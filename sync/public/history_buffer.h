@@ -1,0 +1,44 @@
+#ifndef SYNC_PUBLIC_HISTORY_BUFFER_H_
+#define SYNC_PUBLIC_HISTORY_BUFFER_H_
+
+#include <cstdint>
+#include <vector>
+
+#include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
+
+#include "world/public/world.h"
+
+namespace network_example {
+
+struct HitVolumeSnapshot {
+    NetId net_id = 0;
+    glm::vec3 center{0.0f, 0.0f, 0.0f};
+    glm::vec3 half_extents{0.0f, 0.0f, 0.0f};
+    glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+    std::uint8_t hit_zone = 0;
+    std::uint8_t team = 0;
+    std::uint8_t alive = 0;
+};
+
+struct HistoryFrame {
+    std::uint32_t server_tick = 0;
+    std::vector<HitVolumeSnapshot> volumes;
+};
+
+class HistoryBuffer {
+public:
+    explicit HistoryBuffer(std::uint32_t max_frames);
+
+    void write_frame(const World& world, std::uint32_t server_tick);
+    const HistoryFrame* find_frame(std::uint32_t server_tick) const;
+    std::uint32_t size() const;
+
+private:
+    std::vector<HistoryFrame> frames_;
+    std::uint32_t write_index_ = 0;
+};
+
+}  // namespace network_example
+
+#endif  // SYNC_PUBLIC_HISTORY_BUFFER_H_

@@ -1,0 +1,55 @@
+namespace NetworkExample.Protocol;
+
+enum MessageType : ushort {
+  Handshake = 1,
+  InputPacket = 2,
+  SnapshotPacket = 3,
+  ReliableEventPacket = 4,
+  FireCommand = 5,
+  HitResult = 6,
+  ExplosionResult = 7,
+  Disconnect = 8,
+  PingPong = 9
+}
+
+table Vec3 {
+  x:float;
+  y:float;
+  z:float;
+}
+
+table InputPacket {
+  player_id:uint;
+  input_seq:uint;
+  client_tick:uint;
+  move_x:float;
+  move_y:float;
+  aim_dir:Vec3;
+  buttons:uint;
+  selected_weapon:ubyte;
+}
+
+table EntitySnapshot {
+  net_id:uint;
+  entity_type:ushort;
+  position:Vec3;
+  velocity:Vec3;
+  hp:ushort;
+  state:ubyte;
+  flags:ubyte;
+}
+
+table SnapshotPacket {
+  server_tick:uint;
+  server_time_ms:uint;
+  last_processed_input_seq:uint;
+  entities:[EntitySnapshot];
+}
+
+table ReliableEventPacket {
+  event_type:ushort;
+  server_tick:uint;
+  net_id:uint;
+  peer_id:uint;
+  code:uint;
+}

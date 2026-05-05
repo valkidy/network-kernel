@@ -1,0 +1,20 @@
+licenses(["notice"])
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "sync",
+    srcs = [
+        "src/history_buffer.cc",
+        "src/snapshot_builder.cc",
+    ],
+    hdrs = [
+        "public/history_buffer.h",
+        "public/snapshot.h",
+    ],
+    includes = ["."],
+    deps = [
+        "//world:world",
+        "@glm//:glm",
+    ],
+)

@@ -1,0 +1,13 @@
+licenses(["notice"])
+
+cc_test(
+    name = "m2_packets_test",
+    srcs = ["m2_packets_test.cc"],
+    deps = ["//protocol:protocol"],
+)
+
+cc_test(
+    name = "packet_header_test",
+    srcs = ["packet_header_test.cc"],
+    deps = ["//protocol:protocol"],
+)

@@ -1,0 +1,26 @@
+licenses(["notice"])
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "packet_schema",
+    srcs = ["schema/packets.fbs"],
+)
+
+cc_library(
+    name = "protocol",
+    srcs = [
+        "src/m2_packets.cc",
+        "src/packet_header.cc",
+    ],
+    hdrs = [
+        "public/m2_packets.h",
+        "public/packet_header.h",
+    ],
+    includes = ["."],
+    deps = [
+        "//kernel:kernel_types",
+        "//sync:sync",
+        "//world:world",
+    ],
+)

@@ -1,0 +1,42 @@
+licenses(["notice"])
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "kernel_types",
+    hdrs = ["public/kernel_types.h"],
+    includes = ["."],
+)
+
+cc_library(
+    name = "kernel_api",
+    hdrs = ["public/kernel_api.h"],
+    includes = ["."],
+    deps = [":kernel_types"],
+)
+
+cc_library(
+    name = "tick_loop",
+    srcs = ["src/tick_loop.cc"],
+    hdrs = ["src/tick_loop.h"],
+    deps = [":kernel_types"],
+)
+
+cc_library(
+    name = "kernel",
+    srcs = ["src/kernel.cc"],
+    hdrs = ["src/kernel.h"],
+    deps = [
+        ":kernel_api",
+        ":kernel_types",
+        ":tick_loop",
+        "//protocol:protocol",
+        "//simulation:simulation",
+        "//sync:sync",
+        "//transport:transport",
+        "//world:world",
+        "@fmt//:fmt",
+        "@glm//:glm",
+        "@spdlog//:spdlog",
+    ],
+)

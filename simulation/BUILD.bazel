@@ -1,0 +1,20 @@
+licenses(["notice"])
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "simulation",
+    srcs = [
+        "src/damage_system.cc",
+        "src/player_movement.cc",
+        "src/projectile_system.cc",
+        "src/weapon_system.cc",
+    ],
+    hdrs = ["public/simulation.h"],
+    includes = ["."],
+    deps = [
+        "//kernel:kernel_types",
+        "//world:world",
+        "@glm//:glm",
+    ],
+)

@@ -1,0 +1,18 @@
+licenses(["notice"])
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "transport",
+    srcs = [
+        "src/loopback_transport.cc",
+        "src/network_simulator_transport.cc",
+    ],
+    hdrs = [
+        "public/itransport.h",
+        "public/loopback_transport.h",
+        "public/network_simulator_transport.h",
+    ],
+    includes = ["."],
+    deps = ["//world:world"],
+)
