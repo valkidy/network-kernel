@@ -3,6 +3,7 @@ set -euo pipefail
 
 PLATFORM="${1:-macos}"
 MODE="${2:-build}"
+OUTPUT_BASE="${OUTPUT_BASE:-/private/tmp/bazel-network-example}"
 
 if command -v bazelisk >/dev/null 2>&1; then
   BAZEL_CMD="bazelisk"
@@ -18,11 +19,14 @@ case "$MODE" in
     case "$PLATFORM" in
       macos)
         CMD=(
-          "$BAZEL_CMD" build
+          "$BAZEL_CMD"
+          --output_base="$OUTPUT_BASE"
+          build
           --config=macos
           --copt=-Wunused-function
           -c opt
           //engine/src:example_app
+          //app/dedicated_server:dedicated_server
         )
         ;;
       *)
@@ -39,23 +43,28 @@ case "$MODE" in
           if [[ -n "$target" ]]; then
             TEST_TARGETS+=("$target")
           fi
-        done < <("$BAZEL_CMD" query 'kind(".*_test rule", //engine/...)' 2>/dev/null || true)
+        done < <("$BAZEL_CMD" --output_base="$OUTPUT_BASE" query 'kind("cc_test rule", //tests/...)' 2>/dev/null || true)
         if [[ "${#TEST_TARGETS[@]}" -gt 0 ]]; then
           CMD=(
-            "$BAZEL_CMD" test
+            "$BAZEL_CMD"
+            --output_base="$OUTPUT_BASE"
+            test
             --config=macos
             --copt=-Wunused-function
             -c opt
             "${TEST_TARGETS[@]}"
           )
         else
-          echo "==> No test targets found under //engine/...; building smoke binary instead."
+          echo "==> No test targets found under //tests/...; building smoke binaries instead."
           CMD=(
-            "$BAZEL_CMD" build
+            "$BAZEL_CMD"
+            --output_base="$OUTPUT_BASE"
+            build
             --config=macos
             --copt=-Wunused-function
             -c opt
             //engine/src:example_app
+            //app/dedicated_server:dedicated_server
           )
         fi
         ;;

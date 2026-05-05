@@ -11,16 +11,18 @@ Use this skill when:
 - the user asks to run tests or verify the current change
 - you need compilation verification before concluding a code task
 - a change touches Bazel files, `WORKSPACE`, `.bazelrc`, `platform_mappings`, or `third_party/*.BUILD`
-- a change touches C++ code under `engine/`
+- a change touches C++ code under `engine/`, `kernel/`, `world/`, `simulation/`, `sync/`, `transport/`, `protocol/`, `app/`, or `tests/`
 
 ## Current Project Shape
 
-- Main target: `//engine/src:example_app`
+- Main smoke target: `//engine/src:example_app`
+- M1 dedicated server target: `//app/dedicated_server:dedicated_server`
 - Primary local config: `--config=macos`
 - Bazel version: `.bazelversion` pins Bazel `7.4.1`
 - Dependency management currently uses `WORKSPACE`; `.bazelrc` sets `--noenable_bzlmod`
-- There are no checked-in `cc_test` targets yet
-- Do not use `//...` as the default verification pattern; it descends into local third-party wrapper packages that are not the app verification surface.
+- Checked-in `cc_test` targets live under `//tests/...`
+- Do not use `//...` as the default build/test verification pattern; it descends into local third-party wrapper packages that are not the app verification surface.
+- Do not use bare `bazel query` in this sandbox. The default output base may not be writable, so use the sandbox-friendly output base shown below.
 
 ## Platform Selection
 
@@ -44,28 +46,57 @@ Use `test` as the second argument to run the platform's standard test set:
 .agents/skills/bazel-build/scripts/run-bazel-build.sh macos test
 ```
 
-If there are no test targets under `//engine/...`, `test` mode builds `//engine/src:example_app` instead.
+If there are no test targets under `//tests/...`, `test` mode builds `//engine/src:example_app` and `//app/dedicated_server:dedicated_server` instead. The helper uses `OUTPUT_BASE=/private/tmp/bazel-network-example` by default; override that environment variable only when a different writable output base is required.
 
 ## Standard Commands
 
-Build the smoke binary:
+Build the smoke binary and M1 dedicated server:
 
 ```bash
 bazel build \
   --config=macos \
   --copt=-Wunused-function \
   -c opt \
-  //engine/src:example_app
+  //engine/src:example_app \
+  //app/dedicated_server:dedicated_server
 ```
 
-When tests exist, run engine tests only:
+Run checked-in tests:
 
 ```bash
 bazel test \
   --config=macos \
   --copt=-Wunused-function \
   -c opt \
-  <test targets from bazel query 'kind(".*_test rule", //engine/...)'>
+  <test targets from the query commands below>
+```
+
+## Query Commands
+
+Use these query commands for target discovery and dependency inspection. They all set `--output_base=/private/tmp/bazel-network-example` because the default Bazel output base may not be readable/writable in the local sandbox.
+
+List C++ rules:
+
+```bash
+bazel --output_base=/private/tmp/bazel-network-example query 'kind("cc_.* rule", //...)'
+```
+
+List tests:
+
+```bash
+bazel --output_base=/private/tmp/bazel-network-example query 'kind("cc_test rule", //...)'
+```
+
+Inspect one layer of dependencies for a target:
+
+```bash
+bazel --output_base=/private/tmp/bazel-network-example query 'deps(<target>, 1)'
+```
+
+Find reverse dependencies of a target:
+
+```bash
+bazel --output_base=/private/tmp/bazel-network-example query 'rdeps(//..., <target>)'
 ```
 
 ## Verification Guidance
