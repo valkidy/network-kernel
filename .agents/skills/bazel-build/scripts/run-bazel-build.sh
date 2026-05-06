@@ -25,8 +25,7 @@ case "$MODE" in
           --config=macos
           --copt=-Wunused-function
           -c opt
-          //engine/src:example_app
-          //app/dedicated_server:dedicated_server
+          //app:app
         )
         ;;
       *)
@@ -43,7 +42,7 @@ case "$MODE" in
           if [[ -n "$target" ]]; then
             TEST_TARGETS+=("$target")
           fi
-        done < <("$BAZEL_CMD" --output_base="$OUTPUT_BASE" query 'kind("cc_test rule", //tests/...)' 2>/dev/null || true)
+        done < <("$BAZEL_CMD" --output_base="$OUTPUT_BASE" query 'kind("cc_test rule", //engine/src/tests/...)' 2>/dev/null || true)
         if [[ "${#TEST_TARGETS[@]}" -gt 0 ]]; then
           CMD=(
             "$BAZEL_CMD"
@@ -55,7 +54,7 @@ case "$MODE" in
             "${TEST_TARGETS[@]}"
           )
         else
-          echo "==> No test targets found under //tests/...; building smoke binaries instead."
+          echo "==> No test targets found under //engine/src/tests/...; building app binary instead."
           CMD=(
             "$BAZEL_CMD"
             --output_base="$OUTPUT_BASE"
@@ -63,8 +62,7 @@ case "$MODE" in
             --config=macos
             --copt=-Wunused-function
             -c opt
-            //engine/src:example_app
-            //app/dedicated_server:dedicated_server
+            //app:app
           )
         fi
         ;;

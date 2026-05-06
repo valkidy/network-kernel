@@ -1,7 +1,0 @@
-licenses(["notice"])
-
-cc_test(
-    name = "world_test",
-    srcs = ["world_test.cc"],
-    deps = ["//world:world"],
-)

@@ -1,0 +1,19 @@
+licenses(["notice"])
+
+cc_test(
+    name = "loopback_transport_test",
+    srcs = ["loopback_transport_test.cc"],
+    deps = ["//engine/src/transport:transport"],
+)
+
+cc_test(
+    name = "gns_transport_test",
+    srcs = ["gns_transport_test.cc"],
+    deps = ["//engine/src/transport:transport"],
+)
+
+cc_test(
+    name = "network_simulator_transport_test",
+    srcs = ["network_simulator_transport_test.cc"],
+    deps = ["//engine/src/transport:transport"],
+)

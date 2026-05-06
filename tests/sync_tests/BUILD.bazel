@@ -1,7 +1,0 @@
-licenses(["notice"])
-
-cc_test(
-    name = "snapshot_test",
-    srcs = ["snapshot_test.cc"],
-    deps = ["//sync:sync"],
-)

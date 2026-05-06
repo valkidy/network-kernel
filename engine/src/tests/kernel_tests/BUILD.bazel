@@ -1,0 +1,25 @@
+licenses(["notice"])
+
+cc_test(
+    name = "tick_loop_test",
+    srcs = ["tick_loop_test.cc"],
+    deps = ["//engine/src/kernel:tick_loop"],
+)
+
+cc_test(
+    name = "kernel_api_test",
+    srcs = ["kernel_api_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
+    name = "client_mode_test",
+    srcs = ["client_mode_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
+    name = "listen_server_test",
+    srcs = ["listen_server_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)

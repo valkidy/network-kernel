@@ -1,11 +1,11 @@
 ---
 name: completion-smoke-test
-description: Run network-example completion smoke tests for finished tasks, including dedicated_server and example_client localhost verification. Use when the user asks to complete a task, finish verification, run smoke test, or validate bazel-bin/app/dedicated_server/dedicated_server with bazel-bin/app/example_client/example_client.
+description: Run network-example completion smoke tests for finished tasks, including unified app dedicated_server, client, and host_server mode verification. Use when the user asks to complete a task, finish verification, run smoke test, or validate bazel-bin/app/app runtime modes.
 ---
 
 # Completion Smoke Test Skill
 
-Use this skill before concluding a task when runtime verification is appropriate for `network-example`, especially after changes touching `app/`, `kernel/`, `protocol/`, `transport/`, or Bazel targets used by the dedicated server or example client.
+Use this skill before concluding a task when runtime verification is appropriate for `network-example`, especially after changes touching `app/`, `engine/src/kernel/`, `engine/src/protocol/`, `engine/src/transport/`, or Bazel targets used by the unified app.
 
 ## Helper Script
 
@@ -17,15 +17,16 @@ Run the repository smoke helper from the repo root:
 
 The helper builds and runs:
 
-- `//app/dedicated_server:dedicated_server`
-- `//app/example_client:example_client`
-- `bazel-bin/app/dedicated_server/dedicated_server`
-- `bazel-bin/app/example_client/example_client 127.0.0.1:7777`
+- `//app:app`
+- `bazel-bin/app/app --mode=host_server --port=7777`
+- `bazel-bin/app/app --mode=dedicated_server --port=7777`
+- `bazel-bin/app/app --mode=client --address=127.0.0.1:7777`
 
 ## Expected Behavior
 
-- The server starts on `127.0.0.1:7777`.
-- The client connects to that server and exits successfully.
+- The host server mode starts, runs its scripted frames, and exits successfully.
+- The dedicated server mode starts on `127.0.0.1:7777`.
+- The client mode connects to that server and exits successfully.
 - The helper exits nonzero if either binary is missing, the server exits early, readiness times out, or the client fails.
 - The helper always attempts to stop the background server before exiting.
 

@@ -1,0 +1,20 @@
+licenses(["notice"])
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "world",
+    srcs = [
+        "src/entity_factory.cc",
+        "src/world.cc",
+    ],
+    hdrs = [
+        "public/components.h",
+        "public/world.h",
+    ],
+    includes = [".."],
+    deps = [
+        "@entt//:entt",
+        "@glm//:glm",
+    ],
+)

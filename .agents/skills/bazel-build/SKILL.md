@@ -1,6 +1,6 @@
 ---
 name: bazel-build
-description: Run network-example's Bazel verification for the C++ engine smoke binary and third-party dependency wrappers. Use this when the user asks to build, test, verify compilation, or validate Bazel/C++ dependency changes.
+description: Run network-example's Bazel verification for the unified app binary, engine modules, tests, and third-party dependency wrappers. Use this when the user asks to build, test, verify compilation, or validate Bazel/C++ dependency changes.
 ---
 
 # Bazel Build Skill
@@ -11,16 +11,16 @@ Use this skill when:
 - the user asks to run tests or verify the current change
 - you need compilation verification before concluding a code task
 - a change touches Bazel files, `WORKSPACE`, `.bazelrc`, `platform_mappings`, or `third_party/*.BUILD`
-- a change touches C++ code under `engine/`, `kernel/`, `world/`, `simulation/`, `sync/`, `transport/`, `protocol/`, `app/`, or `tests/`
+- a change touches C++ code under `engine/src/`, `app/`, or tests
 
 ## Current Project Shape
 
-- Main smoke target: `//engine/src:example_app`
-- M1 dedicated server target: `//app/dedicated_server:dedicated_server`
+- Main app target: `//app:app`
+- Engine module targets live under `//engine/src/<module>:...`
 - Primary local config: `--config=macos`
 - Bazel version: `.bazelversion` pins Bazel `7.4.1`
 - Dependency management currently uses `WORKSPACE`; `.bazelrc` sets `--noenable_bzlmod`
-- Checked-in `cc_test` targets live under `//tests/...`
+- Checked-in `cc_test` targets live under `//engine/src/tests/...`
 - Do not use `//...` as the default build/test verification pattern; it descends into local third-party wrapper packages that are not the app verification surface.
 - Do not use bare `bazel query` in this sandbox. The default output base may not be writable, so use the sandbox-friendly output base shown below.
 
@@ -46,19 +46,18 @@ Use `test` as the second argument to run the platform's standard test set:
 .agents/skills/bazel-build/scripts/run-bazel-build.sh macos test
 ```
 
-If there are no test targets under `//tests/...`, `test` mode builds `//engine/src:example_app` and `//app/dedicated_server:dedicated_server` instead. The helper uses `OUTPUT_BASE=/private/tmp/bazel-network-example` by default; override that environment variable only when a different writable output base is required.
+If there are no test targets under `//engine/src/tests/...`, `test` mode builds `//app:app` instead. The helper uses `OUTPUT_BASE=/private/tmp/bazel-network-example` by default; override that environment variable only when a different writable output base is required.
 
 ## Standard Commands
 
-Build the smoke binary and M1 dedicated server:
+Build the unified app binary:
 
 ```bash
 bazel build \
   --config=macos \
   --copt=-Wunused-function \
   -c opt \
-  //engine/src:example_app \
-  //app/dedicated_server:dedicated_server
+  //app:app
 ```
 
 Run checked-in tests:
@@ -68,7 +67,7 @@ bazel test \
   --config=macos \
   --copt=-Wunused-function \
   -c opt \
-  <test targets from the query commands below>
+  <engine/src test targets from the query commands below>
 ```
 
 ## Query Commands
@@ -85,6 +84,12 @@ List tests:
 
 ```bash
 bazel --output_base=/private/tmp/bazel-network-example query 'kind("cc_test rule", //...)'
+```
+
+List engine tests:
+
+```bash
+bazel --output_base=/private/tmp/bazel-network-example query 'kind("cc_test rule", //engine/src/tests/...)'
 ```
 
 Inspect one layer of dependencies for a target:

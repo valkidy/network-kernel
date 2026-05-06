@@ -1,7 +1,0 @@
-licenses(["notice"])
-
-cc_test(
-    name = "hitscan_test",
-    srcs = ["hitscan_test.cc"],
-    deps = ["//simulation:simulation"],
-)

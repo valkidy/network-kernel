@@ -4,13 +4,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd -P)"
 OUTPUT_BASE="${OUTPUT_BASE:-/private/tmp/bazel-network-example}"
-SERVER_BIN="$REPO_ROOT/bazel-bin/app/dedicated_server/dedicated_server"
-CLIENT_BIN="$REPO_ROOT/bazel-bin/app/example_client/example_client"
+APP_BIN="$REPO_ROOT/bazel-bin/app/app"
 ADDRESS="${ADDRESS:-127.0.0.1:7777}"
+PORT="${PORT:-7777}"
 READY_TIMEOUT_SECONDS="${READY_TIMEOUT_SECONDS:-10}"
 LOG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/network-example-smoke.XXXXXX")"
 SERVER_LOG="$LOG_DIR/dedicated_server.log"
 CLIENT_LOG="$LOG_DIR/example_client.log"
+HOST_LOG="$LOG_DIR/host_server.log"
 SERVER_PID=""
 
 cleanup() {
@@ -29,6 +30,10 @@ print_failure_context() {
   if [[ -f "$CLIENT_LOG" ]]; then
     echo "==> Last example_client log lines:" >&2
     tail -n 40 "$CLIENT_LOG" >&2 || true
+  fi
+  if [[ -f "$HOST_LOG" ]]; then
+    echo "==> Last host_server log lines:" >&2
+    tail -n 40 "$HOST_LOG" >&2 || true
   fi
 }
 
@@ -52,28 +57,25 @@ fi
 
 cd "$REPO_ROOT"
 
-echo "==> Building dedicated_server and example_client"
+echo "==> Building unified app"
 "$BAZEL_CMD" \
   --output_base="$OUTPUT_BASE" \
   build \
   --config=macos \
   --copt=-Wunused-function \
   -c opt \
-  //app/dedicated_server:dedicated_server \
-  //app/example_client:example_client
+  //app:app
 
-if [[ ! -x "$SERVER_BIN" ]]; then
-  echo "ERROR: expected server binary not found or not executable: $SERVER_BIN" >&2
+if [[ ! -x "$APP_BIN" ]]; then
+  echo "ERROR: expected app binary not found or not executable: $APP_BIN" >&2
   exit 1
 fi
 
-if [[ ! -x "$CLIENT_BIN" ]]; then
-  echo "ERROR: expected client binary not found or not executable: $CLIENT_BIN" >&2
-  exit 1
-fi
+echo "==> Running host_server mode"
+"$APP_BIN" --mode=host_server --port="$PORT" >"$HOST_LOG" 2>&1
 
-echo "==> Starting dedicated_server"
-"$SERVER_BIN" >"$SERVER_LOG" 2>&1 &
+echo "==> Starting dedicated_server mode"
+"$APP_BIN" --mode=dedicated_server --port="$PORT" >"$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 
 ready_deadline=$((SECONDS + READY_TIMEOUT_SECONDS))
@@ -85,21 +87,21 @@ while (( SECONDS < ready_deadline )); do
     exit 1
   fi
 
-  if grep -q "dedicated server listening on 127.0.0.1:7777" "$SERVER_LOG"; then
+  if grep -q "dedicated server listening on 127.0.0.1:$PORT" "$SERVER_LOG"; then
     break
   fi
 
   sleep 0.2
 done
 
-if ! grep -q "dedicated server listening on 127.0.0.1:7777" "$SERVER_LOG"; then
+if ! grep -q "dedicated server listening on 127.0.0.1:$PORT" "$SERVER_LOG"; then
   echo "ERROR: timed out waiting for dedicated_server readiness" >&2
   print_failure_context
   exit 1
 fi
 
-echo "==> Running example_client against $ADDRESS"
-"$CLIENT_BIN" "$ADDRESS" >"$CLIENT_LOG" 2>&1
+echo "==> Running client mode against $ADDRESS"
+"$APP_BIN" --mode=client --address="$ADDRESS" >"$CLIENT_LOG" 2>&1
 
 echo "==> Completion smoke test passed"
 echo "==> Logs are in: $LOG_DIR"

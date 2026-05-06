@@ -1,0 +1,7 @@
+licenses(["notice"])
+
+cc_test(
+    name = "world_test",
+    srcs = ["world_test.cc"],
+    deps = ["//engine/src/world:world"],
+)

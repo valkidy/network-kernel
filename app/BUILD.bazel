@@ -1,0 +1,21 @@
+licenses(["notice"])
+
+package(default_visibility = ["//visibility:public"])
+
+cc_binary(
+    name = "app",
+    srcs = [
+        "client_app.h",
+        "client_app.cc",
+        "dedicated_server_app.h",
+        "dedicated_server_app.cc",
+        "host_server_app.h",
+        "host_server_app.cc",
+        "main.cc",
+    ],
+    deps = [
+        "//engine/src/kernel:kernel",
+        "@fmt//:fmt",
+        "@spdlog//:spdlog",
+    ],
+)
