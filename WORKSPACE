@@ -31,6 +31,52 @@ http_archive(
 )
 
 http_archive(
+    name = "rules_pkg",
+    sha256 = "8a298e832762eda1830597d64fe7db58178aa84cd5926d76d5b744d6558941c2",
+    urls = [
+        "https://mirror.bazel.build/github.com/bazelbuild/rules_pkg/releases/download/0.7.0/rules_pkg-0.7.0.tar.gz",
+        "https://github.com/bazelbuild/rules_pkg/releases/download/0.7.0/rules_pkg-0.7.0.tar.gz",
+    ],
+)
+
+new_local_repository(
+    name = "zlib",
+    build_file_content = """
+cc_library(
+    name = "zlib",
+    hdrs = [
+        "usr/include/zconf.h",
+        "usr/include/zlib.h",
+    ],
+    includes = ["usr/include"],
+    linkopts = ["-lz"],
+    visibility = ["//visibility:public"],
+)
+""",
+    path = "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk",
+)
+
+new_local_repository(
+    name = "system_openssl",
+    build_file_content = """
+cc_library(
+    name = "openssl",
+    hdrs = glob([
+        "include/openssl/**/*.h",
+    ]),
+    includes = ["include"],
+    linkopts = [
+        "-L/opt/homebrew/opt/openssl@3/lib",
+        "-lssl",
+        "-lcrypto",
+    ],
+    visibility = ["//visibility:public"],
+)
+""",
+    path = "/opt/homebrew/opt/openssl@3",
+)
+
+http_archive(
     name = "com_google_protobuf",
     patch_args = [
         "-p1",
@@ -115,4 +161,3 @@ http_archive(
     urls = ["https://github.com/fmtlib/fmt/archive/refs/tags/12.1.0.tar.gz"],
     build_file = "@//third_party:fmt.BUILD",
 )
-

@@ -12,10 +12,12 @@ cc_library(
     srcs = [
         "src/m2_packets.cc",
         "src/packet_header.cc",
+        "src/session_packets.cc",
     ],
     hdrs = [
         "public/m2_packets.h",
         "public/packet_header.h",
+        "public/session_packets.h",
     ],
     includes = ["."],
     deps = [

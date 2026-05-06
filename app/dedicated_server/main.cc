@@ -1,5 +1,7 @@
 #include <array>
+#include <chrono>
 #include <cstdint>
+#include <thread>
 
 #include <fmt/format.h>
 #include <spdlog/spdlog.h>
@@ -20,16 +22,6 @@ KernelConfig default_config() {
     return config;
 }
 
-PlayerInput scripted_input(std::uint32_t sequence) {
-    PlayerInput input{};
-    input.input_seq = sequence;
-    input.client_tick = sequence;
-    input.move = KernelVec2{1.0f, 0.0f};
-    input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
-    input.buttons = sequence == 2 ? InputButton_Fire : 0;
-    return input;
-}
-
 }  // namespace
 
 int main() {
@@ -43,20 +35,11 @@ int main() {
         return 1;
     }
 
-    constexpr std::array<float, 6> kFrameDeltas = {
-        0.016f,
-        0.034f,
-        0.050f,
-        0.033f,
-        0.016f,
-        0.066f,
-    };
+    spdlog::info("dedicated server listening on 127.0.0.1:7777");
 
-    std::uint32_t sequence = 1;
-    for (float delta_seconds : kFrameDeltas) {
-        PlayerInput input = scripted_input(sequence++);
-        Kernel_SubmitInput(kernel, 1, &input);
-        Kernel_Update(kernel, delta_seconds);
+    constexpr float kDeltaSeconds = 1.0f / 30.0f;
+    while (true) {
+        Kernel_Update(kernel, kDeltaSeconds);
 
         std::array<KernelEvent, 32> events{};
         const std::uint32_t event_count =
@@ -70,20 +53,7 @@ int main() {
                 events[index].peer_id,
                 events[index].code);
         }
-    }
-
-    std::array<RenderEntityState, 16> states{};
-    const std::uint32_t state_count =
-        Kernel_GetRenderStates(kernel, states.data(), static_cast<std::uint32_t>(states.size()));
-    for (std::uint32_t index = 0; index < state_count; ++index) {
-        const RenderEntityState& state = states[index];
-        spdlog::info(
-            "render_state net_id={} type={} pos=({}, {}, {})",
-            state.net_id,
-            state.entity_type,
-            state.position.x,
-            state.position.y,
-            state.position.z);
+        std::this_thread::sleep_for(std::chrono::milliseconds(33));
     }
 
     Kernel_Destroy(kernel);

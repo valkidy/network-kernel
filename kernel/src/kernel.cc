@@ -11,6 +11,8 @@
 
 #include "kernel/public/kernel_api.h"
 #include "protocol/public/m2_packets.h"
+#include "protocol/public/session_packets.h"
+#include "transport/public/gns_transport.h"
 #include "transport/public/loopback_transport.h"
 #include "transport/public/network_simulator_transport.h"
 
@@ -42,6 +44,8 @@ std::uint32_t history_frame_count(const TickConfig& config) {
 }
 
 constexpr PeerId kLocalListenPeerId = 1;
+constexpr PeerId kServerPeerId = 0;
+constexpr std::uint32_t kClientNonce = 0x4d330001u;
 
 }  // namespace
 
@@ -54,9 +58,22 @@ KernelEngine::KernelEngine(KernelConfig config)
     events_.reserve(config_.max_events);
 }
 
-bool KernelEngine::start_client(const char*) {
-    push_event(KernelEventType_Error, 0, 0, 1);
-    return false;
+bool KernelEngine::start_client(const char* address) {
+    auto gns_transport = std::make_unique<GnsTransport>();
+    if (!gns_transport->StartClient(address)) {
+        push_event(KernelEventType_Error, 0, 0, 1);
+        return false;
+    }
+
+    loopback_transport_ = nullptr;
+    transport_ = std::move(gns_transport);
+    config_.mode = KernelMode_Client;
+    running_ = true;
+    local_client_peer_id_ = 0;
+    client_handshake_sent_ = false;
+    has_welcome_ = false;
+    has_client_snapshot_ = false;
+    return true;
 }
 
 bool KernelEngine::start_listen_server(std::uint16_t port) {
@@ -90,19 +107,18 @@ bool KernelEngine::start_listen_server(std::uint16_t port) {
 }
 
 bool KernelEngine::start_dedicated_server(std::uint16_t port) {
+    auto gns_transport = std::make_unique<GnsTransport>();
     loopback_transport_ = nullptr;
-    if (!transport_->StartServer(port)) {
+    if (!gns_transport->StartServer(port)) {
         push_event(KernelEventType_Error, 0, 0, 3);
         return false;
     }
 
+    transport_ = std::move(gns_transport);
     config_.mode = KernelMode_DedicatedServer;
     running_ = true;
-    const NetId player = world_.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
     const NetId enemy = world_.spawn_enemy(glm::vec3{8.0f, 0.0f, 0.0f});
     world_.spawn_projectile(0, glm::vec3{2.0f, 0.4f, -2.0f}, glm::vec3{0.0f, 0.0f, 2.0f});
-    push_event(KernelEventType_PlayerJoined, player, 1);
-    push_event(KernelEventType_EntitySpawned, player, 1);
     push_event(KernelEventType_EntitySpawned, enemy, 0);
     publish_snapshot();
     rebuild_render_states();
@@ -134,6 +150,25 @@ void KernelEngine::submit_input(PeerId local_player_id, const PlayerInput& input
                 SendMode::kUnreliable,
                 ChannelId::kInput)) {
             push_event(KernelEventType_Error, 0, local_player_id, 4);
+        }
+        return;
+    }
+
+    if (config_.mode == KernelMode_Client) {
+        if (!has_welcome_) {
+            push_event(KernelEventType_Error, 0, 0, 8);
+            return;
+        }
+
+        const std::vector<std::uint8_t> packet =
+            encode_input_packet(local_client_peer_id_, input, next_packet_sequence_++);
+        if (!transport_->Send(
+                kServerPeerId,
+                packet.data(),
+                static_cast<std::uint32_t>(packet.size()),
+                SendMode::kUnreliable,
+                ChannelId::kInput)) {
+            push_event(KernelEventType_Error, 0, local_client_peer_id_, 4);
         }
         return;
     }
@@ -178,11 +213,50 @@ void KernelEngine::poll_transport() {
     while (transport_->PollEvent(transport_event)) {
         if (transport_event.type == TransportEventType::kConnected) {
             push_event(KernelEventType_Connected, 0, transport_event.peer);
+            if (config_.mode == KernelMode_Client) {
+                send_client_handshake();
+            }
         } else if (transport_event.type == TransportEventType::kDisconnected) {
+            const PeerSession* session = find_session(transport_event.peer);
+            if (session != nullptr) {
+                push_event(KernelEventType_PlayerLeft, session->player, transport_event.peer);
+                remove_session(transport_event.peer);
+            }
             push_event(KernelEventType_Disconnected, 0, transport_event.peer);
         } else if (
             transport_event.type == TransportEventType::kMessage &&
-            transport_event.channel == ChannelId::kInput) {
+            transport_event.channel == ChannelId::kSession &&
+            config_.mode == KernelMode_DedicatedServer) {
+            handle_server_handshake(transport_event);
+        } else if (
+            transport_event.type == TransportEventType::kMessage &&
+            transport_event.channel == ChannelId::kSession &&
+            config_.mode == KernelMode_Client) {
+            handle_client_session_message(transport_event);
+        } else if (
+            transport_event.type == TransportEventType::kMessage &&
+            transport_event.channel == ChannelId::kSnapshot &&
+            config_.mode == KernelMode_Client) {
+            WorldSnapshot snapshot;
+            if (!decode_snapshot_packet(
+                    transport_event.payload.data(),
+                    transport_event.payload.size(),
+                    &snapshot)) {
+                push_event(KernelEventType_Error, 0, transport_event.peer, 6);
+                continue;
+            }
+            latest_client_snapshot_ = std::move(snapshot);
+            has_client_snapshot_ = true;
+        } else if (
+            transport_event.type == TransportEventType::kMessage &&
+            transport_event.channel == ChannelId::kInput &&
+            config_.mode == KernelMode_DedicatedServer) {
+            const PeerSession* session = find_session(transport_event.peer);
+            if (session == nullptr || !session->welcomed) {
+                push_event(KernelEventType_Error, 0, transport_event.peer, 10);
+                continue;
+            }
+
             PeerId player_id = 0;
             PlayerInput input{};
             if (!decode_input_packet(
@@ -191,6 +265,10 @@ void KernelEngine::poll_transport() {
                     &player_id,
                     &input)) {
                 push_event(KernelEventType_Error, 0, transport_event.peer, 5);
+                continue;
+            }
+            if (player_id != transport_event.peer) {
+                push_event(KernelEventType_Error, 0, transport_event.peer, 11);
                 continue;
             }
             pending_inputs_.push_back(QueuedInput{player_id, input});
@@ -240,7 +318,8 @@ void KernelEngine::simulate_tick() {
 }
 
 void KernelEngine::rebuild_render_states() {
-    if (config_.mode == KernelMode_ListenServer && has_client_snapshot_) {
+    if ((config_.mode == KernelMode_ListenServer || config_.mode == KernelMode_Client) &&
+        has_client_snapshot_) {
         rebuild_render_states_from_snapshot();
         return;
     }
@@ -305,6 +384,147 @@ void KernelEngine::publish_snapshot() {
             push_event(KernelEventType_Error, 0, kLocalListenPeerId, 7);
         }
     }
+
+    if (config_.mode == KernelMode_DedicatedServer) {
+        const std::vector<std::uint8_t> packet =
+            encode_snapshot_packet(latest_snapshot_, next_packet_sequence_++);
+        for (const PeerSession& session : peer_sessions_) {
+            if (!session.welcomed) {
+                continue;
+            }
+            if (!transport_->Send(
+                    session.peer,
+                    packet.data(),
+                    static_cast<std::uint32_t>(packet.size()),
+                    SendMode::kUnreliable,
+                    ChannelId::kSnapshot)) {
+                push_event(KernelEventType_Error, 0, session.peer, 7);
+            }
+        }
+    }
+}
+
+void KernelEngine::send_client_handshake() {
+    if (client_handshake_sent_) {
+        return;
+    }
+
+    const std::vector<std::uint8_t> packet = encode_handshake_packet(
+        HandshakePacket{kClientNonce},
+        next_packet_sequence_++);
+    if (!transport_->Send(
+            kServerPeerId,
+            packet.data(),
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kSession)) {
+        push_event(KernelEventType_Error, 0, kServerPeerId, 9);
+        return;
+    }
+    client_handshake_sent_ = true;
+}
+
+void KernelEngine::handle_server_handshake(const TransportEvent& transport_event) {
+    HandshakePacket handshake;
+    if (!decode_handshake_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &handshake)) {
+        push_event(KernelEventType_Error, 0, transport_event.peer, 9);
+        return;
+    }
+
+    PeerSession* session = find_session(transport_event.peer);
+    if (session == nullptr) {
+        const NetId player = world_.spawn_player(
+            transport_event.peer,
+            glm::vec3{0.0f, 0.0f, 0.0f});
+        peer_sessions_.push_back(PeerSession{transport_event.peer, player, false});
+        session = &peer_sessions_.back();
+        push_event(KernelEventType_PlayerJoined, player, transport_event.peer);
+        push_event(KernelEventType_EntitySpawned, player, transport_event.peer);
+    }
+
+    const WelcomePacket welcome{
+        transport_event.peer,
+        config_.tick.server_tick_rate,
+        config_.tick.snapshot_rate,
+    };
+    const std::vector<std::uint8_t> packet =
+        encode_welcome_packet(welcome, next_packet_sequence_++);
+    if (!transport_->Send(
+            transport_event.peer,
+            packet.data(),
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kSession)) {
+        push_event(KernelEventType_Error, 0, transport_event.peer, 12);
+        return;
+    }
+
+    session->welcomed = true;
+    publish_snapshot();
+}
+
+void KernelEngine::handle_client_session_message(const TransportEvent& transport_event) {
+    WelcomePacket welcome;
+    if (decode_welcome_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &welcome)) {
+        local_client_peer_id_ = welcome.assigned_peer_id;
+        has_welcome_ = true;
+        push_event(KernelEventType_PlayerJoined, 0, local_client_peer_id_);
+        return;
+    }
+
+    DisconnectPacket disconnect;
+    if (decode_disconnect_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &disconnect)) {
+        push_event(KernelEventType_Disconnected, 0, kServerPeerId, disconnect.reason_code);
+        return;
+    }
+
+    push_event(KernelEventType_Error, 0, transport_event.peer, 13);
+}
+
+KernelEngine::PeerSession* KernelEngine::find_session(PeerId peer) {
+    auto found = std::find_if(
+        peer_sessions_.begin(),
+        peer_sessions_.end(),
+        [peer](const PeerSession& session) {
+            return session.peer == peer;
+        });
+    if (found == peer_sessions_.end()) {
+        return nullptr;
+    }
+    return &(*found);
+}
+
+const KernelEngine::PeerSession* KernelEngine::find_session(PeerId peer) const {
+    auto found = std::find_if(
+        peer_sessions_.begin(),
+        peer_sessions_.end(),
+        [peer](const PeerSession& session) {
+            return session.peer == peer;
+        });
+    if (found == peer_sessions_.end()) {
+        return nullptr;
+    }
+    return &(*found);
+}
+
+void KernelEngine::remove_session(PeerId peer) {
+    peer_sessions_.erase(
+        std::remove_if(
+            peer_sessions_.begin(),
+            peer_sessions_.end(),
+            [peer](const PeerSession& session) {
+                return session.peer == peer;
+            }),
+        peer_sessions_.end());
 }
 
 }  // namespace network_example

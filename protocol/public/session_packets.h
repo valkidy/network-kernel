@@ -1,0 +1,52 @@
+#ifndef PROTOCOL_PUBLIC_SESSION_PACKETS_H_
+#define PROTOCOL_PUBLIC_SESSION_PACKETS_H_
+
+#include <cstdint>
+#include <vector>
+
+#include "protocol/public/packet_header.h"
+#include "world/public/components.h"
+
+namespace network_example {
+
+struct HandshakePacket {
+    std::uint32_t client_nonce = 0;
+};
+
+struct WelcomePacket {
+    PeerId assigned_peer_id = 0;
+    std::uint32_t server_tick_rate = 0;
+    std::uint32_t snapshot_rate = 0;
+};
+
+struct DisconnectPacket {
+    std::uint32_t reason_code = 0;
+};
+
+std::vector<std::uint8_t> encode_handshake_packet(
+    const HandshakePacket& packet,
+    std::uint32_t sequence = 0);
+bool decode_handshake_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    HandshakePacket* out_packet);
+
+std::vector<std::uint8_t> encode_welcome_packet(
+    const WelcomePacket& packet,
+    std::uint32_t sequence = 0);
+bool decode_welcome_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    WelcomePacket* out_packet);
+
+std::vector<std::uint8_t> encode_disconnect_packet(
+    const DisconnectPacket& packet,
+    std::uint32_t sequence = 0);
+bool decode_disconnect_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    DisconnectPacket* out_packet);
+
+}  // namespace network_example
+
+#endif  // PROTOCOL_PUBLIC_SESSION_PACKETS_H_

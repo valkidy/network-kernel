@@ -5,14 +5,19 @@ package(default_visibility = ["//visibility:public"])
 cc_library(
     name = "transport",
     srcs = [
+        "src/gns_transport.cc",
         "src/loopback_transport.cc",
         "src/network_simulator_transport.cc",
     ],
     hdrs = [
+        "public/gns_transport.h",
         "public/itransport.h",
         "public/loopback_transport.h",
         "public/network_simulator_transport.h",
     ],
     includes = ["."],
-    deps = ["//world:world"],
+    deps = [
+        "//world:world",
+        "@GameNetworkingSockets//:gns_static",
+    ],
 )

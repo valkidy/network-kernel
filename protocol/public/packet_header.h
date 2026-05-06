@@ -22,6 +22,7 @@ enum class MessageType : std::uint16_t {
     kExplosionResult = 7,
     kDisconnect = 8,
     kPingPong = 9,
+    kWelcome = 10,
 };
 
 struct PacketHeader {

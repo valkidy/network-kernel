@@ -11,3 +11,9 @@ cc_test(
     srcs = ["packet_header_test.cc"],
     deps = ["//protocol:protocol"],
 )
+
+cc_test(
+    name = "session_packets_test",
+    srcs = ["session_packets_test.cc"],
+    deps = ["//protocol:protocol"],
+)

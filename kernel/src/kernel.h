@@ -34,6 +34,12 @@ public:
     std::uint32_t poll_events(KernelEvent* out_events, std::uint32_t max_events);
 
 private:
+    struct PeerSession {
+        PeerId peer = 0;
+        NetId player = 0;
+        bool welcomed = false;
+    };
+
     void push_event(
         KernelEventType type,
         NetId net_id = 0,
@@ -46,6 +52,12 @@ private:
     void rebuild_render_states_from_world();
     void rebuild_render_states_from_snapshot();
     void publish_snapshot();
+    void send_client_handshake();
+    void handle_server_handshake(const TransportEvent& transport_event);
+    void handle_client_session_message(const TransportEvent& transport_event);
+    PeerSession* find_session(PeerId peer);
+    const PeerSession* find_session(PeerId peer) const;
+    void remove_session(PeerId peer);
 
     KernelConfig config_;
     TickLoop tick_loop_;
@@ -58,8 +70,12 @@ private:
     std::vector<RenderEntityState> render_states_;
     WorldSnapshot latest_snapshot_;
     WorldSnapshot latest_client_snapshot_;
+    std::vector<PeerSession> peer_sessions_;
     std::uint32_t last_processed_input_seq_ = 0;
     std::uint32_t next_packet_sequence_ = 1;
+    PeerId local_client_peer_id_ = 0;
+    bool client_handshake_sent_ = false;
+    bool has_welcome_ = false;
     bool has_client_snapshot_ = false;
     bool running_ = false;
 };

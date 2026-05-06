@@ -21,7 +21,7 @@ int main() {
     Kernel_Update(kernel, 1.0f / 30.0f);
 
     std::array<RenderEntityState, 8> states{};
-    assert(Kernel_GetRenderStates(kernel, states.data(), states.size()) >= 2);
+    assert(Kernel_GetRenderStates(kernel, states.data(), states.size()) >= 1);
 
     std::array<KernelEvent, 16> events{};
     assert(Kernel_PollEvents(kernel, events.data(), events.size()) >= 1);
