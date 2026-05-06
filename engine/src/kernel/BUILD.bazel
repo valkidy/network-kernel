@@ -1,5 +1,7 @@
 licenses(["notice"])
 
+load("@rules_cc//cc:defs.bzl", "cc_shared_library")
+
 package(default_visibility = ["//visibility:public"])
 
 cc_library(
@@ -40,5 +42,16 @@ cc_library(
         "@fmt//:fmt",
         "@glm//:glm",
         "@spdlog//:spdlog",
+    ],
+)
+
+cc_shared_library(
+    name = "network_kernel_shared",
+    deps = [":kernel"],
+    shared_lib_name = "libnetwork_kernel.dylib",
+    user_link_flags = [
+        "-L/opt/homebrew/opt/openssl@3/lib",
+        "-lssl",
+        "-lcrypto",
     ],
 )

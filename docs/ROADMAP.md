@@ -19,7 +19,7 @@
 | M3 | Real Network Transport | Planning |
 | M4 | Authoritative Combat | Pending |
 | M5 | Lag Compensation & Smoothing | Pending |
-| M6 | Engine Plugin Boundary | Pending |
+| M6 | Engine Plugin Boundary | ABI Spike Evaluated |
 
 ---
 
@@ -505,6 +505,13 @@ Explosion
 Damage events
 ```
 
+## ABI Notes
+
+- Keep combat data behind `Kernel_PollEvents()` and C-compatible public structs.
+- Candidate post-spike ABI extensions: weapon id, fire sequence, hit position,
+  damage amount, explosion radius, and compact flags for damage source metadata.
+- Do not expose simulation internals, STL containers, GLM values, or EnTT ids.
+
 ---
 
 # M5 — Lag Compensation & Smoothing
@@ -627,11 +634,19 @@ Reconciliation
 Interpolation
 ```
 
+## ABI Notes
+
+- Preserve `PlayerInput::input_seq` and `PlayerInput::client_tick` as the public
+  prediction and server-ack bridge.
+- Candidate post-spike ABI extensions: acknowledged input sequence, snapshot
+  interpolation flags, local correction vector, and clamped rewind tick metadata.
+- Keep history buffers and rewind queries internal to the kernel.
+
 ---
 
 # M6 — Engine Plugin Boundary
 
-Status: Pending
+Status: ABI Spike Evaluated
 
 ## Goal
 
@@ -720,6 +735,22 @@ C ABI
 Unity wrapper
 Unreal wrapper
 ```
+
+## ABI Spike Result
+
+The native plugin boundary has an initial validated shape before completing
+Unity and Unreal wrappers:
+
+- Preserve the current opaque `KernelHandle` and `extern "C"` API.
+- Build `//engine/src/kernel:network_kernel_shared` as
+  `libnetwork_kernel.dylib`.
+- Test an external consumer that only uses public headers and resolves exported
+  symbols dynamically.
+- Record M4/M5 ABI extension candidates before changing public signatures.
+
+Unity and Unreal prototypes remain M6 follow-up work after this spike confirms
+the native ABI and dynamic library shape. Next implementation order returns to
+M4 authoritative combat, then M5 lag compensation and smoothing.
 
 ---
 
