@@ -49,6 +49,21 @@ PlayerInput scripted_input(std::uint32_t sequence) {
     return input;
 }
 
+bool sample_player_x(KernelHandle* kernel, float* out_x) {
+    std::array<RenderEntityState, 16> states{};
+    const std::uint32_t state_count =
+        Kernel_GetRenderStates(kernel, states.data(), static_cast<std::uint32_t>(states.size()));
+    for (std::uint32_t index = 0; index < state_count; ++index) {
+        if (states[index].entity_type == 1) {
+            if (out_x != nullptr) {
+                *out_x = states[index].position.x;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
 }  // namespace
 
 int RunClient(const char* address) {
@@ -69,6 +84,11 @@ int RunClient(const char* address) {
     std::uint32_t fire_confirmed_count = 0;
     std::uint32_t damage_applied_count = 0;
     std::uint32_t explosion_count = 0;
+    std::uint32_t client_render_sample_count = 0;
+    std::uint32_t client_player_move_sample_count = 0;
+    float first_player_x = 0.0f;
+    float last_player_x = 0.0f;
+    bool has_first_player_x = false;
 
     for (std::uint32_t frame = 0; frame < 180; ++frame) {
         Kernel_Update(kernel, kDeltaSeconds);
@@ -112,6 +132,19 @@ int RunClient(const char* address) {
             Kernel_SubmitInput(kernel, 0, &input);
         }
 
+        float sampled_player_x = 0.0f;
+        if (ready_for_input && sample_player_x(kernel, &sampled_player_x)) {
+            ++client_render_sample_count;
+            if (!has_first_player_x) {
+                first_player_x = sampled_player_x;
+                has_first_player_x = true;
+            }
+            if (sampled_player_x > last_player_x) {
+                ++client_player_move_sample_count;
+            }
+            last_player_x = sampled_player_x;
+        }
+
         std::this_thread::sleep_for(std::chrono::milliseconds(33));
     }
 
@@ -122,6 +155,12 @@ int RunClient(const char* address) {
         fire_confirmed_count,
         damage_applied_count,
         explosion_count);
+    spdlog::info(
+        "client side test summary render_samples={} move_samples={} first_x={} last_x={}",
+        client_render_sample_count,
+        client_player_move_sample_count,
+        first_player_x,
+        last_player_x);
 
     std::array<RenderEntityState, 16> states{};
     const std::uint32_t state_count =
@@ -138,5 +177,11 @@ int RunClient(const char* address) {
     }
 
     Kernel_Destroy(kernel);
-    return state_count > 0 ? 0 : 2;
+    if (state_count == 0) {
+        return 2;
+    }
+    if (client_render_sample_count == 0 || client_player_move_sample_count == 0) {
+        return 3;
+    }
+    return 0;
 }

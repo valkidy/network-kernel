@@ -1,6 +1,8 @@
 #include "kernel/src/kernel.h"
 
 #include <algorithm>
+#include <cstddef>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <utility>
@@ -38,6 +40,53 @@ KernelQuat to_kernel_quat(const glm::quat& value) {
     return KernelQuat{value.x, value.y, value.z, value.w};
 }
 
+glm::vec3 input_move_to_world(const PlayerInput& input) {
+    glm::vec3 move{input.move.x, 0.0f, input.move.y};
+    const float length = glm::length(move);
+    if (length > 1.0f) {
+        move /= length;
+    }
+    return move;
+}
+
+void apply_input_prediction(
+    EntitySnapshot* entity,
+    const PlayerInput& input,
+    float fixed_delta_seconds) {
+    if (entity == nullptr) {
+        return;
+    }
+    constexpr float kMoveSpeedMetersPerSecond = 5.0f;
+    entity->velocity = input_move_to_world(input) * kMoveSpeedMetersPerSecond;
+    entity->position += entity->velocity * fixed_delta_seconds;
+}
+
+const EntitySnapshot* find_snapshot_entity(
+    const WorldSnapshot& snapshot,
+    NetId net_id) {
+    const auto found = std::find_if(
+        snapshot.entities.begin(),
+        snapshot.entities.end(),
+        [net_id](const EntitySnapshot& entity) {
+            return entity.net_id == net_id;
+        });
+    if (found == snapshot.entities.end()) {
+        return nullptr;
+    }
+    return &(*found);
+}
+
+EntitySnapshot interpolate_entity(
+    const EntitySnapshot& from,
+    const EntitySnapshot& to,
+    float alpha) {
+    EntitySnapshot entity = to;
+    entity.position = from.position + (to.position - from.position) * alpha;
+    entity.rotation = glm::slerp(from.rotation, to.rotation, alpha);
+    entity.velocity = from.velocity + (to.velocity - from.velocity) * alpha;
+    return entity;
+}
+
 std::uint32_t history_frame_count(const TickConfig& config) {
     const TickConfig tick = with_tick_defaults(config);
     return std::max(1u, (tick.server_tick_rate * tick.history_ms) / 1000u);
@@ -70,9 +119,16 @@ bool KernelEngine::start_client(const char* address) {
     config_.mode = KernelMode_Client;
     running_ = true;
     local_client_peer_id_ = 0;
+    local_player_net_id_ = 0;
+    local_last_processed_input_seq_ = 0;
+    predicted_server_tick_ = tick_loop_.current_tick();
+    pending_prediction_inputs_.clear();
+    client_snapshot_buffer_.clear();
+    local_correction_offset_ = glm::vec3{0.0f, 0.0f, 0.0f};
     client_handshake_sent_ = false;
     has_welcome_ = false;
     has_client_snapshot_ = false;
+    has_predicted_local_entity_ = false;
     return true;
 }
 
@@ -91,6 +147,15 @@ bool KernelEngine::start_listen_server(std::uint16_t port) {
     const NetId player =
         world_.spawn_player(kLocalListenPeerId, glm::vec3{0.0f, 0.0f, 0.0f});
     const NetId enemy = world_.spawn_enemy(glm::vec3{8.0f, 0.0f, 0.0f});
+    local_client_peer_id_ = kLocalListenPeerId;
+    local_player_net_id_ = player;
+    local_last_processed_input_seq_ = 0;
+    predicted_server_tick_ = tick_loop_.current_tick();
+    pending_prediction_inputs_.clear();
+    client_snapshot_buffer_.clear();
+    local_correction_offset_ = glm::vec3{0.0f, 0.0f, 0.0f};
+    has_welcome_ = true;
+    has_predicted_local_entity_ = false;
     world_.spawn_projectile(
         0,
         glm::vec3{2.0f, 0.4f, -2.0f},
@@ -117,6 +182,13 @@ bool KernelEngine::start_dedicated_server(std::uint16_t port) {
     transport_ = std::move(gns_transport);
     config_.mode = KernelMode_DedicatedServer;
     running_ = true;
+    local_client_peer_id_ = 0;
+    local_player_net_id_ = 0;
+    local_last_processed_input_seq_ = 0;
+    pending_prediction_inputs_.clear();
+    client_snapshot_buffer_.clear();
+    has_client_snapshot_ = false;
+    has_predicted_local_entity_ = false;
     const NetId enemy = world_.spawn_enemy(glm::vec3{8.0f, 0.0f, 0.0f});
     world_.spawn_projectile(0, glm::vec3{2.0f, 0.4f, -2.0f}, glm::vec3{0.0f, 0.0f, 2.0f});
     push_event(KernelEventType_EntitySpawned, enemy, 0);
@@ -141,8 +213,10 @@ void KernelEngine::update(float delta_seconds) {
 
 void KernelEngine::submit_input(PeerId local_player_id, const PlayerInput& input) {
     if (config_.mode == KernelMode_ListenServer && loopback_transport_ != nullptr) {
+        const PlayerInput input_to_send = prepare_client_input(input);
+        predict_local_input(input_to_send);
         const std::vector<std::uint8_t> packet =
-            encode_input_packet(local_player_id, input, next_packet_sequence_++);
+            encode_input_packet(local_player_id, input_to_send, next_packet_sequence_++);
         if (!loopback_transport_->SendClient(
                 local_player_id,
                 packet.data(),
@@ -160,8 +234,10 @@ void KernelEngine::submit_input(PeerId local_player_id, const PlayerInput& input
             return;
         }
 
+        const PlayerInput input_to_send = prepare_client_input(input);
+        predict_local_input(input_to_send);
         const std::vector<std::uint8_t> packet =
-            encode_input_packet(local_client_peer_id_, input, next_packet_sequence_++);
+            encode_input_packet(local_client_peer_id_, input_to_send, next_packet_sequence_++);
         if (!transport_->Send(
                 kServerPeerId,
                 packet.data(),
@@ -173,8 +249,9 @@ void KernelEngine::submit_input(PeerId local_player_id, const PlayerInput& input
         return;
     }
 
-    pending_inputs_.push_back(QueuedInput{local_player_id, input});
-    last_processed_input_seq_ = std::max(last_processed_input_seq_, input.input_seq);
+    pending_inputs_.push_back(QueuedInput{local_player_id, input, tick_loop_.current_tick()});
+    local_last_processed_input_seq_ =
+        std::max(local_last_processed_input_seq_, input.input_seq);
 }
 
 std::uint32_t KernelEngine::get_render_states(
@@ -245,14 +322,15 @@ void KernelEngine::poll_transport() {
                 push_event(KernelEventType_Error, 0, transport_event.peer, 6);
                 continue;
             }
-            latest_client_snapshot_ = std::move(snapshot);
-            has_client_snapshot_ = true;
+            handle_client_snapshot(std::move(snapshot));
         } else if (
             transport_event.type == TransportEventType::kMessage &&
             transport_event.channel == ChannelId::kInput &&
-            config_.mode == KernelMode_DedicatedServer) {
+            (config_.mode == KernelMode_DedicatedServer ||
+             config_.mode == KernelMode_ListenServer)) {
             const PeerSession* session = find_session(transport_event.peer);
-            if (session == nullptr || !session->welcomed) {
+            if (config_.mode == KernelMode_DedicatedServer &&
+                (session == nullptr || !session->welcomed)) {
                 push_event(KernelEventType_Error, 0, transport_event.peer, 10);
                 continue;
             }
@@ -271,9 +349,19 @@ void KernelEngine::poll_transport() {
                 push_event(KernelEventType_Error, 0, transport_event.peer, 11);
                 continue;
             }
-            pending_inputs_.push_back(QueuedInput{player_id, input});
-            last_processed_input_seq_ =
-                std::max(last_processed_input_seq_, input.input_seq);
+            pending_inputs_.push_back(QueuedInput{
+                player_id,
+                input,
+                tick_loop_.current_tick(),
+            });
+            PeerSession* mutable_session = find_session(transport_event.peer);
+            if (mutable_session != nullptr) {
+                mutable_session->last_processed_input_seq =
+                    std::max(mutable_session->last_processed_input_seq, input.input_seq);
+            } else if (config_.mode == KernelMode_ListenServer) {
+                local_last_processed_input_seq_ =
+                    std::max(local_last_processed_input_seq_, input.input_seq);
+            }
         }
     }
 }
@@ -298,15 +386,235 @@ void KernelEngine::poll_client_transport() {
             push_event(KernelEventType_Error, 0, transport_event.peer, 6);
             continue;
         }
-        latest_client_snapshot_ = std::move(snapshot);
-        has_client_snapshot_ = true;
+        handle_client_snapshot(std::move(snapshot));
     }
+}
+
+void KernelEngine::handle_client_snapshot(WorldSnapshot snapshot) {
+    latest_client_snapshot_ = snapshot;
+    has_client_snapshot_ = true;
+    store_client_snapshot(std::move(snapshot));
+    reconcile_local_prediction(latest_client_snapshot_);
+}
+
+void KernelEngine::store_client_snapshot(WorldSnapshot snapshot) {
+    auto existing = std::find_if(
+        client_snapshot_buffer_.begin(),
+        client_snapshot_buffer_.end(),
+        [&snapshot](const WorldSnapshot& buffered) {
+            return buffered.header.server_tick == snapshot.header.server_tick;
+        });
+    if (existing != client_snapshot_buffer_.end()) {
+        *existing = std::move(snapshot);
+    } else {
+        client_snapshot_buffer_.push_back(std::move(snapshot));
+    }
+
+    std::sort(
+        client_snapshot_buffer_.begin(),
+        client_snapshot_buffer_.end(),
+        [](const WorldSnapshot& lhs, const WorldSnapshot& rhs) {
+            return lhs.header.server_tick < rhs.header.server_tick;
+        });
+    constexpr std::size_t kMaxClientSnapshots = 32;
+    if (client_snapshot_buffer_.size() > kMaxClientSnapshots) {
+        client_snapshot_buffer_.erase(
+            client_snapshot_buffer_.begin(),
+            client_snapshot_buffer_.begin() +
+                static_cast<std::ptrdiff_t>(
+                    client_snapshot_buffer_.size() - kMaxClientSnapshots));
+    }
+}
+
+void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {
+    if (local_player_net_id_ == 0) {
+        return;
+    }
+
+    const EntitySnapshot* authoritative =
+        find_snapshot_entity(snapshot, local_player_net_id_);
+    if (authoritative == nullptr) {
+        return;
+    }
+
+    pending_prediction_inputs_.erase(
+        std::remove_if(
+            pending_prediction_inputs_.begin(),
+            pending_prediction_inputs_.end(),
+            [&snapshot](const PlayerInput& input) {
+                return input.input_seq <= snapshot.header.last_processed_input_seq;
+            }),
+        pending_prediction_inputs_.end());
+
+    const glm::vec3 previous_render_position =
+        has_predicted_local_entity_
+            ? predicted_local_entity_.position + local_correction_offset_
+            : authoritative->position;
+
+    EntitySnapshot replayed = *authoritative;
+    for (const PlayerInput& input : pending_prediction_inputs_) {
+        apply_input_prediction(&replayed, input, tick_loop_.fixed_delta_seconds());
+    }
+
+    predicted_local_entity_ = replayed;
+    has_predicted_local_entity_ = true;
+
+    const glm::vec3 correction = previous_render_position - predicted_local_entity_.position;
+    local_correction_offset_ =
+        glm::length(correction) > 2.0f ? glm::vec3{0.0f, 0.0f, 0.0f} : correction;
+}
+
+void KernelEngine::predict_local_input(const PlayerInput& input) {
+    if (local_player_net_id_ == 0) {
+        return;
+    }
+
+    if (!has_predicted_local_entity_) {
+        if (const EntitySnapshot* latest =
+                find_snapshot_entity(latest_client_snapshot_, local_player_net_id_)) {
+            predicted_local_entity_ = *latest;
+        } else {
+            predicted_local_entity_.net_id = local_player_net_id_;
+            predicted_local_entity_.type = EntityType::kPlayer;
+        }
+        has_predicted_local_entity_ = true;
+    }
+
+    apply_input_prediction(
+        &predicted_local_entity_,
+        input,
+        tick_loop_.fixed_delta_seconds());
+    pending_prediction_inputs_.push_back(input);
+}
+
+PlayerInput KernelEngine::prepare_client_input(const PlayerInput& input) {
+    PlayerInput input_to_send = input;
+    if (input_to_send.client_tick == 0) {
+        input_to_send.client_tick = std::max(1u, predicted_server_tick_);
+    }
+    predicted_server_tick_ =
+        std::max(predicted_server_tick_, input_to_send.client_tick + 1);
+    return input_to_send;
+}
+
+bool KernelEngine::build_interpolated_snapshot(WorldSnapshot* out_snapshot) const {
+    if (out_snapshot == nullptr || client_snapshot_buffer_.empty()) {
+        return false;
+    }
+    if (client_snapshot_buffer_.size() == 1) {
+        *out_snapshot = client_snapshot_buffer_.back();
+        return true;
+    }
+
+    const std::uint32_t newest_tick =
+        client_snapshot_buffer_.back().header.server_tick;
+    const std::uint32_t interpolation_delay =
+        tick_loop_.snapshot_interval_ticks() * 2u;
+    const std::uint32_t target_tick =
+        newest_tick > interpolation_delay
+            ? newest_tick - interpolation_delay
+            : client_snapshot_buffer_.front().header.server_tick;
+
+    const WorldSnapshot* from = &client_snapshot_buffer_.front();
+    const WorldSnapshot* to = &client_snapshot_buffer_.back();
+    for (std::size_t index = 0; index < client_snapshot_buffer_.size(); ++index) {
+        const WorldSnapshot& snapshot = client_snapshot_buffer_[index];
+        if (snapshot.header.server_tick <= target_tick) {
+            from = &snapshot;
+        }
+        if (snapshot.header.server_tick >= target_tick) {
+            to = &snapshot;
+            break;
+        }
+    }
+
+    if (from->header.server_tick == to->header.server_tick) {
+        *out_snapshot = *from;
+        return true;
+    }
+
+    const float alpha =
+        static_cast<float>(target_tick - from->header.server_tick) /
+        static_cast<float>(to->header.server_tick - from->header.server_tick);
+    WorldSnapshot interpolated;
+    interpolated.header = to->header;
+    interpolated.header.server_tick = target_tick;
+    interpolated.entities.reserve(to->entities.size());
+    for (const EntitySnapshot& from_entity : from->entities) {
+        if (const EntitySnapshot* to_entity = find_snapshot_entity(*to, from_entity.net_id)) {
+            interpolated.entities.push_back(
+                interpolate_entity(from_entity, *to_entity, alpha));
+        } else {
+            interpolated.entities.push_back(from_entity);
+        }
+    }
+    for (const EntitySnapshot& to_entity : to->entities) {
+        if (find_snapshot_entity(*from, to_entity.net_id) == nullptr) {
+            interpolated.entities.push_back(to_entity);
+        }
+    }
+
+    *out_snapshot = std::move(interpolated);
+    return true;
+}
+
+void KernelEngine::append_predicted_local_render_state() {
+    if (!has_predicted_local_entity_) {
+        return;
+    }
+
+    EntitySnapshot local = predicted_local_entity_;
+    local.position += local_correction_offset_;
+    render_states_.push_back(RenderEntityState{
+        local.net_id,
+        static_cast<std::uint16_t>(local.type),
+        to_kernel_vec3(local.position),
+        to_kernel_quat(local.rotation),
+        local.state,
+        local.flags,
+    });
+
+    local_correction_offset_ *= 0.5f;
+    if (glm::length(local_correction_offset_) < 0.001f) {
+        local_correction_offset_ = glm::vec3{0.0f, 0.0f, 0.0f};
+    }
+}
+
+std::uint32_t KernelEngine::rewind_tick_for_input(
+    const QueuedInput& queued_input) const {
+    if (queued_input.input.input_seq == 0 || queued_input.input.client_tick == 0 ||
+        queued_input.input.client_tick > queued_input.received_server_tick) {
+        return queued_input.received_server_tick;
+    }
+
+    const std::uint32_t observed_input_delay =
+        queued_input.received_server_tick - queued_input.input.client_tick;
+    const std::uint32_t estimated_rtt_ticks = observed_input_delay * 2u;
+    const std::uint32_t one_way_ticks = estimated_rtt_ticks / 2u;
+    if (one_way_ticks >= queued_input.received_server_tick) {
+        return 0;
+    }
+    return queued_input.received_server_tick - one_way_ticks;
 }
 
 void KernelEngine::simulate_tick() {
     const float fixed_delta = tick_loop_.fixed_delta_seconds();
     simulate_player_movement(world_, pending_inputs_, fixed_delta);
-    simulate_weapons(world_, pending_inputs_, tick_loop_.current_tick(), &events_);
+    simulate_weapons(world_, {}, tick_loop_.current_tick(), &events_);
+    for (const QueuedInput& pending_input : pending_inputs_) {
+        const HistoryFrame* rewind_frame = nullptr;
+        if ((pending_input.input.buttons & InputButton_Fire) != 0) {
+            rewind_frame =
+                history_buffer_.find_frame_clamped(rewind_tick_for_input(pending_input));
+        }
+        const std::vector<QueuedInput> single_input{pending_input};
+        simulate_weapons(
+            world_,
+            single_input,
+            tick_loop_.current_tick(),
+            &events_,
+            rewind_frame);
+    }
     simulate_projectiles(world_, fixed_delta, tick_loop_.current_tick(), &events_);
     destroy_dead_entities(world_, tick_loop_.current_tick(), &events_);
     history_buffer_.write_frame(world_, tick_loop_.current_tick());
@@ -346,7 +654,15 @@ void KernelEngine::rebuild_render_states_from_world() {
 
 void KernelEngine::rebuild_render_states_from_snapshot() {
     render_states_.clear();
-    for (const EntitySnapshot& entity : latest_client_snapshot_.entities) {
+    append_predicted_local_render_state();
+
+    WorldSnapshot render_snapshot;
+    const WorldSnapshot& snapshot =
+        build_interpolated_snapshot(&render_snapshot) ? render_snapshot : latest_client_snapshot_;
+    for (const EntitySnapshot& entity : snapshot.entities) {
+        if (has_predicted_local_entity_ && entity.net_id == local_player_net_id_) {
+            continue;
+        }
         render_states_.push_back(RenderEntityState{
             entity.net_id,
             static_cast<std::uint16_t>(entity.type),
@@ -364,7 +680,7 @@ void KernelEngine::publish_snapshot() {
         tick_loop_.current_tick(),
         static_cast<std::uint32_t>(
             tick_loop_.current_tick() * tick_loop_.fixed_delta_seconds() * 1000.0f),
-        last_processed_input_seq_);
+        local_last_processed_input_seq_);
     spdlog::debug(
         "{}",
         fmt::format(
@@ -386,12 +702,19 @@ void KernelEngine::publish_snapshot() {
     }
 
     if (config_.mode == KernelMode_DedicatedServer) {
-        const std::vector<std::uint8_t> packet =
-            encode_snapshot_packet(latest_snapshot_, next_packet_sequence_++);
         for (const PeerSession& session : peer_sessions_) {
             if (!session.welcomed) {
                 continue;
             }
+            const WorldSnapshot peer_snapshot = build_world_snapshot(
+                world_,
+                tick_loop_.current_tick(),
+                static_cast<std::uint32_t>(
+                    tick_loop_.current_tick() *
+                    tick_loop_.fixed_delta_seconds() * 1000.0f),
+                session.last_processed_input_seq);
+            const std::vector<std::uint8_t> packet =
+                encode_snapshot_packet(peer_snapshot, next_packet_sequence_++);
             if (!transport_->Send(
                     session.peer,
                     packet.data(),
@@ -439,7 +762,7 @@ void KernelEngine::handle_server_handshake(const TransportEvent& transport_event
         const NetId player = world_.spawn_player(
             transport_event.peer,
             glm::vec3{0.0f, 0.0f, 0.0f});
-        peer_sessions_.push_back(PeerSession{transport_event.peer, player, false});
+        peer_sessions_.push_back(PeerSession{transport_event.peer, player, 0, false});
         session = &peer_sessions_.back();
         push_event(KernelEventType_PlayerJoined, player, transport_event.peer);
         push_event(KernelEventType_EntitySpawned, player, transport_event.peer);
@@ -447,6 +770,8 @@ void KernelEngine::handle_server_handshake(const TransportEvent& transport_event
 
     const WelcomePacket welcome{
         transport_event.peer,
+        session->player,
+        tick_loop_.current_tick(),
         config_.tick.server_tick_rate,
         config_.tick.snapshot_rate,
     };
@@ -473,6 +798,8 @@ void KernelEngine::handle_client_session_message(const TransportEvent& transport
             transport_event.payload.size(),
             &welcome)) {
         local_client_peer_id_ = welcome.assigned_peer_id;
+        local_player_net_id_ = welcome.assigned_player_net_id;
+        predicted_server_tick_ = welcome.server_tick;
         has_welcome_ = true;
         push_event(KernelEventType_PlayerJoined, 0, local_client_peer_id_);
         return;

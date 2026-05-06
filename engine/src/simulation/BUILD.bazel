@@ -14,6 +14,7 @@ cc_library(
     includes = [".."],
     deps = [
         "//engine/src/kernel:kernel_types",
+        "//engine/src/sync:sync",
         "//engine/src/world:world",
         "@glm//:glm",
     ],

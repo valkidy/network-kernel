@@ -9,7 +9,7 @@ namespace {
 
 constexpr std::size_t kInputPayloadSize = 37;
 constexpr std::size_t kSnapshotHeaderPayloadSize = 16;
-constexpr std::size_t kEntitySnapshotPayloadSize = 34;
+constexpr std::size_t kEntitySnapshotPayloadSize = 50;
 
 void write_u8(std::vector<std::uint8_t>* buffer, std::uint8_t value) {
     buffer->push_back(value);
@@ -155,6 +155,24 @@ bool read_vec3(
            read_float(data, size, offset, &out_value->z);
 }
 
+void write_quat(std::vector<std::uint8_t>* buffer, const glm::quat& value) {
+    write_float(buffer, value.x);
+    write_float(buffer, value.y);
+    write_float(buffer, value.z);
+    write_float(buffer, value.w);
+}
+
+bool read_quat(
+    const std::uint8_t* data,
+    std::size_t size,
+    std::size_t* offset,
+    glm::quat* out_value) {
+    return read_float(data, size, offset, &out_value->x) &&
+           read_float(data, size, offset, &out_value->y) &&
+           read_float(data, size, offset, &out_value->z) &&
+           read_float(data, size, offset, &out_value->w);
+}
+
 }  // namespace
 
 std::vector<std::uint8_t> encode_input_packet(
@@ -219,6 +237,7 @@ std::vector<std::uint8_t> encode_snapshot_packet(
         write_u32(&payload, entity.net_id);
         write_u16(&payload, static_cast<std::uint16_t>(entity.type));
         write_vec3(&payload, entity.position);
+        write_quat(&payload, entity.rotation);
         write_vec3(&payload, entity.velocity);
         write_u16(&payload, entity.hp);
         write_u8(&payload, entity.state);
@@ -263,6 +282,7 @@ bool decode_snapshot_packet(
         if (!read_u32(payload, payload_size, &offset, &entity.net_id) ||
             !read_u16(payload, payload_size, &offset, &entity_type) ||
             !read_vec3(payload, payload_size, &offset, &entity.position) ||
+            !read_quat(payload, payload_size, &offset, &entity.rotation) ||
             !read_vec3(payload, payload_size, &offset, &entity.velocity) ||
             !read_u16(payload, payload_size, &offset, &entity.hp) ||
             !read_u8(payload, payload_size, &offset, &entity.state) ||

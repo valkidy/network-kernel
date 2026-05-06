@@ -9,13 +9,21 @@ enum MessageType : ushort {
   HitResult = 6,
   ExplosionResult = 7,
   Disconnect = 8,
-  PingPong = 9
+  PingPong = 9,
+  Welcome = 10
 }
 
 table Vec3 {
   x:float;
   y:float;
   z:float;
+}
+
+table Quat {
+  x:float;
+  y:float;
+  z:float;
+  w:float;
 }
 
 table InputPacket {
@@ -33,10 +41,19 @@ table EntitySnapshot {
   net_id:uint;
   entity_type:ushort;
   position:Vec3;
+  rotation:Quat;
   velocity:Vec3;
   hp:ushort;
   state:ubyte;
   flags:ubyte;
+}
+
+table WelcomePacket {
+  assigned_peer_id:uint;
+  assigned_player_net_id:uint;
+  server_tick:uint;
+  server_tick_rate:uint;
+  snapshot_rate:uint;
 }
 
 table SnapshotPacket {

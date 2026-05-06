@@ -2,6 +2,7 @@
 #include <vector>
 
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include "protocol/public/m2_packets.h"
 
@@ -49,6 +50,7 @@ int main() {
     entity.net_id = 5;
     entity.type = network_example::EntityType::kPlayer;
     entity.position = glm::vec3{1.0f, 2.0f, 3.0f};
+    entity.rotation = glm::quat{0.5f, 0.5f, 0.5f, 0.5f};
     entity.velocity = glm::vec3{4.0f, 5.0f, 6.0f};
     entity.hp = 88;
     entity.state = 2;
@@ -69,6 +71,7 @@ int main() {
     assert(decoded_snapshot.entities[0].net_id == 5);
     assert(decoded_snapshot.entities[0].type == network_example::EntityType::kPlayer);
     assert(nearly_equal(decoded_snapshot.entities[0].position.x, 1.0f));
+    assert(nearly_equal(decoded_snapshot.entities[0].rotation.w, 0.5f));
     assert(nearly_equal(decoded_snapshot.entities[0].velocity.z, 6.0f));
     assert(decoded_snapshot.entities[0].hp == 88);
     assert(decoded_snapshot.entities[0].state == 2);

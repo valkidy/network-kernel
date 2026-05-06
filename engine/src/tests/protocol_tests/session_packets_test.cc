@@ -17,6 +17,8 @@ int main() {
 
     network_example::WelcomePacket welcome;
     welcome.assigned_peer_id = 7;
+    welcome.assigned_player_net_id = 11;
+    welcome.server_tick = 44;
     welcome.server_tick_rate = 30;
     welcome.snapshot_rate = 15;
     const std::vector<std::uint8_t> welcome_packet =
@@ -27,6 +29,8 @@ int main() {
         welcome_packet.size(),
         &decoded_welcome));
     assert(decoded_welcome.assigned_peer_id == 7);
+    assert(decoded_welcome.assigned_player_net_id == 11);
+    assert(decoded_welcome.server_tick == 44);
     assert(decoded_welcome.server_tick_rate == 30);
     assert(decoded_welcome.snapshot_rate == 15);
 

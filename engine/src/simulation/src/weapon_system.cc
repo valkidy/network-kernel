@@ -151,11 +151,32 @@ std::vector<glm::vec3> pellet_directions(
 
 bool find_hitscan_target(
     World& world,
+    const HistoryFrame* rewind_frame,
     NetId shooter_net_id,
     const glm::vec3& origin,
     const glm::vec3& direction,
     float max_range,
     NetId* target_net_id) {
+    if (rewind_frame != nullptr) {
+        HistoricalHitResult hit;
+        if (raycast_history_frame(
+                *rewind_frame,
+                origin,
+                direction,
+                max_range,
+                shooter_net_id,
+                &hit)) {
+            if (target_net_id != nullptr) {
+                *target_net_id = hit.net_id;
+            }
+            return true;
+        }
+        if (target_net_id != nullptr) {
+            *target_net_id = 0;
+        }
+        return false;
+    }
+
     float best_distance = max_range;
     NetId best_net_id = 0;
     auto target_view = world.registry().view<NetworkIdentity, Transform, Health, Hitbox>();
@@ -190,6 +211,7 @@ bool find_hitscan_target(
 void apply_hitscan_damage(
     World& world,
     const WeaponDefinition& definition,
+    const HistoryFrame* rewind_frame,
     std::uint32_t current_tick,
     NetId shooter_net_id,
     PeerId shooter_peer_id,
@@ -199,6 +221,7 @@ void apply_hitscan_damage(
     NetId target_net_id = 0;
     if (!find_hitscan_target(
             world,
+            rewind_frame,
             shooter_net_id,
             origin,
             direction,
@@ -309,7 +332,8 @@ void simulate_weapons(
     World& world,
     const std::vector<QueuedInput>& inputs,
     std::uint32_t current_tick,
-    std::vector<KernelEvent>* events) {
+    std::vector<KernelEvent>* events,
+    const HistoryFrame* rewind_frame) {
     complete_all_reloads(world, current_tick);
 
     for (const QueuedInput& queued_input : inputs) {
@@ -352,6 +376,7 @@ void simulate_weapons(
                 apply_hitscan_damage(
                     world,
                     definition,
+                    rewind_frame,
                     current_tick,
                     player_identity.net_id,
                     queued_input.owner_peer,
@@ -364,6 +389,7 @@ void simulate_weapons(
                     apply_hitscan_damage(
                         world,
                         definition,
+                        rewind_frame,
                         current_tick,
                         player_identity.net_id,
                         queued_input.owner_peer,
@@ -383,6 +409,14 @@ void simulate_weapons(
             }
         }
     }
+}
+
+void simulate_weapons(
+    World& world,
+    const std::vector<QueuedInput>& inputs,
+    std::uint32_t current_tick,
+    std::vector<KernelEvent>* events) {
+    simulate_weapons(world, inputs, current_tick, events, nullptr);
 }
 
 void simulate_hitscan_weapons(

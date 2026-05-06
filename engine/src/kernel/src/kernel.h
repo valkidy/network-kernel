@@ -37,6 +37,7 @@ private:
     struct PeerSession {
         PeerId peer = 0;
         NetId player = 0;
+        std::uint32_t last_processed_input_seq = 0;
         bool welcomed = false;
     };
 
@@ -51,6 +52,14 @@ private:
     void rebuild_render_states();
     void rebuild_render_states_from_world();
     void rebuild_render_states_from_snapshot();
+    void handle_client_snapshot(WorldSnapshot snapshot);
+    void store_client_snapshot(WorldSnapshot snapshot);
+    void reconcile_local_prediction(const WorldSnapshot& snapshot);
+    void predict_local_input(const PlayerInput& input);
+    PlayerInput prepare_client_input(const PlayerInput& input);
+    bool build_interpolated_snapshot(WorldSnapshot* out_snapshot) const;
+    void append_predicted_local_render_state();
+    std::uint32_t rewind_tick_for_input(const QueuedInput& queued_input) const;
     void publish_snapshot();
     void send_client_handshake();
     void handle_server_handshake(const TransportEvent& transport_event);
@@ -70,13 +79,20 @@ private:
     std::vector<RenderEntityState> render_states_;
     WorldSnapshot latest_snapshot_;
     WorldSnapshot latest_client_snapshot_;
+    std::vector<WorldSnapshot> client_snapshot_buffer_;
     std::vector<PeerSession> peer_sessions_;
-    std::uint32_t last_processed_input_seq_ = 0;
+    std::vector<PlayerInput> pending_prediction_inputs_;
+    EntitySnapshot predicted_local_entity_;
+    glm::vec3 local_correction_offset_{0.0f, 0.0f, 0.0f};
+    NetId local_player_net_id_ = 0;
+    std::uint32_t local_last_processed_input_seq_ = 0;
+    std::uint32_t predicted_server_tick_ = 0;
     std::uint32_t next_packet_sequence_ = 1;
     PeerId local_client_peer_id_ = 0;
     bool client_handshake_sent_ = false;
     bool has_welcome_ = false;
     bool has_client_snapshot_ = false;
+    bool has_predicted_local_entity_ = false;
     bool running_ = false;
 };
 

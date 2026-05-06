@@ -23,7 +23,14 @@ struct HitVolumeSnapshot {
 
 struct HistoryFrame {
     std::uint32_t server_tick = 0;
+    bool valid = false;
     std::vector<HitVolumeSnapshot> volumes;
+};
+
+struct HistoricalHitResult {
+    NetId net_id = 0;
+    float distance = 0.0f;
+    HitVolumeSnapshot volume;
 };
 
 class HistoryBuffer {
@@ -32,12 +39,24 @@ public:
 
     void write_frame(const World& world, std::uint32_t server_tick);
     const HistoryFrame* find_frame(std::uint32_t server_tick) const;
+    const HistoryFrame* find_frame_clamped(std::uint32_t server_tick) const;
+    bool empty() const;
+    std::uint32_t oldest_tick() const;
+    std::uint32_t newest_tick() const;
     std::uint32_t size() const;
 
 private:
     std::vector<HistoryFrame> frames_;
     std::uint32_t write_index_ = 0;
 };
+
+bool raycast_history_frame(
+    const HistoryFrame& frame,
+    const glm::vec3& ray_origin,
+    const glm::vec3& ray_direction,
+    float max_range,
+    NetId ignored_net_id,
+    HistoricalHitResult* out_hit);
 
 }  // namespace network_example
 

@@ -15,6 +15,8 @@ struct HandshakePacket {
 
 struct WelcomePacket {
     PeerId assigned_peer_id = 0;
+    NetId assigned_player_net_id = 0;
+    std::uint32_t server_tick = 0;
     std::uint32_t server_tick_rate = 0;
     std::uint32_t snapshot_rate = 0;
 };

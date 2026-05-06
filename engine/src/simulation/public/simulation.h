@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "kernel/public/kernel_types.h"
+#include "sync/public/history_buffer.h"
 #include "world/public/world.h"
 
 namespace network_example {
@@ -11,6 +12,7 @@ namespace network_example {
 struct QueuedInput {
     PeerId owner_peer = 0;
     PlayerInput input{};
+    std::uint32_t received_server_tick = 0;
 };
 
 void simulate_player_movement(
@@ -42,6 +44,12 @@ void simulate_weapons(
     const std::vector<QueuedInput>& inputs,
     std::uint32_t current_tick,
     std::vector<KernelEvent>* events);
+void simulate_weapons(
+    World& world,
+    const std::vector<QueuedInput>& inputs,
+    std::uint32_t current_tick,
+    std::vector<KernelEvent>* events,
+    const HistoryFrame* rewind_frame);
 
 void destroy_dead_entities(
     World& world,

@@ -6,7 +6,7 @@ namespace network_example {
 namespace {
 
 constexpr std::size_t kHandshakePayloadSize = 4;
-constexpr std::size_t kWelcomePayloadSize = 12;
+constexpr std::size_t kWelcomePayloadSize = 20;
 constexpr std::size_t kDisconnectPayloadSize = 4;
 
 void write_u32(std::vector<std::uint8_t>* buffer, std::uint32_t value) {
@@ -120,6 +120,8 @@ std::vector<std::uint8_t> encode_welcome_packet(
     std::vector<std::uint8_t> payload;
     payload.reserve(kWelcomePayloadSize);
     write_u32(&payload, packet.assigned_peer_id);
+    write_u32(&payload, packet.assigned_player_net_id);
+    write_u32(&payload, packet.server_tick);
     write_u32(&payload, packet.server_tick_rate);
     write_u32(&payload, packet.snapshot_rate);
     return wrap_packet(MessageType::kWelcome, payload, sequence);
@@ -145,6 +147,8 @@ bool decode_welcome_packet(
     WelcomePacket packet;
     std::size_t offset = 0;
     if (!read_u32(payload, payload_size, &offset, &packet.assigned_peer_id) ||
+        !read_u32(payload, payload_size, &offset, &packet.assigned_player_net_id) ||
+        !read_u32(payload, payload_size, &offset, &packet.server_tick) ||
         !read_u32(payload, payload_size, &offset, &packet.server_tick_rate) ||
         !read_u32(payload, payload_size, &offset, &packet.snapshot_rate) ||
         offset != payload_size) {

@@ -51,10 +51,22 @@ int main() {
 
     PlayerInput input{};
     input.input_seq = 1;
-    input.client_tick = 1;
+    input.client_tick = 0;
     input.move = KernelVec2{1.0f, 0.0f};
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     Kernel_SubmitInput(kernel, 1, &input);
+
+    Kernel_Update(kernel, 0.0f);
+    std::array<RenderEntityState, 16> predicted_states{};
+    const std::uint32_t predicted_count = Kernel_GetRenderStates(
+        kernel,
+        predicted_states.data(),
+        static_cast<std::uint32_t>(predicted_states.size()));
+    assert(predicted_count >= 2);
+    const RenderEntityState predicted_player =
+        find_player(predicted_states, predicted_count);
+    assert(predicted_player.position.x > before_player.position.x);
+
     Kernel_Update(kernel, 1.0f / 30.0f);
 
     std::array<RenderEntityState, 16> after_states{};
