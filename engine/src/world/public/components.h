@@ -1,6 +1,8 @@
 #ifndef WORLD_PUBLIC_COMPONENTS_H_
 #define WORLD_PUBLIC_COMPONENTS_H_
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 
 #include <glm/glm.hpp>
@@ -45,16 +47,33 @@ struct PlayerTag {};
 struct EnemyTag {};
 struct ProjectileTag {};
 
+inline constexpr std::uint8_t kWeaponRifle = 0;
+inline constexpr std::uint8_t kWeaponShotgun = 1;
+inline constexpr std::uint8_t kWeaponGrenade = 2;
+inline constexpr std::size_t kWeaponCount = 3;
+
 struct WeaponState {
     std::uint8_t weapon_id = 0;
-    std::uint16_t ammo = 0;
-    std::uint32_t next_fire_tick = 0;
+    std::array<std::uint16_t, kWeaponCount> ammo{30, 8, 1};
+    std::array<std::uint16_t, kWeaponCount> reserve_ammo{90, 32, 3};
+    std::array<std::uint32_t, kWeaponCount> next_fire_tick{0, 0, 0};
+    std::uint32_t reload_end_tick = 0;
+    bool is_reloading = false;
 };
 
 struct Hitbox {
     glm::vec3 center{0.0f, 0.0f, 0.0f};
     glm::vec3 half_extents{0.5f, 0.5f, 0.5f};
     std::uint8_t hit_zone = 0;
+};
+
+struct ProjectileState {
+    std::uint8_t weapon_id = 0;
+    std::uint16_t damage = 0;
+    float explosion_radius = 0.0f;
+    float max_lifetime_seconds = 0.0f;
+    float age_seconds = 0.0f;
+    glm::vec3 previous_position{0.0f, 0.0f, 0.0f};
 };
 
 }  // namespace network_example

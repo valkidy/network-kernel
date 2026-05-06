@@ -306,8 +306,8 @@ void KernelEngine::poll_client_transport() {
 void KernelEngine::simulate_tick() {
     const float fixed_delta = tick_loop_.fixed_delta_seconds();
     simulate_player_movement(world_, pending_inputs_, fixed_delta);
-    simulate_hitscan_weapons(world_, pending_inputs_, tick_loop_.current_tick(), &events_);
-    simulate_projectiles(world_, fixed_delta);
+    simulate_weapons(world_, pending_inputs_, tick_loop_.current_tick(), &events_);
+    simulate_projectiles(world_, fixed_delta, tick_loop_.current_tick(), &events_);
     destroy_dead_entities(world_, tick_loop_.current_tick(), &events_);
     history_buffer_.write_frame(world_, tick_loop_.current_tick());
     if (tick_loop_.should_write_snapshot()) {

@@ -19,6 +19,11 @@ void simulate_player_movement(
     float fixed_delta_seconds);
 
 void simulate_projectiles(World& world, float fixed_delta_seconds);
+void simulate_projectiles(
+    World& world,
+    float fixed_delta_seconds,
+    std::uint32_t current_tick,
+    std::vector<KernelEvent>* events);
 
 bool ray_intersects_aabb(
     const glm::vec3& ray_origin,
@@ -28,6 +33,11 @@ bool ray_intersects_aabb(
     float* out_distance);
 
 void simulate_hitscan_weapons(
+    World& world,
+    const std::vector<QueuedInput>& inputs,
+    std::uint32_t current_tick,
+    std::vector<KernelEvent>* events);
+void simulate_weapons(
     World& world,
     const std::vector<QueuedInput>& inputs,
     std::uint32_t current_tick,

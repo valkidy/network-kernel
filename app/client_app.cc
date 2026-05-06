@@ -30,6 +30,22 @@ PlayerInput scripted_input(std::uint32_t sequence) {
     input.move = KernelVec2{1.0f, 0.0f};
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     input.buttons = 0;
+    input.selected_weapon = 0;
+
+    if (sequence == 2) {
+        input.buttons = InputButton_Fire;
+        input.selected_weapon = 0;
+    } else if (sequence == 12) {
+        input.buttons = InputButton_Reload;
+        input.selected_weapon = 0;
+    } else if (sequence == 36) {
+        input.buttons = InputButton_Fire;
+        input.selected_weapon = 1;
+    } else if (sequence == 72) {
+        input.buttons = InputButton_Fire;
+        input.selected_weapon = 2;
+    }
+
     return input;
 }
 
@@ -49,6 +65,10 @@ int RunClient(const char* address) {
     constexpr float kDeltaSeconds = 1.0f / 30.0f;
     bool ready_for_input = false;
     std::uint32_t sequence = 1;
+    std::uint32_t combat_input_count = 0;
+    std::uint32_t fire_confirmed_count = 0;
+    std::uint32_t damage_applied_count = 0;
+    std::uint32_t explosion_count = 0;
 
     for (std::uint32_t frame = 0; frame < 180; ++frame) {
         Kernel_Update(kernel, kDeltaSeconds);
@@ -68,15 +88,40 @@ int RunClient(const char* address) {
             if (event.type == KernelEventType_PlayerJoined && event.peer_id != 0) {
                 ready_for_input = true;
             }
+            if (event.type == KernelEventType_FireConfirmed) {
+                ++fire_confirmed_count;
+            }
+            if (event.type == KernelEventType_DamageApplied) {
+                ++damage_applied_count;
+            }
+            if (event.type == KernelEventType_Explosion) {
+                ++explosion_count;
+            }
         }
 
         if (ready_for_input) {
             const PlayerInput input = scripted_input(sequence++);
+            if ((input.buttons & (InputButton_Fire | InputButton_Reload)) != 0) {
+                ++combat_input_count;
+                spdlog::info(
+                    "client submitting combat input seq={} buttons={} weapon={}",
+                    input.input_seq,
+                    input.buttons,
+                    static_cast<int>(input.selected_weapon));
+            }
             Kernel_SubmitInput(kernel, 0, &input);
         }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(33));
     }
+
+    spdlog::info(
+        "client combat test summary submitted={} observed_fire_confirmed={} "
+        "observed_damage_applied={} observed_explosions={}",
+        combat_input_count,
+        fire_confirmed_count,
+        damage_applied_count,
+        explosion_count);
 
     std::array<RenderEntityState, 16> states{};
     const std::uint32_t state_count =

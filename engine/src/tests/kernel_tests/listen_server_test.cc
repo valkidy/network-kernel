@@ -66,6 +66,33 @@ int main() {
     const RenderEntityState after_player = find_player(after_states, after_count);
     assert(after_player.position.x > before_player.position.x);
 
+    PlayerInput fire_input{};
+    fire_input.input_seq = 2;
+    fire_input.client_tick = 2;
+    fire_input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
+    fire_input.buttons = InputButton_Fire;
+    fire_input.selected_weapon = 0;
+    Kernel_SubmitInput(kernel, 1, &fire_input);
+    Kernel_Update(kernel, 1.0f / 30.0f);
+
+    std::array<KernelEvent, 16> combat_events{};
+    const std::uint32_t combat_event_count = Kernel_PollEvents(
+        kernel,
+        combat_events.data(),
+        static_cast<std::uint32_t>(combat_events.size()));
+    bool saw_fire_confirmed = false;
+    bool saw_damage_applied = false;
+    for (std::uint32_t index = 0; index < combat_event_count; ++index) {
+        saw_fire_confirmed =
+            saw_fire_confirmed ||
+            combat_events[index].type == KernelEventType_FireConfirmed;
+        saw_damage_applied =
+            saw_damage_applied ||
+            combat_events[index].type == KernelEventType_DamageApplied;
+    }
+    assert(saw_fire_confirmed);
+    assert(saw_damage_applied);
+
     Kernel_Destroy(kernel);
     return 0;
 }

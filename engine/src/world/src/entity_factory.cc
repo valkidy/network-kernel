@@ -8,7 +8,7 @@ NetId World::spawn_player(PeerId owner_peer, const glm::vec3& position) {
     registry().emplace<PlayerTag>(entity);
     registry().emplace<Velocity>(entity);
     registry().emplace<Health>(entity, Health{100, 100});
-    registry().emplace<WeaponState>(entity, WeaponState{0, 30, 0});
+    registry().emplace<WeaponState>(entity);
     registry().emplace<Hitbox>(entity, Hitbox{{0.0f, 0.9f, 0.0f}, {0.35f, 0.9f, 0.35f}, 0});
     return registry().get<NetworkIdentity>(entity).net_id;
 }
@@ -31,6 +31,9 @@ NetId World::spawn_projectile(
     registry().emplace<ProjectileTag>(entity);
     registry().emplace<Velocity>(entity, Velocity{velocity});
     registry().emplace<Hitbox>(entity, Hitbox{{0.0f, 0.0f, 0.0f}, {0.1f, 0.1f, 0.1f}, 0});
+    registry().emplace<ProjectileState>(
+        entity,
+        ProjectileState{0, 0, 0.0f, 0.0f, 0.0f, position});
     return registry().get<NetworkIdentity>(entity).net_id;
 }
 

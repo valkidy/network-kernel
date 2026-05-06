@@ -5,3 +5,9 @@ cc_test(
     srcs = ["hitscan_test.cc"],
     deps = ["//engine/src/simulation:simulation"],
 )
+
+cc_test(
+    name = "combat_test",
+    srcs = ["combat_test.cc"],
+    deps = ["//engine/src/simulation:simulation"],
+)
