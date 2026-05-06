@@ -1,0 +1,4 @@
+.aswb/
+bazel-*
+!.agents/skills/bazel-build/
+!.agents/skills/bazel-build/**
