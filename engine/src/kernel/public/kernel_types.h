@@ -4,9 +4,31 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#define KERNEL_ABI_VERSION 1u
+
+#define KERNEL_CAPABILITY_CLIENT_MODE UINT64_C(0x0000000000000001)
+#define KERNEL_CAPABILITY_LISTEN_SERVER_MODE UINT64_C(0x0000000000000002)
+#define KERNEL_CAPABILITY_DEDICATED_SERVER_MODE UINT64_C(0x0000000000000004)
+#define KERNEL_CAPABILITY_INPUT_SUBMISSION UINT64_C(0x0000000000000008)
+#define KERNEL_CAPABILITY_RENDER_STATES UINT64_C(0x0000000000000010)
+#define KERNEL_CAPABILITY_EVENT_POLLING UINT64_C(0x0000000000000020)
+#define KERNEL_CAPABILITY_CLIENT_PREDICTION UINT64_C(0x0000000000000040)
+#define KERNEL_CAPABILITY_SNAPSHOT_INTERPOLATION UINT64_C(0x0000000000000080)
+#define KERNEL_CAPABILITY_LAG_COMPENSATED_HITSCAN UINT64_C(0x0000000000000100)
+
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+typedef struct KernelAbiInfo {
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t kernel_config_size;
+    uint32_t player_input_size;
+    uint32_t render_entity_state_size;
+    uint32_t kernel_event_size;
+    uint64_t capability_flags;
+} KernelAbiInfo;
 
 typedef enum KernelMode {
     KernelMode_Client = 0,

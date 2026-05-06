@@ -1,7 +1,9 @@
 #include <array>
 #include <cassert>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <string>
 #include <vector>
 
 #include <dlfcn.h>
@@ -45,13 +47,62 @@ std::filesystem::path find_shared_library() {
     return {};
 }
 
+std::string shell_quote(const std::string& value) {
+    std::string quoted = "'";
+    for (const char character : value) {
+        if (character == '\'') {
+            quoted += "'\\''";
+        } else {
+            quoted += character;
+        }
+    }
+    quoted += "'";
+    return quoted;
+}
+
+void verify_exported_symbols(const std::filesystem::path& library_path) {
+#if defined(__APPLE__)
+    const std::string command = "nm -gU " + shell_quote(library_path.string());
+    FILE* pipe = popen(command.c_str(), "r");
+    assert(pipe != nullptr);
+
+    std::array<char, 1024> line{};
+    std::vector<std::string> unexpected_symbols;
+    while (fgets(line.data(), static_cast<int>(line.size()), pipe) != nullptr) {
+        std::string text = line.data();
+        while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) {
+            text.pop_back();
+        }
+        if (text.empty()) {
+            continue;
+        }
+        const std::size_t symbol_begin = text.find_last_of(' ');
+        const std::string symbol =
+            symbol_begin == std::string::npos ? text : text.substr(symbol_begin + 1);
+        if (symbol.rfind("_Kernel_", 0) != 0) {
+            unexpected_symbols.push_back(symbol);
+        }
+    }
+
+    const int status = pclose(pipe);
+    assert(status == 0);
+    assert(unexpected_symbols.empty());
+#else
+    (void)library_path;
+#endif
+}
+
 }  // namespace
 
 int main() {
     const std::filesystem::path library_path = find_shared_library();
+    verify_exported_symbols(library_path);
+
     void* library = dlopen(library_path.c_str(), RTLD_NOW | RTLD_LOCAL);
     assert(library != nullptr);
 
+    auto* kernel_get_abi_info =
+        load_symbol<bool(KernelAbiInfo*, std::uint32_t)>(library, "Kernel_GetAbiInfo");
     auto* kernel_create =
         load_symbol<KernelHandle*(const KernelConfig*)>(library, "Kernel_Create");
     auto* kernel_destroy =
@@ -80,6 +131,19 @@ int main() {
         load_symbol<std::uint32_t(KernelHandle*, KernelEvent*, std::uint32_t)>(
             library,
             "Kernel_PollEvents");
+
+    KernelAbiInfo abi_info{};
+    assert(kernel_get_abi_info(&abi_info, sizeof(abi_info)));
+    assert(abi_info.abi_version == KERNEL_ABI_VERSION);
+    assert(abi_info.kernel_config_size == sizeof(KernelConfig));
+    assert(abi_info.player_input_size == sizeof(PlayerInput));
+    assert(abi_info.render_entity_state_size == sizeof(RenderEntityState));
+    assert(abi_info.kernel_event_size == sizeof(KernelEvent));
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_LISTEN_SERVER_MODE) != 0);
+    assert(!kernel_get_abi_info(nullptr, sizeof(abi_info)));
+    assert(!kernel_get_abi_info(&abi_info, sizeof(abi_info) - 1));
+
+    assert(kernel_create(nullptr) == nullptr);
 
     KernelConfig config{};
     config.mode = KernelMode_ListenServer;

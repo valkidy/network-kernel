@@ -646,25 +646,52 @@ Interpolation
 
 # M6 — Engine Plugin Boundary
 
-Status: ABI Spike Evaluated
+Status: M6.1-M6.3 Implemented; M6.4 Deferred
 
 ## Goal
 
-Package the kernel as an engine plugin.
+Package the kernel as a native engine plugin with a stable C ABI, a Bazel-built
+dynamic library, and an externally consumable export surface. Current
+implementation scope is limited to M6.1 through M6.3; the Unity prototype is
+deferred to M6.4.
+
+## Scope
+
+Included:
+
+- Stabilize the public C ABI around opaque handles and plain C data structs.
+- Produce `libnetwork_kernel.dylib` from the Bazel build.
+- Validate that an external native consumer can load and call exported symbols
+  without depending on internal C++ headers.
+- Document the deferred Unity C# P/Invoke prototype scope for M6.4.
+
+Deferred:
+
+- Unreal wrapper and actor synchronization.
+- Unity wrapper implementation until the next M6.4 pass.
+- Host migration, matchmaking, Steam integration, anti-cheat, mobile packaging,
+  and backend orchestration.
+- New gameplay protocol features beyond ABI extensions required by M4/M5.
 
 ## M6.1 C ABI Stabilization
 
 ### Tasks
 
-Complete:
+Implemented:
 
-- kernel_api.h
-- kernel_types.h
-- Opaque handles
+- Keep `KernelHandle` opaque in `kernel_api.h`.
+- Keep public data in `kernel_types.h` limited to fixed-width integer types,
+  floats, bools, enums, and POD structs.
+- Add `KernelAbiInfo`, `KERNEL_ABI_VERSION`, and capability flags.
+- Add `Kernel_GetAbiInfo()` for native consumers.
+- Document ownership, capacity, lifetime, and ABI compatibility rules in public
+  headers and `docs/M6_ABI.md`.
 
 ### Acceptance
 
-- No STL types across ABI
+- No STL, EnTT, glm, FlatBuffers, or C++ ownership types cross the ABI.
+- Public headers compile from a C or C-compatible consumer translation unit.
+- ABI metadata reports public struct sizes and capability flags.
 
 ---
 
@@ -672,15 +699,30 @@ Complete:
 
 ### Tasks
 
-Build:
+Implemented shared-library target:
+
+```text
+//engine/src/kernel:network_kernel_shared
+```
+
+Produce:
 
 ```text
 libnetwork_kernel.dylib
 ```
 
+- Keep exported symbols limited to the `Kernel_*` API surface.
+- Ensure the library links with the existing transport, simulation, sync, world,
+  and protocol targets.
+- Keep third-party dependency linkage documented for macOS in `docs/M6_ABI.md`.
+
 ### Acceptance
 
-- External applications can link successfully
+- Bazel builds the dynamic library on macOS.
+- `nm` or an equivalent symbol check shows the intended exported `Kernel_*`
+  symbols.
+- The library can be copied beside an external consumer executable and loaded at
+  runtime.
 
 ---
 
@@ -688,58 +730,71 @@ libnetwork_kernel.dylib
 
 ### Tasks
 
-Complete:
+Implemented and validated the engine-facing runtime calls:
 
-- Kernel_Update()
-- Kernel_SubmitInput()
-- Kernel_GetRenderStates()
-- Kernel_PollEvents()
+- `Kernel_Create()`
+- `Kernel_Destroy()`
+- `Kernel_StartClient()`
+- `Kernel_StartListenServer()`
+- `Kernel_StartDedicatedServer()`
+- `Kernel_Update()`
+- `Kernel_SubmitInput()`
+- `Kernel_GetRenderStates()`
+- `Kernel_PollEvents()`
+- `Kernel_GetAbiInfo()`
+
+Add an external native consumer smoke test that only includes public headers and
+loads the dylib through the platform dynamic-loader API.
 
 ### Acceptance
 
-- Stable memory ownership
+- Stable memory ownership for input buffers, render-state buffers, and event
+  buffers.
+- External consumer can create a kernel, run at least one update, submit input,
+  poll events, and read render states.
+- Failure cases return explicit false/zero results rather than leaking C++
+  exceptions through the ABI.
+- Dynamic ABI smoke test verifies the macOS dylib exports only `Kernel_*`
+  symbols.
 
 ---
 
 ## M6.4 Unity Prototype
 
-### Tasks
-
-Complete:
-
-- C# P/Invoke wrapper
-
-### Acceptance
-
-- Unity reads render states successfully
-
----
-
-## M6.5 Unreal Prototype
+Status: Deferred to a future pass.
 
 ### Tasks
 
-Complete:
+Build a minimal Unity-facing prototype:
 
-- Unreal module wrapper
+- C# P/Invoke declarations for the public `Kernel_*` API.
+- C# mirror structs for `KernelConfig`, `PlayerInput`, `RenderEntityState`, and
+  `KernelEvent`.
+- A small Unity scene or script that starts the kernel, advances updates, submits
+  local input, and reads render states.
+- Packaging notes for placing `libnetwork_kernel.dylib` in Unity's native plugin
+  folder on macOS.
 
 ### Acceptance
 
-- Unreal actor synchronization works
+- Unity loads the dylib on macOS through P/Invoke.
+- Unity can start the kernel and read render states without unsafe lifetime
+  violations.
+- The prototype remains thin: gameplay behavior stays in the native kernel.
 
 ## Deliverables
 
 ```text
 Dynamic library
 C ABI
-Unity wrapper
-Unreal wrapper
+External native consumer smoke test
+ABI documentation
 ```
 
 ## ABI Spike Result
 
-The native plugin boundary has an initial validated shape before completing
-Unity and Unreal wrappers:
+The native plugin boundary has a validated shape before completing the Unity
+wrapper:
 
 - Preserve the current opaque `KernelHandle` and `extern "C"` API.
 - Build `//engine/src/kernel:network_kernel_shared` as
@@ -747,10 +802,38 @@ Unity and Unreal wrappers:
 - Test an external consumer that only uses public headers and resolves exported
   symbols dynamically.
 - Record M4/M5 ABI extension candidates before changing public signatures.
+- Expose `Kernel_GetAbiInfo()` for ABI version, public struct sizes, and
+  capability flags.
 
-Unity and Unreal prototypes remain M6 follow-up work after this spike confirms
-the native ABI and dynamic library shape. Next implementation order returns to
-M4 authoritative combat, then M5 lag compensation and smoothing.
+M6.1 through M6.3 are implemented. M6.4 Unity prototype remains deferred.
+
+## M6 Validation Plan
+
+Run the core verification first:
+
+```text
+bazel build //engine/src/kernel:network_kernel_shared
+bazel test //engine/src/tests/...
+```
+
+Then verify plugin consumption:
+
+```text
+External native consumer loads libnetwork_kernel.dylib
+External native consumer calls Kernel_Create/Update/Destroy
+External native consumer validates Kernel_GetAbiInfo
+nm -gU shows only Kernel_* exported symbols on macOS
+```
+
+## M6 Risks
+
+- ABI struct changes after Unity binding work can force mirrored C# struct
+  churn.
+- macOS dynamic-library dependency paths may need explicit packaging guidance.
+- Keeping exceptions, allocations, and ownership entirely behind the C ABI needs
+  focused failure-path tests.
+- Unity prototype scope can expand quickly; keep it to binding and render-state
+  verification.
 
 ---
 
@@ -758,6 +841,7 @@ M4 authoritative combat, then M5 lag compensation and smoothing.
 
 Not included in current scope:
 
+- Unreal prototype
 - Host migration
 - Matchmaking
 - Anti-cheat

@@ -49,9 +49,22 @@ cc_shared_library(
     name = "network_kernel_shared",
     deps = [":kernel"],
     shared_lib_name = "libnetwork_kernel.dylib",
-    user_link_flags = [
-        "-L/opt/homebrew/opt/openssl@3/lib",
-        "-lssl",
-        "-lcrypto",
-    ],
+    user_link_flags = select({
+        "//engine:macos": [
+            "-L/opt/homebrew/opt/openssl@3/lib",
+            "-lssl",
+            "-lcrypto",
+            "-Wl,-exported_symbol,_Kernel_Create",
+            "-Wl,-exported_symbol,_Kernel_Destroy",
+            "-Wl,-exported_symbol,_Kernel_GetAbiInfo",
+            "-Wl,-exported_symbol,_Kernel_StartClient",
+            "-Wl,-exported_symbol,_Kernel_StartListenServer",
+            "-Wl,-exported_symbol,_Kernel_StartDedicatedServer",
+            "-Wl,-exported_symbol,_Kernel_Update",
+            "-Wl,-exported_symbol,_Kernel_SubmitInput",
+            "-Wl,-exported_symbol,_Kernel_GetRenderStates",
+            "-Wl,-exported_symbol,_Kernel_PollEvents",
+        ],
+        "//conditions:default": [],
+    }),
 )

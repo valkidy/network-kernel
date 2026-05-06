@@ -863,33 +863,84 @@ struct KernelHandle {
 extern "C" {
 
 KernelHandle* Kernel_Create(const KernelConfig* config) {
-    if (config == nullptr) {
+    try {
+        if (config == nullptr) {
+            return nullptr;
+        }
+        auto* handle = new KernelHandle;
+        handle->engine = std::make_unique<network_example::KernelEngine>(*config);
+        return handle;
+    } catch (...) {
         return nullptr;
     }
-    auto* handle = new KernelHandle;
-    handle->engine = std::make_unique<network_example::KernelEngine>(*config);
-    return handle;
 }
 
 void Kernel_Destroy(KernelHandle* kernel) {
-    delete kernel;
+    try {
+        delete kernel;
+    } catch (...) {
+    }
+}
+
+bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
+    try {
+        if (out_info == nullptr || out_info_size < sizeof(KernelAbiInfo)) {
+            return false;
+        }
+        std::memset(out_info, 0, sizeof(KernelAbiInfo));
+        out_info->struct_size = sizeof(KernelAbiInfo);
+        out_info->abi_version = KERNEL_ABI_VERSION;
+        out_info->kernel_config_size = sizeof(KernelConfig);
+        out_info->player_input_size = sizeof(PlayerInput);
+        out_info->render_entity_state_size = sizeof(RenderEntityState);
+        out_info->kernel_event_size = sizeof(KernelEvent);
+        out_info->capability_flags =
+            KERNEL_CAPABILITY_CLIENT_MODE |
+            KERNEL_CAPABILITY_LISTEN_SERVER_MODE |
+            KERNEL_CAPABILITY_DEDICATED_SERVER_MODE |
+            KERNEL_CAPABILITY_INPUT_SUBMISSION |
+            KERNEL_CAPABILITY_RENDER_STATES |
+            KERNEL_CAPABILITY_EVENT_POLLING |
+            KERNEL_CAPABILITY_CLIENT_PREDICTION |
+            KERNEL_CAPABILITY_SNAPSHOT_INTERPOLATION |
+            KERNEL_CAPABILITY_LAG_COMPENSATED_HITSCAN;
+        return true;
+    } catch (...) {
+        return false;
+    }
 }
 
 bool Kernel_StartClient(KernelHandle* kernel, const char* address) {
-    return kernel != nullptr && kernel->engine->start_client(address);
+    try {
+        return kernel != nullptr && address != nullptr && address[0] != '\0' &&
+               kernel->engine->start_client(address);
+    } catch (...) {
+        return false;
+    }
 }
 
 bool Kernel_StartListenServer(KernelHandle* kernel, uint16_t port) {
-    return kernel != nullptr && kernel->engine->start_listen_server(port);
+    try {
+        return kernel != nullptr && kernel->engine->start_listen_server(port);
+    } catch (...) {
+        return false;
+    }
 }
 
 bool Kernel_StartDedicatedServer(KernelHandle* kernel, uint16_t port) {
-    return kernel != nullptr && kernel->engine->start_dedicated_server(port);
+    try {
+        return kernel != nullptr && kernel->engine->start_dedicated_server(port);
+    } catch (...) {
+        return false;
+    }
 }
 
 void Kernel_Update(KernelHandle* kernel, float delta_seconds) {
-    if (kernel != nullptr) {
-        kernel->engine->update(delta_seconds);
+    try {
+        if (kernel != nullptr) {
+            kernel->engine->update(delta_seconds);
+        }
+    } catch (...) {
     }
 }
 
@@ -897,8 +948,11 @@ void Kernel_SubmitInput(
     KernelHandle* kernel,
     uint32_t local_player_id,
     const PlayerInput* input) {
-    if (kernel != nullptr && input != nullptr) {
-        kernel->engine->submit_input(local_player_id, *input);
+    try {
+        if (kernel != nullptr && input != nullptr) {
+            kernel->engine->submit_input(local_player_id, *input);
+        }
+    } catch (...) {
     }
 }
 
@@ -906,20 +960,28 @@ uint32_t Kernel_GetRenderStates(
     KernelHandle* kernel,
     RenderEntityState* out_states,
     uint32_t max_states) {
-    if (kernel == nullptr) {
+    try {
+        if (kernel == nullptr) {
+            return 0;
+        }
+        return kernel->engine->get_render_states(out_states, max_states);
+    } catch (...) {
         return 0;
     }
-    return kernel->engine->get_render_states(out_states, max_states);
 }
 
 uint32_t Kernel_PollEvents(
     KernelHandle* kernel,
     KernelEvent* out_events,
     uint32_t max_events) {
-    if (kernel == nullptr) {
+    try {
+        if (kernel == nullptr) {
+            return 0;
+        }
+        return kernel->engine->poll_events(out_events, max_events);
+    } catch (...) {
         return 0;
     }
-    return kernel->engine->poll_events(out_events, max_events);
 }
 
 }  // extern "C"

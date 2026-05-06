@@ -13,6 +13,12 @@ cc_test(
 )
 
 cc_test(
+    name = "kernel_c_header_test",
+    srcs = ["kernel_c_header_test.c"],
+    deps = ["//engine/src/kernel:kernel_api"],
+)
+
+cc_test(
     name = "dynamic_abi_smoke_test",
     srcs = ["dynamic_abi_smoke_test.cc"],
     data = ["//engine/src/kernel:network_kernel_shared"],
