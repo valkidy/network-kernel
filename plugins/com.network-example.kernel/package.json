@@ -1,0 +1,17 @@
+{
+  "name": "com.network-example.kernel",
+  "version": "0.6.4",
+  "displayName": "Network Example Kernel",
+  "description": "Thin Unity P/Invoke wrapper for the network-example native kernel C ABI.",
+  "unity": "6000.0",
+  "author": {
+    "name": "network-example"
+  },
+  "samples": [
+    {
+      "displayName": "Smoke",
+      "description": "Minimal MonoBehaviour that starts listen-server mode, advances the kernel, submits input, and reads render states.",
+      "path": "Samples~/Smoke"
+    }
+  ]
+}

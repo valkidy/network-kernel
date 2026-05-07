@@ -1,0 +1,179 @@
+using System;
+using System.Runtime.InteropServices;
+
+namespace NetworkExample.Kernel
+{
+    public static class KernelConstants
+    {
+        public const uint AbiVersion = 1;
+
+        public const ulong CapabilityClientMode = 0x0000000000000001UL;
+        public const ulong CapabilityListenServerMode = 0x0000000000000002UL;
+        public const ulong CapabilityDedicatedServerMode = 0x0000000000000004UL;
+        public const ulong CapabilityInputSubmission = 0x0000000000000008UL;
+        public const ulong CapabilityRenderStates = 0x0000000000000010UL;
+        public const ulong CapabilityEventPolling = 0x0000000000000020UL;
+        public const ulong CapabilityClientPrediction = 0x0000000000000040UL;
+        public const ulong CapabilitySnapshotInterpolation = 0x0000000000000080UL;
+        public const ulong CapabilityLagCompensatedHitscan = 0x0000000000000100UL;
+    }
+
+    public enum KernelMode
+    {
+        Client = 0,
+        ListenServer = 1,
+        DedicatedServer = 2,
+    }
+
+    public enum KernelEventType
+    {
+        Connected = 0,
+        Disconnected = 1,
+        PlayerJoined = 2,
+        PlayerLeft = 3,
+        EntitySpawned = 4,
+        EntityDestroyed = 5,
+        FireConfirmed = 6,
+        HitConfirmed = 7,
+        DamageApplied = 8,
+        Explosion = 9,
+        MissionStateChanged = 10,
+        Error = 11,
+    }
+
+    [Flags]
+    public enum InputButton : uint
+    {
+        MoveJump = 1U << 0,
+        Fire = 1U << 1,
+        Reload = 1U << 2,
+        Sprint = 1U << 3,
+        Interact = 1U << 4,
+        Ability1 = 1U << 5,
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelAbiInfo
+    {
+        public uint struct_size;
+        public uint abi_version;
+        public uint kernel_config_size;
+        public uint player_input_size;
+        public uint render_entity_state_size;
+        public uint kernel_event_size;
+        public ulong capability_flags;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelVec2
+    {
+        public float x;
+        public float y;
+
+        public KernelVec2(float x, float y)
+        {
+            this.x = x;
+            this.y = y;
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelVec3
+    {
+        public float x;
+        public float y;
+        public float z;
+
+        public KernelVec3(float x, float y, float z)
+        {
+            this.x = x;
+            this.y = y;
+            this.z = z;
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelQuat
+    {
+        public float x;
+        public float y;
+        public float z;
+        public float w;
+
+        public KernelQuat(float x, float y, float z, float w)
+        {
+            this.x = x;
+            this.y = y;
+            this.z = z;
+            this.w = w;
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct TickConfig
+    {
+        public uint server_tick_rate;
+        public uint snapshot_rate;
+        public uint history_ms;
+        public uint max_ticks_per_update;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelConfig
+    {
+        public KernelMode mode;
+        public TickConfig tick;
+        public uint max_render_states;
+        public uint max_events;
+
+        public static KernelConfig CreateDefault(KernelMode mode)
+        {
+            return new KernelConfig
+            {
+                mode = mode,
+                tick = new TickConfig
+                {
+                    server_tick_rate = 30,
+                    snapshot_rate = 15,
+                    history_ms = 500,
+                    max_ticks_per_update = 4,
+                },
+                max_render_states = 256,
+                max_events = 256,
+            };
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PlayerInput
+    {
+        public uint input_seq;
+        public uint client_tick;
+        public KernelVec2 move;
+        public KernelVec2 look_delta;
+        public KernelVec3 aim_dir;
+        public uint buttons;
+        public byte selected_weapon;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RenderEntityState
+    {
+        public uint net_id;
+        public ushort entity_type;
+        public KernelVec3 position;
+        public KernelQuat rotation;
+        public ushort animation_state;
+        public uint visual_flags;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelEvent
+    {
+        public KernelEventType type;
+        public uint tick;
+        public uint net_id;
+        public uint peer_id;
+        public uint code;
+    }
+}
