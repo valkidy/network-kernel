@@ -1,15 +1,18 @@
 using System;
-using UnityEditor;
-using UnityEngine;
+using NetworkExample.Kernel;
 
-namespace NetworkExample.Kernel.Editor
+public static class NetworkKernelManagedAbiSmoke
 {
-    public static class NetworkKernelAbiSmokeRunner
+    public static int Main()
     {
-        [MenuItem("Network Example/Run Kernel ABI Smoke")]
-        public static void Run()
+        try
         {
             KernelAbi.ValidateNativeAbi();
+            KernelAbiInfo info = KernelAbi.GetInfo();
+            if ((info.capability_flags & KernelConstants.CapabilityLocalPlayerInfo) == 0)
+            {
+                throw new InvalidOperationException("Kernel local-player info capability is missing.");
+            }
 
             using (var kernel = new Kernel(KernelConfig.CreateDefault(KernelMode.ListenServer)))
             {
@@ -19,7 +22,8 @@ namespace NetworkExample.Kernel.Editor
                 }
                 if (!kernel.TryGetLocalPlayerInfo(out KernelLocalPlayerInfo localInfo) ||
                     localInfo.player_net_id == 0 ||
-                    !localInfo.connected)
+                    kernel.LocalPlayerNetId != localInfo.player_net_id ||
+                    !kernel.IsClientReady)
                 {
                     throw new InvalidOperationException("Kernel_GetLocalPlayerInfo returned no local player.");
                 }
@@ -51,7 +55,16 @@ namespace NetworkExample.Kernel.Editor
                 }
             }
 
-            Debug.Log("Network kernel ABI smoke passed.");
+            Console.WriteLine(
+                "Network kernel managed ABI smoke passed: version={0} capabilities=0x{1:x16}",
+                info.abi_version,
+                info.capability_flags);
+            return 0;
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine(exception);
+            return 1;
         }
     }
 }

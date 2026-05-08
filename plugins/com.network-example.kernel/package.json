@@ -12,6 +12,11 @@
       "displayName": "Smoke",
       "description": "Minimal MonoBehaviour that starts listen-server mode, advances the kernel, submits input, and reads render states.",
       "path": "Samples~/Smoke"
+    },
+    {
+      "displayName": "Client",
+      "description": "Client-mode MonoBehaviour for connecting Unity to a command-line dedicated server.",
+      "path": "Samples~/Client"
     }
   ]
 }

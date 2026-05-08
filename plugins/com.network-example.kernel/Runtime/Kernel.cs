@@ -18,6 +18,26 @@ namespace NetworkExample.Kernel
 
         public bool IsCreated => handle != IntPtr.Zero;
 
+        public uint LocalPlayerNetId
+        {
+            get
+            {
+                return TryGetLocalPlayerInfo(out KernelLocalPlayerInfo info)
+                    ? info.player_net_id
+                    : 0U;
+            }
+        }
+
+        public bool IsClientReady
+        {
+            get
+            {
+                return TryGetLocalPlayerInfo(out KernelLocalPlayerInfo info) &&
+                       info.has_welcome &&
+                       info.connected;
+            }
+        }
+
         public void Dispose()
         {
             Dispose(true);
@@ -52,6 +72,12 @@ namespace NetworkExample.Kernel
         {
             ThrowIfDisposed();
             KernelNative.Kernel_SubmitInput(handle, localPlayerId, ref input);
+        }
+
+        public bool TryGetLocalPlayerInfo(out KernelLocalPlayerInfo info)
+        {
+            ThrowIfDisposed();
+            return KernelNative.Kernel_GetLocalPlayerInfo(handle, out info);
         }
 
         public uint GetRenderStates(RenderEntityState[] states)

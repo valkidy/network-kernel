@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 1;
+        public const uint AbiVersion = 2;
 
         public const ulong CapabilityClientMode = 0x0000000000000001UL;
         public const ulong CapabilityListenServerMode = 0x0000000000000002UL;
@@ -16,6 +16,7 @@ namespace NetworkExample.Kernel
         public const ulong CapabilityClientPrediction = 0x0000000000000040UL;
         public const ulong CapabilitySnapshotInterpolation = 0x0000000000000080UL;
         public const ulong CapabilityLagCompensatedHitscan = 0x0000000000000100UL;
+        public const ulong CapabilityLocalPlayerInfo = 0x0000000000000200UL;
     }
 
     public enum KernelMode
@@ -61,7 +62,19 @@ namespace NetworkExample.Kernel
         public uint player_input_size;
         public uint render_entity_state_size;
         public uint kernel_event_size;
+        public uint local_player_info_size;
         public ulong capability_flags;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelLocalPlayerInfo
+    {
+        public uint peer_id;
+        public uint player_net_id;
+        [MarshalAs(UnmanagedType.I1)]
+        public bool has_welcome;
+        [MarshalAs(UnmanagedType.I1)]
+        public bool connected;
     }
 
     [StructLayout(LayoutKind.Sequential)]

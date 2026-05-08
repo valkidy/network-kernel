@@ -2,3 +2,7 @@
 bazel-*
 !.agents/skills/bazel-build/
 !.agents/skills/bazel-build/**
+!plugins/com.network-example.kernel/Samples~/
+!plugins/com.network-example.kernel/Samples~/**
+!plugins/com.network-example.kernel/Tests~/
+!plugins/com.network-example.kernel/Tests~/**
