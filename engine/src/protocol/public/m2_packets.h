@@ -31,6 +31,15 @@ bool decode_snapshot_packet(
     std::size_t size,
     WorldSnapshot* out_snapshot);
 
+std::vector<std::uint8_t> encode_reliable_event_packet(
+    const KernelEvent& event,
+    std::uint32_t sequence = 0);
+
+bool decode_reliable_event_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    KernelEvent* out_event);
+
 }  // namespace network_example
 
 #endif  // PROTOCOL_PUBLIC_M2_PACKETS_H_

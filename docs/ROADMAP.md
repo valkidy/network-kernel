@@ -19,7 +19,7 @@
 | M3 | Real Network Transport | Planning |
 | M4 | Authoritative Combat | Pending |
 | M5 | Lag Compensation & Smoothing | Pending |
-| M6 | Engine Plugin Boundary | ABI Spike Evaluated |
+| M6 | Engine Plugin Boundary | Implemented |
 
 ---
 
@@ -646,14 +646,13 @@ Interpolation
 
 # M6 — Engine Plugin Boundary
 
-Status: M6.1-M6.3 Implemented; M6.4 Deferred
+Status: Implemented
 
 ## Goal
 
 Package the kernel as a native engine plugin with a stable C ABI, a Bazel-built
-dynamic library, and an externally consumable export surface. Current
-implementation scope is limited to M6.1 through M6.3; the Unity prototype is
-deferred to M6.4.
+dynamic library, an externally consumable export surface, and a thin Unity C#
+prototype package.
 
 ## Scope
 
@@ -663,12 +662,11 @@ Included:
 - Produce `libnetwork_kernel.dylib` from the Bazel build.
 - Validate that an external native consumer can load and call exported symbols
   without depending on internal C++ headers.
-- Document the deferred Unity C# P/Invoke prototype scope for M6.4.
+- Document and provide the Unity C# P/Invoke prototype scope for M6.4.
 
 Deferred:
 
 - Unreal wrapper and actor synchronization.
-- Unity wrapper implementation until the next M6.4 pass.
 - Host migration, matchmaking, Steam integration, anti-cheat, mobile packaging,
   and backend orchestration.
 - New gameplay protocol features beyond ABI extensions required by M4/M5.
@@ -761,16 +759,16 @@ loads the dylib through the platform dynamic-loader API.
 
 ## M6.4 Unity Prototype
 
-Status: Deferred to a future pass.
+Status: Implemented.
 
 ### Tasks
 
-Build a minimal Unity-facing prototype:
+Implemented a minimal Unity-facing prototype:
 
 - C# P/Invoke declarations for the public `Kernel_*` API.
 - C# mirror structs for `KernelConfig`, `PlayerInput`, `RenderEntityState`, and
   `KernelEvent`.
-- A small Unity scene or script that starts the kernel, advances updates, submits
+- A small Unity script that starts the kernel, advances updates, submits
   local input, and reads render states.
 - Packaging notes for placing `libnetwork_kernel.dylib` in Unity's native plugin
   folder on macOS.
@@ -781,6 +779,9 @@ Build a minimal Unity-facing prototype:
 - Unity can start the kernel and read render states without unsafe lifetime
   violations.
 - The prototype remains thin: gameplay behavior stays in the native kernel.
+- Required validation is hybrid: native ABI tests and C# compile checks are
+  expected to pass; Unity Editor batchmode smoke is available but
+  environment-dependent.
 
 ## Deliverables
 
@@ -788,6 +789,7 @@ Build a minimal Unity-facing prototype:
 Dynamic library
 C ABI
 External native consumer smoke test
+Unity C# package
 ABI documentation
 ```
 
@@ -805,14 +807,14 @@ wrapper:
 - Expose `Kernel_GetAbiInfo()` for ABI version, public struct sizes, and
   capability flags.
 
-M6.1 through M6.3 are implemented. M6.4 Unity prototype remains deferred.
+M6.1 through M6.4 are implemented.
 
 ## M6 Validation Plan
 
 Run the core verification first:
 
 ```text
-bazel build //engine/src/kernel:network_kernel_shared
+bazel build //engine/src/kernel:network_kernel_shared --config=macos --copt=-Wunused-function -c opt
 bazel test //engine/src/tests/...
 ```
 
@@ -823,6 +825,8 @@ External native consumer loads libnetwork_kernel.dylib
 External native consumer calls Kernel_Create/Update/Destroy
 External native consumer validates Kernel_GetAbiInfo
 nm -gU shows only Kernel_* exported symbols on macOS
+C# package compiles against Unity references
+Unity Editor smoke runner validates ABI sizes and listen-server render states
 ```
 
 ## M6 Risks
@@ -834,6 +838,10 @@ nm -gU shows only Kernel_* exported symbols on macOS
   focused failure-path tests.
 - Unity prototype scope can expand quickly; keep it to binding and render-state
   verification.
+- Unity Editor batchmode can be blocked by local licensing/headless setup. On
+  the current development machine, Unity 6000.4.3f1 starts but licensing times
+  out with `LicenseClient-kasaki doesn't exist` and
+  `com.unity.editor.headless was not found`.
 
 ---
 

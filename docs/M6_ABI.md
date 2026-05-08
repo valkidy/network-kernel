@@ -1,7 +1,7 @@
 # M6 Native ABI
 
 M6.1 through M6.3 define the native plugin boundary for the network kernel.
-Unity integration is intentionally deferred to M6.4.
+M6.4 adds a thin Unity C# package over the same C ABI.
 
 ## Public ABI
 
@@ -43,10 +43,10 @@ export flags. `dynamic_abi_smoke_test` verifies this with `nm -gU`.
 
 ## macOS Dependencies
 
-The Bazel target is:
+Build the optimized macOS dylib with:
 
 ```text
-//engine/src/kernel:network_kernel_shared
+bazel build //engine/src/kernel:network_kernel_shared --config=macos --copt=-Wunused-function -c opt
 ```
 
 It produces:
@@ -65,3 +65,27 @@ The macOS build links against Homebrew OpenSSL:
 External consumers must either run on a machine with those libraries available
 at those install names or package equivalent runtime dependencies with adjusted
 install names in a later packaging step.
+
+## Unity Prototype
+
+The Unity package lives at:
+
+```text
+plugins/com.network-example.kernel
+```
+
+It provides handwritten C# P/Invoke declarations for the public `Kernel_*`
+surface, C# mirror structs for public ABI data, an `IDisposable` wrapper for
+`KernelHandle`, an Editor ABI smoke runner, and a minimal smoke sample.
+
+On macOS, the Unity package includes the built dylib at:
+
+```text
+plugins/com.network-example.kernel/Assets/Plugins/macOS/libnetwork_kernel.dylib
+```
+
+Unity resolves the C# import name `network_kernel` to `libnetwork_kernel.dylib`
+on macOS. The Editor smoke runner calls `Kernel_GetAbiInfo`, validates
+`Marshal.SizeOf<T>()` against native struct sizes, starts listen-server mode,
+updates the kernel, submits one input, polls events, reads render states, and
+destroys the handle.

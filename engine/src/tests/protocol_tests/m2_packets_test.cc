@@ -77,6 +77,29 @@ int main() {
     assert(decoded_snapshot.entities[0].state == 2);
     assert(decoded_snapshot.entities[0].flags == 3);
 
+    KernelEvent reliable_event{};
+    reliable_event.type = KernelEventType_PlayerLeft;
+    reliable_event.tick = 19;
+    reliable_event.net_id = 23;
+    reliable_event.peer_id = 4;
+    reliable_event.code = 99;
+    const std::vector<std::uint8_t> reliable_event_packet =
+        network_example::encode_reliable_event_packet(reliable_event, 44);
+    KernelEvent decoded_event{};
+    assert(network_example::decode_reliable_event_packet(
+        reliable_event_packet.data(),
+        reliable_event_packet.size(),
+        &decoded_event));
+    assert(decoded_event.type == KernelEventType_PlayerLeft);
+    assert(decoded_event.tick == 19);
+    assert(decoded_event.net_id == 23);
+    assert(decoded_event.peer_id == 4);
+    assert(decoded_event.code == 99);
+    assert(!network_example::decode_reliable_event_packet(
+        input_packet.data(),
+        input_packet.size(),
+        &decoded_event));
+
     std::vector<std::uint8_t> bad_header = input_packet;
     bad_header[0] = 0;
     assert(!network_example::decode_input_packet(
@@ -92,6 +115,12 @@ int main() {
         bad_crc.size(),
         &decoded_player,
         &decoded_input));
+    std::vector<std::uint8_t> bad_reliable_crc = reliable_event_packet;
+    bad_reliable_crc.back() ^= 0xffu;
+    assert(!network_example::decode_reliable_event_packet(
+        bad_reliable_crc.data(),
+        bad_reliable_crc.size(),
+        &decoded_event));
 
     std::vector<std::uint8_t> bad_size = input_packet;
     bad_size.pop_back();
@@ -100,5 +129,11 @@ int main() {
         bad_size.size(),
         &decoded_player,
         &decoded_input));
+    std::vector<std::uint8_t> bad_reliable_size = reliable_event_packet;
+    bad_reliable_size.pop_back();
+    assert(!network_example::decode_reliable_event_packet(
+        bad_reliable_size.data(),
+        bad_reliable_size.size(),
+        &decoded_event));
     return 0;
 }

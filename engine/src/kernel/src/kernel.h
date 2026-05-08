@@ -48,6 +48,8 @@ private:
         std::uint32_t code = 0);
     void poll_transport();
     void poll_client_transport();
+    void handle_server_disconnect(const TransportEvent& transport_event);
+    void handle_client_reliable_event(const TransportEvent& transport_event);
     void simulate_tick();
     void rebuild_render_states();
     void rebuild_render_states_from_world();
@@ -62,6 +64,8 @@ private:
     std::uint32_t rewind_tick_for_input(const QueuedInput& queued_input) const;
     void publish_snapshot();
     void send_client_handshake();
+    void send_reliable_event(PeerId peer, const KernelEvent& event);
+    void broadcast_reliable_event(const KernelEvent& event);
     void handle_server_handshake(const TransportEvent& transport_event);
     void handle_client_session_message(const TransportEvent& transport_event);
     PeerSession* find_session(PeerId peer);
