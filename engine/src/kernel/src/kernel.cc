@@ -277,6 +277,16 @@ std::uint32_t KernelEngine::poll_events(KernelEvent* out_events, std::uint32_t m
     return count;
 }
 
+KernelLocalPlayerInfo KernelEngine::local_player_info() const {
+    return KernelLocalPlayerInfo{
+        local_client_peer_id_,
+        local_player_net_id_,
+        has_welcome_,
+        running_ && has_welcome_ && local_client_peer_id_ != 0 &&
+            local_player_net_id_ != 0,
+    };
+}
+
 void KernelEngine::push_event(
     KernelEventType type,
     NetId net_id,
@@ -296,6 +306,8 @@ void KernelEngine::poll_transport() {
         } else if (transport_event.type == TransportEventType::kDisconnected) {
             if (config_.mode == KernelMode_DedicatedServer) {
                 handle_server_disconnect(transport_event);
+            } else if (config_.mode == KernelMode_Client) {
+                handle_client_disconnect(transport_event.peer);
             } else {
                 const PeerSession* session = find_session(transport_event.peer);
                 if (session != nullptr) {
@@ -403,6 +415,11 @@ void KernelEngine::handle_server_disconnect(const TransportEvent& transport_even
     push_event(KernelEventType_Disconnected, 0, transport_event.peer);
 }
 
+void KernelEngine::handle_client_disconnect(PeerId peer) {
+    clear_client_session();
+    push_event(KernelEventType_Disconnected, 0, peer);
+}
+
 void KernelEngine::handle_client_reliable_event(const TransportEvent& transport_event) {
     KernelEvent event{};
     if (!decode_reliable_event_packet(
@@ -414,6 +431,21 @@ void KernelEngine::handle_client_reliable_event(const TransportEvent& transport_
     }
 
     events_.push_back(event);
+}
+
+void KernelEngine::clear_client_session() {
+    local_client_peer_id_ = 0;
+    local_player_net_id_ = 0;
+    local_last_processed_input_seq_ = 0;
+    pending_prediction_inputs_.clear();
+    client_snapshot_buffer_.clear();
+    latest_client_snapshot_ = WorldSnapshot{};
+    predicted_local_entity_ = EntitySnapshot{};
+    local_correction_offset_ = glm::vec3{0.0f, 0.0f, 0.0f};
+    has_welcome_ = false;
+    has_client_snapshot_ = false;
+    has_predicted_local_entity_ = false;
+    render_states_.clear();
 }
 
 void KernelEngine::poll_client_transport() {
@@ -882,6 +914,7 @@ void KernelEngine::handle_client_session_message(const TransportEvent& transport
             transport_event.payload.data(),
             transport_event.payload.size(),
             &disconnect)) {
+        clear_client_session();
         push_event(KernelEventType_Disconnected, 0, kServerPeerId, disconnect.reason_code);
         return;
     }
@@ -966,6 +999,7 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
         out_info->player_input_size = sizeof(PlayerInput);
         out_info->render_entity_state_size = sizeof(RenderEntityState);
         out_info->kernel_event_size = sizeof(KernelEvent);
+        out_info->local_player_info_size = sizeof(KernelLocalPlayerInfo);
         out_info->capability_flags =
             KERNEL_CAPABILITY_CLIENT_MODE |
             KERNEL_CAPABILITY_LISTEN_SERVER_MODE |
@@ -975,7 +1009,22 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_EVENT_POLLING |
             KERNEL_CAPABILITY_CLIENT_PREDICTION |
             KERNEL_CAPABILITY_SNAPSHOT_INTERPOLATION |
-            KERNEL_CAPABILITY_LAG_COMPENSATED_HITSCAN;
+            KERNEL_CAPABILITY_LAG_COMPENSATED_HITSCAN |
+            KERNEL_CAPABILITY_LOCAL_PLAYER_INFO;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool Kernel_GetLocalPlayerInfo(
+    KernelHandle* kernel,
+    KernelLocalPlayerInfo* out_info) {
+    try {
+        if (kernel == nullptr || out_info == nullptr) {
+            return false;
+        }
+        *out_info = kernel->engine->local_player_info();
         return true;
     } catch (...) {
         return false;

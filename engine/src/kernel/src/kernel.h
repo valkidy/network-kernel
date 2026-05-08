@@ -32,6 +32,7 @@ public:
         RenderEntityState* out_states,
         std::uint32_t max_states) const;
     std::uint32_t poll_events(KernelEvent* out_events, std::uint32_t max_events);
+    KernelLocalPlayerInfo local_player_info() const;
 
 private:
     struct PeerSession {
@@ -49,7 +50,9 @@ private:
     void poll_transport();
     void poll_client_transport();
     void handle_server_disconnect(const TransportEvent& transport_event);
+    void handle_client_disconnect(PeerId peer);
     void handle_client_reliable_event(const TransportEvent& transport_event);
+    void clear_client_session();
     void simulate_tick();
     void rebuild_render_states();
     void rebuild_render_states_from_world();

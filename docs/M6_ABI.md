@@ -11,8 +11,8 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
-version they do not support. The first stable native ABI version is
-`KERNEL_ABI_VERSION == 1`.
+version they do not support. The current native ABI version is
+`KERNEL_ABI_VERSION == 2`.
 
 ## Ownership
 
@@ -76,7 +76,8 @@ plugins/com.network-example.kernel
 
 It provides handwritten C# P/Invoke declarations for the public `Kernel_*`
 surface, C# mirror structs for public ABI data, an `IDisposable` wrapper for
-`KernelHandle`, an Editor ABI smoke runner, and a minimal smoke sample.
+`KernelHandle`, local player info helpers, an Editor ABI smoke runner, and
+minimal listen-server/client smoke samples.
 
 On macOS, the Unity package includes the built dylib at:
 
@@ -87,5 +88,5 @@ plugins/com.network-example.kernel/Assets/Plugins/macOS/libnetwork_kernel.dylib
 Unity resolves the C# import name `network_kernel` to `libnetwork_kernel.dylib`
 on macOS. The Editor smoke runner calls `Kernel_GetAbiInfo`, validates
 `Marshal.SizeOf<T>()` against native struct sizes, starts listen-server mode,
-updates the kernel, submits one input, polls events, reads render states, and
-destroys the handle.
+checks `Kernel_GetLocalPlayerInfo`, updates the kernel, submits one input,
+polls events, reads render states, and destroys the handle.

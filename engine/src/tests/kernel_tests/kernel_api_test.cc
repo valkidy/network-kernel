@@ -21,6 +21,8 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CLIENT_PREDICTION) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_SNAPSHOT_INTERPOLATION) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LAG_COMPENSATED_HITSCAN) != 0);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_LOCAL_PLAYER_INFO) != 0);
+    assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
     assert(!Kernel_GetAbiInfo(nullptr, sizeof(abi_info)));
     assert(!Kernel_GetAbiInfo(&abi_info, sizeof(abi_info) - 1));
 
@@ -32,6 +34,9 @@ int main() {
     Kernel_SubmitInput(nullptr, 1, nullptr);
     assert(Kernel_GetRenderStates(nullptr, nullptr, 0) == 0);
     assert(Kernel_PollEvents(nullptr, nullptr, 0) == 0);
+    KernelLocalPlayerInfo local_info{};
+    assert(!Kernel_GetLocalPlayerInfo(nullptr, &local_info));
+    assert(!Kernel_GetLocalPlayerInfo(nullptr, nullptr));
 
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;
@@ -40,6 +45,12 @@ int main() {
 
     KernelHandle* kernel = Kernel_Create(&config);
     assert(kernel != nullptr);
+    assert(Kernel_GetLocalPlayerInfo(kernel, &local_info));
+    assert(local_info.peer_id == 0);
+    assert(local_info.player_net_id == 0);
+    assert(!local_info.has_welcome);
+    assert(!local_info.connected);
+    assert(!Kernel_GetLocalPlayerInfo(kernel, nullptr));
     assert(!Kernel_StartClient(kernel, nullptr));
     assert(!Kernel_StartClient(kernel, ""));
     assert(Kernel_StartDedicatedServer(kernel, 7777));
