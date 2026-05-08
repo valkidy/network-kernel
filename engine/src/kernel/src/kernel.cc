@@ -116,19 +116,7 @@ bool KernelEngine::start_client(const char* address) {
 
     loopback_transport_ = nullptr;
     transport_ = std::move(gns_transport);
-    config_.mode = KernelMode_Client;
-    running_ = true;
-    local_client_peer_id_ = 0;
-    local_player_net_id_ = 0;
-    local_last_processed_input_seq_ = 0;
-    predicted_server_tick_ = tick_loop_.current_tick();
-    pending_prediction_inputs_.clear();
-    client_snapshot_buffer_.clear();
-    local_correction_offset_ = glm::vec3{0.0f, 0.0f, 0.0f};
-    client_handshake_sent_ = false;
-    has_welcome_ = false;
-    has_client_snapshot_ = false;
-    has_predicted_local_entity_ = false;
+    reset_runtime_state(KernelMode_Client);
     return true;
 }
 
@@ -141,30 +129,17 @@ bool KernelEngine::start_listen_server(std::uint16_t port) {
 
     loopback_transport_ = loopback_transport.get();
     transport_ = std::move(loopback_transport);
-    config_.mode = KernelMode_ListenServer;
-    running_ = true;
+    reset_runtime_state(KernelMode_ListenServer);
 
     const NetId player =
         world_.spawn_player(kLocalListenPeerId, glm::vec3{0.0f, 0.0f, 0.0f});
-    const NetId enemy = world_.spawn_enemy(glm::vec3{8.0f, 0.0f, 0.0f});
     local_client_peer_id_ = kLocalListenPeerId;
     local_player_net_id_ = player;
-    local_last_processed_input_seq_ = 0;
-    predicted_server_tick_ = tick_loop_.current_tick();
-    pending_prediction_inputs_.clear();
-    client_snapshot_buffer_.clear();
-    local_correction_offset_ = glm::vec3{0.0f, 0.0f, 0.0f};
     has_welcome_ = true;
-    has_predicted_local_entity_ = false;
-    world_.spawn_projectile(
-        0,
-        glm::vec3{2.0f, 0.4f, -2.0f},
-        glm::vec3{0.0f, 0.0f, 2.0f});
 
     push_event(KernelEventType_Connected, 0, kLocalListenPeerId);
     push_event(KernelEventType_PlayerJoined, player, kLocalListenPeerId);
     push_event(KernelEventType_EntitySpawned, player, kLocalListenPeerId);
-    push_event(KernelEventType_EntitySpawned, enemy, 0);
     publish_snapshot();
     poll_client_transport();
     rebuild_render_states();
@@ -180,18 +155,7 @@ bool KernelEngine::start_dedicated_server(std::uint16_t port) {
     }
 
     transport_ = std::move(gns_transport);
-    config_.mode = KernelMode_DedicatedServer;
-    running_ = true;
-    local_client_peer_id_ = 0;
-    local_player_net_id_ = 0;
-    local_last_processed_input_seq_ = 0;
-    pending_prediction_inputs_.clear();
-    client_snapshot_buffer_.clear();
-    has_client_snapshot_ = false;
-    has_predicted_local_entity_ = false;
-    const NetId enemy = world_.spawn_enemy(glm::vec3{8.0f, 0.0f, 0.0f});
-    world_.spawn_projectile(0, glm::vec3{2.0f, 0.4f, -2.0f}, glm::vec3{0.0f, 0.0f, 2.0f});
-    push_event(KernelEventType_EntitySpawned, enemy, 0);
+    reset_runtime_state(KernelMode_DedicatedServer);
     publish_snapshot();
     rebuild_render_states();
     return true;
@@ -293,6 +257,33 @@ void KernelEngine::push_event(
     PeerId peer_id,
     std::uint32_t code) {
     events_.push_back(KernelEvent{type, tick_loop_.current_tick(), net_id, peer_id, code});
+}
+
+void KernelEngine::reset_runtime_state(KernelMode mode) {
+    config_.mode = mode;
+    tick_loop_ = TickLoop(config_.tick);
+    world_ = World{};
+    history_buffer_ = HistoryBuffer(history_frame_count(config_.tick));
+    pending_inputs_.clear();
+    events_.clear();
+    render_states_.clear();
+    latest_snapshot_ = WorldSnapshot{};
+    latest_client_snapshot_ = WorldSnapshot{};
+    client_snapshot_buffer_.clear();
+    peer_sessions_.clear();
+    pending_prediction_inputs_.clear();
+    predicted_local_entity_ = EntitySnapshot{};
+    local_correction_offset_ = glm::vec3{0.0f, 0.0f, 0.0f};
+    local_player_net_id_ = 0;
+    local_last_processed_input_seq_ = 0;
+    predicted_server_tick_ = tick_loop_.current_tick();
+    next_packet_sequence_ = 1;
+    local_client_peer_id_ = 0;
+    client_handshake_sent_ = false;
+    has_welcome_ = false;
+    has_client_snapshot_ = false;
+    has_predicted_local_entity_ = false;
+    running_ = true;
 }
 
 void KernelEngine::poll_transport() {

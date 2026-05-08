@@ -15,6 +15,17 @@ RenderEntityState find_player(const std::array<RenderEntityState, 16>& states, s
     return RenderEntityState{};
 }
 
+bool has_non_player_state(
+    const std::array<RenderEntityState, 16>& states,
+    std::uint32_t count) {
+    for (std::uint32_t index = 0; index < count; ++index) {
+        if (states[index].entity_type != 1) {
+            return true;
+        }
+    }
+    return false;
+}
+
 }  // namespace
 
 int main() {
@@ -46,7 +57,8 @@ int main() {
         kernel,
         before_states.data(),
         static_cast<std::uint32_t>(before_states.size()));
-    assert(before_count >= 2);
+    assert(before_count == 1);
+    assert(!has_non_player_state(before_states, before_count));
     const RenderEntityState before_player = find_player(before_states, before_count);
 
     PlayerInput input{};
@@ -62,7 +74,8 @@ int main() {
         kernel,
         predicted_states.data(),
         static_cast<std::uint32_t>(predicted_states.size()));
-    assert(predicted_count >= 2);
+    assert(predicted_count == 1);
+    assert(!has_non_player_state(predicted_states, predicted_count));
     const RenderEntityState predicted_player =
         find_player(predicted_states, predicted_count);
     assert(predicted_player.position.x > before_player.position.x);
@@ -74,7 +87,8 @@ int main() {
         kernel,
         after_states.data(),
         static_cast<std::uint32_t>(after_states.size()));
-    assert(after_count >= 2);
+    assert(after_count == 1);
+    assert(!has_non_player_state(after_states, after_count));
     const RenderEntityState after_player = find_player(after_states, after_count);
     assert(after_player.position.x > before_player.position.x);
 
@@ -93,17 +107,13 @@ int main() {
         combat_events.data(),
         static_cast<std::uint32_t>(combat_events.size()));
     bool saw_fire_confirmed = false;
-    bool saw_damage_applied = false;
     for (std::uint32_t index = 0; index < combat_event_count; ++index) {
         saw_fire_confirmed =
             saw_fire_confirmed ||
             combat_events[index].type == KernelEventType_FireConfirmed;
-        saw_damage_applied =
-            saw_damage_applied ||
-            combat_events[index].type == KernelEventType_DamageApplied;
+        assert(combat_events[index].type != KernelEventType_DamageApplied);
     }
     assert(saw_fire_confirmed);
-    assert(saw_damage_applied);
 
     Kernel_Destroy(kernel);
     return 0;

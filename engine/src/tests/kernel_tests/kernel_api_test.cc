@@ -65,12 +65,12 @@ int main() {
     std::array<RenderEntityState, 8> states{};
     assert(Kernel_GetRenderStates(kernel, nullptr, states.size()) == 0);
     assert(Kernel_GetRenderStates(kernel, states.data(), 0) == 0);
-    assert(Kernel_GetRenderStates(kernel, states.data(), states.size()) >= 1);
+    assert(Kernel_GetRenderStates(kernel, states.data(), states.size()) == 0);
 
     std::array<KernelEvent, 16> events{};
     assert(Kernel_PollEvents(kernel, nullptr, events.size()) == 0);
     assert(Kernel_PollEvents(kernel, events.data(), 0) == 0);
-    assert(Kernel_PollEvents(kernel, events.data(), events.size()) >= 1);
+    assert(Kernel_PollEvents(kernel, events.data(), events.size()) == 0);
 
     Kernel_Destroy(kernel);
     return 0;

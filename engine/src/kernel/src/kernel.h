@@ -47,6 +47,7 @@ private:
         NetId net_id = 0,
         PeerId peer_id = 0,
         std::uint32_t code = 0);
+    void reset_runtime_state(KernelMode mode);
     void poll_transport();
     void poll_client_transport();
     void handle_server_disconnect(const TransportEvent& transport_event);
