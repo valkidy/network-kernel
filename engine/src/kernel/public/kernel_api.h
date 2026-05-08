@@ -25,6 +25,9 @@ typedef struct KernelHandle KernelHandle;
  */
 
 bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size);
+bool Kernel_GetLocalPlayerInfo(
+    KernelHandle* kernel,
+    KernelLocalPlayerInfo* out_info);
 
 KernelHandle* Kernel_Create(const KernelConfig* config);
 void Kernel_Destroy(KernelHandle* kernel);

@@ -131,6 +131,10 @@ int main() {
         load_symbol<std::uint32_t(KernelHandle*, KernelEvent*, std::uint32_t)>(
             library,
             "Kernel_PollEvents");
+    auto* kernel_get_local_player_info =
+        load_symbol<bool(KernelHandle*, KernelLocalPlayerInfo*)>(
+            library,
+            "Kernel_GetLocalPlayerInfo");
 
     KernelAbiInfo abi_info{};
     assert(kernel_get_abi_info(&abi_info, sizeof(abi_info)));
@@ -139,9 +143,13 @@ int main() {
     assert(abi_info.player_input_size == sizeof(PlayerInput));
     assert(abi_info.render_entity_state_size == sizeof(RenderEntityState));
     assert(abi_info.kernel_event_size == sizeof(KernelEvent));
+    assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LISTEN_SERVER_MODE) != 0);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_LOCAL_PLAYER_INFO) != 0);
     assert(!kernel_get_abi_info(nullptr, sizeof(abi_info)));
     assert(!kernel_get_abi_info(&abi_info, sizeof(abi_info) - 1));
+    KernelLocalPlayerInfo local_info{};
+    assert(!kernel_get_local_player_info(nullptr, &local_info));
 
     assert(kernel_create(nullptr) == nullptr);
 
@@ -153,6 +161,11 @@ int main() {
     KernelHandle* kernel = kernel_create(&config);
     assert(kernel != nullptr);
     assert(kernel_start_listen_server(kernel, 7777));
+    assert(kernel_get_local_player_info(kernel, &local_info));
+    assert(local_info.peer_id == 1);
+    assert(local_info.player_net_id != 0);
+    assert(local_info.has_welcome);
+    assert(local_info.connected);
 
     PlayerInput input{};
     input.input_seq = 1;

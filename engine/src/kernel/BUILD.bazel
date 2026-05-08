@@ -57,6 +57,7 @@ cc_shared_library(
             "-Wl,-exported_symbol,_Kernel_Create",
             "-Wl,-exported_symbol,_Kernel_Destroy",
             "-Wl,-exported_symbol,_Kernel_GetAbiInfo",
+            "-Wl,-exported_symbol,_Kernel_GetLocalPlayerInfo",
             "-Wl,-exported_symbol,_Kernel_StartClient",
             "-Wl,-exported_symbol,_Kernel_StartListenServer",
             "-Wl,-exported_symbol,_Kernel_StartDedicatedServer",
