@@ -10,6 +10,7 @@ namespace {
 constexpr std::size_t kInputPayloadSize = 37;
 constexpr std::size_t kSnapshotHeaderPayloadSize = 16;
 constexpr std::size_t kEntitySnapshotPayloadSize = 50;
+constexpr std::size_t kReliableEventPayloadSize = 18;
 
 void write_u8(std::vector<std::uint8_t>* buffer, std::uint8_t value) {
     buffer->push_back(value);
@@ -298,6 +299,53 @@ bool decode_snapshot_packet(
     }
 
     *out_snapshot = std::move(snapshot);
+    return true;
+}
+
+std::vector<std::uint8_t> encode_reliable_event_packet(
+    const KernelEvent& event,
+    std::uint32_t sequence) {
+    std::vector<std::uint8_t> payload;
+    payload.reserve(kReliableEventPayloadSize);
+    write_u16(&payload, static_cast<std::uint16_t>(event.type));
+    write_u32(&payload, event.tick);
+    write_u32(&payload, event.net_id);
+    write_u32(&payload, event.peer_id);
+    write_u32(&payload, event.code);
+    return wrap_packet(MessageType::kReliableEventPacket, payload, sequence);
+}
+
+bool decode_reliable_event_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    KernelEvent* out_event) {
+    const std::uint8_t* payload = nullptr;
+    std::size_t payload_size = 0;
+    if (out_event == nullptr ||
+        !unwrap_packet(
+            data,
+            size,
+            MessageType::kReliableEventPacket,
+            &payload,
+            &payload_size) ||
+        payload_size != kReliableEventPayloadSize) {
+        return false;
+    }
+
+    KernelEvent event{};
+    std::uint16_t event_type = 0;
+    std::size_t offset = 0;
+    if (!read_u16(payload, payload_size, &offset, &event_type) ||
+        !read_u32(payload, payload_size, &offset, &event.tick) ||
+        !read_u32(payload, payload_size, &offset, &event.net_id) ||
+        !read_u32(payload, payload_size, &offset, &event.peer_id) ||
+        !read_u32(payload, payload_size, &offset, &event.code) ||
+        offset != payload_size) {
+        return false;
+    }
+
+    event.type = static_cast<KernelEventType>(event_type);
+    *out_event = event;
     return true;
 }
 

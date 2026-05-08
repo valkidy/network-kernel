@@ -294,12 +294,16 @@ void KernelEngine::poll_transport() {
                 send_client_handshake();
             }
         } else if (transport_event.type == TransportEventType::kDisconnected) {
-            const PeerSession* session = find_session(transport_event.peer);
-            if (session != nullptr) {
-                push_event(KernelEventType_PlayerLeft, session->player, transport_event.peer);
-                remove_session(transport_event.peer);
+            if (config_.mode == KernelMode_DedicatedServer) {
+                handle_server_disconnect(transport_event);
+            } else {
+                const PeerSession* session = find_session(transport_event.peer);
+                if (session != nullptr) {
+                    push_event(KernelEventType_PlayerLeft, session->player, transport_event.peer);
+                    remove_session(transport_event.peer);
+                }
+                push_event(KernelEventType_Disconnected, 0, transport_event.peer);
             }
-            push_event(KernelEventType_Disconnected, 0, transport_event.peer);
         } else if (
             transport_event.type == TransportEventType::kMessage &&
             transport_event.channel == ChannelId::kSession &&
@@ -310,6 +314,11 @@ void KernelEngine::poll_transport() {
             transport_event.channel == ChannelId::kSession &&
             config_.mode == KernelMode_Client) {
             handle_client_session_message(transport_event);
+        } else if (
+            transport_event.type == TransportEventType::kMessage &&
+            transport_event.channel == ChannelId::kReliableEvent &&
+            config_.mode == KernelMode_Client) {
+            handle_client_reliable_event(transport_event);
         } else if (
             transport_event.type == TransportEventType::kMessage &&
             transport_event.channel == ChannelId::kSnapshot &&
@@ -364,6 +373,47 @@ void KernelEngine::poll_transport() {
             }
         }
     }
+}
+
+void KernelEngine::handle_server_disconnect(const TransportEvent& transport_event) {
+    const PeerSession* session = find_session(transport_event.peer);
+    if (session == nullptr) {
+        push_event(KernelEventType_Disconnected, 0, transport_event.peer);
+        return;
+    }
+
+    const KernelEvent player_left{
+        KernelEventType_PlayerLeft,
+        tick_loop_.current_tick(),
+        session->player,
+        transport_event.peer,
+        0,
+    };
+    events_.push_back(player_left);
+
+    // Current gameplay removes the disconnected player immediately. A later
+    // policy may preserve selected entities while clearing transient state.
+    if (world_.destroy(session->player)) {
+        push_event(KernelEventType_EntityDestroyed, session->player, transport_event.peer);
+    }
+
+    remove_session(transport_event.peer);
+    broadcast_reliable_event(player_left);
+    publish_snapshot();
+    push_event(KernelEventType_Disconnected, 0, transport_event.peer);
+}
+
+void KernelEngine::handle_client_reliable_event(const TransportEvent& transport_event) {
+    KernelEvent event{};
+    if (!decode_reliable_event_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &event)) {
+        push_event(KernelEventType_Error, 0, transport_event.peer, 14);
+        return;
+    }
+
+    events_.push_back(event);
 }
 
 void KernelEngine::poll_client_transport() {
@@ -745,6 +795,28 @@ void KernelEngine::send_client_handshake() {
         return;
     }
     client_handshake_sent_ = true;
+}
+
+void KernelEngine::send_reliable_event(PeerId peer, const KernelEvent& event) {
+    const std::vector<std::uint8_t> packet =
+        encode_reliable_event_packet(event, next_packet_sequence_++);
+    if (!transport_->Send(
+            peer,
+            packet.data(),
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kReliableEvent)) {
+        push_event(KernelEventType_Error, event.net_id, peer, 15);
+    }
+}
+
+void KernelEngine::broadcast_reliable_event(const KernelEvent& event) {
+    for (const PeerSession& session : peer_sessions_) {
+        if (!session.welcomed) {
+            continue;
+        }
+        send_reliable_event(session.peer, event);
+    }
 }
 
 void KernelEngine::handle_server_handshake(const TransportEvent& transport_event) {
