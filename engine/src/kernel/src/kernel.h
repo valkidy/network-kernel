@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <unordered_set>
 #include <vector>
 
 #include "kernel/public/kernel_types.h"
@@ -16,6 +17,8 @@
 namespace network_example {
 
 class LoopbackTransport;
+struct EntityDespawnPacket;
+struct EntitySpawnPacket;
 
 class KernelEngine {
 public:
@@ -33,6 +36,26 @@ public:
         std::uint32_t max_states) const;
     std::uint32_t poll_events(KernelEvent* out_events, std::uint32_t max_events);
     KernelLocalPlayerInfo local_player_info() const;
+    bool server_create_entity(
+        const KernelServerEntityCreateInfo& create_info,
+        NetId* out_net_id);
+    bool server_destroy_entity(NetId net_id, std::uint32_t reason);
+    bool server_set_entity_transform(
+        NetId net_id,
+        const KernelVec3& position,
+        const KernelQuat& rotation);
+    bool server_set_entity_velocity(NetId net_id, const KernelVec3& velocity);
+    bool server_set_entity_state(
+        NetId net_id,
+        std::uint16_t animation_state,
+        std::uint32_t visual_flags);
+    bool server_get_entity_state(
+        NetId net_id,
+        KernelServerEntityState* out_state) const;
+    std::uint32_t server_query_entities(
+        EntityType entity_type_filter,
+        KernelServerEntityState* out_states,
+        std::uint32_t max_states) const;
 
 private:
     struct PeerSession {
@@ -40,6 +63,15 @@ private:
         NetId player = 0;
         std::uint32_t last_processed_input_seq = 0;
         bool welcomed = false;
+        std::unordered_set<NetId> relevant_entities;
+    };
+
+    struct ClientReplicatedEntity {
+        NetId net_id = 0;
+        EntityType type = EntityType::kUnknown;
+        glm::vec3 position{0.0f, 0.0f, 0.0f};
+        glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+        bool active = false;
     };
 
     void push_event(
@@ -47,11 +79,14 @@ private:
         NetId net_id = 0,
         PeerId peer_id = 0,
         std::uint32_t code = 0);
+    void reset_runtime_state(KernelMode mode);
     void poll_transport();
     void poll_client_transport();
     void handle_server_disconnect(const TransportEvent& transport_event);
     void handle_client_disconnect(PeerId peer);
     void handle_client_reliable_event(const TransportEvent& transport_event);
+    void handle_client_spawn(const EntitySpawnPacket& packet);
+    void handle_client_despawn(const EntityDespawnPacket& packet);
     void clear_client_session();
     void simulate_tick();
     void rebuild_render_states();
@@ -66,6 +101,21 @@ private:
     void append_predicted_local_render_state();
     std::uint32_t rewind_tick_for_input(const QueuedInput& queued_input) const;
     void publish_snapshot();
+    WorldSnapshot build_relevant_snapshot(
+        const PeerSession& session,
+        std::uint32_t server_time_ms) const;
+    bool is_entity_relevant_to_session(
+        const PeerSession& session,
+        const EntitySnapshot& entity,
+        const EntitySnapshot* player_entity) const;
+    void sync_session_relevance(
+        PeerSession* session,
+        const WorldSnapshot& snapshot);
+    void send_entity_spawn(PeerId peer, const EntitySnapshot& entity);
+    void send_entity_despawn(
+        PeerId peer,
+        NetId net_id,
+        std::uint32_t reason);
     void send_client_handshake();
     void send_reliable_event(PeerId peer, const KernelEvent& event);
     void broadcast_reliable_event(const KernelEvent& event);
@@ -88,6 +138,9 @@ private:
     WorldSnapshot latest_client_snapshot_;
     std::vector<WorldSnapshot> client_snapshot_buffer_;
     std::vector<PeerSession> peer_sessions_;
+    PeerSession local_listen_session_;
+    std::vector<ClientReplicatedEntity> client_replicated_entities_;
+    std::unordered_set<NetId> client_despawned_entities_;
     std::vector<PlayerInput> pending_prediction_inputs_;
     EntitySnapshot predicted_local_entity_;
     glm::vec3 local_correction_offset_{0.0f, 0.0f, 0.0f};

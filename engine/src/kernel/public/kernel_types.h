@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 2u
+#define KERNEL_ABI_VERSION 3u
 
 #define KERNEL_CAPABILITY_CLIENT_MODE UINT64_C(0x0000000000000001)
 #define KERNEL_CAPABILITY_LISTEN_SERVER_MODE UINT64_C(0x0000000000000002)
@@ -16,6 +16,17 @@
 #define KERNEL_CAPABILITY_SNAPSHOT_INTERPOLATION UINT64_C(0x0000000000000080)
 #define KERNEL_CAPABILITY_LAG_COMPENSATED_HITSCAN UINT64_C(0x0000000000000100)
 #define KERNEL_CAPABILITY_LOCAL_PLAYER_INFO UINT64_C(0x0000000000000200)
+#define KERNEL_CAPABILITY_SERVER_ENTITY_CREATE UINT64_C(0x0000000000000400)
+#define KERNEL_CAPABILITY_SERVER_ENTITY_DESTROY UINT64_C(0x0000000000000800)
+#define KERNEL_CAPABILITY_SERVER_ENTITY_TRANSFORM_WRITE UINT64_C(0x0000000000001000)
+#define KERNEL_CAPABILITY_SERVER_ENTITY_VELOCITY_WRITE UINT64_C(0x0000000000002000)
+#define KERNEL_CAPABILITY_SERVER_ENTITY_STATE_WRITE UINT64_C(0x0000000000004000)
+#define KERNEL_CAPABILITY_SERVER_ENTITY_QUERY UINT64_C(0x0000000000008000)
+#define KERNEL_CAPABILITY_SERVER_RELEVANCE_FILTER UINT64_C(0x0000000000010000)
+
+#define KERNEL_VISUAL_FLAG_MOVING UINT32_C(0x00000001)
+#define KERNEL_VISUAL_FLAG_RELOADING UINT32_C(0x00000002)
+#define KERNEL_VISUAL_FLAG_DEAD UINT32_C(0x00000004)
 
 #ifdef __cplusplus
 extern "C" {
@@ -29,6 +40,8 @@ typedef struct KernelAbiInfo {
     uint32_t render_entity_state_size;
     uint32_t kernel_event_size;
     uint32_t local_player_info_size;
+    uint32_t server_entity_create_info_size;
+    uint32_t server_entity_state_size;
     uint64_t capability_flags;
 } KernelAbiInfo;
 
@@ -59,6 +72,12 @@ typedef enum KernelEventType {
     KernelEventType_MissionStateChanged = 10,
     KernelEventType_Error = 11,
 } KernelEventType;
+
+typedef enum KernelDespawnReason {
+    KernelDespawnReason_Destroyed = 0,
+    KernelDespawnReason_OutOfRange = 1,
+    KernelDespawnReason_Disconnected = 2,
+} KernelDespawnReason;
 
 typedef enum InputButton {
     InputButton_MoveJump = 1u << 0,
@@ -119,6 +138,30 @@ typedef struct RenderEntityState {
     uint16_t animation_state;
     uint32_t visual_flags;
 } RenderEntityState;
+
+typedef struct KernelServerEntityCreateInfo {
+    uint32_t struct_size;
+    uint16_t entity_type;
+    uint32_t owner_peer;
+    KernelVec3 position;
+    KernelQuat rotation;
+    uint16_t animation_state;
+    uint32_t visual_flags;
+} KernelServerEntityCreateInfo;
+
+typedef struct KernelServerEntityState {
+    uint32_t struct_size;
+    uint32_t net_id;
+    uint16_t entity_type;
+    uint32_t owner_peer;
+    KernelVec3 position;
+    KernelQuat rotation;
+    KernelVec3 velocity;
+    uint16_t hp;
+    uint16_t animation_state;
+    uint32_t visual_flags;
+    bool valid;
+} KernelServerEntityState;
 
 typedef struct KernelEvent {
     KernelEventType type;

@@ -12,7 +12,7 @@
 #include <spdlog/spdlog.h>
 
 #include "kernel/public/kernel_api.h"
-#include "protocol/public/m2_packets.h"
+#include "protocol/public/network_packets.h"
 #include "protocol/public/session_packets.h"
 #include "transport/public/gns_transport.h"
 #include "transport/public/loopback_transport.h"
@@ -38,6 +38,35 @@ KernelVec3 to_kernel_vec3(const glm::vec3& value) {
 
 KernelQuat to_kernel_quat(const glm::quat& value) {
     return KernelQuat{value.x, value.y, value.z, value.w};
+}
+
+glm::vec3 from_kernel_vec3(const KernelVec3& value) {
+    return glm::vec3{value.x, value.y, value.z};
+}
+
+glm::quat from_kernel_quat(const KernelQuat& value) {
+    return glm::quat{value.w, value.x, value.y, value.z};
+}
+
+bool is_server_mode(KernelMode mode) {
+    return mode == KernelMode_DedicatedServer || mode == KernelMode_ListenServer;
+}
+
+std::uint32_t derived_visual_flags(const World& world, entt::entity entity) {
+    std::uint32_t flags = 0;
+    if (world.registry().all_of<Velocity>(entity) &&
+        glm::length(world.registry().get<Velocity>(entity).linear) > 0.001f) {
+        flags |= kVisualFlagMoving;
+    }
+    if (world.registry().all_of<WeaponState>(entity) &&
+        world.registry().get<WeaponState>(entity).is_reloading) {
+        flags |= kVisualFlagReloading;
+    }
+    if (world.registry().all_of<Health>(entity) &&
+        world.registry().get<Health>(entity).hp == 0) {
+        flags |= kVisualFlagDead;
+    }
+    return flags;
 }
 
 glm::vec3 input_move_to_world(const PlayerInput& input) {
@@ -74,6 +103,39 @@ const EntitySnapshot* find_snapshot_entity(
         return nullptr;
     }
     return &(*found);
+}
+
+KernelServerEntityState to_server_entity_state(
+    const World& world,
+    entt::entity entity) {
+    KernelServerEntityState state{};
+    state.struct_size = sizeof(KernelServerEntityState);
+
+    const NetworkIdentity& identity = world.registry().get<NetworkIdentity>(entity);
+    const EntityKind& kind = world.registry().get<EntityKind>(entity);
+    const Transform& transform = world.registry().get<Transform>(entity);
+    state.net_id = identity.net_id;
+    state.entity_type = static_cast<std::uint16_t>(kind.type);
+    state.owner_peer = identity.owner_peer;
+    state.position = to_kernel_vec3(transform.position);
+    state.rotation = to_kernel_quat(transform.rotation);
+    state.valid = true;
+
+    if (world.registry().all_of<Velocity>(entity)) {
+        state.velocity =
+            to_kernel_vec3(world.registry().get<Velocity>(entity).linear);
+    }
+    if (world.registry().all_of<Health>(entity)) {
+        state.hp = world.registry().get<Health>(entity).hp;
+    }
+    state.visual_flags = derived_visual_flags(world, entity);
+    if (world.registry().all_of<ReplicationState>(entity)) {
+        const ReplicationState& replication =
+            world.registry().get<ReplicationState>(entity);
+        state.animation_state = replication.animation_state;
+        state.visual_flags |= replication.visual_flags;
+    }
+    return state;
 }
 
 EntitySnapshot interpolate_entity(
@@ -116,19 +178,7 @@ bool KernelEngine::start_client(const char* address) {
 
     loopback_transport_ = nullptr;
     transport_ = std::move(gns_transport);
-    config_.mode = KernelMode_Client;
-    running_ = true;
-    local_client_peer_id_ = 0;
-    local_player_net_id_ = 0;
-    local_last_processed_input_seq_ = 0;
-    predicted_server_tick_ = tick_loop_.current_tick();
-    pending_prediction_inputs_.clear();
-    client_snapshot_buffer_.clear();
-    local_correction_offset_ = glm::vec3{0.0f, 0.0f, 0.0f};
-    client_handshake_sent_ = false;
-    has_welcome_ = false;
-    has_client_snapshot_ = false;
-    has_predicted_local_entity_ = false;
+    reset_runtime_state(KernelMode_Client);
     return true;
 }
 
@@ -141,30 +191,18 @@ bool KernelEngine::start_listen_server(std::uint16_t port) {
 
     loopback_transport_ = loopback_transport.get();
     transport_ = std::move(loopback_transport);
-    config_.mode = KernelMode_ListenServer;
-    running_ = true;
+    reset_runtime_state(KernelMode_ListenServer);
 
     const NetId player =
         world_.spawn_player(kLocalListenPeerId, glm::vec3{0.0f, 0.0f, 0.0f});
-    const NetId enemy = world_.spawn_enemy(glm::vec3{8.0f, 0.0f, 0.0f});
     local_client_peer_id_ = kLocalListenPeerId;
     local_player_net_id_ = player;
-    local_last_processed_input_seq_ = 0;
-    predicted_server_tick_ = tick_loop_.current_tick();
-    pending_prediction_inputs_.clear();
-    client_snapshot_buffer_.clear();
-    local_correction_offset_ = glm::vec3{0.0f, 0.0f, 0.0f};
+    local_listen_session_ = PeerSession{kLocalListenPeerId, player, 0, true, {}};
     has_welcome_ = true;
-    has_predicted_local_entity_ = false;
-    world_.spawn_projectile(
-        0,
-        glm::vec3{2.0f, 0.4f, -2.0f},
-        glm::vec3{0.0f, 0.0f, 2.0f});
 
     push_event(KernelEventType_Connected, 0, kLocalListenPeerId);
     push_event(KernelEventType_PlayerJoined, player, kLocalListenPeerId);
     push_event(KernelEventType_EntitySpawned, player, kLocalListenPeerId);
-    push_event(KernelEventType_EntitySpawned, enemy, 0);
     publish_snapshot();
     poll_client_transport();
     rebuild_render_states();
@@ -180,18 +218,7 @@ bool KernelEngine::start_dedicated_server(std::uint16_t port) {
     }
 
     transport_ = std::move(gns_transport);
-    config_.mode = KernelMode_DedicatedServer;
-    running_ = true;
-    local_client_peer_id_ = 0;
-    local_player_net_id_ = 0;
-    local_last_processed_input_seq_ = 0;
-    pending_prediction_inputs_.clear();
-    client_snapshot_buffer_.clear();
-    has_client_snapshot_ = false;
-    has_predicted_local_entity_ = false;
-    const NetId enemy = world_.spawn_enemy(glm::vec3{8.0f, 0.0f, 0.0f});
-    world_.spawn_projectile(0, glm::vec3{2.0f, 0.4f, -2.0f}, glm::vec3{0.0f, 0.0f, 2.0f});
-    push_event(KernelEventType_EntitySpawned, enemy, 0);
+    reset_runtime_state(KernelMode_DedicatedServer);
     publish_snapshot();
     rebuild_render_states();
     return true;
@@ -287,12 +314,185 @@ KernelLocalPlayerInfo KernelEngine::local_player_info() const {
     };
 }
 
+bool KernelEngine::server_create_entity(
+    const KernelServerEntityCreateInfo& create_info,
+    NetId* out_net_id) {
+    if (!running_ || !is_server_mode(config_.mode) || out_net_id == nullptr ||
+        create_info.struct_size < sizeof(KernelServerEntityCreateInfo)) {
+        return false;
+    }
+
+    const EntityType type = static_cast<EntityType>(create_info.entity_type);
+    NetId net_id = 0;
+    if (type == EntityType::kEnemy) {
+        net_id = world_.spawn_enemy(from_kernel_vec3(create_info.position));
+    } else {
+        return false;
+    }
+
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value()) {
+        return false;
+    }
+    Transform& transform = world_.registry().get<Transform>(*entity);
+    transform.rotation = from_kernel_quat(create_info.rotation);
+    ReplicationState& replication =
+        world_.registry().get_or_emplace<ReplicationState>(*entity);
+    replication.animation_state = create_info.animation_state;
+    replication.visual_flags = create_info.visual_flags;
+
+    *out_net_id = net_id;
+    push_event(KernelEventType_EntitySpawned, net_id, create_info.owner_peer);
+    publish_snapshot();
+    return true;
+}
+
+bool KernelEngine::server_destroy_entity(NetId net_id, std::uint32_t reason) {
+    if (!running_ || !is_server_mode(config_.mode) || net_id == 0) {
+        return false;
+    }
+    if (!world_.destroy(net_id)) {
+        return false;
+    }
+    if (config_.mode == KernelMode_ListenServer && loopback_transport_ != nullptr) {
+        send_entity_despawn(kLocalListenPeerId, net_id, reason);
+    }
+    for (PeerSession& session : peer_sessions_) {
+        if (session.relevant_entities.erase(net_id) > 0) {
+            send_entity_despawn(session.peer, net_id, reason);
+        }
+    }
+    push_event(KernelEventType_EntityDestroyed, net_id, 0, reason);
+    publish_snapshot();
+    return true;
+}
+
+bool KernelEngine::server_set_entity_transform(
+    NetId net_id,
+    const KernelVec3& position,
+    const KernelQuat& rotation) {
+    if (!running_ || !is_server_mode(config_.mode)) {
+        return false;
+    }
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value() || !world_.registry().all_of<Transform>(*entity)) {
+        return false;
+    }
+    Transform& transform = world_.registry().get<Transform>(*entity);
+    transform.position = from_kernel_vec3(position);
+    transform.rotation = from_kernel_quat(rotation);
+    return true;
+}
+
+bool KernelEngine::server_set_entity_velocity(
+    NetId net_id,
+    const KernelVec3& velocity) {
+    if (!running_ || !is_server_mode(config_.mode)) {
+        return false;
+    }
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value() || !world_.registry().all_of<Velocity>(*entity)) {
+        return false;
+    }
+    world_.registry().get<Velocity>(*entity).linear = from_kernel_vec3(velocity);
+    return true;
+}
+
+bool KernelEngine::server_set_entity_state(
+    NetId net_id,
+    std::uint16_t animation_state,
+    std::uint32_t visual_flags) {
+    if (!running_ || !is_server_mode(config_.mode)) {
+        return false;
+    }
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value()) {
+        return false;
+    }
+    ReplicationState& replication =
+        world_.registry().get_or_emplace<ReplicationState>(*entity);
+    replication.animation_state = animation_state;
+    replication.visual_flags = visual_flags;
+    return true;
+}
+
+bool KernelEngine::server_get_entity_state(
+    NetId net_id,
+    KernelServerEntityState* out_state) const {
+    if (!running_ || !is_server_mode(config_.mode) || out_state == nullptr ||
+        out_state->struct_size < sizeof(KernelServerEntityState)) {
+        return false;
+    }
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value()) {
+        return false;
+    }
+    *out_state = to_server_entity_state(world_, *entity);
+    return true;
+}
+
+std::uint32_t KernelEngine::server_query_entities(
+    EntityType entity_type_filter,
+    KernelServerEntityState* out_states,
+    std::uint32_t max_states) const {
+    if (!running_ || !is_server_mode(config_.mode) || out_states == nullptr ||
+        max_states == 0) {
+        return 0;
+    }
+
+    std::uint32_t count = 0;
+    auto view =
+        world_.registry().view<const NetworkIdentity, const EntityKind, const Transform>();
+    for (const entt::entity entity : view) {
+        const EntityKind& kind = view.get<const EntityKind>(entity);
+        if (entity_type_filter != EntityType::kUnknown &&
+            kind.type != entity_type_filter) {
+            continue;
+        }
+        if (count >= max_states) {
+            break;
+        }
+        out_states[count++] = to_server_entity_state(world_, entity);
+    }
+    return count;
+}
+
 void KernelEngine::push_event(
     KernelEventType type,
     NetId net_id,
     PeerId peer_id,
     std::uint32_t code) {
     events_.push_back(KernelEvent{type, tick_loop_.current_tick(), net_id, peer_id, code});
+}
+
+void KernelEngine::reset_runtime_state(KernelMode mode) {
+    config_.mode = mode;
+    tick_loop_ = TickLoop(config_.tick);
+    world_ = World{};
+    history_buffer_ = HistoryBuffer(history_frame_count(config_.tick));
+    pending_inputs_.clear();
+    events_.clear();
+    render_states_.clear();
+    latest_snapshot_ = WorldSnapshot{};
+    latest_client_snapshot_ = WorldSnapshot{};
+    client_snapshot_buffer_.clear();
+    peer_sessions_.clear();
+    local_listen_session_ = PeerSession{};
+    client_replicated_entities_.clear();
+    client_despawned_entities_.clear();
+    pending_prediction_inputs_.clear();
+    predicted_local_entity_ = EntitySnapshot{};
+    local_correction_offset_ = glm::vec3{0.0f, 0.0f, 0.0f};
+    local_player_net_id_ = 0;
+    local_last_processed_input_seq_ = 0;
+    predicted_server_tick_ = tick_loop_.current_tick();
+    next_packet_sequence_ = 1;
+    local_client_peer_id_ = 0;
+    client_handshake_sent_ = false;
+    has_welcome_ = false;
+    has_client_snapshot_ = false;
+    has_predicted_local_entity_ = false;
+    running_ = true;
 }
 
 void KernelEngine::poll_transport() {
@@ -422,15 +622,83 @@ void KernelEngine::handle_client_disconnect(PeerId peer) {
 
 void KernelEngine::handle_client_reliable_event(const TransportEvent& transport_event) {
     KernelEvent event{};
-    if (!decode_reliable_event_packet(
+    if (decode_reliable_event_packet(
             transport_event.payload.data(),
             transport_event.payload.size(),
             &event)) {
-        push_event(KernelEventType_Error, 0, transport_event.peer, 14);
+        events_.push_back(event);
         return;
     }
 
-    events_.push_back(event);
+    EntitySpawnPacket spawn{};
+    if (decode_entity_spawn_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &spawn)) {
+        handle_client_spawn(spawn);
+        return;
+    }
+
+    EntityDespawnPacket despawn{};
+    if (decode_entity_despawn_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &despawn)) {
+        handle_client_despawn(despawn);
+        return;
+    }
+
+    push_event(KernelEventType_Error, 0, transport_event.peer, 14);
+}
+
+void KernelEngine::handle_client_spawn(const EntitySpawnPacket& packet) {
+    client_despawned_entities_.erase(packet.net_id);
+    auto found = std::find_if(
+        client_replicated_entities_.begin(),
+        client_replicated_entities_.end(),
+        [&packet](const ClientReplicatedEntity& entity) {
+            return entity.net_id == packet.net_id;
+        });
+    if (found == client_replicated_entities_.end()) {
+        client_replicated_entities_.push_back(ClientReplicatedEntity{
+            packet.net_id,
+            packet.entity_type,
+            packet.position,
+            packet.rotation,
+            false,
+        });
+    } else {
+        found->type = packet.entity_type;
+        found->position = packet.position;
+        found->rotation = packet.rotation;
+        found->active = false;
+    }
+    events_.push_back(KernelEvent{
+        KernelEventType_EntitySpawned,
+        packet.server_tick,
+        packet.net_id,
+        packet.owner_peer,
+        static_cast<std::uint32_t>(packet.entity_type),
+    });
+}
+
+void KernelEngine::handle_client_despawn(const EntityDespawnPacket& packet) {
+    client_despawned_entities_.insert(packet.net_id);
+    client_replicated_entities_.erase(
+        std::remove_if(
+            client_replicated_entities_.begin(),
+            client_replicated_entities_.end(),
+            [&packet](const ClientReplicatedEntity& entity) {
+                return entity.net_id == packet.net_id;
+            }),
+        client_replicated_entities_.end());
+    events_.push_back(KernelEvent{
+        KernelEventType_EntityDestroyed,
+        packet.server_tick,
+        packet.net_id,
+        0,
+        packet.reason,
+    });
 }
 
 void KernelEngine::clear_client_session() {
@@ -439,6 +707,8 @@ void KernelEngine::clear_client_session() {
     local_last_processed_input_seq_ = 0;
     pending_prediction_inputs_.clear();
     client_snapshot_buffer_.clear();
+    client_replicated_entities_.clear();
+    client_despawned_entities_.clear();
     latest_client_snapshot_ = WorldSnapshot{};
     predicted_local_entity_ = EntitySnapshot{};
     local_correction_offset_ = glm::vec3{0.0f, 0.0f, 0.0f};
@@ -455,8 +725,14 @@ void KernelEngine::poll_client_transport() {
 
     TransportEvent transport_event;
     while (loopback_transport_->PollClientEvent(transport_event)) {
-        if (transport_event.type != TransportEventType::kMessage ||
-            transport_event.channel != ChannelId::kSnapshot) {
+        if (transport_event.type != TransportEventType::kMessage) {
+            continue;
+        }
+        if (transport_event.channel == ChannelId::kReliableEvent) {
+            handle_client_reliable_event(transport_event);
+            continue;
+        }
+        if (transport_event.channel != ChannelId::kSnapshot) {
             continue;
         }
 
@@ -682,6 +958,7 @@ std::uint32_t KernelEngine::rewind_tick_for_input(
 void KernelEngine::simulate_tick() {
     const float fixed_delta = tick_loop_.fixed_delta_seconds();
     simulate_player_movement(world_, pending_inputs_, fixed_delta);
+    simulate_velocity_movement(world_, fixed_delta);
     simulate_weapons(world_, {}, tick_loop_.current_tick(), &events_);
     for (const QueuedInput& pending_input : pending_inputs_) {
         const HistoryFrame* rewind_frame = nullptr;
@@ -707,6 +984,136 @@ void KernelEngine::simulate_tick() {
     tick_loop_.advance_tick();
 }
 
+WorldSnapshot KernelEngine::build_relevant_snapshot(
+    const PeerSession& session,
+    std::uint32_t server_time_ms) const {
+    WorldSnapshot full_snapshot = build_world_snapshot(
+        world_,
+        tick_loop_.current_tick(),
+        server_time_ms,
+        session.last_processed_input_seq);
+    const EntitySnapshot* player_entity =
+        find_snapshot_entity(full_snapshot, session.player);
+
+    WorldSnapshot filtered;
+    filtered.header = full_snapshot.header;
+    filtered.entities.reserve(full_snapshot.entities.size());
+    for (const EntitySnapshot& entity : full_snapshot.entities) {
+        if (is_entity_relevant_to_session(session, entity, player_entity)) {
+            filtered.entities.push_back(entity);
+        }
+    }
+    return filtered;
+}
+
+bool KernelEngine::is_entity_relevant_to_session(
+    const PeerSession& session,
+    const EntitySnapshot& entity,
+    const EntitySnapshot* player_entity) const {
+    if (entity.net_id == session.player) {
+        return true;
+    }
+    if (entity.type == EntityType::kProjectile) {
+        const std::optional<entt::entity> world_entity = world_.find_entity(entity.net_id);
+        if (world_entity.has_value() &&
+            world_.registry().all_of<NetworkIdentity>(*world_entity) &&
+            world_.registry().get<NetworkIdentity>(*world_entity).owner_peer == session.peer) {
+            return true;
+        }
+    }
+    if (player_entity == nullptr) {
+        return false;
+    }
+
+    constexpr float kRelevantDistanceMeters = 40.0f;
+    constexpr float kProjectileRelevantDistanceMeters = 80.0f;
+    const float distance = glm::length(entity.position - player_entity->position);
+    if (distance <= kRelevantDistanceMeters) {
+        return true;
+    }
+    if (entity.type == EntityType::kProjectile &&
+        distance <= kProjectileRelevantDistanceMeters) {
+        const glm::vec3 to_player = player_entity->position - entity.position;
+        if (glm::length(entity.velocity) > 0.001f &&
+            glm::length(to_player) > 0.001f &&
+            glm::dot(glm::normalize(entity.velocity), glm::normalize(to_player)) > 0.5f) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void KernelEngine::sync_session_relevance(
+    PeerSession* session,
+    const WorldSnapshot& snapshot) {
+    if (session == nullptr || !session->welcomed) {
+        return;
+    }
+
+    std::unordered_set<NetId> next_relevant;
+    for (const EntitySnapshot& entity : snapshot.entities) {
+        next_relevant.insert(entity.net_id);
+        if (session->relevant_entities.find(entity.net_id) ==
+            session->relevant_entities.end()) {
+            send_entity_spawn(session->peer, entity);
+        }
+    }
+
+    for (NetId net_id : session->relevant_entities) {
+        if (next_relevant.find(net_id) == next_relevant.end()) {
+            send_entity_despawn(
+                session->peer,
+                net_id,
+                KernelDespawnReason_OutOfRange);
+        }
+    }
+    session->relevant_entities = std::move(next_relevant);
+}
+
+void KernelEngine::send_entity_spawn(PeerId peer, const EntitySnapshot& entity) {
+    PeerId owner_peer = 0;
+    const std::optional<entt::entity> world_entity = world_.find_entity(entity.net_id);
+    if (world_entity.has_value() &&
+        world_.registry().all_of<NetworkIdentity>(*world_entity)) {
+        owner_peer = world_.registry().get<NetworkIdentity>(*world_entity).owner_peer;
+    }
+    const std::vector<std::uint8_t> packet = encode_entity_spawn_packet(
+        EntitySpawnPacket{
+            entity.net_id,
+            entity.type,
+            owner_peer,
+            tick_loop_.current_tick(),
+            entity.position,
+            entity.rotation,
+        },
+        next_packet_sequence_++);
+    if (!transport_->Send(
+            peer,
+            packet.data(),
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kReliableEvent)) {
+        push_event(KernelEventType_Error, entity.net_id, peer, 16);
+    }
+}
+
+void KernelEngine::send_entity_despawn(
+    PeerId peer,
+    NetId net_id,
+    std::uint32_t reason) {
+    const std::vector<std::uint8_t> packet = encode_entity_despawn_packet(
+        EntityDespawnPacket{net_id, tick_loop_.current_tick(), reason},
+        next_packet_sequence_++);
+    if (!transport_->Send(
+            peer,
+            packet.data(),
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kReliableEvent)) {
+        push_event(KernelEventType_Error, net_id, peer, 17);
+    }
+}
+
 void KernelEngine::rebuild_render_states() {
     if ((config_.mode == KernelMode_ListenServer || config_.mode == KernelMode_Client) &&
         has_client_snapshot_) {
@@ -723,13 +1130,21 @@ void KernelEngine::rebuild_render_states_from_world() {
         const NetworkIdentity& identity = view.get<const NetworkIdentity>(entity);
         const EntityKind& kind = view.get<const EntityKind>(entity);
         const Transform& transform = view.get<const Transform>(entity);
+        std::uint16_t animation_state = 0;
+        std::uint32_t visual_flags = derived_visual_flags(world_, entity);
+        if (world_.registry().all_of<ReplicationState>(entity)) {
+            const ReplicationState& replication =
+                world_.registry().get<ReplicationState>(entity);
+            animation_state = replication.animation_state;
+            visual_flags |= replication.visual_flags;
+        }
         render_states_.push_back(RenderEntityState{
             identity.net_id,
             static_cast<std::uint16_t>(kind.type),
             to_kernel_vec3(transform.position),
             to_kernel_quat(transform.rotation),
-            0,
-            0,
+            animation_state,
+            visual_flags,
         });
     }
 }
@@ -741,8 +1156,13 @@ void KernelEngine::rebuild_render_states_from_snapshot() {
     WorldSnapshot render_snapshot;
     const WorldSnapshot& snapshot =
         build_interpolated_snapshot(&render_snapshot) ? render_snapshot : latest_client_snapshot_;
+    std::unordered_set<NetId> rendered_entities;
     for (const EntitySnapshot& entity : snapshot.entities) {
         if (has_predicted_local_entity_ && entity.net_id == local_player_net_id_) {
+            continue;
+        }
+        if (client_despawned_entities_.find(entity.net_id) !=
+            client_despawned_entities_.end()) {
             continue;
         }
         render_states_.push_back(RenderEntityState{
@@ -753,15 +1173,45 @@ void KernelEngine::rebuild_render_states_from_snapshot() {
             entity.state,
             entity.flags,
         });
+        rendered_entities.insert(entity.net_id);
+        auto replicated = std::find_if(
+            client_replicated_entities_.begin(),
+            client_replicated_entities_.end(),
+            [&entity](const ClientReplicatedEntity& replicated_entity) {
+                return replicated_entity.net_id == entity.net_id;
+            });
+        if (replicated != client_replicated_entities_.end()) {
+            replicated->active = true;
+            replicated->position = entity.position;
+            replicated->rotation = entity.rotation;
+        }
+    }
+
+    for (const ClientReplicatedEntity& entity : client_replicated_entities_) {
+        if (entity.net_id == local_player_net_id_ ||
+            rendered_entities.find(entity.net_id) != rendered_entities.end() ||
+            client_despawned_entities_.find(entity.net_id) !=
+                client_despawned_entities_.end()) {
+            continue;
+        }
+        render_states_.push_back(RenderEntityState{
+            entity.net_id,
+            static_cast<std::uint16_t>(entity.type),
+            to_kernel_vec3(entity.position),
+            to_kernel_quat(entity.rotation),
+            0,
+            0,
+        });
     }
 }
 
 void KernelEngine::publish_snapshot() {
+    const std::uint32_t server_time_ms = static_cast<std::uint32_t>(
+        tick_loop_.current_tick() * tick_loop_.fixed_delta_seconds() * 1000.0f);
     latest_snapshot_ = build_world_snapshot(
         world_,
         tick_loop_.current_tick(),
-        static_cast<std::uint32_t>(
-            tick_loop_.current_tick() * tick_loop_.fixed_delta_seconds() * 1000.0f),
+        server_time_ms,
         local_last_processed_input_seq_);
     spdlog::debug(
         "{}",
@@ -771,8 +1221,15 @@ void KernelEngine::publish_snapshot() {
             latest_snapshot_.entities.size()));
 
     if (config_.mode == KernelMode_ListenServer && loopback_transport_ != nullptr) {
+        local_listen_session_.peer = kLocalListenPeerId;
+        local_listen_session_.player = local_player_net_id_;
+        local_listen_session_.last_processed_input_seq = local_last_processed_input_seq_;
+        local_listen_session_.welcomed = local_player_net_id_ != 0;
+        const WorldSnapshot peer_snapshot =
+            build_relevant_snapshot(local_listen_session_, server_time_ms);
+        sync_session_relevance(&local_listen_session_, peer_snapshot);
         const std::vector<std::uint8_t> packet =
-            encode_snapshot_packet(latest_snapshot_, next_packet_sequence_++);
+            encode_snapshot_packet(peer_snapshot, next_packet_sequence_++);
         if (!loopback_transport_->Send(
                 kLocalListenPeerId,
                 packet.data(),
@@ -784,17 +1241,13 @@ void KernelEngine::publish_snapshot() {
     }
 
     if (config_.mode == KernelMode_DedicatedServer) {
-        for (const PeerSession& session : peer_sessions_) {
+        for (PeerSession& session : peer_sessions_) {
             if (!session.welcomed) {
                 continue;
             }
-            const WorldSnapshot peer_snapshot = build_world_snapshot(
-                world_,
-                tick_loop_.current_tick(),
-                static_cast<std::uint32_t>(
-                    tick_loop_.current_tick() *
-                    tick_loop_.fixed_delta_seconds() * 1000.0f),
-                session.last_processed_input_seq);
+            const WorldSnapshot peer_snapshot =
+                build_relevant_snapshot(session, server_time_ms);
+            sync_session_relevance(&session, peer_snapshot);
             const std::vector<std::uint8_t> packet =
                 encode_snapshot_packet(peer_snapshot, next_packet_sequence_++);
             if (!transport_->Send(
@@ -1000,6 +1453,9 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
         out_info->render_entity_state_size = sizeof(RenderEntityState);
         out_info->kernel_event_size = sizeof(KernelEvent);
         out_info->local_player_info_size = sizeof(KernelLocalPlayerInfo);
+        out_info->server_entity_create_info_size =
+            sizeof(KernelServerEntityCreateInfo);
+        out_info->server_entity_state_size = sizeof(KernelServerEntityState);
         out_info->capability_flags =
             KERNEL_CAPABILITY_CLIENT_MODE |
             KERNEL_CAPABILITY_LISTEN_SERVER_MODE |
@@ -1010,7 +1466,14 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_CLIENT_PREDICTION |
             KERNEL_CAPABILITY_SNAPSHOT_INTERPOLATION |
             KERNEL_CAPABILITY_LAG_COMPENSATED_HITSCAN |
-            KERNEL_CAPABILITY_LOCAL_PLAYER_INFO;
+            KERNEL_CAPABILITY_LOCAL_PLAYER_INFO |
+            KERNEL_CAPABILITY_SERVER_ENTITY_CREATE |
+            KERNEL_CAPABILITY_SERVER_ENTITY_DESTROY |
+            KERNEL_CAPABILITY_SERVER_ENTITY_TRANSFORM_WRITE |
+            KERNEL_CAPABILITY_SERVER_ENTITY_VELOCITY_WRITE |
+            KERNEL_CAPABILITY_SERVER_ENTITY_STATE_WRITE |
+            KERNEL_CAPABILITY_SERVER_ENTITY_QUERY |
+            KERNEL_CAPABILITY_SERVER_RELEVANCE_FILTER;
         return true;
     } catch (...) {
         return false;
@@ -1100,6 +1563,104 @@ uint32_t Kernel_PollEvents(
             return 0;
         }
         return kernel->engine->poll_events(out_events, max_events);
+    } catch (...) {
+        return 0;
+    }
+}
+
+bool Kernel_ServerCreateEntity(
+    KernelHandle* kernel,
+    const KernelServerEntityCreateInfo* create_info,
+    uint32_t* out_net_id) {
+    try {
+        return kernel != nullptr && create_info != nullptr &&
+               kernel->engine->server_create_entity(*create_info, out_net_id);
+    } catch (...) {
+        return false;
+    }
+}
+
+bool Kernel_ServerDestroyEntity(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    uint32_t reason) {
+    try {
+        return kernel != nullptr &&
+               kernel->engine->server_destroy_entity(net_id, reason);
+    } catch (...) {
+        return false;
+    }
+}
+
+bool Kernel_ServerSetEntityTransform(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    const KernelVec3* position,
+    const KernelQuat* rotation) {
+    try {
+        return kernel != nullptr && position != nullptr && rotation != nullptr &&
+               kernel->engine->server_set_entity_transform(
+                   net_id,
+                   *position,
+                   *rotation);
+    } catch (...) {
+        return false;
+    }
+}
+
+bool Kernel_ServerSetEntityVelocity(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    const KernelVec3* velocity) {
+    try {
+        return kernel != nullptr && velocity != nullptr &&
+               kernel->engine->server_set_entity_velocity(net_id, *velocity);
+    } catch (...) {
+        return false;
+    }
+}
+
+bool Kernel_ServerSetEntityState(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    uint16_t animation_state,
+    uint32_t visual_flags) {
+    try {
+        return kernel != nullptr &&
+               kernel->engine->server_set_entity_state(
+                   net_id,
+                   animation_state,
+                   visual_flags);
+    } catch (...) {
+        return false;
+    }
+}
+
+bool Kernel_ServerGetEntityState(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    KernelServerEntityState* out_state) {
+    try {
+        return kernel != nullptr &&
+               kernel->engine->server_get_entity_state(net_id, out_state);
+    } catch (...) {
+        return false;
+    }
+}
+
+uint32_t Kernel_ServerQueryEntities(
+    KernelHandle* kernel,
+    uint16_t entity_type_filter,
+    KernelServerEntityState* out_states,
+    uint32_t max_states) {
+    try {
+        if (kernel == nullptr) {
+            return 0;
+        }
+        return kernel->engine->server_query_entities(
+            static_cast<network_example::EntityType>(entity_type_filter),
+            out_states,
+            max_states);
     } catch (...) {
         return 0;
     }

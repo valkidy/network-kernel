@@ -187,7 +187,7 @@ void rewind_hitscan_uses_historical_hit_volumes() {
     const auto current_enemy_entity = current_world.find_entity(current_enemy);
     assert(current_enemy_entity.has_value());
     current_world.registry().get<network_example::Transform>(*current_enemy_entity).position =
-        glm::vec3{20.0f, 0.0f, 0.0f};
+        glm::vec3{120.0f, 0.0f, 0.0f};
 
     std::vector<KernelEvent> events;
     network_example::simulate_weapons(

@@ -1,4 +1,4 @@
-#include "protocol/public/m2_packets.h"
+#include "protocol/public/network_packets.h"
 
 #include <cstddef>
 #include <cstring>
@@ -9,8 +9,10 @@ namespace {
 
 constexpr std::size_t kInputPayloadSize = 37;
 constexpr std::size_t kSnapshotHeaderPayloadSize = 16;
-constexpr std::size_t kEntitySnapshotPayloadSize = 50;
+constexpr std::size_t kEntitySnapshotPayloadSize = 54;
 constexpr std::size_t kReliableEventPayloadSize = 18;
+constexpr std::size_t kEntitySpawnPayloadSize = 42;
+constexpr std::size_t kEntityDespawnPayloadSize = 12;
 
 void write_u8(std::vector<std::uint8_t>* buffer, std::uint8_t value) {
     buffer->push_back(value);
@@ -241,8 +243,8 @@ std::vector<std::uint8_t> encode_snapshot_packet(
         write_quat(&payload, entity.rotation);
         write_vec3(&payload, entity.velocity);
         write_u16(&payload, entity.hp);
-        write_u8(&payload, entity.state);
-        write_u8(&payload, entity.flags);
+        write_u16(&payload, entity.state);
+        write_u32(&payload, entity.flags);
     }
 
     return wrap_packet(MessageType::kSnapshotPacket, payload, sequence);
@@ -286,8 +288,8 @@ bool decode_snapshot_packet(
             !read_quat(payload, payload_size, &offset, &entity.rotation) ||
             !read_vec3(payload, payload_size, &offset, &entity.velocity) ||
             !read_u16(payload, payload_size, &offset, &entity.hp) ||
-            !read_u8(payload, payload_size, &offset, &entity.state) ||
-            !read_u8(payload, payload_size, &offset, &entity.flags)) {
+            !read_u16(payload, payload_size, &offset, &entity.state) ||
+            !read_u32(payload, payload_size, &offset, &entity.flags)) {
             return false;
         }
         entity.type = static_cast<EntityType>(entity_type);
@@ -346,6 +348,84 @@ bool decode_reliable_event_packet(
 
     event.type = static_cast<KernelEventType>(event_type);
     *out_event = event;
+    return true;
+}
+
+std::vector<std::uint8_t> encode_entity_spawn_packet(
+    const EntitySpawnPacket& packet,
+    std::uint32_t sequence) {
+    std::vector<std::uint8_t> payload;
+    payload.reserve(kEntitySpawnPayloadSize);
+    write_u32(&payload, packet.net_id);
+    write_u16(&payload, static_cast<std::uint16_t>(packet.entity_type));
+    write_u32(&payload, packet.owner_peer);
+    write_u32(&payload, packet.server_tick);
+    write_vec3(&payload, packet.position);
+    write_quat(&payload, packet.rotation);
+    return wrap_packet(MessageType::kEntitySpawn, payload, sequence);
+}
+
+bool decode_entity_spawn_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    EntitySpawnPacket* out_packet) {
+    const std::uint8_t* payload = nullptr;
+    std::size_t payload_size = 0;
+    if (out_packet == nullptr ||
+        !unwrap_packet(data, size, MessageType::kEntitySpawn, &payload, &payload_size) ||
+        payload_size != kEntitySpawnPayloadSize) {
+        return false;
+    }
+
+    EntitySpawnPacket packet{};
+    std::uint16_t entity_type = 0;
+    std::size_t offset = 0;
+    if (!read_u32(payload, payload_size, &offset, &packet.net_id) ||
+        !read_u16(payload, payload_size, &offset, &entity_type) ||
+        !read_u32(payload, payload_size, &offset, &packet.owner_peer) ||
+        !read_u32(payload, payload_size, &offset, &packet.server_tick) ||
+        !read_vec3(payload, payload_size, &offset, &packet.position) ||
+        !read_quat(payload, payload_size, &offset, &packet.rotation) ||
+        offset != payload_size) {
+        return false;
+    }
+    packet.entity_type = static_cast<EntityType>(entity_type);
+    *out_packet = packet;
+    return true;
+}
+
+std::vector<std::uint8_t> encode_entity_despawn_packet(
+    const EntityDespawnPacket& packet,
+    std::uint32_t sequence) {
+    std::vector<std::uint8_t> payload;
+    payload.reserve(kEntityDespawnPayloadSize);
+    write_u32(&payload, packet.net_id);
+    write_u32(&payload, packet.server_tick);
+    write_u32(&payload, packet.reason);
+    return wrap_packet(MessageType::kEntityDespawn, payload, sequence);
+}
+
+bool decode_entity_despawn_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    EntityDespawnPacket* out_packet) {
+    const std::uint8_t* payload = nullptr;
+    std::size_t payload_size = 0;
+    if (out_packet == nullptr ||
+        !unwrap_packet(data, size, MessageType::kEntityDespawn, &payload, &payload_size) ||
+        payload_size != kEntityDespawnPayloadSize) {
+        return false;
+    }
+
+    EntityDespawnPacket packet{};
+    std::size_t offset = 0;
+    if (!read_u32(payload, payload_size, &offset, &packet.net_id) ||
+        !read_u32(payload, payload_size, &offset, &packet.server_tick) ||
+        !read_u32(payload, payload_size, &offset, &packet.reason) ||
+        offset != payload_size) {
+        return false;
+    }
+    *out_packet = packet;
     return true;
 }
 

@@ -1,8 +1,8 @@
 licenses(["notice"])
 
 cc_test(
-    name = "m2_packets_test",
-    srcs = ["m2_packets_test.cc"],
+    name = "network_packets_test",
+    srcs = ["network_packets_test.cc"],
     deps = ["//engine/src/protocol:protocol"],
 )
 

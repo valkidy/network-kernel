@@ -1,4 +1,4 @@
-# M6 Native ABI
+# Network Kernel ABI
 
 M6.1 through M6.3 define the native plugin boundary for the network kernel.
 M6.4 adds a thin Unity C# package over the same C ABI.
@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 2`.
+`KERNEL_ABI_VERSION == 3`.
 
 ## Ownership
 
@@ -30,6 +30,11 @@ failures return `NULL`, `false`, or `0`.
 Additive changes must prefer new `Kernel_*` functions or new capability flags.
 Breaking changes to public struct layout, enum semantics, buffer ownership, or
 function signatures require a `KERNEL_ABI_VERSION` bump.
+
+ABI version 3 adds server-only gameplay scaffolding for external dedicated
+server logic. The kernel exposes generic entity create/destroy, transform,
+velocity, persistent state write, and entity query functions. These functions
+are intentionally not enemy-specific, and they fail when used from client mode.
 
 Consumers pass a `struct_size`-style byte size to `Kernel_GetAbiInfo`. The call
 returns `false` if the output pointer is null or the provided size is smaller

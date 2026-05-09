@@ -36,4 +36,21 @@ void simulate_player_movement(
     }
 }
 
+void simulate_velocity_movement(World& world, float fixed_delta_seconds) {
+    if (fixed_delta_seconds <= 0.0f) {
+        return;
+    }
+
+    auto view = world.registry().view<Transform, Velocity>();
+    for (const entt::entity entity : view) {
+        if (world.registry().all_of<PlayerTag>(entity) ||
+            world.registry().all_of<ProjectileTag>(entity)) {
+            continue;
+        }
+        Transform& transform = view.get<Transform>(entity);
+        const Velocity& velocity = view.get<Velocity>(entity);
+        transform.position += velocity.linear * fixed_delta_seconds;
+    }
+}
+
 }  // namespace network_example

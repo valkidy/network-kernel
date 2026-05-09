@@ -36,3 +36,9 @@ cc_test(
     srcs = ["listen_server_test.cc"],
     deps = ["//engine/src/kernel:kernel"],
 )
+
+cc_test(
+    name = "relevance_test",
+    srcs = ["relevance_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
