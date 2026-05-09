@@ -324,6 +324,17 @@ bool KernelEngine::server_create_entity(
 
     *out_net_id = net_id;
     push_event(KernelEventType_EntitySpawned, net_id, create_info.owner_peer);
+    if (config_.mode == KernelMode_ListenServer && loopback_transport_ != nullptr) {
+        const WorldSnapshot snapshot = build_world_snapshot(
+            world_,
+            tick_loop_.current_tick(),
+            static_cast<std::uint32_t>(
+                tick_loop_.current_tick() * tick_loop_.fixed_delta_seconds() * 1000.0f),
+            local_last_processed_input_seq_);
+        if (const EntitySnapshot* spawned = find_snapshot_entity(snapshot, net_id)) {
+            send_entity_spawn(kLocalListenPeerId, *spawned);
+        }
+    }
     publish_snapshot();
     return true;
 }
@@ -334,6 +345,9 @@ bool KernelEngine::server_destroy_entity(NetId net_id, std::uint32_t reason) {
     }
     if (!world_.destroy(net_id)) {
         return false;
+    }
+    if (config_.mode == KernelMode_ListenServer && loopback_transport_ != nullptr) {
+        send_entity_despawn(kLocalListenPeerId, net_id, reason);
     }
     for (PeerSession& session : peer_sessions_) {
         if (session.relevant_entities.erase(net_id) > 0) {
@@ -637,10 +651,17 @@ void KernelEngine::handle_client_spawn(const EntitySpawnPacket& packet) {
             return entity.net_id == packet.net_id;
         });
     if (found == client_replicated_entities_.end()) {
-        client_replicated_entities_.push_back(
-            ClientReplicatedEntity{packet.net_id, packet.entity_type, false});
+        client_replicated_entities_.push_back(ClientReplicatedEntity{
+            packet.net_id,
+            packet.entity_type,
+            packet.position,
+            packet.rotation,
+            false,
+        });
     } else {
         found->type = packet.entity_type;
+        found->position = packet.position;
+        found->rotation = packet.rotation;
         found->active = false;
     }
     events_.push_back(KernelEvent{
@@ -695,8 +716,14 @@ void KernelEngine::poll_client_transport() {
 
     TransportEvent transport_event;
     while (loopback_transport_->PollClientEvent(transport_event)) {
-        if (transport_event.type != TransportEventType::kMessage ||
-            transport_event.channel != ChannelId::kSnapshot) {
+        if (transport_event.type != TransportEventType::kMessage) {
+            continue;
+        }
+        if (transport_event.channel == ChannelId::kReliableEvent) {
+            handle_client_reliable_event(transport_event);
+            continue;
+        }
+        if (transport_event.channel != ChannelId::kSnapshot) {
             continue;
         }
 
@@ -1119,6 +1146,7 @@ void KernelEngine::rebuild_render_states_from_snapshot() {
     WorldSnapshot render_snapshot;
     const WorldSnapshot& snapshot =
         build_interpolated_snapshot(&render_snapshot) ? render_snapshot : latest_client_snapshot_;
+    std::unordered_set<NetId> rendered_entities;
     for (const EntitySnapshot& entity : snapshot.entities) {
         if (has_predicted_local_entity_ && entity.net_id == local_player_net_id_) {
             continue;
@@ -1134,6 +1162,35 @@ void KernelEngine::rebuild_render_states_from_snapshot() {
             to_kernel_quat(entity.rotation),
             entity.state,
             entity.flags,
+        });
+        rendered_entities.insert(entity.net_id);
+        auto replicated = std::find_if(
+            client_replicated_entities_.begin(),
+            client_replicated_entities_.end(),
+            [&entity](const ClientReplicatedEntity& replicated_entity) {
+                return replicated_entity.net_id == entity.net_id;
+            });
+        if (replicated != client_replicated_entities_.end()) {
+            replicated->active = true;
+            replicated->position = entity.position;
+            replicated->rotation = entity.rotation;
+        }
+    }
+
+    for (const ClientReplicatedEntity& entity : client_replicated_entities_) {
+        if (entity.net_id == local_player_net_id_ ||
+            rendered_entities.find(entity.net_id) != rendered_entities.end() ||
+            client_despawned_entities_.find(entity.net_id) !=
+                client_despawned_entities_.end()) {
+            continue;
+        }
+        render_states_.push_back(RenderEntityState{
+            entity.net_id,
+            static_cast<std::uint16_t>(entity.type),
+            to_kernel_vec3(entity.position),
+            to_kernel_quat(entity.rotation),
+            0,
+            0,
         });
     }
 }

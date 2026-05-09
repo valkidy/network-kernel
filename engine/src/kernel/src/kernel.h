@@ -69,6 +69,8 @@ private:
     struct ClientReplicatedEntity {
         NetId net_id = 0;
         EntityType type = EntityType::kUnknown;
+        glm::vec3 position{0.0f, 0.0f, 0.0f};
+        glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
         bool active = false;
     };
 

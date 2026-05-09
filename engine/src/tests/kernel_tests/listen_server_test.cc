@@ -26,6 +26,18 @@ bool has_non_player_state(
     return false;
 }
 
+bool has_entity(
+    const std::array<RenderEntityState, 16>& states,
+    std::uint32_t count,
+    std::uint32_t net_id) {
+    for (std::uint32_t index = 0; index < count; ++index) {
+        if (states[index].net_id == net_id) {
+            return true;
+        }
+    }
+    return false;
+}
+
 }  // namespace
 
 int main() {
@@ -114,6 +126,53 @@ int main() {
         assert(combat_events[index].type != KernelEventType_DamageApplied);
     }
     assert(saw_fire_confirmed);
+
+    KernelServerEntityCreateInfo enemy_create{};
+    enemy_create.struct_size = sizeof(enemy_create);
+    enemy_create.entity_type = 2;
+    enemy_create.position = KernelVec3{6.0f, 0.0f, 0.0f};
+    enemy_create.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+    enemy_create.animation_state = 4;
+    enemy_create.visual_flags = 8;
+    std::uint32_t enemy_net_id = 0;
+    assert(Kernel_ServerCreateEntity(kernel, &enemy_create, &enemy_net_id));
+    assert(enemy_net_id != 0);
+
+    Kernel_Update(kernel, 0.0f);
+    std::array<RenderEntityState, 16> spawned_states{};
+    const std::uint32_t spawned_count = Kernel_GetRenderStates(
+        kernel,
+        spawned_states.data(),
+        static_cast<std::uint32_t>(spawned_states.size()));
+    assert(spawned_count >= 2);
+    assert(has_entity(spawned_states, spawned_count, enemy_net_id));
+
+    std::array<KernelEvent, 16> spawn_events{};
+    const std::uint32_t spawn_event_count = Kernel_PollEvents(
+        kernel,
+        spawn_events.data(),
+        static_cast<std::uint32_t>(spawn_events.size()));
+    bool saw_enemy_spawned = false;
+    for (std::uint32_t index = 0; index < spawn_event_count; ++index) {
+        saw_enemy_spawned =
+            saw_enemy_spawned ||
+            (spawn_events[index].type == KernelEventType_EntitySpawned &&
+             spawn_events[index].net_id == enemy_net_id);
+    }
+    assert(saw_enemy_spawned);
+
+    assert(Kernel_ServerDestroyEntity(
+        kernel,
+        enemy_net_id,
+        KernelDespawnReason_Destroyed));
+    Kernel_Update(kernel, 0.0f);
+
+    std::array<RenderEntityState, 16> despawned_states{};
+    const std::uint32_t despawned_count = Kernel_GetRenderStates(
+        kernel,
+        despawned_states.data(),
+        static_cast<std::uint32_t>(despawned_states.size()));
+    assert(!has_entity(despawned_states, despawned_count, enemy_net_id));
 
     Kernel_Destroy(kernel);
     return 0;
