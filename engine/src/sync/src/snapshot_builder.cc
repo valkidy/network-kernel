@@ -30,6 +30,12 @@ WorldSnapshot build_world_snapshot(
         if (world.registry().all_of<Health>(entity)) {
             entity_snapshot.hp = world.registry().get<Health>(entity).hp;
         }
+        if (world.registry().all_of<ReplicationState>(entity)) {
+            const ReplicationState& replication =
+                world.registry().get<ReplicationState>(entity);
+            entity_snapshot.state = replication.animation_state;
+            entity_snapshot.flags = replication.visual_flags;
+        }
         snapshot.entities.push_back(entity_snapshot);
     }
 

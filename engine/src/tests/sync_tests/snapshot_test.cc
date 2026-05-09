@@ -12,6 +12,11 @@ int main() {
         world.spawn_player(1, glm::vec3{1.0f, 2.0f, 3.0f});
     const network_example::NetId enemy =
         world.spawn_enemy(glm::vec3{4.0f, 0.0f, 0.0f});
+    const auto enemy_entity = world.find_entity(enemy);
+    assert(enemy_entity.has_value());
+    world.registry().emplace<network_example::ReplicationState>(
+        *enemy_entity,
+        network_example::ReplicationState{9, 0x01020304u});
 
     const network_example::WorldSnapshot snapshot =
         network_example::build_world_snapshot(world, 7, 233, 3);
@@ -19,6 +24,13 @@ int main() {
     assert(snapshot.header.server_time_ms == 233);
     assert(snapshot.header.last_processed_input_seq == 3);
     assert(snapshot.entities.size() == 2);
+    bool saw_enemy_state = false;
+    for (const network_example::EntitySnapshot& entity : snapshot.entities) {
+        if (entity.net_id == enemy) {
+            saw_enemy_state = entity.state == 9 && entity.flags == 0x01020304u;
+        }
+    }
+    assert(saw_enemy_state);
 
     network_example::HistoryBuffer history(2);
     history.write_frame(world, 7);
@@ -37,8 +49,6 @@ int main() {
 
     network_example::HistoryBuffer raycast_history(4);
     raycast_history.write_frame(world, 10);
-    const auto enemy_entity = world.find_entity(enemy);
-    assert(enemy_entity.has_value());
     world.registry().get<network_example::Transform>(*enemy_entity).position =
         glm::vec3{20.0f, 0.0f, 0.0f};
     raycast_history.write_frame(world, 11);
@@ -62,7 +72,8 @@ int main() {
         &hit));
 
     network_example::World dead_world;
-    dead_world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+    const network_example::NetId dead_player =
+        dead_world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
     const network_example::NetId dead_enemy =
         dead_world.spawn_enemy(glm::vec3{5.0f, 0.0f, 0.0f});
     assert(dead_world.apply_damage(dead_enemy, 50));
@@ -73,7 +84,7 @@ int main() {
         glm::vec3{0.0f, 1.0f, 0.0f},
         glm::vec3{1.0f, 0.0f, 0.0f},
         10.0f,
-        0,
+        dead_player,
         &hit));
     return 0;
 }

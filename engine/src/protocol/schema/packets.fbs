@@ -10,7 +10,9 @@ enum MessageType : ushort {
   ExplosionResult = 7,
   Disconnect = 8,
   PingPong = 9,
-  Welcome = 10
+  Welcome = 10,
+  EntitySpawn = 11,
+  EntityDespawn = 12
 }
 
 table Vec3 {
@@ -44,8 +46,8 @@ table EntitySnapshot {
   rotation:Quat;
   velocity:Vec3;
   hp:ushort;
-  state:ubyte;
-  flags:ubyte;
+  state:ushort;
+  flags:uint;
 }
 
 table WelcomePacket {
@@ -69,4 +71,19 @@ table ReliableEventPacket {
   net_id:uint;
   peer_id:uint;
   code:uint;
+}
+
+table EntitySpawnPacket {
+  net_id:uint;
+  entity_type:ushort;
+  owner_peer:uint;
+  server_tick:uint;
+  position:Vec3;
+  rotation:Quat;
+}
+
+table EntityDespawnPacket {
+  net_id:uint;
+  server_tick:uint;
+  reason:uint;
 }

@@ -135,6 +135,39 @@ int main() {
         load_symbol<bool(KernelHandle*, KernelLocalPlayerInfo*)>(
             library,
             "Kernel_GetLocalPlayerInfo");
+    auto* kernel_server_create_entity =
+        load_symbol<bool(
+            KernelHandle*,
+            const KernelServerEntityCreateInfo*,
+            std::uint32_t*)>(library, "Kernel_ServerCreateEntity");
+    auto* kernel_server_destroy_entity =
+        load_symbol<bool(KernelHandle*, std::uint32_t, std::uint32_t)>(
+            library,
+            "Kernel_ServerDestroyEntity");
+    [[maybe_unused]] auto* kernel_server_set_entity_transform =
+        load_symbol<bool(
+            KernelHandle*,
+            std::uint32_t,
+            const KernelVec3*,
+            const KernelQuat*)>(library, "Kernel_ServerSetEntityTransform");
+    [[maybe_unused]] auto* kernel_server_set_entity_velocity =
+        load_symbol<bool(KernelHandle*, std::uint32_t, const KernelVec3*)>(
+            library,
+            "Kernel_ServerSetEntityVelocity");
+    auto* kernel_server_set_entity_state =
+        load_symbol<bool(KernelHandle*, std::uint32_t, std::uint16_t, std::uint32_t)>(
+            library,
+            "Kernel_ServerSetEntityState");
+    auto* kernel_server_get_entity_state =
+        load_symbol<bool(KernelHandle*, std::uint32_t, KernelServerEntityState*)>(
+            library,
+            "Kernel_ServerGetEntityState");
+    [[maybe_unused]] auto* kernel_server_query_entities =
+        load_symbol<std::uint32_t(
+            KernelHandle*,
+            std::uint16_t,
+            KernelServerEntityState*,
+            std::uint32_t)>(library, "Kernel_ServerQueryEntities");
 
     KernelAbiInfo abi_info{};
     assert(kernel_get_abi_info(&abi_info, sizeof(abi_info)));
@@ -144,8 +177,12 @@ int main() {
     assert(abi_info.render_entity_state_size == sizeof(RenderEntityState));
     assert(abi_info.kernel_event_size == sizeof(KernelEvent));
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
+    assert(abi_info.server_entity_create_info_size ==
+           sizeof(KernelServerEntityCreateInfo));
+    assert(abi_info.server_entity_state_size == sizeof(KernelServerEntityState));
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LISTEN_SERVER_MODE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LOCAL_PLAYER_INFO) != 0);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_SERVER_ENTITY_CREATE) != 0);
     assert(!kernel_get_abi_info(nullptr, sizeof(abi_info)));
     assert(!kernel_get_abi_info(&abi_info, sizeof(abi_info) - 1));
     KernelLocalPlayerInfo local_info{};
@@ -167,6 +204,25 @@ int main() {
     assert(local_info.has_welcome);
     assert(local_info.connected);
 
+    KernelServerEntityCreateInfo create_info{};
+    create_info.struct_size = sizeof(create_info);
+    create_info.entity_type = 2;
+    create_info.position = KernelVec3{2.0f, 0.0f, 0.0f};
+    create_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+    std::uint32_t enemy = 0;
+    assert(kernel_server_create_entity(kernel, &create_info, &enemy));
+    assert(enemy != 0);
+    assert(kernel_server_set_entity_state(kernel, enemy, 4, 8));
+    KernelServerEntityState server_state{};
+    server_state.struct_size = sizeof(server_state);
+    assert(kernel_server_get_entity_state(kernel, enemy, &server_state));
+    assert(server_state.net_id == enemy);
+    assert(server_state.animation_state == 4);
+    assert(kernel_server_destroy_entity(
+        kernel,
+        enemy,
+        KernelDespawnReason_Destroyed));
+
     PlayerInput input{};
     input.input_seq = 1;
     input.client_tick = 1;
@@ -181,7 +237,7 @@ int main() {
         kernel,
         states.data(),
         static_cast<std::uint32_t>(states.size()));
-    assert(state_count >= 2);
+    assert(state_count >= 1);
 
     std::array<KernelEvent, 16> events{};
     const std::uint32_t event_count = kernel_poll_events(

@@ -53,6 +53,44 @@ uint32_t Kernel_PollEvents(
     KernelEvent* out_events,
     uint32_t max_events);
 
+bool Kernel_ServerCreateEntity(
+    KernelHandle* kernel,
+    const KernelServerEntityCreateInfo* create_info,
+    uint32_t* out_net_id);
+
+bool Kernel_ServerDestroyEntity(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    uint32_t reason);
+
+bool Kernel_ServerSetEntityTransform(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    const KernelVec3* position,
+    const KernelQuat* rotation);
+
+bool Kernel_ServerSetEntityVelocity(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    const KernelVec3* velocity);
+
+bool Kernel_ServerSetEntityState(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    uint16_t animation_state,
+    uint32_t visual_flags);
+
+bool Kernel_ServerGetEntityState(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    KernelServerEntityState* out_state);
+
+uint32_t Kernel_ServerQueryEntities(
+    KernelHandle* kernel,
+    uint16_t entity_type_filter,
+    KernelServerEntityState* out_states,
+    uint32_t max_states);
+
 #ifdef __cplusplus
 }
 #endif

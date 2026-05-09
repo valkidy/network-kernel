@@ -53,8 +53,8 @@ int main() {
     entity.rotation = glm::quat{0.5f, 0.5f, 0.5f, 0.5f};
     entity.velocity = glm::vec3{4.0f, 5.0f, 6.0f};
     entity.hp = 88;
-    entity.state = 2;
-    entity.flags = 3;
+    entity.state = 513;
+    entity.flags = 0x01020304u;
     snapshot.entities.push_back(entity);
 
     const std::vector<std::uint8_t> snapshot_packet =
@@ -74,8 +74,8 @@ int main() {
     assert(nearly_equal(decoded_snapshot.entities[0].rotation.w, 0.5f));
     assert(nearly_equal(decoded_snapshot.entities[0].velocity.z, 6.0f));
     assert(decoded_snapshot.entities[0].hp == 88);
-    assert(decoded_snapshot.entities[0].state == 2);
-    assert(decoded_snapshot.entities[0].flags == 3);
+    assert(decoded_snapshot.entities[0].state == 513);
+    assert(decoded_snapshot.entities[0].flags == 0x01020304u);
 
     KernelEvent reliable_event{};
     reliable_event.type = KernelEventType_PlayerLeft;
@@ -99,6 +99,46 @@ int main() {
         input_packet.data(),
         input_packet.size(),
         &decoded_event));
+
+    network_example::EntitySpawnPacket spawn{};
+    spawn.net_id = 41;
+    spawn.entity_type = network_example::EntityType::kEnemy;
+    spawn.owner_peer = 9;
+    spawn.server_tick = 12;
+    spawn.position = glm::vec3{3.0f, 4.0f, 5.0f};
+    spawn.rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+    const std::vector<std::uint8_t> spawn_packet =
+        network_example::encode_entity_spawn_packet(spawn, 45);
+    network_example::EntitySpawnPacket decoded_spawn{};
+    assert(network_example::decode_entity_spawn_packet(
+        spawn_packet.data(),
+        spawn_packet.size(),
+        &decoded_spawn));
+    assert(decoded_spawn.net_id == 41);
+    assert(decoded_spawn.entity_type == network_example::EntityType::kEnemy);
+    assert(decoded_spawn.owner_peer == 9);
+    assert(decoded_spawn.server_tick == 12);
+    assert(nearly_equal(decoded_spawn.position.y, 4.0f));
+    assert(nearly_equal(decoded_spawn.rotation.w, 1.0f));
+    assert(!network_example::decode_entity_spawn_packet(
+        reliable_event_packet.data(),
+        reliable_event_packet.size(),
+        &decoded_spawn));
+
+    network_example::EntityDespawnPacket despawn{};
+    despawn.net_id = 41;
+    despawn.server_tick = 18;
+    despawn.reason = KernelDespawnReason_OutOfRange;
+    const std::vector<std::uint8_t> despawn_packet =
+        network_example::encode_entity_despawn_packet(despawn, 46);
+    network_example::EntityDespawnPacket decoded_despawn{};
+    assert(network_example::decode_entity_despawn_packet(
+        despawn_packet.data(),
+        despawn_packet.size(),
+        &decoded_despawn));
+    assert(decoded_despawn.net_id == 41);
+    assert(decoded_despawn.server_tick == 18);
+    assert(decoded_despawn.reason == KernelDespawnReason_OutOfRange);
 
     std::vector<std::uint8_t> bad_header = input_packet;
     bad_header[0] = 0;

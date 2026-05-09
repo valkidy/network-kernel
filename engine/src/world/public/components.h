@@ -76,6 +76,11 @@ struct ProjectileState {
     glm::vec3 previous_position{0.0f, 0.0f, 0.0f};
 };
 
+struct ReplicationState {
+    std::uint16_t animation_state = 0;
+    std::uint32_t visual_flags = 0;
+};
+
 }  // namespace network_example
 
 #endif  // WORLD_PUBLIC_COMPONENTS_H_
