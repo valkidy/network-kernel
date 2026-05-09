@@ -7,6 +7,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include "game_server/game_server.h"
 #include "kernel/public/kernel_api.h"
 
 namespace {
@@ -35,6 +36,7 @@ int RunDedicatedServer(std::uint16_t port) {
     }
 
     spdlog::info("dedicated server listening on 127.0.0.1:{}", port);
+    network_example::game_server::GameServer game_server(kernel);
 
     constexpr float kDeltaSeconds = 1.0f / 30.0f;
     while (true) {
@@ -51,7 +53,9 @@ int RunDedicatedServer(std::uint16_t port) {
                 events[index].net_id,
                 events[index].peer_id,
                 events[index].code);
+            game_server.handle_event(events[index]);
         }
+        game_server.tick(kDeltaSeconds);
         std::this_thread::sleep_for(std::chrono::milliseconds(33));
     }
 

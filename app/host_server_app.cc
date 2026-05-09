@@ -5,6 +5,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include "game_server/game_server.h"
 #include "kernel/public/kernel_api.h"
 
 namespace {
@@ -49,6 +50,7 @@ int RunHostServer(std::uint16_t port) {
         1.0f / 30.0f,
     };
 
+    network_example::game_server::GameServer game_server(kernel);
     std::uint32_t sequence = 1;
     for (float delta_seconds : kFrameDeltas) {
         const PlayerInput input = scripted_input(sequence++);
@@ -66,7 +68,9 @@ int RunHostServer(std::uint16_t port) {
                 events[index].net_id,
                 events[index].peer_id,
                 events[index].code);
+            game_server.handle_event(events[index]);
         }
+        game_server.tick(delta_seconds);
     }
 
     std::array<RenderEntityState, 16> states{};

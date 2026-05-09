@@ -1,0 +1,34 @@
+licenses(["notice"])
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "game_server",
+    srcs = [
+        "enemy_ai_controller.cc",
+        "enemy_manager.cc",
+        "game_server.cc",
+    ],
+    hdrs = [
+        "enemy.h",
+        "enemy_ai_controller.h",
+        "enemy_manager.h",
+        "game_server.h",
+    ],
+    deps = ["//engine/src/kernel:kernel_api"],
+)
+
+cc_test(
+    name = "enemy_ai_controller_test",
+    srcs = ["enemy_ai_controller_test.cc"],
+    deps = [":game_server"],
+)
+
+cc_test(
+    name = "enemy_manager_test",
+    srcs = ["enemy_manager_test.cc"],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)

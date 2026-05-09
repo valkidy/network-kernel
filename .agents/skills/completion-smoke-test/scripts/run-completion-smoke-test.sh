@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd -P)"
-OUTPUT_BASE="${OUTPUT_BASE:-/private/tmp/bazel-network-example}"
+OUTPUT_BASE="${OUTPUT_BASE:-/private/tmp/bazel-network-example-completion-smoke}"
 APP_BIN="$REPO_ROOT/bazel-bin/app/app"
 ADDRESS="${ADDRESS:-127.0.0.1:7777}"
 PORT="${PORT:-7777}"
@@ -66,6 +66,16 @@ echo "==> Building unified app"
   -c opt \
   //app:app
 
+echo "==> Running GameServer focused tests"
+"$BAZEL_CMD" \
+  --output_base="$OUTPUT_BASE" \
+  test \
+  --config=macos \
+  --copt=-Wunused-function \
+  -c opt \
+  //game_server:enemy_ai_controller_test \
+  //game_server:enemy_manager_test
+
 if [[ ! -x "$APP_BIN" ]]; then
   echo "ERROR: expected app binary not found or not executable: $APP_BIN" >&2
   exit 1
@@ -73,6 +83,11 @@ fi
 
 echo "==> Running host_server mode"
 "$APP_BIN" --mode=host_server --port="$PORT" >"$HOST_LOG" 2>&1
+if ! grep -Eq "render_state net_id=[0-9]+ type=2 pos=\\(5\\." "$HOST_LOG"; then
+  echo "ERROR: host_server did not render a moving GameServer enemy" >&2
+  print_failure_context
+  exit 1
+fi
 
 echo "==> Starting dedicated_server mode"
 "$APP_BIN" --mode=dedicated_server --port="$PORT" >"$SERVER_LOG" 2>&1 &
@@ -102,6 +117,12 @@ fi
 
 echo "==> Running client mode against $ADDRESS"
 "$APP_BIN" --mode=client --address="$ADDRESS" >"$CLIENT_LOG" 2>&1
+sleep 0.2
+if ! grep -Eq "event type=4 .* peer=0 " "$SERVER_LOG"; then
+  echo "ERROR: dedicated_server did not report a GameServer enemy spawn" >&2
+  print_failure_context
+  exit 1
+fi
 
 echo "==> Completion smoke test passed"
 echo "==> Logs are in: $LOG_DIR"
