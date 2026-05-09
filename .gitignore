@@ -1,5 +1,6 @@
 .aswb/
 bazel-*
+plugins/output/
 !.agents/skills/bazel-build/
 !.agents/skills/bazel-build/**
 !plugins/com.network-example.kernel/Samples~/
