@@ -108,7 +108,9 @@ int main() {
     assert(server_state.net_id == created_net_id);
     assert(server_state.entity_type == 2);
     assert(server_state.animation_state == 7);
-    assert(server_state.visual_flags == 0x12345678u);
+    assert(
+        server_state.visual_flags ==
+        (0x12345678u | KERNEL_VISUAL_FLAG_MOVING));
     assert(server_state.position.x == 5.0f);
     assert(server_state.velocity.x == 1.0f);
     std::array<KernelServerEntityState, 4> queried_states{};
@@ -147,7 +149,9 @@ int main() {
     assert(states[0].net_id == created_net_id);
     assert(states[0].position.x > 5.0f);
     assert(states[0].animation_state == 7);
-    assert(states[0].visual_flags == 0x12345678u);
+    assert(
+        states[0].visual_flags ==
+        (0x12345678u | KERNEL_VISUAL_FLAG_MOVING));
 
     std::array<KernelEvent, 16> events{};
     assert(Kernel_PollEvents(kernel, nullptr, events.size()) == 0);

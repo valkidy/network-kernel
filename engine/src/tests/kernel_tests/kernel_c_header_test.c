@@ -33,6 +33,8 @@ int main(void) {
     assert(sizeof(KernelServerEntityCreateInfo) > 0u);
     assert(sizeof(KernelServerEntityState) > 0u);
     assert((KERNEL_CAPABILITY_CLIENT_MODE & KERNEL_CAPABILITY_RENDER_STATES) == 0u);
+    assert((KERNEL_VISUAL_FLAG_MOVING & KERNEL_VISUAL_FLAG_RELOADING) == 0u);
+    assert((KERNEL_VISUAL_FLAG_MOVING & KERNEL_VISUAL_FLAG_DEAD) == 0u);
     assert(sizeof(abi_info.abi_version) == sizeof(uint32_t));
 
     return 0;

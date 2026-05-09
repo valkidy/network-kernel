@@ -12,11 +12,17 @@ int main() {
         world.spawn_player(1, glm::vec3{1.0f, 2.0f, 3.0f});
     const network_example::NetId enemy =
         world.spawn_enemy(glm::vec3{4.0f, 0.0f, 0.0f});
+    const auto player_entity = world.find_entity(player);
+    assert(player_entity.has_value());
+    world.registry().get<network_example::Velocity>(*player_entity).linear =
+        glm::vec3{1.0f, 0.0f, 0.0f};
+    world.registry().get<network_example::WeaponState>(*player_entity).is_reloading =
+        true;
     const auto enemy_entity = world.find_entity(enemy);
     assert(enemy_entity.has_value());
     world.registry().emplace<network_example::ReplicationState>(
         *enemy_entity,
-        network_example::ReplicationState{9, 0x01020304u});
+        network_example::ReplicationState{9, 0x01020300u});
 
     const network_example::WorldSnapshot snapshot =
         network_example::build_world_snapshot(world, 7, 233, 3);
@@ -24,12 +30,19 @@ int main() {
     assert(snapshot.header.server_time_ms == 233);
     assert(snapshot.header.last_processed_input_seq == 3);
     assert(snapshot.entities.size() == 2);
+    bool saw_player_flags = false;
     bool saw_enemy_state = false;
     for (const network_example::EntitySnapshot& entity : snapshot.entities) {
+        if (entity.net_id == player) {
+            saw_player_flags =
+                (entity.flags & network_example::kVisualFlagMoving) != 0 &&
+                (entity.flags & network_example::kVisualFlagReloading) != 0;
+        }
         if (entity.net_id == enemy) {
-            saw_enemy_state = entity.state == 9 && entity.flags == 0x01020304u;
+            saw_enemy_state = entity.state == 9 && entity.flags == 0x01020300u;
         }
     }
+    assert(saw_player_flags);
     assert(saw_enemy_state);
 
     network_example::HistoryBuffer history(2);
@@ -77,6 +90,15 @@ int main() {
     const network_example::NetId dead_enemy =
         dead_world.spawn_enemy(glm::vec3{5.0f, 0.0f, 0.0f});
     assert(dead_world.apply_damage(dead_enemy, 50));
+    const network_example::WorldSnapshot dead_snapshot =
+        network_example::build_world_snapshot(dead_world, 1, 33, 0);
+    bool saw_dead_flag = false;
+    for (const network_example::EntitySnapshot& entity : dead_snapshot.entities) {
+        if (entity.net_id == dead_enemy) {
+            saw_dead_flag = (entity.flags & network_example::kVisualFlagDead) != 0;
+        }
+    }
+    assert(saw_dead_flag);
     network_example::HistoryBuffer dead_history(1);
     dead_history.write_frame(dead_world, 1);
     assert(!network_example::raycast_history_frame(

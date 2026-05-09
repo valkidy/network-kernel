@@ -52,6 +52,23 @@ bool is_server_mode(KernelMode mode) {
     return mode == KernelMode_DedicatedServer || mode == KernelMode_ListenServer;
 }
 
+std::uint32_t derived_visual_flags(const World& world, entt::entity entity) {
+    std::uint32_t flags = 0;
+    if (world.registry().all_of<Velocity>(entity) &&
+        glm::length(world.registry().get<Velocity>(entity).linear) > 0.001f) {
+        flags |= kVisualFlagMoving;
+    }
+    if (world.registry().all_of<WeaponState>(entity) &&
+        world.registry().get<WeaponState>(entity).is_reloading) {
+        flags |= kVisualFlagReloading;
+    }
+    if (world.registry().all_of<Health>(entity) &&
+        world.registry().get<Health>(entity).hp == 0) {
+        flags |= kVisualFlagDead;
+    }
+    return flags;
+}
+
 glm::vec3 input_move_to_world(const PlayerInput& input) {
     glm::vec3 move{input.move.x, 0.0f, input.move.y};
     const float length = glm::length(move);
@@ -111,11 +128,12 @@ KernelServerEntityState to_server_entity_state(
     if (world.registry().all_of<Health>(entity)) {
         state.hp = world.registry().get<Health>(entity).hp;
     }
+    state.visual_flags = derived_visual_flags(world, entity);
     if (world.registry().all_of<ReplicationState>(entity)) {
         const ReplicationState& replication =
             world.registry().get<ReplicationState>(entity);
         state.animation_state = replication.animation_state;
-        state.visual_flags = replication.visual_flags;
+        state.visual_flags |= replication.visual_flags;
     }
     return state;
 }
@@ -1122,12 +1140,12 @@ void KernelEngine::rebuild_render_states_from_world() {
         const EntityKind& kind = view.get<const EntityKind>(entity);
         const Transform& transform = view.get<const Transform>(entity);
         std::uint16_t animation_state = 0;
-        std::uint32_t visual_flags = 0;
+        std::uint32_t visual_flags = derived_visual_flags(world_, entity);
         if (world_.registry().all_of<ReplicationState>(entity)) {
             const ReplicationState& replication =
                 world_.registry().get<ReplicationState>(entity);
             animation_state = replication.animation_state;
-            visual_flags = replication.visual_flags;
+            visual_flags |= replication.visual_flags;
         }
         render_states_.push_back(RenderEntityState{
             identity.net_id,

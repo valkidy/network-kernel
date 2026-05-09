@@ -76,6 +76,10 @@ struct ProjectileState {
     glm::vec3 previous_position{0.0f, 0.0f, 0.0f};
 };
 
+inline constexpr std::uint32_t kVisualFlagMoving = 0x00000001u;
+inline constexpr std::uint32_t kVisualFlagReloading = 0x00000002u;
+inline constexpr std::uint32_t kVisualFlagDead = 0x00000004u;
+
 struct ReplicationState {
     std::uint16_t animation_state = 0;
     std::uint32_t visual_flags = 0;
