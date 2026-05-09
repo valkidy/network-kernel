@@ -1,6 +1,7 @@
 # Network Example Kernel Unity Package
 
-This package is the M6.4 Unity prototype for the network-example native kernel.
+This package is the M6.4 Unity prototype for the network-example native kernel
+ABI v3.
 It is intentionally thin: gameplay and networking behavior stay in the native
 kernel, while Unity owns plugin loading, input sampling, and render-state
 consumption.
@@ -44,13 +45,21 @@ Required compile/ABI smoke:
 - Compile and run `Tests~/AbiSmoke/NetworkKernelManagedAbiSmoke.cs` with the
   package runtime sources in a directory containing `libnetwork_kernel.dylib`;
   it validates ABI sizes and exercises create/start/update/input/render/event
-  calls without opening Unity Editor.
+  calls plus server entity create/query/update/destroy calls without opening
+  Unity Editor.
 - Run `NetworkExample.Kernel.Editor.NetworkKernelAbiSmokeRunner.Run` in an
   environment where Unity batchmode licensing/headless execution works.
 - The runner calls `Kernel_GetAbiInfo`, compares native struct sizes with
   `Marshal.SizeOf<T>()`, starts listen-server mode, checks local-player info,
-  updates, submits one input, polls events, reads render states, and destroys
-  the handle.
+  updates, submits one input, creates an enemy, queries and mutates server
+  entity state, polls events, reads render states, destroys the enemy, and
+  destroys the handle.
+
+To confirm the packaged dylib has the ABI v3 server exports:
+
+```text
+nm -gU plugins/com.network-example.kernel/Assets/Plugins/macOS/libnetwork_kernel.dylib | grep Kernel_Server
+```
 
 ## Command-Line Server + Unity Client
 

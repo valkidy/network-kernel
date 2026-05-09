@@ -59,5 +59,56 @@ namespace NetworkExample.Kernel
             IntPtr kernel,
             [Out] KernelEvent[] outEvents,
             uint maxEvents);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerCreateEntity(
+            IntPtr kernel,
+            ref KernelServerEntityCreateInfo createInfo,
+            out uint outNetId);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerDestroyEntity(
+            IntPtr kernel,
+            uint netId,
+            uint reason);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerSetEntityTransform(
+            IntPtr kernel,
+            uint netId,
+            ref KernelVec3 position,
+            ref KernelQuat rotation);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerSetEntityVelocity(
+            IntPtr kernel,
+            uint netId,
+            ref KernelVec3 velocity);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerSetEntityState(
+            IntPtr kernel,
+            uint netId,
+            ushort animationState,
+            uint visualFlags);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerGetEntityState(
+            IntPtr kernel,
+            uint netId,
+            ref KernelServerEntityState outState);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint Kernel_ServerQueryEntities(
+            IntPtr kernel,
+            ushort entityTypeFilter,
+            [Out] KernelServerEntityState[] outStates,
+            uint maxStates);
     }
 }

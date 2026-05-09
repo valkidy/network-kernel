@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 2;
+        public const uint AbiVersion = 3;
 
         public const ulong CapabilityClientMode = 0x0000000000000001UL;
         public const ulong CapabilityListenServerMode = 0x0000000000000002UL;
@@ -17,6 +17,17 @@ namespace NetworkExample.Kernel
         public const ulong CapabilitySnapshotInterpolation = 0x0000000000000080UL;
         public const ulong CapabilityLagCompensatedHitscan = 0x0000000000000100UL;
         public const ulong CapabilityLocalPlayerInfo = 0x0000000000000200UL;
+        public const ulong CapabilityServerEntityCreate = 0x0000000000000400UL;
+        public const ulong CapabilityServerEntityDestroy = 0x0000000000000800UL;
+        public const ulong CapabilityServerEntityTransformWrite = 0x0000000000001000UL;
+        public const ulong CapabilityServerEntityVelocityWrite = 0x0000000000002000UL;
+        public const ulong CapabilityServerEntityStateWrite = 0x0000000000004000UL;
+        public const ulong CapabilityServerEntityQuery = 0x0000000000008000UL;
+        public const ulong CapabilityServerRelevanceFilter = 0x0000000000010000UL;
+
+        public const uint VisualFlagMoving = 0x00000001U;
+        public const uint VisualFlagReloading = 0x00000002U;
+        public const uint VisualFlagDead = 0x00000004U;
     }
 
     public enum KernelMode
@@ -42,6 +53,21 @@ namespace NetworkExample.Kernel
         Error = 11,
     }
 
+    public enum KernelDespawnReason : uint
+    {
+        Destroyed = 0,
+        OutOfRange = 1,
+        Disconnected = 2,
+    }
+
+    public enum KernelEntityType : ushort
+    {
+        Unknown = 0,
+        Player = 1,
+        Enemy = 2,
+        Projectile = 3,
+    }
+
     [Flags]
     public enum InputButton : uint
     {
@@ -63,6 +89,8 @@ namespace NetworkExample.Kernel
         public uint render_entity_state_size;
         public uint kernel_event_size;
         public uint local_player_info_size;
+        public uint server_entity_create_info_size;
+        public uint server_entity_state_size;
         public ulong capability_flags;
     }
 
@@ -173,11 +201,44 @@ namespace NetworkExample.Kernel
     public struct RenderEntityState
     {
         public uint net_id;
-        public ushort entity_type;
+        public KernelEntityType entity_type;
         public KernelVec3 position;
         public KernelQuat rotation;
         public ushort animation_state;
         public uint visual_flags;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelServerEntityCreateInfo
+    {
+        public uint struct_size;
+        public KernelEntityType entity_type;
+        public uint owner_peer;
+        public KernelVec3 position;
+        public KernelQuat rotation;
+        public ushort animation_state;
+        public uint visual_flags;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelServerEntityCreateInfo>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelServerEntityState
+    {
+        public uint struct_size;
+        public uint net_id;
+        public KernelEntityType entity_type;
+        public uint owner_peer;
+        public KernelVec3 position;
+        public KernelQuat rotation;
+        public KernelVec3 velocity;
+        public ushort hp;
+        public ushort animation_state;
+        public uint visual_flags;
+        [MarshalAs(UnmanagedType.I1)]
+        public bool valid;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelServerEntityState>();
     }
 
     [StructLayout(LayoutKind.Sequential)]

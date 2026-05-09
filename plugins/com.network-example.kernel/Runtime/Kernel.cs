@@ -102,6 +102,80 @@ namespace NetworkExample.Kernel
             return KernelNative.Kernel_PollEvents(handle, events, (uint)events.Length);
         }
 
+        public bool ServerCreateEntity(
+            KernelServerEntityCreateInfo createInfo,
+            out uint netId)
+        {
+            ThrowIfDisposed();
+            createInfo.struct_size = KernelServerEntityCreateInfo.StructSize;
+            return KernelNative.Kernel_ServerCreateEntity(handle, ref createInfo, out netId);
+        }
+
+        public bool ServerDestroyEntity(uint netId, KernelDespawnReason reason)
+        {
+            ThrowIfDisposed();
+            return KernelNative.Kernel_ServerDestroyEntity(handle, netId, (uint)reason);
+        }
+
+        public bool ServerSetEntityTransform(
+            uint netId,
+            KernelVec3 position,
+            KernelQuat rotation)
+        {
+            ThrowIfDisposed();
+            return KernelNative.Kernel_ServerSetEntityTransform(
+                handle,
+                netId,
+                ref position,
+                ref rotation);
+        }
+
+        public bool ServerSetEntityVelocity(uint netId, KernelVec3 velocity)
+        {
+            ThrowIfDisposed();
+            return KernelNative.Kernel_ServerSetEntityVelocity(handle, netId, ref velocity);
+        }
+
+        public bool ServerSetEntityState(
+            uint netId,
+            ushort animationState,
+            uint visualFlags)
+        {
+            ThrowIfDisposed();
+            return KernelNative.Kernel_ServerSetEntityState(
+                handle,
+                netId,
+                animationState,
+                visualFlags);
+        }
+
+        public bool ServerGetEntityState(uint netId, out KernelServerEntityState state)
+        {
+            ThrowIfDisposed();
+            state = new KernelServerEntityState
+            {
+                struct_size = KernelServerEntityState.StructSize,
+            };
+            return KernelNative.Kernel_ServerGetEntityState(handle, netId, ref state);
+        }
+
+        public uint ServerQueryEntities(
+            KernelEntityType entityTypeFilter,
+            KernelServerEntityState[] states)
+        {
+            ThrowIfDisposed();
+            if (states == null || states.Length == 0)
+            {
+                return 0;
+            }
+
+            return KernelNative.Kernel_ServerQueryEntities(
+                handle,
+                (ushort)entityTypeFilter,
+                states,
+                (uint)states.Length);
+        }
+
         private void Dispose(bool disposing)
         {
             if (handle == IntPtr.Zero)
