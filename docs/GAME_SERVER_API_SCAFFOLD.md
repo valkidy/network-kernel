@@ -1,14 +1,15 @@
 # Game Server API Scaffold
 
-This document marks the C++ kernel surface prepared for a later Game Server v1
-task. The current task does not implement EnemyManager or EnemyAI inside the
-kernel.
+This document records the C++ kernel surface that prepared the repository for
+Game Server v1. The follow-up implementation now lives in `game_server/`; see
+`docs/GAME_SERVER_V1.md` for current behavior.
 
 ## Status
 
-M7 is a handoff milestone only. The kernel now exposes the generic server-side
-API needed by an external game server layer, but this repository still does not
-contain a `game_server/` implementation.
+M7 began as a handoff milestone. The kernel exposes the generic server-side API
+needed by an external game server layer, and the repository now contains the v1
+`game_server/` implementation plus a Unity-loadable `GameServer_*` native
+bridge.
 
 ## Boundary
 
@@ -89,9 +90,9 @@ The game server layer gets these behaviors without owning replication logic:
 - per-client AOI filtering controls enemy/projectile relevance
 - out-of-range entities despawn with `KernelDespawnReason_OutOfRange`
 
-## Follow-Up Game Server v1 Task
+## Implemented Game Server v1 Task
 
-The next task can add a `game_server` layer that calls the prepared kernel API:
+Game Server v1 adds a `game_server` layer that calls the prepared kernel API:
 
 - `EnemyManager` calls entity create/destroy.
 - `EnemyAIController` queries players/entities.
@@ -99,7 +100,7 @@ The next task can add a `game_server` layer that calls the prepared kernel API:
   kernel.
 - Unity remains presentation-only and does not run AI or network tick logic.
 
-## Follow-Up Checklist
+## Implemented Checklist
 
 - Add a server-side `EnemyManager` outside `engine/src/kernel`.
 - Keep `Enemy` as game-server-owned bookkeeping with `net_id`, target, and AI
@@ -116,9 +117,8 @@ The next task can add a `game_server` layer that calls the prepared kernel API:
 - Verify clients see enemy spawn/despawn/movement through existing render state
   and snapshot replication.
 
-## Out Of Scope For The Follow-Up Scaffold
+## Still Out Of Scope
 
-- Unity plugin or C# binding changes
 - client-side enemy prediction
 - attacks, damage, or melee behavior
 - navigation mesh/pathfinding

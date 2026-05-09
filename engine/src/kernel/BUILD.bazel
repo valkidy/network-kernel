@@ -47,7 +47,10 @@ cc_library(
 
 cc_shared_library(
     name = "network_kernel_shared",
-    deps = [":kernel"],
+    deps = [
+        ":kernel",
+        "//game_server:game_server_bridge",
+    ],
     shared_lib_name = "libnetwork_kernel.dylib",
     user_link_flags = select({
         "//engine:macos": [
@@ -72,6 +75,13 @@ cc_shared_library(
             "-Wl,-exported_symbol,_Kernel_ServerSetEntityState",
             "-Wl,-exported_symbol,_Kernel_ServerGetEntityState",
             "-Wl,-exported_symbol,_Kernel_ServerQueryEntities",
+            "-Wl,-exported_symbol,_GameServer_GetAbiInfo",
+            "-Wl,-exported_symbol,_GameServer_Create",
+            "-Wl,-exported_symbol,_GameServer_Destroy",
+            "-Wl,-exported_symbol,_GameServer_HandleEvent",
+            "-Wl,-exported_symbol,_GameServer_Tick",
+            "-Wl,-exported_symbol,_GameServer_GetEnemyCount",
+            "-Wl,-exported_symbol,_GameServer_DespawnAll",
         ],
         "//conditions:default": [],
     }),

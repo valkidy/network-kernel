@@ -22,7 +22,10 @@ cc_test(
     name = "dynamic_abi_smoke_test",
     srcs = ["dynamic_abi_smoke_test.cc"],
     data = ["//engine/src/kernel:network_kernel_shared"],
-    deps = ["//engine/src/kernel:kernel_api"],
+    deps = [
+        "//engine/src/kernel:kernel_api",
+        "//game_server:game_server_api",
+    ],
 )
 
 cc_test(
