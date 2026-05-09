@@ -110,6 +110,7 @@ int main() {
     assert(server_state.animation_state == 7);
     assert(server_state.visual_flags == 0x12345678u);
     assert(server_state.position.x == 5.0f);
+    assert(server_state.velocity.x == 1.0f);
     std::array<KernelServerEntityState, 4> queried_states{};
     for (KernelServerEntityState& queried_state : queried_states) {
         queried_state.struct_size = sizeof(KernelServerEntityState);
@@ -119,6 +120,12 @@ int main() {
                2,
                queried_states.data(),
                static_cast<std::uint32_t>(queried_states.size())) == 1);
+    assert(queried_states[0].net_id == created_net_id);
+    assert(Kernel_ServerQueryEntities(
+               kernel,
+               0,
+               queried_states.data(),
+               static_cast<std::uint32_t>(queried_states.size())) == 1);
 
     PlayerInput input{};
     input.input_seq = 1;
@@ -126,6 +133,10 @@ int main() {
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     Kernel_SubmitInput(kernel, 1, &input);
     Kernel_Update(kernel, 1.0f / 30.0f);
+    server_state = KernelServerEntityState{};
+    server_state.struct_size = sizeof(server_state);
+    assert(Kernel_ServerGetEntityState(kernel, created_net_id, &server_state));
+    assert(server_state.position.x > 5.0f);
 
     std::array<RenderEntityState, 8> states{};
     assert(Kernel_GetRenderStates(kernel, nullptr, states.size()) == 0);
@@ -134,6 +145,7 @@ int main() {
         Kernel_GetRenderStates(kernel, states.data(), states.size());
     assert(render_count == 1);
     assert(states[0].net_id == created_net_id);
+    assert(states[0].position.x > 5.0f);
     assert(states[0].animation_state == 7);
     assert(states[0].visual_flags == 0x12345678u);
 

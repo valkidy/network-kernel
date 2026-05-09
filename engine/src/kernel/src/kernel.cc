@@ -949,6 +949,7 @@ std::uint32_t KernelEngine::rewind_tick_for_input(
 void KernelEngine::simulate_tick() {
     const float fixed_delta = tick_loop_.fixed_delta_seconds();
     simulate_player_movement(world_, pending_inputs_, fixed_delta);
+    simulate_velocity_movement(world_, fixed_delta);
     simulate_weapons(world_, {}, tick_loop_.current_tick(), &events_);
     for (const QueuedInput& pending_input : pending_inputs_) {
         const HistoryFrame* rewind_frame = nullptr;

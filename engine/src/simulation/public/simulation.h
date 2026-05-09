@@ -20,6 +20,8 @@ void simulate_player_movement(
     const std::vector<QueuedInput>& inputs,
     float fixed_delta_seconds);
 
+void simulate_velocity_movement(World& world, float fixed_delta_seconds);
+
 void simulate_projectiles(World& world, float fixed_delta_seconds);
 void simulate_projectiles(
     World& world,

@@ -38,6 +38,19 @@ bool has_entity(
     return false;
 }
 
+KernelServerEntityState find_server_entity(
+    const std::array<KernelServerEntityState, 16>& states,
+    std::uint32_t count,
+    std::uint32_t net_id) {
+    for (std::uint32_t index = 0; index < count; ++index) {
+        if (states[index].net_id == net_id) {
+            return states[index];
+        }
+    }
+    assert(false);
+    return KernelServerEntityState{};
+}
+
 }  // namespace
 
 int main() {
@@ -72,6 +85,20 @@ int main() {
     assert(before_count == 1);
     assert(!has_non_player_state(before_states, before_count));
     const RenderEntityState before_player = find_player(before_states, before_count);
+    KernelLocalPlayerInfo local_info{};
+    assert(Kernel_GetLocalPlayerInfo(kernel, &local_info));
+    assert(local_info.player_net_id == before_player.net_id);
+    std::array<KernelServerEntityState, 16> queried_players{};
+    const std::uint32_t player_query_count = Kernel_ServerQueryEntities(
+        kernel,
+        1,
+        queried_players.data(),
+        static_cast<std::uint32_t>(queried_players.size()));
+    assert(player_query_count == 1);
+    const KernelServerEntityState queried_player =
+        find_server_entity(queried_players, player_query_count, before_player.net_id);
+    assert(queried_player.valid);
+    assert(queried_player.entity_type == 1);
 
     PlayerInput input{};
     input.input_seq = 1;
@@ -137,6 +164,17 @@ int main() {
     std::uint32_t enemy_net_id = 0;
     assert(Kernel_ServerCreateEntity(kernel, &enemy_create, &enemy_net_id));
     assert(enemy_net_id != 0);
+    std::array<KernelServerEntityState, 16> queried_enemies{};
+    const std::uint32_t enemy_query_count = Kernel_ServerQueryEntities(
+        kernel,
+        2,
+        queried_enemies.data(),
+        static_cast<std::uint32_t>(queried_enemies.size()));
+    assert(enemy_query_count == 1);
+    const KernelServerEntityState queried_enemy =
+        find_server_entity(queried_enemies, enemy_query_count, enemy_net_id);
+    assert(queried_enemy.valid);
+    assert(queried_enemy.position.x == enemy_create.position.x);
 
     Kernel_Update(kernel, 0.0f);
     std::array<RenderEntityState, 16> spawned_states{};
