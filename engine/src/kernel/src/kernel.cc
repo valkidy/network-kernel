@@ -12,7 +12,7 @@
 #include <spdlog/spdlog.h>
 
 #include "kernel/public/kernel_api.h"
-#include "protocol/public/m2_packets.h"
+#include "protocol/public/network_packets.h"
 #include "protocol/public/session_packets.h"
 #include "transport/public/gns_transport.h"
 #include "transport/public/loopback_transport.h"

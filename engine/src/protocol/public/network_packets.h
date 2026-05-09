@@ -1,5 +1,5 @@
-#ifndef PROTOCOL_PUBLIC_M2_PACKETS_H_
-#define PROTOCOL_PUBLIC_M2_PACKETS_H_
+#ifndef PROTOCOL_PUBLIC_NETWORK_PACKETS_H_
+#define PROTOCOL_PUBLIC_NETWORK_PACKETS_H_
 
 #include <cstdint>
 #include <vector>
@@ -75,4 +75,4 @@ bool decode_entity_despawn_packet(
 
 }  // namespace network_example
 
-#endif  // PROTOCOL_PUBLIC_M2_PACKETS_H_
+#endif  // PROTOCOL_PUBLIC_NETWORK_PACKETS_H_

@@ -12,7 +12,7 @@
 #include "kernel/src/kernel.h"
 #undef private
 
-#include "protocol/public/m2_packets.h"
+#include "protocol/public/network_packets.h"
 
 namespace {
 

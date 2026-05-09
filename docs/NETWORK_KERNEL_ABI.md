@@ -1,4 +1,4 @@
-# M6 Native ABI
+# Network Kernel ABI
 
 M6.1 through M6.3 define the native plugin boundary for the network kernel.
 M6.4 adds a thin Unity C# package over the same C ABI.

@@ -683,7 +683,7 @@ Implemented:
 - Add `KernelAbiInfo`, `KERNEL_ABI_VERSION`, and capability flags.
 - Add `Kernel_GetAbiInfo()` for native consumers.
 - Document ownership, capacity, lifetime, and ABI compatibility rules in public
-  headers and `docs/M6_ABI.md`.
+  headers and `docs/NETWORK_KERNEL_ABI.md`.
 
 ### Acceptance
 
@@ -712,7 +712,7 @@ libnetwork_kernel.dylib
 - Keep exported symbols limited to the `Kernel_*` API surface.
 - Ensure the library links with the existing transport, simulation, sync, world,
   and protocol targets.
-- Keep third-party dependency linkage documented for macOS in `docs/M6_ABI.md`.
+- Keep third-party dependency linkage documented for macOS in `docs/NETWORK_KERNEL_ABI.md`.
 
 ### Acceptance
 

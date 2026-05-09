@@ -4,7 +4,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
-#include "protocol/public/m2_packets.h"
+#include "protocol/public/network_packets.h"
 
 namespace {
 
