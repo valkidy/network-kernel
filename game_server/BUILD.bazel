@@ -18,6 +18,24 @@ cc_library(
     deps = ["//engine/src/kernel:kernel_api"],
 )
 
+cc_library(
+    name = "game_server_api",
+    hdrs = [
+        "public/game_server_api.h",
+        "public/game_server_types.h",
+    ],
+    deps = ["//engine/src/kernel:kernel_api"],
+)
+
+cc_library(
+    name = "game_server_bridge",
+    srcs = ["src/game_server_api.cc"],
+    deps = [
+        ":game_server",
+        ":game_server_api",
+    ],
+)
+
 cc_test(
     name = "enemy_ai_controller_test",
     srcs = ["enemy_ai_controller_test.cc"],
@@ -29,6 +47,15 @@ cc_test(
     srcs = ["enemy_manager_test.cc"],
     deps = [
         ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "game_server_api_test",
+    srcs = ["game_server_api_test.cc"],
+    deps = [
+        ":game_server_bridge",
         "//engine/src/kernel:kernel",
     ],
 )

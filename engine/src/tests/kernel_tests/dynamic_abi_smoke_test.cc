@@ -8,6 +8,7 @@
 
 #include <dlfcn.h>
 
+#include "game_server/public/game_server_api.h"
 #include "kernel/public/kernel_api.h"
 
 namespace {
@@ -79,7 +80,8 @@ void verify_exported_symbols(const std::filesystem::path& library_path) {
         const std::size_t symbol_begin = text.find_last_of(' ');
         const std::string symbol =
             symbol_begin == std::string::npos ? text : text.substr(symbol_begin + 1);
-        if (symbol.rfind("_Kernel_", 0) != 0) {
+        if (symbol.rfind("_Kernel_", 0) != 0 &&
+            symbol.rfind("_GameServer_", 0) != 0) {
             unexpected_symbols.push_back(symbol);
         }
     }
@@ -168,6 +170,28 @@ int main() {
             std::uint16_t,
             KernelServerEntityState*,
             std::uint32_t)>(library, "Kernel_ServerQueryEntities");
+    auto* game_server_get_abi_info =
+        load_symbol<bool(GameServerAbiInfo*, std::uint32_t)>(
+            library,
+            "GameServer_GetAbiInfo");
+    auto* game_server_create =
+        load_symbol<GameServerHandle*(KernelHandle*)>(library, "GameServer_Create");
+    auto* game_server_destroy =
+        load_symbol<void(GameServerHandle*)>(library, "GameServer_Destroy");
+    auto* game_server_handle_event =
+        load_symbol<void(GameServerHandle*, const KernelEvent*)>(
+            library,
+            "GameServer_HandleEvent");
+    auto* game_server_tick =
+        load_symbol<void(GameServerHandle*, float)>(library, "GameServer_Tick");
+    auto* game_server_get_enemy_count =
+        load_symbol<std::uint32_t(GameServerHandle*)>(
+            library,
+            "GameServer_GetEnemyCount");
+    auto* game_server_despawn_all =
+        load_symbol<void(GameServerHandle*, std::uint32_t)>(
+            library,
+            "GameServer_DespawnAll");
 
     KernelAbiInfo abi_info{};
     assert(kernel_get_abi_info(&abi_info, sizeof(abi_info)));
@@ -185,6 +209,18 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_SERVER_ENTITY_CREATE) != 0);
     assert(!kernel_get_abi_info(nullptr, sizeof(abi_info)));
     assert(!kernel_get_abi_info(&abi_info, sizeof(abi_info) - 1));
+    GameServerAbiInfo game_server_abi_info{};
+    assert(game_server_get_abi_info(
+        &game_server_abi_info,
+        sizeof(game_server_abi_info)));
+    assert(game_server_abi_info.abi_version == GAME_SERVER_ABI_VERSION);
+    assert(
+        (game_server_abi_info.capability_flags &
+         GAME_SERVER_CAPABILITY_ENEMY_MANAGER) != 0);
+    assert(!game_server_get_abi_info(nullptr, sizeof(game_server_abi_info)));
+    assert(!game_server_get_abi_info(
+        &game_server_abi_info,
+        sizeof(game_server_abi_info) - 1));
     KernelLocalPlayerInfo local_info{};
     assert(!kernel_get_local_player_info(nullptr, &local_info));
 
@@ -198,6 +234,8 @@ int main() {
     KernelHandle* kernel = kernel_create(&config);
     assert(kernel != nullptr);
     assert(kernel_start_listen_server(kernel, 7777));
+    GameServerHandle* game_server = game_server_create(kernel);
+    assert(game_server != nullptr);
     assert(kernel_get_local_player_info(kernel, &local_info));
     assert(local_info.peer_id == 1);
     assert(local_info.player_net_id != 0);
@@ -245,7 +283,16 @@ int main() {
         events.data(),
         static_cast<std::uint32_t>(events.size()));
     assert(event_count >= 1);
+    for (std::uint32_t index = 0; index < event_count; ++index) {
+        game_server_handle_event(game_server, &events[index]);
+    }
+    game_server_tick(game_server, 1.0f / 30.0f);
+    assert(game_server_get_enemy_count(game_server) == 1);
+    game_server_despawn_all(game_server, KernelDespawnReason_Destroyed);
+    game_server_tick(game_server, 1.0f / 30.0f);
+    assert(game_server_get_enemy_count(game_server) == 0);
 
+    game_server_destroy(game_server);
     kernel_destroy(kernel);
     assert(dlclose(library) == 0);
     return 0;

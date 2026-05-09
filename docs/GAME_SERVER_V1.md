@@ -33,6 +33,13 @@ only through the public server-side C API:
 
 The current v1 implementation does not add or rename kernel API symbols.
 
+For Unity plugin consumption, the same dylib also exposes a small
+`GameServer_*` bridge ABI. That bridge owns an opaque game-server handle,
+accepts polled `KernelEvent` values, ticks the native `GameServer`, exposes the
+managed enemy count for smoke checks, and can despawn all managed enemies. The
+bridge has its own `GAME_SERVER_ABI_VERSION` and does not change
+`KERNEL_ABI_VERSION`.
+
 ## Tick Flow
 
 The dedicated and host/listen server loops run gameplay on the same simulation
