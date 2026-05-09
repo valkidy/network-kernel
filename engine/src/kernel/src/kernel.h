@@ -138,6 +138,7 @@ private:
     WorldSnapshot latest_client_snapshot_;
     std::vector<WorldSnapshot> client_snapshot_buffer_;
     std::vector<PeerSession> peer_sessions_;
+    PeerSession local_listen_session_;
     std::vector<ClientReplicatedEntity> client_replicated_entities_;
     std::unordered_set<NetId> client_despawned_entities_;
     std::vector<PlayerInput> pending_prediction_inputs_;

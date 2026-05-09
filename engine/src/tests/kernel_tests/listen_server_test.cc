@@ -185,6 +185,19 @@ int main() {
     assert(spawned_count >= 2);
     assert(has_entity(spawned_states, spawned_count, enemy_net_id));
 
+    KernelServerEntityCreateInfo far_enemy_create = enemy_create;
+    far_enemy_create.position = KernelVec3{100.0f, 0.0f, 0.0f};
+    std::uint32_t far_enemy_net_id = 0;
+    assert(Kernel_ServerCreateEntity(kernel, &far_enemy_create, &far_enemy_net_id));
+    assert(far_enemy_net_id != 0);
+    Kernel_Update(kernel, 0.0f);
+    std::array<RenderEntityState, 16> filtered_states{};
+    const std::uint32_t filtered_count = Kernel_GetRenderStates(
+        kernel,
+        filtered_states.data(),
+        static_cast<std::uint32_t>(filtered_states.size()));
+    assert(!has_entity(filtered_states, filtered_count, far_enemy_net_id));
+
     std::array<KernelEvent, 16> spawn_events{};
     const std::uint32_t spawn_event_count = Kernel_PollEvents(
         kernel,
@@ -203,6 +216,10 @@ int main() {
         kernel,
         enemy_net_id,
         KernelDespawnReason_Destroyed));
+    assert(Kernel_ServerDestroyEntity(
+        kernel,
+        far_enemy_net_id,
+        KernelDespawnReason_Destroyed));
     Kernel_Update(kernel, 0.0f);
 
     std::array<RenderEntityState, 16> despawned_states{};
@@ -211,6 +228,7 @@ int main() {
         despawned_states.data(),
         static_cast<std::uint32_t>(despawned_states.size()));
     assert(!has_entity(despawned_states, despawned_count, enemy_net_id));
+    assert(!has_entity(despawned_states, despawned_count, far_enemy_net_id));
 
     Kernel_Destroy(kernel);
     return 0;

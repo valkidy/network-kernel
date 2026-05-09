@@ -197,6 +197,7 @@ bool KernelEngine::start_listen_server(std::uint16_t port) {
         world_.spawn_player(kLocalListenPeerId, glm::vec3{0.0f, 0.0f, 0.0f});
     local_client_peer_id_ = kLocalListenPeerId;
     local_player_net_id_ = player;
+    local_listen_session_ = PeerSession{kLocalListenPeerId, player, 0, true, {}};
     has_welcome_ = true;
 
     push_event(KernelEventType_Connected, 0, kLocalListenPeerId);
@@ -342,17 +343,6 @@ bool KernelEngine::server_create_entity(
 
     *out_net_id = net_id;
     push_event(KernelEventType_EntitySpawned, net_id, create_info.owner_peer);
-    if (config_.mode == KernelMode_ListenServer && loopback_transport_ != nullptr) {
-        const WorldSnapshot snapshot = build_world_snapshot(
-            world_,
-            tick_loop_.current_tick(),
-            static_cast<std::uint32_t>(
-                tick_loop_.current_tick() * tick_loop_.fixed_delta_seconds() * 1000.0f),
-            local_last_processed_input_seq_);
-        if (const EntitySnapshot* spawned = find_snapshot_entity(snapshot, net_id)) {
-            send_entity_spawn(kLocalListenPeerId, *spawned);
-        }
-    }
     publish_snapshot();
     return true;
 }
@@ -487,6 +477,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     latest_client_snapshot_ = WorldSnapshot{};
     client_snapshot_buffer_.clear();
     peer_sessions_.clear();
+    local_listen_session_ = PeerSession{};
     client_replicated_entities_.clear();
     client_despawned_entities_.clear();
     pending_prediction_inputs_.clear();
@@ -1230,8 +1221,15 @@ void KernelEngine::publish_snapshot() {
             latest_snapshot_.entities.size()));
 
     if (config_.mode == KernelMode_ListenServer && loopback_transport_ != nullptr) {
+        local_listen_session_.peer = kLocalListenPeerId;
+        local_listen_session_.player = local_player_net_id_;
+        local_listen_session_.last_processed_input_seq = local_last_processed_input_seq_;
+        local_listen_session_.welcomed = local_player_net_id_ != 0;
+        const WorldSnapshot peer_snapshot =
+            build_relevant_snapshot(local_listen_session_, server_time_ms);
+        sync_session_relevance(&local_listen_session_, peer_snapshot);
         const std::vector<std::uint8_t> packet =
-            encode_snapshot_packet(latest_snapshot_, next_packet_sequence_++);
+            encode_snapshot_packet(peer_snapshot, next_packet_sequence_++);
         if (!loopback_transport_->Send(
                 kLocalListenPeerId,
                 packet.data(),
