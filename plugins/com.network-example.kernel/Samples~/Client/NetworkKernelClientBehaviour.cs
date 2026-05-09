@@ -1,4 +1,5 @@
 using NetworkExample.Kernel;
+using NetworkExample.Kernel.Client;
 using UnityEngine;
 
 public sealed class NetworkKernelClientBehaviour : MonoBehaviour
@@ -8,17 +9,14 @@ public sealed class NetworkKernelClientBehaviour : MonoBehaviour
 
     private readonly RenderEntityState[] states = new RenderEntityState[128];
     private readonly KernelEvent[] events = new KernelEvent[64];
-    private Kernel kernel;
+    private NetworkClient client;
     private uint sequence = 1;
-    private bool readyForInput;
-    private bool disconnected;
-    private uint localPlayerNetId;
     private uint logFrame;
 
     private void Start()
     {
-        kernel = new Kernel(KernelConfig.CreateDefault(KernelMode.Client));
-        if (!kernel.StartClient(address))
+        client = new NetworkClient();
+        if (!client.Start(address))
         {
             Debug.LogError($"Kernel_StartClient failed for {address}.");
             enabled = false;
@@ -30,26 +28,26 @@ public sealed class NetworkKernelClientBehaviour : MonoBehaviour
 
     private void Update()
     {
-        if (kernel == null)
+        if (client == null)
         {
             return;
         }
 
-        kernel.Update(Time.deltaTime);
-        PollKernelEvents();
+        uint eventCount = client.Update(Time.deltaTime, events);
+        LogKernelEvents(eventCount);
 
-        if (readyForInput && !disconnected)
+        if (client.IsReady && !client.IsDisconnected)
         {
             SubmitInput();
         }
 
-        uint stateCount = kernel.GetRenderStates(states);
+        uint stateCount = client.GetRenderStates(states);
         RenderEntityState localState = default;
         bool foundLocalState = false;
         int stateCountInt = (int)stateCount;
         for (int index = 0; index < stateCountInt; ++index)
         {
-            if (states[index].net_id == localPlayerNetId)
+            if (states[index].net_id == client.LocalPlayerNetId)
             {
                 localState = states[index];
                 foundLocalState = true;
@@ -61,14 +59,13 @@ public sealed class NetworkKernelClientBehaviour : MonoBehaviour
         if (foundLocalState && logFrame % 30U == 0U)
         {
             Debug.Log(
-                $"client render states={stateCount} local_net_id={localPlayerNetId} " +
+                $"client render states={stateCount} local_net_id={client.LocalPlayerNetId} " +
                 $"local_x={localState.position.x:0.00}");
         }
     }
 
-    private void PollKernelEvents()
+    private void LogKernelEvents(uint eventCount)
     {
-        uint eventCount = kernel.PollEvents(events);
         int eventCountInt = (int)eventCount;
         for (int index = 0; index < eventCountInt; ++index)
         {
@@ -76,14 +73,10 @@ public sealed class NetworkKernelClientBehaviour : MonoBehaviour
             switch (kernelEvent.type)
             {
                 case KernelEventType.PlayerJoined:
-                    if (kernel.TryGetLocalPlayerInfo(out KernelLocalPlayerInfo info) &&
-                        info.connected)
+                    if (client.IsReady)
                     {
-                        readyForInput = true;
-                        disconnected = false;
-                        localPlayerNetId = info.player_net_id;
                         Debug.Log(
-                            $"client ready peer={info.peer_id} local_net_id={localPlayerNetId}");
+                            $"client ready peer={client.LocalPeerId} local_net_id={client.LocalPlayerNetId}");
                     }
                     else
                     {
@@ -96,9 +89,6 @@ public sealed class NetworkKernelClientBehaviour : MonoBehaviour
                         $"player left net_id={kernelEvent.net_id} peer={kernelEvent.peer_id}");
                     break;
                 case KernelEventType.Disconnected:
-                    readyForInput = false;
-                    disconnected = true;
-                    localPlayerNetId = 0;
                     Debug.Log($"client disconnected code={kernelEvent.code}");
                     break;
                 case KernelEventType.Error:
@@ -121,13 +111,12 @@ public sealed class NetworkKernelClientBehaviour : MonoBehaviour
         };
         sequence++;
 
-        kernel.TryGetLocalPlayerInfo(out KernelLocalPlayerInfo info);
-        kernel.SubmitInput(info.peer_id, input);
+        client.TrySubmitInput(input);
     }
 
     private void OnDestroy()
     {
-        kernel?.Dispose();
-        kernel = null;
+        client?.Dispose();
+        client = null;
     }
 }

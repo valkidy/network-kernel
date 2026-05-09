@@ -1,6 +1,7 @@
 using System;
 using UnityEditor;
 using UnityEngine;
+using NetworkExample.Kernel.Host;
 
 namespace NetworkExample.Kernel.Editor
 {
@@ -10,6 +11,7 @@ namespace NetworkExample.Kernel.Editor
         public static void Run()
         {
             KernelAbi.ValidateNativeAbi();
+            GameServerAbi.ValidateNativeAbi();
 
             using (var kernel = new Kernel(KernelConfig.CreateDefault(KernelMode.ListenServer)))
             {
@@ -107,6 +109,23 @@ namespace NetworkExample.Kernel.Editor
                 if (!kernel.ServerDestroyEntity(enemyNetId, KernelDespawnReason.Destroyed))
                 {
                     throw new InvalidOperationException("Kernel_ServerDestroyEntity failed.");
+                }
+            }
+
+            using (var host = new NetworkHost())
+            {
+                if (!host.Start(7778))
+                {
+                    throw new InvalidOperationException("NetworkHost.Start failed.");
+                }
+
+                var events = new KernelEvent[16];
+                host.Update(1.0f / 30.0f, events);
+                if (!host.IsLocalClientReady ||
+                    host.LocalPlayerNetId == 0 ||
+                    host.EnemyCount != 1)
+                {
+                    throw new InvalidOperationException("NetworkHost smoke failed.");
                 }
             }
 

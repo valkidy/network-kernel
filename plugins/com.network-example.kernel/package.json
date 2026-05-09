@@ -17,6 +17,11 @@
       "displayName": "Client",
       "description": "Client-mode MonoBehaviour for connecting Unity to a command-line dedicated server.",
       "path": "Samples~/Client"
+    },
+    {
+      "displayName": "Host",
+      "description": "Listen-host MonoBehaviour that runs the pure runtime SDK plus native GameServer bridge and exposes render states as data.",
+      "path": "Samples~/Host"
     }
   ]
 }

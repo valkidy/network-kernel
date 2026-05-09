@@ -25,10 +25,10 @@ namespace NetworkExample.Kernel
                 throw new InvalidOperationException(
                     $"Unsupported kernel ABI version {info.abi_version}; expected {KernelConstants.AbiVersion}.");
             }
-            if ((info.capability_flags & KernelConstants.CapabilityLocalPlayerInfo) == 0)
-            {
-                throw new InvalidOperationException("Kernel local-player info capability is missing.");
-            }
+            RequireCapability(
+                info,
+                KernelConstants.CapabilityLocalPlayerInfo,
+                "Kernel local-player info capability is missing.");
             RequireCapability(
                 info,
                 KernelConstants.CapabilityServerEntityCreate,

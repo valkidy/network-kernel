@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     internal static class KernelNative
     {
-        private const string LibraryName = "network_kernel";
+        internal const string LibraryName = "network_kernel";
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)]

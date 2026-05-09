@@ -38,6 +38,15 @@ namespace NetworkExample.Kernel
             }
         }
 
+        internal IntPtr Handle
+        {
+            get
+            {
+                ThrowIfDisposed();
+                return handle;
+            }
+        }
+
         public void Dispose()
         {
             Dispose(true);

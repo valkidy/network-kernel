@@ -34,6 +34,13 @@ REQUIRED_EXPORTS=(
   Kernel_ServerSetEntityState
   Kernel_ServerGetEntityState
   Kernel_ServerQueryEntities
+  GameServer_GetAbiInfo
+  GameServer_Create
+  GameServer_Destroy
+  GameServer_HandleEvent
+  GameServer_Tick
+  GameServer_GetEnemyCount
+  GameServer_DespawnAll
 )
 
 usage() {
@@ -185,14 +192,26 @@ read_native_abi_version() {
 }
 
 read_managed_abi_version() {
-  sed -nE 's/^[[:space:]]*public const uint AbiVersion = ([0-9]+);$/\1/p' "$PACKAGE_DIR/Runtime/KernelTypes.cs" | head -n 1
+  sed -nE 's/^[[:space:]]*public const uint AbiVersion = ([0-9]+);$/\1/p' "$PACKAGE_DIR/Runtime/Core/KernelTypes.cs" | head -n 1
+}
+
+read_native_game_server_abi_version() {
+  sed -nE 's/^#define GAME_SERVER_ABI_VERSION ([0-9]+)u$/\1/p' "$repo_root/game_server/public/game_server_types.h" | head -n 1
+}
+
+read_managed_game_server_abi_version() {
+  sed -nE 's/^[[:space:]]*public const uint AbiVersion = ([0-9]+);$/\1/p' "$PACKAGE_DIR/Runtime/Core/GameServerTypes.cs" | head -n 1
 }
 
 verify_package() {
   note "Verifying package layout, ABI version, and exported symbols"
   [[ -f "$PACKAGE_DIR/package.json" ]] || die "missing package.json"
-  [[ -f "$PACKAGE_DIR/Runtime/KernelNative.cs" ]] || die "missing Runtime/KernelNative.cs"
-  [[ -f "$PACKAGE_DIR/Runtime/KernelTypes.cs" ]] || die "missing Runtime/KernelTypes.cs"
+  [[ -f "$PACKAGE_DIR/Runtime/Core/KernelNative.cs" ]] || die "missing Runtime/Core/KernelNative.cs"
+  [[ -f "$PACKAGE_DIR/Runtime/Core/KernelTypes.cs" ]] || die "missing Runtime/Core/KernelTypes.cs"
+  [[ -f "$PACKAGE_DIR/Runtime/Core/GameServerNative.cs" ]] || die "missing Runtime/Core/GameServerNative.cs"
+  [[ -f "$PACKAGE_DIR/Runtime/Core/GameServerTypes.cs" ]] || die "missing Runtime/Core/GameServerTypes.cs"
+  [[ -f "$PACKAGE_DIR/Runtime/Client/NetworkClient.cs" ]] || die "missing Runtime/Client/NetworkClient.cs"
+  [[ -f "$PACKAGE_DIR/Runtime/Host/NetworkHost.cs" ]] || die "missing Runtime/Host/NetworkHost.cs"
   [[ -f "$PACKAGE_DIR/Editor/NetworkKernelAbiSmokeRunner.cs" ]] || die "missing Editor/NetworkKernelAbiSmokeRunner.cs"
   [[ -f "$PACKAGE_DIR/Tests~/AbiSmoke/NetworkKernelManagedAbiSmoke.cs" ]] || die "missing Tests~/AbiSmoke/NetworkKernelManagedAbiSmoke.cs"
   [[ -f "$STAGED_DYLIB" ]] || die "missing staged dylib: $STAGED_DYLIB"
@@ -201,12 +220,17 @@ verify_package() {
   package_name="$(node -e "const p=require(process.argv[1]); console.log(p.name || '')" "$PACKAGE_DIR/package.json")"
   [[ "$package_name" == "$PACKAGE_NAME" ]] || die "package name mismatch: expected $PACKAGE_NAME, found '$package_name'"
 
-  local native_abi managed_abi
+  local native_abi managed_abi native_game_server_abi managed_game_server_abi
   native_abi="$(read_native_abi_version)"
   managed_abi="$(read_managed_abi_version)"
+  native_game_server_abi="$(read_native_game_server_abi_version)"
+  managed_game_server_abi="$(read_managed_game_server_abi_version)"
   [[ -n "$native_abi" ]] || die "could not read KERNEL_ABI_VERSION"
   [[ -n "$managed_abi" ]] || die "could not read KernelConstants.AbiVersion"
   [[ "$native_abi" == "$managed_abi" ]] || die "ABI version mismatch: native=$native_abi managed=$managed_abi"
+  [[ -n "$native_game_server_abi" ]] || die "could not read GAME_SERVER_ABI_VERSION"
+  [[ -n "$managed_game_server_abi" ]] || die "could not read GameServerConstants.AbiVersion"
+  [[ "$native_game_server_abi" == "$managed_game_server_abi" ]] || die "game server ABI version mismatch: native=$native_game_server_abi managed=$managed_game_server_abi"
 
   local exported
   exported="$(nm -gU "$STAGED_DYLIB")"
@@ -217,7 +241,7 @@ verify_package() {
     fi
   done
 
-  note "Verification passed: package=$PACKAGE_NAME abi=$native_abi exports=${#REQUIRED_EXPORTS[@]}"
+  note "Verification passed: package=$PACKAGE_NAME kernel_abi=$native_abi game_server_abi=$native_game_server_abi exports=${#REQUIRED_EXPORTS[@]}"
 }
 
 copy_clean_package() {

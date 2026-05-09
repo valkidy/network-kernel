@@ -1,5 +1,6 @@
 using System;
 using NetworkExample.Kernel;
+using NetworkExample.Kernel.Host;
 
 public static class NetworkKernelManagedAbiSmoke
 {
@@ -8,10 +9,17 @@ public static class NetworkKernelManagedAbiSmoke
         try
         {
             KernelAbi.ValidateNativeAbi();
+            GameServerAbi.ValidateNativeAbi();
             KernelAbiInfo info = KernelAbi.GetInfo();
+            GameServerAbiInfo gameServerInfo = GameServerAbi.GetInfo();
             if ((info.capability_flags & KernelConstants.CapabilityLocalPlayerInfo) == 0)
             {
                 throw new InvalidOperationException("Kernel local-player info capability is missing.");
+            }
+            if ((gameServerInfo.capability_flags &
+                 GameServerConstants.CapabilityEnemyManager) == 0)
+            {
+                throw new InvalidOperationException("Game server enemy-manager capability is missing.");
             }
 
             using (var kernel = new Kernel(KernelConfig.CreateDefault(KernelMode.ListenServer)))
@@ -116,10 +124,38 @@ public static class NetworkKernelManagedAbiSmoke
                 }
             }
 
+            using (var host = new NetworkHost())
+            {
+                if (!host.Start(7778))
+                {
+                    throw new InvalidOperationException("NetworkHost.Start failed.");
+                }
+
+                var hostEvents = new KernelEvent[16];
+                host.Update(1.0f / 30.0f, hostEvents);
+                if (!host.IsLocalClientReady ||
+                    host.LocalPlayerNetId == 0 ||
+                    host.EnemyCount != 1)
+                {
+                    throw new InvalidOperationException("NetworkHost smoke failed.");
+                }
+
+                var hostEnemies = new KernelServerEntityState[8];
+                uint hostEnemyCount = host.Kernel.ServerQueryEntities(
+                    KernelEntityType.Enemy,
+                    hostEnemies);
+                if (hostEnemyCount != 1)
+                {
+                    throw new InvalidOperationException("NetworkHost enemy query failed.");
+                }
+            }
+
             Console.WriteLine(
-                "Network kernel managed ABI smoke passed: version={0} capabilities=0x{1:x16}",
+                "Network kernel managed ABI smoke passed: kernel_version={0} kernel_capabilities=0x{1:x16} game_server_version={2} game_server_capabilities=0x{3:x16}",
                 info.abi_version,
-                info.capability_flags);
+                info.capability_flags,
+                gameServerInfo.abi_version,
+                gameServerInfo.capability_flags);
             return 0;
         }
         catch (Exception exception)
