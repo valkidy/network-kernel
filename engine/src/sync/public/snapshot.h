@@ -20,12 +20,15 @@ struct SnapshotHeader {
 struct EntitySnapshot {
     NetId net_id = 0;
     EntityType type = EntityType::kUnknown;
+    PeerId owner_peer = 0;
     glm::vec3 position{0.0f, 0.0f, 0.0f};
     glm::vec3 velocity{0.0f, 0.0f, 0.0f};
     glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
     std::uint16_t hp = 0;
     std::uint16_t state = 0;
     std::uint32_t flags = 0;
+    std::uint32_t spawn_tick = 0;
+    std::uint32_t client_projectile_id = 0;
 };
 
 struct WorldSnapshot {

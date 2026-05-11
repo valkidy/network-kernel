@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 3u
+#define KERNEL_ABI_VERSION 4u
 
 #define KERNEL_CAPABILITY_CLIENT_MODE UINT64_C(0x0000000000000001)
 #define KERNEL_CAPABILITY_LISTEN_SERVER_MODE UINT64_C(0x0000000000000002)
@@ -123,6 +123,7 @@ typedef struct KernelConfig {
 typedef struct PlayerInput {
     uint32_t input_seq;
     uint32_t client_tick;
+    uint32_t client_projectile_id;
     KernelVec2 move;
     KernelVec2 look_delta;
     KernelVec3 aim_dir;
@@ -133,10 +134,14 @@ typedef struct PlayerInput {
 typedef struct RenderEntityState {
     uint32_t net_id;
     uint16_t entity_type;
+    uint32_t owner_peer;
     KernelVec3 position;
     KernelQuat rotation;
+    KernelVec3 velocity;
     uint16_t animation_state;
     uint32_t visual_flags;
+    uint32_t spawn_tick;
+    uint32_t client_projectile_id;
 } RenderEntityState;
 
 typedef struct KernelServerEntityCreateInfo {

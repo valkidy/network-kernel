@@ -663,12 +663,14 @@ void KernelEngine::handle_client_spawn(const EntitySpawnPacket& packet) {
         client_replicated_entities_.push_back(ClientReplicatedEntity{
             packet.net_id,
             packet.entity_type,
+            packet.owner_peer,
             packet.position,
             packet.rotation,
             false,
         });
     } else {
         found->type = packet.entity_type;
+        found->owner_peer = packet.owner_peer;
         found->position = packet.position;
         found->rotation = packet.rotation;
         found->active = false;
@@ -926,10 +928,14 @@ void KernelEngine::append_predicted_local_render_state() {
     render_states_.push_back(RenderEntityState{
         local.net_id,
         static_cast<std::uint16_t>(local.type),
+        local.owner_peer,
         to_kernel_vec3(local.position),
         to_kernel_quat(local.rotation),
+        to_kernel_vec3(local.velocity),
         local.state,
         local.flags,
+        local.spawn_tick,
+        local.client_projectile_id,
     });
 
     local_correction_offset_ *= 0.5f;
@@ -1130,21 +1136,37 @@ void KernelEngine::rebuild_render_states_from_world() {
         const NetworkIdentity& identity = view.get<const NetworkIdentity>(entity);
         const EntityKind& kind = view.get<const EntityKind>(entity);
         const Transform& transform = view.get<const Transform>(entity);
+        KernelVec3 velocity{0.0f, 0.0f, 0.0f};
         std::uint16_t animation_state = 0;
         std::uint32_t visual_flags = derived_visual_flags(world_, entity);
+        std::uint32_t spawn_tick = 0;
+        std::uint32_t client_projectile_id = 0;
+        if (world_.registry().all_of<Velocity>(entity)) {
+            velocity = to_kernel_vec3(world_.registry().get<Velocity>(entity).linear);
+        }
         if (world_.registry().all_of<ReplicationState>(entity)) {
             const ReplicationState& replication =
                 world_.registry().get<ReplicationState>(entity);
             animation_state = replication.animation_state;
             visual_flags |= replication.visual_flags;
         }
+        if (world_.registry().all_of<ProjectileState>(entity)) {
+            const ProjectileState& projectile =
+                world_.registry().get<ProjectileState>(entity);
+            spawn_tick = projectile.spawn_tick;
+            client_projectile_id = projectile.client_projectile_id;
+        }
         render_states_.push_back(RenderEntityState{
             identity.net_id,
             static_cast<std::uint16_t>(kind.type),
+            identity.owner_peer,
             to_kernel_vec3(transform.position),
             to_kernel_quat(transform.rotation),
+            velocity,
             animation_state,
             visual_flags,
+            spawn_tick,
+            client_projectile_id,
         });
     }
 }
@@ -1168,10 +1190,14 @@ void KernelEngine::rebuild_render_states_from_snapshot() {
         render_states_.push_back(RenderEntityState{
             entity.net_id,
             static_cast<std::uint16_t>(entity.type),
+            entity.owner_peer,
             to_kernel_vec3(entity.position),
             to_kernel_quat(entity.rotation),
+            to_kernel_vec3(entity.velocity),
             entity.state,
             entity.flags,
+            entity.spawn_tick,
+            entity.client_projectile_id,
         });
         rendered_entities.insert(entity.net_id);
         auto replicated = std::find_if(
@@ -1197,8 +1223,12 @@ void KernelEngine::rebuild_render_states_from_snapshot() {
         render_states_.push_back(RenderEntityState{
             entity.net_id,
             static_cast<std::uint16_t>(entity.type),
+            entity.owner_peer,
             to_kernel_vec3(entity.position),
             to_kernel_quat(entity.rotation),
+            KernelVec3{0.0f, 0.0f, 0.0f},
+            0,
+            0,
             0,
             0,
         });
