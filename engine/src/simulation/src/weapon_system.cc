@@ -35,7 +35,7 @@ constexpr std::array<WeaponDefinition, kWeaponCount> kWeaponDefinitions{{
     WeaponDefinition{
         kWeaponGrenade,
         WeaponFireMode::kProjectile,
-        1,
+        30,
         80,
         30,
         60,
