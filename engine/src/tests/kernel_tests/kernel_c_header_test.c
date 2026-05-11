@@ -23,7 +23,7 @@ int main(void) {
     (void)create_info;
     (void)server_state;
 
-    assert(KERNEL_ABI_VERSION == 3u);
+    assert(KERNEL_ABI_VERSION == 4u);
     assert(sizeof(KernelAbiInfo) > 0u);
     assert(sizeof(KernelLocalPlayerInfo) > 0u);
     assert(sizeof(KernelConfig) > 0u);
