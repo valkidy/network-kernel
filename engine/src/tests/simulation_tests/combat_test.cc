@@ -179,6 +179,37 @@ void grenade_sweeps_and_explodes_with_falloff() {
     assert(count_events(events, KernelEventType_DamageApplied) >= 2);
 }
 
+void projectile_weapon_fires_again_after_cooldown() {
+    network_example::World world;
+    const network_example::NetId player =
+        world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+
+    std::vector<KernelEvent> events;
+    network_example::simulate_weapons(
+        world,
+        queue(fire_input(network_example::kWeaponGrenade)),
+        0,
+        &events);
+    assert(count_events(events, KernelEventType_EntitySpawned) == 1);
+
+    events.clear();
+    network_example::simulate_weapons(
+        world,
+        queue(fire_input(network_example::kWeaponGrenade)),
+        1,
+        &events);
+    assert(events.empty());
+
+    events.clear();
+    network_example::simulate_weapons(
+        world,
+        queue(fire_input(network_example::kWeaponGrenade)),
+        30,
+        &events);
+    assert(count_events(events, KernelEventType_EntitySpawned) == 1);
+    assert(weapon_state(world, player).ammo[network_example::kWeaponGrenade] == 28);
+}
+
 void rewind_hitscan_uses_historical_hit_volumes() {
     network_example::World current_world;
     current_world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
@@ -263,6 +294,7 @@ int main() {
     rejects_fire_during_cooldown_and_reload();
     shotgun_applies_multiple_pellets();
     grenade_sweeps_and_explodes_with_falloff();
+    projectile_weapon_fires_again_after_cooldown();
     rewind_hitscan_uses_historical_hit_volumes();
     rewind_shotgun_respects_range();
     return 0;

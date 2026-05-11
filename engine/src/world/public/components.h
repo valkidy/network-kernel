@@ -54,8 +54,8 @@ inline constexpr std::size_t kWeaponCount = 3;
 
 struct WeaponState {
     std::uint8_t weapon_id = 0;
-    std::array<std::uint16_t, kWeaponCount> ammo{30, 8, 1};
-    std::array<std::uint16_t, kWeaponCount> reserve_ammo{90, 32, 3};
+    std::array<std::uint16_t, kWeaponCount> ammo{30, 8, 30};
+    std::array<std::uint16_t, kWeaponCount> reserve_ammo{90, 32, 90};
     std::array<std::uint32_t, kWeaponCount> next_fire_tick{0, 0, 0};
     std::uint32_t reload_end_tick = 0;
     bool is_reloading = false;

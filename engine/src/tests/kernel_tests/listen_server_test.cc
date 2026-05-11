@@ -38,6 +38,19 @@ bool has_entity(
     return false;
 }
 
+RenderEntityState find_entity(
+    const std::array<RenderEntityState, 16>& states,
+    std::uint32_t count,
+    std::uint32_t net_id) {
+    for (std::uint32_t index = 0; index < count; ++index) {
+        if (states[index].net_id == net_id) {
+            return states[index];
+        }
+    }
+    assert(false);
+    return RenderEntityState{};
+}
+
 KernelServerEntityState find_server_entity(
     const std::array<KernelServerEntityState, 16>& states,
     std::uint32_t count,
@@ -153,6 +166,54 @@ int main() {
         assert(combat_events[index].type != KernelEventType_DamageApplied);
     }
     assert(saw_fire_confirmed);
+
+    PlayerInput projectile_input{};
+    projectile_input.input_seq = 3;
+    projectile_input.client_tick = 3;
+    projectile_input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
+    projectile_input.buttons = InputButton_Fire;
+    projectile_input.selected_weapon = 2;
+    Kernel_SubmitInput(kernel, 1, &projectile_input);
+    Kernel_Update(kernel, 1.0f);
+
+    std::array<KernelEvent, 16> projectile_events{};
+    const std::uint32_t projectile_event_count = Kernel_PollEvents(
+        kernel,
+        projectile_events.data(),
+        static_cast<std::uint32_t>(projectile_events.size()));
+    bool saw_projectile_fire_confirmed = false;
+    std::uint32_t projectile_net_id = 0;
+    for (std::uint32_t index = 0; index < projectile_event_count; ++index) {
+        saw_projectile_fire_confirmed =
+            saw_projectile_fire_confirmed ||
+            projectile_events[index].type == KernelEventType_FireConfirmed;
+        if (projectile_events[index].type == KernelEventType_EntitySpawned &&
+            projectile_events[index].net_id != local_info.player_net_id) {
+            projectile_net_id = projectile_events[index].net_id;
+        }
+    }
+    assert(saw_projectile_fire_confirmed);
+    assert(projectile_net_id != 0);
+
+    std::array<RenderEntityState, 16> projectile_states{};
+    const std::uint32_t projectile_count = Kernel_GetRenderStates(
+        kernel,
+        projectile_states.data(),
+        static_cast<std::uint32_t>(projectile_states.size()));
+    const RenderEntityState projectile_state =
+        find_entity(projectile_states, projectile_count, projectile_net_id);
+    assert(projectile_state.entity_type == 3);
+
+    Kernel_Update(kernel, 1.0f / 30.0f);
+    std::array<RenderEntityState, 16> moved_projectile_states{};
+    const std::uint32_t moved_projectile_count = Kernel_GetRenderStates(
+        kernel,
+        moved_projectile_states.data(),
+        static_cast<std::uint32_t>(moved_projectile_states.size()));
+    const RenderEntityState moved_projectile_state =
+        find_entity(moved_projectile_states, moved_projectile_count, projectile_net_id);
+    assert(moved_projectile_state.entity_type == 3);
+    assert(moved_projectile_state.position.x > projectile_state.position.x);
 
     KernelServerEntityCreateInfo enemy_create{};
     enemy_create.struct_size = sizeof(enemy_create);
