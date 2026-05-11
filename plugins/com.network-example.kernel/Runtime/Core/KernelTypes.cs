@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 3;
+        public const uint AbiVersion = 4;
 
         public const ulong CapabilityClientMode = 0x0000000000000001UL;
         public const ulong CapabilityListenServerMode = 0x0000000000000002UL;
@@ -190,6 +190,7 @@ namespace NetworkExample.Kernel
     {
         public uint input_seq;
         public uint client_tick;
+        public uint client_projectile_id;
         public KernelVec2 move;
         public KernelVec2 look_delta;
         public KernelVec3 aim_dir;
@@ -202,10 +203,14 @@ namespace NetworkExample.Kernel
     {
         public uint net_id;
         public KernelEntityType entity_type;
+        public uint owner_peer;
         public KernelVec3 position;
         public KernelQuat rotation;
+        public KernelVec3 velocity;
         public ushort animation_state;
         public uint visual_flags;
+        public uint spawn_tick;
+        public uint client_projectile_id;
     }
 
     [StructLayout(LayoutKind.Sequential)]

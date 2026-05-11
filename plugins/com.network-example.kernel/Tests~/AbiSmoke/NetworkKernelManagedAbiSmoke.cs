@@ -40,9 +40,11 @@ public static class NetworkKernelManagedAbiSmoke
                 {
                     input_seq = 1,
                     client_tick = 1,
+                    client_projectile_id = 1001,
                     move = new KernelVec2(1.0f, 0.0f),
                     aim_dir = new KernelVec3(1.0f, 0.0f, 0.0f),
                     buttons = (uint)InputButton.Fire,
+                    selected_weapon = 2,
                 };
 
                 kernel.SubmitInput(1, input);
@@ -110,6 +112,11 @@ public static class NetworkKernelManagedAbiSmoke
                 if (!HasRenderEntity(states, stateCount, enemyNetId))
                 {
                     throw new InvalidOperationException("Kernel_GetRenderStates missed enemy.");
+                }
+                if (!HasProjectileRenderMetadata(states, stateCount, 1, input.client_projectile_id))
+                {
+                    throw new InvalidOperationException(
+                        "Kernel_GetRenderStates missed projectile sync metadata.");
                 }
 
                 var events = new KernelEvent[16];
@@ -191,6 +198,28 @@ public static class NetworkKernelManagedAbiSmoke
         for (int index = 0; index < countInt; ++index)
         {
             if (states[index].net_id == netId)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasProjectileRenderMetadata(
+        RenderEntityState[] states,
+        uint count,
+        uint ownerPeer,
+        uint clientProjectileId)
+    {
+        int countInt = (int)count;
+        for (int index = 0; index < countInt; ++index)
+        {
+            RenderEntityState state = states[index];
+            if (state.entity_type == KernelEntityType.Projectile &&
+                state.owner_peer == ownerPeer &&
+                state.client_projectile_id == clientProjectileId &&
+                state.velocity.x > 0.0f)
             {
                 return true;
             }

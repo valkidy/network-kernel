@@ -1,7 +1,7 @@
 # Network Example Kernel Unity Package
 
 This package is the M6.4 Unity prototype for the network-example native kernel
-ABI v3 plus the Game Server v1 native bridge ABI v1.
+ABI v4 plus the Game Server v1 native bridge ABI v1.
 It is intentionally a pure networking/runtime SDK: native networking and game
 server behavior stay in C++, while Unity projects own input sampling,
 prefab/entity mapping, animation, scene objects, cameras, UI, and render-state
@@ -47,19 +47,20 @@ Required compile/ABI smoke:
 - Compile and run `Tests~/AbiSmoke/NetworkKernelManagedAbiSmoke.cs` with the
   package runtime sources in a directory containing `libnetwork_kernel.dylib`;
   it validates kernel and game-server ABI sizes, exercises
-  create/start/update/input/render/event calls, server entity
-  create/query/update/destroy calls, and a pure runtime `NetworkHost` smoke
-  without opening Unity Editor.
+  create/start/update/input/render/event calls, projectile sync metadata,
+  server entity create/query/update/destroy calls, and a pure runtime
+  `NetworkHost` smoke without opening Unity Editor.
 - Run `NetworkExample.Kernel.Editor.NetworkKernelAbiSmokeRunner.Run` in an
   environment where Unity batchmode licensing/headless execution works.
 - The runner calls `Kernel_GetAbiInfo` and `GameServer_GetAbiInfo`, compares
   native struct sizes with `Marshal.SizeOf<T>()`, starts listen-server mode,
-  checks local-player info, updates, submits one input, creates an enemy,
-  queries and mutates server entity state, polls events, reads render states,
-  destroys the enemy, runs a `NetworkHost` smoke through the native
+  checks local-player info, updates, submits one projectile input, creates an
+  enemy, queries and mutates server entity state, polls events, reads render
+  states including projectile sync metadata, destroys the enemy, runs a
+  `NetworkHost` smoke through the native
   `GameServer_*` bridge, and destroys the handles.
 
-To confirm the packaged dylib has the ABI v3 kernel server exports and Game
+To confirm the packaged dylib has the ABI v4 kernel server exports and Game
 Server v1 bridge exports:
 
 ```text
