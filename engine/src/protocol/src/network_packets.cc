@@ -7,9 +7,9 @@
 namespace network_example {
 namespace {
 
-constexpr std::size_t kInputPayloadSize = 37;
+constexpr std::size_t kInputPayloadSize = 41;
 constexpr std::size_t kSnapshotHeaderPayloadSize = 16;
-constexpr std::size_t kEntitySnapshotPayloadSize = 54;
+constexpr std::size_t kEntitySnapshotPayloadSize = 66;
 constexpr std::size_t kReliableEventPayloadSize = 18;
 constexpr std::size_t kEntitySpawnPayloadSize = 42;
 constexpr std::size_t kEntityDespawnPayloadSize = 12;
@@ -187,6 +187,7 @@ std::vector<std::uint8_t> encode_input_packet(
     write_u32(&payload, player_id);
     write_u32(&payload, input.input_seq);
     write_u32(&payload, input.client_tick);
+    write_u32(&payload, input.client_projectile_id);
     write_float(&payload, input.move.x);
     write_float(&payload, input.move.y);
     write_float(&payload, input.aim_dir.x);
@@ -215,6 +216,7 @@ bool decode_input_packet(
     return read_u32(payload, payload_size, &offset, out_player_id) &&
            read_u32(payload, payload_size, &offset, &input.input_seq) &&
            read_u32(payload, payload_size, &offset, &input.client_tick) &&
+           read_u32(payload, payload_size, &offset, &input.client_projectile_id) &&
            read_float(payload, payload_size, &offset, &input.move.x) &&
            read_float(payload, payload_size, &offset, &input.move.y) &&
            read_float(payload, payload_size, &offset, &input.aim_dir.x) &&
@@ -239,12 +241,15 @@ std::vector<std::uint8_t> encode_snapshot_packet(
     for (const EntitySnapshot& entity : snapshot.entities) {
         write_u32(&payload, entity.net_id);
         write_u16(&payload, static_cast<std::uint16_t>(entity.type));
+        write_u32(&payload, entity.owner_peer);
         write_vec3(&payload, entity.position);
         write_quat(&payload, entity.rotation);
         write_vec3(&payload, entity.velocity);
         write_u16(&payload, entity.hp);
         write_u16(&payload, entity.state);
         write_u32(&payload, entity.flags);
+        write_u32(&payload, entity.spawn_tick);
+        write_u32(&payload, entity.client_projectile_id);
     }
 
     return wrap_packet(MessageType::kSnapshotPacket, payload, sequence);
@@ -284,12 +289,15 @@ bool decode_snapshot_packet(
         std::uint16_t entity_type = 0;
         if (!read_u32(payload, payload_size, &offset, &entity.net_id) ||
             !read_u16(payload, payload_size, &offset, &entity_type) ||
+            !read_u32(payload, payload_size, &offset, &entity.owner_peer) ||
             !read_vec3(payload, payload_size, &offset, &entity.position) ||
             !read_quat(payload, payload_size, &offset, &entity.rotation) ||
             !read_vec3(payload, payload_size, &offset, &entity.velocity) ||
             !read_u16(payload, payload_size, &offset, &entity.hp) ||
             !read_u16(payload, payload_size, &offset, &entity.state) ||
-            !read_u32(payload, payload_size, &offset, &entity.flags)) {
+            !read_u32(payload, payload_size, &offset, &entity.flags) ||
+            !read_u32(payload, payload_size, &offset, &entity.spawn_tick) ||
+            !read_u32(payload, payload_size, &offset, &entity.client_projectile_id)) {
             return false;
         }
         entity.type = static_cast<EntityType>(entity_type);

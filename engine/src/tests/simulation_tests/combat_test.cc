@@ -24,6 +24,14 @@ network_example::WeaponState& weapon_state(
     return world.registry().get<network_example::WeaponState>(*entity);
 }
 
+network_example::ProjectileState& projectile_state(
+    network_example::World& world,
+    network_example::NetId net_id) {
+    const auto entity = world.find_entity(net_id);
+    assert(entity.has_value());
+    return world.registry().get<network_example::ProjectileState>(*entity);
+}
+
 PlayerInput fire_input(std::uint8_t weapon_id) {
     PlayerInput input{};
     input.input_seq = 1;
@@ -152,9 +160,11 @@ void grenade_sweeps_and_explodes_with_falloff() {
         world.spawn_enemy(glm::vec3{5.5f, 0.0f, 0.0f});
 
     std::vector<KernelEvent> events;
+    PlayerInput grenade_input = fire_input(network_example::kWeaponGrenade);
+    grenade_input.client_projectile_id = 4321;
     network_example::simulate_weapons(
         world,
-        queue(fire_input(network_example::kWeaponGrenade)),
+        queue(grenade_input),
         0,
         &events);
     assert(count_events(events, KernelEventType_FireConfirmed) == 1);
@@ -167,6 +177,14 @@ void grenade_sweeps_and_explodes_with_falloff() {
         }
     }
     assert(projectile != 0);
+    const auto projectile_entity = world.find_entity(projectile);
+    assert(projectile_entity.has_value());
+    assert(
+        world.registry()
+            .get<network_example::NetworkIdentity>(*projectile_entity)
+            .owner_peer == 1);
+    assert(projectile_state(world, projectile).spawn_tick == 0);
+    assert(projectile_state(world, projectile).client_projectile_id == 4321);
 
     events.clear();
     network_example::simulate_projectiles(world, 0.2f, 1, &events);
@@ -185,9 +203,11 @@ void projectile_weapon_fires_again_after_cooldown() {
         world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
 
     std::vector<KernelEvent> events;
+    PlayerInput grenade_input = fire_input(network_example::kWeaponGrenade);
+    grenade_input.client_projectile_id = 8765;
     network_example::simulate_weapons(
         world,
-        queue(fire_input(network_example::kWeaponGrenade)),
+        queue(grenade_input),
         0,
         &events);
     assert(count_events(events, KernelEventType_EntitySpawned) == 1);
@@ -195,7 +215,7 @@ void projectile_weapon_fires_again_after_cooldown() {
     events.clear();
     network_example::simulate_weapons(
         world,
-        queue(fire_input(network_example::kWeaponGrenade)),
+        queue(grenade_input),
         1,
         &events);
     assert(events.empty());
@@ -203,7 +223,7 @@ void projectile_weapon_fires_again_after_cooldown() {
     events.clear();
     network_example::simulate_weapons(
         world,
-        queue(fire_input(network_example::kWeaponGrenade)),
+        queue(grenade_input),
         30,
         &events);
     assert(count_events(events, KernelEventType_EntitySpawned) == 1);

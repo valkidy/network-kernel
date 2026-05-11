@@ -12,6 +12,11 @@ int main() {
         world.spawn_player(1, glm::vec3{1.0f, 2.0f, 3.0f});
     const network_example::NetId enemy =
         world.spawn_enemy(glm::vec3{4.0f, 0.0f, 0.0f});
+    const network_example::NetId projectile =
+        world.spawn_projectile(
+            1,
+            glm::vec3{2.0f, 1.0f, 0.0f},
+            glm::vec3{10.0f, 0.0f, 0.0f});
     const auto player_entity = world.find_entity(player);
     assert(player_entity.has_value());
     world.registry().get<network_example::Velocity>(*player_entity).linear =
@@ -23,27 +28,45 @@ int main() {
     world.registry().emplace<network_example::ReplicationState>(
         *enemy_entity,
         network_example::ReplicationState{9, 0x01020300u});
+    const auto projectile_entity = world.find_entity(projectile);
+    assert(projectile_entity.has_value());
+    network_example::ProjectileState& projectile_state =
+        world.registry().get<network_example::ProjectileState>(*projectile_entity);
+    projectile_state.spawn_tick = 7;
+    projectile_state.client_projectile_id = 3456;
 
     const network_example::WorldSnapshot snapshot =
         network_example::build_world_snapshot(world, 7, 233, 3);
     assert(snapshot.header.server_tick == 7);
     assert(snapshot.header.server_time_ms == 233);
     assert(snapshot.header.last_processed_input_seq == 3);
-    assert(snapshot.entities.size() == 2);
+    assert(snapshot.entities.size() == 3);
     bool saw_player_flags = false;
     bool saw_enemy_state = false;
+    bool saw_projectile_metadata = false;
     for (const network_example::EntitySnapshot& entity : snapshot.entities) {
         if (entity.net_id == player) {
             saw_player_flags =
+                entity.owner_peer == 1 &&
                 (entity.flags & network_example::kVisualFlagMoving) != 0 &&
                 (entity.flags & network_example::kVisualFlagReloading) != 0;
         }
         if (entity.net_id == enemy) {
-            saw_enemy_state = entity.state == 9 && entity.flags == 0x01020300u;
+            saw_enemy_state =
+                entity.owner_peer == 0 && entity.state == 9 &&
+                entity.flags == 0x01020300u;
+        }
+        if (entity.net_id == projectile) {
+            saw_projectile_metadata =
+                entity.owner_peer == 1 &&
+                entity.spawn_tick == 7 &&
+                entity.client_projectile_id == 3456 &&
+                entity.velocity.x == 10.0f;
         }
     }
     assert(saw_player_flags);
     assert(saw_enemy_state);
+    assert(saw_projectile_metadata);
 
     network_example::HistoryBuffer history(2);
     history.write_frame(world, 7);

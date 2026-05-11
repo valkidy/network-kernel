@@ -147,11 +147,15 @@ int main() {
         Kernel_GetRenderStates(kernel, states.data(), states.size());
     assert(render_count == 1);
     assert(states[0].net_id == created_net_id);
+    assert(states[0].owner_peer == 0);
     assert(states[0].position.x > 5.0f);
+    assert(states[0].velocity.x == 1.0f);
     assert(states[0].animation_state == 7);
     assert(
         states[0].visual_flags ==
         (0x12345678u | KERNEL_VISUAL_FLAG_MOVING));
+    assert(states[0].spawn_tick == 0);
+    assert(states[0].client_projectile_id == 0);
 
     std::array<KernelEvent, 16> events{};
     assert(Kernel_PollEvents(kernel, nullptr, events.size()) == 0);

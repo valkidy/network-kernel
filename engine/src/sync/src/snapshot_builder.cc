@@ -40,7 +40,9 @@ WorldSnapshot build_world_snapshot(
         const Transform>();
     for (const entt::entity entity : view) {
         EntitySnapshot entity_snapshot;
-        entity_snapshot.net_id = view.get<const NetworkIdentity>(entity).net_id;
+        const NetworkIdentity& identity = view.get<const NetworkIdentity>(entity);
+        entity_snapshot.net_id = identity.net_id;
+        entity_snapshot.owner_peer = identity.owner_peer;
         entity_snapshot.type = view.get<const EntityKind>(entity).type;
         entity_snapshot.position = view.get<const Transform>(entity).position;
         entity_snapshot.rotation = view.get<const Transform>(entity).rotation;
@@ -56,6 +58,12 @@ WorldSnapshot build_world_snapshot(
                 world.registry().get<ReplicationState>(entity);
             entity_snapshot.state = replication.animation_state;
             entity_snapshot.flags |= replication.visual_flags;
+        }
+        if (world.registry().all_of<ProjectileState>(entity)) {
+            const ProjectileState& projectile =
+                world.registry().get<ProjectileState>(entity);
+            entity_snapshot.spawn_tick = projectile.spawn_tick;
+            entity_snapshot.client_projectile_id = projectile.client_projectile_id;
         }
         snapshot.entities.push_back(entity_snapshot);
     }

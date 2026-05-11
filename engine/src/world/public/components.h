@@ -70,6 +70,8 @@ struct Hitbox {
 struct ProjectileState {
     std::uint8_t weapon_id = 0;
     std::uint16_t damage = 0;
+    std::uint32_t spawn_tick = 0;
+    std::uint32_t client_projectile_id = 0;
     float explosion_radius = 0.0f;
     float max_lifetime_seconds = 0.0f;
     float age_seconds = 0.0f;

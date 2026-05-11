@@ -19,6 +19,7 @@ int main() {
     PlayerInput input{};
     input.input_seq = 7;
     input.client_tick = 11;
+    input.client_projectile_id = 1234;
     input.move = KernelVec2{0.5f, -0.25f};
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     input.buttons = InputButton_Fire | InputButton_Sprint;
@@ -36,6 +37,7 @@ int main() {
     assert(decoded_player == 3);
     assert(decoded_input.input_seq == input.input_seq);
     assert(decoded_input.client_tick == input.client_tick);
+    assert(decoded_input.client_projectile_id == input.client_projectile_id);
     assert(nearly_equal(decoded_input.move.x, input.move.x));
     assert(nearly_equal(decoded_input.move.y, input.move.y));
     assert(nearly_equal(decoded_input.aim_dir.x, input.aim_dir.x));
@@ -48,13 +50,16 @@ int main() {
     snapshot.header.last_processed_input_seq = 7;
     network_example::EntitySnapshot entity;
     entity.net_id = 5;
-    entity.type = network_example::EntityType::kPlayer;
+    entity.type = network_example::EntityType::kProjectile;
+    entity.owner_peer = 3;
     entity.position = glm::vec3{1.0f, 2.0f, 3.0f};
     entity.rotation = glm::quat{0.5f, 0.5f, 0.5f, 0.5f};
     entity.velocity = glm::vec3{4.0f, 5.0f, 6.0f};
     entity.hp = 88;
     entity.state = 513;
     entity.flags = 0x01020304u;
+    entity.spawn_tick = 12;
+    entity.client_projectile_id = 1234;
     snapshot.entities.push_back(entity);
 
     const std::vector<std::uint8_t> snapshot_packet =
@@ -69,13 +74,16 @@ int main() {
     assert(decoded_snapshot.header.last_processed_input_seq == 7);
     assert(decoded_snapshot.entities.size() == 1);
     assert(decoded_snapshot.entities[0].net_id == 5);
-    assert(decoded_snapshot.entities[0].type == network_example::EntityType::kPlayer);
+    assert(decoded_snapshot.entities[0].type == network_example::EntityType::kProjectile);
+    assert(decoded_snapshot.entities[0].owner_peer == 3);
     assert(nearly_equal(decoded_snapshot.entities[0].position.x, 1.0f));
     assert(nearly_equal(decoded_snapshot.entities[0].rotation.w, 0.5f));
     assert(nearly_equal(decoded_snapshot.entities[0].velocity.z, 6.0f));
     assert(decoded_snapshot.entities[0].hp == 88);
     assert(decoded_snapshot.entities[0].state == 513);
     assert(decoded_snapshot.entities[0].flags == 0x01020304u);
+    assert(decoded_snapshot.entities[0].spawn_tick == 12);
+    assert(decoded_snapshot.entities[0].client_projectile_id == 1234);
 
     KernelEvent reliable_event{};
     reliable_event.type = KernelEventType_PlayerLeft;

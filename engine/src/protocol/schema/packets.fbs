@@ -32,6 +32,7 @@ table InputPacket {
   player_id:uint;
   input_seq:uint;
   client_tick:uint;
+  client_projectile_id:uint;
   move_x:float;
   move_y:float;
   aim_dir:Vec3;
@@ -42,12 +43,15 @@ table InputPacket {
 table EntitySnapshot {
   net_id:uint;
   entity_type:ushort;
+  owner_peer:uint;
   position:Vec3;
   rotation:Quat;
   velocity:Vec3;
   hp:ushort;
   state:ushort;
   flags:uint;
+  spawn_tick:uint;
+  client_projectile_id:uint;
 }
 
 table WelcomePacket {

@@ -254,6 +254,7 @@ void fire_projectile(
     const WeaponDefinition& definition,
     std::uint32_t current_tick,
     PeerId shooter_peer_id,
+    std::uint32_t client_projectile_id,
     const glm::vec3& origin,
     const glm::vec3& direction,
     std::vector<KernelEvent>* events) {
@@ -267,6 +268,8 @@ void fire_projectile(
             world.registry().get<ProjectileState>(*projectile_entity);
         projectile_state.weapon_id = definition.id;
         projectile_state.damage = definition.damage;
+        projectile_state.spawn_tick = current_tick;
+        projectile_state.client_projectile_id = client_projectile_id;
         projectile_state.explosion_radius = definition.explosion_radius;
         projectile_state.max_lifetime_seconds = definition.projectile_lifetime_seconds;
         projectile_state.previous_position = origin;
@@ -403,6 +406,7 @@ void simulate_weapons(
                     definition,
                     current_tick,
                     queued_input.owner_peer,
+                    queued_input.input.client_projectile_id,
                     origin,
                     direction,
                     events);

@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 3`.
+`KERNEL_ABI_VERSION == 4`.
 
 ## Ownership
 
@@ -35,6 +35,13 @@ ABI version 3 adds server-only gameplay scaffolding for external dedicated
 server logic. The kernel exposes generic entity create/destroy, transform,
 velocity, persistent state write, and entity query functions. These functions
 are intentionally not enemy-specific, and they fail when used from client mode.
+
+ABI version 4 adds projectile prediction reconciliation metadata. `PlayerInput`
+includes `client_projectile_id`; `client_tick` remains the client fire tick.
+Projectile snapshots and render states expose `owner_peer`, `velocity`,
+`spawn_tick`, and `client_projectile_id` so managed clients can match a
+server-authoritative projectile to a locally predicted projectile after the
+server validates ammo, cooldown, and weapon state.
 
 Consumers pass a `struct_size`-style byte size to `Kernel_GetAbiInfo`. The call
 returns `false` if the output pointer is null or the provided size is smaller
