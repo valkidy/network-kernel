@@ -23,7 +23,7 @@ int main(void) {
     (void)create_info;
     (void)server_state;
 
-    assert(KERNEL_ABI_VERSION == 4u);
+    assert(KERNEL_ABI_VERSION == 5u);
     assert(sizeof(KernelAbiInfo) > 0u);
     assert(sizeof(KernelLocalPlayerInfo) > 0u);
     assert(sizeof(KernelConfig) > 0u);
@@ -36,6 +36,10 @@ int main(void) {
     assert((KERNEL_VISUAL_FLAG_MOVING & KERNEL_VISUAL_FLAG_RELOADING) == 0u);
     assert((KERNEL_VISUAL_FLAG_MOVING & KERNEL_VISUAL_FLAG_DEAD) == 0u);
     assert(sizeof(abi_info.abi_version) == sizeof(uint32_t));
+    assert(offsetof(PlayerInput, client_action_time_us) > offsetof(PlayerInput, input_seq));
+    assert(offsetof(PlayerInput, client_action_id) > offsetof(PlayerInput, client_action_time_us));
+    assert(offsetof(RenderEntityState, entity_id) == 0u);
+    assert(sizeof(state.entity_id) == sizeof(uint64_t));
 
     return 0;
 }

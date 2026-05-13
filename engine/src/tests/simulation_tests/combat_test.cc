@@ -161,7 +161,7 @@ void grenade_sweeps_and_explodes_with_falloff() {
 
     std::vector<KernelEvent> events;
     PlayerInput grenade_input = fire_input(network_example::kWeaponGrenade);
-    grenade_input.client_projectile_id = 4321;
+    grenade_input.client_action_id = 4321;
     network_example::simulate_weapons(
         world,
         queue(grenade_input),
@@ -184,7 +184,7 @@ void grenade_sweeps_and_explodes_with_falloff() {
             .get<network_example::NetworkIdentity>(*projectile_entity)
             .owner_peer == 1);
     assert(projectile_state(world, projectile).spawn_tick == 0);
-    assert(projectile_state(world, projectile).client_projectile_id == 4321);
+    assert(projectile_state(world, projectile).client_action_id == 4321);
 
     events.clear();
     network_example::simulate_projectiles(world, 0.2f, 1, &events);
@@ -204,7 +204,7 @@ void projectile_weapon_fires_again_after_cooldown() {
 
     std::vector<KernelEvent> events;
     PlayerInput grenade_input = fire_input(network_example::kWeaponGrenade);
-    grenade_input.client_projectile_id = 8765;
+    grenade_input.client_action_id = 8765;
     network_example::simulate_weapons(
         world,
         queue(grenade_input),

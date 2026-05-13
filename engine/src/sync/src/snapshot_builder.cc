@@ -63,7 +63,7 @@ WorldSnapshot build_world_snapshot(
             const ProjectileState& projectile =
                 world.registry().get<ProjectileState>(entity);
             entity_snapshot.spawn_tick = projectile.spawn_tick;
-            entity_snapshot.client_projectile_id = projectile.client_projectile_id;
+            entity_snapshot.client_action_id = projectile.client_action_id;
         }
         snapshot.entities.push_back(entity_snapshot);
     }

@@ -51,6 +51,33 @@ RenderEntityState find_entity(
     return RenderEntityState{};
 }
 
+RenderEntityState find_projectile_action(
+    const std::array<RenderEntityState, 16>& states,
+    std::uint32_t count,
+    std::uint32_t client_action_id) {
+    for (std::uint32_t index = 0; index < count; ++index) {
+        if (states[index].entity_type == 3 &&
+            states[index].client_action_id == client_action_id) {
+            return states[index];
+        }
+    }
+    assert(false);
+    return RenderEntityState{};
+}
+
+bool has_projectile_action(
+    const std::array<RenderEntityState, 16>& states,
+    std::uint32_t count,
+    std::uint32_t client_action_id) {
+    for (std::uint32_t index = 0; index < count; ++index) {
+        if (states[index].entity_type == 3 &&
+            states[index].client_action_id == client_action_id) {
+            return true;
+        }
+    }
+    return false;
+}
+
 KernelServerEntityState find_server_entity(
     const std::array<KernelServerEntityState, 16>& states,
     std::uint32_t count,
@@ -115,7 +142,7 @@ int main() {
 
     PlayerInput input{};
     input.input_seq = 1;
-    input.client_tick = 0;
+    input.client_action_time_us = 0;
     input.move = KernelVec2{1.0f, 0.0f};
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     Kernel_SubmitInput(kernel, 1, &input);
@@ -146,7 +173,7 @@ int main() {
 
     PlayerInput fire_input{};
     fire_input.input_seq = 2;
-    fire_input.client_tick = 2;
+    fire_input.client_action_time_us = 66666;
     fire_input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     fire_input.buttons = InputButton_Fire;
     fire_input.selected_weapon = 0;
@@ -169,11 +196,25 @@ int main() {
 
     PlayerInput projectile_input{};
     projectile_input.input_seq = 3;
-    projectile_input.client_tick = 3;
+    projectile_input.client_action_time_us = 100000;
+    projectile_input.client_action_id = 3001;
     projectile_input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     projectile_input.buttons = InputButton_Fire;
     projectile_input.selected_weapon = 2;
     Kernel_SubmitInput(kernel, 1, &projectile_input);
+
+    std::array<RenderEntityState, 16> predicted_projectile_states{};
+    const std::uint32_t predicted_projectile_count = Kernel_GetRenderStates(
+        kernel,
+        predicted_projectile_states.data(),
+        static_cast<std::uint32_t>(predicted_projectile_states.size()));
+    const RenderEntityState predicted_projectile = find_projectile_action(
+        predicted_projectile_states,
+        predicted_projectile_count,
+        projectile_input.client_action_id);
+    assert(predicted_projectile.entity_id != 0);
+    assert(predicted_projectile.net_id == 0);
+
     Kernel_Update(kernel, 1.0f);
 
     std::array<KernelEvent, 16> projectile_events{};
@@ -203,6 +244,8 @@ int main() {
     const RenderEntityState projectile_state =
         find_entity(projectile_states, projectile_count, projectile_net_id);
     assert(projectile_state.entity_type == 3);
+    assert(projectile_state.entity_id == predicted_projectile.entity_id);
+    assert(projectile_state.client_action_id == projectile_input.client_action_id);
 
     Kernel_Update(kernel, 1.0f / 30.0f);
     std::array<RenderEntityState, 16> moved_projectile_states{};
@@ -214,6 +257,34 @@ int main() {
         find_entity(moved_projectile_states, moved_projectile_count, projectile_net_id);
     assert(moved_projectile_state.entity_type == 3);
     assert(moved_projectile_state.position.x > projectile_state.position.x);
+
+    PlayerInput rejected_projectile_input{};
+    rejected_projectile_input.input_seq = 4;
+    rejected_projectile_input.client_action_time_us = 133333;
+    rejected_projectile_input.client_action_id = 3002;
+    rejected_projectile_input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
+    rejected_projectile_input.buttons = InputButton_Fire;
+    rejected_projectile_input.selected_weapon = 2;
+    Kernel_SubmitInput(kernel, 1, &rejected_projectile_input);
+    std::array<RenderEntityState, 16> rejected_predicted_states{};
+    const std::uint32_t rejected_predicted_count = Kernel_GetRenderStates(
+        kernel,
+        rejected_predicted_states.data(),
+        static_cast<std::uint32_t>(rejected_predicted_states.size()));
+    assert(has_projectile_action(
+        rejected_predicted_states,
+        rejected_predicted_count,
+        rejected_projectile_input.client_action_id));
+    Kernel_Update(kernel, 1.0f / 30.0f);
+    std::array<RenderEntityState, 16> rejected_after_states{};
+    const std::uint32_t rejected_after_count = Kernel_GetRenderStates(
+        kernel,
+        rejected_after_states.data(),
+        static_cast<std::uint32_t>(rejected_after_states.size()));
+    assert(!has_projectile_action(
+        rejected_after_states,
+        rejected_after_count,
+        rejected_projectile_input.client_action_id));
 
     KernelServerEntityCreateInfo enemy_create{};
     enemy_create.struct_size = sizeof(enemy_create);

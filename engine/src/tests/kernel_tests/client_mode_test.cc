@@ -15,7 +15,7 @@ int main() {
 
     PlayerInput input{};
     input.input_seq = 1;
-    input.client_tick = 1;
+    input.client_action_time_us = 33333;
     input.move = KernelVec2{1.0f, 0.0f};
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     Kernel_SubmitInput(kernel, 0, &input);

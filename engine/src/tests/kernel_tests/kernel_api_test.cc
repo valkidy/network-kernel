@@ -1,5 +1,6 @@
 #include <array>
 #include <cassert>
+#include <cstddef>
 
 #include "kernel/public/kernel_api.h"
 
@@ -37,6 +38,11 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_SERVER_ENTITY_QUERY) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_SERVER_RELEVANCE_FILTER) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
+    assert(KERNEL_ABI_VERSION == 5u);
+    assert(offsetof(PlayerInput, client_action_time_us) > offsetof(PlayerInput, input_seq));
+    assert(offsetof(PlayerInput, client_action_id) > offsetof(PlayerInput, client_action_time_us));
+    assert(offsetof(RenderEntityState, entity_id) == 0u);
+    assert(offsetof(RenderEntityState, net_id) > offsetof(RenderEntityState, entity_id));
     assert(!Kernel_GetAbiInfo(nullptr, sizeof(abi_info)));
     assert(!Kernel_GetAbiInfo(&abi_info, sizeof(abi_info) - 1));
 
@@ -147,6 +153,7 @@ int main() {
         Kernel_GetRenderStates(kernel, states.data(), states.size());
     assert(render_count == 1);
     assert(states[0].net_id == created_net_id);
+    assert(states[0].entity_id != 0);
     assert(states[0].owner_peer == 0);
     assert(states[0].position.x > 5.0f);
     assert(states[0].velocity.x == 1.0f);
@@ -155,7 +162,7 @@ int main() {
         states[0].visual_flags ==
         (0x12345678u | KERNEL_VISUAL_FLAG_MOVING));
     assert(states[0].spawn_tick == 0);
-    assert(states[0].client_projectile_id == 0);
+    assert(states[0].client_action_id == 0);
 
     std::array<KernelEvent, 16> events{};
     assert(Kernel_PollEvents(kernel, nullptr, events.size()) == 0);

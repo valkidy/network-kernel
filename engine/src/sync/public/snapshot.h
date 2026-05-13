@@ -28,7 +28,7 @@ struct EntitySnapshot {
     std::uint16_t state = 0;
     std::uint32_t flags = 0;
     std::uint32_t spawn_tick = 0;
-    std::uint32_t client_projectile_id = 0;
+    std::uint32_t client_action_id = 0;
 };
 
 struct WorldSnapshot {

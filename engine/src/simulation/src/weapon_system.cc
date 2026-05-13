@@ -254,7 +254,7 @@ void fire_projectile(
     const WeaponDefinition& definition,
     std::uint32_t current_tick,
     PeerId shooter_peer_id,
-    std::uint32_t client_projectile_id,
+    std::uint32_t client_action_id,
     const glm::vec3& origin,
     const glm::vec3& direction,
     std::vector<KernelEvent>* events) {
@@ -269,7 +269,7 @@ void fire_projectile(
         projectile_state.weapon_id = definition.id;
         projectile_state.damage = definition.damage;
         projectile_state.spawn_tick = current_tick;
-        projectile_state.client_projectile_id = client_projectile_id;
+        projectile_state.client_action_id = client_action_id;
         projectile_state.explosion_radius = definition.explosion_radius;
         projectile_state.max_lifetime_seconds = definition.projectile_lifetime_seconds;
         projectile_state.previous_position = origin;
@@ -406,7 +406,7 @@ void simulate_weapons(
                     definition,
                     current_tick,
                     queued_input.owner_peer,
-                    queued_input.input.client_projectile_id,
+                    queued_input.input.client_action_id,
                     origin,
                     direction,
                     events);

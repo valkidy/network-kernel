@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -75,6 +76,19 @@ private:
         bool active = false;
     };
 
+    struct PredictedProjectile {
+        std::uint64_t entity_id = 0;
+        NetId net_id = 0;
+        PeerId owner_peer = 0;
+        std::uint32_t input_seq = 0;
+        std::uint32_t client_action_id = 0;
+        std::uint32_t spawn_tick = 0;
+        glm::vec3 position{0.0f, 0.0f, 0.0f};
+        glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+        glm::vec3 velocity{0.0f, 0.0f, 0.0f};
+        bool bound = false;
+    };
+
     void push_event(
         KernelEventType type,
         NetId net_id = 0,
@@ -96,11 +110,21 @@ private:
     void handle_client_snapshot(WorldSnapshot snapshot);
     void store_client_snapshot(WorldSnapshot snapshot);
     void reconcile_local_prediction(const WorldSnapshot& snapshot);
+    void reconcile_predicted_projectiles(const WorldSnapshot& snapshot);
     void predict_local_input(const PlayerInput& input);
+    void predict_local_projectile(const PlayerInput& input);
     PlayerInput prepare_client_input(const PlayerInput& input);
     bool build_interpolated_snapshot(WorldSnapshot* out_snapshot) const;
     void append_predicted_local_render_state();
+    void append_predicted_projectile_render_states();
+    void advance_predicted_projectiles(float fixed_delta_seconds);
     std::uint32_t rewind_tick_for_input(const QueuedInput& queued_input) const;
+    std::uint64_t entity_id_for_net_id(NetId net_id);
+    std::uint64_t allocate_predicted_entity_id();
+    bool has_predicted_projectile_net_id(NetId net_id) const;
+    PredictedProjectile* find_predicted_projectile(
+        PeerId owner_peer,
+        std::uint32_t client_action_id);
     void publish_snapshot();
     WorldSnapshot build_relevant_snapshot(
         const PeerSession& session,
@@ -143,8 +167,12 @@ private:
     std::vector<ClientReplicatedEntity> client_replicated_entities_;
     std::unordered_set<NetId> client_despawned_entities_;
     std::vector<PlayerInput> pending_prediction_inputs_;
+    std::vector<PredictedProjectile> predicted_projectiles_;
+    std::unordered_map<NetId, std::uint64_t> entity_ids_by_net_id_;
     EntitySnapshot predicted_local_entity_;
     glm::vec3 local_correction_offset_{0.0f, 0.0f, 0.0f};
+    std::uint64_t next_entity_id_ = 1;
+    std::uint64_t next_predicted_entity_id_ = UINT64_C(0x8000000000000000);
     NetId local_player_net_id_ = 0;
     std::uint32_t local_last_processed_input_seq_ = 0;
     std::uint32_t predicted_server_tick_ = 0;

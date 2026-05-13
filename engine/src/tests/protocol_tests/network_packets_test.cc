@@ -18,8 +18,8 @@ bool nearly_equal(float lhs, float rhs) {
 int main() {
     PlayerInput input{};
     input.input_seq = 7;
-    input.client_tick = 11;
-    input.client_projectile_id = 1234;
+    input.client_action_time_us = 11000;
+    input.client_action_id = 1234;
     input.move = KernelVec2{0.5f, -0.25f};
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     input.buttons = InputButton_Fire | InputButton_Sprint;
@@ -36,8 +36,8 @@ int main() {
         &decoded_input));
     assert(decoded_player == 3);
     assert(decoded_input.input_seq == input.input_seq);
-    assert(decoded_input.client_tick == input.client_tick);
-    assert(decoded_input.client_projectile_id == input.client_projectile_id);
+    assert(decoded_input.client_action_time_us == input.client_action_time_us);
+    assert(decoded_input.client_action_id == input.client_action_id);
     assert(nearly_equal(decoded_input.move.x, input.move.x));
     assert(nearly_equal(decoded_input.move.y, input.move.y));
     assert(nearly_equal(decoded_input.aim_dir.x, input.aim_dir.x));
@@ -59,7 +59,7 @@ int main() {
     entity.state = 513;
     entity.flags = 0x01020304u;
     entity.spawn_tick = 12;
-    entity.client_projectile_id = 1234;
+    entity.client_action_id = 1234;
     snapshot.entities.push_back(entity);
 
     const std::vector<std::uint8_t> snapshot_packet =
@@ -83,7 +83,7 @@ int main() {
     assert(decoded_snapshot.entities[0].state == 513);
     assert(decoded_snapshot.entities[0].flags == 0x01020304u);
     assert(decoded_snapshot.entities[0].spawn_tick == 12);
-    assert(decoded_snapshot.entities[0].client_projectile_id == 1234);
+    assert(decoded_snapshot.entities[0].client_action_id == 1234);
 
     KernelEvent reliable_event{};
     reliable_event.type = KernelEventType_PlayerLeft;
