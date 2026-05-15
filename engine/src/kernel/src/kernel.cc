@@ -499,6 +499,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     tick_loop_ = TickLoop(config_.tick);
     world_ = World{};
     history_buffer_ = HistoryBuffer(history_frame_count(config_.tick));
+    damage_pipeline_.clear();
     pending_inputs_.clear();
     events_.clear();
     render_states_.clear();
@@ -1159,7 +1160,15 @@ KernelEngine::PredictedProjectile* KernelEngine::find_predicted_projectile(
 
 void KernelEngine::simulate_tick() {
     const float fixed_delta = tick_loop_.fixed_delta_seconds();
+    const std::uint64_t server_time_us =
+        tick_time_us(tick_loop_.current_tick(), fixed_delta);
     advance_predicted_projectiles(fixed_delta);
+    for (const QueuedInput& pending_input : pending_inputs_) {
+        damage_pipeline_.ingest_defensive_input(
+            pending_input.owner_peer,
+            pending_input.input,
+            server_time_us);
+    }
     simulate_player_movement(world_, pending_inputs_, fixed_delta);
     simulate_velocity_movement(world_, fixed_delta);
     simulate_weapons(world_, {}, tick_loop_.current_tick(), &events_);
@@ -1177,7 +1186,17 @@ void KernelEngine::simulate_tick() {
             &events_,
             rewind_frame);
     }
-    simulate_projectiles(world_, fixed_delta, tick_loop_.current_tick(), &events_);
+    simulate_projectiles(
+        world_,
+        fixed_delta,
+        tick_loop_.current_tick(),
+        &events_,
+        &damage_pipeline_);
+    damage_pipeline_.confirm_ready(
+        world_,
+        server_time_us,
+        tick_loop_.current_tick(),
+        &events_);
     destroy_dead_entities(world_, tick_loop_.current_tick(), &events_);
     history_buffer_.write_frame(world_, tick_loop_.current_tick());
     if (tick_loop_.should_write_snapshot()) {

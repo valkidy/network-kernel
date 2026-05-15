@@ -86,6 +86,8 @@ typedef enum InputButton {
     InputButton_Sprint = 1u << 3,
     InputButton_Interact = 1u << 4,
     InputButton_Ability1 = 1u << 5,
+    InputButton_Dodge = 1u << 6,
+    InputButton_Parry = 1u << 7,
 } InputButton;
 
 typedef struct KernelVec2 {

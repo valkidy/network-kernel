@@ -39,7 +39,9 @@ void explode_projectile(
     const ProjectileState& projectile,
     const glm::vec3& explosion_center,
     std::uint32_t current_tick,
-    std::vector<KernelEvent>* events) {
+    std::uint64_t hit_time_us,
+    std::vector<KernelEvent>* events,
+    DamagePipeline* damage_pipeline) {
     if (projectile.explosion_radius <= 0.0f || projectile.damage == 0) {
         return;
     }
@@ -80,6 +82,17 @@ void explode_projectile(
     }
 
     for (const auto& [target_net_id, damage] : damage_results) {
+        if (damage_pipeline != nullptr &&
+            damage_pipeline->submit_hit(
+                world,
+                target_net_id,
+                projectile_net_id,
+                owner_peer,
+                projectile.weapon_id,
+                damage,
+                hit_time_us)) {
+            continue;
+        }
         if (!world.apply_damage(target_net_id, damage)) {
             continue;
         }
@@ -150,6 +163,12 @@ bool projectile_sweep_hits_target(
     return found_hit;
 }
 
+std::uint64_t tick_time_us(std::uint32_t tick, float fixed_delta_seconds) {
+    return static_cast<std::uint64_t>(
+        static_cast<double>(tick) * static_cast<double>(fixed_delta_seconds) *
+        1000000.0);
+}
+
 }  // namespace
 
 void simulate_projectiles(World& world, float fixed_delta_seconds) {
@@ -161,6 +180,15 @@ void simulate_projectiles(
     float fixed_delta_seconds,
     std::uint32_t current_tick,
     std::vector<KernelEvent>* events) {
+    simulate_projectiles(world, fixed_delta_seconds, current_tick, events, nullptr);
+}
+
+void simulate_projectiles(
+    World& world,
+    float fixed_delta_seconds,
+    std::uint32_t current_tick,
+    std::vector<KernelEvent>* events,
+    DamagePipeline* damage_pipeline) {
     std::vector<NetId> projectiles_to_destroy;
     auto view = world.registry().view<NetworkIdentity, Transform, Velocity, ProjectileState, ProjectileTag>();
     for (const entt::entity entity : view) {
@@ -194,7 +222,9 @@ void simulate_projectiles(
             projectile,
             hit_target ? impact_position : transform.position,
             current_tick,
-            events);
+            tick_time_us(current_tick, fixed_delta_seconds),
+            events,
+            damage_pipeline);
         projectiles_to_destroy.push_back(identity.net_id);
     }
 

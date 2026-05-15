@@ -35,6 +35,8 @@ int main(void) {
     assert((KERNEL_CAPABILITY_CLIENT_MODE & KERNEL_CAPABILITY_RENDER_STATES) == 0u);
     assert((KERNEL_VISUAL_FLAG_MOVING & KERNEL_VISUAL_FLAG_RELOADING) == 0u);
     assert((KERNEL_VISUAL_FLAG_MOVING & KERNEL_VISUAL_FLAG_DEAD) == 0u);
+    assert((InputButton_Dodge & InputButton_Parry) == 0u);
+    assert((InputButton_Dodge & InputButton_Reload) == 0u);
     assert(sizeof(abi_info.abi_version) == sizeof(uint32_t));
     assert(offsetof(PlayerInput, client_action_time_us) > offsetof(PlayerInput, input_seq));
     assert(offsetof(PlayerInput, client_action_id) > offsetof(PlayerInput, client_action_time_us));

@@ -154,6 +154,7 @@ private:
     TickLoop tick_loop_;
     World world_;
     HistoryBuffer history_buffer_;
+    DamagePipeline damage_pipeline_;
     std::unique_ptr<ITransport> transport_;
     LoopbackTransport* loopback_transport_ = nullptr;
     std::vector<QueuedInput> pending_inputs_;

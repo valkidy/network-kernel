@@ -197,6 +197,35 @@ void grenade_sweeps_and_explodes_with_falloff() {
     assert(count_events(events, KernelEventType_DamageApplied) >= 2);
 }
 
+void server_projectile_damage_to_player_is_pended() {
+    network_example::World world;
+    const network_example::NetId player =
+        world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+    const network_example::NetId projectile_net_id =
+        world.spawn_projectile(
+            0,
+            glm::vec3{0.0f, 1.0f, 0.0f},
+            glm::vec3{0.0f, 0.0f, 0.0f});
+    network_example::ProjectileState& projectile =
+        projectile_state(world, projectile_net_id);
+    projectile.weapon_id = network_example::kWeaponGrenade;
+    projectile.damage = 80;
+    projectile.explosion_radius = 4.0f;
+    projectile.max_lifetime_seconds = 0.01f;
+
+    network_example::DamagePipeline pipeline;
+    std::vector<KernelEvent> events;
+    network_example::simulate_projectiles(world, 0.02f, 0, &events, &pipeline);
+    assert(health(world, player).hp == 100);
+    assert(count_events(events, KernelEventType_Explosion) == 1);
+    assert(count_events(events, KernelEventType_DamageApplied) == 0);
+    assert(pipeline.pending_count() == 1);
+
+    pipeline.confirm_ready(world, 100000, 3, &events);
+    assert(health(world, player).hp < 100);
+    assert(count_events(events, KernelEventType_DamageApplied) == 1);
+}
+
 void projectile_weapon_fires_again_after_cooldown() {
     network_example::World world;
     const network_example::NetId player =
@@ -314,6 +343,7 @@ int main() {
     rejects_fire_during_cooldown_and_reload();
     shotgun_applies_multiple_pellets();
     grenade_sweeps_and_explodes_with_falloff();
+    server_projectile_damage_to_player_is_pended();
     projectile_weapon_fires_again_after_cooldown();
     rewind_hitscan_uses_historical_hit_volumes();
     rewind_shotgun_respects_range();

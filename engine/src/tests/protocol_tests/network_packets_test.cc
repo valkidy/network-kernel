@@ -22,7 +22,8 @@ int main() {
     input.client_action_id = 1234;
     input.move = KernelVec2{0.5f, -0.25f};
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
-    input.buttons = InputButton_Fire | InputButton_Sprint;
+    input.buttons = InputButton_Fire | InputButton_Sprint | InputButton_Dodge |
+                    InputButton_Parry;
     input.selected_weapon = 2;
 
     const std::vector<std::uint8_t> input_packet =

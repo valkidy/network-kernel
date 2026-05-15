@@ -20,6 +20,8 @@
 - Input packets encode `client_action_time_us` and `client_action_id`.
 - Snapshot packets encode projectile `client_action_id` but never encode
   `entity_id`, which is client-local.
+- `InputButton_Dodge` and `InputButton_Parry` are additive ABI v5 button bits
+  for rollback-eligible defensive input.
 
 ## Runtime Behavior
 
@@ -34,6 +36,11 @@
   while `net_id` becomes the server id.
 - If the server acknowledges an input sequence without producing a matching
   authoritative projectile, the provisional projectile render state is removed.
+- Server-originated projectile/explosion damage against players enters an
+  internal pending damage queue instead of applying immediately.
+- Pending damage uses a 100ms grace window; Dodge overlapping the hit time
+  cancels damage, and Parry overlapping the hit time reduces final damage by
+  50%. Existing `DamageApplied` events are emitted only when damage confirms.
 
 ## Test Coverage
 
@@ -43,6 +50,9 @@
 - Kernel listen-server tests verify immediate predicted projectile render
   states, predicted-to-authoritative `entity_id` stability, duplicate
   suppression, and rejected prediction cleanup.
+- Damage pipeline tests cover grace-window confirmation, Dodge cancel, Parry
+  reduction, non-eligible input rejection, and server-owned projectile pending
+  damage.
 
 ## Assumptions
 
@@ -50,5 +60,5 @@
 - `net_id` remains the server-authoritative entity id.
 - `client_action_id == 0` means no predicted/correlatable action.
 - Full time-sync sampling, projectile historical replay, sticky projectile
-  authority, pending damage, defensive input correction, and Unity C# mirror
-  updates remain separate follow-up work.
+  authority, client damage presentation timing, public defensive feedback
+  events, and Unity C# mirror updates remain separate follow-up work.

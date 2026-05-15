@@ -47,6 +47,12 @@ stable object key across predicted-to-authoritative binding; `net_id` remains
 the server-authoritative id and may be `0` before binding. Snapshot packets do
 not transmit `entity_id`.
 
+ABI version 5 also reserves additive input button bits for server-side
+defensive correction: `InputButton_Dodge` cancels eligible pending
+server-originated player damage, and `InputButton_Parry` reduces it. These bits
+reuse `client_action_time_us` for rollback timing and do not change public
+struct layout.
+
 Consumers pass a `struct_size`-style byte size to `Kernel_GetAbiInfo`. The call
 returns `false` if the output pointer is null or the provided size is smaller
 than the current `KernelAbiInfo` layout.

@@ -11,3 +11,9 @@ cc_test(
     srcs = ["combat_test.cc"],
     deps = ["//engine/src/simulation:simulation"],
 )
+
+cc_test(
+    name = "damage_pipeline_test",
+    srcs = ["damage_pipeline_test.cc"],
+    deps = ["//engine/src/simulation:simulation"],
+)
