@@ -9,7 +9,7 @@ namespace network_example {
 
 constexpr std::uint32_t kPacketMagic = 0x4e584b31u;
 constexpr std::uint16_t kProtocolVersion = 1;
-constexpr std::uint16_t kSchemaVersion = 3;
+constexpr std::uint16_t kSchemaVersion = 4;
 constexpr std::size_t kPacketHeaderSize = 28;
 
 enum class MessageType : std::uint16_t {

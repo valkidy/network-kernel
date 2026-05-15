@@ -72,11 +72,20 @@ void push_event(
     std::uint32_t tick,
     NetId net_id,
     PeerId peer_id,
-    std::uint32_t code = 0) {
+    std::uint32_t code = 0,
+    std::uint64_t event_time_us = 0,
+    std::uint64_t presentation_time_us = 0) {
     if (events == nullptr) {
         return;
     }
-    events->push_back(KernelEvent{type, tick, net_id, peer_id, code});
+    events->push_back(KernelEvent{
+        type,
+        tick,
+        net_id,
+        peer_id,
+        code,
+        event_time_us,
+        presentation_time_us});
 }
 
 void complete_ready_reload(WeaponState& weapon, std::uint32_t current_tick) {
@@ -208,6 +217,34 @@ bool find_hitscan_target(
     return best_net_id != 0;
 }
 
+const HitVolumeSnapshot* find_historical_volume(
+    const HistoryFrame* frame,
+    NetId net_id) {
+    if (frame == nullptr || !frame->valid) {
+        return nullptr;
+    }
+    for (const HitVolumeSnapshot& volume : frame->volumes) {
+        if (volume.net_id == net_id && volume.alive != 0) {
+            return &volume;
+        }
+    }
+    return nullptr;
+}
+
+glm::vec3 compensated_projectile_origin(
+    const HistoryFrame* rewind_frame,
+    NetId shooter_net_id,
+    const Hitbox& shooter_hitbox,
+    const glm::vec3& current_origin) {
+    const HitVolumeSnapshot* historical_shooter =
+        find_historical_volume(rewind_frame, shooter_net_id);
+    if (historical_shooter == nullptr) {
+        return current_origin;
+    }
+    const glm::vec3 muzzle_offset = glm::vec3{0.0f, 1.0f, 0.0f} - shooter_hitbox.center;
+    return historical_shooter->center + muzzle_offset;
+}
+
 void apply_hitscan_damage(
     World& world,
     const WeaponDefinition& definition,
@@ -217,6 +254,7 @@ void apply_hitscan_damage(
     PeerId shooter_peer_id,
     const glm::vec3& origin,
     const glm::vec3& direction,
+    std::uint64_t hit_time_us,
     std::vector<KernelEvent>* events) {
     NetId target_net_id = 0;
     if (!find_hitscan_target(
@@ -239,48 +277,56 @@ void apply_hitscan_damage(
         current_tick,
         target_net_id,
         shooter_peer_id,
-        definition.id);
+        definition.id,
+        hit_time_us,
+        hit_time_us);
     push_event(
         events,
         KernelEventType_DamageApplied,
         current_tick,
         target_net_id,
         shooter_peer_id,
-        definition.damage);
+        definition.damage,
+        hit_time_us,
+        hit_time_us);
 }
 
-void fire_projectile(
+NetId fire_projectile(
     World& world,
     const WeaponDefinition& definition,
-    std::uint32_t current_tick,
+    std::uint32_t event_tick,
+    std::uint32_t spawn_tick,
     PeerId shooter_peer_id,
     std::uint32_t client_action_id,
     const glm::vec3& origin,
-    const glm::vec3& direction,
+    const glm::vec3& velocity,
+    float age_seconds,
     std::vector<KernelEvent>* events) {
     const NetId projectile = world.spawn_projectile(
         shooter_peer_id,
         origin,
-        direction * definition.projectile_speed);
+        velocity);
     const auto projectile_entity = world.find_entity(projectile);
     if (projectile_entity.has_value()) {
         ProjectileState& projectile_state =
             world.registry().get<ProjectileState>(*projectile_entity);
         projectile_state.weapon_id = definition.id;
         projectile_state.damage = definition.damage;
-        projectile_state.spawn_tick = current_tick;
+        projectile_state.spawn_tick = spawn_tick;
         projectile_state.client_action_id = client_action_id;
         projectile_state.explosion_radius = definition.explosion_radius;
         projectile_state.max_lifetime_seconds = definition.projectile_lifetime_seconds;
+        projectile_state.age_seconds = age_seconds;
         projectile_state.previous_position = origin;
     }
     push_event(
         events,
         KernelEventType_EntitySpawned,
-        current_tick,
+        event_tick,
         projectile,
         shooter_peer_id,
         definition.id);
+    return projectile;
 }
 
 void complete_all_reloads(World& world, std::uint32_t current_tick) {
@@ -334,13 +380,15 @@ bool ray_intersects_aabb(
 void simulate_weapons(
     World& world,
     const std::vector<QueuedInput>& inputs,
-    std::uint32_t current_tick,
-    std::vector<KernelEvent>* events,
-    const HistoryFrame* rewind_frame) {
+    const WeaponSimulationContext& context,
+    std::vector<KernelEvent>* events) {
+    const std::uint32_t current_tick = context.current_tick;
     complete_all_reloads(world, current_tick);
 
     for (const QueuedInput& queued_input : inputs) {
-        auto player_view = world.registry().view<NetworkIdentity, Transform, WeaponState, PlayerTag>();
+        auto player_view =
+            world.registry()
+                .view<NetworkIdentity, Transform, WeaponState, Hitbox, PlayerTag>();
         for (const entt::entity player_entity : player_view) {
             const NetworkIdentity& player_identity =
                 player_view.get<NetworkIdentity>(player_entity);
@@ -374,17 +422,19 @@ void simulate_weapons(
             const Transform& player_transform = player_view.get<Transform>(player_entity);
             const glm::vec3 origin = player_transform.position + glm::vec3{0.0f, 1.0f, 0.0f};
             const glm::vec3 direction = input_aim_to_world(queued_input.input);
+            const std::uint64_t hit_time_us = context.action_time_us;
 
             if (definition.mode == WeaponFireMode::kHitscan) {
                 apply_hitscan_damage(
                     world,
                     definition,
-                    rewind_frame,
+                    context.rewind_frame,
                     current_tick,
                     player_identity.net_id,
                     queued_input.owner_peer,
                     origin,
                     direction,
+                    hit_time_us,
                     events);
             } else if (definition.mode == WeaponFireMode::kShotgun) {
                 for (const glm::vec3& pellet_direction :
@@ -392,27 +442,88 @@ void simulate_weapons(
                     apply_hitscan_damage(
                         world,
                         definition,
-                        rewind_frame,
+                        context.rewind_frame,
                         current_tick,
                         player_identity.net_id,
                         queued_input.owner_peer,
                         origin,
                         pellet_direction,
+                        hit_time_us,
                         events);
                 }
             } else {
-                fire_projectile(
+                const Hitbox& shooter_hitbox = player_view.get<Hitbox>(player_entity);
+                const glm::vec3 compensated_origin =
+                    compensated_projectile_origin(
+                        context.rewind_frame,
+                        player_identity.net_id,
+                        shooter_hitbox,
+                        origin);
+                const std::uint32_t spawn_tick =
+                    context.rewind_frame != nullptr ? context.rewind_tick : current_tick;
+                const float elapsed_seconds =
+                    context.fixed_delta_seconds > 0.0f && current_tick > spawn_tick
+                        ? static_cast<float>(current_tick - spawn_tick) *
+                              context.fixed_delta_seconds
+                        : 0.0f;
+                const glm::vec3 velocity = direction * definition.projectile_speed;
+                const glm::vec3 spawn_position =
+                    compensated_origin + velocity * elapsed_seconds;
+                const NetId projectile = fire_projectile(
                     world,
                     definition,
                     current_tick,
+                    spawn_tick,
                     queued_input.owner_peer,
                     queued_input.input.client_action_id,
-                    origin,
-                    direction,
+                    spawn_position,
+                    velocity,
+                    elapsed_seconds,
                     events);
+                if (context.history_buffer != nullptr &&
+                    context.rewind_frame != nullptr &&
+                    context.fixed_delta_seconds > 0.0f) {
+                    const auto projectile_entity = world.find_entity(projectile);
+                    if (projectile_entity.has_value()) {
+                        const ProjectileState projectile_state =
+                            world.registry().get<ProjectileState>(*projectile_entity);
+                        replay_projectile_history(
+                            world,
+                            *context.history_buffer,
+                            projectile,
+                            player_identity.net_id,
+                            queued_input.owner_peer,
+                            projectile_state,
+                            compensated_origin,
+                            velocity,
+                            spawn_tick,
+                            current_tick,
+                            context.fixed_delta_seconds,
+                            events);
+                    }
+                }
             }
         }
     }
+}
+
+void simulate_weapons(
+    World& world,
+    const std::vector<QueuedInput>& inputs,
+    std::uint32_t current_tick,
+    std::vector<KernelEvent>* events,
+    const HistoryFrame* rewind_frame) {
+    simulate_weapons(
+        world,
+        inputs,
+        WeaponSimulationContext{
+            nullptr,
+            rewind_frame,
+            rewind_frame != nullptr ? rewind_frame->server_tick : current_tick,
+            current_tick,
+            0.0f,
+            0},
+        events);
 }
 
 void simulate_weapons(

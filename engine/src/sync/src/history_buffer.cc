@@ -176,7 +176,11 @@ bool raycast_history_frame(
                 &distance) &&
             distance <= best_distance) {
             best_distance = distance;
-            best_hit = HistoricalHitResult{volume.net_id, distance, volume};
+            best_hit = HistoricalHitResult{
+                volume.net_id,
+                distance,
+                ray_origin + ray_direction * distance,
+                volume};
             has_hit = true;
         }
     }
@@ -185,6 +189,26 @@ bool raycast_history_frame(
         *out_hit = best_hit;
     }
     return has_hit;
+}
+
+bool sweep_history_frame(
+    const HistoryFrame& frame,
+    const glm::vec3& segment_start,
+    const glm::vec3& segment_end,
+    NetId ignored_net_id,
+    HistoricalHitResult* out_hit) {
+    const glm::vec3 displacement = segment_end - segment_start;
+    const float length = glm::length(displacement);
+    if (length <= 0.0001f) {
+        return false;
+    }
+    return raycast_history_frame(
+        frame,
+        segment_start,
+        displacement / length,
+        length,
+        ignored_net_id,
+        out_hit);
 }
 
 }  // namespace network_example

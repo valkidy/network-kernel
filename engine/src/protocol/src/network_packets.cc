@@ -10,7 +10,7 @@ namespace {
 constexpr std::size_t kInputPayloadSize = 45;
 constexpr std::size_t kSnapshotHeaderPayloadSize = 16;
 constexpr std::size_t kEntitySnapshotPayloadSize = 66;
-constexpr std::size_t kReliableEventPayloadSize = 18;
+constexpr std::size_t kReliableEventPayloadSize = 34;
 constexpr std::size_t kEntitySpawnPayloadSize = 42;
 constexpr std::size_t kEntityDespawnPayloadSize = 12;
 
@@ -343,6 +343,8 @@ std::vector<std::uint8_t> encode_reliable_event_packet(
     write_u32(&payload, event.net_id);
     write_u32(&payload, event.peer_id);
     write_u32(&payload, event.code);
+    write_u64(&payload, event.event_time_us);
+    write_u64(&payload, event.presentation_time_us);
     return wrap_packet(MessageType::kReliableEventPacket, payload, sequence);
 }
 
@@ -371,6 +373,8 @@ bool decode_reliable_event_packet(
         !read_u32(payload, payload_size, &offset, &event.net_id) ||
         !read_u32(payload, payload_size, &offset, &event.peer_id) ||
         !read_u32(payload, payload_size, &offset, &event.code) ||
+        !read_u64(payload, payload_size, &offset, &event.event_time_us) ||
+        !read_u64(payload, payload_size, &offset, &event.presentation_time_us) ||
         offset != payload_size) {
         return false;
     }

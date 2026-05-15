@@ -1,6 +1,7 @@
 #ifndef KERNEL_SRC_KERNEL_H_
 #define KERNEL_SRC_KERNEL_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <unordered_map>
@@ -104,6 +105,8 @@ private:
     void handle_client_despawn(const EntityDespawnPacket& packet);
     void clear_client_session();
     void simulate_tick();
+    void release_presentable_events();
+    void broadcast_combat_events(std::size_t first_event, std::size_t last_event);
     void rebuild_render_states();
     void rebuild_render_states_from_world();
     void rebuild_render_states_from_snapshot();
@@ -159,6 +162,7 @@ private:
     LoopbackTransport* loopback_transport_ = nullptr;
     std::vector<QueuedInput> pending_inputs_;
     std::vector<KernelEvent> events_;
+    std::vector<KernelEvent> pending_presentation_events_;
     std::vector<RenderEntityState> render_states_;
     WorldSnapshot latest_snapshot_;
     WorldSnapshot latest_client_snapshot_;
@@ -178,11 +182,13 @@ private:
     std::uint32_t local_last_processed_input_seq_ = 0;
     std::uint32_t predicted_server_tick_ = 0;
     std::uint32_t next_packet_sequence_ = 1;
+    std::uint64_t current_render_time_us_ = 0;
     PeerId local_client_peer_id_ = 0;
     bool client_handshake_sent_ = false;
     bool has_welcome_ = false;
     bool has_client_snapshot_ = false;
     bool has_predicted_local_entity_ = false;
+    bool has_client_render_time_ = false;
     bool running_ = false;
 };
 

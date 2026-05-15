@@ -125,6 +125,8 @@ void DamagePipeline::confirm_ready(
                         pending.target_net_id,
                         pending.source_peer,
                         pending.source_code,
+                        pending.hit_time_us,
+                        pending.hit_time_us,
                     });
                     events->push_back(KernelEvent{
                         KernelEventType_DamageApplied,
@@ -132,6 +134,8 @@ void DamagePipeline::confirm_ready(
                         pending.target_net_id,
                         pending.source_peer,
                         pending.damage,
+                        pending.hit_time_us,
+                        pending.hit_time_us,
                     });
                 }
             }

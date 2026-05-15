@@ -92,6 +92,8 @@ int main() {
     reliable_event.net_id = 23;
     reliable_event.peer_id = 4;
     reliable_event.code = 99;
+    reliable_event.event_time_us = 123456;
+    reliable_event.presentation_time_us = 234567;
     const std::vector<std::uint8_t> reliable_event_packet =
         network_example::encode_reliable_event_packet(reliable_event, 44);
     KernelEvent decoded_event{};
@@ -104,6 +106,8 @@ int main() {
     assert(decoded_event.net_id == 23);
     assert(decoded_event.peer_id == 4);
     assert(decoded_event.code == 99);
+    assert(decoded_event.event_time_us == 123456);
+    assert(decoded_event.presentation_time_us == 234567);
     assert(!network_example::decode_reliable_event_packet(
         input_packet.data(),
         input_packet.size(),

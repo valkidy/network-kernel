@@ -52,6 +52,13 @@ bool is_server_mode(KernelMode mode) {
     return mode == KernelMode_DedicatedServer || mode == KernelMode_ListenServer;
 }
 
+bool is_authoritative_combat_event(KernelEventType type) {
+    return type == KernelEventType_FireConfirmed ||
+           type == KernelEventType_HitConfirmed ||
+           type == KernelEventType_DamageApplied ||
+           type == KernelEventType_Explosion;
+}
+
 std::uint32_t derived_visual_flags(const World& world, entt::entity entity) {
     std::uint32_t flags = 0;
     if (world.registry().all_of<Velocity>(entity) &&
@@ -326,6 +333,7 @@ std::uint32_t KernelEngine::poll_events(KernelEvent* out_events, std::uint32_t m
     if (out_events == nullptr || max_events == 0) {
         return 0;
     }
+    release_presentable_events();
     const std::uint32_t count =
         std::min(max_events, static_cast<std::uint32_t>(events_.size()));
     std::memcpy(out_events, events_.data(), sizeof(KernelEvent) * count);
@@ -502,6 +510,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     damage_pipeline_.clear();
     pending_inputs_.clear();
     events_.clear();
+    pending_presentation_events_.clear();
     render_states_.clear();
     latest_snapshot_ = WorldSnapshot{};
     latest_client_snapshot_ = WorldSnapshot{};
@@ -521,11 +530,13 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     local_last_processed_input_seq_ = 0;
     predicted_server_tick_ = tick_loop_.current_tick();
     next_packet_sequence_ = 1;
+    current_render_time_us_ = 0;
     local_client_peer_id_ = 0;
     client_handshake_sent_ = false;
     has_welcome_ = false;
     has_client_snapshot_ = false;
     has_predicted_local_entity_ = false;
+    has_client_render_time_ = false;
     running_ = true;
 }
 
@@ -660,6 +671,10 @@ void KernelEngine::handle_client_reliable_event(const TransportEvent& transport_
             transport_event.payload.data(),
             transport_event.payload.size(),
             &event)) {
+        if (event.presentation_time_us != 0) {
+            pending_presentation_events_.push_back(event);
+            return;
+        }
         events_.push_back(event);
         return;
     }
@@ -743,6 +758,7 @@ void KernelEngine::clear_client_session() {
     local_last_processed_input_seq_ = 0;
     pending_prediction_inputs_.clear();
     predicted_projectiles_.clear();
+    pending_presentation_events_.clear();
     client_snapshot_buffer_.clear();
     client_replicated_entities_.clear();
     client_despawned_entities_.clear();
@@ -752,7 +768,26 @@ void KernelEngine::clear_client_session() {
     has_welcome_ = false;
     has_client_snapshot_ = false;
     has_predicted_local_entity_ = false;
+    has_client_render_time_ = false;
+    current_render_time_us_ = 0;
     render_states_.clear();
+}
+
+void KernelEngine::release_presentable_events() {
+    if (!has_client_render_time_ || pending_presentation_events_.empty()) {
+        return;
+    }
+
+    std::vector<KernelEvent> still_pending;
+    still_pending.reserve(pending_presentation_events_.size());
+    for (const KernelEvent& event : pending_presentation_events_) {
+        if (event.presentation_time_us <= current_render_time_us_) {
+            events_.push_back(event);
+        } else {
+            still_pending.push_back(event);
+        }
+    }
+    pending_presentation_events_ = std::move(still_pending);
 }
 
 void KernelEngine::poll_client_transport() {
@@ -1162,6 +1197,7 @@ void KernelEngine::simulate_tick() {
     const float fixed_delta = tick_loop_.fixed_delta_seconds();
     const std::uint64_t server_time_us =
         tick_time_us(tick_loop_.current_tick(), fixed_delta);
+    const std::size_t first_tick_event = events_.size();
     advance_predicted_projectiles(fixed_delta);
     for (const QueuedInput& pending_input : pending_inputs_) {
         damage_pipeline_.ingest_defensive_input(
@@ -1174,17 +1210,28 @@ void KernelEngine::simulate_tick() {
     simulate_weapons(world_, {}, tick_loop_.current_tick(), &events_);
     for (const QueuedInput& pending_input : pending_inputs_) {
         const HistoryFrame* rewind_frame = nullptr;
+        std::uint32_t rewind_tick = tick_loop_.current_tick();
         if ((pending_input.input.buttons & InputButton_Fire) != 0) {
-            rewind_frame =
-                history_buffer_.find_frame_clamped(rewind_tick_for_input(pending_input));
+            rewind_tick = rewind_tick_for_input(pending_input);
+            rewind_frame = history_buffer_.find_frame_clamped(rewind_tick);
+            if (rewind_frame != nullptr) {
+                rewind_tick = rewind_frame->server_tick;
+            }
         }
         const std::vector<QueuedInput> single_input{pending_input};
         simulate_weapons(
             world_,
             single_input,
-            tick_loop_.current_tick(),
-            &events_,
-            rewind_frame);
+            WeaponSimulationContext{
+                &history_buffer_,
+                rewind_frame,
+                rewind_tick,
+                tick_loop_.current_tick(),
+                fixed_delta,
+                pending_input.input.client_action_time_us != 0
+                    ? pending_input.input.client_action_time_us
+                    : tick_time_us(rewind_tick, fixed_delta)},
+            &events_);
     }
     simulate_projectiles(
         world_,
@@ -1198,6 +1245,8 @@ void KernelEngine::simulate_tick() {
         tick_loop_.current_tick(),
         &events_);
     destroy_dead_entities(world_, tick_loop_.current_tick(), &events_);
+    const std::size_t last_tick_event = events_.size();
+    broadcast_combat_events(first_tick_event, last_tick_event);
     history_buffer_.write_frame(world_, tick_loop_.current_tick());
     if (tick_loop_.should_write_snapshot()) {
         publish_snapshot();
@@ -1396,6 +1445,9 @@ void KernelEngine::rebuild_render_states_from_snapshot() {
     WorldSnapshot render_snapshot;
     const WorldSnapshot& snapshot =
         build_interpolated_snapshot(&render_snapshot) ? render_snapshot : latest_client_snapshot_;
+    current_render_time_us_ =
+        tick_time_us(snapshot.header.server_tick, tick_loop_.fixed_delta_seconds());
+    has_client_render_time_ = true;
     std::unordered_set<NetId> rendered_entities;
     for (const EntitySnapshot& entity : snapshot.entities) {
         if (has_predicted_local_entity_ && entity.net_id == local_player_net_id_) {
@@ -1555,6 +1607,22 @@ void KernelEngine::broadcast_reliable_event(const KernelEvent& event) {
             continue;
         }
         send_reliable_event(session.peer, event);
+    }
+}
+
+void KernelEngine::broadcast_combat_events(
+    std::size_t first_event,
+    std::size_t last_event) {
+    if (!is_server_mode(config_.mode) || transport_ == nullptr) {
+        return;
+    }
+    const std::size_t capped_last = std::min(last_event, events_.size());
+    for (std::size_t index = first_event; index < capped_last; ++index) {
+        const KernelEvent& event = events_[index];
+        if (!is_authoritative_combat_event(event.type)) {
+            continue;
+        }
+        broadcast_reliable_event(event);
     }
 }
 
@@ -1727,7 +1795,9 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_SERVER_ENTITY_VELOCITY_WRITE |
             KERNEL_CAPABILITY_SERVER_ENTITY_STATE_WRITE |
             KERNEL_CAPABILITY_SERVER_ENTITY_QUERY |
-            KERNEL_CAPABILITY_SERVER_RELEVANCE_FILTER;
+            KERNEL_CAPABILITY_SERVER_RELEVANCE_FILTER |
+            KERNEL_CAPABILITY_LAG_COMPENSATED_PROJECTILE |
+            KERNEL_CAPABILITY_EVENT_PRESENTATION_TIME;
         return true;
     } catch (...) {
         return false;

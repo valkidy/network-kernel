@@ -16,6 +16,15 @@ struct QueuedInput {
     std::uint32_t received_server_tick = 0;
 };
 
+struct WeaponSimulationContext {
+    const HistoryBuffer* history_buffer = nullptr;
+    const HistoryFrame* rewind_frame = nullptr;
+    std::uint32_t rewind_tick = 0;
+    std::uint32_t current_tick = 0;
+    float fixed_delta_seconds = 0.0f;
+    std::uint64_t action_time_us = 0;
+};
+
 class DamagePipeline {
 public:
     static constexpr std::uint64_t kGraceWindowUs = 100000;
@@ -92,6 +101,19 @@ void simulate_projectiles(
     std::uint32_t current_tick,
     std::vector<KernelEvent>* events,
     DamagePipeline* damage_pipeline);
+bool replay_projectile_history(
+    World& world,
+    const HistoryBuffer& history_buffer,
+    NetId projectile_net_id,
+    NetId ignored_net_id,
+    PeerId owner_peer,
+    const ProjectileState& projectile,
+    const glm::vec3& origin,
+    const glm::vec3& velocity,
+    std::uint32_t rewind_tick,
+    std::uint32_t current_tick,
+    float fixed_delta_seconds,
+    std::vector<KernelEvent>* events);
 
 bool ray_intersects_aabb(
     const glm::vec3& ray_origin,
@@ -116,6 +138,11 @@ void simulate_weapons(
     std::uint32_t current_tick,
     std::vector<KernelEvent>* events,
     const HistoryFrame* rewind_frame);
+void simulate_weapons(
+    World& world,
+    const std::vector<QueuedInput>& inputs,
+    const WeaponSimulationContext& context,
+    std::vector<KernelEvent>* events);
 
 void destroy_dead_entities(
     World& world,

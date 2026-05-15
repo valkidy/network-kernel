@@ -30,6 +30,7 @@ struct HistoryFrame {
 struct HistoricalHitResult {
     NetId net_id = 0;
     float distance = 0.0f;
+    glm::vec3 impact_position{0.0f, 0.0f, 0.0f};
     HitVolumeSnapshot volume;
 };
 
@@ -55,6 +56,13 @@ bool raycast_history_frame(
     const glm::vec3& ray_origin,
     const glm::vec3& ray_direction,
     float max_range,
+    NetId ignored_net_id,
+    HistoricalHitResult* out_hit);
+
+bool sweep_history_frame(
+    const HistoryFrame& frame,
+    const glm::vec3& segment_start,
+    const glm::vec3& segment_end,
     NetId ignored_net_id,
     HistoricalHitResult* out_hit);
 

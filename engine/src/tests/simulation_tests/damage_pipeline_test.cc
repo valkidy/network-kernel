@@ -44,6 +44,10 @@ void confirm_after_grace_window() {
     assert(events[0].type == KernelEventType_HitConfirmed);
     assert(events[1].type == KernelEventType_DamageApplied);
     assert(events[1].code == 40);
+    assert(events[0].event_time_us == 1000);
+    assert(events[0].presentation_time_us == 1000);
+    assert(events[1].event_time_us == 1000);
+    assert(events[1].presentation_time_us == 1000);
 }
 
 void dodge_cancels_pending_damage() {
