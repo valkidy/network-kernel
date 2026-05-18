@@ -31,7 +31,10 @@ cc_test(
 cc_test(
     name = "client_mode_test",
     srcs = ["client_mode_test.cc"],
-    deps = ["//engine/src/kernel:kernel"],
+    deps = [
+        "//engine/src/kernel:kernel",
+        "//engine/src/transport:transport",
+    ],
 )
 
 cc_test(

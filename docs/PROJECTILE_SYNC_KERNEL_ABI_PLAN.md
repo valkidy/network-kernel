@@ -9,9 +9,9 @@
 - Presentation consumers should use `RenderEntityState::entity_id` as the stable
   object key and treat `net_id` as the optional server-authoritative identity.
 
-## Native ABI v5 Changes
+## Native ABI v5/v6 Changes
 
-- `KERNEL_ABI_VERSION` is `5`.
+- `KERNEL_ABI_VERSION` is `6`.
 - `PlayerInput` carries `input_seq`, `client_action_time_us`, and
   `client_action_id`; `client_tick` is no longer part of the public ABI.
 - `RenderEntityState` includes `uint64_t entity_id` before `net_id`.
@@ -22,13 +22,15 @@
   `entity_id`, which is client-local.
 - `InputButton_Dodge` and `InputButton_Parry` are additive ABI v5 button bits
   for rollback-eligible defensive input.
+- PingPong session packets provide clock-sync samples for converting
+  client-local action timestamps to the server timeline.
 
 ## Runtime Behavior
 
-- `client_action_time_us == 0` means the kernel fills an estimated server
-  timeline action time before sending input.
-- Hitscan rewind converts `client_action_time_us` to a history tick and clamps
-  compensation to 100ms.
+- `client_action_time_us == 0` means the client kernel fills a client-local
+  monotonic action time before sending input.
+- Server hit rewind converts `client_action_time_us` to server time through the
+  latest clock-sync offset, then clamps compensation to 100ms.
 - Local client projectile prediction creates a provisional projectile render
   state immediately for grenade fire when `client_action_id != 0`.
 - Authoritative projectile snapshots bind back to predicted projectiles by

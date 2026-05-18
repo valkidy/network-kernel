@@ -14,6 +14,8 @@ struct QueuedInput {
     PeerId owner_peer = 0;
     PlayerInput input{};
     std::uint32_t received_server_tick = 0;
+    std::uint64_t action_server_time_us = 0;
+    bool has_action_server_time = false;
 };
 
 struct WeaponSimulationContext {
@@ -34,7 +36,9 @@ public:
     void ingest_defensive_input(
         PeerId owner_peer,
         const PlayerInput& input,
-        std::uint64_t received_server_time_us);
+        std::uint64_t received_server_time_us,
+        std::uint64_t action_server_time_us = 0,
+        bool has_action_server_time = false);
     bool submit_hit(
         const World& world,
         NetId target_net_id,

@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 5`.
+`KERNEL_ABI_VERSION == 6`.
 
 ## Ownership
 
@@ -39,7 +39,9 @@ are intentionally not enemy-specific, and they fail when used from client mode.
 ABI version 4 added projectile prediction reconciliation metadata.
 
 ABI version 5 replaces the coarse `client_tick` fire marker with
-`client_action_time_us`, a canonical estimated-server-timeline action time.
+`client_action_time_us`, a client-local monotonic action time. The server uses
+session clock sync to convert this timestamp into the server timeline before
+lag compensation.
 `client_action_id` is the client-originated prediction correlation token for
 projectiles and future predicted actions. `RenderEntityState` now exposes a
 client-local `uint64_t entity_id` that presentation layers can use as their
@@ -52,6 +54,11 @@ defensive correction: `InputButton_Dodge` cancels eligible pending
 server-originated player damage, and `InputButton_Parry` reduces it. These bits
 reuse `client_action_time_us` for rollback timing and do not change public
 struct layout.
+
+ABI version 6 adds PingPong session clock-sync packets. Dedicated servers use
+the latest clock offset sample to convert client-local action timestamps to
+server time. Action times outside the accepted 100ms compensation window are
+clamped, not rejected, before rewind selection.
 
 Consumers pass a `struct_size`-style byte size to `Kernel_GetAbiInfo`. The call
 returns `false` if the output pointer is null or the provided size is smaller

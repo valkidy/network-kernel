@@ -31,8 +31,8 @@ table Quat {
 table InputPacket {
   player_id:uint;
   input_seq:uint;
-  client_tick:uint;
-  client_projectile_id:uint;
+  client_action_time_us:ulong;
+  client_action_id:uint;
   move_x:float;
   move_y:float;
   aim_dir:Vec3;
@@ -51,7 +51,7 @@ table EntitySnapshot {
   state:ushort;
   flags:uint;
   spawn_tick:uint;
-  client_projectile_id:uint;
+  client_action_id:uint;
 }
 
 table WelcomePacket {
@@ -60,6 +60,13 @@ table WelcomePacket {
   server_tick:uint;
   server_tick_rate:uint;
   snapshot_rate:uint;
+}
+
+table PingPongPacket {
+  nonce:uint;
+  server_send_time_us:ulong;
+  client_receive_time_us:ulong;
+  client_send_time_us:ulong;
 }
 
 table SnapshotPacket {

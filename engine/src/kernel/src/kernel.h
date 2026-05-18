@@ -66,6 +66,12 @@ private:
         std::uint32_t last_processed_input_seq = 0;
         bool welcomed = false;
         std::unordered_set<NetId> relevant_entities;
+        std::uint32_t pending_clock_sync_nonce = 0;
+        std::uint64_t pending_clock_sync_server_time_us = 0;
+        std::uint64_t last_clock_sync_sent_server_time_us = 0;
+        std::uint64_t last_clock_sync_rtt_us = 0;
+        std::int64_t clock_offset_us = 0;
+        bool has_clock_sync = false;
     };
 
     struct ClientReplicatedEntity {
@@ -101,6 +107,8 @@ private:
     void handle_server_disconnect(const TransportEvent& transport_event);
     void handle_client_disconnect(PeerId peer);
     void handle_client_reliable_event(const TransportEvent& transport_event);
+    void handle_client_ping_pong(const TransportEvent& transport_event);
+    void handle_server_ping_pong(const TransportEvent& transport_event);
     void handle_client_spawn(const EntitySpawnPacket& packet);
     void handle_client_despawn(const EntityDespawnPacket& packet);
     void clear_client_session();
@@ -117,6 +125,17 @@ private:
     void predict_local_input(const PlayerInput& input);
     void predict_local_projectile(const PlayerInput& input);
     PlayerInput prepare_client_input(const PlayerInput& input);
+    std::uint64_t client_local_action_time_us() const;
+    std::uint64_t current_server_time_us() const;
+    std::uint64_t convert_client_action_time_to_server_time(
+        PeerId peer,
+        std::uint64_t client_action_time_us,
+        std::uint64_t received_server_time_us) const;
+    std::uint64_t uncompensated_action_time_us(const QueuedInput& queued_input) const;
+    std::uint64_t clamp_compensated_action_time_us(
+        std::uint64_t action_server_time_us,
+        std::uint64_t received_server_time_us) const;
+    std::uint64_t compensated_action_time_us(const QueuedInput& queued_input) const;
     bool build_interpolated_snapshot(WorldSnapshot* out_snapshot) const;
     void append_predicted_local_render_state();
     void append_predicted_projectile_render_states();
@@ -145,9 +164,14 @@ private:
         NetId net_id,
         std::uint32_t reason);
     void send_client_handshake();
+    void send_clock_sync_ping(
+        PeerSession* session,
+        std::uint64_t server_time_us);
+    void send_due_clock_sync_pings(std::uint64_t server_time_us);
     void send_reliable_event(PeerId peer, const KernelEvent& event);
     void broadcast_reliable_event(const KernelEvent& event);
     void handle_server_handshake(const TransportEvent& transport_event);
+    void handle_server_session_message(const TransportEvent& transport_event);
     void handle_client_session_message(const TransportEvent& transport_event);
     PeerSession* find_session(PeerId peer);
     const PeerSession* find_session(PeerId peer) const;
@@ -180,8 +204,9 @@ private:
     std::uint64_t next_predicted_entity_id_ = UINT64_C(0x8000000000000000);
     NetId local_player_net_id_ = 0;
     std::uint32_t local_last_processed_input_seq_ = 0;
-    std::uint32_t predicted_server_tick_ = 0;
     std::uint32_t next_packet_sequence_ = 1;
+    std::uint32_t next_clock_sync_nonce_ = 1;
+    std::uint64_t client_local_time_us_ = 0;
     std::uint64_t current_render_time_us_ = 0;
     PeerId local_client_peer_id_ = 0;
     bool client_handshake_sent_ = false;

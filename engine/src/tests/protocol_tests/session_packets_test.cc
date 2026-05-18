@@ -34,10 +34,27 @@ int main() {
     assert(decoded_welcome.server_tick_rate == 30);
     assert(decoded_welcome.snapshot_rate == 15);
 
+    network_example::PingPongPacket ping_pong;
+    ping_pong.nonce = 88;
+    ping_pong.server_send_time_us = 100000;
+    ping_pong.client_receive_time_us = 141000;
+    ping_pong.client_send_time_us = 142000;
+    const std::vector<std::uint8_t> ping_pong_packet =
+        network_example::encode_ping_pong_packet(ping_pong, 3);
+    network_example::PingPongPacket decoded_ping_pong;
+    assert(network_example::decode_ping_pong_packet(
+        ping_pong_packet.data(),
+        ping_pong_packet.size(),
+        &decoded_ping_pong));
+    assert(decoded_ping_pong.nonce == 88);
+    assert(decoded_ping_pong.server_send_time_us == 100000);
+    assert(decoded_ping_pong.client_receive_time_us == 141000);
+    assert(decoded_ping_pong.client_send_time_us == 142000);
+
     network_example::DisconnectPacket disconnect;
     disconnect.reason_code = 99;
     const std::vector<std::uint8_t> disconnect_packet =
-        network_example::encode_disconnect_packet(disconnect, 3);
+        network_example::encode_disconnect_packet(disconnect, 4);
     network_example::DisconnectPacket decoded_disconnect;
     assert(network_example::decode_disconnect_packet(
         disconnect_packet.data(),
@@ -65,6 +82,20 @@ int main() {
         bad_version.data(),
         bad_version.size(),
         &decoded_welcome));
+
+    std::vector<std::uint8_t> bad_ping_pong_crc = ping_pong_packet;
+    bad_ping_pong_crc.back() ^= 0xffu;
+    assert(!network_example::decode_ping_pong_packet(
+        bad_ping_pong_crc.data(),
+        bad_ping_pong_crc.size(),
+        &decoded_ping_pong));
+
+    std::vector<std::uint8_t> truncated_ping_pong = ping_pong_packet;
+    truncated_ping_pong.pop_back();
+    assert(!network_example::decode_ping_pong_packet(
+        truncated_ping_pong.data(),
+        truncated_ping_pong.size(),
+        &decoded_ping_pong));
 
     return 0;
 }

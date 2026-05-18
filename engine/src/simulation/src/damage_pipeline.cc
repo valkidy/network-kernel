@@ -36,14 +36,18 @@ void DamagePipeline::clear() {
 void DamagePipeline::ingest_defensive_input(
     PeerId owner_peer,
     const PlayerInput& input,
-    std::uint64_t received_server_time_us) {
+    std::uint64_t received_server_time_us,
+    std::uint64_t action_server_time_us,
+    bool has_action_server_time) {
     if (owner_peer == 0) {
         return;
     }
 
     const std::uint64_t action_time_us =
-        input.client_action_time_us == 0 ? received_server_time_us
-                                         : input.client_action_time_us;
+        has_action_server_time
+            ? action_server_time_us
+            : (input.client_action_time_us == 0 ? received_server_time_us
+                                                : input.client_action_time_us);
 
     if ((input.buttons & InputButton_Dodge) != 0) {
         defensive_actions_.push_back(

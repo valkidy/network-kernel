@@ -189,6 +189,7 @@ constexpr PeerId kServerPeerId = 0;
 constexpr std::uint32_t kClientNonce = 0x4d330001u;
 constexpr float kPredictedProjectileSpeedMetersPerSecond = 15.0f;
 constexpr std::uint32_t kMaxCompensationWindowUs = 100000u;
+constexpr std::uint64_t kClockSyncIntervalUs = 1000000u;
 
 }  // namespace
 
@@ -230,6 +231,8 @@ bool KernelEngine::start_listen_server(std::uint16_t port) {
     local_client_peer_id_ = kLocalListenPeerId;
     local_player_net_id_ = player;
     local_listen_session_ = PeerSession{kLocalListenPeerId, player, 0, true, {}};
+    local_listen_session_.has_clock_sync = true;
+    local_listen_session_.clock_offset_us = 0;
     has_welcome_ = true;
 
     push_event(KernelEventType_Connected, 0, kLocalListenPeerId);
@@ -259,6 +262,12 @@ bool KernelEngine::start_dedicated_server(std::uint16_t port) {
 void KernelEngine::update(float delta_seconds) {
     if (!running_) {
         return;
+    }
+
+    if (delta_seconds > 0.0f &&
+        (config_.mode == KernelMode_Client || config_.mode == KernelMode_ListenServer)) {
+        client_local_time_us_ += static_cast<std::uint64_t>(
+            static_cast<double>(delta_seconds) * 1000000.0);
     }
 
     poll_transport();
@@ -312,7 +321,17 @@ void KernelEngine::submit_input(PeerId local_player_id, const PlayerInput& input
         return;
     }
 
-    pending_inputs_.push_back(QueuedInput{local_player_id, input, tick_loop_.current_tick()});
+    const std::uint64_t received_server_time_us = current_server_time_us();
+    const std::uint64_t action_server_time_us =
+        input.client_action_time_us == 0 ? received_server_time_us
+                                         : input.client_action_time_us;
+    pending_inputs_.push_back(QueuedInput{
+        local_player_id,
+        input,
+        tick_loop_.current_tick(),
+        action_server_time_us,
+        true,
+    });
     local_last_processed_input_seq_ =
         std::max(local_last_processed_input_seq_, input.input_seq);
 }
@@ -528,8 +547,9 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     next_predicted_entity_id_ = UINT64_C(0x8000000000000000);
     local_player_net_id_ = 0;
     local_last_processed_input_seq_ = 0;
-    predicted_server_tick_ = tick_loop_.current_tick();
     next_packet_sequence_ = 1;
+    next_clock_sync_nonce_ = 1;
+    client_local_time_us_ = 0;
     current_render_time_us_ = 0;
     local_client_peer_id_ = 0;
     client_handshake_sent_ = false;
@@ -565,7 +585,7 @@ void KernelEngine::poll_transport() {
             transport_event.type == TransportEventType::kMessage &&
             transport_event.channel == ChannelId::kSession &&
             config_.mode == KernelMode_DedicatedServer) {
-            handle_server_handshake(transport_event);
+            handle_server_session_message(transport_event);
         } else if (
             transport_event.type == TransportEventType::kMessage &&
             transport_event.channel == ChannelId::kSession &&
@@ -615,10 +635,18 @@ void KernelEngine::poll_transport() {
                 push_event(KernelEventType_Error, 0, transport_event.peer, 11);
                 continue;
             }
+            const std::uint64_t received_server_time_us = current_server_time_us();
+            const std::uint64_t action_server_time_us =
+                convert_client_action_time_to_server_time(
+                    player_id,
+                    input.client_action_time_us,
+                    received_server_time_us);
             pending_inputs_.push_back(QueuedInput{
                 player_id,
                 input,
                 tick_loop_.current_tick(),
+                action_server_time_us,
+                true,
             });
             PeerSession* mutable_session = find_session(transport_event.peer);
             if (mutable_session != nullptr) {
@@ -698,6 +726,71 @@ void KernelEngine::handle_client_reliable_event(const TransportEvent& transport_
     }
 
     push_event(KernelEventType_Error, 0, transport_event.peer, 14);
+}
+
+void KernelEngine::handle_client_ping_pong(const TransportEvent& transport_event) {
+    PingPongPacket ping;
+    if (!decode_ping_pong_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &ping)) {
+        push_event(KernelEventType_Error, 0, transport_event.peer, 18);
+        return;
+    }
+
+    ping.client_receive_time_us = client_local_action_time_us();
+    ping.client_send_time_us = client_local_action_time_us();
+    const std::vector<std::uint8_t> packet =
+        encode_ping_pong_packet(ping, next_packet_sequence_++);
+    if (!transport_->Send(
+            kServerPeerId,
+            packet.data(),
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kSession)) {
+        push_event(KernelEventType_Error, 0, kServerPeerId, 19);
+    }
+}
+
+void KernelEngine::handle_server_ping_pong(const TransportEvent& transport_event) {
+    PingPongPacket pong;
+    if (!decode_ping_pong_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &pong)) {
+        push_event(KernelEventType_Error, 0, transport_event.peer, 18);
+        return;
+    }
+
+    PeerSession* session = find_session(transport_event.peer);
+    if (session == nullptr || session->pending_clock_sync_nonce == 0 ||
+        session->pending_clock_sync_nonce != pong.nonce) {
+        push_event(KernelEventType_Error, 0, transport_event.peer, 20);
+        return;
+    }
+
+    const std::uint64_t server_receive_time_us = current_server_time_us();
+    const auto server_send_to_client_receive =
+        static_cast<std::int64_t>(session->pending_clock_sync_server_time_us) -
+        static_cast<std::int64_t>(pong.client_receive_time_us);
+    const auto server_receive_to_client_send =
+        static_cast<std::int64_t>(server_receive_time_us) -
+        static_cast<std::int64_t>(pong.client_send_time_us);
+    session->clock_offset_us =
+        (server_send_to_client_receive + server_receive_to_client_send) / 2;
+    const std::uint64_t server_elapsed =
+        server_receive_time_us >= session->pending_clock_sync_server_time_us
+            ? server_receive_time_us - session->pending_clock_sync_server_time_us
+            : 0;
+    const std::uint64_t client_elapsed =
+        pong.client_send_time_us >= pong.client_receive_time_us
+            ? pong.client_send_time_us - pong.client_receive_time_us
+            : 0;
+    session->last_clock_sync_rtt_us =
+        server_elapsed >= client_elapsed ? server_elapsed - client_elapsed : 0;
+    session->pending_clock_sync_nonce = 0;
+    session->pending_clock_sync_server_time_us = 0;
+    session->has_clock_sync = true;
 }
 
 void KernelEngine::handle_client_spawn(const EntitySpawnPacket& packet) {
@@ -1000,18 +1093,76 @@ void KernelEngine::predict_local_projectile(const PlayerInput& input) {
 PlayerInput KernelEngine::prepare_client_input(const PlayerInput& input) {
     PlayerInput input_to_send = input;
     if (input_to_send.client_action_time_us == 0) {
-        input_to_send.client_action_time_us = tick_time_us(
-            std::max(1u, predicted_server_tick_),
-            tick_loop_.fixed_delta_seconds());
+        input_to_send.client_action_time_us = client_local_action_time_us();
     }
-    predicted_server_tick_ =
-        std::max(
-            predicted_server_tick_,
-            tick_for_time_us(
-                input_to_send.client_action_time_us,
-                tick_loop_.fixed_delta_seconds()) +
-                1u);
     return input_to_send;
+}
+
+std::uint64_t KernelEngine::client_local_action_time_us() const {
+    return std::max<std::uint64_t>(1, client_local_time_us_);
+}
+
+std::uint64_t KernelEngine::current_server_time_us() const {
+    return tick_time_us(tick_loop_.current_tick(), tick_loop_.fixed_delta_seconds());
+}
+
+std::uint64_t KernelEngine::convert_client_action_time_to_server_time(
+    PeerId peer,
+    std::uint64_t client_action_time_us,
+    std::uint64_t received_server_time_us) const {
+    if (client_action_time_us == 0) {
+        return received_server_time_us;
+    }
+
+    const PeerSession* session = find_session(peer);
+    if (session == nullptr && config_.mode == KernelMode_ListenServer &&
+        local_listen_session_.peer == peer && local_listen_session_.welcomed) {
+        session = &local_listen_session_;
+    }
+    if (session == nullptr || !session->has_clock_sync) {
+        return received_server_time_us;
+    }
+
+    const auto converted =
+        static_cast<std::int64_t>(client_action_time_us) + session->clock_offset_us;
+    return converted <= 0 ? 0 : static_cast<std::uint64_t>(converted);
+}
+
+std::uint64_t KernelEngine::uncompensated_action_time_us(
+    const QueuedInput& queued_input) const {
+    if (queued_input.has_action_server_time) {
+        return queued_input.action_server_time_us;
+    }
+    return queued_input.input.client_action_time_us == 0
+               ? tick_time_us(
+                     queued_input.received_server_tick,
+                     tick_loop_.fixed_delta_seconds())
+               : queued_input.input.client_action_time_us;
+}
+
+std::uint64_t KernelEngine::clamp_compensated_action_time_us(
+    std::uint64_t action_server_time_us,
+    std::uint64_t received_server_time_us) const {
+    // Policy: intentionally clamp, rather than reject, action timestamps outside
+    // the accepted compensation window.
+    if (action_server_time_us >= received_server_time_us) {
+        return received_server_time_us;
+    }
+    const std::uint64_t earliest_compensated_time =
+        received_server_time_us > kMaxCompensationWindowUs
+            ? received_server_time_us - kMaxCompensationWindowUs
+            : 0;
+    return std::max(action_server_time_us, earliest_compensated_time);
+}
+
+std::uint64_t KernelEngine::compensated_action_time_us(
+    const QueuedInput& queued_input) const {
+    const std::uint64_t received_server_time_us = tick_time_us(
+        queued_input.received_server_tick,
+        tick_loop_.fixed_delta_seconds());
+    return clamp_compensated_action_time_us(
+        uncompensated_action_time_us(queued_input),
+        received_server_time_us);
 }
 
 bool KernelEngine::build_interpolated_snapshot(WorldSnapshot* out_snapshot) const {
@@ -1128,21 +1279,9 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
 
 std::uint32_t KernelEngine::rewind_tick_for_input(
     const QueuedInput& queued_input) const {
-    const std::uint64_t received_time_us = tick_time_us(
-        queued_input.received_server_tick,
+    return tick_for_time_us(
+        compensated_action_time_us(queued_input),
         tick_loop_.fixed_delta_seconds());
-    if (queued_input.input.client_action_time_us == 0 ||
-        queued_input.input.client_action_time_us >= received_time_us) {
-        return queued_input.received_server_tick;
-    }
-
-    const std::uint64_t earliest_compensated_time =
-        received_time_us > kMaxCompensationWindowUs
-            ? received_time_us - kMaxCompensationWindowUs
-            : 0;
-    const std::uint64_t clamped_action_time =
-        std::max(queued_input.input.client_action_time_us, earliest_compensated_time);
-    return tick_for_time_us(clamped_action_time, tick_loop_.fixed_delta_seconds());
 }
 
 std::uint64_t KernelEngine::entity_id_for_net_id(NetId net_id) {
@@ -1203,7 +1342,9 @@ void KernelEngine::simulate_tick() {
         damage_pipeline_.ingest_defensive_input(
             pending_input.owner_peer,
             pending_input.input,
-            server_time_us);
+            server_time_us,
+            compensated_action_time_us(pending_input),
+            true);
     }
     simulate_player_movement(world_, pending_inputs_, fixed_delta);
     simulate_velocity_movement(world_, fixed_delta);
@@ -1228,9 +1369,7 @@ void KernelEngine::simulate_tick() {
                 rewind_tick,
                 tick_loop_.current_tick(),
                 fixed_delta,
-                pending_input.input.client_action_time_us != 0
-                    ? pending_input.input.client_action_time_us
-                    : tick_time_us(rewind_tick, fixed_delta)},
+                compensated_action_time_us(pending_input)},
             &events_);
     }
     simulate_projectiles(
@@ -1247,6 +1386,7 @@ void KernelEngine::simulate_tick() {
     destroy_dead_entities(world_, tick_loop_.current_tick(), &events_);
     const std::size_t last_tick_event = events_.size();
     broadcast_combat_events(first_tick_event, last_tick_event);
+    send_due_clock_sync_pings(server_time_us);
     history_buffer_.write_frame(world_, tick_loop_.current_tick());
     if (tick_loop_.should_write_snapshot()) {
         publish_snapshot();
@@ -1588,6 +1728,48 @@ void KernelEngine::send_client_handshake() {
     client_handshake_sent_ = true;
 }
 
+void KernelEngine::send_clock_sync_ping(
+    PeerSession* session,
+    std::uint64_t server_time_us) {
+    if (session == nullptr || !session->welcomed || transport_ == nullptr) {
+        return;
+    }
+
+    const std::uint32_t nonce = next_clock_sync_nonce_++;
+    const PingPongPacket ping{nonce, server_time_us, 0, 0};
+    const std::vector<std::uint8_t> packet =
+        encode_ping_pong_packet(ping, next_packet_sequence_++);
+    if (!transport_->Send(
+            session->peer,
+            packet.data(),
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kSession)) {
+        push_event(KernelEventType_Error, 0, session->peer, 21);
+        return;
+    }
+
+    session->pending_clock_sync_nonce = nonce;
+    session->pending_clock_sync_server_time_us = server_time_us;
+    session->last_clock_sync_sent_server_time_us = server_time_us;
+}
+
+void KernelEngine::send_due_clock_sync_pings(std::uint64_t server_time_us) {
+    if (config_.mode != KernelMode_DedicatedServer) {
+        return;
+    }
+    for (PeerSession& session : peer_sessions_) {
+        if (!session.welcomed || session.pending_clock_sync_nonce != 0) {
+            continue;
+        }
+        if (!session.has_clock_sync ||
+            server_time_us >= session.last_clock_sync_sent_server_time_us +
+                                  kClockSyncIntervalUs) {
+            send_clock_sync_ping(&session, server_time_us);
+        }
+    }
+}
+
 void KernelEngine::send_reliable_event(PeerId peer, const KernelEvent& event) {
     const std::vector<std::uint8_t> packet =
         encode_reliable_event_packet(event, next_packet_sequence_++);
@@ -1667,7 +1849,21 @@ void KernelEngine::handle_server_handshake(const TransportEvent& transport_event
     }
 
     session->welcomed = true;
+    send_clock_sync_ping(session, current_server_time_us());
     publish_snapshot();
+}
+
+void KernelEngine::handle_server_session_message(const TransportEvent& transport_event) {
+    PingPongPacket ping;
+    if (decode_ping_pong_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &ping)) {
+        handle_server_ping_pong(transport_event);
+        return;
+    }
+
+    handle_server_handshake(transport_event);
 }
 
 void KernelEngine::handle_client_session_message(const TransportEvent& transport_event) {
@@ -1678,9 +1874,17 @@ void KernelEngine::handle_client_session_message(const TransportEvent& transport
             &welcome)) {
         local_client_peer_id_ = welcome.assigned_peer_id;
         local_player_net_id_ = welcome.assigned_player_net_id;
-        predicted_server_tick_ = welcome.server_tick;
         has_welcome_ = true;
         push_event(KernelEventType_PlayerJoined, 0, local_client_peer_id_);
+        return;
+    }
+
+    PingPongPacket ping;
+    if (decode_ping_pong_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &ping)) {
+        handle_client_ping_pong(transport_event);
         return;
     }
 

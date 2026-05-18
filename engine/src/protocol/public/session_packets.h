@@ -21,6 +21,13 @@ struct WelcomePacket {
     std::uint32_t snapshot_rate = 0;
 };
 
+struct PingPongPacket {
+    std::uint32_t nonce = 0;
+    std::uint64_t server_send_time_us = 0;
+    std::uint64_t client_receive_time_us = 0;
+    std::uint64_t client_send_time_us = 0;
+};
+
 struct DisconnectPacket {
     std::uint32_t reason_code = 0;
 };
@@ -40,6 +47,14 @@ bool decode_welcome_packet(
     const std::uint8_t* data,
     std::size_t size,
     WelcomePacket* out_packet);
+
+std::vector<std::uint8_t> encode_ping_pong_packet(
+    const PingPongPacket& packet,
+    std::uint32_t sequence = 0);
+bool decode_ping_pong_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    PingPongPacket* out_packet);
 
 std::vector<std::uint8_t> encode_disconnect_packet(
     const DisconnectPacket& packet,
