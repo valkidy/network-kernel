@@ -33,7 +33,7 @@ int main() {
     network_example::ProjectileState& projectile_state =
         world.registry().get<network_example::ProjectileState>(*projectile_entity);
     projectile_state.spawn_tick = 7;
-    projectile_state.client_projectile_id = 3456;
+    projectile_state.client_action_id = 3456;
 
     const network_example::WorldSnapshot snapshot =
         network_example::build_world_snapshot(world, 7, 233, 3);
@@ -60,7 +60,7 @@ int main() {
             saw_projectile_metadata =
                 entity.owner_peer == 1 &&
                 entity.spawn_tick == 7 &&
-                entity.client_projectile_id == 3456 &&
+                entity.client_action_id == 3456 &&
                 entity.velocity.x == 10.0f;
         }
     }

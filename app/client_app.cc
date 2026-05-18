@@ -26,7 +26,7 @@ KernelConfig default_config() {
 PlayerInput scripted_input(std::uint32_t sequence) {
     PlayerInput input{};
     input.input_seq = sequence;
-    input.client_tick = sequence;
+    input.client_action_time_us = static_cast<std::uint64_t>(sequence) * 33333u;
     input.move = KernelVec2{1.0f, 0.0f};
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     input.buttons = 0;

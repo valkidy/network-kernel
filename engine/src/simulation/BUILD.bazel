@@ -5,6 +5,7 @@ package(default_visibility = ["//visibility:public"])
 cc_library(
     name = "simulation",
     srcs = [
+        "src/damage_pipeline.cc",
         "src/damage_system.cc",
         "src/player_movement.cc",
         "src/projectile_system.cc",

@@ -1,56 +1,69 @@
-# Projectile Sync Kernel / C# Package ABI Plan
+# Native Projectile Prediction ABI v5
 
 ## Summary
 
-- Implement native projectile prediction reconciliation metadata in the
-  `network-example` kernel, protocol, snapshot, and public C ABI.
-- Native C++ ABI work is completed on `main` first, then merged back into
-  `feat-unity-plugin` before updating the Unity C# package mirrors.
-- The C# package uses `clientProjectileId` to match a locally predicted
-  projectile to the server-authoritative projectile returned through render
-  state metadata.
+- Native kernel ABI v5 exposes stable render identity and generic client action
+  correlation for projectile prediction.
+- This document covers native C++ kernel/protocol/snapshot behavior only. Unity
+  C# package mirrors are intentionally deferred to a follow-up task.
+- Presentation consumers should use `RenderEntityState::entity_id` as the stable
+  object key and treat `net_id` as the optional server-authoritative identity.
 
-## Branch Flow
+## Native ABI v5/v6 Changes
 
-- Start from clean `feat-unity-plugin`.
-- Switch to `main` for native C++ ABI v4 work.
-- Commit native C++ and documentation changes on `main`.
-- Switch back to `feat-unity-plugin`, merge `main`, and resolve conflicts
-  without rewriting history.
-- Update Unity package C# ABI mirrors and managed smoke tests on
-  `feat-unity-plugin`.
+- `KERNEL_ABI_VERSION` is `7`.
+- `PlayerInput` carries `input_seq`, `client_action_time_us`, and
+  `client_action_id`; `client_tick` is no longer part of the public ABI.
+- `RenderEntityState` includes `uint64_t entity_id` before `net_id`.
+- `EntitySnapshot` and projectile state use `client_action_id` for
+  predicted-action reconciliation metadata.
+- Input packets encode `client_action_time_us` and `client_action_id`.
+- Snapshot packets encode projectile `client_action_id` but never encode
+  `entity_id`, which is client-local.
+- `InputButton_Dodge` and `InputButton_Parry` are additive ABI v5 button bits
+  for rollback-eligible defensive input.
+- PingPong session packets provide clock-sync samples for converting
+  client-local action timestamps to the server timeline.
+- `Kernel_GetRenderStatesAtTime` lets callers request render states for a
+  client-local timestamp; the kernel maps it onto the server snapshot timeline
+  and clamps outside the buffered snapshot range.
 
-## Native ABI v4 Changes
+## Runtime Behavior
 
-- `KERNEL_ABI_VERSION` is `4`.
-- `PlayerInput` adds `client_projectile_id` after `client_tick`; `client_tick`
-  remains the client fire tick.
-- `EntitySnapshot` and `RenderEntityState` include projectile reconciliation
-  metadata: `owner_peer`, `velocity`, `spawn_tick`, and
-  `client_projectile_id`.
-- Projectile entities store `spawn_tick` and `client_projectile_id` only after
-  server fire validation succeeds.
-- Input and snapshot packet encode/decode paths include the new fields, and the
-  packet schema stays aligned with the handwritten protocol implementation.
+- `client_action_time_us == 0` means the client kernel fills a client-local
+  monotonic action time before sending input.
+- Server hit rewind converts `client_action_time_us` to server time through the
+  latest clock-sync offset, then clamps compensation to 100ms.
+- Local client projectile prediction creates a provisional projectile render
+  state immediately for grenade fire when `client_action_id != 0`.
+- Authoritative projectile snapshots bind back to predicted projectiles by
+  `owner_peer + client_action_id`; the render-facing `entity_id` stays stable
+  while `net_id` becomes the server id.
+- If the server acknowledges an input sequence without producing a matching
+  authoritative projectile, the provisional projectile render state is removed.
+- Server-originated projectile/explosion damage against players enters an
+  internal pending damage queue instead of applying immediately.
+- Pending damage uses a 100ms grace window; Dodge overlapping the hit time
+  cancels damage, and Parry overlapping the hit time reduces final damage by
+  50%. Existing `DamageApplied` events are emitted only when damage confirms.
 
-## Unity Package Follow-Up
+## Test Coverage
 
-- Update `KernelConstants.AbiVersion` to `4`.
-- Mirror native `PlayerInput` and `RenderEntityState` field order exactly.
-- Update managed smoke input setup and ABI validation to cover the new fields.
-- Rebuild and stage the macOS native plugin dylib after the merged native v4
-  build is verified.
-
-## Test Plan
-
-- Native Bazel tests cover input roundtrip, snapshot metadata roundtrip,
-  projectile spawn metadata retention, render state metadata, and dynamic ABI
-  smoke.
-- Unity package validation verifies C# struct sizes against native ABI v4 and
-  confirms managed smoke can submit input and read render states.
+- Native ABI smoke tests verify ABI version 5 and public struct sizes/layout.
+- Protocol tests verify input packet roundtrip for `client_action_time_us` and
+  `client_action_id`, plus projectile snapshot `client_action_id`.
+- Kernel listen-server tests verify immediate predicted projectile render
+  states, predicted-to-authoritative `entity_id` stability, duplicate
+  suppression, and rejected prediction cleanup.
+- Damage pipeline tests cover grace-window confirmation, Dodge cancel, Parry
+  reduction, non-eligible input rejection, and server-owned projectile pending
+  damage.
 
 ## Assumptions
 
-- Server authority remains unchanged for transform, ammo, cooldown, hit,
-  explosion, and despawn behavior.
-- `client_projectile_id == 0` means no predicted projectile id.
+- `entity_id` is client-local and stable only within one kernel instance.
+- `net_id` remains the server-authoritative entity id.
+- `client_action_id == 0` means no predicted/correlatable action.
+- Full time-sync sampling, projectile historical replay, sticky projectile
+  authority, client damage presentation timing, public defensive feedback
+  events, and Unity C# mirror updates remain separate follow-up work.

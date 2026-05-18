@@ -57,6 +57,15 @@ std::uint32_t count_events(
     return count;
 }
 
+network_example::NetId spawned_projectile(const std::vector<KernelEvent>& events) {
+    for (const KernelEvent& event : events) {
+        if (event.type == KernelEventType_EntitySpawned) {
+            return event.net_id;
+        }
+    }
+    return 0;
+}
+
 void rejects_fire_during_cooldown_and_reload() {
     network_example::World world;
     const network_example::NetId player =
@@ -161,7 +170,7 @@ void grenade_sweeps_and_explodes_with_falloff() {
 
     std::vector<KernelEvent> events;
     PlayerInput grenade_input = fire_input(network_example::kWeaponGrenade);
-    grenade_input.client_projectile_id = 4321;
+    grenade_input.client_action_id = 4321;
     network_example::simulate_weapons(
         world,
         queue(grenade_input),
@@ -184,7 +193,7 @@ void grenade_sweeps_and_explodes_with_falloff() {
             .get<network_example::NetworkIdentity>(*projectile_entity)
             .owner_peer == 1);
     assert(projectile_state(world, projectile).spawn_tick == 0);
-    assert(projectile_state(world, projectile).client_projectile_id == 4321);
+    assert(projectile_state(world, projectile).client_action_id == 4321);
 
     events.clear();
     network_example::simulate_projectiles(world, 0.2f, 1, &events);
@@ -197,6 +206,35 @@ void grenade_sweeps_and_explodes_with_falloff() {
     assert(count_events(events, KernelEventType_DamageApplied) >= 2);
 }
 
+void server_projectile_damage_to_player_is_pended() {
+    network_example::World world;
+    const network_example::NetId player =
+        world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+    const network_example::NetId projectile_net_id =
+        world.spawn_projectile(
+            0,
+            glm::vec3{0.0f, 1.0f, 0.0f},
+            glm::vec3{0.0f, 0.0f, 0.0f});
+    network_example::ProjectileState& projectile =
+        projectile_state(world, projectile_net_id);
+    projectile.weapon_id = network_example::kWeaponGrenade;
+    projectile.damage = 80;
+    projectile.explosion_radius = 4.0f;
+    projectile.max_lifetime_seconds = 0.01f;
+
+    network_example::DamagePipeline pipeline;
+    std::vector<KernelEvent> events;
+    network_example::simulate_projectiles(world, 0.02f, 0, &events, &pipeline);
+    assert(health(world, player).hp == 100);
+    assert(count_events(events, KernelEventType_Explosion) == 1);
+    assert(count_events(events, KernelEventType_DamageApplied) == 0);
+    assert(pipeline.pending_count() == 1);
+
+    pipeline.confirm_ready(world, 100000, 3, &events);
+    assert(health(world, player).hp < 100);
+    assert(count_events(events, KernelEventType_DamageApplied) == 1);
+}
+
 void projectile_weapon_fires_again_after_cooldown() {
     network_example::World world;
     const network_example::NetId player =
@@ -204,7 +242,7 @@ void projectile_weapon_fires_again_after_cooldown() {
 
     std::vector<KernelEvent> events;
     PlayerInput grenade_input = fire_input(network_example::kWeaponGrenade);
-    grenade_input.client_projectile_id = 8765;
+    grenade_input.client_action_id = 8765;
     network_example::simulate_weapons(
         world,
         queue(grenade_input),
@@ -228,6 +266,135 @@ void projectile_weapon_fires_again_after_cooldown() {
         &events);
     assert(count_events(events, KernelEventType_EntitySpawned) == 1);
     assert(weapon_state(world, player).ammo[network_example::kWeaponGrenade] == 28);
+}
+
+void projectile_rewind_spawns_from_historical_muzzle() {
+    network_example::World world;
+    const network_example::NetId player =
+        world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+    network_example::HistoryBuffer history(8);
+    history.write_frame(world, 4);
+    world.registry().get<network_example::Transform>(*world.find_entity(player)).position =
+        glm::vec3{10.0f, 0.0f, 0.0f};
+
+    PlayerInput grenade_input = fire_input(network_example::kWeaponGrenade);
+    grenade_input.client_action_id = 9001;
+    std::vector<KernelEvent> events;
+    network_example::simulate_weapons(
+        world,
+        queue(grenade_input),
+        network_example::WeaponSimulationContext{
+            &history,
+            history.find_frame(4),
+            4,
+            7,
+            1.0f / 30.0f,
+            133333},
+        &events);
+
+    const network_example::NetId projectile = spawned_projectile(events);
+    assert(projectile != 0);
+    const auto projectile_entity = world.find_entity(projectile);
+    assert(projectile_entity.has_value());
+    const network_example::Transform& transform =
+        world.registry().get<network_example::Transform>(*projectile_entity);
+    assert(transform.position.x > 1.49f);
+    assert(transform.position.x < 1.51f);
+    assert(transform.position.y > 0.99f);
+    assert(transform.position.y < 1.01f);
+    assert(projectile_state(world, projectile).spawn_tick == 4);
+    assert(projectile_state(world, projectile).age_seconds > 0.09f);
+}
+
+void projectile_without_rewind_uses_current_muzzle() {
+    network_example::World world;
+    const network_example::NetId player =
+        world.spawn_player(1, glm::vec3{10.0f, 0.0f, 0.0f});
+
+    std::vector<KernelEvent> events;
+    network_example::simulate_weapons(
+        world,
+        queue(fire_input(network_example::kWeaponGrenade)),
+        7,
+        &events);
+
+    const network_example::NetId projectile = spawned_projectile(events);
+    assert(projectile != 0);
+    const auto projectile_entity = world.find_entity(projectile);
+    assert(projectile_entity.has_value());
+    const network_example::Transform& transform =
+        world.registry().get<network_example::Transform>(*projectile_entity);
+    assert(transform.position.x > 9.99f);
+    assert(transform.position.x < 10.01f);
+    assert(projectile_state(world, projectile).spawn_tick == 7);
+    assert(projectile_state(world, projectile).age_seconds == 0.0f);
+    (void)player;
+}
+
+void projectile_replay_hits_historical_target() {
+    network_example::World world;
+    world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+    const network_example::NetId enemy =
+        world.spawn_enemy(glm::vec3{2.0f, 0.2f, 0.0f});
+    network_example::HistoryBuffer history(12);
+    for (std::uint32_t tick = 4; tick <= 8; ++tick) {
+        history.write_frame(world, tick);
+    }
+    world.registry().get<network_example::Transform>(*world.find_entity(enemy)).position =
+        glm::vec3{50.0f, 0.2f, 0.0f};
+
+    std::vector<KernelEvent> events;
+    network_example::simulate_weapons(
+        world,
+        queue(fire_input(network_example::kWeaponGrenade)),
+        network_example::WeaponSimulationContext{
+            &history,
+            history.find_frame(4),
+            4,
+            8,
+            1.0f / 30.0f,
+            133333},
+        &events);
+
+    const network_example::NetId projectile = spawned_projectile(events);
+    assert(projectile != 0);
+    assert(!world.find_entity(projectile).has_value());
+    assert(health(world, enemy).hp < 50);
+    assert(count_events(events, KernelEventType_Explosion) == 1);
+    assert(count_events(events, KernelEventType_DamageApplied) >= 1);
+}
+
+void projectile_replay_ignores_current_only_target() {
+    network_example::World world;
+    world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+    const network_example::NetId enemy =
+        world.spawn_enemy(glm::vec3{50.0f, 0.2f, 0.0f});
+    network_example::HistoryBuffer history(12);
+    for (std::uint32_t tick = 4; tick <= 8; ++tick) {
+        history.write_frame(world, tick);
+    }
+    world.registry().get<network_example::Transform>(*world.find_entity(enemy)).position =
+        glm::vec3{2.0f, 0.2f, 0.0f};
+
+    std::vector<KernelEvent> events;
+    network_example::simulate_weapons(
+        world,
+        queue(fire_input(network_example::kWeaponGrenade)),
+        network_example::WeaponSimulationContext{
+            &history,
+            history.find_frame(4),
+            4,
+            8,
+            1.0f / 30.0f,
+            133333},
+        &events);
+
+    const network_example::NetId projectile = spawned_projectile(events);
+    assert(projectile != 0);
+    assert(world.find_entity(projectile).has_value());
+    assert(health(world, enemy).hp == 50);
+    assert(count_events(events, KernelEventType_Explosion) == 0);
+    assert(count_events(events, KernelEventType_DamageApplied) == 0);
 }
 
 void rewind_hitscan_uses_historical_hit_volumes() {
@@ -314,7 +481,12 @@ int main() {
     rejects_fire_during_cooldown_and_reload();
     shotgun_applies_multiple_pellets();
     grenade_sweeps_and_explodes_with_falloff();
+    server_projectile_damage_to_player_is_pended();
     projectile_weapon_fires_again_after_cooldown();
+    projectile_rewind_spawns_from_historical_muzzle();
+    projectile_without_rewind_uses_current_muzzle();
+    projectile_replay_hits_historical_target();
+    projectile_replay_ignores_current_only_target();
     rewind_hitscan_uses_historical_hit_volumes();
     rewind_shotgun_respects_range();
     return 0;

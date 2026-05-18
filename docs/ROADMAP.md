@@ -304,7 +304,7 @@ Channels should map to GNS send lanes or message flags only inside
   `ChannelId::kInput` with `SendMode::kUnreliable`.
 - On the server, map input peer ids to spawned player entities after handshake.
 - Ignore or error-report input from unauthenticated peers.
-- Preserve `input_seq` and `client_tick` for M5 prediction/ack work.
+- Preserve `input_seq` and `client_action_time_us` for M5 prediction/ack work.
 
 ### Acceptance
 
@@ -546,9 +546,9 @@ Every server tick.
 
 Calculate rewind tick using:
 
-- RTT
+- action time
 - inputSeq
-- clientTick
+- server receive time
 
 ### Acceptance
 
@@ -636,8 +636,8 @@ Interpolation
 
 ## ABI Notes
 
-- Preserve `PlayerInput::input_seq` and `PlayerInput::client_tick` as the public
-  prediction and server-ack bridge.
+- Preserve `PlayerInput::input_seq` and `PlayerInput::client_action_time_us` as
+  the public prediction and server-ack bridge.
 - Candidate post-spike ABI extensions: acknowledged input sequence, snapshot
   interpolation flags, local correction vector, and clamped rewind tick metadata.
 - Keep history buffers and rewind queries internal to the kernel.

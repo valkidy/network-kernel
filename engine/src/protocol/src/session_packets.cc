@@ -7,6 +7,7 @@ namespace {
 
 constexpr std::size_t kHandshakePayloadSize = 4;
 constexpr std::size_t kWelcomePayloadSize = 20;
+constexpr std::size_t kPingPongPayloadSize = 28;
 constexpr std::size_t kDisconnectPayloadSize = 4;
 
 void write_u32(std::vector<std::uint8_t>* buffer, std::uint32_t value) {
@@ -14,6 +15,11 @@ void write_u32(std::vector<std::uint8_t>* buffer, std::uint32_t value) {
     buffer->push_back(static_cast<std::uint8_t>((value >> 8u) & 0xffu));
     buffer->push_back(static_cast<std::uint8_t>((value >> 16u) & 0xffu));
     buffer->push_back(static_cast<std::uint8_t>((value >> 24u) & 0xffu));
+}
+
+void write_u64(std::vector<std::uint8_t>* buffer, std::uint64_t value) {
+    write_u32(buffer, static_cast<std::uint32_t>(value & 0xffffffffu));
+    write_u32(buffer, static_cast<std::uint32_t>((value >> 32u) & 0xffffffffu));
 }
 
 bool read_u32(
@@ -29,6 +35,22 @@ bool read_u32(
                  (static_cast<std::uint32_t>(data[*offset + 2]) << 16u) |
                  (static_cast<std::uint32_t>(data[*offset + 3]) << 24u);
     *offset += 4;
+    return true;
+}
+
+bool read_u64(
+    const std::uint8_t* data,
+    std::size_t size,
+    std::size_t* offset,
+    std::uint64_t* out_value) {
+    std::uint32_t low = 0;
+    std::uint32_t high = 0;
+    if (!read_u32(data, size, offset, &low) ||
+        !read_u32(data, size, offset, &high)) {
+        return false;
+    }
+    *out_value = static_cast<std::uint64_t>(low) |
+                 (static_cast<std::uint64_t>(high) << 32u);
     return true;
 }
 
@@ -151,6 +173,44 @@ bool decode_welcome_packet(
         !read_u32(payload, payload_size, &offset, &packet.server_tick) ||
         !read_u32(payload, payload_size, &offset, &packet.server_tick_rate) ||
         !read_u32(payload, payload_size, &offset, &packet.snapshot_rate) ||
+        offset != payload_size) {
+        return false;
+    }
+
+    *out_packet = packet;
+    return true;
+}
+
+std::vector<std::uint8_t> encode_ping_pong_packet(
+    const PingPongPacket& packet,
+    std::uint32_t sequence) {
+    std::vector<std::uint8_t> payload;
+    payload.reserve(kPingPongPayloadSize);
+    write_u32(&payload, packet.nonce);
+    write_u64(&payload, packet.server_send_time_us);
+    write_u64(&payload, packet.client_receive_time_us);
+    write_u64(&payload, packet.client_send_time_us);
+    return wrap_packet(MessageType::kPingPong, payload, sequence);
+}
+
+bool decode_ping_pong_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    PingPongPacket* out_packet) {
+    const std::uint8_t* payload = nullptr;
+    std::size_t payload_size = 0;
+    if (out_packet == nullptr ||
+        !unwrap_packet(data, size, MessageType::kPingPong, &payload, &payload_size) ||
+        payload_size != kPingPongPayloadSize) {
+        return false;
+    }
+
+    PingPongPacket packet;
+    std::size_t offset = 0;
+    if (!read_u32(payload, payload_size, &offset, &packet.nonce) ||
+        !read_u64(payload, payload_size, &offset, &packet.server_send_time_us) ||
+        !read_u64(payload, payload_size, &offset, &packet.client_receive_time_us) ||
+        !read_u64(payload, payload_size, &offset, &packet.client_send_time_us) ||
         offset != payload_size) {
         return false;
     }

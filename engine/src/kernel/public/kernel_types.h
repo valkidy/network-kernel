@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 4u
+#define KERNEL_ABI_VERSION 7u
 
 #define KERNEL_CAPABILITY_CLIENT_MODE UINT64_C(0x0000000000000001)
 #define KERNEL_CAPABILITY_LISTEN_SERVER_MODE UINT64_C(0x0000000000000002)
@@ -23,6 +23,9 @@
 #define KERNEL_CAPABILITY_SERVER_ENTITY_STATE_WRITE UINT64_C(0x0000000000004000)
 #define KERNEL_CAPABILITY_SERVER_ENTITY_QUERY UINT64_C(0x0000000000008000)
 #define KERNEL_CAPABILITY_SERVER_RELEVANCE_FILTER UINT64_C(0x0000000000010000)
+#define KERNEL_CAPABILITY_LAG_COMPENSATED_PROJECTILE UINT64_C(0x0000000000020000)
+#define KERNEL_CAPABILITY_EVENT_PRESENTATION_TIME UINT64_C(0x0000000000040000)
+#define KERNEL_CAPABILITY_RENDER_STATES_AT_TIME UINT64_C(0x0000000000080000)
 
 #define KERNEL_VISUAL_FLAG_MOVING UINT32_C(0x00000001)
 #define KERNEL_VISUAL_FLAG_RELOADING UINT32_C(0x00000002)
@@ -86,6 +89,8 @@ typedef enum InputButton {
     InputButton_Sprint = 1u << 3,
     InputButton_Interact = 1u << 4,
     InputButton_Ability1 = 1u << 5,
+    InputButton_Dodge = 1u << 6,
+    InputButton_Parry = 1u << 7,
 } InputButton;
 
 typedef struct KernelVec2 {
@@ -122,8 +127,8 @@ typedef struct KernelConfig {
 
 typedef struct PlayerInput {
     uint32_t input_seq;
-    uint32_t client_tick;
-    uint32_t client_projectile_id;
+    uint64_t client_action_time_us;
+    uint32_t client_action_id;
     KernelVec2 move;
     KernelVec2 look_delta;
     KernelVec3 aim_dir;
@@ -132,6 +137,7 @@ typedef struct PlayerInput {
 } PlayerInput;
 
 typedef struct RenderEntityState {
+    uint64_t entity_id;
     uint32_t net_id;
     uint16_t entity_type;
     uint32_t owner_peer;
@@ -141,7 +147,7 @@ typedef struct RenderEntityState {
     uint16_t animation_state;
     uint32_t visual_flags;
     uint32_t spawn_tick;
-    uint32_t client_projectile_id;
+    uint32_t client_action_id;
 } RenderEntityState;
 
 typedef struct KernelServerEntityCreateInfo {
@@ -174,6 +180,8 @@ typedef struct KernelEvent {
     uint32_t net_id;
     uint32_t peer_id;
     uint32_t code;
+    uint64_t event_time_us;
+    uint64_t presentation_time_us;
 } KernelEvent;
 
 #ifdef __cplusplus

@@ -129,6 +129,12 @@ int main() {
         load_symbol<std::uint32_t(KernelHandle*, RenderEntityState*, std::uint32_t)>(
             library,
             "Kernel_GetRenderStates");
+    auto* kernel_get_render_states_at_time =
+        load_symbol<std::uint32_t(
+            KernelHandle*,
+            std::uint64_t,
+            RenderEntityState*,
+            std::uint32_t)>(library, "Kernel_GetRenderStatesAtTime");
     auto* kernel_poll_events =
         load_symbol<std::uint32_t(KernelHandle*, KernelEvent*, std::uint32_t)>(
             library,
@@ -207,6 +213,9 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LISTEN_SERVER_MODE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LOCAL_PLAYER_INFO) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_SERVER_ENTITY_CREATE) != 0);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_LAG_COMPENSATED_PROJECTILE) != 0);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_EVENT_PRESENTATION_TIME) != 0);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_RENDER_STATES_AT_TIME) != 0);
     assert(!kernel_get_abi_info(nullptr, sizeof(abi_info)));
     assert(!kernel_get_abi_info(&abi_info, sizeof(abi_info) - 1));
     GameServerAbiInfo game_server_abi_info{};
@@ -263,7 +272,7 @@ int main() {
 
     PlayerInput input{};
     input.input_seq = 1;
-    input.client_tick = 1;
+    input.client_action_time_us = 33333;
     input.move = KernelVec2{1.0f, 0.0f};
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     input.buttons = InputButton_Fire;
@@ -276,6 +285,11 @@ int main() {
         states.data(),
         static_cast<std::uint32_t>(states.size()));
     assert(state_count >= 1);
+    assert(kernel_get_render_states_at_time(
+               kernel,
+               33333,
+               states.data(),
+               static_cast<std::uint32_t>(states.size())) >= 1);
 
     std::array<KernelEvent, 16> events{};
     const std::uint32_t event_count = kernel_poll_events(

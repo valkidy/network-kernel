@@ -7,10 +7,10 @@
 namespace network_example {
 namespace {
 
-constexpr std::size_t kInputPayloadSize = 41;
+constexpr std::size_t kInputPayloadSize = 45;
 constexpr std::size_t kSnapshotHeaderPayloadSize = 16;
 constexpr std::size_t kEntitySnapshotPayloadSize = 66;
-constexpr std::size_t kReliableEventPayloadSize = 18;
+constexpr std::size_t kReliableEventPayloadSize = 34;
 constexpr std::size_t kEntitySpawnPayloadSize = 42;
 constexpr std::size_t kEntityDespawnPayloadSize = 12;
 
@@ -28,6 +28,11 @@ void write_u32(std::vector<std::uint8_t>* buffer, std::uint32_t value) {
     buffer->push_back(static_cast<std::uint8_t>((value >> 8u) & 0xffu));
     buffer->push_back(static_cast<std::uint8_t>((value >> 16u) & 0xffu));
     buffer->push_back(static_cast<std::uint8_t>((value >> 24u) & 0xffu));
+}
+
+void write_u64(std::vector<std::uint8_t>* buffer, std::uint64_t value) {
+    write_u32(buffer, static_cast<std::uint32_t>(value & 0xffffffffu));
+    write_u32(buffer, static_cast<std::uint32_t>((value >> 32u) & 0xffffffffu));
 }
 
 void write_float(std::vector<std::uint8_t>* buffer, float value) {
@@ -77,6 +82,22 @@ bool read_u32(
                  (static_cast<std::uint32_t>(data[*offset + 2]) << 16u) |
                  (static_cast<std::uint32_t>(data[*offset + 3]) << 24u);
     *offset += 4;
+    return true;
+}
+
+bool read_u64(
+    const std::uint8_t* data,
+    std::size_t size,
+    std::size_t* offset,
+    std::uint64_t* out_value) {
+    std::uint32_t low = 0;
+    std::uint32_t high = 0;
+    if (!read_u32(data, size, offset, &low) ||
+        !read_u32(data, size, offset, &high)) {
+        return false;
+    }
+    *out_value = static_cast<std::uint64_t>(low) |
+                 (static_cast<std::uint64_t>(high) << 32u);
     return true;
 }
 
@@ -186,8 +207,8 @@ std::vector<std::uint8_t> encode_input_packet(
     payload.reserve(kInputPayloadSize);
     write_u32(&payload, player_id);
     write_u32(&payload, input.input_seq);
-    write_u32(&payload, input.client_tick);
-    write_u32(&payload, input.client_projectile_id);
+    write_u64(&payload, input.client_action_time_us);
+    write_u32(&payload, input.client_action_id);
     write_float(&payload, input.move.x);
     write_float(&payload, input.move.y);
     write_float(&payload, input.aim_dir.x);
@@ -215,8 +236,8 @@ bool decode_input_packet(
     std::size_t offset = 0;
     return read_u32(payload, payload_size, &offset, out_player_id) &&
            read_u32(payload, payload_size, &offset, &input.input_seq) &&
-           read_u32(payload, payload_size, &offset, &input.client_tick) &&
-           read_u32(payload, payload_size, &offset, &input.client_projectile_id) &&
+           read_u64(payload, payload_size, &offset, &input.client_action_time_us) &&
+           read_u32(payload, payload_size, &offset, &input.client_action_id) &&
            read_float(payload, payload_size, &offset, &input.move.x) &&
            read_float(payload, payload_size, &offset, &input.move.y) &&
            read_float(payload, payload_size, &offset, &input.aim_dir.x) &&
@@ -249,7 +270,7 @@ std::vector<std::uint8_t> encode_snapshot_packet(
         write_u16(&payload, entity.state);
         write_u32(&payload, entity.flags);
         write_u32(&payload, entity.spawn_tick);
-        write_u32(&payload, entity.client_projectile_id);
+        write_u32(&payload, entity.client_action_id);
     }
 
     return wrap_packet(MessageType::kSnapshotPacket, payload, sequence);
@@ -297,7 +318,7 @@ bool decode_snapshot_packet(
             !read_u16(payload, payload_size, &offset, &entity.state) ||
             !read_u32(payload, payload_size, &offset, &entity.flags) ||
             !read_u32(payload, payload_size, &offset, &entity.spawn_tick) ||
-            !read_u32(payload, payload_size, &offset, &entity.client_projectile_id)) {
+            !read_u32(payload, payload_size, &offset, &entity.client_action_id)) {
             return false;
         }
         entity.type = static_cast<EntityType>(entity_type);
@@ -322,6 +343,8 @@ std::vector<std::uint8_t> encode_reliable_event_packet(
     write_u32(&payload, event.net_id);
     write_u32(&payload, event.peer_id);
     write_u32(&payload, event.code);
+    write_u64(&payload, event.event_time_us);
+    write_u64(&payload, event.presentation_time_us);
     return wrap_packet(MessageType::kReliableEventPacket, payload, sequence);
 }
 
@@ -350,6 +373,8 @@ bool decode_reliable_event_packet(
         !read_u32(payload, payload_size, &offset, &event.net_id) ||
         !read_u32(payload, payload_size, &offset, &event.peer_id) ||
         !read_u32(payload, payload_size, &offset, &event.code) ||
+        !read_u64(payload, payload_size, &offset, &event.event_time_us) ||
+        !read_u64(payload, payload_size, &offset, &event.presentation_time_us) ||
         offset != payload_size) {
         return false;
     }
