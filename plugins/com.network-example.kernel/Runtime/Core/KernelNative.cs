@@ -55,6 +55,13 @@ namespace NetworkExample.Kernel
             uint maxStates);
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint Kernel_GetRenderStatesAtTime(
+            IntPtr kernel,
+            ulong clientRenderTimeUs,
+            [Out] RenderEntityState[] outStates,
+            uint maxStates);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern uint Kernel_PollEvents(
             IntPtr kernel,
             [Out] KernelEvent[] outEvents,

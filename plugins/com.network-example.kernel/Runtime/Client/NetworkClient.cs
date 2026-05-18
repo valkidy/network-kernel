@@ -44,6 +44,11 @@ namespace NetworkExample.Kernel.Client
             return kernel.GetRenderStates(states);
         }
 
+        public uint GetRenderStatesAtTime(ulong clientRenderTimeUs, RenderEntityState[] states)
+        {
+            return kernel.GetRenderStatesAtTime(clientRenderTimeUs, states);
+        }
+
         public bool TrySubmitInput(PlayerInput input)
         {
             if (!IsReady)

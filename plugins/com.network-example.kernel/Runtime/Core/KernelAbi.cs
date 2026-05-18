@@ -53,6 +53,18 @@ namespace NetworkExample.Kernel
                 info,
                 KernelConstants.CapabilityServerEntityQuery,
                 "Kernel server entity query capability is missing.");
+            RequireCapability(
+                info,
+                KernelConstants.CapabilityLagCompensatedProjectile,
+                "Kernel lag-compensated projectile capability is missing.");
+            RequireCapability(
+                info,
+                KernelConstants.CapabilityEventPresentationTime,
+                "Kernel event presentation-time capability is missing.");
+            RequireCapability(
+                info,
+                KernelConstants.CapabilityRenderStatesAtTime,
+                "Kernel render-states-at-time capability is missing.");
 
             RequireSize(nameof(KernelAbiInfo), info.struct_size, Marshal.SizeOf<KernelAbiInfo>());
             RequireSize(nameof(KernelConfig), info.kernel_config_size, Marshal.SizeOf<KernelConfig>());

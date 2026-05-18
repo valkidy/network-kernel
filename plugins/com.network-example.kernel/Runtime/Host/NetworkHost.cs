@@ -90,6 +90,12 @@ namespace NetworkExample.Kernel.Host
             return kernel.GetRenderStates(states);
         }
 
+        public uint GetRenderStatesAtTime(ulong clientRenderTimeUs, RenderEntityState[] states)
+        {
+            ThrowIfNotRunning();
+            return kernel.GetRenderStatesAtTime(clientRenderTimeUs, states);
+        }
+
         public bool TrySubmitLocalInput(PlayerInput input)
         {
             ThrowIfNotRunning();

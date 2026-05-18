@@ -29,8 +29,8 @@ namespace NetworkExample.Kernel.Editor
                 var input = new PlayerInput
                 {
                     input_seq = 1,
-                    client_tick = 1,
-                    client_projectile_id = 1001,
+                    client_action_time_us = 33333,
+                    client_action_id = 1001,
                     move = new KernelVec2(1.0f, 0.0f),
                     aim_dir = new KernelVec3(1.0f, 0.0f, 0.0f),
                     buttons = (uint)InputButton.Fire,
@@ -101,10 +101,16 @@ namespace NetworkExample.Kernel.Editor
                 {
                     throw new InvalidOperationException("Kernel_GetRenderStates missed enemy.");
                 }
-                if (!HasProjectileRenderMetadata(states, stateCount, 1, input.client_projectile_id))
+                if (!HasProjectileRenderMetadata(states, stateCount, 1, input.client_action_id))
                 {
                     throw new InvalidOperationException(
                         "Kernel_GetRenderStates missed projectile sync metadata.");
+                }
+                uint stateAtTimeCount = kernel.GetRenderStatesAtTime(33333, states);
+                if (stateAtTimeCount == 0)
+                {
+                    throw new InvalidOperationException(
+                        "Kernel_GetRenderStatesAtTime returned no states.");
                 }
 
                 var events = new KernelEvent[16];
@@ -112,6 +118,11 @@ namespace NetworkExample.Kernel.Editor
                 if (eventCount == 0)
                 {
                     throw new InvalidOperationException("Kernel_PollEvents returned no events.");
+                }
+                if (!HasValidEventTimeline(events, eventCount))
+                {
+                    throw new InvalidOperationException(
+                        "Kernel_PollEvents returned invalid event presentation timestamps.");
                 }
                 if (!kernel.ServerDestroyEntity(enemyNetId, KernelDespawnReason.Destroyed))
                 {
@@ -177,7 +188,7 @@ namespace NetworkExample.Kernel.Editor
             RenderEntityState[] states,
             uint count,
             uint ownerPeer,
-            uint clientProjectileId)
+            uint clientActionId)
         {
             int countInt = (int)count;
             for (int index = 0; index < countInt; ++index)
@@ -185,7 +196,7 @@ namespace NetworkExample.Kernel.Editor
                 RenderEntityState state = states[index];
                 if (state.entity_type == KernelEntityType.Projectile &&
                     state.owner_peer == ownerPeer &&
-                    state.client_projectile_id == clientProjectileId &&
+                    state.client_action_id == clientActionId &&
                     state.velocity.x > 0.0f)
                 {
                     return true;
@@ -193,6 +204,23 @@ namespace NetworkExample.Kernel.Editor
             }
 
             return false;
+        }
+
+        private static bool HasValidEventTimeline(KernelEvent[] events, uint count)
+        {
+            int countInt = (int)count;
+            for (int index = 0; index < countInt; ++index)
+            {
+                KernelEvent kernelEvent = events[index];
+                if (kernelEvent.presentation_time_us != 0 &&
+                    (kernelEvent.event_time_us == 0 ||
+                     kernelEvent.event_time_us > kernelEvent.presentation_time_us))
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
     }
 }

@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 4;
+        public const uint AbiVersion = 7;
 
         public const ulong CapabilityClientMode = 0x0000000000000001UL;
         public const ulong CapabilityListenServerMode = 0x0000000000000002UL;
@@ -24,6 +24,9 @@ namespace NetworkExample.Kernel
         public const ulong CapabilityServerEntityStateWrite = 0x0000000000004000UL;
         public const ulong CapabilityServerEntityQuery = 0x0000000000008000UL;
         public const ulong CapabilityServerRelevanceFilter = 0x0000000000010000UL;
+        public const ulong CapabilityLagCompensatedProjectile = 0x0000000000020000UL;
+        public const ulong CapabilityEventPresentationTime = 0x0000000000040000UL;
+        public const ulong CapabilityRenderStatesAtTime = 0x0000000000080000UL;
 
         public const uint VisualFlagMoving = 0x00000001U;
         public const uint VisualFlagReloading = 0x00000002U;
@@ -77,6 +80,8 @@ namespace NetworkExample.Kernel
         Sprint = 1U << 3,
         Interact = 1U << 4,
         Ability1 = 1U << 5,
+        Dodge = 1U << 6,
+        Parry = 1U << 7,
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -189,8 +194,8 @@ namespace NetworkExample.Kernel
     public struct PlayerInput
     {
         public uint input_seq;
-        public uint client_tick;
-        public uint client_projectile_id;
+        public ulong client_action_time_us;
+        public uint client_action_id;
         public KernelVec2 move;
         public KernelVec2 look_delta;
         public KernelVec3 aim_dir;
@@ -201,6 +206,7 @@ namespace NetworkExample.Kernel
     [StructLayout(LayoutKind.Sequential)]
     public struct RenderEntityState
     {
+        public ulong entity_id;
         public uint net_id;
         public KernelEntityType entity_type;
         public uint owner_peer;
@@ -210,7 +216,7 @@ namespace NetworkExample.Kernel
         public ushort animation_state;
         public uint visual_flags;
         public uint spawn_tick;
-        public uint client_projectile_id;
+        public uint client_action_id;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -254,5 +260,7 @@ namespace NetworkExample.Kernel
         public uint net_id;
         public uint peer_id;
         public uint code;
+        public ulong event_time_us;
+        public ulong presentation_time_us;
     }
 }

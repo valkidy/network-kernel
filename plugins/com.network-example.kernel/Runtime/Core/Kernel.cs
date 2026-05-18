@@ -100,6 +100,21 @@ namespace NetworkExample.Kernel
             return KernelNative.Kernel_GetRenderStates(handle, states, (uint)states.Length);
         }
 
+        public uint GetRenderStatesAtTime(ulong clientRenderTimeUs, RenderEntityState[] states)
+        {
+            ThrowIfDisposed();
+            if (states == null || states.Length == 0)
+            {
+                return 0;
+            }
+
+            return KernelNative.Kernel_GetRenderStatesAtTime(
+                handle,
+                clientRenderTimeUs,
+                states,
+                (uint)states.Length);
+        }
+
         public uint PollEvents(KernelEvent[] events)
         {
             ThrowIfDisposed();

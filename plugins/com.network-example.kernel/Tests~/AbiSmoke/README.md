@@ -8,4 +8,5 @@ The smoke calls `Kernel_GetAbiInfo()` through P/Invoke, compares the native
 sizes with `Marshal.SizeOf<T>()`, validates local-player info, starts
 listen-server mode, submits one projectile input, updates once, creates and
 mutates a server-owned enemy, reads render states including projectile sync
-metadata, polls events, destroys the enemy, and disposes the native handle.
+metadata, reads render states at a client-local render timestamp, polls
+events, destroys the enemy, and disposes the native handle.

@@ -26,6 +26,7 @@ REQUIRED_EXPORTS=(
   Kernel_Update
   Kernel_SubmitInput
   Kernel_GetRenderStates
+  Kernel_GetRenderStatesAtTime
   Kernel_PollEvents
   Kernel_ServerCreateEntity
   Kernel_ServerDestroyEntity
