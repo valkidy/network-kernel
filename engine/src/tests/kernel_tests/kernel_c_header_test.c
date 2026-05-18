@@ -23,7 +23,7 @@ int main(void) {
     (void)create_info;
     (void)server_state;
 
-    assert(KERNEL_ABI_VERSION == 6u);
+    assert(KERNEL_ABI_VERSION == 7u);
     assert(sizeof(KernelAbiInfo) > 0u);
     assert(sizeof(KernelLocalPlayerInfo) > 0u);
     assert(sizeof(KernelConfig) > 0u);
@@ -35,6 +35,8 @@ int main(void) {
     assert((KERNEL_CAPABILITY_CLIENT_MODE & KERNEL_CAPABILITY_RENDER_STATES) == 0u);
     assert((KERNEL_CAPABILITY_LAG_COMPENSATED_PROJECTILE &
             KERNEL_CAPABILITY_EVENT_PRESENTATION_TIME) == 0u);
+    assert((KERNEL_CAPABILITY_RENDER_STATES_AT_TIME &
+            KERNEL_CAPABILITY_RENDER_STATES) == 0u);
     assert((KERNEL_VISUAL_FLAG_MOVING & KERNEL_VISUAL_FLAG_RELOADING) == 0u);
     assert((KERNEL_VISUAL_FLAG_MOVING & KERNEL_VISUAL_FLAG_DEAD) == 0u);
     assert((InputButton_Dodge & InputButton_Parry) == 0u);

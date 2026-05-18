@@ -35,7 +35,11 @@ public:
 
     std::uint32_t get_render_states(
         RenderEntityState* out_states,
-        std::uint32_t max_states) const;
+        std::uint32_t max_states);
+    std::uint32_t get_render_states_at_time(
+        std::uint64_t client_render_time_us,
+        RenderEntityState* out_states,
+        std::uint32_t max_states);
     std::uint32_t poll_events(KernelEvent* out_events, std::uint32_t max_events);
     KernelLocalPlayerInfo local_player_info() const;
     bool server_create_entity(
@@ -116,8 +120,13 @@ private:
     void release_presentable_events();
     void broadcast_combat_events(std::size_t first_event, std::size_t last_event);
     void rebuild_render_states();
+    void rebuild_render_states_at_time(
+        std::uint64_t client_render_time_us,
+        bool consume_correction);
     void rebuild_render_states_from_world();
-    void rebuild_render_states_from_snapshot();
+    void rebuild_render_states_from_snapshot(
+        std::uint64_t client_render_time_us,
+        bool consume_correction);
     void handle_client_snapshot(WorldSnapshot snapshot);
     void store_client_snapshot(WorldSnapshot snapshot);
     void reconcile_local_prediction(const WorldSnapshot& snapshot);
@@ -136,8 +145,13 @@ private:
         std::uint64_t action_server_time_us,
         std::uint64_t received_server_time_us) const;
     std::uint64_t compensated_action_time_us(const QueuedInput& queued_input) const;
-    bool build_interpolated_snapshot(WorldSnapshot* out_snapshot) const;
-    void append_predicted_local_render_state();
+    bool build_interpolated_snapshot(
+        std::uint64_t client_render_time_us,
+        WorldSnapshot* out_snapshot) const;
+    bool build_interpolated_snapshot_for_server_time(
+        std::uint64_t target_server_time_us,
+        WorldSnapshot* out_snapshot) const;
+    void append_predicted_local_render_state(bool consume_correction);
     void append_predicted_projectile_render_states();
     void advance_predicted_projectiles(float fixed_delta_seconds);
     std::uint32_t rewind_tick_for_input(const QueuedInput& queued_input) const;
@@ -207,12 +221,14 @@ private:
     std::uint32_t next_packet_sequence_ = 1;
     std::uint32_t next_clock_sync_nonce_ = 1;
     std::uint64_t client_local_time_us_ = 0;
+    std::int64_t client_clock_offset_us_ = 0;
     std::uint64_t current_render_time_us_ = 0;
     PeerId local_client_peer_id_ = 0;
     bool client_handshake_sent_ = false;
     bool has_welcome_ = false;
     bool has_client_snapshot_ = false;
     bool has_predicted_local_entity_ = false;
+    bool has_client_clock_sync_ = false;
     bool has_client_render_time_ = false;
     bool running_ = false;
 };

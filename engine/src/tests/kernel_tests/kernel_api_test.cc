@@ -39,8 +39,9 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_SERVER_RELEVANCE_FILTER) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LAG_COMPENSATED_PROJECTILE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_EVENT_PRESENTATION_TIME) != 0);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_RENDER_STATES_AT_TIME) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 6u);
+    assert(KERNEL_ABI_VERSION == 7u);
     assert(offsetof(PlayerInput, client_action_time_us) > offsetof(PlayerInput, input_seq));
     assert(offsetof(PlayerInput, client_action_id) > offsetof(PlayerInput, client_action_time_us));
     assert(offsetof(KernelEvent, event_time_us) > offsetof(KernelEvent, code));
@@ -57,6 +58,7 @@ int main() {
     Kernel_Update(nullptr, 1.0f / 30.0f);
     Kernel_SubmitInput(nullptr, 1, nullptr);
     assert(Kernel_GetRenderStates(nullptr, nullptr, 0) == 0);
+    assert(Kernel_GetRenderStatesAtTime(nullptr, 0, nullptr, 0) == 0);
     assert(Kernel_PollEvents(nullptr, nullptr, 0) == 0);
     KernelLocalPlayerInfo local_info{};
     assert(!Kernel_GetLocalPlayerInfo(nullptr, &local_info));
@@ -153,6 +155,8 @@ int main() {
     std::array<RenderEntityState, 8> states{};
     assert(Kernel_GetRenderStates(kernel, nullptr, states.size()) == 0);
     assert(Kernel_GetRenderStates(kernel, states.data(), 0) == 0);
+    assert(Kernel_GetRenderStatesAtTime(kernel, 0, nullptr, states.size()) == 0);
+    assert(Kernel_GetRenderStatesAtTime(kernel, 0, states.data(), 0) == 0);
     const std::uint32_t render_count =
         Kernel_GetRenderStates(kernel, states.data(), states.size());
     assert(render_count == 1);
@@ -167,6 +171,10 @@ int main() {
         (0x12345678u | KERNEL_VISUAL_FLAG_MOVING));
     assert(states[0].spawn_tick == 0);
     assert(states[0].client_action_id == 0);
+    const std::uint32_t render_at_time_count =
+        Kernel_GetRenderStatesAtTime(kernel, 33333, states.data(), states.size());
+    assert(render_at_time_count == 1);
+    assert(states[0].net_id == created_net_id);
 
     std::array<KernelEvent, 16> events{};
     assert(Kernel_PollEvents(kernel, nullptr, events.size()) == 0);

@@ -48,6 +48,12 @@ uint32_t Kernel_GetRenderStates(
     RenderEntityState* out_states,
     uint32_t max_states);
 
+uint32_t Kernel_GetRenderStatesAtTime(
+    KernelHandle* kernel,
+    uint64_t client_render_time_us,
+    RenderEntityState* out_states,
+    uint32_t max_states);
+
 uint32_t Kernel_PollEvents(
     KernelHandle* kernel,
     KernelEvent* out_events,

@@ -11,7 +11,7 @@
 
 ## Native ABI v5/v6 Changes
 
-- `KERNEL_ABI_VERSION` is `6`.
+- `KERNEL_ABI_VERSION` is `7`.
 - `PlayerInput` carries `input_seq`, `client_action_time_us`, and
   `client_action_id`; `client_tick` is no longer part of the public ABI.
 - `RenderEntityState` includes `uint64_t entity_id` before `net_id`.
@@ -24,6 +24,9 @@
   for rollback-eligible defensive input.
 - PingPong session packets provide clock-sync samples for converting
   client-local action timestamps to the server timeline.
+- `Kernel_GetRenderStatesAtTime` lets callers request render states for a
+  client-local timestamp; the kernel maps it onto the server snapshot timeline
+  and clamps outside the buffered snapshot range.
 
 ## Runtime Behavior
 

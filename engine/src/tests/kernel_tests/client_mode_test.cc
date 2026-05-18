@@ -20,6 +20,21 @@
 
 namespace {
 
+network_example::WorldSnapshot snapshot_with_entity(
+    std::uint32_t server_tick,
+    network_example::NetId net_id,
+    network_example::EntityType type,
+    float position_x) {
+    network_example::WorldSnapshot snapshot;
+    snapshot.header.server_tick = server_tick;
+    network_example::EntitySnapshot entity;
+    entity.net_id = net_id;
+    entity.type = type;
+    entity.position = glm::vec3{position_x, 0.0f, 0.0f};
+    snapshot.entities.push_back(entity);
+    return snapshot;
+}
+
 void presentation_gate_releases_at_render_time() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
@@ -193,6 +208,8 @@ void client_replies_to_clock_sync_ping() {
         network_example::PingPongPacket{9, 123000, 0, 0},
         2);
     engine.handle_client_ping_pong(event);
+    assert(engine.has_client_clock_sync_);
+    assert(engine.client_clock_offset_us_ == -333000);
 
     auto* loopback =
         static_cast<network_example::LoopbackTransport*>(engine.transport_.get());
@@ -209,6 +226,115 @@ void client_replies_to_clock_sync_ping() {
     assert(decoded_reply.client_send_time_us == 456000);
 }
 
+void render_states_at_time_interpolates_and_clamps() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 1000;
+    config.tick.snapshot_rate = 100;
+
+    network_example::KernelEngine empty_engine(config);
+    std::array<RenderEntityState, 4> states{};
+    assert(empty_engine.get_render_states_at_time(
+               31000,
+               states.data(),
+               static_cast<std::uint32_t>(states.size())) == 0);
+
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_Client);
+    engine.has_client_clock_sync_ = true;
+    engine.client_clock_offset_us_ = 0;
+    engine.handle_client_snapshot(snapshot_with_entity(
+        10,
+        42,
+        network_example::EntityType::kEnemy,
+        0.0f));
+    engine.handle_client_snapshot(snapshot_with_entity(
+        12,
+        42,
+        network_example::EntityType::kEnemy,
+        20.0f));
+
+    std::uint32_t count = engine.get_render_states_at_time(
+        31000,
+        states.data(),
+        static_cast<std::uint32_t>(states.size()));
+    assert(count == 1);
+    assert(states[0].net_id == 42);
+    assert(states[0].position.x > 9.99f);
+    assert(states[0].position.x < 10.01f);
+
+    count = engine.get_render_states_at_time(
+        25000,
+        states.data(),
+        static_cast<std::uint32_t>(states.size()));
+    assert(count == 1);
+    assert(states[0].position.x == 0.0f);
+
+    count = engine.get_render_states_at_time(
+        40000,
+        states.data(),
+        static_cast<std::uint32_t>(states.size()));
+    assert(count == 1);
+    assert(states[0].position.x == 20.0f);
+
+    network_example::KernelEngine single_snapshot_engine(config);
+    single_snapshot_engine.reset_runtime_state(KernelMode_Client);
+    single_snapshot_engine.has_client_clock_sync_ = true;
+    single_snapshot_engine.handle_client_snapshot(snapshot_with_entity(
+        10,
+        77,
+        network_example::EntityType::kEnemy,
+        7.0f));
+    count = single_snapshot_engine.get_render_states_at_time(
+        999999,
+        states.data(),
+        static_cast<std::uint32_t>(states.size()));
+    assert(count == 1);
+    assert(states[0].net_id == 77);
+    assert(states[0].position.x == 7.0f);
+}
+
+void render_query_does_not_consume_local_correction() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 1000;
+    config.tick.snapshot_rate = 100;
+
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_Client);
+    engine.has_client_clock_sync_ = true;
+    engine.local_player_net_id_ = 1;
+    engine.predicted_local_entity_.net_id = 1;
+    engine.predicted_local_entity_.type = network_example::EntityType::kPlayer;
+    engine.predicted_local_entity_.position = glm::vec3{1.0f, 0.0f, 0.0f};
+    engine.has_predicted_local_entity_ = true;
+    engine.local_correction_offset_ = glm::vec3{4.0f, 0.0f, 0.0f};
+    engine.latest_client_snapshot_ = snapshot_with_entity(
+        10,
+        1,
+        network_example::EntityType::kPlayer,
+        0.0f);
+    engine.client_snapshot_buffer_.push_back(engine.latest_client_snapshot_);
+    engine.has_client_snapshot_ = true;
+
+    std::array<RenderEntityState, 4> first_states{};
+    const std::uint32_t first_count = engine.get_render_states_at_time(
+        31000,
+        first_states.data(),
+        static_cast<std::uint32_t>(first_states.size()));
+    std::array<RenderEntityState, 4> second_states{};
+    const std::uint32_t second_count = engine.get_render_states_at_time(
+        31000,
+        second_states.data(),
+        static_cast<std::uint32_t>(second_states.size()));
+
+    assert(first_count == 1);
+    assert(second_count == 1);
+    assert(first_states[0].position.x == 5.0f);
+    assert(second_states[0].position.x == first_states[0].position.x);
+    assert(engine.local_correction_offset_.x == 4.0f);
+}
+
 }  // namespace
 
 int main() {
@@ -216,6 +342,8 @@ int main() {
     clock_sync_ping_pong_updates_peer_offset();
     compensation_clamps_not_rejects_client_local_time();
     client_replies_to_clock_sync_ping();
+    render_states_at_time_interpolates_and_clamps();
+    render_query_does_not_consume_local_correction();
 
     KernelConfig config{};
     config.mode = KernelMode_Client;

@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 6`.
+`KERNEL_ABI_VERSION == 7`.
 
 ## Ownership
 
@@ -59,6 +59,12 @@ ABI version 6 adds PingPong session clock-sync packets. Dedicated servers use
 the latest clock offset sample to convert client-local action timestamps to
 server time. Action times outside the accepted 100ms compensation window are
 clamped, not rejected, before rewind selection.
+
+ABI version 7 adds `Kernel_GetRenderStatesAtTime`, allowing clients to pass a
+client-local render timestamp and receive kernel-interpolated render states.
+The legacy `Kernel_GetRenderStates` remains available and uses the kernel's
+current client-local time. Clients estimate their snapshot render clock offset
+from incoming PingPong packets without changing the session packet wire format.
 
 Consumers pass a `struct_size`-style byte size to `Kernel_GetAbiInfo`. The call
 returns `false` if the output pointer is null or the provided size is smaller

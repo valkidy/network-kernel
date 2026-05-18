@@ -99,13 +99,29 @@ std::uint64_t tick_time_us(std::uint32_t tick, float fixed_delta_seconds) {
         1000000.0);
 }
 
+std::uint64_t offset_time_us(std::uint64_t time_us, std::int64_t offset_us) {
+    if (offset_us >= 0) {
+        return time_us + static_cast<std::uint64_t>(offset_us);
+    }
+    const std::uint64_t absolute_offset =
+        static_cast<std::uint64_t>(-offset_us);
+    return time_us > absolute_offset ? time_us - absolute_offset : 0;
+}
+
+std::int64_t time_delta_us(std::uint64_t lhs, std::uint64_t rhs) {
+    if (lhs >= rhs) {
+        return static_cast<std::int64_t>(lhs - rhs);
+    }
+    return -static_cast<std::int64_t>(rhs - lhs);
+}
+
 std::uint32_t tick_for_time_us(
     std::uint64_t time_us,
     float fixed_delta_seconds) {
     const double tick =
         static_cast<double>(time_us) /
         (static_cast<double>(fixed_delta_seconds) * 1000000.0);
-    return static_cast<std::uint32_t>(tick);
+    return static_cast<std::uint32_t>(tick + 0.0001);
 }
 
 void apply_input_prediction(
@@ -338,10 +354,18 @@ void KernelEngine::submit_input(PeerId local_player_id, const PlayerInput& input
 
 std::uint32_t KernelEngine::get_render_states(
     RenderEntityState* out_states,
-    std::uint32_t max_states) const {
+    std::uint32_t max_states) {
+    return get_render_states_at_time(client_local_time_us_, out_states, max_states);
+}
+
+std::uint32_t KernelEngine::get_render_states_at_time(
+    std::uint64_t client_render_time_us,
+    RenderEntityState* out_states,
+    std::uint32_t max_states) {
     if (out_states == nullptr || max_states == 0) {
         return 0;
     }
+    rebuild_render_states_at_time(client_render_time_us, false);
     const std::uint32_t count =
         std::min(max_states, static_cast<std::uint32_t>(render_states_.size()));
     std::memcpy(out_states, render_states_.data(), sizeof(RenderEntityState) * count);
@@ -550,12 +574,14 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     next_packet_sequence_ = 1;
     next_clock_sync_nonce_ = 1;
     client_local_time_us_ = 0;
+    client_clock_offset_us_ = 0;
     current_render_time_us_ = 0;
     local_client_peer_id_ = 0;
     client_handshake_sent_ = false;
     has_welcome_ = false;
     has_client_snapshot_ = false;
     has_predicted_local_entity_ = false;
+    has_client_clock_sync_ = false;
     has_client_render_time_ = false;
     running_ = true;
 }
@@ -739,6 +765,9 @@ void KernelEngine::handle_client_ping_pong(const TransportEvent& transport_event
     }
 
     ping.client_receive_time_us = client_local_action_time_us();
+    client_clock_offset_us_ =
+        time_delta_us(ping.server_send_time_us, ping.client_receive_time_us);
+    has_client_clock_sync_ = true;
     ping.client_send_time_us = client_local_action_time_us();
     const std::vector<std::uint8_t> packet =
         encode_ping_pong_packet(ping, next_packet_sequence_++);
@@ -858,9 +887,11 @@ void KernelEngine::clear_client_session() {
     latest_client_snapshot_ = WorldSnapshot{};
     predicted_local_entity_ = EntitySnapshot{};
     local_correction_offset_ = glm::vec3{0.0f, 0.0f, 0.0f};
+    client_clock_offset_us_ = 0;
     has_welcome_ = false;
     has_client_snapshot_ = false;
     has_predicted_local_entity_ = false;
+    has_client_clock_sync_ = false;
     has_client_render_time_ = false;
     current_render_time_us_ = 0;
     render_states_.clear();
@@ -1165,7 +1196,9 @@ std::uint64_t KernelEngine::compensated_action_time_us(
         received_server_time_us);
 }
 
-bool KernelEngine::build_interpolated_snapshot(WorldSnapshot* out_snapshot) const {
+bool KernelEngine::build_interpolated_snapshot(
+    std::uint64_t client_render_time_us,
+    WorldSnapshot* out_snapshot) const {
     if (out_snapshot == nullptr || client_snapshot_buffer_.empty()) {
         return false;
     }
@@ -1174,23 +1207,75 @@ bool KernelEngine::build_interpolated_snapshot(WorldSnapshot* out_snapshot) cons
         return true;
     }
 
-    const std::uint32_t newest_tick =
-        client_snapshot_buffer_.back().header.server_tick;
-    const std::uint32_t interpolation_delay =
-        tick_loop_.snapshot_interval_ticks() * 2u;
-    const std::uint32_t target_tick =
-        newest_tick > interpolation_delay
-            ? newest_tick - interpolation_delay
-            : client_snapshot_buffer_.front().header.server_tick;
+    const std::uint64_t interpolation_delay_us =
+        tick_time_us(
+            tick_loop_.snapshot_interval_ticks() * 2u,
+            tick_loop_.fixed_delta_seconds());
+    std::uint64_t target_server_time_us = 0;
+    if (has_client_clock_sync_) {
+        const std::uint64_t server_now_us =
+            offset_time_us(client_render_time_us, client_clock_offset_us_);
+        target_server_time_us =
+            server_now_us > interpolation_delay_us
+                ? server_now_us - interpolation_delay_us
+                : 0;
+    } else {
+        const std::uint32_t newest_tick =
+            client_snapshot_buffer_.back().header.server_tick;
+        const std::uint32_t interpolation_delay_ticks =
+            tick_loop_.snapshot_interval_ticks() * 2u;
+        const std::uint32_t target_tick =
+            newest_tick > interpolation_delay_ticks
+                ? newest_tick - interpolation_delay_ticks
+                : client_snapshot_buffer_.front().header.server_tick;
+        target_server_time_us =
+            tick_time_us(target_tick, tick_loop_.fixed_delta_seconds());
+    }
+
+    return build_interpolated_snapshot_for_server_time(
+        target_server_time_us,
+        out_snapshot);
+}
+
+bool KernelEngine::build_interpolated_snapshot_for_server_time(
+    std::uint64_t target_server_time_us,
+    WorldSnapshot* out_snapshot) const {
+    if (out_snapshot == nullptr || client_snapshot_buffer_.empty()) {
+        return false;
+    }
+    if (client_snapshot_buffer_.size() == 1) {
+        *out_snapshot = client_snapshot_buffer_.back();
+        return true;
+    }
+
+    const float fixed_delta_seconds = tick_loop_.fixed_delta_seconds();
+    const std::uint64_t oldest_time_us =
+        tick_time_us(
+            client_snapshot_buffer_.front().header.server_tick,
+            fixed_delta_seconds);
+    if (target_server_time_us <= oldest_time_us) {
+        *out_snapshot = client_snapshot_buffer_.front();
+        return true;
+    }
+    const std::uint64_t newest_time_us =
+        tick_time_us(
+            client_snapshot_buffer_.back().header.server_tick,
+            fixed_delta_seconds);
+    if (target_server_time_us >= newest_time_us) {
+        *out_snapshot = client_snapshot_buffer_.back();
+        return true;
+    }
 
     const WorldSnapshot* from = &client_snapshot_buffer_.front();
     const WorldSnapshot* to = &client_snapshot_buffer_.back();
     for (std::size_t index = 0; index < client_snapshot_buffer_.size(); ++index) {
         const WorldSnapshot& snapshot = client_snapshot_buffer_[index];
-        if (snapshot.header.server_tick <= target_tick) {
+        const std::uint64_t snapshot_time_us =
+            tick_time_us(snapshot.header.server_tick, fixed_delta_seconds);
+        if (snapshot_time_us <= target_server_time_us) {
             from = &snapshot;
         }
-        if (snapshot.header.server_tick >= target_tick) {
+        if (snapshot_time_us >= target_server_time_us) {
             to = &snapshot;
             break;
         }
@@ -1201,12 +1286,19 @@ bool KernelEngine::build_interpolated_snapshot(WorldSnapshot* out_snapshot) cons
         return true;
     }
 
+    const std::uint64_t from_time_us =
+        tick_time_us(from->header.server_tick, fixed_delta_seconds);
+    const std::uint64_t to_time_us =
+        tick_time_us(to->header.server_tick, fixed_delta_seconds);
     const float alpha =
-        static_cast<float>(target_tick - from->header.server_tick) /
-        static_cast<float>(to->header.server_tick - from->header.server_tick);
+        static_cast<float>(target_server_time_us - from_time_us) /
+        static_cast<float>(to_time_us - from_time_us);
     WorldSnapshot interpolated;
     interpolated.header = to->header;
-    interpolated.header.server_tick = target_tick;
+    interpolated.header.server_tick =
+        tick_for_time_us(target_server_time_us, fixed_delta_seconds);
+    interpolated.header.server_time_ms =
+        static_cast<std::uint32_t>(target_server_time_us / 1000u);
     interpolated.entities.reserve(to->entities.size());
     for (const EntitySnapshot& from_entity : from->entities) {
         if (const EntitySnapshot* to_entity = find_snapshot_entity(*to, from_entity.net_id)) {
@@ -1226,7 +1318,7 @@ bool KernelEngine::build_interpolated_snapshot(WorldSnapshot* out_snapshot) cons
     return true;
 }
 
-void KernelEngine::append_predicted_local_render_state() {
+void KernelEngine::append_predicted_local_render_state(bool consume_correction) {
     if (!has_predicted_local_entity_) {
         return;
     }
@@ -1247,9 +1339,11 @@ void KernelEngine::append_predicted_local_render_state() {
         local.client_action_id,
     });
 
-    local_correction_offset_ *= 0.5f;
-    if (glm::length(local_correction_offset_) < 0.001f) {
-        local_correction_offset_ = glm::vec3{0.0f, 0.0f, 0.0f};
+    if (consume_correction) {
+        local_correction_offset_ *= 0.5f;
+        if (glm::length(local_correction_offset_) < 0.001f) {
+            local_correction_offset_ = glm::vec3{0.0f, 0.0f, 0.0f};
+        }
     }
 }
 
@@ -1526,9 +1620,15 @@ void KernelEngine::send_entity_despawn(
 }
 
 void KernelEngine::rebuild_render_states() {
+    rebuild_render_states_at_time(client_local_time_us_, true);
+}
+
+void KernelEngine::rebuild_render_states_at_time(
+    std::uint64_t client_render_time_us,
+    bool consume_correction) {
     if ((config_.mode == KernelMode_ListenServer || config_.mode == KernelMode_Client) &&
         has_client_snapshot_) {
-        rebuild_render_states_from_snapshot();
+        rebuild_render_states_from_snapshot(client_render_time_us, consume_correction);
         return;
     }
     rebuild_render_states_from_world();
@@ -1577,14 +1677,18 @@ void KernelEngine::rebuild_render_states_from_world() {
     }
 }
 
-void KernelEngine::rebuild_render_states_from_snapshot() {
+void KernelEngine::rebuild_render_states_from_snapshot(
+    std::uint64_t client_render_time_us,
+    bool consume_correction) {
     render_states_.clear();
-    append_predicted_local_render_state();
+    append_predicted_local_render_state(consume_correction);
     append_predicted_projectile_render_states();
 
     WorldSnapshot render_snapshot;
     const WorldSnapshot& snapshot =
-        build_interpolated_snapshot(&render_snapshot) ? render_snapshot : latest_client_snapshot_;
+        build_interpolated_snapshot(client_render_time_us, &render_snapshot)
+            ? render_snapshot
+            : latest_client_snapshot_;
     current_render_time_us_ =
         tick_time_us(snapshot.header.server_tick, tick_loop_.fixed_delta_seconds());
     has_client_render_time_ = true;
@@ -2001,7 +2105,8 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_SERVER_ENTITY_QUERY |
             KERNEL_CAPABILITY_SERVER_RELEVANCE_FILTER |
             KERNEL_CAPABILITY_LAG_COMPENSATED_PROJECTILE |
-            KERNEL_CAPABILITY_EVENT_PRESENTATION_TIME;
+            KERNEL_CAPABILITY_EVENT_PRESENTATION_TIME |
+            KERNEL_CAPABILITY_RENDER_STATES_AT_TIME;
         return true;
     } catch (...) {
         return false;
@@ -2077,6 +2182,24 @@ uint32_t Kernel_GetRenderStates(
             return 0;
         }
         return kernel->engine->get_render_states(out_states, max_states);
+    } catch (...) {
+        return 0;
+    }
+}
+
+uint32_t Kernel_GetRenderStatesAtTime(
+    KernelHandle* kernel,
+    uint64_t client_render_time_us,
+    RenderEntityState* out_states,
+    uint32_t max_states) {
+    try {
+        if (kernel == nullptr) {
+            return 0;
+        }
+        return kernel->engine->get_render_states_at_time(
+            client_render_time_us,
+            out_states,
+            max_states);
     } catch (...) {
         return 0;
     }

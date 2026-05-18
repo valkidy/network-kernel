@@ -61,6 +61,9 @@ void HistoryBuffer::write_frame(const World& world, std::uint32_t server_tick) {
         const Transform,
         const Hitbox>();
     for (const entt::entity entity : view) {
+        if (world.registry().all_of<ProjectileTag>(entity)) {
+            continue;
+        }
         const NetworkIdentity& identity = view.get<const NetworkIdentity>(entity);
         const Transform& transform = view.get<const Transform>(entity);
         const Hitbox& hitbox = view.get<const Hitbox>(entity);
