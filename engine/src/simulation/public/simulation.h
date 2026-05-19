@@ -27,6 +27,19 @@ struct WeaponSimulationContext {
     std::uint64_t action_time_us = 0;
 };
 
+glm::vec3 projectile_position_at(
+    const glm::vec3& origin,
+    const glm::vec3& initial_velocity,
+    ProjectileMotionModel motion_model,
+    const glm::vec3& gravity,
+    float elapsed_seconds);
+
+glm::vec3 projectile_velocity_at(
+    const glm::vec3& initial_velocity,
+    ProjectileMotionModel motion_model,
+    const glm::vec3& gravity,
+    float elapsed_seconds);
+
 class DamagePipeline {
 public:
     static constexpr std::uint64_t kGraceWindowUs = 100000;

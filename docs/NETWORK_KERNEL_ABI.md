@@ -65,6 +65,11 @@ client-local render timestamp and receive kernel-interpolated render states.
 The legacy `Kernel_GetRenderStates` remains available and uses the kernel's
 current client-local time. Clients estimate their snapshot render clock offset
 from incoming PingPong packets without changing the session packet wire format.
+Local-owned predicted projectiles are excluded from the remote interpolation
+path after authoritative binding; their snapshots are fast-forwarded to the
+local prediction timeline and used as correction targets. Remote entities,
+including remote projectiles with no local prediction match, continue to render
+from the delayed snapshot interpolation timeline.
 
 Consumers pass a `struct_size`-style byte size to `Kernel_GetAbiInfo`. The call
 returns `false` if the output pointer is null or the provided size is smaller

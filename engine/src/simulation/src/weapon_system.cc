@@ -27,7 +27,11 @@ struct WeaponDefinition {
     float projectile_speed = 0.0f;
     float projectile_lifetime_seconds = 0.0f;
     float explosion_radius = 0.0f;
+    ProjectileMotionModel projectile_motion_model = ProjectileMotionModel::kLinear;
+    glm::vec3 projectile_gravity{0.0f, 0.0f, 0.0f};
 };
+
+constexpr glm::vec3 kGrenadeGravity{0.0f, -9.8f, 0.0f};
 
 constexpr std::array<WeaponDefinition, kWeaponCount> kWeaponDefinitions{{
     WeaponDefinition{kWeaponRifle, WeaponFireMode::kHitscan, 30, 25, 3, 30, 100.0f},
@@ -44,7 +48,24 @@ constexpr std::array<WeaponDefinition, kWeaponCount> kWeaponDefinitions{{
         0.0f,
         15.0f,
         3.0f,
-        4.0f},
+        4.0f,
+        ProjectileMotionModel::kParabolic,
+        kGrenadeGravity},
+    WeaponDefinition{
+        kWeaponRocket,
+        WeaponFireMode::kProjectile,
+        6,
+        100,
+        45,
+        75,
+        0.0f,
+        1,
+        0.0f,
+        35.0f,
+        2.5f,
+        3.0f,
+        ProjectileMotionModel::kLinear,
+        glm::vec3{0.0f, 0.0f, 0.0f}},
 }};
 
 const WeaponDefinition& weapon_definition(std::uint8_t weapon_id) {
@@ -302,10 +323,21 @@ NetId fire_projectile(
     const glm::vec3& velocity,
     float age_seconds,
     std::vector<KernelEvent>* events) {
+    const glm::vec3 current_position = projectile_position_at(
+        origin,
+        velocity,
+        definition.projectile_motion_model,
+        definition.projectile_gravity,
+        age_seconds);
+    const glm::vec3 current_velocity = projectile_velocity_at(
+        velocity,
+        definition.projectile_motion_model,
+        definition.projectile_gravity,
+        age_seconds);
     const NetId projectile = world.spawn_projectile(
         shooter_peer_id,
-        origin,
-        velocity);
+        current_position,
+        current_velocity);
     const auto projectile_entity = world.find_entity(projectile);
     if (projectile_entity.has_value()) {
         ProjectileState& projectile_state =
@@ -314,10 +346,14 @@ NetId fire_projectile(
         projectile_state.damage = definition.damage;
         projectile_state.spawn_tick = spawn_tick;
         projectile_state.client_action_id = client_action_id;
+        projectile_state.motion_model = definition.projectile_motion_model;
         projectile_state.explosion_radius = definition.explosion_radius;
         projectile_state.max_lifetime_seconds = definition.projectile_lifetime_seconds;
         projectile_state.age_seconds = age_seconds;
-        projectile_state.previous_position = origin;
+        projectile_state.spawn_position = origin;
+        projectile_state.initial_velocity = velocity;
+        projectile_state.gravity = definition.projectile_gravity;
+        projectile_state.previous_position = current_position;
     }
     push_event(
         events,
@@ -325,7 +361,7 @@ NetId fire_projectile(
         event_tick,
         projectile,
         shooter_peer_id,
-        definition.id);
+        static_cast<std::uint32_t>(EntityType::kProjectile));
     return projectile;
 }
 
@@ -467,8 +503,6 @@ void simulate_weapons(
                               context.fixed_delta_seconds
                         : 0.0f;
                 const glm::vec3 velocity = direction * definition.projectile_speed;
-                const glm::vec3 spawn_position =
-                    compensated_origin + velocity * elapsed_seconds;
                 const NetId projectile = fire_projectile(
                     world,
                     definition,
@@ -476,7 +510,7 @@ void simulate_weapons(
                     spawn_tick,
                     queued_input.owner_peer,
                     queued_input.input.client_action_id,
-                    spawn_position,
+                    compensated_origin,
                     velocity,
                     elapsed_seconds,
                     events);

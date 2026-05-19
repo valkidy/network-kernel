@@ -2,6 +2,7 @@
 #include <cassert>
 
 #include "kernel/public/kernel_api.h"
+#include "world/public/components.h"
 
 namespace {
 
@@ -231,6 +232,7 @@ int main() {
         if (projectile_events[index].type == KernelEventType_EntitySpawned &&
             projectile_events[index].net_id != local_info.player_net_id) {
             projectile_net_id = projectile_events[index].net_id;
+            assert(projectile_events[index].code == 3);
         }
     }
     assert(saw_projectile_fire_confirmed);
@@ -258,10 +260,58 @@ int main() {
     assert(moved_projectile_state.entity_type == 3);
     assert(moved_projectile_state.position.x > projectile_state.position.x);
 
+    PlayerInput rocket_input{};
+    rocket_input.input_seq = 4;
+    rocket_input.client_action_time_us = 133333;
+    rocket_input.client_action_id = 3002;
+    rocket_input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
+    rocket_input.buttons = InputButton_Fire;
+    rocket_input.selected_weapon = network_example::kWeaponRocket;
+    Kernel_SubmitInput(kernel, 1, &rocket_input);
+
+    std::array<RenderEntityState, 16> predicted_rocket_states{};
+    const std::uint32_t predicted_rocket_count = Kernel_GetRenderStates(
+        kernel,
+        predicted_rocket_states.data(),
+        static_cast<std::uint32_t>(predicted_rocket_states.size()));
+    const RenderEntityState predicted_rocket = find_projectile_action(
+        predicted_rocket_states,
+        predicted_rocket_count,
+        rocket_input.client_action_id);
+    assert(predicted_rocket.entity_id != 0);
+    assert(predicted_rocket.net_id == 0);
+
+    Kernel_Update(kernel, 1.0f);
+    std::array<KernelEvent, 16> rocket_events{};
+    const std::uint32_t rocket_event_count = Kernel_PollEvents(
+        kernel,
+        rocket_events.data(),
+        static_cast<std::uint32_t>(rocket_events.size()));
+    std::uint32_t rocket_net_id = 0;
+    for (std::uint32_t index = 0; index < rocket_event_count; ++index) {
+        if (rocket_events[index].type == KernelEventType_EntitySpawned &&
+            rocket_events[index].net_id != local_info.player_net_id) {
+            rocket_net_id = rocket_events[index].net_id;
+            assert(rocket_events[index].code == 3);
+        }
+    }
+    assert(rocket_net_id != 0);
+
+    std::array<RenderEntityState, 16> rocket_states{};
+    const std::uint32_t rocket_count = Kernel_GetRenderStates(
+        kernel,
+        rocket_states.data(),
+        static_cast<std::uint32_t>(rocket_states.size()));
+    const RenderEntityState rocket_state =
+        find_entity(rocket_states, rocket_count, rocket_net_id);
+    assert(rocket_state.entity_type == 3);
+    assert(rocket_state.entity_id == predicted_rocket.entity_id);
+    assert(rocket_state.client_action_id == rocket_input.client_action_id);
+
     PlayerInput rejected_projectile_input{};
-    rejected_projectile_input.input_seq = 4;
-    rejected_projectile_input.client_action_time_us = 133333;
-    rejected_projectile_input.client_action_id = 3002;
+    rejected_projectile_input.input_seq = 5;
+    rejected_projectile_input.client_action_time_us = 166666;
+    rejected_projectile_input.client_action_id = 3003;
     rejected_projectile_input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     rejected_projectile_input.buttons = InputButton_Fire;
     rejected_projectile_input.selected_weapon = 2;

@@ -33,7 +33,19 @@ NetId World::spawn_projectile(
     registry().emplace<Hitbox>(entity, Hitbox{{0.0f, 0.0f, 0.0f}, {0.1f, 0.1f, 0.1f}, 0});
     registry().emplace<ProjectileState>(
         entity,
-        ProjectileState{0, 0, 0, 0, 0.0f, 0.0f, 0.0f, position});
+        ProjectileState{
+            0,
+            0,
+            0,
+            0,
+            ProjectileMotionModel::kLinear,
+            0.0f,
+            0.0f,
+            0.0f,
+            position,
+            velocity,
+            glm::vec3{0.0f, 0.0f, 0.0f},
+            position});
     return registry().get<NetworkIdentity>(entity).net_id;
 }
 

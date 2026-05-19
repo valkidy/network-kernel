@@ -36,11 +36,16 @@
   latest clock-sync offset, then clamps compensation to 100ms.
 - Local client projectile prediction creates a provisional projectile render
   state immediately for grenade fire when `client_action_id != 0`.
-- Authoritative projectile snapshots bind back to predicted projectiles by
+- Authoritative projectile snapshots bind back to local predicted projectiles by
   `owner_peer + client_action_id`; the render-facing `entity_id` stays stable
-  while `net_id` becomes the server id.
+  while `net_id` becomes the server id. Owner clients fast-forward the
+  authoritative projectile snapshot to the local prediction timeline and use it
+  as a correction target, not as direct raw render state.
 - If the server acknowledges an input sequence without producing a matching
   authoritative projectile, the provisional projectile render state is removed.
+- Clients maintain two presentation timelines: local-owned player/projectile
+  state is predicted and reconciled on the current local timeline, while remote
+  entities render from the delayed snapshot interpolation timeline.
 - Server-originated projectile/explosion damage against players enters an
   internal pending damage queue instead of applying immediately.
 - Pending damage uses a 100ms grace window; Dodge overlapping the hit time

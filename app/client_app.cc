@@ -8,16 +8,14 @@
 #include <spdlog/spdlog.h>
 
 #include "kernel/public/kernel_api.h"
+#include "kernel/src/tick_loop.h"
 
 namespace {
 
 KernelConfig default_config() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
-    config.tick.server_tick_rate = 30;
-    config.tick.snapshot_rate = 15;
-    config.tick.history_ms = 500;
-    config.tick.max_ticks_per_update = 4;
+    config.tick = network_example::current_netcode_preset();
     config.max_render_states = 256;
     config.max_events = 256;
     return config;

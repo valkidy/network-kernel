@@ -7,6 +7,8 @@
 
 namespace network_example {
 
+TickConfig current_netcode_preset();
+TickConfig shooter_tuning_preset();
 TickConfig with_tick_defaults(TickConfig config);
 
 class TickLoop {

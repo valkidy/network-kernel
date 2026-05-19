@@ -4,18 +4,37 @@
 
 namespace network_example {
 
+TickConfig current_netcode_preset() {
+    return TickConfig{
+        30,
+        15,
+        500,
+        4,
+    };
+}
+
+TickConfig shooter_tuning_preset() {
+    return TickConfig{
+        60,
+        20,
+        300,
+        4,
+    };
+}
+
 TickConfig with_tick_defaults(TickConfig config) {
+    const TickConfig current = current_netcode_preset();
     if (config.server_tick_rate == 0) {
-        config.server_tick_rate = 30;
+        config.server_tick_rate = current.server_tick_rate;
     }
     if (config.snapshot_rate == 0) {
-        config.snapshot_rate = 15;
+        config.snapshot_rate = current.snapshot_rate;
     }
     if (config.history_ms == 0) {
-        config.history_ms = 500;
+        config.history_ms = current.history_ms;
     }
     if (config.max_ticks_per_update == 0) {
-        config.max_ticks_per_update = 4;
+        config.max_ticks_per_update = current.max_ticks_per_update;
     }
     return config;
 }

@@ -50,13 +50,14 @@ struct ProjectileTag {};
 inline constexpr std::uint8_t kWeaponRifle = 0;
 inline constexpr std::uint8_t kWeaponShotgun = 1;
 inline constexpr std::uint8_t kWeaponGrenade = 2;
-inline constexpr std::size_t kWeaponCount = 3;
+inline constexpr std::uint8_t kWeaponRocket = 3;
+inline constexpr std::size_t kWeaponCount = 4;
 
 struct WeaponState {
     std::uint8_t weapon_id = 0;
-    std::array<std::uint16_t, kWeaponCount> ammo{30, 8, 30};
-    std::array<std::uint16_t, kWeaponCount> reserve_ammo{90, 32, 90};
-    std::array<std::uint32_t, kWeaponCount> next_fire_tick{0, 0, 0};
+    std::array<std::uint16_t, kWeaponCount> ammo{30, 8, 30, 6};
+    std::array<std::uint16_t, kWeaponCount> reserve_ammo{90, 32, 90, 18};
+    std::array<std::uint32_t, kWeaponCount> next_fire_tick{0, 0, 0, 0};
     std::uint32_t reload_end_tick = 0;
     bool is_reloading = false;
 };
@@ -67,14 +68,25 @@ struct Hitbox {
     std::uint8_t hit_zone = 0;
 };
 
+enum class ProjectileMotionModel : std::uint8_t {
+    kLinear = 0,
+    kParabolic = 1,
+};
+
 struct ProjectileState {
     std::uint8_t weapon_id = 0;
     std::uint16_t damage = 0;
     std::uint32_t spawn_tick = 0;
     std::uint32_t client_action_id = 0;
+    ProjectileMotionModel motion_model = ProjectileMotionModel::kLinear;
     float explosion_radius = 0.0f;
     float max_lifetime_seconds = 0.0f;
     float age_seconds = 0.0f;
+    glm::vec3 spawn_position{0.0f, 0.0f, 0.0f};
+    glm::vec3 initial_velocity{0.0f, 0.0f, 0.0f};
+    // Future non-deterministic physics projectiles should use authoritative
+    // snapshots plus render-side correction after a physics module exists.
+    glm::vec3 gravity{0.0f, 0.0f, 0.0f};
     glm::vec3 previous_position{0.0f, 0.0f, 0.0f};
 };
 

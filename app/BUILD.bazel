@@ -16,6 +16,7 @@ cc_binary(
     deps = [
         "//game_server:game_server",
         "//engine/src/kernel:kernel",
+        "//engine/src/kernel:tick_loop",
         "@fmt//:fmt",
         "@spdlog//:spdlog",
     ],

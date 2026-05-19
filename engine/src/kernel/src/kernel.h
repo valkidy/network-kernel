@@ -94,9 +94,15 @@ private:
         std::uint32_t input_seq = 0;
         std::uint32_t client_action_id = 0;
         std::uint32_t spawn_tick = 0;
+        float age_seconds = 0.0f;
         glm::vec3 position{0.0f, 0.0f, 0.0f};
         glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
         glm::vec3 velocity{0.0f, 0.0f, 0.0f};
+        glm::vec3 spawn_position{0.0f, 0.0f, 0.0f};
+        glm::vec3 initial_velocity{0.0f, 0.0f, 0.0f};
+        glm::vec3 gravity{0.0f, 0.0f, 0.0f};
+        ProjectileMotionModel motion_model = ProjectileMotionModel::kLinear;
+        glm::vec3 correction_offset{0.0f, 0.0f, 0.0f};
         bool bound = false;
     };
 
@@ -152,8 +158,9 @@ private:
         std::uint64_t target_server_time_us,
         WorldSnapshot* out_snapshot) const;
     void append_predicted_local_render_state(bool consume_correction);
-    void append_predicted_projectile_render_states();
+    void append_predicted_projectile_render_states(bool consume_correction);
     void advance_predicted_projectiles(float fixed_delta_seconds);
+    std::uint32_t local_prediction_server_tick(std::uint32_t snapshot_tick) const;
     std::uint32_t rewind_tick_for_input(const QueuedInput& queued_input) const;
     std::uint64_t entity_id_for_net_id(NetId net_id);
     std::uint64_t allocate_predicted_entity_id();
