@@ -158,9 +158,11 @@ preflight() {
   [[ -d "$PACKAGE_DIR/Tests~" ]] || die "missing $PACKAGE_DIR/Tests~"
   require_command node
   require_command npm
+  require_command codesign
   require_command nm
   require_command rsync
   require_command tar
+  require_command xattr
   mkdir -p "$OUTPUT_DIR" "$WORK_ROOT"
   [[ -w "$OUTPUT_DIR" ]] || die "output dir is not writable: $OUTPUT_DIR"
   [[ -w "$WORK_ROOT" ]] || die "work dir is not writable: $WORK_ROOT"
@@ -185,6 +187,10 @@ stage_native() {
   [[ -f "$BUILT_DYLIB" ]] || die "built dylib not found: $BUILT_DYLIB. Run --mode build-native or --mode all first."
   mkdir -p "$(dirname "$STAGED_DYLIB")"
   cp "$BUILT_DYLIB" "$STAGED_DYLIB"
+  note "Ad-hoc signing staged native plugin"
+  codesign --force --deep --sign - "$STAGED_DYLIB"
+  note "Removing GateKeeper quarantine attributes from staged native plugin"
+  xattr -d -r com.apple.quarantine "$STAGED_DYLIB" 2>/dev/null || true
   note "Staged native plugin: $STAGED_DYLIB"
 }
 

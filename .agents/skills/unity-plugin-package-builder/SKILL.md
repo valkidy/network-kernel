@@ -57,11 +57,12 @@ Default behavior:
 1. Build `//engine/src/kernel:network_kernel_shared` for macOS.
 2. Stage `bazel-bin/engine/src/kernel/libnetwork_kernel.dylib` into
    `plugins/com.network-example.kernel/Assets/Plugins/macOS/`.
-3. Verify package layout, C/C# ABI version alignment, and required exported
+3. Ad-hoc sign the staged dylib and remove any GateKeeper quarantine attribute.
+4. Verify package layout, C/C# ABI version alignment, and required exported
    `Kernel_*` symbols.
-4. Pack a clean UPM tarball in
+5. Pack a clean UPM tarball in
    `plugins/output`.
-5. Optionally run Unity batchmode ABI smoke if Unity is auto-detected and the
+6. Optionally run Unity batchmode ABI smoke if Unity is auto-detected and the
    local license/headless environment works. Missing or blocked Unity should be
    reported as a clear skip, not a failure, unless the user provided an explicit
    Unity executable path. Override the default smoke timeout with
