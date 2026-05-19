@@ -19,6 +19,8 @@ Before entering Play Mode on macOS:
 3. Enter Play Mode. The sample connects to `127.0.0.1:7777` by default.
 
 The sample waits for `PlayerJoined`, reads the local player id through
-`TryGetLocalPlayerInfo`, submits input only while connected, filters render
-states by `LocalPlayerNetId`, and logs `PlayerLeft` and `Disconnected` events.
-`GetRenderStates` returns renderable entities, not the connected client count.
+`TryGetLocalPlayerInfo`, submits input only while connected, passes a
+client-local action timestamp with each input, reads render states through
+`GetRenderStatesAtTime`, filters render states by `LocalPlayerNetId`, and logs
+`PlayerLeft` and `Disconnected` events. Render states are renderable entities,
+not the connected client count.

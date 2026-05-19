@@ -16,7 +16,8 @@ Before entering Play Mode on macOS:
    plugins/com.network-example.kernel/Assets/Plugins/macOS/libnetwork_kernel.dylib
    ```
 
-The sample starts listen-server mode, submits local input every frame, advances
-the native kernel at 30 Hz, polls events, and reads render states.
+The sample starts listen-server mode, submits local input every frame with a
+client-local action timestamp, advances the native kernel with Unity frame
+delta, polls events, and reads render states through `GetRenderStatesAtTime`.
 Use the `Client` sample when validating Unity against a command-line dedicated
 server.

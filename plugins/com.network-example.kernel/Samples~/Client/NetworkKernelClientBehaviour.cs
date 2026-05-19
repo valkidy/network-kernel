@@ -12,6 +12,7 @@ public sealed class NetworkKernelClientBehaviour : MonoBehaviour
     private NetworkClient client;
     private uint sequence = 1;
     private uint logFrame;
+    private ulong clientRenderTimeUs;
 
     private void Start()
     {
@@ -33,7 +34,10 @@ public sealed class NetworkKernelClientBehaviour : MonoBehaviour
             return;
         }
 
-        uint eventCount = client.Update(Time.deltaTime, events);
+        float deltaSeconds = Time.deltaTime;
+        clientRenderTimeUs += SecondsToMicroseconds(deltaSeconds);
+
+        uint eventCount = client.Update(deltaSeconds, events);
         LogKernelEvents(eventCount);
 
         if (client.IsReady && !client.IsDisconnected)
@@ -41,7 +45,7 @@ public sealed class NetworkKernelClientBehaviour : MonoBehaviour
             SubmitInput();
         }
 
-        uint stateCount = client.GetRenderStates(states);
+        uint stateCount = client.GetRenderStatesAtTime(clientRenderTimeUs, states);
         RenderEntityState localState = default;
         bool foundLocalState = false;
         int stateCountInt = (int)stateCount;
@@ -105,7 +109,7 @@ public sealed class NetworkKernelClientBehaviour : MonoBehaviour
         var input = new PlayerInput
         {
             input_seq = sequence,
-            client_action_time_us = sequence * 33333UL,
+            client_action_time_us = clientRenderTimeUs,
             client_action_id = buttons == 0U ? 0U : sequence,
             move = new KernelVec2(Input.GetAxisRaw("Horizontal"), Input.GetAxisRaw("Vertical")),
             aim_dir = new KernelVec3(1.0f, 0.0f, 0.0f),
@@ -114,6 +118,11 @@ public sealed class NetworkKernelClientBehaviour : MonoBehaviour
         sequence++;
 
         client.TrySubmitInput(input);
+    }
+
+    private static ulong SecondsToMicroseconds(float seconds)
+    {
+        return seconds <= 0.0f ? 0UL : (ulong)(seconds * 1000000.0f);
     }
 
     private void OnDestroy()
