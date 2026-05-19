@@ -207,6 +207,7 @@ constexpr float kPredictedGrenadeSpeedMetersPerSecond = 15.0f;
 constexpr float kPredictedRocketSpeedMetersPerSecond = 35.0f;
 constexpr std::uint32_t kMaxCompensationWindowUs = 100000u;
 constexpr std::uint64_t kClockSyncIntervalUs = 1000000u;
+constexpr double kClientClockOffsetSmoothingFactor = 0.25;
 const glm::vec3 kPredictedGrenadeGravity{0.0f, -9.8f, 0.0f};
 
 bool is_predictable_projectile_weapon(std::uint8_t weapon_id) {
@@ -794,9 +795,8 @@ void KernelEngine::handle_client_ping_pong(const TransportEvent& transport_event
     }
 
     ping.client_receive_time_us = client_local_action_time_us();
-    client_clock_offset_us_ =
-        time_delta_us(ping.server_send_time_us, ping.client_receive_time_us);
-    has_client_clock_sync_ = true;
+    apply_client_clock_offset_sample(
+        time_delta_us(ping.server_send_time_us, ping.client_receive_time_us));
     ping.client_send_time_us = client_local_action_time_us();
     const std::vector<std::uint8_t> packet =
         encode_ping_pong_packet(ping, next_packet_sequence_++);
@@ -808,6 +808,35 @@ void KernelEngine::handle_client_ping_pong(const TransportEvent& transport_event
             ChannelId::kSession)) {
         push_event(KernelEventType_Error, 0, kServerPeerId, 19);
     }
+}
+
+void KernelEngine::apply_welcome(const WelcomePacket& welcome) {
+    local_client_peer_id_ = welcome.assigned_peer_id;
+    local_player_net_id_ = welcome.assigned_player_net_id;
+
+    TickConfig server_tick = config_.tick;
+    if (welcome.server_tick_rate != 0) {
+        server_tick.server_tick_rate = welcome.server_tick_rate;
+    }
+    if (welcome.snapshot_rate != 0) {
+        server_tick.snapshot_rate = welcome.snapshot_rate;
+    }
+    config_.tick = with_tick_defaults(server_tick);
+    tick_loop_.reset(config_.tick, welcome.server_tick);
+    history_buffer_ = HistoryBuffer(history_frame_count(config_.tick));
+    has_welcome_ = true;
+}
+
+void KernelEngine::apply_client_clock_offset_sample(std::int64_t sample_offset_us) {
+    if (!has_client_clock_sync_) {
+        client_clock_offset_us_ = sample_offset_us;
+        has_client_clock_sync_ = true;
+        return;
+    }
+
+    const std::int64_t delta = sample_offset_us - client_clock_offset_us_;
+    client_clock_offset_us_ += static_cast<std::int64_t>(
+        static_cast<double>(delta) * kClientClockOffsetSmoothingFactor);
 }
 
 void KernelEngine::handle_server_ping_pong(const TransportEvent& transport_event) {
@@ -2085,9 +2114,7 @@ void KernelEngine::handle_client_session_message(const TransportEvent& transport
             transport_event.payload.data(),
             transport_event.payload.size(),
             &welcome)) {
-        local_client_peer_id_ = welcome.assigned_peer_id;
-        local_player_net_id_ = welcome.assigned_player_net_id;
-        has_welcome_ = true;
+        apply_welcome(welcome);
         push_event(KernelEventType_PlayerJoined, 0, local_client_peer_id_);
         return;
     }

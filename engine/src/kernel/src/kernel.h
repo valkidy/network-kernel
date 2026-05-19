@@ -21,6 +21,7 @@ namespace network_example {
 class LoopbackTransport;
 struct EntityDespawnPacket;
 struct EntitySpawnPacket;
+struct WelcomePacket;
 
 class KernelEngine {
 public:
@@ -119,6 +120,8 @@ private:
     void handle_client_reliable_event(const TransportEvent& transport_event);
     void handle_client_ping_pong(const TransportEvent& transport_event);
     void handle_server_ping_pong(const TransportEvent& transport_event);
+    void apply_welcome(const WelcomePacket& welcome);
+    void apply_client_clock_offset_sample(std::int64_t sample_offset_us);
     void handle_client_spawn(const EntitySpawnPacket& packet);
     void handle_client_despawn(const EntityDespawnPacket& packet);
     void clear_client_session();

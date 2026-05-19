@@ -2,6 +2,7 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <unordered_map>
 #include <unordered_set>
@@ -20,6 +21,12 @@
 #undef private
 
 namespace {
+
+void require(bool condition) {
+    if (!condition) {
+        std::abort();
+    }
+}
 
 network_example::WorldSnapshot snapshot_with_entity(
     std::uint32_t server_tick,
@@ -258,6 +265,70 @@ void client_replies_to_clock_sync_ping() {
     assert(decoded_reply.server_send_time_us == 123000);
     assert(decoded_reply.client_receive_time_us == 456000);
     assert(decoded_reply.client_send_time_us == 456000);
+}
+
+void client_applies_server_tick_config_from_welcome() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_Client);
+    require(engine.tick_loop_.fixed_delta_seconds() > 0.0333f);
+    require(engine.tick_loop_.snapshot_interval_ticks() == 2);
+
+    network_example::TransportEvent event;
+    event.peer = 0;
+    event.channel = network_example::ChannelId::kSession;
+    event.payload = network_example::encode_welcome_packet(
+        network_example::WelcomePacket{9, 77, 120, 60, 20},
+        3);
+    engine.handle_client_session_message(event);
+
+    require(engine.has_welcome_);
+    require(engine.local_client_peer_id_ == 9);
+    require(engine.local_player_net_id_ == 77);
+    require(engine.config_.tick.server_tick_rate == 60);
+    require(engine.config_.tick.snapshot_rate == 20);
+    require(engine.tick_loop_.fixed_delta_seconds() > 0.0166f);
+    require(engine.tick_loop_.fixed_delta_seconds() < 0.0167f);
+    require(engine.tick_loop_.snapshot_interval_ticks() == 3);
+}
+
+void client_clock_offset_smooths_after_initial_sync() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 1000;
+    config.tick.snapshot_rate = 100;
+
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_Client);
+    engine.transport_ = std::make_unique<network_example::LoopbackTransport>();
+    require(engine.transport_->StartServer(7778));
+
+    engine.client_local_time_us_ = 456000;
+    network_example::TransportEvent first_event;
+    first_event.peer = 0;
+    first_event.channel = network_example::ChannelId::kSession;
+    first_event.payload = network_example::encode_ping_pong_packet(
+        network_example::PingPongPacket{10, 123000, 0, 0},
+        4);
+    engine.handle_client_ping_pong(first_event);
+    require(engine.has_client_clock_sync_);
+    require(engine.client_clock_offset_us_ == -333000);
+
+    engine.client_local_time_us_ = 457000;
+    network_example::TransportEvent second_event;
+    second_event.peer = 0;
+    second_event.channel = network_example::ChannelId::kSession;
+    second_event.payload = network_example::encode_ping_pong_packet(
+        network_example::PingPongPacket{11, 323000, 0, 0},
+        5);
+    engine.handle_client_ping_pong(second_event);
+
+    require(engine.client_clock_offset_us_ > -333000);
+    require(engine.client_clock_offset_us_ < -133000);
 }
 
 void projectile_spawn_packet_uses_original_muzzle_position() {
@@ -553,6 +624,8 @@ int main() {
     clock_sync_ping_pong_updates_peer_offset();
     compensation_clamps_not_rejects_client_local_time();
     client_replies_to_clock_sync_ping();
+    client_applies_server_tick_config_from_welcome();
+    client_clock_offset_smooths_after_initial_sync();
     projectile_spawn_packet_uses_original_muzzle_position();
     render_states_at_time_interpolates_and_clamps();
     remote_projectile_uses_interpolated_past_timeline();
