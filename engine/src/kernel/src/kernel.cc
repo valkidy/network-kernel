@@ -203,9 +203,30 @@ std::uint32_t history_frame_count(const TickConfig& config) {
 constexpr PeerId kLocalListenPeerId = 1;
 constexpr PeerId kServerPeerId = 0;
 constexpr std::uint32_t kClientNonce = 0x4d330001u;
-constexpr float kPredictedProjectileSpeedMetersPerSecond = 15.0f;
+constexpr float kPredictedGrenadeSpeedMetersPerSecond = 15.0f;
+constexpr float kPredictedRocketSpeedMetersPerSecond = 35.0f;
 constexpr std::uint32_t kMaxCompensationWindowUs = 100000u;
 constexpr std::uint64_t kClockSyncIntervalUs = 1000000u;
+const glm::vec3 kPredictedGrenadeGravity{0.0f, -9.8f, 0.0f};
+
+bool is_predictable_projectile_weapon(std::uint8_t weapon_id) {
+    return weapon_id == kWeaponGrenade || weapon_id == kWeaponRocket;
+}
+
+float predicted_projectile_speed(std::uint8_t weapon_id) {
+    return weapon_id == kWeaponRocket ? kPredictedRocketSpeedMetersPerSecond
+                                      : kPredictedGrenadeSpeedMetersPerSecond;
+}
+
+ProjectileMotionModel predicted_projectile_motion(std::uint8_t weapon_id) {
+    return weapon_id == kWeaponGrenade ? ProjectileMotionModel::kParabolic
+                                       : ProjectileMotionModel::kLinear;
+}
+
+glm::vec3 predicted_projectile_gravity(std::uint8_t weapon_id) {
+    return weapon_id == kWeaponGrenade ? kPredictedGrenadeGravity
+                                       : glm::vec3{0.0f, 0.0f, 0.0f};
+}
 
 }  // namespace
 
@@ -253,7 +274,11 @@ bool KernelEngine::start_listen_server(std::uint16_t port) {
 
     push_event(KernelEventType_Connected, 0, kLocalListenPeerId);
     push_event(KernelEventType_PlayerJoined, player, kLocalListenPeerId);
-    push_event(KernelEventType_EntitySpawned, player, kLocalListenPeerId);
+    push_event(
+        KernelEventType_EntitySpawned,
+        player,
+        kLocalListenPeerId,
+        static_cast<std::uint32_t>(EntityType::kPlayer));
     publish_snapshot();
     poll_client_transport();
     rebuild_render_states();
@@ -422,7 +447,11 @@ bool KernelEngine::server_create_entity(
     replication.visual_flags = create_info.visual_flags;
 
     *out_net_id = net_id;
-    push_event(KernelEventType_EntitySpawned, net_id, create_info.owner_peer);
+    push_event(
+        KernelEventType_EntitySpawned,
+        net_id,
+        create_info.owner_peer,
+        static_cast<std::uint32_t>(type));
     publish_snapshot();
     return true;
 }
@@ -1021,6 +1050,15 @@ void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {
 
 void KernelEngine::reconcile_predicted_projectiles(const WorldSnapshot& snapshot) {
     std::unordered_set<NetId> snapshot_projectiles;
+    const float fixed_delta_seconds = tick_loop_.fixed_delta_seconds();
+    const std::uint32_t local_tick =
+        local_prediction_server_tick(snapshot.header.server_tick);
+    const std::uint32_t fast_forward_ticks =
+        local_tick > snapshot.header.server_tick
+            ? local_tick - snapshot.header.server_tick
+            : 0;
+    const float snapshot_age_seconds =
+        static_cast<float>(fast_forward_ticks) * fixed_delta_seconds;
     for (const EntitySnapshot& entity : snapshot.entities) {
         if (entity.type != EntityType::kProjectile) {
             continue;
@@ -1034,12 +1072,32 @@ void KernelEngine::reconcile_predicted_projectiles(const WorldSnapshot& snapshot
         if (predicted == nullptr) {
             continue;
         }
+        const glm::vec3 previous_render_position =
+            predicted->position + predicted->correction_offset;
+        const glm::vec3 authoritative_now = projectile_position_at(
+            entity.position,
+            entity.velocity,
+            predicted->motion_model,
+            predicted->gravity,
+            snapshot_age_seconds);
+        const glm::vec3 authoritative_velocity_now = projectile_velocity_at(
+            entity.velocity,
+            predicted->motion_model,
+            predicted->gravity,
+            snapshot_age_seconds);
         predicted->net_id = entity.net_id;
-        predicted->position = entity.position;
+        predicted->position = authoritative_now;
         predicted->rotation = entity.rotation;
-        predicted->velocity = entity.velocity;
+        predicted->velocity = authoritative_velocity_now;
+        predicted->spawn_position = entity.position;
+        predicted->initial_velocity = entity.velocity;
+        predicted->age_seconds = snapshot_age_seconds;
         predicted->spawn_tick = entity.spawn_tick;
         predicted->bound = true;
+        const glm::vec3 correction = previous_render_position - authoritative_now;
+        predicted->correction_offset =
+            glm::length(correction) > 2.0f ? glm::vec3{0.0f, 0.0f, 0.0f}
+                                           : correction;
         entity_ids_by_net_id_[entity.net_id] = predicted->entity_id;
     }
 
@@ -1091,7 +1149,7 @@ void KernelEngine::predict_local_input(const PlayerInput& input) {
 void KernelEngine::predict_local_projectile(const PlayerInput& input) {
     if (local_client_peer_id_ == 0 || input.client_action_id == 0 ||
         (input.buttons & InputButton_Fire) == 0 ||
-        input.selected_weapon != kWeaponGrenade ||
+        !is_predictable_projectile_weapon(input.selected_weapon) ||
         find_predicted_projectile(local_client_peer_id_, input.client_action_id) != nullptr) {
         return;
     }
@@ -1107,6 +1165,11 @@ void KernelEngine::predict_local_projectile(const PlayerInput& input) {
 
     const glm::vec3 origin = player_position + glm::vec3{0.0f, 1.0f, 0.0f};
     const glm::vec3 direction = input_aim_to_world(input);
+    const glm::vec3 velocity =
+        direction * predicted_projectile_speed(input.selected_weapon);
+    const ProjectileMotionModel motion_model =
+        predicted_projectile_motion(input.selected_weapon);
+    const glm::vec3 gravity = predicted_projectile_gravity(input.selected_weapon);
     predicted_projectiles_.push_back(PredictedProjectile{
         allocate_predicted_entity_id(),
         0,
@@ -1114,9 +1177,15 @@ void KernelEngine::predict_local_projectile(const PlayerInput& input) {
         input.input_seq,
         input.client_action_id,
         tick_loop_.current_tick(),
+        0.0f,
         origin,
         glm::quat{1.0f, 0.0f, 0.0f, 0.0f},
-        direction * kPredictedProjectileSpeedMetersPerSecond,
+        velocity,
+        origin,
+        velocity,
+        gravity,
+        motion_model,
+        glm::vec3{0.0f, 0.0f, 0.0f},
         false,
     });
 }
@@ -1347,14 +1416,16 @@ void KernelEngine::append_predicted_local_render_state(bool consume_correction) 
     }
 }
 
-void KernelEngine::append_predicted_projectile_render_states() {
-    for (const PredictedProjectile& projectile : predicted_projectiles_) {
+void KernelEngine::append_predicted_projectile_render_states(bool consume_correction) {
+    for (PredictedProjectile& projectile : predicted_projectiles_) {
+        const glm::vec3 render_position =
+            projectile.position + projectile.correction_offset;
         render_states_.push_back(RenderEntityState{
             projectile.entity_id,
             projectile.net_id,
             static_cast<std::uint16_t>(EntityType::kProjectile),
             projectile.owner_peer,
-            to_kernel_vec3(projectile.position),
+            to_kernel_vec3(render_position),
             to_kernel_quat(projectile.rotation),
             to_kernel_vec3(projectile.velocity),
             0,
@@ -1362,13 +1433,41 @@ void KernelEngine::append_predicted_projectile_render_states() {
             projectile.spawn_tick,
             projectile.client_action_id,
         });
+        if (consume_correction) {
+            projectile.correction_offset *= 0.5f;
+            if (glm::length(projectile.correction_offset) < 0.001f) {
+                projectile.correction_offset = glm::vec3{0.0f, 0.0f, 0.0f};
+            }
+        }
     }
 }
 
 void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
     for (PredictedProjectile& projectile : predicted_projectiles_) {
-        projectile.position += projectile.velocity * fixed_delta_seconds;
+        projectile.age_seconds += fixed_delta_seconds;
+        projectile.position = projectile_position_at(
+            projectile.spawn_position,
+            projectile.initial_velocity,
+            projectile.motion_model,
+            projectile.gravity,
+            projectile.age_seconds);
+        projectile.velocity = projectile_velocity_at(
+            projectile.initial_velocity,
+            projectile.motion_model,
+            projectile.gravity,
+            projectile.age_seconds);
     }
+}
+
+std::uint32_t KernelEngine::local_prediction_server_tick(
+    std::uint32_t snapshot_tick) const {
+    std::uint32_t estimate = tick_loop_.current_tick();
+    if (has_client_clock_sync_) {
+        const std::uint64_t server_time_us =
+            offset_time_us(client_local_time_us_, client_clock_offset_us_);
+        estimate = tick_for_time_us(server_time_us, tick_loop_.fixed_delta_seconds());
+    }
+    return std::max(estimate, snapshot_tick);
 }
 
 std::uint32_t KernelEngine::rewind_tick_for_input(
@@ -1682,7 +1781,7 @@ void KernelEngine::rebuild_render_states_from_snapshot(
     bool consume_correction) {
     render_states_.clear();
     append_predicted_local_render_state(consume_correction);
-    append_predicted_projectile_render_states();
+    append_predicted_projectile_render_states(consume_correction);
 
     WorldSnapshot render_snapshot;
     const WorldSnapshot& snapshot =
@@ -1930,7 +2029,11 @@ void KernelEngine::handle_server_handshake(const TransportEvent& transport_event
         peer_sessions_.push_back(PeerSession{transport_event.peer, player, 0, false});
         session = &peer_sessions_.back();
         push_event(KernelEventType_PlayerJoined, player, transport_event.peer);
-        push_event(KernelEventType_EntitySpawned, player, transport_event.peer);
+        push_event(
+            KernelEventType_EntitySpawned,
+            player,
+            transport_event.peer,
+            static_cast<std::uint32_t>(EntityType::kPlayer));
     }
 
     const WelcomePacket welcome{

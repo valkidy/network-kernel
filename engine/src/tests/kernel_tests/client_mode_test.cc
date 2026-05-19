@@ -35,6 +35,39 @@ network_example::WorldSnapshot snapshot_with_entity(
     return snapshot;
 }
 
+void add_snapshot_entity(
+    network_example::WorldSnapshot* snapshot,
+    network_example::NetId net_id,
+    network_example::EntityType type,
+    float position_x) {
+    network_example::EntitySnapshot entity;
+    entity.net_id = net_id;
+    entity.type = type;
+    entity.position = glm::vec3{position_x, 0.0f, 0.0f};
+    snapshot->entities.push_back(entity);
+}
+
+network_example::WorldSnapshot projectile_snapshot(
+    std::uint32_t server_tick,
+    network_example::NetId net_id,
+    network_example::PeerId owner_peer,
+    std::uint32_t client_action_id,
+    const glm::vec3& position,
+    const glm::vec3& velocity) {
+    network_example::WorldSnapshot snapshot;
+    snapshot.header.server_tick = server_tick;
+    network_example::EntitySnapshot entity;
+    entity.net_id = net_id;
+    entity.type = network_example::EntityType::kProjectile;
+    entity.owner_peer = owner_peer;
+    entity.position = position;
+    entity.velocity = velocity;
+    entity.spawn_tick = server_tick;
+    entity.client_action_id = client_action_id;
+    snapshot.entities.push_back(entity);
+    return snapshot;
+}
+
 void presentation_gate_releases_at_render_time() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
@@ -294,6 +327,121 @@ void render_states_at_time_interpolates_and_clamps() {
     assert(states[0].position.x == 7.0f);
 }
 
+void remote_projectile_uses_interpolated_past_timeline() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 1000;
+    config.tick.snapshot_rate = 100;
+
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_Client);
+    engine.has_client_clock_sync_ = true;
+    engine.client_clock_offset_us_ = 0;
+
+    network_example::WorldSnapshot from = snapshot_with_entity(
+        10,
+        42,
+        network_example::EntityType::kEnemy,
+        0.0f);
+    add_snapshot_entity(
+        &from,
+        43,
+        network_example::EntityType::kProjectile,
+        100.0f);
+    network_example::WorldSnapshot to = snapshot_with_entity(
+        12,
+        42,
+        network_example::EntityType::kEnemy,
+        20.0f);
+    add_snapshot_entity(
+        &to,
+        43,
+        network_example::EntityType::kProjectile,
+        120.0f);
+    engine.handle_client_snapshot(from);
+    engine.handle_client_snapshot(to);
+
+    std::array<RenderEntityState, 4> states{};
+    const std::uint32_t count = engine.get_render_states_at_time(
+        31000,
+        states.data(),
+        static_cast<std::uint32_t>(states.size()));
+    assert(count == 2);
+    bool saw_projectile = false;
+    for (std::uint32_t index = 0; index < count; ++index) {
+        if (states[index].net_id == 43) {
+            saw_projectile = true;
+            assert(states[index].entity_type == 3);
+            assert(states[index].position.x > 109.99f);
+            assert(states[index].position.x < 110.01f);
+        }
+    }
+    assert(saw_projectile);
+}
+
+void local_projectile_snapshot_fast_forwards_and_smooths() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 1000;
+    config.tick.snapshot_rate = 100;
+
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_Client);
+    engine.local_client_peer_id_ = 7;
+    for (std::uint32_t tick = 0; tick < 20; ++tick) {
+        engine.tick_loop_.advance_tick();
+    }
+
+    network_example::KernelEngine::PredictedProjectile predicted;
+    predicted.entity_id = 9000;
+    predicted.owner_peer = 7;
+    predicted.input_seq = 3;
+    predicted.client_action_id = 4444;
+    predicted.spawn_tick = 20;
+    predicted.position = glm::vec3{6.2f, 0.0f, 0.0f};
+    predicted.velocity = glm::vec3{100.0f, 0.0f, 0.0f};
+    predicted.spawn_position = predicted.position;
+    predicted.initial_velocity = predicted.velocity;
+    predicted.motion_model = network_example::ProjectileMotionModel::kLinear;
+    predicted.correction_offset = glm::vec3{0.0f, 0.0f, 0.0f};
+    engine.predicted_projectiles_.push_back(predicted);
+
+    engine.handle_client_snapshot(projectile_snapshot(
+        10,
+        55,
+        7,
+        4444,
+        glm::vec3{5.0f, 0.0f, 0.0f},
+        glm::vec3{100.0f, 0.0f, 0.0f}));
+
+    assert(engine.predicted_projectiles_.size() == 1);
+    const network_example::KernelEngine::PredictedProjectile& bound =
+        engine.predicted_projectiles_[0];
+    assert(bound.entity_id == 9000);
+    assert(bound.net_id == 55);
+    assert(bound.bound);
+    assert(bound.spawn_position.x == 5.0f);
+    assert(bound.initial_velocity.x == 100.0f);
+    assert(bound.age_seconds > 0.0099f);
+    assert(bound.age_seconds < 0.0101f);
+    assert(bound.position.x > 5.99f);
+    assert(bound.position.x < 6.01f);
+    assert(bound.correction_offset.x > 0.19f);
+    assert(bound.correction_offset.x < 0.21f);
+
+    engine.rebuild_render_states();
+    assert(engine.render_states_.size() == 1);
+    assert(engine.render_states_[0].entity_id == 9000);
+    assert(engine.render_states_[0].net_id == 55);
+    assert(engine.render_states_[0].position.x > 6.19f);
+    assert(engine.render_states_[0].position.x < 6.21f);
+
+    engine.rebuild_render_states();
+    assert(engine.render_states_.size() == 1);
+    assert(engine.render_states_[0].position.x > 6.09f);
+    assert(engine.render_states_[0].position.x < 6.11f);
+}
+
 void render_query_does_not_consume_local_correction() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
@@ -343,6 +491,8 @@ int main() {
     compensation_clamps_not_rejects_client_local_time();
     client_replies_to_clock_sync_ping();
     render_states_at_time_interpolates_and_clamps();
+    remote_projectile_uses_interpolated_past_timeline();
+    local_projectile_snapshot_fast_forwards_and_smooths();
     render_query_does_not_consume_local_correction();
 
     KernelConfig config{};

@@ -32,6 +32,14 @@ network_example::ProjectileState& projectile_state(
     return world.registry().get<network_example::ProjectileState>(*entity);
 }
 
+network_example::Transform& transform_state(
+    network_example::World& world,
+    network_example::NetId net_id) {
+    const auto entity = world.find_entity(net_id);
+    assert(entity.has_value());
+    return world.registry().get<network_example::Transform>(*entity);
+}
+
 PlayerInput fire_input(std::uint8_t weapon_id) {
     PlayerInput input{};
     input.input_seq = 1;
@@ -64,6 +72,77 @@ network_example::NetId spawned_projectile(const std::vector<KernelEvent>& events
         }
     }
     return 0;
+}
+
+void deterministic_projectile_paths_match_motion_models() {
+    const glm::vec3 origin{0.0f, 1.0f, 0.0f};
+    const glm::vec3 velocity{10.0f, 5.0f, 0.0f};
+    const glm::vec3 gravity{0.0f, -9.8f, 0.0f};
+
+    const glm::vec3 rocket =
+        network_example::projectile_position_at(
+            origin,
+            velocity,
+            network_example::ProjectileMotionModel::kLinear,
+            gravity,
+            0.5f);
+    assert(rocket.x > 4.99f && rocket.x < 5.01f);
+    assert(rocket.y > 3.49f && rocket.y < 3.51f);
+
+    const glm::vec3 grenade =
+        network_example::projectile_position_at(
+            origin,
+            velocity,
+            network_example::ProjectileMotionModel::kParabolic,
+            gravity,
+            0.5f);
+    assert(grenade.x > 4.99f && grenade.x < 5.01f);
+    assert(grenade.y > 2.26f && grenade.y < 2.28f);
+    assert(grenade.y < rocket.y);
+}
+
+void rocket_moves_linearly_and_grenade_arcs() {
+    network_example::World rocket_world;
+    rocket_world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+    std::vector<KernelEvent> rocket_events;
+    PlayerInput rocket_input = fire_input(network_example::kWeaponRocket);
+    rocket_input.client_action_id = 9101;
+    network_example::simulate_weapons(
+        rocket_world,
+        queue(rocket_input),
+        0,
+        &rocket_events);
+
+    const network_example::NetId rocket = spawned_projectile(rocket_events);
+    assert(rocket != 0);
+    assert(projectile_state(rocket_world, rocket).motion_model ==
+           network_example::ProjectileMotionModel::kLinear);
+    network_example::simulate_projectiles(rocket_world, 0.1f, 1, &rocket_events);
+    const network_example::Transform& rocket_transform =
+        transform_state(rocket_world, rocket);
+    assert(rocket_transform.position.x > 3.49f && rocket_transform.position.x < 3.51f);
+    assert(rocket_transform.position.y > 0.99f && rocket_transform.position.y < 1.01f);
+
+    network_example::World grenade_world;
+    grenade_world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+    std::vector<KernelEvent> grenade_events;
+    PlayerInput grenade_input = fire_input(network_example::kWeaponGrenade);
+    grenade_input.client_action_id = 9102;
+    network_example::simulate_weapons(
+        grenade_world,
+        queue(grenade_input),
+        0,
+        &grenade_events);
+
+    const network_example::NetId grenade = spawned_projectile(grenade_events);
+    assert(grenade != 0);
+    assert(projectile_state(grenade_world, grenade).motion_model ==
+           network_example::ProjectileMotionModel::kParabolic);
+    network_example::simulate_projectiles(grenade_world, 0.1f, 1, &grenade_events);
+    const network_example::Transform& grenade_transform =
+        transform_state(grenade_world, grenade);
+    assert(grenade_transform.position.x > 1.49f && grenade_transform.position.x < 1.51f);
+    assert(grenade_transform.position.y > 0.94f && grenade_transform.position.y < 0.96f);
 }
 
 void rejects_fire_during_cooldown_and_reload() {
@@ -300,8 +379,8 @@ void projectile_rewind_spawns_from_historical_muzzle() {
         world.registry().get<network_example::Transform>(*projectile_entity);
     assert(transform.position.x > 1.49f);
     assert(transform.position.x < 1.51f);
-    assert(transform.position.y > 0.99f);
-    assert(transform.position.y < 1.01f);
+    assert(transform.position.y > 0.95f);
+    assert(transform.position.y < 0.96f);
     assert(projectile_state(world, projectile).spawn_tick == 4);
     assert(projectile_state(world, projectile).age_seconds > 0.09f);
 }
@@ -478,6 +557,8 @@ void rewind_shotgun_respects_range() {
 }  // namespace
 
 int main() {
+    deterministic_projectile_paths_match_motion_models();
+    rocket_moves_linearly_and_grenade_arcs();
     rejects_fire_during_cooldown_and_reload();
     shotgun_applies_multiple_pellets();
     grenade_sweeps_and_explodes_with_falloff();

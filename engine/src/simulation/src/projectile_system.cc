@@ -251,6 +251,30 @@ std::uint64_t tick_time_us(std::uint32_t tick, float fixed_delta_seconds) {
 
 }  // namespace
 
+glm::vec3 projectile_position_at(
+    const glm::vec3& origin,
+    const glm::vec3& initial_velocity,
+    ProjectileMotionModel motion_model,
+    const glm::vec3& gravity,
+    float elapsed_seconds) {
+    if (motion_model == ProjectileMotionModel::kParabolic) {
+        return origin + initial_velocity * elapsed_seconds +
+               0.5f * gravity * elapsed_seconds * elapsed_seconds;
+    }
+    return origin + initial_velocity * elapsed_seconds;
+}
+
+glm::vec3 projectile_velocity_at(
+    const glm::vec3& initial_velocity,
+    ProjectileMotionModel motion_model,
+    const glm::vec3& gravity,
+    float elapsed_seconds) {
+    if (motion_model == ProjectileMotionModel::kParabolic) {
+        return initial_velocity + gravity * elapsed_seconds;
+    }
+    return initial_velocity;
+}
+
 void simulate_projectiles(World& world, float fixed_delta_seconds) {
     simulate_projectiles(world, fixed_delta_seconds, 0, nullptr);
 }
@@ -274,12 +298,23 @@ void simulate_projectiles(
     for (const entt::entity entity : view) {
         const NetworkIdentity& identity = view.get<NetworkIdentity>(entity);
         Transform& transform = view.get<Transform>(entity);
-        const Velocity& velocity = view.get<Velocity>(entity);
+        Velocity& velocity = view.get<Velocity>(entity);
         ProjectileState& projectile = view.get<ProjectileState>(entity);
 
         projectile.previous_position = transform.position;
-        transform.position += velocity.linear * fixed_delta_seconds;
-        projectile.age_seconds += fixed_delta_seconds;
+        const float next_age_seconds = projectile.age_seconds + fixed_delta_seconds;
+        transform.position = projectile_position_at(
+            projectile.spawn_position,
+            projectile.initial_velocity,
+            projectile.motion_model,
+            projectile.gravity,
+            next_age_seconds);
+        velocity.linear = projectile_velocity_at(
+            projectile.initial_velocity,
+            projectile.motion_model,
+            projectile.gravity,
+            next_age_seconds);
+        projectile.age_seconds = next_age_seconds;
 
         glm::vec3 impact_position = transform.position;
         const bool hit_target = projectile_sweep_hits_target(
@@ -334,7 +369,12 @@ bool replay_projectile_history(
     for (std::uint32_t tick = rewind_tick + 1; tick <= current_tick; ++tick) {
         const float elapsed_seconds =
             static_cast<float>(tick - rewind_tick) * fixed_delta_seconds;
-        const glm::vec3 current_position = origin + velocity * elapsed_seconds;
+        const glm::vec3 current_position = projectile_position_at(
+            origin,
+            velocity,
+            projectile.motion_model,
+            projectile.gravity,
+            elapsed_seconds);
         const HistoryFrame* frame = history_buffer.find_frame(tick);
         if (frame != nullptr) {
             HistoricalHitResult hit;
