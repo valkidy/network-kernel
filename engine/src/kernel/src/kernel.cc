@@ -1676,10 +1676,16 @@ void KernelEngine::sync_session_relevance(
 
 void KernelEngine::send_entity_spawn(PeerId peer, const EntitySnapshot& entity) {
     PeerId owner_peer = 0;
+    glm::vec3 spawn_position = entity.position;
     const std::optional<entt::entity> world_entity = world_.find_entity(entity.net_id);
     if (world_entity.has_value() &&
         world_.registry().all_of<NetworkIdentity>(*world_entity)) {
         owner_peer = world_.registry().get<NetworkIdentity>(*world_entity).owner_peer;
+    }
+    if (world_entity.has_value() &&
+        world_.registry().all_of<ProjectileState>(*world_entity)) {
+        spawn_position =
+            world_.registry().get<ProjectileState>(*world_entity).spawn_position;
     }
     const std::vector<std::uint8_t> packet = encode_entity_spawn_packet(
         EntitySpawnPacket{
@@ -1687,7 +1693,7 @@ void KernelEngine::send_entity_spawn(PeerId peer, const EntitySnapshot& entity) 
             entity.type,
             owner_peer,
             tick_loop_.current_tick(),
-            entity.position,
+            spawn_position,
             entity.rotation,
         },
         next_packet_sequence_++);
