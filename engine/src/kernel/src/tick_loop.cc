@@ -41,6 +41,12 @@ TickConfig with_tick_defaults(TickConfig config) {
 
 TickLoop::TickLoop(TickConfig config) : config_(with_tick_defaults(config)) {}
 
+void TickLoop::reset(TickConfig config, std::uint32_t current_tick) {
+    config_ = with_tick_defaults(config);
+    accumulator_seconds_ = 0.0;
+    current_tick_ = current_tick;
+}
+
 std::uint32_t TickLoop::accumulate(float delta_seconds) {
     if (delta_seconds <= 0.0f) {
         return 0;

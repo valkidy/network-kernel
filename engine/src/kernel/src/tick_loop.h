@@ -21,6 +21,7 @@ public:
     std::uint32_t snapshot_interval_ticks() const;
     bool should_write_snapshot() const;
 
+    void reset(TickConfig config, std::uint32_t current_tick = 0);
     void advance_tick();
 
 private:
