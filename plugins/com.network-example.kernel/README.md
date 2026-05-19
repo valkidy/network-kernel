@@ -1,6 +1,6 @@
 # Network Example Kernel Unity Package
 
-This package is the M6.4 Unity prototype for the network-example native kernel
+This package is the M6.4 Unity package for the network-example native kernel
 ABI v7 plus the Game Server v1 native bridge ABI v1.
 It is intentionally a pure networking/runtime SDK: native networking and game
 server behavior stay in C++, while Unity projects own input sampling,
@@ -21,10 +21,20 @@ Add this package to a Unity project with a local package reference:
 
 ## Native Plugin
 
-Build the macOS dylib from the repo root:
+Build, stage, verify, and pack the macOS package from the repo root through the
+package builder:
 
 ```text
-bazel build //engine/src/kernel:network_kernel_shared --config=macos --copt=-Wunused-function -c opt
+.agents/skills/unity-plugin-package-builder/scripts/run-unity-plugin-package-builder.sh --unity off
+```
+
+The builder is the supported packaging entry point. It builds
+`//engine/src/kernel:network_kernel_shared`, stages the produced dylib into the
+Unity package, verifies ABI/version/export alignment, and writes the UPM
+tarball under:
+
+```text
+plugins/output
 ```
 
 The produced dylib exports both `Kernel_*` and `GameServer_*` symbols. The
@@ -41,6 +51,12 @@ Unity resolves the C# import name `network_kernel` to
 
 Required compile/ABI smoke:
 
+- Run the package builder verification without Unity:
+
+  ```text
+  .agents/skills/unity-plugin-package-builder/scripts/run-unity-plugin-package-builder.sh --mode verify --unity off
+  ```
+
 - Compile the package runtime/editor C# assemblies with Unity.
 - In Unity Editor, run `Network Example/Kernel Hello World` to confirm the
   Editor can load `libnetwork_kernel.dylib` and call `Kernel_GetAbiInfo`.
@@ -51,7 +67,9 @@ Required compile/ABI smoke:
   server entity create/query/update/destroy calls, and a pure runtime
   `NetworkHost` smoke without opening Unity Editor.
 - Run `NetworkExample.Kernel.Editor.NetworkKernelAbiSmokeRunner.Run` in an
-  environment where Unity batchmode licensing/headless execution works.
+  environment where Unity batchmode licensing/headless execution works. In
+  package-builder auto mode, missing or blocked Unity is reported as a skip
+  instead of a package failure.
 - The runner calls `Kernel_GetAbiInfo` and `GameServer_GetAbiInfo`, compares
   native struct sizes with `Marshal.SizeOf<T>()`, starts listen-server mode,
   checks local-player info, updates, submits one projectile input, creates an

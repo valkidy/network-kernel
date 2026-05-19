@@ -1,4 +1,5 @@
 .aswb/
+.DS_Store
 bazel-*
 plugins/output/
 !.agents/skills/bazel-build/

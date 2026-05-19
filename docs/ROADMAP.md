@@ -650,9 +650,9 @@ Status: Implemented
 
 ## Goal
 
-Package the kernel as a native engine plugin with a stable C ABI, a Bazel-built
-dynamic library, an externally consumable export surface, and a thin Unity C#
-prototype package.
+Package the kernel as a native engine plugin with stable C ABI boundaries, a
+Bazel-built dynamic library, an externally consumable export surface, and a
+thin Unity C# package.
 
 ## Scope
 
@@ -662,7 +662,7 @@ Included:
 - Produce `libnetwork_kernel.dylib` from the Bazel build.
 - Validate that an external native consumer can load and call exported symbols
   without depending on internal C++ headers.
-- Document and provide the Unity C# P/Invoke prototype scope for M6.4.
+- Document and provide the Unity C# P/Invoke package scope for M6.4.
 
 Deferred:
 
@@ -709,7 +709,8 @@ Produce:
 libnetwork_kernel.dylib
 ```
 
-- Keep exported symbols limited to the `Kernel_*` API surface.
+- Keep exported symbols limited to the public `Kernel_*` API surface and the
+  Unity-consumable `GameServer_*` bridge surface.
 - Ensure the library links with the existing transport, simulation, sync, world,
   and protocol targets.
 - Keep third-party dependency linkage documented for macOS in `docs/NETWORK_KERNEL_ABI.md`.
@@ -717,8 +718,8 @@ libnetwork_kernel.dylib
 ### Acceptance
 
 - Bazel builds the dynamic library on macOS.
-- `nm` or an equivalent symbol check shows the intended exported `Kernel_*`
-  symbols.
+- `nm` or an equivalent symbol check shows the intended exported `Kernel_*` and
+  `GameServer_*` symbols.
 - The library can be copied beside an external consumer executable and loaded at
   runtime.
 
@@ -757,31 +758,35 @@ loads the dylib through the platform dynamic-loader API.
 
 ---
 
-## M6.4 Unity Prototype
+## M6.4 Unity Package
 
 Status: Implemented.
 
 ### Tasks
 
-Implemented a minimal Unity-facing prototype:
+Implemented a Unity-facing package:
 
-- C# P/Invoke declarations for the public `Kernel_*` API.
-- C# mirror structs for `KernelConfig`, `PlayerInput`, `RenderEntityState`, and
-  `KernelEvent`.
-- A small Unity script that starts the kernel, advances updates, submits
-  local input, and reads render states.
-- Packaging notes for placing `libnetwork_kernel.dylib` in Unity's native plugin
-  folder on macOS.
+- C# P/Invoke declarations and mirror structs for native kernel ABI v7.
+- C# P/Invoke declarations and mirror structs for Game Server bridge ABI v1.
+- Runtime split into Core, Client, and Host SDK surfaces with native handle
+  ownership isolated from Unity presentation code.
+- Smoke, Client, and Host samples under `Samples~`.
+- Managed ABI smoke under `Tests~` plus an Editor ABI smoke runner.
+- Package builder that builds, stages, verifies, and packs the macOS UPM
+  package through
+  `.agents/skills/unity-plugin-package-builder/scripts/run-unity-plugin-package-builder.sh`.
 
 ### Acceptance
 
 - Unity loads the dylib on macOS through P/Invoke.
-- Unity can start the kernel and read render states without unsafe lifetime
-  violations.
-- The prototype remains thin: gameplay behavior stays in the native kernel.
-- Required validation is hybrid: native ABI tests and C# compile checks are
-  expected to pass; Unity Editor batchmode smoke is available but
-  environment-dependent.
+- Unity-facing runtime code can start client/listen-host paths, submit input,
+  poll events, read render states including render-at-time data, and use the
+  native Game Server bridge without unsafe lifetime violations.
+- The package remains thin: gameplay behavior stays in the native kernel.
+- Required validation is hybrid: package-builder verification and C# compile
+  checks are expected to pass; Unity Editor batchmode smoke is available but
+  environment-dependent and may be skipped when local licensing/headless setup
+  blocks Editor startup.
 
 ## Deliverables
 
@@ -790,6 +795,7 @@ Dynamic library
 C ABI
 External native consumer smoke test
 Unity C# package
+UPM package tarball
 ABI documentation
 ```
 
@@ -824,9 +830,14 @@ Then verify plugin consumption:
 External native consumer loads libnetwork_kernel.dylib
 External native consumer calls Kernel_Create/Update/Destroy
 External native consumer validates Kernel_GetAbiInfo
-nm -gU shows only Kernel_* exported symbols on macOS
+nm -gU shows the required Kernel_* exported symbols on macOS
+nm -gU shows GameServer_* bridge symbols on macOS
+Package builder verifies ABI version mirrors and required exports
 C# package compiles against Unity references
-Unity Editor smoke runner validates ABI sizes and listen-server render states
+Managed ABI smoke validates kernel ABI v7, Game Server bridge ABI v1, server
+entity operations, render-at-time output, projectile metadata, and NetworkHost
+Unity Editor smoke runner validates ABI sizes and listen-server/host paths when
+local Unity batchmode licensing/headless setup is available
 ```
 
 ## M6 Risks
@@ -836,8 +847,9 @@ Unity Editor smoke runner validates ABI sizes and listen-server render states
 - macOS dynamic-library dependency paths may need explicit packaging guidance.
 - Keeping exceptions, allocations, and ownership entirely behind the C ABI needs
   focused failure-path tests.
-- Unity prototype scope can expand quickly; keep it to binding and render-state
-  verification.
+- Unity package scope can expand quickly; keep this milestone to runtime SDK,
+  samples, managed smoke, and UPM packaging. Prefab/entity mapping, animation,
+  camera, scene object registries, pooling, and UI remain demo-project scope.
 - Unity Editor batchmode can be blocked by local licensing/headless setup. On
   the current development machine, Unity 6000.4.3f1 starts but licensing times
   out with `LicenseClient-kasaki doesn't exist` and
