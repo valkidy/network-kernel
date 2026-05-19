@@ -11,6 +11,7 @@
 #include <glm/glm.hpp>
 
 #include "kernel/public/kernel_api.h"
+#include "protocol/public/network_packets.h"
 #include "protocol/public/session_packets.h"
 #include "transport/public/loopback_transport.h"
 
@@ -259,6 +260,68 @@ void client_replies_to_clock_sync_ping() {
     assert(decoded_reply.client_send_time_us == 456000);
 }
 
+void projectile_spawn_packet_uses_original_muzzle_position() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+    auto loopback = std::make_unique<network_example::LoopbackTransport>();
+    assert(loopback->StartServer(7777));
+    auto* loopback_transport = loopback.get();
+    engine.transport_ = std::move(loopback);
+    for (std::uint32_t tick = 0; tick < 7; ++tick) {
+        engine.tick_loop_.advance_tick();
+    }
+
+    const glm::vec3 muzzle_position{-7.33337402f, 1.0f, -9.21669769f};
+    const glm::vec3 compensated_position{-7.33337402f, 1.0f, -5.71669769f};
+    const network_example::NetId projectile_net_id =
+        engine.world_.spawn_projectile(
+            7,
+            compensated_position,
+            glm::vec3{0.0f, 0.0f, 35.0f});
+    const auto projectile_entity = engine.world_.find_entity(projectile_net_id);
+    assert(projectile_entity.has_value());
+    network_example::ProjectileState& projectile =
+        engine.world_.registry().get<network_example::ProjectileState>(
+            *projectile_entity);
+    projectile.spawn_tick = 4;
+    projectile.spawn_position = muzzle_position;
+
+    const network_example::WorldSnapshot snapshot =
+        network_example::build_world_snapshot(engine.world_, 7, 233, 0);
+    const network_example::EntitySnapshot* entity = nullptr;
+    for (const network_example::EntitySnapshot& snapshot_entity : snapshot.entities) {
+        if (snapshot_entity.net_id == projectile_net_id) {
+            entity = &snapshot_entity;
+            break;
+        }
+    }
+    assert(entity != nullptr);
+    assert(entity->position.z > -5.72f);
+    assert(entity->position.z < -5.71f);
+
+    engine.send_entity_spawn(7, *entity);
+
+    network_example::TransportEvent event;
+    assert(loopback_transport->PollClientEvent(event));
+    network_example::EntitySpawnPacket packet;
+    assert(network_example::decode_entity_spawn_packet(
+        event.payload.data(),
+        event.payload.size(),
+        &packet));
+    assert(packet.net_id == projectile_net_id);
+    assert(packet.position.x > -7.34f);
+    assert(packet.position.x < -7.33f);
+    assert(packet.position.y > 0.99f);
+    assert(packet.position.y < 1.01f);
+    assert(packet.position.z > -9.22f);
+    assert(packet.position.z < -9.21f);
+}
+
 void render_states_at_time_interpolates_and_clamps() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
@@ -490,6 +553,7 @@ int main() {
     clock_sync_ping_pong_updates_peer_offset();
     compensation_clamps_not_rejects_client_local_time();
     client_replies_to_clock_sync_ping();
+    projectile_spawn_packet_uses_original_muzzle_position();
     render_states_at_time_interpolates_and_clamps();
     remote_projectile_uses_interpolated_past_timeline();
     local_projectile_snapshot_fast_forwards_and_smooths();
