@@ -1003,6 +1003,11 @@ void KernelEngine::poll_client_transport() {
 }
 
 void KernelEngine::handle_client_snapshot(WorldSnapshot snapshot) {
+    if (has_client_snapshot_ &&
+        snapshot.header.server_tick < latest_client_snapshot_.header.server_tick) {
+        store_client_snapshot(std::move(snapshot));
+        return;
+    }
     latest_client_snapshot_ = snapshot;
     has_client_snapshot_ = true;
     store_client_snapshot(std::move(snapshot));

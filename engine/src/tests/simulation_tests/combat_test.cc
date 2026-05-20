@@ -1,4 +1,5 @@
 #include <cassert>
+#include <cstdlib>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -7,6 +8,12 @@
 #include "simulation/public/simulation.h"
 
 namespace {
+
+void require(bool condition) {
+    if (!condition) {
+        std::abort();
+    }
+}
 
 network_example::Health& health(
     network_example::World& world,
@@ -410,7 +417,7 @@ void projectile_without_rewind_uses_current_muzzle() {
     (void)player;
 }
 
-void projectile_replay_hits_historical_target() {
+void projectile_historical_hit_query_hits_historical_target() {
     network_example::World world;
     world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
     const network_example::NetId enemy =
@@ -436,14 +443,14 @@ void projectile_replay_hits_historical_target() {
         &events);
 
     const network_example::NetId projectile = spawned_projectile(events);
-    assert(projectile != 0);
-    assert(!world.find_entity(projectile).has_value());
-    assert(health(world, enemy).hp < 50);
-    assert(count_events(events, KernelEventType_Explosion) == 1);
-    assert(count_events(events, KernelEventType_DamageApplied) >= 1);
+    require(projectile != 0);
+    require(!world.find_entity(projectile).has_value());
+    require(health(world, enemy).hp < 50);
+    require(count_events(events, KernelEventType_Explosion) == 1);
+    require(count_events(events, KernelEventType_DamageApplied) >= 1);
 }
 
-void projectile_replay_ignores_current_only_target() {
+void projectile_historical_hit_query_ignores_current_only_target() {
     network_example::World world;
     world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
     const network_example::NetId enemy =
@@ -469,11 +476,16 @@ void projectile_replay_ignores_current_only_target() {
         &events);
 
     const network_example::NetId projectile = spawned_projectile(events);
-    assert(projectile != 0);
-    assert(world.find_entity(projectile).has_value());
-    assert(health(world, enemy).hp == 50);
-    assert(count_events(events, KernelEventType_Explosion) == 0);
-    assert(count_events(events, KernelEventType_DamageApplied) == 0);
+    require(projectile != 0);
+    const auto projectile_entity = world.find_entity(projectile);
+    require(projectile_entity.has_value());
+    const network_example::Transform& transform =
+        world.registry().get<network_example::Transform>(*projectile_entity);
+    require(transform.position.x > 1.99f);
+    require(transform.position.x < 2.01f);
+    require(health(world, enemy).hp == 50);
+    require(count_events(events, KernelEventType_Explosion) == 0);
+    require(count_events(events, KernelEventType_DamageApplied) == 0);
 }
 
 void rewind_hitscan_uses_historical_hit_volumes() {
@@ -566,8 +578,8 @@ int main() {
     projectile_weapon_fires_again_after_cooldown();
     projectile_rewind_spawns_from_historical_muzzle();
     projectile_without_rewind_uses_current_muzzle();
-    projectile_replay_hits_historical_target();
-    projectile_replay_ignores_current_only_target();
+    projectile_historical_hit_query_hits_historical_target();
+    projectile_historical_hit_query_ignores_current_only_target();
     rewind_hitscan_uses_historical_hit_volumes();
     rewind_shotgun_respects_range();
     return 0;

@@ -521,7 +521,7 @@ void simulate_weapons(
                     if (projectile_entity.has_value()) {
                         const ProjectileState projectile_state =
                             world.registry().get<ProjectileState>(*projectile_entity);
-                        replay_projectile_history(
+                        resolve_projectile_historical_hit(
                             world,
                             *context.history_buffer,
                             projectile,

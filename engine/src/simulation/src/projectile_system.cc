@@ -348,7 +348,7 @@ void simulate_projectiles(
     }
 }
 
-bool replay_projectile_history(
+bool resolve_projectile_historical_hit(
     World& world,
     const HistoryBuffer& history_buffer,
     NetId projectile_net_id,
@@ -365,6 +365,8 @@ bool replay_projectile_history(
         return false;
     }
 
+    // Only query historical hitboxes along the deterministic catch-up path; the
+    // surviving projectile's current transform remains the fast-forwarded state.
     glm::vec3 previous_position = origin;
     for (std::uint32_t tick = rewind_tick + 1; tick <= current_tick; ++tick) {
         const float elapsed_seconds =
