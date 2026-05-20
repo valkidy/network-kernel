@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <cassert>
 #include <cstddef>
@@ -617,6 +618,72 @@ void render_query_does_not_consume_local_correction() {
     assert(engine.local_correction_offset_.x == 4.0f);
 }
 
+void late_snapshot_is_stored_but_not_used_for_reconciliation() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 1000;
+    config.tick.snapshot_rate = 100;
+
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_Client);
+    engine.local_client_peer_id_ = 7;
+    engine.local_player_net_id_ = 1;
+    for (std::uint32_t tick = 0; tick < 20; ++tick) {
+        engine.tick_loop_.advance_tick();
+    }
+
+    network_example::KernelEngine::PredictedProjectile predicted;
+    predicted.entity_id = 9000;
+    predicted.owner_peer = 7;
+    predicted.input_seq = 3;
+    predicted.client_action_id = 4444;
+    predicted.spawn_tick = 20;
+    predicted.position = glm::vec3{6.2f, 0.0f, 0.0f};
+    predicted.velocity = glm::vec3{100.0f, 0.0f, 0.0f};
+    predicted.spawn_position = predicted.position;
+    predicted.initial_velocity = predicted.velocity;
+    predicted.motion_model = network_example::ProjectileMotionModel::kLinear;
+    engine.predicted_projectiles_.push_back(predicted);
+
+    network_example::WorldSnapshot newer = snapshot_with_entity(
+        10,
+        1,
+        network_example::EntityType::kPlayer,
+        10.0f);
+    add_snapshot_entity(
+        &newer,
+        55,
+        network_example::EntityType::kProjectile,
+        5.0f);
+    newer.entities.back().owner_peer = 7;
+    newer.entities.back().velocity = glm::vec3{100.0f, 0.0f, 0.0f};
+    newer.entities.back().client_action_id = 4444;
+    engine.handle_client_snapshot(newer);
+    require(engine.latest_client_snapshot_.header.server_tick == 10);
+    require(engine.predicted_local_entity_.position.x == 10.0f);
+    require(engine.predicted_projectiles_.size() == 1);
+    require(engine.predicted_projectiles_[0].bound);
+    require(engine.predicted_projectiles_[0].net_id == 55);
+
+    network_example::WorldSnapshot older = snapshot_with_entity(
+        8,
+        1,
+        network_example::EntityType::kPlayer,
+        -20.0f);
+    engine.handle_client_snapshot(older);
+
+    require(engine.latest_client_snapshot_.header.server_tick == 10);
+    require(engine.predicted_local_entity_.position.x == 10.0f);
+    require(engine.predicted_projectiles_.size() == 1);
+    require(engine.predicted_projectiles_[0].net_id == 55);
+    require(std::any_of(
+        engine.client_snapshot_buffer_.begin(),
+        engine.client_snapshot_buffer_.end(),
+        [](const network_example::WorldSnapshot& snapshot) {
+            return snapshot.header.server_tick == 8;
+        }));
+}
+
 }  // namespace
 
 int main() {
@@ -631,6 +698,7 @@ int main() {
     remote_projectile_uses_interpolated_past_timeline();
     local_projectile_snapshot_fast_forwards_and_smooths();
     render_query_does_not_consume_local_correction();
+    late_snapshot_is_stored_but_not_used_for_reconciliation();
 
     KernelConfig config{};
     config.mode = KernelMode_Client;

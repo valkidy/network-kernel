@@ -118,7 +118,7 @@ void simulate_projectiles(
     std::uint32_t current_tick,
     std::vector<KernelEvent>* events,
     DamagePipeline* damage_pipeline);
-bool replay_projectile_history(
+bool resolve_projectile_historical_hit(
     World& world,
     const HistoryBuffer& history_buffer,
     NetId projectile_net_id,

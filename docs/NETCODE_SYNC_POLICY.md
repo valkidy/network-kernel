@@ -121,6 +121,34 @@ Instead:
 Remote clients do not do fire prediction for that projectile. They render it
 from the delayed snapshot interpolation timeline.
 
+## Server Projectile Authority
+
+The server owns projectile gameplay state and damage.
+
+For deterministic projectile state:
+
+```text
+1. Convert the client action time onto the server timeline.
+2. Clamp it to the accepted compensation window.
+3. Use that compensated time as the projectile spawn time.
+4. Evaluate the deterministic projectile path directly at server now.
+```
+
+The server must not replay missed projectile movement frames to produce the
+current transform. It fast-forwards the projectile state from spawn time to the
+current server tick.
+
+Projectile hit validation may use rewind:
+
+```text
+historical hitbox snapshots
++ deterministic projectile path segment
++ server-authoritative damage resolution
+```
+
+Rewind is for hit queries and damage validation only. It is not a visual-state
+or transform replay mechanism.
+
 ## Hitscan
 
 Hitscan weapons do not create synchronized projectile entities.
