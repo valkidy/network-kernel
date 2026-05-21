@@ -1,0 +1,63 @@
+licenses(["notice"])
+
+cc_test(
+    name = "ai_context_test",
+    srcs = ["ai_context_test.cc"],
+    deps = ["//engine/components/ai:ai"],
+)
+
+cc_test(
+    name = "command_buffer_test",
+    srcs = ["command_buffer_test.cc"],
+    deps = ["//engine/components/ai:ai"],
+)
+
+cc_test(
+    name = "composite_nodes_test",
+    srcs = ["composite_nodes_test.cc"],
+    deps = ["//engine/components/ai:ai"],
+)
+
+cc_test(
+    name = "leaf_nodes_test",
+    srcs = ["leaf_nodes_test.cc"],
+    deps = ["//engine/components/ai:ai"],
+)
+
+cc_test(
+    name = "node_factory_test",
+    srcs = ["node_factory_test.cc"],
+    deps = ["//engine/components/ai:ai"],
+)
+
+cc_test(
+    name = "capability_registry_test",
+    srcs = ["capability_registry_test.cc"],
+    deps = ["//engine/components/ai:ai"],
+)
+
+cc_test(
+    name = "scenario_analysis_test",
+    srcs = ["scenario_analysis_test.cc"],
+    deps = ["//engine/components/ai:ai"],
+)
+
+cc_test(
+    name = "ai_scheduler_test",
+    srcs = ["ai_scheduler_test.cc"],
+    deps = ["//engine/components/ai:ai"],
+)
+
+sh_test(
+    name = "dependency_boundary_test",
+    srcs = ["dependency_boundary_test.sh"],
+    data = [
+        "//engine/components/ai:BUILD.bazel",
+        "//engine/src/kernel:BUILD.bazel",
+        "//engine/src/protocol:BUILD.bazel",
+        "//engine/src/simulation:BUILD.bazel",
+        "//engine/src/sync:BUILD.bazel",
+        "//engine/src/transport:BUILD.bazel",
+        "//engine/src/world:BUILD.bazel",
+    ],
+)
