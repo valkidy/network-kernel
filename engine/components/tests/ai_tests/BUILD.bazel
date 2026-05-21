@@ -31,6 +31,12 @@ cc_test(
 )
 
 cc_test(
+    name = "yaml_loader_test",
+    srcs = ["yaml_loader_test.cc"],
+    deps = ["//engine/components/ai:ai"],
+)
+
+cc_test(
     name = "capability_registry_test",
     srcs = ["capability_registry_test.cc"],
     deps = ["//engine/components/ai:ai"],

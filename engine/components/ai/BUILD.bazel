@@ -13,6 +13,7 @@ cc_library(
         "src/ai_tree.cc",
         "src/capability_registry.cc",
         "src/node_factory.cc",
+        "src/yaml_loader.cc",
     ],
     hdrs = [
         "include/ai/ai_command.h",
@@ -25,6 +26,8 @@ cc_library(
         "include/ai/node_factory.h",
         "include/ai/node_status.h",
         "include/ai/scenario_analysis.h",
+        "include/ai/yaml_loader.h",
     ],
     strip_include_prefix = "include",
+    deps = ["@yaml-cpp//:yaml-cpp"],
 )
