@@ -43,6 +43,8 @@ private:
     std::unordered_map<std::string, ScoreFunction> score_functions_;
 };
 
+NodeFactory make_default_node_factory();
+
 NodePtr make_selector(std::vector<NodePtr> children);
 NodePtr make_sequence(std::vector<NodePtr> children);
 NodePtr make_utility_selector(std::vector<UtilityCandidate> candidates);

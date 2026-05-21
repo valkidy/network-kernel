@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "ai/ai_tree.h"
+#include "ai/capability_registry.h"
 
 namespace network_example::ai {
 
@@ -25,6 +26,12 @@ struct YamlLoadResult {
 };
 
 YamlLoadResult load_tree_from_yaml(const std::string& yaml);
+YamlLoadResult load_tree_from_yaml(
+    const std::string& yaml,
+    const CapabilityRegistry& registry);
+CapabilityReport validate_yaml_capabilities(
+    const std::string& yaml,
+    const CapabilityRegistry& registry);
 
 }  // namespace network_example::ai
 

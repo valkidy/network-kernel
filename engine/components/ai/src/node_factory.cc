@@ -272,6 +272,26 @@ std::optional<ScoreFunction> NodeFactory::score_function(
     return iter->second;
 }
 
+NodeFactory make_default_node_factory() {
+    NodeFactory factory;
+    factory.register_node_type("Action.Patrol", []() {
+        return make_action_patrol();
+    });
+    factory.register_node_type("Action.StopMovement", []() {
+        return make_action_stop_movement();
+    });
+    factory.register_score_function(
+        "Score.AttackWhenHealthy",
+        score_attack_when_healthy);
+    factory.register_score_function(
+        "Score.FleeWhenCriticalHp",
+        score_flee_when_critical_hp);
+    factory.register_score_function(
+        "Score.RequestHelpWhenInjured",
+        score_request_help_when_injured);
+    return factory;
+}
+
 NodePtr make_selector(std::vector<NodePtr> children) {
     return std::make_unique<SelectorNode>(std::move(children));
 }

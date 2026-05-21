@@ -92,4 +92,37 @@ CapabilityReport CapabilityRegistry::validate(
     return report;
 }
 
+CapabilityRegistry make_default_capability_registry() {
+    CapabilityRegistry registry;
+    registry.add_feature("hp01");
+    registry.add_feature("hasVisibleEnemy");
+    registry.add_feature("hasAmmo");
+    registry.add_feature("isAtTarget");
+    registry.add_feature("nearestEnemyId");
+    registry.add_feature("enemyDistance");
+    registry.add_feature("allyNearbyCount");
+    registry.add_feature("coverScore");
+    registry.add_feature("dangerScore");
+
+    registry.add_node_type("Composite.Selector");
+    registry.add_node_type("Composite.Sequence");
+    registry.add_node_type("Composite.UtilitySelector");
+    registry.add_node_type("Condition.HasVisibleEnemy");
+    registry.add_node_type("Condition.HpAbove");
+    registry.add_node_type("Condition.HpBelow");
+    registry.add_node_type("Condition.HasAmmo");
+    registry.add_node_type("Condition.IsAtTarget");
+    registry.add_node_type("Action.Patrol");
+    registry.add_node_type("Action.MoveTo");
+    registry.add_node_type("Action.AttackTarget");
+    registry.add_node_type("Action.FleeFromTarget");
+    registry.add_node_type("Action.RequestHelp");
+    registry.add_node_type("Action.StopMovement");
+
+    registry.add_score_function("Score.AttackWhenHealthy");
+    registry.add_score_function("Score.FleeWhenCriticalHp");
+    registry.add_score_function("Score.RequestHelpWhenInjured");
+    return registry;
+}
+
 }  // namespace network_example::ai

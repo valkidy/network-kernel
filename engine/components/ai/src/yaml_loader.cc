@@ -32,6 +32,13 @@ bool expect_scalar(const YAML::Node& node,
     return true;
 }
 
+void finalize_result(YamlLoadResult* result) {
+    if (!result->errors.empty() || !result->missing_nodes.empty() ||
+        !result->missing_scores.empty() || !result->missing_features.empty()) {
+        result->root.reset();
+    }
+}
+
 std::optional<float> optional_float(const YAML::Node& node,
                                     const char* key,
                                     YamlLoadResult* result) {
@@ -232,7 +239,8 @@ NodePtr build_node(const YAML::Node& node, YamlLoadResult* result) {
 
 }  // namespace
 
-YamlLoadResult load_tree_from_yaml(const std::string& yaml) {
+YamlLoadResult load_tree_from_yaml(const std::string& yaml,
+                                   const CapabilityRegistry& registry) {
     YamlLoadResult result;
     YAML::Node document;
     try {
@@ -256,11 +264,48 @@ YamlLoadResult load_tree_from_yaml(const std::string& yaml) {
     }
 
     result.root = build_node(root, &result);
-    if (!result.errors.empty() || !result.missing_nodes.empty() ||
-        !result.missing_scores.empty() || !result.missing_features.empty()) {
-        result.root.reset();
+    CapabilityReport report = registry.validate(ScenarioRequirements{
+        result.required_features,
+        result.required_nodes,
+        result.required_scores,
+        {},
+    });
+    for (const std::string& feature : report.missing_features) {
+        add_unique(&result.missing_features, feature);
     }
+    for (const std::string& node : report.missing_nodes) {
+        add_unique(&result.missing_nodes, node);
+    }
+    for (const std::string& score : report.missing_scores) {
+        add_unique(&result.missing_scores, score);
+    }
+    finalize_result(&result);
     return result;
+}
+
+YamlLoadResult load_tree_from_yaml(const std::string& yaml) {
+    return load_tree_from_yaml(yaml, make_default_capability_registry());
+}
+
+CapabilityReport validate_yaml_capabilities(
+    const std::string& yaml,
+    const CapabilityRegistry& registry) {
+    YamlLoadResult result = load_tree_from_yaml(yaml);
+    ScenarioRequirements requirements;
+    requirements.required_features = result.required_features;
+    requirements.required_nodes = result.required_nodes;
+    requirements.required_scores = result.required_scores;
+    CapabilityReport report = registry.validate(requirements);
+    for (const std::string& node : result.missing_nodes) {
+        add_unique(&report.missing_nodes, node);
+    }
+    for (const std::string& score : result.missing_scores) {
+        add_unique(&report.missing_scores, score);
+    }
+    for (const std::string& feature : result.missing_features) {
+        add_unique(&report.missing_features, feature);
+    }
+    return report;
 }
 
 }  // namespace network_example::ai

@@ -46,6 +46,8 @@ private:
     std::unordered_set<std::string> queries_;
 };
 
+CapabilityRegistry make_default_capability_registry();
+
 }  // namespace network_example::ai
 
 #endif  // ENGINE_COMPONENTS_AI_INCLUDE_AI_CAPABILITY_REGISTRY_H_
