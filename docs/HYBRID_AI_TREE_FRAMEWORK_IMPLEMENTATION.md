@@ -151,6 +151,21 @@ Perception / gameplay feature extraction
 Tree nodes only read `AIContext` and append commands. They do not query the
 world, mutate gameplay state, allocate long-running jobs, or call kernel APIs.
 
+### Blackboard v1
+
+`AIContext` is the Blackboard v1 surface. It is a tick-local, read-only typed
+scalar feature bag populated by gameplay adapters before each tree tick. Tree
+nodes may read values such as `hasVisibleEnemy`, `hp01`, `nearestEnemyId`, and
+`hasAmmo`, but they must not retain references to the context or treat it as
+persistent memory.
+
+Long-lived AI or gameplay state belongs outside `engine/components/ai`: fire
+cooldowns, reload timers, patrol anchors, remembered targets, and similar state
+should live in the gameplay layer or ECS components that build the next
+`AIContext`. A future persistent blackboard can be added as a separate adapter
+or component, but the AI component must remain independent from `game_server`
+and `engine/src`.
+
 ## MVP File Layout
 
 ### Core Public Headers
@@ -220,6 +235,10 @@ knowing the repository path.
 
 Use a typed feature bag for MVP:
 
+Blackboard v1 intentionally keeps this type small and transient. The owning
+gameplay adapter rebuilds the context every tick from authoritative state, and
+the AI tree treats it as read-only input.
+
 ```cpp
 using AIValue = std::variant<bool, int, float, std::uint32_t, std::string>;
 ```
@@ -240,6 +259,7 @@ hp01
 hasVisibleEnemy
 hasAmmo
 isAtTarget
+isReloading
 nearestEnemyId
 enemyDistance
 allyNearbyCount
@@ -265,6 +285,7 @@ MoveTo
 AttackTarget
 FleeFromTarget
 RequestHelp
+Reload
 StopMovement
 ```
 
@@ -342,6 +363,7 @@ Action.MoveTo
 Action.AttackTarget
 Action.FleeFromTarget
 Action.RequestHelp
+Action.Reload
 Action.StopMovement
 ```
 
@@ -362,7 +384,8 @@ value: 0.5
 
 Action nodes emit commands and return:
 
-- `Success` for one-shot commands such as `AttackTarget` and `RequestHelp`.
+- `Success` for one-shot commands such as `AttackTarget`, `Reload`, and
+  `RequestHelp`.
 - `Running` for long-running commands such as `MoveTo` and `FleeFromTarget`
   until `isAtTarget` or another completion feature says they are done.
 
@@ -380,26 +403,34 @@ root:
       name: Combat
       children:
         - type: Condition.HasVisibleEnemy
-        - type: Composite.UtilitySelector
+        - type: Composite.Selector
           name: CombatDecision
           children:
-            - name: Attack
-              score: Score.AttackWhenHealthy
-              node:
-                type: Action.AttackTarget
-                target: nearestEnemyId
+            - type: Composite.Sequence
+              name: FleeCriticalHp
+              children:
+                - type: Condition.HpBelow
+                  value: 0.1
+                - type: Action.FleeFromTarget
+                  target: nearestEnemyId
 
-            - name: Flee
-              score: Score.FleeWhenCriticalHp
-              node:
-                type: Action.FleeFromTarget
-                target: nearestEnemyId
+            - type: Composite.Sequence
+              name: AttackHealthy
+              children:
+                - type: Condition.HpAbove
+                  value: 0.5
+                - type: Composite.Selector
+                  name: AttackOrReload
+                  children:
+                    - type: Composite.Sequence
+                      name: FireWithAmmo
+                      children:
+                        - type: Condition.HasAmmo
+                        - type: Action.AttackTarget
+                          target: nearestEnemyId
+                    - type: Action.Reload
 
-            - name: RequestHelp
-              score: Score.RequestHelpWhenInjured
-              node:
-                type: Action.RequestHelp
-                target: nearestEnemyId
+            - type: Action.StopMovement
 
     - type: Action.Patrol
 ```

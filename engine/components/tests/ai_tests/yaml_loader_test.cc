@@ -26,18 +26,24 @@ root:
             - name: Attack
               score: Score.AttackWhenHealthy
               node:
-                type: Action.AttackTarget
-                target: nearestEnemyId
+                type: Composite.Selector
+                children:
+                  - type: Composite.Sequence
+                    name: FireWithAmmo
+                    children:
+                      - type: Condition.HasAmmo
+                      - type: Action.AttackTarget
+                        target: nearestEnemyId
+                  - type: Action.Reload
             - name: Flee
               score: Score.FleeWhenCriticalHp
               node:
                 type: Action.FleeFromTarget
                 target: nearestEnemyId
-            - name: RequestHelp
+            - name: Hold
               score: Score.RequestHelpWhenInjured
               node:
-                type: Action.RequestHelp
-                target: nearestEnemyId
+                type: Action.StopMovement
     - type: Action.Patrol
 )yaml";
 }
@@ -57,8 +63,9 @@ int main() {
     network_example::ai::CapabilityRegistry defaults =
         network_example::ai::make_default_capability_registry();
     assert(defaults.has_node_type("Composite.Selector"));
-    assert(defaults.has_node_type("Action.RequestHelp"));
-    assert(defaults.has_score_function("Score.RequestHelpWhenInjured"));
+    assert(defaults.has_node_type("Action.Reload"));
+    assert(defaults.has_node_type("Action.StopMovement"));
+    assert(defaults.has_feature("hasAmmo"));
     assert(defaults.has_feature("nearestEnemyId"));
 
     network_example::ai::NodeFactory factory =
@@ -70,37 +77,55 @@ int main() {
         network_example::ai::load_tree_from_yaml(valid_tree_yaml());
     assert(result.success());
     assert(result.root != nullptr);
-    assert(result.required_nodes.size() == 8);
+    assert(result.required_nodes.size() == 11);
     assert(result.required_scores.size() == 3);
-    assert(contains(result.required_nodes, "Action.RequestHelp"));
-    assert(contains(result.required_scores, "Score.RequestHelpWhenInjured"));
+    assert(contains(result.required_nodes, "Condition.HasAmmo"));
+    assert(contains(result.required_nodes, "Action.Reload"));
+    assert(contains(result.required_nodes, "Action.StopMovement"));
     assert(contains(result.required_features, "hasVisibleEnemy"));
     assert(contains(result.required_features, "hp01"));
     assert(contains(result.required_features, "nearestEnemyId"));
+    assert(contains(result.required_features, "hasAmmo"));
 
     network_example::ai::AITreeInstance tree(std::move(result.root));
     network_example::ai::AIContext context;
     network_example::ai::AICommandBuffer commands;
     context.set_feature("hasVisibleEnemy", true);
     context.set_feature("hp01", 0.9f);
+    context.set_feature("hasAmmo", true);
     context.set_feature("nearestEnemyId", static_cast<std::uint32_t>(42));
     assert(tree.tick(context, &commands) ==
            network_example::ai::NodeStatus::kSuccess);
     assert(commands.size() == 1);
     assert(commands.commands()[0].type == "AttackTarget");
 
-    network_example::ai::AICommandBuffer help_commands;
-    network_example::ai::YamlLoadResult help_result =
+    network_example::ai::AICommandBuffer reload_commands;
+    network_example::ai::YamlLoadResult reload_result =
         network_example::ai::load_tree_from_yaml(valid_tree_yaml());
-    network_example::ai::AITreeInstance help_tree(std::move(help_result.root));
-    network_example::ai::AIContext help_context;
-    help_context.set_feature("hasVisibleEnemy", true);
-    help_context.set_feature("hp01", 0.35f);
-    help_context.set_feature("nearestEnemyId", static_cast<std::uint32_t>(5));
-    assert(help_tree.tick(help_context, &help_commands) ==
+    network_example::ai::AITreeInstance reload_tree(std::move(reload_result.root));
+    network_example::ai::AIContext reload_context;
+    reload_context.set_feature("hasVisibleEnemy", true);
+    reload_context.set_feature("hp01", 0.9f);
+    reload_context.set_feature("hasAmmo", false);
+    reload_context.set_feature("nearestEnemyId", static_cast<std::uint32_t>(5));
+    assert(reload_tree.tick(reload_context, &reload_commands) ==
            network_example::ai::NodeStatus::kSuccess);
-    assert(help_commands.size() == 1);
-    assert(help_commands.commands()[0].type == "RequestHelp");
+    assert(reload_commands.size() == 1);
+    assert(reload_commands.commands()[0].type == "Reload");
+
+    network_example::ai::AICommandBuffer hold_commands;
+    network_example::ai::YamlLoadResult hold_result =
+        network_example::ai::load_tree_from_yaml(valid_tree_yaml());
+    network_example::ai::AITreeInstance hold_tree(std::move(hold_result.root));
+    network_example::ai::AIContext hold_context;
+    hold_context.set_feature("hasVisibleEnemy", true);
+    hold_context.set_feature("hp01", 0.35f);
+    hold_context.set_feature("hasAmmo", true);
+    hold_context.set_feature("nearestEnemyId", static_cast<std::uint32_t>(5));
+    assert(hold_tree.tick(hold_context, &hold_commands) ==
+           network_example::ai::NodeStatus::kSuccess);
+    assert(hold_commands.size() == 1);
+    assert(hold_commands.commands()[0].type == "StopMovement");
 
     network_example::ai::YamlLoadResult unknown_node =
         network_example::ai::load_tree_from_yaml(R"yaml(

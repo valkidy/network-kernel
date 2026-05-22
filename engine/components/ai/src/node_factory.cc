@@ -505,6 +505,10 @@ NodeFactory make_default_node_factory() {
         return make_action_request_help(
             param_or_default(config, "target", "nearestEnemyId"));
     });
+    factory.register_node_type("Action.Reload", [](
+        const NodeConfig&, const NodeFactory&) {
+        return make_action_reload();
+    });
     factory.register_node_type("Action.StopMovement", [](
         const NodeConfig&, const NodeFactory&) {
         return make_action_stop_movement();
@@ -575,6 +579,10 @@ NodePtr make_action_flee_from_target(std::string target_feature) {
 NodePtr make_action_request_help(std::string target_feature) {
     return std::make_unique<CommandActionNode>(
         "RequestHelp", std::move(target_feature), false);
+}
+
+NodePtr make_action_reload() {
+    return std::make_unique<CommandActionNode>("Reload", "", false);
 }
 
 NodePtr make_action_stop_movement() {

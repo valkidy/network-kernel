@@ -117,6 +117,7 @@ CapabilityRegistry make_default_capability_registry() {
     registry.add_node_type("Action.AttackTarget");
     registry.add_node_type("Action.FleeFromTarget");
     registry.add_node_type("Action.RequestHelp");
+    registry.add_node_type("Action.Reload");
     registry.add_node_type("Action.StopMovement");
 
     registry.add_score_function("Score.AttackWhenHealthy");

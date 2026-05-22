@@ -111,6 +111,7 @@ NodePtr make_action_move_to(std::string target_feature);
 NodePtr make_action_attack_target(std::string target_feature);
 NodePtr make_action_flee_from_target(std::string target_feature);
 NodePtr make_action_request_help(std::string target_feature);
+NodePtr make_action_reload();
 NodePtr make_action_stop_movement();
 
 ScoreResult score_attack_when_healthy(const AIContext& context);

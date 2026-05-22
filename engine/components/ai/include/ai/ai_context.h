@@ -11,6 +11,11 @@
 
 namespace network_example::ai {
 
+// Blackboard v1: AIContext is the tick-local, read-only blackboard passed to
+// tree nodes. Gameplay adapters rebuild it from perception and gameplay facts
+// each tick; nodes should read these values but not retain them across ticks.
+// Persistent memory such as cooldowns, patrol anchors, reload timers, and
+// long-lived targets belongs in gameplay state or ECS components instead.
 class AIContext {
 public:
     void set_feature(std::string name, AIValue value);

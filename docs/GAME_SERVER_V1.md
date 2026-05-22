@@ -29,9 +29,12 @@ only through the public server-side C API:
 - `Kernel_ServerGetEntityState`
 - `Kernel_ServerSetEntityVelocity`
 - `Kernel_ServerSetEntityState`
+- `Kernel_ServerSubmitEntityInput`
 - `Kernel_ServerQueryEntities`
 
-The current v1 implementation does not add or rename kernel API symbols.
+`Kernel_ServerSubmitEntityInput` is an in-process native server hook for
+server-owned gameplay entities. It is not exposed through the Unity managed
+binding and does not require a `KERNEL_ABI_VERSION` bump.
 
 For Unity plugin consumption, the same dylib also exposes a small
 `GameServer_*` bridge ABI. That bridge owns an opaque game-server handle,
@@ -57,6 +60,25 @@ Enemy velocity written in step 5 is integrated by the kernel on the next
 `Kernel_Update()`. This keeps all world mutation on the server simulation
 thread.
 
+## Enemy AI Blackboard
+
+Game Server v1 uses `AIContext` as Blackboard v1. The enemy gameplay adapter
+rebuilds this tick-local read-only context before ticking the hardcoded enemy
+tree. Current and planned enemy feature keys include:
+
+- `hasVisibleEnemy`
+- `hp01`
+- `nearestEnemyId`
+- `hasAmmo`
+- `isReloading`
+- `enemyDistance`
+- `isAtTarget`
+
+The blackboard should contain perception and decision inputs only. Persistent
+state such as ammo counts, reload timers, fire intervals, patrol anchors, and
+patrol direction remains in GameServer or kernel-owned gameplay state, then is
+projected into the next tick's `AIContext` as scalar facts.
+
 ## Enemy v1 Behavior
 
 `EnemyManager` spawns exactly one enemy after the first `PlayerJoined` event.
@@ -66,15 +88,28 @@ The initial enemy state is deterministic:
 - position: `{6, 0, 0}`
 - rotation: identity
 - animation: idle
+- server gameplay HP: `240`
+- enemy rifle damage: `5`
+- enemy rifle magazine: `3`
+- enemy rifle reserve ammo: `6`
+- enemy rifle reload duration: about `1s`
 
 Repeated ticks do not create additional enemies while the managed enemy exists.
 If the v1 enemy is explicitly destroyed, it is not automatically respawned.
 
-`EnemyAIController` supports two states:
+`EnemyAIController` uses the hardcoded EnemySoldier YAML tree and supports five
+observable behavior bands:
 
-- Idle: no target in chase range, velocity is zero, animation state `0`.
-- Chasing: nearest player is within 12 meters, velocity points toward that
-  player at 2.5 meters per second, animation state `1`.
+- Patrol: no player is inside the 12 meter visibility range; the enemy moves
+  along a deterministic route around its spawn anchor.
+- Attack: a player is visible and HP is above 50%; the enemy stops moving and
+  submits one rifle fire input per second toward the nearest player.
+- Reload: when the enemy attack branch has no rifle ammo and reserve ammo
+  remains, it submits a reload input and resumes firing after reload completes.
+- Flee: a player is visible and HP is below 10%; the enemy moves away from the
+  nearest player until no player is visible.
+- Hold: a player is visible and HP is between 10% and 50%; the enemy stops
+  moving and does not request help in v1.
 
 Visual moving state is derived by the kernel from non-zero velocity.
 
@@ -82,12 +117,11 @@ Visual moving state is derived by the kernel from non-zero velocity.
 
 This version does not include:
 
-- attacks or damage decisions
 - pathfinding or obstacle avoidance
 - spawn waves or respawn policy
 - random spawn tables
 - config files or CLI tuning for AI constants
-- new kernel ABI surface
+- Unity managed bindings for server-owned entity input or enemy ammo/debug state
 
 ## Verification
 

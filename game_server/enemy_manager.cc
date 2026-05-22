@@ -36,7 +36,7 @@ void EnemyManager::handle_event(const KernelEvent& event) {
         enemies_.end());
 }
 
-void EnemyManager::tick(float /*delta_seconds*/) {
+void EnemyManager::tick(float delta_seconds) {
     if (kernel_ == nullptr) {
         return;
     }
@@ -45,7 +45,7 @@ void EnemyManager::tick(float /*delta_seconds*/) {
     if (has_seen_player_ && !has_spawned_initial_enemy_) {
         spawn_initial_enemy();
     }
-    ai_.tick(kernel_, &enemies_);
+    ai_.tick(kernel_, &enemies_, delta_seconds);
 }
 
 void EnemyManager::despawn_all(std::uint32_t reason) {
@@ -86,8 +86,10 @@ void EnemyManager::spawn_initial_enemy() {
     Enemy enemy;
     enemy.net_id = net_id;
     enemy.position = create_info.position;
+    enemy.patrol_anchor = create_info.position;
     enemy.velocity = KernelVec3{0.0f, 0.0f, 0.0f};
-    enemy.hp = 50;
+    enemy.hp = kEnemyInitialHp;
+    enemy.max_hp = kEnemyInitialHp;
     enemy.animation_state = create_info.animation_state;
     enemies_.push_back(enemy);
     has_spawned_initial_enemy_ = true;

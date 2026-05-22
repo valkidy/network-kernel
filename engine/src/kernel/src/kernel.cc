@@ -208,6 +208,11 @@ constexpr float kPredictedRocketSpeedMetersPerSecond = 35.0f;
 constexpr std::uint32_t kMaxCompensationWindowUs = 100000u;
 constexpr std::uint64_t kClockSyncIntervalUs = 1000000u;
 constexpr double kClientClockOffsetSmoothingFactor = 0.25;
+constexpr std::uint16_t kServerEnemyInitialHp = 240;
+constexpr std::uint16_t kServerEnemyRifleMagazine = 3;
+constexpr std::uint16_t kServerEnemyRifleReserveAmmo = 6;
+constexpr std::uint16_t kServerEnemyRifleDamage = 5;
+constexpr std::uint32_t kServerEnemyRifleReloadTicks = 30;
 const glm::vec3 kPredictedGrenadeGravity{0.0f, -9.8f, 0.0f};
 
 bool is_predictable_projectile_weapon(std::uint8_t weapon_id) {
@@ -227,6 +232,27 @@ ProjectileMotionModel predicted_projectile_motion(std::uint8_t weapon_id) {
 glm::vec3 predicted_projectile_gravity(std::uint8_t weapon_id) {
     return weapon_id == kWeaponGrenade ? kPredictedGrenadeGravity
                                        : glm::vec3{0.0f, 0.0f, 0.0f};
+}
+
+void configure_server_enemy(World* world, entt::entity entity) {
+    if (world == nullptr || !world->registry().all_of<Health>(entity)) {
+        return;
+    }
+
+    Health& health = world->registry().get<Health>(entity);
+    health.hp = kServerEnemyInitialHp;
+    health.max_hp = kServerEnemyInitialHp;
+
+    WeaponState& weapon = world->registry().get_or_emplace<WeaponState>(entity);
+    weapon.weapon_id = kWeaponRifle;
+    weapon.ammo[kWeaponRifle] = kServerEnemyRifleMagazine;
+    weapon.reserve_ammo[kWeaponRifle] = kServerEnemyRifleReserveAmmo;
+
+    WeaponTuning& tuning = world->registry().get_or_emplace<WeaponTuning>(entity);
+    tuning.override_weapon[kWeaponRifle] = true;
+    tuning.magazine_size[kWeaponRifle] = kServerEnemyRifleMagazine;
+    tuning.damage[kWeaponRifle] = kServerEnemyRifleDamage;
+    tuning.reload_ticks[kWeaponRifle] = kServerEnemyRifleReloadTicks;
 }
 
 }  // namespace
@@ -440,6 +466,9 @@ bool KernelEngine::server_create_entity(
     if (!entity.has_value()) {
         return false;
     }
+    if (type == EntityType::kEnemy) {
+        configure_server_enemy(&world_, *entity);
+    }
     Transform& transform = world_.registry().get<Transform>(*entity);
     transform.rotation = from_kernel_quat(create_info.rotation);
     ReplicationState& replication =
@@ -523,6 +552,28 @@ bool KernelEngine::server_set_entity_state(
         world_.registry().get_or_emplace<ReplicationState>(*entity);
     replication.animation_state = animation_state;
     replication.visual_flags = visual_flags;
+    return true;
+}
+
+bool KernelEngine::server_submit_entity_input(NetId net_id, const PlayerInput& input) {
+    if (!running_ || !is_server_mode(config_.mode) || net_id == 0) {
+        return false;
+    }
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value() ||
+        !world_.registry().all_of<NetworkIdentity, Transform, WeaponState, Hitbox>(
+            *entity)) {
+        return false;
+    }
+
+    pending_inputs_.push_back(QueuedInput{
+        0,
+        input,
+        tick_loop_.current_tick(),
+        current_server_time_us(),
+        true,
+        net_id,
+    });
     return true;
 }
 
@@ -1566,6 +1617,9 @@ void KernelEngine::simulate_tick() {
     const std::size_t first_tick_event = events_.size();
     advance_predicted_projectiles(fixed_delta);
     for (const QueuedInput& pending_input : pending_inputs_) {
+        if (pending_input.controlled_net_id != 0) {
+            continue;
+        }
         damage_pipeline_.ingest_defensive_input(
             pending_input.owner_peer,
             pending_input.input,
@@ -1579,7 +1633,8 @@ void KernelEngine::simulate_tick() {
     for (const QueuedInput& pending_input : pending_inputs_) {
         const HistoryFrame* rewind_frame = nullptr;
         std::uint32_t rewind_tick = tick_loop_.current_tick();
-        if ((pending_input.input.buttons & InputButton_Fire) != 0) {
+        if (pending_input.controlled_net_id == 0 &&
+            (pending_input.input.buttons & InputButton_Fire) != 0) {
             rewind_tick = rewind_tick_for_input(pending_input);
             rewind_frame = history_buffer_.find_frame_clamped(rewind_tick);
             if (rewind_frame != nullptr) {
@@ -2423,6 +2478,18 @@ bool Kernel_ServerSetEntityState(
                    net_id,
                    animation_state,
                    visual_flags);
+    } catch (...) {
+        return false;
+    }
+}
+
+bool Kernel_ServerSubmitEntityInput(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    const PlayerInput* input) {
+    try {
+        return kernel != nullptr && input != nullptr &&
+               kernel->engine->server_submit_entity_input(net_id, *input);
     } catch (...) {
         return false;
     }

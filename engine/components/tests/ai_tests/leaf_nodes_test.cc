@@ -30,6 +30,12 @@ int main() {
                commands.commands().back().params.at("target")) == 88);
 
     commands.clear();
+    auto reload = network_example::ai::make_action_reload();
+    assert(reload->tick(context, &commands) == NodeStatus::kSuccess);
+    assert(commands.commands().size() == 1);
+    assert(commands.commands().back().type == "Reload");
+
+    commands.clear();
     auto move = network_example::ai::make_action_move_to("nearestEnemyId");
     context.set_feature("isAtTarget", false);
     assert(move->tick(context, &commands) == NodeStatus::kRunning);

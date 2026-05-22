@@ -75,6 +75,35 @@ const WeaponDefinition& weapon_definition(std::uint8_t weapon_id) {
     return kWeaponDefinitions[kWeaponRifle];
 }
 
+WeaponDefinition weapon_definition_for_entity(
+    const World& world,
+    entt::entity entity,
+    std::uint8_t weapon_id) {
+    WeaponDefinition definition = weapon_definition(weapon_id);
+    if (!world.registry().all_of<WeaponTuning>(entity)) {
+        return definition;
+    }
+
+    const WeaponTuning& tuning = world.registry().get<WeaponTuning>(entity);
+    const std::size_t index = static_cast<std::size_t>(definition.id);
+    if (index >= kWeaponCount || !tuning.override_weapon[index]) {
+        return definition;
+    }
+    if (tuning.magazine_size[index] != 0) {
+        definition.magazine_size = tuning.magazine_size[index];
+    }
+    if (tuning.damage[index] != 0) {
+        definition.damage = tuning.damage[index];
+    }
+    if (tuning.cooldown_ticks[index] != 0) {
+        definition.cooldown_ticks = tuning.cooldown_ticks[index];
+    }
+    if (tuning.reload_ticks[index] != 0) {
+        definition.reload_ticks = tuning.reload_ticks[index];
+    }
+    return definition;
+}
+
 std::size_t weapon_index(std::uint8_t weapon_id) {
     return static_cast<std::size_t>(weapon_definition(weapon_id).id);
 }
@@ -109,12 +138,17 @@ void push_event(
         presentation_time_us});
 }
 
-void complete_ready_reload(WeaponState& weapon, std::uint32_t current_tick) {
+void complete_ready_reload(
+    const World& world,
+    entt::entity entity,
+    WeaponState& weapon,
+    std::uint32_t current_tick) {
     if (!weapon.is_reloading || current_tick < weapon.reload_end_tick) {
         return;
     }
 
-    const WeaponDefinition& definition = weapon_definition(weapon.weapon_id);
+    const WeaponDefinition definition =
+        weapon_definition_for_entity(world, entity, weapon.weapon_id);
     const std::size_t index = weapon_index(definition.id);
     const std::uint16_t missing_ammo =
         static_cast<std::uint16_t>(definition.magazine_size - weapon.ammo[index]);
@@ -368,7 +402,11 @@ NetId fire_projectile(
 void complete_all_reloads(World& world, std::uint32_t current_tick) {
     auto view = world.registry().view<WeaponState>();
     for (const entt::entity entity : view) {
-        complete_ready_reload(view.get<WeaponState>(entity), current_tick);
+        complete_ready_reload(
+            world,
+            entity,
+            view.get<WeaponState>(entity),
+            current_tick);
     }
 }
 
@@ -424,17 +462,25 @@ void simulate_weapons(
     for (const QueuedInput& queued_input : inputs) {
         auto player_view =
             world.registry()
-                .view<NetworkIdentity, Transform, WeaponState, Hitbox, PlayerTag>();
+                .view<NetworkIdentity, Transform, WeaponState, Hitbox>();
         for (const entt::entity player_entity : player_view) {
             const NetworkIdentity& player_identity =
                 player_view.get<NetworkIdentity>(player_entity);
-            if (player_identity.owner_peer != queued_input.owner_peer) {
-                continue;
+            if (queued_input.controlled_net_id != 0) {
+                if (player_identity.net_id != queued_input.controlled_net_id) {
+                    continue;
+                }
+            } else {
+                if (!world.registry().all_of<PlayerTag>(player_entity) ||
+                    player_identity.owner_peer != queued_input.owner_peer) {
+                    continue;
+                }
             }
 
             WeaponState& weapon = player_view.get<WeaponState>(player_entity);
             weapon.weapon_id = weapon_definition(queued_input.input.selected_weapon).id;
-            const WeaponDefinition& definition = weapon_definition(weapon.weapon_id);
+            const WeaponDefinition definition =
+                weapon_definition_for_entity(world, player_entity, weapon.weapon_id);
 
             if ((queued_input.input.buttons & InputButton_Reload) != 0) {
                 begin_reload(weapon, definition, current_tick);
