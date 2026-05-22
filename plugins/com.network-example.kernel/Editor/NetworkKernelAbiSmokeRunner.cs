@@ -83,6 +83,8 @@ namespace NetworkExample.Kernel.Editor
                         out KernelServerEntityState enemyState) ||
                     !enemyState.valid ||
                     enemyState.entity_type != KernelEntityType.Enemy ||
+                    enemyState.hp != 240 ||
+                    enemyState.max_hp != 240 ||
                     enemyState.animation_state != 7 ||
                     (enemyState.visual_flags & 0x12345678U) != 0x12345678U)
                 {
@@ -97,9 +99,20 @@ namespace NetworkExample.Kernel.Editor
                 {
                     throw new InvalidOperationException("Kernel_GetRenderStates returned no states.");
                 }
-                if (!HasRenderEntity(states, stateCount, enemyNetId))
+                if (!HasRenderEntityHealth(states, stateCount, enemyNetId, 240, 240))
                 {
-                    throw new InvalidOperationException("Kernel_GetRenderStates missed enemy.");
+                    throw new InvalidOperationException(
+                        "Kernel_GetRenderStates missed enemy health.");
+                }
+                if (!HasRenderEntityHealth(
+                        states,
+                        stateCount,
+                        localInfo.player_net_id,
+                        100,
+                        100))
+                {
+                    throw new InvalidOperationException(
+                        "Kernel_GetRenderStates missed local player health.");
                 }
                 if (!HasProjectileRenderMetadata(states, stateCount, 1, input.client_action_id))
                 {
@@ -184,17 +197,19 @@ namespace NetworkExample.Kernel.Editor
             return false;
         }
 
-        private static bool HasRenderEntity(
+        private static bool HasRenderEntityHealth(
             RenderEntityState[] states,
             uint count,
-            uint netId)
+            uint netId,
+            ushort hp,
+            ushort maxHp)
         {
             int countInt = (int)count;
             for (int index = 0; index < countInt; ++index)
             {
                 if (states[index].net_id == netId)
                 {
-                    return true;
+                    return states[index].hp == hp && states[index].max_hp == maxHp;
                 }
             }
 

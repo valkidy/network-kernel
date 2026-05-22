@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 7;
+        public const uint AbiVersion = 8;
 
         public const ulong CapabilityClientMode = 0x0000000000000001UL;
         public const ulong CapabilityListenServerMode = 0x0000000000000002UL;
@@ -213,6 +213,8 @@ namespace NetworkExample.Kernel
         public KernelVec3 position;
         public KernelQuat rotation;
         public KernelVec3 velocity;
+        public ushort hp;
+        public ushort max_hp;
         public ushort animation_state;
         public uint visual_flags;
         public uint spawn_tick;
@@ -244,6 +246,7 @@ namespace NetworkExample.Kernel
         public KernelQuat rotation;
         public KernelVec3 velocity;
         public ushort hp;
+        public ushort max_hp;
         public ushort animation_state;
         public uint visual_flags;
         [MarshalAs(UnmanagedType.I1)]
