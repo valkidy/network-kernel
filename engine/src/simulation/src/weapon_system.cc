@@ -351,6 +351,7 @@ NetId fire_projectile(
     const WeaponDefinition& definition,
     std::uint32_t event_tick,
     std::uint32_t spawn_tick,
+    NetId shooter_net_id,
     PeerId shooter_peer_id,
     std::uint32_t client_action_id,
     const glm::vec3& origin,
@@ -380,6 +381,7 @@ NetId fire_projectile(
         projectile_state.damage = definition.damage;
         projectile_state.spawn_tick = spawn_tick;
         projectile_state.client_action_id = client_action_id;
+        projectile_state.shooter_net_id = shooter_net_id;
         projectile_state.motion_model = definition.projectile_motion_model;
         projectile_state.explosion_radius = definition.explosion_radius;
         projectile_state.max_lifetime_seconds = definition.projectile_lifetime_seconds;
@@ -554,6 +556,7 @@ void simulate_weapons(
                     definition,
                     current_tick,
                     spawn_tick,
+                    player_identity.net_id,
                     queued_input.owner_peer,
                     queued_input.input.client_action_id,
                     compensated_origin,

@@ -27,7 +27,7 @@ PlayerInput scripted_input(std::uint32_t sequence) {
     PlayerInput input{};
     input.input_seq = sequence;
     input.client_action_time_us = static_cast<std::uint64_t>(sequence) * 33333u;
-    input.move = KernelVec2{1.0f, 0.0f};
+    input.move = KernelVec2{0.0f, 0.0f};
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     input.buttons = sequence == 2 ? InputButton_Fire : 0;
     return input;
@@ -44,7 +44,15 @@ int RunHostServer(std::uint16_t port) {
         return 1;
     }
 
-    constexpr std::array<float, 4> kFrameDeltas = {
+    constexpr std::array<float, 12> kFrameDeltas = {
+        1.0f / 30.0f,
+        1.0f / 30.0f,
+        1.0f / 30.0f,
+        1.0f / 30.0f,
+        1.0f / 30.0f,
+        1.0f / 30.0f,
+        1.0f / 30.0f,
+        1.0f / 30.0f,
         1.0f / 30.0f,
         1.0f / 30.0f,
         1.0f / 30.0f,

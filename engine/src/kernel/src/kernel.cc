@@ -209,10 +209,11 @@ constexpr std::uint32_t kMaxCompensationWindowUs = 100000u;
 constexpr std::uint64_t kClockSyncIntervalUs = 1000000u;
 constexpr double kClientClockOffsetSmoothingFactor = 0.25;
 constexpr std::uint16_t kServerEnemyInitialHp = 240;
-constexpr std::uint16_t kServerEnemyRifleMagazine = 3;
-constexpr std::uint16_t kServerEnemyRifleReserveAmmo = 6;
-constexpr std::uint16_t kServerEnemyRifleDamage = 5;
-constexpr std::uint32_t kServerEnemyRifleReloadTicks = 30;
+constexpr std::uint16_t kServerEnemyRocketMagazine = 3;
+constexpr std::uint16_t kServerEnemyRocketReserveAmmo = 6;
+constexpr std::uint16_t kServerEnemyRocketDamage = 5;
+constexpr std::uint32_t kServerEnemyRocketCooldownTicks = 30;
+constexpr std::uint32_t kServerEnemyRocketReloadTicks = 30;
 const glm::vec3 kPredictedGrenadeGravity{0.0f, -9.8f, 0.0f};
 
 bool is_predictable_projectile_weapon(std::uint8_t weapon_id) {
@@ -244,15 +245,16 @@ void configure_server_enemy(World* world, entt::entity entity) {
     health.max_hp = kServerEnemyInitialHp;
 
     WeaponState& weapon = world->registry().get_or_emplace<WeaponState>(entity);
-    weapon.weapon_id = kWeaponRifle;
-    weapon.ammo[kWeaponRifle] = kServerEnemyRifleMagazine;
-    weapon.reserve_ammo[kWeaponRifle] = kServerEnemyRifleReserveAmmo;
+    weapon.weapon_id = kWeaponRocket;
+    weapon.ammo[kWeaponRocket] = kServerEnemyRocketMagazine;
+    weapon.reserve_ammo[kWeaponRocket] = kServerEnemyRocketReserveAmmo;
 
     WeaponTuning& tuning = world->registry().get_or_emplace<WeaponTuning>(entity);
-    tuning.override_weapon[kWeaponRifle] = true;
-    tuning.magazine_size[kWeaponRifle] = kServerEnemyRifleMagazine;
-    tuning.damage[kWeaponRifle] = kServerEnemyRifleDamage;
-    tuning.reload_ticks[kWeaponRifle] = kServerEnemyRifleReloadTicks;
+    tuning.override_weapon[kWeaponRocket] = true;
+    tuning.magazine_size[kWeaponRocket] = kServerEnemyRocketMagazine;
+    tuning.damage[kWeaponRocket] = kServerEnemyRocketDamage;
+    tuning.cooldown_ticks[kWeaponRocket] = kServerEnemyRocketCooldownTicks;
+    tuning.reload_ticks[kWeaponRocket] = kServerEnemyRocketReloadTicks;
 }
 
 }  // namespace

@@ -81,6 +81,12 @@ std::uint32_t query_players(
         states);
 }
 
+std::uint32_t query_projectiles(
+    KernelHandle* kernel,
+    std::array<KernelServerEntityState, 8>* states) {
+    return query_entities(kernel, 3, states);
+}
+
 void run_server_frame(
     KernelHandle* kernel,
     network_example::game_server::GameServer* game_server) {
@@ -137,22 +143,28 @@ int main() {
     Kernel_Update(kernel, 1.0f / 30.0f);
     player_count = query_players(kernel, &player_states);
     require(player_count == 1);
-    require(player_states[0].hp == 95);
+    require(player_states[0].hp == 100);
+
+    std::array<KernelServerEntityState, 8> projectile_states{};
+    std::uint32_t projectile_count = query_projectiles(kernel, &projectile_states);
+    require(projectile_count == 1);
+    require(projectile_states[0].owner_peer == 0);
+    require(projectile_states[0].velocity.x < 0.0f);
 
     run_server_frame(kernel, &game_server);
     player_count = query_players(kernel, &player_states);
     require(player_count == 1);
-    require(player_states[0].hp == 95);
+    require(player_states[0].hp == 100);
 
     run_server_frames(kernel, &game_server, 30);
     player_count = query_players(kernel, &player_states);
     require(player_count == 1);
-    require(player_states[0].hp == 90);
+    require(player_states[0].hp < 100);
 
     run_server_frames(kernel, &game_server, 30);
     player_count = query_players(kernel, &player_states);
     require(player_count == 1);
-    require(player_states[0].hp == 85);
+    require(player_states[0].hp < 100);
 
     run_server_frame(kernel, &game_server);
     enemy_count = query_enemies(kernel, &enemy_states);

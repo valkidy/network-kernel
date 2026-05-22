@@ -86,6 +86,7 @@ struct ProjectileState {
     std::uint16_t damage = 0;
     std::uint32_t spawn_tick = 0;
     std::uint32_t client_action_id = 0;
+    NetId shooter_net_id = 0;
     ProjectileMotionModel motion_model = ProjectileMotionModel::kLinear;
     float explosion_radius = 0.0f;
     float max_lifetime_seconds = 0.0f;
