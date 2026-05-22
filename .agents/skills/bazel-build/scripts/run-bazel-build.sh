@@ -23,6 +23,7 @@ case "$MODE" in
           --output_base="$OUTPUT_BASE"
           build
           --config=macos
+          --symlink_prefix=/
           --copt=-Wunused-function
           -c opt
           //app:app
@@ -49,6 +50,7 @@ case "$MODE" in
             --output_base="$OUTPUT_BASE"
             test
             --config=macos
+            --symlink_prefix=/
             --copt=-Wunused-function
             -c opt
             "${TEST_TARGETS[@]}"
@@ -60,6 +62,7 @@ case "$MODE" in
             --output_base="$OUTPUT_BASE"
             build
             --config=macos
+            --symlink_prefix=/
             --copt=-Wunused-function
             -c opt
             //app:app

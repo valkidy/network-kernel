@@ -12,7 +12,7 @@ UNITY_TIMEOUT_SECONDS="${UNITY_TIMEOUT_SECONDS:-180}"
 PACKAGE_DIR_REL="plugins/com.network-example.kernel"
 PACKAGE_NAME="com.network-example.kernel"
 NATIVE_TARGET="//engine/src/kernel:network_kernel_shared"
-BUILT_DYLIB_REL="bazel-bin/engine/src/kernel/libnetwork_kernel.dylib"
+BUILT_DYLIB_SUBPATH="engine/src/kernel/libnetwork_kernel.dylib"
 STAGED_DYLIB_REL="${PACKAGE_DIR_REL}/Assets/Plugins/macOS/libnetwork_kernel.dylib"
 
 REQUIRED_EXPORTS=(
@@ -134,7 +134,7 @@ repo_root="$(find_repo_root)" || die "run this script from the network-example r
 cd "$repo_root"
 
 PACKAGE_DIR="$repo_root/$PACKAGE_DIR_REL"
-BUILT_DYLIB="$repo_root/$BUILT_DYLIB_REL"
+BUILT_DYLIB=""
 STAGED_DYLIB="$repo_root/$STAGED_DYLIB_REL"
 
 if [[ -z "$OUTPUT_DIR" ]]; then
@@ -177,9 +177,13 @@ build_native() {
     --output_base="$OUTPUT_BASE" \
     build \
     --config=macos \
+    --symlink_prefix=/ \
     --copt=-Wunused-function \
     -c opt \
     "$NATIVE_TARGET"
+  local bazel_bin
+  bazel_bin="$("$BAZEL_CMD" --output_base="$OUTPUT_BASE" info --config=macos -c opt bazel-bin --symlink_prefix=/)"
+  BUILT_DYLIB="$bazel_bin/$BUILT_DYLIB_SUBPATH"
   [[ -f "$BUILT_DYLIB" ]] || die "expected built dylib not found: $BUILT_DYLIB"
 }
 
