@@ -177,11 +177,12 @@ test_requires_feat_unity_plugin_branch() {
 }
 
 test_release_notes_are_prepended_and_auto_committed_for_allowed_files() {
-  local sandbox_dir repo_dir output_file notes_file subject
+  local sandbox_dir repo_dir output_file notes_file notes_meta_file subject
   sandbox_dir="$(mktemp -d "${TMPDIR:-/tmp}/package-builder-commit.XXXXXX")"
   repo_dir="$sandbox_dir/repo"
   output_file="$sandbox_dir/output.txt"
   notes_file="$repo_dir/plugins/com.network-example.kernel/RELEASE_NOTES.md"
+  notes_meta_file="$repo_dir/plugins/com.network-example.kernel/RELEASE_NOTES.md.meta"
   make_fake_repo "$repo_dir" "feat-unity-plugin"
 
   write_file "$notes_file" <<'MD'
@@ -193,6 +194,11 @@ MD
   git -C "$repo_dir" commit -q -m "docs: add previous release notes"
 
   echo "// allowed managed change" >> "$repo_dir/plugins/com.network-example.kernel/Runtime/Client/NetworkClient.cs"
+  write_file "$notes_meta_file" <<'YAML'
+fileFormatVersion: 2
+guid: 11111111111111111111111111111111
+YAML
+
   run_builder "$repo_dir" "$output_file" \
     --mode verify \
     --unity off \
@@ -206,6 +212,7 @@ MD
   assert_contains "$(sed -n '1,8p' "$notes_file")" "- fixes managed host startup"
   assert_contains "$(sed -n '1,8p' "$notes_file")" "- updates macOS native plugin"
   assert_contains "$(cat "$notes_file")" "0.6.3 release notes:"
+  git -C "$repo_dir" cat-file -e HEAD:plugins/com.network-example.kernel/RELEASE_NOTES.md.meta || fail "expected RELEASE_NOTES.md.meta to be auto committed"
   [[ -z "$(git -C "$repo_dir" status --short)" ]] || fail "expected clean fake repo after auto commit"
 }
 

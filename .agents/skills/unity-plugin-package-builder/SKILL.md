@@ -95,7 +95,8 @@ Default behavior:
 7. If successful and `--auto-commit on`, prepend the supplied release-note
    bullets to `plugins/com.network-example.kernel/RELEASE_NOTES.md` and commit
    only when the dirty files are limited to the staged dylib, Unity package
-   `.cs` files, and `RELEASE_NOTES.md`.
+   `.cs` files, `RELEASE_NOTES.md`, and Unity's generated
+   `RELEASE_NOTES.md.meta`.
 
 Auto commit details:
 
@@ -114,6 +115,9 @@ Auto commit details:
   skips the commit and tells the user to rerun with release-note bullets. Treat
   that as a caller error for normal `/unity-package` runs; rerun with inferred
   release-note bullets unless the user explicitly requested no finalization.
+- Treat `plugins/com.network-example.kernel/RELEASE_NOTES.md.meta` as an
+  eligible release-note companion file because Unity may generate it when the
+  package is imported.
 - If any dirty file falls outside the allowlist, the script skips the commit and
   lists the blocking paths. It does not stage unrelated files.
 - Use `--auto-commit off` when validating or packing without changing release

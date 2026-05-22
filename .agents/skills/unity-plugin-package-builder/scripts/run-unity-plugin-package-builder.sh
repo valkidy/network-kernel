@@ -17,6 +17,7 @@ NATIVE_TARGET="//engine/src/kernel:network_kernel_shared"
 BUILT_DYLIB_SUBPATH="engine/src/kernel/libnetwork_kernel.dylib"
 STAGED_DYLIB_REL="${PACKAGE_DIR_REL}/Assets/Plugins/macOS/libnetwork_kernel.dylib"
 RELEASE_NOTES_REL="${PACKAGE_DIR_REL}/RELEASE_NOTES.md"
+RELEASE_NOTES_META_REL="${RELEASE_NOTES_REL}.meta"
 RELEASE_NOTES=()
 
 REQUIRED_EXPORTS=(
@@ -462,7 +463,7 @@ write_release_notes() {
 
 is_auto_commit_allowed_path() {
   local path="$1"
-  if [[ "$path" == "$STAGED_DYLIB_REL" || "$path" == "$RELEASE_NOTES_REL" ]]; then
+  if [[ "$path" == "$STAGED_DYLIB_REL" || "$path" == "$RELEASE_NOTES_REL" || "$path" == "$RELEASE_NOTES_META_REL" ]]; then
     return 0
   fi
   if [[ "$path" == "$PACKAGE_DIR_REL/"* && "$path" == *.cs ]]; then
