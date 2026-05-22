@@ -56,6 +56,7 @@ public:
         NetId net_id,
         std::uint16_t animation_state,
         std::uint32_t visual_flags);
+    bool server_submit_entity_input(NetId net_id, const PlayerInput& input);
     bool server_get_entity_state(
         NetId net_id,
         KernelServerEntityState* out_state) const;

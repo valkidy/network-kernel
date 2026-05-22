@@ -78,6 +78,8 @@ int main() {
         &create_info.rotation));
     assert(!Kernel_ServerSetEntityVelocity(nullptr, 1, &create_info.position));
     assert(!Kernel_ServerSetEntityState(nullptr, 1, 2, 3));
+    PlayerInput server_entity_input{};
+    assert(!Kernel_ServerSubmitEntityInput(nullptr, 1, &server_entity_input));
     KernelServerEntityState server_state{};
     server_state.struct_size = sizeof(server_state);
     assert(!Kernel_ServerGetEntityState(nullptr, 1, &server_state));
@@ -113,6 +115,12 @@ int main() {
     KernelVec3 enemy_velocity{1.0f, 0.0f, 0.0f};
     assert(Kernel_ServerSetEntityVelocity(kernel, created_net_id, &enemy_velocity));
     assert(Kernel_ServerSetEntityState(kernel, created_net_id, 7, 0x12345678u));
+    server_entity_input.buttons = InputButton_Fire;
+    server_entity_input.aim_dir = KernelVec3{-1.0f, 0.0f, 0.0f};
+    assert(Kernel_ServerSubmitEntityInput(
+        kernel,
+        created_net_id,
+        &server_entity_input));
     server_state = KernelServerEntityState{};
     server_state.struct_size = sizeof(server_state);
     assert(Kernel_ServerGetEntityState(kernel, created_net_id, &server_state));

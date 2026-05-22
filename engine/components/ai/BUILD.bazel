@@ -1,0 +1,33 @@
+licenses(["notice"])
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["BUILD.bazel"])
+
+cc_library(
+    name = "ai",
+    srcs = [
+        "src/ai_command.cc",
+        "src/ai_context.cc",
+        "src/ai_scheduler.cc",
+        "src/ai_tree.cc",
+        "src/capability_registry.cc",
+        "src/node_factory.cc",
+        "src/yaml_loader.cc",
+    ],
+    hdrs = [
+        "include/ai/ai_command.h",
+        "include/ai/ai_context.h",
+        "include/ai/ai_node.h",
+        "include/ai/ai_scheduler.h",
+        "include/ai/ai_tree.h",
+        "include/ai/ai_value.h",
+        "include/ai/capability_registry.h",
+        "include/ai/node_factory.h",
+        "include/ai/node_status.h",
+        "include/ai/scenario_analysis.h",
+        "include/ai/yaml_loader.h",
+    ],
+    strip_include_prefix = "include",
+    deps = ["@yaml-cpp//:yaml-cpp"],
+)

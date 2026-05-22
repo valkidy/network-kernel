@@ -16,6 +16,7 @@ struct QueuedInput {
     std::uint32_t received_server_tick = 0;
     std::uint64_t action_server_time_us = 0;
     bool has_action_server_time = false;
+    NetId controlled_net_id = 0;
 };
 
 struct WeaponSimulationContext {

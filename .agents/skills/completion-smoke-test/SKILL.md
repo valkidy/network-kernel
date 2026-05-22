@@ -29,7 +29,7 @@ The helper builds and runs:
 ## Expected Behavior
 
 - The host server mode starts, runs its scripted frames, and exits successfully.
-- The host server log includes an enemy render state (`type=2`) that moved from the initial GameServer spawn point.
+- The host server log includes a server-owned enemy render state (`type=2`), enemy fire confirmation, and enemy rifle damage.
 - The dedicated server mode starts on `127.0.0.1:7777`.
 - The client mode connects to that server and exits successfully.
 - After the client connects, the dedicated server log includes a server-owned enemy spawn event (`peer=0`).

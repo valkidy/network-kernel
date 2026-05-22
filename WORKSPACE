@@ -161,3 +161,11 @@ http_archive(
     urls = ["https://github.com/fmtlib/fmt/archive/refs/tags/12.1.0.tar.gz"],
     build_file = "@//third_party:fmt.BUILD",
 )
+
+# yaml
+http_archive(
+    name = "yaml-cpp",
+    sha256 = "298593d9c440fd9034b8b193d96318b76d49bc97c6ceadb7b0836edf0b6d7539",
+    urls = ["https://github.com/jbeder/yaml-cpp/releases/download/yaml-cpp-0.9.0/yaml-cpp-yaml-cpp-0.9.0.tar.gz"],
+    build_file = "@//third_party:yaml-cpp.BUILD",
+)

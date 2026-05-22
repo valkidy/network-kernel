@@ -86,6 +86,11 @@ bool Kernel_ServerSetEntityState(
     uint16_t animation_state,
     uint32_t visual_flags);
 
+bool Kernel_ServerSubmitEntityInput(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    const PlayerInput* input);
+
 bool Kernel_ServerGetEntityState(
     KernelHandle* kernel,
     uint32_t net_id,

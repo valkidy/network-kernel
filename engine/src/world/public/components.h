@@ -62,6 +62,14 @@ struct WeaponState {
     bool is_reloading = false;
 };
 
+struct WeaponTuning {
+    std::array<bool, kWeaponCount> override_weapon{false, false, false, false};
+    std::array<std::uint16_t, kWeaponCount> magazine_size{0, 0, 0, 0};
+    std::array<std::uint16_t, kWeaponCount> damage{0, 0, 0, 0};
+    std::array<std::uint32_t, kWeaponCount> cooldown_ticks{0, 0, 0, 0};
+    std::array<std::uint32_t, kWeaponCount> reload_ticks{0, 0, 0, 0};
+};
+
 struct Hitbox {
     glm::vec3 center{0.0f, 0.0f, 0.0f};
     glm::vec3 half_extents{0.5f, 0.5f, 0.5f};
