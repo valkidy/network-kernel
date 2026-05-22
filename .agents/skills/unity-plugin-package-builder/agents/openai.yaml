@@ -1,4 +1,4 @@
 interface:
   display_name: "Unity Package Builder"
   short_description: "Build and verify the Unity UPM package"
-  default_prompt: "Use $unity-plugin-package-builder or /unity-package to build, stage, pack, and smoke-check com.network-example.kernel as a Unity UPM .tgz package."
+  default_prompt: "Use $unity-plugin-package-builder or /unity-package to build, stage, pack, smoke-check, add inferred release notes, and auto-commit eligible com.network-example.kernel UPM package changes."

@@ -49,6 +49,7 @@ cat <<'SYMBOLS'
 00000000 T _Kernel_StartDedicatedServer
 00000000 T _Kernel_Update
 00000000 T _Kernel_SubmitInput
+00000000 T _Kernel_ServerSubmitEntityInput
 00000000 T _Kernel_GetRenderStates
 00000000 T _Kernel_GetRenderStatesAtTime
 00000000 T _Kernel_PollEvents

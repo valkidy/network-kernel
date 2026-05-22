@@ -24,20 +24,36 @@ you are editing this script itself.
 Common invocations:
 
 ```bash
-# Full macOS build, stage, verify, pack into plugins/output, and optional Unity batchmode smoke.
-.agents/skills/unity-plugin-package-builder/scripts/run-unity-plugin-package-builder.sh
+# Default /unity-package behavior: build, stage, verify, pack, update release notes,
+# and auto-commit eligible package changes. Infer concise release-note bullets from
+# the actual package/native changes when the user does not provide them.
+.agents/skills/unity-plugin-package-builder/scripts/run-unity-plugin-package-builder.sh \
+  --release-note "updates macOS native plugin"
 
 # Verify package layout/ABI/export symbols without building or staging.
 .agents/skills/unity-plugin-package-builder/scripts/run-unity-plugin-package-builder.sh --mode verify --unity off
 
-# Build and pack without launching Unity.
-.agents/skills/unity-plugin-package-builder/scripts/run-unity-plugin-package-builder.sh --unity off
+# Build and pack without launching Unity, still using the default release-note
+# and auto-commit flow.
+.agents/skills/unity-plugin-package-builder/scripts/run-unity-plugin-package-builder.sh \
+  --unity off \
+  --release-note "updates macOS native plugin"
 
-# Build, update release notes, and auto-commit eligible package changes.
+# Build, update release notes, and auto-commit eligible package changes with
+# explicit user- or task-supplied bullets.
 .agents/skills/unity-plugin-package-builder/scripts/run-unity-plugin-package-builder.sh \
   --release-note "fixes managed host startup" \
   --release-note "updates macOS native plugin"
 ```
+
+When the user invokes `/unity-package`, `$unity-plugin-package-builder`, or asks
+to build/pack the Unity package without extra options, include at least one
+`--release-note` by default so the script can complete its normal release-note
+and auto-commit finalization. Prefer a concise bullet inferred from the actual
+diff, such as `updates macOS native plugin` for dylib-only staging or `adds HP
+and MaxHP to Unity render states` for visible ABI/API changes. Only omit
+`--release-note` when the user explicitly asks for verify-only, no commit, or
+`--auto-commit off`.
 
 ## Branch And Safety
 
@@ -95,7 +111,9 @@ Auto commit details:
   ```
 
 - If package files changed but no `--release-note` was supplied, the script
-  skips the commit and tells the user to rerun with release-note bullets.
+  skips the commit and tells the user to rerun with release-note bullets. Treat
+  that as a caller error for normal `/unity-package` runs; rerun with inferred
+  release-note bullets unless the user explicitly requested no finalization.
 - If any dirty file falls outside the allowlist, the script skips the commit and
   lists the blocking paths. It does not stage unrelated files.
 - Use `--auto-commit off` when validating or packing without changing release
