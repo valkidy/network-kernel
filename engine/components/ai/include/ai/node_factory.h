@@ -12,6 +12,8 @@
 
 namespace network_example::ai {
 
+class NodeFactory;
+
 struct ScoreResult {
     bool valid = false;
     float value = 0.0f;
@@ -21,7 +23,54 @@ struct ScoreResult {
 };
 
 using ScoreFunction = std::function<ScoreResult(const AIContext&)>;
-using NodeCreator = std::function<NodePtr()>;
+struct NodeConfig;
+
+struct UtilityChildConfig {
+    UtilityChildConfig();
+    UtilityChildConfig(std::string child_name,
+                       std::string score_function,
+                       NodeConfig child_node);
+
+    std::string name;
+    std::string score;
+    std::shared_ptr<NodeConfig> node;
+};
+
+struct NodeConfig {
+    NodeConfig();
+    explicit NodeConfig(std::string node_type);
+    NodeConfig(std::string node_type,
+               std::string node_name,
+               std::unordered_map<std::string, std::string> node_params);
+
+    std::string type;
+    std::string name;
+    std::unordered_map<std::string, std::string> params;
+    std::vector<NodeConfig> children;
+    std::vector<UtilityChildConfig> utility_children;
+};
+
+struct NodeBuildReport {
+    std::vector<std::string> errors;
+    std::vector<std::string> required_nodes;
+    std::vector<std::string> required_scores;
+    std::vector<std::string> required_features;
+    std::vector<std::string> missing_nodes;
+    std::vector<std::string> missing_scores;
+    std::vector<std::string> missing_features;
+
+    bool supported() const;
+};
+
+struct NodeBuildResult {
+    NodePtr node;
+    NodeBuildReport report;
+
+    bool success() const;
+};
+
+using NodeCreator =
+    std::function<NodePtr(const NodeConfig&, const NodeFactory&)>;
 
 struct UtilityCandidate {
     std::string name;
@@ -32,9 +81,11 @@ struct UtilityCandidate {
 class NodeFactory {
 public:
     void register_node_type(std::string type, NodeCreator creator);
+    void register_node_type(std::string type);
     void register_score_function(std::string type, ScoreFunction score);
 
     bool has_node_type(const std::string& type) const;
+    NodeBuildResult create_node(const NodeConfig& config) const;
     NodePtr create_node(const std::string& type) const;
     std::optional<ScoreFunction> score_function(const std::string& type) const;
 

@@ -1,6 +1,7 @@
 #include "ai/scenario_analysis.h"
 
 #include <cassert>
+#include <string>
 
 int main() {
     network_example::ai::ScenarioAnalysisResult analysis;

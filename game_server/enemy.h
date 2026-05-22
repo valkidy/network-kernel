@@ -17,6 +17,7 @@ struct Enemy {
     std::uint32_t net_id = 0;
     KernelVec3 position{0.0f, 0.0f, 0.0f};
     KernelVec3 velocity{0.0f, 0.0f, 0.0f};
+    std::uint16_t hp = 50;
     std::uint16_t animation_state = kEnemyAnimationIdle;
     std::uint32_t target_player_net_id = 0;
 };

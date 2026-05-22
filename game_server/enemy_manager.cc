@@ -87,6 +87,7 @@ void EnemyManager::spawn_initial_enemy() {
     enemy.net_id = net_id;
     enemy.position = create_info.position;
     enemy.velocity = KernelVec3{0.0f, 0.0f, 0.0f};
+    enemy.hp = 50;
     enemy.animation_state = create_info.animation_state;
     enemies_.push_back(enemy);
     has_spawned_initial_enemy_ = true;

@@ -15,7 +15,10 @@ cc_library(
         "enemy_manager.h",
         "game_server.h",
     ],
-    deps = ["//engine/src/kernel:kernel_api"],
+    deps = [
+        "//engine/components/ai:ai",
+        "//engine/src/kernel:kernel_api",
+    ],
 )
 
 cc_library(

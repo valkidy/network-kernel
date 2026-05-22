@@ -1,15 +1,50 @@
 #include "game_server/enemy_ai_controller.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
 #include <limits>
+
+#include "ai/ai_context.h"
+#include "ai/ai_tree.h"
+#include "ai/yaml_loader.h"
 
 namespace network_example::game_server {
 namespace {
 
 constexpr std::uint32_t kMaxQueriedPlayers = 64;
 constexpr float kEpsilon = 0.0001f;
+constexpr float kEnemyMaxHp = 50.0f;
+constexpr const char* kEnemyTreeYaml = R"yaml(
+tree: EnemySoldierAI
+root:
+  type: Composite.Selector
+  children:
+    - type: Composite.Sequence
+      name: Combat
+      children:
+        - type: Condition.HasVisibleEnemy
+        - type: Composite.UtilitySelector
+          name: CombatDecision
+          children:
+            - name: Attack
+              score: Score.AttackWhenHealthy
+              node:
+                type: Action.AttackTarget
+                target: nearestEnemyId
+            - name: Flee
+              score: Score.FleeWhenCriticalHp
+              node:
+                type: Action.FleeFromTarget
+                target: nearestEnemyId
+            - name: RequestHelp
+              score: Score.RequestHelpWhenInjured
+              node:
+                type: Action.RequestHelp
+                target: nearestEnemyId
+    - type: Action.Patrol
+)yaml";
 
 KernelVec3 zero_vec3() {
     return KernelVec3{0.0f, 0.0f, 0.0f};
@@ -25,6 +60,17 @@ float length_squared(const KernelVec3& value) {
 
 KernelVec3 scale(const KernelVec3& value, float scalar) {
     return KernelVec3{value.x * scalar, value.y * scalar, value.z * scalar};
+}
+
+KernelVec3 normalized_direction(const KernelVec3& from,
+                                const KernelVec3& to,
+                                float speed) {
+    const KernelVec3 delta = subtract(to, from);
+    const float distance_squared = length_squared(delta);
+    if (distance_squared <= kEpsilon * kEpsilon) {
+        return zero_vec3();
+    }
+    return scale(delta, speed / std::sqrt(distance_squared));
 }
 
 std::vector<EnemyAiTarget> query_players(KernelHandle* kernel) {
@@ -50,13 +96,16 @@ std::vector<EnemyAiTarget> query_players(KernelHandle* kernel) {
     return players;
 }
 
-}  // namespace
+network_example::ai::AITreeInstance make_enemy_tree() {
+    network_example::ai::YamlLoadResult loaded =
+        network_example::ai::load_tree_from_yaml(kEnemyTreeYaml);
+    return network_example::ai::AITreeInstance(std::move(loaded.root));
+}
 
-EnemyAIController::EnemyAIController(EnemyAiConfig config) : config_(config) {}
-
-EnemyAiDecision EnemyAIController::decide(
-    const Enemy& enemy,
-    const std::vector<EnemyAiTarget>& players) const {
+const EnemyAiTarget* nearest_target(const Enemy& enemy,
+                                    const std::vector<EnemyAiTarget>& players,
+                                    float chase_range,
+                                    float* out_distance_squared) {
     const EnemyAiTarget* nearest_player = nullptr;
     float nearest_distance_squared = std::numeric_limits<float>::max();
     for (const EnemyAiTarget& player : players) {
@@ -67,23 +116,87 @@ EnemyAiDecision EnemyAIController::decide(
             nearest_player = &player;
         }
     }
-
+    if (out_distance_squared != nullptr) {
+        *out_distance_squared = nearest_distance_squared;
+    }
     if (nearest_player == nullptr ||
-        nearest_distance_squared > config_.chase_range * config_.chase_range) {
-        return EnemyAiDecision{zero_vec3(), kEnemyAnimationIdle, 0};
+        nearest_distance_squared > chase_range * chase_range) {
+        return nullptr;
+    }
+    return nearest_player;
+}
+
+network_example::ai::AIContext build_context(
+    const Enemy& enemy,
+    const EnemyAiTarget* target,
+    float distance_squared) {
+    network_example::ai::AIContext context;
+    context.set_feature("hasVisibleEnemy", target != nullptr);
+    context.set_feature(
+        "hp01",
+        std::clamp(static_cast<float>(enemy.hp) / kEnemyMaxHp, 0.0f, 1.0f));
+    context.set_feature("isAtTarget", distance_squared <= kEpsilon * kEpsilon);
+    if (target != nullptr) {
+        context.set_feature("nearestEnemyId", target->net_id);
+    }
+    return context;
+}
+
+EnemyAiDecision idle_decision(std::uint32_t target_player_net_id = 0) {
+    return EnemyAiDecision{
+        zero_vec3(),
+        kEnemyAnimationIdle,
+        target_player_net_id,
+    };
+}
+
+EnemyAiDecision execute_command(const network_example::ai::AICommand& command,
+                                const Enemy& enemy,
+                                const EnemyAiTarget* target,
+                                float move_speed) {
+    const std::uint32_t target_net_id = target != nullptr ? target->net_id : 0;
+    if (command.type == "AttackTarget" && target != nullptr) {
+        return EnemyAiDecision{
+            normalized_direction(enemy.position, target->position, move_speed),
+            kEnemyAnimationChasing,
+            target_net_id,
+        };
+    }
+    if (command.type == "FleeFromTarget" && target != nullptr) {
+        return EnemyAiDecision{
+            normalized_direction(target->position, enemy.position, move_speed),
+            kEnemyAnimationChasing,
+            target_net_id,
+        };
+    }
+    return idle_decision(target_net_id);
+}
+
+}  // namespace
+
+EnemyAIController::EnemyAIController(EnemyAiConfig config) : config_(config) {}
+
+EnemyAiDecision EnemyAIController::decide(
+    const Enemy& enemy,
+    const std::vector<EnemyAiTarget>& players) const {
+    float nearest_distance_squared = std::numeric_limits<float>::max();
+    const EnemyAiTarget* nearest_player = nearest_target(
+        enemy, players, config_.chase_range, &nearest_distance_squared);
+
+    network_example::ai::AITreeInstance tree = make_enemy_tree();
+    if (!tree.has_root()) {
+        return idle_decision();
     }
 
-    const KernelVec3 to_player = subtract(nearest_player->position, enemy.position);
-    const float distance = std::sqrt(nearest_distance_squared);
-    KernelVec3 velocity = zero_vec3();
-    if (distance > kEpsilon) {
-        velocity = scale(to_player, config_.move_speed / distance);
+    network_example::ai::AIContext context =
+        build_context(enemy, nearest_player, nearest_distance_squared);
+    network_example::ai::AICommandBuffer commands;
+    tree.tick(context, &commands);
+    if (commands.empty()) {
+        return idle_decision(nearest_player != nullptr ? nearest_player->net_id : 0);
     }
-    return EnemyAiDecision{
-        velocity,
-        kEnemyAnimationChasing,
-        nearest_player->net_id,
-    };
+    return execute_command(
+        commands.commands().front(), enemy, nearest_player, config_.move_speed);
 }
 
 void EnemyAIController::tick(KernelHandle* kernel, std::vector<Enemy>* enemies) const {
@@ -100,6 +213,7 @@ void EnemyAIController::tick(KernelHandle* kernel, std::vector<Enemy>* enemies) 
         }
 
         enemy.position = state.position;
+        enemy.hp = state.hp;
         const EnemyAiDecision decision = decide(enemy, players);
         enemy.velocity = decision.velocity;
         enemy.animation_state = decision.animation_state;

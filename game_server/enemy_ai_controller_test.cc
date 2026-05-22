@@ -17,6 +17,7 @@ int main() {
     network_example::game_server::Enemy enemy;
     enemy.net_id = 10;
     enemy.position = KernelVec3{0.0f, 0.0f, 0.0f};
+    enemy.hp = 50;
 
     const network_example::game_server::EnemyAiDecision no_player =
         controller.decide(enemy, {});
@@ -40,6 +41,27 @@ int main() {
     assert(near(chasing.velocity.y, 0.0f));
     assert(near(chasing.velocity.z, 0.0f));
 
+    enemy.hp = 4;
+    const network_example::game_server::EnemyAiDecision fleeing =
+        controller.decide(enemy, players);
+    assert(fleeing.animation_state ==
+           network_example::game_server::kEnemyAnimationChasing);
+    assert(fleeing.target_player_net_id == 2);
+    assert(near(fleeing.velocity.x, -2.5f));
+    assert(near(fleeing.velocity.y, 0.0f));
+    assert(near(fleeing.velocity.z, 0.0f));
+
+    enemy.hp = 20;
+    const network_example::game_server::EnemyAiDecision requesting_help =
+        controller.decide(enemy, players);
+    assert(requesting_help.animation_state ==
+           network_example::game_server::kEnemyAnimationIdle);
+    assert(requesting_help.target_player_net_id == 2);
+    assert(near(requesting_help.velocity.x, 0.0f));
+    assert(near(requesting_help.velocity.y, 0.0f));
+    assert(near(requesting_help.velocity.z, 0.0f));
+
+    enemy.hp = 50;
     const std::vector<network_example::game_server::EnemyAiTarget> far_players{
         {3, KernelVec3{20.0f, 0.0f, 0.0f}},
     };

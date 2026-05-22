@@ -3,10 +3,60 @@
 #include <algorithm>
 #include <cstddef>
 #include <optional>
+#include <string>
 #include <utility>
 
 namespace network_example::ai {
 namespace {
+
+void add_unique(std::vector<std::string>* values, std::string value) {
+    if (std::find(values->begin(), values->end(), value) == values->end()) {
+        values->push_back(std::move(value));
+    }
+}
+
+void merge_unique(std::vector<std::string>* target,
+                  const std::vector<std::string>& source) {
+    for (const std::string& value : source) {
+        add_unique(target, value);
+    }
+}
+
+void merge_report(NodeBuildReport* target, const NodeBuildReport& source) {
+    merge_unique(&target->errors, source.errors);
+    merge_unique(&target->required_nodes, source.required_nodes);
+    merge_unique(&target->required_scores, source.required_scores);
+    merge_unique(&target->required_features, source.required_features);
+    merge_unique(&target->missing_nodes, source.missing_nodes);
+    merge_unique(&target->missing_scores, source.missing_scores);
+    merge_unique(&target->missing_features, source.missing_features);
+}
+
+std::string param_or_default(const NodeConfig& config,
+                             const std::string& name,
+                             std::string fallback) {
+    const auto iter = config.params.find(name);
+    if (iter == config.params.end()) {
+        return fallback;
+    }
+    return iter->second;
+}
+
+std::optional<float> float_param(const NodeConfig& config,
+                                 const std::string& name,
+                                 NodeBuildReport* report) {
+    const auto iter = config.params.find(name);
+    if (iter == config.params.end()) {
+        add_unique(&report->errors, "missing scalar field: " + name);
+        return std::nullopt;
+    }
+    try {
+        return std::stof(iter->second);
+    } catch (...) {
+        add_unique(&report->errors, "invalid float field: " + name);
+        return std::nullopt;
+    }
+}
 
 class SelectorNode final : public AINode {
 public:
@@ -243,8 +293,42 @@ ScoreResult ScoreResult::valid_score(float score) {
     return ScoreResult{true, score};
 }
 
+UtilityChildConfig::UtilityChildConfig() = default;
+
+UtilityChildConfig::UtilityChildConfig(std::string child_name,
+                                       std::string score_function,
+                                       NodeConfig child_node)
+    : name(std::move(child_name)),
+      score(std::move(score_function)),
+      node(std::make_shared<NodeConfig>(std::move(child_node))) {}
+
+NodeConfig::NodeConfig() = default;
+
+NodeConfig::NodeConfig(std::string node_type) : type(std::move(node_type)) {}
+
+NodeConfig::NodeConfig(
+    std::string node_type,
+    std::string node_name,
+    std::unordered_map<std::string, std::string> node_params)
+    : type(std::move(node_type)),
+      name(std::move(node_name)),
+      params(std::move(node_params)) {}
+
+bool NodeBuildReport::supported() const {
+    return errors.empty() && missing_nodes.empty() && missing_scores.empty() &&
+           missing_features.empty();
+}
+
+bool NodeBuildResult::success() const {
+    return node != nullptr && report.supported();
+}
+
 void NodeFactory::register_node_type(std::string type, NodeCreator creator) {
     node_creators_[std::move(type)] = std::move(creator);
+}
+
+void NodeFactory::register_node_type(std::string type) {
+    node_creators_[std::move(type)] = nullptr;
 }
 
 void NodeFactory::register_score_function(std::string type, ScoreFunction score) {
@@ -255,12 +339,108 @@ bool NodeFactory::has_node_type(const std::string& type) const {
     return node_creators_.find(type) != node_creators_.end();
 }
 
-NodePtr NodeFactory::create_node(const std::string& type) const {
-    const auto iter = node_creators_.find(type);
+NodeBuildResult NodeFactory::create_node(const NodeConfig& config) const {
+    NodeBuildResult result;
+    add_unique(&result.report.required_nodes, config.type);
+
+    const auto iter = node_creators_.find(config.type);
     if (iter == node_creators_.end()) {
-        return nullptr;
+        add_unique(&result.report.missing_nodes, config.type);
+        return result;
     }
-    return iter->second();
+
+    if (config.type == "Composite.Selector" || config.type == "Composite.Sequence") {
+        if (config.children.empty()) {
+            add_unique(&result.report.errors,
+                       config.type + " requires non-empty children");
+            return result;
+        }
+
+        std::vector<NodePtr> children;
+        for (const NodeConfig& child : config.children) {
+            NodeBuildResult child_result = create_node(child);
+            merge_report(&result.report, child_result.report);
+            if (child_result.node != nullptr) {
+                children.push_back(std::move(child_result.node));
+            }
+        }
+        if (!result.report.supported() || children.empty()) {
+            return result;
+        }
+        result.node = config.type == "Composite.Selector"
+                          ? make_selector(std::move(children))
+                          : make_sequence(std::move(children));
+        return result;
+    }
+
+    if (config.type == "Composite.UtilitySelector") {
+        if (config.utility_children.empty()) {
+            add_unique(&result.report.errors,
+                       "Composite.UtilitySelector requires non-empty children");
+            return result;
+        }
+
+        std::vector<UtilityCandidate> candidates;
+        for (const UtilityChildConfig& child : config.utility_children) {
+            add_unique(&result.report.required_scores, child.score);
+            const auto score = score_function(child.score);
+            if (!score.has_value()) {
+                add_unique(&result.report.missing_scores, child.score);
+                continue;
+            }
+            if (child.node == nullptr) {
+                add_unique(&result.report.errors,
+                           "utility child requires map field: node");
+                continue;
+            }
+            NodeBuildResult child_result = create_node(*child.node);
+            merge_report(&result.report, child_result.report);
+            if (child_result.node != nullptr) {
+                candidates.push_back(UtilityCandidate{
+                    child.name,
+                    *score,
+                    std::move(child_result.node),
+                });
+            }
+        }
+        if (!result.report.supported() || candidates.empty()) {
+            return result;
+        }
+        result.node = make_utility_selector(std::move(candidates));
+        return result;
+    }
+
+    if (config.type == "Condition.HasVisibleEnemy") {
+        add_unique(&result.report.required_features, "hasVisibleEnemy");
+    } else if (config.type == "Condition.HpAbove" ||
+               config.type == "Condition.HpBelow") {
+        add_unique(&result.report.required_features, "hp01");
+    } else if (config.type == "Condition.HasAmmo") {
+        add_unique(&result.report.required_features, "hasAmmo");
+    } else if (config.type == "Condition.IsAtTarget") {
+        add_unique(&result.report.required_features, "isAtTarget");
+    } else if (config.type == "Action.MoveTo" ||
+               config.type == "Action.AttackTarget" ||
+               config.type == "Action.FleeFromTarget" ||
+               config.type == "Action.RequestHelp") {
+        add_unique(
+            &result.report.required_features,
+            param_or_default(config, "target", "nearestEnemyId"));
+    }
+
+    if (!iter->second) {
+        add_unique(&result.report.missing_nodes, config.type);
+        return result;
+    }
+    result.node = iter->second(config, *this);
+    if (result.node == nullptr) {
+        add_unique(&result.report.errors, "failed to create node: " + config.type);
+    }
+    return result;
+}
+
+NodePtr NodeFactory::create_node(const std::string& type) const {
+    return create_node(NodeConfig{type}).node;
 }
 
 std::optional<ScoreFunction> NodeFactory::score_function(
@@ -274,10 +454,59 @@ std::optional<ScoreFunction> NodeFactory::score_function(
 
 NodeFactory make_default_node_factory() {
     NodeFactory factory;
-    factory.register_node_type("Action.Patrol", []() {
+    factory.register_node_type("Composite.Selector");
+    factory.register_node_type("Composite.Sequence");
+    factory.register_node_type("Composite.UtilitySelector");
+    factory.register_node_type("Condition.HasVisibleEnemy", [](
+        const NodeConfig&, const NodeFactory&) {
+        return make_condition_has_visible_enemy();
+    });
+    factory.register_node_type("Condition.HpAbove", [](
+        const NodeConfig& config, const NodeFactory&) {
+        NodeBuildReport report;
+        const std::optional<float> value = float_param(config, "value", &report);
+        return value.has_value() ? make_condition_hp_above(*value) : nullptr;
+    });
+    factory.register_node_type("Condition.HpBelow", [](
+        const NodeConfig& config, const NodeFactory&) {
+        NodeBuildReport report;
+        const std::optional<float> value = float_param(config, "value", &report);
+        return value.has_value() ? make_condition_hp_below(*value) : nullptr;
+    });
+    factory.register_node_type("Condition.HasAmmo", [](
+        const NodeConfig&, const NodeFactory&) {
+        return make_condition_has_ammo();
+    });
+    factory.register_node_type("Condition.IsAtTarget", [](
+        const NodeConfig&, const NodeFactory&) {
+        return make_condition_is_at_target();
+    });
+    factory.register_node_type("Action.Patrol", [](
+        const NodeConfig&, const NodeFactory&) {
         return make_action_patrol();
     });
-    factory.register_node_type("Action.StopMovement", []() {
+    factory.register_node_type("Action.MoveTo", [](
+        const NodeConfig& config, const NodeFactory&) {
+        return make_action_move_to(
+            param_or_default(config, "target", "nearestEnemyId"));
+    });
+    factory.register_node_type("Action.AttackTarget", [](
+        const NodeConfig& config, const NodeFactory&) {
+        return make_action_attack_target(
+            param_or_default(config, "target", "nearestEnemyId"));
+    });
+    factory.register_node_type("Action.FleeFromTarget", [](
+        const NodeConfig& config, const NodeFactory&) {
+        return make_action_flee_from_target(
+            param_or_default(config, "target", "nearestEnemyId"));
+    });
+    factory.register_node_type("Action.RequestHelp", [](
+        const NodeConfig& config, const NodeFactory&) {
+        return make_action_request_help(
+            param_or_default(config, "target", "nearestEnemyId"));
+    });
+    factory.register_node_type("Action.StopMovement", [](
+        const NodeConfig&, const NodeFactory&) {
         return make_action_stop_movement();
     });
     factory.register_score_function(
@@ -357,15 +586,14 @@ ScoreResult score_attack_when_healthy(const AIContext& context) {
 }
 
 ScoreResult score_flee_when_critical_hp(const AIContext& context) {
-    return score_from_hp(context, [](float hp) { return 1.0f - hp; });
+    return score_from_hp(context, [](float hp) {
+        return hp < 0.1f ? 1.0f : 0.0f;
+    });
 }
 
 ScoreResult score_request_help_when_injured(const AIContext& context) {
     return score_from_hp(context, [](float hp) {
-        if (hp < 0.1f || hp > 0.5f) {
-            return 0.0f;
-        }
-        return 1.0f - hp;
+        return hp >= 0.1f && hp <= 0.5f ? 1.0f : 0.0f;
     });
 }
 
