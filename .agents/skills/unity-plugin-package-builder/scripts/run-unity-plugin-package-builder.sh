@@ -5,15 +5,19 @@ MODE="all"
 PLATFORM="macos"
 UNITY_SETTING="auto"
 OUTPUT_DIR=""
+AUTO_COMMIT="on"
 WORK_ROOT="/private/tmp/network-example-unity-package-builder"
 OUTPUT_BASE="${OUTPUT_BASE:-/private/tmp/bazel-network-example}"
 UNITY_TIMEOUT_SECONDS="${UNITY_TIMEOUT_SECONDS:-180}"
+OPENSSL_LIB_DIR="${OPENSSL_LIB_DIR:-/opt/homebrew/opt/openssl@3/lib}"
 
 PACKAGE_DIR_REL="plugins/com.network-example.kernel"
 PACKAGE_NAME="com.network-example.kernel"
 NATIVE_TARGET="//engine/src/kernel:network_kernel_shared"
 BUILT_DYLIB_SUBPATH="engine/src/kernel/libnetwork_kernel.dylib"
 STAGED_DYLIB_REL="${PACKAGE_DIR_REL}/Assets/Plugins/macOS/libnetwork_kernel.dylib"
+RELEASE_NOTES_REL="${PACKAGE_DIR_REL}/RELEASE_NOTES.md"
+RELEASE_NOTES=()
 
 REQUIRED_EXPORTS=(
   Kernel_Create
@@ -53,6 +57,8 @@ Options:
   --platform macos
   --unity auto|off|/absolute/path/to/Unity
   --output-dir /absolute/path
+  --release-note "bullet text"    May be repeated; prepended to RELEASE_NOTES.md.
+  --auto-commit on|off            Commit eligible package changes after success.
   -h, --help
 
 Default:
@@ -93,6 +99,16 @@ while [[ "$#" -gt 0 ]]; do
       OUTPUT_DIR="$2"
       shift 2
       ;;
+    --release-note)
+      [[ "$#" -ge 2 ]] || die "--release-note requires a value"
+      RELEASE_NOTES+=("$2")
+      shift 2
+      ;;
+    --auto-commit)
+      [[ "$#" -ge 2 ]] || die "--auto-commit requires a value"
+      AUTO_COMMIT="$2"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -111,6 +127,11 @@ esac
 case "$PLATFORM" in
   macos) ;;
   *) die "unsupported platform '$PLATFORM'. Current package builder supports macos only." ;;
+esac
+
+case "$AUTO_COMMIT" in
+  on|off) ;;
+  *) die "unsupported --auto-commit '$AUTO_COMMIT'. Use on or off." ;;
 esac
 
 find_repo_root() {
@@ -133,9 +154,20 @@ require_command() {
 repo_root="$(find_repo_root)" || die "run this script from the network-example repo or one of its subdirectories"
 cd "$repo_root"
 
+require_branch() {
+  local current_branch
+  current_branch="$(git branch --show-current 2>/dev/null || true)"
+  if [[ "$current_branch" != "feat-unity-plugin" ]]; then
+    die "unity package builder must run on branch feat-unity-plugin; current branch is '${current_branch:-detached or unknown}'"
+  fi
+}
+
+require_branch
+
 PACKAGE_DIR="$repo_root/$PACKAGE_DIR_REL"
 BUILT_DYLIB=""
 STAGED_DYLIB="$repo_root/$STAGED_DYLIB_REL"
+RELEASE_NOTES_PATH="$repo_root/$RELEASE_NOTES_REL"
 
 if [[ -z "$OUTPUT_DIR" ]]; then
   OUTPUT_DIR="$repo_root/plugins/output"
@@ -166,9 +198,13 @@ preflight() {
   mkdir -p "$OUTPUT_DIR" "$WORK_ROOT"
   [[ -w "$OUTPUT_DIR" ]] || die "output dir is not writable: $OUTPUT_DIR"
   [[ -w "$WORK_ROOT" ]] || die "work dir is not writable: $WORK_ROOT"
-  [[ -d /opt/homebrew/opt/openssl@3/lib ]] || die "missing Homebrew OpenSSL library dir: /opt/homebrew/opt/openssl@3/lib"
-  [[ -f /opt/homebrew/opt/openssl@3/lib/libssl.3.dylib ]] || die "missing /opt/homebrew/opt/openssl@3/lib/libssl.3.dylib"
-  [[ -f /opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib ]] || die "missing /opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib"
+  [[ -d "$OPENSSL_LIB_DIR" ]] || die "missing Homebrew OpenSSL library dir: $OPENSSL_LIB_DIR"
+  [[ -f "$OPENSSL_LIB_DIR/libssl.3.dylib" ]] || die "missing $OPENSSL_LIB_DIR/libssl.3.dylib"
+  [[ -f "$OPENSSL_LIB_DIR/libcrypto.3.dylib" ]] || die "missing $OPENSSL_LIB_DIR/libcrypto.3.dylib"
+}
+
+read_package_version() {
+  node -e "const p=require(process.argv[1]); console.log(p.version || '')" "$PACKAGE_DIR/package.json"
 }
 
 build_native() {
@@ -276,7 +312,7 @@ copy_clean_package() {
 pack_package() {
   verify_package
   local version staging_dir npm_output tgz_name tgz_path
-  version="$(node -e "const p=require(process.argv[1]); console.log(p.version || '')" "$PACKAGE_DIR/package.json")"
+  version="$(read_package_version)"
   [[ -n "$version" ]] || die "package.json is missing version"
   staging_dir="$WORK_ROOT/staging/$PACKAGE_NAME"
   copy_clean_package "$staging_dir"
@@ -403,6 +439,97 @@ run_unity_smoke() {
   die "Unity smoke failed with exit code $unity_status"
 }
 
+write_release_notes() {
+  local version="$1"
+  local temp_path
+  mkdir -p "$(dirname "$RELEASE_NOTES_PATH")"
+  temp_path="$RELEASE_NOTES_PATH.tmp.$$"
+  {
+    printf '%s release notes:\n\n' "$version"
+    local release_note
+    for release_note in "${RELEASE_NOTES[@]}"; do
+      printf -- '- %s\n' "$release_note"
+    done
+    if [[ -s "$RELEASE_NOTES_PATH" ]]; then
+      printf '\n\n'
+      cat "$RELEASE_NOTES_PATH"
+    fi
+  } > "$temp_path"
+  mv "$temp_path" "$RELEASE_NOTES_PATH"
+  note "Updated release notes: $RELEASE_NOTES_PATH"
+}
+
+is_auto_commit_allowed_path() {
+  local path="$1"
+  if [[ "$path" == "$STAGED_DYLIB_REL" || "$path" == "$RELEASE_NOTES_REL" ]]; then
+    return 0
+  fi
+  if [[ "$path" == "$PACKAGE_DIR_REL/"* && "$path" == *.cs ]]; then
+    return 0
+  fi
+  return 1
+}
+
+finalize_auto_commit() {
+  if [[ "$AUTO_COMMIT" == "off" ]]; then
+    note "Auto commit skipped: disabled by --auto-commit off"
+    return 0
+  fi
+
+  local version
+  version="$(read_package_version)"
+  [[ -n "$version" ]] || die "package.json is missing version"
+
+  if [[ "${#RELEASE_NOTES[@]}" -gt 0 ]]; then
+    write_release_notes "$version"
+  fi
+
+  local status_output
+  status_output="$(git status --porcelain=v1 --untracked-files=all)"
+  if [[ -z "$status_output" ]]; then
+    note "Auto commit skipped: no package changes detected"
+    return 0
+  fi
+
+  if [[ "${#RELEASE_NOTES[@]}" -eq 0 ]]; then
+    note "Auto commit skipped: provide at least one --release-note to create $RELEASE_NOTES_REL"
+    return 0
+  fi
+
+  local disallowed_paths=()
+  local allowed_paths=()
+  local line path
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    path="${line:3}"
+    if is_auto_commit_allowed_path "$path"; then
+      allowed_paths+=("$path")
+    else
+      disallowed_paths+=("$path")
+    fi
+  done <<< "$status_output"
+
+  if [[ "${#disallowed_paths[@]}" -gt 0 ]]; then
+    note "Auto commit skipped: dirty files outside the Unity package release allowlist"
+    printf '%s\n' "${disallowed_paths[@]}"
+    return 0
+  fi
+
+  if [[ "${#allowed_paths[@]}" -eq 0 ]]; then
+    note "Auto commit skipped: no eligible package files changed"
+    return 0
+  fi
+
+  git add -- "${allowed_paths[@]}"
+  if git diff --cached --quiet; then
+    note "Auto commit skipped: no staged package changes"
+    return 0
+  fi
+
+  git commit -m "feat: bump Unity package to $version"
+  note "Auto commit created: feat: bump Unity package to $version"
+}
+
 ARTIFACT_PATH=""
 
 preflight
@@ -429,6 +556,8 @@ case "$MODE" in
     run_unity_smoke
     ;;
 esac
+
+finalize_auto_commit
 
 note "Summary"
 if [[ -f "$STAGED_DYLIB" ]]; then

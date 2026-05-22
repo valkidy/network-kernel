@@ -32,11 +32,17 @@ Common invocations:
 
 # Build and pack without launching Unity.
 .agents/skills/unity-plugin-package-builder/scripts/run-unity-plugin-package-builder.sh --unity off
+
+# Build, update release notes, and auto-commit eligible package changes.
+.agents/skills/unity-plugin-package-builder/scripts/run-unity-plugin-package-builder.sh \
+  --release-note "fixes managed host startup" \
+  --release-note "updates macOS native plugin"
 ```
 
 ## Branch And Safety
 
-- Stay on the current Unity plugin branch, normally `feat-unity-plugin`.
+- The script must run on `feat-unity-plugin`; it stops immediately on any other
+  branch and reports the current branch.
 - Stop and ask before switching branches.
 - Stop and ask before overwriting unrelated dirty files under
   `plugins/com.network-example.kernel/`, `engine/src/kernel/`, or this skill.
@@ -51,6 +57,9 @@ The script supports:
 - `--platform macos`
 - `--unity auto|off|/absolute/path/to/Unity`
 - `--output-dir /absolute/path`
+- `--release-note "bullet text"`; repeat for each bullet to prepend to
+  `plugins/com.network-example.kernel/RELEASE_NOTES.md`
+- `--auto-commit on|off`; defaults to `on`
 
 Default behavior:
 
@@ -67,6 +76,30 @@ Default behavior:
    reported as a clear skip, not a failure, unless the user provided an explicit
    Unity executable path. Override the default smoke timeout with
    `UNITY_TIMEOUT_SECONDS=<seconds>` when diagnosing slow Editor startup.
+7. If successful and `--auto-commit on`, prepend the supplied release-note
+   bullets to `plugins/com.network-example.kernel/RELEASE_NOTES.md` and commit
+   only when the dirty files are limited to the staged dylib, Unity package
+   `.cs` files, and `RELEASE_NOTES.md`.
+
+Auto commit details:
+
+- Commit message is `feat: bump Unity package to <package.json version>`.
+- Release notes use a single cumulative file. The newest block is inserted at
+  the top:
+
+  ```md
+  0.6.4 release notes:
+
+  - fixes managed host startup
+  - updates macOS native plugin
+  ```
+
+- If package files changed but no `--release-note` was supplied, the script
+  skips the commit and tells the user to rerun with release-note bullets.
+- If any dirty file falls outside the allowlist, the script skips the commit and
+  lists the blocking paths. It does not stage unrelated files.
+- Use `--auto-commit off` when validating or packing without changing release
+  notes or creating a commit.
 
 ## Reporting
 
@@ -76,3 +109,4 @@ Report:
 - Staged dylib path when staging runs.
 - Verification status.
 - Whether Unity smoke passed, skipped, or failed.
+- Release-note path and auto-commit result when finalization runs.
