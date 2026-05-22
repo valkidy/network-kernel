@@ -26,6 +26,21 @@ void assert_zero_velocity(const KernelVec3& velocity) {
     require(near(velocity.z, 0.0f));
 }
 
+KernelVec3 subtract(const KernelVec3& lhs, const KernelVec3& rhs) {
+    return KernelVec3{lhs.x - rhs.x, lhs.y - rhs.y, lhs.z - rhs.z};
+}
+
+float dot(const KernelVec3& lhs, const KernelVec3& rhs) {
+    return lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z;
+}
+
+void assert_flees_away_from_target(const KernelVec3& velocity,
+                                   const KernelVec3& enemy_position,
+                                   const KernelVec3& target_position) {
+    const KernelVec3 away_from_target = subtract(enemy_position, target_position);
+    require(dot(velocity, away_from_target) > 0.0f);
+}
+
 }  // namespace
 
 int main() {
@@ -83,8 +98,29 @@ int main() {
     require(near(fleeing.velocity.x, -2.5f));
     require(near(fleeing.velocity.y, 0.0f));
     require(near(fleeing.velocity.z, 0.0f));
+    assert_flees_away_from_target(
+        fleeing.velocity,
+        enemy.position,
+        players[1].position);
+
+    enemy.position = KernelVec3{3.0f, 0.0f, 4.0f};
+    const std::vector<network_example::game_server::EnemyAiTarget> diagonal_players{
+        {3, KernelVec3{0.0f, 0.0f, 0.0f}},
+    };
+    const network_example::game_server::EnemyAiDecision diagonal_fleeing =
+        controller.decide(enemy, diagonal_players);
+    require(diagonal_fleeing.animation_state ==
+            network_example::game_server::kEnemyAnimationChasing);
+    require(diagonal_fleeing.target_player_net_id == 3);
+    assert_flees_away_from_target(
+        diagonal_fleeing.velocity,
+        enemy.position,
+        diagonal_players[0].position);
+    require(diagonal_fleeing.velocity.x > 0.0f);
+    require(diagonal_fleeing.velocity.z > 0.0f);
 
     enemy.hp = 100;
+    enemy.position = KernelVec3{0.0f, 0.0f, 0.0f};
     const network_example::game_server::EnemyAiDecision holding =
         controller.decide(enemy, players);
     require(holding.animation_state ==

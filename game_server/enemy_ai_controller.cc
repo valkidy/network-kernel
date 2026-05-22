@@ -88,9 +88,19 @@ KernelVec3 velocity_toward(const KernelVec3& from,
     return scale(normalized_direction(from, to), speed);
 }
 
-KernelVec3 fallback_flee_velocity(const Enemy& enemy, float speed) {
+KernelVec3 patrol_fallback_velocity(const Enemy& enemy, float speed) {
     const float direction = enemy.patrol_direction < 0 ? -1.0f : 1.0f;
     return KernelVec3{direction * speed, 0.0f, 0.0f};
+}
+
+KernelVec3 flee_velocity_from_target(const Enemy& enemy,
+                                     const EnemyAiTarget& target,
+                                     float speed) {
+    KernelVec3 velocity = velocity_toward(target.position, enemy.position, speed);
+    if (length_squared(velocity) <= kEpsilon * kEpsilon) {
+        velocity = patrol_fallback_velocity(enemy, speed);
+    }
+    return velocity;
 }
 
 std::vector<EnemyAiTarget> query_players(KernelHandle* kernel) {
@@ -209,12 +219,8 @@ EnemyAiDecision execute_command(const network_example::ai::AICommand& command,
         return decision;
     }
     if (command.type == "FleeFromTarget" && target != nullptr) {
-        KernelVec3 velocity = velocity_toward(target->position, enemy.position, move_speed);
-        if (length_squared(velocity) <= kEpsilon * kEpsilon) {
-            velocity = fallback_flee_velocity(enemy, move_speed);
-        }
         return EnemyAiDecision{
-            velocity,
+            flee_velocity_from_target(enemy, *target, move_speed),
             KernelVec3{1.0f, 0.0f, 0.0f},
             kEnemyAnimationChasing,
             target_net_id,
