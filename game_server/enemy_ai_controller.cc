@@ -35,7 +35,7 @@ root:
               name: FleeCriticalHp
               children:
                 - type: Condition.HpBelow
-                  value: 0.1
+                  value: 0.2
                 - type: Action.FleeFromTarget
                   target: nearestEnemyId
             - type: Composite.Sequence
