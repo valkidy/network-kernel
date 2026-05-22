@@ -229,13 +229,16 @@ class CommandActionNode final : public AINode {
 public:
     CommandActionNode(std::string command_type,
                       std::string target_feature,
-                      bool long_running)
+                      bool long_running,
+                      std::string completion_feature = "")
         : command_type_(std::move(command_type)),
           target_feature_(std::move(target_feature)),
-          long_running_(long_running) {}
+          long_running_(long_running),
+          completion_feature_(std::move(completion_feature)) {}
 
     NodeStatus tick(const AIContext& context, AICommandBuffer* commands) override {
-        if (long_running_ && context.get_bool("isAtTarget").value_or(false)) {
+        if (long_running_ && !completion_feature_.empty() &&
+            context.get_bool(completion_feature_).value_or(false)) {
             running_ = false;
             return NodeStatus::kSuccess;
         }
@@ -271,6 +274,7 @@ private:
     std::string command_type_;
     std::string target_feature_;
     bool long_running_ = false;
+    std::string completion_feature_;
     bool running_ = false;
 };
 
@@ -563,7 +567,7 @@ NodePtr make_action_patrol() {
 
 NodePtr make_action_move_to(std::string target_feature) {
     return std::make_unique<CommandActionNode>(
-        "MoveTo", std::move(target_feature), true);
+        "MoveTo", std::move(target_feature), true, "isAtTarget");
 }
 
 NodePtr make_action_attack_target(std::string target_feature) {

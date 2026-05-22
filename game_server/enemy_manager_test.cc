@@ -103,6 +103,17 @@ void run_server_frames(
     }
 }
 
+void submit_player_fire(KernelHandle* kernel,
+                        std::uint32_t input_seq,
+                        std::uint8_t weapon_id) {
+    PlayerInput input{};
+    input.input_seq = input_seq;
+    input.buttons = InputButton_Fire;
+    input.selected_weapon = weapon_id;
+    input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
+    Kernel_SubmitInput(kernel, 1, &input);
+}
+
 }  // namespace
 
 int main() {
@@ -176,6 +187,19 @@ int main() {
     enemy_count = query_enemies(kernel, &enemy_states);
     require(enemy_count == 1);
     require(enemy_states[0].position.x == 6.0f);
+
+    std::uint32_t next_input_seq = 1;
+    for (int shot = 0; shot < 9; ++shot) {
+        submit_player_fire(kernel, next_input_seq++, 0);
+        run_server_frame(kernel, &game_server);
+        run_server_frames(kernel, &game_server, 3);
+    }
+    enemy_count = query_enemies(kernel, &enemy_states);
+    require(enemy_count == 1);
+    require(enemy_states[0].hp < 24);
+    require(enemy_states[0].velocity.x > 0.0f);
+    require(enemy_states[0].velocity.y == 0.0f);
+    require(enemy_states[0].velocity.z == 0.0f);
 
     KernelVec3 far_position{100.0f, 0.0f, 0.0f};
     KernelQuat identity_rotation{0.0f, 0.0f, 0.0f, 1.0f};
