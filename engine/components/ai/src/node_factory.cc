@@ -32,6 +32,15 @@ void merge_report(NodeBuildReport* target, const NodeBuildReport& source) {
     merge_unique(&target->missing_features, source.missing_features);
 }
 
+std::vector<std::string> score_required_features(const std::string& score) {
+    if (score == "Score.AttackWhenHealthy" ||
+        score == "Score.FleeWhenCriticalHp" ||
+        score == "Score.RequestHelpWhenInjured") {
+        return {"hp01"};
+    }
+    return {};
+}
+
 std::string param_or_default(const NodeConfig& config,
                              const std::string& name,
                              std::string fallback) {
@@ -387,6 +396,9 @@ NodeBuildResult NodeFactory::create_node(const NodeConfig& config) const {
         std::vector<UtilityCandidate> candidates;
         for (const UtilityChildConfig& child : config.utility_children) {
             add_unique(&result.report.required_scores, child.score);
+            merge_unique(
+                &result.report.required_features,
+                score_required_features(child.score));
             const auto score = score_function(child.score);
             if (!score.has_value()) {
                 add_unique(&result.report.missing_scores, child.score);

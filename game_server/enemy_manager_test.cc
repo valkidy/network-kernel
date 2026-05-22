@@ -200,6 +200,11 @@ int main() {
     require(enemy_states[0].velocity.x > 0.0f);
     require(enemy_states[0].velocity.y == 0.0f);
     require(enemy_states[0].velocity.z == 0.0f);
+    const float fleeing_enemy_x = enemy_states[0].position.x;
+    run_server_frame(kernel, &game_server);
+    enemy_count = query_enemies(kernel, &enemy_states);
+    require(enemy_count == 1);
+    require(enemy_states[0].position.x > fleeing_enemy_x);
 
     KernelVec3 far_position{100.0f, 0.0f, 0.0f};
     KernelQuat identity_rotation{0.0f, 0.0f, 0.0f, 1.0f};
