@@ -197,6 +197,7 @@ bool projectile_sweep_hits_target(
     World& world,
     entt::entity projectile_entity,
     PeerId owner_peer,
+    NetId ignored_net_id,
     const glm::vec3& previous_position,
     const glm::vec3& current_position,
     glm::vec3* impact_position) {
@@ -218,6 +219,9 @@ bool projectile_sweep_hits_target(
 
         const NetworkIdentity& target_identity =
             target_view.get<NetworkIdentity>(target_entity);
+        if (target_identity.net_id == ignored_net_id) {
+            continue;
+        }
         if (owner_peer != 0 && target_identity.owner_peer == owner_peer) {
             continue;
         }
@@ -321,6 +325,7 @@ void simulate_projectiles(
             world,
             entity,
             identity.owner_peer,
+            projectile.shooter_net_id,
             projectile.previous_position,
             transform.position,
             &impact_position);

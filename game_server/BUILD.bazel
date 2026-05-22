@@ -42,7 +42,10 @@ cc_library(
 cc_test(
     name = "enemy_ai_controller_test",
     srcs = ["enemy_ai_controller_test.cc"],
-    deps = [":game_server"],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
 )
 
 cc_test(

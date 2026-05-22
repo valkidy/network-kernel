@@ -89,10 +89,10 @@ The initial enemy state is deterministic:
 - rotation: identity
 - animation: idle
 - server gameplay HP: `240`
-- enemy rifle damage: `5`
-- enemy rifle magazine: `3`
-- enemy rifle reserve ammo: `6`
-- enemy rifle reload duration: about `1s`
+- enemy rocket damage: `5`
+- enemy rocket magazine: `3`
+- enemy rocket reserve ammo: `6`
+- enemy rocket reload duration: about `1s`
 
 Repeated ticks do not create additional enemies while the managed enemy exists.
 If the v1 enemy is explicitly destroyed, it is not automatically respawned.
@@ -103,8 +103,8 @@ observable behavior bands:
 - Patrol: no player is inside the 12 meter visibility range; the enemy moves
   along a deterministic route around its spawn anchor.
 - Attack: a player is visible and HP is above 50%; the enemy stops moving and
-  submits one rifle fire input per second toward the nearest player.
-- Reload: when the enemy attack branch has no rifle ammo and reserve ammo
+  submits one rocket fire input per second toward the nearest player.
+- Reload: when the enemy attack branch has no rocket ammo and reserve ammo
   remains, it submits a reload input and resumes firing after reload completes.
 - Flee: a player is visible and HP is below 10%; the enemy moves away from the
   nearest player until no player is visible.

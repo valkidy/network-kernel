@@ -38,6 +38,7 @@ NetId World::spawn_projectile(
             0,
             0,
             0,
+            0,
             ProjectileMotionModel::kLinear,
             0.0f,
             0.0f,
