@@ -103,6 +103,20 @@ int main() {
         enemy.position,
         players[1].position);
 
+    enemy.hp = 45;
+    const network_example::game_server::EnemyAiDecision fleeing_below_twenty_percent =
+        controller.decide(enemy, players);
+    require(fleeing_below_twenty_percent.animation_state ==
+            network_example::game_server::kEnemyAnimationChasing);
+    require(fleeing_below_twenty_percent.target_player_net_id == 2);
+    require(!fleeing_below_twenty_percent.should_fire);
+    require(!fleeing_below_twenty_percent.should_reload);
+    assert_flees_away_from_target(
+        fleeing_below_twenty_percent.velocity,
+        enemy.position,
+        players[1].position);
+
+    enemy.hp = 20;
     enemy.position = KernelVec3{3.0f, 0.0f, 4.0f};
     const std::vector<network_example::game_server::EnemyAiTarget> diagonal_players{
         {3, KernelVec3{0.0f, 0.0f, 0.0f}},

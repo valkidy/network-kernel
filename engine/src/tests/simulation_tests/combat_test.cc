@@ -152,6 +152,34 @@ void rocket_moves_linearly_and_grenade_arcs() {
     assert(grenade_transform.position.y > 0.94f && grenade_transform.position.y < 0.96f);
 }
 
+void projectile_damage_values_leave_enemy_flee_window() {
+    network_example::World grenade_world;
+    grenade_world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+    std::vector<KernelEvent> grenade_events;
+    network_example::simulate_weapons(
+        grenade_world,
+        queue(fire_input(network_example::kWeaponGrenade)),
+        0,
+        &grenade_events);
+
+    const network_example::NetId grenade = spawned_projectile(grenade_events);
+    require(grenade != 0);
+    require(projectile_state(grenade_world, grenade).damage == 40);
+
+    network_example::World rocket_world;
+    rocket_world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+    std::vector<KernelEvent> rocket_events;
+    network_example::simulate_weapons(
+        rocket_world,
+        queue(fire_input(network_example::kWeaponRocket)),
+        0,
+        &rocket_events);
+
+    const network_example::NetId rocket = spawned_projectile(rocket_events);
+    require(rocket != 0);
+    require(projectile_state(rocket_world, rocket).damage == 45);
+}
+
 void rejects_fire_during_cooldown_and_reload() {
     network_example::World world;
     const network_example::NetId player =
@@ -285,9 +313,11 @@ void grenade_sweeps_and_explodes_with_falloff() {
     network_example::simulate_projectiles(world, 0.2f, 1, &events);
 
     assert(!world.find_entity(projectile).has_value());
-    assert(health(world, near_enemy).hp == 0);
+    assert(health(world, near_enemy).hp > 0);
+    assert(health(world, near_enemy).hp < 50);
     assert(health(world, far_enemy).hp > 0);
     assert(health(world, far_enemy).hp < 50);
+    assert(health(world, near_enemy).hp < health(world, far_enemy).hp);
     assert(count_events(events, KernelEventType_Explosion) == 1);
     assert(count_events(events, KernelEventType_DamageApplied) >= 2);
 }
@@ -571,6 +601,7 @@ void rewind_shotgun_respects_range() {
 int main() {
     deterministic_projectile_paths_match_motion_models();
     rocket_moves_linearly_and_grenade_arcs();
+    projectile_damage_values_leave_enemy_flee_window();
     rejects_fire_during_cooldown_and_reload();
     shotgun_applies_multiple_pellets();
     grenade_sweeps_and_explodes_with_falloff();
