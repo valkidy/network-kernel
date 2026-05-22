@@ -23,8 +23,10 @@ int main() {
         glm::vec3{1.0f, 0.0f, 0.0f};
     world.registry().get<network_example::WeaponState>(*player_entity).is_reloading =
         true;
+    world.registry().get<network_example::Health>(*player_entity).hp = 75;
     const auto enemy_entity = world.find_entity(enemy);
     assert(enemy_entity.has_value());
+    world.registry().get<network_example::Health>(*enemy_entity).hp = 25;
     world.registry().emplace<network_example::ReplicationState>(
         *enemy_entity,
         network_example::ReplicationState{9, 0x01020300u});
@@ -48,12 +50,16 @@ int main() {
         if (entity.net_id == player) {
             saw_player_flags =
                 entity.owner_peer == 1 &&
+                entity.hp == 75 &&
+                entity.max_hp == 100 &&
                 (entity.flags & network_example::kVisualFlagMoving) != 0 &&
                 (entity.flags & network_example::kVisualFlagReloading) != 0;
         }
         if (entity.net_id == enemy) {
             saw_enemy_state =
                 entity.owner_peer == 0 && entity.state == 9 &&
+                entity.hp == 25 &&
+                entity.max_hp == 50 &&
                 entity.flags == 0x01020300u;
         }
         if (entity.net_id == projectile) {

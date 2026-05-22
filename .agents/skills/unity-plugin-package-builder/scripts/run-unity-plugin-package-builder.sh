@@ -26,12 +26,14 @@ REQUIRED_EXPORTS=(
   Kernel_Update
   Kernel_SubmitInput
   Kernel_GetRenderStates
+  Kernel_GetRenderStatesAtTime
   Kernel_PollEvents
   Kernel_ServerCreateEntity
   Kernel_ServerDestroyEntity
   Kernel_ServerSetEntityTransform
   Kernel_ServerSetEntityVelocity
   Kernel_ServerSetEntityState
+  Kernel_ServerSubmitEntityInput
   Kernel_ServerGetEntityState
   Kernel_ServerQueryEntities
 )
@@ -185,14 +187,14 @@ read_native_abi_version() {
 }
 
 read_managed_abi_version() {
-  sed -nE 's/^[[:space:]]*public const uint AbiVersion = ([0-9]+);$/\1/p' "$PACKAGE_DIR/Runtime/KernelTypes.cs" | head -n 1
+  sed -nE 's/^[[:space:]]*public const uint AbiVersion = ([0-9]+);$/\1/p' "$PACKAGE_DIR/Runtime/Core/KernelTypes.cs" | head -n 1
 }
 
 verify_package() {
   note "Verifying package layout, ABI version, and exported symbols"
   [[ -f "$PACKAGE_DIR/package.json" ]] || die "missing package.json"
-  [[ -f "$PACKAGE_DIR/Runtime/KernelNative.cs" ]] || die "missing Runtime/KernelNative.cs"
-  [[ -f "$PACKAGE_DIR/Runtime/KernelTypes.cs" ]] || die "missing Runtime/KernelTypes.cs"
+  [[ -f "$PACKAGE_DIR/Runtime/Core/KernelNative.cs" ]] || die "missing Runtime/Core/KernelNative.cs"
+  [[ -f "$PACKAGE_DIR/Runtime/Core/KernelTypes.cs" ]] || die "missing Runtime/Core/KernelTypes.cs"
   [[ -f "$PACKAGE_DIR/Editor/NetworkKernelAbiSmokeRunner.cs" ]] || die "missing Editor/NetworkKernelAbiSmokeRunner.cs"
   [[ -f "$PACKAGE_DIR/Tests~/AbiSmoke/NetworkKernelManagedAbiSmoke.cs" ]] || die "missing Tests~/AbiSmoke/NetworkKernelManagedAbiSmoke.cs"
   [[ -f "$STAGED_DYLIB" ]] || die "missing staged dylib: $STAGED_DYLIB"

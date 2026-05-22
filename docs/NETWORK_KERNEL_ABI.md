@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 7`.
+`KERNEL_ABI_VERSION == 8`.
 
 ## Ownership
 
@@ -70,6 +70,11 @@ path after authoritative binding; their snapshots are fast-forwarded to the
 local prediction timeline and used as correction targets. Remote entities,
 including remote projectiles with no local prediction match, continue to render
 from the delayed snapshot interpolation timeline.
+
+ABI version 8 adds `hp` and `max_hp` to `RenderEntityState`, and adds
+`max_hp` to `KernelServerEntityState` and replicated entity snapshots. Unity
+clients can read player and enemy health directly from the render-state stream
+returned by `Kernel_GetRenderStates` or `Kernel_GetRenderStatesAtTime`.
 
 Consumers pass a `struct_size`-style byte size to `Kernel_GetAbiInfo`. The call
 returns `false` if the output pointer is null or the provided size is smaller

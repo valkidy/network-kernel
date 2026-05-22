@@ -48,6 +48,7 @@ table EntitySnapshot {
   rotation:Quat;
   velocity:Vec3;
   hp:ushort;
+  max_hp:ushort;
   state:ushort;
   flags:uint;
   spawn_tick:uint;

@@ -166,6 +166,10 @@ int main() {
         load_symbol<bool(KernelHandle*, std::uint32_t, std::uint16_t, std::uint32_t)>(
             library,
             "Kernel_ServerSetEntityState");
+    [[maybe_unused]] auto* kernel_server_submit_entity_input =
+        load_symbol<bool(KernelHandle*, std::uint32_t, const PlayerInput*)>(
+            library,
+            "Kernel_ServerSubmitEntityInput");
     auto* kernel_server_get_entity_state =
         load_symbol<bool(KernelHandle*, std::uint32_t, KernelServerEntityState*)>(
             library,
@@ -264,6 +268,8 @@ int main() {
     server_state.struct_size = sizeof(server_state);
     assert(kernel_server_get_entity_state(kernel, enemy, &server_state));
     assert(server_state.net_id == enemy);
+    assert(server_state.hp == 240);
+    assert(server_state.max_hp == 240);
     assert(server_state.animation_state == 4);
     assert(kernel_server_destroy_entity(
         kernel,
@@ -285,6 +291,14 @@ int main() {
         states.data(),
         static_cast<std::uint32_t>(states.size()));
     assert(state_count >= 1);
+    bool saw_local_player_health = false;
+    for (std::uint32_t index = 0; index < state_count; ++index) {
+        if (states[index].net_id == local_info.player_net_id) {
+            saw_local_player_health =
+                states[index].hp == 100 && states[index].max_hp == 100;
+        }
+    }
+    assert(saw_local_player_health);
     assert(kernel_get_render_states_at_time(
                kernel,
                33333,

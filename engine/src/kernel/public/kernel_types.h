@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 7u
+#define KERNEL_ABI_VERSION 8u
 
 #define KERNEL_CAPABILITY_CLIENT_MODE UINT64_C(0x0000000000000001)
 #define KERNEL_CAPABILITY_LISTEN_SERVER_MODE UINT64_C(0x0000000000000002)
@@ -144,6 +144,8 @@ typedef struct RenderEntityState {
     KernelVec3 position;
     KernelQuat rotation;
     KernelVec3 velocity;
+    uint16_t hp;
+    uint16_t max_hp;
     uint16_t animation_state;
     uint32_t visual_flags;
     uint32_t spawn_tick;
@@ -169,6 +171,7 @@ typedef struct KernelServerEntityState {
     KernelQuat rotation;
     KernelVec3 velocity;
     uint16_t hp;
+    uint16_t max_hp;
     uint16_t animation_state;
     uint32_t visual_flags;
     bool valid;

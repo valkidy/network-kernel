@@ -74,6 +74,7 @@ cc_shared_library(
             "-Wl,-exported_symbol,_Kernel_ServerSetEntityTransform",
             "-Wl,-exported_symbol,_Kernel_ServerSetEntityVelocity",
             "-Wl,-exported_symbol,_Kernel_ServerSetEntityState",
+            "-Wl,-exported_symbol,_Kernel_ServerSubmitEntityInput",
             "-Wl,-exported_symbol,_Kernel_ServerGetEntityState",
             "-Wl,-exported_symbol,_Kernel_ServerQueryEntities",
             "-Wl,-exported_symbol,_GameServer_GetAbiInfo",

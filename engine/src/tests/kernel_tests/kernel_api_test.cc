@@ -41,13 +41,15 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_EVENT_PRESENTATION_TIME) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_RENDER_STATES_AT_TIME) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 7u);
+    assert(KERNEL_ABI_VERSION == 8u);
     assert(offsetof(PlayerInput, client_action_time_us) > offsetof(PlayerInput, input_seq));
     assert(offsetof(PlayerInput, client_action_id) > offsetof(PlayerInput, client_action_time_us));
     assert(offsetof(KernelEvent, event_time_us) > offsetof(KernelEvent, code));
     assert(offsetof(KernelEvent, presentation_time_us) > offsetof(KernelEvent, event_time_us));
     assert(offsetof(RenderEntityState, entity_id) == 0u);
     assert(offsetof(RenderEntityState, net_id) > offsetof(RenderEntityState, entity_id));
+    assert(offsetof(RenderEntityState, hp) > offsetof(RenderEntityState, velocity));
+    assert(offsetof(RenderEntityState, max_hp) > offsetof(RenderEntityState, hp));
     assert(!Kernel_GetAbiInfo(nullptr, sizeof(abi_info)));
     assert(!Kernel_GetAbiInfo(&abi_info, sizeof(abi_info) - 1));
 
@@ -133,6 +135,8 @@ int main() {
         (0x12345678u | KERNEL_VISUAL_FLAG_MOVING));
     assert(server_state.position.x == 5.0f);
     assert(server_state.velocity.x == 1.0f);
+    assert(server_state.hp == 240);
+    assert(server_state.max_hp == 240);
     std::array<KernelServerEntityState, 4> queried_states{};
     for (KernelServerEntityState& queried_state : queried_states) {
         queried_state.struct_size = sizeof(KernelServerEntityState);
@@ -143,6 +147,8 @@ int main() {
                queried_states.data(),
                static_cast<std::uint32_t>(queried_states.size())) == 1);
     assert(queried_states[0].net_id == created_net_id);
+    assert(queried_states[0].hp == 240);
+    assert(queried_states[0].max_hp == 240);
     assert(Kernel_ServerQueryEntities(
                kernel,
                0,
@@ -159,6 +165,8 @@ int main() {
     server_state.struct_size = sizeof(server_state);
     assert(Kernel_ServerGetEntityState(kernel, created_net_id, &server_state));
     assert(server_state.position.x > 5.0f);
+    assert(server_state.hp == 240);
+    assert(server_state.max_hp == 240);
 
     std::array<RenderEntityState, 8> states{};
     assert(Kernel_GetRenderStates(kernel, nullptr, states.size()) == 0);
@@ -173,6 +181,8 @@ int main() {
     assert(states[0].owner_peer == 0);
     assert(states[0].position.x > 5.0f);
     assert(states[0].velocity.x == 1.0f);
+    assert(states[0].hp == 240);
+    assert(states[0].max_hp == 240);
     assert(states[0].animation_state == 7);
     assert(
         states[0].visual_flags ==
@@ -183,6 +193,8 @@ int main() {
         Kernel_GetRenderStatesAtTime(kernel, 33333, states.data(), states.size());
     assert(render_at_time_count == 1);
     assert(states[0].net_id == created_net_id);
+    assert(states[0].hp == 240);
+    assert(states[0].max_hp == 240);
 
     std::array<KernelEvent, 16> events{};
     assert(Kernel_PollEvents(kernel, nullptr, events.size()) == 0);

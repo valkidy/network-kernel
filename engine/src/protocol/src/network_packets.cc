@@ -9,7 +9,7 @@ namespace {
 
 constexpr std::size_t kInputPayloadSize = 45;
 constexpr std::size_t kSnapshotHeaderPayloadSize = 16;
-constexpr std::size_t kEntitySnapshotPayloadSize = 66;
+constexpr std::size_t kEntitySnapshotPayloadSize = 68;
 constexpr std::size_t kReliableEventPayloadSize = 34;
 constexpr std::size_t kEntitySpawnPayloadSize = 42;
 constexpr std::size_t kEntityDespawnPayloadSize = 12;
@@ -267,6 +267,7 @@ std::vector<std::uint8_t> encode_snapshot_packet(
         write_quat(&payload, entity.rotation);
         write_vec3(&payload, entity.velocity);
         write_u16(&payload, entity.hp);
+        write_u16(&payload, entity.max_hp);
         write_u16(&payload, entity.state);
         write_u32(&payload, entity.flags);
         write_u32(&payload, entity.spawn_tick);
@@ -315,6 +316,7 @@ bool decode_snapshot_packet(
             !read_quat(payload, payload_size, &offset, &entity.rotation) ||
             !read_vec3(payload, payload_size, &offset, &entity.velocity) ||
             !read_u16(payload, payload_size, &offset, &entity.hp) ||
+            !read_u16(payload, payload_size, &offset, &entity.max_hp) ||
             !read_u16(payload, payload_size, &offset, &entity.state) ||
             !read_u32(payload, payload_size, &offset, &entity.flags) ||
             !read_u32(payload, payload_size, &offset, &entity.spawn_tick) ||
