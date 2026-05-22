@@ -74,6 +74,21 @@ public sealed class NetworkKernelHostBehaviour : MonoBehaviour
                 case KernelEventType.EntityDestroyed:
                     Debug.Log($"host entity destroyed net_id={kernelEvent.net_id}");
                     break;
+                case KernelEventType.FireConfirmed:
+                    Debug.Log(
+                        $"host fire confirmed net_id={kernelEvent.net_id} " +
+                        $"peer={kernelEvent.peer_id} weapon={kernelEvent.code}");
+                    break;
+                case KernelEventType.HitConfirmed:
+                    Debug.Log(
+                        $"host hit confirmed target_net_id={kernelEvent.net_id} " +
+                        $"peer={kernelEvent.peer_id} weapon={kernelEvent.code}");
+                    break;
+                case KernelEventType.DamageApplied:
+                    Debug.Log(
+                        $"host damage applied target_net_id={kernelEvent.net_id} " +
+                        $"peer={kernelEvent.peer_id} damage={kernelEvent.code}");
+                    break;
                 case KernelEventType.Error:
                     Debug.LogWarning(
                         $"host kernel error peer={kernelEvent.peer_id} code={kernelEvent.code}");

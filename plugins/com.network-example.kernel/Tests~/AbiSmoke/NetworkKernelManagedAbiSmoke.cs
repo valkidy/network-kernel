@@ -166,6 +166,23 @@ public static class NetworkKernelManagedAbiSmoke
                 {
                     throw new InvalidOperationException("NetworkHost enemy query failed.");
                 }
+
+                uint hostCombatEventCount = host.Update(1.0f / 30.0f, hostEvents);
+                if (!TryGetFirstEntityHp(
+                        host.Kernel,
+                        KernelEntityType.Player,
+                        out ushort playerHp) ||
+                    playerHp >= 100)
+                {
+                    throw new InvalidOperationException(
+                        "NetworkHost enemy did not damage the local player.");
+                }
+                if (!HasEvent(hostEvents, hostCombatEventCount, KernelEventType.FireConfirmed) ||
+                    !HasEvent(hostEvents, hostCombatEventCount, KernelEventType.DamageApplied))
+                {
+                    throw new InvalidOperationException(
+                        "NetworkHost enemy combat events were not observed.");
+                }
             }
 
             Console.WriteLine(
@@ -209,6 +226,44 @@ public static class NetworkKernelManagedAbiSmoke
         for (int index = 0; index < countInt; ++index)
         {
             if (states[index].net_id == netId)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryGetFirstEntityHp(
+        Kernel kernel,
+        KernelEntityType entityType,
+        out ushort hp)
+    {
+        var states = new KernelServerEntityState[8];
+        uint count = kernel.ServerQueryEntities(entityType, states);
+        int countInt = (int)count;
+        for (int index = 0; index < countInt; ++index)
+        {
+            if (states[index].valid && states[index].entity_type == entityType)
+            {
+                hp = states[index].hp;
+                return true;
+            }
+        }
+
+        hp = 0;
+        return false;
+    }
+
+    private static bool HasEvent(
+        KernelEvent[] events,
+        uint count,
+        KernelEventType eventType)
+    {
+        int countInt = Math.Min(events.Length, (int)count);
+        for (int index = 0; index < countInt; ++index)
+        {
+            if (events[index].type == eventType)
             {
                 return true;
             }
