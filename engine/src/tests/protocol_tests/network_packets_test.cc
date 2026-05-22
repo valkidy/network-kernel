@@ -57,6 +57,7 @@ int main() {
     entity.rotation = glm::quat{0.5f, 0.5f, 0.5f, 0.5f};
     entity.velocity = glm::vec3{4.0f, 5.0f, 6.0f};
     entity.hp = 88;
+    entity.max_hp = 120;
     entity.state = 513;
     entity.flags = 0x01020304u;
     entity.spawn_tick = 12;
@@ -81,6 +82,7 @@ int main() {
     assert(nearly_equal(decoded_snapshot.entities[0].rotation.w, 0.5f));
     assert(nearly_equal(decoded_snapshot.entities[0].velocity.z, 6.0f));
     assert(decoded_snapshot.entities[0].hp == 88);
+    assert(decoded_snapshot.entities[0].max_hp == 120);
     assert(decoded_snapshot.entities[0].state == 513);
     assert(decoded_snapshot.entities[0].flags == 0x01020304u);
     assert(decoded_snapshot.entities[0].spawn_tick == 12);

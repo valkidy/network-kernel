@@ -23,7 +23,7 @@ int main(void) {
     (void)create_info;
     (void)server_state;
 
-    assert(KERNEL_ABI_VERSION == 7u);
+    assert(KERNEL_ABI_VERSION == 8u);
     assert(sizeof(KernelAbiInfo) > 0u);
     assert(sizeof(KernelLocalPlayerInfo) > 0u);
     assert(sizeof(KernelConfig) > 0u);
@@ -45,6 +45,8 @@ int main(void) {
     assert(offsetof(PlayerInput, client_action_time_us) > offsetof(PlayerInput, input_seq));
     assert(offsetof(PlayerInput, client_action_id) > offsetof(PlayerInput, client_action_time_us));
     assert(offsetof(RenderEntityState, entity_id) == 0u);
+    assert(offsetof(RenderEntityState, hp) > offsetof(RenderEntityState, velocity));
+    assert(offsetof(RenderEntityState, max_hp) > offsetof(RenderEntityState, hp));
     assert(offsetof(KernelEvent, event_time_us) > offsetof(KernelEvent, code));
     assert(offsetof(KernelEvent, presentation_time_us) > offsetof(KernelEvent, event_time_us));
     assert(sizeof(state.entity_id) == sizeof(uint64_t));

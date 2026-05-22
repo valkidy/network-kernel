@@ -129,6 +129,8 @@ int main() {
     KernelLocalPlayerInfo local_info{};
     assert(Kernel_GetLocalPlayerInfo(kernel, &local_info));
     assert(local_info.player_net_id == before_player.net_id);
+    assert(before_player.hp == 100);
+    assert(before_player.max_hp == 100);
     std::array<KernelServerEntityState, 16> queried_players{};
     const std::uint32_t player_query_count = Kernel_ServerQueryEntities(
         kernel,
@@ -140,6 +142,8 @@ int main() {
         find_server_entity(queried_players, player_query_count, before_player.net_id);
     assert(queried_player.valid);
     assert(queried_player.entity_type == 1);
+    assert(queried_player.hp == 100);
+    assert(queried_player.max_hp == 100);
 
     PlayerInput input{};
     input.input_seq = 1;
@@ -159,6 +163,8 @@ int main() {
     const RenderEntityState predicted_player =
         find_player(predicted_states, predicted_count);
     assert(predicted_player.position.x > before_player.position.x);
+    assert(predicted_player.hp == 100);
+    assert(predicted_player.max_hp == 100);
 
     Kernel_Update(kernel, 1.0f / 30.0f);
 
@@ -171,6 +177,8 @@ int main() {
     assert(!has_non_player_state(after_states, after_count));
     const RenderEntityState after_player = find_player(after_states, after_count);
     assert(after_player.position.x > before_player.position.x);
+    assert(after_player.hp == 100);
+    assert(after_player.max_hp == 100);
 
     PlayerInput fire_input{};
     fire_input.input_seq = 2;

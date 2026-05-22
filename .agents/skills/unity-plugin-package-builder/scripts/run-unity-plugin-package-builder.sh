@@ -37,6 +37,7 @@ REQUIRED_EXPORTS=(
   Kernel_ServerSetEntityTransform
   Kernel_ServerSetEntityVelocity
   Kernel_ServerSetEntityState
+  Kernel_ServerSubmitEntityInput
   Kernel_ServerGetEntityState
   Kernel_ServerQueryEntities
   GameServer_GetAbiInfo

@@ -172,7 +172,9 @@ KernelServerEntityState to_server_entity_state(
             to_kernel_vec3(world.registry().get<Velocity>(entity).linear);
     }
     if (world.registry().all_of<Health>(entity)) {
-        state.hp = world.registry().get<Health>(entity).hp;
+        const Health& health = world.registry().get<Health>(entity);
+        state.hp = health.hp;
+        state.max_hp = health.max_hp;
     }
     state.visual_flags = derived_visual_flags(world, entity);
     if (world.registry().all_of<ReplicationState>(entity)) {
@@ -1489,6 +1491,8 @@ void KernelEngine::append_predicted_local_render_state(bool consume_correction) 
         to_kernel_vec3(local.position),
         to_kernel_quat(local.rotation),
         to_kernel_vec3(local.velocity),
+        local.hp,
+        local.max_hp,
         local.state,
         local.flags,
         local.spawn_tick,
@@ -1515,6 +1519,8 @@ void KernelEngine::append_predicted_projectile_render_states(bool consume_correc
             to_kernel_vec3(render_position),
             to_kernel_quat(projectile.rotation),
             to_kernel_vec3(projectile.velocity),
+            0,
+            0,
             0,
             kVisualFlagMoving,
             projectile.spawn_tick,
@@ -1842,8 +1848,15 @@ void KernelEngine::rebuild_render_states_from_world() {
         std::uint32_t visual_flags = derived_visual_flags(world_, entity);
         std::uint32_t spawn_tick = 0;
         std::uint32_t client_action_id = 0;
+        std::uint16_t hp = 0;
+        std::uint16_t max_hp = 0;
         if (world_.registry().all_of<Velocity>(entity)) {
             velocity = to_kernel_vec3(world_.registry().get<Velocity>(entity).linear);
+        }
+        if (world_.registry().all_of<Health>(entity)) {
+            const Health& health = world_.registry().get<Health>(entity);
+            hp = health.hp;
+            max_hp = health.max_hp;
         }
         if (world_.registry().all_of<ReplicationState>(entity)) {
             const ReplicationState& replication =
@@ -1865,6 +1878,8 @@ void KernelEngine::rebuild_render_states_from_world() {
             to_kernel_vec3(transform.position),
             to_kernel_quat(transform.rotation),
             velocity,
+            hp,
+            max_hp,
             animation_state,
             visual_flags,
             spawn_tick,
@@ -1909,6 +1924,8 @@ void KernelEngine::rebuild_render_states_from_snapshot(
             to_kernel_vec3(entity.position),
             to_kernel_quat(entity.rotation),
             to_kernel_vec3(entity.velocity),
+            entity.hp,
+            entity.max_hp,
             entity.state,
             entity.flags,
             entity.spawn_tick,
@@ -1943,6 +1960,8 @@ void KernelEngine::rebuild_render_states_from_snapshot(
             to_kernel_vec3(entity.position),
             to_kernel_quat(entity.rotation),
             KernelVec3{0.0f, 0.0f, 0.0f},
+            0,
+            0,
             0,
             0,
             0,

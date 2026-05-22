@@ -50,7 +50,9 @@ WorldSnapshot build_world_snapshot(
             entity_snapshot.velocity = world.registry().get<Velocity>(entity).linear;
         }
         if (world.registry().all_of<Health>(entity)) {
-            entity_snapshot.hp = world.registry().get<Health>(entity).hp;
+            const Health& health = world.registry().get<Health>(entity);
+            entity_snapshot.hp = health.hp;
+            entity_snapshot.max_hp = health.max_hp;
         }
         entity_snapshot.flags = derived_visual_flags(world, entity);
         if (world.registry().all_of<ReplicationState>(entity)) {

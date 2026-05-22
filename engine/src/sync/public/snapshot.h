@@ -25,6 +25,7 @@ struct EntitySnapshot {
     glm::vec3 velocity{0.0f, 0.0f, 0.0f};
     glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
     std::uint16_t hp = 0;
+    std::uint16_t max_hp = 0;
     std::uint16_t state = 0;
     std::uint32_t flags = 0;
     std::uint32_t spawn_tick = 0;
