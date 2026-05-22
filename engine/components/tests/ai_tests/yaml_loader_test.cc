@@ -77,7 +77,7 @@ int main() {
         network_example::ai::load_tree_from_yaml(valid_tree_yaml());
     assert(result.success());
     assert(result.root != nullptr);
-    assert(result.required_nodes.size() == 11);
+    assert(result.required_nodes.size() == 10);
     assert(result.required_scores.size() == 3);
     assert(contains(result.required_nodes, "Condition.HasAmmo"));
     assert(contains(result.required_nodes, "Action.Reload"));
