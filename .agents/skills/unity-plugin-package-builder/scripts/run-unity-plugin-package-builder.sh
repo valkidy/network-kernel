@@ -209,6 +209,23 @@ read_package_version() {
   node -e "const p=require(process.argv[1]); console.log(p.version || '')" "$PACKAGE_DIR/package.json"
 }
 
+sign_native_plugin() {
+  local dylib_path="$1"
+  local description="$2"
+  [[ -f "$dylib_path" ]] || die "native plugin not found for signing: $dylib_path"
+  note "Ad-hoc signing $description"
+  codesign --force --deep --sign - "$dylib_path"
+  note "Removing GateKeeper quarantine attributes from $description"
+  xattr -d -r com.apple.quarantine "$dylib_path" 2>/dev/null || true
+}
+
+resolve_built_dylib() {
+  local bazel_bin
+  bazel_bin="$("$BAZEL_CMD" --output_base="$OUTPUT_BASE" info --config=macos -c opt bazel-bin --symlink_prefix=/)"
+  BUILT_DYLIB="$bazel_bin/$BUILT_DYLIB_SUBPATH"
+  [[ -f "$BUILT_DYLIB" ]] || die "expected built dylib not found: $BUILT_DYLIB"
+}
+
 build_native() {
   note "Building native plugin: $NATIVE_TARGET"
   "$BAZEL_CMD" \
@@ -219,20 +236,18 @@ build_native() {
     --copt=-Wunused-function \
     -c opt \
     "$NATIVE_TARGET"
-  local bazel_bin
-  bazel_bin="$("$BAZEL_CMD" --output_base="$OUTPUT_BASE" info --config=macos -c opt bazel-bin --symlink_prefix=/)"
-  BUILT_DYLIB="$bazel_bin/$BUILT_DYLIB_SUBPATH"
-  [[ -f "$BUILT_DYLIB" ]] || die "expected built dylib not found: $BUILT_DYLIB"
+  resolve_built_dylib
+  sign_native_plugin "$BUILT_DYLIB" "built native plugin"
 }
 
 stage_native() {
+  if [[ -z "$BUILT_DYLIB" ]]; then
+    resolve_built_dylib
+  fi
   [[ -f "$BUILT_DYLIB" ]] || die "built dylib not found: $BUILT_DYLIB. Run --mode build-native or --mode all first."
   mkdir -p "$(dirname "$STAGED_DYLIB")"
   cp "$BUILT_DYLIB" "$STAGED_DYLIB"
-  note "Ad-hoc signing staged native plugin"
-  codesign --force --deep --sign - "$STAGED_DYLIB"
-  note "Removing GateKeeper quarantine attributes from staged native plugin"
-  xattr -d -r com.apple.quarantine "$STAGED_DYLIB" 2>/dev/null || true
+  sign_native_plugin "$STAGED_DYLIB" "staged native plugin"
   note "Staged native plugin: $STAGED_DYLIB"
 }
 

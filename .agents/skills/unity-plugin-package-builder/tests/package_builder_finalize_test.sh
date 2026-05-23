@@ -28,12 +28,31 @@ make_fake_command_dir() {
 
   write_file "$bin_dir/bazel" <<'SH'
 #!/usr/bin/env bash
-echo "fake bazel should not be called in verify mode" >&2
+set -euo pipefail
+
+for arg in "$@"; do
+  if [[ "$arg" == "build" ]]; then
+    mkdir -p "$FAKE_BAZEL_BIN/engine/src/kernel"
+    echo "fake built dylib" > "$FAKE_BAZEL_BIN/engine/src/kernel/libnetwork_kernel.dylib"
+    exit 0
+  fi
+  if [[ "$arg" == "info" ]]; then
+    printf '%s\n' "$FAKE_BAZEL_BIN"
+    exit 0
+  fi
+done
+
+echo "fake bazel received unsupported arguments: $*" >&2
 exit 1
 SH
+  cp "$bin_dir/bazel" "$bin_dir/bazelisk"
 
   write_file "$bin_dir/codesign" <<'SH'
 #!/usr/bin/env bash
+set -euo pipefail
+if [[ -n "${CODESIGN_LOG:-}" ]]; then
+  printf '%s\n' "$*" >> "$CODESIGN_LOG"
+fi
 exit 0
 SH
 
@@ -156,7 +175,11 @@ run_builder() {
 
   (
     cd "$repo_dir"
-    PATH="$fake_bin:$PATH" OPENSSL_LIB_DIR="$fake_openssl" "$SCRIPT_UNDER_TEST" "$@"
+    PATH="$fake_bin:$PATH" \
+      OPENSSL_LIB_DIR="$fake_openssl" \
+      FAKE_BAZEL_BIN="$sandbox_dir/bazel-bin" \
+      CODESIGN_LOG="$sandbox_dir/codesign.log" \
+      "$SCRIPT_UNDER_TEST" "$@"
   ) >"$output_file" 2>&1
 }
 
@@ -256,9 +279,50 @@ test_auto_commit_skips_without_release_note_bullets() {
   assert_contains "$(cat "$output_file")" "--release-note"
 }
 
+test_build_native_codesigns_built_dylib() {
+  local sandbox_dir repo_dir output_file codesign_log
+  sandbox_dir="$(mktemp -d "${TMPDIR:-/tmp}/package-builder-build-sign.XXXXXX")"
+  sandbox_dir="$(cd "$sandbox_dir" && pwd)"
+  repo_dir="$sandbox_dir/repo"
+  output_file="$sandbox_dir/output.txt"
+  codesign_log="$sandbox_dir/codesign.log"
+  make_fake_repo "$repo_dir" "feat-unity-plugin"
+
+  run_builder "$repo_dir" "$output_file" --mode build-native --unity off --auto-commit off
+
+  [[ -f "$codesign_log" ]] || fail "expected build-native mode to codesign the built dylib"
+  assert_contains "$(cat "$codesign_log")" "--force --deep --sign - $sandbox_dir/bazel-bin/engine/src/kernel/libnetwork_kernel.dylib"
+}
+
+test_stage_codesigns_staged_dylib_from_existing_build_output() {
+  local sandbox_dir repo_dir output_file codesign_log built_dylib staged_dylib status
+  sandbox_dir="$(mktemp -d "${TMPDIR:-/tmp}/package-builder-stage-sign.XXXXXX")"
+  sandbox_dir="$(cd "$sandbox_dir" && pwd)"
+  repo_dir="$sandbox_dir/repo"
+  output_file="$sandbox_dir/output.txt"
+  codesign_log="$sandbox_dir/codesign.log"
+  built_dylib="$sandbox_dir/bazel-bin/engine/src/kernel/libnetwork_kernel.dylib"
+  staged_dylib="$repo_dir/plugins/com.network-example.kernel/Assets/Plugins/macOS/libnetwork_kernel.dylib"
+  make_fake_repo "$repo_dir" "feat-unity-plugin"
+  mkdir -p "$(dirname "$built_dylib")"
+  echo "fake existing build output" > "$built_dylib"
+
+  set +e
+  run_builder "$repo_dir" "$output_file" --mode stage --unity off --auto-commit off
+  status="$?"
+  set -e
+
+  [[ "$status" -eq 0 ]] || fail "expected stage mode to succeed with existing build output; got status $status: $(cat "$output_file")"
+  [[ "$(cat "$staged_dylib")" == "fake existing build output" ]] || fail "expected stage mode to copy the existing build output"
+  [[ -f "$codesign_log" ]] || fail "expected stage mode to codesign the staged dylib"
+  assert_contains "$(cat "$codesign_log")" "--force --deep --sign - $staged_dylib"
+}
+
 test_requires_feat_unity_plugin_branch
 test_release_notes_are_prepended_and_auto_committed_for_allowed_files
 test_auto_commit_skips_when_disallowed_files_are_dirty
 test_auto_commit_skips_without_release_note_bullets
+test_build_native_codesigns_built_dylib
+test_stage_codesigns_staged_dylib_from_existing_build_output
 
 echo "package_builder_finalize_test.sh: PASS"

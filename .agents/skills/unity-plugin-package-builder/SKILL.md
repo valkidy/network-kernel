@@ -77,9 +77,14 @@ The script supports:
   `plugins/com.network-example.kernel/RELEASE_NOTES.md`
 - `--auto-commit on|off`; defaults to `on`
 
+Codesign is mandatory for every mode that creates or updates a dylib:
+`build-native` signs the Bazel-built dylib, `stage` signs the staged package
+dylib, and `all` does both. `verify` and `pack` do not create dylibs.
+
 Default behavior:
 
-1. Build `//engine/src/kernel:network_kernel_shared` for macOS.
+1. Build `//engine/src/kernel:network_kernel_shared` for macOS and ad-hoc sign
+   the built dylib.
 2. Stage `bazel-bin/engine/src/kernel/libnetwork_kernel.dylib` into
    `plugins/com.network-example.kernel/Assets/Plugins/macOS/`.
 3. Ad-hoc sign the staged dylib and remove any GateKeeper quarantine attribute.
