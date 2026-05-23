@@ -14,6 +14,7 @@ cc_library(
     hdrs = ["public/simulation.h"],
     includes = [".."],
     deps = [
+        "//engine/src/gameplay:gameplay_data",
         "//engine/src/kernel:kernel_types",
         "//engine/src/sync:sync",
         "//engine/src/world:world",

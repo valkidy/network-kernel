@@ -27,13 +27,21 @@ cc_library(
 
 cc_library(
     name = "kernel",
-    srcs = ["src/kernel.cc"],
-    hdrs = ["src/kernel.h"],
+    srcs = [
+        "src/kernel.cc",
+        "src/kernel_api.cc",
+        "src/render_state_builder.cc",
+    ],
+    hdrs = [
+        "src/kernel.h",
+        "src/render_state_builder.h",
+    ],
     includes = [".."],
     deps = [
         ":kernel_api",
         ":kernel_types",
         ":tick_loop",
+        "//engine/src/gameplay:gameplay_data",
         "//engine/src/protocol:protocol",
         "//engine/src/simulation:simulation",
         "//engine/src/sync:sync",

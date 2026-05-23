@@ -2,6 +2,8 @@
 
 #include <cmath>
 
+#include "gameplay/public/gameplay_data.h"
+
 namespace network_example {
 namespace {
 
@@ -20,7 +22,7 @@ void simulate_player_movement(
     World& world,
     const std::vector<QueuedInput>& inputs,
     float fixed_delta_seconds) {
-    constexpr float kMoveSpeedMetersPerSecond = 5.0f;
+    const GameplayTuning tuning = default_gameplay_tuning();
     for (const QueuedInput& queued_input : inputs) {
         auto view = world.registry().view<NetworkIdentity, Transform, Velocity, PlayerTag>();
         for (const entt::entity entity : view) {
@@ -30,7 +32,8 @@ void simulate_player_movement(
             }
             Velocity& velocity = view.get<Velocity>(entity);
             Transform& transform = view.get<Transform>(entity);
-            velocity.linear = input_move_to_world(queued_input.input) * kMoveSpeedMetersPerSecond;
+            velocity.linear = input_move_to_world(queued_input.input) *
+                              tuning.player_movement.move_speed_meters_per_second;
             transform.position += velocity.linear * fixed_delta_seconds;
         }
     }

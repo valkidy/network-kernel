@@ -5,74 +5,18 @@
 #include <cmath>
 #include <limits>
 
+#include "gameplay/public/gameplay_data.h"
+
 namespace network_example {
 namespace {
 
-enum class WeaponFireMode {
-    kHitscan,
-    kShotgun,
-    kProjectile,
-};
-
-struct WeaponDefinition {
-    std::uint8_t id = 0;
-    WeaponFireMode mode = WeaponFireMode::kHitscan;
-    std::uint16_t magazine_size = 0;
-    std::uint16_t damage = 0;
-    std::uint32_t cooldown_ticks = 0;
-    std::uint32_t reload_ticks = 0;
-    float max_range = 0.0f;
-    std::uint8_t pellet_count = 1;
-    float pellet_spread = 0.0f;
-    float projectile_speed = 0.0f;
-    float projectile_lifetime_seconds = 0.0f;
-    float explosion_radius = 0.0f;
-    ProjectileMotionModel projectile_motion_model = ProjectileMotionModel::kLinear;
-    glm::vec3 projectile_gravity{0.0f, 0.0f, 0.0f};
-};
-
-constexpr glm::vec3 kGrenadeGravity{0.0f, -9.8f, 0.0f};
-
-constexpr std::array<WeaponDefinition, kWeaponCount> kWeaponDefinitions{{
-    WeaponDefinition{kWeaponRifle, WeaponFireMode::kHitscan, 30, 25, 3, 30, 100.0f},
-    WeaponDefinition{kWeaponShotgun, WeaponFireMode::kShotgun, 8, 10, 20, 45, 40.0f, 5, 0.035f},
-    WeaponDefinition{
-        kWeaponGrenade,
-        WeaponFireMode::kProjectile,
-        30,
-        40,
-        30,
-        60,
-        0.0f,
-        1,
-        0.0f,
-        15.0f,
-        3.0f,
-        4.0f,
-        ProjectileMotionModel::kParabolic,
-        kGrenadeGravity},
-    WeaponDefinition{
-        kWeaponRocket,
-        WeaponFireMode::kProjectile,
-        6,
-        45,
-        45,
-        75,
-        0.0f,
-        1,
-        0.0f,
-        35.0f,
-        2.5f,
-        3.0f,
-        ProjectileMotionModel::kLinear,
-        glm::vec3{0.0f, 0.0f, 0.0f}},
-}};
+const WeaponCatalog& weapon_catalog() {
+    static const GameplayTuning tuning = default_gameplay_tuning();
+    return tuning.weapon_catalog;
+}
 
 const WeaponDefinition& weapon_definition(std::uint8_t weapon_id) {
-    if (weapon_id < kWeaponDefinitions.size()) {
-        return kWeaponDefinitions[weapon_id];
-    }
-    return kWeaponDefinitions[kWeaponRifle];
+    return weapon_catalog().definition(weapon_id);
 }
 
 WeaponDefinition weapon_definition_for_entity(

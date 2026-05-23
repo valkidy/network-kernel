@@ -18,5 +18,8 @@ int main() {
     assert(next == 3);
     assert(!world.find_entity(player).has_value());
     assert(world.find_entity(next).has_value());
+    assert(world.destroy(enemy));
+    assert(!world.find_entity(enemy).has_value());
+    assert(!world.destroy(enemy));
     return 0;
 }

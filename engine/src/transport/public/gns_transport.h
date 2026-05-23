@@ -83,6 +83,10 @@ private:
     bool initialized_ = false;
 };
 
+bool gns_callback_router_has_owner_for_testing();
+void gns_callback_router_set_owner_for_testing(GnsTransport* transport);
+void gns_callback_router_clear_owner_for_testing(GnsTransport* transport);
+
 }  // namespace network_example
 
 #endif  // TRANSPORT_PUBLIC_GNS_TRANSPORT_H_

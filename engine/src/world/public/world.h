@@ -2,6 +2,7 @@
 #define WORLD_PUBLIC_WORLD_H_
 
 #include <optional>
+#include <unordered_map>
 #include <vector>
 
 #include <entt/entt.hpp>
@@ -39,6 +40,7 @@ private:
         const glm::vec3& position);
 
     entt::registry registry_;
+    std::unordered_map<NetId, entt::entity> entities_by_net_id_;
     NetId next_net_id_ = 1;
 };
 

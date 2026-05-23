@@ -18,6 +18,7 @@ cc_library(
         "public/network_packets.h",
         "public/packet_header.h",
         "public/session_packets.h",
+        "src/packet_codec.h",
     ],
     includes = [".."],
     deps = [

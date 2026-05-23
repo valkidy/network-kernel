@@ -57,5 +57,15 @@ int main() {
         &channel,
         &mode,
         &payload));
+
+    network_example::GnsTransport first;
+    network_example::GnsTransport second;
+    assert(!network_example::gns_callback_router_has_owner_for_testing());
+    network_example::gns_callback_router_set_owner_for_testing(&first);
+    assert(network_example::gns_callback_router_has_owner_for_testing());
+    network_example::gns_callback_router_clear_owner_for_testing(&second);
+    assert(network_example::gns_callback_router_has_owner_for_testing());
+    network_example::gns_callback_router_clear_owner_for_testing(&first);
+    assert(!network_example::gns_callback_router_has_owner_for_testing());
     return 0;
 }

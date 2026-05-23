@@ -13,7 +13,20 @@ namespace {
 constexpr PeerId kServerPeerId = 0;
 constexpr std::size_t kTransportPrefixSize = 2;
 
-GnsTransport* g_callback_instance = nullptr;
+GnsTransport*& callback_owner() {
+    static GnsTransport* owner = nullptr;
+    return owner;
+}
+
+void set_callback_owner(GnsTransport* transport) {
+    callback_owner() = transport;
+}
+
+void clear_callback_owner(GnsTransport* transport) {
+    if (callback_owner() == transport) {
+        callback_owner() = nullptr;
+    }
+}
 
 bool is_valid_channel(std::uint8_t value) {
     return value <= static_cast<std::uint8_t>(ChannelId::kSession);
@@ -125,7 +138,7 @@ bool GnsTransport::StartClient(const char* address) {
 
     role_ = Role::kClient;
     interface_ = SteamNetworkingSockets();
-    g_callback_instance = this;
+    set_callback_owner(this);
     return true;
 }
 
@@ -158,7 +171,7 @@ bool GnsTransport::StartServer(std::uint16_t port) {
     }
 
     role_ = Role::kServer;
-    g_callback_instance = this;
+    set_callback_owner(this);
     return true;
 }
 
@@ -184,9 +197,7 @@ void GnsTransport::Stop() {
         }
     }
 
-    if (g_callback_instance == this) {
-        g_callback_instance = nullptr;
-    }
+    clear_callback_owner(this);
     if (initialized_) {
         GameNetworkingSockets_Kill();
         initialized_ = false;
@@ -268,7 +279,7 @@ bool GnsTransport::initialize_gns() {
 
 void GnsTransport::poll_connection_state_changes() {
     if (interface_ != nullptr) {
-        g_callback_instance = this;
+        set_callback_owner(this);
         interface_->RunCallbacks();
     }
 }
@@ -405,9 +416,21 @@ void GnsTransport::erase_connection(ConnectionHandle connection) {
 }
 
 void GnsTransport::SteamNetConnectionStatusChangedCallback(void* callback_info) {
-    if (g_callback_instance != nullptr) {
-        g_callback_instance->handle_connection_status_changed(callback_info);
+    if (callback_owner() != nullptr) {
+        callback_owner()->handle_connection_status_changed(callback_info);
     }
+}
+
+bool gns_callback_router_has_owner_for_testing() {
+    return callback_owner() != nullptr;
+}
+
+void gns_callback_router_set_owner_for_testing(GnsTransport* transport) {
+    set_callback_owner(transport);
+}
+
+void gns_callback_router_clear_owner_for_testing(GnsTransport* transport) {
+    clear_callback_owner(transport);
 }
 
 }  // namespace network_example

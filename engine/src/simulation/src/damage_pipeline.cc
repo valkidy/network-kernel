@@ -4,8 +4,15 @@
 #include <cmath>
 #include <optional>
 
+#include "gameplay/public/gameplay_data.h"
+
 namespace network_example {
 namespace {
+
+const DamageTuning& damage_tuning() {
+    static const GameplayTuning tuning = default_gameplay_tuning();
+    return tuning.damage;
+}
 
 bool is_player_entity(const World& world, entt::entity entity) {
     return world.registry().all_of<PlayerTag>(entity);
@@ -15,7 +22,7 @@ bool action_overlaps_hit(
     std::uint64_t action_time_us,
     std::uint64_t hit_time_us) {
     return action_time_us <= hit_time_us &&
-           hit_time_us <= action_time_us + DamagePipeline::kDefensiveActionWindowUs;
+           hit_time_us <= action_time_us + damage_tuning().defensive_action_window_us;
 }
 
 std::uint16_t parry_reduced_damage(std::uint16_t damage) {
@@ -93,7 +100,7 @@ bool DamagePipeline::submit_hit(
         source_code,
         damage,
         hit_time_us,
-        hit_time_us + kGraceWindowUs,
+        hit_time_us + damage_tuning().grace_window_us,
         false,
         false,
     };
@@ -187,7 +194,7 @@ void DamagePipeline::prune_defensive_actions(std::uint64_t server_time_us) {
             defensive_actions_.begin(),
             defensive_actions_.end(),
             [server_time_us](const DefensiveAction& action) {
-                return action.action_time_us + kDefensiveActionWindowUs <
+                return action.action_time_us + damage_tuning().defensive_action_window_us <
                        server_time_us;
             }),
         defensive_actions_.end());

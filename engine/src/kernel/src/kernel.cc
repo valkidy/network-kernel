@@ -11,7 +11,9 @@
 #include <glm/glm.hpp>
 #include <spdlog/spdlog.h>
 
+#include "gameplay/public/gameplay_data.h"
 #include "kernel/public/kernel_api.h"
+#include "kernel/src/render_state_builder.h"
 #include "protocol/public/network_packets.h"
 #include "protocol/public/session_packets.h"
 #include "transport/public/gns_transport.h"
@@ -58,6 +60,8 @@ bool is_authoritative_combat_event(KernelEventType type) {
            type == KernelEventType_DamageApplied ||
            type == KernelEventType_Explosion;
 }
+
+const GameplayTuning& gameplay_tuning();
 
 std::uint32_t derived_visual_flags(const World& world, entt::entity entity) {
     std::uint32_t flags = 0;
@@ -131,8 +135,8 @@ void apply_input_prediction(
     if (entity == nullptr) {
         return;
     }
-    constexpr float kMoveSpeedMetersPerSecond = 5.0f;
-    entity->velocity = input_move_to_world(input) * kMoveSpeedMetersPerSecond;
+    entity->velocity = input_move_to_world(input) *
+                       gameplay_tuning().player_movement.move_speed_meters_per_second;
     entity->position += entity->velocity * fixed_delta_seconds;
 }
 
@@ -186,17 +190,6 @@ KernelServerEntityState to_server_entity_state(
     return state;
 }
 
-EntitySnapshot interpolate_entity(
-    const EntitySnapshot& from,
-    const EntitySnapshot& to,
-    float alpha) {
-    EntitySnapshot entity = to;
-    entity.position = from.position + (to.position - from.position) * alpha;
-    entity.rotation = glm::slerp(from.rotation, to.rotation, alpha);
-    entity.velocity = from.velocity + (to.velocity - from.velocity) * alpha;
-    return entity;
-}
-
 std::uint32_t history_frame_count(const TickConfig& config) {
     const TickConfig tick = with_tick_defaults(config);
     return std::max(1u, (tick.server_tick_rate * tick.history_ms) / 1000u);
@@ -205,36 +198,33 @@ std::uint32_t history_frame_count(const TickConfig& config) {
 constexpr PeerId kLocalListenPeerId = 1;
 constexpr PeerId kServerPeerId = 0;
 constexpr std::uint32_t kClientNonce = 0x4d330001u;
-constexpr float kPredictedGrenadeSpeedMetersPerSecond = 15.0f;
-constexpr float kPredictedRocketSpeedMetersPerSecond = 35.0f;
 constexpr std::uint32_t kMaxCompensationWindowUs = 100000u;
 constexpr std::uint64_t kClockSyncIntervalUs = 1000000u;
 constexpr double kClientClockOffsetSmoothingFactor = 0.25;
-constexpr std::uint16_t kServerEnemyInitialHp = 240;
-constexpr std::uint16_t kServerEnemyRocketMagazine = 3;
-constexpr std::uint16_t kServerEnemyRocketReserveAmmo = 6;
-constexpr std::uint16_t kServerEnemyRocketDamage = 5;
-constexpr std::uint32_t kServerEnemyRocketCooldownTicks = 30;
-constexpr std::uint32_t kServerEnemyRocketReloadTicks = 30;
-const glm::vec3 kPredictedGrenadeGravity{0.0f, -9.8f, 0.0f};
+
+const GameplayTuning& gameplay_tuning() {
+    static const GameplayTuning tuning = default_gameplay_tuning();
+    return tuning;
+}
 
 bool is_predictable_projectile_weapon(std::uint8_t weapon_id) {
-    return weapon_id == kWeaponGrenade || weapon_id == kWeaponRocket;
+    const WeaponDefinition& weapon =
+        gameplay_tuning().weapon_catalog.definition(weapon_id);
+    return weapon.mode == WeaponFireMode::kProjectile;
 }
 
 float predicted_projectile_speed(std::uint8_t weapon_id) {
-    return weapon_id == kWeaponRocket ? kPredictedRocketSpeedMetersPerSecond
-                                      : kPredictedGrenadeSpeedMetersPerSecond;
+    return gameplay_tuning().weapon_catalog.definition(weapon_id).projectile_speed;
 }
 
 ProjectileMotionModel predicted_projectile_motion(std::uint8_t weapon_id) {
-    return weapon_id == kWeaponGrenade ? ProjectileMotionModel::kParabolic
-                                       : ProjectileMotionModel::kLinear;
+    return gameplay_tuning()
+        .weapon_catalog.definition(weapon_id)
+        .projectile_motion_model;
 }
 
 glm::vec3 predicted_projectile_gravity(std::uint8_t weapon_id) {
-    return weapon_id == kWeaponGrenade ? kPredictedGrenadeGravity
-                                       : glm::vec3{0.0f, 0.0f, 0.0f};
+    return gameplay_tuning().weapon_catalog.definition(weapon_id).projectile_gravity;
 }
 
 void configure_server_enemy(World* world, entt::entity entity) {
@@ -243,20 +233,21 @@ void configure_server_enemy(World* world, entt::entity entity) {
     }
 
     Health& health = world->registry().get<Health>(entity);
-    health.hp = kServerEnemyInitialHp;
-    health.max_hp = kServerEnemyInitialHp;
+    const ServerEnemyDefinition& enemy = gameplay_tuning().server_enemy;
+    health.hp = enemy.initial_hp;
+    health.max_hp = enemy.initial_hp;
 
     WeaponState& weapon = world->registry().get_or_emplace<WeaponState>(entity);
-    weapon.weapon_id = kWeaponRocket;
-    weapon.ammo[kWeaponRocket] = kServerEnemyRocketMagazine;
-    weapon.reserve_ammo[kWeaponRocket] = kServerEnemyRocketReserveAmmo;
+    weapon.weapon_id = enemy.weapon_id;
+    weapon.ammo[enemy.weapon_id] = enemy.magazine_size;
+    weapon.reserve_ammo[enemy.weapon_id] = enemy.reserve_ammo;
 
     WeaponTuning& tuning = world->registry().get_or_emplace<WeaponTuning>(entity);
-    tuning.override_weapon[kWeaponRocket] = true;
-    tuning.magazine_size[kWeaponRocket] = kServerEnemyRocketMagazine;
-    tuning.damage[kWeaponRocket] = kServerEnemyRocketDamage;
-    tuning.cooldown_ticks[kWeaponRocket] = kServerEnemyRocketCooldownTicks;
-    tuning.reload_ticks[kWeaponRocket] = kServerEnemyRocketReloadTicks;
+    tuning.override_weapon[enemy.weapon_id] = true;
+    tuning.magazine_size[enemy.weapon_id] = enemy.magazine_size;
+    tuning.damage[enemy.weapon_id] = enemy.damage;
+    tuning.cooldown_ticks[enemy.weapon_id] = enemy.cooldown_ticks;
+    tuning.reload_ticks[enemy.weapon_id] = enemy.reload_ticks;
 }
 
 }  // namespace
@@ -1461,7 +1452,7 @@ bool KernelEngine::build_interpolated_snapshot_for_server_time(
     for (const EntitySnapshot& from_entity : from->entities) {
         if (const EntitySnapshot* to_entity = find_snapshot_entity(*to, from_entity.net_id)) {
             interpolated.entities.push_back(
-                interpolate_entity(from_entity, *to_entity, alpha));
+                interpolate_snapshot_entity(from_entity, *to_entity, alpha));
         } else {
             interpolated.entities.push_back(from_entity);
         }
@@ -1483,21 +1474,9 @@ void KernelEngine::append_predicted_local_render_state(bool consume_correction) 
 
     EntitySnapshot local = predicted_local_entity_;
     local.position += local_correction_offset_;
-    render_states_.push_back(RenderEntityState{
-        entity_id_for_net_id(local.net_id),
-        local.net_id,
-        static_cast<std::uint16_t>(local.type),
-        local.owner_peer,
-        to_kernel_vec3(local.position),
-        to_kernel_quat(local.rotation),
-        to_kernel_vec3(local.velocity),
-        local.hp,
-        local.max_hp,
-        local.state,
-        local.flags,
-        local.spawn_tick,
-        local.client_action_id,
-    });
+    render_states_.push_back(render_state_from_snapshot_entity(
+        local,
+        entity_id_for_net_id(local.net_id)));
 
     if (consume_correction) {
         local_correction_offset_ *= 0.5f;
@@ -1726,14 +1705,13 @@ bool KernelEngine::is_entity_relevant_to_session(
         return false;
     }
 
-    constexpr float kRelevantDistanceMeters = 40.0f;
-    constexpr float kProjectileRelevantDistanceMeters = 80.0f;
     const float distance = glm::length(entity.position - player_entity->position);
-    if (distance <= kRelevantDistanceMeters) {
+    const RelevanceTuning& relevance = gameplay_tuning().relevance;
+    if (distance <= relevance.entity_distance_meters) {
         return true;
     }
     if (entity.type == EntityType::kProjectile &&
-        distance <= kProjectileRelevantDistanceMeters) {
+        distance <= relevance.projectile_distance_meters) {
         const glm::vec3 to_player = player_entity->position - entity.position;
         if (glm::length(entity.velocity) > 0.001f &&
             glm::length(to_player) > 0.001f &&
@@ -1841,50 +1819,10 @@ void KernelEngine::rebuild_render_states_from_world() {
     auto view = world_.registry().view<const NetworkIdentity, const EntityKind, const Transform>();
     for (const entt::entity entity : view) {
         const NetworkIdentity& identity = view.get<const NetworkIdentity>(entity);
-        const EntityKind& kind = view.get<const EntityKind>(entity);
-        const Transform& transform = view.get<const Transform>(entity);
-        KernelVec3 velocity{0.0f, 0.0f, 0.0f};
-        std::uint16_t animation_state = 0;
-        std::uint32_t visual_flags = derived_visual_flags(world_, entity);
-        std::uint32_t spawn_tick = 0;
-        std::uint32_t client_action_id = 0;
-        std::uint16_t hp = 0;
-        std::uint16_t max_hp = 0;
-        if (world_.registry().all_of<Velocity>(entity)) {
-            velocity = to_kernel_vec3(world_.registry().get<Velocity>(entity).linear);
-        }
-        if (world_.registry().all_of<Health>(entity)) {
-            const Health& health = world_.registry().get<Health>(entity);
-            hp = health.hp;
-            max_hp = health.max_hp;
-        }
-        if (world_.registry().all_of<ReplicationState>(entity)) {
-            const ReplicationState& replication =
-                world_.registry().get<ReplicationState>(entity);
-            animation_state = replication.animation_state;
-            visual_flags |= replication.visual_flags;
-        }
-        if (world_.registry().all_of<ProjectileState>(entity)) {
-            const ProjectileState& projectile =
-                world_.registry().get<ProjectileState>(entity);
-            spawn_tick = projectile.spawn_tick;
-            client_action_id = projectile.client_action_id;
-        }
-        render_states_.push_back(RenderEntityState{
-            entity_id_for_net_id(identity.net_id),
-            identity.net_id,
-            static_cast<std::uint16_t>(kind.type),
-            identity.owner_peer,
-            to_kernel_vec3(transform.position),
-            to_kernel_quat(transform.rotation),
-            velocity,
-            hp,
-            max_hp,
-            animation_state,
-            visual_flags,
-            spawn_tick,
-            client_action_id,
-        });
+        render_states_.push_back(render_state_from_world_entity(
+            world_,
+            entity,
+            entity_id_for_net_id(identity.net_id)));
     }
 }
 
@@ -1916,21 +1854,9 @@ void KernelEngine::rebuild_render_states_from_snapshot(
             rendered_entities.insert(entity.net_id);
             continue;
         }
-        render_states_.push_back(RenderEntityState{
-            entity_id_for_net_id(entity.net_id),
-            entity.net_id,
-            static_cast<std::uint16_t>(entity.type),
-            entity.owner_peer,
-            to_kernel_vec3(entity.position),
-            to_kernel_quat(entity.rotation),
-            to_kernel_vec3(entity.velocity),
-            entity.hp,
-            entity.max_hp,
-            entity.state,
-            entity.flags,
-            entity.spawn_tick,
-            entity.client_action_id,
-        });
+        render_states_.push_back(render_state_from_snapshot_entity(
+            entity,
+            entity_id_for_net_id(entity.net_id)));
         rendered_entities.insert(entity.net_id);
         auto replicated = std::find_if(
             client_replicated_entities_.begin(),
@@ -2260,290 +2186,3 @@ void KernelEngine::remove_session(PeerId peer) {
 }
 
 }  // namespace network_example
-
-struct KernelHandle {
-    std::unique_ptr<network_example::KernelEngine> engine;
-};
-
-extern "C" {
-
-KernelHandle* Kernel_Create(const KernelConfig* config) {
-    try {
-        if (config == nullptr) {
-            return nullptr;
-        }
-        auto* handle = new KernelHandle;
-        handle->engine = std::make_unique<network_example::KernelEngine>(*config);
-        return handle;
-    } catch (...) {
-        return nullptr;
-    }
-}
-
-void Kernel_Destroy(KernelHandle* kernel) {
-    try {
-        delete kernel;
-    } catch (...) {
-    }
-}
-
-bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
-    try {
-        if (out_info == nullptr || out_info_size < sizeof(KernelAbiInfo)) {
-            return false;
-        }
-        std::memset(out_info, 0, sizeof(KernelAbiInfo));
-        out_info->struct_size = sizeof(KernelAbiInfo);
-        out_info->abi_version = KERNEL_ABI_VERSION;
-        out_info->kernel_config_size = sizeof(KernelConfig);
-        out_info->player_input_size = sizeof(PlayerInput);
-        out_info->render_entity_state_size = sizeof(RenderEntityState);
-        out_info->kernel_event_size = sizeof(KernelEvent);
-        out_info->local_player_info_size = sizeof(KernelLocalPlayerInfo);
-        out_info->server_entity_create_info_size =
-            sizeof(KernelServerEntityCreateInfo);
-        out_info->server_entity_state_size = sizeof(KernelServerEntityState);
-        out_info->capability_flags =
-            KERNEL_CAPABILITY_CLIENT_MODE |
-            KERNEL_CAPABILITY_LISTEN_SERVER_MODE |
-            KERNEL_CAPABILITY_DEDICATED_SERVER_MODE |
-            KERNEL_CAPABILITY_INPUT_SUBMISSION |
-            KERNEL_CAPABILITY_RENDER_STATES |
-            KERNEL_CAPABILITY_EVENT_POLLING |
-            KERNEL_CAPABILITY_CLIENT_PREDICTION |
-            KERNEL_CAPABILITY_SNAPSHOT_INTERPOLATION |
-            KERNEL_CAPABILITY_LAG_COMPENSATED_HITSCAN |
-            KERNEL_CAPABILITY_LOCAL_PLAYER_INFO |
-            KERNEL_CAPABILITY_SERVER_ENTITY_CREATE |
-            KERNEL_CAPABILITY_SERVER_ENTITY_DESTROY |
-            KERNEL_CAPABILITY_SERVER_ENTITY_TRANSFORM_WRITE |
-            KERNEL_CAPABILITY_SERVER_ENTITY_VELOCITY_WRITE |
-            KERNEL_CAPABILITY_SERVER_ENTITY_STATE_WRITE |
-            KERNEL_CAPABILITY_SERVER_ENTITY_QUERY |
-            KERNEL_CAPABILITY_SERVER_RELEVANCE_FILTER |
-            KERNEL_CAPABILITY_LAG_COMPENSATED_PROJECTILE |
-            KERNEL_CAPABILITY_EVENT_PRESENTATION_TIME |
-            KERNEL_CAPABILITY_RENDER_STATES_AT_TIME;
-        return true;
-    } catch (...) {
-        return false;
-    }
-}
-
-bool Kernel_GetLocalPlayerInfo(
-    KernelHandle* kernel,
-    KernelLocalPlayerInfo* out_info) {
-    try {
-        if (kernel == nullptr || out_info == nullptr) {
-            return false;
-        }
-        *out_info = kernel->engine->local_player_info();
-        return true;
-    } catch (...) {
-        return false;
-    }
-}
-
-bool Kernel_StartClient(KernelHandle* kernel, const char* address) {
-    try {
-        return kernel != nullptr && address != nullptr && address[0] != '\0' &&
-               kernel->engine->start_client(address);
-    } catch (...) {
-        return false;
-    }
-}
-
-bool Kernel_StartListenServer(KernelHandle* kernel, uint16_t port) {
-    try {
-        return kernel != nullptr && kernel->engine->start_listen_server(port);
-    } catch (...) {
-        return false;
-    }
-}
-
-bool Kernel_StartDedicatedServer(KernelHandle* kernel, uint16_t port) {
-    try {
-        return kernel != nullptr && kernel->engine->start_dedicated_server(port);
-    } catch (...) {
-        return false;
-    }
-}
-
-void Kernel_Update(KernelHandle* kernel, float delta_seconds) {
-    try {
-        if (kernel != nullptr) {
-            kernel->engine->update(delta_seconds);
-        }
-    } catch (...) {
-    }
-}
-
-void Kernel_SubmitInput(
-    KernelHandle* kernel,
-    uint32_t local_player_id,
-    const PlayerInput* input) {
-    try {
-        if (kernel != nullptr && input != nullptr) {
-            kernel->engine->submit_input(local_player_id, *input);
-        }
-    } catch (...) {
-    }
-}
-
-uint32_t Kernel_GetRenderStates(
-    KernelHandle* kernel,
-    RenderEntityState* out_states,
-    uint32_t max_states) {
-    try {
-        if (kernel == nullptr) {
-            return 0;
-        }
-        return kernel->engine->get_render_states(out_states, max_states);
-    } catch (...) {
-        return 0;
-    }
-}
-
-uint32_t Kernel_GetRenderStatesAtTime(
-    KernelHandle* kernel,
-    uint64_t client_render_time_us,
-    RenderEntityState* out_states,
-    uint32_t max_states) {
-    try {
-        if (kernel == nullptr) {
-            return 0;
-        }
-        return kernel->engine->get_render_states_at_time(
-            client_render_time_us,
-            out_states,
-            max_states);
-    } catch (...) {
-        return 0;
-    }
-}
-
-uint32_t Kernel_PollEvents(
-    KernelHandle* kernel,
-    KernelEvent* out_events,
-    uint32_t max_events) {
-    try {
-        if (kernel == nullptr) {
-            return 0;
-        }
-        return kernel->engine->poll_events(out_events, max_events);
-    } catch (...) {
-        return 0;
-    }
-}
-
-bool Kernel_ServerCreateEntity(
-    KernelHandle* kernel,
-    const KernelServerEntityCreateInfo* create_info,
-    uint32_t* out_net_id) {
-    try {
-        return kernel != nullptr && create_info != nullptr &&
-               kernel->engine->server_create_entity(*create_info, out_net_id);
-    } catch (...) {
-        return false;
-    }
-}
-
-bool Kernel_ServerDestroyEntity(
-    KernelHandle* kernel,
-    uint32_t net_id,
-    uint32_t reason) {
-    try {
-        return kernel != nullptr &&
-               kernel->engine->server_destroy_entity(net_id, reason);
-    } catch (...) {
-        return false;
-    }
-}
-
-bool Kernel_ServerSetEntityTransform(
-    KernelHandle* kernel,
-    uint32_t net_id,
-    const KernelVec3* position,
-    const KernelQuat* rotation) {
-    try {
-        return kernel != nullptr && position != nullptr && rotation != nullptr &&
-               kernel->engine->server_set_entity_transform(
-                   net_id,
-                   *position,
-                   *rotation);
-    } catch (...) {
-        return false;
-    }
-}
-
-bool Kernel_ServerSetEntityVelocity(
-    KernelHandle* kernel,
-    uint32_t net_id,
-    const KernelVec3* velocity) {
-    try {
-        return kernel != nullptr && velocity != nullptr &&
-               kernel->engine->server_set_entity_velocity(net_id, *velocity);
-    } catch (...) {
-        return false;
-    }
-}
-
-bool Kernel_ServerSetEntityState(
-    KernelHandle* kernel,
-    uint32_t net_id,
-    uint16_t animation_state,
-    uint32_t visual_flags) {
-    try {
-        return kernel != nullptr &&
-               kernel->engine->server_set_entity_state(
-                   net_id,
-                   animation_state,
-                   visual_flags);
-    } catch (...) {
-        return false;
-    }
-}
-
-bool Kernel_ServerSubmitEntityInput(
-    KernelHandle* kernel,
-    uint32_t net_id,
-    const PlayerInput* input) {
-    try {
-        return kernel != nullptr && input != nullptr &&
-               kernel->engine->server_submit_entity_input(net_id, *input);
-    } catch (...) {
-        return false;
-    }
-}
-
-bool Kernel_ServerGetEntityState(
-    KernelHandle* kernel,
-    uint32_t net_id,
-    KernelServerEntityState* out_state) {
-    try {
-        return kernel != nullptr &&
-               kernel->engine->server_get_entity_state(net_id, out_state);
-    } catch (...) {
-        return false;
-    }
-}
-
-uint32_t Kernel_ServerQueryEntities(
-    KernelHandle* kernel,
-    uint16_t entity_type_filter,
-    KernelServerEntityState* out_states,
-    uint32_t max_states) {
-    try {
-        if (kernel == nullptr) {
-            return 0;
-        }
-        return kernel->engine->server_query_entities(
-            static_cast<network_example::EntityType>(entity_type_filter),
-            out_states,
-            max_states);
-    } catch (...) {
-        return 0;
-    }
-}
-
-}  // extern "C"
