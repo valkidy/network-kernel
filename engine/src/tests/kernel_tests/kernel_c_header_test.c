@@ -14,6 +14,9 @@ int main(void) {
     KernelEvent event;
     KernelServerEntityCreateInfo create_info;
     KernelServerEntityState server_state;
+    KernelCombatStateDefinition combat_state;
+    KernelWeaponMechanicsDefinition weapon_mechanics;
+    KernelProjectileMechanicsDefinition projectile_mechanics;
 
     (void)config;
     (void)local_player_info;
@@ -22,8 +25,11 @@ int main(void) {
     (void)event;
     (void)create_info;
     (void)server_state;
+    (void)combat_state;
+    (void)weapon_mechanics;
+    (void)projectile_mechanics;
 
-    assert(KERNEL_ABI_VERSION == 8u);
+    assert(KERNEL_ABI_VERSION == 9u);
     assert(sizeof(KernelAbiInfo) > 0u);
     assert(sizeof(KernelLocalPlayerInfo) > 0u);
     assert(sizeof(KernelConfig) > 0u);
@@ -32,11 +38,16 @@ int main(void) {
     assert(sizeof(KernelEvent) > 0u);
     assert(sizeof(KernelServerEntityCreateInfo) > 0u);
     assert(sizeof(KernelServerEntityState) > 0u);
+    assert(sizeof(KernelCombatStateDefinition) > 0u);
+    assert(sizeof(KernelWeaponMechanicsDefinition) > 0u);
+    assert(sizeof(KernelProjectileMechanicsDefinition) > 0u);
     assert((KERNEL_CAPABILITY_CLIENT_MODE & KERNEL_CAPABILITY_RENDER_STATES) == 0u);
     assert((KERNEL_CAPABILITY_LAG_COMPENSATED_PROJECTILE &
             KERNEL_CAPABILITY_EVENT_PRESENTATION_TIME) == 0u);
     assert((KERNEL_CAPABILITY_RENDER_STATES_AT_TIME &
             KERNEL_CAPABILITY_RENDER_STATES) == 0u);
+    assert((KERNEL_CAPABILITY_SERVER_MECHANICS_CONFIG &
+            KERNEL_CAPABILITY_SERVER_ENTITY_CREATE) == 0u);
     assert((KERNEL_VISUAL_FLAG_MOVING & KERNEL_VISUAL_FLAG_RELOADING) == 0u);
     assert((KERNEL_VISUAL_FLAG_MOVING & KERNEL_VISUAL_FLAG_DEAD) == 0u);
     assert((InputButton_Dodge & InputButton_Parry) == 0u);

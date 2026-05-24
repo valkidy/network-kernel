@@ -170,6 +170,28 @@ int main() {
         load_symbol<bool(KernelHandle*, std::uint32_t, const PlayerInput*)>(
             library,
             "Kernel_ServerSubmitEntityInput");
+    auto* kernel_server_set_entity_combat_state =
+        load_symbol<bool(
+            KernelHandle*,
+            std::uint32_t,
+            const KernelCombatStateDefinition*)>(
+            library,
+            "Kernel_ServerSetEntityCombatState");
+    auto* kernel_server_set_entity_weapon_mechanics =
+        load_symbol<bool(
+            KernelHandle*,
+            std::uint32_t,
+            const KernelWeaponMechanicsDefinition*)>(
+            library,
+            "Kernel_ServerSetEntityWeaponMechanics");
+    auto* kernel_server_clear_entity_weapon_mechanics =
+        load_symbol<bool(KernelHandle*, std::uint32_t, std::uint8_t)>(
+            library,
+            "Kernel_ServerClearEntityWeaponMechanics");
+    auto* kernel_server_validate_mechanics_config =
+        load_symbol<bool(const KernelWeaponMechanicsDefinition*)>(
+            library,
+            "Kernel_ServerValidateMechanicsConfig");
     auto* kernel_server_get_entity_state =
         load_symbol<bool(KernelHandle*, std::uint32_t, KernelServerEntityState*)>(
             library,
@@ -214,12 +236,19 @@ int main() {
     assert(abi_info.server_entity_create_info_size ==
            sizeof(KernelServerEntityCreateInfo));
     assert(abi_info.server_entity_state_size == sizeof(KernelServerEntityState));
+    assert(abi_info.weapon_mechanics_definition_size ==
+           sizeof(KernelWeaponMechanicsDefinition));
+    assert(abi_info.projectile_mechanics_definition_size ==
+           sizeof(KernelProjectileMechanicsDefinition));
+    assert(abi_info.combat_state_definition_size ==
+           sizeof(KernelCombatStateDefinition));
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LISTEN_SERVER_MODE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LOCAL_PLAYER_INFO) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_SERVER_ENTITY_CREATE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LAG_COMPENSATED_PROJECTILE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_EVENT_PRESENTATION_TIME) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_RENDER_STATES_AT_TIME) != 0);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_SERVER_MECHANICS_CONFIG) != 0);
     assert(!kernel_get_abi_info(nullptr, sizeof(abi_info)));
     assert(!kernel_get_abi_info(&abi_info, sizeof(abi_info) - 1));
     GameServerAbiInfo game_server_abi_info{};
@@ -254,6 +283,14 @@ int main() {
     assert(local_info.player_net_id != 0);
     assert(local_info.has_welcome);
     assert(local_info.connected);
+    std::array<KernelEvent, 16> events{};
+    std::uint32_t event_count = kernel_poll_events(
+        kernel,
+        events.data(),
+        static_cast<std::uint32_t>(events.size()));
+    for (std::uint32_t index = 0; index < event_count; ++index) {
+        game_server_handle_event(game_server, &events[index]);
+    }
 
     KernelServerEntityCreateInfo create_info{};
     create_info.struct_size = sizeof(create_info);
@@ -263,6 +300,31 @@ int main() {
     std::uint32_t enemy = 0;
     assert(kernel_server_create_entity(kernel, &create_info, &enemy));
     assert(enemy != 0);
+    KernelCombatStateDefinition combat_state{};
+    combat_state.struct_size = sizeof(combat_state);
+    combat_state.hp = 240;
+    combat_state.max_hp = 240;
+    combat_state.active_weapon_id = 3;
+    combat_state.hitbox_center = KernelVec3{0.0f, 0.8f, 0.0f};
+    combat_state.hitbox_half_extents = KernelVec3{0.4f, 0.8f, 0.4f};
+    combat_state.ammo[3] = 3;
+    combat_state.reserve_ammo[3] = 6;
+    assert(kernel_server_set_entity_combat_state(kernel, enemy, &combat_state));
+    KernelWeaponMechanicsDefinition rocket{};
+    rocket.struct_size = sizeof(rocket);
+    rocket.weapon_id = 3;
+    rocket.fire_mode = KernelWeaponFireMode_Projectile;
+    rocket.magazine_size = 3;
+    rocket.damage = 5;
+    rocket.cooldown_ticks = 30;
+    rocket.reload_ticks = 30;
+    rocket.projectile.struct_size = sizeof(KernelProjectileMechanicsDefinition);
+    rocket.projectile.motion_model = KernelProjectileMotionModel_Linear;
+    rocket.projectile.speed = 35.0f;
+    rocket.projectile.lifetime_seconds = 2.5f;
+    rocket.projectile.explosion_radius = 3.0f;
+    assert(kernel_server_validate_mechanics_config(&rocket));
+    assert(kernel_server_set_entity_weapon_mechanics(kernel, enemy, &rocket));
     assert(kernel_server_set_entity_state(kernel, enemy, 4, 8));
     KernelServerEntityState server_state{};
     server_state.struct_size = sizeof(server_state);
@@ -275,6 +337,7 @@ int main() {
         kernel,
         enemy,
         KernelDespawnReason_Destroyed));
+    assert(!kernel_server_clear_entity_weapon_mechanics(kernel, enemy, 3));
 
     PlayerInput input{};
     input.input_seq = 1;
@@ -305,8 +368,7 @@ int main() {
                states.data(),
                static_cast<std::uint32_t>(states.size())) >= 1);
 
-    std::array<KernelEvent, 16> events{};
-    const std::uint32_t event_count = kernel_poll_events(
+    event_count = kernel_poll_events(
         kernel,
         events.data(),
         static_cast<std::uint32_t>(events.size()));

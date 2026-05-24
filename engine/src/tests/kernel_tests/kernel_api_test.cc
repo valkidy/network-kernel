@@ -16,6 +16,12 @@ int main() {
     assert(abi_info.server_entity_create_info_size ==
            sizeof(KernelServerEntityCreateInfo));
     assert(abi_info.server_entity_state_size == sizeof(KernelServerEntityState));
+    assert(abi_info.weapon_mechanics_definition_size ==
+           sizeof(KernelWeaponMechanicsDefinition));
+    assert(abi_info.projectile_mechanics_definition_size ==
+           sizeof(KernelProjectileMechanicsDefinition));
+    assert(abi_info.combat_state_definition_size ==
+           sizeof(KernelCombatStateDefinition));
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CLIENT_MODE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LISTEN_SERVER_MODE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_DEDICATED_SERVER_MODE) != 0);
@@ -40,8 +46,9 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LAG_COMPENSATED_PROJECTILE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_EVENT_PRESENTATION_TIME) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_RENDER_STATES_AT_TIME) != 0);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_SERVER_MECHANICS_CONFIG) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 8u);
+    assert(KERNEL_ABI_VERSION == 9u);
     assert(offsetof(PlayerInput, client_action_time_us) > offsetof(PlayerInput, input_seq));
     assert(offsetof(PlayerInput, client_action_id) > offsetof(PlayerInput, client_action_time_us));
     assert(offsetof(KernelEvent, event_time_us) > offsetof(KernelEvent, code));
@@ -82,6 +89,14 @@ int main() {
     assert(!Kernel_ServerSetEntityState(nullptr, 1, 2, 3));
     PlayerInput server_entity_input{};
     assert(!Kernel_ServerSubmitEntityInput(nullptr, 1, &server_entity_input));
+    KernelCombatStateDefinition combat_state{};
+    combat_state.struct_size = sizeof(combat_state);
+    assert(!Kernel_ServerSetEntityCombatState(nullptr, 1, &combat_state));
+    KernelWeaponMechanicsDefinition weapon_mechanics{};
+    weapon_mechanics.struct_size = sizeof(weapon_mechanics);
+    assert(!Kernel_ServerValidateMechanicsConfig(nullptr));
+    assert(!Kernel_ServerSetEntityWeaponMechanics(nullptr, 1, &weapon_mechanics));
+    assert(!Kernel_ServerClearEntityWeaponMechanics(nullptr, 1, 0));
     KernelServerEntityState server_state{};
     server_state.struct_size = sizeof(server_state);
     assert(!Kernel_ServerGetEntityState(nullptr, 1, &server_state));
@@ -107,6 +122,48 @@ int main() {
 
     assert(Kernel_ServerCreateEntity(kernel, &create_info, &created_net_id));
     assert(created_net_id != 0);
+    server_state = KernelServerEntityState{};
+    server_state.struct_size = sizeof(server_state);
+    assert(Kernel_ServerGetEntityState(kernel, created_net_id, &server_state));
+    assert(server_state.hp == 0);
+    assert(server_state.max_hp == 0);
+
+    combat_state.hp = 240;
+    combat_state.max_hp = 240;
+    combat_state.active_weapon_id = 3;
+    combat_state.hitbox_center = KernelVec3{0.0f, 0.8f, 0.0f};
+    combat_state.hitbox_half_extents = KernelVec3{0.4f, 0.8f, 0.4f};
+    combat_state.ammo[3] = 3;
+    combat_state.reserve_ammo[3] = 6;
+    assert(!Kernel_ServerSetEntityCombatState(kernel, created_net_id, nullptr));
+    assert(Kernel_ServerSetEntityCombatState(kernel, created_net_id, &combat_state));
+
+    weapon_mechanics.weapon_id = 3;
+    weapon_mechanics.fire_mode = KernelWeaponFireMode_Projectile;
+    weapon_mechanics.magazine_size = 3;
+    weapon_mechanics.damage = 5;
+    weapon_mechanics.cooldown_ticks = 30;
+    weapon_mechanics.reload_ticks = 30;
+    weapon_mechanics.projectile.struct_size = sizeof(KernelProjectileMechanicsDefinition);
+    weapon_mechanics.projectile.speed = 35.0f;
+    weapon_mechanics.projectile.lifetime_seconds = 2.5f;
+    weapon_mechanics.projectile.explosion_radius = 3.0f;
+    weapon_mechanics.projectile.motion_model = KernelProjectileMotionModel_Linear;
+    assert(Kernel_ServerValidateMechanicsConfig(&weapon_mechanics));
+    assert(!Kernel_ServerSetEntityWeaponMechanics(kernel, created_net_id, nullptr));
+    assert(Kernel_ServerSetEntityWeaponMechanics(
+        kernel,
+        created_net_id,
+        &weapon_mechanics));
+
+    KernelWeaponMechanicsDefinition invalid_weapon = weapon_mechanics;
+    invalid_weapon.struct_size = sizeof(invalid_weapon) - 1;
+    assert(!Kernel_ServerValidateMechanicsConfig(&invalid_weapon));
+    assert(!Kernel_ServerSetEntityWeaponMechanics(
+        kernel,
+        created_net_id,
+        &invalid_weapon));
+
     KernelVec3 enemy_position{5.0f, 0.0f, 0.0f};
     KernelQuat enemy_rotation{0.0f, 0.0f, 0.0f, 1.0f};
     assert(Kernel_ServerSetEntityTransform(
@@ -117,7 +174,8 @@ int main() {
     KernelVec3 enemy_velocity{1.0f, 0.0f, 0.0f};
     assert(Kernel_ServerSetEntityVelocity(kernel, created_net_id, &enemy_velocity));
     assert(Kernel_ServerSetEntityState(kernel, created_net_id, 7, 0x12345678u));
-    server_entity_input.buttons = InputButton_Fire;
+    server_entity_input.buttons = 0;
+    server_entity_input.selected_weapon = 3;
     server_entity_input.aim_dir = KernelVec3{-1.0f, 0.0f, 0.0f};
     assert(Kernel_ServerSubmitEntityInput(
         kernel,
@@ -204,6 +262,8 @@ int main() {
         kernel,
         created_net_id,
         KernelDespawnReason_Destroyed));
+
+    assert(!Kernel_ServerClearEntityWeaponMechanics(kernel, created_net_id, 3));
 
     Kernel_Destroy(kernel);
     return 0;

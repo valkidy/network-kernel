@@ -11,7 +11,6 @@
 #include <glm/glm.hpp>
 #include <spdlog/spdlog.h>
 
-#include "gameplay/public/gameplay_data.h"
 #include "kernel/public/kernel_api.h"
 #include "kernel/src/render_state_builder.h"
 #include "protocol/public/network_packets.h"
@@ -60,8 +59,6 @@ bool is_authoritative_combat_event(KernelEventType type) {
            type == KernelEventType_DamageApplied ||
            type == KernelEventType_Explosion;
 }
-
-const GameplayTuning& gameplay_tuning();
 
 std::uint32_t derived_visual_flags(const World& world, entt::entity entity) {
     std::uint32_t flags = 0;
@@ -131,12 +128,12 @@ std::uint32_t tick_for_time_us(
 void apply_input_prediction(
     EntitySnapshot* entity,
     const PlayerInput& input,
-    float fixed_delta_seconds) {
+    float fixed_delta_seconds,
+    float move_speed_meters_per_second) {
     if (entity == nullptr) {
         return;
     }
-    entity->velocity = input_move_to_world(input) *
-                       gameplay_tuning().player_movement.move_speed_meters_per_second;
+    entity->velocity = input_move_to_world(input) * move_speed_meters_per_second;
     entity->position += entity->velocity * fixed_delta_seconds;
 }
 
@@ -201,53 +198,93 @@ constexpr std::uint32_t kClientNonce = 0x4d330001u;
 constexpr std::uint32_t kMaxCompensationWindowUs = 100000u;
 constexpr std::uint64_t kClockSyncIntervalUs = 1000000u;
 constexpr double kClientClockOffsetSmoothingFactor = 0.25;
+constexpr float kDefaultEntityRelevanceDistanceMeters = 40.0f;
+constexpr float kDefaultProjectileRelevanceDistanceMeters = 80.0f;
 
-const GameplayTuning& gameplay_tuning() {
-    static const GameplayTuning tuning = default_gameplay_tuning();
-    return tuning;
+bool valid_weapon_id(std::uint8_t weapon_id) {
+    return static_cast<std::size_t>(weapon_id) < kWeaponCount;
 }
 
-bool is_predictable_projectile_weapon(std::uint8_t weapon_id) {
-    const WeaponDefinition& weapon =
-        gameplay_tuning().weapon_catalog.definition(weapon_id);
-    return weapon.mode == WeaponFireMode::kProjectile;
+ProjectileMotionModel to_projectile_motion_model(std::uint8_t motion_model) {
+    return motion_model == KernelProjectileMotionModel_Parabolic
+               ? ProjectileMotionModel::kParabolic
+               : ProjectileMotionModel::kLinear;
 }
 
-float predicted_projectile_speed(std::uint8_t weapon_id) {
-    return gameplay_tuning().weapon_catalog.definition(weapon_id).projectile_speed;
-}
-
-ProjectileMotionModel predicted_projectile_motion(std::uint8_t weapon_id) {
-    return gameplay_tuning()
-        .weapon_catalog.definition(weapon_id)
-        .projectile_motion_model;
-}
-
-glm::vec3 predicted_projectile_gravity(std::uint8_t weapon_id) {
-    return gameplay_tuning().weapon_catalog.definition(weapon_id).projectile_gravity;
-}
-
-void configure_server_enemy(World* world, entt::entity entity) {
-    if (world == nullptr || !world->registry().all_of<Health>(entity)) {
-        return;
+WeaponFireMode to_weapon_fire_mode(std::uint8_t fire_mode) {
+    if (fire_mode == KernelWeaponFireMode_Shotgun) {
+        return WeaponFireMode::kShotgun;
     }
+    if (fire_mode == KernelWeaponFireMode_Projectile) {
+        return WeaponFireMode::kProjectile;
+    }
+    return WeaponFireMode::kHitscan;
+}
 
-    Health& health = world->registry().get<Health>(entity);
-    const ServerEnemyDefinition& enemy = gameplay_tuning().server_enemy;
-    health.hp = enemy.initial_hp;
-    health.max_hp = enemy.initial_hp;
+WeaponMechanicsDefinition to_weapon_mechanics(
+    const KernelWeaponMechanicsDefinition& definition) {
+    return WeaponMechanicsDefinition{
+        definition.weapon_id,
+        to_weapon_fire_mode(definition.fire_mode),
+        definition.magazine_size,
+        definition.damage,
+        definition.cooldown_ticks,
+        definition.reload_ticks,
+        definition.max_range,
+        definition.pellet_count,
+        definition.pellet_spread,
+        definition.projectile.speed,
+        definition.projectile.lifetime_seconds,
+        definition.projectile.explosion_radius,
+        to_projectile_motion_model(definition.projectile.motion_model),
+        from_kernel_vec3(definition.projectile.gravity),
+    };
+}
 
-    WeaponState& weapon = world->registry().get_or_emplace<WeaponState>(entity);
-    weapon.weapon_id = enemy.weapon_id;
-    weapon.ammo[enemy.weapon_id] = enemy.magazine_size;
-    weapon.reserve_ammo[enemy.weapon_id] = enemy.reserve_ammo;
+bool validate_weapon_mechanics(const KernelWeaponMechanicsDefinition& definition) {
+    if (definition.struct_size < sizeof(KernelWeaponMechanicsDefinition) ||
+        !valid_weapon_id(definition.weapon_id) ||
+        definition.magazine_size == 0 ||
+        definition.damage == 0 ||
+        definition.cooldown_ticks == 0 ||
+        definition.reload_ticks == 0) {
+        return false;
+    }
+    if (definition.fire_mode > KernelWeaponFireMode_Projectile) {
+        return false;
+    }
+    if (definition.fire_mode == KernelWeaponFireMode_Projectile) {
+        return definition.projectile.struct_size >=
+                   sizeof(KernelProjectileMechanicsDefinition) &&
+               definition.projectile.motion_model <= KernelProjectileMotionModel_Parabolic &&
+               definition.projectile.speed > 0.0f &&
+               definition.projectile.lifetime_seconds > 0.0f;
+    }
+    if (definition.max_range <= 0.0f) {
+        return false;
+    }
+    if (definition.fire_mode == KernelWeaponFireMode_Shotgun &&
+        definition.pellet_count == 0) {
+        return false;
+    }
+    return true;
+}
 
-    WeaponTuning& tuning = world->registry().get_or_emplace<WeaponTuning>(entity);
-    tuning.override_weapon[enemy.weapon_id] = true;
-    tuning.magazine_size[enemy.weapon_id] = enemy.magazine_size;
-    tuning.damage[enemy.weapon_id] = enemy.damage;
-    tuning.cooldown_ticks[enemy.weapon_id] = enemy.cooldown_ticks;
-    tuning.reload_ticks[enemy.weapon_id] = enemy.reload_ticks;
+const WeaponMechanicsDefinition* entity_weapon_mechanics(
+    const World& world,
+    NetId net_id,
+    std::uint8_t weapon_id) {
+    if (!valid_weapon_id(weapon_id)) {
+        return nullptr;
+    }
+    const std::optional<entt::entity> entity = world.find_entity(net_id);
+    if (!entity.has_value() ||
+        !world.registry().all_of<WeaponTuning>(*entity)) {
+        return nullptr;
+    }
+    const WeaponTuning& tuning = world.registry().get<WeaponTuning>(*entity);
+    const std::size_t index = static_cast<std::size_t>(weapon_id);
+    return tuning.configured[index] ? &tuning.definitions[index] : nullptr;
 }
 
 }  // namespace
@@ -461,9 +498,6 @@ bool KernelEngine::server_create_entity(
     if (!entity.has_value()) {
         return false;
     }
-    if (type == EntityType::kEnemy) {
-        configure_server_enemy(&world_, *entity);
-    }
     Transform& transform = world_.registry().get<Transform>(*entity);
     transform.rotation = from_kernel_quat(create_info.rotation);
     ReplicationState& replication =
@@ -572,6 +606,81 @@ bool KernelEngine::server_submit_entity_input(NetId net_id, const PlayerInput& i
     return true;
 }
 
+bool KernelEngine::server_set_entity_combat_state(
+    NetId net_id,
+    const KernelCombatStateDefinition& combat_state) {
+    if (!running_ || !is_server_mode(config_.mode) || net_id == 0 ||
+        combat_state.struct_size < sizeof(KernelCombatStateDefinition) ||
+        !valid_weapon_id(combat_state.active_weapon_id)) {
+        return false;
+    }
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value()) {
+        return false;
+    }
+
+    Health& health = world_.registry().get_or_emplace<Health>(*entity);
+    health.hp = combat_state.hp;
+    health.max_hp = combat_state.max_hp;
+
+    Hitbox& hitbox = world_.registry().get_or_emplace<Hitbox>(*entity);
+    hitbox.center = from_kernel_vec3(combat_state.hitbox_center);
+    hitbox.half_extents = from_kernel_vec3(combat_state.hitbox_half_extents);
+
+    MovementState& movement = world_.registry().get_or_emplace<MovementState>(*entity);
+    movement.speed_meters_per_second = combat_state.move_speed_meters_per_second;
+
+    WeaponState& weapon = world_.registry().get_or_emplace<WeaponState>(*entity);
+    weapon.weapon_id = combat_state.active_weapon_id;
+    for (std::size_t index = 0; index < kWeaponCount; ++index) {
+        weapon.ammo[index] = combat_state.ammo[index];
+        weapon.reserve_ammo[index] = combat_state.reserve_ammo[index];
+    }
+    if (net_id == local_player_net_id_) {
+        local_player_move_speed_meters_per_second_ =
+            combat_state.move_speed_meters_per_second;
+    }
+    publish_snapshot();
+    rebuild_render_states();
+    return true;
+}
+
+bool KernelEngine::server_set_entity_weapon_mechanics(
+    NetId net_id,
+    const KernelWeaponMechanicsDefinition& weapon_mechanics) {
+    if (!running_ || !is_server_mode(config_.mode) ||
+        !validate_weapon_mechanics(weapon_mechanics)) {
+        return false;
+    }
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value()) {
+        return false;
+    }
+    WeaponTuning& tuning = world_.registry().get_or_emplace<WeaponTuning>(*entity);
+    const std::size_t index = static_cast<std::size_t>(weapon_mechanics.weapon_id);
+    tuning.configured[index] = true;
+    tuning.definitions[index] = to_weapon_mechanics(weapon_mechanics);
+    return true;
+}
+
+bool KernelEngine::server_clear_entity_weapon_mechanics(
+    NetId net_id,
+    std::uint8_t weapon_id) {
+    if (!running_ || !is_server_mode(config_.mode) || !valid_weapon_id(weapon_id)) {
+        return false;
+    }
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value() ||
+        !world_.registry().all_of<WeaponTuning>(*entity)) {
+        return false;
+    }
+    WeaponTuning& tuning = world_.registry().get<WeaponTuning>(*entity);
+    const std::size_t index = static_cast<std::size_t>(weapon_id);
+    tuning.configured[index] = false;
+    tuning.definitions[index] = WeaponMechanicsDefinition{};
+    return true;
+}
+
 bool KernelEngine::server_get_entity_state(
     NetId net_id,
     KernelServerEntityState* out_state) const {
@@ -651,6 +760,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     next_clock_sync_nonce_ = 1;
     client_local_time_us_ = 0;
     client_clock_offset_us_ = 0;
+    local_player_move_speed_meters_per_second_ = 0.0f;
     current_render_time_us_ = 0;
     local_client_peer_id_ = 0;
     client_handshake_sent_ = false;
@@ -778,8 +888,8 @@ void KernelEngine::handle_server_disconnect(const TransportEvent& transport_even
     };
     events_.push_back(player_left);
 
-    // Current gameplay removes the disconnected player immediately. A later
-    // policy may preserve selected entities while clearing transient state.
+    // Current server mechanism removes the disconnected player immediately.
+    // A later policy may preserve selected entities while clearing transient state.
     if (world_.destroy(session->player)) {
         push_event(KernelEventType_EntityDestroyed, session->player, transport_event.peer);
     }
@@ -1117,7 +1227,11 @@ void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {
 
     EntitySnapshot replayed = *authoritative;
     for (const PlayerInput& input : pending_prediction_inputs_) {
-        apply_input_prediction(&replayed, input, tick_loop_.fixed_delta_seconds());
+        apply_input_prediction(
+            &replayed,
+            input,
+            tick_loop_.fixed_delta_seconds(),
+            local_player_move_speed_meters_per_second_);
     }
 
     predicted_local_entity_ = replayed;
@@ -1222,15 +1336,20 @@ void KernelEngine::predict_local_input(const PlayerInput& input) {
     apply_input_prediction(
         &predicted_local_entity_,
         input,
-        tick_loop_.fixed_delta_seconds());
+        tick_loop_.fixed_delta_seconds(),
+        local_player_move_speed_meters_per_second_);
     pending_prediction_inputs_.push_back(input);
 }
 
 void KernelEngine::predict_local_projectile(const PlayerInput& input) {
     if (local_client_peer_id_ == 0 || input.client_action_id == 0 ||
         (input.buttons & InputButton_Fire) == 0 ||
-        !is_predictable_projectile_weapon(input.selected_weapon) ||
         find_predicted_projectile(local_client_peer_id_, input.client_action_id) != nullptr) {
+        return;
+    }
+    const WeaponMechanicsDefinition* weapon =
+        entity_weapon_mechanics(world_, local_player_net_id_, input.selected_weapon);
+    if (weapon == nullptr || weapon->mode != WeaponFireMode::kProjectile) {
         return;
     }
 
@@ -1245,11 +1364,9 @@ void KernelEngine::predict_local_projectile(const PlayerInput& input) {
 
     const glm::vec3 origin = player_position + glm::vec3{0.0f, 1.0f, 0.0f};
     const glm::vec3 direction = input_aim_to_world(input);
-    const glm::vec3 velocity =
-        direction * predicted_projectile_speed(input.selected_weapon);
-    const ProjectileMotionModel motion_model =
-        predicted_projectile_motion(input.selected_weapon);
-    const glm::vec3 gravity = predicted_projectile_gravity(input.selected_weapon);
+    const glm::vec3 velocity = direction * weapon->projectile_speed;
+    const ProjectileMotionModel motion_model = weapon->projectile_motion_model;
+    const glm::vec3 gravity = weapon->projectile_gravity;
     predicted_projectiles_.push_back(PredictedProjectile{
         allocate_predicted_entity_id(),
         0,
@@ -1706,12 +1823,11 @@ bool KernelEngine::is_entity_relevant_to_session(
     }
 
     const float distance = glm::length(entity.position - player_entity->position);
-    const RelevanceTuning& relevance = gameplay_tuning().relevance;
-    if (distance <= relevance.entity_distance_meters) {
+    if (distance <= kDefaultEntityRelevanceDistanceMeters) {
         return true;
     }
     if (entity.type == EntityType::kProjectile &&
-        distance <= relevance.projectile_distance_meters) {
+        distance <= kDefaultProjectileRelevanceDistanceMeters) {
         const glm::vec3 to_player = player_entity->position - entity.position;
         if (glm::length(entity.velocity) > 0.001f &&
             glm::length(to_player) > 0.001f &&

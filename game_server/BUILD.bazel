@@ -7,18 +7,26 @@ cc_library(
     srcs = [
         "enemy_ai_controller.cc",
         "enemy_manager.cc",
+        "gameplay_config.cc",
         "game_server.cc",
     ],
     hdrs = [
         "enemy.h",
         "enemy_ai_controller.h",
         "enemy_manager.h",
+        "gameplay_config.h",
         "game_server.h",
     ],
     deps = [
         "//engine/components/ai:ai",
         "//engine/src/kernel:kernel_api",
     ],
+)
+
+cc_test(
+    name = "gameplay_config_test",
+    srcs = ["gameplay_config_test.cc"],
+    deps = [":game_server"],
 )
 
 cc_library(

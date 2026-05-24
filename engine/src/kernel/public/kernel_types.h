@@ -4,7 +4,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 8u
+#define KERNEL_ABI_VERSION 9u
+
+#define KERNEL_MAX_WEAPONS 4u
 
 #define KERNEL_CAPABILITY_CLIENT_MODE UINT64_C(0x0000000000000001)
 #define KERNEL_CAPABILITY_LISTEN_SERVER_MODE UINT64_C(0x0000000000000002)
@@ -26,6 +28,7 @@
 #define KERNEL_CAPABILITY_LAG_COMPENSATED_PROJECTILE UINT64_C(0x0000000000020000)
 #define KERNEL_CAPABILITY_EVENT_PRESENTATION_TIME UINT64_C(0x0000000000040000)
 #define KERNEL_CAPABILITY_RENDER_STATES_AT_TIME UINT64_C(0x0000000000080000)
+#define KERNEL_CAPABILITY_SERVER_MECHANICS_CONFIG UINT64_C(0x0000000000100000)
 
 #define KERNEL_VISUAL_FLAG_MOVING UINT32_C(0x00000001)
 #define KERNEL_VISUAL_FLAG_RELOADING UINT32_C(0x00000002)
@@ -45,6 +48,9 @@ typedef struct KernelAbiInfo {
     uint32_t local_player_info_size;
     uint32_t server_entity_create_info_size;
     uint32_t server_entity_state_size;
+    uint32_t weapon_mechanics_definition_size;
+    uint32_t projectile_mechanics_definition_size;
+    uint32_t combat_state_definition_size;
     uint64_t capability_flags;
 } KernelAbiInfo;
 
@@ -92,6 +98,17 @@ typedef enum InputButton {
     InputButton_Dodge = 1u << 6,
     InputButton_Parry = 1u << 7,
 } InputButton;
+
+typedef enum KernelWeaponFireMode {
+    KernelWeaponFireMode_Hitscan = 0,
+    KernelWeaponFireMode_Shotgun = 1,
+    KernelWeaponFireMode_Projectile = 2,
+} KernelWeaponFireMode;
+
+typedef enum KernelProjectileMotionModel {
+    KernelProjectileMotionModel_Linear = 0,
+    KernelProjectileMotionModel_Parabolic = 1,
+} KernelProjectileMotionModel;
 
 typedef struct KernelVec2 {
     float x;
@@ -176,6 +193,41 @@ typedef struct KernelServerEntityState {
     uint32_t visual_flags;
     bool valid;
 } KernelServerEntityState;
+
+typedef struct KernelProjectileMechanicsDefinition {
+    uint32_t struct_size;
+    uint8_t motion_model;
+    float speed;
+    float lifetime_seconds;
+    float explosion_radius;
+    KernelVec3 gravity;
+} KernelProjectileMechanicsDefinition;
+
+typedef struct KernelWeaponMechanicsDefinition {
+    uint32_t struct_size;
+    uint8_t weapon_id;
+    uint8_t fire_mode;
+    uint16_t magazine_size;
+    uint16_t damage;
+    uint32_t cooldown_ticks;
+    uint32_t reload_ticks;
+    float max_range;
+    uint8_t pellet_count;
+    float pellet_spread;
+    KernelProjectileMechanicsDefinition projectile;
+} KernelWeaponMechanicsDefinition;
+
+typedef struct KernelCombatStateDefinition {
+    uint32_t struct_size;
+    uint16_t hp;
+    uint16_t max_hp;
+    uint8_t active_weapon_id;
+    float move_speed_meters_per_second;
+    KernelVec3 hitbox_center;
+    KernelVec3 hitbox_half_extents;
+    uint16_t ammo[KERNEL_MAX_WEAPONS];
+    uint16_t reserve_ammo[KERNEL_MAX_WEAPONS];
+} KernelCombatStateDefinition;
 
 typedef struct KernelEvent {
     KernelEventType type;

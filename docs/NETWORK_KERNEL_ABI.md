@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 8`.
+`KERNEL_ABI_VERSION == 9`.
 
 ## Ownership
 
@@ -75,6 +75,16 @@ ABI version 8 adds `hp` and `max_hp` to `RenderEntityState`, and adds
 `max_hp` to `KernelServerEntityState` and replicated entity snapshots. Unity
 clients can read player and enemy health directly from the render-state stream
 returned by `Kernel_GetRenderStates` or `Kernel_GetRenderStatesAtTime`.
+
+ABI version 9 moves gameplay-owned combat and weapon data out of the engine.
+The kernel exposes generic mechanism configuration structs for combat state,
+weapon mechanics, and projectile mechanics. Server gameplay layers configure
+entities through `Kernel_ServerSetEntityCombatState`,
+`Kernel_ServerSetEntityWeaponMechanics`,
+`Kernel_ServerClearEntityWeaponMechanics`, and validate weapon mechanism data
+with `Kernel_ServerValidateMechanicsConfig`. The engine executes movement,
+weapon, projectile, damage, snapshot, and transport mechanisms, but does not
+own rifle/rocket/enemy tuning defaults.
 
 Consumers pass a `struct_size`-style byte size to `Kernel_GetAbiInfo`. The call
 returns `false` if the output pointer is null or the provided size is smaller

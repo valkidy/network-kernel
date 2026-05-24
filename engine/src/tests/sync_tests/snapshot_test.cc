@@ -24,9 +24,15 @@ int main() {
     world.registry().get<network_example::WeaponState>(*player_entity).is_reloading =
         true;
     world.registry().get<network_example::Health>(*player_entity).hp = 75;
+    world.registry().get<network_example::Health>(*player_entity).max_hp = 100;
+    world.registry().get<network_example::Hitbox>(*player_entity) =
+        network_example::Hitbox{{0.0f, 0.9f, 0.0f}, {0.35f, 0.9f, 0.35f}, 0};
     const auto enemy_entity = world.find_entity(enemy);
     assert(enemy_entity.has_value());
     world.registry().get<network_example::Health>(*enemy_entity).hp = 25;
+    world.registry().get<network_example::Health>(*enemy_entity).max_hp = 50;
+    world.registry().get<network_example::Hitbox>(*enemy_entity) =
+        network_example::Hitbox{{0.0f, 0.8f, 0.0f}, {0.4f, 0.8f, 0.4f}, 0};
     world.registry().emplace<network_example::ReplicationState>(
         *enemy_entity,
         network_example::ReplicationState{9, 0x01020300u});
@@ -118,6 +124,12 @@ int main() {
         dead_world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
     const network_example::NetId dead_enemy =
         dead_world.spawn_enemy(glm::vec3{5.0f, 0.0f, 0.0f});
+    const auto dead_enemy_entity = dead_world.find_entity(dead_enemy);
+    assert(dead_enemy_entity.has_value());
+    dead_world.registry().get<network_example::Health>(*dead_enemy_entity) =
+        network_example::Health{50, 50};
+    dead_world.registry().get<network_example::Hitbox>(*dead_enemy_entity) =
+        network_example::Hitbox{{0.0f, 0.8f, 0.0f}, {0.4f, 0.8f, 0.4f}, 0};
     assert(dead_world.apply_damage(dead_enemy, 50));
     const network_example::WorldSnapshot dead_snapshot =
         network_example::build_world_snapshot(dead_world, 1, 33, 0);

@@ -76,6 +76,12 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
         out_info->server_entity_create_info_size =
             sizeof(KernelServerEntityCreateInfo);
         out_info->server_entity_state_size = sizeof(KernelServerEntityState);
+        out_info->weapon_mechanics_definition_size =
+            sizeof(KernelWeaponMechanicsDefinition);
+        out_info->projectile_mechanics_definition_size =
+            sizeof(KernelProjectileMechanicsDefinition);
+        out_info->combat_state_definition_size =
+            sizeof(KernelCombatStateDefinition);
         out_info->capability_flags =
             KERNEL_CAPABILITY_CLIENT_MODE |
             KERNEL_CAPABILITY_LISTEN_SERVER_MODE |
@@ -96,7 +102,8 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_SERVER_RELEVANCE_FILTER |
             KERNEL_CAPABILITY_LAG_COMPENSATED_PROJECTILE |
             KERNEL_CAPABILITY_EVENT_PRESENTATION_TIME |
-            KERNEL_CAPABILITY_RENDER_STATES_AT_TIME;
+            KERNEL_CAPABILITY_RENDER_STATES_AT_TIME |
+            KERNEL_CAPABILITY_SERVER_MECHANICS_CONFIG;
         return true;
     });
 }
@@ -256,6 +263,71 @@ bool Kernel_ServerSubmitEntityInput(
     return abi_call("Kernel_ServerSubmitEntityInput", false, [&]() {
         return kernel != nullptr && input != nullptr &&
                kernel->engine->server_submit_entity_input(net_id, *input);
+    });
+}
+
+bool Kernel_ServerSetEntityCombatState(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    const KernelCombatStateDefinition* combat_state) {
+    return abi_call("Kernel_ServerSetEntityCombatState", false, [&]() {
+        return kernel != nullptr && combat_state != nullptr &&
+               kernel->engine->server_set_entity_combat_state(
+                   net_id,
+                   *combat_state);
+    });
+}
+
+bool Kernel_ServerSetEntityWeaponMechanics(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    const KernelWeaponMechanicsDefinition* weapon_mechanics) {
+    return abi_call("Kernel_ServerSetEntityWeaponMechanics", false, [&]() {
+        return kernel != nullptr && weapon_mechanics != nullptr &&
+               kernel->engine->server_set_entity_weapon_mechanics(
+                   net_id,
+                   *weapon_mechanics);
+    });
+}
+
+bool Kernel_ServerClearEntityWeaponMechanics(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    uint8_t weapon_id) {
+    return abi_call("Kernel_ServerClearEntityWeaponMechanics", false, [&]() {
+        return kernel != nullptr &&
+               kernel->engine->server_clear_entity_weapon_mechanics(
+                   net_id,
+                   weapon_id);
+    });
+}
+
+bool Kernel_ServerValidateMechanicsConfig(
+    const KernelWeaponMechanicsDefinition* weapon_mechanics) {
+    return abi_call("Kernel_ServerValidateMechanicsConfig", false, [&]() {
+        if (weapon_mechanics == nullptr ||
+            weapon_mechanics->struct_size < sizeof(KernelWeaponMechanicsDefinition) ||
+            weapon_mechanics->weapon_id >= KERNEL_MAX_WEAPONS ||
+            weapon_mechanics->magazine_size == 0 ||
+            weapon_mechanics->damage == 0 ||
+            weapon_mechanics->cooldown_ticks == 0 ||
+            weapon_mechanics->reload_ticks == 0 ||
+            weapon_mechanics->fire_mode > KernelWeaponFireMode_Projectile) {
+            return false;
+        }
+        if (weapon_mechanics->fire_mode == KernelWeaponFireMode_Projectile) {
+            return weapon_mechanics->projectile.struct_size >=
+                       sizeof(KernelProjectileMechanicsDefinition) &&
+                   weapon_mechanics->projectile.motion_model <=
+                       KernelProjectileMotionModel_Parabolic &&
+                   weapon_mechanics->projectile.speed > 0.0f &&
+                   weapon_mechanics->projectile.lifetime_seconds > 0.0f;
+        }
+        if (weapon_mechanics->max_range <= 0.0f) {
+            return false;
+        }
+        return weapon_mechanics->fire_mode != KernelWeaponFireMode_Shotgun ||
+               weapon_mechanics->pellet_count != 0;
     });
 }
 

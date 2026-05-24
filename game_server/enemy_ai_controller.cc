@@ -261,7 +261,7 @@ void update_timers(const EnemyAiConfig& config, Enemy* enemy, float delta_second
     }
 
     const std::uint16_t missing_ammo =
-        static_cast<std::uint16_t>(kEnemyRocketMagazine - enemy->ammo);
+        static_cast<std::uint16_t>(config.magazine_size - enemy->ammo);
     const std::uint16_t loaded_ammo = std::min(missing_ammo, enemy->reserve_ammo);
     enemy->ammo = static_cast<std::uint16_t>(enemy->ammo + loaded_ammo);
     enemy->reserve_ammo =
@@ -275,13 +275,14 @@ void update_timers(const EnemyAiConfig& config, Enemy* enemy, float delta_second
 }
 
 PlayerInput make_enemy_input(
+    const EnemyAiConfig& config,
     Enemy* enemy,
     std::uint32_t buttons,
     const KernelVec3& aim_direction) {
     PlayerInput input{};
     input.input_seq = enemy->next_input_seq++;
     input.buttons = buttons;
-    input.selected_weapon = kEnemyRocketWeaponId;
+    input.selected_weapon = config.weapon_id;
     input.aim_dir = aim_direction;
     return input;
 }
@@ -291,9 +292,11 @@ void submit_enemy_action(
     const EnemyAiConfig& config,
     const EnemyAiDecision& decision,
     Enemy* enemy) {
-    if (decision.should_reload && !enemy->is_reloading && enemy->ammo < kEnemyRocketMagazine &&
+    if (decision.should_reload && !enemy->is_reloading &&
+        enemy->ammo < config.magazine_size &&
         enemy->reserve_ammo > 0) {
         PlayerInput reload_input = make_enemy_input(
+            config,
             enemy,
             InputButton_Reload,
             decision.aim_direction);
@@ -310,6 +313,7 @@ void submit_enemy_action(
     }
 
     PlayerInput fire_input = make_enemy_input(
+        config,
         enemy,
         InputButton_Fire,
         decision.aim_direction);

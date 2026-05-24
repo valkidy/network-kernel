@@ -15,6 +15,8 @@ struct EnemyAiConfig {
     float patrol_half_extent = 2.0f;
     float fire_interval_seconds = 1.0f;
     float reload_seconds = 1.0f;
+    std::uint8_t weapon_id = kEnemyRocketWeaponId;
+    std::uint16_t magazine_size = kEnemyRocketMagazine;
 };
 
 class EnemyAIController {

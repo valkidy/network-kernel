@@ -24,7 +24,6 @@ cc_library(
     includes = [".."],
     deps = [
         ":components",
-        "//engine/src/gameplay:gameplay_data",
         "@entt//:entt",
         "@glm//:glm",
     ],

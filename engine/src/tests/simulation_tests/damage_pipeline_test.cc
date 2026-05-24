@@ -23,10 +23,19 @@ PlayerInput defensive_input(std::uint32_t buttons, std::uint64_t action_time_us)
     return input;
 }
 
+network_example::NetId spawn_player(
+    network_example::World& world,
+    network_example::PeerId owner_peer,
+    const glm::vec3& position) {
+    const network_example::NetId player = world.spawn_player(owner_peer, position);
+    health(world, player) = network_example::Health{100, 100};
+    return player;
+}
+
 void confirm_after_grace_window() {
     network_example::World world;
     const network_example::NetId player =
-        world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+        spawn_player(world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
     network_example::DamagePipeline pipeline;
     std::vector<KernelEvent> events;
 
@@ -53,7 +62,7 @@ void confirm_after_grace_window() {
 void dodge_cancels_pending_damage() {
     network_example::World world;
     const network_example::NetId player =
-        world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+        spawn_player(world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
     network_example::DamagePipeline pipeline;
     std::vector<KernelEvent> events;
 
@@ -70,7 +79,7 @@ void dodge_cancels_pending_damage() {
 void parry_reduces_pending_damage() {
     network_example::World world;
     const network_example::NetId player =
-        world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+        spawn_player(world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
     network_example::DamagePipeline pipeline;
     std::vector<KernelEvent> events;
 
@@ -88,7 +97,7 @@ void parry_reduces_pending_damage() {
 void reload_does_not_modify_pending_damage() {
     network_example::World world;
     const network_example::NetId player =
-        world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+        spawn_player(world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
     network_example::DamagePipeline pipeline;
     std::vector<KernelEvent> events;
 
@@ -106,7 +115,7 @@ void reload_does_not_modify_pending_damage() {
 void dodge_wins_over_parry() {
     network_example::World world;
     const network_example::NetId player =
-        world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+        spawn_player(world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
     network_example::DamagePipeline pipeline;
     std::vector<KernelEvent> events;
 
@@ -123,7 +132,7 @@ void dodge_wins_over_parry() {
 void non_server_damage_is_not_pended() {
     network_example::World world;
     const network_example::NetId player =
-        world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+        spawn_player(world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
     network_example::DamagePipeline pipeline;
 
     assert(!pipeline.submit_hit(world, player, 77, 2, 3, 40, 100000));
