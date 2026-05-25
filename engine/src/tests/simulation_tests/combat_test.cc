@@ -460,6 +460,33 @@ void server_projectile_damage_to_player_is_pended() {
     assert(count_events(events, KernelEventType_DamageApplied) == 1);
 }
 
+void direct_hit_projectile_without_explosion_applies_damage() {
+    network_example::World world;
+    spawn_player(world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
+    const network_example::NetId enemy =
+        spawn_enemy(world, glm::vec3{1.0f, 0.0f, 0.0f});
+    const network_example::NetId projectile_net_id =
+        world.spawn_projectile(
+            1,
+            glm::vec3{0.0f, 0.8f, 0.0f},
+            glm::vec3{10.0f, 0.0f, 0.0f});
+    network_example::ProjectileState& projectile =
+        projectile_state(world, projectile_net_id);
+    projectile.weapon_id = network_example::kWeaponSlot3;
+    projectile.damage = 30;
+    projectile.shooter_net_id = 1;
+    projectile.explosion_radius = 0.0f;
+    projectile.max_lifetime_seconds = 1.0f;
+    projectile.initial_velocity = glm::vec3{10.0f, 0.0f, 0.0f};
+
+    std::vector<KernelEvent> events;
+    network_example::simulate_projectiles(world, 0.1f, 1, &events);
+    require(!world.find_entity(projectile_net_id).has_value());
+    require(health(world, enemy).hp == 20);
+    require(count_events(events, KernelEventType_Explosion) == 0);
+    require(count_events(events, KernelEventType_DamageApplied) == 1);
+}
+
 void projectile_weapon_fires_again_after_cooldown() {
     network_example::World world;
     const network_example::NetId player =
@@ -511,6 +538,7 @@ void projectile_rewind_spawns_from_historical_muzzle() {
         network_example::WeaponSimulationContext{
             &history,
             history.find_frame(4),
+            nullptr,
             4,
             7,
             1.0f / 30.0f,
@@ -575,6 +603,7 @@ void projectile_historical_hit_query_hits_historical_target() {
         network_example::WeaponSimulationContext{
             &history,
             history.find_frame(4),
+            nullptr,
             4,
             8,
             1.0f / 30.0f,
@@ -608,6 +637,7 @@ void projectile_historical_hit_query_ignores_current_only_target() {
         network_example::WeaponSimulationContext{
             &history,
             history.find_frame(4),
+            nullptr,
             4,
             8,
             1.0f / 30.0f,
@@ -715,6 +745,7 @@ int main() {
     shotgun_applies_multiple_pellets();
     grenade_sweeps_and_explodes_with_falloff();
     server_projectile_damage_to_player_is_pended();
+    direct_hit_projectile_without_explosion_applies_damage();
     projectile_weapon_fires_again_after_cooldown();
     projectile_rewind_spawns_from_historical_muzzle();
     projectile_without_rewind_uses_current_muzzle();

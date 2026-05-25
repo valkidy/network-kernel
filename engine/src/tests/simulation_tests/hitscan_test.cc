@@ -46,7 +46,16 @@ int main() {
         network_example::QueuedInput{1, input},
     };
     std::vector<KernelEvent> events;
-    network_example::simulate_hitscan_weapons(world, inputs, 0, &events);
+    network_example::DamagePipeline damage_pipeline;
+    network_example::simulate_hitscan_weapons(
+        world,
+        inputs,
+        0,
+        &events,
+        &damage_pipeline);
+
+    assert(world.registry().get<network_example::Health>(*enemy_entity).hp == 50);
+    damage_pipeline.confirm_ready(world, 0, 0, &events);
 
     const network_example::Health& health =
         world.registry().get<network_example::Health>(*enemy_entity);

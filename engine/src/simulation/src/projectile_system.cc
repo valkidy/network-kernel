@@ -50,6 +50,12 @@ float distance_to_historical_hitbox(
     return glm::length(point - closest);
 }
 
+struct ProjectileHitRecord {
+    NetId target_net_id = 0;
+    float distance = 0.0f;
+    glm::vec3 impact_position{0.0f, 0.0f, 0.0f};
+};
+
 void apply_historical_explosion_damage(
     World& world,
     const HistoryFrame& frame,
@@ -59,7 +65,8 @@ void apply_historical_explosion_damage(
     const glm::vec3& explosion_center,
     std::uint32_t current_tick,
     std::uint64_t hit_time_us,
-    std::vector<KernelEvent>* events) {
+    std::vector<KernelEvent>* events,
+    DamagePipeline* damage_pipeline) {
     if (projectile.explosion_radius <= 0.0f || projectile.damage == 0) {
         return;
     }
@@ -82,27 +89,19 @@ void apply_historical_explosion_damage(
     }
 
     for (const auto& [target_net_id, damage] : damage_results) {
-        if (!world.apply_damage(target_net_id, damage)) {
-            continue;
+        if (damage_pipeline != nullptr) {
+            damage_pipeline->submit_damage_request(DamageRequest{
+                current_tick,
+                0,
+                projectile_net_id,
+                target_net_id,
+                owner_peer,
+                projectile.weapon_id,
+                damage,
+                hit_time_us,
+                explosion_center,
+            });
         }
-        push_event(
-            events,
-            KernelEventType_HitConfirmed,
-            current_tick,
-            target_net_id,
-            owner_peer,
-            projectile.weapon_id,
-            hit_time_us,
-            hit_time_us);
-        push_event(
-            events,
-            KernelEventType_DamageApplied,
-            current_tick,
-            target_net_id,
-            owner_peer,
-            damage,
-            hit_time_us,
-            hit_time_us);
     }
 }
 
@@ -158,58 +157,37 @@ void explode_projectile(
     }
 
     for (const auto& [target_net_id, damage] : damage_results) {
-        if (damage_pipeline != nullptr &&
-            damage_pipeline->submit_hit(
-                world,
-                target_net_id,
+        if (damage_pipeline != nullptr) {
+            damage_pipeline->submit_damage_request(DamageRequest{
+                current_tick,
+                0,
                 projectile_net_id,
+                target_net_id,
                 owner_peer,
                 projectile.weapon_id,
                 damage,
-                hit_time_us)) {
-            continue;
+                hit_time_us,
+                explosion_center,
+            });
         }
-        if (!world.apply_damage(target_net_id, damage)) {
-            continue;
-        }
-        push_event(
-            events,
-            KernelEventType_HitConfirmed,
-            current_tick,
-            target_net_id,
-            owner_peer,
-            projectile.weapon_id,
-            hit_time_us,
-            hit_time_us);
-        push_event(
-            events,
-            KernelEventType_DamageApplied,
-            current_tick,
-            target_net_id,
-            owner_peer,
-            damage,
-            hit_time_us,
-            hit_time_us);
     }
 }
 
-bool projectile_sweep_hits_target(
+std::vector<ProjectileHitRecord> collect_projectile_sweep_hits(
     World& world,
     entt::entity projectile_entity,
     PeerId owner_peer,
     NetId ignored_net_id,
     const glm::vec3& previous_position,
-    const glm::vec3& current_position,
-    glm::vec3* impact_position) {
+    const glm::vec3& current_position) {
     const glm::vec3 displacement = current_position - previous_position;
     const float length = glm::length(displacement);
     if (length <= 0.0001f) {
-        return false;
+        return {};
     }
     const glm::vec3 direction = displacement / length;
 
-    float best_distance = length;
-    bool found_hit = false;
+    std::vector<ProjectileHitRecord> hits;
     auto target_view = world.registry().view<NetworkIdentity, Transform, Health, Hitbox>();
     for (const entt::entity target_entity : target_view) {
         if (target_entity == projectile_entity ||
@@ -235,16 +213,25 @@ bool projectile_sweep_hits_target(
                 target_transform.position + hitbox.center,
                 hitbox.half_extents,
                 &distance) &&
-            distance <= best_distance) {
-            best_distance = distance;
-            found_hit = true;
+            distance <= length) {
+            hits.push_back(ProjectileHitRecord{
+                target_identity.net_id,
+                distance,
+                previous_position + direction * distance,
+            });
         }
     }
 
-    if (found_hit && impact_position != nullptr) {
-        *impact_position = previous_position + direction * best_distance;
-    }
-    return found_hit;
+    std::sort(
+        hits.begin(),
+        hits.end(),
+        [](const ProjectileHitRecord& lhs, const ProjectileHitRecord& rhs) {
+            if (lhs.distance != rhs.distance) {
+                return lhs.distance < rhs.distance;
+            }
+            return lhs.target_net_id < rhs.target_net_id;
+        });
+    return hits;
 }
 
 std::uint64_t tick_time_us(std::uint32_t tick, float fixed_delta_seconds) {
@@ -297,6 +284,11 @@ void simulate_projectiles(
     std::uint32_t current_tick,
     std::vector<KernelEvent>* events,
     DamagePipeline* damage_pipeline) {
+    DamagePipeline local_damage_pipeline;
+    DamagePipeline* active_damage_pipeline = damage_pipeline;
+    if (active_damage_pipeline == nullptr) {
+        active_damage_pipeline = &local_damage_pipeline;
+    }
     std::vector<NetId> projectiles_to_destroy;
     auto view = world.registry().view<NetworkIdentity, Transform, Velocity, ProjectileState, ProjectileTag>();
     for (const entt::entity entity : view) {
@@ -320,36 +312,61 @@ void simulate_projectiles(
             next_age_seconds);
         projectile.age_seconds = next_age_seconds;
 
-        glm::vec3 impact_position = transform.position;
-        const bool hit_target = projectile_sweep_hits_target(
+        const std::vector<ProjectileHitRecord> hits = collect_projectile_sweep_hits(
             world,
             entity,
             identity.owner_peer,
             projectile.shooter_net_id,
             projectile.previous_position,
-            transform.position,
-            &impact_position);
+            transform.position);
+        const bool hit_target = !hits.empty();
+        const glm::vec3 impact_position =
+            hit_target ? hits.front().impact_position : transform.position;
         const bool expired = projectile.max_lifetime_seconds > 0.0f &&
                              projectile.age_seconds >= projectile.max_lifetime_seconds;
         if (!hit_target && !expired) {
             continue;
         }
 
-        explode_projectile(
-            world,
-            identity.net_id,
-            identity.owner_peer,
-            projectile,
-            hit_target ? impact_position : transform.position,
-            current_tick,
-            tick_time_us(current_tick, fixed_delta_seconds),
-            events,
-            damage_pipeline);
+        const std::uint64_t hit_time_us =
+            tick_time_us(current_tick, fixed_delta_seconds);
+        if (hit_target && projectile.explosion_radius <= 0.0f &&
+            projectile.damage > 0) {
+            active_damage_pipeline->submit_damage_request(DamageRequest{
+                current_tick,
+                0,
+                identity.net_id,
+                hits.front().target_net_id,
+                identity.owner_peer,
+                projectile.weapon_id,
+                projectile.damage,
+                hit_time_us,
+                impact_position,
+            });
+        } else {
+            explode_projectile(
+                world,
+                identity.net_id,
+                identity.owner_peer,
+                projectile,
+                hit_target ? impact_position : transform.position,
+                current_tick,
+                hit_time_us,
+                events,
+                active_damage_pipeline);
+        }
         projectiles_to_destroy.push_back(identity.net_id);
     }
 
     for (NetId projectile : projectiles_to_destroy) {
         world.destroy(projectile);
+    }
+    if (damage_pipeline == nullptr) {
+        active_damage_pipeline->confirm_ready(
+            world,
+            tick_time_us(current_tick, fixed_delta_seconds),
+            current_tick,
+            events);
     }
 }
 
@@ -365,7 +382,8 @@ bool resolve_projectile_historical_hit(
     std::uint32_t rewind_tick,
     std::uint32_t current_tick,
     float fixed_delta_seconds,
-    std::vector<KernelEvent>* events) {
+    std::vector<KernelEvent>* events,
+    DamagePipeline* damage_pipeline) {
     if (fixed_delta_seconds <= 0.0f || current_tick <= rewind_tick) {
         return false;
     }
@@ -412,7 +430,8 @@ bool resolve_projectile_historical_hit(
                     hit.impact_position,
                     current_tick,
                     hit_time_us,
-                    events);
+                    events,
+                    damage_pipeline);
                 world.destroy(projectile_net_id);
                 return true;
             }

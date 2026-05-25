@@ -1752,6 +1752,7 @@ void KernelEngine::simulate_tick() {
             WeaponSimulationContext{
                 &history_buffer_,
                 rewind_frame,
+                &damage_pipeline_,
                 rewind_tick,
                 tick_loop_.current_tick(),
                 fixed_delta,

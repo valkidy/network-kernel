@@ -31,6 +31,7 @@ std::uint16_t parry_reduced_damage(std::uint16_t damage) {
 
 void DamagePipeline::clear() {
     defensive_actions_.clear();
+    queued_damage_.clear();
     pending_damage_.clear();
 }
 
@@ -73,33 +74,25 @@ bool DamagePipeline::submit_hit(
     std::uint8_t source_code,
     std::uint16_t damage,
     std::uint64_t hit_time_us) {
-    if (damage == 0 || source_peer != 0) {
-        return false;
-    }
-
-    const std::optional<entt::entity> target_entity = world.find_entity(target_net_id);
-    if (!target_entity.has_value() ||
-        !world.registry().all_of<NetworkIdentity>(*target_entity) ||
-        !is_player_entity(world, *target_entity)) {
-        return false;
-    }
-
-    const NetworkIdentity& target_identity =
-        world.registry().get<NetworkIdentity>(*target_entity);
-    PendingDamage pending{
-        target_net_id,
-        target_identity.owner_peer,
+    (void)world;
+    return submit_damage_request(DamageRequest{
+        0,
+        0,
         source_net_id,
+        target_net_id,
         source_peer,
         source_code,
         damage,
         hit_time_us,
-        hit_time_us + DamagePipeline::kGraceWindowUs,
-        false,
-        false,
-    };
-    apply_defensive_actions(&pending);
-    pending_damage_.push_back(pending);
+        glm::vec3{0.0f, 0.0f, 0.0f},
+    });
+}
+
+bool DamagePipeline::submit_damage_request(const DamageRequest& request) {
+    if (request.damage == 0 || request.target_net_id == 0) {
+        return false;
+    }
+    queued_damage_.push_back(request);
     return true;
 }
 
@@ -108,9 +101,61 @@ void DamagePipeline::confirm_ready(
     std::uint64_t server_time_us,
     std::uint32_t current_tick,
     std::vector<KernelEvent>* events) {
+    for (const DamageRequest& request : queued_damage_) {
+        const std::optional<entt::entity> target_entity =
+            world.find_entity(request.target_net_id);
+        if (!target_entity.has_value() ||
+            !world.registry().all_of<NetworkIdentity, Health>(*target_entity)) {
+            continue;
+        }
+
+        const NetworkIdentity& target_identity =
+            world.registry().get<NetworkIdentity>(*target_entity);
+        const bool delay_for_defense =
+            request.source_peer == 0 && is_player_entity(world, *target_entity);
+        PendingDamage pending{
+            request.target_net_id,
+            target_identity.owner_peer,
+            request.source_net_id,
+            request.source_peer,
+            request.source_code,
+            request.damage,
+            request.hit_time_us,
+            delay_for_defense
+                ? request.hit_time_us + DamagePipeline::kGraceWindowUs
+                : request.hit_time_us,
+            request.server_tick,
+            request.sequence_id,
+            false,
+            false,
+        };
+        apply_defensive_actions(&pending);
+        pending_damage_.push_back(pending);
+    }
+    queued_damage_.clear();
+
     for (PendingDamage& pending : pending_damage_) {
         apply_defensive_actions(&pending);
     }
+
+    std::stable_sort(
+        pending_damage_.begin(),
+        pending_damage_.end(),
+        [](const PendingDamage& lhs, const PendingDamage& rhs) {
+            if (lhs.server_tick != rhs.server_tick) {
+                return lhs.server_tick < rhs.server_tick;
+            }
+            if (lhs.sequence_id != rhs.sequence_id) {
+                return lhs.sequence_id < rhs.sequence_id;
+            }
+            if (lhs.source_net_id != rhs.source_net_id) {
+                return lhs.source_net_id < rhs.source_net_id;
+            }
+            if (lhs.target_net_id != rhs.target_net_id) {
+                return lhs.target_net_id < rhs.target_net_id;
+            }
+            return lhs.confirm_time_us < rhs.confirm_time_us;
+        });
 
     auto ready_begin = std::remove_if(
         pending_damage_.begin(),
@@ -151,7 +196,8 @@ void DamagePipeline::confirm_ready(
 }
 
 std::uint32_t DamagePipeline::pending_count() const {
-    return static_cast<std::uint32_t>(pending_damage_.size());
+    return static_cast<std::uint32_t>(
+        pending_damage_.size() + queued_damage_.size());
 }
 
 void DamagePipeline::apply_defensive_actions(PendingDamage* pending) {

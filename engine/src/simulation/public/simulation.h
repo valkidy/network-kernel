@@ -10,6 +10,8 @@
 
 namespace network_example {
 
+class DamagePipeline;
+
 struct QueuedInput {
     PeerId owner_peer = 0;
     PlayerInput input{};
@@ -22,10 +24,23 @@ struct QueuedInput {
 struct WeaponSimulationContext {
     const HistoryBuffer* history_buffer = nullptr;
     const HistoryFrame* rewind_frame = nullptr;
+    DamagePipeline* damage_pipeline = nullptr;
     std::uint32_t rewind_tick = 0;
     std::uint32_t current_tick = 0;
     float fixed_delta_seconds = 0.0f;
     std::uint64_t action_time_us = 0;
+};
+
+struct DamageRequest {
+    std::uint32_t server_tick = 0;
+    std::uint32_t sequence_id = 0;
+    NetId source_net_id = 0;
+    NetId target_net_id = 0;
+    PeerId source_peer = 0;
+    std::uint8_t source_code = 0;
+    std::uint16_t damage = 0;
+    std::uint64_t hit_time_us = 0;
+    glm::vec3 hit_position{0.0f, 0.0f, 0.0f};
 };
 
 glm::vec3 projectile_position_at(
@@ -53,6 +68,7 @@ public:
         std::uint64_t received_server_time_us,
         std::uint64_t action_server_time_us = 0,
         bool has_action_server_time = false);
+    bool submit_damage_request(const DamageRequest& request);
     bool submit_hit(
         const World& world,
         NetId target_net_id,
@@ -89,6 +105,8 @@ private:
         std::uint16_t damage = 0;
         std::uint64_t hit_time_us = 0;
         std::uint64_t confirm_time_us = 0;
+        std::uint32_t server_tick = 0;
+        std::uint32_t sequence_id = 0;
         bool canceled = false;
         bool parry_applied = false;
     };
@@ -97,6 +115,7 @@ private:
     void prune_defensive_actions(std::uint64_t server_time_us);
 
     std::vector<DefensiveAction> defensive_actions_;
+    std::vector<DamageRequest> queued_damage_;
     std::vector<PendingDamage> pending_damage_;
 };
 
@@ -131,7 +150,8 @@ bool resolve_projectile_historical_hit(
     std::uint32_t rewind_tick,
     std::uint32_t current_tick,
     float fixed_delta_seconds,
-    std::vector<KernelEvent>* events);
+    std::vector<KernelEvent>* events,
+    DamagePipeline* damage_pipeline);
 
 bool ray_intersects_aabb(
     const glm::vec3& ray_origin,
@@ -145,6 +165,12 @@ void simulate_hitscan_weapons(
     const std::vector<QueuedInput>& inputs,
     std::uint32_t current_tick,
     std::vector<KernelEvent>* events);
+void simulate_hitscan_weapons(
+    World& world,
+    const std::vector<QueuedInput>& inputs,
+    std::uint32_t current_tick,
+    std::vector<KernelEvent>* events,
+    DamagePipeline* damage_pipeline);
 void simulate_weapons(
     World& world,
     const std::vector<QueuedInput>& inputs,

@@ -240,7 +240,8 @@ void apply_hitscan_damage(
     const glm::vec3& origin,
     const glm::vec3& direction,
     std::uint64_t hit_time_us,
-    std::vector<KernelEvent>* events) {
+    std::vector<KernelEvent>* events,
+    DamagePipeline* damage_pipeline) {
     NetId target_net_id = 0;
     if (!find_hitscan_target(
             world,
@@ -253,27 +254,20 @@ void apply_hitscan_damage(
         return;
     }
 
-    if (!world.apply_damage(target_net_id, definition.damage)) {
+    if (damage_pipeline == nullptr ||
+        !damage_pipeline->submit_damage_request(DamageRequest{
+            current_tick,
+            0,
+            shooter_net_id,
+            target_net_id,
+            shooter_peer_id,
+            definition.id,
+            definition.damage,
+            hit_time_us,
+            origin,
+        })) {
         return;
     }
-    push_event(
-        events,
-        KernelEventType_HitConfirmed,
-        current_tick,
-        target_net_id,
-        shooter_peer_id,
-        definition.id,
-        hit_time_us,
-        hit_time_us);
-    push_event(
-        events,
-        KernelEventType_DamageApplied,
-        current_tick,
-        target_net_id,
-        shooter_peer_id,
-        definition.damage,
-        hit_time_us,
-        hit_time_us);
 }
 
 NetId fire_projectile(
@@ -389,6 +383,11 @@ void simulate_weapons(
     const WeaponSimulationContext& context,
     std::vector<KernelEvent>* events) {
     const std::uint32_t current_tick = context.current_tick;
+    DamagePipeline local_damage_pipeline;
+    DamagePipeline* damage_pipeline = context.damage_pipeline;
+    if (damage_pipeline == nullptr) {
+        damage_pipeline = &local_damage_pipeline;
+    }
     complete_all_reloads(world, current_tick);
 
     for (const QueuedInput& queued_input : inputs) {
@@ -455,7 +454,8 @@ void simulate_weapons(
                     origin,
                     direction,
                     hit_time_us,
-                    events);
+                    events,
+                    damage_pipeline);
             } else if (definition->mode == WeaponFireMode::kShotgun) {
                 for (const glm::vec3& pellet_direction :
                      pellet_directions(direction, *definition)) {
@@ -469,7 +469,8 @@ void simulate_weapons(
                         origin,
                         pellet_direction,
                         hit_time_us,
-                        events);
+                        events,
+                        damage_pipeline);
                 }
             } else {
                 const Hitbox& shooter_hitbox = player_view.get<Hitbox>(player_entity);
@@ -518,11 +519,22 @@ void simulate_weapons(
                             spawn_tick,
                             current_tick,
                             context.fixed_delta_seconds,
-                            events);
+                            events,
+                            damage_pipeline);
                     }
                 }
             }
         }
+    }
+    if (context.damage_pipeline == nullptr) {
+        const std::uint64_t confirm_time_us =
+            context.fixed_delta_seconds > 0.0f
+                ? static_cast<std::uint64_t>(
+                      static_cast<double>(current_tick) *
+                      static_cast<double>(context.fixed_delta_seconds) *
+                      1000000.0)
+                : context.action_time_us;
+        damage_pipeline->confirm_ready(world, confirm_time_us, current_tick, events);
     }
 }
 
@@ -538,6 +550,7 @@ void simulate_weapons(
         WeaponSimulationContext{
             nullptr,
             rewind_frame,
+            nullptr,
             rewind_frame != nullptr ? rewind_frame->server_tick : current_tick,
             current_tick,
             0.0f,
@@ -559,6 +572,26 @@ void simulate_hitscan_weapons(
     std::uint32_t current_tick,
     std::vector<KernelEvent>* events) {
     simulate_weapons(world, inputs, current_tick, events);
+}
+
+void simulate_hitscan_weapons(
+    World& world,
+    const std::vector<QueuedInput>& inputs,
+    std::uint32_t current_tick,
+    std::vector<KernelEvent>* events,
+    DamagePipeline* damage_pipeline) {
+    simulate_weapons(
+        world,
+        inputs,
+        WeaponSimulationContext{
+            nullptr,
+            nullptr,
+            damage_pipeline,
+            current_tick,
+            current_tick,
+            0.0f,
+            0},
+        events);
 }
 
 }  // namespace network_example
