@@ -90,6 +90,13 @@ int main() {
     assert(template_info.fire_mode == KernelWeaponFireMode_AreaEffect);
     assert(template_info.mechanics.area_effect.radius == 2.0f);
     assert(template_info.name[0] == 'F');
+    template_info = GameServerWeaponTemplateInfo{};
+    template_info.struct_size = sizeof(template_info);
+    assert(GameServer_QueryWeaponTemplate(game_server, 5, &template_info));
+    assert(template_info.weapon_id == 5);
+    assert(template_info.fire_mode == KernelWeaponFireMode_Beam);
+    assert(template_info.mechanics.beam.length == 8.0f);
+    assert(template_info.mechanics.beam.damage_per_second == 30);
     handle_pending_events(kernel, game_server);
     GameServer_Tick(game_server, 1.0f / 30.0f);
     assert(GameServer_GetEnemyCount(game_server) == 1);
@@ -113,6 +120,11 @@ int main() {
     assert(GameServer_QueryWeaponTemplate(yaml_game_server, 4, &template_info));
     assert(template_info.mechanics.fire_mode == KernelWeaponFireMode_AreaEffect);
     assert(template_info.mechanics.area_effect.collision_mask == KERNEL_COLLISION_LAYER_ENEMY);
+    template_info = GameServerWeaponTemplateInfo{};
+    template_info.struct_size = sizeof(template_info);
+    assert(GameServer_QueryWeaponTemplate(yaml_game_server, 5, &template_info));
+    assert(template_info.mechanics.fire_mode == KernelWeaponFireMode_Beam);
+    assert(template_info.mechanics.beam.collision_mask == KERNEL_COLLISION_LAYER_ENEMY);
     GameServer_Destroy(yaml_game_server);
     Kernel_Destroy(kernel);
     return 0;

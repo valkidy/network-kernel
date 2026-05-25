@@ -278,6 +278,9 @@ WeaponFireMode to_weapon_fire_mode(std::uint8_t fire_mode) {
     if (fire_mode == KernelWeaponFireMode_AreaEffect) {
         return WeaponFireMode::kAreaEffect;
     }
+    if (fire_mode == KernelWeaponFireMode_Beam) {
+        return WeaponFireMode::kBeam;
+    }
     return WeaponFireMode::kHitscan;
 }
 
@@ -314,6 +317,11 @@ WeaponMechanicsDefinition to_weapon_mechanics(
     mechanics.area_effect_lifetime_ticks = definition.area_effect.lifetime_ticks;
     mechanics.area_effect_spawn_distance = definition.area_effect.spawn_distance;
     mechanics.area_effect_collision_mask = definition.area_effect.collision_mask;
+    mechanics.beam_length = definition.beam.length;
+    mechanics.beam_radius = definition.beam.radius;
+    mechanics.beam_damage_per_second = definition.beam.damage_per_second;
+    mechanics.beam_lifetime_ticks = definition.beam.lifetime_ticks;
+    mechanics.beam_collision_mask = definition.beam.collision_mask;
     return mechanics;
 }
 
@@ -354,6 +362,12 @@ KernelWeaponMechanicsDefinition to_kernel_weapon_mechanics(
     definition.area_effect.lifetime_ticks = mechanics.area_effect_lifetime_ticks;
     definition.area_effect.spawn_distance = mechanics.area_effect_spawn_distance;
     definition.area_effect.collision_mask = mechanics.area_effect_collision_mask;
+    definition.beam.struct_size = sizeof(KernelBeamMechanicsDefinition);
+    definition.beam.length = mechanics.beam_length;
+    definition.beam.radius = mechanics.beam_radius;
+    definition.beam.damage_per_second = mechanics.beam_damage_per_second;
+    definition.beam.lifetime_ticks = mechanics.beam_lifetime_ticks;
+    definition.beam.collision_mask = mechanics.beam_collision_mask;
     return definition;
 }
 
@@ -366,7 +380,7 @@ bool validate_weapon_mechanics(const KernelWeaponMechanicsDefinition& definition
         definition.reload_ticks == 0) {
         return false;
     }
-    if (definition.fire_mode > KernelWeaponFireMode_AreaEffect) {
+    if (definition.fire_mode > KernelWeaponFireMode_Beam) {
         return false;
     }
     if (definition.fire_mode == KernelWeaponFireMode_Projectile) {
@@ -391,6 +405,15 @@ bool validate_weapon_mechanics(const KernelWeaponMechanicsDefinition& definition
                definition.area_effect.lifetime_ticks > 0 &&
                definition.area_effect.spawn_distance >= 0.0f &&
                definition.area_effect.collision_mask != 0;
+    }
+    if (definition.fire_mode == KernelWeaponFireMode_Beam) {
+        return definition.beam.struct_size >=
+                   sizeof(KernelBeamMechanicsDefinition) &&
+               definition.beam.length > 0.0f &&
+               definition.beam.radius > 0.0f &&
+               definition.beam.damage_per_second > 0 &&
+               definition.beam.lifetime_ticks > 0 &&
+               definition.beam.collision_mask != 0;
     }
     if (definition.max_range <= 0.0f) {
         return false;
@@ -859,6 +882,38 @@ bool KernelEngine::server_get_area_effect_state(
     out_state->expire_tick = area_effect.expire_tick;
     out_state->source_code = area_effect.source_code;
     out_state->collision_mask = area_effect.collision_mask;
+    out_state->valid = true;
+    return true;
+}
+
+bool KernelEngine::server_get_beam_state(
+    NetId net_id,
+    KernelBeamState* out_state) const {
+    if (!running_ || !is_server_mode(config_.mode) || out_state == nullptr ||
+        out_state->struct_size < sizeof(KernelBeamState)) {
+        return false;
+    }
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value() ||
+        !world_.registry().all_of<NetworkIdentity, BeamState, BeamTag>(*entity)) {
+        return false;
+    }
+    const NetworkIdentity& identity =
+        world_.registry().get<NetworkIdentity>(*entity);
+    const BeamState& beam = world_.registry().get<BeamState>(*entity);
+    std::memset(out_state, 0, sizeof(KernelBeamState));
+    out_state->struct_size = sizeof(KernelBeamState);
+    out_state->net_id = identity.net_id;
+    out_state->owner_peer = identity.owner_peer;
+    out_state->shooter_net_id = beam.shooter_net_id;
+    out_state->origin = to_kernel_vec3(beam.origin);
+    out_state->direction = to_kernel_vec3(beam.direction);
+    out_state->length = beam.length;
+    out_state->radius = beam.radius;
+    out_state->damage_per_second = beam.damage_per_second;
+    out_state->expire_tick = beam.expire_tick;
+    out_state->source_code = beam.source_code;
+    out_state->collision_mask = beam.collision_mask;
     out_state->valid = true;
     return true;
 }
@@ -1950,6 +2005,13 @@ void KernelEngine::simulate_tick() {
     simulate_area_effects(
         world_,
         tick_loop_.current_tick(),
+        server_time_us,
+        &events_,
+        &damage_pipeline_);
+    simulate_beams(
+        world_,
+        tick_loop_.current_tick(),
+        fixed_delta,
         server_time_us,
         &events_,
         &damage_pipeline_);

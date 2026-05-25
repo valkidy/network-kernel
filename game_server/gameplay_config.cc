@@ -119,6 +119,35 @@ KernelWeaponMechanicsDefinition area_effect_weapon(
     return weapon;
 }
 
+KernelWeaponMechanicsDefinition beam_weapon(
+    std::uint8_t weapon_id,
+    std::uint16_t magazine_size,
+    std::uint16_t damage,
+    std::uint32_t cooldown_ticks,
+    std::uint32_t reload_ticks,
+    float length,
+    float radius,
+    std::uint16_t damage_per_second,
+    std::uint32_t lifetime_ticks,
+    std::uint32_t collision_mask) {
+    KernelWeaponMechanicsDefinition weapon{};
+    weapon.struct_size = sizeof(KernelWeaponMechanicsDefinition);
+    weapon.weapon_id = weapon_id;
+    weapon.fire_mode = KernelWeaponFireMode_Beam;
+    weapon.magazine_size = magazine_size;
+    weapon.damage = damage;
+    weapon.cooldown_ticks = cooldown_ticks;
+    weapon.reload_ticks = reload_ticks;
+    weapon.pellet_count = 1;
+    weapon.beam.struct_size = sizeof(KernelBeamMechanicsDefinition);
+    weapon.beam.length = length;
+    weapon.beam.radius = radius;
+    weapon.beam.damage_per_second = damage_per_second;
+    weapon.beam.lifetime_ticks = lifetime_ticks;
+    weapon.beam.collision_mask = collision_mask;
+    return weapon;
+}
+
 void fill_default_ammo(
     const WeaponCatalogConfig& weapons,
     KernelCombatStateDefinition* combat_state) {
@@ -138,7 +167,7 @@ bool validate_weapon_mechanics(
         weapon.damage == 0 ||
         weapon.cooldown_ticks == 0 ||
         weapon.reload_ticks == 0 ||
-            weapon.fire_mode > KernelWeaponFireMode_AreaEffect) {
+            weapon.fire_mode > KernelWeaponFireMode_Beam) {
         return false;
     }
     if (weapon.fire_mode == KernelWeaponFireMode_Projectile) {
@@ -164,7 +193,16 @@ bool validate_weapon_mechanics(
                weapon.area_effect.spawn_distance >= 0.0f &&
                weapon.area_effect.collision_mask != 0;
     }
-    if (weapon.max_range <= 0.0f) {
+    if (weapon.fire_mode == KernelWeaponFireMode_Beam) {
+        return weapon.beam.struct_size >= sizeof(KernelBeamMechanicsDefinition) &&
+               weapon.beam.length > 0.0f &&
+               weapon.beam.radius > 0.0f &&
+               weapon.beam.damage_per_second > 0 &&
+               weapon.beam.lifetime_ticks > 0 &&
+               weapon.beam.collision_mask != 0;
+    }
+    if (weapon.fire_mode != KernelWeaponFireMode_Beam &&
+        weapon.max_range <= 0.0f) {
         return false;
     }
     return weapon.fire_mode != KernelWeaponFireMode_Shotgun ||
@@ -253,12 +291,10 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(const YAML::Node& node) {
     const std::uint32_t cooldown_ticks = node["cooldown_ticks"].as<std::uint32_t>();
     const std::uint32_t reload_ticks = node["reload_ticks"].as<std::uint32_t>();
     const std::string type = node["weapon_type"].as<std::string>();
-    if (type == "beam") {
-        throw std::runtime_error("beam weapons are not supported in this phase");
-    }
     if (type == "hitscan" || type == "shotgun") {
-        if (node["projectile"] || node["area_effect"]) {
-            throw std::runtime_error("instant weapons must not define projectile or area_effect");
+        if (node["projectile"] || node["area_effect"] || node["beam"]) {
+            throw std::runtime_error(
+                "instant weapons must not define projectile, area_effect, or beam");
         }
         if (type == "shotgun") {
             return shotgun_weapon(
@@ -280,6 +316,10 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(const YAML::Node& node) {
             node["max_range"].as<float>());
     }
     if (type == "projectile") {
+        if (node["area_effect"] || node["beam"]) {
+            throw std::runtime_error(
+                "projectile weapons must not define area_effect or beam");
+        }
         const YAML::Node projectile = node["projectile"];
         if (!projectile) {
             throw std::runtime_error("projectile weapon requires projectile block");
@@ -304,6 +344,10 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(const YAML::Node& node) {
         return weapon;
     }
     if (type == "area_effect") {
+        if (node["projectile"] || node["beam"]) {
+            throw std::runtime_error(
+                "area_effect weapons must not define projectile or beam");
+        }
         const YAML::Node area_effect = node["area_effect"];
         if (!area_effect) {
             throw std::runtime_error("area_effect weapon requires area_effect block");
@@ -320,6 +364,23 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(const YAML::Node& node) {
             area_effect["lifetime_ticks"].as<std::uint32_t>(),
             area_effect["spawn_distance"].as<float>(),
             collision_mask_from_yaml(area_effect["collision_mask"]));
+    }
+    if (type == "beam") {
+        const YAML::Node beam = node["beam"];
+        if (!beam) {
+            throw std::runtime_error("beam weapon requires beam block");
+        }
+        return beam_weapon(
+            id,
+            magazine_size,
+            damage,
+            cooldown_ticks,
+            reload_ticks,
+            beam["length"].as<float>(),
+            beam["radius"].as<float>(),
+            beam["damage_per_second"].as<std::uint16_t>(),
+            beam["lifetime_ticks"] ? beam["lifetime_ticks"].as<std::uint32_t>() : 2u,
+            collision_mask_from_yaml(beam["collision_mask"]));
     }
     throw std::runtime_error("unsupported weapon_type: " + type);
 }
@@ -365,6 +426,17 @@ GameServerGameplayConfig default_game_server_gameplay_config() {
             6,
             1.0f,
             KERNEL_COLLISION_LAYER_ENEMY),
+        beam_weapon(
+            kWeaponBeamRifle,
+            12,
+            30,
+            1,
+            45,
+            8.0f,
+            0.25f,
+            30,
+            2,
+            KERNEL_COLLISION_LAYER_ENEMY),
     }};
     config.weapons.names = {{
         "Rifle",
@@ -372,6 +444,7 @@ GameServerGameplayConfig default_game_server_gameplay_config() {
         "Grenade",
         "Rocket",
         "Fire Floor",
+        "Beam Rifle",
     }};
     config.enemy.weapon_id = kWeaponRocket;
     config.enemy.ai.weapon_id = kWeaponRocket;
@@ -382,7 +455,7 @@ GameServerGameplayConfig default_game_server_gameplay_config() {
 GameServerGameplayConfig load_gameplay_config_from_weapon_template_directory(
     const std::string& directory) {
     GameServerGameplayConfig config;
-    std::array<bool, kWeaponCount> seen{false, false, false, false, false};
+    std::array<bool, kWeaponCount> seen{false, false, false, false, false, false};
     std::vector<std::filesystem::path> files;
     for (const std::filesystem::directory_entry& entry :
          std::filesystem::directory_iterator(directory)) {

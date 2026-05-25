@@ -29,3 +29,9 @@ cc_test(
     srcs = ["area_effect_test.cc"],
     deps = ["//engine/src/simulation:simulation"],
 )
+
+cc_test(
+    name = "beam_test",
+    srcs = ["beam_test.cc"],
+    deps = ["//engine/src/simulation:simulation"],
+)

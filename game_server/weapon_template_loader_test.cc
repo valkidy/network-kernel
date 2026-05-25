@@ -62,6 +62,12 @@ void write_valid_templates(const std::filesystem::path& dir) {
         "damage: 12\ncooldown_ticks: 10\nreload_ticks: 30\narea_effect:\n"
         "  radius: 2.0\n  damage_per_interval: 12\n  damage_interval_ticks: 2\n"
         "  lifetime_ticks: 6\n  spawn_distance: 1.0\n  collision_mask: enemy\n");
+    write_file(
+        dir / "beam_rifle.yaml",
+        "id: 5\nname: Beam Rifle\nweapon_type: beam\nmagazine_size: 12\n"
+        "damage: 30\ncooldown_ticks: 1\nreload_ticks: 45\nbeam:\n"
+        "  length: 8.0\n  radius: 0.25\n  damage_per_second: 30\n"
+        "  lifetime_ticks: 2\n  collision_mask: enemy\n");
 }
 
 bool load_fails(const std::filesystem::path& dir) {
@@ -89,8 +95,14 @@ void valid_repo_templates_load_all_slots() {
                .fire_mode == KernelWeaponFireMode_AreaEffect);
     assert(config.weapons.definitions[network_example::game_server::kWeaponFireFloor]
                .area_effect.collision_mask == KERNEL_COLLISION_LAYER_ENEMY);
+    assert(config.weapons.definitions[network_example::game_server::kWeaponBeamRifle]
+               .fire_mode == KernelWeaponFireMode_Beam);
+    assert(config.weapons.definitions[network_example::game_server::kWeaponBeamRifle]
+               .beam.damage_per_second == 30);
     assert(config.weapons.names[network_example::game_server::kWeaponFireFloor] ==
            "Fire Floor");
+    assert(config.weapons.names[network_example::game_server::kWeaponBeamRifle] ==
+           "Beam Rifle");
 }
 
 void invalid_templates_are_rejected() {
@@ -111,13 +123,32 @@ void invalid_templates_are_rejected() {
         "projectile: {speed: 10.0}\n");
     assert(load_fails(hitscan_projectile_dir));
 
-    const std::filesystem::path beam_dir = tmp_dir("beam");
-    write_valid_templates(beam_dir);
+    const std::filesystem::path missing_beam_dir = tmp_dir("missing_beam");
+    write_valid_templates(missing_beam_dir);
     write_file(
-        beam_dir / "rifle.yaml",
-        "id: 0\nname: Beam\nweapon_type: beam\nmagazine_size: 1\n"
+        missing_beam_dir / "beam_rifle.yaml",
+        "id: 5\nname: Beam\nweapon_type: beam\nmagazine_size: 1\n"
         "damage: 1\ncooldown_ticks: 1\nreload_ticks: 1\n");
-    assert(load_fails(beam_dir));
+    assert(load_fails(missing_beam_dir));
+
+    const std::filesystem::path invalid_beam_dir = tmp_dir("invalid_beam");
+    write_valid_templates(invalid_beam_dir);
+    write_file(
+        invalid_beam_dir / "beam_rifle.yaml",
+        "id: 5\nname: Beam\nweapon_type: beam\nmagazine_size: 1\n"
+        "damage: 1\ncooldown_ticks: 1\nreload_ticks: 1\nbeam:\n"
+        "  length: 0.0\n  radius: 0.25\n  damage_per_second: 30\n"
+        "  lifetime_ticks: 2\n  collision_mask: enemy\n");
+    assert(load_fails(invalid_beam_dir));
+
+    const std::filesystem::path beam_on_hitscan_dir = tmp_dir("beam_on_hitscan");
+    write_valid_templates(beam_on_hitscan_dir);
+    write_file(
+        beam_on_hitscan_dir / "rifle.yaml",
+        "id: 0\nname: Bad Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
+        "damage: 25\ncooldown_ticks: 3\nreload_ticks: 30\nmax_range: 100.0\n"
+        "beam: {length: 8.0}\n");
+    assert(load_fails(beam_on_hitscan_dir));
 
     const std::filesystem::path homing_dir = tmp_dir("homing");
     write_valid_templates(homing_dir);

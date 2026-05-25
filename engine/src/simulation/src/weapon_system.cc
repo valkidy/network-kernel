@@ -363,6 +363,58 @@ NetId fire_area_effect(
     return area_effect;
 }
 
+NetId fire_beam(
+    World& world,
+    const WeaponMechanicsDefinition& definition,
+    std::uint32_t current_tick,
+    NetId shooter_net_id,
+    PeerId owner_peer,
+    const glm::vec3& origin,
+    const glm::vec3& direction,
+    std::vector<KernelEvent>* events) {
+    const std::uint32_t expire_tick =
+        current_tick + std::max(1u, definition.beam_lifetime_ticks);
+    auto beam_view = world.registry().view<NetworkIdentity, Transform, BeamState, BeamTag>();
+    for (const entt::entity entity : beam_view) {
+        const NetworkIdentity& identity = beam_view.get<NetworkIdentity>(entity);
+        BeamState& beam = beam_view.get<BeamState>(entity);
+        if (beam.shooter_net_id != shooter_net_id ||
+            beam.source_code != definition.id) {
+            continue;
+        }
+        Transform& transform = beam_view.get<Transform>(entity);
+        transform.position = origin;
+        beam.origin = origin;
+        beam.direction = direction;
+        beam.length = definition.beam_length;
+        beam.radius = definition.beam_radius;
+        beam.damage_per_second = definition.beam_damage_per_second;
+        beam.expire_tick = expire_tick;
+        beam.collision_mask = definition.beam_collision_mask;
+        return identity.net_id;
+    }
+
+    const NetId beam = world.spawn_beam(
+        owner_peer,
+        shooter_net_id,
+        origin,
+        direction,
+        definition.beam_length,
+        definition.beam_radius,
+        definition.beam_damage_per_second,
+        expire_tick,
+        definition.id,
+        definition.beam_collision_mask);
+    push_event(
+        events,
+        KernelEventType_EntitySpawned,
+        current_tick,
+        beam,
+        owner_peer,
+        static_cast<std::uint32_t>(EntityType::kBeam));
+    return beam;
+}
+
 void complete_all_reloads(World& world, std::uint32_t current_tick) {
     auto view = world.registry().view<WeaponState>();
     for (const entt::entity entity : view) {
@@ -527,6 +579,16 @@ void simulate_weapons(
                     world,
                     *definition,
                     current_tick,
+                    queued_input.owner_peer,
+                    origin,
+                    direction,
+                    events);
+            } else if (definition->mode == WeaponFireMode::kBeam) {
+                fire_beam(
+                    world,
+                    *definition,
+                    current_tick,
+                    player_identity.net_id,
                     queued_input.owner_peer,
                     origin,
                     direction,

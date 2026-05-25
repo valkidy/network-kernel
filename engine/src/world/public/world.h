@@ -31,6 +31,17 @@ public:
         std::uint16_t damage_per_interval,
         std::uint8_t source_code,
         std::uint32_t collision_mask = kCollisionMaskDamageable);
+    NetId spawn_beam(
+        PeerId owner_peer,
+        NetId shooter_net_id,
+        const glm::vec3& origin,
+        const glm::vec3& direction,
+        float length,
+        float radius,
+        std::uint16_t damage_per_second,
+        std::uint32_t expire_tick,
+        std::uint8_t source_code,
+        std::uint32_t collision_mask = kCollisionMaskDamageable);
 
     bool destroy(NetId net_id);
     bool apply_damage(NetId net_id, std::uint16_t amount);

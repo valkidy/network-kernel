@@ -51,6 +51,18 @@ int main() {
     assert(config.weapons.names[network_example::game_server::kWeaponFireFloor] ==
            "Fire Floor");
 
+    const KernelWeaponMechanicsDefinition& beam_rifle =
+        config.weapons.definitions[network_example::game_server::kWeaponBeamRifle];
+    assert(beam_rifle.weapon_id == network_example::game_server::kWeaponBeamRifle);
+    assert(beam_rifle.fire_mode == KernelWeaponFireMode_Beam);
+    assert(beam_rifle.beam.struct_size == sizeof(KernelBeamMechanicsDefinition));
+    assert(beam_rifle.beam.length == 8.0f);
+    assert(beam_rifle.beam.radius == 0.25f);
+    assert(beam_rifle.beam.damage_per_second == 30);
+    assert(beam_rifle.beam.collision_mask == KERNEL_COLLISION_LAYER_ENEMY);
+    assert(config.weapons.names[network_example::game_server::kWeaponBeamRifle] ==
+           "Beam Rifle");
+
     network_example::game_server::GameServerGameplayConfig invalid = config;
     invalid.weapons.definitions[0].damage = 0;
     assert(!network_example::game_server::validate_gameplay_config(invalid).empty());

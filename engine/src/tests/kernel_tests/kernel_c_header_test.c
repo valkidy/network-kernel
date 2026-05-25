@@ -18,7 +18,9 @@ int main(void) {
     KernelWeaponMechanicsDefinition weapon_mechanics;
     KernelProjectileMechanicsDefinition projectile_mechanics;
     KernelAreaEffectMechanicsDefinition area_effect_mechanics;
+    KernelBeamMechanicsDefinition beam_mechanics;
     KernelAreaEffectState area_effect_state;
+    KernelBeamState beam_state;
 
     (void)config;
     (void)local_player_info;
@@ -31,10 +33,12 @@ int main(void) {
     (void)weapon_mechanics;
     (void)projectile_mechanics;
     (void)area_effect_mechanics;
+    (void)beam_mechanics;
     (void)area_effect_state;
+    (void)beam_state;
 
-    assert(KERNEL_ABI_VERSION == 10u);
-    assert(KERNEL_MAX_WEAPONS == 5u);
+    assert(KERNEL_ABI_VERSION == 11u);
+    assert(KERNEL_MAX_WEAPONS == 6u);
     assert(sizeof(KernelAbiInfo) > 0u);
     assert(sizeof(KernelLocalPlayerInfo) > 0u);
     assert(sizeof(KernelConfig) > 0u);
@@ -47,7 +51,9 @@ int main(void) {
     assert(sizeof(KernelWeaponMechanicsDefinition) > 0u);
     assert(sizeof(KernelProjectileMechanicsDefinition) > 0u);
     assert(sizeof(KernelAreaEffectMechanicsDefinition) > 0u);
+    assert(sizeof(KernelBeamMechanicsDefinition) > 0u);
     assert(sizeof(KernelAreaEffectState) > 0u);
+    assert(sizeof(KernelBeamState) > 0u);
     assert((KERNEL_CAPABILITY_CLIENT_MODE & KERNEL_CAPABILITY_RENDER_STATES) == 0u);
     assert((KERNEL_CAPABILITY_LAG_COMPENSATED_PROJECTILE &
             KERNEL_CAPABILITY_EVENT_PRESENTATION_TIME) == 0u);
@@ -59,6 +65,8 @@ int main(void) {
             KERNEL_CAPABILITY_SERVER_MECHANICS_CONFIG) == 0u);
     assert((KERNEL_CAPABILITY_AREA_EFFECT_WEAPONS &
             KERNEL_CAPABILITY_PROJECTILE_RESPONSE_MASKS) == 0u);
+    assert((KERNEL_CAPABILITY_BEAM_WEAPONS &
+            KERNEL_CAPABILITY_AREA_EFFECT_WEAPONS) == 0u);
     assert((KERNEL_COLLISION_LAYER_PLAYER & KERNEL_COLLISION_LAYER_ENEMY) == 0u);
     assert((KERNEL_COLLISION_LAYER_PROJECTILE & KERNEL_COLLISION_LAYER_AREA_EFFECT) == 0u);
     assert((KERNEL_COLLISION_MASK_DAMAGEABLE & KERNEL_COLLISION_LAYER_PLAYER) != 0u);
@@ -77,6 +85,8 @@ int main(void) {
     assert(offsetof(KernelEvent, presentation_time_us) > offsetof(KernelEvent, event_time_us));
     assert(offsetof(KernelWeaponMechanicsDefinition, area_effect) >
            offsetof(KernelWeaponMechanicsDefinition, projectile));
+    assert(offsetof(KernelWeaponMechanicsDefinition, beam) >
+           offsetof(KernelWeaponMechanicsDefinition, area_effect));
     assert(sizeof(state.entity_id) == sizeof(uint64_t));
 
     return 0;

@@ -204,6 +204,10 @@ int main() {
         load_symbol<bool(KernelHandle*, std::uint32_t, KernelAreaEffectState*)>(
             library,
             "Kernel_ServerGetAreaEffectState");
+    [[maybe_unused]] auto* kernel_server_get_beam_state =
+        load_symbol<bool(KernelHandle*, std::uint32_t, KernelBeamState*)>(
+            library,
+            "Kernel_ServerGetBeamState");
     auto* kernel_server_get_entity_state =
         load_symbol<bool(KernelHandle*, std::uint32_t, KernelServerEntityState*)>(
             library,
@@ -262,7 +266,10 @@ int main() {
            sizeof(KernelProjectileMechanicsDefinition));
     assert(abi_info.area_effect_mechanics_definition_size ==
            sizeof(KernelAreaEffectMechanicsDefinition));
+    assert(abi_info.beam_mechanics_definition_size ==
+           sizeof(KernelBeamMechanicsDefinition));
     assert(abi_info.area_effect_state_size == sizeof(KernelAreaEffectState));
+    assert(abi_info.beam_state_size == sizeof(KernelBeamState));
     assert(abi_info.combat_state_definition_size ==
            sizeof(KernelCombatStateDefinition));
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LISTEN_SERVER_MODE) != 0);
@@ -275,6 +282,7 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_WEAPON_METADATA_QUERY) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_AREA_EFFECT_WEAPONS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_PROJECTILE_RESPONSE_MASKS) != 0);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_BEAM_WEAPONS) != 0);
     assert(!kernel_get_abi_info(nullptr, sizeof(abi_info)));
     assert(!kernel_get_abi_info(&abi_info, sizeof(abi_info) - 1));
     GameServerAbiInfo game_server_abi_info{};

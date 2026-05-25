@@ -165,6 +165,13 @@ void simulate_area_effects(
     std::uint64_t server_time_us,
     std::vector<KernelEvent>* events,
     DamagePipeline* damage_pipeline);
+void simulate_beams(
+    World& world,
+    std::uint32_t current_tick,
+    float fixed_delta_seconds,
+    std::uint64_t server_time_us,
+    std::vector<KernelEvent>* events,
+    DamagePipeline* damage_pipeline);
 bool resolve_projectile_historical_hit(
     World& world,
     const HistoryBuffer& history_buffer,

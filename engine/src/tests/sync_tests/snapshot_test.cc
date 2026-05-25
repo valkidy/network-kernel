@@ -19,6 +19,18 @@ int main() {
             glm::vec3{10.0f, 0.0f, 0.0f});
     const network_example::NetId area =
         world.spawn_area_effect(0, glm::vec3{6.0f, 0.0f, 0.0f}, 3.0f, 3, 30, 10, 2);
+    const network_example::NetId beam =
+        world.spawn_beam(
+            1,
+            player,
+            glm::vec3{1.0f, 3.0f, 3.0f},
+            glm::vec3{1.0f, 0.0f, 0.0f},
+            8.0f,
+            0.25f,
+            30,
+            9,
+            5,
+            network_example::kCollisionLayerEnemy);
     const auto player_entity = world.find_entity(player);
     assert(player_entity.has_value());
     world.registry().get<network_example::Velocity>(*player_entity).linear =
@@ -50,11 +62,12 @@ int main() {
     assert(snapshot.header.server_tick == 7);
     assert(snapshot.header.server_time_ms == 233);
     assert(snapshot.header.last_processed_input_seq == 3);
-    assert(snapshot.entities.size() == 4);
+    assert(snapshot.entities.size() == 5);
     bool saw_player_flags = false;
     bool saw_enemy_state = false;
     bool saw_projectile_metadata = false;
     bool saw_area_effect = false;
+    bool saw_beam = false;
     for (const network_example::EntitySnapshot& entity : snapshot.entities) {
         if (entity.net_id == player) {
             saw_player_flags =
@@ -84,11 +97,18 @@ int main() {
                 entity.type == network_example::EntityType::kAreaEffect &&
                 entity.position.x == 6.0f;
         }
+        if (entity.net_id == beam) {
+            saw_beam =
+                entity.owner_peer == 1 &&
+                entity.type == network_example::EntityType::kBeam &&
+                entity.position.x == 1.0f;
+        }
     }
     assert(saw_player_flags);
     assert(saw_enemy_state);
     assert(saw_projectile_metadata);
     assert(saw_area_effect);
+    assert(saw_beam);
 
     network_example::HistoryBuffer history(2);
     history.write_frame(world, 7);

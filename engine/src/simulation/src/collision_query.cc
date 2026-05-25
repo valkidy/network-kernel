@@ -46,6 +46,9 @@ bool query_includes_entity(
     if (!filter.include_area_effects && world.registry().all_of<AreaEffectTag>(entity)) {
         return false;
     }
+    if (world.registry().all_of<BeamTag>(entity)) {
+        return false;
+    }
     if (world.registry().all_of<Health>(entity) &&
         world.registry().get<Health>(entity).hp == 0) {
         return false;

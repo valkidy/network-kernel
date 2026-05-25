@@ -4,9 +4,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 10u
+#define KERNEL_ABI_VERSION 11u
 
-#define KERNEL_MAX_WEAPONS 5u
+#define KERNEL_MAX_WEAPONS 6u
 
 #define KERNEL_CAPABILITY_CLIENT_MODE UINT64_C(0x0000000000000001)
 #define KERNEL_CAPABILITY_LISTEN_SERVER_MODE UINT64_C(0x0000000000000002)
@@ -32,6 +32,7 @@
 #define KERNEL_CAPABILITY_WEAPON_METADATA_QUERY UINT64_C(0x0000000000200000)
 #define KERNEL_CAPABILITY_AREA_EFFECT_WEAPONS UINT64_C(0x0000000000400000)
 #define KERNEL_CAPABILITY_PROJECTILE_RESPONSE_MASKS UINT64_C(0x0000000000800000)
+#define KERNEL_CAPABILITY_BEAM_WEAPONS UINT64_C(0x0000000001000000)
 
 #define KERNEL_COLLISION_LAYER_PLAYER UINT32_C(0x00000001)
 #define KERNEL_COLLISION_LAYER_ENEMY UINT32_C(0x00000002)
@@ -63,6 +64,8 @@ typedef struct KernelAbiInfo {
     uint32_t combat_state_definition_size;
     uint32_t area_effect_mechanics_definition_size;
     uint32_t area_effect_state_size;
+    uint32_t beam_mechanics_definition_size;
+    uint32_t beam_state_size;
     uint64_t capability_flags;
 } KernelAbiInfo;
 
@@ -116,6 +119,7 @@ typedef enum KernelWeaponFireMode {
     KernelWeaponFireMode_Shotgun = 1,
     KernelWeaponFireMode_Projectile = 2,
     KernelWeaponFireMode_AreaEffect = 3,
+    KernelWeaponFireMode_Beam = 4,
 } KernelWeaponFireMode;
 
 typedef enum KernelProjectileMotionModel {
@@ -244,6 +248,15 @@ typedef struct KernelAreaEffectMechanicsDefinition {
     uint32_t collision_mask;
 } KernelAreaEffectMechanicsDefinition;
 
+typedef struct KernelBeamMechanicsDefinition {
+    uint32_t struct_size;
+    float length;
+    float radius;
+    uint16_t damage_per_second;
+    uint32_t lifetime_ticks;
+    uint32_t collision_mask;
+} KernelBeamMechanicsDefinition;
+
 typedef struct KernelWeaponMechanicsDefinition {
     uint32_t struct_size;
     uint8_t weapon_id;
@@ -257,7 +270,24 @@ typedef struct KernelWeaponMechanicsDefinition {
     float pellet_spread;
     KernelProjectileMechanicsDefinition projectile;
     KernelAreaEffectMechanicsDefinition area_effect;
+    KernelBeamMechanicsDefinition beam;
 } KernelWeaponMechanicsDefinition;
+
+typedef struct KernelBeamState {
+    uint32_t struct_size;
+    uint32_t net_id;
+    uint32_t owner_peer;
+    uint32_t shooter_net_id;
+    KernelVec3 origin;
+    KernelVec3 direction;
+    float length;
+    float radius;
+    uint16_t damage_per_second;
+    uint32_t expire_tick;
+    uint8_t source_code;
+    uint32_t collision_mask;
+    bool valid;
+} KernelBeamState;
 
 typedef struct KernelAreaEffectState {
     uint32_t struct_size;

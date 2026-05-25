@@ -85,6 +85,9 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
         out_info->area_effect_mechanics_definition_size =
             sizeof(KernelAreaEffectMechanicsDefinition);
         out_info->area_effect_state_size = sizeof(KernelAreaEffectState);
+        out_info->beam_mechanics_definition_size =
+            sizeof(KernelBeamMechanicsDefinition);
+        out_info->beam_state_size = sizeof(KernelBeamState);
         out_info->capability_flags =
             KERNEL_CAPABILITY_CLIENT_MODE |
             KERNEL_CAPABILITY_LISTEN_SERVER_MODE |
@@ -109,7 +112,8 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_SERVER_MECHANICS_CONFIG |
             KERNEL_CAPABILITY_WEAPON_METADATA_QUERY |
             KERNEL_CAPABILITY_AREA_EFFECT_WEAPONS |
-            KERNEL_CAPABILITY_PROJECTILE_RESPONSE_MASKS;
+            KERNEL_CAPABILITY_PROJECTILE_RESPONSE_MASKS |
+            KERNEL_CAPABILITY_BEAM_WEAPONS;
         return true;
     });
 }
@@ -332,6 +336,16 @@ bool Kernel_ServerGetAreaEffectState(
     });
 }
 
+bool Kernel_ServerGetBeamState(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    KernelBeamState* out_state) {
+    return abi_call("Kernel_ServerGetBeamState", false, [&]() {
+        return kernel != nullptr &&
+               kernel->engine->server_get_beam_state(net_id, out_state);
+    });
+}
+
 bool Kernel_ServerValidateMechanicsConfig(
     const KernelWeaponMechanicsDefinition* weapon_mechanics) {
     return abi_call("Kernel_ServerValidateMechanicsConfig", false, [&]() {
@@ -342,7 +356,7 @@ bool Kernel_ServerValidateMechanicsConfig(
             weapon_mechanics->damage == 0 ||
             weapon_mechanics->cooldown_ticks == 0 ||
             weapon_mechanics->reload_ticks == 0 ||
-            weapon_mechanics->fire_mode > KernelWeaponFireMode_AreaEffect) {
+            weapon_mechanics->fire_mode > KernelWeaponFireMode_Beam) {
             return false;
         }
         if (weapon_mechanics->fire_mode == KernelWeaponFireMode_Projectile) {
@@ -373,7 +387,17 @@ bool Kernel_ServerValidateMechanicsConfig(
                    weapon_mechanics->area_effect.spawn_distance >= 0.0f &&
                    weapon_mechanics->area_effect.collision_mask != 0;
         }
-        if (weapon_mechanics->max_range <= 0.0f) {
+        if (weapon_mechanics->fire_mode == KernelWeaponFireMode_Beam) {
+            return weapon_mechanics->beam.struct_size >=
+                       sizeof(KernelBeamMechanicsDefinition) &&
+                   weapon_mechanics->beam.length > 0.0f &&
+                   weapon_mechanics->beam.radius > 0.0f &&
+                   weapon_mechanics->beam.damage_per_second > 0 &&
+                   weapon_mechanics->beam.lifetime_ticks > 0 &&
+                   weapon_mechanics->beam.collision_mask != 0;
+        }
+        if (weapon_mechanics->fire_mode != KernelWeaponFireMode_Beam &&
+            weapon_mechanics->max_range <= 0.0f) {
             return false;
         }
         return weapon_mechanics->fire_mode != KernelWeaponFireMode_Shotgun ||

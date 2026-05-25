@@ -117,6 +117,11 @@ bool Kernel_ServerGetAreaEffectState(
     uint32_t net_id,
     KernelAreaEffectState* out_state);
 
+bool Kernel_ServerGetBeamState(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    KernelBeamState* out_state);
+
 bool Kernel_ServerValidateMechanicsConfig(
     const KernelWeaponMechanicsDefinition* weapon_mechanics);
 
