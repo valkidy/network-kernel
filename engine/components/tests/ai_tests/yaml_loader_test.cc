@@ -243,6 +243,18 @@ root:
     assert(capability_report.missing_features.size() == 1);
     assert(capability_report.missing_features[0] == "nearestEnemyId");
 
+    network_example::ai::CapabilityRegistry extended_registry =
+        network_example::ai::make_default_capability_registry();
+    extended_registry.add_node_type("Action.CustomAbility");
+    network_example::ai::CapabilityReport extended_report =
+        network_example::ai::validate_yaml_capabilities(R"yaml(
+tree: CustomAbilityTree
+root:
+  type: Action.CustomAbility
+)yaml",
+                                                        extended_registry);
+    assert(extended_report.supported());
+
     network_example::ai::YamlLoadResult custom_load =
         network_example::ai::load_tree_from_yaml(R"yaml(
 tree: UnsupportedTarget

@@ -1,111 +1,39 @@
 #include "simulation/public/simulation.h"
 
 #include <algorithm>
-#include <array>
 #include <cmath>
-#include <limits>
+
+#include "simulation/public/collision_query.h"
 
 namespace network_example {
 namespace {
 
-enum class WeaponFireMode {
-    kHitscan,
-    kShotgun,
-    kProjectile,
-};
-
-struct WeaponDefinition {
-    std::uint8_t id = 0;
-    WeaponFireMode mode = WeaponFireMode::kHitscan;
-    std::uint16_t magazine_size = 0;
-    std::uint16_t damage = 0;
-    std::uint32_t cooldown_ticks = 0;
-    std::uint32_t reload_ticks = 0;
-    float max_range = 0.0f;
-    std::uint8_t pellet_count = 1;
-    float pellet_spread = 0.0f;
-    float projectile_speed = 0.0f;
-    float projectile_lifetime_seconds = 0.0f;
-    float explosion_radius = 0.0f;
-    ProjectileMotionModel projectile_motion_model = ProjectileMotionModel::kLinear;
-    glm::vec3 projectile_gravity{0.0f, 0.0f, 0.0f};
-};
-
-constexpr glm::vec3 kGrenadeGravity{0.0f, -9.8f, 0.0f};
-
-constexpr std::array<WeaponDefinition, kWeaponCount> kWeaponDefinitions{{
-    WeaponDefinition{kWeaponRifle, WeaponFireMode::kHitscan, 30, 25, 3, 30, 100.0f},
-    WeaponDefinition{kWeaponShotgun, WeaponFireMode::kShotgun, 8, 10, 20, 45, 40.0f, 5, 0.035f},
-    WeaponDefinition{
-        kWeaponGrenade,
-        WeaponFireMode::kProjectile,
-        30,
-        40,
-        30,
-        60,
-        0.0f,
-        1,
-        0.0f,
-        15.0f,
-        3.0f,
-        4.0f,
-        ProjectileMotionModel::kParabolic,
-        kGrenadeGravity},
-    WeaponDefinition{
-        kWeaponRocket,
-        WeaponFireMode::kProjectile,
-        6,
-        45,
-        45,
-        75,
-        0.0f,
-        1,
-        0.0f,
-        35.0f,
-        2.5f,
-        3.0f,
-        ProjectileMotionModel::kLinear,
-        glm::vec3{0.0f, 0.0f, 0.0f}},
-}};
-
-const WeaponDefinition& weapon_definition(std::uint8_t weapon_id) {
-    if (weapon_id < kWeaponDefinitions.size()) {
-        return kWeaponDefinitions[weapon_id];
-    }
-    return kWeaponDefinitions[kWeaponRifle];
-}
-
-WeaponDefinition weapon_definition_for_entity(
+const WeaponMechanicsDefinition* weapon_definition_for_entity(
     const World& world,
     entt::entity entity,
     std::uint8_t weapon_id) {
-    WeaponDefinition definition = weapon_definition(weapon_id);
-    if (!world.registry().all_of<WeaponTuning>(entity)) {
-        return definition;
+    const std::size_t index = static_cast<std::size_t>(weapon_id);
+    if (index >= kWeaponCount ||
+        !world.registry().all_of<WeaponTuning>(entity)) {
+        return nullptr;
     }
 
     const WeaponTuning& tuning = world.registry().get<WeaponTuning>(entity);
-    const std::size_t index = static_cast<std::size_t>(definition.id);
-    if (index >= kWeaponCount || !tuning.override_weapon[index]) {
-        return definition;
+    if (!tuning.configured[index]) {
+        return nullptr;
     }
-    if (tuning.magazine_size[index] != 0) {
-        definition.magazine_size = tuning.magazine_size[index];
-    }
-    if (tuning.damage[index] != 0) {
-        definition.damage = tuning.damage[index];
-    }
-    if (tuning.cooldown_ticks[index] != 0) {
-        definition.cooldown_ticks = tuning.cooldown_ticks[index];
-    }
-    if (tuning.reload_ticks[index] != 0) {
-        definition.reload_ticks = tuning.reload_ticks[index];
-    }
-    return definition;
+    return &tuning.definitions[index];
+}
+
+const WeaponMechanicsDefinition* current_weapon_definition_for_entity(
+    const World& world,
+    entt::entity entity,
+    const WeaponState& weapon) {
+    return weapon_definition_for_entity(world, entity, weapon.weapon_id);
 }
 
 std::size_t weapon_index(std::uint8_t weapon_id) {
-    return static_cast<std::size_t>(weapon_definition(weapon_id).id);
+    return static_cast<std::size_t>(weapon_id);
 }
 
 glm::vec3 input_aim_to_world(const PlayerInput& input) {
@@ -147,11 +75,14 @@ void complete_ready_reload(
         return;
     }
 
-    const WeaponDefinition definition =
-        weapon_definition_for_entity(world, entity, weapon.weapon_id);
-    const std::size_t index = weapon_index(definition.id);
+    const WeaponMechanicsDefinition* definition =
+        current_weapon_definition_for_entity(world, entity, weapon);
+    if (definition == nullptr) {
+        return;
+    }
+    const std::size_t index = weapon_index(definition->id);
     const std::uint16_t missing_ammo =
-        static_cast<std::uint16_t>(definition.magazine_size - weapon.ammo[index]);
+        static_cast<std::uint16_t>(definition->magazine_size - weapon.ammo[index]);
     const std::uint16_t loaded_ammo = std::min(missing_ammo, weapon.reserve_ammo[index]);
     weapon.ammo[index] = static_cast<std::uint16_t>(weapon.ammo[index] + loaded_ammo);
     weapon.reserve_ammo[index] =
@@ -162,7 +93,7 @@ void complete_ready_reload(
 
 void begin_reload(
     WeaponState& weapon,
-    const WeaponDefinition& definition,
+    const WeaponMechanicsDefinition& definition,
     std::uint32_t current_tick) {
     const std::size_t index = weapon_index(definition.id);
     if (weapon.is_reloading || weapon.ammo[index] >= definition.magazine_size ||
@@ -175,7 +106,7 @@ void begin_reload(
 
 bool can_fire(
     const WeaponState& weapon,
-    const WeaponDefinition& definition,
+    const WeaponMechanicsDefinition& definition,
     std::uint32_t current_tick) {
     const std::size_t index = weapon_index(definition.id);
     return !weapon.is_reloading && current_tick >= weapon.next_fire_tick[index] &&
@@ -184,7 +115,7 @@ bool can_fire(
 
 void consume_ammo(
     WeaponState& weapon,
-    const WeaponDefinition& definition,
+    const WeaponMechanicsDefinition& definition,
     std::uint32_t current_tick) {
     const std::size_t index = weapon_index(definition.id);
     --weapon.ammo[index];
@@ -193,7 +124,7 @@ void consume_ammo(
 
 std::vector<glm::vec3> pellet_directions(
     const glm::vec3& direction,
-    const WeaponDefinition& definition) {
+    const WeaponMechanicsDefinition& definition) {
     std::vector<glm::vec3> directions;
     directions.reserve(definition.pellet_count);
     if (definition.pellet_count == 0) {
@@ -302,7 +233,7 @@ glm::vec3 compensated_projectile_origin(
 
 void apply_hitscan_damage(
     World& world,
-    const WeaponDefinition& definition,
+    const WeaponMechanicsDefinition& definition,
     const HistoryFrame* rewind_frame,
     std::uint32_t current_tick,
     NetId shooter_net_id,
@@ -310,7 +241,8 @@ void apply_hitscan_damage(
     const glm::vec3& origin,
     const glm::vec3& direction,
     std::uint64_t hit_time_us,
-    std::vector<KernelEvent>* events) {
+    std::vector<KernelEvent>* events,
+    DamagePipeline* damage_pipeline) {
     NetId target_net_id = 0;
     if (!find_hitscan_target(
             world,
@@ -323,32 +255,25 @@ void apply_hitscan_damage(
         return;
     }
 
-    if (!world.apply_damage(target_net_id, definition.damage)) {
+    if (damage_pipeline == nullptr ||
+        !damage_pipeline->submit_damage_request(DamageRequest{
+            current_tick,
+            0,
+            shooter_net_id,
+            target_net_id,
+            shooter_peer_id,
+            definition.id,
+            definition.damage,
+            hit_time_us,
+            origin,
+        })) {
         return;
     }
-    push_event(
-        events,
-        KernelEventType_HitConfirmed,
-        current_tick,
-        target_net_id,
-        shooter_peer_id,
-        definition.id,
-        hit_time_us,
-        hit_time_us);
-    push_event(
-        events,
-        KernelEventType_DamageApplied,
-        current_tick,
-        target_net_id,
-        shooter_peer_id,
-        definition.damage,
-        hit_time_us,
-        hit_time_us);
 }
 
 NetId fire_projectile(
     World& world,
-    const WeaponDefinition& definition,
+    const WeaponMechanicsDefinition& definition,
     std::uint32_t event_tick,
     std::uint32_t spawn_tick,
     NetId shooter_net_id,
@@ -383,6 +308,12 @@ NetId fire_projectile(
         projectile_state.client_action_id = client_action_id;
         projectile_state.shooter_net_id = shooter_net_id;
         projectile_state.motion_model = definition.projectile_motion_model;
+        projectile_state.hit_response = definition.projectile_hit_response;
+        projectile_state.damage_shape = definition.projectile_damage_shape;
+        projectile_state.collision_mask = definition.projectile_collision_mask;
+        projectile_state.max_hit_count =
+            std::max(1u, definition.projectile_max_hit_count);
+        projectile_state.hit_count = 0;
         projectile_state.explosion_radius = definition.explosion_radius;
         projectile_state.max_lifetime_seconds = definition.projectile_lifetime_seconds;
         projectile_state.age_seconds = age_seconds;
@@ -390,6 +321,23 @@ NetId fire_projectile(
         projectile_state.initial_velocity = velocity;
         projectile_state.gravity = definition.projectile_gravity;
         projectile_state.previous_position = current_position;
+        if (definition.projectile_motion_model == ProjectileMotionModel::kHoming) {
+            world.registry().emplace<HomingState>(
+                *projectile_entity,
+                HomingState{
+                    definition.homing_mode,
+                    definition.homing_sync_mode,
+                    MissileGuidancePhase::kBoost,
+                    0,
+                    definition.homing_boost_ticks,
+                    spawn_tick + definition.homing_boost_ticks,
+                    definition.homing_lock_on_range,
+                    definition.homing_lose_target_range,
+                    definition.homing_lock_cone_degrees,
+                    definition.homing_max_turn_rate_degrees_per_second,
+                    definition.homing_acceleration,
+                    definition.homing_max_speed});
+        }
     }
     push_event(
         events,
@@ -399,6 +347,89 @@ NetId fire_projectile(
         shooter_peer_id,
         static_cast<std::uint32_t>(EntityType::kProjectile));
     return projectile;
+}
+
+NetId fire_area_effect(
+    World& world,
+    const WeaponMechanicsDefinition& definition,
+    std::uint32_t current_tick,
+    PeerId owner_peer,
+    const glm::vec3& origin,
+    const glm::vec3& direction,
+    std::vector<KernelEvent>* events) {
+    const glm::vec3 position =
+        origin + direction * definition.area_effect_spawn_distance;
+    const std::uint32_t expire_tick =
+        current_tick + std::max(1u, definition.area_effect_lifetime_ticks);
+    const NetId area_effect = world.spawn_area_effect(
+        owner_peer,
+        position,
+        definition.area_effect_radius,
+        definition.area_effect_damage_interval_ticks,
+        expire_tick,
+        definition.area_effect_damage_per_interval,
+        definition.id,
+        definition.area_effect_collision_mask);
+    push_event(
+        events,
+        KernelEventType_EntitySpawned,
+        current_tick,
+        area_effect,
+        owner_peer,
+        static_cast<std::uint32_t>(EntityType::kAreaEffect));
+    return area_effect;
+}
+
+NetId fire_beam(
+    World& world,
+    const WeaponMechanicsDefinition& definition,
+    std::uint32_t current_tick,
+    NetId shooter_net_id,
+    PeerId owner_peer,
+    const glm::vec3& origin,
+    const glm::vec3& direction,
+    std::vector<KernelEvent>* events) {
+    const std::uint32_t expire_tick =
+        current_tick + std::max(1u, definition.beam_lifetime_ticks);
+    auto beam_view = world.registry().view<NetworkIdentity, Transform, BeamState, BeamTag>();
+    for (const entt::entity entity : beam_view) {
+        const NetworkIdentity& identity = beam_view.get<NetworkIdentity>(entity);
+        BeamState& beam = beam_view.get<BeamState>(entity);
+        if (beam.shooter_net_id != shooter_net_id ||
+            beam.source_code != definition.id) {
+            continue;
+        }
+        Transform& transform = beam_view.get<Transform>(entity);
+        transform.position = origin;
+        beam.origin = origin;
+        beam.direction = direction;
+        beam.length = definition.beam_length;
+        beam.radius = definition.beam_radius;
+        beam.damage_per_second = definition.beam_damage_per_second;
+        beam.expire_tick = expire_tick;
+        beam.collision_mask = definition.beam_collision_mask;
+        return identity.net_id;
+    }
+
+    const NetId beam = world.spawn_beam(
+        owner_peer,
+        shooter_net_id,
+        origin,
+        direction,
+        definition.beam_length,
+        definition.beam_radius,
+        definition.beam_damage_per_second,
+        expire_tick,
+        definition.id,
+        definition.beam_collision_mask);
+    push_event(
+        events,
+        KernelEventType_EntitySpawned,
+        current_tick,
+        beam,
+        owner_peer,
+        static_cast<std::uint32_t>(EntityType::kBeam));
+    return beam;
 }
 
 void complete_all_reloads(World& world, std::uint32_t current_tick) {
@@ -414,51 +445,17 @@ void complete_all_reloads(World& world, std::uint32_t current_tick) {
 
 }  // namespace
 
-bool ray_intersects_aabb(
-    const glm::vec3& ray_origin,
-    const glm::vec3& ray_direction,
-    const glm::vec3& box_center,
-    const glm::vec3& box_half_extents,
-    float* out_distance) {
-    float t_min = 0.0f;
-    float t_max = std::numeric_limits<float>::max();
-    const glm::vec3 min_corner = box_center - box_half_extents;
-    const glm::vec3 max_corner = box_center + box_half_extents;
-
-    for (int axis = 0; axis < 3; ++axis) {
-        const float origin = ray_origin[axis];
-        const float direction = ray_direction[axis];
-        if (std::abs(direction) < 0.000001f) {
-            if (origin < min_corner[axis] || origin > max_corner[axis]) {
-                return false;
-            }
-            continue;
-        }
-
-        float t1 = (min_corner[axis] - origin) / direction;
-        float t2 = (max_corner[axis] - origin) / direction;
-        if (t1 > t2) {
-            std::swap(t1, t2);
-        }
-        t_min = std::max(t_min, t1);
-        t_max = std::min(t_max, t2);
-        if (t_min > t_max) {
-            return false;
-        }
-    }
-
-    if (out_distance != nullptr) {
-        *out_distance = t_min;
-    }
-    return true;
-}
-
 void simulate_weapons(
     World& world,
     const std::vector<QueuedInput>& inputs,
     const WeaponSimulationContext& context,
     std::vector<KernelEvent>* events) {
     const std::uint32_t current_tick = context.current_tick;
+    DamagePipeline local_damage_pipeline;
+    DamagePipeline* damage_pipeline = context.damage_pipeline;
+    if (damage_pipeline == nullptr) {
+        damage_pipeline = &local_damage_pipeline;
+    }
     complete_all_reloads(world, current_tick);
 
     for (const QueuedInput& queued_input : inputs) {
@@ -479,39 +476,45 @@ void simulate_weapons(
                 }
             }
 
+            const WeaponMechanicsDefinition* definition =
+                weapon_definition_for_entity(
+                    world,
+                    player_entity,
+                    queued_input.input.selected_weapon);
+            if (definition == nullptr) {
+                continue;
+            }
             WeaponState& weapon = player_view.get<WeaponState>(player_entity);
-            weapon.weapon_id = weapon_definition(queued_input.input.selected_weapon).id;
-            const WeaponDefinition definition =
-                weapon_definition_for_entity(world, player_entity, weapon.weapon_id);
+            weapon.weapon_id = definition->id;
 
             if ((queued_input.input.buttons & InputButton_Reload) != 0) {
-                begin_reload(weapon, definition, current_tick);
+                begin_reload(weapon, *definition, current_tick);
             }
             if ((queued_input.input.buttons & InputButton_Fire) == 0) {
                 continue;
             }
-            if (!can_fire(weapon, definition, current_tick)) {
+            if (!can_fire(weapon, *definition, current_tick)) {
                 continue;
             }
 
-            consume_ammo(weapon, definition, current_tick);
+            consume_ammo(weapon, *definition, current_tick);
             push_event(
                 events,
                 KernelEventType_FireConfirmed,
                 current_tick,
                 player_identity.net_id,
                 queued_input.owner_peer,
-                definition.id);
+                definition->id);
 
             const Transform& player_transform = player_view.get<Transform>(player_entity);
             const glm::vec3 origin = player_transform.position + glm::vec3{0.0f, 1.0f, 0.0f};
             const glm::vec3 direction = input_aim_to_world(queued_input.input);
             const std::uint64_t hit_time_us = context.action_time_us;
 
-            if (definition.mode == WeaponFireMode::kHitscan) {
+            if (definition->mode == WeaponFireMode::kHitscan) {
                 apply_hitscan_damage(
                     world,
-                    definition,
+                    *definition,
                     context.rewind_frame,
                     current_tick,
                     player_identity.net_id,
@@ -519,13 +522,14 @@ void simulate_weapons(
                     origin,
                     direction,
                     hit_time_us,
-                    events);
-            } else if (definition.mode == WeaponFireMode::kShotgun) {
+                    events,
+                    damage_pipeline);
+            } else if (definition->mode == WeaponFireMode::kShotgun) {
                 for (const glm::vec3& pellet_direction :
-                     pellet_directions(direction, definition)) {
+                     pellet_directions(direction, *definition)) {
                     apply_hitscan_damage(
                         world,
-                        definition,
+                        *definition,
                         context.rewind_frame,
                         current_tick,
                         player_identity.net_id,
@@ -533,9 +537,10 @@ void simulate_weapons(
                         origin,
                         pellet_direction,
                         hit_time_us,
-                        events);
+                        events,
+                        damage_pipeline);
                 }
-            } else {
+            } else if (definition->mode == WeaponFireMode::kProjectile) {
                 const Hitbox& shooter_hitbox = player_view.get<Hitbox>(player_entity);
                 const glm::vec3 compensated_origin =
                     compensated_projectile_origin(
@@ -550,10 +555,10 @@ void simulate_weapons(
                         ? static_cast<float>(current_tick - spawn_tick) *
                               context.fixed_delta_seconds
                         : 0.0f;
-                const glm::vec3 velocity = direction * definition.projectile_speed;
+                const glm::vec3 velocity = direction * definition->projectile_speed;
                 const NetId projectile = fire_projectile(
                     world,
-                    definition,
+                    *definition,
                     current_tick,
                     spawn_tick,
                     player_identity.net_id,
@@ -565,7 +570,9 @@ void simulate_weapons(
                     events);
                 if (context.history_buffer != nullptr &&
                     context.rewind_frame != nullptr &&
-                    context.fixed_delta_seconds > 0.0f) {
+                    context.fixed_delta_seconds > 0.0f &&
+                    definition->projectile_motion_model !=
+                        ProjectileMotionModel::kHoming) {
                     const auto projectile_entity = world.find_entity(projectile);
                     if (projectile_entity.has_value()) {
                         const ProjectileState projectile_state =
@@ -582,11 +589,41 @@ void simulate_weapons(
                             spawn_tick,
                             current_tick,
                             context.fixed_delta_seconds,
-                            events);
+                            events,
+                            damage_pipeline);
                     }
                 }
+            } else if (definition->mode == WeaponFireMode::kAreaEffect) {
+                fire_area_effect(
+                    world,
+                    *definition,
+                    current_tick,
+                    queued_input.owner_peer,
+                    origin,
+                    direction,
+                    events);
+            } else if (definition->mode == WeaponFireMode::kBeam) {
+                fire_beam(
+                    world,
+                    *definition,
+                    current_tick,
+                    player_identity.net_id,
+                    queued_input.owner_peer,
+                    origin,
+                    direction,
+                    events);
             }
         }
+    }
+    if (context.damage_pipeline == nullptr) {
+        const std::uint64_t confirm_time_us =
+            context.fixed_delta_seconds > 0.0f
+                ? static_cast<std::uint64_t>(
+                      static_cast<double>(current_tick) *
+                      static_cast<double>(context.fixed_delta_seconds) *
+                      1000000.0)
+                : context.action_time_us;
+        damage_pipeline->confirm_ready(world, confirm_time_us, current_tick, events);
     }
 }
 
@@ -602,6 +639,7 @@ void simulate_weapons(
         WeaponSimulationContext{
             nullptr,
             rewind_frame,
+            nullptr,
             rewind_frame != nullptr ? rewind_frame->server_tick : current_tick,
             current_tick,
             0.0f,
@@ -623,6 +661,26 @@ void simulate_hitscan_weapons(
     std::uint32_t current_tick,
     std::vector<KernelEvent>* events) {
     simulate_weapons(world, inputs, current_tick, events);
+}
+
+void simulate_hitscan_weapons(
+    World& world,
+    const std::vector<QueuedInput>& inputs,
+    std::uint32_t current_tick,
+    std::vector<KernelEvent>* events,
+    DamagePipeline* damage_pipeline) {
+    simulate_weapons(
+        world,
+        inputs,
+        WeaponSimulationContext{
+            nullptr,
+            nullptr,
+            damage_pipeline,
+            current_tick,
+            current_tick,
+            0.0f,
+            0},
+        events);
 }
 
 }  // namespace network_example

@@ -3,6 +3,8 @@
 #include <array>
 #include <cassert>
 #include <cstdint>
+#include <cstdlib>
+#include <filesystem>
 
 namespace {
 
@@ -41,6 +43,14 @@ std::uint32_t query_enemy_count(KernelHandle* kernel) {
         static_cast<std::uint32_t>(states.size()));
 }
 
+std::filesystem::path runfiles_root() {
+    const char* test_srcdir = std::getenv("TEST_SRCDIR");
+    const char* test_workspace = std::getenv("TEST_WORKSPACE");
+    assert(test_srcdir != nullptr);
+    assert(test_workspace != nullptr);
+    return std::filesystem::path(test_srcdir) / test_workspace;
+}
+
 }  // namespace
 
 int main() {
@@ -51,14 +61,21 @@ int main() {
     assert((info.capability_flags & GAME_SERVER_CAPABILITY_ENEMY_MANAGER) != 0);
     assert((info.capability_flags & GAME_SERVER_CAPABILITY_EVENT_HANDLING) != 0);
     assert((info.capability_flags & GAME_SERVER_CAPABILITY_DESPAWN_ALL) != 0);
+    assert((info.capability_flags & GAME_SERVER_CAPABILITY_WEAPON_TEMPLATE_DIRECTORY) != 0);
+    assert((info.capability_flags & GAME_SERVER_CAPABILITY_WEAPON_TEMPLATE_QUERY) != 0);
+    assert(info.weapon_template_info_size == sizeof(GameServerWeaponTemplateInfo));
     assert(!GameServer_GetAbiInfo(nullptr, sizeof(info)));
     assert(!GameServer_GetAbiInfo(&info, sizeof(info) - 1));
 
     assert(GameServer_Create(nullptr) == nullptr);
+    assert(GameServer_CreateWithWeaponTemplateDirectory(nullptr, "x") == nullptr);
     GameServer_Destroy(nullptr);
     GameServer_HandleEvent(nullptr, nullptr);
     GameServer_Tick(nullptr, 1.0f / 30.0f);
     assert(GameServer_GetEnemyCount(nullptr) == 0);
+    GameServerWeaponTemplateInfo template_info{};
+    template_info.struct_size = sizeof(template_info);
+    assert(!GameServer_QueryWeaponTemplate(nullptr, 0, &template_info));
     GameServer_DespawnAll(nullptr, KernelDespawnReason_Destroyed);
 
     KernelConfig config = listen_server_config();
@@ -68,6 +85,26 @@ int main() {
 
     GameServerHandle* game_server = GameServer_Create(kernel);
     assert(game_server != nullptr);
+    assert(GameServer_QueryWeaponTemplate(game_server, 4, &template_info));
+    assert(template_info.weapon_id == 4);
+    assert(template_info.fire_mode == KernelWeaponFireMode_AreaEffect);
+    assert(template_info.mechanics.area_effect.radius == 2.0f);
+    assert(template_info.name[0] == 'F');
+    template_info = GameServerWeaponTemplateInfo{};
+    template_info.struct_size = sizeof(template_info);
+    assert(GameServer_QueryWeaponTemplate(game_server, 5, &template_info));
+    assert(template_info.weapon_id == 5);
+    assert(template_info.fire_mode == KernelWeaponFireMode_Beam);
+    assert(template_info.mechanics.beam.length == 8.0f);
+    assert(template_info.mechanics.beam.damage_per_second == 30);
+    template_info = GameServerWeaponTemplateInfo{};
+    template_info.struct_size = sizeof(template_info);
+    assert(GameServer_QueryWeaponTemplate(game_server, 6, &template_info));
+    assert(template_info.weapon_id == 6);
+    assert(template_info.fire_mode == KernelWeaponFireMode_Projectile);
+    assert(template_info.mechanics.projectile.motion_model ==
+           KernelProjectileMotionModel_Homing);
+    assert(template_info.mechanics.projectile.homing.lock_on_range == 25.0f);
     handle_pending_events(kernel, game_server);
     GameServer_Tick(game_server, 1.0f / 30.0f);
     assert(GameServer_GetEnemyCount(game_server) == 1);
@@ -79,6 +116,31 @@ int main() {
     assert(query_enemy_count(kernel) == 0);
 
     GameServer_Destroy(game_server);
+    game_server = nullptr;
+
+    const std::filesystem::path template_dir =
+        runfiles_root() / "game_server" / "weapon_templates";
+    GameServerHandle* yaml_game_server =
+        GameServer_CreateWithWeaponTemplateDirectory(kernel, template_dir.string().c_str());
+    assert(yaml_game_server != nullptr);
+    template_info = GameServerWeaponTemplateInfo{};
+    template_info.struct_size = sizeof(template_info);
+    assert(GameServer_QueryWeaponTemplate(yaml_game_server, 4, &template_info));
+    assert(template_info.mechanics.fire_mode == KernelWeaponFireMode_AreaEffect);
+    assert(template_info.mechanics.area_effect.collision_mask == KERNEL_COLLISION_LAYER_ENEMY);
+    template_info = GameServerWeaponTemplateInfo{};
+    template_info.struct_size = sizeof(template_info);
+    assert(GameServer_QueryWeaponTemplate(yaml_game_server, 5, &template_info));
+    assert(template_info.mechanics.fire_mode == KernelWeaponFireMode_Beam);
+    assert(template_info.mechanics.beam.collision_mask == KERNEL_COLLISION_LAYER_ENEMY);
+    template_info = GameServerWeaponTemplateInfo{};
+    template_info.struct_size = sizeof(template_info);
+    assert(GameServer_QueryWeaponTemplate(yaml_game_server, 6, &template_info));
+    assert(template_info.mechanics.fire_mode == KernelWeaponFireMode_Projectile);
+    assert(template_info.mechanics.projectile.motion_model ==
+           KernelProjectileMotionModel_Homing);
+    assert(template_info.mechanics.projectile.homing.max_speed == 30.0f);
+    GameServer_Destroy(yaml_game_server);
     Kernel_Destroy(kernel);
     return 0;
 }

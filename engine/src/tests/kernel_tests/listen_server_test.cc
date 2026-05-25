@@ -92,6 +92,75 @@ KernelServerEntityState find_server_entity(
     return KernelServerEntityState{};
 }
 
+KernelWeaponMechanicsDefinition projectile_weapon(
+    std::uint8_t weapon_id,
+    float speed,
+    std::uint8_t motion_model) {
+    KernelWeaponMechanicsDefinition weapon{};
+    weapon.struct_size = sizeof(weapon);
+    weapon.weapon_id = weapon_id;
+    weapon.fire_mode = KernelWeaponFireMode_Projectile;
+    weapon.magazine_size = 30;
+    weapon.damage = 40;
+    weapon.cooldown_ticks = 30;
+    weapon.reload_ticks = 60;
+    weapon.projectile.struct_size = sizeof(KernelProjectileMechanicsDefinition);
+    weapon.projectile.motion_model = motion_model;
+    weapon.projectile.speed = speed;
+    weapon.projectile.lifetime_seconds = 3.0f;
+    weapon.projectile.explosion_radius = 4.0f;
+    weapon.projectile.hit_response = KernelProjectileHitResponse_Destroy;
+    weapon.projectile.damage_shape = KernelProjectileDamageShape_Explosion;
+    weapon.projectile.collision_mask = KERNEL_COLLISION_MASK_DAMAGEABLE;
+    weapon.projectile.max_hit_count = 1;
+    if (motion_model == KernelProjectileMotionModel_Parabolic) {
+        weapon.projectile.gravity = KernelVec3{0.0f, -9.8f, 0.0f};
+    }
+    return weapon;
+}
+
+void configure_local_player(KernelHandle* kernel, std::uint32_t player_net_id) {
+    KernelCombatStateDefinition combat{};
+    combat.struct_size = sizeof(combat);
+    combat.hp = 100;
+    combat.max_hp = 100;
+    combat.active_weapon_id = 0;
+    combat.move_speed_meters_per_second = 5.0f;
+    combat.hitbox_center = KernelVec3{0.0f, 0.9f, 0.0f};
+    combat.hitbox_half_extents = KernelVec3{0.35f, 0.9f, 0.35f};
+    combat.ammo[0] = 30;
+    combat.reserve_ammo[0] = 90;
+    combat.ammo[2] = 30;
+    combat.reserve_ammo[2] = 90;
+    combat.ammo[3] = 6;
+    combat.reserve_ammo[3] = 18;
+    assert(Kernel_ServerSetEntityCombatState(kernel, player_net_id, &combat));
+
+    KernelWeaponMechanicsDefinition rifle{};
+    rifle.struct_size = sizeof(rifle);
+    rifle.weapon_id = 0;
+    rifle.fire_mode = KernelWeaponFireMode_Hitscan;
+    rifle.magazine_size = 30;
+    rifle.damage = 25;
+    rifle.cooldown_ticks = 3;
+    rifle.reload_ticks = 30;
+    rifle.max_range = 100.0f;
+    rifle.pellet_count = 1;
+    assert(Kernel_ServerSetEntityWeaponMechanics(kernel, player_net_id, &rifle));
+
+    KernelWeaponMechanicsDefinition grenade =
+        projectile_weapon(2, 15.0f, KernelProjectileMotionModel_Parabolic);
+    assert(Kernel_ServerSetEntityWeaponMechanics(kernel, player_net_id, &grenade));
+    KernelWeaponMechanicsDefinition rocket =
+        projectile_weapon(3, 35.0f, KernelProjectileMotionModel_Linear);
+    rocket.magazine_size = 6;
+    rocket.damage = 45;
+    rocket.reload_ticks = 75;
+    rocket.projectile.lifetime_seconds = 2.5f;
+    rocket.projectile.explosion_radius = 3.0f;
+    assert(Kernel_ServerSetEntityWeaponMechanics(kernel, player_net_id, &rocket));
+}
+
 }  // namespace
 
 int main() {
@@ -119,15 +188,22 @@ int main() {
     assert(saw_player_spawned);
 
     std::array<RenderEntityState, 16> before_states{};
-    const std::uint32_t before_count = Kernel_GetRenderStates(
+    std::uint32_t before_count = Kernel_GetRenderStates(
         kernel,
         before_states.data(),
         static_cast<std::uint32_t>(before_states.size()));
     assert(before_count == 1);
     assert(!has_non_player_state(before_states, before_count));
-    const RenderEntityState before_player = find_player(before_states, before_count);
+    RenderEntityState before_player = find_player(before_states, before_count);
     KernelLocalPlayerInfo local_info{};
     assert(Kernel_GetLocalPlayerInfo(kernel, &local_info));
+    configure_local_player(kernel, local_info.player_net_id);
+    Kernel_Update(kernel, 0.0f);
+    before_count = Kernel_GetRenderStates(
+        kernel,
+        before_states.data(),
+        static_cast<std::uint32_t>(before_states.size()));
+    before_player = find_player(before_states, before_count);
     assert(local_info.player_net_id == before_player.net_id);
     assert(before_player.hp == 100);
     assert(before_player.max_hp == 100);
@@ -274,7 +350,7 @@ int main() {
     rocket_input.client_action_id = 3002;
     rocket_input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     rocket_input.buttons = InputButton_Fire;
-    rocket_input.selected_weapon = network_example::kWeaponRocket;
+    rocket_input.selected_weapon = network_example::kWeaponSlot3;
     Kernel_SubmitInput(kernel, 1, &rocket_input);
 
     std::array<RenderEntityState, 16> predicted_rocket_states{};

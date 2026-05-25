@@ -2,6 +2,8 @@
 
 #include <cstddef>
 
+#include "protocol/src/packet_codec.h"
+
 namespace network_example {
 namespace {
 
@@ -10,107 +12,18 @@ constexpr std::size_t kWelcomePayloadSize = 20;
 constexpr std::size_t kPingPongPayloadSize = 28;
 constexpr std::size_t kDisconnectPayloadSize = 4;
 
-void write_u32(std::vector<std::uint8_t>* buffer, std::uint32_t value) {
-    buffer->push_back(static_cast<std::uint8_t>(value & 0xffu));
-    buffer->push_back(static_cast<std::uint8_t>((value >> 8u) & 0xffu));
-    buffer->push_back(static_cast<std::uint8_t>((value >> 16u) & 0xffu));
-    buffer->push_back(static_cast<std::uint8_t>((value >> 24u) & 0xffu));
-}
-
-void write_u64(std::vector<std::uint8_t>* buffer, std::uint64_t value) {
-    write_u32(buffer, static_cast<std::uint32_t>(value & 0xffffffffu));
-    write_u32(buffer, static_cast<std::uint32_t>((value >> 32u) & 0xffffffffu));
-}
-
-bool read_u32(
-    const std::uint8_t* data,
-    std::size_t size,
-    std::size_t* offset,
-    std::uint32_t* out_value) {
-    if (*offset + 4 > size) {
-        return false;
-    }
-    *out_value = static_cast<std::uint32_t>(data[*offset]) |
-                 (static_cast<std::uint32_t>(data[*offset + 1]) << 8u) |
-                 (static_cast<std::uint32_t>(data[*offset + 2]) << 16u) |
-                 (static_cast<std::uint32_t>(data[*offset + 3]) << 24u);
-    *offset += 4;
-    return true;
-}
-
-bool read_u64(
-    const std::uint8_t* data,
-    std::size_t size,
-    std::size_t* offset,
-    std::uint64_t* out_value) {
-    std::uint32_t low = 0;
-    std::uint32_t high = 0;
-    if (!read_u32(data, size, offset, &low) ||
-        !read_u32(data, size, offset, &high)) {
-        return false;
-    }
-    *out_value = static_cast<std::uint64_t>(low) |
-                 (static_cast<std::uint64_t>(high) << 32u);
-    return true;
-}
-
-std::vector<std::uint8_t> wrap_packet(
-    MessageType message_type,
-    const std::vector<std::uint8_t>& payload,
-    std::uint32_t sequence) {
-    PacketHeader header;
-    header.message_type = static_cast<std::uint16_t>(message_type);
-    header.sequence = sequence;
-    header.payload_size = static_cast<std::uint32_t>(payload.size());
-    header.payload_crc = compute_payload_crc(payload.data(), payload.size());
-
-    const EncodedPacketHeader encoded_header = encode_packet_header(header);
-    std::vector<std::uint8_t> packet;
-    packet.reserve(kPacketHeaderSize + payload.size());
-    packet.insert(packet.end(), encoded_header.begin(), encoded_header.end());
-    packet.insert(packet.end(), payload.begin(), payload.end());
-    return packet;
-}
-
-bool unwrap_packet(
-    const std::uint8_t* data,
-    std::size_t size,
-    MessageType expected_type,
-    const std::uint8_t** out_payload,
-    std::size_t* out_payload_size) {
-    if (data == nullptr || out_payload == nullptr || out_payload_size == nullptr ||
-        size < kPacketHeaderSize) {
-        return false;
-    }
-
-    PacketHeader header;
-    if (!decode_packet_header(data, size, &header) ||
-        header.message_type != static_cast<std::uint16_t>(expected_type)) {
-        return false;
-    }
-    if (header.payload_size != size - kPacketHeaderSize) {
-        return false;
-    }
-
-    const std::uint8_t* payload = data + kPacketHeaderSize;
-    if (compute_payload_crc(payload, header.payload_size) != header.payload_crc) {
-        return false;
-    }
-
-    *out_payload = payload;
-    *out_payload_size = header.payload_size;
-    return true;
-}
-
 }  // namespace
 
 std::vector<std::uint8_t> encode_handshake_packet(
     const HandshakePacket& packet,
     std::uint32_t sequence) {
-    std::vector<std::uint8_t> payload;
+    protocol_internal::PacketWriter payload;
     payload.reserve(kHandshakePayloadSize);
-    write_u32(&payload, packet.client_nonce);
-    return wrap_packet(MessageType::kHandshake, payload, sequence);
+    payload.write_u32(packet.client_nonce);
+    return protocol_internal::wrap_packet(
+        MessageType::kHandshake,
+        payload.bytes(),
+        sequence);
 }
 
 bool decode_handshake_packet(
@@ -120,15 +33,19 @@ bool decode_handshake_packet(
     const std::uint8_t* payload = nullptr;
     std::size_t payload_size = 0;
     if (out_packet == nullptr ||
-        !unwrap_packet(data, size, MessageType::kHandshake, &payload, &payload_size) ||
+        !protocol_internal::unwrap_packet(
+            data,
+            size,
+            MessageType::kHandshake,
+            &payload,
+            &payload_size) ||
         payload_size != kHandshakePayloadSize) {
         return false;
     }
 
     HandshakePacket packet;
-    std::size_t offset = 0;
-    if (!read_u32(payload, payload_size, &offset, &packet.client_nonce) ||
-        offset != payload_size) {
+    protocol_internal::PacketReader reader(payload, payload_size);
+    if (!reader.read_u32(&packet.client_nonce) || !reader.done()) {
         return false;
     }
 
@@ -139,14 +56,17 @@ bool decode_handshake_packet(
 std::vector<std::uint8_t> encode_welcome_packet(
     const WelcomePacket& packet,
     std::uint32_t sequence) {
-    std::vector<std::uint8_t> payload;
+    protocol_internal::PacketWriter payload;
     payload.reserve(kWelcomePayloadSize);
-    write_u32(&payload, packet.assigned_peer_id);
-    write_u32(&payload, packet.assigned_player_net_id);
-    write_u32(&payload, packet.server_tick);
-    write_u32(&payload, packet.server_tick_rate);
-    write_u32(&payload, packet.snapshot_rate);
-    return wrap_packet(MessageType::kWelcome, payload, sequence);
+    payload.write_u32(packet.assigned_peer_id);
+    payload.write_u32(packet.assigned_player_net_id);
+    payload.write_u32(packet.server_tick);
+    payload.write_u32(packet.server_tick_rate);
+    payload.write_u32(packet.snapshot_rate);
+    return protocol_internal::wrap_packet(
+        MessageType::kWelcome,
+        payload.bytes(),
+        sequence);
 }
 
 bool decode_welcome_packet(
@@ -156,7 +76,7 @@ bool decode_welcome_packet(
     const std::uint8_t* payload = nullptr;
     std::size_t payload_size = 0;
     if (out_packet == nullptr ||
-        !unwrap_packet(
+        !protocol_internal::unwrap_packet(
             data,
             size,
             MessageType::kWelcome,
@@ -167,13 +87,13 @@ bool decode_welcome_packet(
     }
 
     WelcomePacket packet;
-    std::size_t offset = 0;
-    if (!read_u32(payload, payload_size, &offset, &packet.assigned_peer_id) ||
-        !read_u32(payload, payload_size, &offset, &packet.assigned_player_net_id) ||
-        !read_u32(payload, payload_size, &offset, &packet.server_tick) ||
-        !read_u32(payload, payload_size, &offset, &packet.server_tick_rate) ||
-        !read_u32(payload, payload_size, &offset, &packet.snapshot_rate) ||
-        offset != payload_size) {
+    protocol_internal::PacketReader reader(payload, payload_size);
+    if (!reader.read_u32(&packet.assigned_peer_id) ||
+        !reader.read_u32(&packet.assigned_player_net_id) ||
+        !reader.read_u32(&packet.server_tick) ||
+        !reader.read_u32(&packet.server_tick_rate) ||
+        !reader.read_u32(&packet.snapshot_rate) ||
+        !reader.done()) {
         return false;
     }
 
@@ -184,13 +104,16 @@ bool decode_welcome_packet(
 std::vector<std::uint8_t> encode_ping_pong_packet(
     const PingPongPacket& packet,
     std::uint32_t sequence) {
-    std::vector<std::uint8_t> payload;
+    protocol_internal::PacketWriter payload;
     payload.reserve(kPingPongPayloadSize);
-    write_u32(&payload, packet.nonce);
-    write_u64(&payload, packet.server_send_time_us);
-    write_u64(&payload, packet.client_receive_time_us);
-    write_u64(&payload, packet.client_send_time_us);
-    return wrap_packet(MessageType::kPingPong, payload, sequence);
+    payload.write_u32(packet.nonce);
+    payload.write_u64(packet.server_send_time_us);
+    payload.write_u64(packet.client_receive_time_us);
+    payload.write_u64(packet.client_send_time_us);
+    return protocol_internal::wrap_packet(
+        MessageType::kPingPong,
+        payload.bytes(),
+        sequence);
 }
 
 bool decode_ping_pong_packet(
@@ -200,18 +123,23 @@ bool decode_ping_pong_packet(
     const std::uint8_t* payload = nullptr;
     std::size_t payload_size = 0;
     if (out_packet == nullptr ||
-        !unwrap_packet(data, size, MessageType::kPingPong, &payload, &payload_size) ||
+        !protocol_internal::unwrap_packet(
+            data,
+            size,
+            MessageType::kPingPong,
+            &payload,
+            &payload_size) ||
         payload_size != kPingPongPayloadSize) {
         return false;
     }
 
     PingPongPacket packet;
-    std::size_t offset = 0;
-    if (!read_u32(payload, payload_size, &offset, &packet.nonce) ||
-        !read_u64(payload, payload_size, &offset, &packet.server_send_time_us) ||
-        !read_u64(payload, payload_size, &offset, &packet.client_receive_time_us) ||
-        !read_u64(payload, payload_size, &offset, &packet.client_send_time_us) ||
-        offset != payload_size) {
+    protocol_internal::PacketReader reader(payload, payload_size);
+    if (!reader.read_u32(&packet.nonce) ||
+        !reader.read_u64(&packet.server_send_time_us) ||
+        !reader.read_u64(&packet.client_receive_time_us) ||
+        !reader.read_u64(&packet.client_send_time_us) ||
+        !reader.done()) {
         return false;
     }
 
@@ -222,10 +150,13 @@ bool decode_ping_pong_packet(
 std::vector<std::uint8_t> encode_disconnect_packet(
     const DisconnectPacket& packet,
     std::uint32_t sequence) {
-    std::vector<std::uint8_t> payload;
+    protocol_internal::PacketWriter payload;
     payload.reserve(kDisconnectPayloadSize);
-    write_u32(&payload, packet.reason_code);
-    return wrap_packet(MessageType::kDisconnect, payload, sequence);
+    payload.write_u32(packet.reason_code);
+    return protocol_internal::wrap_packet(
+        MessageType::kDisconnect,
+        payload.bytes(),
+        sequence);
 }
 
 bool decode_disconnect_packet(
@@ -235,15 +166,19 @@ bool decode_disconnect_packet(
     const std::uint8_t* payload = nullptr;
     std::size_t payload_size = 0;
     if (out_packet == nullptr ||
-        !unwrap_packet(data, size, MessageType::kDisconnect, &payload, &payload_size) ||
+        !protocol_internal::unwrap_packet(
+            data,
+            size,
+            MessageType::kDisconnect,
+            &payload,
+            &payload_size) ||
         payload_size != kDisconnectPayloadSize) {
         return false;
     }
 
     DisconnectPacket packet;
-    std::size_t offset = 0;
-    if (!read_u32(payload, payload_size, &offset, &packet.reason_code) ||
-        offset != payload_size) {
+    protocol_internal::PacketReader reader(payload, payload_size);
+    if (!reader.read_u32(&packet.reason_code) || !reader.done()) {
         return false;
     }
 

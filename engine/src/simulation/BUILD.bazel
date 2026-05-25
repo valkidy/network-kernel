@@ -5,13 +5,19 @@ package(default_visibility = ["//visibility:public"])
 cc_library(
     name = "simulation",
     srcs = [
+        "src/area_effect_system.cc",
+        "src/beam_system.cc",
+        "src/collision_query.cc",
         "src/damage_pipeline.cc",
         "src/damage_system.cc",
         "src/player_movement.cc",
         "src/projectile_system.cc",
         "src/weapon_system.cc",
     ],
-    hdrs = ["public/simulation.h"],
+    hdrs = [
+        "public/collision_query.h",
+        "public/simulation.h",
+    ],
     includes = [".."],
     deps = [
         "//engine/src/kernel:kernel_types",

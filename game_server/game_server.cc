@@ -1,10 +1,19 @@
 #include "game_server/game_server.h"
 
+#include <cstring>
+#include <utility>
+
 namespace network_example::game_server {
 
-GameServer::GameServer(KernelHandle* kernel) : enemy_manager_(kernel) {}
+GameServer::GameServer(KernelHandle* kernel, GameServerGameplayConfig config)
+    : kernel_(kernel),
+      config_(std::move(config)),
+      enemy_manager_(kernel, config_) {}
 
 void GameServer::handle_event(const KernelEvent& event) {
+    if (event.type == KernelEventType_PlayerJoined && event.net_id != 0) {
+        configure_player(event.net_id);
+    }
     enemy_manager_.handle_event(event);
 }
 
@@ -18,6 +27,43 @@ EnemyManager& GameServer::enemy_manager() {
 
 const EnemyManager& GameServer::enemy_manager() const {
     return enemy_manager_;
+}
+
+bool GameServer::query_weapon_template(
+    std::uint8_t weapon_id,
+    GameServerWeaponTemplateInfo* out_info) const {
+    if (out_info == nullptr ||
+        out_info->struct_size < sizeof(GameServerWeaponTemplateInfo) ||
+        weapon_id >= kWeaponCount) {
+        return false;
+    }
+    const KernelWeaponMechanicsDefinition& mechanics =
+        config_.weapons.definitions[weapon_id];
+    if (mechanics.struct_size < sizeof(KernelWeaponMechanicsDefinition)) {
+        return false;
+    }
+    std::memset(out_info, 0, sizeof(GameServerWeaponTemplateInfo));
+    out_info->struct_size = sizeof(GameServerWeaponTemplateInfo);
+    out_info->weapon_id = weapon_id;
+    out_info->fire_mode = mechanics.fire_mode;
+    const std::string& name = config_.weapons.names[weapon_id];
+    std::strncpy(out_info->name, name.c_str(), sizeof(out_info->name) - 1);
+    out_info->mechanics = mechanics;
+    out_info->valid = true;
+    return true;
+}
+
+void GameServer::configure_player(std::uint32_t net_id) const {
+    if (kernel_ == nullptr) {
+        return;
+    }
+    KernelCombatStateDefinition combat_state = make_player_combat_state(config_);
+    if (!Kernel_ServerSetEntityCombatState(kernel_, net_id, &combat_state)) {
+        return;
+    }
+    for (const KernelWeaponMechanicsDefinition& weapon : config_.weapons.definitions) {
+        Kernel_ServerSetEntityWeaponMechanics(kernel_, net_id, &weapon);
+    }
 }
 
 }  // namespace network_example::game_server

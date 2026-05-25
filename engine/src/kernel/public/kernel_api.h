@@ -91,6 +91,45 @@ bool Kernel_ServerSubmitEntityInput(
     uint32_t net_id,
     const PlayerInput* input);
 
+bool Kernel_ServerSetEntityCombatState(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    const KernelCombatStateDefinition* combat_state);
+
+bool Kernel_ServerSetEntityWeaponMechanics(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    const KernelWeaponMechanicsDefinition* weapon_mechanics);
+
+bool Kernel_ServerClearEntityWeaponMechanics(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    uint8_t weapon_id);
+
+bool Kernel_ServerGetEntityWeaponMechanics(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    uint8_t weapon_id,
+    KernelWeaponMechanicsDefinition* out_weapon_mechanics);
+
+bool Kernel_ServerGetAreaEffectState(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    KernelAreaEffectState* out_state);
+
+bool Kernel_ServerGetBeamState(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    KernelBeamState* out_state);
+
+bool Kernel_ServerGetHomingState(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    KernelHomingState* out_state);
+
+bool Kernel_ServerValidateMechanicsConfig(
+    const KernelWeaponMechanicsDefinition* weapon_mechanics);
+
 bool Kernel_ServerGetEntityState(
     KernelHandle* kernel,
     uint32_t net_id,

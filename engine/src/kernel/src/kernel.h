@@ -57,6 +57,28 @@ public:
         std::uint16_t animation_state,
         std::uint32_t visual_flags);
     bool server_submit_entity_input(NetId net_id, const PlayerInput& input);
+    bool server_set_entity_combat_state(
+        NetId net_id,
+        const KernelCombatStateDefinition& combat_state);
+    bool server_set_entity_weapon_mechanics(
+        NetId net_id,
+        const KernelWeaponMechanicsDefinition& weapon_mechanics);
+    bool server_clear_entity_weapon_mechanics(
+        NetId net_id,
+        std::uint8_t weapon_id);
+    bool server_get_entity_weapon_mechanics(
+        NetId net_id,
+        std::uint8_t weapon_id,
+        KernelWeaponMechanicsDefinition* out_weapon_mechanics) const;
+    bool server_get_area_effect_state(
+        NetId net_id,
+        KernelAreaEffectState* out_state) const;
+    bool server_get_beam_state(
+        NetId net_id,
+        KernelBeamState* out_state) const;
+    bool server_get_homing_state(
+        NetId net_id,
+        KernelHomingState* out_state) const;
     bool server_get_entity_state(
         NetId net_id,
         KernelServerEntityState* out_state) const;
@@ -233,6 +255,7 @@ private:
     std::uint32_t next_clock_sync_nonce_ = 1;
     std::uint64_t client_local_time_us_ = 0;
     std::int64_t client_clock_offset_us_ = 0;
+    float local_player_move_speed_meters_per_second_ = 0.0f;
     std::uint64_t current_render_time_us_ = 0;
     PeerId local_client_peer_id_ = 0;
     bool client_handshake_sent_ = false;

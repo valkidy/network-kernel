@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 8`.
+`KERNEL_ABI_VERSION == 12u`.
 
 ## Ownership
 
@@ -76,6 +76,35 @@ ABI version 8 adds `hp` and `max_hp` to `RenderEntityState`, and adds
 clients can read player and enemy health directly from the render-state stream
 returned by `Kernel_GetRenderStates` or `Kernel_GetRenderStatesAtTime`.
 
+ABI version 9 moves gameplay-owned combat and weapon data out of the engine.
+The kernel exposes generic mechanism configuration structs for combat state,
+weapon mechanics, and projectile mechanics. Server gameplay layers configure
+entities through `Kernel_ServerSetEntityCombatState`,
+`Kernel_ServerSetEntityWeaponMechanics`,
+`Kernel_ServerClearEntityWeaponMechanics`, and validate weapon mechanism data
+with `Kernel_ServerValidateMechanicsConfig`. The engine executes movement,
+weapon, projectile, damage, snapshot, and transport mechanisms, but does not
+own rifle/rocket/enemy tuning defaults.
+
+ABI version 10 adds weapon metadata query, area-effect weapons, projectile
+response fields, projectile damage shape fields, and collision mask fields.
+Area effects remain server-authoritative gameplay entities and are queried
+through API metadata rather than new snapshot payload fields.
+
+ABI version 11 adds beam weapon mechanics and `Kernel_ServerGetBeamState`.
+Beam runtime uses dedicated server-owned beam entities and a DPS accumulator;
+beam render metadata is queried through the ABI rather than replicated through
+new packet fields.
+
+ABI version 12 adds fire-and-forget homing projectile mechanics and
+`Kernel_ServerGetHomingState`. Homing boost can be deterministically predicted
+for presentation, while guided and lost-target phases remain server
+authoritative and use existing snapshot position/velocity fields.
+
+The current projectile interaction foundation is internal C++ engine state. It
+does not add Kernel C ABI functions, does not change public struct layout, and
+does not require an ABI version bump beyond v12.
+
 Consumers pass a `struct_size`-style byte size to `Kernel_GetAbiInfo`. The call
 returns `false` if the output pointer is null or the provided size is smaller
 than the current `KernelAbiInfo` layout.
@@ -119,10 +148,10 @@ The Unity package lives at:
 plugins/com.network-example.kernel
 ```
 
-It provides handwritten C# P/Invoke declarations for the public `Kernel_*`
-surface, C# mirror structs for public ABI data, an `IDisposable` wrapper for
-`KernelHandle`, local player info helpers, an Editor ABI smoke runner, and
-minimal listen-server/client smoke samples.
+The intended package provides handwritten C# P/Invoke declarations for the
+public `Kernel_*` surface, C# mirror structs for public ABI data, an
+`IDisposable` wrapper for `KernelHandle`, local player info helpers, an Editor
+ABI smoke runner, and minimal listen-server/client smoke samples.
 
 On macOS, the Unity package includes the built dylib at:
 
@@ -135,3 +164,10 @@ on macOS. The Editor smoke runner calls `Kernel_GetAbiInfo`, validates
 `Marshal.SizeOf<T>()` against native struct sizes, starts listen-server mode,
 checks `Kernel_GetLocalPlayerInfo`, updates the kernel, submits one input,
 polls events, reads render states, and destroys the handle.
+
+Current caveat: the workspace package source under
+`plugins/com.network-example.kernel` is not expanded with its package manifest,
+runtime C# files, editor tests, or staged dylib. The old packaged artifact under
+`plugins/output` contains managed bindings for an earlier ABI while the native
+header is v12. Unity package builder verify and Unity Editor smoke should be
+treated as stale until the package is restored and resynced with ABI v12.

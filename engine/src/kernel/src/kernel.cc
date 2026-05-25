@@ -12,6 +12,7 @@
 #include <spdlog/spdlog.h>
 
 #include "kernel/public/kernel_api.h"
+#include "kernel/src/render_state_builder.h"
 #include "protocol/public/network_packets.h"
 #include "protocol/public/session_packets.h"
 #include "transport/public/gns_transport.h"
@@ -127,12 +128,12 @@ std::uint32_t tick_for_time_us(
 void apply_input_prediction(
     EntitySnapshot* entity,
     const PlayerInput& input,
-    float fixed_delta_seconds) {
+    float fixed_delta_seconds,
+    float move_speed_meters_per_second) {
     if (entity == nullptr) {
         return;
     }
-    constexpr float kMoveSpeedMetersPerSecond = 5.0f;
-    entity->velocity = input_move_to_world(input) * kMoveSpeedMetersPerSecond;
+    entity->velocity = input_move_to_world(input) * move_speed_meters_per_second;
     entity->position += entity->velocity * fixed_delta_seconds;
 }
 
@@ -186,17 +187,6 @@ KernelServerEntityState to_server_entity_state(
     return state;
 }
 
-EntitySnapshot interpolate_entity(
-    const EntitySnapshot& from,
-    const EntitySnapshot& to,
-    float alpha) {
-    EntitySnapshot entity = to;
-    entity.position = from.position + (to.position - from.position) * alpha;
-    entity.rotation = glm::slerp(from.rotation, to.rotation, alpha);
-    entity.velocity = from.velocity + (to.velocity - from.velocity) * alpha;
-    return entity;
-}
-
 std::uint32_t history_frame_count(const TickConfig& config) {
     const TickConfig tick = with_tick_defaults(config);
     return std::max(1u, (tick.server_tick_rate * tick.history_ms) / 1000u);
@@ -205,58 +195,358 @@ std::uint32_t history_frame_count(const TickConfig& config) {
 constexpr PeerId kLocalListenPeerId = 1;
 constexpr PeerId kServerPeerId = 0;
 constexpr std::uint32_t kClientNonce = 0x4d330001u;
-constexpr float kPredictedGrenadeSpeedMetersPerSecond = 15.0f;
-constexpr float kPredictedRocketSpeedMetersPerSecond = 35.0f;
 constexpr std::uint32_t kMaxCompensationWindowUs = 100000u;
 constexpr std::uint64_t kClockSyncIntervalUs = 1000000u;
 constexpr double kClientClockOffsetSmoothingFactor = 0.25;
-constexpr std::uint16_t kServerEnemyInitialHp = 240;
-constexpr std::uint16_t kServerEnemyRocketMagazine = 3;
-constexpr std::uint16_t kServerEnemyRocketReserveAmmo = 6;
-constexpr std::uint16_t kServerEnemyRocketDamage = 5;
-constexpr std::uint32_t kServerEnemyRocketCooldownTicks = 30;
-constexpr std::uint32_t kServerEnemyRocketReloadTicks = 30;
-const glm::vec3 kPredictedGrenadeGravity{0.0f, -9.8f, 0.0f};
+constexpr float kMaxHomingVisualExtrapolationSeconds = 0.2f;
+constexpr float kDefaultEntityRelevanceDistanceMeters = 40.0f;
+constexpr float kDefaultProjectileRelevanceDistanceMeters = 80.0f;
 
-bool is_predictable_projectile_weapon(std::uint8_t weapon_id) {
-    return weapon_id == kWeaponGrenade || weapon_id == kWeaponRocket;
+bool valid_weapon_id(std::uint8_t weapon_id) {
+    return static_cast<std::size_t>(weapon_id) < kWeaponCount;
 }
 
-float predicted_projectile_speed(std::uint8_t weapon_id) {
-    return weapon_id == kWeaponRocket ? kPredictedRocketSpeedMetersPerSecond
-                                      : kPredictedGrenadeSpeedMetersPerSecond;
-}
-
-ProjectileMotionModel predicted_projectile_motion(std::uint8_t weapon_id) {
-    return weapon_id == kWeaponGrenade ? ProjectileMotionModel::kParabolic
-                                       : ProjectileMotionModel::kLinear;
-}
-
-glm::vec3 predicted_projectile_gravity(std::uint8_t weapon_id) {
-    return weapon_id == kWeaponGrenade ? kPredictedGrenadeGravity
-                                       : glm::vec3{0.0f, 0.0f, 0.0f};
-}
-
-void configure_server_enemy(World* world, entt::entity entity) {
-    if (world == nullptr || !world->registry().all_of<Health>(entity)) {
-        return;
+ProjectileMotionModel to_projectile_motion_model(std::uint8_t motion_model) {
+    if (motion_model == KernelProjectileMotionModel_Homing) {
+        return ProjectileMotionModel::kHoming;
     }
+    if (motion_model == KernelProjectileMotionModel_Parabolic) {
+        return ProjectileMotionModel::kParabolic;
+    }
+    return ProjectileMotionModel::kLinear;
+}
 
-    Health& health = world->registry().get<Health>(entity);
-    health.hp = kServerEnemyInitialHp;
-    health.max_hp = kServerEnemyInitialHp;
+std::uint8_t to_kernel_projectile_motion_model(ProjectileMotionModel motion_model) {
+    if (motion_model == ProjectileMotionModel::kHoming) {
+        return KernelProjectileMotionModel_Homing;
+    }
+    if (motion_model == ProjectileMotionModel::kParabolic) {
+        return KernelProjectileMotionModel_Parabolic;
+    }
+    return KernelProjectileMotionModel_Linear;
+}
 
-    WeaponState& weapon = world->registry().get_or_emplace<WeaponState>(entity);
-    weapon.weapon_id = kWeaponRocket;
-    weapon.ammo[kWeaponRocket] = kServerEnemyRocketMagazine;
-    weapon.reserve_ammo[kWeaponRocket] = kServerEnemyRocketReserveAmmo;
+HomingMode to_homing_mode(std::uint8_t homing_mode) {
+    return homing_mode == KernelHomingMode_FireAndForget
+               ? HomingMode::kFireAndForget
+               : HomingMode::kFireAndForget;
+}
 
-    WeaponTuning& tuning = world->registry().get_or_emplace<WeaponTuning>(entity);
-    tuning.override_weapon[kWeaponRocket] = true;
-    tuning.magazine_size[kWeaponRocket] = kServerEnemyRocketMagazine;
-    tuning.damage[kWeaponRocket] = kServerEnemyRocketDamage;
-    tuning.cooldown_ticks[kWeaponRocket] = kServerEnemyRocketCooldownTicks;
-    tuning.reload_ticks[kWeaponRocket] = kServerEnemyRocketReloadTicks;
+std::uint8_t to_kernel_homing_mode(HomingMode homing_mode) {
+    switch (homing_mode) {
+        case HomingMode::kFireAndForget:
+        default:
+            return KernelHomingMode_FireAndForget;
+    }
+}
+
+ProjectileSyncMode to_projectile_sync_mode(std::uint8_t sync_mode) {
+    if (sync_mode == KernelProjectileSyncMode_LocalPredictedDeterministic) {
+        return ProjectileSyncMode::kLocalPredictedDeterministic;
+    }
+    if (sync_mode == KernelProjectileSyncMode_ServerSnapshotOnly) {
+        return ProjectileSyncMode::kServerSnapshotOnly;
+    }
+    return ProjectileSyncMode::kHybridDeterministicThenSnapshot;
+}
+
+std::uint8_t to_kernel_projectile_sync_mode(ProjectileSyncMode sync_mode) {
+    switch (sync_mode) {
+        case ProjectileSyncMode::kLocalPredictedDeterministic:
+            return KernelProjectileSyncMode_LocalPredictedDeterministic;
+        case ProjectileSyncMode::kServerSnapshotOnly:
+            return KernelProjectileSyncMode_ServerSnapshotOnly;
+        case ProjectileSyncMode::kHybridDeterministicThenSnapshot:
+        default:
+            return KernelProjectileSyncMode_HybridDeterministicThenSnapshot;
+    }
+}
+
+std::uint8_t to_kernel_guidance_phase(MissileGuidancePhase phase) {
+    switch (phase) {
+        case MissileGuidancePhase::kGuided:
+            return KernelMissileGuidancePhase_Guided;
+        case MissileGuidancePhase::kLostTarget:
+            return KernelMissileGuidancePhase_LostTarget;
+        case MissileGuidancePhase::kExpired:
+            return KernelMissileGuidancePhase_Expired;
+        case MissileGuidancePhase::kBoost:
+        default:
+            return KernelMissileGuidancePhase_Boost;
+    }
+}
+
+ProjectileHitResponse to_projectile_hit_response(std::uint8_t hit_response) {
+    if (hit_response == KernelProjectileHitResponse_Continue) {
+        return ProjectileHitResponse::kContinue;
+    }
+    if (hit_response == KernelProjectileHitResponse_Bounce) {
+        return ProjectileHitResponse::kBounce;
+    }
+    if (hit_response == KernelProjectileHitResponse_Attach) {
+        return ProjectileHitResponse::kAttach;
+    }
+    return ProjectileHitResponse::kDestroy;
+}
+
+std::uint8_t to_kernel_projectile_hit_response(
+    ProjectileHitResponse hit_response) {
+    switch (hit_response) {
+        case ProjectileHitResponse::kContinue:
+            return KernelProjectileHitResponse_Continue;
+        case ProjectileHitResponse::kBounce:
+            return KernelProjectileHitResponse_Bounce;
+        case ProjectileHitResponse::kAttach:
+            return KernelProjectileHitResponse_Attach;
+        case ProjectileHitResponse::kDestroy:
+        default:
+            return KernelProjectileHitResponse_Destroy;
+    }
+}
+
+ProjectileDamageShape to_projectile_damage_shape(std::uint8_t damage_shape) {
+    if (damage_shape == KernelProjectileDamageShape_Explosion) {
+        return ProjectileDamageShape::kExplosion;
+    }
+    if (damage_shape == KernelProjectileDamageShape_PiercingSegment) {
+        return ProjectileDamageShape::kPiercingSegment;
+    }
+    return ProjectileDamageShape::kDirectHit;
+}
+
+std::uint8_t to_kernel_projectile_damage_shape(
+    ProjectileDamageShape damage_shape) {
+    switch (damage_shape) {
+        case ProjectileDamageShape::kExplosion:
+            return KernelProjectileDamageShape_Explosion;
+        case ProjectileDamageShape::kPiercingSegment:
+            return KernelProjectileDamageShape_PiercingSegment;
+        case ProjectileDamageShape::kDirectHit:
+        default:
+            return KernelProjectileDamageShape_DirectHit;
+    }
+}
+
+WeaponFireMode to_weapon_fire_mode(std::uint8_t fire_mode) {
+    if (fire_mode == KernelWeaponFireMode_Shotgun) {
+        return WeaponFireMode::kShotgun;
+    }
+    if (fire_mode == KernelWeaponFireMode_Projectile) {
+        return WeaponFireMode::kProjectile;
+    }
+    if (fire_mode == KernelWeaponFireMode_AreaEffect) {
+        return WeaponFireMode::kAreaEffect;
+    }
+    if (fire_mode == KernelWeaponFireMode_Beam) {
+        return WeaponFireMode::kBeam;
+    }
+    return WeaponFireMode::kHitscan;
+}
+
+WeaponMechanicsDefinition to_weapon_mechanics(
+    const KernelWeaponMechanicsDefinition& definition) {
+    WeaponMechanicsDefinition mechanics{};
+    mechanics.id = definition.weapon_id;
+    mechanics.mode = to_weapon_fire_mode(definition.fire_mode);
+    mechanics.magazine_size = definition.magazine_size;
+    mechanics.damage = definition.damage;
+    mechanics.cooldown_ticks = definition.cooldown_ticks;
+    mechanics.reload_ticks = definition.reload_ticks;
+    mechanics.max_range = definition.max_range;
+    mechanics.pellet_count = definition.pellet_count;
+    mechanics.pellet_spread = definition.pellet_spread;
+    mechanics.projectile_speed = definition.projectile.speed;
+    mechanics.projectile_lifetime_seconds =
+        definition.projectile.lifetime_seconds;
+    mechanics.explosion_radius = definition.projectile.explosion_radius;
+    mechanics.projectile_motion_model =
+        to_projectile_motion_model(definition.projectile.motion_model);
+    mechanics.projectile_gravity = from_kernel_vec3(definition.projectile.gravity);
+    mechanics.projectile_hit_response =
+        to_projectile_hit_response(definition.projectile.hit_response);
+    mechanics.projectile_damage_shape =
+        to_projectile_damage_shape(definition.projectile.damage_shape);
+    mechanics.projectile_collision_mask = definition.projectile.collision_mask;
+    mechanics.projectile_max_hit_count = definition.projectile.max_hit_count;
+    mechanics.area_effect_radius = definition.area_effect.radius;
+    mechanics.area_effect_damage_per_interval =
+        definition.area_effect.damage_per_interval;
+    mechanics.area_effect_damage_interval_ticks =
+        definition.area_effect.damage_interval_ticks;
+    mechanics.area_effect_lifetime_ticks = definition.area_effect.lifetime_ticks;
+    mechanics.area_effect_spawn_distance = definition.area_effect.spawn_distance;
+    mechanics.area_effect_collision_mask = definition.area_effect.collision_mask;
+    mechanics.beam_length = definition.beam.length;
+    mechanics.beam_radius = definition.beam.radius;
+    mechanics.beam_damage_per_second = definition.beam.damage_per_second;
+    mechanics.beam_lifetime_ticks = definition.beam.lifetime_ticks;
+    mechanics.beam_collision_mask = definition.beam.collision_mask;
+    mechanics.homing_mode = to_homing_mode(definition.projectile.homing.homing_mode);
+    mechanics.homing_sync_mode =
+        to_projectile_sync_mode(definition.projectile.homing.sync_mode);
+    mechanics.homing_boost_ticks = definition.projectile.homing.boost_ticks;
+    mechanics.homing_lock_on_range = definition.projectile.homing.lock_on_range;
+    mechanics.homing_lose_target_range = definition.projectile.homing.lose_target_range;
+    mechanics.homing_lock_cone_degrees = definition.projectile.homing.lock_cone_degrees;
+    mechanics.homing_max_turn_rate_degrees_per_second =
+        definition.projectile.homing.max_turn_rate_degrees_per_second;
+    mechanics.homing_acceleration = definition.projectile.homing.acceleration;
+    mechanics.homing_max_speed = definition.projectile.homing.max_speed;
+    return mechanics;
+}
+
+KernelWeaponMechanicsDefinition to_kernel_weapon_mechanics(
+    const WeaponMechanicsDefinition& mechanics) {
+    KernelWeaponMechanicsDefinition definition{};
+    definition.struct_size = sizeof(KernelWeaponMechanicsDefinition);
+    definition.weapon_id = mechanics.id;
+    definition.fire_mode = static_cast<std::uint8_t>(mechanics.mode);
+    definition.magazine_size = mechanics.magazine_size;
+    definition.damage = mechanics.damage;
+    definition.cooldown_ticks = mechanics.cooldown_ticks;
+    definition.reload_ticks = mechanics.reload_ticks;
+    definition.max_range = mechanics.max_range;
+    definition.pellet_count = mechanics.pellet_count;
+    definition.pellet_spread = mechanics.pellet_spread;
+    definition.projectile.struct_size = sizeof(KernelProjectileMechanicsDefinition);
+    definition.projectile.motion_model =
+        to_kernel_projectile_motion_model(mechanics.projectile_motion_model);
+    definition.projectile.hit_response =
+        to_kernel_projectile_hit_response(mechanics.projectile_hit_response);
+    definition.projectile.damage_shape =
+        to_kernel_projectile_damage_shape(mechanics.projectile_damage_shape);
+    definition.projectile.speed = mechanics.projectile_speed;
+    definition.projectile.lifetime_seconds =
+        mechanics.projectile_lifetime_seconds;
+    definition.projectile.explosion_radius = mechanics.explosion_radius;
+    definition.projectile.gravity = to_kernel_vec3(mechanics.projectile_gravity);
+    definition.projectile.collision_mask = mechanics.projectile_collision_mask;
+    definition.projectile.max_hit_count = mechanics.projectile_max_hit_count;
+    if (mechanics.projectile_motion_model == ProjectileMotionModel::kHoming) {
+        definition.projectile.homing.struct_size =
+            sizeof(KernelHomingMechanicsDefinition);
+        definition.projectile.homing.homing_mode =
+            to_kernel_homing_mode(mechanics.homing_mode);
+        definition.projectile.homing.sync_mode =
+            to_kernel_projectile_sync_mode(mechanics.homing_sync_mode);
+        definition.projectile.homing.boost_ticks = mechanics.homing_boost_ticks;
+        definition.projectile.homing.lock_on_range = mechanics.homing_lock_on_range;
+        definition.projectile.homing.lose_target_range =
+            mechanics.homing_lose_target_range;
+        definition.projectile.homing.lock_cone_degrees =
+            mechanics.homing_lock_cone_degrees;
+        definition.projectile.homing.max_turn_rate_degrees_per_second =
+            mechanics.homing_max_turn_rate_degrees_per_second;
+        definition.projectile.homing.acceleration = mechanics.homing_acceleration;
+        definition.projectile.homing.max_speed = mechanics.homing_max_speed;
+    }
+    definition.area_effect.struct_size =
+        sizeof(KernelAreaEffectMechanicsDefinition);
+    definition.area_effect.radius = mechanics.area_effect_radius;
+    definition.area_effect.damage_per_interval =
+        mechanics.area_effect_damage_per_interval;
+    definition.area_effect.damage_interval_ticks =
+        mechanics.area_effect_damage_interval_ticks;
+    definition.area_effect.lifetime_ticks = mechanics.area_effect_lifetime_ticks;
+    definition.area_effect.spawn_distance = mechanics.area_effect_spawn_distance;
+    definition.area_effect.collision_mask = mechanics.area_effect_collision_mask;
+    definition.beam.struct_size = sizeof(KernelBeamMechanicsDefinition);
+    definition.beam.length = mechanics.beam_length;
+    definition.beam.radius = mechanics.beam_radius;
+    definition.beam.damage_per_second = mechanics.beam_damage_per_second;
+    definition.beam.lifetime_ticks = mechanics.beam_lifetime_ticks;
+    definition.beam.collision_mask = mechanics.beam_collision_mask;
+    return definition;
+}
+
+bool validate_homing_mechanics(const KernelHomingMechanicsDefinition& homing) {
+    return homing.struct_size >= sizeof(KernelHomingMechanicsDefinition) &&
+           homing.homing_mode == KernelHomingMode_FireAndForget &&
+           homing.sync_mode == KernelProjectileSyncMode_HybridDeterministicThenSnapshot &&
+           homing.lock_on_range > 0.0f &&
+           homing.lose_target_range >= homing.lock_on_range &&
+           homing.lock_cone_degrees > 0.0f &&
+           homing.lock_cone_degrees <= 180.0f &&
+           homing.max_turn_rate_degrees_per_second > 0.0f &&
+           homing.acceleration > 0.0f &&
+           homing.max_speed > 0.0f;
+}
+
+bool validate_weapon_mechanics(const KernelWeaponMechanicsDefinition& definition) {
+    if (definition.struct_size < sizeof(KernelWeaponMechanicsDefinition) ||
+        !valid_weapon_id(definition.weapon_id) ||
+        definition.magazine_size == 0 ||
+        definition.damage == 0 ||
+        definition.cooldown_ticks == 0 ||
+        definition.reload_ticks == 0) {
+        return false;
+    }
+    if (definition.fire_mode > KernelWeaponFireMode_Beam) {
+        return false;
+    }
+    if (definition.fire_mode == KernelWeaponFireMode_Projectile) {
+        if (definition.projectile.struct_size <
+                sizeof(KernelProjectileMechanicsDefinition) ||
+            definition.projectile.motion_model > KernelProjectileMotionModel_Homing ||
+            definition.projectile.hit_response > KernelProjectileHitResponse_Attach ||
+            definition.projectile.damage_shape > KernelProjectileDamageShape_PiercingSegment ||
+            definition.projectile.hit_response == KernelProjectileHitResponse_Bounce ||
+            definition.projectile.hit_response == KernelProjectileHitResponse_Attach ||
+            definition.projectile.collision_mask == 0 ||
+            definition.projectile.max_hit_count == 0 ||
+            definition.projectile.speed <= 0.0f ||
+            definition.projectile.lifetime_seconds <= 0.0f) {
+            return false;
+        }
+        if (definition.projectile.motion_model == KernelProjectileMotionModel_Homing) {
+            return validate_homing_mechanics(definition.projectile.homing);
+        }
+        return definition.projectile.homing.struct_size == 0;
+    }
+    if (definition.fire_mode == KernelWeaponFireMode_AreaEffect) {
+        return definition.area_effect.struct_size >=
+                   sizeof(KernelAreaEffectMechanicsDefinition) &&
+               definition.area_effect.radius > 0.0f &&
+               definition.area_effect.damage_per_interval > 0 &&
+               definition.area_effect.damage_interval_ticks > 0 &&
+               definition.area_effect.lifetime_ticks > 0 &&
+               definition.area_effect.spawn_distance >= 0.0f &&
+               definition.area_effect.collision_mask != 0;
+    }
+    if (definition.fire_mode == KernelWeaponFireMode_Beam) {
+        return definition.beam.struct_size >=
+                   sizeof(KernelBeamMechanicsDefinition) &&
+               definition.beam.length > 0.0f &&
+               definition.beam.radius > 0.0f &&
+               definition.beam.damage_per_second > 0 &&
+               definition.beam.lifetime_ticks > 0 &&
+               definition.beam.collision_mask != 0;
+    }
+    if (definition.max_range <= 0.0f) {
+        return false;
+    }
+    if (definition.fire_mode == KernelWeaponFireMode_Shotgun &&
+        definition.pellet_count == 0) {
+        return false;
+    }
+    return true;
+}
+
+const WeaponMechanicsDefinition* entity_weapon_mechanics(
+    const World& world,
+    NetId net_id,
+    std::uint8_t weapon_id) {
+    if (!valid_weapon_id(weapon_id)) {
+        return nullptr;
+    }
+    const std::optional<entt::entity> entity = world.find_entity(net_id);
+    if (!entity.has_value() ||
+        !world.registry().all_of<WeaponTuning>(*entity)) {
+        return nullptr;
+    }
+    const WeaponTuning& tuning = world.registry().get<WeaponTuning>(*entity);
+    const std::size_t index = static_cast<std::size_t>(weapon_id);
+    return tuning.configured[index] ? &tuning.definitions[index] : nullptr;
 }
 
 }  // namespace
@@ -470,9 +760,6 @@ bool KernelEngine::server_create_entity(
     if (!entity.has_value()) {
         return false;
     }
-    if (type == EntityType::kEnemy) {
-        configure_server_enemy(&world_, *entity);
-    }
     Transform& transform = world_.registry().get<Transform>(*entity);
     transform.rotation = from_kernel_quat(create_info.rotation);
     ReplicationState& replication =
@@ -581,6 +868,203 @@ bool KernelEngine::server_submit_entity_input(NetId net_id, const PlayerInput& i
     return true;
 }
 
+bool KernelEngine::server_set_entity_combat_state(
+    NetId net_id,
+    const KernelCombatStateDefinition& combat_state) {
+    if (!running_ || !is_server_mode(config_.mode) || net_id == 0 ||
+        combat_state.struct_size < sizeof(KernelCombatStateDefinition) ||
+        !valid_weapon_id(combat_state.active_weapon_id)) {
+        return false;
+    }
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value()) {
+        return false;
+    }
+
+    Health& health = world_.registry().get_or_emplace<Health>(*entity);
+    health.hp = combat_state.hp;
+    health.max_hp = combat_state.max_hp;
+
+    Hitbox& hitbox = world_.registry().get_or_emplace<Hitbox>(*entity);
+    hitbox.center = from_kernel_vec3(combat_state.hitbox_center);
+    hitbox.half_extents = from_kernel_vec3(combat_state.hitbox_half_extents);
+
+    MovementState& movement = world_.registry().get_or_emplace<MovementState>(*entity);
+    movement.speed_meters_per_second = combat_state.move_speed_meters_per_second;
+
+    WeaponState& weapon = world_.registry().get_or_emplace<WeaponState>(*entity);
+    weapon.weapon_id = combat_state.active_weapon_id;
+    for (std::size_t index = 0; index < kWeaponCount; ++index) {
+        weapon.ammo[index] = combat_state.ammo[index];
+        weapon.reserve_ammo[index] = combat_state.reserve_ammo[index];
+    }
+    if (net_id == local_player_net_id_) {
+        local_player_move_speed_meters_per_second_ =
+            combat_state.move_speed_meters_per_second;
+    }
+    publish_snapshot();
+    rebuild_render_states();
+    return true;
+}
+
+bool KernelEngine::server_set_entity_weapon_mechanics(
+    NetId net_id,
+    const KernelWeaponMechanicsDefinition& weapon_mechanics) {
+    if (!running_ || !is_server_mode(config_.mode) ||
+        !validate_weapon_mechanics(weapon_mechanics)) {
+        return false;
+    }
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value()) {
+        return false;
+    }
+    WeaponTuning& tuning = world_.registry().get_or_emplace<WeaponTuning>(*entity);
+    const std::size_t index = static_cast<std::size_t>(weapon_mechanics.weapon_id);
+    tuning.configured[index] = true;
+    tuning.definitions[index] = to_weapon_mechanics(weapon_mechanics);
+    return true;
+}
+
+bool KernelEngine::server_clear_entity_weapon_mechanics(
+    NetId net_id,
+    std::uint8_t weapon_id) {
+    if (!running_ || !is_server_mode(config_.mode) || !valid_weapon_id(weapon_id)) {
+        return false;
+    }
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value() ||
+        !world_.registry().all_of<WeaponTuning>(*entity)) {
+        return false;
+    }
+    WeaponTuning& tuning = world_.registry().get<WeaponTuning>(*entity);
+    const std::size_t index = static_cast<std::size_t>(weapon_id);
+    tuning.configured[index] = false;
+    tuning.definitions[index] = WeaponMechanicsDefinition{};
+    return true;
+}
+
+bool KernelEngine::server_get_entity_weapon_mechanics(
+    NetId net_id,
+    std::uint8_t weapon_id,
+    KernelWeaponMechanicsDefinition* out_weapon_mechanics) const {
+    if (!running_ || !is_server_mode(config_.mode) ||
+        out_weapon_mechanics == nullptr ||
+        out_weapon_mechanics->struct_size < sizeof(KernelWeaponMechanicsDefinition) ||
+        !valid_weapon_id(weapon_id)) {
+        return false;
+    }
+    const WeaponMechanicsDefinition* mechanics =
+        entity_weapon_mechanics(world_, net_id, weapon_id);
+    if (mechanics == nullptr) {
+        return false;
+    }
+    *out_weapon_mechanics = to_kernel_weapon_mechanics(*mechanics);
+    return true;
+}
+
+bool KernelEngine::server_get_area_effect_state(
+    NetId net_id,
+    KernelAreaEffectState* out_state) const {
+    if (!running_ || !is_server_mode(config_.mode) || out_state == nullptr ||
+        out_state->struct_size < sizeof(KernelAreaEffectState)) {
+        return false;
+    }
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value() ||
+        !world_.registry().all_of<NetworkIdentity, AreaEffectState, AreaEffectTag>(
+            *entity)) {
+        return false;
+    }
+    const NetworkIdentity& identity =
+        world_.registry().get<NetworkIdentity>(*entity);
+    const AreaEffectState& area_effect =
+        world_.registry().get<AreaEffectState>(*entity);
+    std::memset(out_state, 0, sizeof(KernelAreaEffectState));
+    out_state->struct_size = sizeof(KernelAreaEffectState);
+    out_state->net_id = identity.net_id;
+    out_state->owner_peer = identity.owner_peer;
+    out_state->radius = area_effect.radius;
+    out_state->damage_per_interval = area_effect.damage_per_interval;
+    out_state->damage_interval_ticks = area_effect.damage_interval_ticks;
+    out_state->expire_tick = area_effect.expire_tick;
+    out_state->source_code = area_effect.source_code;
+    out_state->collision_mask = area_effect.collision_mask;
+    out_state->valid = true;
+    return true;
+}
+
+bool KernelEngine::server_get_beam_state(
+    NetId net_id,
+    KernelBeamState* out_state) const {
+    if (!running_ || !is_server_mode(config_.mode) || out_state == nullptr ||
+        out_state->struct_size < sizeof(KernelBeamState)) {
+        return false;
+    }
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value() ||
+        !world_.registry().all_of<NetworkIdentity, BeamState, BeamTag>(*entity)) {
+        return false;
+    }
+    const NetworkIdentity& identity =
+        world_.registry().get<NetworkIdentity>(*entity);
+    const BeamState& beam = world_.registry().get<BeamState>(*entity);
+    std::memset(out_state, 0, sizeof(KernelBeamState));
+    out_state->struct_size = sizeof(KernelBeamState);
+    out_state->net_id = identity.net_id;
+    out_state->owner_peer = identity.owner_peer;
+    out_state->shooter_net_id = beam.shooter_net_id;
+    out_state->origin = to_kernel_vec3(beam.origin);
+    out_state->direction = to_kernel_vec3(beam.direction);
+    out_state->length = beam.length;
+    out_state->radius = beam.radius;
+    out_state->damage_per_second = beam.damage_per_second;
+    out_state->expire_tick = beam.expire_tick;
+    out_state->source_code = beam.source_code;
+    out_state->collision_mask = beam.collision_mask;
+    out_state->valid = true;
+    return true;
+}
+
+bool KernelEngine::server_get_homing_state(
+    NetId net_id,
+    KernelHomingState* out_state) const {
+    if (!running_ || !is_server_mode(config_.mode) || out_state == nullptr ||
+        out_state->struct_size < sizeof(KernelHomingState)) {
+        return false;
+    }
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value() ||
+        !world_.registry().all_of<NetworkIdentity, ProjectileState, HomingState, ProjectileTag>(
+            *entity)) {
+        return false;
+    }
+    const NetworkIdentity& identity =
+        world_.registry().get<NetworkIdentity>(*entity);
+    const ProjectileState& projectile =
+        world_.registry().get<ProjectileState>(*entity);
+    const HomingState& homing = world_.registry().get<HomingState>(*entity);
+    std::memset(out_state, 0, sizeof(KernelHomingState));
+    out_state->struct_size = sizeof(KernelHomingState);
+    out_state->net_id = identity.net_id;
+    out_state->owner_peer = identity.owner_peer;
+    out_state->shooter_net_id = projectile.shooter_net_id;
+    out_state->target_net_id = homing.target_net_id;
+    out_state->homing_mode = to_kernel_homing_mode(homing.homing_mode);
+    out_state->sync_mode = to_kernel_projectile_sync_mode(homing.sync_mode);
+    out_state->guidance_phase = to_kernel_guidance_phase(homing.phase);
+    out_state->boost_ticks = homing.boost_ticks;
+    out_state->guidance_start_tick = homing.guidance_start_tick;
+    out_state->lock_on_range = homing.lock_on_range;
+    out_state->lose_target_range = homing.lose_target_range;
+    out_state->lock_cone_degrees = homing.lock_cone_degrees;
+    out_state->max_turn_rate_degrees_per_second =
+        homing.max_turn_rate_degrees_per_second;
+    out_state->acceleration = homing.acceleration;
+    out_state->max_speed = homing.max_speed;
+    out_state->valid = true;
+    return true;
+}
+
 bool KernelEngine::server_get_entity_state(
     NetId net_id,
     KernelServerEntityState* out_state) const {
@@ -660,6 +1144,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     next_clock_sync_nonce_ = 1;
     client_local_time_us_ = 0;
     client_clock_offset_us_ = 0;
+    local_player_move_speed_meters_per_second_ = 0.0f;
     current_render_time_us_ = 0;
     local_client_peer_id_ = 0;
     client_handshake_sent_ = false;
@@ -787,8 +1272,8 @@ void KernelEngine::handle_server_disconnect(const TransportEvent& transport_even
     };
     events_.push_back(player_left);
 
-    // Current gameplay removes the disconnected player immediately. A later
-    // policy may preserve selected entities while clearing transient state.
+    // Current server mechanism removes the disconnected player immediately.
+    // A later policy may preserve selected entities while clearing transient state.
     if (world_.destroy(session->player)) {
         push_event(KernelEventType_EntityDestroyed, session->player, transport_event.peer);
     }
@@ -1126,7 +1611,11 @@ void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {
 
     EntitySnapshot replayed = *authoritative;
     for (const PlayerInput& input : pending_prediction_inputs_) {
-        apply_input_prediction(&replayed, input, tick_loop_.fixed_delta_seconds());
+        apply_input_prediction(
+            &replayed,
+            input,
+            tick_loop_.fixed_delta_seconds(),
+            local_player_move_speed_meters_per_second_);
     }
 
     predicted_local_entity_ = replayed;
@@ -1161,6 +1650,10 @@ void KernelEngine::reconcile_predicted_projectiles(const WorldSnapshot& snapshot
         if (predicted == nullptr) {
             continue;
         }
+        const float authoritative_age_seconds =
+            predicted->motion_model == ProjectileMotionModel::kHoming
+                ? std::min(snapshot_age_seconds, kMaxHomingVisualExtrapolationSeconds)
+                : snapshot_age_seconds;
         const glm::vec3 previous_render_position =
             predicted->position + predicted->correction_offset;
         const glm::vec3 authoritative_now = projectile_position_at(
@@ -1168,19 +1661,19 @@ void KernelEngine::reconcile_predicted_projectiles(const WorldSnapshot& snapshot
             entity.velocity,
             predicted->motion_model,
             predicted->gravity,
-            snapshot_age_seconds);
+            authoritative_age_seconds);
         const glm::vec3 authoritative_velocity_now = projectile_velocity_at(
             entity.velocity,
             predicted->motion_model,
             predicted->gravity,
-            snapshot_age_seconds);
+            authoritative_age_seconds);
         predicted->net_id = entity.net_id;
         predicted->position = authoritative_now;
         predicted->rotation = entity.rotation;
         predicted->velocity = authoritative_velocity_now;
         predicted->spawn_position = entity.position;
         predicted->initial_velocity = entity.velocity;
-        predicted->age_seconds = snapshot_age_seconds;
+        predicted->age_seconds = authoritative_age_seconds;
         predicted->spawn_tick = entity.spawn_tick;
         predicted->bound = true;
         const glm::vec3 correction = previous_render_position - authoritative_now;
@@ -1231,15 +1724,20 @@ void KernelEngine::predict_local_input(const PlayerInput& input) {
     apply_input_prediction(
         &predicted_local_entity_,
         input,
-        tick_loop_.fixed_delta_seconds());
+        tick_loop_.fixed_delta_seconds(),
+        local_player_move_speed_meters_per_second_);
     pending_prediction_inputs_.push_back(input);
 }
 
 void KernelEngine::predict_local_projectile(const PlayerInput& input) {
     if (local_client_peer_id_ == 0 || input.client_action_id == 0 ||
         (input.buttons & InputButton_Fire) == 0 ||
-        !is_predictable_projectile_weapon(input.selected_weapon) ||
         find_predicted_projectile(local_client_peer_id_, input.client_action_id) != nullptr) {
+        return;
+    }
+    const WeaponMechanicsDefinition* weapon =
+        entity_weapon_mechanics(world_, local_player_net_id_, input.selected_weapon);
+    if (weapon == nullptr || weapon->mode != WeaponFireMode::kProjectile) {
         return;
     }
 
@@ -1254,11 +1752,9 @@ void KernelEngine::predict_local_projectile(const PlayerInput& input) {
 
     const glm::vec3 origin = player_position + glm::vec3{0.0f, 1.0f, 0.0f};
     const glm::vec3 direction = input_aim_to_world(input);
-    const glm::vec3 velocity =
-        direction * predicted_projectile_speed(input.selected_weapon);
-    const ProjectileMotionModel motion_model =
-        predicted_projectile_motion(input.selected_weapon);
-    const glm::vec3 gravity = predicted_projectile_gravity(input.selected_weapon);
+    const glm::vec3 velocity = direction * weapon->projectile_speed;
+    const ProjectileMotionModel motion_model = weapon->projectile_motion_model;
+    const glm::vec3 gravity = weapon->projectile_gravity;
     predicted_projectiles_.push_back(PredictedProjectile{
         allocate_predicted_entity_id(),
         0,
@@ -1461,7 +1957,7 @@ bool KernelEngine::build_interpolated_snapshot_for_server_time(
     for (const EntitySnapshot& from_entity : from->entities) {
         if (const EntitySnapshot* to_entity = find_snapshot_entity(*to, from_entity.net_id)) {
             interpolated.entities.push_back(
-                interpolate_entity(from_entity, *to_entity, alpha));
+                interpolate_snapshot_entity(from_entity, *to_entity, alpha));
         } else {
             interpolated.entities.push_back(from_entity);
         }
@@ -1483,21 +1979,9 @@ void KernelEngine::append_predicted_local_render_state(bool consume_correction) 
 
     EntitySnapshot local = predicted_local_entity_;
     local.position += local_correction_offset_;
-    render_states_.push_back(RenderEntityState{
-        entity_id_for_net_id(local.net_id),
-        local.net_id,
-        static_cast<std::uint16_t>(local.type),
-        local.owner_peer,
-        to_kernel_vec3(local.position),
-        to_kernel_quat(local.rotation),
-        to_kernel_vec3(local.velocity),
-        local.hp,
-        local.max_hp,
-        local.state,
-        local.flags,
-        local.spawn_tick,
-        local.client_action_id,
-    });
+    render_states_.push_back(render_state_from_snapshot_entity(
+        local,
+        entity_id_for_net_id(local.net_id)));
 
     if (consume_correction) {
         local_correction_offset_ *= 0.5f;
@@ -1656,6 +2140,7 @@ void KernelEngine::simulate_tick() {
             WeaponSimulationContext{
                 &history_buffer_,
                 rewind_frame,
+                &damage_pipeline_,
                 rewind_tick,
                 tick_loop_.current_tick(),
                 fixed_delta,
@@ -1668,9 +2153,24 @@ void KernelEngine::simulate_tick() {
         tick_loop_.current_tick(),
         &events_,
         &damage_pipeline_);
-    damage_pipeline_.confirm_ready(
+    simulate_area_effects(
         world_,
+        tick_loop_.current_tick(),
         server_time_us,
+        &events_,
+        &damage_pipeline_);
+    simulate_beams(
+        world_,
+        tick_loop_.current_tick(),
+        fixed_delta,
+        server_time_us,
+        &events_,
+        &damage_pipeline_);
+    const std::vector<ConfirmedDamage> ready_damage =
+        damage_pipeline_.drain_ready_damage(world_, server_time_us);
+    apply_damage_applications(
+        world_,
+        ready_damage,
         tick_loop_.current_tick(),
         &events_);
     destroy_dead_entities(world_, tick_loop_.current_tick(), &events_);
@@ -1726,14 +2226,12 @@ bool KernelEngine::is_entity_relevant_to_session(
         return false;
     }
 
-    constexpr float kRelevantDistanceMeters = 40.0f;
-    constexpr float kProjectileRelevantDistanceMeters = 80.0f;
     const float distance = glm::length(entity.position - player_entity->position);
-    if (distance <= kRelevantDistanceMeters) {
+    if (distance <= kDefaultEntityRelevanceDistanceMeters) {
         return true;
     }
     if (entity.type == EntityType::kProjectile &&
-        distance <= kProjectileRelevantDistanceMeters) {
+        distance <= kDefaultProjectileRelevanceDistanceMeters) {
         const glm::vec3 to_player = player_entity->position - entity.position;
         if (glm::length(entity.velocity) > 0.001f &&
             glm::length(to_player) > 0.001f &&
@@ -1841,50 +2339,10 @@ void KernelEngine::rebuild_render_states_from_world() {
     auto view = world_.registry().view<const NetworkIdentity, const EntityKind, const Transform>();
     for (const entt::entity entity : view) {
         const NetworkIdentity& identity = view.get<const NetworkIdentity>(entity);
-        const EntityKind& kind = view.get<const EntityKind>(entity);
-        const Transform& transform = view.get<const Transform>(entity);
-        KernelVec3 velocity{0.0f, 0.0f, 0.0f};
-        std::uint16_t animation_state = 0;
-        std::uint32_t visual_flags = derived_visual_flags(world_, entity);
-        std::uint32_t spawn_tick = 0;
-        std::uint32_t client_action_id = 0;
-        std::uint16_t hp = 0;
-        std::uint16_t max_hp = 0;
-        if (world_.registry().all_of<Velocity>(entity)) {
-            velocity = to_kernel_vec3(world_.registry().get<Velocity>(entity).linear);
-        }
-        if (world_.registry().all_of<Health>(entity)) {
-            const Health& health = world_.registry().get<Health>(entity);
-            hp = health.hp;
-            max_hp = health.max_hp;
-        }
-        if (world_.registry().all_of<ReplicationState>(entity)) {
-            const ReplicationState& replication =
-                world_.registry().get<ReplicationState>(entity);
-            animation_state = replication.animation_state;
-            visual_flags |= replication.visual_flags;
-        }
-        if (world_.registry().all_of<ProjectileState>(entity)) {
-            const ProjectileState& projectile =
-                world_.registry().get<ProjectileState>(entity);
-            spawn_tick = projectile.spawn_tick;
-            client_action_id = projectile.client_action_id;
-        }
-        render_states_.push_back(RenderEntityState{
-            entity_id_for_net_id(identity.net_id),
-            identity.net_id,
-            static_cast<std::uint16_t>(kind.type),
-            identity.owner_peer,
-            to_kernel_vec3(transform.position),
-            to_kernel_quat(transform.rotation),
-            velocity,
-            hp,
-            max_hp,
-            animation_state,
-            visual_flags,
-            spawn_tick,
-            client_action_id,
-        });
+        render_states_.push_back(render_state_from_world_entity(
+            world_,
+            entity,
+            entity_id_for_net_id(identity.net_id)));
     }
 }
 
@@ -1916,21 +2374,9 @@ void KernelEngine::rebuild_render_states_from_snapshot(
             rendered_entities.insert(entity.net_id);
             continue;
         }
-        render_states_.push_back(RenderEntityState{
-            entity_id_for_net_id(entity.net_id),
-            entity.net_id,
-            static_cast<std::uint16_t>(entity.type),
-            entity.owner_peer,
-            to_kernel_vec3(entity.position),
-            to_kernel_quat(entity.rotation),
-            to_kernel_vec3(entity.velocity),
-            entity.hp,
-            entity.max_hp,
-            entity.state,
-            entity.flags,
-            entity.spawn_tick,
-            entity.client_action_id,
-        });
+        render_states_.push_back(render_state_from_snapshot_entity(
+            entity,
+            entity_id_for_net_id(entity.net_id)));
         rendered_entities.insert(entity.net_id);
         auto replicated = std::find_if(
             client_replicated_entities_.begin(),
@@ -2260,290 +2706,3 @@ void KernelEngine::remove_session(PeerId peer) {
 }
 
 }  // namespace network_example
-
-struct KernelHandle {
-    std::unique_ptr<network_example::KernelEngine> engine;
-};
-
-extern "C" {
-
-KernelHandle* Kernel_Create(const KernelConfig* config) {
-    try {
-        if (config == nullptr) {
-            return nullptr;
-        }
-        auto* handle = new KernelHandle;
-        handle->engine = std::make_unique<network_example::KernelEngine>(*config);
-        return handle;
-    } catch (...) {
-        return nullptr;
-    }
-}
-
-void Kernel_Destroy(KernelHandle* kernel) {
-    try {
-        delete kernel;
-    } catch (...) {
-    }
-}
-
-bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
-    try {
-        if (out_info == nullptr || out_info_size < sizeof(KernelAbiInfo)) {
-            return false;
-        }
-        std::memset(out_info, 0, sizeof(KernelAbiInfo));
-        out_info->struct_size = sizeof(KernelAbiInfo);
-        out_info->abi_version = KERNEL_ABI_VERSION;
-        out_info->kernel_config_size = sizeof(KernelConfig);
-        out_info->player_input_size = sizeof(PlayerInput);
-        out_info->render_entity_state_size = sizeof(RenderEntityState);
-        out_info->kernel_event_size = sizeof(KernelEvent);
-        out_info->local_player_info_size = sizeof(KernelLocalPlayerInfo);
-        out_info->server_entity_create_info_size =
-            sizeof(KernelServerEntityCreateInfo);
-        out_info->server_entity_state_size = sizeof(KernelServerEntityState);
-        out_info->capability_flags =
-            KERNEL_CAPABILITY_CLIENT_MODE |
-            KERNEL_CAPABILITY_LISTEN_SERVER_MODE |
-            KERNEL_CAPABILITY_DEDICATED_SERVER_MODE |
-            KERNEL_CAPABILITY_INPUT_SUBMISSION |
-            KERNEL_CAPABILITY_RENDER_STATES |
-            KERNEL_CAPABILITY_EVENT_POLLING |
-            KERNEL_CAPABILITY_CLIENT_PREDICTION |
-            KERNEL_CAPABILITY_SNAPSHOT_INTERPOLATION |
-            KERNEL_CAPABILITY_LAG_COMPENSATED_HITSCAN |
-            KERNEL_CAPABILITY_LOCAL_PLAYER_INFO |
-            KERNEL_CAPABILITY_SERVER_ENTITY_CREATE |
-            KERNEL_CAPABILITY_SERVER_ENTITY_DESTROY |
-            KERNEL_CAPABILITY_SERVER_ENTITY_TRANSFORM_WRITE |
-            KERNEL_CAPABILITY_SERVER_ENTITY_VELOCITY_WRITE |
-            KERNEL_CAPABILITY_SERVER_ENTITY_STATE_WRITE |
-            KERNEL_CAPABILITY_SERVER_ENTITY_QUERY |
-            KERNEL_CAPABILITY_SERVER_RELEVANCE_FILTER |
-            KERNEL_CAPABILITY_LAG_COMPENSATED_PROJECTILE |
-            KERNEL_CAPABILITY_EVENT_PRESENTATION_TIME |
-            KERNEL_CAPABILITY_RENDER_STATES_AT_TIME;
-        return true;
-    } catch (...) {
-        return false;
-    }
-}
-
-bool Kernel_GetLocalPlayerInfo(
-    KernelHandle* kernel,
-    KernelLocalPlayerInfo* out_info) {
-    try {
-        if (kernel == nullptr || out_info == nullptr) {
-            return false;
-        }
-        *out_info = kernel->engine->local_player_info();
-        return true;
-    } catch (...) {
-        return false;
-    }
-}
-
-bool Kernel_StartClient(KernelHandle* kernel, const char* address) {
-    try {
-        return kernel != nullptr && address != nullptr && address[0] != '\0' &&
-               kernel->engine->start_client(address);
-    } catch (...) {
-        return false;
-    }
-}
-
-bool Kernel_StartListenServer(KernelHandle* kernel, uint16_t port) {
-    try {
-        return kernel != nullptr && kernel->engine->start_listen_server(port);
-    } catch (...) {
-        return false;
-    }
-}
-
-bool Kernel_StartDedicatedServer(KernelHandle* kernel, uint16_t port) {
-    try {
-        return kernel != nullptr && kernel->engine->start_dedicated_server(port);
-    } catch (...) {
-        return false;
-    }
-}
-
-void Kernel_Update(KernelHandle* kernel, float delta_seconds) {
-    try {
-        if (kernel != nullptr) {
-            kernel->engine->update(delta_seconds);
-        }
-    } catch (...) {
-    }
-}
-
-void Kernel_SubmitInput(
-    KernelHandle* kernel,
-    uint32_t local_player_id,
-    const PlayerInput* input) {
-    try {
-        if (kernel != nullptr && input != nullptr) {
-            kernel->engine->submit_input(local_player_id, *input);
-        }
-    } catch (...) {
-    }
-}
-
-uint32_t Kernel_GetRenderStates(
-    KernelHandle* kernel,
-    RenderEntityState* out_states,
-    uint32_t max_states) {
-    try {
-        if (kernel == nullptr) {
-            return 0;
-        }
-        return kernel->engine->get_render_states(out_states, max_states);
-    } catch (...) {
-        return 0;
-    }
-}
-
-uint32_t Kernel_GetRenderStatesAtTime(
-    KernelHandle* kernel,
-    uint64_t client_render_time_us,
-    RenderEntityState* out_states,
-    uint32_t max_states) {
-    try {
-        if (kernel == nullptr) {
-            return 0;
-        }
-        return kernel->engine->get_render_states_at_time(
-            client_render_time_us,
-            out_states,
-            max_states);
-    } catch (...) {
-        return 0;
-    }
-}
-
-uint32_t Kernel_PollEvents(
-    KernelHandle* kernel,
-    KernelEvent* out_events,
-    uint32_t max_events) {
-    try {
-        if (kernel == nullptr) {
-            return 0;
-        }
-        return kernel->engine->poll_events(out_events, max_events);
-    } catch (...) {
-        return 0;
-    }
-}
-
-bool Kernel_ServerCreateEntity(
-    KernelHandle* kernel,
-    const KernelServerEntityCreateInfo* create_info,
-    uint32_t* out_net_id) {
-    try {
-        return kernel != nullptr && create_info != nullptr &&
-               kernel->engine->server_create_entity(*create_info, out_net_id);
-    } catch (...) {
-        return false;
-    }
-}
-
-bool Kernel_ServerDestroyEntity(
-    KernelHandle* kernel,
-    uint32_t net_id,
-    uint32_t reason) {
-    try {
-        return kernel != nullptr &&
-               kernel->engine->server_destroy_entity(net_id, reason);
-    } catch (...) {
-        return false;
-    }
-}
-
-bool Kernel_ServerSetEntityTransform(
-    KernelHandle* kernel,
-    uint32_t net_id,
-    const KernelVec3* position,
-    const KernelQuat* rotation) {
-    try {
-        return kernel != nullptr && position != nullptr && rotation != nullptr &&
-               kernel->engine->server_set_entity_transform(
-                   net_id,
-                   *position,
-                   *rotation);
-    } catch (...) {
-        return false;
-    }
-}
-
-bool Kernel_ServerSetEntityVelocity(
-    KernelHandle* kernel,
-    uint32_t net_id,
-    const KernelVec3* velocity) {
-    try {
-        return kernel != nullptr && velocity != nullptr &&
-               kernel->engine->server_set_entity_velocity(net_id, *velocity);
-    } catch (...) {
-        return false;
-    }
-}
-
-bool Kernel_ServerSetEntityState(
-    KernelHandle* kernel,
-    uint32_t net_id,
-    uint16_t animation_state,
-    uint32_t visual_flags) {
-    try {
-        return kernel != nullptr &&
-               kernel->engine->server_set_entity_state(
-                   net_id,
-                   animation_state,
-                   visual_flags);
-    } catch (...) {
-        return false;
-    }
-}
-
-bool Kernel_ServerSubmitEntityInput(
-    KernelHandle* kernel,
-    uint32_t net_id,
-    const PlayerInput* input) {
-    try {
-        return kernel != nullptr && input != nullptr &&
-               kernel->engine->server_submit_entity_input(net_id, *input);
-    } catch (...) {
-        return false;
-    }
-}
-
-bool Kernel_ServerGetEntityState(
-    KernelHandle* kernel,
-    uint32_t net_id,
-    KernelServerEntityState* out_state) {
-    try {
-        return kernel != nullptr &&
-               kernel->engine->server_get_entity_state(net_id, out_state);
-    } catch (...) {
-        return false;
-    }
-}
-
-uint32_t Kernel_ServerQueryEntities(
-    KernelHandle* kernel,
-    uint16_t entity_type_filter,
-    KernelServerEntityState* out_states,
-    uint32_t max_states) {
-    try {
-        if (kernel == nullptr) {
-            return 0;
-        }
-        return kernel->engine->server_query_entities(
-            static_cast<network_example::EntityType>(entity_type_filter),
-            out_states,
-            max_states);
-    } catch (...) {
-        return 0;
-    }
-}
-
-}  // extern "C"

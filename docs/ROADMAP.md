@@ -857,6 +857,28 @@ local Unity batchmode licensing/headless setup is available
 
 ---
 
+# Authoritative Weapon Current Status
+
+The native weapon foundation is currently at `KERNEL_ABI_VERSION == 12u` with
+seven weapon slots. Server-owned systems exist for DamagePipeline, YAML weapon
+templates, AreaEffect, Beam, Homing v1, collision query helpers, projectile hit
+processing, and internal ProjectileInteractionSystem v1.
+
+ProjectileInteractionSystem v1 is internal-only. It can match projectile pairs
+by weapon id, destroy consumed projectiles, and optionally spawn an
+authoritative AreaEffect. It does not load YAML reaction catalogs, expose
+reaction metadata through Kernel/GameServer APIs, emit a dedicated
+ProjectileReactionEvent, or apply damage directly.
+
+Unity validation is currently not aligned with native weapon status. The
+workspace package source under `plugins/com.network-example.kernel` is missing
+the expanded package files, and the packaged artifact under `plugins/output`
+contains managed bindings for an older ABI. Native Bazel tests remain the
+authoritative validation signal until the Unity package is restored and synced
+to ABI v12.
+
+---
+
 # Post-M6 (Future Scope)
 
 Not included in current scope:

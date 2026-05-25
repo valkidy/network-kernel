@@ -116,6 +116,42 @@ void copy_build_report(const NodeBuildReport& report, YamlLoadResult* result) {
     }
 }
 
+void collect_node_requirements(
+    const NodeConfig& config,
+    ScenarioRequirements* requirements) {
+    add_unique(&requirements->required_nodes, config.type);
+
+    if (config.type == "Condition.HasVisibleEnemy") {
+        add_unique(&requirements->required_features, "hasVisibleEnemy");
+    } else if (config.type == "Condition.HpAbove" ||
+               config.type == "Condition.HpBelow") {
+        add_unique(&requirements->required_features, "hp01");
+    } else if (config.type == "Condition.HasAmmo") {
+        add_unique(&requirements->required_features, "hasAmmo");
+    } else if (config.type == "Condition.IsAtTarget") {
+        add_unique(&requirements->required_features, "isAtTarget");
+    } else if (
+        config.type == "Action.MoveTo" ||
+        config.type == "Action.AttackTarget" ||
+        config.type == "Action.FleeFromTarget" ||
+        config.type == "Action.RequestHelp") {
+        const auto target = config.params.find("target");
+        add_unique(
+            &requirements->required_features,
+            target == config.params.end() ? "nearestEnemyId" : target->second);
+    }
+
+    for (const NodeConfig& child : config.children) {
+        collect_node_requirements(child, requirements);
+    }
+    for (const UtilityChildConfig& child : config.utility_children) {
+        add_unique(&requirements->required_scores, child.score);
+        if (child.node != nullptr) {
+            collect_node_requirements(*child.node, requirements);
+        }
+    }
+}
+
 }  // namespace
 
 YamlLoadResult load_tree_from_yaml(const std::string& yaml,
@@ -172,21 +208,27 @@ YamlLoadResult load_tree_from_yaml(const std::string& yaml) {
 CapabilityReport validate_yaml_capabilities(
     const std::string& yaml,
     const CapabilityRegistry& registry) {
-    YamlLoadResult result = load_tree_from_yaml(yaml);
     ScenarioRequirements requirements;
-    requirements.required_features = result.required_features;
-    requirements.required_nodes = result.required_nodes;
-    requirements.required_scores = result.required_scores;
+
+    YAML::Node document;
+    try {
+        document = YAML::Load(yaml);
+    } catch (const YAML::Exception&) {
+        return registry.validate(requirements);
+    }
+
+    if (!document || !document.IsMap()) {
+        return registry.validate(requirements);
+    }
+    const YAML::Node root = document["root"];
+    if (!root || !root.IsMap()) {
+        return registry.validate(requirements);
+    }
+
+    YamlLoadResult parse_result;
+    const NodeConfig root_config = parse_node_config(root, &parse_result);
+    collect_node_requirements(root_config, &requirements);
     CapabilityReport report = registry.validate(requirements);
-    for (const std::string& node : result.missing_nodes) {
-        add_unique(&report.missing_nodes, node);
-    }
-    for (const std::string& score : result.missing_scores) {
-        add_unique(&report.missing_scores, score);
-    }
-    for (const std::string& feature : result.missing_features) {
-        add_unique(&report.missing_features, feature);
-    }
     return report;
 }
 

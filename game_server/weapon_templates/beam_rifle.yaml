@@ -1,0 +1,13 @@
+id: 5
+name: Beam Rifle
+weapon_type: beam
+magazine_size: 12
+damage: 30
+cooldown_ticks: 1
+reload_ticks: 45
+beam:
+  length: 8.0
+  radius: 0.25
+  damage_per_second: 30
+  lifetime_ticks: 2
+  collision_mask: enemy

@@ -17,3 +17,33 @@ cc_test(
     srcs = ["damage_pipeline_test.cc"],
     deps = ["//engine/src/simulation:simulation"],
 )
+
+cc_test(
+    name = "collision_query_test",
+    srcs = ["collision_query_test.cc"],
+    deps = ["//engine/src/simulation:simulation"],
+)
+
+cc_test(
+    name = "area_effect_test",
+    srcs = ["area_effect_test.cc"],
+    deps = ["//engine/src/simulation:simulation"],
+)
+
+cc_test(
+    name = "beam_test",
+    srcs = ["beam_test.cc"],
+    deps = ["//engine/src/simulation:simulation"],
+)
+
+cc_test(
+    name = "homing_test",
+    srcs = ["homing_test.cc"],
+    deps = ["//engine/src/simulation:simulation"],
+)
+
+cc_test(
+    name = "projectile_interaction_test",
+    srcs = ["projectile_interaction_test.cc"],
+    deps = ["//engine/src/simulation:simulation"],
+)

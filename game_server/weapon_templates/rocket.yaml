@@ -1,0 +1,20 @@
+id: 3
+name: Rocket
+weapon_type: projectile
+magazine_size: 6
+damage: 45
+cooldown_ticks: 45
+reload_ticks: 75
+projectile:
+  movement_model: linear
+  hit_response: destroy
+  damage_shape: explosion
+  speed: 35.0
+  lifetime_seconds: 2.5
+  explosion_radius: 3.0
+  collision_mask: damageable
+  max_hit_count: 1
+  gravity:
+    x: 0.0
+    y: 0.0
+    z: 0.0

@@ -20,17 +20,19 @@ void simulate_player_movement(
     World& world,
     const std::vector<QueuedInput>& inputs,
     float fixed_delta_seconds) {
-    constexpr float kMoveSpeedMetersPerSecond = 5.0f;
     for (const QueuedInput& queued_input : inputs) {
-        auto view = world.registry().view<NetworkIdentity, Transform, Velocity, PlayerTag>();
+        auto view = world.registry()
+                        .view<NetworkIdentity, Transform, Velocity, MovementState, PlayerTag>();
         for (const entt::entity entity : view) {
             const NetworkIdentity& identity = view.get<NetworkIdentity>(entity);
             if (identity.owner_peer != queued_input.owner_peer) {
                 continue;
             }
+            const MovementState& movement = view.get<MovementState>(entity);
             Velocity& velocity = view.get<Velocity>(entity);
             Transform& transform = view.get<Transform>(entity);
-            velocity.linear = input_move_to_world(queued_input.input) * kMoveSpeedMetersPerSecond;
+            velocity.linear = input_move_to_world(queued_input.input) *
+                              movement.speed_meters_per_second;
             transform.position += velocity.linear * fixed_delta_seconds;
         }
     }
