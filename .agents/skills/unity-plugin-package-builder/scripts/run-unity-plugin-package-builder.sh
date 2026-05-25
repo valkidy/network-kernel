@@ -63,6 +63,11 @@ Options:
   --auto-commit on|off            Commit eligible package changes after success.
   -h, --help
 
+Environment:
+  UNITY_PACKAGE_BUILDER_ALLOW_INTEGRATION_BRANCH=1
+      Allow integration/* branches for test-package validation. Requires
+      --auto-commit off and does not relax the default feat-unity-plugin guard.
+
 Default:
   Build the macOS native plugin, stage it into the Unity package, verify ABI
   and exports, create a clean UPM .tgz under plugins/output, and run optional
@@ -159,9 +164,17 @@ cd "$repo_root"
 require_branch() {
   local current_branch
   current_branch="$(git branch --show-current 2>/dev/null || true)"
-  if [[ "$current_branch" != "feat-unity-plugin" ]]; then
-    die "unity package builder must run on branch feat-unity-plugin; current branch is '${current_branch:-detached or unknown}'"
+  if [[ "$current_branch" == "feat-unity-plugin" ]]; then
+    return 0
   fi
+  if [[ "${UNITY_PACKAGE_BUILDER_ALLOW_INTEGRATION_BRANCH:-}" == "1" &&
+        "$current_branch" == integration/* ]]; then
+    [[ "$AUTO_COMMIT" == "off" ]] ||
+      die "integration branch package validation requires --auto-commit off"
+    note "Integration branch override enabled: $current_branch"
+    return 0
+  fi
+  die "unity package builder must run on branch feat-unity-plugin; current branch is '${current_branch:-detached or unknown}'"
 }
 
 require_branch
@@ -296,16 +309,42 @@ verify_package() {
   [[ -n "$managed_game_server_abi" ]] || die "could not read GameServerConstants.AbiVersion"
   [[ "$native_game_server_abi" == "$managed_game_server_abi" ]] || die "game server ABI version mismatch: native=$native_game_server_abi managed=$managed_game_server_abi"
 
+  local required_exports=("${REQUIRED_EXPORTS[@]}")
+  if [[ "$native_abi" -ge 9 ]]; then
+    required_exports+=(
+      Kernel_ServerSetEntityCombatState
+      Kernel_ServerSetEntityWeaponMechanics
+      Kernel_ServerClearEntityWeaponMechanics
+      Kernel_ServerGetEntityWeaponMechanics
+      Kernel_ServerValidateMechanicsConfig
+    )
+  fi
+  if [[ "$native_abi" -ge 10 ]]; then
+    required_exports+=(Kernel_ServerGetAreaEffectState)
+  fi
+  if [[ "$native_abi" -ge 11 ]]; then
+    required_exports+=(Kernel_ServerGetBeamState)
+  fi
+  if [[ "$native_abi" -ge 12 ]]; then
+    required_exports+=(Kernel_ServerGetHomingState)
+  fi
+  if [[ "$native_game_server_abi" -ge 2 ]]; then
+    required_exports+=(
+      GameServer_CreateWithWeaponTemplateDirectory
+      GameServer_QueryWeaponTemplate
+    )
+  fi
+
   local exported
   exported="$(nm -gU "$STAGED_DYLIB")"
   local symbol
-  for symbol in "${REQUIRED_EXPORTS[@]}"; do
+  for symbol in "${required_exports[@]}"; do
     if ! grep -q "_${symbol}$" <<<"$exported"; then
       die "missing exported symbol: $symbol"
     fi
   done
 
-  note "Verification passed: package=$PACKAGE_NAME kernel_abi=$native_abi game_server_abi=$native_game_server_abi exports=${#REQUIRED_EXPORTS[@]}"
+  note "Verification passed: package=$PACKAGE_NAME kernel_abi=$native_abi game_server_abi=$native_game_server_abi exports=${#required_exports[@]}"
 }
 
 copy_clean_package() {
