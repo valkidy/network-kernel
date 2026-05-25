@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <optional>
+#include <utility>
 
 namespace network_example {
 namespace {
@@ -96,11 +97,9 @@ bool DamagePipeline::submit_damage_request(const DamageRequest& request) {
     return true;
 }
 
-void DamagePipeline::confirm_ready(
-    World& world,
-    std::uint64_t server_time_us,
-    std::uint32_t current_tick,
-    std::vector<KernelEvent>* events) {
+std::vector<ConfirmedDamage> DamagePipeline::drain_ready_damage(
+    const World& world,
+    std::uint64_t server_time_us) {
     for (const DamageRequest& request : queued_damage_) {
         const std::optional<entt::entity> target_entity =
             world.find_entity(request.target_net_id);
@@ -126,6 +125,7 @@ void DamagePipeline::confirm_ready(
                 : request.hit_time_us,
             request.server_tick,
             request.sequence_id,
+            request.hit_position,
             false,
             false,
         };
@@ -157,42 +157,42 @@ void DamagePipeline::confirm_ready(
             return lhs.confirm_time_us < rhs.confirm_time_us;
         });
 
-    auto ready_begin = std::remove_if(
-        pending_damage_.begin(),
-        pending_damage_.end(),
-        [&](const PendingDamage& pending) {
-            if (server_time_us < pending.confirm_time_us) {
-                return false;
-            }
-            if (pending.canceled || pending.damage == 0) {
-                return true;
-            }
-            if (world.apply_damage(pending.target_net_id, pending.damage)) {
-                if (events != nullptr) {
-                    events->push_back(KernelEvent{
-                        KernelEventType_HitConfirmed,
-                        current_tick,
-                        pending.target_net_id,
-                        pending.source_peer,
-                        pending.source_code,
-                        pending.hit_time_us,
-                        pending.hit_time_us,
-                    });
-                    events->push_back(KernelEvent{
-                        KernelEventType_DamageApplied,
-                        current_tick,
-                        pending.target_net_id,
-                        pending.source_peer,
-                        pending.damage,
-                        pending.hit_time_us,
-                        pending.hit_time_us,
-                    });
-                }
-            }
-            return true;
+    std::vector<ConfirmedDamage> ready_damage;
+    std::vector<PendingDamage> still_pending;
+    still_pending.reserve(pending_damage_.size());
+    for (const PendingDamage& pending : pending_damage_) {
+        if (server_time_us < pending.confirm_time_us) {
+            still_pending.push_back(pending);
+            continue;
+        }
+        if (pending.canceled || pending.damage == 0) {
+            continue;
+        }
+        ready_damage.push_back(ConfirmedDamage{
+            pending.server_tick,
+            pending.sequence_id,
+            pending.source_net_id,
+            pending.target_net_id,
+            pending.source_peer,
+            pending.source_code,
+            pending.damage,
+            pending.hit_time_us,
+            pending.hit_position,
         });
-    pending_damage_.erase(ready_begin, pending_damage_.end());
+    }
+    pending_damage_ = std::move(still_pending);
     prune_defensive_actions(server_time_us);
+    return ready_damage;
+}
+
+void DamagePipeline::confirm_ready(
+    World& world,
+    std::uint64_t server_time_us,
+    std::uint32_t current_tick,
+    std::vector<KernelEvent>* events) {
+    const std::vector<ConfirmedDamage> ready_damage =
+        drain_ready_damage(world, server_time_us);
+    apply_damage_applications(world, ready_damage, current_tick, events);
 }
 
 std::uint32_t DamagePipeline::pending_count() const {

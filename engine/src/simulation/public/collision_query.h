@@ -23,6 +23,8 @@ struct QueryHit {
     glm::vec3 position{0.0f, 0.0f, 0.0f};
 };
 
+std::uint32_t entity_collision_layer(const World& world, NetId net_id);
+
 bool ray_intersects_aabb(
     const glm::vec3& ray_origin,
     const glm::vec3& ray_direction,
@@ -34,6 +36,19 @@ std::vector<QueryHit> collect_segment_hits(
     World& world,
     const glm::vec3& segment_start,
     const glm::vec3& segment_end,
+    const QueryFilter& filter);
+
+std::vector<QueryHit> collect_swept_sphere_hits(
+    World& world,
+    const glm::vec3& segment_start,
+    const glm::vec3& segment_end,
+    float radius,
+    const QueryFilter& filter);
+
+std::vector<QueryHit> collect_box_overlaps(
+    World& world,
+    const glm::vec3& center,
+    const glm::vec3& half_extents,
     const QueryFilter& filter);
 
 std::vector<QueryHit> collect_sphere_overlaps(

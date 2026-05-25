@@ -1953,9 +1953,11 @@ void KernelEngine::simulate_tick() {
         server_time_us,
         &events_,
         &damage_pipeline_);
-    damage_pipeline_.confirm_ready(
+    const std::vector<ConfirmedDamage> ready_damage =
+        damage_pipeline_.drain_ready_damage(world_, server_time_us);
+    apply_damage_applications(
         world_,
-        server_time_us,
+        ready_damage,
         tick_loop_.current_tick(),
         &events_);
     destroy_dead_entities(world_, tick_loop_.current_tick(), &events_);

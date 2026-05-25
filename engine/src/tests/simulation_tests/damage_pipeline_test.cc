@@ -91,6 +91,43 @@ void immediate_damage_request_applies_on_confirm() {
     assert(events[1].code == 35);
 }
 
+void drain_ready_damage_does_not_apply_health_until_damage_system() {
+    network_example::World world;
+    const network_example::NetId enemy =
+        world.spawn_enemy(glm::vec3{0.0f, 0.0f, 0.0f});
+    health(world, enemy) = network_example::Health{100, 100};
+    network_example::DamagePipeline pipeline;
+    std::vector<KernelEvent> events;
+
+    pipeline.submit_damage_request(network_example::DamageRequest{
+        11,
+        77,
+        0,
+        enemy,
+        0,
+        3,
+        35,
+        3000,
+        glm::vec3{1.0f, 0.0f, 0.0f},
+    });
+
+    const std::vector<network_example::ConfirmedDamage> ready =
+        pipeline.drain_ready_damage(world, 3000);
+    assert(ready.size() == 1);
+    assert(ready[0].target_net_id == enemy);
+    assert(ready[0].source_code == 3);
+    assert(ready[0].damage == 35);
+    assert(ready[0].hit_position.x == 1.0f);
+    assert(health(world, enemy).hp == 100);
+
+    network_example::apply_damage_applications(world, ready, 11, &events);
+    assert(health(world, enemy).hp == 65);
+    assert(events.size() == 2);
+    assert(events[0].type == KernelEventType_HitConfirmed);
+    assert(events[1].type == KernelEventType_DamageApplied);
+    assert(events[1].code == 35);
+}
+
 void damage_requests_apply_in_deterministic_order() {
     network_example::World world;
     const network_example::NetId first =
@@ -226,6 +263,7 @@ void non_server_damage_applies_without_grace_window() {
 int main() {
     confirm_after_grace_window();
     immediate_damage_request_applies_on_confirm();
+    drain_ready_damage_does_not_apply_health_until_damage_system();
     damage_requests_apply_in_deterministic_order();
     dodge_cancels_pending_damage();
     parry_reduces_pending_damage();

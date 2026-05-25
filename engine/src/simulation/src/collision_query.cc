@@ -3,10 +3,30 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <vector>
 
 namespace network_example {
 namespace {
+
+std::uint32_t entity_collision_layer_for_entity(
+    const World& world,
+    entt::entity entity) {
+    std::uint32_t entity_layer = 0;
+    if (world.registry().all_of<PlayerTag>(entity)) {
+        entity_layer |= kCollisionLayerPlayer;
+    }
+    if (world.registry().all_of<EnemyTag>(entity)) {
+        entity_layer |= kCollisionLayerEnemy;
+    }
+    if (world.registry().all_of<ProjectileTag>(entity)) {
+        entity_layer |= kCollisionLayerProjectile;
+    }
+    if (world.registry().all_of<AreaEffectTag>(entity)) {
+        entity_layer |= kCollisionLayerAreaEffect;
+    }
+    return entity_layer;
+}
 
 bool query_includes_entity(
     const World& world,
@@ -30,19 +50,8 @@ bool query_includes_entity(
         world.registry().get<Health>(entity).hp == 0) {
         return false;
     }
-    std::uint32_t entity_layer = 0;
-    if (world.registry().all_of<PlayerTag>(entity)) {
-        entity_layer |= kCollisionLayerPlayer;
-    }
-    if (world.registry().all_of<EnemyTag>(entity)) {
-        entity_layer |= kCollisionLayerEnemy;
-    }
-    if (world.registry().all_of<ProjectileTag>(entity)) {
-        entity_layer |= kCollisionLayerProjectile;
-    }
-    if (world.registry().all_of<AreaEffectTag>(entity)) {
-        entity_layer |= kCollisionLayerAreaEffect;
-    }
+    const std::uint32_t entity_layer =
+        entity_collision_layer_for_entity(world, entity);
     if (entity_layer != 0 && (filter.collision_mask & entity_layer) == 0) {
         return false;
     }
@@ -71,7 +80,26 @@ void sort_hits(std::vector<QueryHit>* hits) {
         });
 }
 
+bool aabb_overlaps_aabb(
+    const glm::vec3& lhs_center,
+    const glm::vec3& lhs_half_extents,
+    const glm::vec3& rhs_center,
+    const glm::vec3& rhs_half_extents) {
+    const glm::vec3 delta = glm::abs(lhs_center - rhs_center);
+    return delta.x <= lhs_half_extents.x + rhs_half_extents.x &&
+           delta.y <= lhs_half_extents.y + rhs_half_extents.y &&
+           delta.z <= lhs_half_extents.z + rhs_half_extents.z;
+}
+
 }  // namespace
+
+std::uint32_t entity_collision_layer(const World& world, NetId net_id) {
+    const std::optional<entt::entity> entity = world.find_entity(net_id);
+    if (!entity.has_value()) {
+        return 0;
+    }
+    return entity_collision_layer_for_entity(world, *entity);
+}
 
 bool ray_intersects_aabb(
     const glm::vec3& ray_origin,
@@ -112,6 +140,51 @@ bool ray_intersects_aabb(
     return true;
 }
 
+std::vector<QueryHit> collect_swept_sphere_hits(
+    World& world,
+    const glm::vec3& segment_start,
+    const glm::vec3& segment_end,
+    float radius,
+    const QueryFilter& filter) {
+    if (radius < 0.0f) {
+        return {};
+    }
+    const glm::vec3 displacement = segment_end - segment_start;
+    const float length = glm::length(displacement);
+    if (length <= 0.0001f) {
+        return {};
+    }
+    const glm::vec3 direction = displacement / length;
+
+    std::vector<QueryHit> hits;
+    auto view = world.registry().view<NetworkIdentity, Transform, Hitbox>();
+    for (const entt::entity entity : view) {
+        const NetworkIdentity& identity = view.get<NetworkIdentity>(entity);
+        if (!query_includes_entity(world, entity, identity, filter)) {
+            continue;
+        }
+
+        const Transform& transform = view.get<Transform>(entity);
+        const Hitbox& hitbox = view.get<Hitbox>(entity);
+        float distance = 0.0f;
+        if (ray_intersects_aabb(
+                segment_start,
+                direction,
+                transform.position + hitbox.center,
+                hitbox.half_extents + glm::vec3{radius},
+                &distance) &&
+            distance <= length) {
+            hits.push_back(QueryHit{
+                identity.net_id,
+                distance,
+                segment_start + direction * distance,
+            });
+        }
+    }
+    sort_hits(&hits);
+    return hits;
+}
+
 std::vector<QueryHit> collect_segment_hits(
     World& world,
     const glm::vec3& segment_start,
@@ -146,6 +219,42 @@ std::vector<QueryHit> collect_segment_hits(
                 identity.net_id,
                 distance,
                 segment_start + direction * distance,
+            });
+        }
+    }
+    sort_hits(&hits);
+    return hits;
+}
+
+std::vector<QueryHit> collect_box_overlaps(
+    World& world,
+    const glm::vec3& center,
+    const glm::vec3& half_extents,
+    const QueryFilter& filter) {
+    if (half_extents.x < 0.0f || half_extents.y < 0.0f || half_extents.z < 0.0f) {
+        return {};
+    }
+
+    std::vector<QueryHit> hits;
+    auto view = world.registry().view<NetworkIdentity, Transform, Hitbox>();
+    for (const entt::entity entity : view) {
+        const NetworkIdentity& identity = view.get<NetworkIdentity>(entity);
+        if (!query_includes_entity(world, entity, identity, filter)) {
+            continue;
+        }
+
+        const Transform& transform = view.get<Transform>(entity);
+        const Hitbox& hitbox = view.get<Hitbox>(entity);
+        const glm::vec3 hitbox_center = transform.position + hitbox.center;
+        if (aabb_overlaps_aabb(
+                center,
+                half_extents,
+                hitbox_center,
+                hitbox.half_extents)) {
+            hits.push_back(QueryHit{
+                identity.net_id,
+                distance_to_aabb(center, hitbox_center, hitbox.half_extents),
+                center,
             });
         }
     }

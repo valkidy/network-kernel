@@ -43,6 +43,18 @@ struct DamageRequest {
     glm::vec3 hit_position{0.0f, 0.0f, 0.0f};
 };
 
+struct ConfirmedDamage {
+    std::uint32_t server_tick = 0;
+    std::uint32_t sequence_id = 0;
+    NetId source_net_id = 0;
+    NetId target_net_id = 0;
+    PeerId source_peer = 0;
+    std::uint8_t source_code = 0;
+    std::uint16_t damage = 0;
+    std::uint64_t hit_time_us = 0;
+    glm::vec3 hit_position{0.0f, 0.0f, 0.0f};
+};
+
 glm::vec3 projectile_position_at(
     const glm::vec3& origin,
     const glm::vec3& initial_velocity,
@@ -77,6 +89,9 @@ public:
         std::uint8_t source_code,
         std::uint16_t damage,
         std::uint64_t hit_time_us);
+    std::vector<ConfirmedDamage> drain_ready_damage(
+        const World& world,
+        std::uint64_t server_time_us);
     void confirm_ready(
         World& world,
         std::uint64_t server_time_us,
@@ -107,6 +122,7 @@ private:
         std::uint64_t confirm_time_us = 0;
         std::uint32_t server_tick = 0;
         std::uint32_t sequence_id = 0;
+        glm::vec3 hit_position{0.0f, 0.0f, 0.0f};
         bool canceled = false;
         bool parry_applied = false;
     };
@@ -194,6 +210,12 @@ void simulate_weapons(
 
 void destroy_dead_entities(
     World& world,
+    std::uint32_t current_tick,
+    std::vector<KernelEvent>* events);
+
+void apply_damage_applications(
+    World& world,
+    const std::vector<ConfirmedDamage>& damage_applications,
     std::uint32_t current_tick,
     std::vector<KernelEvent>* events);
 
