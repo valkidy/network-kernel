@@ -88,7 +88,7 @@ void configure_test_weapons(
     assert(entity.has_value());
     network_example::WeaponTuning& tuning =
         world.registry().get_or_emplace<network_example::WeaponTuning>(*entity);
-    tuning.configured = {true, true, true, true, true};
+    tuning.configured = {true, true, true, true, true, false, false};
     tuning.definitions = {{
         weapon_definition(
             network_example::kWeaponSlot0,

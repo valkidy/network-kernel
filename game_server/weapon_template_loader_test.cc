@@ -68,6 +68,24 @@ void write_valid_templates(const std::filesystem::path& dir) {
         "damage: 30\ncooldown_ticks: 1\nreload_ticks: 45\nbeam:\n"
         "  length: 8.0\n  radius: 0.25\n  damage_per_second: 30\n"
         "  lifetime_ticks: 2\n  collision_mask: enemy\n");
+    write_file(
+        dir / "homing_missile.yaml",
+        "id: 6\nname: Homing Missile\nweapon_type: projectile\nmagazine_size: 4\n"
+        "damage: 20\ncooldown_ticks: 15\nreload_ticks: 60\nprojectile:\n"
+        "  movement_model: homing\n  hit_response: destroy\n"
+        "  damage_shape: direct_hit\n  speed: 20.0\n  lifetime_seconds: 3.0\n"
+        "  explosion_radius: 0.0\n  collision_mask: enemy\n  max_hit_count: 1\n"
+        "  gravity: {x: 0.0, y: 0.0, z: 0.0}\n"
+        "  homing:\n"
+        "    homing_mode: fire_and_forget\n"
+        "    sync_mode: hybrid_deterministic_then_snapshot\n"
+        "    boost_ticks: 2\n"
+        "    lock_on_range: 25.0\n"
+        "    lose_target_range: 30.0\n"
+        "    lock_cone_degrees: 75.0\n"
+        "    max_turn_rate_degrees_per_second: 360.0\n"
+        "    acceleration: 20.0\n"
+        "    max_speed: 30.0\n");
 }
 
 bool load_fails(const std::filesystem::path& dir) {
@@ -99,10 +117,16 @@ void valid_repo_templates_load_all_slots() {
                .fire_mode == KernelWeaponFireMode_Beam);
     assert(config.weapons.definitions[network_example::game_server::kWeaponBeamRifle]
                .beam.damage_per_second == 30);
+    assert(config.weapons.definitions[network_example::game_server::kWeaponHomingMissile]
+               .projectile.motion_model == KernelProjectileMotionModel_Homing);
+    assert(config.weapons.definitions[network_example::game_server::kWeaponHomingMissile]
+               .projectile.homing.lock_on_range == 25.0f);
     assert(config.weapons.names[network_example::game_server::kWeaponFireFloor] ==
            "Fire Floor");
     assert(config.weapons.names[network_example::game_server::kWeaponBeamRifle] ==
            "Beam Rifle");
+    assert(config.weapons.names[network_example::game_server::kWeaponHomingMissile] ==
+           "Homing Missile");
 }
 
 void invalid_templates_are_rejected() {
@@ -160,6 +184,39 @@ void invalid_templates_are_rejected() {
         "  damage_shape: explosion\n  speed: 1.0\n  lifetime_seconds: 1.0\n"
         "  explosion_radius: 1.0\n  collision_mask: damageable\n  max_hit_count: 1\n");
     assert(load_fails(homing_dir));
+
+    const std::filesystem::path invalid_homing_dir = tmp_dir("invalid_homing");
+    write_valid_templates(invalid_homing_dir);
+    write_file(
+        invalid_homing_dir / "homing_missile.yaml",
+        "id: 6\nname: Bad Homing\nweapon_type: projectile\nmagazine_size: 1\n"
+        "damage: 1\ncooldown_ticks: 1\nreload_ticks: 1\nprojectile:\n"
+        "  movement_model: homing\n  hit_response: destroy\n"
+        "  damage_shape: direct_hit\n  speed: 1.0\n  lifetime_seconds: 1.0\n"
+        "  collision_mask: enemy\n  max_hit_count: 1\n"
+        "  homing:\n"
+        "    homing_mode: retarget\n"
+        "    sync_mode: hybrid_deterministic_then_snapshot\n"
+        "    boost_ticks: 1\n"
+        "    lock_on_range: 10.0\n"
+        "    lose_target_range: 12.0\n"
+        "    lock_cone_degrees: 75.0\n"
+        "    max_turn_rate_degrees_per_second: 360.0\n"
+        "    acceleration: 10.0\n"
+        "    max_speed: 20.0\n");
+    assert(load_fails(invalid_homing_dir));
+
+    const std::filesystem::path homing_on_linear_dir = tmp_dir("homing_on_linear");
+    write_valid_templates(homing_on_linear_dir);
+    write_file(
+        homing_on_linear_dir / "rocket.yaml",
+        "id: 3\nname: Bad Rocket\nweapon_type: projectile\nmagazine_size: 1\n"
+        "damage: 1\ncooldown_ticks: 1\nreload_ticks: 1\nprojectile:\n"
+        "  movement_model: linear\n  hit_response: destroy\n"
+        "  damage_shape: direct_hit\n  speed: 1.0\n  lifetime_seconds: 1.0\n"
+        "  collision_mask: damageable\n  max_hit_count: 1\n"
+        "  homing: {homing_mode: fire_and_forget}\n");
+    assert(load_fails(homing_on_linear_dir));
 
     const std::filesystem::path bounce_dir = tmp_dir("bounce");
     write_valid_templates(bounce_dir);

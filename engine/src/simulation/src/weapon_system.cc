@@ -321,6 +321,23 @@ NetId fire_projectile(
         projectile_state.initial_velocity = velocity;
         projectile_state.gravity = definition.projectile_gravity;
         projectile_state.previous_position = current_position;
+        if (definition.projectile_motion_model == ProjectileMotionModel::kHoming) {
+            world.registry().emplace<HomingState>(
+                *projectile_entity,
+                HomingState{
+                    definition.homing_mode,
+                    definition.homing_sync_mode,
+                    MissileGuidancePhase::kBoost,
+                    0,
+                    definition.homing_boost_ticks,
+                    spawn_tick + definition.homing_boost_ticks,
+                    definition.homing_lock_on_range,
+                    definition.homing_lose_target_range,
+                    definition.homing_lock_cone_degrees,
+                    definition.homing_max_turn_rate_degrees_per_second,
+                    definition.homing_acceleration,
+                    definition.homing_max_speed});
+        }
     }
     push_event(
         events,
@@ -553,7 +570,9 @@ void simulate_weapons(
                     events);
                 if (context.history_buffer != nullptr &&
                     context.rewind_frame != nullptr &&
-                    context.fixed_delta_seconds > 0.0f) {
+                    context.fixed_delta_seconds > 0.0f &&
+                    definition->projectile_motion_model !=
+                        ProjectileMotionModel::kHoming) {
                     const auto projectile_entity = world.find_entity(projectile);
                     if (projectile_entity.has_value()) {
                         const ProjectileState projectile_state =

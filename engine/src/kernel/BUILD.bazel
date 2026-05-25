@@ -88,6 +88,7 @@ cc_shared_library(
             "-Wl,-exported_symbol,_Kernel_ServerGetEntityWeaponMechanics",
             "-Wl,-exported_symbol,_Kernel_ServerGetAreaEffectState",
             "-Wl,-exported_symbol,_Kernel_ServerGetBeamState",
+            "-Wl,-exported_symbol,_Kernel_ServerGetHomingState",
             "-Wl,-exported_symbol,_Kernel_ServerValidateMechanicsConfig",
             "-Wl,-exported_symbol,_Kernel_ServerGetEntityState",
             "-Wl,-exported_symbol,_Kernel_ServerQueryEntities",

@@ -67,6 +67,10 @@ RenderEntityState render_state_from_world_entity(
         spawn_tick = projectile.spawn_tick;
         client_action_id = projectile.client_action_id;
     }
+    if (world.registry().all_of<HomingState>(entity)) {
+        animation_state = static_cast<std::uint16_t>(
+            world.registry().get<HomingState>(entity).phase);
+    }
     return RenderEntityState{
         entity_id,
         identity.net_id,

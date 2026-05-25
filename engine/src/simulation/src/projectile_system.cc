@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -165,6 +166,198 @@ std::uint64_t tick_time_us(std::uint32_t tick, float fixed_delta_seconds) {
         1000000.0);
 }
 
+glm::vec3 normalized_or(const glm::vec3& value, const glm::vec3& fallback) {
+    if (glm::length(value) <= 0.0001f) {
+        return fallback;
+    }
+    return glm::normalize(value);
+}
+
+float degrees_to_radians(float degrees) {
+    return degrees * 0.017453292519943295f;
+}
+
+glm::vec3 hitbox_center(const Transform& transform, const Hitbox& hitbox) {
+    return transform.position + hitbox.center;
+}
+
+bool homing_target_is_valid(
+    World& world,
+    NetId target_net_id,
+    PeerId owner_peer,
+    std::uint32_t collision_mask,
+    const glm::vec3& projectile_position,
+    const HomingState& homing,
+    glm::vec3* out_target_center) {
+    const auto target_entity = world.find_entity(target_net_id);
+    if (!target_entity.has_value() ||
+        !world.registry().all_of<NetworkIdentity, Transform, Hitbox, Health>(
+            *target_entity)) {
+        return false;
+    }
+    const NetworkIdentity& identity =
+        world.registry().get<NetworkIdentity>(*target_entity);
+    if (owner_peer != 0 && identity.owner_peer == owner_peer) {
+        return false;
+    }
+    const Health& health = world.registry().get<Health>(*target_entity);
+    if (health.hp == 0) {
+        return false;
+    }
+    const std::uint32_t layer = entity_collision_layer(world, target_net_id);
+    if (layer != 0 && (layer & collision_mask) == 0) {
+        return false;
+    }
+    const Transform& transform = world.registry().get<Transform>(*target_entity);
+    const Hitbox& hitbox = world.registry().get<Hitbox>(*target_entity);
+    const glm::vec3 center = hitbox_center(transform, hitbox);
+    if (glm::length(center - projectile_position) > homing.lose_target_range) {
+        return false;
+    }
+    if (out_target_center != nullptr) {
+        *out_target_center = center;
+    }
+    return true;
+}
+
+NetId acquire_homing_target(
+    World& world,
+    NetId shooter_net_id,
+    PeerId owner_peer,
+    std::uint32_t collision_mask,
+    const glm::vec3& origin,
+    const glm::vec3& forward,
+    const HomingState& homing) {
+    const glm::vec3 aim = normalized_or(forward, glm::vec3{1.0f, 0.0f, 0.0f});
+    const float cone_cos =
+        std::cos(degrees_to_radians(homing.lock_cone_degrees) * 0.5f);
+    NetId best_net_id = 0;
+    float best_dot = -std::numeric_limits<float>::max();
+    float best_distance = std::numeric_limits<float>::max();
+
+    auto view = world.registry().view<NetworkIdentity, Transform, Hitbox, Health>();
+    for (const entt::entity entity : view) {
+        const NetworkIdentity& identity = view.get<NetworkIdentity>(entity);
+        if (identity.net_id == shooter_net_id ||
+            (owner_peer != 0 && identity.owner_peer == owner_peer)) {
+            continue;
+        }
+        const Health& health = view.get<Health>(entity);
+        if (health.hp == 0) {
+            continue;
+        }
+        const std::uint32_t layer = entity_collision_layer(world, identity.net_id);
+        if (layer != 0 && (layer & collision_mask) == 0) {
+            continue;
+        }
+        const glm::vec3 center =
+            hitbox_center(view.get<Transform>(entity), view.get<Hitbox>(entity));
+        const glm::vec3 to_target = center - origin;
+        const float distance = glm::length(to_target);
+        if (distance <= 0.0001f || distance > homing.lock_on_range) {
+            continue;
+        }
+        const float dot = glm::dot(aim, to_target / distance);
+        if (dot < cone_cos) {
+            continue;
+        }
+        const bool better_dot = dot > best_dot + 0.0001f;
+        const bool tied_dot = std::abs(dot - best_dot) <= 0.0001f;
+        if (better_dot ||
+            (tied_dot && distance < best_distance - 0.0001f) ||
+            (tied_dot && std::abs(distance - best_distance) <= 0.0001f &&
+             (best_net_id == 0 || identity.net_id < best_net_id))) {
+            best_net_id = identity.net_id;
+            best_dot = dot;
+            best_distance = distance;
+        }
+    }
+    return best_net_id;
+}
+
+glm::vec3 steer_direction(
+    const glm::vec3& current_direction,
+    const glm::vec3& desired_direction,
+    float max_turn_radians) {
+    const glm::vec3 current =
+        normalized_or(current_direction, glm::vec3{1.0f, 0.0f, 0.0f});
+    const glm::vec3 desired = normalized_or(desired_direction, current);
+    const float dot = glm::clamp(glm::dot(current, desired), -1.0f, 1.0f);
+    const float angle = std::acos(dot);
+    if (angle <= 0.0001f || angle <= max_turn_radians) {
+        return desired;
+    }
+    const float t = max_turn_radians / angle;
+    return normalized_or(current + (desired - current) * t, current);
+}
+
+void advance_homing_projectile(
+    World& world,
+    PeerId owner_peer,
+    ProjectileState& projectile,
+    Transform& transform,
+    Velocity& velocity,
+    HomingState& homing,
+    float fixed_delta_seconds,
+    std::uint32_t current_tick) {
+    const float next_age_seconds = projectile.age_seconds + fixed_delta_seconds;
+    if (homing.phase == MissileGuidancePhase::kBoost) {
+        transform.position = projectile_position_at(
+            projectile.spawn_position,
+            projectile.initial_velocity,
+            ProjectileMotionModel::kLinear,
+            glm::vec3{0.0f},
+            next_age_seconds);
+        velocity.linear = projectile.initial_velocity;
+        projectile.age_seconds = next_age_seconds;
+        if (current_tick >= homing.guidance_start_tick) {
+            const NetId target = acquire_homing_target(
+                world,
+                projectile.shooter_net_id,
+                owner_peer,
+                projectile.collision_mask,
+                transform.position,
+                velocity.linear,
+                homing);
+            homing.target_net_id = target;
+            homing.phase = target == 0 ? MissileGuidancePhase::kLostTarget
+                                       : MissileGuidancePhase::kGuided;
+        }
+        return;
+    }
+
+    glm::vec3 target_center{0.0f, 0.0f, 0.0f};
+    if (homing.phase == MissileGuidancePhase::kGuided &&
+        !homing_target_is_valid(
+            world,
+            homing.target_net_id,
+            owner_peer,
+            projectile.collision_mask,
+            transform.position,
+            homing,
+            &target_center)) {
+        homing.target_net_id = 0;
+        homing.phase = MissileGuidancePhase::kLostTarget;
+    }
+
+    if (homing.phase == MissileGuidancePhase::kGuided) {
+        const float max_turn =
+            degrees_to_radians(homing.max_turn_rate_degrees_per_second) *
+            fixed_delta_seconds;
+        const glm::vec3 direction = steer_direction(
+            velocity.linear,
+            target_center - transform.position,
+            max_turn);
+        const float speed = std::min(
+            homing.max_speed,
+            glm::length(velocity.linear) + homing.acceleration * fixed_delta_seconds);
+        velocity.linear = direction * speed;
+    }
+
+    transform.position += velocity.linear * fixed_delta_seconds;
+    projectile.age_seconds = next_age_seconds;
+}
+
 }  // namespace
 
 glm::vec3 projectile_position_at(
@@ -223,19 +416,33 @@ void simulate_projectiles(
         ProjectileState& projectile = view.get<ProjectileState>(entity);
 
         projectile.previous_position = transform.position;
-        const float next_age_seconds = projectile.age_seconds + fixed_delta_seconds;
-        transform.position = projectile_position_at(
-            projectile.spawn_position,
-            projectile.initial_velocity,
-            projectile.motion_model,
-            projectile.gravity,
-            next_age_seconds);
-        velocity.linear = projectile_velocity_at(
-            projectile.initial_velocity,
-            projectile.motion_model,
-            projectile.gravity,
-            next_age_seconds);
-        projectile.age_seconds = next_age_seconds;
+        if (projectile.motion_model == ProjectileMotionModel::kHoming &&
+            world.registry().all_of<HomingState>(entity)) {
+            advance_homing_projectile(
+                world,
+                identity.owner_peer,
+                projectile,
+                transform,
+                velocity,
+                world.registry().get<HomingState>(entity),
+                fixed_delta_seconds,
+                current_tick);
+        } else {
+            const float next_age_seconds =
+                projectile.age_seconds + fixed_delta_seconds;
+            transform.position = projectile_position_at(
+                projectile.spawn_position,
+                projectile.initial_velocity,
+                projectile.motion_model,
+                projectile.gravity,
+                next_age_seconds);
+            velocity.linear = projectile_velocity_at(
+                projectile.initial_velocity,
+                projectile.motion_model,
+                projectile.gravity,
+                next_age_seconds);
+            projectile.age_seconds = next_age_seconds;
+        }
 
         QueryFilter filter;
         filter.ignored_net_id = projectile.shooter_net_id;

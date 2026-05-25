@@ -26,6 +26,9 @@ int main() {
            sizeof(KernelBeamMechanicsDefinition));
     assert(abi_info.area_effect_state_size == sizeof(KernelAreaEffectState));
     assert(abi_info.beam_state_size == sizeof(KernelBeamState));
+    assert(abi_info.homing_mechanics_definition_size ==
+           sizeof(KernelHomingMechanicsDefinition));
+    assert(abi_info.homing_state_size == sizeof(KernelHomingState));
     assert(abi_info.combat_state_definition_size ==
            sizeof(KernelCombatStateDefinition));
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CLIENT_MODE) != 0);
@@ -57,9 +60,10 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_AREA_EFFECT_WEAPONS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_PROJECTILE_RESPONSE_MASKS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_BEAM_WEAPONS) != 0);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_HOMING_PROJECTILES) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 11u);
-    assert(KERNEL_MAX_WEAPONS == 6u);
+    assert(KERNEL_ABI_VERSION == 12u);
+    assert(KERNEL_MAX_WEAPONS == 7u);
     assert(offsetof(PlayerInput, client_action_time_us) > offsetof(PlayerInput, input_seq));
     assert(offsetof(PlayerInput, client_action_id) > offsetof(PlayerInput, client_action_time_us));
     assert(offsetof(KernelEvent, event_time_us) > offsetof(KernelEvent, code));
@@ -115,6 +119,9 @@ int main() {
     KernelBeamState beam_state{};
     beam_state.struct_size = sizeof(beam_state);
     assert(!Kernel_ServerGetBeamState(nullptr, 1, &beam_state));
+    KernelHomingState homing_state{};
+    homing_state.struct_size = sizeof(homing_state);
+    assert(!Kernel_ServerGetHomingState(nullptr, 1, &homing_state));
     KernelServerEntityState server_state{};
     server_state.struct_size = sizeof(server_state);
     assert(!Kernel_ServerGetEntityState(nullptr, 1, &server_state));
@@ -157,6 +164,8 @@ int main() {
     combat_state.reserve_ammo[4] = 1;
     combat_state.ammo[5] = 2;
     combat_state.reserve_ammo[5] = 2;
+    combat_state.ammo[6] = 2;
+    combat_state.reserve_ammo[6] = 2;
     assert(!Kernel_ServerSetEntityCombatState(kernel, created_net_id, nullptr));
     assert(Kernel_ServerSetEntityCombatState(kernel, created_net_id, &combat_state));
 
@@ -198,6 +207,45 @@ int main() {
     assert(!Kernel_ServerValidateMechanicsConfig(&invalid_reserved_response));
     invalid_reserved_response.projectile.hit_response = KernelProjectileHitResponse_Attach;
     assert(!Kernel_ServerValidateMechanicsConfig(&invalid_reserved_response));
+
+    KernelWeaponMechanicsDefinition homing_weapon = weapon_mechanics;
+    homing_weapon.weapon_id = 6;
+    homing_weapon.projectile.motion_model = KernelProjectileMotionModel_Homing;
+    homing_weapon.projectile.damage_shape = KernelProjectileDamageShape_DirectHit;
+    homing_weapon.projectile.explosion_radius = 0.0f;
+    homing_weapon.projectile.homing.struct_size = sizeof(KernelHomingMechanicsDefinition);
+    homing_weapon.projectile.homing.homing_mode = KernelHomingMode_FireAndForget;
+    homing_weapon.projectile.homing.sync_mode =
+        KernelProjectileSyncMode_HybridDeterministicThenSnapshot;
+    homing_weapon.projectile.homing.boost_ticks = 1;
+    homing_weapon.projectile.homing.lock_on_range = 25.0f;
+    homing_weapon.projectile.homing.lose_target_range = 30.0f;
+    homing_weapon.projectile.homing.lock_cone_degrees = 75.0f;
+    homing_weapon.projectile.homing.max_turn_rate_degrees_per_second = 360.0f;
+    homing_weapon.projectile.homing.acceleration = 20.0f;
+    homing_weapon.projectile.homing.max_speed = 40.0f;
+    assert(Kernel_ServerValidateMechanicsConfig(&homing_weapon));
+    assert(Kernel_ServerSetEntityWeaponMechanics(kernel, created_net_id, &homing_weapon));
+    queried_weapon = KernelWeaponMechanicsDefinition{};
+    queried_weapon.struct_size = sizeof(queried_weapon);
+    assert(Kernel_ServerGetEntityWeaponMechanics(
+        kernel,
+        created_net_id,
+        6,
+        &queried_weapon));
+    assert(queried_weapon.projectile.motion_model == KernelProjectileMotionModel_Homing);
+    assert(queried_weapon.projectile.homing.lock_on_range == 25.0f);
+
+    KernelWeaponMechanicsDefinition invalid_homing = homing_weapon;
+    invalid_homing.projectile.homing.max_turn_rate_degrees_per_second = 0.0f;
+    assert(!Kernel_ServerValidateMechanicsConfig(&invalid_homing));
+    invalid_homing = homing_weapon;
+    invalid_homing.projectile.homing.homing_mode = 99;
+    assert(!Kernel_ServerValidateMechanicsConfig(&invalid_homing));
+    invalid_homing = homing_weapon;
+    invalid_homing.projectile.homing.sync_mode =
+        KernelProjectileSyncMode_ServerSnapshotOnly;
+    assert(!Kernel_ServerValidateMechanicsConfig(&invalid_homing));
 
     KernelWeaponMechanicsDefinition invalid_weapon = weapon_mechanics;
     invalid_weapon.struct_size = sizeof(invalid_weapon) - 1;
@@ -415,6 +463,34 @@ int main() {
     assert(beam_state.radius == 0.25f);
     assert(beam_state.damage_per_second == 30);
     assert(beam_state.collision_mask == KERNEL_COLLISION_LAYER_ENEMY);
+
+    server_entity_input.buttons = InputButton_Fire;
+    server_entity_input.selected_weapon = 6;
+    server_entity_input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
+    assert(Kernel_ServerSubmitEntityInput(
+        kernel,
+        created_net_id,
+        &server_entity_input));
+    Kernel_Update(kernel, 1.0f / 30.0f);
+    std::array<KernelEvent, 16> homing_events{};
+    const std::uint32_t homing_event_count =
+        Kernel_PollEvents(kernel, homing_events.data(), homing_events.size());
+    std::uint32_t homing_net_id = 0;
+    for (std::uint32_t index = 0; index < homing_event_count; ++index) {
+        if (homing_events[index].type == KernelEventType_EntitySpawned &&
+            homing_events[index].code == 3u) {
+            homing_net_id = homing_events[index].net_id;
+        }
+    }
+    assert(homing_net_id != 0);
+    homing_state = KernelHomingState{};
+    homing_state.struct_size = sizeof(homing_state);
+    assert(Kernel_ServerGetHomingState(kernel, homing_net_id, &homing_state));
+    assert(homing_state.valid);
+    assert(homing_state.shooter_net_id == created_net_id);
+    assert(homing_state.guidance_phase <= KernelMissileGuidancePhase_LostTarget);
+    assert(homing_state.lock_on_range == 25.0f);
+    assert(homing_state.max_speed == 40.0f);
 
     std::array<KernelEvent, 16> events{};
     assert(Kernel_PollEvents(kernel, nullptr, events.size()) == 0);

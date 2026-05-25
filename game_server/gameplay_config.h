@@ -16,6 +16,7 @@ inline constexpr std::uint8_t kWeaponGrenade = 2;
 inline constexpr std::uint8_t kWeaponRocket = 3;
 inline constexpr std::uint8_t kWeaponFireFloor = 4;
 inline constexpr std::uint8_t kWeaponBeamRifle = 5;
+inline constexpr std::uint8_t kWeaponHomingMissile = 6;
 inline constexpr std::size_t kWeaponCount = KERNEL_MAX_WEAPONS;
 
 struct EntityHealthDefinition {

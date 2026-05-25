@@ -148,6 +148,53 @@ KernelWeaponMechanicsDefinition beam_weapon(
     return weapon;
 }
 
+KernelWeaponMechanicsDefinition homing_projectile_weapon(
+    std::uint8_t weapon_id,
+    std::uint16_t magazine_size,
+    std::uint16_t damage,
+    std::uint32_t cooldown_ticks,
+    std::uint32_t reload_ticks,
+    float projectile_speed,
+    float projectile_lifetime_seconds,
+    float explosion_radius,
+    std::uint32_t boost_ticks,
+    float lock_on_range,
+    float lose_target_range,
+    float lock_cone_degrees,
+    float max_turn_rate_degrees_per_second,
+    float acceleration,
+    float max_speed,
+    std::uint32_t collision_mask) {
+    KernelWeaponMechanicsDefinition weapon = projectile_weapon(
+        weapon_id,
+        magazine_size,
+        damage,
+        cooldown_ticks,
+        reload_ticks,
+        projectile_speed,
+        projectile_lifetime_seconds,
+        explosion_radius,
+        KernelProjectileMotionModel_Homing,
+        KernelVec3{0.0f, 0.0f, 0.0f});
+    weapon.projectile.damage_shape =
+        explosion_radius > 0.0f ? KernelProjectileDamageShape_Explosion
+                                : KernelProjectileDamageShape_DirectHit;
+    weapon.projectile.collision_mask = collision_mask;
+    weapon.projectile.homing.struct_size = sizeof(KernelHomingMechanicsDefinition);
+    weapon.projectile.homing.homing_mode = KernelHomingMode_FireAndForget;
+    weapon.projectile.homing.sync_mode =
+        KernelProjectileSyncMode_HybridDeterministicThenSnapshot;
+    weapon.projectile.homing.boost_ticks = boost_ticks;
+    weapon.projectile.homing.lock_on_range = lock_on_range;
+    weapon.projectile.homing.lose_target_range = lose_target_range;
+    weapon.projectile.homing.lock_cone_degrees = lock_cone_degrees;
+    weapon.projectile.homing.max_turn_rate_degrees_per_second =
+        max_turn_rate_degrees_per_second;
+    weapon.projectile.homing.acceleration = acceleration;
+    weapon.projectile.homing.max_speed = max_speed;
+    return weapon;
+}
+
 void fill_default_ammo(
     const WeaponCatalogConfig& weapons,
     KernelCombatStateDefinition* combat_state) {
@@ -173,7 +220,7 @@ bool validate_weapon_mechanics(
     if (weapon.fire_mode == KernelWeaponFireMode_Projectile) {
         return weapon.projectile.struct_size >=
                    sizeof(KernelProjectileMechanicsDefinition) &&
-               weapon.projectile.motion_model <= KernelProjectileMotionModel_Parabolic &&
+               weapon.projectile.motion_model <= KernelProjectileMotionModel_Homing &&
                weapon.projectile.hit_response <= KernelProjectileHitResponse_Attach &&
                weapon.projectile.hit_response != KernelProjectileHitResponse_Bounce &&
                weapon.projectile.hit_response != KernelProjectileHitResponse_Attach &&
@@ -181,7 +228,24 @@ bool validate_weapon_mechanics(
                weapon.projectile.collision_mask != 0 &&
                weapon.projectile.max_hit_count > 0 &&
                weapon.projectile.speed > 0.0f &&
-               weapon.projectile.lifetime_seconds > 0.0f;
+               weapon.projectile.lifetime_seconds > 0.0f &&
+               (weapon.projectile.motion_model != KernelProjectileMotionModel_Homing
+                    ? weapon.projectile.homing.struct_size == 0
+                    : weapon.projectile.homing.struct_size >=
+                              sizeof(KernelHomingMechanicsDefinition) &&
+                          weapon.projectile.homing.homing_mode ==
+                              KernelHomingMode_FireAndForget &&
+                          weapon.projectile.homing.sync_mode ==
+                              KernelProjectileSyncMode_HybridDeterministicThenSnapshot &&
+                          weapon.projectile.homing.lock_on_range > 0.0f &&
+                          weapon.projectile.homing.lose_target_range >=
+                              weapon.projectile.homing.lock_on_range &&
+                          weapon.projectile.homing.lock_cone_degrees > 0.0f &&
+                          weapon.projectile.homing.lock_cone_degrees <= 180.0f &&
+                          weapon.projectile.homing
+                                  .max_turn_rate_degrees_per_second > 0.0f &&
+                          weapon.projectile.homing.acceleration > 0.0f &&
+                          weapon.projectile.homing.max_speed > 0.0f);
     }
     if (weapon.fire_mode == KernelWeaponFireMode_AreaEffect) {
         return weapon.area_effect.struct_size >=
@@ -238,7 +302,7 @@ std::uint8_t motion_model_from_yaml(const YAML::Node& node) {
         return KernelProjectileMotionModel_Parabolic;
     }
     if (value == "homing") {
-        throw std::runtime_error("homing projectiles are not supported in this phase");
+        return KernelProjectileMotionModel_Homing;
     }
     throw std::runtime_error("unsupported projectile movement_model: " + value);
 }
@@ -272,6 +336,27 @@ std::uint8_t damage_shape_from_yaml(const YAML::Node& node) {
         throw std::runtime_error("beam damage shape is not supported in this phase");
     }
     throw std::runtime_error("unsupported projectile damage_shape: " + value);
+}
+
+std::uint8_t homing_mode_from_yaml(const YAML::Node& node) {
+    const std::string value = node ? node.as<std::string>() : "fire_and_forget";
+    if (value == "fire_and_forget") {
+        return KernelHomingMode_FireAndForget;
+    }
+    throw std::runtime_error("unsupported homing_mode: " + value);
+}
+
+std::uint8_t homing_sync_mode_from_yaml(const YAML::Node& node) {
+    const std::string value =
+        node ? node.as<std::string>() : "hybrid_deterministic_then_snapshot";
+    if (value == "hybrid_deterministic_then_snapshot") {
+        return KernelProjectileSyncMode_HybridDeterministicThenSnapshot;
+    }
+    if (value == "local_predicted_deterministic" ||
+        value == "server_snapshot_only") {
+        throw std::runtime_error("unsupported homing sync_mode: " + value);
+    }
+    throw std::runtime_error("unsupported homing sync_mode: " + value);
 }
 
 KernelVec3 vec3_from_yaml(const YAML::Node& node) {
@@ -341,6 +426,33 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(const YAML::Node& node) {
             collision_mask_from_yaml(projectile["collision_mask"]);
         weapon.projectile.max_hit_count =
             projectile["max_hit_count"] ? projectile["max_hit_count"].as<std::uint32_t>() : 1u;
+        if (weapon.projectile.motion_model == KernelProjectileMotionModel_Homing) {
+            const YAML::Node homing = projectile["homing"];
+            if (!homing) {
+                throw std::runtime_error("homing projectile requires homing block");
+            }
+            weapon.projectile.homing.struct_size =
+                sizeof(KernelHomingMechanicsDefinition);
+            weapon.projectile.homing.homing_mode =
+                homing_mode_from_yaml(homing["homing_mode"]);
+            weapon.projectile.homing.sync_mode =
+                homing_sync_mode_from_yaml(homing["sync_mode"]);
+            weapon.projectile.homing.boost_ticks =
+                homing["boost_ticks"].as<std::uint32_t>();
+            weapon.projectile.homing.lock_on_range =
+                homing["lock_on_range"].as<float>();
+            weapon.projectile.homing.lose_target_range =
+                homing["lose_target_range"].as<float>();
+            weapon.projectile.homing.lock_cone_degrees =
+                homing["lock_cone_degrees"].as<float>();
+            weapon.projectile.homing.max_turn_rate_degrees_per_second =
+                homing["max_turn_rate_degrees_per_second"].as<float>();
+            weapon.projectile.homing.acceleration =
+                homing["acceleration"].as<float>();
+            weapon.projectile.homing.max_speed = homing["max_speed"].as<float>();
+        } else if (projectile["homing"]) {
+            throw std::runtime_error("homing block requires movement_model: homing");
+        }
         return weapon;
     }
     if (type == "area_effect") {
@@ -437,6 +549,23 @@ GameServerGameplayConfig default_game_server_gameplay_config() {
             30,
             2,
             KERNEL_COLLISION_LAYER_ENEMY),
+        homing_projectile_weapon(
+            kWeaponHomingMissile,
+            4,
+            20,
+            15,
+            60,
+            20.0f,
+            3.0f,
+            0.0f,
+            2,
+            25.0f,
+            30.0f,
+            75.0f,
+            360.0f,
+            20.0f,
+            30.0f,
+            KERNEL_COLLISION_LAYER_ENEMY),
     }};
     config.weapons.names = {{
         "Rifle",
@@ -445,6 +574,7 @@ GameServerGameplayConfig default_game_server_gameplay_config() {
         "Rocket",
         "Fire Floor",
         "Beam Rifle",
+        "Homing Missile",
     }};
     config.enemy.weapon_id = kWeaponRocket;
     config.enemy.ai.weapon_id = kWeaponRocket;
@@ -455,7 +585,14 @@ GameServerGameplayConfig default_game_server_gameplay_config() {
 GameServerGameplayConfig load_gameplay_config_from_weapon_template_directory(
     const std::string& directory) {
     GameServerGameplayConfig config;
-    std::array<bool, kWeaponCount> seen{false, false, false, false, false, false};
+    std::array<bool, kWeaponCount> seen{
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false};
     std::vector<std::filesystem::path> files;
     for (const std::filesystem::directory_entry& entry :
          std::filesystem::directory_iterator(directory)) {

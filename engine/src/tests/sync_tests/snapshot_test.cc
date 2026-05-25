@@ -56,6 +56,21 @@ int main() {
         world.registry().get<network_example::ProjectileState>(*projectile_entity);
     projectile_state.spawn_tick = 7;
     projectile_state.client_action_id = 3456;
+    world.registry().emplace<network_example::HomingState>(
+        *projectile_entity,
+        network_example::HomingState{
+            network_example::HomingMode::kFireAndForget,
+            network_example::ProjectileSyncMode::kHybridDeterministicThenSnapshot,
+            network_example::MissileGuidancePhase::kGuided,
+            enemy,
+            2,
+            9,
+            20.0f,
+            25.0f,
+            75.0f,
+            360.0f,
+            10.0f,
+            30.0f});
 
     const network_example::WorldSnapshot snapshot =
         network_example::build_world_snapshot(world, 7, 233, 3);
@@ -89,7 +104,9 @@ int main() {
                 entity.owner_peer == 1 &&
                 entity.spawn_tick == 7 &&
                 entity.client_action_id == 3456 &&
-                entity.velocity.x == 10.0f;
+                entity.velocity.x == 10.0f &&
+                entity.state == static_cast<std::uint16_t>(
+                    network_example::MissileGuidancePhase::kGuided);
         }
         if (entity.net_id == area) {
             saw_area_effect =

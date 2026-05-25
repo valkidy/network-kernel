@@ -198,6 +198,7 @@ constexpr std::uint32_t kClientNonce = 0x4d330001u;
 constexpr std::uint32_t kMaxCompensationWindowUs = 100000u;
 constexpr std::uint64_t kClockSyncIntervalUs = 1000000u;
 constexpr double kClientClockOffsetSmoothingFactor = 0.25;
+constexpr float kMaxHomingVisualExtrapolationSeconds = 0.2f;
 constexpr float kDefaultEntityRelevanceDistanceMeters = 40.0f;
 constexpr float kDefaultProjectileRelevanceDistanceMeters = 80.0f;
 
@@ -206,15 +207,73 @@ bool valid_weapon_id(std::uint8_t weapon_id) {
 }
 
 ProjectileMotionModel to_projectile_motion_model(std::uint8_t motion_model) {
-    return motion_model == KernelProjectileMotionModel_Parabolic
-               ? ProjectileMotionModel::kParabolic
-               : ProjectileMotionModel::kLinear;
+    if (motion_model == KernelProjectileMotionModel_Homing) {
+        return ProjectileMotionModel::kHoming;
+    }
+    if (motion_model == KernelProjectileMotionModel_Parabolic) {
+        return ProjectileMotionModel::kParabolic;
+    }
+    return ProjectileMotionModel::kLinear;
 }
 
 std::uint8_t to_kernel_projectile_motion_model(ProjectileMotionModel motion_model) {
-    return motion_model == ProjectileMotionModel::kParabolic
-               ? KernelProjectileMotionModel_Parabolic
-               : KernelProjectileMotionModel_Linear;
+    if (motion_model == ProjectileMotionModel::kHoming) {
+        return KernelProjectileMotionModel_Homing;
+    }
+    if (motion_model == ProjectileMotionModel::kParabolic) {
+        return KernelProjectileMotionModel_Parabolic;
+    }
+    return KernelProjectileMotionModel_Linear;
+}
+
+HomingMode to_homing_mode(std::uint8_t homing_mode) {
+    return homing_mode == KernelHomingMode_FireAndForget
+               ? HomingMode::kFireAndForget
+               : HomingMode::kFireAndForget;
+}
+
+std::uint8_t to_kernel_homing_mode(HomingMode homing_mode) {
+    switch (homing_mode) {
+        case HomingMode::kFireAndForget:
+        default:
+            return KernelHomingMode_FireAndForget;
+    }
+}
+
+ProjectileSyncMode to_projectile_sync_mode(std::uint8_t sync_mode) {
+    if (sync_mode == KernelProjectileSyncMode_LocalPredictedDeterministic) {
+        return ProjectileSyncMode::kLocalPredictedDeterministic;
+    }
+    if (sync_mode == KernelProjectileSyncMode_ServerSnapshotOnly) {
+        return ProjectileSyncMode::kServerSnapshotOnly;
+    }
+    return ProjectileSyncMode::kHybridDeterministicThenSnapshot;
+}
+
+std::uint8_t to_kernel_projectile_sync_mode(ProjectileSyncMode sync_mode) {
+    switch (sync_mode) {
+        case ProjectileSyncMode::kLocalPredictedDeterministic:
+            return KernelProjectileSyncMode_LocalPredictedDeterministic;
+        case ProjectileSyncMode::kServerSnapshotOnly:
+            return KernelProjectileSyncMode_ServerSnapshotOnly;
+        case ProjectileSyncMode::kHybridDeterministicThenSnapshot:
+        default:
+            return KernelProjectileSyncMode_HybridDeterministicThenSnapshot;
+    }
+}
+
+std::uint8_t to_kernel_guidance_phase(MissileGuidancePhase phase) {
+    switch (phase) {
+        case MissileGuidancePhase::kGuided:
+            return KernelMissileGuidancePhase_Guided;
+        case MissileGuidancePhase::kLostTarget:
+            return KernelMissileGuidancePhase_LostTarget;
+        case MissileGuidancePhase::kExpired:
+            return KernelMissileGuidancePhase_Expired;
+        case MissileGuidancePhase::kBoost:
+        default:
+            return KernelMissileGuidancePhase_Boost;
+    }
 }
 
 ProjectileHitResponse to_projectile_hit_response(std::uint8_t hit_response) {
@@ -322,6 +381,17 @@ WeaponMechanicsDefinition to_weapon_mechanics(
     mechanics.beam_damage_per_second = definition.beam.damage_per_second;
     mechanics.beam_lifetime_ticks = definition.beam.lifetime_ticks;
     mechanics.beam_collision_mask = definition.beam.collision_mask;
+    mechanics.homing_mode = to_homing_mode(definition.projectile.homing.homing_mode);
+    mechanics.homing_sync_mode =
+        to_projectile_sync_mode(definition.projectile.homing.sync_mode);
+    mechanics.homing_boost_ticks = definition.projectile.homing.boost_ticks;
+    mechanics.homing_lock_on_range = definition.projectile.homing.lock_on_range;
+    mechanics.homing_lose_target_range = definition.projectile.homing.lose_target_range;
+    mechanics.homing_lock_cone_degrees = definition.projectile.homing.lock_cone_degrees;
+    mechanics.homing_max_turn_rate_degrees_per_second =
+        definition.projectile.homing.max_turn_rate_degrees_per_second;
+    mechanics.homing_acceleration = definition.projectile.homing.acceleration;
+    mechanics.homing_max_speed = definition.projectile.homing.max_speed;
     return mechanics;
 }
 
@@ -352,6 +422,24 @@ KernelWeaponMechanicsDefinition to_kernel_weapon_mechanics(
     definition.projectile.gravity = to_kernel_vec3(mechanics.projectile_gravity);
     definition.projectile.collision_mask = mechanics.projectile_collision_mask;
     definition.projectile.max_hit_count = mechanics.projectile_max_hit_count;
+    if (mechanics.projectile_motion_model == ProjectileMotionModel::kHoming) {
+        definition.projectile.homing.struct_size =
+            sizeof(KernelHomingMechanicsDefinition);
+        definition.projectile.homing.homing_mode =
+            to_kernel_homing_mode(mechanics.homing_mode);
+        definition.projectile.homing.sync_mode =
+            to_kernel_projectile_sync_mode(mechanics.homing_sync_mode);
+        definition.projectile.homing.boost_ticks = mechanics.homing_boost_ticks;
+        definition.projectile.homing.lock_on_range = mechanics.homing_lock_on_range;
+        definition.projectile.homing.lose_target_range =
+            mechanics.homing_lose_target_range;
+        definition.projectile.homing.lock_cone_degrees =
+            mechanics.homing_lock_cone_degrees;
+        definition.projectile.homing.max_turn_rate_degrees_per_second =
+            mechanics.homing_max_turn_rate_degrees_per_second;
+        definition.projectile.homing.acceleration = mechanics.homing_acceleration;
+        definition.projectile.homing.max_speed = mechanics.homing_max_speed;
+    }
     definition.area_effect.struct_size =
         sizeof(KernelAreaEffectMechanicsDefinition);
     definition.area_effect.radius = mechanics.area_effect_radius;
@@ -371,6 +459,19 @@ KernelWeaponMechanicsDefinition to_kernel_weapon_mechanics(
     return definition;
 }
 
+bool validate_homing_mechanics(const KernelHomingMechanicsDefinition& homing) {
+    return homing.struct_size >= sizeof(KernelHomingMechanicsDefinition) &&
+           homing.homing_mode == KernelHomingMode_FireAndForget &&
+           homing.sync_mode == KernelProjectileSyncMode_HybridDeterministicThenSnapshot &&
+           homing.lock_on_range > 0.0f &&
+           homing.lose_target_range >= homing.lock_on_range &&
+           homing.lock_cone_degrees > 0.0f &&
+           homing.lock_cone_degrees <= 180.0f &&
+           homing.max_turn_rate_degrees_per_second > 0.0f &&
+           homing.acceleration > 0.0f &&
+           homing.max_speed > 0.0f;
+}
+
 bool validate_weapon_mechanics(const KernelWeaponMechanicsDefinition& definition) {
     if (definition.struct_size < sizeof(KernelWeaponMechanicsDefinition) ||
         !valid_weapon_id(definition.weapon_id) ||
@@ -384,17 +485,23 @@ bool validate_weapon_mechanics(const KernelWeaponMechanicsDefinition& definition
         return false;
     }
     if (definition.fire_mode == KernelWeaponFireMode_Projectile) {
-        return definition.projectile.struct_size >=
-                   sizeof(KernelProjectileMechanicsDefinition) &&
-               definition.projectile.motion_model <= KernelProjectileMotionModel_Parabolic &&
-               definition.projectile.hit_response <= KernelProjectileHitResponse_Attach &&
-               definition.projectile.damage_shape <= KernelProjectileDamageShape_PiercingSegment &&
-               definition.projectile.hit_response != KernelProjectileHitResponse_Bounce &&
-               definition.projectile.hit_response != KernelProjectileHitResponse_Attach &&
-               definition.projectile.collision_mask != 0 &&
-               definition.projectile.max_hit_count > 0 &&
-               definition.projectile.speed > 0.0f &&
-               definition.projectile.lifetime_seconds > 0.0f;
+        if (definition.projectile.struct_size <
+                sizeof(KernelProjectileMechanicsDefinition) ||
+            definition.projectile.motion_model > KernelProjectileMotionModel_Homing ||
+            definition.projectile.hit_response > KernelProjectileHitResponse_Attach ||
+            definition.projectile.damage_shape > KernelProjectileDamageShape_PiercingSegment ||
+            definition.projectile.hit_response == KernelProjectileHitResponse_Bounce ||
+            definition.projectile.hit_response == KernelProjectileHitResponse_Attach ||
+            definition.projectile.collision_mask == 0 ||
+            definition.projectile.max_hit_count == 0 ||
+            definition.projectile.speed <= 0.0f ||
+            definition.projectile.lifetime_seconds <= 0.0f) {
+            return false;
+        }
+        if (definition.projectile.motion_model == KernelProjectileMotionModel_Homing) {
+            return validate_homing_mechanics(definition.projectile.homing);
+        }
+        return definition.projectile.homing.struct_size == 0;
     }
     if (definition.fire_mode == KernelWeaponFireMode_AreaEffect) {
         return definition.area_effect.struct_size >=
@@ -914,6 +1021,46 @@ bool KernelEngine::server_get_beam_state(
     out_state->expire_tick = beam.expire_tick;
     out_state->source_code = beam.source_code;
     out_state->collision_mask = beam.collision_mask;
+    out_state->valid = true;
+    return true;
+}
+
+bool KernelEngine::server_get_homing_state(
+    NetId net_id,
+    KernelHomingState* out_state) const {
+    if (!running_ || !is_server_mode(config_.mode) || out_state == nullptr ||
+        out_state->struct_size < sizeof(KernelHomingState)) {
+        return false;
+    }
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value() ||
+        !world_.registry().all_of<NetworkIdentity, ProjectileState, HomingState, ProjectileTag>(
+            *entity)) {
+        return false;
+    }
+    const NetworkIdentity& identity =
+        world_.registry().get<NetworkIdentity>(*entity);
+    const ProjectileState& projectile =
+        world_.registry().get<ProjectileState>(*entity);
+    const HomingState& homing = world_.registry().get<HomingState>(*entity);
+    std::memset(out_state, 0, sizeof(KernelHomingState));
+    out_state->struct_size = sizeof(KernelHomingState);
+    out_state->net_id = identity.net_id;
+    out_state->owner_peer = identity.owner_peer;
+    out_state->shooter_net_id = projectile.shooter_net_id;
+    out_state->target_net_id = homing.target_net_id;
+    out_state->homing_mode = to_kernel_homing_mode(homing.homing_mode);
+    out_state->sync_mode = to_kernel_projectile_sync_mode(homing.sync_mode);
+    out_state->guidance_phase = to_kernel_guidance_phase(homing.phase);
+    out_state->boost_ticks = homing.boost_ticks;
+    out_state->guidance_start_tick = homing.guidance_start_tick;
+    out_state->lock_on_range = homing.lock_on_range;
+    out_state->lose_target_range = homing.lose_target_range;
+    out_state->lock_cone_degrees = homing.lock_cone_degrees;
+    out_state->max_turn_rate_degrees_per_second =
+        homing.max_turn_rate_degrees_per_second;
+    out_state->acceleration = homing.acceleration;
+    out_state->max_speed = homing.max_speed;
     out_state->valid = true;
     return true;
 }
@@ -1503,6 +1650,10 @@ void KernelEngine::reconcile_predicted_projectiles(const WorldSnapshot& snapshot
         if (predicted == nullptr) {
             continue;
         }
+        const float authoritative_age_seconds =
+            predicted->motion_model == ProjectileMotionModel::kHoming
+                ? std::min(snapshot_age_seconds, kMaxHomingVisualExtrapolationSeconds)
+                : snapshot_age_seconds;
         const glm::vec3 previous_render_position =
             predicted->position + predicted->correction_offset;
         const glm::vec3 authoritative_now = projectile_position_at(
@@ -1510,19 +1661,19 @@ void KernelEngine::reconcile_predicted_projectiles(const WorldSnapshot& snapshot
             entity.velocity,
             predicted->motion_model,
             predicted->gravity,
-            snapshot_age_seconds);
+            authoritative_age_seconds);
         const glm::vec3 authoritative_velocity_now = projectile_velocity_at(
             entity.velocity,
             predicted->motion_model,
             predicted->gravity,
-            snapshot_age_seconds);
+            authoritative_age_seconds);
         predicted->net_id = entity.net_id;
         predicted->position = authoritative_now;
         predicted->rotation = entity.rotation;
         predicted->velocity = authoritative_velocity_now;
         predicted->spawn_position = entity.position;
         predicted->initial_velocity = entity.velocity;
-        predicted->age_seconds = snapshot_age_seconds;
+        predicted->age_seconds = authoritative_age_seconds;
         predicted->spawn_tick = entity.spawn_tick;
         predicted->bound = true;
         const glm::vec3 correction = previous_render_position - authoritative_now;

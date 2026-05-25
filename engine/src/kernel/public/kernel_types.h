@@ -4,9 +4,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 11u
+#define KERNEL_ABI_VERSION 12u
 
-#define KERNEL_MAX_WEAPONS 6u
+#define KERNEL_MAX_WEAPONS 7u
 
 #define KERNEL_CAPABILITY_CLIENT_MODE UINT64_C(0x0000000000000001)
 #define KERNEL_CAPABILITY_LISTEN_SERVER_MODE UINT64_C(0x0000000000000002)
@@ -33,6 +33,7 @@
 #define KERNEL_CAPABILITY_AREA_EFFECT_WEAPONS UINT64_C(0x0000000000400000)
 #define KERNEL_CAPABILITY_PROJECTILE_RESPONSE_MASKS UINT64_C(0x0000000000800000)
 #define KERNEL_CAPABILITY_BEAM_WEAPONS UINT64_C(0x0000000001000000)
+#define KERNEL_CAPABILITY_HOMING_PROJECTILES UINT64_C(0x0000000002000000)
 
 #define KERNEL_COLLISION_LAYER_PLAYER UINT32_C(0x00000001)
 #define KERNEL_COLLISION_LAYER_ENEMY UINT32_C(0x00000002)
@@ -66,6 +67,8 @@ typedef struct KernelAbiInfo {
     uint32_t area_effect_state_size;
     uint32_t beam_mechanics_definition_size;
     uint32_t beam_state_size;
+    uint32_t homing_mechanics_definition_size;
+    uint32_t homing_state_size;
     uint64_t capability_flags;
 } KernelAbiInfo;
 
@@ -125,7 +128,25 @@ typedef enum KernelWeaponFireMode {
 typedef enum KernelProjectileMotionModel {
     KernelProjectileMotionModel_Linear = 0,
     KernelProjectileMotionModel_Parabolic = 1,
+    KernelProjectileMotionModel_Homing = 2,
 } KernelProjectileMotionModel;
+
+typedef enum KernelProjectileSyncMode {
+    KernelProjectileSyncMode_LocalPredictedDeterministic = 0,
+    KernelProjectileSyncMode_HybridDeterministicThenSnapshot = 1,
+    KernelProjectileSyncMode_ServerSnapshotOnly = 2,
+} KernelProjectileSyncMode;
+
+typedef enum KernelMissileGuidancePhase {
+    KernelMissileGuidancePhase_Boost = 0,
+    KernelMissileGuidancePhase_Guided = 1,
+    KernelMissileGuidancePhase_LostTarget = 2,
+    KernelMissileGuidancePhase_Expired = 3,
+} KernelMissileGuidancePhase;
+
+typedef enum KernelHomingMode {
+    KernelHomingMode_FireAndForget = 0,
+} KernelHomingMode;
 
 typedef enum KernelProjectileHitResponse {
     KernelProjectileHitResponse_Destroy = 0,
@@ -224,6 +245,20 @@ typedef struct KernelServerEntityState {
     bool valid;
 } KernelServerEntityState;
 
+typedef struct KernelHomingMechanicsDefinition {
+    uint32_t struct_size;
+    uint8_t homing_mode;
+    uint8_t sync_mode;
+    uint16_t reserved0;
+    uint32_t boost_ticks;
+    float lock_on_range;
+    float lose_target_range;
+    float lock_cone_degrees;
+    float max_turn_rate_degrees_per_second;
+    float acceleration;
+    float max_speed;
+} KernelHomingMechanicsDefinition;
+
 typedef struct KernelProjectileMechanicsDefinition {
     uint32_t struct_size;
     uint8_t motion_model;
@@ -236,6 +271,7 @@ typedef struct KernelProjectileMechanicsDefinition {
     KernelVec3 gravity;
     uint32_t collision_mask;
     uint32_t max_hit_count;
+    KernelHomingMechanicsDefinition homing;
 } KernelProjectileMechanicsDefinition;
 
 typedef struct KernelAreaEffectMechanicsDefinition {
@@ -301,6 +337,27 @@ typedef struct KernelAreaEffectState {
     uint32_t collision_mask;
     bool valid;
 } KernelAreaEffectState;
+
+typedef struct KernelHomingState {
+    uint32_t struct_size;
+    uint32_t net_id;
+    uint32_t owner_peer;
+    uint32_t shooter_net_id;
+    uint32_t target_net_id;
+    uint8_t homing_mode;
+    uint8_t sync_mode;
+    uint8_t guidance_phase;
+    uint8_t reserved0;
+    uint32_t boost_ticks;
+    uint32_t guidance_start_tick;
+    float lock_on_range;
+    float lose_target_range;
+    float lock_cone_degrees;
+    float max_turn_rate_degrees_per_second;
+    float acceleration;
+    float max_speed;
+    bool valid;
+} KernelHomingState;
 
 typedef struct KernelCombatStateDefinition {
     uint32_t struct_size;

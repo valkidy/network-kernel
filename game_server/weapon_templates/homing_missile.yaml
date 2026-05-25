@@ -1,0 +1,27 @@
+id: 6
+name: Homing Missile
+weapon_type: projectile
+magazine_size: 4
+damage: 20
+cooldown_ticks: 15
+reload_ticks: 60
+projectile:
+  movement_model: homing
+  hit_response: destroy
+  damage_shape: direct_hit
+  speed: 20.0
+  lifetime_seconds: 3.0
+  explosion_radius: 0.0
+  collision_mask: enemy
+  max_hit_count: 1
+  gravity: {x: 0.0, y: 0.0, z: 0.0}
+  homing:
+    homing_mode: fire_and_forget
+    sync_mode: hybrid_deterministic_then_snapshot
+    boost_ticks: 2
+    lock_on_range: 25.0
+    lose_target_range: 30.0
+    lock_cone_degrees: 75.0
+    max_turn_rate_degrees_per_second: 360.0
+    acceleration: 20.0
+    max_speed: 30.0

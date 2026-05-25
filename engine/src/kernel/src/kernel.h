@@ -76,6 +76,9 @@ public:
     bool server_get_beam_state(
         NetId net_id,
         KernelBeamState* out_state) const;
+    bool server_get_homing_state(
+        NetId net_id,
+        KernelHomingState* out_state) const;
     bool server_get_entity_state(
         NetId net_id,
         KernelServerEntityState* out_state) const;

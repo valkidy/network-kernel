@@ -52,13 +52,14 @@ struct ProjectileTag {};
 struct AreaEffectTag {};
 struct BeamTag {};
 
-inline constexpr std::size_t kWeaponCount = 6;
+inline constexpr std::size_t kWeaponCount = 7;
 inline constexpr std::uint8_t kWeaponSlot0 = 0;
 inline constexpr std::uint8_t kWeaponSlot1 = 1;
 inline constexpr std::uint8_t kWeaponSlot2 = 2;
 inline constexpr std::uint8_t kWeaponSlot3 = 3;
 inline constexpr std::uint8_t kWeaponSlot4 = 4;
 inline constexpr std::uint8_t kWeaponSlot5 = 5;
+inline constexpr std::uint8_t kWeaponSlot6 = 6;
 
 enum class WeaponFireMode : std::uint8_t {
     kHitscan = 0,
@@ -71,6 +72,24 @@ enum class WeaponFireMode : std::uint8_t {
 enum class ProjectileMotionModel : std::uint8_t {
     kLinear = 0,
     kParabolic = 1,
+    kHoming = 2,
+};
+
+enum class ProjectileSyncMode : std::uint8_t {
+    kLocalPredictedDeterministic = 0,
+    kHybridDeterministicThenSnapshot = 1,
+    kServerSnapshotOnly = 2,
+};
+
+enum class MissileGuidancePhase : std::uint8_t {
+    kBoost = 0,
+    kGuided = 1,
+    kLostTarget = 2,
+    kExpired = 3,
+};
+
+enum class HomingMode : std::uint8_t {
+    kFireAndForget = 0,
 };
 
 enum class ProjectileHitResponse : std::uint8_t {
@@ -95,9 +114,9 @@ inline constexpr std::uint32_t kCollisionMaskDamageable =
 
 struct WeaponState {
     std::uint8_t weapon_id = 0;
-    std::array<std::uint16_t, kWeaponCount> ammo{0, 0, 0, 0, 0, 0};
-    std::array<std::uint16_t, kWeaponCount> reserve_ammo{0, 0, 0, 0, 0, 0};
-    std::array<std::uint32_t, kWeaponCount> next_fire_tick{0, 0, 0, 0, 0, 0};
+    std::array<std::uint16_t, kWeaponCount> ammo{0, 0, 0, 0, 0, 0, 0};
+    std::array<std::uint16_t, kWeaponCount> reserve_ammo{0, 0, 0, 0, 0, 0, 0};
+    std::array<std::uint32_t, kWeaponCount> next_fire_tick{0, 0, 0, 0, 0, 0, 0};
     std::uint32_t reload_end_tick = 0;
     bool is_reloading = false;
 };
@@ -132,10 +151,20 @@ struct WeaponMechanicsDefinition {
     std::uint16_t beam_damage_per_second = 0;
     std::uint32_t beam_lifetime_ticks = 1;
     std::uint32_t beam_collision_mask = kCollisionMaskDamageable;
+    HomingMode homing_mode = HomingMode::kFireAndForget;
+    ProjectileSyncMode homing_sync_mode =
+        ProjectileSyncMode::kHybridDeterministicThenSnapshot;
+    std::uint32_t homing_boost_ticks = 0;
+    float homing_lock_on_range = 0.0f;
+    float homing_lose_target_range = 0.0f;
+    float homing_lock_cone_degrees = 0.0f;
+    float homing_max_turn_rate_degrees_per_second = 0.0f;
+    float homing_acceleration = 0.0f;
+    float homing_max_speed = 0.0f;
 };
 
 struct WeaponTuning {
-    std::array<bool, kWeaponCount> configured{false, false, false, false, false, false};
+    std::array<bool, kWeaponCount> configured{false, false, false, false, false, false, false};
     std::array<WeaponMechanicsDefinition, kWeaponCount> definitions{};
 };
 
@@ -166,6 +195,21 @@ struct ProjectileState {
     // snapshots plus render-side correction after a physics module exists.
     glm::vec3 gravity{0.0f, 0.0f, 0.0f};
     glm::vec3 previous_position{0.0f, 0.0f, 0.0f};
+};
+
+struct HomingState {
+    HomingMode homing_mode = HomingMode::kFireAndForget;
+    ProjectileSyncMode sync_mode = ProjectileSyncMode::kHybridDeterministicThenSnapshot;
+    MissileGuidancePhase phase = MissileGuidancePhase::kBoost;
+    NetId target_net_id = 0;
+    std::uint32_t boost_ticks = 0;
+    std::uint32_t guidance_start_tick = 0;
+    float lock_on_range = 0.0f;
+    float lose_target_range = 0.0f;
+    float lock_cone_degrees = 0.0f;
+    float max_turn_rate_degrees_per_second = 0.0f;
+    float acceleration = 0.0f;
+    float max_speed = 0.0f;
 };
 
 struct AreaEffectState {

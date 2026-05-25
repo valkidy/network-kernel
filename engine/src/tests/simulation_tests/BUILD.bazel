@@ -35,3 +35,9 @@ cc_test(
     srcs = ["beam_test.cc"],
     deps = ["//engine/src/simulation:simulation"],
 )
+
+cc_test(
+    name = "homing_test",
+    srcs = ["homing_test.cc"],
+    deps = ["//engine/src/simulation:simulation"],
+)

@@ -577,6 +577,50 @@ void local_projectile_snapshot_fast_forwards_and_smooths() {
     assert(engine.render_states_[0].position.x < 6.11f);
 }
 
+void homing_projectile_snapshot_extrapolation_is_bounded() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 1000;
+    config.tick.snapshot_rate = 100;
+
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_Client);
+    engine.local_client_peer_id_ = 7;
+    for (std::uint32_t tick = 0; tick < 500; ++tick) {
+        engine.tick_loop_.advance_tick();
+    }
+
+    network_example::KernelEngine::PredictedProjectile predicted;
+    predicted.entity_id = 9000;
+    predicted.owner_peer = 7;
+    predicted.input_seq = 3;
+    predicted.client_action_id = 4444;
+    predicted.spawn_tick = 500;
+    predicted.position = glm::vec3{6.2f, 0.0f, 0.0f};
+    predicted.velocity = glm::vec3{100.0f, 0.0f, 0.0f};
+    predicted.spawn_position = predicted.position;
+    predicted.initial_velocity = predicted.velocity;
+    predicted.motion_model = network_example::ProjectileMotionModel::kHoming;
+    engine.predicted_projectiles_.push_back(predicted);
+
+    engine.handle_client_snapshot(projectile_snapshot(
+        10,
+        55,
+        7,
+        4444,
+        glm::vec3{5.0f, 0.0f, 0.0f},
+        glm::vec3{100.0f, 0.0f, 0.0f}));
+
+    assert(engine.predicted_projectiles_.size() == 1);
+    const network_example::KernelEngine::PredictedProjectile& bound =
+        engine.predicted_projectiles_[0];
+    assert(bound.bound);
+    assert(bound.age_seconds > 0.199f);
+    assert(bound.age_seconds < 0.201f);
+    assert(bound.position.x > 24.99f);
+    assert(bound.position.x < 25.01f);
+}
+
 void render_query_does_not_consume_local_correction() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
@@ -697,6 +741,7 @@ int main() {
     render_states_at_time_interpolates_and_clamps();
     remote_projectile_uses_interpolated_past_timeline();
     local_projectile_snapshot_fast_forwards_and_smooths();
+    homing_projectile_snapshot_extrapolation_is_bounded();
     render_query_does_not_consume_local_correction();
     late_snapshot_is_stored_but_not_used_for_reconciliation();
 

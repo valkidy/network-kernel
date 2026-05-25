@@ -67,6 +67,10 @@ WorldSnapshot build_world_snapshot(
             entity_snapshot.spawn_tick = projectile.spawn_tick;
             entity_snapshot.client_action_id = projectile.client_action_id;
         }
+        if (world.registry().all_of<HomingState>(entity)) {
+            entity_snapshot.state = static_cast<std::uint16_t>(
+                world.registry().get<HomingState>(entity).phase);
+        }
         snapshot.entities.push_back(entity_snapshot);
     }
 

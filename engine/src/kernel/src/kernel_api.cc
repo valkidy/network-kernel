@@ -88,6 +88,9 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
         out_info->beam_mechanics_definition_size =
             sizeof(KernelBeamMechanicsDefinition);
         out_info->beam_state_size = sizeof(KernelBeamState);
+        out_info->homing_mechanics_definition_size =
+            sizeof(KernelHomingMechanicsDefinition);
+        out_info->homing_state_size = sizeof(KernelHomingState);
         out_info->capability_flags =
             KERNEL_CAPABILITY_CLIENT_MODE |
             KERNEL_CAPABILITY_LISTEN_SERVER_MODE |
@@ -113,7 +116,8 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_WEAPON_METADATA_QUERY |
             KERNEL_CAPABILITY_AREA_EFFECT_WEAPONS |
             KERNEL_CAPABILITY_PROJECTILE_RESPONSE_MASKS |
-            KERNEL_CAPABILITY_BEAM_WEAPONS;
+            KERNEL_CAPABILITY_BEAM_WEAPONS |
+            KERNEL_CAPABILITY_HOMING_PROJECTILES;
         return true;
     });
 }
@@ -346,6 +350,16 @@ bool Kernel_ServerGetBeamState(
     });
 }
 
+bool Kernel_ServerGetHomingState(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    KernelHomingState* out_state) {
+    return abi_call("Kernel_ServerGetHomingState", false, [&]() {
+        return kernel != nullptr &&
+               kernel->engine->server_get_homing_state(net_id, out_state);
+    });
+}
+
 bool Kernel_ServerValidateMechanicsConfig(
     const KernelWeaponMechanicsDefinition* weapon_mechanics) {
     return abi_call("Kernel_ServerValidateMechanicsConfig", false, [&]() {
@@ -362,8 +376,8 @@ bool Kernel_ServerValidateMechanicsConfig(
         if (weapon_mechanics->fire_mode == KernelWeaponFireMode_Projectile) {
             return weapon_mechanics->projectile.struct_size >=
                        sizeof(KernelProjectileMechanicsDefinition) &&
-                   weapon_mechanics->projectile.motion_model <=
-                       KernelProjectileMotionModel_Parabolic &&
+                    weapon_mechanics->projectile.motion_model <=
+                       KernelProjectileMotionModel_Homing &&
                    weapon_mechanics->projectile.hit_response <=
                        KernelProjectileHitResponse_Attach &&
                    weapon_mechanics->projectile.damage_shape <=
@@ -375,7 +389,25 @@ bool Kernel_ServerValidateMechanicsConfig(
                    weapon_mechanics->projectile.collision_mask != 0 &&
                    weapon_mechanics->projectile.max_hit_count > 0 &&
                    weapon_mechanics->projectile.speed > 0.0f &&
-                   weapon_mechanics->projectile.lifetime_seconds > 0.0f;
+                   weapon_mechanics->projectile.lifetime_seconds > 0.0f &&
+                   (weapon_mechanics->projectile.motion_model !=
+                            KernelProjectileMotionModel_Homing
+                        ? weapon_mechanics->projectile.homing.struct_size == 0
+                        : weapon_mechanics->projectile.homing.struct_size >=
+                                  sizeof(KernelHomingMechanicsDefinition) &&
+                              weapon_mechanics->projectile.homing.homing_mode ==
+                                  KernelHomingMode_FireAndForget &&
+                              weapon_mechanics->projectile.homing.sync_mode ==
+                                  KernelProjectileSyncMode_HybridDeterministicThenSnapshot &&
+                              weapon_mechanics->projectile.homing.lock_on_range > 0.0f &&
+                              weapon_mechanics->projectile.homing.lose_target_range >=
+                                  weapon_mechanics->projectile.homing.lock_on_range &&
+                              weapon_mechanics->projectile.homing.lock_cone_degrees > 0.0f &&
+                              weapon_mechanics->projectile.homing.lock_cone_degrees <= 180.0f &&
+                              weapon_mechanics->projectile.homing
+                                      .max_turn_rate_degrees_per_second > 0.0f &&
+                              weapon_mechanics->projectile.homing.acceleration > 0.0f &&
+                              weapon_mechanics->projectile.homing.max_speed > 0.0f);
         }
         if (weapon_mechanics->fire_mode == KernelWeaponFireMode_AreaEffect) {
             return weapon_mechanics->area_effect.struct_size >=

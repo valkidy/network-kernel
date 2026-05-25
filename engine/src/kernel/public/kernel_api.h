@@ -122,6 +122,11 @@ bool Kernel_ServerGetBeamState(
     uint32_t net_id,
     KernelBeamState* out_state);
 
+bool Kernel_ServerGetHomingState(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    KernelHomingState* out_state);
+
 bool Kernel_ServerValidateMechanicsConfig(
     const KernelWeaponMechanicsDefinition* weapon_mechanics);
 
