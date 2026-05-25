@@ -30,6 +30,9 @@ bool GameServer_GetAbiInfo(
     uint32_t out_info_size);
 
 GameServerHandle* GameServer_Create(KernelHandle* kernel);
+GameServerHandle* GameServer_CreateWithWeaponTemplateDirectory(
+    KernelHandle* kernel,
+    const char* template_directory);
 void GameServer_Destroy(GameServerHandle* game_server);
 
 void GameServer_HandleEvent(
@@ -39,6 +42,11 @@ void GameServer_HandleEvent(
 void GameServer_Tick(GameServerHandle* game_server, float delta_seconds);
 
 uint32_t GameServer_GetEnemyCount(GameServerHandle* game_server);
+
+bool GameServer_QueryWeaponTemplate(
+    GameServerHandle* game_server,
+    uint8_t weapon_id,
+    GameServerWeaponTemplateInfo* out_info);
 
 void GameServer_DespawnAll(GameServerHandle* game_server, uint32_t reason);
 

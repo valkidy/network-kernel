@@ -88,7 +88,7 @@ void configure_test_weapons(
     assert(entity.has_value());
     network_example::WeaponTuning& tuning =
         world.registry().get_or_emplace<network_example::WeaponTuning>(*entity);
-    tuning.configured = {true, true, true, true};
+    tuning.configured = {true, true, true, true, true};
     tuning.definitions = {{
         weapon_definition(
             network_example::kWeaponSlot0,
@@ -120,6 +120,13 @@ void configure_test_weapons(
             45,
             45,
             75),
+        weapon_definition(
+            network_example::kWeaponSlot4,
+            network_example::WeaponFireMode::kAreaEffect,
+            3,
+            12,
+            10,
+            30),
     }};
     tuning.definitions[network_example::kWeaponSlot1].pellet_count = 5;
     tuning.definitions[network_example::kWeaponSlot1].pellet_spread = 0.035f;
@@ -133,6 +140,13 @@ void configure_test_weapons(
     tuning.definitions[network_example::kWeaponSlot3].projectile_speed = 35.0f;
     tuning.definitions[network_example::kWeaponSlot3].projectile_lifetime_seconds = 2.5f;
     tuning.definitions[network_example::kWeaponSlot3].explosion_radius = 3.0f;
+    tuning.definitions[network_example::kWeaponSlot4].area_effect_radius = 2.0f;
+    tuning.definitions[network_example::kWeaponSlot4].area_effect_damage_per_interval = 12;
+    tuning.definitions[network_example::kWeaponSlot4].area_effect_damage_interval_ticks = 2;
+    tuning.definitions[network_example::kWeaponSlot4].area_effect_lifetime_ticks = 6;
+    tuning.definitions[network_example::kWeaponSlot4].area_effect_spawn_distance = 1.0f;
+    tuning.definitions[network_example::kWeaponSlot4].area_effect_collision_mask =
+        network_example::kCollisionLayerEnemy;
 
     network_example::WeaponState& weapon =
         world.registry().get_or_emplace<network_example::WeaponState>(*entity);
@@ -184,6 +198,16 @@ std::uint32_t count_events(
 network_example::NetId spawned_projectile(const std::vector<KernelEvent>& events) {
     for (const KernelEvent& event : events) {
         if (event.type == KernelEventType_EntitySpawned) {
+            return event.net_id;
+        }
+    }
+    return 0;
+}
+
+network_example::NetId spawned_area_effect(const std::vector<KernelEvent>& events) {
+    for (const KernelEvent& event : events) {
+        if (event.type == KernelEventType_EntitySpawned &&
+            event.code == static_cast<std::uint32_t>(network_example::EntityType::kAreaEffect)) {
             return event.net_id;
         }
     }
@@ -735,6 +759,93 @@ void rewind_shotgun_respects_range() {
     assert(count_events(events, KernelEventType_DamageApplied) == 0);
 }
 
+void area_effect_weapon_spawns_and_damages_enemy() {
+    network_example::World world;
+    spawn_player(world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
+    const network_example::NetId enemy =
+        spawn_enemy(world, glm::vec3{1.4f, 0.0f, 0.0f});
+    std::vector<KernelEvent> events;
+
+    PlayerInput input = fire_input(network_example::kWeaponSlot4);
+    network_example::simulate_weapons(world, queue(input), 4, &events);
+
+    const network_example::NetId area = spawned_area_effect(events);
+    require(area != 0);
+    const auto area_entity = world.find_entity(area);
+    require(area_entity.has_value());
+    const network_example::AreaEffectState& state =
+        world.registry().get<network_example::AreaEffectState>(*area_entity);
+    require(state.radius == 2.0f);
+    require(state.damage_per_interval == 12);
+    require(state.damage_interval_ticks == 2);
+    require(state.collision_mask == network_example::kCollisionLayerEnemy);
+
+    network_example::DamagePipeline pipeline;
+    network_example::simulate_area_effects(world, 4, 133333, &events, &pipeline);
+    pipeline.confirm_ready(world, 133333, 4, &events);
+
+    require(health(world, enemy).hp == 38);
+    require(count_events(events, KernelEventType_DamageApplied) == 1);
+}
+
+void piercing_projectile_damages_sorted_targets_up_to_max_hit_count() {
+    network_example::World world;
+    spawn_player(world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
+    const network_example::NetId first =
+        spawn_enemy(world, glm::vec3{1.0f, 0.0f, 0.0f});
+    const network_example::NetId second =
+        spawn_enemy(world, glm::vec3{2.0f, 0.0f, 0.0f});
+    const network_example::NetId third =
+        spawn_enemy(world, glm::vec3{3.0f, 0.0f, 0.0f});
+    const network_example::NetId projectile =
+        world.spawn_projectile(1, glm::vec3{0.0f, 0.8f, 0.0f}, glm::vec3{30.0f, 0.0f, 0.0f});
+    network_example::ProjectileState& state = projectile_state(world, projectile);
+    state.weapon_id = network_example::kWeaponSlot3;
+    state.damage = 10;
+    state.shooter_net_id = 1;
+    state.hit_response = network_example::ProjectileHitResponse::kContinue;
+    state.damage_shape = network_example::ProjectileDamageShape::kPiercingSegment;
+    state.collision_mask = network_example::kCollisionLayerEnemy;
+    state.max_hit_count = 2;
+    state.max_lifetime_seconds = 1.0f;
+    state.spawn_position = glm::vec3{0.0f, 0.8f, 0.0f};
+    state.initial_velocity = glm::vec3{30.0f, 0.0f, 0.0f};
+    std::vector<KernelEvent> events;
+
+    network_example::simulate_projectiles(world, 0.1f, 5, &events);
+
+    require(health(world, first).hp == 40);
+    require(health(world, second).hp == 40);
+    require(health(world, third).hp == 50);
+    require(!world.find_entity(projectile).has_value());
+    require(count_events(events, KernelEventType_DamageApplied) == 2);
+}
+
+void projectile_collision_mask_excludes_players() {
+    network_example::World world;
+    const network_example::NetId target_player =
+        spawn_player(world, 2, glm::vec3{1.0f, 0.0f, 0.0f});
+    const network_example::NetId projectile =
+        world.spawn_projectile(1, glm::vec3{0.0f, 0.9f, 0.0f}, glm::vec3{20.0f, 0.0f, 0.0f});
+    network_example::ProjectileState& state = projectile_state(world, projectile);
+    state.weapon_id = network_example::kWeaponSlot3;
+    state.damage = 10;
+    state.shooter_net_id = 0;
+    state.hit_response = network_example::ProjectileHitResponse::kDestroy;
+    state.damage_shape = network_example::ProjectileDamageShape::kDirectHit;
+    state.collision_mask = network_example::kCollisionLayerEnemy;
+    state.max_lifetime_seconds = 1.0f;
+    state.spawn_position = glm::vec3{0.0f, 0.9f, 0.0f};
+    state.initial_velocity = glm::vec3{20.0f, 0.0f, 0.0f};
+    std::vector<KernelEvent> events;
+
+    network_example::simulate_projectiles(world, 0.1f, 6, &events);
+
+    require(health(world, target_player).hp == 100);
+    require(world.find_entity(projectile).has_value());
+    require(count_events(events, KernelEventType_DamageApplied) == 0);
+}
+
 }  // namespace
 
 int main() {
@@ -753,5 +864,8 @@ int main() {
     projectile_historical_hit_query_ignores_current_only_target();
     rewind_hitscan_uses_historical_hit_volumes();
     rewind_shotgun_respects_range();
+    area_effect_weapon_spawns_and_damages_enemy();
+    piercing_projectile_damages_sorted_targets_up_to_max_hit_count();
+    projectile_collision_mask_excludes_players();
     return 0;
 }

@@ -61,6 +61,7 @@ void simulate_area_effects(
         QueryFilter filter;
         filter.ignored_net_id = identity.net_id;
         filter.ignored_owner_peer = identity.owner_peer;
+        filter.collision_mask = area_effect.collision_mask;
         std::vector<QueryHit> hits = collect_sphere_overlaps(
             world,
             transform.position,

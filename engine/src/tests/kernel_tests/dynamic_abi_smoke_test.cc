@@ -192,6 +192,18 @@ int main() {
         load_symbol<bool(const KernelWeaponMechanicsDefinition*)>(
             library,
             "Kernel_ServerValidateMechanicsConfig");
+    auto* kernel_server_get_entity_weapon_mechanics =
+        load_symbol<bool(
+            KernelHandle*,
+            std::uint32_t,
+            std::uint8_t,
+            KernelWeaponMechanicsDefinition*)>(
+            library,
+            "Kernel_ServerGetEntityWeaponMechanics");
+    [[maybe_unused]] auto* kernel_server_get_area_effect_state =
+        load_symbol<bool(KernelHandle*, std::uint32_t, KernelAreaEffectState*)>(
+            library,
+            "Kernel_ServerGetAreaEffectState");
     auto* kernel_server_get_entity_state =
         load_symbol<bool(KernelHandle*, std::uint32_t, KernelServerEntityState*)>(
             library,
@@ -208,6 +220,10 @@ int main() {
             "GameServer_GetAbiInfo");
     auto* game_server_create =
         load_symbol<GameServerHandle*(KernelHandle*)>(library, "GameServer_Create");
+    auto* game_server_create_with_weapon_template_directory =
+        load_symbol<GameServerHandle*(KernelHandle*, const char*)>(
+            library,
+            "GameServer_CreateWithWeaponTemplateDirectory");
     auto* game_server_destroy =
         load_symbol<void(GameServerHandle*)>(library, "GameServer_Destroy");
     auto* game_server_handle_event =
@@ -220,6 +236,10 @@ int main() {
         load_symbol<std::uint32_t(GameServerHandle*)>(
             library,
             "GameServer_GetEnemyCount");
+    auto* game_server_query_weapon_template =
+        load_symbol<bool(GameServerHandle*, std::uint8_t, GameServerWeaponTemplateInfo*)>(
+            library,
+            "GameServer_QueryWeaponTemplate");
     auto* game_server_despawn_all =
         load_symbol<void(GameServerHandle*, std::uint32_t)>(
             library,
@@ -240,6 +260,9 @@ int main() {
            sizeof(KernelWeaponMechanicsDefinition));
     assert(abi_info.projectile_mechanics_definition_size ==
            sizeof(KernelProjectileMechanicsDefinition));
+    assert(abi_info.area_effect_mechanics_definition_size ==
+           sizeof(KernelAreaEffectMechanicsDefinition));
+    assert(abi_info.area_effect_state_size == sizeof(KernelAreaEffectState));
     assert(abi_info.combat_state_definition_size ==
            sizeof(KernelCombatStateDefinition));
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LISTEN_SERVER_MODE) != 0);
@@ -249,6 +272,9 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_EVENT_PRESENTATION_TIME) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_RENDER_STATES_AT_TIME) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_SERVER_MECHANICS_CONFIG) != 0);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_WEAPON_METADATA_QUERY) != 0);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_AREA_EFFECT_WEAPONS) != 0);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_PROJECTILE_RESPONSE_MASKS) != 0);
     assert(!kernel_get_abi_info(nullptr, sizeof(abi_info)));
     assert(!kernel_get_abi_info(&abi_info, sizeof(abi_info) - 1));
     GameServerAbiInfo game_server_abi_info{};
@@ -256,9 +282,14 @@ int main() {
         &game_server_abi_info,
         sizeof(game_server_abi_info)));
     assert(game_server_abi_info.abi_version == GAME_SERVER_ABI_VERSION);
+    assert(game_server_abi_info.weapon_template_info_size ==
+           sizeof(GameServerWeaponTemplateInfo));
     assert(
         (game_server_abi_info.capability_flags &
          GAME_SERVER_CAPABILITY_ENEMY_MANAGER) != 0);
+    assert(
+        (game_server_abi_info.capability_flags &
+         GAME_SERVER_CAPABILITY_WEAPON_TEMPLATE_QUERY) != 0);
     assert(!game_server_get_abi_info(nullptr, sizeof(game_server_abi_info)));
     assert(!game_server_get_abi_info(
         &game_server_abi_info,
@@ -278,6 +309,11 @@ int main() {
     assert(kernel_start_listen_server(kernel, 7777));
     GameServerHandle* game_server = game_server_create(kernel);
     assert(game_server != nullptr);
+    assert(game_server_create_with_weapon_template_directory(kernel, nullptr) == nullptr);
+    GameServerWeaponTemplateInfo template_info{};
+    template_info.struct_size = sizeof(template_info);
+    assert(game_server_query_weapon_template(game_server, 4, &template_info));
+    assert(template_info.mechanics.fire_mode == KernelWeaponFireMode_AreaEffect);
     assert(kernel_get_local_player_info(kernel, &local_info));
     assert(local_info.peer_id == 1);
     assert(local_info.player_net_id != 0);
@@ -323,8 +359,16 @@ int main() {
     rocket.projectile.speed = 35.0f;
     rocket.projectile.lifetime_seconds = 2.5f;
     rocket.projectile.explosion_radius = 3.0f;
+    rocket.projectile.hit_response = KernelProjectileHitResponse_Destroy;
+    rocket.projectile.damage_shape = KernelProjectileDamageShape_Explosion;
+    rocket.projectile.collision_mask = KERNEL_COLLISION_MASK_DAMAGEABLE;
+    rocket.projectile.max_hit_count = 1;
     assert(kernel_server_validate_mechanics_config(&rocket));
     assert(kernel_server_set_entity_weapon_mechanics(kernel, enemy, &rocket));
+    KernelWeaponMechanicsDefinition queried_weapon{};
+    queried_weapon.struct_size = sizeof(queried_weapon);
+    assert(kernel_server_get_entity_weapon_mechanics(kernel, enemy, 3, &queried_weapon));
+    assert(queried_weapon.projectile.damage_shape == KernelProjectileDamageShape_Explosion);
     assert(kernel_server_set_entity_state(kernel, enemy, 4, 8));
     KernelServerEntityState server_state{};
     server_state.struct_size = sizeof(server_state);

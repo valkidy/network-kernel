@@ -20,6 +20,9 @@ int main() {
            sizeof(KernelWeaponMechanicsDefinition));
     assert(abi_info.projectile_mechanics_definition_size ==
            sizeof(KernelProjectileMechanicsDefinition));
+    assert(abi_info.area_effect_mechanics_definition_size ==
+           sizeof(KernelAreaEffectMechanicsDefinition));
+    assert(abi_info.area_effect_state_size == sizeof(KernelAreaEffectState));
     assert(abi_info.combat_state_definition_size ==
            sizeof(KernelCombatStateDefinition));
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CLIENT_MODE) != 0);
@@ -47,8 +50,12 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_EVENT_PRESENTATION_TIME) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_RENDER_STATES_AT_TIME) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_SERVER_MECHANICS_CONFIG) != 0);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_WEAPON_METADATA_QUERY) != 0);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_AREA_EFFECT_WEAPONS) != 0);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_PROJECTILE_RESPONSE_MASKS) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 9u);
+    assert(KERNEL_ABI_VERSION == 10u);
+    assert(KERNEL_MAX_WEAPONS == 5u);
     assert(offsetof(PlayerInput, client_action_time_us) > offsetof(PlayerInput, input_seq));
     assert(offsetof(PlayerInput, client_action_id) > offsetof(PlayerInput, client_action_time_us));
     assert(offsetof(KernelEvent, event_time_us) > offsetof(KernelEvent, code));
@@ -97,6 +104,10 @@ int main() {
     assert(!Kernel_ServerValidateMechanicsConfig(nullptr));
     assert(!Kernel_ServerSetEntityWeaponMechanics(nullptr, 1, &weapon_mechanics));
     assert(!Kernel_ServerClearEntityWeaponMechanics(nullptr, 1, 0));
+    assert(!Kernel_ServerGetEntityWeaponMechanics(nullptr, 1, 0, &weapon_mechanics));
+    KernelAreaEffectState area_effect_state{};
+    area_effect_state.struct_size = sizeof(area_effect_state);
+    assert(!Kernel_ServerGetAreaEffectState(nullptr, 1, &area_effect_state));
     KernelServerEntityState server_state{};
     server_state.struct_size = sizeof(server_state);
     assert(!Kernel_ServerGetEntityState(nullptr, 1, &server_state));
@@ -135,6 +146,8 @@ int main() {
     combat_state.hitbox_half_extents = KernelVec3{0.4f, 0.8f, 0.4f};
     combat_state.ammo[3] = 3;
     combat_state.reserve_ammo[3] = 6;
+    combat_state.ammo[4] = 1;
+    combat_state.reserve_ammo[4] = 1;
     assert(!Kernel_ServerSetEntityCombatState(kernel, created_net_id, nullptr));
     assert(Kernel_ServerSetEntityCombatState(kernel, created_net_id, &combat_state));
 
@@ -149,12 +162,33 @@ int main() {
     weapon_mechanics.projectile.lifetime_seconds = 2.5f;
     weapon_mechanics.projectile.explosion_radius = 3.0f;
     weapon_mechanics.projectile.motion_model = KernelProjectileMotionModel_Linear;
+    weapon_mechanics.projectile.hit_response = KernelProjectileHitResponse_Destroy;
+    weapon_mechanics.projectile.damage_shape = KernelProjectileDamageShape_Explosion;
+    weapon_mechanics.projectile.collision_mask = KERNEL_COLLISION_MASK_DAMAGEABLE;
+    weapon_mechanics.projectile.max_hit_count = 1;
     assert(Kernel_ServerValidateMechanicsConfig(&weapon_mechanics));
     assert(!Kernel_ServerSetEntityWeaponMechanics(kernel, created_net_id, nullptr));
     assert(Kernel_ServerSetEntityWeaponMechanics(
         kernel,
         created_net_id,
         &weapon_mechanics));
+    KernelWeaponMechanicsDefinition queried_weapon{};
+    queried_weapon.struct_size = sizeof(queried_weapon);
+    assert(Kernel_ServerGetEntityWeaponMechanics(
+        kernel,
+        created_net_id,
+        3,
+        &queried_weapon));
+    assert(queried_weapon.weapon_id == 3);
+    assert(queried_weapon.projectile.hit_response == KernelProjectileHitResponse_Destroy);
+    assert(queried_weapon.projectile.damage_shape == KernelProjectileDamageShape_Explosion);
+    assert(queried_weapon.projectile.collision_mask == KERNEL_COLLISION_MASK_DAMAGEABLE);
+
+    KernelWeaponMechanicsDefinition invalid_reserved_response = weapon_mechanics;
+    invalid_reserved_response.projectile.hit_response = KernelProjectileHitResponse_Bounce;
+    assert(!Kernel_ServerValidateMechanicsConfig(&invalid_reserved_response));
+    invalid_reserved_response.projectile.hit_response = KernelProjectileHitResponse_Attach;
+    assert(!Kernel_ServerValidateMechanicsConfig(&invalid_reserved_response));
 
     KernelWeaponMechanicsDefinition invalid_weapon = weapon_mechanics;
     invalid_weapon.struct_size = sizeof(invalid_weapon) - 1;
@@ -163,6 +197,34 @@ int main() {
         kernel,
         created_net_id,
         &invalid_weapon));
+
+    KernelWeaponMechanicsDefinition area_weapon{};
+    area_weapon.struct_size = sizeof(area_weapon);
+    area_weapon.weapon_id = 4;
+    area_weapon.fire_mode = KernelWeaponFireMode_AreaEffect;
+    area_weapon.magazine_size = 2;
+    area_weapon.damage = 7;
+    area_weapon.cooldown_ticks = 10;
+    area_weapon.reload_ticks = 30;
+    area_weapon.area_effect.struct_size = sizeof(KernelAreaEffectMechanicsDefinition);
+    area_weapon.area_effect.radius = 2.5f;
+    area_weapon.area_effect.damage_per_interval = 7;
+    area_weapon.area_effect.damage_interval_ticks = 3;
+    area_weapon.area_effect.lifetime_ticks = 9;
+    area_weapon.area_effect.spawn_distance = 1.5f;
+    area_weapon.area_effect.collision_mask = KERNEL_COLLISION_MASK_DAMAGEABLE;
+    assert(Kernel_ServerValidateMechanicsConfig(&area_weapon));
+    assert(Kernel_ServerSetEntityWeaponMechanics(kernel, created_net_id, &area_weapon));
+    queried_weapon = KernelWeaponMechanicsDefinition{};
+    queried_weapon.struct_size = sizeof(queried_weapon);
+    assert(Kernel_ServerGetEntityWeaponMechanics(
+        kernel,
+        created_net_id,
+        4,
+        &queried_weapon));
+    assert(queried_weapon.fire_mode == KernelWeaponFireMode_AreaEffect);
+    assert(queried_weapon.area_effect.radius == 2.5f);
+    assert(queried_weapon.area_effect.damage_interval_ticks == 3);
 
     KernelVec3 enemy_position{5.0f, 0.0f, 0.0f};
     KernelQuat enemy_rotation{0.0f, 0.0f, 0.0f, 1.0f};
@@ -254,10 +316,38 @@ int main() {
     assert(states[0].hp == 240);
     assert(states[0].max_hp == 240);
 
+    server_entity_input.buttons = InputButton_Fire;
+    server_entity_input.selected_weapon = 4;
+    server_entity_input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
+    assert(Kernel_ServerSubmitEntityInput(
+        kernel,
+        created_net_id,
+        &server_entity_input));
+    Kernel_Update(kernel, 1.0f / 30.0f);
+    std::array<KernelEvent, 16> area_events{};
+    const std::uint32_t area_event_count =
+        Kernel_PollEvents(kernel, area_events.data(), area_events.size());
+    std::uint32_t area_net_id = 0;
+    for (std::uint32_t index = 0; index < area_event_count; ++index) {
+        if (area_events[index].type == KernelEventType_EntitySpawned &&
+            area_events[index].code == 4u) {
+            area_net_id = area_events[index].net_id;
+        }
+    }
+    assert(area_net_id != 0);
+    area_effect_state = KernelAreaEffectState{};
+    area_effect_state.struct_size = sizeof(area_effect_state);
+    assert(Kernel_ServerGetAreaEffectState(kernel, area_net_id, &area_effect_state));
+    assert(area_effect_state.valid);
+    assert(area_effect_state.radius == 2.5f);
+    assert(area_effect_state.damage_per_interval == 7);
+    assert(area_effect_state.damage_interval_ticks == 3);
+    assert(area_effect_state.collision_mask == KERNEL_COLLISION_MASK_DAMAGEABLE);
+
     std::array<KernelEvent, 16> events{};
     assert(Kernel_PollEvents(kernel, nullptr, events.size()) == 0);
     assert(Kernel_PollEvents(kernel, events.data(), 0) == 0);
-    assert(Kernel_PollEvents(kernel, events.data(), events.size()) >= 1);
+    Kernel_PollEvents(kernel, events.data(), events.size());
     assert(Kernel_ServerDestroyEntity(
         kernel,
         created_net_id,

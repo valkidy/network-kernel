@@ -125,31 +125,21 @@ void explode_projectile(
         hit_time_us,
         hit_time_us);
 
+    QueryFilter filter;
+    filter.ignored_net_id = projectile_net_id;
+    filter.ignored_owner_peer = owner_peer;
+    filter.collision_mask = projectile.collision_mask;
+    const std::vector<QueryHit> hits = collect_sphere_overlaps(
+        world,
+        explosion_center,
+        projectile.explosion_radius,
+        filter);
     std::vector<std::pair<NetId, std::uint16_t>> damage_results;
-    auto target_view = world.registry().view<NetworkIdentity, Transform, Health, Hitbox>();
-    for (const entt::entity target_entity : target_view) {
-        if (world.registry().all_of<ProjectileTag>(target_entity)) {
-            continue;
-        }
-
-        const NetworkIdentity& target_identity =
-            target_view.get<NetworkIdentity>(target_entity);
-        if (target_identity.net_id == projectile_net_id) {
-            continue;
-        }
-
-        const float distance = distance_to_hitbox(
-            explosion_center,
-            target_view.get<Transform>(target_entity),
-            target_view.get<Hitbox>(target_entity));
-        if (distance > projectile.explosion_radius) {
-            continue;
-        }
-
-        const float falloff = 1.0f - (distance / projectile.explosion_radius);
+    for (const QueryHit& hit : hits) {
+        const float falloff = 1.0f - (hit.distance / projectile.explosion_radius);
         const auto damage =
             static_cast<std::uint16_t>(std::max(1.0f, std::round(projectile.damage * falloff)));
-        damage_results.push_back({target_identity.net_id, damage});
+        damage_results.push_back({hit.net_id, damage});
     }
 
     for (const auto& [target_net_id, damage] : damage_results) {
@@ -250,6 +240,7 @@ void simulate_projectiles(
         QueryFilter filter;
         filter.ignored_net_id = projectile.shooter_net_id;
         filter.ignored_owner_peer = identity.owner_peer;
+        filter.collision_mask = projectile.collision_mask;
         const std::vector<QueryHit> hits = collect_segment_hits(
             world,
             projectile.previous_position,
@@ -266,8 +257,50 @@ void simulate_projectiles(
 
         const std::uint64_t hit_time_us =
             tick_time_us(current_tick, fixed_delta_seconds);
-        if (hit_target && projectile.explosion_radius <= 0.0f &&
+        if (hit_target &&
+            projectile.hit_response == ProjectileHitResponse::kContinue &&
+            projectile.damage_shape == ProjectileDamageShape::kPiercingSegment &&
             projectile.damage > 0) {
+            std::uint32_t sequence_id = 0;
+            for (const QueryHit& hit : hits) {
+                if (projectile.hit_count >= projectile.max_hit_count) {
+                    break;
+                }
+                active_damage_pipeline->submit_damage_request(DamageRequest{
+                    current_tick,
+                    sequence_id++,
+                    identity.net_id,
+                    hit.net_id,
+                    identity.owner_peer,
+                    projectile.weapon_id,
+                    projectile.damage,
+                    hit_time_us,
+                    hit.position,
+                });
+                ++projectile.hit_count;
+            }
+            if (projectile.hit_count >= projectile.max_hit_count) {
+                projectiles_to_destroy.push_back(identity.net_id);
+            }
+            continue;
+        }
+
+        if (
+            projectile.damage_shape == ProjectileDamageShape::kExplosion ||
+            projectile.explosion_radius > 0.0f) {
+            explode_projectile(
+                world,
+                identity.net_id,
+                identity.owner_peer,
+                projectile,
+                hit_target ? impact_position : transform.position,
+                current_tick,
+                hit_time_us,
+                events,
+                active_damage_pipeline);
+        } else if (hit_target &&
+                   projectile.damage_shape == ProjectileDamageShape::kDirectHit &&
+                   projectile.damage > 0) {
             active_damage_pipeline->submit_damage_request(DamageRequest{
                 current_tick,
                 0,
@@ -279,17 +312,6 @@ void simulate_projectiles(
                 hit_time_us,
                 impact_position,
             });
-        } else {
-            explode_projectile(
-                world,
-                identity.net_id,
-                identity.owner_peer,
-                projectile,
-                hit_target ? impact_position : transform.position,
-                current_tick,
-                hit_time_us,
-                events,
-                active_damage_pipeline);
         }
         projectiles_to_destroy.push_back(identity.net_id);
     }

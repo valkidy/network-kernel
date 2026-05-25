@@ -30,6 +30,22 @@ bool query_includes_entity(
         world.registry().get<Health>(entity).hp == 0) {
         return false;
     }
+    std::uint32_t entity_layer = 0;
+    if (world.registry().all_of<PlayerTag>(entity)) {
+        entity_layer |= kCollisionLayerPlayer;
+    }
+    if (world.registry().all_of<EnemyTag>(entity)) {
+        entity_layer |= kCollisionLayerEnemy;
+    }
+    if (world.registry().all_of<ProjectileTag>(entity)) {
+        entity_layer |= kCollisionLayerProjectile;
+    }
+    if (world.registry().all_of<AreaEffectTag>(entity)) {
+        entity_layer |= kCollisionLayerAreaEffect;
+    }
+    if (entity_layer != 0 && (filter.collision_mask & entity_layer) == 0) {
+        return false;
+    }
     return true;
 }
 

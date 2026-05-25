@@ -4,9 +4,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 9u
+#define KERNEL_ABI_VERSION 10u
 
-#define KERNEL_MAX_WEAPONS 4u
+#define KERNEL_MAX_WEAPONS 5u
 
 #define KERNEL_CAPABILITY_CLIENT_MODE UINT64_C(0x0000000000000001)
 #define KERNEL_CAPABILITY_LISTEN_SERVER_MODE UINT64_C(0x0000000000000002)
@@ -29,6 +29,16 @@
 #define KERNEL_CAPABILITY_EVENT_PRESENTATION_TIME UINT64_C(0x0000000000040000)
 #define KERNEL_CAPABILITY_RENDER_STATES_AT_TIME UINT64_C(0x0000000000080000)
 #define KERNEL_CAPABILITY_SERVER_MECHANICS_CONFIG UINT64_C(0x0000000000100000)
+#define KERNEL_CAPABILITY_WEAPON_METADATA_QUERY UINT64_C(0x0000000000200000)
+#define KERNEL_CAPABILITY_AREA_EFFECT_WEAPONS UINT64_C(0x0000000000400000)
+#define KERNEL_CAPABILITY_PROJECTILE_RESPONSE_MASKS UINT64_C(0x0000000000800000)
+
+#define KERNEL_COLLISION_LAYER_PLAYER UINT32_C(0x00000001)
+#define KERNEL_COLLISION_LAYER_ENEMY UINT32_C(0x00000002)
+#define KERNEL_COLLISION_LAYER_PROJECTILE UINT32_C(0x00000004)
+#define KERNEL_COLLISION_LAYER_AREA_EFFECT UINT32_C(0x00000008)
+#define KERNEL_COLLISION_MASK_DAMAGEABLE \
+    (KERNEL_COLLISION_LAYER_PLAYER | KERNEL_COLLISION_LAYER_ENEMY)
 
 #define KERNEL_VISUAL_FLAG_MOVING UINT32_C(0x00000001)
 #define KERNEL_VISUAL_FLAG_RELOADING UINT32_C(0x00000002)
@@ -51,6 +61,8 @@ typedef struct KernelAbiInfo {
     uint32_t weapon_mechanics_definition_size;
     uint32_t projectile_mechanics_definition_size;
     uint32_t combat_state_definition_size;
+    uint32_t area_effect_mechanics_definition_size;
+    uint32_t area_effect_state_size;
     uint64_t capability_flags;
 } KernelAbiInfo;
 
@@ -103,12 +115,26 @@ typedef enum KernelWeaponFireMode {
     KernelWeaponFireMode_Hitscan = 0,
     KernelWeaponFireMode_Shotgun = 1,
     KernelWeaponFireMode_Projectile = 2,
+    KernelWeaponFireMode_AreaEffect = 3,
 } KernelWeaponFireMode;
 
 typedef enum KernelProjectileMotionModel {
     KernelProjectileMotionModel_Linear = 0,
     KernelProjectileMotionModel_Parabolic = 1,
 } KernelProjectileMotionModel;
+
+typedef enum KernelProjectileHitResponse {
+    KernelProjectileHitResponse_Destroy = 0,
+    KernelProjectileHitResponse_Continue = 1,
+    KernelProjectileHitResponse_Bounce = 2,
+    KernelProjectileHitResponse_Attach = 3,
+} KernelProjectileHitResponse;
+
+typedef enum KernelProjectileDamageShape {
+    KernelProjectileDamageShape_DirectHit = 0,
+    KernelProjectileDamageShape_Explosion = 1,
+    KernelProjectileDamageShape_PiercingSegment = 2,
+} KernelProjectileDamageShape;
 
 typedef struct KernelVec2 {
     float x;
@@ -197,11 +223,26 @@ typedef struct KernelServerEntityState {
 typedef struct KernelProjectileMechanicsDefinition {
     uint32_t struct_size;
     uint8_t motion_model;
+    uint8_t hit_response;
+    uint8_t damage_shape;
+    uint8_t reserved0;
     float speed;
     float lifetime_seconds;
     float explosion_radius;
     KernelVec3 gravity;
+    uint32_t collision_mask;
+    uint32_t max_hit_count;
 } KernelProjectileMechanicsDefinition;
+
+typedef struct KernelAreaEffectMechanicsDefinition {
+    uint32_t struct_size;
+    float radius;
+    uint16_t damage_per_interval;
+    uint32_t damage_interval_ticks;
+    uint32_t lifetime_ticks;
+    float spawn_distance;
+    uint32_t collision_mask;
+} KernelAreaEffectMechanicsDefinition;
 
 typedef struct KernelWeaponMechanicsDefinition {
     uint32_t struct_size;
@@ -215,7 +256,21 @@ typedef struct KernelWeaponMechanicsDefinition {
     uint8_t pellet_count;
     float pellet_spread;
     KernelProjectileMechanicsDefinition projectile;
+    KernelAreaEffectMechanicsDefinition area_effect;
 } KernelWeaponMechanicsDefinition;
+
+typedef struct KernelAreaEffectState {
+    uint32_t struct_size;
+    uint32_t net_id;
+    uint32_t owner_peer;
+    float radius;
+    uint16_t damage_per_interval;
+    uint32_t damage_interval_ticks;
+    uint32_t expire_tick;
+    uint8_t source_code;
+    uint32_t collision_mask;
+    bool valid;
+} KernelAreaEffectState;
 
 typedef struct KernelCombatStateDefinition {
     uint32_t struct_size;

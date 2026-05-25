@@ -1,0 +1,8 @@
+id: 0
+name: Rifle
+weapon_type: hitscan
+magazine_size: 30
+damage: 25
+cooldown_ticks: 3
+reload_ticks: 30
+max_range: 100.0

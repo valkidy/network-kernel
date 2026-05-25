@@ -106,6 +106,17 @@ bool Kernel_ServerClearEntityWeaponMechanics(
     uint32_t net_id,
     uint8_t weapon_id);
 
+bool Kernel_ServerGetEntityWeaponMechanics(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    uint8_t weapon_id,
+    KernelWeaponMechanicsDefinition* out_weapon_mechanics);
+
+bool Kernel_ServerGetAreaEffectState(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    KernelAreaEffectState* out_state);
+
 bool Kernel_ServerValidateMechanicsConfig(
     const KernelWeaponMechanicsDefinition* weapon_mechanics);
 

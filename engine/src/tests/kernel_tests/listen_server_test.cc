@@ -109,6 +109,10 @@ KernelWeaponMechanicsDefinition projectile_weapon(
     weapon.projectile.speed = speed;
     weapon.projectile.lifetime_seconds = 3.0f;
     weapon.projectile.explosion_radius = 4.0f;
+    weapon.projectile.hit_response = KernelProjectileHitResponse_Destroy;
+    weapon.projectile.damage_shape = KernelProjectileDamageShape_Explosion;
+    weapon.projectile.collision_mask = KERNEL_COLLISION_MASK_DAMAGEABLE;
+    weapon.projectile.max_hit_count = 1;
     if (motion_model == KernelProjectileMotionModel_Parabolic) {
         weapon.projectile.gravity = KernelVec3{0.0f, -9.8f, 0.0f};
     }

@@ -308,6 +308,12 @@ NetId fire_projectile(
         projectile_state.client_action_id = client_action_id;
         projectile_state.shooter_net_id = shooter_net_id;
         projectile_state.motion_model = definition.projectile_motion_model;
+        projectile_state.hit_response = definition.projectile_hit_response;
+        projectile_state.damage_shape = definition.projectile_damage_shape;
+        projectile_state.collision_mask = definition.projectile_collision_mask;
+        projectile_state.max_hit_count =
+            std::max(1u, definition.projectile_max_hit_count);
+        projectile_state.hit_count = 0;
         projectile_state.explosion_radius = definition.explosion_radius;
         projectile_state.max_lifetime_seconds = definition.projectile_lifetime_seconds;
         projectile_state.age_seconds = age_seconds;
@@ -324,6 +330,37 @@ NetId fire_projectile(
         shooter_peer_id,
         static_cast<std::uint32_t>(EntityType::kProjectile));
     return projectile;
+}
+
+NetId fire_area_effect(
+    World& world,
+    const WeaponMechanicsDefinition& definition,
+    std::uint32_t current_tick,
+    PeerId owner_peer,
+    const glm::vec3& origin,
+    const glm::vec3& direction,
+    std::vector<KernelEvent>* events) {
+    const glm::vec3 position =
+        origin + direction * definition.area_effect_spawn_distance;
+    const std::uint32_t expire_tick =
+        current_tick + std::max(1u, definition.area_effect_lifetime_ticks);
+    const NetId area_effect = world.spawn_area_effect(
+        owner_peer,
+        position,
+        definition.area_effect_radius,
+        definition.area_effect_damage_interval_ticks,
+        expire_tick,
+        definition.area_effect_damage_per_interval,
+        definition.id,
+        definition.area_effect_collision_mask);
+    push_event(
+        events,
+        KernelEventType_EntitySpawned,
+        current_tick,
+        area_effect,
+        owner_peer,
+        static_cast<std::uint32_t>(EntityType::kAreaEffect));
+    return area_effect;
 }
 
 void complete_all_reloads(World& world, std::uint32_t current_tick) {
@@ -434,7 +471,7 @@ void simulate_weapons(
                         events,
                         damage_pipeline);
                 }
-            } else {
+            } else if (definition->mode == WeaponFireMode::kProjectile) {
                 const Hitbox& shooter_hitbox = player_view.get<Hitbox>(player_entity);
                 const glm::vec3 compensated_origin =
                     compensated_projectile_origin(
@@ -485,6 +522,15 @@ void simulate_weapons(
                             damage_pipeline);
                     }
                 }
+            } else if (definition->mode == WeaponFireMode::kAreaEffect) {
+                fire_area_effect(
+                    world,
+                    *definition,
+                    current_tick,
+                    queued_input.owner_peer,
+                    origin,
+                    direction,
+                    events);
             }
         }
     }

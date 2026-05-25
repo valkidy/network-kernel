@@ -12,6 +12,7 @@ namespace network_example {
 struct QueryFilter {
     NetId ignored_net_id = 0;
     PeerId ignored_owner_peer = 0;
+    std::uint32_t collision_mask = kCollisionMaskDamageable;
     bool include_projectiles = false;
     bool include_area_effects = false;
 };

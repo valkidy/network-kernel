@@ -14,6 +14,7 @@ inline constexpr std::uint8_t kWeaponRifle = 0;
 inline constexpr std::uint8_t kWeaponShotgun = 1;
 inline constexpr std::uint8_t kWeaponGrenade = 2;
 inline constexpr std::uint8_t kWeaponRocket = 3;
+inline constexpr std::uint8_t kWeaponFireFloor = 4;
 inline constexpr std::size_t kWeaponCount = KERNEL_MAX_WEAPONS;
 
 struct EntityHealthDefinition {
@@ -43,6 +44,7 @@ struct EnemyGameplayDefinition {
 
 struct WeaponCatalogConfig {
     std::array<KernelWeaponMechanicsDefinition, kWeaponCount> definitions{};
+    std::array<std::string, kWeaponCount> names{};
 };
 
 struct GameServerGameplayConfig {
@@ -52,6 +54,8 @@ struct GameServerGameplayConfig {
 };
 
 GameServerGameplayConfig default_game_server_gameplay_config();
+GameServerGameplayConfig load_gameplay_config_from_weapon_template_directory(
+    const std::string& directory);
 std::vector<std::string> validate_gameplay_config(
     const GameServerGameplayConfig& config);
 

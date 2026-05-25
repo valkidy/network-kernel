@@ -66,6 +66,13 @@ public:
     bool server_clear_entity_weapon_mechanics(
         NetId net_id,
         std::uint8_t weapon_id);
+    bool server_get_entity_weapon_mechanics(
+        NetId net_id,
+        std::uint8_t weapon_id,
+        KernelWeaponMechanicsDefinition* out_weapon_mechanics) const;
+    bool server_get_area_effect_state(
+        NetId net_id,
+        KernelAreaEffectState* out_state) const;
     bool server_get_entity_state(
         NetId net_id,
         KernelServerEntityState* out_state) const;

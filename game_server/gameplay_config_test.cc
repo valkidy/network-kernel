@@ -40,6 +40,16 @@ int main() {
     assert(rocket.projectile.speed == 35.0f);
     assert(rocket.projectile.lifetime_seconds == 2.5f);
     assert(rocket.projectile.explosion_radius == 3.0f);
+    assert(rocket.projectile.damage_shape == KernelProjectileDamageShape_Explosion);
+
+    const KernelWeaponMechanicsDefinition& fire_floor =
+        config.weapons.definitions[network_example::game_server::kWeaponFireFloor];
+    assert(fire_floor.weapon_id == network_example::game_server::kWeaponFireFloor);
+    assert(fire_floor.fire_mode == KernelWeaponFireMode_AreaEffect);
+    assert(fire_floor.area_effect.radius == 2.0f);
+    assert(fire_floor.area_effect.collision_mask == KERNEL_COLLISION_LAYER_ENEMY);
+    assert(config.weapons.names[network_example::game_server::kWeaponFireFloor] ==
+           "Fire Floor");
 
     network_example::game_server::GameServerGameplayConfig invalid = config;
     invalid.weapons.definitions[0].damage = 0;
