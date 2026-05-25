@@ -5,6 +5,8 @@
 #include <utility>
 #include <vector>
 
+#include "simulation/public/collision_query.h"
+
 namespace network_example {
 namespace {
 
@@ -49,12 +51,6 @@ float distance_to_historical_hitbox(
     const glm::vec3 closest = glm::clamp(point, min_corner, max_corner);
     return glm::length(point - closest);
 }
-
-struct ProjectileHitRecord {
-    NetId target_net_id = 0;
-    float distance = 0.0f;
-    glm::vec3 impact_position{0.0f, 0.0f, 0.0f};
-};
 
 void apply_historical_explosion_damage(
     World& world,
@@ -173,67 +169,6 @@ void explode_projectile(
     }
 }
 
-std::vector<ProjectileHitRecord> collect_projectile_sweep_hits(
-    World& world,
-    entt::entity projectile_entity,
-    PeerId owner_peer,
-    NetId ignored_net_id,
-    const glm::vec3& previous_position,
-    const glm::vec3& current_position) {
-    const glm::vec3 displacement = current_position - previous_position;
-    const float length = glm::length(displacement);
-    if (length <= 0.0001f) {
-        return {};
-    }
-    const glm::vec3 direction = displacement / length;
-
-    std::vector<ProjectileHitRecord> hits;
-    auto target_view = world.registry().view<NetworkIdentity, Transform, Health, Hitbox>();
-    for (const entt::entity target_entity : target_view) {
-        if (target_entity == projectile_entity ||
-            world.registry().all_of<ProjectileTag>(target_entity)) {
-            continue;
-        }
-
-        const NetworkIdentity& target_identity =
-            target_view.get<NetworkIdentity>(target_entity);
-        if (target_identity.net_id == ignored_net_id) {
-            continue;
-        }
-        if (owner_peer != 0 && target_identity.owner_peer == owner_peer) {
-            continue;
-        }
-
-        const Transform& target_transform = target_view.get<Transform>(target_entity);
-        const Hitbox& hitbox = target_view.get<Hitbox>(target_entity);
-        float distance = 0.0f;
-        if (ray_intersects_aabb(
-                previous_position,
-                direction,
-                target_transform.position + hitbox.center,
-                hitbox.half_extents,
-                &distance) &&
-            distance <= length) {
-            hits.push_back(ProjectileHitRecord{
-                target_identity.net_id,
-                distance,
-                previous_position + direction * distance,
-            });
-        }
-    }
-
-    std::sort(
-        hits.begin(),
-        hits.end(),
-        [](const ProjectileHitRecord& lhs, const ProjectileHitRecord& rhs) {
-            if (lhs.distance != rhs.distance) {
-                return lhs.distance < rhs.distance;
-            }
-            return lhs.target_net_id < rhs.target_net_id;
-        });
-    return hits;
-}
-
 std::uint64_t tick_time_us(std::uint32_t tick, float fixed_delta_seconds) {
     return static_cast<std::uint64_t>(
         static_cast<double>(tick) * static_cast<double>(fixed_delta_seconds) *
@@ -312,16 +247,17 @@ void simulate_projectiles(
             next_age_seconds);
         projectile.age_seconds = next_age_seconds;
 
-        const std::vector<ProjectileHitRecord> hits = collect_projectile_sweep_hits(
+        QueryFilter filter;
+        filter.ignored_net_id = projectile.shooter_net_id;
+        filter.ignored_owner_peer = identity.owner_peer;
+        const std::vector<QueryHit> hits = collect_segment_hits(
             world,
-            entity,
-            identity.owner_peer,
-            projectile.shooter_net_id,
             projectile.previous_position,
-            transform.position);
+            transform.position,
+            filter);
         const bool hit_target = !hits.empty();
         const glm::vec3 impact_position =
-            hit_target ? hits.front().impact_position : transform.position;
+            hit_target ? hits.front().position : transform.position;
         const bool expired = projectile.max_lifetime_seconds > 0.0f &&
                              projectile.age_seconds >= projectile.max_lifetime_seconds;
         if (!hit_target && !expired) {
@@ -336,7 +272,7 @@ void simulate_projectiles(
                 current_tick,
                 0,
                 identity.net_id,
-                hits.front().target_net_id,
+                hits.front().net_id,
                 identity.owner_peer,
                 projectile.weapon_id,
                 projectile.damage,

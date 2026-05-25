@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <unordered_map>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -18,6 +19,7 @@ enum class EntityType : std::uint16_t {
     kPlayer = 1,
     kEnemy = 2,
     kProjectile = 3,
+    kAreaEffect = 4,
 };
 
 struct NetworkIdentity {
@@ -46,6 +48,7 @@ struct Health {
 struct PlayerTag {};
 struct EnemyTag {};
 struct ProjectileTag {};
+struct AreaEffectTag {};
 
 inline constexpr std::size_t kWeaponCount = 4;
 inline constexpr std::uint8_t kWeaponSlot0 = 0;
@@ -117,6 +120,15 @@ struct ProjectileState {
     // snapshots plus render-side correction after a physics module exists.
     glm::vec3 gravity{0.0f, 0.0f, 0.0f};
     glm::vec3 previous_position{0.0f, 0.0f, 0.0f};
+};
+
+struct AreaEffectState {
+    float radius = 0.0f;
+    std::uint16_t damage_per_interval = 0;
+    std::uint32_t damage_interval_ticks = 1;
+    std::uint32_t expire_tick = 0;
+    std::uint8_t source_code = 0;
+    std::unordered_map<NetId, std::uint32_t> next_damage_tick_by_target;
 };
 
 struct MovementState {

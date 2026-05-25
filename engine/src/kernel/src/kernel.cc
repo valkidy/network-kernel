@@ -1765,6 +1765,12 @@ void KernelEngine::simulate_tick() {
         tick_loop_.current_tick(),
         &events_,
         &damage_pipeline_);
+    simulate_area_effects(
+        world_,
+        tick_loop_.current_tick(),
+        server_time_us,
+        &events_,
+        &damage_pipeline_);
     damage_pipeline_.confirm_ready(
         world_,
         server_time_us,

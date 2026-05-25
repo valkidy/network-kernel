@@ -2,7 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
-#include <limits>
+
+#include "simulation/public/collision_query.h"
 
 namespace network_example {
 namespace {
@@ -337,45 +338,6 @@ void complete_all_reloads(World& world, std::uint32_t current_tick) {
 }
 
 }  // namespace
-
-bool ray_intersects_aabb(
-    const glm::vec3& ray_origin,
-    const glm::vec3& ray_direction,
-    const glm::vec3& box_center,
-    const glm::vec3& box_half_extents,
-    float* out_distance) {
-    float t_min = 0.0f;
-    float t_max = std::numeric_limits<float>::max();
-    const glm::vec3 min_corner = box_center - box_half_extents;
-    const glm::vec3 max_corner = box_center + box_half_extents;
-
-    for (int axis = 0; axis < 3; ++axis) {
-        const float origin = ray_origin[axis];
-        const float direction = ray_direction[axis];
-        if (std::abs(direction) < 0.000001f) {
-            if (origin < min_corner[axis] || origin > max_corner[axis]) {
-                return false;
-            }
-            continue;
-        }
-
-        float t1 = (min_corner[axis] - origin) / direction;
-        float t2 = (max_corner[axis] - origin) / direction;
-        if (t1 > t2) {
-            std::swap(t1, t2);
-        }
-        t_min = std::max(t_min, t1);
-        t_max = std::min(t_max, t2);
-        if (t_min > t_max) {
-            return false;
-        }
-    }
-
-    if (out_distance != nullptr) {
-        *out_distance = t_min;
-    }
-    return true;
-}
 
 void simulate_weapons(
     World& world,

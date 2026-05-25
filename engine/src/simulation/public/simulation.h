@@ -138,6 +138,17 @@ void simulate_projectiles(
     std::uint32_t current_tick,
     std::vector<KernelEvent>* events,
     DamagePipeline* damage_pipeline);
+void simulate_area_effects(
+    World& world,
+    std::uint32_t current_tick,
+    std::vector<KernelEvent>* events,
+    DamagePipeline* damage_pipeline);
+void simulate_area_effects(
+    World& world,
+    std::uint32_t current_tick,
+    std::uint64_t server_time_us,
+    std::vector<KernelEvent>* events,
+    DamagePipeline* damage_pipeline);
 bool resolve_projectile_historical_hit(
     World& world,
     const HistoryBuffer& history_buffer,
@@ -152,13 +163,6 @@ bool resolve_projectile_historical_hit(
     float fixed_delta_seconds,
     std::vector<KernelEvent>* events,
     DamagePipeline* damage_pipeline);
-
-bool ray_intersects_aabb(
-    const glm::vec3& ray_origin,
-    const glm::vec3& ray_direction,
-    const glm::vec3& box_center,
-    const glm::vec3& box_half_extents,
-    float* out_distance);
 
 void simulate_hitscan_weapons(
     World& world,
