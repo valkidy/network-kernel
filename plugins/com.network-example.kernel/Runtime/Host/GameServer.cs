@@ -7,6 +7,11 @@ namespace NetworkExample.Kernel.Host
         private IntPtr handle;
 
         public GameServer(Kernel kernel)
+            : this(kernel, null)
+        {
+        }
+
+        public GameServer(Kernel kernel, string templateDirectory)
         {
             if (kernel == null)
             {
@@ -14,7 +19,11 @@ namespace NetworkExample.Kernel.Host
             }
 
             GameServerAbi.ValidateNativeAbi();
-            handle = GameServerNative.GameServer_Create(kernel.Handle);
+            handle = string.IsNullOrEmpty(templateDirectory)
+                ? GameServerNative.GameServer_Create(kernel.Handle)
+                : GameServerNative.GameServer_CreateWithWeaponTemplateDirectory(
+                    kernel.Handle,
+                    templateDirectory);
             if (handle == IntPtr.Zero)
             {
                 throw new InvalidOperationException("GameServer_Create failed.");
@@ -42,6 +51,21 @@ namespace NetworkExample.Kernel.Host
         {
             ThrowIfDisposed();
             GameServerNative.GameServer_Tick(handle, deltaSeconds);
+        }
+
+        public bool QueryWeaponTemplate(
+            byte weaponId,
+            out GameServerWeaponTemplateInfo templateInfo)
+        {
+            ThrowIfDisposed();
+            templateInfo = new GameServerWeaponTemplateInfo
+            {
+                struct_size = GameServerWeaponTemplateInfo.StructSize,
+            };
+            return GameServerNative.GameServer_QueryWeaponTemplate(
+                handle,
+                weaponId,
+                ref templateInfo);
         }
 
         public void DespawnAll(KernelDespawnReason reason)

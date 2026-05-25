@@ -37,10 +37,22 @@ namespace NetworkExample.Kernel
                 info,
                 GameServerConstants.CapabilityDespawnAll,
                 "Game server despawn-all capability is missing.");
+            RequireCapability(
+                info,
+                GameServerConstants.CapabilityWeaponTemplateDirectory,
+                "Game server weapon-template-directory capability is missing.");
+            RequireCapability(
+                info,
+                GameServerConstants.CapabilityWeaponTemplateQuery,
+                "Game server weapon-template-query capability is missing.");
             RequireSize(
                 nameof(GameServerAbiInfo),
                 info.struct_size,
                 Marshal.SizeOf<GameServerAbiInfo>());
+            RequireSize(
+                nameof(GameServerWeaponTemplateInfo),
+                info.weapon_template_info_size,
+                Marshal.SizeOf<GameServerWeaponTemplateInfo>());
         }
 
         private static void RequireCapability(

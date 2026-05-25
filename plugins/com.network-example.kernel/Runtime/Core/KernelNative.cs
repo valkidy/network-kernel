@@ -106,10 +106,72 @@ namespace NetworkExample.Kernel
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerSubmitEntityInput(
+            IntPtr kernel,
+            uint netId,
+            ref PlayerInput input);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
         internal static extern bool Kernel_ServerGetEntityState(
             IntPtr kernel,
             uint netId,
             ref KernelServerEntityState outState);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerSetEntityCombatState(
+            IntPtr kernel,
+            uint netId,
+            ref KernelCombatStateDefinition combatState);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerSetEntityWeaponMechanics(
+            IntPtr kernel,
+            uint netId,
+            ref KernelWeaponMechanicsDefinition weaponMechanics);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerClearEntityWeaponMechanics(
+            IntPtr kernel,
+            uint netId,
+            byte weaponId);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerGetEntityWeaponMechanics(
+            IntPtr kernel,
+            uint netId,
+            byte weaponId,
+            ref KernelWeaponMechanicsDefinition outWeaponMechanics);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerGetAreaEffectState(
+            IntPtr kernel,
+            uint netId,
+            ref KernelAreaEffectState outState);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerGetBeamState(
+            IntPtr kernel,
+            uint netId,
+            ref KernelBeamState outState);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerGetHomingState(
+            IntPtr kernel,
+            uint netId,
+            ref KernelHomingState outState);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerValidateMechanicsConfig(
+            ref KernelWeaponMechanicsDefinition weaponMechanics);
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern uint Kernel_ServerQueryEntities(

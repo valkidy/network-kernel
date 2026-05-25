@@ -173,6 +173,12 @@ namespace NetworkExample.Kernel
                 visualFlags);
         }
 
+        public bool ServerSubmitEntityInput(uint netId, PlayerInput input)
+        {
+            ThrowIfDisposed();
+            return KernelNative.Kernel_ServerSubmitEntityInput(handle, netId, ref input);
+        }
+
         public bool ServerGetEntityState(uint netId, out KernelServerEntityState state)
         {
             ThrowIfDisposed();
@@ -181,6 +187,93 @@ namespace NetworkExample.Kernel
                 struct_size = KernelServerEntityState.StructSize,
             };
             return KernelNative.Kernel_ServerGetEntityState(handle, netId, ref state);
+        }
+
+        public bool ServerSetEntityCombatState(
+            uint netId,
+            KernelCombatStateDefinition combatState)
+        {
+            ThrowIfDisposed();
+            PrepareCombatState(ref combatState);
+            return KernelNative.Kernel_ServerSetEntityCombatState(
+                handle,
+                netId,
+                ref combatState);
+        }
+
+        public bool ServerSetEntityWeaponMechanics(
+            uint netId,
+            KernelWeaponMechanicsDefinition weaponMechanics)
+        {
+            ThrowIfDisposed();
+            PrepareWeaponMechanics(ref weaponMechanics);
+            return KernelNative.Kernel_ServerSetEntityWeaponMechanics(
+                handle,
+                netId,
+                ref weaponMechanics);
+        }
+
+        public bool ServerClearEntityWeaponMechanics(uint netId, byte weaponId)
+        {
+            ThrowIfDisposed();
+            return KernelNative.Kernel_ServerClearEntityWeaponMechanics(
+                handle,
+                netId,
+                weaponId);
+        }
+
+        public bool ServerGetEntityWeaponMechanics(
+            uint netId,
+            byte weaponId,
+            out KernelWeaponMechanicsDefinition weaponMechanics)
+        {
+            ThrowIfDisposed();
+            weaponMechanics = new KernelWeaponMechanicsDefinition
+            {
+                struct_size = KernelWeaponMechanicsDefinition.StructSize,
+            };
+            return KernelNative.Kernel_ServerGetEntityWeaponMechanics(
+                handle,
+                netId,
+                weaponId,
+                ref weaponMechanics);
+        }
+
+        public bool ServerGetAreaEffectState(uint netId, out KernelAreaEffectState state)
+        {
+            ThrowIfDisposed();
+            state = new KernelAreaEffectState
+            {
+                struct_size = KernelAreaEffectState.StructSize,
+            };
+            return KernelNative.Kernel_ServerGetAreaEffectState(handle, netId, ref state);
+        }
+
+        public bool ServerGetBeamState(uint netId, out KernelBeamState state)
+        {
+            ThrowIfDisposed();
+            state = new KernelBeamState
+            {
+                struct_size = KernelBeamState.StructSize,
+            };
+            return KernelNative.Kernel_ServerGetBeamState(handle, netId, ref state);
+        }
+
+        public bool ServerGetHomingState(uint netId, out KernelHomingState state)
+        {
+            ThrowIfDisposed();
+            state = new KernelHomingState
+            {
+                struct_size = KernelHomingState.StructSize,
+            };
+            return KernelNative.Kernel_ServerGetHomingState(handle, netId, ref state);
+        }
+
+        public static bool ServerValidateMechanicsConfig(
+            KernelWeaponMechanicsDefinition weaponMechanics)
+        {
+            PrepareWeaponMechanics(ref weaponMechanics);
+            return KernelNative.Kernel_ServerValidateMechanicsConfig(ref weaponMechanics);
         }
 
         public uint ServerQueryEntities(
@@ -198,6 +291,27 @@ namespace NetworkExample.Kernel
                 (ushort)entityTypeFilter,
                 states,
                 (uint)states.Length);
+        }
+
+        private static void PrepareCombatState(ref KernelCombatStateDefinition combatState)
+        {
+            combatState.struct_size = KernelCombatStateDefinition.StructSize;
+            if (combatState.ammo == null ||
+                combatState.ammo.Length != KernelConstants.MaxWeapons)
+            {
+                combatState.ammo = new ushort[KernelConstants.MaxWeapons];
+            }
+            if (combatState.reserve_ammo == null ||
+                combatState.reserve_ammo.Length != KernelConstants.MaxWeapons)
+            {
+                combatState.reserve_ammo = new ushort[KernelConstants.MaxWeapons];
+            }
+        }
+
+        private static void PrepareWeaponMechanics(
+            ref KernelWeaponMechanicsDefinition weaponMechanics)
+        {
+            weaponMechanics.struct_size = KernelWeaponMechanicsDefinition.StructSize;
         }
 
         private void Dispose(bool disposing)

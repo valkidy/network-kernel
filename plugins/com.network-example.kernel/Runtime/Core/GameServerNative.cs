@@ -15,6 +15,11 @@ namespace NetworkExample.Kernel
         internal static extern IntPtr GameServer_Create(IntPtr kernel);
 
         [DllImport(KernelNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr GameServer_CreateWithWeaponTemplateDirectory(
+            IntPtr kernel,
+            [MarshalAs(UnmanagedType.LPStr)] string templateDirectory);
+
+        [DllImport(KernelNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern void GameServer_Destroy(IntPtr gameServer);
 
         [DllImport(KernelNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
@@ -27,6 +32,13 @@ namespace NetworkExample.Kernel
 
         [DllImport(KernelNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern uint GameServer_GetEnemyCount(IntPtr gameServer);
+
+        [DllImport(KernelNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool GameServer_QueryWeaponTemplate(
+            IntPtr gameServer,
+            byte weaponId,
+            ref GameServerWeaponTemplateInfo outInfo);
 
         [DllImport(KernelNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern void GameServer_DespawnAll(
