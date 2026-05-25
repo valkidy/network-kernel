@@ -59,6 +59,11 @@ and MaxHP to Unity render states` for visible ABI/API changes. Only omit
 
 - The script must run on `feat-unity-plugin`; it stops immediately on any other
   branch and reports the current branch.
+- For compatibility testing only, integration branches named `integration/*`
+  may run the script when
+  `UNITY_PACKAGE_BUILDER_ALLOW_INTEGRATION_BRANCH=1` is set. This override
+  requires `--auto-commit off` and must not be used for official package
+  publishing.
 - Stop and ask before switching branches.
 - Stop and ask before overwriting unrelated dirty files under
   `plugins/com.network-example.kernel/`, `engine/src/kernel/`, or this skill.
@@ -89,7 +94,10 @@ Default behavior:
    `plugins/com.network-example.kernel/Assets/Plugins/macOS/`.
 3. Ad-hoc sign the staged dylib and remove any GateKeeper quarantine attribute.
 4. Verify package layout, C/C# ABI version alignment, and required exported
-   `Kernel_*` symbols.
+   `Kernel_*` symbols. Export checks are ABI-aware: the v8 baseline remains
+   compatible with the long-lived Unity plugin branch, while ABI 9-12 and
+   GameServer ABI 2 symbols are required when the native headers report those
+   versions.
 5. Pack a clean UPM tarball in
    `plugins/output`.
 6. Optionally run Unity batchmode ABI smoke if Unity is auto-detected and the
