@@ -48,6 +48,9 @@ public:
 
     std::optional<entt::entity> find_entity(NetId net_id) const;
     std::vector<NetId> net_ids() const;
+    void add_projectile_interaction_rule(const ProjectileInteractionRule& rule);
+    void clear_projectile_interaction_rules();
+    const std::vector<ProjectileInteractionRule>& projectile_interaction_rules() const;
 
     entt::registry& registry();
     const entt::registry& registry() const;
@@ -61,6 +64,7 @@ private:
 
     entt::registry registry_;
     std::unordered_map<NetId, entt::entity> entities_by_net_id_;
+    std::vector<ProjectileInteractionRule> projectile_interaction_rules_;
     NetId next_net_id_ = 1;
 };
 

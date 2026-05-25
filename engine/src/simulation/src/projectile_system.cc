@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -358,6 +359,349 @@ void advance_homing_projectile(
     projectile.age_seconds = next_age_seconds;
 }
 
+struct ProjectileHitRecord {
+    NetId projectile_net_id = 0;
+    NetId target_net_id = 0;
+    QueryHit hit{};
+    std::uint32_t sequence_id = 0;
+};
+
+struct ProjectileHitOutcome {
+    bool destroy_projectile = false;
+};
+
+struct ProjectileEntityRef {
+    NetId net_id = 0;
+    entt::entity entity = entt::null;
+};
+
+struct ProjectileInteractionMatch {
+    NetId lhs_net_id = 0;
+    NetId rhs_net_id = 0;
+    glm::vec3 position{0.0f, 0.0f, 0.0f};
+    const ProjectileInteractionRule* rule = nullptr;
+    bool lhs_is_rule_lhs = true;
+};
+
+std::vector<ProjectileEntityRef> sorted_projectile_entities(World& world) {
+    std::vector<ProjectileEntityRef> projectiles;
+    auto view = world.registry().view<NetworkIdentity, ProjectileState, ProjectileTag>();
+    for (const entt::entity entity : view) {
+        projectiles.push_back(ProjectileEntityRef{
+            view.get<NetworkIdentity>(entity).net_id,
+            entity,
+        });
+    }
+    std::sort(
+        projectiles.begin(),
+        projectiles.end(),
+        [](const ProjectileEntityRef& lhs, const ProjectileEntityRef& rhs) {
+            return lhs.net_id < rhs.net_id;
+        });
+    return projectiles;
+}
+
+bool contains_net_id(const std::vector<NetId>& net_ids, NetId net_id) {
+    return std::find(net_ids.begin(), net_ids.end(), net_id) != net_ids.end();
+}
+
+void push_unique_net_id(std::vector<NetId>* net_ids, NetId net_id) {
+    if (!contains_net_id(*net_ids, net_id)) {
+        net_ids->push_back(net_id);
+    }
+}
+
+std::vector<ProjectileHitRecord> make_projectile_hit_records(
+    NetId projectile_net_id,
+    const std::vector<QueryHit>& hits) {
+    std::vector<ProjectileHitRecord> records;
+    records.reserve(hits.size());
+    std::uint32_t sequence_id = 0;
+    for (const QueryHit& hit : hits) {
+        records.push_back(ProjectileHitRecord{
+            projectile_net_id,
+            hit.net_id,
+            hit,
+            sequence_id++,
+        });
+    }
+    return records;
+}
+
+ProjectileHitOutcome process_projectile_hit_records(
+    World& world,
+    const NetworkIdentity& identity,
+    ProjectileState& projectile,
+    const std::vector<ProjectileHitRecord>& records,
+    const glm::vec3& fallback_position,
+    std::uint32_t current_tick,
+    std::uint64_t hit_time_us,
+    std::vector<KernelEvent>* events,
+    DamagePipeline* damage_pipeline) {
+    ProjectileHitOutcome outcome{};
+    if (records.empty()) {
+        return outcome;
+    }
+
+    if (projectile.hit_response == ProjectileHitResponse::kContinue &&
+        projectile.damage_shape == ProjectileDamageShape::kPiercingSegment &&
+        projectile.damage > 0) {
+        for (const ProjectileHitRecord& record : records) {
+            if (projectile.hit_count >= projectile.max_hit_count) {
+                break;
+            }
+            damage_pipeline->submit_damage_request(DamageRequest{
+                current_tick,
+                record.sequence_id,
+                identity.net_id,
+                record.target_net_id,
+                identity.owner_peer,
+                projectile.weapon_id,
+                projectile.damage,
+                hit_time_us,
+                record.hit.position,
+            });
+            ++projectile.hit_count;
+        }
+        outcome.destroy_projectile = projectile.hit_count >= projectile.max_hit_count;
+        return outcome;
+    }
+
+    const glm::vec3 impact_position =
+        records.empty() ? fallback_position : records.front().hit.position;
+    if (projectile.damage_shape == ProjectileDamageShape::kExplosion ||
+        projectile.explosion_radius > 0.0f) {
+        explode_projectile(
+            world,
+            identity.net_id,
+            identity.owner_peer,
+            projectile,
+            impact_position,
+            current_tick,
+            hit_time_us,
+            events,
+            damage_pipeline);
+    } else if (projectile.damage_shape == ProjectileDamageShape::kDirectHit &&
+               projectile.damage > 0) {
+        damage_pipeline->submit_damage_request(DamageRequest{
+            current_tick,
+            0,
+            identity.net_id,
+            records.front().target_net_id,
+            identity.owner_peer,
+            projectile.weapon_id,
+            projectile.damage,
+            hit_time_us,
+            impact_position,
+        });
+    }
+
+    outcome.destroy_projectile = true;
+    return outcome;
+}
+
+std::optional<ProjectileInteractionMatch> match_projectile_interaction_rule(
+    const std::vector<ProjectileInteractionRule>& rules,
+    NetId lhs_net_id,
+    const ProjectileState& lhs_projectile,
+    NetId rhs_net_id,
+    const ProjectileState& rhs_projectile,
+    const glm::vec3& position) {
+    for (const ProjectileInteractionRule& rule : rules) {
+        if (rule.lhs_weapon_id == lhs_projectile.weapon_id &&
+            rule.rhs_weapon_id == rhs_projectile.weapon_id) {
+            return ProjectileInteractionMatch{
+                lhs_net_id,
+                rhs_net_id,
+                position,
+                &rule,
+                true,
+            };
+        }
+        if (rule.symmetric &&
+            rule.lhs_weapon_id == rhs_projectile.weapon_id &&
+            rule.rhs_weapon_id == lhs_projectile.weapon_id) {
+            return ProjectileInteractionMatch{
+                lhs_net_id,
+                rhs_net_id,
+                position,
+                &rule,
+                false,
+            };
+        }
+    }
+    return std::nullopt;
+}
+
+bool projectile_can_interact_with_projectiles(const ProjectileState& projectile) {
+    return (projectile.collision_mask & kCollisionLayerProjectile) != 0;
+}
+
+void collect_projectile_interaction_matches(
+    World& world,
+    std::vector<ProjectileInteractionMatch>* matches) {
+    matches->clear();
+    if (world.projectile_interaction_rules().empty()) {
+        return;
+    }
+
+    const std::vector<ProjectileEntityRef> projectiles =
+        sorted_projectile_entities(world);
+    for (const ProjectileEntityRef& ref : projectiles) {
+        if (!world.registry().valid(ref.entity) ||
+            !world.registry().all_of<NetworkIdentity, Transform, ProjectileState>(
+                ref.entity)) {
+            continue;
+        }
+        const NetworkIdentity& identity =
+            world.registry().get<NetworkIdentity>(ref.entity);
+        const Transform& transform = world.registry().get<Transform>(ref.entity);
+        const ProjectileState& projectile =
+            world.registry().get<ProjectileState>(ref.entity);
+        if (!projectile_can_interact_with_projectiles(projectile)) {
+            continue;
+        }
+
+        QueryFilter filter;
+        filter.ignored_net_id = identity.net_id;
+        filter.ignored_owner_peer = identity.owner_peer;
+        filter.collision_mask = projectile.collision_mask;
+        filter.include_projectiles = true;
+        const std::vector<QueryHit> hits = collect_segment_hits(
+            world,
+            projectile.previous_position,
+            transform.position,
+            filter);
+        for (const QueryHit& hit : hits) {
+            if (hit.entity_type != EntityType::kProjectile) {
+                continue;
+            }
+            const NetId first = std::min(identity.net_id, hit.net_id);
+            const NetId second = std::max(identity.net_id, hit.net_id);
+            const auto duplicate = std::find_if(
+                matches->begin(),
+                matches->end(),
+                [first, second](const ProjectileInteractionMatch& match) {
+                    return std::min(match.lhs_net_id, match.rhs_net_id) == first &&
+                           std::max(match.lhs_net_id, match.rhs_net_id) == second;
+                });
+            if (duplicate != matches->end()) {
+                continue;
+            }
+
+            const auto target_entity = world.find_entity(hit.net_id);
+            if (!target_entity.has_value() ||
+                !world.registry().all_of<NetworkIdentity, ProjectileState>(
+                    *target_entity)) {
+                continue;
+            }
+            const NetworkIdentity& target_identity =
+                world.registry().get<NetworkIdentity>(*target_entity);
+            if (identity.owner_peer != 0 &&
+                identity.owner_peer == target_identity.owner_peer) {
+                continue;
+            }
+            const ProjectileState& target_projectile =
+                world.registry().get<ProjectileState>(*target_entity);
+            if (!projectile_can_interact_with_projectiles(target_projectile)) {
+                continue;
+            }
+
+            const std::optional<ProjectileInteractionMatch> match =
+                match_projectile_interaction_rule(
+                    world.projectile_interaction_rules(),
+                    identity.net_id,
+                    projectile,
+                    hit.net_id,
+                    target_projectile,
+                    hit.position);
+            if (match.has_value()) {
+                matches->push_back(*match);
+            }
+        }
+    }
+
+    std::sort(
+        matches->begin(),
+        matches->end(),
+        [](const ProjectileInteractionMatch& lhs,
+           const ProjectileInteractionMatch& rhs) {
+            const NetId lhs_min = std::min(lhs.lhs_net_id, lhs.rhs_net_id);
+            const NetId lhs_max = std::max(lhs.lhs_net_id, lhs.rhs_net_id);
+            const NetId rhs_min = std::min(rhs.lhs_net_id, rhs.rhs_net_id);
+            const NetId rhs_max = std::max(rhs.lhs_net_id, rhs.rhs_net_id);
+            if (lhs_min != rhs_min) {
+                return lhs_min < rhs_min;
+            }
+            return lhs_max < rhs_max;
+        });
+}
+
+void process_projectile_interactions(
+    World& world,
+    std::uint32_t current_tick,
+    float fixed_delta_seconds,
+    std::vector<KernelEvent>* events,
+    std::vector<NetId>* projectiles_to_destroy) {
+    std::vector<ProjectileInteractionMatch> matches;
+    collect_projectile_interaction_matches(world, &matches);
+    std::vector<NetId> consumed_projectiles;
+    for (const ProjectileInteractionMatch& match : matches) {
+        if (contains_net_id(consumed_projectiles, match.lhs_net_id) ||
+            contains_net_id(consumed_projectiles, match.rhs_net_id)) {
+            continue;
+        }
+        if (match.rule == nullptr) {
+            continue;
+        }
+
+        const bool destroy_lhs = match.lhs_is_rule_lhs ? match.rule->destroy_lhs
+                                                       : match.rule->destroy_rhs;
+        const bool destroy_rhs = match.lhs_is_rule_lhs ? match.rule->destroy_rhs
+                                                       : match.rule->destroy_lhs;
+        if (destroy_lhs) {
+            push_unique_net_id(projectiles_to_destroy, match.lhs_net_id);
+            push_unique_net_id(&consumed_projectiles, match.lhs_net_id);
+        }
+        if (destroy_rhs) {
+            push_unique_net_id(projectiles_to_destroy, match.rhs_net_id);
+            push_unique_net_id(&consumed_projectiles, match.rhs_net_id);
+        }
+
+        if (match.rule->area_effect.enabled) {
+            const NetId source_net_id =
+                match.lhs_is_rule_lhs ? match.lhs_net_id : match.rhs_net_id;
+            PeerId owner_peer = 0;
+            const auto source_entity = world.find_entity(source_net_id);
+            if (source_entity.has_value() &&
+                world.registry().all_of<NetworkIdentity>(*source_entity)) {
+                owner_peer =
+                    world.registry().get<NetworkIdentity>(*source_entity).owner_peer;
+            }
+            const ProjectileInteractionAreaEffectSpawn& spawn =
+                match.rule->area_effect;
+            const NetId area_effect = world.spawn_area_effect(
+                owner_peer,
+                match.position,
+                spawn.radius,
+                spawn.damage_interval_ticks,
+                current_tick + spawn.lifetime_ticks,
+                spawn.damage_per_interval,
+                spawn.source_code,
+                spawn.collision_mask);
+            push_event(
+                events,
+                KernelEventType_EntitySpawned,
+                current_tick,
+                area_effect,
+                owner_peer,
+                static_cast<std::uint32_t>(EntityType::kAreaEffect),
+                tick_time_us(current_tick, fixed_delta_seconds),
+                tick_time_us(current_tick, fixed_delta_seconds));
+        }
+    }
+}
+
 }  // namespace
 
 glm::vec3 projectile_position_at(
@@ -408,6 +752,7 @@ void simulate_projectiles(
         active_damage_pipeline = &local_damage_pipeline;
     }
     std::vector<NetId> projectiles_to_destroy;
+
     auto view = world.registry().view<NetworkIdentity, Transform, Velocity, ProjectileState, ProjectileTag>();
     for (const entt::entity entity : view) {
         const NetworkIdentity& identity = view.get<NetworkIdentity>(entity);
@@ -443,6 +788,23 @@ void simulate_projectiles(
                 next_age_seconds);
             projectile.age_seconds = next_age_seconds;
         }
+    }
+
+    process_projectile_interactions(
+        world,
+        current_tick,
+        fixed_delta_seconds,
+        events,
+        &projectiles_to_destroy);
+
+    auto hit_view = world.registry().view<NetworkIdentity, Transform, ProjectileState, ProjectileTag>();
+    for (const entt::entity entity : hit_view) {
+        const NetworkIdentity& identity = hit_view.get<NetworkIdentity>(entity);
+        if (contains_net_id(projectiles_to_destroy, identity.net_id)) {
+            continue;
+        }
+        const Transform& transform = hit_view.get<Transform>(entity);
+        ProjectileState& projectile = hit_view.get<ProjectileState>(entity);
 
         QueryFilter filter;
         filter.ignored_net_id = projectile.shooter_net_id;
@@ -453,41 +815,29 @@ void simulate_projectiles(
             projectile.previous_position,
             transform.position,
             filter);
-        const bool hit_target = !hits.empty();
-        const glm::vec3 impact_position =
-            hit_target ? hits.front().position : transform.position;
         const bool expired = projectile.max_lifetime_seconds > 0.0f &&
                              projectile.age_seconds >= projectile.max_lifetime_seconds;
-        if (!hit_target && !expired) {
+        if (hits.empty() && !expired) {
             continue;
         }
 
         const std::uint64_t hit_time_us =
             tick_time_us(current_tick, fixed_delta_seconds);
-        if (hit_target &&
-            projectile.hit_response == ProjectileHitResponse::kContinue &&
-            projectile.damage_shape == ProjectileDamageShape::kPiercingSegment &&
-            projectile.damage > 0) {
-            std::uint32_t sequence_id = 0;
-            for (const QueryHit& hit : hits) {
-                if (projectile.hit_count >= projectile.max_hit_count) {
-                    break;
-                }
-                active_damage_pipeline->submit_damage_request(DamageRequest{
-                    current_tick,
-                    sequence_id++,
-                    identity.net_id,
-                    hit.net_id,
-                    identity.owner_peer,
-                    projectile.weapon_id,
-                    projectile.damage,
-                    hit_time_us,
-                    hit.position,
-                });
-                ++projectile.hit_count;
-            }
-            if (projectile.hit_count >= projectile.max_hit_count) {
-                projectiles_to_destroy.push_back(identity.net_id);
+        const std::vector<ProjectileHitRecord> records =
+            make_projectile_hit_records(identity.net_id, hits);
+        if (!records.empty()) {
+            const ProjectileHitOutcome outcome = process_projectile_hit_records(
+                world,
+                identity,
+                projectile,
+                records,
+                transform.position,
+                current_tick,
+                hit_time_us,
+                events,
+                active_damage_pipeline);
+            if (outcome.destroy_projectile) {
+                push_unique_net_id(&projectiles_to_destroy, identity.net_id);
             }
             continue;
         }
@@ -500,29 +850,19 @@ void simulate_projectiles(
                 identity.net_id,
                 identity.owner_peer,
                 projectile,
-                hit_target ? impact_position : transform.position,
+                transform.position,
                 current_tick,
                 hit_time_us,
                 events,
                 active_damage_pipeline);
-        } else if (hit_target &&
-                   projectile.damage_shape == ProjectileDamageShape::kDirectHit &&
-                   projectile.damage > 0) {
-            active_damage_pipeline->submit_damage_request(DamageRequest{
-                current_tick,
-                0,
-                identity.net_id,
-                hits.front().net_id,
-                identity.owner_peer,
-                projectile.weapon_id,
-                projectile.damage,
-                hit_time_us,
-                impact_position,
-            });
         }
-        projectiles_to_destroy.push_back(identity.net_id);
+        push_unique_net_id(&projectiles_to_destroy, identity.net_id);
     }
 
+    std::sort(projectiles_to_destroy.begin(), projectiles_to_destroy.end());
+    projectiles_to_destroy.erase(
+        std::unique(projectiles_to_destroy.begin(), projectiles_to_destroy.end()),
+        projectiles_to_destroy.end());
     for (NetId projectile : projectiles_to_destroy) {
         world.destroy(projectile);
     }

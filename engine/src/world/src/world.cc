@@ -39,6 +39,20 @@ std::vector<NetId> World::net_ids() const {
     return ids;
 }
 
+void World::add_projectile_interaction_rule(
+    const ProjectileInteractionRule& rule) {
+    projectile_interaction_rules_.push_back(rule);
+}
+
+void World::clear_projectile_interaction_rules() {
+    projectile_interaction_rules_.clear();
+}
+
+const std::vector<ProjectileInteractionRule>&
+World::projectile_interaction_rules() const {
+    return projectile_interaction_rules_;
+}
+
 entt::registry& World::registry() {
     return registry_;
 }

@@ -21,6 +21,9 @@ struct QueryHit {
     NetId net_id = 0;
     float distance = 0.0f;
     glm::vec3 position{0.0f, 0.0f, 0.0f};
+    glm::vec3 normal{0.0f, 0.0f, 0.0f};
+    EntityType entity_type = EntityType::kUnknown;
+    std::uint32_t collision_layer = 0;
 };
 
 std::uint32_t entity_collision_layer(const World& world, NetId net_id);

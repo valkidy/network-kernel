@@ -63,6 +63,10 @@ void segment_hits_are_sorted_by_distance_then_net_id() {
     require(hits[0].net_id == near);
     require(hits[1].net_id == far);
     require(hits[0].distance < hits[1].distance);
+    require(hits[0].entity_type == network_example::EntityType::kEnemy);
+    require(hits[0].collision_layer == network_example::kCollisionLayerEnemy);
+    require(glm::length(hits[0].normal) > 0.9f);
+    require(hits[0].normal.x < -0.9f);
 }
 
 void sphere_overlap_respects_default_exclusions() {
@@ -93,6 +97,45 @@ void sphere_overlap_respects_default_exclusions() {
 
     require(hits.size() == 1);
     require(hits[0].net_id == enemy);
+    require(hits[0].entity_type == network_example::EntityType::kEnemy);
+    require(hits[0].collision_layer == network_example::kCollisionLayerEnemy);
+    require(glm::length(hits[0].normal) > 0.9f);
+}
+
+void projectile_hits_require_explicit_inclusion() {
+    network_example::World world;
+    const network_example::NetId first =
+        world.spawn_projectile(1, glm::vec3{2.0f, 0.5f, 0.0f}, glm::vec3{0.0f});
+    const network_example::NetId second =
+        world.spawn_projectile(2, glm::vec3{3.0f, 0.5f, 0.0f}, glm::vec3{0.0f});
+    (void)first;
+    (void)second;
+
+    network_example::QueryFilter default_filter;
+    default_filter.collision_mask = network_example::kCollisionLayerProjectile;
+    const std::vector<network_example::QueryHit> default_hits =
+        network_example::collect_segment_hits(
+            world,
+            glm::vec3{0.0f, 0.5f, 0.0f},
+            glm::vec3{4.0f, 0.5f, 0.0f},
+            default_filter);
+    require(default_hits.empty());
+
+    network_example::QueryFilter projectile_filter = default_filter;
+    projectile_filter.include_projectiles = true;
+    const std::vector<network_example::QueryHit> projectile_hits =
+        network_example::collect_segment_hits(
+            world,
+            glm::vec3{0.0f, 0.5f, 0.0f},
+            glm::vec3{4.0f, 0.5f, 0.0f},
+            projectile_filter);
+
+    require(projectile_hits.size() == 2);
+    require(projectile_hits[0].net_id == first);
+    require(projectile_hits[1].net_id == second);
+    require(projectile_hits[0].entity_type == network_example::EntityType::kProjectile);
+    require(projectile_hits[0].collision_layer ==
+            network_example::kCollisionLayerProjectile);
 }
 
 void layer_helper_reports_entity_layers() {
@@ -172,6 +215,7 @@ int main() {
     ray_aabb_hit_and_miss();
     segment_hits_are_sorted_by_distance_then_net_id();
     sphere_overlap_respects_default_exclusions();
+    projectile_hits_require_explicit_inclusion();
     layer_helper_reports_entity_layers();
     box_overlap_collects_hits_by_layer_and_order();
     swept_sphere_hits_thick_projectile_target();

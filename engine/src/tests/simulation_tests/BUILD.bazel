@@ -41,3 +41,9 @@ cc_test(
     srcs = ["homing_test.cc"],
     deps = ["//engine/src/simulation:simulation"],
 )
+
+cc_test(
+    name = "projectile_interaction_test",
+    srcs = ["projectile_interaction_test.cc"],
+    deps = ["//engine/src/simulation:simulation"],
+)

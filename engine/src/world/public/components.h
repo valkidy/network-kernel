@@ -222,6 +222,25 @@ struct AreaEffectState {
     std::unordered_map<NetId, std::uint32_t> next_damage_tick_by_target;
 };
 
+struct ProjectileInteractionAreaEffectSpawn {
+    bool enabled = false;
+    float radius = 0.0f;
+    std::uint32_t damage_interval_ticks = 1;
+    std::uint32_t lifetime_ticks = 0;
+    std::uint16_t damage_per_interval = 0;
+    std::uint8_t source_code = 0;
+    std::uint32_t collision_mask = kCollisionMaskDamageable;
+};
+
+struct ProjectileInteractionRule {
+    std::uint8_t lhs_weapon_id = 0;
+    std::uint8_t rhs_weapon_id = 0;
+    bool symmetric = true;
+    bool destroy_lhs = true;
+    bool destroy_rhs = true;
+    ProjectileInteractionAreaEffectSpawn area_effect{};
+};
+
 struct BeamState {
     NetId shooter_net_id = 0;
     glm::vec3 origin{0.0f, 0.0f, 0.0f};

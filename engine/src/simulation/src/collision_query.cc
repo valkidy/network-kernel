@@ -28,6 +28,13 @@ std::uint32_t entity_collision_layer_for_entity(
     return entity_layer;
 }
 
+EntityType entity_type_for_entity(const World& world, entt::entity entity) {
+    if (!world.registry().all_of<EntityKind>(entity)) {
+        return EntityType::kUnknown;
+    }
+    return world.registry().get<EntityKind>(entity).type;
+}
+
 bool query_includes_entity(
     const World& world,
     entt::entity entity,
@@ -59,6 +66,59 @@ bool query_includes_entity(
         return false;
     }
     return true;
+}
+
+glm::vec3 normalized_or_zero(const glm::vec3& value) {
+    if (glm::length(value) <= 0.0001f) {
+        return glm::vec3{0.0f, 1.0f, 0.0f};
+    }
+    return glm::normalize(value);
+}
+
+glm::vec3 normal_from_aabb_surface(
+    const glm::vec3& point,
+    const glm::vec3& box_center,
+    const glm::vec3& box_half_extents,
+    const glm::vec3& fallback_direction) {
+    const glm::vec3 local = point - box_center;
+    const glm::vec3 safe_extents = glm::max(box_half_extents, glm::vec3{0.0001f});
+    const glm::vec3 face_delta = glm::abs(glm::abs(local) - safe_extents);
+    int axis = 0;
+    if (face_delta.y < face_delta.x && face_delta.y <= face_delta.z) {
+        axis = 1;
+    } else if (face_delta.z < face_delta.x && face_delta.z < face_delta.y) {
+        axis = 2;
+    }
+
+    glm::vec3 normal{0.0f, 0.0f, 0.0f};
+    normal[axis] = local[axis] >= 0.0f ? 1.0f : -1.0f;
+    if (glm::length(normal) <= 0.0001f) {
+        return normalized_or_zero(-fallback_direction);
+    }
+    return normal;
+}
+
+glm::vec3 normal_from_overlap_center(
+    const glm::vec3& query_center,
+    const glm::vec3& hitbox_center) {
+    return normalized_or_zero(query_center - hitbox_center);
+}
+
+QueryHit make_query_hit(
+    const World& world,
+    entt::entity entity,
+    NetId net_id,
+    float distance,
+    const glm::vec3& position,
+    const glm::vec3& normal) {
+    return QueryHit{
+        net_id,
+        distance,
+        position,
+        normalized_or_zero(normal),
+        entity_type_for_entity(world, entity),
+        entity_collision_layer_for_entity(world, entity),
+    };
 }
 
 float distance_to_aabb(
@@ -177,11 +237,18 @@ std::vector<QueryHit> collect_swept_sphere_hits(
                 hitbox.half_extents + glm::vec3{radius},
                 &distance) &&
             distance <= length) {
-            hits.push_back(QueryHit{
+            const glm::vec3 position = segment_start + direction * distance;
+            hits.push_back(make_query_hit(
+                world,
+                entity,
                 identity.net_id,
                 distance,
-                segment_start + direction * distance,
-            });
+                position,
+                normal_from_aabb_surface(
+                    position,
+                    transform.position + hitbox.center,
+                    hitbox.half_extents + glm::vec3{radius},
+                    direction)));
         }
     }
     sort_hits(&hits);
@@ -218,11 +285,18 @@ std::vector<QueryHit> collect_segment_hits(
                 hitbox.half_extents,
                 &distance) &&
             distance <= length) {
-            hits.push_back(QueryHit{
+            const glm::vec3 position = segment_start + direction * distance;
+            hits.push_back(make_query_hit(
+                world,
+                entity,
                 identity.net_id,
                 distance,
-                segment_start + direction * distance,
-            });
+                position,
+                normal_from_aabb_surface(
+                    position,
+                    transform.position + hitbox.center,
+                    hitbox.half_extents,
+                    direction)));
         }
     }
     sort_hits(&hits);
@@ -254,11 +328,13 @@ std::vector<QueryHit> collect_box_overlaps(
                 half_extents,
                 hitbox_center,
                 hitbox.half_extents)) {
-            hits.push_back(QueryHit{
+            hits.push_back(make_query_hit(
+                world,
+                entity,
                 identity.net_id,
                 distance_to_aabb(center, hitbox_center, hitbox.half_extents),
                 center,
-            });
+                normal_from_overlap_center(center, hitbox_center)));
         }
     }
     sort_hits(&hits);
@@ -289,11 +365,14 @@ std::vector<QueryHit> collect_sphere_overlaps(
             transform.position + hitbox.center,
             hitbox.half_extents);
         if (distance <= radius) {
-            hits.push_back(QueryHit{
+            const glm::vec3 hitbox_center = transform.position + hitbox.center;
+            hits.push_back(make_query_hit(
+                world,
+                entity,
                 identity.net_id,
                 distance,
                 center,
-            });
+                normal_from_overlap_center(center, hitbox_center)));
         }
     }
     sort_hits(&hits);
