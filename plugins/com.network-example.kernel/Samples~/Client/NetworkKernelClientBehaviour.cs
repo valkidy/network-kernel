@@ -14,6 +14,8 @@ public sealed class NetworkKernelClientBehaviour : MonoBehaviour
     private uint logFrame;
     private ulong clientRenderTimeUs;
 
+    private const byte RocketWeaponId = 3;
+
     private void Start()
     {
         client = new NetworkClient();
@@ -114,6 +116,7 @@ public sealed class NetworkKernelClientBehaviour : MonoBehaviour
             move = new KernelVec2(Input.GetAxisRaw("Horizontal"), Input.GetAxisRaw("Vertical")),
             aim_dir = new KernelVec3(1.0f, 0.0f, 0.0f),
             buttons = buttons,
+            selected_weapon = buttons == 0U ? (byte)0 : RocketWeaponId,
         };
         sequence++;
 
