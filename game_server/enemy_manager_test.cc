@@ -87,6 +87,20 @@ std::uint32_t query_projectiles(
     return query_entities(kernel, 3, states);
 }
 
+bool render_states_include_type(KernelHandle* kernel, std::uint16_t entity_type) {
+    std::array<RenderEntityState, 16> states{};
+    const std::uint32_t count = Kernel_GetRenderStates(
+        kernel,
+        states.data(),
+        static_cast<std::uint32_t>(states.size()));
+    for (std::uint32_t index = 0; index < count; ++index) {
+        if (states[index].entity_type == entity_type) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void run_server_frame(
     KernelHandle* kernel,
     network_example::game_server::GameServer* game_server) {
@@ -112,6 +126,15 @@ void submit_player_fire(KernelHandle* kernel,
     input.selected_weapon = weapon_id;
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     Kernel_SubmitInput(kernel, 1, &input);
+}
+
+PlayerInput stationary_input(std::uint32_t input_seq) {
+    PlayerInput input{};
+    input.input_seq = input_seq;
+    input.client_action_time_us =
+        static_cast<std::uint64_t>(input_seq) * 33333u;
+    input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
+    return input;
 }
 
 }  // namespace
@@ -229,6 +252,45 @@ int main() {
     require(game_server.enemy_manager().enemy_count() == 0);
 
     Kernel_Destroy(kernel);
+
+    KernelConfig host_config = listen_server_config();
+    host_config.tick.snapshot_rate = host_config.tick.server_tick_rate;
+    KernelHandle* host_kernel = Kernel_Create(&host_config);
+    require(host_kernel != nullptr);
+    require(Kernel_StartListenServer(host_kernel, 7782));
+
+    network_example::game_server::GameServer host_game_server(host_kernel);
+    for (std::uint32_t frame = 1; frame <= 12; ++frame) {
+        const PlayerInput input = stationary_input(frame);
+        Kernel_SubmitInput(host_kernel, 1, &input);
+        Kernel_Update(host_kernel, 1.0f / 30.0f);
+        handle_pending_events(host_kernel, &host_game_server);
+        host_game_server.tick(1.0f / 30.0f);
+    }
+    require(host_game_server.enemy_manager().enemy_count() == 1);
+    require(render_states_include_type(
+        host_kernel,
+        network_example::game_server::kEntityTypeEnemy));
+    Kernel_Destroy(host_kernel);
+
+    KernelConfig player_death_config = listen_server_config();
+    player_death_config.tick.snapshot_rate =
+        player_death_config.tick.server_tick_rate;
+    KernelHandle* player_death_kernel = Kernel_Create(&player_death_config);
+    require(player_death_kernel != nullptr);
+    require(Kernel_StartListenServer(player_death_kernel, 7783));
+
+    network_example::game_server::GameServer player_death_game_server(
+        player_death_kernel);
+    handle_pending_events(player_death_kernel, &player_death_game_server);
+    player_death_game_server.tick(1.0f / 30.0f);
+    run_server_frames(player_death_kernel, &player_death_game_server, 160);
+    require(query_players(player_death_kernel, &player_states) == 1);
+    require(player_states[0].hp == 0);
+    require(render_states_include_type(
+        player_death_kernel,
+        network_example::game_server::kEntityTypeEnemy));
+    Kernel_Destroy(player_death_kernel);
 
     KernelConfig dedicated_config = dedicated_server_config();
     KernelHandle* dedicated_kernel = Kernel_Create(&dedicated_config);
