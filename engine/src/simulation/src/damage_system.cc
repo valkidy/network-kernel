@@ -43,7 +43,8 @@ void destroy_dead_entities(
     auto view = world.registry().view<NetworkIdentity, Health>();
     for (const entt::entity entity : view) {
         const Health& health = view.get<Health>(entity);
-        if (health.hp == 0) {
+        if (health.max_hp > 0 && health.hp == 0 &&
+            !world.registry().all_of<PlayerTag>(entity)) {
             dead_entities.push_back(view.get<NetworkIdentity>(entity).net_id);
         }
     }
