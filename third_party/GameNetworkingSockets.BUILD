@@ -116,6 +116,7 @@ cc_library(
     deps = [
         ":gns_common_cc_proto",
         ":gns_udp_cc_proto",
-        "@system_openssl//:openssl",
+        "//third_party:openssl",
+        # "@system_openssl//:openssl",
     ],
 )

@@ -39,8 +39,16 @@ http_archive(
     ],
 )
 
-new_local_repository(
+http_archive(
     name = "zlib",
+    build_file = "@//third_party:zlib.BUI-LD",
+    sha256 = "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23",
+    strip_prefix = "zlib-1.3.1",
+    url = "https://zlib.net/fossils/zlib-1.3.1.tar.gz",
+)
+
+new_local_repository(
+    name = "macos_zlib",
     build_file_content = """
 cc_library(
     name = "zlib",
@@ -57,7 +65,7 @@ cc_library(
 )
 
 new_local_repository(
-    name = "system_openssl",
+    name = "macos_openssl",
     build_file_content = """
 cc_library(
     name = "openssl",
