@@ -3,14 +3,8 @@ licenses(["notice"])
 package(default_visibility = ["//visibility:public"])
 
 GNS_COMMON_SRCS = [
-    "src/common/crypto.cpp",
-    "src/common/crypto_25519_openssl.cpp",
-    "src/common/crypto_digest_opensslevp.cpp",
-    "src/common/crypto_openssl.cpp",
-    "src/common/crypto_symmetric_opensslevp.cpp",
     "src/common/crypto_textencode.cpp",
     "src/common/keypair.cpp",
-    "src/common/opensslwrapper.cpp",
     "src/common/steamid.cpp",
     "src/steamnetworkingsockets/steamnetworkingsockets_certs.cpp",
     "src/steamnetworkingsockets/steamnetworkingsockets_certstore.cpp",
@@ -23,6 +17,25 @@ GNS_COMMON_SRCS = [
     "src/tier1/utlbuffer.cpp",
     "src/tier1/utlmemory.cpp",
     "src/vstdlib/strtools.cpp",
+]
+
+GNS_OPENSSL_SRCS = [
+    "src/common/crypto.cpp",
+    "src/common/crypto_25519_openssl.cpp",
+    "src/common/crypto_digest_opensslevp.cpp",
+    "src/common/crypto_openssl.cpp",
+    "src/common/crypto_symmetric_opensslevp.cpp",
+    "src/common/opensslwrapper.cpp",
+]
+
+GNS_BCRYPT_SRCS = [
+    "src/common/crypto.cpp",
+    "src/common/crypto_25519_donna.cpp",
+    "src/common/crypto_bcrypt.cpp",
+    "src/external/curve25519-donna/curve25519.c",
+    "src/external/curve25519-donna/curve25519_VALVE_sse2.c",
+    "src/external/ed25519-donna/ed25519_VALVE.c",
+    "src/external/ed25519-donna/ed25519_VALVE_sse2.c",
 ]
 
 GNS_CLIENTLIB_SRCS = [
@@ -74,11 +87,19 @@ cc_proto_library(
 
 cc_library(
     name = "gns_static",
-    srcs = GNS_COMMON_SRCS + GNS_CLIENTLIB_SRCS,
+    srcs = GNS_COMMON_SRCS + GNS_CLIENTLIB_SRCS + select({
+        "@//engine:mingw_w64": GNS_BCRYPT_SRCS,
+        "//conditions:default": GNS_OPENSSL_SRCS,
+    }),
     hdrs = glob([
         "include/steam/**/*.h",
         "src/**/*.h",
     ]),
+    textual_hdrs = [
+        "src/external/curve25519-donna/curve25519.c",
+        "src/external/ed25519-donna/ed25519.c",
+        "src/external/ed25519-donna/ed25519_VALVE.c",
+    ],
     copts = [
         "-Wno-deprecated-declarations",
         "-Wno-format",
@@ -99,24 +120,37 @@ cc_library(
         "include",
         "src",
         "src/common",
+        "src/external/curve25519-donna",
+        "src/external/ed25519-donna",
         "src/public",
         "src/steamnetworkingsockets",
         "src/steamnetworkingsockets/clientlib",
     ],
     local_defines = [
-        "ENABLE_OPENSSLCONNECTION",
         "GOOGLE_PROTOBUF_NO_RTTI",
-        "OSX",
         "STEAMNETWORKINGSOCKETS_FOREXPORT",
         "STEAMNETWORKINGSOCKETS_OPENSOURCE",
-        "VALVE_CRYPTO_25519_OPENSSLEVP",
         "VALVE_CRYPTO_ENABLE_25519",
-        "VALVE_CRYPTO_OPENSSL",
-    ],
+    ] + select({
+        "@//engine:mingw_w64": [
+            "ED25519_HASH_BCRYPT",
+            "VALVE_CRYPTO_25519_DONNA",
+            "VALVE_CRYPTO_BCRYPT",
+            "WINDOWS",
+            "_WINDOWS",
+        ],
+        "//conditions:default": [
+            "ENABLE_OPENSSLCONNECTION",
+            "OSX",
+            "VALVE_CRYPTO_25519_OPENSSLEVP",
+            "VALVE_CRYPTO_OPENSSL",
+        ],
+    }),
     deps = [
         ":gns_common_cc_proto",
         ":gns_udp_cc_proto",
-        "//third_party:openssl",
-        # "@system_openssl//:openssl",
-    ],
+    ] + select({
+        "@//engine:mingw_w64": [],
+        "//conditions:default": ["@//third_party:openssl"],
+    }),
 )

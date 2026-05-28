@@ -21,19 +21,9 @@ licenses(["notice"])  # Apache License 2.0
 package(default_visibility = ["//visibility:public"])
 
 alias(
-    name = "zlib",
-    actual = select({
-        "//mediapipe:macos": "@macos_zlib//:zlib",
-        # "//mediapipe:mingw_w64": "@zlib//:zlib",
-        "//conditions:default": "@macos_zlib//:zlib",
-    }),
-)
-
-alias(
     name = "openssl",
     actual = select({
-        "//mediapipe:macos": "@macos_openssl//:openssl",
-        # "//mediapipe:mingw_w64": "@zlib//:zlib",
-        "//conditions:default": "@macos_openssl//:openssl",
+        "//engine:macos": "@openssl_macos//:openssl",
+        "//engine:windows": "@openssl_mingw//:openssl",
     }),
 )

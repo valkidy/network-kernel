@@ -17,12 +17,42 @@ COPTS = select({
     ],
 })
 
+_ZLIB_HEADERS = [
+    "crc32.h",
+    "deflate.h",
+    "gzguts.h",
+    "inffast.h",
+    "inffixed.h",
+    "inflate.h",
+    "inftrees.h",
+    "trees.h",
+    "zconf.h",
+    "zlib.h",
+    "zutil.h",
+]
+
 cc_library(
     name = "zlib",
-    linkopts = [
-        "-lz",
-    ],
-    includes = ["/usr/include"],
+    srcs = [
+        "adler32.c",
+        "compress.c",
+        "crc32.c",
+        "deflate.c",
+        "gzclose.c",
+        "gzlib.c",
+        "gzread.c",
+        "gzwrite.c",
+        "infback.c",
+        "inffast.c",
+        "inflate.c",
+        "inftrees.c",
+        "trees.c",
+        "uncompr.c",
+        "zutil.c",
+    ] + _ZLIB_HEADERS,
+    hdrs = _ZLIB_HEADERS,
+    copts = COPTS,
+    includes = ["."],
 )
 
 cc_library(

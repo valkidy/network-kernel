@@ -51,7 +51,11 @@ cc_shared_library(
         ":kernel",
         "//game_server:game_server_bridge",
     ],
-    shared_lib_name = "libnetwork_kernel.dylib",
+    shared_lib_name = select({
+        "//engine:macos": "libnetwork_kernel.dylib",
+        "//engine:windows": "network_kernel.dll",
+        "//conditions:default": "libnetwork_kernel.so",
+    }),
     user_link_flags = select({
         "//engine:macos": [
             "-L/opt/homebrew/opt/openssl@3/lib",
@@ -84,6 +88,19 @@ cc_shared_library(
             "-Wl,-exported_symbol,_GameServer_Tick",
             "-Wl,-exported_symbol,_GameServer_GetEnemyCount",
             "-Wl,-exported_symbol,_GameServer_DespawnAll",
+        ],
+        # MinGW-w64 Windows DLL
+        "//engine:windows": [
+            "-lws2_32",
+            "-lbcrypt",
+            "-lcrypt32",
+            "-liphlpapi",
+            "-lwinpthread",
+            "-lwinmm",
+
+            "-static-libgcc",
+            "-static-libstdc++",
+            "-lstdc++",
         ],
         "//conditions:default": [],
     }),
