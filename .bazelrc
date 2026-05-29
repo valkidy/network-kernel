@@ -28,13 +28,33 @@ build:linux --host_cxxopt=-std=c++20
 build:linux --copt=-w
 build:linux --define=xnn_enable_avx512amx=false
 
-# windows
+# Windows / MSVC
+build:windows --define compiler=msvc
 build:windows --cxxopt=/std:c++20
 build:windows --host_cxxopt=/std:c++20
 build:windows --copt=/w
 # For using M_* math constants on Windows with MSVC.
 build:windows --copt=/D_USE_MATH_DEFINES
 build:windows --host_copt=/D_USE_MATH_DEFINES
+
+# Windows / MinGW-w64
+build:mingw_w64 --define compiler=mingw_w64
+build:mingw_w64 --platforms=//engine:windows_platform
+build:mingw_w64 --extra_toolchains=//tools/toolchains/mingw:cc_toolchain
+build:mingw_w64 --incompatible_enable_cc_toolchain_resolution
+# compiler
+build:mingw_w64 --cpu=x86_64_windows
+build:mingw_w64 --compiler=mingw-gcc
+# C++ standard
+build:mingw_w64 --cxxopt=-std=gnu++20
+build:mingw_w64 --host_cxxopt=-std=gnu++20
+build:mingw_w64 --copt=-fno-canonical-system-headers
+# Windows target macros
+build:mingw_w64 --copt=-D_WIN32
+build:mingw_w64 --copt=-DWIN32
+build:mingw_w64 --copt=-D_WINDOW
+build:mingw_w64 --copt=-D_WIN32_WINNT=0x0601
+build:mingw_w64 --copt=-DNTDDI_VERSION=0x06010000
 
 # macOS
 build:macos --cxxopt=-std=c++20

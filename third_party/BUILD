@@ -19,3 +19,11 @@
 licenses(["notice"])  # Apache License 2.0
 
 package(default_visibility = ["//visibility:public"])
+
+alias(
+    name = "openssl",
+    actual = select({
+        "//engine:macos": "@openssl_macos//:openssl",
+        "//engine:windows": "@openssl_mingw//:openssl",
+    }),
+)

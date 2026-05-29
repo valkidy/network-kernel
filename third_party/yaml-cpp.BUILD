@@ -13,5 +13,6 @@ cc_library(
         "include",
         "src",
     ],
+    defines = ["YAML_CPP_STATIC_DEFINE"],
     visibility = ["//visibility:public"],
 )

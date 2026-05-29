@@ -162,13 +162,31 @@ alias(
     visibility = ["//visibility:public"],
 )
 
-# Windows 64-bit.
+# Windows 64-bit, any compiler.
 config_setting_and_platform(
     name = "windows",
     constraint_values = [
         "@platforms//os:windows",
         "@platforms//cpu:x86_64",
     ],
+    visibility = ["//visibility:public"],
+)
+
+# Windows 64-bit + MinGW config flag.
+config_setting(
+    name = "mingw_w64",
+    values = {
+        "define": "compiler=mingw_w64",
+    },
+    visibility = ["//visibility:public"],
+)
+
+# Windows 64-bit + MSVC config flag.
+config_setting(
+    name = "msvc",
+    values = {
+        "define": "compiler=msvc",
+    },
     visibility = ["//visibility:public"],
 )
 
