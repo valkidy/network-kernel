@@ -39,8 +39,16 @@ http_archive(
     ],
 )
 
+http_archive(
+    name = "fossils_zlib",
+    build_file = "@//third_party:zlib.BUILD",
+    sha256 = "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23",
+    strip_prefix = "zlib-1.3.1",
+    url = "https://zlib.net/fossils/zlib-1.3.1.tar.gz",
+)
+
 new_local_repository(
-    name = "zlib",
+    name = "macos_zlib",
     build_file_content = """
 cc_library(
     name = "zlib",
@@ -57,7 +65,22 @@ cc_library(
 )
 
 new_local_repository(
-    name = "system_openssl",
+    name = "zlib",
+    build_file_content = """
+alias(
+    name = "zlib",
+    actual = select({
+        "@//engine:macos": "@macos_zlib//:zlib",
+        "@//engine:windows": "@fossils_zlib//:zlib",
+    }),
+    visibility = ["//visibility:public"],
+)
+""",
+    path = ".",
+)
+
+new_local_repository(
+    name = "openssl_macos",
     build_file_content = """
 cc_library(
     name = "openssl",
@@ -74,6 +97,20 @@ cc_library(
 )
 """,
     path = "/opt/homebrew/opt/openssl@3",
+)
+
+load("//tools:local_archive.bzl", "local_archive")
+
+local_archive(
+    name = "openssl_mingw",
+    sha256 = "6609b410696658164b0d42ef0ccd6e52553ff7428eefdf85f4643ef54637d29f",
+    src = ["//third_party:openssl_mingw-4.0.0.zip"],
+    strip_prefix = "openssl_x86_64",
+    build_file = "@//third_party:openssl_mingw.BUILD",
+    # The bundled zip ships a stray lib/BUILD (unrelated Android platform
+    # defs) that would turn `lib/` into a subpackage and break the
+    # `srcs = ["lib/libssl.a", ...]` references in openssl_mingw.BUILD.
+    delete = ["lib/BUILD"],
 )
 
 http_archive(
