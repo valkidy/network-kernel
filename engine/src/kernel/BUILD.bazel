@@ -52,8 +52,16 @@ cc_library(
     ],
 )
 
-cc_shared_library(
+alias(
     name = "network_kernel_shared",
+    actual = select({
+        "//engine:mingw_w64": ":_network_kernel_shared_mingw_stripped",
+        "//conditions:default": ":_network_kernel_shared_unstripped",
+    }),
+)
+
+cc_shared_library(
+    name = "_network_kernel_shared_unstripped",
     deps = [
         ":kernel",
         "//game_server:game_server_bridge",
@@ -121,4 +129,47 @@ cc_shared_library(
         ],
         "//conditions:default": [],
     }),
+    target_compatible_with = select({
+        "//engine:mingw_w64": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:private"],
+)
+
+cc_shared_library(
+    name = "_network_kernel_shared_mingw_unstripped",
+    deps = [
+        ":kernel",
+        "//game_server:game_server_bridge",
+    ],
+    shared_lib_name = "network_kernel.unstripped.dll",
+    user_link_flags = [
+        "-lws2_32",
+        "-lbcrypt",
+        "-lcrypt32",
+        "-liphlpapi",
+        "-lwinpthread",
+        "-lwinmm",
+
+        "-static-libgcc",
+        "-static-libstdc++",
+        "-lstdc++",
+    ],
+    target_compatible_with = select({
+        "//engine:mingw_w64": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:private"],
+)
+
+genrule(
+    name = "_network_kernel_shared_mingw_stripped",
+    srcs = [":_network_kernel_shared_mingw_unstripped"],
+    outs = ["network_kernel.dll"],
+    cmd = "x86_64-w64-mingw32-strip --strip-unneeded $(location :_network_kernel_shared_mingw_unstripped) -o $@",
+    target_compatible_with = select({
+        "//engine:mingw_w64": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:private"],
 )
