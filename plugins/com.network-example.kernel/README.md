@@ -29,9 +29,10 @@ repo root through the package builder:
 ```
 
 The builder is the supported packaging entry point. It builds
-`//engine/src/kernel:network_kernel_shared`, stages the produced macOS dylib and
-Windows x86_64 DLL resources into the Unity package, removes `.DS_Store` files,
-verifies ABI/version/export alignment, and writes the UPM tarball under:
+`//engine/src/kernel:network_kernel_shared`, stages the Bazel-signed macOS
+dylib and Windows x86_64 DLL resources into the Unity package, removes
+`.DS_Store` files, verifies ABI/version/export alignment, and writes the UPM
+tarball under:
 
 ```text
 plugins/output
@@ -108,13 +109,13 @@ demonstrate input collection and logging.
 Build the app and native plugin from the repo root:
 
 ```text
-bazel build //app:app //engine/src/kernel:network_kernel_shared --config=macos --copt=-Wunused-function -c opt
+bazel build //app:signed_dedicated_server //engine/src/kernel:network_kernel_shared --config=macos --copt=-Wunused-function -c opt
 ```
 
 Start the dedicated server:
 
 ```text
-bazel run //app:app --config=macos -- --mode=dedicated_server
+bazel-bin/app/signed/network_kernel_dedicated_server --mode=dedicated_server
 ```
 
 In Unity, import the `Client` sample and add `NetworkKernelClientBehaviour` to
