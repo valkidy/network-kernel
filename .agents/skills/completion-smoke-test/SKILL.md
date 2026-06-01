@@ -36,6 +36,24 @@ The helper builds and runs:
 - The helper exits nonzero if either binary is missing, the server exits early, readiness times out, or the client fails.
 - The helper always attempts to stop the background server before exiting.
 
+## Token-Aware Smoke Test Policy
+
+Smoke tests are the default validation strategy for reducing token and execution cost.
+
+Prefer:
+
+1. Static diff review.
+2. The smallest relevant smoke target.
+3. Local regression only after smoke passes.
+4. Final regression only when explicitly requested.
+
+If a smoke test fails:
+
+- Fix only the first directly relevant error.
+- Do not chain into unrelated cleanup.
+- Re-run only the same smoke command.
+- Report files read, files modified, searches, and build/test commands.
+
 ## Reporting
 
 When reporting results, include whether the helper passed and summarize any failure using the printed server/client log context. If dependency fetching fails because of restricted network access, request escalation and rerun the same helper command.
