@@ -28,6 +28,28 @@ Use this skill only while planning Unity plugin work that may touch or depend on
 5. If native C++ changes are not needed, plan to continue directly on the recorded Unity plugin branch.
 6. After the native baseline is settled, plan the Unity plugin work under `plugins/com.network-example.kernel/`, keeping C# bindings, ABI constants, samples, editor smoke tools, package assets, and managed smoke tests aligned with the native ABI.
 
+## Planning Cost Control
+
+When producing a Unity plugin implementation plan, include:
+
+- In scope.
+- Out of scope.
+- File budget.
+- Search budget.
+- Edit budget.
+- Validation budget.
+- Deferred follow-ups.
+
+Do not combine unrelated phases unless explicitly requested.
+
+Avoid combining all of the following in one phase:
+
+- Bazel target changes.
+- Package builder changes.
+- Windows regression.
+- Docs updates.
+- Broad final validation.
+
 ## Plan Requirements
 
 - State the starting branch and the Unity plugin branch the agent should return to.
