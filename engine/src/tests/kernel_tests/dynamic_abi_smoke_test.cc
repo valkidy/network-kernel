@@ -34,7 +34,7 @@ std::filesystem::path runfiles_root() {
 std::filesystem::path find_shared_library() {
     const std::filesystem::path root = runfiles_root();
     const std::vector<std::filesystem::path> candidates = {
-        root / "engine/src/kernel/libnetwork_kernel.dylib",
+        root / "engine/src/kernel/signed/libnetwork_kernel.dylib",
         root / "engine/src/kernel/libnetwork_kernel.so",
     };
 

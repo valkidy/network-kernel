@@ -1,5 +1,7 @@
 licenses(["notice"])
 
+load("//tools:macos_codesign.bzl", "macos_codesigned_artifact")
+
 package(default_visibility = ["//visibility:public"])
 
 cc_binary(
@@ -20,4 +22,11 @@ cc_binary(
         "@fmt//:fmt",
         "@spdlog//:spdlog",
     ],
+)
+
+macos_codesigned_artifact(
+    name = "signed_dedicated_server",
+    src = ":app",
+    out = "signed/network_kernel_dedicated_server",
+    executable = True,
 )

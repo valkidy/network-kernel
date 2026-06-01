@@ -111,9 +111,10 @@ than the current `KernelAbiInfo` layout.
 
 ## Exported Symbols
 
-`libnetwork_kernel.dylib` exports only the public `Kernel_*` symbols on macOS.
-Internal C++ symbols and third-party dependency symbols are hidden by linker
-export flags. `dynamic_abi_smoke_test` verifies this with `nm -gU`.
+`libnetwork_kernel.dylib` exports only the public `Kernel_*` and
+`GameServer_*` symbols on macOS. Internal C++ symbols and third-party dependency
+symbols are hidden by linker export flags. `dynamic_abi_smoke_test` verifies
+this with `nm -gU`.
 
 ## macOS Dependencies
 
@@ -126,8 +127,11 @@ bazel build //engine/src/kernel:network_kernel_shared --config=macos --copt=-Wun
 It produces:
 
 ```text
-libnetwork_kernel.dylib
+bazel-bin/engine/src/kernel/signed/libnetwork_kernel.dylib
 ```
+
+`//engine/src/kernel:network_kernel_shared_unsigned` preserves the unsigned
+debug dylib at `bazel-bin/engine/src/kernel/libnetwork_kernel.dylib`.
 
 The macOS build links against Homebrew OpenSSL:
 
