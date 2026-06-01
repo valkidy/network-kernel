@@ -32,12 +32,13 @@ set -euo pipefail
 
 for arg in "$@"; do
   if [[ "$arg" == "build" ]]; then
-    mkdir -p "$FAKE_BAZEL_BIN/engine/src/kernel"
+    mkdir -p "$FAKE_BAZEL_BIN/engine/src/kernel/signed"
     case " $* " in
       *" --config=macos "*)
-        echo "fake built dylib" > "$FAKE_BAZEL_BIN/engine/src/kernel/libnetwork_kernel.dylib"
+        echo "fake built dylib" > "$FAKE_BAZEL_BIN/engine/src/kernel/signed/libnetwork_kernel.dylib"
         ;;
       *" --config=mingw_w64 "*)
+        mkdir -p "$FAKE_BAZEL_BIN/engine/src/kernel"
         echo "fake built dll" > "$FAKE_BAZEL_BIN/engine/src/kernel/network_kernel.dll"
         ;;
       *)
@@ -376,7 +377,7 @@ test_auto_commit_skips_without_release_note_bullets() {
   assert_contains "$(cat "$output_file")" "--release-note"
 }
 
-test_build_native_codesigns_built_dylib() {
+test_build_native_verifies_bazel_signed_dylib() {
   local sandbox_dir repo_dir output_file codesign_log
   sandbox_dir="$(mktemp -d "${TMPDIR:-/tmp}/package-builder-build-sign.XXXXXX")"
   sandbox_dir="$(cd "$sandbox_dir" && pwd)"
@@ -387,21 +388,21 @@ test_build_native_codesigns_built_dylib() {
 
   run_builder "$repo_dir" "$output_file" --mode build-native --unity off --auto-commit off
 
-  [[ -f "$codesign_log" ]] || fail "expected build-native mode to codesign the built dylib"
-  assert_contains "$(cat "$codesign_log")" "--force --deep --sign - $sandbox_dir/bazel-bin/engine/src/kernel/libnetwork_kernel.dylib"
+  [[ -f "$codesign_log" ]] || fail "expected build-native mode to verify the built dylib signature"
+  assert_contains "$(cat "$codesign_log")" "--verify --verbose=4 $sandbox_dir/bazel-bin/engine/src/kernel/signed/libnetwork_kernel.dylib"
   if grep -q "network_kernel.dll" "$codesign_log"; then
     fail "expected Windows DLL to skip codesign"
   fi
 }
 
-test_stage_codesigns_staged_dylib_from_existing_build_output() {
+test_stage_verifies_staged_dylib_from_existing_build_output() {
   local sandbox_dir repo_dir output_file codesign_log built_dylib built_dll staged_dylib staged_dll status
   sandbox_dir="$(mktemp -d "${TMPDIR:-/tmp}/package-builder-stage-sign.XXXXXX")"
   sandbox_dir="$(cd "$sandbox_dir" && pwd)"
   repo_dir="$sandbox_dir/repo"
   output_file="$sandbox_dir/output.txt"
   codesign_log="$sandbox_dir/codesign.log"
-  built_dylib="$sandbox_dir/bazel-bin/engine/src/kernel/libnetwork_kernel.dylib"
+  built_dylib="$sandbox_dir/bazel-bin/engine/src/kernel/signed/libnetwork_kernel.dylib"
   built_dll="$sandbox_dir/bazel-bin/engine/src/kernel/network_kernel.dll"
   staged_dylib="$repo_dir/plugins/com.network-example.kernel/Assets/Plugins/macOS/libnetwork_kernel.dylib"
   staged_dll="$repo_dir/plugins/com.network-example.kernel/Assets/Plugins/Windows/x86_64/network_kernel.dll"
@@ -422,8 +423,8 @@ test_stage_codesigns_staged_dylib_from_existing_build_output() {
     [[ -f "$repo_dir/plugins/com.network-example.kernel/Assets/Plugins/Windows/x86_64/$dll_name" ]] ||
       fail "expected stage mode to copy $dll_name"
   done
-  [[ -f "$codesign_log" ]] || fail "expected stage mode to codesign the staged dylib"
-  assert_contains "$(cat "$codesign_log")" "--force --deep --sign - $staged_dylib"
+  [[ -f "$codesign_log" ]] || fail "expected stage mode to verify the staged dylib signature"
+  assert_contains "$(cat "$codesign_log")" "--verify --verbose=4 $staged_dylib"
 }
 
 test_verify_fails_when_windows_runtime_dll_is_missing() {
@@ -467,8 +468,8 @@ test_requires_feat_unity_plugin_branch
 test_release_notes_are_prepended_and_auto_committed_for_allowed_files
 test_auto_commit_skips_when_disallowed_files_are_dirty
 test_auto_commit_skips_without_release_note_bullets
-test_build_native_codesigns_built_dylib
-test_stage_codesigns_staged_dylib_from_existing_build_output
+test_build_native_verifies_bazel_signed_dylib
+test_stage_verifies_staged_dylib_from_existing_build_output
 test_verify_fails_when_windows_runtime_dll_is_missing
 test_pack_removes_ds_store_files_from_package
 

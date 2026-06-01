@@ -83,21 +83,20 @@ The script supports:
 - `--auto-commit on|off`; defaults to `on`
 
 Codesign is mandatory for every mode that creates or updates the macOS dylib:
-`build-native` signs the Bazel-built dylib, `stage` signs the staged package
-dylib, and `all` does both. Windows DLLs are not codesigned. `verify` and
-`pack` do not create native binaries.
+the Bazel target produces an ad-hoc signed dylib, and `build-native`/`stage`
+verify that signature with `codesign --verify`. Windows DLLs are not codesigned.
+`verify` and `pack` do not create native binaries.
 
 Default behavior:
 
 1. Build `//engine/src/kernel:network_kernel_shared` for macOS and
-   Windows x86_64. Ad-hoc sign the built macOS dylib.
-2. Stage `bazel-bin/engine/src/kernel/libnetwork_kernel.dylib` into
+   Windows x86_64. The macOS target returns the Bazel ad-hoc signed dylib.
+2. Stage `bazel-bin/engine/src/kernel/signed/libnetwork_kernel.dylib` into
    `plugins/com.network-example.kernel/Assets/Plugins/macOS/`.
 3. Stage `bazel-bin/engine/src/kernel/network_kernel.dll` plus the Windows
    x86_64 support DLLs into
    `plugins/com.network-example.kernel/Assets/Plugins/Windows/x86_64/`.
-4. Ad-hoc sign the staged macOS dylib and remove any GateKeeper quarantine
-   attribute.
+4. Verify the staged macOS dylib signature with `codesign --verify`.
 5. Verify package layout, C/C# ABI version alignment, required exported
    `Kernel_*`/`GameServer_*` symbols for macOS and Windows, and Windows PE32+
    x86-64 DLL shape. Export checks are ABI-aware: the v8 baseline remains

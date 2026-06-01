@@ -17,7 +17,7 @@ MINGW_ROOT="${MINGW_ROOT:-/opt/homebrew/Cellar/mingw-w64/14.0.0/toolchain-x86_64
 PACKAGE_DIR_REL="plugins/com.network-example.kernel"
 PACKAGE_NAME="com.network-example.kernel"
 NATIVE_TARGET="//engine/src/kernel:network_kernel_shared"
-BUILT_MACOS_DYLIB_SUBPATH="engine/src/kernel/libnetwork_kernel.dylib"
+BUILT_MACOS_DYLIB_SUBPATH="engine/src/kernel/signed/libnetwork_kernel.dylib"
 BUILT_WINDOWS_DLL_SUBPATH="engine/src/kernel/network_kernel.dll"
 STAGED_MACOS_DYLIB_REL="${PACKAGE_DIR_REL}/Assets/Plugins/macOS/libnetwork_kernel.dylib"
 STAGED_WINDOWS_DIR_REL="${PACKAGE_DIR_REL}/Assets/Plugins/Windows/x86_64"
@@ -226,7 +226,6 @@ preflight() {
   if platform_enabled macos; then
     require_command codesign
     require_command nm
-    require_command xattr
   fi
   if platform_enabled windows-x86_64; then
     require_command file
@@ -247,14 +246,12 @@ read_package_version() {
   node -e "const p=require(process.argv[1]); console.log(p.version || '')" "$PACKAGE_DIR/package.json"
 }
 
-sign_native_plugin() {
+verify_signed_native_plugin() {
   local dylib_path="$1"
   local description="$2"
-  [[ -f "$dylib_path" ]] || die "native plugin not found for signing: $dylib_path"
-  note "Ad-hoc signing $description"
-  codesign --force --deep --sign - "$dylib_path"
-  note "Removing GateKeeper quarantine attributes from $description"
-  xattr -d -r com.apple.quarantine "$dylib_path" 2>/dev/null || true
+  [[ -f "$dylib_path" ]] || die "native plugin not found for codesign verification: $dylib_path"
+  note "Verifying ad-hoc signature for $description"
+  codesign --verify --verbose=4 "$dylib_path"
 }
 
 resolve_bazel_bin() {
@@ -288,7 +285,7 @@ build_native() {
       -c opt \
       "$NATIVE_TARGET"
     resolve_built_macos_dylib
-    sign_native_plugin "$BUILT_MACOS_DYLIB" "built macOS native plugin"
+    verify_signed_native_plugin "$BUILT_MACOS_DYLIB" "Bazel-built macOS native plugin"
   fi
 
   if platform_enabled windows-x86_64; then
@@ -363,7 +360,7 @@ stage_native() {
     [[ -f "$BUILT_MACOS_DYLIB" ]] || die "built macOS dylib not found: $BUILT_MACOS_DYLIB. Run --mode build-native or --mode all first."
     mkdir -p "$(dirname "$STAGED_MACOS_DYLIB")"
     cp "$BUILT_MACOS_DYLIB" "$STAGED_MACOS_DYLIB"
-    sign_native_plugin "$STAGED_MACOS_DYLIB" "staged macOS native plugin"
+    verify_signed_native_plugin "$STAGED_MACOS_DYLIB" "staged macOS native plugin"
     note "Staged macOS native plugin: $STAGED_MACOS_DYLIB"
   fi
 
