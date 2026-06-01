@@ -33,7 +33,18 @@ set -euo pipefail
 for arg in "$@"; do
   if [[ "$arg" == "build" ]]; then
     mkdir -p "$FAKE_BAZEL_BIN/engine/src/kernel"
-    echo "fake built dylib" > "$FAKE_BAZEL_BIN/engine/src/kernel/libnetwork_kernel.dylib"
+    case " $* " in
+      *" --config=macos "*)
+        echo "fake built dylib" > "$FAKE_BAZEL_BIN/engine/src/kernel/libnetwork_kernel.dylib"
+        ;;
+      *" --config=mingw_w64 "*)
+        echo "fake built dll" > "$FAKE_BAZEL_BIN/engine/src/kernel/network_kernel.dll"
+        ;;
+      *)
+        echo "fake bazel build missing supported --config: $*" >&2
+        exit 1
+        ;;
+    esac
     exit 0
   fi
   if [[ "$arg" == "info" ]]; then
@@ -81,15 +92,82 @@ cat <<'SYMBOLS'
 00000000 T _Kernel_ServerQueryEntities
 00000000 T _GameServer_GetAbiInfo
 00000000 T _GameServer_Create
+00000000 T _GameServer_CreateWithWeaponTemplateDirectory
 00000000 T _GameServer_Destroy
 00000000 T _GameServer_HandleEvent
 00000000 T _GameServer_Tick
 00000000 T _GameServer_GetEnemyCount
+00000000 T _GameServer_QueryWeaponTemplate
 00000000 T _GameServer_DespawnAll
 SYMBOLS
 SH
 
-  for command_name in npm rsync tar xattr; do
+  write_file "$bin_dir/x86_64-w64-mingw32-objdump" <<'SH'
+#!/usr/bin/env bash
+cat <<'SYMBOLS'
+Export Table:
+	[   0] Kernel_Create
+	[   1] Kernel_Destroy
+	[   2] Kernel_GetAbiInfo
+	[   3] Kernel_GetLocalPlayerInfo
+	[   4] Kernel_StartClient
+	[   5] Kernel_StartListenServer
+	[   6] Kernel_StartDedicatedServer
+	[   7] Kernel_Update
+	[   8] Kernel_SubmitInput
+	[   9] Kernel_ServerSubmitEntityInput
+	[  10] Kernel_GetRenderStates
+	[  11] Kernel_GetRenderStatesAtTime
+	[  12] Kernel_PollEvents
+	[  13] Kernel_ServerCreateEntity
+	[  14] Kernel_ServerDestroyEntity
+	[  15] Kernel_ServerSetEntityTransform
+	[  16] Kernel_ServerSetEntityVelocity
+	[  17] Kernel_ServerSetEntityState
+	[  18] Kernel_ServerGetEntityState
+	[  19] Kernel_ServerQueryEntities
+	[  20] GameServer_GetAbiInfo
+	[  21] GameServer_Create
+	[  22] GameServer_CreateWithWeaponTemplateDirectory
+	[  23] GameServer_Destroy
+	[  24] GameServer_HandleEvent
+	[  25] GameServer_Tick
+	[  26] GameServer_GetEnemyCount
+	[  27] GameServer_QueryWeaponTemplate
+	[  28] GameServer_DespawnAll
+Import Table:
+SYMBOLS
+SH
+
+  write_file "$bin_dir/file" <<'SH'
+#!/usr/bin/env bash
+for path in "$@"; do
+  printf '%s: PE32+ executable (DLL) x86-64, for MS Windows\n' "$path"
+done
+SH
+
+  write_file "$bin_dir/npm" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+destination=""
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --pack-destination)
+      destination="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+[[ -n "$destination" ]] || destination="$PWD"
+mkdir -p "$destination"
+touch "$destination/com.network-example.kernel-0.6.4.tgz"
+printf '%s\n' "com.network-example.kernel-0.6.4.tgz"
+SH
+
+  for command_name in rsync tar xattr; do
     write_file "$bin_dir/$command_name" <<'SH'
 #!/usr/bin/env bash
 exit 0
@@ -118,6 +196,7 @@ JSON
 
   mkdir -p \
     "$repo_dir/plugins/com.network-example.kernel/Assets/Plugins/macOS" \
+    "$repo_dir/plugins/com.network-example.kernel/Assets/Plugins/Windows/x86_64" \
     "$repo_dir/plugins/com.network-example.kernel/Editor" \
     "$repo_dir/plugins/com.network-example.kernel/Runtime/Core" \
     "$repo_dir/plugins/com.network-example.kernel/Runtime/Client" \
@@ -128,6 +207,10 @@ JSON
     "$repo_dir/game_server/public"
 
   echo "fake dylib" > "$repo_dir/plugins/com.network-example.kernel/Assets/Plugins/macOS/libnetwork_kernel.dylib"
+  echo "fake dll" > "$repo_dir/plugins/com.network-example.kernel/Assets/Plugins/Windows/x86_64/network_kernel.dll"
+  for dll_name in libcrypto-4-x64.dll libssl-4-x64.dll libstdc++-6.dll libwinpthread-1.dll; do
+    echo "fake support dll" > "$repo_dir/plugins/com.network-example.kernel/Assets/Plugins/Windows/x86_64/$dll_name"
+  done
   echo "#define KERNEL_ABI_VERSION 7u" > "$repo_dir/engine/src/kernel/public/kernel_types.h"
   echo "#define GAME_SERVER_ABI_VERSION 3u" > "$repo_dir/game_server/public/game_server_types.h"
 
@@ -146,8 +229,15 @@ namespace NetworkExample.Kernel {
 }
 CS
 
+  write_file "$repo_dir/plugins/com.network-example.kernel/Runtime/Core/KernelNative.cs" <<'CS'
+namespace NetworkExample.Kernel {
+  internal static class KernelNative {
+    internal const string LibraryName = "network_kernel";
+  }
+}
+CS
+
   for cs_file in \
-    Runtime/Core/KernelNative.cs \
     Runtime/Core/GameServerNative.cs \
     Runtime/Client/NetworkClient.cs \
     Runtime/Host/NetworkHost.cs \
@@ -169,14 +259,21 @@ run_builder() {
   sandbox_dir="$(dirname "$repo_dir")"
   local fake_bin="$sandbox_dir/bin"
   local fake_openssl="$sandbox_dir/openssl/lib"
-  mkdir -p "$fake_openssl"
+  local fake_mingw_runtime="$sandbox_dir/mingw-runtime"
+  mkdir -p "$fake_openssl" "$fake_mingw_runtime"
   touch "$fake_openssl/libssl.3.dylib" "$fake_openssl/libcrypto.3.dylib"
+  echo "fake openssl dll" > "$fake_openssl/libcrypto-4-x64.dll"
+  echo "fake openssl dll" > "$fake_openssl/libssl-4-x64.dll"
+  echo "fake mingw dll" > "$fake_mingw_runtime/libstdc++-6.dll"
+  echo "fake mingw dll" > "$fake_mingw_runtime/libwinpthread-1.dll"
   make_fake_command_dir "$fake_bin"
 
   (
     cd "$repo_dir"
     PATH="$fake_bin:$PATH" \
       OPENSSL_LIB_DIR="$fake_openssl" \
+      OPENSSL_MINGW_DLL_DIR="$fake_openssl" \
+      MINGW_RUNTIME_DLL_DIR="$fake_mingw_runtime" \
       FAKE_BAZEL_BIN="$sandbox_dir/bazel-bin" \
       CODESIGN_LOG="$sandbox_dir/codesign.log" \
       "$SCRIPT_UNDER_TEST" "$@"
@@ -292,20 +389,26 @@ test_build_native_codesigns_built_dylib() {
 
   [[ -f "$codesign_log" ]] || fail "expected build-native mode to codesign the built dylib"
   assert_contains "$(cat "$codesign_log")" "--force --deep --sign - $sandbox_dir/bazel-bin/engine/src/kernel/libnetwork_kernel.dylib"
+  if grep -q "network_kernel.dll" "$codesign_log"; then
+    fail "expected Windows DLL to skip codesign"
+  fi
 }
 
 test_stage_codesigns_staged_dylib_from_existing_build_output() {
-  local sandbox_dir repo_dir output_file codesign_log built_dylib staged_dylib status
+  local sandbox_dir repo_dir output_file codesign_log built_dylib built_dll staged_dylib staged_dll status
   sandbox_dir="$(mktemp -d "${TMPDIR:-/tmp}/package-builder-stage-sign.XXXXXX")"
   sandbox_dir="$(cd "$sandbox_dir" && pwd)"
   repo_dir="$sandbox_dir/repo"
   output_file="$sandbox_dir/output.txt"
   codesign_log="$sandbox_dir/codesign.log"
   built_dylib="$sandbox_dir/bazel-bin/engine/src/kernel/libnetwork_kernel.dylib"
+  built_dll="$sandbox_dir/bazel-bin/engine/src/kernel/network_kernel.dll"
   staged_dylib="$repo_dir/plugins/com.network-example.kernel/Assets/Plugins/macOS/libnetwork_kernel.dylib"
+  staged_dll="$repo_dir/plugins/com.network-example.kernel/Assets/Plugins/Windows/x86_64/network_kernel.dll"
   make_fake_repo "$repo_dir" "feat-unity-plugin"
   mkdir -p "$(dirname "$built_dylib")"
   echo "fake existing build output" > "$built_dylib"
+  echo "fake existing windows build output" > "$built_dll"
 
   set +e
   run_builder "$repo_dir" "$output_file" --mode stage --unity off --auto-commit off
@@ -314,8 +417,50 @@ test_stage_codesigns_staged_dylib_from_existing_build_output() {
 
   [[ "$status" -eq 0 ]] || fail "expected stage mode to succeed with existing build output; got status $status: $(cat "$output_file")"
   [[ "$(cat "$staged_dylib")" == "fake existing build output" ]] || fail "expected stage mode to copy the existing build output"
+  [[ "$(cat "$staged_dll")" == "fake existing windows build output" ]] || fail "expected stage mode to copy the existing Windows build output"
+  for dll_name in libcrypto-4-x64.dll libssl-4-x64.dll libstdc++-6.dll libwinpthread-1.dll; do
+    [[ -f "$repo_dir/plugins/com.network-example.kernel/Assets/Plugins/Windows/x86_64/$dll_name" ]] ||
+      fail "expected stage mode to copy $dll_name"
+  done
   [[ -f "$codesign_log" ]] || fail "expected stage mode to codesign the staged dylib"
   assert_contains "$(cat "$codesign_log")" "--force --deep --sign - $staged_dylib"
+}
+
+test_verify_fails_when_windows_runtime_dll_is_missing() {
+  local sandbox_dir repo_dir output_file status
+  sandbox_dir="$(mktemp -d "${TMPDIR:-/tmp}/package-builder-missing-windows.XXXXXX")"
+  repo_dir="$sandbox_dir/repo"
+  output_file="$sandbox_dir/output.txt"
+  make_fake_repo "$repo_dir" "feat-unity-plugin"
+  rm "$repo_dir/plugins/com.network-example.kernel/Assets/Plugins/Windows/x86_64/libwinpthread-1.dll"
+
+  set +e
+  run_builder "$repo_dir" "$output_file" --mode verify --unity off --auto-commit off
+  status="$?"
+  set -e
+
+  [[ "$status" -ne 0 ]] || fail "expected verify to fail when a Windows support DLL is missing"
+  assert_contains "$(cat "$output_file")" "libwinpthread-1.dll"
+}
+
+test_pack_removes_ds_store_files_from_package() {
+  local sandbox_dir repo_dir output_file status
+  sandbox_dir="$(mktemp -d "${TMPDIR:-/tmp}/package-builder-ds-store.XXXXXX")"
+  repo_dir="$sandbox_dir/repo"
+  output_file="$sandbox_dir/output.txt"
+  make_fake_repo "$repo_dir" "feat-unity-plugin"
+  echo "finder junk" > "$repo_dir/plugins/com.network-example.kernel/.DS_Store"
+  echo "finder junk" > "$repo_dir/plugins/com.network-example.kernel/Assets/Plugins/Windows/x86_64/.DS_Store"
+
+  set +e
+  run_builder "$repo_dir" "$output_file" --mode pack --unity off --auto-commit off
+  status="$?"
+  set -e
+
+  [[ "$status" -eq 0 ]] || fail "expected pack mode to succeed; got status $status: $(cat "$output_file")"
+  [[ ! -e "$repo_dir/plugins/com.network-example.kernel/.DS_Store" ]] || fail "expected root .DS_Store to be removed"
+  [[ ! -e "$repo_dir/plugins/com.network-example.kernel/Assets/Plugins/Windows/x86_64/.DS_Store" ]] ||
+    fail "expected nested .DS_Store to be removed"
 }
 
 test_requires_feat_unity_plugin_branch
@@ -324,5 +469,7 @@ test_auto_commit_skips_when_disallowed_files_are_dirty
 test_auto_commit_skips_without_release_note_bullets
 test_build_native_codesigns_built_dylib
 test_stage_codesigns_staged_dylib_from_existing_build_output
+test_verify_fails_when_windows_runtime_dll_is_missing
+test_pack_removes_ds_store_files_from_package
 
 echo "package_builder_finalize_test.sh: PASS"

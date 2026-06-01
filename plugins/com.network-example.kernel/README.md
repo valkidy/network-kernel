@@ -21,31 +21,32 @@ Add this package to a Unity project with a local package reference:
 
 ## Native Plugin
 
-Build, stage, verify, and pack the macOS package from the repo root through the
-package builder:
+Build, stage, verify, and pack the macOS and Windows x86_64 package from the
+repo root through the package builder:
 
 ```text
 .agents/skills/unity-plugin-package-builder/scripts/run-unity-plugin-package-builder.sh --unity off
 ```
 
 The builder is the supported packaging entry point. It builds
-`//engine/src/kernel:network_kernel_shared`, stages the produced dylib into the
-Unity package, verifies ABI/version/export alignment, and writes the UPM
-tarball under:
+`//engine/src/kernel:network_kernel_shared`, stages the produced macOS dylib and
+Windows x86_64 DLL resources into the Unity package, removes `.DS_Store` files,
+verifies ABI/version/export alignment, and writes the UPM tarball under:
 
 ```text
 plugins/output
 ```
 
-The produced dylib exports both `Kernel_*` and `GameServer_*` symbols. The
-package keeps the produced native plugin at:
+The produced native plugins export both `Kernel_*` and `GameServer_*` symbols.
+The package keeps the produced native plugins at:
 
 ```text
 plugins/com.network-example.kernel/Assets/Plugins/macOS/libnetwork_kernel.dylib
+plugins/com.network-example.kernel/Assets/Plugins/Windows/x86_64/network_kernel.dll
 ```
 
 Unity resolves the C# import name `network_kernel` to
-`libnetwork_kernel.dylib` on macOS.
+`libnetwork_kernel.dylib` on macOS and `network_kernel.dll` on Windows.
 
 ## Smoke Checks
 

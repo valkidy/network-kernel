@@ -11,8 +11,8 @@ Unity Package Manager package. The deliverable is a UPM `.tgz`, not a
 
 ## Required Entry Point
 
-Use the bundled script as the only entry point for native build, dylib staging,
-package packing, and Unity batchmode execution:
+Use the bundled script as the only entry point for native build, native plugin
+staging, package packing, and Unity batchmode execution:
 
 ```bash
 .agents/skills/unity-plugin-package-builder/scripts/run-unity-plugin-package-builder.sh
@@ -28,7 +28,7 @@ Common invocations:
 # and auto-commit eligible package changes. Infer concise release-note bullets from
 # the actual package/native changes when the user does not provide them.
 .agents/skills/unity-plugin-package-builder/scripts/run-unity-plugin-package-builder.sh \
-  --release-note "updates macOS native plugin"
+  --release-note "updates native plugins"
 
 # Verify package layout/ABI/export symbols without building or staging.
 .agents/skills/unity-plugin-package-builder/scripts/run-unity-plugin-package-builder.sh --mode verify --unity off
@@ -37,21 +37,21 @@ Common invocations:
 # and auto-commit flow.
 .agents/skills/unity-plugin-package-builder/scripts/run-unity-plugin-package-builder.sh \
   --unity off \
-  --release-note "updates macOS native plugin"
+  --release-note "updates native plugins"
 
 # Build, update release notes, and auto-commit eligible package changes with
 # explicit user- or task-supplied bullets.
 .agents/skills/unity-plugin-package-builder/scripts/run-unity-plugin-package-builder.sh \
   --release-note "fixes managed host startup" \
-  --release-note "updates macOS native plugin"
+  --release-note "updates native plugins"
 ```
 
 When the user invokes `/unity-package`, `$unity-plugin-package-builder`, or asks
 to build/pack the Unity package without extra options, include at least one
 `--release-note` by default so the script can complete its normal release-note
 and auto-commit finalization. Prefer a concise bullet inferred from the actual
-diff, such as `updates macOS native plugin` for dylib-only staging or `adds HP
-and MaxHP to Unity render states` for visible ABI/API changes. Only omit
+diff, such as `updates native plugins` for native asset-only staging or `adds
+HP and MaxHP to Unity render states` for visible ABI/API changes. Only omit
 `--release-note` when the user explicitly asks for verify-only, no commit, or
 `--auto-commit off`.
 
@@ -75,41 +75,48 @@ and MaxHP to Unity render states` for visible ABI/API changes. Only omit
 The script supports:
 
 - `--mode all|build-native|stage|verify|pack`
-- `--platform macos`
+- `--platform all|macos|windows-x86_64`; defaults to `all`
 - `--unity auto|off|/absolute/path/to/Unity`
 - `--output-dir /absolute/path`
 - `--release-note "bullet text"`; repeat for each bullet to prepend to
   `plugins/com.network-example.kernel/RELEASE_NOTES.md`
 - `--auto-commit on|off`; defaults to `on`
 
-Codesign is mandatory for every mode that creates or updates a dylib:
+Codesign is mandatory for every mode that creates or updates the macOS dylib:
 `build-native` signs the Bazel-built dylib, `stage` signs the staged package
-dylib, and `all` does both. `verify` and `pack` do not create dylibs.
+dylib, and `all` does both. Windows DLLs are not codesigned. `verify` and
+`pack` do not create native binaries.
 
 Default behavior:
 
-1. Build `//engine/src/kernel:network_kernel_shared` for macOS and ad-hoc sign
-   the built dylib.
+1. Build `//engine/src/kernel:network_kernel_shared` for macOS and
+   Windows x86_64. Ad-hoc sign the built macOS dylib.
 2. Stage `bazel-bin/engine/src/kernel/libnetwork_kernel.dylib` into
    `plugins/com.network-example.kernel/Assets/Plugins/macOS/`.
-3. Ad-hoc sign the staged dylib and remove any GateKeeper quarantine attribute.
-4. Verify package layout, C/C# ABI version alignment, and required exported
-   `Kernel_*` symbols. Export checks are ABI-aware: the v8 baseline remains
+3. Stage `bazel-bin/engine/src/kernel/network_kernel.dll` plus the Windows
+   x86_64 support DLLs into
+   `plugins/com.network-example.kernel/Assets/Plugins/Windows/x86_64/`.
+4. Ad-hoc sign the staged macOS dylib and remove any GateKeeper quarantine
+   attribute.
+5. Verify package layout, C/C# ABI version alignment, required exported
+   `Kernel_*`/`GameServer_*` symbols for macOS and Windows, and Windows PE32+
+   x86-64 DLL shape. Export checks are ABI-aware: the v8 baseline remains
    compatible with the long-lived Unity plugin branch, while ABI 9-12 and
    GameServer ABI 2 symbols are required when the native headers report those
    versions.
-5. Pack a clean UPM tarball in
+6. Delete every `.DS_Store` under `plugins/com.network-example.kernel`, then
+   pack a clean UPM tarball in
    `plugins/output`.
-6. Optionally run Unity batchmode ABI smoke if Unity is auto-detected and the
+7. Optionally run Unity batchmode ABI smoke if Unity is auto-detected and the
    local license/headless environment works. Missing or blocked Unity should be
    reported as a clear skip, not a failure, unless the user provided an explicit
    Unity executable path. Override the default smoke timeout with
    `UNITY_TIMEOUT_SECONDS=<seconds>` when diagnosing slow Editor startup.
-7. If successful and `--auto-commit on`, prepend the supplied release-note
+8. If successful and `--auto-commit on`, prepend the supplied release-note
    bullets to `plugins/com.network-example.kernel/RELEASE_NOTES.md` and commit
-   only when the dirty files are limited to the staged dylib, Unity package
-   `.cs` files, `RELEASE_NOTES.md`, and Unity's generated
-   `RELEASE_NOTES.md.meta`.
+   only when the dirty files are limited to staged native plugin assets under
+   `Assets/Plugins`, Unity package `.cs` files, `RELEASE_NOTES.md`, and
+   Unity's generated `RELEASE_NOTES.md.meta`.
 
 Auto commit details:
 
@@ -141,7 +148,7 @@ Auto commit details:
 Report:
 
 - Final `.tgz` path when packing runs.
-- Staged dylib path when staging runs.
+- Staged macOS dylib and Windows DLL paths when staging runs.
 - Verification status.
 - Whether Unity smoke passed, skipped, or failed.
 - Release-note path and auto-commit result when finalization runs.

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 MODE="all"
-PLATFORM="macos"
+PLATFORM="all"
 UNITY_SETTING="auto"
 OUTPUT_DIR=""
 AUTO_COMMIT="on"
@@ -10,15 +10,23 @@ WORK_ROOT="/private/tmp/network-example-unity-package-builder"
 OUTPUT_BASE="${OUTPUT_BASE:-/private/tmp/bazel-network-example}"
 UNITY_TIMEOUT_SECONDS="${UNITY_TIMEOUT_SECONDS:-180}"
 OPENSSL_LIB_DIR="${OPENSSL_LIB_DIR:-/opt/homebrew/opt/openssl@3/lib}"
+OPENSSL_MINGW_DLL_DIR="${OPENSSL_MINGW_DLL_DIR:-}"
+MINGW_RUNTIME_DLL_DIR="${MINGW_RUNTIME_DLL_DIR:-}"
+MINGW_ROOT="${MINGW_ROOT:-/opt/homebrew/Cellar/mingw-w64/14.0.0/toolchain-x86_64}"
 
 PACKAGE_DIR_REL="plugins/com.network-example.kernel"
 PACKAGE_NAME="com.network-example.kernel"
 NATIVE_TARGET="//engine/src/kernel:network_kernel_shared"
-BUILT_DYLIB_SUBPATH="engine/src/kernel/libnetwork_kernel.dylib"
-STAGED_DYLIB_REL="${PACKAGE_DIR_REL}/Assets/Plugins/macOS/libnetwork_kernel.dylib"
+BUILT_MACOS_DYLIB_SUBPATH="engine/src/kernel/libnetwork_kernel.dylib"
+BUILT_WINDOWS_DLL_SUBPATH="engine/src/kernel/network_kernel.dll"
+STAGED_MACOS_DYLIB_REL="${PACKAGE_DIR_REL}/Assets/Plugins/macOS/libnetwork_kernel.dylib"
+STAGED_WINDOWS_DIR_REL="${PACKAGE_DIR_REL}/Assets/Plugins/Windows/x86_64"
+STAGED_WINDOWS_DLL_REL="${STAGED_WINDOWS_DIR_REL}/network_kernel.dll"
 RELEASE_NOTES_REL="${PACKAGE_DIR_REL}/RELEASE_NOTES.md"
 RELEASE_NOTES_META_REL="${RELEASE_NOTES_REL}.meta"
 RELEASE_NOTES=()
+OPENSSL_WINDOWS_DLLS=(libcrypto-4-x64.dll libssl-4-x64.dll)
+MINGW_RUNTIME_DLLS=(libstdc++-6.dll libwinpthread-1.dll)
 
 REQUIRED_EXPORTS=(
   Kernel_Create
@@ -56,7 +64,7 @@ Usage: run-unity-plugin-package-builder.sh [options]
 
 Options:
   --mode all|build-native|stage|verify|pack
-  --platform macos
+  --platform all|macos|windows-x86_64
   --unity auto|off|/absolute/path/to/Unity
   --output-dir /absolute/path
   --release-note "bullet text"    May be repeated; prepended to RELEASE_NOTES.md.
@@ -69,9 +77,9 @@ Environment:
       --auto-commit off and does not relax the default feat-unity-plugin guard.
 
 Default:
-  Build the macOS native plugin, stage it into the Unity package, verify ABI
-  and exports, create a clean UPM .tgz under plugins/output, and run optional
-  Unity batchmode smoke.
+  Build the macOS and Windows x86_64 native plugins, stage them into the Unity
+  package, verify ABI and exports, create a clean UPM .tgz under
+  plugins/output, and run optional Unity batchmode smoke.
 USAGE
 }
 
@@ -132,8 +140,8 @@ case "$MODE" in
 esac
 
 case "$PLATFORM" in
-  macos) ;;
-  *) die "unsupported platform '$PLATFORM'. Current package builder supports macos only." ;;
+  all|macos|windows-x86_64) ;;
+  *) die "unsupported platform '$PLATFORM'. Use all, macos, or windows-x86_64." ;;
 esac
 
 case "$AUTO_COMMIT" in
@@ -158,6 +166,11 @@ require_command() {
   command -v "$command_name" >/dev/null 2>&1 || die "$command_name not found in PATH"
 }
 
+platform_enabled() {
+  local requested="$1"
+  [[ "$PLATFORM" == "all" || "$PLATFORM" == "$requested" ]]
+}
+
 repo_root="$(find_repo_root)" || die "run this script from the network-example repo or one of its subdirectories"
 cd "$repo_root"
 
@@ -180,8 +193,11 @@ require_branch() {
 require_branch
 
 PACKAGE_DIR="$repo_root/$PACKAGE_DIR_REL"
-BUILT_DYLIB=""
-STAGED_DYLIB="$repo_root/$STAGED_DYLIB_REL"
+BUILT_MACOS_DYLIB=""
+BUILT_WINDOWS_DLL=""
+STAGED_MACOS_DYLIB="$repo_root/$STAGED_MACOS_DYLIB_REL"
+STAGED_WINDOWS_DIR="$repo_root/$STAGED_WINDOWS_DIR_REL"
+STAGED_WINDOWS_DLL="$repo_root/$STAGED_WINDOWS_DLL_REL"
 RELEASE_NOTES_PATH="$repo_root/$RELEASE_NOTES_REL"
 
 if [[ -z "$OUTPUT_DIR" ]]; then
@@ -205,17 +221,26 @@ preflight() {
   [[ -d "$PACKAGE_DIR/Tests~" ]] || die "missing $PACKAGE_DIR/Tests~"
   require_command node
   require_command npm
-  require_command codesign
-  require_command nm
   require_command rsync
   require_command tar
-  require_command xattr
+  if platform_enabled macos; then
+    require_command codesign
+    require_command nm
+    require_command xattr
+  fi
+  if platform_enabled windows-x86_64; then
+    require_command file
+    require_command unzip
+    require_command x86_64-w64-mingw32-objdump
+  fi
   mkdir -p "$OUTPUT_DIR" "$WORK_ROOT"
   [[ -w "$OUTPUT_DIR" ]] || die "output dir is not writable: $OUTPUT_DIR"
   [[ -w "$WORK_ROOT" ]] || die "work dir is not writable: $WORK_ROOT"
-  [[ -d "$OPENSSL_LIB_DIR" ]] || die "missing Homebrew OpenSSL library dir: $OPENSSL_LIB_DIR"
-  [[ -f "$OPENSSL_LIB_DIR/libssl.3.dylib" ]] || die "missing $OPENSSL_LIB_DIR/libssl.3.dylib"
-  [[ -f "$OPENSSL_LIB_DIR/libcrypto.3.dylib" ]] || die "missing $OPENSSL_LIB_DIR/libcrypto.3.dylib"
+  if platform_enabled macos; then
+    [[ -d "$OPENSSL_LIB_DIR" ]] || die "missing Homebrew OpenSSL library dir: $OPENSSL_LIB_DIR"
+    [[ -f "$OPENSSL_LIB_DIR/libssl.3.dylib" ]] || die "missing $OPENSSL_LIB_DIR/libssl.3.dylib"
+    [[ -f "$OPENSSL_LIB_DIR/libcrypto.3.dylib" ]] || die "missing $OPENSSL_LIB_DIR/libcrypto.3.dylib"
+  fi
 }
 
 read_package_version() {
@@ -232,36 +257,132 @@ sign_native_plugin() {
   xattr -d -r com.apple.quarantine "$dylib_path" 2>/dev/null || true
 }
 
-resolve_built_dylib() {
+resolve_bazel_bin() {
+  local config="$1"
+  "$BAZEL_CMD" --output_base="$OUTPUT_BASE" info "--config=$config" -c opt bazel-bin --symlink_prefix=/
+}
+
+resolve_built_macos_dylib() {
   local bazel_bin
-  bazel_bin="$("$BAZEL_CMD" --output_base="$OUTPUT_BASE" info --config=macos -c opt bazel-bin --symlink_prefix=/)"
-  BUILT_DYLIB="$bazel_bin/$BUILT_DYLIB_SUBPATH"
-  [[ -f "$BUILT_DYLIB" ]] || die "expected built dylib not found: $BUILT_DYLIB"
+  bazel_bin="$(resolve_bazel_bin macos)"
+  BUILT_MACOS_DYLIB="$bazel_bin/$BUILT_MACOS_DYLIB_SUBPATH"
+  [[ -f "$BUILT_MACOS_DYLIB" ]] || die "expected built macOS dylib not found: $BUILT_MACOS_DYLIB"
+}
+
+resolve_built_windows_dll() {
+  local bazel_bin
+  bazel_bin="$(resolve_bazel_bin mingw_w64)"
+  BUILT_WINDOWS_DLL="$bazel_bin/$BUILT_WINDOWS_DLL_SUBPATH"
+  [[ -f "$BUILT_WINDOWS_DLL" ]] || die "expected built Windows DLL not found: $BUILT_WINDOWS_DLL"
 }
 
 build_native() {
-  note "Building native plugin: $NATIVE_TARGET"
-  "$BAZEL_CMD" \
-    --output_base="$OUTPUT_BASE" \
-    build \
-    --config=macos \
-    --symlink_prefix=/ \
-    --copt=-Wunused-function \
-    -c opt \
-    "$NATIVE_TARGET"
-  resolve_built_dylib
-  sign_native_plugin "$BUILT_DYLIB" "built native plugin"
+  if platform_enabled macos; then
+    note "Building macOS native plugin: $NATIVE_TARGET"
+    "$BAZEL_CMD" \
+      --output_base="$OUTPUT_BASE" \
+      build \
+      --config=macos \
+      --symlink_prefix=/ \
+      --copt=-Wunused-function \
+      -c opt \
+      "$NATIVE_TARGET"
+    resolve_built_macos_dylib
+    sign_native_plugin "$BUILT_MACOS_DYLIB" "built macOS native plugin"
+  fi
+
+  if platform_enabled windows-x86_64; then
+    note "Building Windows x86_64 native plugin: $NATIVE_TARGET"
+    "$BAZEL_CMD" \
+      --output_base="$OUTPUT_BASE" \
+      build \
+      --config=mingw_w64 \
+      --symlink_prefix=/ \
+      -c opt \
+      "$NATIVE_TARGET"
+    resolve_built_windows_dll
+  fi
+}
+
+copy_existing_windows_dll() {
+  local dll_name="$1"
+  shift
+  local source_dir
+  for source_dir in "$@"; do
+    [[ -n "$source_dir" ]] || continue
+    if [[ -f "$source_dir/$dll_name" ]]; then
+      copy_overwriting "$source_dir/$dll_name" "$STAGED_WINDOWS_DIR/$dll_name"
+      return 0
+    fi
+  done
+  return 1
+}
+
+copy_overwriting() {
+  local source_path="$1"
+  local destination_path="$2"
+  if [[ -e "$destination_path" ]]; then
+    chmod u+w "$destination_path" 2>/dev/null || true
+  fi
+  cp "$source_path" "$destination_path"
+}
+
+copy_openssl_windows_dll() {
+  local dll_name="$1"
+  if copy_existing_windows_dll "$dll_name" "$OPENSSL_MINGW_DLL_DIR"; then
+    return 0
+  fi
+
+  local archive_path="$repo_root/third_party/openssl_mingw-4.0.0.zip"
+  [[ -f "$archive_path" ]] || die "missing OpenSSL MinGW archive: $archive_path"
+  local destination_path="$STAGED_WINDOWS_DIR/$dll_name"
+  if [[ -e "$destination_path" ]]; then
+    chmod u+w "$destination_path" 2>/dev/null || true
+  fi
+  unzip -p "$archive_path" "openssl_x86_64/lib/$dll_name" > "$destination_path" ||
+    die "could not extract $dll_name from $archive_path"
+}
+
+copy_mingw_runtime_dll() {
+  local dll_name="$1"
+  if copy_existing_windows_dll \
+      "$dll_name" \
+      "$MINGW_RUNTIME_DLL_DIR" \
+      "$MINGW_ROOT/x86_64-w64-mingw32/bin" \
+      "$MINGW_ROOT/x86_64-w64-mingw32/lib"; then
+    return 0
+  fi
+  die "missing MinGW runtime DLL: $dll_name"
 }
 
 stage_native() {
-  if [[ -z "$BUILT_DYLIB" ]]; then
-    resolve_built_dylib
+  if platform_enabled macos; then
+    if [[ -z "$BUILT_MACOS_DYLIB" ]]; then
+      resolve_built_macos_dylib
+    fi
+    [[ -f "$BUILT_MACOS_DYLIB" ]] || die "built macOS dylib not found: $BUILT_MACOS_DYLIB. Run --mode build-native or --mode all first."
+    mkdir -p "$(dirname "$STAGED_MACOS_DYLIB")"
+    cp "$BUILT_MACOS_DYLIB" "$STAGED_MACOS_DYLIB"
+    sign_native_plugin "$STAGED_MACOS_DYLIB" "staged macOS native plugin"
+    note "Staged macOS native plugin: $STAGED_MACOS_DYLIB"
   fi
-  [[ -f "$BUILT_DYLIB" ]] || die "built dylib not found: $BUILT_DYLIB. Run --mode build-native or --mode all first."
-  mkdir -p "$(dirname "$STAGED_DYLIB")"
-  cp "$BUILT_DYLIB" "$STAGED_DYLIB"
-  sign_native_plugin "$STAGED_DYLIB" "staged native plugin"
-  note "Staged native plugin: $STAGED_DYLIB"
+
+  if platform_enabled windows-x86_64; then
+    if [[ -z "$BUILT_WINDOWS_DLL" ]]; then
+      resolve_built_windows_dll
+    fi
+    [[ -f "$BUILT_WINDOWS_DLL" ]] || die "built Windows DLL not found: $BUILT_WINDOWS_DLL. Run --mode build-native or --mode all first."
+    mkdir -p "$STAGED_WINDOWS_DIR"
+    copy_overwriting "$BUILT_WINDOWS_DLL" "$STAGED_WINDOWS_DLL"
+    local dll_name
+    for dll_name in "${OPENSSL_WINDOWS_DLLS[@]}"; do
+      copy_openssl_windows_dll "$dll_name"
+    done
+    for dll_name in "${MINGW_RUNTIME_DLLS[@]}"; do
+      copy_mingw_runtime_dll "$dll_name"
+    done
+    note "Staged Windows x86_64 native plugin: $STAGED_WINDOWS_DLL"
+  fi
 }
 
 read_native_abi_version() {
@@ -280,6 +401,65 @@ read_managed_game_server_abi_version() {
   sed -nE 's/^[[:space:]]*public const uint AbiVersion = ([0-9]+);$/\1/p' "$PACKAGE_DIR/Runtime/Core/GameServerTypes.cs" | head -n 1
 }
 
+build_required_exports() {
+  local native_abi="$1"
+  local native_game_server_abi="$2"
+  REQUIRED_EXPORTS_BUILT=("${REQUIRED_EXPORTS[@]}")
+  if [[ "$native_abi" -ge 9 ]]; then
+    REQUIRED_EXPORTS_BUILT+=(
+      Kernel_ServerSetEntityCombatState
+      Kernel_ServerSetEntityWeaponMechanics
+      Kernel_ServerClearEntityWeaponMechanics
+      Kernel_ServerGetEntityWeaponMechanics
+      Kernel_ServerValidateMechanicsConfig
+    )
+  fi
+  if [[ "$native_abi" -ge 10 ]]; then
+    REQUIRED_EXPORTS_BUILT+=(Kernel_ServerGetAreaEffectState)
+  fi
+  if [[ "$native_abi" -ge 11 ]]; then
+    REQUIRED_EXPORTS_BUILT+=(Kernel_ServerGetBeamState)
+  fi
+  if [[ "$native_abi" -ge 12 ]]; then
+    REQUIRED_EXPORTS_BUILT+=(Kernel_ServerGetHomingState)
+  fi
+  if [[ "$native_game_server_abi" -ge 2 ]]; then
+    REQUIRED_EXPORTS_BUILT+=(
+      GameServer_CreateWithWeaponTemplateDirectory
+      GameServer_QueryWeaponTemplate
+    )
+  fi
+}
+
+verify_macos_exports() {
+  local dylib_path="$1"
+  shift
+  local required_exports=("$@")
+  local exported symbol
+  exported="$(nm -gU "$dylib_path")"
+  for symbol in "${required_exports[@]}"; do
+    if ! grep -q "_${symbol}$" <<<"$exported"; then
+      die "missing macOS exported symbol: $symbol"
+    fi
+  done
+}
+
+verify_windows_exports() {
+  local dll_path="$1"
+  shift
+  local required_exports=("$@")
+  local file_output exported symbol
+  file_output="$(file "$dll_path")"
+  [[ "$file_output" == *"PE32+"* && "$file_output" == *"x86-64"* ]] ||
+    die "Windows native plugin is not a PE32+ x86-64 DLL: $dll_path"
+  exported="$(x86_64-w64-mingw32-objdump -p "$dll_path")"
+  for symbol in "${required_exports[@]}"; do
+    if ! grep -Eq "[[:space:]]${symbol}$" <<<"$exported"; then
+      die "missing Windows exported symbol: $symbol"
+    fi
+  done
+}
+
 verify_package() {
   note "Verifying package layout, ABI version, and exported symbols"
   [[ -f "$PACKAGE_DIR/package.json" ]] || die "missing package.json"
@@ -291,7 +471,18 @@ verify_package() {
   [[ -f "$PACKAGE_DIR/Runtime/Host/NetworkHost.cs" ]] || die "missing Runtime/Host/NetworkHost.cs"
   [[ -f "$PACKAGE_DIR/Editor/NetworkKernelAbiSmokeRunner.cs" ]] || die "missing Editor/NetworkKernelAbiSmokeRunner.cs"
   [[ -f "$PACKAGE_DIR/Tests~/AbiSmoke/NetworkKernelManagedAbiSmoke.cs" ]] || die "missing Tests~/AbiSmoke/NetworkKernelManagedAbiSmoke.cs"
-  [[ -f "$STAGED_DYLIB" ]] || die "missing staged dylib: $STAGED_DYLIB"
+  grep -q 'LibraryName = "network_kernel"' "$PACKAGE_DIR/Runtime/Core/KernelNative.cs" ||
+    die "KernelNative.LibraryName must be network_kernel"
+  if platform_enabled macos; then
+    [[ -f "$STAGED_MACOS_DYLIB" ]] || die "missing staged macOS dylib: $STAGED_MACOS_DYLIB"
+  fi
+  if platform_enabled windows-x86_64; then
+    [[ -f "$STAGED_WINDOWS_DLL" ]] || die "missing staged Windows DLL: $STAGED_WINDOWS_DLL"
+    local dll_name
+    for dll_name in "${OPENSSL_WINDOWS_DLLS[@]}" "${MINGW_RUNTIME_DLLS[@]}"; do
+      [[ -f "$STAGED_WINDOWS_DIR/$dll_name" ]] || die "missing staged Windows support DLL: $STAGED_WINDOWS_DIR/$dll_name"
+    done
+  fi
 
   local package_name
   package_name="$(node -e "const p=require(process.argv[1]); console.log(p.name || '')" "$PACKAGE_DIR/package.json")"
@@ -309,40 +500,15 @@ verify_package() {
   [[ -n "$managed_game_server_abi" ]] || die "could not read GameServerConstants.AbiVersion"
   [[ "$native_game_server_abi" == "$managed_game_server_abi" ]] || die "game server ABI version mismatch: native=$native_game_server_abi managed=$managed_game_server_abi"
 
-  local required_exports=("${REQUIRED_EXPORTS[@]}")
-  if [[ "$native_abi" -ge 9 ]]; then
-    required_exports+=(
-      Kernel_ServerSetEntityCombatState
-      Kernel_ServerSetEntityWeaponMechanics
-      Kernel_ServerClearEntityWeaponMechanics
-      Kernel_ServerGetEntityWeaponMechanics
-      Kernel_ServerValidateMechanicsConfig
-    )
+  local required_exports=()
+  build_required_exports "$native_abi" "$native_game_server_abi"
+  required_exports=("${REQUIRED_EXPORTS_BUILT[@]}")
+  if platform_enabled macos; then
+    verify_macos_exports "$STAGED_MACOS_DYLIB" "${required_exports[@]}"
   fi
-  if [[ "$native_abi" -ge 10 ]]; then
-    required_exports+=(Kernel_ServerGetAreaEffectState)
+  if platform_enabled windows-x86_64; then
+    verify_windows_exports "$STAGED_WINDOWS_DLL" "${required_exports[@]}"
   fi
-  if [[ "$native_abi" -ge 11 ]]; then
-    required_exports+=(Kernel_ServerGetBeamState)
-  fi
-  if [[ "$native_abi" -ge 12 ]]; then
-    required_exports+=(Kernel_ServerGetHomingState)
-  fi
-  if [[ "$native_game_server_abi" -ge 2 ]]; then
-    required_exports+=(
-      GameServer_CreateWithWeaponTemplateDirectory
-      GameServer_QueryWeaponTemplate
-    )
-  fi
-
-  local exported
-  exported="$(nm -gU "$STAGED_DYLIB")"
-  local symbol
-  for symbol in "${required_exports[@]}"; do
-    if ! grep -q "_${symbol}$" <<<"$exported"; then
-      die "missing exported symbol: $symbol"
-    fi
-  done
 
   note "Verification passed: package=$PACKAGE_NAME kernel_abi=$native_abi game_server_abi=$native_game_server_abi exports=${#required_exports[@]}"
 }
@@ -362,10 +528,16 @@ copy_clean_package() {
     --exclude='UserSettings' \
     --exclude='*.log' \
     "$PACKAGE_DIR/" \
-    "$staging_dir/"
+	    "$staging_dir/"
+}
+
+remove_package_ds_store() {
+  note "Removing .DS_Store files from package"
+  find "$PACKAGE_DIR" -name .DS_Store -type f -delete
 }
 
 pack_package() {
+  remove_package_ds_store
   verify_package
   local version staging_dir npm_output tgz_name tgz_path
   version="$(read_package_version)"
@@ -517,8 +689,13 @@ write_release_notes() {
 
 is_auto_commit_allowed_path() {
   local path="$1"
-  if [[ "$path" == "$STAGED_DYLIB_REL" || "$path" == "$RELEASE_NOTES_REL" || "$path" == "$RELEASE_NOTES_META_REL" ]]; then
+  if [[ "$path" == "$RELEASE_NOTES_REL" || "$path" == "$RELEASE_NOTES_META_REL" ]]; then
     return 0
+  fi
+  if [[ "$path" == "$PACKAGE_DIR_REL/Assets/Plugins/"* ]]; then
+    case "$path" in
+      *.dll|*.dylib|*.meta) return 0 ;;
+    esac
   fi
   if [[ "$path" == "$PACKAGE_DIR_REL/"* && "$path" == *.cs ]]; then
     return 0
@@ -616,11 +793,15 @@ esac
 finalize_auto_commit
 
 note "Summary"
-if [[ -f "$STAGED_DYLIB" ]]; then
-  echo "staged_dylib=$STAGED_DYLIB"
+if [[ -f "$STAGED_MACOS_DYLIB" ]]; then
+  echo "staged_macos_dylib=$STAGED_MACOS_DYLIB"
+fi
+if [[ -f "$STAGED_WINDOWS_DLL" ]]; then
+  echo "staged_windows_dll=$STAGED_WINDOWS_DLL"
 fi
 if [[ -n "$ARTIFACT_PATH" ]]; then
   echo "artifact=$ARTIFACT_PATH"
 fi
 echo "unity=$UNITY_SETTING"
 echo "mode=$MODE"
+echo "platform=$PLATFORM"
