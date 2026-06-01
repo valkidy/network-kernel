@@ -32,6 +32,9 @@ set -euo pipefail
 
 for arg in "$@"; do
   if [[ "$arg" == "build" ]]; then
+    if [[ -n "${BAZEL_LOG:-}" ]]; then
+      printf '%s\n' "$*" >> "$BAZEL_LOG"
+    fi
     mkdir -p "$FAKE_BAZEL_BIN/engine/src/kernel/signed"
     case " $* " in
       *" --config=macos "*)
@@ -276,6 +279,7 @@ run_builder() {
       OPENSSL_MINGW_DLL_DIR="$fake_openssl" \
       MINGW_RUNTIME_DLL_DIR="$fake_mingw_runtime" \
       FAKE_BAZEL_BIN="$sandbox_dir/bazel-bin" \
+      BAZEL_LOG="$sandbox_dir/bazel.log" \
       CODESIGN_LOG="$sandbox_dir/codesign.log" \
       "$SCRIPT_UNDER_TEST" "$@"
   ) >"$output_file" 2>&1
@@ -378,15 +382,25 @@ test_auto_commit_skips_without_release_note_bullets() {
 }
 
 test_build_native_verifies_bazel_signed_dylib() {
-  local sandbox_dir repo_dir output_file codesign_log
+  local sandbox_dir repo_dir output_file bazel_log codesign_log macos_build windows_build
   sandbox_dir="$(mktemp -d "${TMPDIR:-/tmp}/package-builder-build-sign.XXXXXX")"
   sandbox_dir="$(cd "$sandbox_dir" && pwd)"
   repo_dir="$sandbox_dir/repo"
   output_file="$sandbox_dir/output.txt"
+  bazel_log="$sandbox_dir/bazel.log"
   codesign_log="$sandbox_dir/codesign.log"
   make_fake_repo "$repo_dir" "feat-unity-plugin"
 
   run_builder "$repo_dir" "$output_file" --mode build-native --unity off --auto-commit off
+
+  [[ -f "$bazel_log" ]] || fail "expected build-native mode to invoke Bazel"
+  macos_build="$(grep -F -- "--config=macos" "$bazel_log")"
+  windows_build="$(grep -F -- "--config=mingw_w64" "$bazel_log")"
+  assert_contains "$macos_build" "//engine/src/kernel:network_kernel_shared"
+  assert_contains "$windows_build" "//engine/src/kernel:network_kernel_shared"
+  if grep -q "network_kernel_shared_codesigned" "$bazel_log"; then
+    fail "expected package builder to use the public network_kernel_shared target"
+  fi
 
   [[ -f "$codesign_log" ]] || fail "expected build-native mode to verify the built dylib signature"
   assert_contains "$(cat "$codesign_log")" "--verify --verbose=4 $sandbox_dir/bazel-bin/engine/src/kernel/signed/libnetwork_kernel.dylib"
