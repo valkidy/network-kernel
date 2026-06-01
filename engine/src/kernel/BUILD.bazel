@@ -1,6 +1,7 @@
 licenses(["notice"])
 
 load("@rules_cc//cc:defs.bzl", "cc_shared_library")
+load("//tools:macos_codesign.bzl", "macos_codesigned_artifact")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -55,13 +56,14 @@ cc_library(
 alias(
     name = "network_kernel_shared",
     actual = select({
+        "//engine:macos": ":_network_kernel_shared_macos_signed",
         "//engine:mingw_w64": ":_network_kernel_shared_mingw_stripped",
-        "//conditions:default": ":_network_kernel_shared_unstripped",
+        "//conditions:default": ":network_kernel_shared_unsigned",
     }),
 )
 
 cc_shared_library(
-    name = "_network_kernel_shared_unstripped",
+    name = "network_kernel_shared_unsigned",
     deps = [
         ":kernel",
         "//game_server:game_server_bridge",
@@ -133,7 +135,12 @@ cc_shared_library(
         "//engine:mingw_w64": ["@platforms//:incompatible"],
         "//conditions:default": [],
     }),
-    visibility = ["//visibility:private"],
+)
+
+macos_codesigned_artifact(
+    name = "_network_kernel_shared_macos_signed",
+    src = ":network_kernel_shared_unsigned",
+    out = "signed/libnetwork_kernel.dylib",
 )
 
 cc_shared_library(
