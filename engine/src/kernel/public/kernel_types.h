@@ -4,9 +4,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 13u
+#define KERNEL_ABI_VERSION 14u
 
 #define KERNEL_BUILD_INFO_TEXT_SIZE 128u
+#define KERNEL_LAN_DISCOVERY_TEXT_SIZE 128u
+#define KERNEL_LAN_DISCOVERY_DEFAULT_PORT 47777u
 
 #define KERNEL_MAX_WEAPONS 7u
 
@@ -36,6 +38,7 @@
 #define KERNEL_CAPABILITY_PROJECTILE_RESPONSE_MASKS UINT64_C(0x0000000000800000)
 #define KERNEL_CAPABILITY_BEAM_WEAPONS UINT64_C(0x0000000001000000)
 #define KERNEL_CAPABILITY_HOMING_PROJECTILES UINT64_C(0x0000000002000000)
+#define KERNEL_CAPABILITY_LAN_DISCOVERY UINT64_C(0x0000000004000000)
 
 #define KERNEL_COLLISION_LAYER_PLAYER UINT32_C(0x00000001)
 #define KERNEL_COLLISION_LAYER_ENEMY UINT32_C(0x00000002)
@@ -71,6 +74,9 @@ typedef struct KernelAbiInfo {
     uint32_t beam_state_size;
     uint32_t homing_mechanics_definition_size;
     uint32_t homing_state_size;
+    uint32_t lan_discovery_server_config_size;
+    uint32_t lan_discovery_query_config_size;
+    uint32_t lan_discovery_result_size;
     uint64_t capability_flags;
 } KernelAbiInfo;
 
@@ -95,6 +101,32 @@ typedef struct KernelLocalPlayerInfo {
     bool has_welcome;
     bool connected;
 } KernelLocalPlayerInfo;
+
+typedef struct KernelLANDiscoveryServerConfig {
+    uint32_t struct_size;
+    uint16_t discovery_port;
+    uint16_t server_endpoint_port;
+    char server_name[KERNEL_LAN_DISCOVERY_TEXT_SIZE];
+} KernelLANDiscoveryServerConfig;
+
+typedef struct KernelLANDiscoveryQueryConfig {
+    uint32_t struct_size;
+    uint16_t discovery_port;
+    uint32_t timeout_ms;
+} KernelLANDiscoveryQueryConfig;
+
+typedef struct KernelLANDiscoveryResult {
+    uint32_t struct_size;
+    char server_name[KERNEL_LAN_DISCOVERY_TEXT_SIZE];
+    char server_endpoint_ip[KERNEL_LAN_DISCOVERY_TEXT_SIZE];
+    uint16_t server_endpoint_port;
+    char module_version[KERNEL_BUILD_INFO_TEXT_SIZE];
+    uint32_t protocol_version;
+    uint32_t snapshot_schema_version;
+    uint32_t packet_schema_version;
+    char git_commit[KERNEL_BUILD_INFO_TEXT_SIZE];
+    bool compatible;
+} KernelLANDiscoveryResult;
 
 typedef enum KernelMode {
     KernelMode_Client = 0,

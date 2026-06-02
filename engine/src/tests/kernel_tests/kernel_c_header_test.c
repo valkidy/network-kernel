@@ -8,6 +8,9 @@
 int main(void) {
     KernelAbiInfo abi_info;
     KernelBuildInfo build_info;
+    KernelLANDiscoveryServerConfig lan_discovery_server_config;
+    KernelLANDiscoveryQueryConfig lan_discovery_query_config;
+    KernelLANDiscoveryResult lan_discovery_result;
     KernelConfig config;
     KernelLocalPlayerInfo local_player_info;
     PlayerInput input;
@@ -27,6 +30,9 @@ int main(void) {
 
     (void)config;
     (void)build_info;
+    (void)lan_discovery_server_config;
+    (void)lan_discovery_query_config;
+    (void)lan_discovery_result;
     (void)local_player_info;
     (void)input;
     (void)state;
@@ -43,10 +49,14 @@ int main(void) {
     (void)beam_state;
     (void)homing_state;
 
-    assert(KERNEL_ABI_VERSION == 13u);
+    assert(KERNEL_ABI_VERSION == 14u);
     assert(KERNEL_MAX_WEAPONS == 7u);
+    assert(KERNEL_LAN_DISCOVERY_DEFAULT_PORT == 47777u);
     assert(sizeof(KernelAbiInfo) > 0u);
     assert(sizeof(KernelBuildInfo) > 0u);
+    assert(sizeof(KernelLANDiscoveryServerConfig) > 0u);
+    assert(sizeof(KernelLANDiscoveryQueryConfig) > 0u);
+    assert(sizeof(KernelLANDiscoveryResult) > 0u);
     assert(sizeof(KernelLocalPlayerInfo) > 0u);
     assert(sizeof(KernelConfig) > 0u);
     assert(sizeof(PlayerInput) > 0u);
@@ -78,6 +88,8 @@ int main(void) {
             KERNEL_CAPABILITY_AREA_EFFECT_WEAPONS) == 0u);
     assert((KERNEL_CAPABILITY_HOMING_PROJECTILES &
             KERNEL_CAPABILITY_BEAM_WEAPONS) == 0u);
+    assert((KERNEL_CAPABILITY_LAN_DISCOVERY &
+            KERNEL_CAPABILITY_HOMING_PROJECTILES) == 0u);
     assert((KERNEL_COLLISION_LAYER_PLAYER & KERNEL_COLLISION_LAYER_ENEMY) == 0u);
     assert((KERNEL_COLLISION_LAYER_PROJECTILE & KERNEL_COLLISION_LAYER_AREA_EFFECT) == 0u);
     assert((KERNEL_COLLISION_MASK_DAMAGEABLE & KERNEL_COLLISION_LAYER_PLAYER) != 0u);
@@ -107,6 +119,14 @@ int main(void) {
     assert(sizeof(build_info.build_platform) == KERNEL_BUILD_INFO_TEXT_SIZE);
     assert(sizeof(build_info.build_config) == KERNEL_BUILD_INFO_TEXT_SIZE);
     assert(sizeof(build_info.compiler_info) == KERNEL_BUILD_INFO_TEXT_SIZE);
+    assert(sizeof(lan_discovery_server_config.server_name) ==
+           KERNEL_LAN_DISCOVERY_TEXT_SIZE);
+    assert(sizeof(lan_discovery_result.server_name) == KERNEL_LAN_DISCOVERY_TEXT_SIZE);
+    assert(sizeof(lan_discovery_result.server_endpoint_ip) ==
+           KERNEL_LAN_DISCOVERY_TEXT_SIZE);
+    assert(sizeof(lan_discovery_result.module_version) ==
+           KERNEL_BUILD_INFO_TEXT_SIZE);
+    assert(sizeof(lan_discovery_result.git_commit) == KERNEL_BUILD_INFO_TEXT_SIZE);
 
     return 0;
 }

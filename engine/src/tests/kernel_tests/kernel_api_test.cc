@@ -64,6 +64,12 @@ int main() {
     assert(abi_info.homing_mechanics_definition_size ==
            sizeof(KernelHomingMechanicsDefinition));
     assert(abi_info.homing_state_size == sizeof(KernelHomingState));
+    assert(abi_info.lan_discovery_server_config_size ==
+           sizeof(KernelLANDiscoveryServerConfig));
+    assert(abi_info.lan_discovery_query_config_size ==
+           sizeof(KernelLANDiscoveryQueryConfig));
+    assert(abi_info.lan_discovery_result_size ==
+           sizeof(KernelLANDiscoveryResult));
     assert(abi_info.combat_state_definition_size ==
            sizeof(KernelCombatStateDefinition));
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CLIENT_MODE) != 0);
@@ -96,9 +102,11 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_PROJECTILE_RESPONSE_MASKS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_BEAM_WEAPONS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_HOMING_PROJECTILES) != 0);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_LAN_DISCOVERY) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 13u);
+    assert(KERNEL_ABI_VERSION == 14u);
     assert(KERNEL_MAX_WEAPONS == 7u);
+    assert(KERNEL_LAN_DISCOVERY_DEFAULT_PORT == 47777u);
     assert(offsetof(PlayerInput, client_action_time_us) > offsetof(PlayerInput, input_seq));
     assert(offsetof(PlayerInput, client_action_id) > offsetof(PlayerInput, client_action_time_us));
     assert(offsetof(KernelEvent, event_time_us) > offsetof(KernelEvent, code));
@@ -133,6 +141,15 @@ int main() {
     assert(!Kernel_StartClient(nullptr, "127.0.0.1:9"));
     assert(!Kernel_StartListenServer(nullptr, 7777));
     assert(!Kernel_StartDedicatedServer(nullptr, 7777));
+    KernelLANDiscoveryHandle* discovery = Kernel_LANDiscovery_Create();
+    assert(discovery != nullptr);
+    Kernel_LANDiscovery_Destroy(discovery);
+    Kernel_LANDiscovery_Destroy(nullptr);
+    assert(!Kernel_LANDiscovery_StartServer(nullptr, nullptr));
+    Kernel_LANDiscovery_StopServer(nullptr);
+    assert(!Kernel_LANDiscovery_Query(nullptr, nullptr));
+    assert(Kernel_LANDiscovery_PollResults(nullptr, nullptr, 0) == 0);
+    Kernel_LANDiscovery_ClearResults(nullptr);
     Kernel_Update(nullptr, 1.0f / 30.0f);
     Kernel_SubmitInput(nullptr, 1, nullptr);
     assert(Kernel_GetRenderStates(nullptr, nullptr, 0) == 0);

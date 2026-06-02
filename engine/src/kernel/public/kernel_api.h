@@ -11,6 +11,7 @@ extern "C" {
 #endif
 
 typedef struct KernelHandle KernelHandle;
+typedef struct KernelLANDiscoveryHandle KernelLANDiscoveryHandle;
 
 /*
  * C ABI ownership and lifetime rules:
@@ -29,6 +30,26 @@ bool Kernel_GetBuildInfo(KernelBuildInfo* out_info, uint32_t out_info_size);
 bool Kernel_GetLocalPlayerInfo(
     KernelHandle* kernel,
     KernelLocalPlayerInfo* out_info);
+
+KernelLANDiscoveryHandle* Kernel_LANDiscovery_Create(void);
+void Kernel_LANDiscovery_Destroy(KernelLANDiscoveryHandle* discovery);
+
+bool Kernel_LANDiscovery_StartServer(
+    KernelLANDiscoveryHandle* discovery,
+    const KernelLANDiscoveryServerConfig* config);
+
+void Kernel_LANDiscovery_StopServer(KernelLANDiscoveryHandle* discovery);
+
+bool Kernel_LANDiscovery_Query(
+    KernelLANDiscoveryHandle* discovery,
+    const KernelLANDiscoveryQueryConfig* config);
+
+uint32_t Kernel_LANDiscovery_PollResults(
+    KernelLANDiscoveryHandle* discovery,
+    KernelLANDiscoveryResult* out_results,
+    uint32_t max_results);
+
+void Kernel_LANDiscovery_ClearResults(KernelLANDiscoveryHandle* discovery);
 
 KernelHandle* Kernel_Create(const KernelConfig* config);
 void Kernel_Destroy(KernelHandle* kernel);

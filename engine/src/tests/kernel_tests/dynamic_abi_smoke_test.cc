@@ -176,6 +176,35 @@ int main() {
         load_symbol<bool(KernelHandle*, KernelLocalPlayerInfo*)>(
             library,
             "Kernel_GetLocalPlayerInfo");
+    auto* kernel_lan_discovery_create =
+        load_symbol<KernelLANDiscoveryHandle*()>(
+            library,
+            "Kernel_LANDiscovery_Create");
+    auto* kernel_lan_discovery_destroy =
+        load_symbol<void(KernelLANDiscoveryHandle*)>(
+            library,
+            "Kernel_LANDiscovery_Destroy");
+    [[maybe_unused]] auto* kernel_lan_discovery_start_server =
+        load_symbol<bool(KernelLANDiscoveryHandle*, const KernelLANDiscoveryServerConfig*)>(
+            library,
+            "Kernel_LANDiscovery_StartServer");
+    [[maybe_unused]] auto* kernel_lan_discovery_stop_server =
+        load_symbol<void(KernelLANDiscoveryHandle*)>(
+            library,
+            "Kernel_LANDiscovery_StopServer");
+    [[maybe_unused]] auto* kernel_lan_discovery_query =
+        load_symbol<bool(KernelLANDiscoveryHandle*, const KernelLANDiscoveryQueryConfig*)>(
+            library,
+            "Kernel_LANDiscovery_Query");
+    [[maybe_unused]] auto* kernel_lan_discovery_poll_results =
+        load_symbol<std::uint32_t(
+            KernelLANDiscoveryHandle*,
+            KernelLANDiscoveryResult*,
+            std::uint32_t)>(library, "Kernel_LANDiscovery_PollResults");
+    [[maybe_unused]] auto* kernel_lan_discovery_clear_results =
+        load_symbol<void(KernelLANDiscoveryHandle*)>(
+            library,
+            "Kernel_LANDiscovery_ClearResults");
     auto* kernel_server_create_entity =
         load_symbol<bool(
             KernelHandle*,
@@ -310,6 +339,12 @@ int main() {
     assert(abi_info.area_effect_state_size == sizeof(KernelAreaEffectState));
     assert(abi_info.beam_state_size == sizeof(KernelBeamState));
     assert(abi_info.homing_state_size == sizeof(KernelHomingState));
+    assert(abi_info.lan_discovery_server_config_size ==
+           sizeof(KernelLANDiscoveryServerConfig));
+    assert(abi_info.lan_discovery_query_config_size ==
+           sizeof(KernelLANDiscoveryQueryConfig));
+    assert(abi_info.lan_discovery_result_size ==
+           sizeof(KernelLANDiscoveryResult));
     assert(abi_info.combat_state_definition_size ==
            sizeof(KernelCombatStateDefinition));
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LISTEN_SERVER_MODE) != 0);
@@ -324,8 +359,15 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_PROJECTILE_RESPONSE_MASKS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_BEAM_WEAPONS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_HOMING_PROJECTILES) != 0);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_LAN_DISCOVERY) != 0);
     assert(!kernel_get_abi_info(nullptr, sizeof(abi_info)));
     assert(!kernel_get_abi_info(&abi_info, sizeof(abi_info) - 1));
+
+    KernelLANDiscoveryHandle* discovery = kernel_lan_discovery_create();
+    assert(discovery != nullptr);
+    kernel_lan_discovery_destroy(discovery);
+    kernel_lan_discovery_destroy(nullptr);
+
     KernelBuildInfo build_info{};
     require(kernel_get_build_info(&build_info, sizeof(build_info)));
     require(build_info.struct_size == sizeof(KernelBuildInfo));
