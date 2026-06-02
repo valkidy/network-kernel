@@ -7,6 +7,7 @@
 
 int main(void) {
     KernelAbiInfo abi_info;
+    KernelBuildInfo build_info;
     KernelConfig config;
     KernelLocalPlayerInfo local_player_info;
     PlayerInput input;
@@ -25,6 +26,7 @@ int main(void) {
     KernelHomingState homing_state;
 
     (void)config;
+    (void)build_info;
     (void)local_player_info;
     (void)input;
     (void)state;
@@ -41,9 +43,10 @@ int main(void) {
     (void)beam_state;
     (void)homing_state;
 
-    assert(KERNEL_ABI_VERSION == 12u);
+    assert(KERNEL_ABI_VERSION == 13u);
     assert(KERNEL_MAX_WEAPONS == 7u);
     assert(sizeof(KernelAbiInfo) > 0u);
+    assert(sizeof(KernelBuildInfo) > 0u);
     assert(sizeof(KernelLocalPlayerInfo) > 0u);
     assert(sizeof(KernelConfig) > 0u);
     assert(sizeof(PlayerInput) > 0u);
@@ -96,6 +99,14 @@ int main(void) {
     assert(offsetof(KernelWeaponMechanicsDefinition, beam) >
            offsetof(KernelWeaponMechanicsDefinition, area_effect));
     assert(sizeof(state.entity_id) == sizeof(uint64_t));
+    assert(sizeof(build_info.module_name) == KERNEL_BUILD_INFO_TEXT_SIZE);
+    assert(sizeof(build_info.module_file_name) == KERNEL_BUILD_INFO_TEXT_SIZE);
+    assert(sizeof(build_info.module_version) == KERNEL_BUILD_INFO_TEXT_SIZE);
+    assert(sizeof(build_info.git_commit) == KERNEL_BUILD_INFO_TEXT_SIZE);
+    assert(sizeof(build_info.build_timestamp) == KERNEL_BUILD_INFO_TEXT_SIZE);
+    assert(sizeof(build_info.build_platform) == KERNEL_BUILD_INFO_TEXT_SIZE);
+    assert(sizeof(build_info.build_config) == KERNEL_BUILD_INFO_TEXT_SIZE);
+    assert(sizeof(build_info.compiler_info) == KERNEL_BUILD_INFO_TEXT_SIZE);
 
     return 0;
 }

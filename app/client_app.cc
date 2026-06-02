@@ -62,9 +62,34 @@ bool sample_player_x(KernelHandle* kernel, float* out_x) {
     return false;
 }
 
+void log_native_build_info() {
+    KernelBuildInfo info{};
+    if (!Kernel_GetBuildInfo(&info, sizeof(info))) {
+        spdlog::error("[NetworkExample] Native Module: Kernel_GetBuildInfo failed");
+        return;
+    }
+    spdlog::info(
+        "[NetworkExample] Native Module: module_name={} module_file={} "
+        "module_version={} protocol_version={} snapshot_schema_version={} "
+        "packet_schema_version={} git_commit={} build_platform={} build_config={} "
+        "compiler_info={}",
+        info.module_name,
+        info.module_file_name,
+        info.module_version,
+        info.protocol_version,
+        info.snapshot_schema_version,
+        info.packet_schema_version,
+        info.git_commit,
+        info.build_platform,
+        info.build_config,
+        info.compiler_info);
+}
+
 }  // namespace
 
 int RunClient(const char* address) {
+    log_native_build_info();
+
     KernelConfig config = default_config();
     KernelHandle* kernel = Kernel_Create(&config);
     if (kernel == nullptr || !Kernel_StartClient(kernel, address)) {

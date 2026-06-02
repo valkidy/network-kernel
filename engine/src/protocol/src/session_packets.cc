@@ -7,7 +7,9 @@
 namespace network_example {
 namespace {
 
-constexpr std::size_t kHandshakePayloadSize = 4;
+constexpr std::size_t kHandshakePayloadSize = 4 + 2 + 2 + 2 +
+                                              kHandshakeTextSize +
+                                              kHandshakeTextSize;
 constexpr std::size_t kWelcomePayloadSize = 20;
 constexpr std::size_t kPingPongPayloadSize = 28;
 constexpr std::size_t kDisconnectPayloadSize = 4;
@@ -20,6 +22,11 @@ std::vector<std::uint8_t> encode_handshake_packet(
     protocol_internal::PacketWriter payload;
     payload.reserve(kHandshakePayloadSize);
     payload.write_u32(packet.client_nonce);
+    payload.write_u16(packet.protocol_version);
+    payload.write_u16(packet.snapshot_schema_version);
+    payload.write_u16(packet.packet_schema_version);
+    payload.write_bytes(packet.module_version, sizeof(packet.module_version));
+    payload.write_bytes(packet.git_commit, sizeof(packet.git_commit));
     return protocol_internal::wrap_packet(
         MessageType::kHandshake,
         payload.bytes(),
@@ -45,9 +52,17 @@ bool decode_handshake_packet(
 
     HandshakePacket packet;
     protocol_internal::PacketReader reader(payload, payload_size);
-    if (!reader.read_u32(&packet.client_nonce) || !reader.done()) {
+    if (!reader.read_u32(&packet.client_nonce) ||
+        !reader.read_u16(&packet.protocol_version) ||
+        !reader.read_u16(&packet.snapshot_schema_version) ||
+        !reader.read_u16(&packet.packet_schema_version) ||
+        !reader.read_bytes(packet.module_version, sizeof(packet.module_version)) ||
+        !reader.read_bytes(packet.git_commit, sizeof(packet.git_commit)) ||
+        !reader.done()) {
         return false;
     }
+    packet.module_version[sizeof(packet.module_version) - 1] = '\0';
+    packet.git_commit[sizeof(packet.git_commit) - 1] = '\0';
 
     *out_packet = packet;
     return true;

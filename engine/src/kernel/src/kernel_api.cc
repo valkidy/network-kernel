@@ -7,6 +7,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include "kernel/src/build_info.h"
 #include "kernel/src/kernel.h"
 
 struct KernelHandle {
@@ -118,6 +119,16 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_PROJECTILE_RESPONSE_MASKS |
             KERNEL_CAPABILITY_BEAM_WEAPONS |
             KERNEL_CAPABILITY_HOMING_PROJECTILES;
+        return true;
+    });
+}
+
+bool Kernel_GetBuildInfo(KernelBuildInfo* out_info, uint32_t out_info_size) {
+    return abi_call("Kernel_GetBuildInfo", false, [&]() {
+        if (out_info == nullptr || out_info_size < sizeof(KernelBuildInfo)) {
+            return false;
+        }
+        *out_info = network_example::current_build_info();
         return true;
     });
 }

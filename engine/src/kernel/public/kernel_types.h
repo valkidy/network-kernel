@@ -4,7 +4,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 12u
+#define KERNEL_ABI_VERSION 13u
+
+#define KERNEL_BUILD_INFO_TEXT_SIZE 128u
 
 #define KERNEL_MAX_WEAPONS 7u
 
@@ -71,6 +73,21 @@ typedef struct KernelAbiInfo {
     uint32_t homing_state_size;
     uint64_t capability_flags;
 } KernelAbiInfo;
+
+typedef struct KernelBuildInfo {
+    uint32_t struct_size;
+    char module_name[KERNEL_BUILD_INFO_TEXT_SIZE];
+    char module_file_name[KERNEL_BUILD_INFO_TEXT_SIZE];
+    char module_version[KERNEL_BUILD_INFO_TEXT_SIZE];
+    uint32_t protocol_version;
+    uint32_t snapshot_schema_version;
+    uint32_t packet_schema_version;
+    char git_commit[KERNEL_BUILD_INFO_TEXT_SIZE];
+    char build_timestamp[KERNEL_BUILD_INFO_TEXT_SIZE];
+    char build_platform[KERNEL_BUILD_INFO_TEXT_SIZE];
+    char build_config[KERNEL_BUILD_INFO_TEXT_SIZE];
+    char compiler_info[KERNEL_BUILD_INFO_TEXT_SIZE];
+} KernelBuildInfo;
 
 typedef struct KernelLocalPlayerInfo {
     uint32_t peer_id;
