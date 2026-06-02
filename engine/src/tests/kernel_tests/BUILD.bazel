@@ -13,6 +13,12 @@ cc_test(
 )
 
 cc_test(
+    name = "lan_discovery_test",
+    srcs = ["lan_discovery_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
     name = "kernel_c_header_test",
     srcs = ["kernel_c_header_test.c"],
     deps = ["//engine/src/kernel:kernel_api"],

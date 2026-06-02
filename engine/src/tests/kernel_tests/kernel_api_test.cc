@@ -1,8 +1,43 @@
 #include <array>
 #include <cassert>
+#include <cctype>
 #include <cstddef>
+#include <cstdlib>
+#include <cstring>
+#include <string>
 
 #include "kernel/public/kernel_api.h"
+
+namespace {
+
+void require(bool condition) {
+    if (!condition) {
+        std::abort();
+    }
+}
+
+bool all_digits(const char* value) {
+    if (value == nullptr || value[0] == '\0') {
+        return false;
+    }
+    for (const char* cursor = value; *cursor != '\0'; ++cursor) {
+        if (!std::isdigit(static_cast<unsigned char>(*cursor))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool has_version_revision_suffix(const char* value) {
+    const std::string text = value == nullptr ? "" : value;
+    constexpr const char* kPrefix = "0.6.4+r";
+    if (text.rfind(kPrefix, 0) != 0 || text.size() == std::strlen(kPrefix)) {
+        return false;
+    }
+    return all_digits(text.c_str() + std::strlen(kPrefix));
+}
+
+}  // namespace
 
 int main() {
     KernelAbiInfo abi_info{};
@@ -29,6 +64,12 @@ int main() {
     assert(abi_info.homing_mechanics_definition_size ==
            sizeof(KernelHomingMechanicsDefinition));
     assert(abi_info.homing_state_size == sizeof(KernelHomingState));
+    assert(abi_info.lan_discovery_server_config_size ==
+           sizeof(KernelLANDiscoveryServerConfig));
+    assert(abi_info.lan_discovery_query_config_size ==
+           sizeof(KernelLANDiscoveryQueryConfig));
+    assert(abi_info.lan_discovery_result_size ==
+           sizeof(KernelLANDiscoveryResult));
     assert(abi_info.combat_state_definition_size ==
            sizeof(KernelCombatStateDefinition));
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CLIENT_MODE) != 0);
@@ -61,9 +102,11 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_PROJECTILE_RESPONSE_MASKS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_BEAM_WEAPONS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_HOMING_PROJECTILES) != 0);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_LAN_DISCOVERY) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 12u);
+    assert(KERNEL_ABI_VERSION == 14u);
     assert(KERNEL_MAX_WEAPONS == 7u);
+    assert(KERNEL_LAN_DISCOVERY_DEFAULT_PORT == 47777u);
     assert(offsetof(PlayerInput, client_action_time_us) > offsetof(PlayerInput, input_seq));
     assert(offsetof(PlayerInput, client_action_id) > offsetof(PlayerInput, client_action_time_us));
     assert(offsetof(KernelEvent, event_time_us) > offsetof(KernelEvent, code));
@@ -75,10 +118,38 @@ int main() {
     assert(!Kernel_GetAbiInfo(nullptr, sizeof(abi_info)));
     assert(!Kernel_GetAbiInfo(&abi_info, sizeof(abi_info) - 1));
 
+    KernelBuildInfo build_info{};
+    require(Kernel_GetBuildInfo(&build_info, sizeof(build_info)));
+    require(build_info.struct_size == sizeof(KernelBuildInfo));
+    require(std::strcmp(build_info.module_name, "network_kernel") == 0);
+    require(build_info.module_file_name[0] != '\0');
+    require(has_version_revision_suffix(build_info.module_version));
+    require(build_info.protocol_version != 0);
+    require(build_info.snapshot_schema_version != 0);
+    require(build_info.packet_schema_version != 0);
+    require(build_info.git_commit[0] != '\0');
+    require(std::strcmp(build_info.git_commit, "unknown") != 0);
+    require(std::strcmp(build_info.module_version, build_info.git_commit) != 0);
+    require(all_digits(build_info.build_timestamp));
+    require(build_info.build_platform[0] != '\0');
+    require(build_info.build_config[0] != '\0');
+    require(build_info.compiler_info[0] != '\0');
+    require(!Kernel_GetBuildInfo(nullptr, sizeof(build_info)));
+    require(!Kernel_GetBuildInfo(&build_info, sizeof(build_info) - 1));
+
     assert(Kernel_Create(nullptr) == nullptr);
     assert(!Kernel_StartClient(nullptr, "127.0.0.1:9"));
     assert(!Kernel_StartListenServer(nullptr, 7777));
     assert(!Kernel_StartDedicatedServer(nullptr, 7777));
+    KernelLANDiscoveryHandle* discovery = Kernel_LANDiscovery_Create();
+    assert(discovery != nullptr);
+    Kernel_LANDiscovery_Destroy(discovery);
+    Kernel_LANDiscovery_Destroy(nullptr);
+    assert(!Kernel_LANDiscovery_StartServer(nullptr, nullptr));
+    Kernel_LANDiscovery_StopServer(nullptr);
+    assert(!Kernel_LANDiscovery_Query(nullptr, nullptr));
+    assert(Kernel_LANDiscovery_PollResults(nullptr, nullptr, 0) == 0);
+    Kernel_LANDiscovery_ClearResults(nullptr);
     Kernel_Update(nullptr, 1.0f / 30.0f);
     Kernel_SubmitInput(nullptr, 1, nullptr);
     assert(Kernel_GetRenderStates(nullptr, nullptr, 0) == 0);

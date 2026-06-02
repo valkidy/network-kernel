@@ -1,3 +1,5 @@
+#include <cstring>
+
 #include <cassert>
 #include <vector>
 
@@ -6,6 +8,17 @@
 int main() {
     network_example::HandshakePacket handshake;
     handshake.client_nonce = 1234;
+    handshake.protocol_version = network_example::kProtocolVersion;
+    handshake.snapshot_schema_version = network_example::kSnapshotSchemaVersion;
+    handshake.packet_schema_version = network_example::kPacketSchemaVersion;
+    std::strncpy(
+        handshake.module_version,
+        "0.6.4-test",
+        sizeof(handshake.module_version) - 1);
+    std::strncpy(
+        handshake.git_commit,
+        "abcdef123456",
+        sizeof(handshake.git_commit) - 1);
     const std::vector<std::uint8_t> handshake_packet =
         network_example::encode_handshake_packet(handshake, 1);
     network_example::HandshakePacket decoded_handshake;
@@ -14,6 +27,13 @@ int main() {
         handshake_packet.size(),
         &decoded_handshake));
     assert(decoded_handshake.client_nonce == handshake.client_nonce);
+    assert(decoded_handshake.protocol_version == network_example::kProtocolVersion);
+    assert(decoded_handshake.snapshot_schema_version ==
+           network_example::kSnapshotSchemaVersion);
+    assert(decoded_handshake.packet_schema_version ==
+           network_example::kPacketSchemaVersion);
+    assert(std::strcmp(decoded_handshake.module_version, "0.6.4-test") == 0);
+    assert(std::strcmp(decoded_handshake.git_commit, "abcdef123456") == 0);
 
     network_example::WelcomePacket welcome;
     welcome.assigned_peer_id = 7;

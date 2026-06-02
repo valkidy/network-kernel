@@ -7,10 +7,16 @@
 
 #include <spdlog/spdlog.h>
 
+#include "kernel/src/build_info.h"
 #include "kernel/src/kernel.h"
+#include "kernel/src/lan_discovery.h"
 
 struct KernelHandle {
     std::unique_ptr<network_example::KernelEngine> engine;
+};
+
+struct KernelLANDiscoveryHandle {
+    std::unique_ptr<network_example::LanDiscoveryService> service;
 };
 
 namespace {
@@ -91,6 +97,11 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
         out_info->homing_mechanics_definition_size =
             sizeof(KernelHomingMechanicsDefinition);
         out_info->homing_state_size = sizeof(KernelHomingState);
+        out_info->lan_discovery_server_config_size =
+            sizeof(KernelLANDiscoveryServerConfig);
+        out_info->lan_discovery_query_config_size =
+            sizeof(KernelLANDiscoveryQueryConfig);
+        out_info->lan_discovery_result_size = sizeof(KernelLANDiscoveryResult);
         out_info->capability_flags =
             KERNEL_CAPABILITY_CLIENT_MODE |
             KERNEL_CAPABILITY_LISTEN_SERVER_MODE |
@@ -117,7 +128,18 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_AREA_EFFECT_WEAPONS |
             KERNEL_CAPABILITY_PROJECTILE_RESPONSE_MASKS |
             KERNEL_CAPABILITY_BEAM_WEAPONS |
-            KERNEL_CAPABILITY_HOMING_PROJECTILES;
+            KERNEL_CAPABILITY_HOMING_PROJECTILES |
+            KERNEL_CAPABILITY_LAN_DISCOVERY;
+        return true;
+    });
+}
+
+bool Kernel_GetBuildInfo(KernelBuildInfo* out_info, uint32_t out_info_size) {
+    return abi_call("Kernel_GetBuildInfo", false, [&]() {
+        if (out_info == nullptr || out_info_size < sizeof(KernelBuildInfo)) {
+            return false;
+        }
+        *out_info = network_example::current_build_info();
         return true;
     });
 }
@@ -131,6 +153,69 @@ bool Kernel_GetLocalPlayerInfo(
         }
         *out_info = kernel->engine->local_player_info();
         return true;
+    });
+}
+
+KernelLANDiscoveryHandle* Kernel_LANDiscovery_Create(void) {
+    return abi_call(
+        "Kernel_LANDiscovery_Create",
+        static_cast<KernelLANDiscoveryHandle*>(nullptr),
+        [&]() -> KernelLANDiscoveryHandle* {
+            auto* handle = new KernelLANDiscoveryHandle;
+            handle->service = std::make_unique<network_example::LanDiscoveryService>();
+            return handle;
+        });
+}
+
+void Kernel_LANDiscovery_Destroy(KernelLANDiscoveryHandle* discovery) {
+    abi_call_void("Kernel_LANDiscovery_Destroy", [&]() {
+        delete discovery;
+    });
+}
+
+bool Kernel_LANDiscovery_StartServer(
+    KernelLANDiscoveryHandle* discovery,
+    const KernelLANDiscoveryServerConfig* config) {
+    return abi_call("Kernel_LANDiscovery_StartServer", false, [&]() {
+        return discovery != nullptr && discovery->service != nullptr &&
+               config != nullptr && discovery->service->start_server(*config);
+    });
+}
+
+void Kernel_LANDiscovery_StopServer(KernelLANDiscoveryHandle* discovery) {
+    abi_call_void("Kernel_LANDiscovery_StopServer", [&]() {
+        if (discovery != nullptr && discovery->service != nullptr) {
+            discovery->service->stop_server();
+        }
+    });
+}
+
+bool Kernel_LANDiscovery_Query(
+    KernelLANDiscoveryHandle* discovery,
+    const KernelLANDiscoveryQueryConfig* config) {
+    return abi_call("Kernel_LANDiscovery_Query", false, [&]() {
+        return discovery != nullptr && discovery->service != nullptr &&
+               config != nullptr && discovery->service->query(*config);
+    });
+}
+
+uint32_t Kernel_LANDiscovery_PollResults(
+    KernelLANDiscoveryHandle* discovery,
+    KernelLANDiscoveryResult* out_results,
+    uint32_t max_results) {
+    return abi_call("Kernel_LANDiscovery_PollResults", 0u, [&]() -> std::uint32_t {
+        if (discovery == nullptr || discovery->service == nullptr) {
+            return 0u;
+        }
+        return discovery->service->poll_results(out_results, max_results);
+    });
+}
+
+void Kernel_LANDiscovery_ClearResults(KernelLANDiscoveryHandle* discovery) {
+    abi_call_void("Kernel_LANDiscovery_ClearResults", [&]() {
+        if (discovery != nullptr && discovery->service != nullptr) {
+            discovery->service->clear_results();
+        }
     });
 }
 

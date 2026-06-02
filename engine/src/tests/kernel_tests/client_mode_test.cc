@@ -728,6 +728,89 @@ void late_snapshot_is_stored_but_not_used_for_reconciliation() {
         }));
 }
 
+void server_accepts_matching_handshake_versions() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine server(config);
+    auto transport = std::make_unique<network_example::LoopbackTransport>();
+    require(transport->StartServer(7777));
+    network_example::LoopbackTransport* loopback = transport.get();
+    server.transport_ = std::move(transport);
+    server.reset_runtime_state(KernelMode_DedicatedServer);
+
+    network_example::HandshakePacket handshake;
+    handshake.client_nonce = 1234;
+    handshake.protocol_version = network_example::kProtocolVersion;
+    handshake.snapshot_schema_version = network_example::kSnapshotSchemaVersion;
+    handshake.packet_schema_version = network_example::kPacketSchemaVersion;
+    const std::vector<std::uint8_t> payload =
+        network_example::encode_handshake_packet(handshake);
+
+    network_example::TransportEvent event;
+    event.type = network_example::TransportEventType::kMessage;
+    event.peer = 7;
+    event.channel = network_example::ChannelId::kSession;
+    event.payload = payload;
+    server.handle_server_handshake(event);
+
+    require(server.peer_sessions_.size() == 1);
+    require(server.peer_sessions_[0].welcomed);
+
+    network_example::TransportEvent response;
+    require(loopback->PollClientEvent(response));
+    network_example::WelcomePacket welcome;
+    require(network_example::decode_welcome_packet(
+        response.payload.data(),
+        response.payload.size(),
+        &welcome));
+    require(welcome.assigned_peer_id == 7);
+}
+
+void server_rejects_mismatched_snapshot_schema_before_welcome() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine server(config);
+    auto transport = std::make_unique<network_example::LoopbackTransport>();
+    require(transport->StartServer(7777));
+    network_example::LoopbackTransport* loopback = transport.get();
+    server.transport_ = std::move(transport);
+    server.reset_runtime_state(KernelMode_DedicatedServer);
+
+    network_example::HandshakePacket handshake;
+    handshake.client_nonce = 1234;
+    handshake.protocol_version = network_example::kProtocolVersion;
+    handshake.snapshot_schema_version = network_example::kSnapshotSchemaVersion + 1;
+    handshake.packet_schema_version = network_example::kPacketSchemaVersion;
+    const std::vector<std::uint8_t> payload =
+        network_example::encode_handshake_packet(handshake);
+
+    network_example::TransportEvent event;
+    event.type = network_example::TransportEventType::kMessage;
+    event.peer = 7;
+    event.channel = network_example::ChannelId::kSession;
+    event.payload = payload;
+    server.handle_server_handshake(event);
+
+    require(server.peer_sessions_.empty());
+
+    network_example::TransportEvent response;
+    require(loopback->PollClientEvent(response));
+    network_example::DisconnectPacket disconnect;
+    require(network_example::decode_disconnect_packet(
+        response.payload.data(),
+        response.payload.size(),
+        &disconnect));
+    require(
+        disconnect.reason_code ==
+        network_example::kDisconnectReasonSnapshotSchemaMismatch);
+}
+
 }  // namespace
 
 int main() {
@@ -744,6 +827,8 @@ int main() {
     homing_projectile_snapshot_extrapolation_is_bounded();
     render_query_does_not_consume_local_correction();
     late_snapshot_is_stored_but_not_used_for_reconciliation();
+    server_accepts_matching_handshake_versions();
+    server_rejects_mismatched_snapshot_schema_before_welcome();
 
     KernelConfig config{};
     config.mode = KernelMode_Client;

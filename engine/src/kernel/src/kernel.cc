@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <utility>
@@ -12,8 +13,10 @@
 #include <spdlog/spdlog.h>
 
 #include "kernel/public/kernel_api.h"
+#include "kernel/src/build_info.h"
 #include "kernel/src/render_state_builder.h"
 #include "protocol/public/network_packets.h"
+#include "protocol/public/packet_header.h"
 #include "protocol/public/session_packets.h"
 #include "transport/public/gns_transport.h"
 #include "transport/public/loopback_transport.h"
@@ -58,6 +61,92 @@ bool is_authoritative_combat_event(KernelEventType type) {
            type == KernelEventType_HitConfirmed ||
            type == KernelEventType_DamageApplied ||
            type == KernelEventType_Explosion;
+}
+
+constexpr PeerId kLocalListenPeerId = 1;
+constexpr PeerId kServerPeerId = 0;
+constexpr std::uint32_t kClientNonce = 0x4d330001u;
+constexpr std::uint32_t kMaxCompensationWindowUs = 100000u;
+constexpr std::uint64_t kClockSyncIntervalUs = 1000000u;
+constexpr double kClientClockOffsetSmoothingFactor = 0.25;
+constexpr float kMaxHomingVisualExtrapolationSeconds = 0.2f;
+constexpr float kDefaultEntityRelevanceDistanceMeters = 40.0f;
+constexpr float kDefaultProjectileRelevanceDistanceMeters = 80.0f;
+
+const char* disconnect_reason_name(std::uint32_t reason_code) {
+    switch (reason_code) {
+        case kDisconnectReasonProtocolVersionMismatch:
+            return "ProtocolVersionMismatch";
+        case kDisconnectReasonSnapshotSchemaMismatch:
+            return "SnapshotSchemaMismatch";
+        case kDisconnectReasonPacketSchemaMismatch:
+            return "PacketSchemaMismatch";
+        default:
+            return "Unknown";
+    }
+}
+
+std::uint32_t handshake_reject_reason(const HandshakePacket& handshake) {
+    if (handshake.protocol_version != kProtocolVersion) {
+        return kDisconnectReasonProtocolVersionMismatch;
+    }
+    if (handshake.snapshot_schema_version != kSnapshotSchemaVersion) {
+        return kDisconnectReasonSnapshotSchemaMismatch;
+    }
+    if (handshake.packet_schema_version != kPacketSchemaVersion) {
+        return kDisconnectReasonPacketSchemaMismatch;
+    }
+    return 0;
+}
+
+void copy_handshake_text(char* destination, std::size_t size, const char* source) {
+    if (destination == nullptr || size == 0) {
+        return;
+    }
+    std::snprintf(destination, size, "%s", source == nullptr ? "unknown" : source);
+}
+
+HandshakePacket make_client_handshake() {
+    const KernelBuildInfo build_info = current_build_info();
+    HandshakePacket handshake;
+    handshake.client_nonce = kClientNonce;
+    handshake.protocol_version = static_cast<std::uint16_t>(build_info.protocol_version);
+    handshake.snapshot_schema_version =
+        static_cast<std::uint16_t>(build_info.snapshot_schema_version);
+    handshake.packet_schema_version =
+        static_cast<std::uint16_t>(build_info.packet_schema_version);
+    copy_handshake_text(
+        handshake.module_version,
+        sizeof(handshake.module_version),
+        build_info.module_version);
+    copy_handshake_text(
+        handshake.git_commit,
+        sizeof(handshake.git_commit),
+        build_info.git_commit);
+    return handshake;
+}
+
+void log_snapshot_decode_failure(const TransportEvent& transport_event) {
+    PacketHeader header;
+    const bool has_header = decode_packet_header(
+        transport_event.payload.data(),
+        transport_event.payload.size(),
+        &header);
+    const KernelBuildInfo build_info = current_build_info();
+    spdlog::error(
+        "[NetworkExample] decode_snapshot_packet failed error_code=6 "
+        "local_module_version={} local_protocol_version={} "
+        "local_snapshot_schema_version={} local_packet_schema_version={} "
+        "local_git_commit={} packet_size={} packet_type={} peer_id={} channel={}",
+        build_info.module_version,
+        build_info.protocol_version,
+        build_info.snapshot_schema_version,
+        build_info.packet_schema_version,
+        build_info.git_commit,
+        transport_event.payload.size(),
+        has_header ? header.message_type : 0,
+        transport_event.peer,
+        static_cast<int>(transport_event.channel));
 }
 
 std::uint32_t derived_visual_flags(const World& world, entt::entity entity) {
@@ -191,16 +280,6 @@ std::uint32_t history_frame_count(const TickConfig& config) {
     const TickConfig tick = with_tick_defaults(config);
     return std::max(1u, (tick.server_tick_rate * tick.history_ms) / 1000u);
 }
-
-constexpr PeerId kLocalListenPeerId = 1;
-constexpr PeerId kServerPeerId = 0;
-constexpr std::uint32_t kClientNonce = 0x4d330001u;
-constexpr std::uint32_t kMaxCompensationWindowUs = 100000u;
-constexpr std::uint64_t kClockSyncIntervalUs = 1000000u;
-constexpr double kClientClockOffsetSmoothingFactor = 0.25;
-constexpr float kMaxHomingVisualExtrapolationSeconds = 0.2f;
-constexpr float kDefaultEntityRelevanceDistanceMeters = 40.0f;
-constexpr float kDefaultProjectileRelevanceDistanceMeters = 80.0f;
 
 bool valid_weapon_id(std::uint8_t weapon_id) {
     return static_cast<std::size_t>(weapon_id) < kWeaponCount;
@@ -1201,6 +1280,7 @@ void KernelEngine::poll_transport() {
                     transport_event.payload.data(),
                     transport_event.payload.size(),
                     &snapshot)) {
+                log_snapshot_decode_failure(transport_event);
                 push_event(KernelEventType_Error, 0, transport_event.peer, 6);
                 continue;
             }
@@ -1535,6 +1615,7 @@ void KernelEngine::poll_client_transport() {
                 transport_event.payload.data(),
                 transport_event.payload.size(),
                 &snapshot)) {
+            log_snapshot_decode_failure(transport_event);
             push_event(KernelEventType_Error, 0, transport_event.peer, 6);
             continue;
         }
@@ -2478,9 +2559,8 @@ void KernelEngine::send_client_handshake() {
         return;
     }
 
-    const std::vector<std::uint8_t> packet = encode_handshake_packet(
-        HandshakePacket{kClientNonce},
-        next_packet_sequence_++);
+    const std::vector<std::uint8_t> packet =
+        encode_handshake_packet(make_client_handshake(), next_packet_sequence_++);
     if (!transport_->Send(
             kServerPeerId,
             packet.data(),
@@ -2580,6 +2660,42 @@ void KernelEngine::handle_server_handshake(const TransportEvent& transport_event
             transport_event.payload.size(),
             &handshake)) {
         push_event(KernelEventType_Error, 0, transport_event.peer, 9);
+        return;
+    }
+
+    const std::uint32_t reject_reason = handshake_reject_reason(handshake);
+    if (reject_reason != 0) {
+        const KernelBuildInfo build_info = current_build_info();
+        spdlog::warn(
+            "[NetworkExample] Connection rejected reason={} peer={} "
+            "local_protocol_version={} remote_protocol_version={} "
+            "local_snapshot_schema_version={} remote_snapshot_schema_version={} "
+            "local_packet_schema_version={} remote_packet_schema_version={} "
+            "local_module_version={} remote_module_version={} "
+            "local_git_commit={} remote_git_commit={}",
+            disconnect_reason_name(reject_reason),
+            transport_event.peer,
+            build_info.protocol_version,
+            handshake.protocol_version,
+            build_info.snapshot_schema_version,
+            handshake.snapshot_schema_version,
+            build_info.packet_schema_version,
+            handshake.packet_schema_version,
+            build_info.module_version,
+            handshake.module_version,
+            build_info.git_commit,
+            handshake.git_commit);
+        const DisconnectPacket disconnect{reject_reason};
+        const std::vector<std::uint8_t> packet =
+            encode_disconnect_packet(disconnect, next_packet_sequence_++);
+        if (!transport_->Send(
+                transport_event.peer,
+                packet.data(),
+                static_cast<std::uint32_t>(packet.size()),
+                SendMode::kReliable,
+                ChannelId::kSession)) {
+            push_event(KernelEventType_Error, 0, transport_event.peer, 12);
+        }
         return;
     }
 

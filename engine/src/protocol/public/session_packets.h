@@ -1,6 +1,7 @@
 #ifndef PROTOCOL_PUBLIC_SESSION_PACKETS_H_
 #define PROTOCOL_PUBLIC_SESSION_PACKETS_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -9,8 +10,21 @@
 
 namespace network_example {
 
+constexpr std::size_t kHandshakeTextSize = 64;
+
 struct HandshakePacket {
     std::uint32_t client_nonce = 0;
+    std::uint16_t protocol_version = kProtocolVersion;
+    std::uint16_t snapshot_schema_version = kSnapshotSchemaVersion;
+    std::uint16_t packet_schema_version = kPacketSchemaVersion;
+    char module_version[kHandshakeTextSize] = {};
+    char git_commit[kHandshakeTextSize] = {};
+};
+
+enum SessionDisconnectReason : std::uint32_t {
+    kDisconnectReasonProtocolVersionMismatch = 1001,
+    kDisconnectReasonSnapshotSchemaMismatch = 1002,
+    kDisconnectReasonPacketSchemaMismatch = 1003,
 };
 
 struct WelcomePacket {

@@ -1,7 +1,9 @@
 #include <array>
 #include <cassert>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -12,6 +14,33 @@
 #include "kernel/public/kernel_api.h"
 
 namespace {
+
+void require(bool condition) {
+    if (!condition) {
+        std::abort();
+    }
+}
+
+bool all_digits(const char* value) {
+    if (value == nullptr || value[0] == '\0') {
+        return false;
+    }
+    for (const char* cursor = value; *cursor != '\0'; ++cursor) {
+        if (!std::isdigit(static_cast<unsigned char>(*cursor))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool has_version_revision_suffix(const char* value) {
+    const std::string text = value == nullptr ? "" : value;
+    constexpr const char* kPrefix = "0.6.4+r";
+    if (text.rfind(kPrefix, 0) != 0 || text.size() == std::strlen(kPrefix)) {
+        return false;
+    }
+    return all_digits(text.c_str() + std::strlen(kPrefix));
+}
 
 template <typename Signature>
 Signature* load_symbol(void* library, const char* name) {
@@ -105,6 +134,10 @@ int main() {
 
     auto* kernel_get_abi_info =
         load_symbol<bool(KernelAbiInfo*, std::uint32_t)>(library, "Kernel_GetAbiInfo");
+    auto* kernel_get_build_info =
+        load_symbol<bool(KernelBuildInfo*, std::uint32_t)>(
+            library,
+            "Kernel_GetBuildInfo");
     auto* kernel_create =
         load_symbol<KernelHandle*(const KernelConfig*)>(library, "Kernel_Create");
     auto* kernel_destroy =
@@ -143,6 +176,35 @@ int main() {
         load_symbol<bool(KernelHandle*, KernelLocalPlayerInfo*)>(
             library,
             "Kernel_GetLocalPlayerInfo");
+    auto* kernel_lan_discovery_create =
+        load_symbol<KernelLANDiscoveryHandle*()>(
+            library,
+            "Kernel_LANDiscovery_Create");
+    auto* kernel_lan_discovery_destroy =
+        load_symbol<void(KernelLANDiscoveryHandle*)>(
+            library,
+            "Kernel_LANDiscovery_Destroy");
+    [[maybe_unused]] auto* kernel_lan_discovery_start_server =
+        load_symbol<bool(KernelLANDiscoveryHandle*, const KernelLANDiscoveryServerConfig*)>(
+            library,
+            "Kernel_LANDiscovery_StartServer");
+    [[maybe_unused]] auto* kernel_lan_discovery_stop_server =
+        load_symbol<void(KernelLANDiscoveryHandle*)>(
+            library,
+            "Kernel_LANDiscovery_StopServer");
+    [[maybe_unused]] auto* kernel_lan_discovery_query =
+        load_symbol<bool(KernelLANDiscoveryHandle*, const KernelLANDiscoveryQueryConfig*)>(
+            library,
+            "Kernel_LANDiscovery_Query");
+    [[maybe_unused]] auto* kernel_lan_discovery_poll_results =
+        load_symbol<std::uint32_t(
+            KernelLANDiscoveryHandle*,
+            KernelLANDiscoveryResult*,
+            std::uint32_t)>(library, "Kernel_LANDiscovery_PollResults");
+    [[maybe_unused]] auto* kernel_lan_discovery_clear_results =
+        load_symbol<void(KernelLANDiscoveryHandle*)>(
+            library,
+            "Kernel_LANDiscovery_ClearResults");
     auto* kernel_server_create_entity =
         load_symbol<bool(
             KernelHandle*,
@@ -277,6 +339,12 @@ int main() {
     assert(abi_info.area_effect_state_size == sizeof(KernelAreaEffectState));
     assert(abi_info.beam_state_size == sizeof(KernelBeamState));
     assert(abi_info.homing_state_size == sizeof(KernelHomingState));
+    assert(abi_info.lan_discovery_server_config_size ==
+           sizeof(KernelLANDiscoveryServerConfig));
+    assert(abi_info.lan_discovery_query_config_size ==
+           sizeof(KernelLANDiscoveryQueryConfig));
+    assert(abi_info.lan_discovery_result_size ==
+           sizeof(KernelLANDiscoveryResult));
     assert(abi_info.combat_state_definition_size ==
            sizeof(KernelCombatStateDefinition));
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LISTEN_SERVER_MODE) != 0);
@@ -291,8 +359,33 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_PROJECTILE_RESPONSE_MASKS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_BEAM_WEAPONS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_HOMING_PROJECTILES) != 0);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_LAN_DISCOVERY) != 0);
     assert(!kernel_get_abi_info(nullptr, sizeof(abi_info)));
     assert(!kernel_get_abi_info(&abi_info, sizeof(abi_info) - 1));
+
+    KernelLANDiscoveryHandle* discovery = kernel_lan_discovery_create();
+    assert(discovery != nullptr);
+    kernel_lan_discovery_destroy(discovery);
+    kernel_lan_discovery_destroy(nullptr);
+
+    KernelBuildInfo build_info{};
+    require(kernel_get_build_info(&build_info, sizeof(build_info)));
+    require(build_info.struct_size == sizeof(KernelBuildInfo));
+    require(std::string(build_info.module_name) == "network_kernel");
+    require(build_info.module_file_name[0] != '\0');
+    require(has_version_revision_suffix(build_info.module_version));
+    require(build_info.protocol_version != 0);
+    require(build_info.snapshot_schema_version != 0);
+    require(build_info.packet_schema_version != 0);
+    require(build_info.git_commit[0] != '\0');
+    require(std::string(build_info.git_commit) != "unknown");
+    require(std::string(build_info.module_version) != build_info.git_commit);
+    require(all_digits(build_info.build_timestamp));
+    require(build_info.build_platform[0] != '\0');
+    require(build_info.build_config[0] != '\0');
+    require(build_info.compiler_info[0] != '\0');
+    require(!kernel_get_build_info(nullptr, sizeof(build_info)));
+    require(!kernel_get_build_info(&build_info, sizeof(build_info) - 1));
     GameServerAbiInfo game_server_abi_info{};
     assert(game_server_get_abi_info(
         &game_server_abi_info,

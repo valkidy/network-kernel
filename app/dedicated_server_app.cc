@@ -22,9 +22,41 @@ KernelConfig default_config() {
     return config;
 }
 
+void log_dedicated_server_build_info() {
+    KernelBuildInfo info{};
+    if (!Kernel_GetBuildInfo(&info, sizeof(info))) {
+        spdlog::error("[NetworkExample] Dedicated Server: Kernel_GetBuildInfo failed");
+        return;
+    }
+    spdlog::info(
+        "[NetworkExample] Dedicated Server:\n "
+        "module_name             = {}\n "
+        "module_file             = {}\n "
+        "server_version          = {}\n "
+        "protocol_version        = {}\n "
+        "snapshot_schema_version = {}\n "
+        "packet_schema_version   = {}\n "
+        "git_commit              = {}\n "
+        "build_platform          = {}\n "
+        "build_config            = {}\n "
+        "compiler_info           = {}",
+        info.module_name,
+        info.module_file_name,
+        info.module_version,
+        info.protocol_version,
+        info.snapshot_schema_version,
+        info.packet_schema_version,
+        info.git_commit,
+        info.build_platform,
+        info.build_config,
+        info.compiler_info);
+}
+
 }  // namespace
 
 int RunDedicatedServer(std::uint16_t port) {
+    log_dedicated_server_build_info();
+
     KernelConfig config = default_config();
     KernelHandle* kernel = Kernel_Create(&config);
     if (kernel == nullptr || !Kernel_StartDedicatedServer(kernel, port)) {

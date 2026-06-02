@@ -49,6 +49,13 @@ public:
         write_float(value.z);
         write_float(value.w);
     }
+    void write_bytes(const void* data, std::size_t size) {
+        if (size == 0) {
+            return;
+        }
+        const auto* bytes = static_cast<const std::uint8_t*>(data);
+        buffer_.insert(buffer_.end(), bytes, bytes + size);
+    }
 
     const std::vector<std::uint8_t>& bytes() const { return buffer_; }
 
@@ -115,6 +122,17 @@ public:
         return out_value != nullptr && read_float(&out_value->x) &&
                read_float(&out_value->y) && read_float(&out_value->z) &&
                read_float(&out_value->w);
+    }
+    bool read_bytes(void* out_data, std::size_t size) {
+        if (size == 0) {
+            return true;
+        }
+        if (!can_read(size) || out_data == nullptr) {
+            return false;
+        }
+        std::memcpy(out_data, data_ + offset_, size);
+        offset_ += size;
+        return true;
     }
 
     bool done() const { return offset_ == size_; }
