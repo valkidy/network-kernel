@@ -89,6 +89,10 @@ namespace NetworkExample.Kernel
                 info,
                 KernelConstants.CapabilityHomingProjectiles,
                 "Kernel homing projectile capability is missing.");
+            RequireCapability(
+                info,
+                KernelConstants.CapabilityLANDiscovery,
+                "Kernel LAN discovery capability is missing.");
 
             RequireSize(nameof(KernelAbiInfo), info.struct_size, Marshal.SizeOf<KernelAbiInfo>());
             RequireSize(nameof(KernelConfig), info.kernel_config_size, Marshal.SizeOf<KernelConfig>());
@@ -146,6 +150,18 @@ namespace NetworkExample.Kernel
                 nameof(KernelHomingState),
                 info.homing_state_size,
                 Marshal.SizeOf<KernelHomingState>());
+            RequireSize(
+                nameof(KernelLANDiscoveryServerConfig),
+                info.lan_discovery_server_config_size,
+                Marshal.SizeOf<KernelLANDiscoveryServerConfig>());
+            RequireSize(
+                nameof(KernelLANDiscoveryQueryConfig),
+                info.lan_discovery_query_config_size,
+                Marshal.SizeOf<KernelLANDiscoveryQueryConfig>());
+            RequireSize(
+                nameof(KernelLANDiscoveryResult),
+                info.lan_discovery_result_size,
+                Marshal.SizeOf<KernelLANDiscoveryResult>());
         }
 
         private static void RequireCapability(

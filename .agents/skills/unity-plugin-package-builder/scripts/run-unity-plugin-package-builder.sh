@@ -420,6 +420,17 @@ build_required_exports() {
   if [[ "$native_abi" -ge 12 ]]; then
     REQUIRED_EXPORTS_BUILT+=(Kernel_ServerGetHomingState)
   fi
+  if [[ "$native_abi" -ge 14 ]]; then
+    REQUIRED_EXPORTS_BUILT+=(
+      Kernel_LANDiscovery_Create
+      Kernel_LANDiscovery_Destroy
+      Kernel_LANDiscovery_StartServer
+      Kernel_LANDiscovery_StopServer
+      Kernel_LANDiscovery_Query
+      Kernel_LANDiscovery_PollResults
+      Kernel_LANDiscovery_ClearResults
+    )
+  fi
   if [[ "$native_game_server_abi" -ge 2 ]]; then
     REQUIRED_EXPORTS_BUILT+=(
       GameServer_CreateWithWeaponTemplateDirectory

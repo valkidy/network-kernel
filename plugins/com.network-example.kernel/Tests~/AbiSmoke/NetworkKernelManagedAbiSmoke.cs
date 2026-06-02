@@ -1,5 +1,9 @@
 using System;
+using System.Net;
+using System.Net.Sockets;
+using System.Threading;
 using NetworkExample.Kernel;
+using NetworkExample.Kernel.Client;
 using NetworkExample.Kernel.Host;
 
 public static class NetworkKernelManagedAbiSmoke
@@ -24,6 +28,7 @@ public static class NetworkKernelManagedAbiSmoke
         GameServerAbi.ValidateNativeAbi();
         KernelAbiInfo info = KernelAbi.GetInfo();
         GameServerAbiInfo gameServerInfo = GameServerAbi.GetInfo();
+        RequireLANDiscovery();
 
         using (var kernel = new Kernel(KernelConfig.CreateDefault(KernelMode.ListenServer)))
         {
@@ -110,6 +115,55 @@ public static class NetworkKernelManagedAbiSmoke
             info.capability_flags,
             gameServerInfo.abi_version,
             gameServerInfo.capability_flags);
+    }
+
+    private static void RequireLANDiscovery()
+    {
+        const string ServerName = "Managed LAN Discovery Smoke";
+        const ushort ServerEndpointPort = 7799;
+        ushort discoveryPort = AllocateUdpPort();
+
+        using (var discovery = new LANDiscovery())
+        {
+            Require(
+                discovery.StartServer(ServerEndpointPort, ServerName, discoveryPort),
+                "LANDiscovery.StartServer failed.");
+            Require(
+                discovery.RefreshServerList(discoveryPort, 250),
+                "LANDiscovery.RefreshServerList failed.");
+
+            var servers = new LANDiscoveredServer[4];
+            uint serverCount = 0;
+            for (int attempt = 0; attempt < 40 && serverCount == 0; ++attempt)
+            {
+                Thread.Sleep(25);
+                serverCount = discovery.GetDiscoveredServers(servers);
+            }
+
+            Require(serverCount > 0, "LANDiscovery did not return any servers.");
+            Require(servers[0].ServerName == ServerName, "LANDiscovery server name mismatch.");
+            Require(!string.IsNullOrEmpty(servers[0].Ip), "LANDiscovery server IP was empty.");
+            Require(servers[0].Port == ServerEndpointPort, "LANDiscovery server port mismatch.");
+            Require(!string.IsNullOrEmpty(servers[0].ModuleVersion), "LANDiscovery module version was empty.");
+            Require(servers[0].ProtocolVersion != 0, "LANDiscovery protocol version was empty.");
+            Require(servers[0].SnapshotSchemaVersion != 0, "LANDiscovery snapshot schema version was empty.");
+            Require(servers[0].PacketSchemaVersion != 0, "LANDiscovery packet schema version was empty.");
+            Require(!string.IsNullOrEmpty(servers[0].GitCommit), "LANDiscovery git commit was empty.");
+            Require(servers[0].Compatible, "LANDiscovery result was not compatible.");
+
+            discovery.ClearResults();
+            Require(discovery.GetDiscoveredServers(servers) == 0, "LANDiscovery.ClearResults failed.");
+            discovery.StopServer();
+            discovery.StopServer();
+        }
+    }
+
+    private static ushort AllocateUdpPort()
+    {
+        using (var socket = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0)))
+        {
+            return (ushort)((IPEndPoint)socket.Client.LocalEndPoint).Port;
+        }
     }
 
     private static void ConfigureCombatAndWeapons(Kernel kernel, uint enemyNetId)

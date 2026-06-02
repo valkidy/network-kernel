@@ -5,7 +5,9 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 12;
+        public const uint AbiVersion = 14;
+        public const int LANDiscoveryTextSize = 128;
+        public const ushort LANDiscoveryDefaultPort = 47777;
         public const int MaxWeapons = 7;
 
         public const ulong CapabilityClientMode = 0x0000000000000001UL;
@@ -34,6 +36,7 @@ namespace NetworkExample.Kernel
         public const ulong CapabilityProjectileResponseMasks = 0x0000000000800000UL;
         public const ulong CapabilityBeamWeapons = 0x0000000001000000UL;
         public const ulong CapabilityHomingProjectiles = 0x0000000002000000UL;
+        public const ulong CapabilityLANDiscovery = 0x0000000004000000UL;
 
         public const uint CollisionLayerPlayer = 0x00000001U;
         public const uint CollisionLayerEnemy = 0x00000002U;
@@ -171,6 +174,9 @@ namespace NetworkExample.Kernel
         public uint beam_state_size;
         public uint homing_mechanics_definition_size;
         public uint homing_state_size;
+        public uint lan_discovery_server_config_size;
+        public uint lan_discovery_query_config_size;
+        public uint lan_discovery_result_size;
         public ulong capability_flags;
     }
 
@@ -183,6 +189,50 @@ namespace NetworkExample.Kernel
         public bool has_welcome;
         [MarshalAs(UnmanagedType.I1)]
         public bool connected;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
+    public struct KernelLANDiscoveryServerConfig
+    {
+        public uint struct_size;
+        public ushort discovery_port;
+        public ushort server_endpoint_port;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = KernelConstants.LANDiscoveryTextSize)]
+        public string server_name;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelLANDiscoveryServerConfig>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelLANDiscoveryQueryConfig
+    {
+        public uint struct_size;
+        public ushort discovery_port;
+        public uint timeout_ms;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelLANDiscoveryQueryConfig>();
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
+    public struct KernelLANDiscoveryResult
+    {
+        public uint struct_size;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = KernelConstants.LANDiscoveryTextSize)]
+        public string server_name;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = KernelConstants.LANDiscoveryTextSize)]
+        public string server_endpoint_ip;
+        public ushort server_endpoint_port;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = KernelConstants.LANDiscoveryTextSize)]
+        public string module_version;
+        public uint protocol_version;
+        public uint snapshot_schema_version;
+        public uint packet_schema_version;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = KernelConstants.LANDiscoveryTextSize)]
+        public string git_commit;
+        [MarshalAs(UnmanagedType.I1)]
+        public bool compatible;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelLANDiscoveryResult>();
     }
 
     [StructLayout(LayoutKind.Sequential)]

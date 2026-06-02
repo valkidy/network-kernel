@@ -19,6 +19,11 @@
       "path": "Samples~/Client"
     },
     {
+      "displayName": "LAN Discovery",
+      "description": "Log-only MonoBehaviour for triggering LAN discovery from a UI Button and printing direct-IP connect endpoints.",
+      "path": "Samples~/LANDiscovery"
+    },
+    {
       "displayName": "Host",
       "description": "Listen-host MonoBehaviour that runs the pure runtime SDK plus native GameServer bridge and exposes render states as data.",
       "path": "Samples~/Host"
