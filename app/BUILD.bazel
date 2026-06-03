@@ -15,6 +15,9 @@ cc_binary(
         "host_server_app.cc",
         "main.cc",
     ],
+    data = [
+        "//engine/src/kernel:network_kernel_shared",
+    ],
     deps = [
         "//game_server:game_server",
         "//engine/src/kernel:kernel",
