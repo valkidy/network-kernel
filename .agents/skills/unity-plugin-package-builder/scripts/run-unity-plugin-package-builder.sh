@@ -226,6 +226,7 @@ preflight() {
   if platform_enabled macos; then
     require_command codesign
     require_command nm
+    require_command xattr
   fi
   if platform_enabled windows-x86_64; then
     require_command file
@@ -252,6 +253,14 @@ verify_signed_native_plugin() {
   [[ -f "$dylib_path" ]] || die "native plugin not found for codesign verification: $dylib_path"
   note "Verifying ad-hoc signature for $description"
   codesign --verify --verbose=4 "$dylib_path"
+}
+
+clear_quarantine_xattr() {
+  local dylib_path="$1"
+  if xattr -p com.apple.quarantine "$dylib_path" >/dev/null 2>&1; then
+    xattr -d com.apple.quarantine "$dylib_path" ||
+      die "could not remove com.apple.quarantine from $dylib_path"
+  fi
 }
 
 resolve_bazel_bin() {
@@ -360,6 +369,7 @@ stage_native() {
     [[ -f "$BUILT_MACOS_DYLIB" ]] || die "built macOS dylib not found: $BUILT_MACOS_DYLIB. Run --mode build-native or --mode all first."
     mkdir -p "$(dirname "$STAGED_MACOS_DYLIB")"
     cp "$BUILT_MACOS_DYLIB" "$STAGED_MACOS_DYLIB"
+    clear_quarantine_xattr "$STAGED_MACOS_DYLIB"
     verify_signed_native_plugin "$STAGED_MACOS_DYLIB" "staged macOS native plugin"
     note "Staged macOS native plugin: $STAGED_MACOS_DYLIB"
   fi

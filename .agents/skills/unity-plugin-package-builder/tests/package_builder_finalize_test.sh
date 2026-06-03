@@ -171,12 +171,21 @@ touch "$destination/com.network-example.kernel-0.6.4.tgz"
 printf '%s\n' "com.network-example.kernel-0.6.4.tgz"
 SH
 
-  for command_name in rsync tar xattr; do
+  for command_name in rsync tar; do
     write_file "$bin_dir/$command_name" <<'SH'
 #!/usr/bin/env bash
 exit 0
 SH
   done
+
+  write_file "$bin_dir/xattr" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -n "${XATTR_LOG:-}" ]]; then
+  printf '%s\n' "$*" >> "$XATTR_LOG"
+fi
+exit 0
+SH
 
   chmod +x "$bin_dir"/*
 }
@@ -281,6 +290,7 @@ run_builder() {
       FAKE_BAZEL_BIN="$sandbox_dir/bazel-bin" \
       BAZEL_LOG="$sandbox_dir/bazel.log" \
       CODESIGN_LOG="$sandbox_dir/codesign.log" \
+      XATTR_LOG="$sandbox_dir/xattr.log" \
       "$SCRIPT_UNDER_TEST" "$@"
   ) >"$output_file" 2>&1
 }
@@ -410,12 +420,13 @@ test_build_native_verifies_bazel_signed_dylib() {
 }
 
 test_stage_verifies_staged_dylib_from_existing_build_output() {
-  local sandbox_dir repo_dir output_file codesign_log built_dylib built_dll staged_dylib staged_dll status
+  local sandbox_dir repo_dir output_file codesign_log xattr_log built_dylib built_dll staged_dylib staged_dll status
   sandbox_dir="$(mktemp -d "${TMPDIR:-/tmp}/package-builder-stage-sign.XXXXXX")"
   sandbox_dir="$(cd "$sandbox_dir" && pwd)"
   repo_dir="$sandbox_dir/repo"
   output_file="$sandbox_dir/output.txt"
   codesign_log="$sandbox_dir/codesign.log"
+  xattr_log="$sandbox_dir/xattr.log"
   built_dylib="$sandbox_dir/bazel-bin/engine/src/kernel/signed/libnetwork_kernel.dylib"
   built_dll="$sandbox_dir/bazel-bin/engine/src/kernel/network_kernel.dll"
   staged_dylib="$repo_dir/plugins/com.network-example.kernel/Assets/Plugins/macOS/libnetwork_kernel.dylib"
@@ -439,6 +450,8 @@ test_stage_verifies_staged_dylib_from_existing_build_output() {
   done
   [[ -f "$codesign_log" ]] || fail "expected stage mode to verify the staged dylib signature"
   assert_contains "$(cat "$codesign_log")" "--verify --verbose=4 $staged_dylib"
+  [[ -f "$xattr_log" ]] || fail "expected stage mode to clear quarantine from the staged dylib"
+  assert_contains "$(cat "$xattr_log")" "-d com.apple.quarantine $staged_dylib"
 }
 
 test_verify_fails_when_windows_runtime_dll_is_missing() {
