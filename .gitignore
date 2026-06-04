@@ -1,4 +1,5 @@
 .aswb/
+.idea/*
 bazel-*
 plugins/output/
 !.agents/skills/bazel-build/
