@@ -17,6 +17,20 @@ namespace NetworkExample.Kernel
             return info;
         }
 
+        public static KernelBuildInfo GetBuildInfo()
+        {
+            int managedSize = Marshal.SizeOf<KernelBuildInfo>();
+            if (!KernelNative.Kernel_GetBuildInfo(
+                    out KernelBuildInfo info,
+                    (uint)managedSize))
+            {
+                throw new InvalidOperationException("Kernel_GetBuildInfo failed.");
+            }
+            RequireSize(nameof(KernelBuildInfo), info.struct_size, managedSize);
+
+            return info;
+        }
+
         public static void ValidateNativeAbi()
         {
             KernelAbiInfo info = GetInfo();

@@ -1,7 +1,7 @@
 # Network Example Kernel Unity Package
 
-This package is the M6.4 Unity package for the network-example native kernel
-ABI v8 plus the Game Server v1 native bridge ABI v1.
+This package is the Unity package for the network-example native kernel
+ABI v14 plus the Game Server native bridge ABI v2.
 It is intentionally a pure networking/runtime SDK: native networking and game
 server behavior stay in C++, while Unity projects own input sampling,
 prefab/entity mapping, animation, scene objects, cameras, UI, and render-state
@@ -18,6 +18,19 @@ Add this package to a Unity project with a local package reference:
   }
 }
 ```
+
+For remote Git installation, point Unity Package Manager at the package
+directory that contains this `package.json`:
+
+```json
+{
+  "dependencies": {
+    "com.network-example.kernel": "https://github.com/<owner>/<repo>.git?path=/plugins/com.network-example.kernel#dev-latest"
+  }
+}
+```
+
+Replace `dev-latest` with an immutable `v*` release tag for release builds.
 
 ## Native Plugin
 
@@ -82,8 +95,8 @@ Required compile/ABI smoke:
   smoke through the native
   `GameServer_*` bridge, and destroys the handles.
 
-To confirm the packaged dylib has the ABI v8 kernel server exports and Game
-Server v1 bridge exports:
+To confirm the packaged dylib has the ABI v14 kernel server exports and Game
+Server v2 bridge exports:
 
 ```text
 nm -gU plugins/com.network-example.kernel/Assets/Plugins/macOS/libnetwork_kernel.dylib | grep Kernel_Server

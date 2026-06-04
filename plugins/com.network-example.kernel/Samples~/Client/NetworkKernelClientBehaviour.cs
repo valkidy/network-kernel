@@ -1,3 +1,4 @@
+using System;
 using NetworkExample.Kernel;
 using NetworkExample.Kernel.Client;
 using UnityEngine;
@@ -18,6 +19,8 @@ public sealed class NetworkKernelClientBehaviour : MonoBehaviour
 
     private void Start()
     {
+        LogVersionInfo();
+
         client = new NetworkClient();
         if (!client.Start(address))
         {
@@ -27,6 +30,25 @@ public sealed class NetworkKernelClientBehaviour : MonoBehaviour
         }
 
         Debug.Log($"Network kernel client connecting to {address}.");
+    }
+
+    private static void LogVersionInfo()
+    {
+        try
+        {
+            KernelAbiInfo kernelInfo = KernelAbi.GetInfo();
+            KernelBuildInfo buildInfo = KernelAbi.GetBuildInfo();
+            GameServerAbiInfo gameServerInfo = GameServerAbi.GetInfo();
+            Debug.Log(
+                $"Network kernel package {NetworkKernelPackageInfo.Name}@{NetworkKernelPackageInfo.Version}: " +
+                $"native_version={buildInfo.module_version} git_commit={buildInfo.git_commit} " +
+                $"platform={buildInfo.build_platform} config={buildInfo.build_config} " +
+                $"kernel_abi={kernelInfo.abi_version} game_server_abi={gameServerInfo.abi_version}");
+        }
+        catch (Exception exception)
+        {
+            Debug.LogWarning($"Network kernel version info unavailable: {exception.Message}");
+        }
     }
 
     private void Update()

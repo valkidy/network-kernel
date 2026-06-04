@@ -27,7 +27,12 @@ public static class NetworkKernelManagedAbiSmoke
         KernelAbi.ValidateNativeAbi();
         GameServerAbi.ValidateNativeAbi();
         KernelAbiInfo info = KernelAbi.GetInfo();
+        KernelBuildInfo buildInfo = KernelAbi.GetBuildInfo();
         GameServerAbiInfo gameServerInfo = GameServerAbi.GetInfo();
+        Require(buildInfo.struct_size != 0, "Kernel_GetBuildInfo returned empty struct size.");
+        Require(!string.IsNullOrEmpty(buildInfo.module_version), "Kernel_GetBuildInfo module version was empty.");
+        Require(!string.IsNullOrEmpty(buildInfo.git_commit), "Kernel_GetBuildInfo git commit was empty.");
+        Require(!string.IsNullOrEmpty(buildInfo.build_platform), "Kernel_GetBuildInfo build platform was empty.");
         RequireLANDiscovery();
 
         using (var kernel = new Kernel(KernelConfig.CreateDefault(KernelMode.ListenServer)))
@@ -110,7 +115,10 @@ public static class NetworkKernelManagedAbiSmoke
         }
 
         Console.WriteLine(
-            "Network kernel managed ABI smoke passed: kernel_version={0} kernel_capabilities=0x{1:x16} game_server_version={2} game_server_capabilities=0x{3:x16}",
+            "Network kernel managed ABI smoke passed: package_version={0} native_version={1} git_commit={2} kernel_version={3} kernel_capabilities=0x{4:x16} game_server_version={5} game_server_capabilities=0x{6:x16}",
+            NetworkKernelPackageInfo.Version,
+            buildInfo.module_version,
+            buildInfo.git_commit,
             info.abi_version,
             info.capability_flags,
             gameServerInfo.abi_version,

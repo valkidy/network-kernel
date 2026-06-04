@@ -1,0 +1,115 @@
+name: Unity Package Dev Build
+
+on:
+  push:
+    branches:
+      - dev-latest
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PACKAGE_DIR: plugins/com.network-example.kernel
+  PACKAGE_NAME: com.network-example.kernel
+
+jobs:
+  build:
+    name: Build dev UPM package
+    runs-on: macos-14
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install native build dependencies
+        run: brew install bazelisk mingw-w64 openssl@3
+
+      - name: Validate UPM package layout
+        run: |
+          set -euo pipefail
+          required_paths=(
+            "$PACKAGE_DIR/package.json"
+            "$PACKAGE_DIR/Runtime/NetworkKernel.asmdef"
+            "$PACKAGE_DIR/Editor/NetworkKernel.Editor.asmdef"
+            "$PACKAGE_DIR/Assets/Plugins/macOS/libnetwork_kernel.dylib"
+            "$PACKAGE_DIR/Assets/Plugins/Windows/x86_64/network_kernel.dll"
+            "$PACKAGE_DIR/Assets/Plugins/Windows/x86_64/libcrypto-4-x64.dll"
+            "$PACKAGE_DIR/Assets/Plugins/Windows/x86_64/libssl-4-x64.dll"
+            "$PACKAGE_DIR/Assets/Plugins/Windows/x86_64/libstdc++-6.dll"
+            "$PACKAGE_DIR/Assets/Plugins/Windows/x86_64/libwinpthread-1.dll"
+          )
+          for path in "${required_paths[@]}"; do
+            if [[ ! -e "$path" ]]; then
+              echo "::error::Missing required UPM package path: $path"
+              exit 1
+            fi
+          done
+
+          package_name="$(node -p "require('./${PACKAGE_DIR}/package.json').name")"
+          if [[ "$package_name" != "$PACKAGE_NAME" ]]; then
+            echo "::error::package.json name is '$package_name', expected '$PACKAGE_NAME'"
+            exit 1
+          fi
+
+      - name: Build, stage, verify, and pack
+        env:
+          OUTPUT_BASE: ${{ runner.temp }}/bazel-network-example-unity-package
+          OPENSSL_LIB_DIR: /opt/homebrew/opt/openssl@3/lib
+          MINGW_ROOT: /opt/homebrew/opt/mingw-w64/toolchain-x86_64
+        run: |
+          set -euo pipefail
+          .agents/skills/unity-plugin-package-builder/scripts/run-unity-plugin-package-builder.sh \
+            --mode all \
+            --unity off \
+            --output-dir "$RUNNER_TEMP/unity-package" \
+            --auto-commit off
+
+      - name: Write build metadata
+        id: metadata
+        run: |
+          set -euo pipefail
+          artifact_path="$(find "$RUNNER_TEMP/unity-package" -maxdepth 1 -type f -name '*.tgz' | sort | tail -n 1)"
+          if [[ -z "$artifact_path" ]]; then
+            echo "::error::No UPM package artifact was produced"
+            exit 1
+          fi
+
+          package_name="$(node -p "require('./${PACKAGE_DIR}/package.json').name")"
+          package_version="$(node -p "require('./${PACKAGE_DIR}/package.json').version")"
+          kernel_abi="$(sed -nE 's/^#define KERNEL_ABI_VERSION ([0-9]+)u$/\1/p' engine/src/kernel/public/kernel_types.h | head -n 1)"
+          game_server_abi="$(sed -nE 's/^#define GAME_SERVER_ABI_VERSION ([0-9]+)u$/\1/p' game_server/public/game_server_types.h | head -n 1)"
+          metadata_path="$RUNNER_TEMP/unity-package/build-metadata.json"
+
+          cat > "$metadata_path" <<JSON
+          {
+            "package_name": "$package_name",
+            "package_version": "$package_version",
+            "kernel_abi": "$kernel_abi",
+            "game_server_abi": "$game_server_abi",
+            "source_ref": "$GITHUB_REF",
+            "source_ref_name": "$GITHUB_REF_NAME",
+            "source_sha": "$GITHUB_SHA",
+            "workflow_run_url": "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID",
+            "remote_upm_url": "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git?path=/$PACKAGE_DIR#$GITHUB_REF_NAME"
+          }
+          JSON
+
+          echo "artifact_path=$artifact_path" >> "$GITHUB_OUTPUT"
+          echo "metadata_path=$metadata_path" >> "$GITHUB_OUTPUT"
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-package-dev-${{ github.sha }}
+          path: |
+            ${{ steps.metadata.outputs.artifact_path }}
+            ${{ steps.metadata.outputs.metadata_path }}
+          retention-days: 14

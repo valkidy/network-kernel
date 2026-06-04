@@ -48,6 +48,7 @@ build:mingw_w64 --compiler=mingw-gcc
 # C++ standard
 build:mingw_w64 --cxxopt=-std=gnu++20
 build:mingw_w64 --host_cxxopt=-std=gnu++20
+build:mingw_w64 --copt=-no-canonical-prefixes
 build:mingw_w64 --copt=-fno-canonical-system-headers
 # Windows target macros
 build:mingw_w64 --copt=-D_WIN32

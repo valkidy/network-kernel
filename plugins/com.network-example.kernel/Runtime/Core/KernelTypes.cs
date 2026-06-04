@@ -6,6 +6,7 @@ namespace NetworkExample.Kernel
     public static class KernelConstants
     {
         public const uint AbiVersion = 14;
+        public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const ushort LANDiscoveryDefaultPort = 47777;
         public const int MaxWeapons = 7;
@@ -47,6 +48,12 @@ namespace NetworkExample.Kernel
         public const uint VisualFlagMoving = 0x00000001U;
         public const uint VisualFlagReloading = 0x00000002U;
         public const uint VisualFlagDead = 0x00000004U;
+    }
+
+    public static class NetworkKernelPackageInfo
+    {
+        public const string Name = "com.network-example.kernel";
+        public const string Version = "0.6.4";
     }
 
     public enum KernelMode
@@ -178,6 +185,31 @@ namespace NetworkExample.Kernel
         public uint lan_discovery_query_config_size;
         public uint lan_discovery_result_size;
         public ulong capability_flags;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
+    public struct KernelBuildInfo
+    {
+        public uint struct_size;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = KernelConstants.BuildInfoTextSize)]
+        public string module_name;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = KernelConstants.BuildInfoTextSize)]
+        public string module_file_name;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = KernelConstants.BuildInfoTextSize)]
+        public string module_version;
+        public uint protocol_version;
+        public uint snapshot_schema_version;
+        public uint packet_schema_version;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = KernelConstants.BuildInfoTextSize)]
+        public string git_commit;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = KernelConstants.BuildInfoTextSize)]
+        public string build_timestamp;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = KernelConstants.BuildInfoTextSize)]
+        public string build_platform;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = KernelConstants.BuildInfoTextSize)]
+        public string build_config;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = KernelConstants.BuildInfoTextSize)]
+        public string compiler_info;
     }
 
     [StructLayout(LayoutKind.Sequential)]

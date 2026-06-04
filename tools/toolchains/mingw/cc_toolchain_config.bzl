@@ -6,7 +6,7 @@ load(
 )
 load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
 
-_MINGW_ROOT = "/opt/homebrew/Cellar/mingw-w64/14.0.0/toolchain-x86_64"
+_MINGW_ROOT = "/opt/homebrew/opt/mingw-w64/toolchain-x86_64"
 _MINGW_PREFIX = _MINGW_ROOT + "/bin/x86_64-w64-mingw32-"
 _MINGW_GCC_VERSION = "15.2.0"
 _MINGW_GCC_LIB = _MINGW_ROOT + "/lib/gcc/x86_64-w64-mingw32/" + _MINGW_GCC_VERSION

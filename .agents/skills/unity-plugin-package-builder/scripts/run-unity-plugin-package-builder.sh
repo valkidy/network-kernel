@@ -12,7 +12,7 @@ UNITY_TIMEOUT_SECONDS="${UNITY_TIMEOUT_SECONDS:-180}"
 OPENSSL_LIB_DIR="${OPENSSL_LIB_DIR:-/opt/homebrew/opt/openssl@3/lib}"
 OPENSSL_MINGW_DLL_DIR="${OPENSSL_MINGW_DLL_DIR:-}"
 MINGW_RUNTIME_DLL_DIR="${MINGW_RUNTIME_DLL_DIR:-}"
-MINGW_ROOT="${MINGW_ROOT:-/opt/homebrew/Cellar/mingw-w64/14.0.0/toolchain-x86_64}"
+MINGW_ROOT="${MINGW_ROOT:-/opt/homebrew/opt/mingw-w64/toolchain-x86_64}"
 
 PACKAGE_DIR_REL="plugins/com.network-example.kernel"
 PACKAGE_NAME="com.network-example.kernel"
@@ -32,6 +32,7 @@ REQUIRED_EXPORTS=(
   Kernel_Create
   Kernel_Destroy
   Kernel_GetAbiInfo
+  Kernel_GetBuildInfo
   Kernel_GetLocalPlayerInfo
   Kernel_StartClient
   Kernel_StartListenServer
@@ -75,6 +76,11 @@ Environment:
   UNITY_PACKAGE_BUILDER_ALLOW_INTEGRATION_BRANCH=1
       Allow integration/* branches for test-package validation. Requires
       --auto-commit off and does not relax the default feat-unity-plugin guard.
+  GITHUB_ACTIONS=true GITHUB_REF_TYPE=branch GITHUB_REF_NAME=dev-latest
+      Allow CI dev-package validation from dev-latest. Requires --auto-commit off.
+  GITHUB_ACTIONS=true GITHUB_REF_TYPE=tag GITHUB_REF_NAME=v*
+      Allow CI release-package validation from immutable release tags. Requires
+      --auto-commit off.
 
 Default:
   Build the macOS and Windows x86_64 native plugins, stage them into the Unity
@@ -180,6 +186,20 @@ require_branch() {
   if [[ "$current_branch" == "feat-unity-plugin" ]]; then
     return 0
   fi
+  if [[ "$AUTO_COMMIT" == "off" &&
+        "${GITHUB_ACTIONS:-}" == "true" &&
+        "${GITHUB_REF_TYPE:-}" == "branch" &&
+        "${GITHUB_REF_NAME:-}" == "dev-latest" ]]; then
+    note "CI dev branch override enabled: ${GITHUB_REF_NAME}"
+    return 0
+  fi
+  if [[ "$AUTO_COMMIT" == "off" &&
+        "${GITHUB_ACTIONS:-}" == "true" &&
+        "${GITHUB_REF_TYPE:-}" == "tag" &&
+        "${GITHUB_REF_NAME:-}" == v* ]]; then
+    note "CI release tag override enabled: ${GITHUB_REF_NAME}"
+    return 0
+  fi
   if [[ "${UNITY_PACKAGE_BUILDER_ALLOW_INTEGRATION_BRANCH:-}" == "1" &&
         "$current_branch" == integration/* ]]; then
     [[ "$AUTO_COMMIT" == "off" ]] ||
@@ -187,7 +207,7 @@ require_branch() {
     note "Integration branch override enabled: $current_branch"
     return 0
   fi
-  die "unity package builder must run on branch feat-unity-plugin; current branch is '${current_branch:-detached or unknown}'"
+  die "unity package builder must run on branch feat-unity-plugin, CI dev-latest, or CI v* tag with --auto-commit off; current branch is '${current_branch:-detached or unknown}'"
 }
 
 require_branch

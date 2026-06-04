@@ -15,6 +15,12 @@ namespace NetworkExample.Kernel
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_GetBuildInfo(
+            out KernelBuildInfo outInfo,
+            uint outInfoSize);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
         internal static extern bool Kernel_GetLocalPlayerInfo(
             IntPtr kernel,
             out KernelLocalPlayerInfo outInfo);
