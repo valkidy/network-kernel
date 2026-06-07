@@ -23,6 +23,23 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.sha }}
+
+      - name: Verify checked out source
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF_TYPE" != "branch" || "$GITHUB_REF_NAME" != "dev-latest" ]]; then
+            echo "::error::Unity dev package builds must run from dev-latest; got ${GITHUB_REF_TYPE}:${GITHUB_REF_NAME}"
+            exit 1
+          fi
+
+          checked_out_sha="$(git rev-parse HEAD)"
+          if [[ "$checked_out_sha" != "$GITHUB_SHA" ]]; then
+            echo "::error::Checked out $checked_out_sha, expected workflow source $GITHUB_SHA"
+            exit 1
+          fi
+
+          echo "Building Unity dev package from $checked_out_sha"
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -111,8 +128,10 @@ jobs:
             "source_ref": "$GITHUB_REF",
             "source_ref_name": "$GITHUB_REF_NAME",
             "source_sha": "$GITHUB_SHA",
+            "checked_out_sha": "$(git rev-parse HEAD)",
             "workflow_run_url": "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID",
-            "remote_upm_url": "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git?path=/$PACKAGE_DIR#$GITHUB_REF_NAME"
+            "remote_upm_url": "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git?path=/$PACKAGE_DIR#$GITHUB_SHA",
+            "remote_upm_branch_url": "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git?path=/$PACKAGE_DIR#$GITHUB_REF_NAME"
           }
           JSON
 
