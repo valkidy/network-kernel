@@ -95,6 +95,31 @@ cat <<'SYMBOLS'
 00000000 T _Kernel_ServerSetEntityState
 00000000 T _Kernel_ServerGetEntityState
 00000000 T _Kernel_ServerQueryEntities
+00000000 T _Kernel_ServerSetEntityCombatState
+00000000 T _Kernel_ServerSetEntityWeaponMechanics
+00000000 T _Kernel_ServerClearEntityWeaponMechanics
+00000000 T _Kernel_ServerGetEntityWeaponMechanics
+00000000 T _Kernel_ServerValidateMechanicsConfig
+00000000 T _Kernel_ServerGetAreaEffectState
+00000000 T _Kernel_ServerGetBeamState
+00000000 T _Kernel_ServerGetHomingState
+00000000 T _Kernel_LANDiscovery_Create
+00000000 T _Kernel_LANDiscovery_Destroy
+00000000 T _Kernel_LANDiscovery_StartServer
+00000000 T _Kernel_LANDiscovery_StopServer
+00000000 T _Kernel_LANDiscovery_Query
+00000000 T _Kernel_LANDiscovery_PollResults
+00000000 T _Kernel_LANDiscovery_ClearResults
+SYMBOLS
+if [[ "${OMIT_ABI15_EXPORTS:-}" != "1" ]]; then
+cat <<'SYMBOLS'
+00000000 T _Kernel_GetBenchmarkStats
+00000000 T _Kernel_GetNetworkStats
+00000000 T _Kernel_PollDebugRecords
+00000000 T _Kernel_QueryColliderShapes
+SYMBOLS
+fi
+cat <<'SYMBOLS'
 00000000 T _GameServer_GetAbiInfo
 00000000 T _GameServer_Create
 00000000 T _GameServer_CreateWithWeaponTemplateDirectory
@@ -132,15 +157,40 @@ Export Table:
 	[  18] Kernel_ServerSetEntityState
 	[  19] Kernel_ServerGetEntityState
 	[  20] Kernel_ServerQueryEntities
-	[  21] GameServer_GetAbiInfo
-	[  22] GameServer_Create
-	[  23] GameServer_CreateWithWeaponTemplateDirectory
-	[  24] GameServer_Destroy
-	[  25] GameServer_HandleEvent
-	[  26] GameServer_Tick
-	[  27] GameServer_GetEnemyCount
-	[  28] GameServer_QueryWeaponTemplate
-	[  29] GameServer_DespawnAll
+	[  21] Kernel_ServerSetEntityCombatState
+	[  22] Kernel_ServerSetEntityWeaponMechanics
+	[  23] Kernel_ServerClearEntityWeaponMechanics
+	[  24] Kernel_ServerGetEntityWeaponMechanics
+	[  25] Kernel_ServerValidateMechanicsConfig
+	[  26] Kernel_ServerGetAreaEffectState
+	[  27] Kernel_ServerGetBeamState
+	[  28] Kernel_ServerGetHomingState
+	[  29] Kernel_LANDiscovery_Create
+	[  30] Kernel_LANDiscovery_Destroy
+	[  31] Kernel_LANDiscovery_StartServer
+	[  32] Kernel_LANDiscovery_StopServer
+	[  33] Kernel_LANDiscovery_Query
+	[  34] Kernel_LANDiscovery_PollResults
+	[  35] Kernel_LANDiscovery_ClearResults
+SYMBOLS
+if [[ "${OMIT_ABI15_EXPORTS:-}" != "1" ]]; then
+cat <<'SYMBOLS'
+	[  36] Kernel_GetBenchmarkStats
+	[  37] Kernel_GetNetworkStats
+	[  38] Kernel_PollDebugRecords
+	[  39] Kernel_QueryColliderShapes
+SYMBOLS
+fi
+cat <<'SYMBOLS'
+	[  40] GameServer_GetAbiInfo
+	[  41] GameServer_Create
+	[  42] GameServer_CreateWithWeaponTemplateDirectory
+	[  43] GameServer_Destroy
+	[  44] GameServer_HandleEvent
+	[  45] GameServer_Tick
+	[  46] GameServer_GetEnemyCount
+	[  47] GameServer_QueryWeaponTemplate
+	[  48] GameServer_DespawnAll
 Import Table:
 SYMBOLS
 SH
@@ -473,6 +523,33 @@ test_verify_fails_when_windows_runtime_dll_is_missing() {
   assert_contains "$(cat "$output_file")" "libwinpthread-1.dll"
 }
 
+test_verify_requires_abi_15_kernel_exports() {
+  local sandbox_dir repo_dir output_file status
+  sandbox_dir="$(mktemp -d "${TMPDIR:-/tmp}/package-builder-abi15-exports.XXXXXX")"
+  repo_dir="$sandbox_dir/repo"
+  output_file="$sandbox_dir/output.txt"
+  make_fake_repo "$repo_dir" "feat-unity-plugin"
+
+  echo "#define KERNEL_ABI_VERSION 15u" > "$repo_dir/engine/src/kernel/public/kernel_types.h"
+  write_file "$repo_dir/plugins/com.network-example.kernel/Runtime/Core/KernelTypes.cs" <<'CS'
+namespace NetworkExample.Kernel {
+  public static class KernelConstants {
+    public const uint AbiVersion = 15;
+  }
+}
+CS
+
+  set +e
+  export OMIT_ABI15_EXPORTS=1
+  run_builder "$repo_dir" "$output_file" --mode verify --unity off --auto-commit off
+  status="$?"
+  unset OMIT_ABI15_EXPORTS
+  set -e
+
+  [[ "$status" -ne 0 ]] || fail "expected verify to fail when ABI 15 kernel exports are missing"
+  assert_contains "$(cat "$output_file")" "Kernel_GetBenchmarkStats"
+}
+
 test_pack_removes_ds_store_files_from_package() {
   local sandbox_dir repo_dir output_file status
   sandbox_dir="$(mktemp -d "${TMPDIR:-/tmp}/package-builder-ds-store.XXXXXX")"
@@ -500,6 +577,7 @@ test_auto_commit_skips_without_release_note_bullets
 test_build_native_verifies_bazel_signed_dylib
 test_stage_verifies_staged_dylib_from_existing_build_output
 test_verify_fails_when_windows_runtime_dll_is_missing
+test_verify_requires_abi_15_kernel_exports
 test_pack_removes_ds_store_files_from_package
 
 echo "package_builder_finalize_test.sh: PASS"

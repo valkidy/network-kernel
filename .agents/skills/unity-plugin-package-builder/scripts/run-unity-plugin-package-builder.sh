@@ -461,6 +461,14 @@ build_required_exports() {
       Kernel_LANDiscovery_ClearResults
     )
   fi
+  if [[ "$native_abi" -ge 15 ]]; then
+    REQUIRED_EXPORTS_BUILT+=(
+      Kernel_GetBenchmarkStats
+      Kernel_GetNetworkStats
+      Kernel_PollDebugRecords
+      Kernel_QueryColliderShapes
+    )
+  fi
   if [[ "$native_game_server_abi" -ge 2 ]]; then
     REQUIRED_EXPORTS_BUILT+=(
       GameServer_CreateWithWeaponTemplateDirectory
