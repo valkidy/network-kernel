@@ -103,6 +103,15 @@ jobs:
             --output-dir "$RUNNER_TEMP/unity-package" \
             --auto-commit off
 
+      - name: Verify committed native plugins match source build
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet -- "$PACKAGE_DIR/Assets/Plugins"; then
+            echo "::error::CI work job build failed: committed Unity native plugins do not match the current source build. Run /unity-package and commit the staged dylib/dll updates."
+            git diff --stat -- "$PACKAGE_DIR/Assets/Plugins"
+            exit 1
+          fi
+
       - name: Write build metadata
         id: metadata
         run: |
