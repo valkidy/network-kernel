@@ -77,6 +77,7 @@ cat <<'SYMBOLS'
 00000000 T _Kernel_Create
 00000000 T _Kernel_Destroy
 00000000 T _Kernel_GetAbiInfo
+00000000 T _Kernel_GetBuildInfo
 00000000 T _Kernel_GetLocalPlayerInfo
 00000000 T _Kernel_StartClient
 00000000 T _Kernel_StartListenServer
@@ -113,32 +114,33 @@ Export Table:
 	[   0] Kernel_Create
 	[   1] Kernel_Destroy
 	[   2] Kernel_GetAbiInfo
-	[   3] Kernel_GetLocalPlayerInfo
-	[   4] Kernel_StartClient
-	[   5] Kernel_StartListenServer
-	[   6] Kernel_StartDedicatedServer
-	[   7] Kernel_Update
-	[   8] Kernel_SubmitInput
-	[   9] Kernel_ServerSubmitEntityInput
-	[  10] Kernel_GetRenderStates
-	[  11] Kernel_GetRenderStatesAtTime
-	[  12] Kernel_PollEvents
-	[  13] Kernel_ServerCreateEntity
-	[  14] Kernel_ServerDestroyEntity
-	[  15] Kernel_ServerSetEntityTransform
-	[  16] Kernel_ServerSetEntityVelocity
-	[  17] Kernel_ServerSetEntityState
-	[  18] Kernel_ServerGetEntityState
-	[  19] Kernel_ServerQueryEntities
-	[  20] GameServer_GetAbiInfo
-	[  21] GameServer_Create
-	[  22] GameServer_CreateWithWeaponTemplateDirectory
-	[  23] GameServer_Destroy
-	[  24] GameServer_HandleEvent
-	[  25] GameServer_Tick
-	[  26] GameServer_GetEnemyCount
-	[  27] GameServer_QueryWeaponTemplate
-	[  28] GameServer_DespawnAll
+	[   3] Kernel_GetBuildInfo
+	[   4] Kernel_GetLocalPlayerInfo
+	[   5] Kernel_StartClient
+	[   6] Kernel_StartListenServer
+	[   7] Kernel_StartDedicatedServer
+	[   8] Kernel_Update
+	[   9] Kernel_SubmitInput
+	[  10] Kernel_ServerSubmitEntityInput
+	[  11] Kernel_GetRenderStates
+	[  12] Kernel_GetRenderStatesAtTime
+	[  13] Kernel_PollEvents
+	[  14] Kernel_ServerCreateEntity
+	[  15] Kernel_ServerDestroyEntity
+	[  16] Kernel_ServerSetEntityTransform
+	[  17] Kernel_ServerSetEntityVelocity
+	[  18] Kernel_ServerSetEntityState
+	[  19] Kernel_ServerGetEntityState
+	[  20] Kernel_ServerQueryEntities
+	[  21] GameServer_GetAbiInfo
+	[  22] GameServer_Create
+	[  23] GameServer_CreateWithWeaponTemplateDirectory
+	[  24] GameServer_Destroy
+	[  25] GameServer_HandleEvent
+	[  26] GameServer_Tick
+	[  27] GameServer_GetEnemyCount
+	[  28] GameServer_QueryWeaponTemplate
+	[  29] GameServer_DespawnAll
 Import Table:
 SYMBOLS
 SH

@@ -59,6 +59,20 @@ jobs:
             exit 1
           fi
 
+      - name: Run native dynamic ABI smoke
+        env:
+          OUTPUT_BASE: ${{ runner.temp }}/bazel-network-example-unity-package
+        run: |
+          set -euo pipefail
+          bazelisk \
+            --output_base="$OUTPUT_BASE" \
+            test \
+            --config=macos \
+            -c opt \
+            //engine/src/tests/kernel_tests:dynamic_abi_smoke_test \
+            --test_output=errors \
+            --symlink_prefix=/
+
       - name: Build, stage, verify, and pack
         env:
           OUTPUT_BASE: ${{ runner.temp }}/bazel-network-example-unity-package
