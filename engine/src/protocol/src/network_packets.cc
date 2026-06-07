@@ -14,6 +14,9 @@ constexpr std::size_t kEntitySnapshotPayloadSize = 68;
 constexpr std::size_t kReliableEventPayloadSize = 34;
 constexpr std::size_t kEntitySpawnPayloadSize = 42;
 constexpr std::size_t kEntityDespawnPayloadSize = 12;
+constexpr std::size_t kProjectileSpawnBatchHeaderPayloadSize = 24;
+constexpr std::size_t kProjectileSpawnGroupHeaderPayloadSize = 8;
+constexpr std::size_t kProjectileSpawnRecordPayloadSize = 40;
 
 }  // namespace
 
@@ -318,6 +321,101 @@ bool decode_entity_despawn_packet(
         return false;
     }
     *out_packet = packet;
+    return true;
+}
+
+std::vector<std::uint8_t> encode_projectile_spawn_batch_packet(
+    const ProjectileSpawnBatchPacket& packet,
+    std::uint32_t sequence) {
+    std::size_t record_count = 0;
+    for (const ProjectileSpawnGroup& group : packet.groups) {
+        record_count += group.records.size();
+    }
+
+    protocol_internal::PacketWriter payload;
+    payload.reserve(
+        kProjectileSpawnBatchHeaderPayloadSize +
+        packet.groups.size() * kProjectileSpawnGroupHeaderPayloadSize +
+        record_count * kProjectileSpawnRecordPayloadSize);
+    payload.write_u32(packet.server_tick);
+    payload.write_u64(packet.server_time_us);
+    payload.write_u64(packet.catalog_hash);
+    payload.write_u32(static_cast<std::uint32_t>(packet.groups.size()));
+
+    for (const ProjectileSpawnGroup& group : packet.groups) {
+        payload.write_u32(group.projectile_template_id);
+        payload.write_u32(static_cast<std::uint32_t>(group.records.size()));
+        for (const ProjectileSpawnRecord& record : group.records) {
+            payload.write_u32(record.projectile_net_id);
+            payload.write_u32(record.owner_net_id);
+            payload.write_u32(record.owner_peer);
+            payload.write_u32(record.client_action_id);
+            payload.write_vec3(record.spawn_position);
+            payload.write_vec3(record.initial_velocity);
+        }
+    }
+
+    return protocol_internal::wrap_packet(
+        MessageType::kProjectileSpawnBatch,
+        payload.bytes(),
+        sequence);
+}
+
+bool decode_projectile_spawn_batch_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    ProjectileSpawnBatchPacket* out_packet) {
+    const std::uint8_t* payload = nullptr;
+    std::size_t payload_size = 0;
+    if (out_packet == nullptr ||
+        !protocol_internal::unwrap_packet(
+            data,
+            size,
+            MessageType::kProjectileSpawnBatch,
+            &payload,
+            &payload_size) ||
+        payload_size < kProjectileSpawnBatchHeaderPayloadSize) {
+        return false;
+    }
+
+    ProjectileSpawnBatchPacket packet;
+    std::uint32_t group_count = 0;
+    protocol_internal::PacketReader reader(payload, payload_size);
+    if (!reader.read_u32(&packet.server_tick) ||
+        !reader.read_u64(&packet.server_time_us) ||
+        !reader.read_u64(&packet.catalog_hash) ||
+        !reader.read_u32(&group_count)) {
+        return false;
+    }
+
+    packet.groups.reserve(group_count);
+    for (std::uint32_t group_index = 0; group_index < group_count; ++group_index) {
+        ProjectileSpawnGroup group;
+        std::uint32_t record_count = 0;
+        if (!reader.read_u32(&group.projectile_template_id) ||
+            !reader.read_u32(&record_count)) {
+            return false;
+        }
+        group.records.reserve(record_count);
+        for (std::uint32_t record_index = 0; record_index < record_count; ++record_index) {
+            ProjectileSpawnRecord record;
+            if (!reader.read_u32(&record.projectile_net_id) ||
+                !reader.read_u32(&record.owner_net_id) ||
+                !reader.read_u32(&record.owner_peer) ||
+                !reader.read_u32(&record.client_action_id) ||
+                !reader.read_vec3(&record.spawn_position) ||
+                !reader.read_vec3(&record.initial_velocity)) {
+                return false;
+            }
+            group.records.push_back(record);
+        }
+        packet.groups.push_back(std::move(group));
+    }
+    if (!reader.done()) {
+        return false;
+    }
+
+    *out_packet = std::move(packet);
     return true;
 }
 

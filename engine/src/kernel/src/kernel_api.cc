@@ -102,6 +102,20 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
         out_info->lan_discovery_query_config_size =
             sizeof(KernelLANDiscoveryQueryConfig);
         out_info->lan_discovery_result_size = sizeof(KernelLANDiscoveryResult);
+        out_info->gameplay_catalog_definition_size =
+            sizeof(KernelGameplayCatalogDefinition);
+        out_info->projectile_template_definition_size =
+            sizeof(KernelProjectileTemplateDefinition);
+        out_info->collider_template_definition_size =
+            sizeof(KernelColliderTemplateDefinition);
+        out_info->collider_binding_definition_size =
+            sizeof(KernelColliderBindingDefinition);
+        out_info->benchmark_stats_size = sizeof(KernelBenchmarkStats);
+        out_info->network_stats_size = sizeof(KernelNetworkStats);
+        out_info->debug_record_filter_size = sizeof(KernelDebugRecordFilter);
+        out_info->debug_info_size = sizeof(KernelDebugInfo);
+        out_info->collider_shape_query_size = sizeof(KernelColliderShapeQuery);
+        out_info->collider_shape_view_size = sizeof(KernelColliderShapeView);
         out_info->capability_flags =
             KERNEL_CAPABILITY_CLIENT_MODE |
             KERNEL_CAPABILITY_LISTEN_SERVER_MODE |
@@ -129,7 +143,13 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_PROJECTILE_RESPONSE_MASKS |
             KERNEL_CAPABILITY_BEAM_WEAPONS |
             KERNEL_CAPABILITY_HOMING_PROJECTILES |
-            KERNEL_CAPABILITY_LAN_DISCOVERY;
+            KERNEL_CAPABILITY_LAN_DISCOVERY |
+            KERNEL_CAPABILITY_GAMEPLAY_CATALOG |
+            KERNEL_CAPABILITY_PROJECTILE_SPAWN_BATCH |
+            KERNEL_CAPABILITY_DEBUG_RECORDS |
+            KERNEL_CAPABILITY_COLLIDER_SHAPE_QUERY |
+            KERNEL_CAPABILITY_BENCHMARK_STATS |
+            KERNEL_CAPABILITY_NETWORK_STATS;
         return true;
     });
 }
@@ -257,6 +277,15 @@ void Kernel_SubmitInput(
     });
 }
 
+bool Kernel_LoadGameplayCatalog(
+    KernelHandle* kernel,
+    const KernelGameplayCatalogDefinition* catalog) {
+    return abi_call("Kernel_LoadGameplayCatalog", false, [&]() {
+        return kernel != nullptr && catalog != nullptr &&
+               kernel->engine->load_gameplay_catalog(*catalog);
+    });
+}
+
 uint32_t Kernel_GetRenderStates(
     KernelHandle* kernel,
     RenderEntityState* out_states,
@@ -294,6 +323,49 @@ uint32_t Kernel_PollEvents(
             return 0u;
         }
         return kernel->engine->poll_events(out_events, max_events);
+    });
+}
+
+bool Kernel_GetBenchmarkStats(
+    KernelHandle* kernel,
+    KernelBenchmarkStats* out_stats) {
+    return abi_call("Kernel_GetBenchmarkStats", false, [&]() {
+        return kernel != nullptr &&
+               kernel->engine->get_benchmark_stats(out_stats);
+    });
+}
+
+bool Kernel_GetNetworkStats(
+    KernelHandle* kernel,
+    KernelNetworkStats* out_stats) {
+    return abi_call("Kernel_GetNetworkStats", false, [&]() {
+        return kernel != nullptr && kernel->engine->get_network_stats(out_stats);
+    });
+}
+
+uint32_t Kernel_PollDebugRecords(
+    KernelHandle* kernel,
+    const KernelDebugRecordFilter* filter,
+    KernelDebugInfo* out_records,
+    uint32_t max_records) {
+    return abi_call("Kernel_PollDebugRecords", 0u, [&]() -> std::uint32_t {
+        if (kernel == nullptr) {
+            return 0u;
+        }
+        return kernel->engine->poll_debug_records(filter, out_records, max_records);
+    });
+}
+
+uint32_t Kernel_QueryColliderShapes(
+    KernelHandle* kernel,
+    const KernelColliderShapeQuery* query,
+    KernelColliderShapeView* out_shapes,
+    uint32_t max_shapes) {
+    return abi_call("Kernel_QueryColliderShapes", 0u, [&]() -> std::uint32_t {
+        if (kernel == nullptr) {
+            return 0u;
+        }
+        return kernel->engine->query_collider_shapes(query, out_shapes, max_shapes);
     });
 }
 

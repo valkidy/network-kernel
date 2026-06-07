@@ -1,11 +1,22 @@
 #include "game_server/gameplay_config.h"
 
 #include <cassert>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
 #include "game_server/enemy.h"
 #include "kernel/public/kernel_types.h"
+
+namespace {
+
+void require(bool condition) {
+    if (!condition) {
+        std::abort();
+    }
+}
+
+}  // namespace
 
 int main() {
     const network_example::game_server::GameServerGameplayConfig config =
@@ -15,6 +26,16 @@ int main() {
     assert(errors.empty());
 
     assert(config.player.entity_type == network_example::game_server::kEntityTypePlayer);
+    require(config.weapons.catalog_version == 1);
+    require(config.weapons.catalog_hash != 0);
+    require(
+        config.weapons.catalog_hash ==
+        network_example::game_server::compute_gameplay_catalog_hash(config.weapons));
+    network_example::game_server::WeaponCatalogConfig changed_weapons = config.weapons;
+    changed_weapons.definitions[network_example::game_server::kWeaponRocket].damage += 1;
+    require(
+        config.weapons.catalog_hash !=
+        network_example::game_server::compute_gameplay_catalog_hash(changed_weapons));
     assert(config.player.health.hp == 100);
     assert(config.player.move_speed_meters_per_second == 5.0f);
 

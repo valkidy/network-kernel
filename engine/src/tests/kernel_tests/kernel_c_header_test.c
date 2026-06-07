@@ -27,6 +27,16 @@ int main(void) {
     KernelAreaEffectState area_effect_state;
     KernelBeamState beam_state;
     KernelHomingState homing_state;
+    KernelGameplayCatalogDefinition gameplay_catalog;
+    KernelProjectileTemplateDefinition projectile_template;
+    KernelColliderTemplateDefinition collider_template;
+    KernelColliderBindingDefinition collider_binding;
+    KernelBenchmarkStats benchmark_stats;
+    KernelNetworkStats network_stats;
+    KernelDebugRecordFilter debug_filter;
+    KernelDebugInfo debug_info;
+    KernelColliderShapeQuery collider_query;
+    KernelColliderShapeView collider_shape;
 
     (void)config;
     (void)build_info;
@@ -48,8 +58,18 @@ int main(void) {
     (void)area_effect_state;
     (void)beam_state;
     (void)homing_state;
+    (void)gameplay_catalog;
+    (void)projectile_template;
+    (void)collider_template;
+    (void)collider_binding;
+    (void)benchmark_stats;
+    (void)network_stats;
+    (void)debug_filter;
+    (void)debug_info;
+    (void)collider_query;
+    (void)collider_shape;
 
-    assert(KERNEL_ABI_VERSION == 14u);
+    assert(KERNEL_ABI_VERSION == 15u);
     assert(KERNEL_MAX_WEAPONS == 7u);
     assert(KERNEL_LAN_DISCOVERY_DEFAULT_PORT == 47777u);
     assert(sizeof(KernelAbiInfo) > 0u);
@@ -73,6 +93,16 @@ int main(void) {
     assert(sizeof(KernelAreaEffectState) > 0u);
     assert(sizeof(KernelBeamState) > 0u);
     assert(sizeof(KernelHomingState) > 0u);
+    assert(sizeof(KernelGameplayCatalogDefinition) > 0u);
+    assert(sizeof(KernelProjectileTemplateDefinition) > 0u);
+    assert(sizeof(KernelColliderTemplateDefinition) > 0u);
+    assert(sizeof(KernelColliderBindingDefinition) > 0u);
+    assert(sizeof(KernelBenchmarkStats) > 0u);
+    assert(sizeof(KernelNetworkStats) > 0u);
+    assert(sizeof(KernelDebugRecordFilter) > 0u);
+    assert(sizeof(KernelDebugInfo) > 0u);
+    assert(sizeof(KernelColliderShapeQuery) > 0u);
+    assert(sizeof(KernelColliderShapeView) > 0u);
     assert((KERNEL_CAPABILITY_CLIENT_MODE & KERNEL_CAPABILITY_RENDER_STATES) == 0u);
     assert((KERNEL_CAPABILITY_LAG_COMPENSATED_PROJECTILE &
             KERNEL_CAPABILITY_EVENT_PRESENTATION_TIME) == 0u);

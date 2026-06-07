@@ -81,12 +81,17 @@ const char* disconnect_reason_name(std::uint32_t reason_code) {
             return "SnapshotSchemaMismatch";
         case kDisconnectReasonPacketSchemaMismatch:
             return "PacketSchemaMismatch";
+        case kDisconnectReasonCatalogMismatch:
+            return "CatalogMismatch";
         default:
             return "Unknown";
     }
 }
 
-std::uint32_t handshake_reject_reason(const HandshakePacket& handshake) {
+std::uint32_t handshake_reject_reason(
+    const HandshakePacket& handshake,
+    std::uint32_t local_catalog_version,
+    std::uint64_t local_catalog_hash) {
     if (handshake.protocol_version != kProtocolVersion) {
         return kDisconnectReasonProtocolVersionMismatch;
     }
@@ -95,6 +100,10 @@ std::uint32_t handshake_reject_reason(const HandshakePacket& handshake) {
     }
     if (handshake.packet_schema_version != kPacketSchemaVersion) {
         return kDisconnectReasonPacketSchemaMismatch;
+    }
+    if (handshake.catalog_version != local_catalog_version ||
+        handshake.catalog_hash != local_catalog_hash) {
+        return kDisconnectReasonCatalogMismatch;
     }
     return 0;
 }
@@ -106,7 +115,9 @@ void copy_handshake_text(char* destination, std::size_t size, const char* source
     std::snprintf(destination, size, "%s", source == nullptr ? "unknown" : source);
 }
 
-HandshakePacket make_client_handshake() {
+HandshakePacket make_client_handshake(
+    std::uint32_t catalog_version,
+    std::uint64_t catalog_hash) {
     const KernelBuildInfo build_info = current_build_info();
     HandshakePacket handshake;
     handshake.client_nonce = kClientNonce;
@@ -115,6 +126,8 @@ HandshakePacket make_client_handshake() {
         static_cast<std::uint16_t>(build_info.snapshot_schema_version);
     handshake.packet_schema_version =
         static_cast<std::uint16_t>(build_info.packet_schema_version);
+    handshake.catalog_version = catalog_version;
+    handshake.catalog_hash = catalog_hash;
     copy_handshake_text(
         handshake.module_version,
         sizeof(handshake.module_version),
@@ -212,6 +225,105 @@ std::uint32_t tick_for_time_us(
         static_cast<double>(time_us) /
         (static_cast<double>(fixed_delta_seconds) * 1000000.0);
     return static_cast<std::uint32_t>(tick + 0.0001);
+}
+
+bool debug_filter_matches(
+    const KernelDebugRecordFilter* filter,
+    const KernelDebugInfo& record) {
+    if (filter == nullptr) {
+        return true;
+    }
+    if (filter->struct_size < sizeof(KernelDebugRecordFilter)) {
+        return false;
+    }
+    if (filter->record_type_mask != 0 &&
+        (filter->record_type_mask & record.record_type) == 0) {
+        return false;
+    }
+    if (filter->min_tick != 0 || filter->max_tick != 0) {
+        if (record.tick < filter->min_tick) {
+            return false;
+        }
+        if (filter->max_tick != 0 && record.tick > filter->max_tick) {
+            return false;
+        }
+    }
+    if (record.record_type == KernelDebugRecordType_Projectile) {
+        const KernelProjectileDebugInfo& projectile = record.data.projectile;
+        if (filter->projectile_net_id != 0 &&
+            filter->projectile_net_id != projectile.projectile_net_id) {
+            return false;
+        }
+        if (filter->source_net_id != 0 &&
+            filter->source_net_id != projectile.owner_net_id) {
+            return false;
+        }
+        if (filter->weapon_id != KERNEL_DEBUG_WILDCARD_U8 &&
+            filter->weapon_id != projectile.weapon_id) {
+            return false;
+        }
+        if (filter->motion_model != KERNEL_DEBUG_WILDCARD_U8 &&
+            filter->motion_model != projectile.motion_model) {
+            return false;
+        }
+        if (filter->sync_mode != KERNEL_DEBUG_WILDCARD_U8 &&
+            filter->sync_mode != projectile.sync_mode) {
+            return false;
+        }
+    }
+    if (record.record_type == KernelDebugRecordType_Hit) {
+        const KernelHitDebugInfo& hit = record.data.hit;
+        if (filter->source_net_id != 0 &&
+            filter->source_net_id != hit.source_net_id) {
+            return false;
+        }
+        if (filter->target_net_id != 0 &&
+            filter->target_net_id != hit.target_net_id) {
+            return false;
+        }
+        if (filter->weapon_id != KERNEL_DEBUG_WILDCARD_U8 &&
+            filter->weapon_id != hit.weapon_id) {
+            return false;
+        }
+    }
+    return true;
+}
+
+const KernelColliderTemplateDefinition* find_collider_template(
+    const std::vector<KernelColliderTemplateDefinition>& templates,
+    std::uint32_t template_id) {
+    const auto found = std::find_if(
+        templates.begin(),
+        templates.end(),
+        [template_id](const KernelColliderTemplateDefinition& collider_template) {
+            return collider_template.template_id == template_id;
+        });
+    return found == templates.end() ? nullptr : &*found;
+}
+
+const KernelColliderBindingDefinition* find_collider_binding(
+    const std::vector<KernelColliderBindingDefinition>& bindings,
+    EntityType entity_type) {
+    const auto found = std::find_if(
+        bindings.begin(),
+        bindings.end(),
+        [entity_type](const KernelColliderBindingDefinition& binding) {
+            return binding.entity_type == static_cast<std::uint16_t>(entity_type);
+        });
+    return found == bindings.end() ? nullptr : &*found;
+}
+
+const KernelProjectileTemplateDefinition* find_projectile_template(
+    const std::vector<KernelProjectileTemplateDefinition>& templates,
+    std::uint32_t projectile_template_id) {
+    const auto found = std::find_if(
+        templates.begin(),
+        templates.end(),
+        [projectile_template_id](
+            const KernelProjectileTemplateDefinition& projectile_template) {
+            return projectile_template.projectile_template_id == projectile_template_id;
+        });
+    return found == templates.end() ? nullptr : &*found;
 }
 
 void apply_input_prediction(
@@ -735,6 +847,11 @@ void KernelEngine::submit_input(PeerId local_player_id, const PlayerInput& input
                 SendMode::kUnreliable,
                 ChannelId::kInput)) {
             push_event(KernelEventType_Error, 0, local_player_id, 4);
+        } else {
+            record_sent_packet(
+                static_cast<std::uint32_t>(packet.size()),
+                SendMode::kUnreliable,
+                ChannelId::kInput);
         }
         return;
     }
@@ -758,6 +875,11 @@ void KernelEngine::submit_input(PeerId local_player_id, const PlayerInput& input
                 SendMode::kUnreliable,
                 ChannelId::kInput)) {
             push_event(KernelEventType_Error, 0, local_client_peer_id_, 4);
+        } else {
+            record_sent_packet(
+                static_cast<std::uint32_t>(packet.size()),
+                SendMode::kUnreliable,
+                ChannelId::kInput);
         }
         return;
     }
@@ -775,6 +897,65 @@ void KernelEngine::submit_input(PeerId local_player_id, const PlayerInput& input
     });
     local_last_processed_input_seq_ =
         std::max(local_last_processed_input_seq_, input.input_seq);
+}
+
+bool KernelEngine::load_gameplay_catalog(
+    const KernelGameplayCatalogDefinition& catalog) {
+    if (catalog.struct_size < sizeof(KernelGameplayCatalogDefinition)) {
+        return false;
+    }
+    if ((catalog.projectile_template_count != 0 &&
+         catalog.projectile_templates == nullptr) ||
+        (catalog.collider_template_count != 0 &&
+         catalog.collider_templates == nullptr) ||
+        (catalog.collider_binding_count != 0 &&
+         catalog.collider_bindings == nullptr)) {
+        return false;
+    }
+
+    projectile_templates_.clear();
+    collider_templates_.clear();
+    collider_bindings_.clear();
+    projectile_templates_.reserve(catalog.projectile_template_count);
+    collider_templates_.reserve(catalog.collider_template_count);
+    collider_bindings_.reserve(catalog.collider_binding_count);
+    for (std::uint32_t index = 0; index < catalog.projectile_template_count; ++index) {
+        const KernelProjectileTemplateDefinition& projectile_template =
+            catalog.projectile_templates[index];
+        if (projectile_template.struct_size <
+                sizeof(KernelProjectileTemplateDefinition) ||
+            projectile_template.projectile_template_id == 0 ||
+            projectile_template.motion_model > KernelProjectileMotionModel_Homing ||
+            projectile_template.sync_mode >
+                KernelProjectileSyncMode_ServerSnapshotOnly) {
+            return false;
+        }
+        projectile_templates_.push_back(projectile_template);
+    }
+    for (std::uint32_t index = 0; index < catalog.collider_template_count; ++index) {
+        const KernelColliderTemplateDefinition& collider_template =
+            catalog.collider_templates[index];
+        if (collider_template.struct_size <
+                sizeof(KernelColliderTemplateDefinition) ||
+            collider_template.template_id == 0 ||
+            collider_template.shape_type > KernelColliderShapeType_Sphere) {
+            return false;
+        }
+        collider_templates_.push_back(collider_template);
+    }
+    for (std::uint32_t index = 0; index < catalog.collider_binding_count; ++index) {
+        const KernelColliderBindingDefinition& binding = catalog.collider_bindings[index];
+        if (binding.struct_size < sizeof(KernelColliderBindingDefinition) ||
+            binding.collider_template_id == 0 ||
+            find_collider_template(collider_templates_, binding.collider_template_id) ==
+                nullptr) {
+            return false;
+        }
+        collider_bindings_.push_back(binding);
+    }
+    catalog_version_ = catalog.catalog_version;
+    catalog_hash_ = catalog.catalog_hash;
+    return true;
 }
 
 std::uint32_t KernelEngine::get_render_states(
@@ -807,6 +988,176 @@ std::uint32_t KernelEngine::poll_events(KernelEvent* out_events, std::uint32_t m
     std::memcpy(out_events, events_.data(), sizeof(KernelEvent) * count);
     events_.erase(events_.begin(), events_.begin() + count);
     return count;
+}
+
+bool KernelEngine::get_benchmark_stats(KernelBenchmarkStats* out_stats) const {
+    if (out_stats == nullptr || out_stats->struct_size < sizeof(KernelBenchmarkStats)) {
+        return false;
+    }
+    KernelBenchmarkStats stats{};
+    stats.struct_size = sizeof(KernelBenchmarkStats);
+    stats.catalog_version = catalog_version_;
+    stats.catalog_hash = catalog_hash_;
+
+    auto entity_view = world_.registry().view<NetworkIdentity, EntityKind>();
+    stats.total_entity_count = static_cast<std::uint32_t>(entity_view.size_hint());
+    stats.total_entity_count += static_cast<std::uint32_t>(predicted_projectiles_.size());
+
+    auto add_projectile_sync_mode = [&stats](std::uint8_t sync_mode) {
+        ++stats.projectile_count;
+        if (sync_mode == KernelProjectileSyncMode_LocalPredictedDeterministic) {
+            ++stats.event_spawn_projectile_count;
+        } else if (sync_mode == KernelProjectileSyncMode_ServerSnapshotOnly) {
+            ++stats.snapshot_only_projectile_count;
+        } else {
+            ++stats.hybrid_projectile_count;
+        }
+    };
+    auto projectile_view =
+        world_.registry().view<NetworkIdentity, ProjectileState, ProjectileTag>();
+    for (const entt::entity entity : projectile_view) {
+        const ProjectileState& projectile = projectile_view.get<ProjectileState>(entity);
+        std::uint8_t sync_mode =
+            KernelProjectileSyncMode_HybridDeterministicThenSnapshot;
+        if (world_.registry().all_of<HomingState>(entity)) {
+            sync_mode = to_kernel_projectile_sync_mode(
+                world_.registry().get<HomingState>(entity).sync_mode);
+        } else {
+            const auto found = std::find_if(
+                projectile_templates_.begin(),
+                projectile_templates_.end(),
+                [&projectile](const KernelProjectileTemplateDefinition& definition) {
+                    return definition.weapon_id == projectile.weapon_id;
+                });
+            if (found != projectile_templates_.end()) {
+                sync_mode = found->sync_mode;
+            }
+        }
+        add_projectile_sync_mode(sync_mode);
+    }
+    for (const PredictedProjectile& projectile : predicted_projectiles_) {
+        add_projectile_sync_mode(projectile.sync_mode);
+    }
+    if (stats.projectile_count != 0) {
+        const float total = static_cast<float>(stats.projectile_count);
+        stats.event_spawn_ratio =
+            static_cast<float>(stats.event_spawn_projectile_count) / total;
+        stats.snapshot_only_ratio =
+            static_cast<float>(stats.snapshot_only_projectile_count) / total;
+        stats.hybrid_ratio =
+            static_cast<float>(stats.hybrid_projectile_count) / total;
+    }
+    *out_stats = stats;
+    return true;
+}
+
+bool KernelEngine::get_network_stats(KernelNetworkStats* out_stats) const {
+    if (out_stats == nullptr || out_stats->struct_size < sizeof(KernelNetworkStats)) {
+        return false;
+    }
+    KernelNetworkStats stats = network_stats_;
+    stats.struct_size = sizeof(KernelNetworkStats);
+    const std::uint64_t total_bytes =
+        stats.reliable_bytes_sent + stats.unreliable_bytes_sent;
+    if (stats.packet_count_sent != 0) {
+        stats.average_packet_size = static_cast<std::uint32_t>(
+            total_bytes / stats.packet_count_sent);
+    }
+    *out_stats = stats;
+    return true;
+}
+
+std::uint32_t KernelEngine::poll_debug_records(
+    const KernelDebugRecordFilter* filter,
+    KernelDebugInfo* out_records,
+    std::uint32_t max_records) {
+    if (out_records == nullptr || max_records == 0 ||
+        (filter != nullptr &&
+         filter->struct_size < sizeof(KernelDebugRecordFilter))) {
+        return 0;
+    }
+    std::uint32_t copied = 0;
+    auto cursor = debug_records_.begin();
+    while (cursor != debug_records_.end() && copied < max_records) {
+        if (!debug_filter_matches(filter, *cursor)) {
+            ++cursor;
+            continue;
+        }
+        out_records[copied] = *cursor;
+        out_records[copied].struct_size = sizeof(KernelDebugInfo);
+        ++copied;
+        cursor = debug_records_.erase(cursor);
+    }
+    return copied;
+}
+
+std::uint32_t KernelEngine::query_collider_shapes(
+    const KernelColliderShapeQuery* query,
+    KernelColliderShapeView* out_shapes,
+    std::uint32_t max_shapes) const {
+    if (out_shapes == nullptr || max_shapes == 0 ||
+        (query != nullptr &&
+         query->struct_size < sizeof(KernelColliderShapeQuery))) {
+        return 0;
+    }
+
+    std::uint32_t copied = 0;
+    auto view = world_.registry().view<NetworkIdentity, EntityKind, Transform, Hitbox>();
+    for (const entt::entity entity : view) {
+        if (copied >= max_shapes) {
+            break;
+        }
+        const NetworkIdentity& identity = view.get<NetworkIdentity>(entity);
+        const EntityKind& kind = view.get<EntityKind>(entity);
+        if (query != nullptr) {
+            if (query->entity_net_id != 0 &&
+                query->entity_net_id != identity.net_id) {
+                continue;
+            }
+            if (query->entity_type_filter != 0 &&
+                query->entity_type_filter != static_cast<std::uint16_t>(kind.type)) {
+                continue;
+            }
+        }
+
+        const Transform& transform = view.get<Transform>(entity);
+        const Hitbox& hitbox = view.get<Hitbox>(entity);
+        KernelColliderShapeView shape{};
+        shape.struct_size = sizeof(KernelColliderShapeView);
+        shape.entity_net_id = identity.net_id;
+        shape.entity_type = static_cast<std::uint16_t>(kind.type);
+        shape.shape_type = KernelColliderShapeType_Aabb;
+        shape.world_center = to_kernel_vec3(transform.position + hitbox.center);
+        shape.half_extents = to_kernel_vec3(hitbox.half_extents);
+        shape.radius = std::max(hitbox.half_extents.x, std::max(hitbox.half_extents.y, hitbox.half_extents.z));
+        shape.purpose_flags = KernelColliderPurpose_Hit;
+        shape.layer_mask = 0;
+
+        if (const KernelColliderBindingDefinition* binding =
+                find_collider_binding(collider_bindings_, kind.type)) {
+            if (const KernelColliderTemplateDefinition* collider_template =
+                    find_collider_template(
+                        collider_templates_,
+                        binding->collider_template_id)) {
+                shape.collider_template_id = collider_template->template_id;
+                shape.shape_type = collider_template->shape_type;
+                shape.world_center = to_kernel_vec3(
+                    transform.position +
+                    from_kernel_vec3(binding->local_position) +
+                    from_kernel_vec3(collider_template->center));
+                shape.half_extents = collider_template->half_extents;
+                shape.radius = collider_template->radius;
+                shape.purpose_flags = collider_template->purpose_flags;
+                shape.layer_mask = collider_template->layer_mask;
+            }
+        }
+        if (query != nullptr && query->purpose_mask != 0 &&
+            (shape.purpose_flags & query->purpose_mask) == 0) {
+            continue;
+        }
+        out_shapes[copied++] = shape;
+    }
+    return copied;
 }
 
 KernelLocalPlayerInfo KernelEngine::local_player_info() const {
@@ -1401,7 +1752,77 @@ void KernelEngine::handle_client_reliable_event(const TransportEvent& transport_
         return;
     }
 
+    ProjectileSpawnBatchPacket projectile_batch{};
+    if (decode_projectile_spawn_batch_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &projectile_batch)) {
+        handle_client_projectile_spawn_batch(projectile_batch);
+        return;
+    }
+
     push_event(KernelEventType_Error, 0, transport_event.peer, 14);
+}
+
+void KernelEngine::handle_client_projectile_spawn_batch(
+    const ProjectileSpawnBatchPacket& packet) {
+    if (packet.catalog_hash != catalog_hash_) {
+        push_event(KernelEventType_Error, 0, kServerPeerId, 22);
+        return;
+    }
+    for (const ProjectileSpawnGroup& group : packet.groups) {
+        const KernelProjectileTemplateDefinition* projectile_template =
+            find_projectile_template(
+                projectile_templates_,
+                group.projectile_template_id);
+        if (projectile_template == nullptr) {
+            push_event(KernelEventType_Error, 0, kServerPeerId, 23);
+            continue;
+        }
+        for (const ProjectileSpawnRecord& record : group.records) {
+            if (record.projectile_net_id == 0 ||
+                has_predicted_projectile_net_id(record.projectile_net_id)) {
+                continue;
+            }
+            const glm::vec3 spawn_position = record.spawn_position;
+            const glm::vec3 initial_velocity = record.initial_velocity;
+            predicted_projectiles_.push_back(PredictedProjectile{
+                entity_id_for_net_id(record.projectile_net_id),
+                record.projectile_net_id,
+                record.owner_peer,
+                0,
+                record.client_action_id,
+                packet.server_tick,
+                0.0f,
+                spawn_position,
+                glm::quat{1.0f, 0.0f, 0.0f, 0.0f},
+                initial_velocity,
+                spawn_position,
+                initial_velocity,
+                from_kernel_vec3(projectile_template->gravity),
+                to_projectile_motion_model(projectile_template->motion_model),
+                projectile_template->weapon_id,
+                projectile_template->sync_mode,
+                glm::vec3{0.0f, 0.0f, 0.0f},
+                false,
+            });
+
+            KernelDebugInfo debug_info{};
+            debug_info.struct_size = sizeof(KernelDebugInfo);
+            debug_info.tick = packet.server_tick;
+            debug_info.record_type = KernelDebugRecordType_Projectile;
+            debug_info.data.projectile.projectile_net_id = record.projectile_net_id;
+            debug_info.data.projectile.owner_net_id = record.owner_net_id;
+            debug_info.data.projectile.owner_peer = record.owner_peer;
+            debug_info.data.projectile.weapon_id = projectile_template->weapon_id;
+            debug_info.data.projectile.motion_model = projectile_template->motion_model;
+            debug_info.data.projectile.sync_mode = projectile_template->sync_mode;
+            debug_info.data.projectile.position = to_kernel_vec3(spawn_position);
+            debug_info.data.projectile.velocity = to_kernel_vec3(initial_velocity);
+            debug_records_.push_back(debug_info);
+        }
+    }
+    rebuild_render_states();
 }
 
 void KernelEngine::handle_client_ping_pong(const TransportEvent& transport_event) {
@@ -1427,12 +1848,19 @@ void KernelEngine::handle_client_ping_pong(const TransportEvent& transport_event
             SendMode::kReliable,
             ChannelId::kSession)) {
         push_event(KernelEventType_Error, 0, kServerPeerId, 19);
+    } else {
+        record_sent_packet(
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kSession);
     }
 }
 
 void KernelEngine::apply_welcome(const WelcomePacket& welcome) {
     local_client_peer_id_ = welcome.assigned_peer_id;
     local_player_net_id_ = welcome.assigned_player_net_id;
+    catalog_version_ = welcome.catalog_version;
+    catalog_hash_ = welcome.catalog_hash;
 
     TickConfig server_tick = config_.tick;
     if (welcome.server_tick_rate != 0) {
@@ -1495,6 +1923,13 @@ void KernelEngine::handle_server_ping_pong(const TransportEvent& transport_event
             : 0;
     session->last_clock_sync_rtt_us =
         server_elapsed >= client_elapsed ? server_elapsed - client_elapsed : 0;
+    if (network_stats_.rtt_us != 0) {
+        network_stats_.jitter_us =
+            network_stats_.rtt_us > session->last_clock_sync_rtt_us
+                ? network_stats_.rtt_us - session->last_clock_sync_rtt_us
+                : session->last_clock_sync_rtt_us - network_stats_.rtt_us;
+    }
+    network_stats_.rtt_us = session->last_clock_sync_rtt_us;
     session->pending_clock_sync_nonce = 0;
     session->pending_clock_sync_server_time_us = 0;
     session->has_clock_sync = true;
@@ -1851,6 +2286,8 @@ void KernelEngine::predict_local_projectile(const PlayerInput& input) {
         velocity,
         gravity,
         motion_model,
+        weapon->id,
+        KernelProjectileSyncMode_HybridDeterministicThenSnapshot,
         glm::vec3{0.0f, 0.0f, 0.0f},
         false,
     });
@@ -2380,6 +2817,68 @@ void KernelEngine::send_entity_spawn(PeerId peer, const EntitySnapshot& entity) 
             SendMode::kReliable,
             ChannelId::kReliableEvent)) {
         push_event(KernelEventType_Error, entity.net_id, peer, 16);
+    } else {
+        record_sent_packet(
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kReliableEvent);
+    }
+    if (entity.type == EntityType::kProjectile) {
+        send_projectile_spawn_batch(peer, entity);
+    }
+}
+
+void KernelEngine::send_projectile_spawn_batch(
+    PeerId peer,
+    const EntitySnapshot& entity) {
+    const std::optional<entt::entity> world_entity = world_.find_entity(entity.net_id);
+    if (!world_entity.has_value() ||
+        !world_.registry().all_of<NetworkIdentity, ProjectileState, Velocity>(
+            *world_entity)) {
+        return;
+    }
+    const NetworkIdentity& identity =
+        world_.registry().get<NetworkIdentity>(*world_entity);
+    const ProjectileState& projectile =
+        world_.registry().get<ProjectileState>(*world_entity);
+    const Velocity& velocity = world_.registry().get<Velocity>(*world_entity);
+
+    ProjectileSpawnRecord record{};
+    record.projectile_net_id = entity.net_id;
+    record.owner_net_id = projectile.shooter_net_id;
+    record.owner_peer = identity.owner_peer;
+    record.client_action_id = projectile.client_action_id;
+    record.spawn_position = projectile.spawn_position;
+    record.initial_velocity =
+        glm::length(projectile.initial_velocity) > 0.0001f
+            ? projectile.initial_velocity
+            : velocity.linear;
+
+    ProjectileSpawnGroup group{};
+    group.projectile_template_id = projectile.weapon_id;
+    group.records.push_back(record);
+
+    ProjectileSpawnBatchPacket batch{};
+    batch.server_tick = projectile.spawn_tick;
+    batch.server_time_us =
+        tick_time_us(projectile.spawn_tick, tick_loop_.fixed_delta_seconds());
+    batch.catalog_hash = catalog_hash_;
+    batch.groups.push_back(std::move(group));
+
+    const std::vector<std::uint8_t> packet =
+        encode_projectile_spawn_batch_packet(batch, next_packet_sequence_++);
+    if (!transport_->Send(
+            peer,
+            packet.data(),
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kReliableEvent)) {
+        push_event(KernelEventType_Error, entity.net_id, peer, 24);
+    } else {
+        record_sent_packet(
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kReliableEvent);
     }
 }
 
@@ -2397,6 +2896,11 @@ void KernelEngine::send_entity_despawn(
             SendMode::kReliable,
             ChannelId::kReliableEvent)) {
         push_event(KernelEventType_Error, net_id, peer, 17);
+    } else {
+        record_sent_packet(
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kReliableEvent);
     }
 }
 
@@ -2417,6 +2921,10 @@ void KernelEngine::rebuild_render_states_at_time(
 
 void KernelEngine::rebuild_render_states_from_world() {
     render_states_.clear();
+    if (config_.mode == KernelMode_Client) {
+        append_predicted_local_render_state(true);
+        append_predicted_projectile_render_states(true);
+    }
     auto view = world_.registry().view<const NetworkIdentity, const EntityKind, const Transform>();
     for (const entt::entity entity : view) {
         const NetworkIdentity& identity = view.get<const NetworkIdentity>(entity);
@@ -2529,6 +3037,11 @@ void KernelEngine::publish_snapshot() {
                 SendMode::kUnreliable,
                 ChannelId::kSnapshot)) {
             push_event(KernelEventType_Error, 0, kLocalListenPeerId, 7);
+        } else {
+            record_sent_packet(
+                static_cast<std::uint32_t>(packet.size()),
+                SendMode::kUnreliable,
+                ChannelId::kSnapshot);
         }
     }
 
@@ -2549,6 +3062,11 @@ void KernelEngine::publish_snapshot() {
                     SendMode::kUnreliable,
                     ChannelId::kSnapshot)) {
                 push_event(KernelEventType_Error, 0, session.peer, 7);
+            } else {
+                record_sent_packet(
+                    static_cast<std::uint32_t>(packet.size()),
+                    SendMode::kUnreliable,
+                    ChannelId::kSnapshot);
             }
         }
     }
@@ -2560,7 +3078,9 @@ void KernelEngine::send_client_handshake() {
     }
 
     const std::vector<std::uint8_t> packet =
-        encode_handshake_packet(make_client_handshake(), next_packet_sequence_++);
+        encode_handshake_packet(
+            make_client_handshake(catalog_version_, catalog_hash_),
+            next_packet_sequence_++);
     if (!transport_->Send(
             kServerPeerId,
             packet.data(),
@@ -2570,6 +3090,10 @@ void KernelEngine::send_client_handshake() {
         push_event(KernelEventType_Error, 0, kServerPeerId, 9);
         return;
     }
+    record_sent_packet(
+        static_cast<std::uint32_t>(packet.size()),
+        SendMode::kReliable,
+        ChannelId::kSession);
     client_handshake_sent_ = true;
 }
 
@@ -2593,6 +3117,10 @@ void KernelEngine::send_clock_sync_ping(
         push_event(KernelEventType_Error, 0, session->peer, 21);
         return;
     }
+    record_sent_packet(
+        static_cast<std::uint32_t>(packet.size()),
+        SendMode::kReliable,
+        ChannelId::kSession);
 
     session->pending_clock_sync_nonce = nonce;
     session->pending_clock_sync_server_time_us = server_time_us;
@@ -2625,6 +3153,11 @@ void KernelEngine::send_reliable_event(PeerId peer, const KernelEvent& event) {
             SendMode::kReliable,
             ChannelId::kReliableEvent)) {
         push_event(KernelEventType_Error, event.net_id, peer, 15);
+    } else {
+        record_sent_packet(
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kReliableEvent);
     }
 }
 
@@ -2634,6 +3167,25 @@ void KernelEngine::broadcast_reliable_event(const KernelEvent& event) {
             continue;
         }
         send_reliable_event(session.peer, event);
+    }
+}
+
+void KernelEngine::record_sent_packet(
+    std::uint32_t packet_size,
+    SendMode mode,
+    ChannelId channel) {
+    ++network_stats_.packet_count_sent;
+    network_stats_.max_packet_size =
+        std::max(network_stats_.max_packet_size, packet_size);
+    if (mode == SendMode::kReliable) {
+        network_stats_.reliable_bytes_sent += packet_size;
+    } else {
+        network_stats_.unreliable_bytes_sent += packet_size;
+    }
+    if (channel == ChannelId::kSnapshot) {
+        network_stats_.snapshot_bytes_sent += packet_size;
+    } else if (channel == ChannelId::kReliableEvent) {
+        network_stats_.event_bytes_sent += packet_size;
     }
 }
 
@@ -2663,7 +3215,8 @@ void KernelEngine::handle_server_handshake(const TransportEvent& transport_event
         return;
     }
 
-    const std::uint32_t reject_reason = handshake_reject_reason(handshake);
+    const std::uint32_t reject_reason =
+        handshake_reject_reason(handshake, catalog_version_, catalog_hash_);
     if (reject_reason != 0) {
         const KernelBuildInfo build_info = current_build_info();
         spdlog::warn(
@@ -2671,6 +3224,8 @@ void KernelEngine::handle_server_handshake(const TransportEvent& transport_event
             "local_protocol_version={} remote_protocol_version={} "
             "local_snapshot_schema_version={} remote_snapshot_schema_version={} "
             "local_packet_schema_version={} remote_packet_schema_version={} "
+            "local_catalog_version={} remote_catalog_version={} "
+            "local_catalog_hash={} remote_catalog_hash={} "
             "local_module_version={} remote_module_version={} "
             "local_git_commit={} remote_git_commit={}",
             disconnect_reason_name(reject_reason),
@@ -2681,6 +3236,10 @@ void KernelEngine::handle_server_handshake(const TransportEvent& transport_event
             handshake.snapshot_schema_version,
             build_info.packet_schema_version,
             handshake.packet_schema_version,
+            catalog_version_,
+            handshake.catalog_version,
+            catalog_hash_,
+            handshake.catalog_hash,
             build_info.module_version,
             handshake.module_version,
             build_info.git_commit,
@@ -2695,6 +3254,11 @@ void KernelEngine::handle_server_handshake(const TransportEvent& transport_event
                 SendMode::kReliable,
                 ChannelId::kSession)) {
             push_event(KernelEventType_Error, 0, transport_event.peer, 12);
+        } else {
+            record_sent_packet(
+                static_cast<std::uint32_t>(packet.size()),
+                SendMode::kReliable,
+                ChannelId::kSession);
         }
         return;
     }
@@ -2720,6 +3284,8 @@ void KernelEngine::handle_server_handshake(const TransportEvent& transport_event
         tick_loop_.current_tick(),
         config_.tick.server_tick_rate,
         config_.tick.snapshot_rate,
+        catalog_version_,
+        catalog_hash_,
     };
     const std::vector<std::uint8_t> packet =
         encode_welcome_packet(welcome, next_packet_sequence_++);
@@ -2732,6 +3298,10 @@ void KernelEngine::handle_server_handshake(const TransportEvent& transport_event
         push_event(KernelEventType_Error, 0, transport_event.peer, 12);
         return;
     }
+    record_sent_packet(
+        static_cast<std::uint32_t>(packet.size()),
+        SendMode::kReliable,
+        ChannelId::kSession);
 
     session->welcomed = true;
     send_clock_sync_ping(session, current_server_time_us());

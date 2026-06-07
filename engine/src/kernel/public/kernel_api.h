@@ -65,6 +65,10 @@ void Kernel_SubmitInput(
     uint32_t local_player_id,
     const PlayerInput* input);
 
+bool Kernel_LoadGameplayCatalog(
+    KernelHandle* kernel,
+    const KernelGameplayCatalogDefinition* catalog);
+
 uint32_t Kernel_GetRenderStates(
     KernelHandle* kernel,
     RenderEntityState* out_states,
@@ -80,6 +84,26 @@ uint32_t Kernel_PollEvents(
     KernelHandle* kernel,
     KernelEvent* out_events,
     uint32_t max_events);
+
+bool Kernel_GetBenchmarkStats(
+    KernelHandle* kernel,
+    KernelBenchmarkStats* out_stats);
+
+bool Kernel_GetNetworkStats(
+    KernelHandle* kernel,
+    KernelNetworkStats* out_stats);
+
+uint32_t Kernel_PollDebugRecords(
+    KernelHandle* kernel,
+    const KernelDebugRecordFilter* filter,
+    KernelDebugInfo* out_records,
+    uint32_t max_records);
+
+uint32_t Kernel_QueryColliderShapes(
+    KernelHandle* kernel,
+    const KernelColliderShapeQuery* query,
+    KernelColliderShapeView* out_shapes,
+    uint32_t max_shapes);
 
 bool Kernel_ServerCreateEntity(
     KernelHandle* kernel,

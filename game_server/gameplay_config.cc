@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstring>
 #include <filesystem>
 #include <stdexcept>
 
@@ -9,6 +10,84 @@
 
 namespace network_example::game_server {
 namespace {
+
+constexpr std::uint64_t kFnvOffsetBasis = 14695981039346656037ull;
+constexpr std::uint64_t kFnvPrime = 1099511628211ull;
+
+void hash_bytes(std::uint64_t* hash, const void* data, std::size_t size) {
+    const auto* bytes = static_cast<const std::uint8_t*>(data);
+    for (std::size_t index = 0; index < size; ++index) {
+        *hash ^= bytes[index];
+        *hash *= kFnvPrime;
+    }
+}
+
+template <typename T>
+void hash_scalar(std::uint64_t* hash, const T& value) {
+    hash_bytes(hash, &value, sizeof(T));
+}
+
+void hash_float(std::uint64_t* hash, float value) {
+    std::uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    hash_scalar(hash, bits);
+}
+
+void hash_vec3(std::uint64_t* hash, const KernelVec3& value) {
+    hash_float(hash, value.x);
+    hash_float(hash, value.y);
+    hash_float(hash, value.z);
+}
+
+void hash_string(std::uint64_t* hash, const std::string& value) {
+    const auto size = static_cast<std::uint32_t>(value.size());
+    hash_scalar(hash, size);
+    hash_bytes(hash, value.data(), value.size());
+}
+
+void hash_weapon(std::uint64_t* hash, const KernelWeaponMechanicsDefinition& weapon) {
+    hash_scalar(hash, weapon.weapon_id);
+    hash_scalar(hash, weapon.fire_mode);
+    hash_scalar(hash, weapon.magazine_size);
+    hash_scalar(hash, weapon.damage);
+    hash_scalar(hash, weapon.cooldown_ticks);
+    hash_scalar(hash, weapon.reload_ticks);
+    hash_float(hash, weapon.max_range);
+    hash_scalar(hash, weapon.pellet_count);
+    hash_float(hash, weapon.pellet_spread);
+
+    hash_scalar(hash, weapon.projectile.motion_model);
+    hash_scalar(hash, weapon.projectile.hit_response);
+    hash_scalar(hash, weapon.projectile.damage_shape);
+    hash_float(hash, weapon.projectile.speed);
+    hash_float(hash, weapon.projectile.lifetime_seconds);
+    hash_float(hash, weapon.projectile.explosion_radius);
+    hash_vec3(hash, weapon.projectile.gravity);
+    hash_scalar(hash, weapon.projectile.collision_mask);
+    hash_scalar(hash, weapon.projectile.max_hit_count);
+    hash_scalar(hash, weapon.projectile.homing.homing_mode);
+    hash_scalar(hash, weapon.projectile.homing.sync_mode);
+    hash_scalar(hash, weapon.projectile.homing.boost_ticks);
+    hash_float(hash, weapon.projectile.homing.lock_on_range);
+    hash_float(hash, weapon.projectile.homing.lose_target_range);
+    hash_float(hash, weapon.projectile.homing.lock_cone_degrees);
+    hash_float(hash, weapon.projectile.homing.max_turn_rate_degrees_per_second);
+    hash_float(hash, weapon.projectile.homing.acceleration);
+    hash_float(hash, weapon.projectile.homing.max_speed);
+
+    hash_float(hash, weapon.area_effect.radius);
+    hash_scalar(hash, weapon.area_effect.damage_per_interval);
+    hash_scalar(hash, weapon.area_effect.damage_interval_ticks);
+    hash_scalar(hash, weapon.area_effect.lifetime_ticks);
+    hash_float(hash, weapon.area_effect.spawn_distance);
+    hash_scalar(hash, weapon.area_effect.collision_mask);
+
+    hash_float(hash, weapon.beam.length);
+    hash_float(hash, weapon.beam.radius);
+    hash_scalar(hash, weapon.beam.damage_per_second);
+    hash_scalar(hash, weapon.beam.lifetime_ticks);
+    hash_scalar(hash, weapon.beam.collision_mask);
+}
 
 KernelWeaponMechanicsDefinition hitscan_weapon(
     std::uint8_t weapon_id,
@@ -499,6 +578,18 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(const YAML::Node& node) {
 
 }  // namespace
 
+std::uint64_t compute_gameplay_catalog_hash(const WeaponCatalogConfig& weapons) {
+    std::uint64_t hash = kFnvOffsetBasis;
+    hash_scalar(&hash, weapons.catalog_version);
+    for (std::size_t index = 0; index < weapons.definitions.size(); ++index) {
+        const auto canonical_index = static_cast<std::uint32_t>(index);
+        hash_scalar(&hash, canonical_index);
+        hash_string(&hash, weapons.names[index]);
+        hash_weapon(&hash, weapons.definitions[index]);
+    }
+    return hash == 0 ? kFnvOffsetBasis : hash;
+}
+
 GameServerGameplayConfig default_game_server_gameplay_config() {
     GameServerGameplayConfig config;
     config.weapons.definitions = {{
@@ -579,6 +670,7 @@ GameServerGameplayConfig default_game_server_gameplay_config() {
     config.enemy.weapon_id = kWeaponRocket;
     config.enemy.ai.weapon_id = kWeaponRocket;
     config.enemy.ai.magazine_size = kEnemyRocketMagazine;
+    config.weapons.catalog_hash = compute_gameplay_catalog_hash(config.weapons);
     return config;
 }
 
@@ -625,6 +717,7 @@ GameServerGameplayConfig load_gameplay_config_from_weapon_template_directory(
     config.enemy.weapon_id = kWeaponRocket;
     config.enemy.ai.weapon_id = kWeaponRocket;
     config.enemy.ai.magazine_size = kEnemyRocketMagazine;
+    config.weapons.catalog_hash = compute_gameplay_catalog_hash(config.weapons);
     const std::vector<std::string> errors = validate_gameplay_config(config);
     if (!errors.empty()) {
         throw std::runtime_error(errors.front());

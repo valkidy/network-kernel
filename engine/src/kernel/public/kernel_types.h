@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 14u
+#define KERNEL_ABI_VERSION 15u
 
 #define KERNEL_BUILD_INFO_TEXT_SIZE 128u
 #define KERNEL_LAN_DISCOVERY_TEXT_SIZE 128u
@@ -39,6 +39,12 @@
 #define KERNEL_CAPABILITY_BEAM_WEAPONS UINT64_C(0x0000000001000000)
 #define KERNEL_CAPABILITY_HOMING_PROJECTILES UINT64_C(0x0000000002000000)
 #define KERNEL_CAPABILITY_LAN_DISCOVERY UINT64_C(0x0000000004000000)
+#define KERNEL_CAPABILITY_GAMEPLAY_CATALOG UINT64_C(0x0000000008000000)
+#define KERNEL_CAPABILITY_PROJECTILE_SPAWN_BATCH UINT64_C(0x0000000010000000)
+#define KERNEL_CAPABILITY_DEBUG_RECORDS UINT64_C(0x0000000020000000)
+#define KERNEL_CAPABILITY_COLLIDER_SHAPE_QUERY UINT64_C(0x0000000040000000)
+#define KERNEL_CAPABILITY_BENCHMARK_STATS UINT64_C(0x0000000080000000)
+#define KERNEL_CAPABILITY_NETWORK_STATS UINT64_C(0x0000000100000000)
 
 #define KERNEL_COLLISION_LAYER_PLAYER UINT32_C(0x00000001)
 #define KERNEL_COLLISION_LAYER_ENEMY UINT32_C(0x00000002)
@@ -78,6 +84,16 @@ typedef struct KernelAbiInfo {
     uint32_t lan_discovery_query_config_size;
     uint32_t lan_discovery_result_size;
     uint64_t capability_flags;
+    uint32_t gameplay_catalog_definition_size;
+    uint32_t projectile_template_definition_size;
+    uint32_t collider_template_definition_size;
+    uint32_t collider_binding_definition_size;
+    uint32_t benchmark_stats_size;
+    uint32_t network_stats_size;
+    uint32_t debug_record_filter_size;
+    uint32_t debug_info_size;
+    uint32_t collider_shape_query_size;
+    uint32_t collider_shape_view_size;
 } KernelAbiInfo;
 
 typedef struct KernelBuildInfo {
@@ -293,6 +309,182 @@ typedef struct KernelServerEntityState {
     uint32_t visual_flags;
     bool valid;
 } KernelServerEntityState;
+
+typedef enum KernelColliderShapeType {
+    KernelColliderShapeType_Aabb = 0,
+    KernelColliderShapeType_Sphere = 1,
+} KernelColliderShapeType;
+
+typedef enum KernelColliderPurpose {
+    KernelColliderPurpose_Hit = 1u << 0,
+    KernelColliderPurpose_Damage = 1u << 1,
+    KernelColliderPurpose_Trigger = 1u << 2,
+} KernelColliderPurpose;
+
+typedef enum KernelDebugRecordType {
+    KernelDebugRecordType_Hit = 1u << 0,
+    KernelDebugRecordType_Projectile = 1u << 1,
+} KernelDebugRecordType;
+
+#define KERNEL_DEBUG_WILDCARD_U8 UINT8_C(0xff)
+
+typedef struct KernelColliderTemplateDefinition {
+    uint32_t struct_size;
+    uint32_t template_id;
+    uint8_t shape_type;
+    uint8_t reserved0;
+    uint16_t reserved1;
+    KernelVec3 center;
+    KernelVec3 half_extents;
+    float radius;
+    uint32_t purpose_flags;
+    uint32_t layer_mask;
+} KernelColliderTemplateDefinition;
+
+typedef struct KernelColliderBindingDefinition {
+    uint32_t struct_size;
+    uint16_t entity_type;
+    uint16_t reserved0;
+    uint32_t collider_template_id;
+    KernelVec3 local_position;
+    KernelQuat local_rotation;
+} KernelColliderBindingDefinition;
+
+typedef struct KernelProjectileTemplateDefinition {
+    uint32_t struct_size;
+    uint32_t projectile_template_id;
+    uint8_t weapon_id;
+    uint8_t motion_model;
+    uint8_t sync_mode;
+    uint8_t hit_response;
+    uint8_t damage_shape;
+    uint8_t reserved0;
+    uint16_t damage;
+    float speed;
+    float lifetime_seconds;
+    float explosion_radius;
+    KernelVec3 gravity;
+    uint32_t collider_template_id;
+    uint32_t explosion_template_id;
+    uint32_t collision_mask;
+    uint32_t max_hit_count;
+} KernelProjectileTemplateDefinition;
+
+typedef struct KernelGameplayCatalogDefinition {
+    uint32_t struct_size;
+    uint32_t catalog_version;
+    uint64_t catalog_hash;
+    const KernelProjectileTemplateDefinition* projectile_templates;
+    uint32_t projectile_template_count;
+    const KernelColliderTemplateDefinition* collider_templates;
+    uint32_t collider_template_count;
+    const KernelColliderBindingDefinition* collider_bindings;
+    uint32_t collider_binding_count;
+} KernelGameplayCatalogDefinition;
+
+typedef struct KernelBenchmarkStats {
+    uint32_t struct_size;
+    uint32_t catalog_version;
+    uint64_t catalog_hash;
+    uint32_t total_entity_count;
+    uint32_t projectile_count;
+    uint32_t event_spawn_projectile_count;
+    uint32_t snapshot_only_projectile_count;
+    uint32_t hybrid_projectile_count;
+    float event_spawn_ratio;
+    float snapshot_only_ratio;
+    float hybrid_ratio;
+    uint64_t render_solver_cost_us;
+    uint64_t projectile_solver_cost_us;
+    uint64_t hybrid_correction_cost_us;
+} KernelBenchmarkStats;
+
+typedef struct KernelNetworkStats {
+    uint32_t struct_size;
+    uint64_t snapshot_bytes_sent;
+    uint64_t event_bytes_sent;
+    uint64_t reliable_bytes_sent;
+    uint64_t unreliable_bytes_sent;
+    uint32_t packet_count_sent;
+    uint32_t average_packet_size;
+    uint32_t max_packet_size;
+    uint64_t packet_serialization_cost_us;
+    uint64_t packet_deserialization_cost_us;
+    uint64_t rtt_us;
+    uint64_t jitter_us;
+    float loss_ratio;
+} KernelNetworkStats;
+
+typedef struct KernelHitDebugInfo {
+    uint32_t source_net_id;
+    uint32_t target_net_id;
+    uint8_t weapon_id;
+    uint8_t reserved0;
+    uint16_t reserved1;
+    KernelVec3 position;
+} KernelHitDebugInfo;
+
+typedef struct KernelProjectileDebugInfo {
+    uint32_t projectile_net_id;
+    uint32_t owner_net_id;
+    uint32_t owner_peer;
+    uint8_t weapon_id;
+    uint8_t motion_model;
+    uint8_t sync_mode;
+    uint8_t reserved0;
+    KernelVec3 position;
+    KernelVec3 velocity;
+} KernelProjectileDebugInfo;
+
+typedef struct KernelDebugInfo {
+    uint32_t struct_size;
+    uint32_t tick;
+    uint8_t record_type;
+    uint8_t flags;
+    uint16_t reserved0;
+    union {
+        KernelHitDebugInfo hit;
+        KernelProjectileDebugInfo projectile;
+    } data;
+} KernelDebugInfo;
+
+typedef struct KernelDebugRecordFilter {
+    uint32_t struct_size;
+    uint32_t record_type_mask;
+    uint32_t source_net_id;
+    uint32_t target_net_id;
+    uint32_t projectile_net_id;
+    uint8_t weapon_id;
+    uint8_t motion_model;
+    uint8_t sync_mode;
+    uint8_t reserved0;
+    uint32_t min_tick;
+    uint32_t max_tick;
+} KernelDebugRecordFilter;
+
+typedef struct KernelColliderShapeQuery {
+    uint32_t struct_size;
+    uint16_t entity_type_filter;
+    uint16_t reserved0;
+    uint32_t entity_net_id;
+    uint32_t purpose_mask;
+} KernelColliderShapeQuery;
+
+typedef struct KernelColliderShapeView {
+    uint32_t struct_size;
+    uint32_t entity_net_id;
+    uint16_t entity_type;
+    uint16_t reserved0;
+    uint32_t collider_template_id;
+    uint8_t shape_type;
+    uint8_t reserved1;
+    uint16_t reserved2;
+    KernelVec3 world_center;
+    KernelVec3 half_extents;
+    float radius;
+    uint32_t purpose_flags;
+    uint32_t layer_mask;
+} KernelColliderShapeView;
 
 typedef struct KernelHomingMechanicsDefinition {
     uint32_t struct_size;

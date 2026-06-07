@@ -45,6 +45,8 @@ struct EnemyGameplayDefinition {
 };
 
 struct WeaponCatalogConfig {
+    std::uint32_t catalog_version = 1;
+    std::uint64_t catalog_hash = 0;
     std::array<KernelWeaponMechanicsDefinition, kWeaponCount> definitions{};
     std::array<std::string, kWeaponCount> names{};
 };
@@ -56,6 +58,7 @@ struct GameServerGameplayConfig {
 };
 
 GameServerGameplayConfig default_game_server_gameplay_config();
+std::uint64_t compute_gameplay_catalog_hash(const WeaponCatalogConfig& weapons);
 GameServerGameplayConfig load_gameplay_config_from_weapon_template_directory(
     const std::string& directory);
 std::vector<std::string> validate_gameplay_config(

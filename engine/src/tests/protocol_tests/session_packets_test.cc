@@ -11,6 +11,8 @@ int main() {
     handshake.protocol_version = network_example::kProtocolVersion;
     handshake.snapshot_schema_version = network_example::kSnapshotSchemaVersion;
     handshake.packet_schema_version = network_example::kPacketSchemaVersion;
+    handshake.catalog_version = 3;
+    handshake.catalog_hash = 0x1122334455667788ull;
     std::strncpy(
         handshake.module_version,
         "0.6.4-test",
@@ -32,6 +34,8 @@ int main() {
            network_example::kSnapshotSchemaVersion);
     assert(decoded_handshake.packet_schema_version ==
            network_example::kPacketSchemaVersion);
+    assert(decoded_handshake.catalog_version == 3);
+    assert(decoded_handshake.catalog_hash == 0x1122334455667788ull);
     assert(std::strcmp(decoded_handshake.module_version, "0.6.4-test") == 0);
     assert(std::strcmp(decoded_handshake.git_commit, "abcdef123456") == 0);
 
@@ -41,6 +45,8 @@ int main() {
     welcome.server_tick = 44;
     welcome.server_tick_rate = 30;
     welcome.snapshot_rate = 15;
+    welcome.catalog_version = 3;
+    welcome.catalog_hash = 0x1122334455667788ull;
     const std::vector<std::uint8_t> welcome_packet =
         network_example::encode_welcome_packet(welcome, 2);
     network_example::WelcomePacket decoded_welcome;
@@ -53,6 +59,8 @@ int main() {
     assert(decoded_welcome.server_tick == 44);
     assert(decoded_welcome.server_tick_rate == 30);
     assert(decoded_welcome.snapshot_rate == 15);
+    assert(decoded_welcome.catalog_version == 3);
+    assert(decoded_welcome.catalog_hash == 0x1122334455667788ull);
 
     network_example::PingPongPacket ping_pong;
     ping_pong.nonce = 88;

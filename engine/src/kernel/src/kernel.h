@@ -21,6 +21,7 @@ namespace network_example {
 class LoopbackTransport;
 struct EntityDespawnPacket;
 struct EntitySpawnPacket;
+struct ProjectileSpawnBatchPacket;
 struct WelcomePacket;
 
 class KernelEngine {
@@ -33,6 +34,7 @@ public:
 
     void update(float delta_seconds);
     void submit_input(PeerId local_player_id, const PlayerInput& input);
+    bool load_gameplay_catalog(const KernelGameplayCatalogDefinition& catalog);
 
     std::uint32_t get_render_states(
         RenderEntityState* out_states,
@@ -42,6 +44,16 @@ public:
         RenderEntityState* out_states,
         std::uint32_t max_states);
     std::uint32_t poll_events(KernelEvent* out_events, std::uint32_t max_events);
+    bool get_benchmark_stats(KernelBenchmarkStats* out_stats) const;
+    bool get_network_stats(KernelNetworkStats* out_stats) const;
+    std::uint32_t poll_debug_records(
+        const KernelDebugRecordFilter* filter,
+        KernelDebugInfo* out_records,
+        std::uint32_t max_records);
+    std::uint32_t query_collider_shapes(
+        const KernelColliderShapeQuery* query,
+        KernelColliderShapeView* out_shapes,
+        std::uint32_t max_shapes) const;
     KernelLocalPlayerInfo local_player_info() const;
     bool server_create_entity(
         const KernelServerEntityCreateInfo& create_info,
@@ -126,6 +138,8 @@ private:
         glm::vec3 initial_velocity{0.0f, 0.0f, 0.0f};
         glm::vec3 gravity{0.0f, 0.0f, 0.0f};
         ProjectileMotionModel motion_model = ProjectileMotionModel::kLinear;
+        std::uint8_t weapon_id = 0;
+        std::uint8_t sync_mode = KernelProjectileSyncMode_HybridDeterministicThenSnapshot;
         glm::vec3 correction_offset{0.0f, 0.0f, 0.0f};
         bool bound = false;
     };
@@ -141,6 +155,8 @@ private:
     void handle_server_disconnect(const TransportEvent& transport_event);
     void handle_client_disconnect(PeerId peer);
     void handle_client_reliable_event(const TransportEvent& transport_event);
+    void handle_client_projectile_spawn_batch(
+        const ProjectileSpawnBatchPacket& packet);
     void handle_client_ping_pong(const TransportEvent& transport_event);
     void handle_server_ping_pong(const TransportEvent& transport_event);
     void apply_welcome(const WelcomePacket& welcome);
@@ -206,6 +222,7 @@ private:
         PeerSession* session,
         const WorldSnapshot& snapshot);
     void send_entity_spawn(PeerId peer, const EntitySnapshot& entity);
+    void send_projectile_spawn_batch(PeerId peer, const EntitySnapshot& entity);
     void send_entity_despawn(
         PeerId peer,
         NetId net_id,
@@ -217,6 +234,10 @@ private:
     void send_due_clock_sync_pings(std::uint64_t server_time_us);
     void send_reliable_event(PeerId peer, const KernelEvent& event);
     void broadcast_reliable_event(const KernelEvent& event);
+    void record_sent_packet(
+        std::uint32_t packet_size,
+        SendMode mode,
+        ChannelId channel);
     void handle_server_handshake(const TransportEvent& transport_event);
     void handle_server_session_message(const TransportEvent& transport_event);
     void handle_client_session_message(const TransportEvent& transport_event);
@@ -244,6 +265,13 @@ private:
     std::unordered_set<NetId> client_despawned_entities_;
     std::vector<PlayerInput> pending_prediction_inputs_;
     std::vector<PredictedProjectile> predicted_projectiles_;
+    std::vector<KernelProjectileTemplateDefinition> projectile_templates_;
+    std::vector<KernelColliderTemplateDefinition> collider_templates_;
+    std::vector<KernelColliderBindingDefinition> collider_bindings_;
+    std::vector<KernelDebugInfo> debug_records_;
+    KernelNetworkStats network_stats_{};
+    std::uint32_t catalog_version_ = 0;
+    std::uint64_t catalog_hash_ = 0;
     std::unordered_map<NetId, std::uint64_t> entity_ids_by_net_id_;
     EntitySnapshot predicted_local_entity_;
     glm::vec3 local_correction_offset_{0.0f, 0.0f, 0.0f};
