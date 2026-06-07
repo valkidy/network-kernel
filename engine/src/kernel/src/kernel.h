@@ -238,6 +238,9 @@ private:
         std::uint32_t packet_size,
         SendMode mode,
         ChannelId channel);
+    void record_packet_deserialization_cost(std::uint64_t cost_us);
+    void queue_hit_debug_records(
+        const std::vector<ConfirmedDamage>& ready_damage);
     void handle_server_handshake(const TransportEvent& transport_event);
     void handle_server_session_message(const TransportEvent& transport_event);
     void handle_client_session_message(const TransportEvent& transport_event);
@@ -270,6 +273,7 @@ private:
     std::vector<KernelColliderBindingDefinition> collider_bindings_;
     std::vector<KernelDebugInfo> debug_records_;
     KernelNetworkStats network_stats_{};
+    KernelBenchmarkStats benchmark_stats_{};
     std::uint32_t catalog_version_ = 0;
     std::uint64_t catalog_hash_ = 0;
     std::unordered_map<NetId, std::uint64_t> entity_ids_by_net_id_;

@@ -421,6 +421,69 @@ void projectile_spawn_packet_uses_original_muzzle_position() {
     require(network_stats.event_bytes_sent > 0);
     require(network_stats.average_packet_size > 0);
     require(network_stats.max_packet_size > 0);
+    require(network_stats.packet_serialization_cost_us > 0);
+}
+
+void snapshot_only_projectile_spawn_skips_event_batch() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+    KernelProjectileTemplateDefinition projectile_template{};
+    projectile_template.struct_size = sizeof(projectile_template);
+    projectile_template.projectile_template_id = 3;
+    projectile_template.weapon_id = 3;
+    projectile_template.sync_mode = KernelProjectileSyncMode_ServerSnapshotOnly;
+    KernelGameplayCatalogDefinition catalog{};
+    catalog.struct_size = sizeof(catalog);
+    catalog.catalog_version = 1;
+    catalog.catalog_hash = 0x7777ull;
+    catalog.projectile_templates = &projectile_template;
+    catalog.projectile_template_count = 1;
+    require(engine.load_gameplay_catalog(catalog));
+
+    auto loopback = std::make_unique<network_example::LoopbackTransport>();
+    require(loopback->StartServer(7778));
+    auto* loopback_transport = loopback.get();
+    engine.transport_ = std::move(loopback);
+
+    const network_example::NetId projectile_net_id =
+        engine.world_.spawn_projectile(
+            7,
+            glm::vec3{1.0f, 0.0f, 0.0f},
+            glm::vec3{2.0f, 0.0f, 0.0f});
+    const auto projectile_entity = engine.world_.find_entity(projectile_net_id);
+    require(projectile_entity.has_value());
+    network_example::ProjectileState& projectile =
+        engine.world_.registry().get<network_example::ProjectileState>(
+            *projectile_entity);
+    projectile.weapon_id = 3;
+
+    const network_example::WorldSnapshot snapshot =
+        network_example::build_world_snapshot(engine.world_, 1, 33, 0);
+    const network_example::EntitySnapshot* entity = nullptr;
+    for (const network_example::EntitySnapshot& snapshot_entity : snapshot.entities) {
+        if (snapshot_entity.net_id == projectile_net_id) {
+            entity = &snapshot_entity;
+            break;
+        }
+    }
+    require(entity != nullptr);
+
+    engine.send_entity_spawn(7, *entity);
+
+    network_example::TransportEvent event;
+    require(loopback_transport->PollClientEvent(event));
+    network_example::EntitySpawnPacket packet;
+    require(network_example::decode_entity_spawn_packet(
+        event.payload.data(),
+        event.payload.size(),
+        &packet));
+    require(packet.net_id == projectile_net_id);
+    require(!loopback_transport->PollClientEvent(event));
 }
 
 void render_states_at_time_interpolates_and_clamps() {
@@ -903,6 +966,11 @@ void server_validates_catalog_hash_before_welcome() {
     }
     require(found_disconnect);
     require(disconnect.reason_code == network_example::kDisconnectReasonCatalogMismatch);
+    KernelNetworkStats network_stats{};
+    network_stats.struct_size = sizeof(network_stats);
+    require(server.get_network_stats(&network_stats));
+    require(network_stats.packet_serialization_cost_us > 0);
+    require(network_stats.packet_deserialization_cost_us > 0);
 }
 
 void projectile_spawn_batch_renders_and_binds_to_snapshot() {
@@ -989,6 +1057,7 @@ void projectile_spawn_batch_renders_and_binds_to_snapshot() {
     require(benchmark_stats.projectile_count == 1);
     require(benchmark_stats.hybrid_projectile_count == 1);
     require(benchmark_stats.hybrid_ratio == 1.0f);
+    require(benchmark_stats.render_solver_cost_us > 0);
 
     client.handle_client_snapshot(projectile_snapshot(
         4,
@@ -1002,6 +1071,58 @@ void projectile_spawn_batch_renders_and_binds_to_snapshot() {
     count = client.get_render_states_at_time(133333, states.data(), states.size());
     require(count == 1);
     require(states[0].net_id == 101);
+    require(client.get_benchmark_stats(&benchmark_stats));
+    require(benchmark_stats.hybrid_correction_cost_us > 0);
+}
+
+void hit_debug_records_filter_and_drain() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+    std::vector<network_example::ConfirmedDamage> ready_damage{
+        network_example::ConfirmedDamage{
+            12,
+            77,
+            100,
+            200,
+            7,
+            3,
+            25,
+            123456,
+            glm::vec3{1.0f, 2.0f, 3.0f},
+        },
+    };
+    engine.queue_hit_debug_records(ready_damage);
+
+    KernelDebugRecordFilter filter{};
+    filter.struct_size = sizeof(filter);
+    filter.record_type_mask = KernelDebugRecordType_Hit;
+    filter.weapon_id = KERNEL_DEBUG_WILDCARD_U8;
+    filter.source_net_id = 999;
+    std::array<KernelDebugInfo, 2> debug_records{};
+    require(engine.poll_debug_records(
+                &filter,
+                debug_records.data(),
+                static_cast<std::uint32_t>(debug_records.size())) == 0);
+
+    filter.source_net_id = 100;
+    require(engine.poll_debug_records(
+                &filter,
+                debug_records.data(),
+                static_cast<std::uint32_t>(debug_records.size())) == 1);
+    require(debug_records[0].record_type == KernelDebugRecordType_Hit);
+    require(debug_records[0].data.hit.source_net_id == 100);
+    require(debug_records[0].data.hit.target_net_id == 200);
+    require(debug_records[0].data.hit.weapon_id == 3);
+    require(debug_records[0].data.hit.position.y == 2.0f);
+    require(engine.poll_debug_records(
+                &filter,
+                debug_records.data(),
+                static_cast<std::uint32_t>(debug_records.size())) == 0);
 }
 
 }  // namespace
@@ -1014,6 +1135,7 @@ int main() {
     client_applies_server_tick_config_from_welcome();
     client_clock_offset_smooths_after_initial_sync();
     projectile_spawn_packet_uses_original_muzzle_position();
+    snapshot_only_projectile_spawn_skips_event_batch();
     render_states_at_time_interpolates_and_clamps();
     remote_projectile_uses_interpolated_past_timeline();
     local_projectile_snapshot_fast_forwards_and_smooths();
@@ -1024,6 +1146,7 @@ int main() {
     server_rejects_mismatched_snapshot_schema_before_welcome();
     server_validates_catalog_hash_before_welcome();
     projectile_spawn_batch_renders_and_binds_to_snapshot();
+    hit_debug_records_filter_and_drain();
 
     KernelConfig config{};
     config.mode = KernelMode_Client;

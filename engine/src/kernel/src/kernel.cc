@@ -1,6 +1,7 @@
 #include "kernel/src/kernel.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cmath>
 #include <cstdio>
@@ -61,6 +62,20 @@ bool is_authoritative_combat_event(KernelEventType type) {
            type == KernelEventType_HitConfirmed ||
            type == KernelEventType_DamageApplied ||
            type == KernelEventType_Explosion;
+}
+
+std::uint64_t elapsed_cost_us(
+    std::chrono::steady_clock::time_point start_time) {
+    const auto elapsed =
+        std::chrono::steady_clock::now() - start_time;
+    const auto elapsed_ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count();
+    if (elapsed_ns <= 0) {
+        return 0;
+    }
+    return std::max<std::uint64_t>(
+        1,
+        static_cast<std::uint64_t>(elapsed_ns) / 1000u);
 }
 
 constexpr PeerId kLocalListenPeerId = 1;
@@ -994,7 +1009,7 @@ bool KernelEngine::get_benchmark_stats(KernelBenchmarkStats* out_stats) const {
     if (out_stats == nullptr || out_stats->struct_size < sizeof(KernelBenchmarkStats)) {
         return false;
     }
-    KernelBenchmarkStats stats{};
+    KernelBenchmarkStats stats = benchmark_stats_;
     stats.struct_size = sizeof(KernelBenchmarkStats);
     stats.catalog_version = catalog_version_;
     stats.catalog_hash = catalog_hash_;
@@ -1563,6 +1578,9 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     client_despawned_entities_.clear();
     pending_prediction_inputs_.clear();
     predicted_projectiles_.clear();
+    debug_records_.clear();
+    network_stats_ = KernelNetworkStats{};
+    benchmark_stats_ = KernelBenchmarkStats{};
     entity_ids_by_net_id_.clear();
     predicted_local_entity_ = EntitySnapshot{};
     local_correction_offset_ = glm::vec3{0.0f, 0.0f, 0.0f};
@@ -1627,14 +1645,17 @@ void KernelEngine::poll_transport() {
             transport_event.channel == ChannelId::kSnapshot &&
             config_.mode == KernelMode_Client) {
             WorldSnapshot snapshot;
+            const auto decode_start = std::chrono::steady_clock::now();
             if (!decode_snapshot_packet(
                     transport_event.payload.data(),
                     transport_event.payload.size(),
                     &snapshot)) {
+                record_packet_deserialization_cost(elapsed_cost_us(decode_start));
                 log_snapshot_decode_failure(transport_event);
                 push_event(KernelEventType_Error, 0, transport_event.peer, 6);
                 continue;
             }
+            record_packet_deserialization_cost(elapsed_cost_us(decode_start));
             handle_client_snapshot(std::move(snapshot));
         } else if (
             transport_event.type == TransportEventType::kMessage &&
@@ -1650,14 +1671,17 @@ void KernelEngine::poll_transport() {
 
             PeerId player_id = 0;
             PlayerInput input{};
+            const auto decode_start = std::chrono::steady_clock::now();
             if (!decode_input_packet(
                     transport_event.payload.data(),
                     transport_event.payload.size(),
                     &player_id,
                     &input)) {
+                record_packet_deserialization_cost(elapsed_cost_us(decode_start));
                 push_event(KernelEventType_Error, 0, transport_event.peer, 5);
                 continue;
             }
+            record_packet_deserialization_cost(elapsed_cost_us(decode_start));
             if (player_id != transport_event.peer) {
                 push_event(KernelEventType_Error, 0, transport_event.peer, 11);
                 continue;
@@ -1722,10 +1746,12 @@ void KernelEngine::handle_client_disconnect(PeerId peer) {
 
 void KernelEngine::handle_client_reliable_event(const TransportEvent& transport_event) {
     KernelEvent event{};
+    auto decode_start = std::chrono::steady_clock::now();
     if (decode_reliable_event_packet(
             transport_event.payload.data(),
             transport_event.payload.size(),
             &event)) {
+        record_packet_deserialization_cost(elapsed_cost_us(decode_start));
         if (event.presentation_time_us != 0) {
             pending_presentation_events_.push_back(event);
             return;
@@ -1735,32 +1761,39 @@ void KernelEngine::handle_client_reliable_event(const TransportEvent& transport_
     }
 
     EntitySpawnPacket spawn{};
+    decode_start = std::chrono::steady_clock::now();
     if (decode_entity_spawn_packet(
             transport_event.payload.data(),
             transport_event.payload.size(),
             &spawn)) {
+        record_packet_deserialization_cost(elapsed_cost_us(decode_start));
         handle_client_spawn(spawn);
         return;
     }
 
     EntityDespawnPacket despawn{};
+    decode_start = std::chrono::steady_clock::now();
     if (decode_entity_despawn_packet(
             transport_event.payload.data(),
             transport_event.payload.size(),
             &despawn)) {
+        record_packet_deserialization_cost(elapsed_cost_us(decode_start));
         handle_client_despawn(despawn);
         return;
     }
 
     ProjectileSpawnBatchPacket projectile_batch{};
+    decode_start = std::chrono::steady_clock::now();
     if (decode_projectile_spawn_batch_packet(
             transport_event.payload.data(),
             transport_event.payload.size(),
             &projectile_batch)) {
+        record_packet_deserialization_cost(elapsed_cost_us(decode_start));
         handle_client_projectile_spawn_batch(projectile_batch);
         return;
     }
 
+    record_packet_deserialization_cost(elapsed_cost_us(decode_start));
     push_event(KernelEventType_Error, 0, transport_event.peer, 14);
 }
 
@@ -2046,14 +2079,17 @@ void KernelEngine::poll_client_transport() {
         }
 
         WorldSnapshot snapshot;
+        const auto decode_start = std::chrono::steady_clock::now();
         if (!decode_snapshot_packet(
                 transport_event.payload.data(),
                 transport_event.payload.size(),
                 &snapshot)) {
+            record_packet_deserialization_cost(elapsed_cost_us(decode_start));
             log_snapshot_decode_failure(transport_event);
             push_event(KernelEventType_Error, 0, transport_event.peer, 6);
             continue;
         }
+        record_packet_deserialization_cost(elapsed_cost_us(decode_start));
         handle_client_snapshot(std::move(snapshot));
     }
 }
@@ -2143,6 +2179,8 @@ void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {
 }
 
 void KernelEngine::reconcile_predicted_projectiles(const WorldSnapshot& snapshot) {
+    const auto cost_start = std::chrono::steady_clock::now();
+    bool corrected_projectile = false;
     std::unordered_set<NetId> snapshot_projectiles;
     const float fixed_delta_seconds = tick_loop_.fixed_delta_seconds();
     const std::uint32_t local_tick =
@@ -2197,6 +2235,7 @@ void KernelEngine::reconcile_predicted_projectiles(const WorldSnapshot& snapshot
             glm::length(correction) > 2.0f ? glm::vec3{0.0f, 0.0f, 0.0f}
                                            : correction;
         entity_ids_by_net_id_[entity.net_id] = predicted->entity_id;
+        corrected_projectile = true;
     }
 
     predicted_projectiles_.erase(
@@ -2219,6 +2258,10 @@ void KernelEngine::reconcile_predicted_projectiles(const WorldSnapshot& snapshot
                            snapshot_projectiles.end();
             }),
         predicted_projectiles_.end());
+    if (corrected_projectile) {
+        benchmark_stats_.hybrid_correction_cost_us +=
+            std::max<std::uint64_t>(1, elapsed_cost_us(cost_start));
+    }
 }
 
 void KernelEngine::predict_local_input(const PlayerInput& input) {
@@ -2256,6 +2299,14 @@ void KernelEngine::predict_local_projectile(const PlayerInput& input) {
     if (weapon == nullptr || weapon->mode != WeaponFireMode::kProjectile) {
         return;
     }
+    std::uint8_t sync_mode = KernelProjectileSyncMode_HybridDeterministicThenSnapshot;
+    if (const KernelProjectileTemplateDefinition* projectile_template =
+            find_projectile_template(projectile_templates_, weapon->id)) {
+        sync_mode = projectile_template->sync_mode;
+    }
+    if (sync_mode == KernelProjectileSyncMode_ServerSnapshotOnly) {
+        return;
+    }
 
     glm::vec3 player_position{0.0f, 0.0f, 0.0f};
     if (has_predicted_local_entity_) {
@@ -2287,7 +2338,7 @@ void KernelEngine::predict_local_projectile(const PlayerInput& input) {
         gravity,
         motion_model,
         weapon->id,
-        KernelProjectileSyncMode_HybridDeterministicThenSnapshot,
+        sync_mode,
         glm::vec3{0.0f, 0.0f, 0.0f},
         false,
     });
@@ -2510,6 +2561,8 @@ void KernelEngine::append_predicted_local_render_state(bool consume_correction) 
 }
 
 void KernelEngine::append_predicted_projectile_render_states(bool consume_correction) {
+    const auto cost_start = std::chrono::steady_clock::now();
+    const bool had_projectiles = !predicted_projectiles_.empty();
     for (PredictedProjectile& projectile : predicted_projectiles_) {
         const glm::vec3 render_position =
             projectile.position + projectile.correction_offset;
@@ -2535,9 +2588,15 @@ void KernelEngine::append_predicted_projectile_render_states(bool consume_correc
             }
         }
     }
+    if (had_projectiles) {
+        benchmark_stats_.render_solver_cost_us +=
+            std::max<std::uint64_t>(1, elapsed_cost_us(cost_start));
+    }
 }
 
 void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
+    const auto cost_start = std::chrono::steady_clock::now();
+    const bool had_projectiles = !predicted_projectiles_.empty();
     for (PredictedProjectile& projectile : predicted_projectiles_) {
         projectile.age_seconds += fixed_delta_seconds;
         projectile.position = projectile_position_at(
@@ -2551,6 +2610,10 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
             projectile.motion_model,
             projectile.gravity,
             projectile.age_seconds);
+    }
+    if (had_projectiles) {
+        benchmark_stats_.projectile_solver_cost_us +=
+            std::max<std::uint64_t>(1, elapsed_cost_us(cost_start));
     }
 }
 
@@ -2686,6 +2749,7 @@ void KernelEngine::simulate_tick() {
         &damage_pipeline_);
     const std::vector<ConfirmedDamage> ready_damage =
         damage_pipeline_.drain_ready_damage(world_, server_time_us);
+    queue_hit_debug_records(ready_damage);
     apply_damage_applications(
         world_,
         ready_damage,
@@ -2842,6 +2906,13 @@ void KernelEngine::send_projectile_spawn_batch(
     const ProjectileState& projectile =
         world_.registry().get<ProjectileState>(*world_entity);
     const Velocity& velocity = world_.registry().get<Velocity>(*world_entity);
+    const KernelProjectileTemplateDefinition* projectile_template =
+        find_projectile_template(projectile_templates_, projectile.weapon_id);
+    if (projectile_template != nullptr &&
+        projectile_template->sync_mode ==
+            KernelProjectileSyncMode_ServerSnapshotOnly) {
+        return;
+    }
 
     ProjectileSpawnRecord record{};
     record.projectile_net_id = entity.net_id;
@@ -2911,12 +2982,17 @@ void KernelEngine::rebuild_render_states() {
 void KernelEngine::rebuild_render_states_at_time(
     std::uint64_t client_render_time_us,
     bool consume_correction) {
+    const auto cost_start = std::chrono::steady_clock::now();
     if ((config_.mode == KernelMode_ListenServer || config_.mode == KernelMode_Client) &&
         has_client_snapshot_) {
         rebuild_render_states_from_snapshot(client_render_time_us, consume_correction);
+        benchmark_stats_.render_solver_cost_us +=
+            std::max<std::uint64_t>(1, elapsed_cost_us(cost_start));
         return;
     }
     rebuild_render_states_from_world();
+    benchmark_stats_.render_solver_cost_us +=
+        std::max<std::uint64_t>(1, elapsed_cost_us(cost_start));
 }
 
 void KernelEngine::rebuild_render_states_from_world() {
@@ -3174,6 +3250,7 @@ void KernelEngine::record_sent_packet(
     std::uint32_t packet_size,
     SendMode mode,
     ChannelId channel) {
+    const auto cost_start = std::chrono::steady_clock::now();
     ++network_stats_.packet_count_sent;
     network_stats_.max_packet_size =
         std::max(network_stats_.max_packet_size, packet_size);
@@ -3186,6 +3263,28 @@ void KernelEngine::record_sent_packet(
         network_stats_.snapshot_bytes_sent += packet_size;
     } else if (channel == ChannelId::kReliableEvent) {
         network_stats_.event_bytes_sent += packet_size;
+    }
+    network_stats_.packet_serialization_cost_us +=
+        std::max<std::uint64_t>(1, elapsed_cost_us(cost_start));
+}
+
+void KernelEngine::record_packet_deserialization_cost(std::uint64_t cost_us) {
+    network_stats_.packet_deserialization_cost_us +=
+        std::max<std::uint64_t>(1, cost_us);
+}
+
+void KernelEngine::queue_hit_debug_records(
+    const std::vector<ConfirmedDamage>& ready_damage) {
+    for (const ConfirmedDamage& damage : ready_damage) {
+        KernelDebugInfo debug_info{};
+        debug_info.struct_size = sizeof(KernelDebugInfo);
+        debug_info.tick = damage.server_tick;
+        debug_info.record_type = KernelDebugRecordType_Hit;
+        debug_info.data.hit.source_net_id = damage.source_net_id;
+        debug_info.data.hit.target_net_id = damage.target_net_id;
+        debug_info.data.hit.weapon_id = damage.source_code;
+        debug_info.data.hit.position = to_kernel_vec3(damage.hit_position);
+        debug_records_.push_back(debug_info);
     }
 }
 
@@ -3207,13 +3306,16 @@ void KernelEngine::broadcast_combat_events(
 
 void KernelEngine::handle_server_handshake(const TransportEvent& transport_event) {
     HandshakePacket handshake;
+    const auto decode_start = std::chrono::steady_clock::now();
     if (!decode_handshake_packet(
             transport_event.payload.data(),
             transport_event.payload.size(),
             &handshake)) {
+        record_packet_deserialization_cost(elapsed_cost_us(decode_start));
         push_event(KernelEventType_Error, 0, transport_event.peer, 9);
         return;
     }
+    record_packet_deserialization_cost(elapsed_cost_us(decode_start));
 
     const std::uint32_t reject_reason =
         handshake_reject_reason(handshake, catalog_version_, catalog_hash_);
@@ -3310,47 +3412,57 @@ void KernelEngine::handle_server_handshake(const TransportEvent& transport_event
 
 void KernelEngine::handle_server_session_message(const TransportEvent& transport_event) {
     PingPongPacket ping;
+    auto decode_start = std::chrono::steady_clock::now();
     if (decode_ping_pong_packet(
             transport_event.payload.data(),
             transport_event.payload.size(),
             &ping)) {
+        record_packet_deserialization_cost(elapsed_cost_us(decode_start));
         handle_server_ping_pong(transport_event);
         return;
     }
+    record_packet_deserialization_cost(elapsed_cost_us(decode_start));
 
     handle_server_handshake(transport_event);
 }
 
 void KernelEngine::handle_client_session_message(const TransportEvent& transport_event) {
     WelcomePacket welcome;
+    auto decode_start = std::chrono::steady_clock::now();
     if (decode_welcome_packet(
             transport_event.payload.data(),
             transport_event.payload.size(),
             &welcome)) {
+        record_packet_deserialization_cost(elapsed_cost_us(decode_start));
         apply_welcome(welcome);
         push_event(KernelEventType_PlayerJoined, 0, local_client_peer_id_);
         return;
     }
 
     PingPongPacket ping;
+    decode_start = std::chrono::steady_clock::now();
     if (decode_ping_pong_packet(
             transport_event.payload.data(),
             transport_event.payload.size(),
             &ping)) {
+        record_packet_deserialization_cost(elapsed_cost_us(decode_start));
         handle_client_ping_pong(transport_event);
         return;
     }
 
     DisconnectPacket disconnect;
+    decode_start = std::chrono::steady_clock::now();
     if (decode_disconnect_packet(
             transport_event.payload.data(),
             transport_event.payload.size(),
             &disconnect)) {
+        record_packet_deserialization_cost(elapsed_cost_us(decode_start));
         clear_client_session();
         push_event(KernelEventType_Disconnected, 0, kServerPeerId, disconnect.reason_code);
         return;
     }
 
+    record_packet_deserialization_cost(elapsed_cost_us(decode_start));
     push_event(KernelEventType_Error, 0, transport_event.peer, 13);
 }
 

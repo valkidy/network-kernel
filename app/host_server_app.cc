@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <exception>
 
 #include <spdlog/spdlog.h>
 
@@ -61,9 +62,23 @@ void log_native_build_info() {
 int RunHostServer(std::uint16_t port) {
     log_native_build_info();
 
+    network_example::game_server::GameServerGameplayConfig gameplay_config;
+    try {
+        gameplay_config =
+            network_example::game_server::load_gameplay_config_from_catalog_file(
+                "game_server/gameplay_catalog.yaml");
+    } catch (const std::exception& error) {
+        spdlog::error("failed to load gameplay catalog: {}", error.what());
+        return 1;
+    }
+
     KernelConfig config = default_config();
     KernelHandle* kernel = Kernel_Create(&config);
-    if (kernel == nullptr || !Kernel_StartListenServer(kernel, port)) {
+    if (kernel == nullptr ||
+        !network_example::game_server::load_kernel_gameplay_catalog(
+            kernel,
+            gameplay_config) ||
+        !Kernel_StartListenServer(kernel, port)) {
         spdlog::error("failed to start listen server");
         Kernel_Destroy(kernel);
         return 1;
@@ -84,7 +99,7 @@ int RunHostServer(std::uint16_t port) {
         1.0f / 30.0f,
     };
 
-    network_example::game_server::GameServer game_server(kernel);
+    network_example::game_server::GameServer game_server(kernel, gameplay_config);
     std::uint32_t sequence = 1;
     for (float delta_seconds : kFrameDeltas) {
         const PlayerInput input = scripted_input(sequence++);

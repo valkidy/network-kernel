@@ -13,9 +13,9 @@ inline constexpr std::uint16_t kEntityTypeEnemy = 2;
 inline constexpr std::uint16_t kEnemyAnimationIdle = 0;
 inline constexpr std::uint16_t kEnemyAnimationChasing = 1;
 inline constexpr std::uint16_t kEnemyInitialHp = 240;
-inline constexpr std::uint8_t kEnemyRocketWeaponId = 3;
-inline constexpr std::uint16_t kEnemyRocketMagazine = 3;
-inline constexpr std::uint16_t kEnemyRocketReserveAmmo = 6;
+inline constexpr std::uint8_t kEnemyRocketWeaponId = 2;
+inline constexpr std::uint16_t kEnemyRocketMagazine = 120;
+inline constexpr std::uint16_t kEnemyRocketReserveAmmo = 240;
 
 struct Enemy {
     std::uint32_t net_id = 0;

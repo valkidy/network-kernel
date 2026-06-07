@@ -2,11 +2,14 @@
 #define GAME_SERVER_GAMEPLAY_CONFIG_H_
 
 #include <array>
+#include <cstdint>
 #include <string>
 #include <vector>
 
 #include "game_server/enemy_ai_controller.h"
 #include "kernel/public/kernel_types.h"
+
+struct KernelHandle;
 
 namespace network_example::game_server {
 
@@ -49,18 +52,57 @@ struct WeaponCatalogConfig {
     std::uint64_t catalog_hash = 0;
     std::array<KernelWeaponMechanicsDefinition, kWeaponCount> definitions{};
     std::array<std::string, kWeaponCount> names{};
+    std::array<std::uint8_t, kWeaponCount> projectile_sync_modes{};
+};
+
+struct ColliderTemplateConfig {
+    std::string name;
+    KernelColliderTemplateDefinition definition{};
+};
+
+struct ColliderBindingConfig {
+    KernelColliderBindingDefinition definition{};
+};
+
+struct ColliderCatalogConfig {
+    std::vector<ColliderTemplateConfig> templates;
+    std::vector<ColliderBindingConfig> bindings;
+};
+
+struct BenchmarkProjectileGroupsConfig {
+    std::uint8_t event_spawn_weapon_id = kWeaponGrenade;
+    std::uint8_t snapshot_only_weapon_id = kWeaponRocket;
+    std::uint8_t hybrid_weapon_id = kWeaponHomingMissile;
 };
 
 struct GameServerGameplayConfig {
     WeaponCatalogConfig weapons;
     PlayerGameplayDefinition player;
     EnemyGameplayDefinition enemy;
+    ColliderCatalogConfig colliders;
+    BenchmarkProjectileGroupsConfig benchmark_projectile_groups;
+};
+
+struct KernelGameplayCatalogStorage {
+    std::vector<KernelProjectileTemplateDefinition> projectile_templates;
+    std::vector<KernelColliderTemplateDefinition> collider_templates;
+    std::vector<KernelColliderBindingDefinition> collider_bindings;
+    KernelGameplayCatalogDefinition definition{};
 };
 
 GameServerGameplayConfig default_game_server_gameplay_config();
 std::uint64_t compute_gameplay_catalog_hash(const WeaponCatalogConfig& weapons);
+std::uint64_t compute_gameplay_catalog_hash(
+    const GameServerGameplayConfig& config);
 GameServerGameplayConfig load_gameplay_config_from_weapon_template_directory(
     const std::string& directory);
+GameServerGameplayConfig load_gameplay_config_from_catalog_file(
+    const std::string& path);
+KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
+    const GameServerGameplayConfig& config);
+bool load_kernel_gameplay_catalog(
+    KernelHandle* kernel,
+    const GameServerGameplayConfig& config);
 std::vector<std::string> validate_gameplay_config(
     const GameServerGameplayConfig& config);
 

@@ -3,10 +3,12 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <exception>
 #include <thread>
 
 #include <spdlog/spdlog.h>
 
+#include "game_server/gameplay_config.h"
 #include "kernel/public/kernel_api.h"
 #include "kernel/src/tick_loop.h"
 
@@ -39,7 +41,7 @@ PlayerInput scripted_input(std::uint32_t sequence) {
     } else if (sequence == 36) {
         input.buttons = InputButton_Fire;
         input.selected_weapon = 1;
-    } else if (sequence == 72) {
+    } else if (sequence >= 72 && sequence < 96) {
         input.buttons = InputButton_Fire;
         input.selected_weapon = 2;
     }
@@ -90,9 +92,23 @@ void log_native_build_info() {
 int RunClient(const char* address) {
     log_native_build_info();
 
+    network_example::game_server::GameServerGameplayConfig gameplay_config;
+    try {
+        gameplay_config =
+            network_example::game_server::load_gameplay_config_from_catalog_file(
+                "game_server/gameplay_catalog.yaml");
+    } catch (const std::exception& error) {
+        spdlog::error("failed to load gameplay catalog: {}", error.what());
+        return 1;
+    }
+
     KernelConfig config = default_config();
     KernelHandle* kernel = Kernel_Create(&config);
-    if (kernel == nullptr || !Kernel_StartClient(kernel, address)) {
+    if (kernel == nullptr ||
+        !network_example::game_server::load_kernel_gameplay_catalog(
+            kernel,
+            gameplay_config) ||
+        !Kernel_StartClient(kernel, address)) {
         spdlog::error("failed to start example client for {}", address);
         Kernel_Destroy(kernel);
         return 1;

@@ -3,6 +3,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <exception>
 #include <thread>
 
 #include <spdlog/spdlog.h>
@@ -57,16 +58,30 @@ void log_dedicated_server_build_info() {
 int RunDedicatedServer(std::uint16_t port) {
     log_dedicated_server_build_info();
 
+    network_example::game_server::GameServerGameplayConfig gameplay_config;
+    try {
+        gameplay_config =
+            network_example::game_server::load_gameplay_config_from_catalog_file(
+                "game_server/gameplay_catalog.yaml");
+    } catch (const std::exception& error) {
+        spdlog::error("failed to load gameplay catalog: {}", error.what());
+        return 1;
+    }
+
     KernelConfig config = default_config();
     KernelHandle* kernel = Kernel_Create(&config);
-    if (kernel == nullptr || !Kernel_StartDedicatedServer(kernel, port)) {
+    if (kernel == nullptr ||
+        !network_example::game_server::load_kernel_gameplay_catalog(
+            kernel,
+            gameplay_config) ||
+        !Kernel_StartDedicatedServer(kernel, port)) {
         spdlog::error("failed to start dedicated server");
         Kernel_Destroy(kernel);
         return 1;
     }
 
     spdlog::info("dedicated server listening on 127.0.0.1:{}", port);
-    network_example::game_server::GameServer game_server(kernel);
+    network_example::game_server::GameServer game_server(kernel, gameplay_config);
 
     constexpr float kDeltaSeconds = 1.0f / 30.0f;
     while (true) {

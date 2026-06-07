@@ -85,6 +85,15 @@ int main() {
 
     GameServerHandle* game_server = GameServer_Create(kernel);
     assert(game_server != nullptr);
+    assert(GameServer_QueryWeaponTemplate(game_server, 2, &template_info));
+    assert(template_info.weapon_id == 2);
+    assert(template_info.fire_mode == KernelWeaponFireMode_Projectile);
+    assert(template_info.mechanics.damage == 1);
+    assert(template_info.mechanics.magazine_size == 120);
+    assert(template_info.mechanics.cooldown_ticks == 1);
+    assert(template_info.name[0] == 'P');
+    template_info = GameServerWeaponTemplateInfo{};
+    template_info.struct_size = sizeof(template_info);
     assert(GameServer_QueryWeaponTemplate(game_server, 4, &template_info));
     assert(template_info.weapon_id == 4);
     assert(template_info.fire_mode == KernelWeaponFireMode_AreaEffect);
@@ -123,6 +132,14 @@ int main() {
     GameServerHandle* yaml_game_server =
         GameServer_CreateWithWeaponTemplateDirectory(kernel, template_dir.string().c_str());
     assert(yaml_game_server != nullptr);
+    template_info = GameServerWeaponTemplateInfo{};
+    template_info.struct_size = sizeof(template_info);
+    assert(GameServer_QueryWeaponTemplate(yaml_game_server, 2, &template_info));
+    assert(template_info.mechanics.damage == 1);
+    assert(template_info.mechanics.magazine_size == 120);
+    assert(template_info.mechanics.cooldown_ticks == 1);
+    assert(template_info.mechanics.projectile.motion_model ==
+           KernelProjectileMotionModel_Linear);
     template_info = GameServerWeaponTemplateInfo{};
     template_info.struct_size = sizeof(template_info);
     assert(GameServer_QueryWeaponTemplate(yaml_game_server, 4, &template_info));

@@ -1,0 +1,46 @@
+templates:
+  - id: 1
+    name: player_hit
+    shape: aabb
+    center: {x: 0.0, y: 0.0, z: 0.0}
+    half_extents: {x: 0.35, y: 0.9, z: 0.35}
+    radius: 0.0
+    purpose: hit
+    layer: player
+  - id: 2
+    name: enemy_hit
+    shape: aabb
+    center: {x: 0.0, y: 0.0, z: 0.0}
+    half_extents: {x: 0.4, y: 0.8, z: 0.4}
+    radius: 0.0
+    purpose: hit
+    layer: enemy
+  - id: 3
+    name: projectile_damage
+    shape: aabb
+    center: {x: 0.0, y: 0.0, z: 0.0}
+    half_extents: {x: 0.1, y: 0.1, z: 0.1}
+    radius: 0.0
+    purpose: damage
+    layer: projectile
+  - id: 4
+    name: explosion_damage
+    shape: sphere
+    center: {x: 0.0, y: 0.0, z: 0.0}
+    half_extents: {x: 1.0, y: 1.0, z: 1.0}
+    radius: 1.0
+    purpose: damage
+    layer: area_effect
+bindings:
+  - entity_type: player
+    collider_template: player_hit
+    local_position: {x: 0.0, y: 0.9, z: 0.0}
+  - entity_type: enemy
+    collider_template: enemy_hit
+    local_position: {x: 0.0, y: 0.8, z: 0.0}
+  - entity_type: projectile
+    collider_template: projectile_damage
+    local_position: {x: 0.0, y: 0.0, z: 0.0}
+  - entity_type: area_effect
+    collider_template: explosion_damage
+    local_position: {x: 0.0, y: 0.0, z: 0.0}
