@@ -6,6 +6,7 @@ damage: 45
 cooldown_ticks: 45
 reload_ticks: 75
 projectile:
+  sync_mode: server_snapshot_only
   movement_model: linear
   hit_response: destroy
   damage_shape: explosion

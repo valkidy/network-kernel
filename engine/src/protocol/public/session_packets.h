@@ -17,6 +17,8 @@ struct HandshakePacket {
     std::uint16_t protocol_version = kProtocolVersion;
     std::uint16_t snapshot_schema_version = kSnapshotSchemaVersion;
     std::uint16_t packet_schema_version = kPacketSchemaVersion;
+    std::uint32_t catalog_version = 0;
+    std::uint64_t catalog_hash = 0;
     char module_version[kHandshakeTextSize] = {};
     char git_commit[kHandshakeTextSize] = {};
 };
@@ -25,6 +27,7 @@ enum SessionDisconnectReason : std::uint32_t {
     kDisconnectReasonProtocolVersionMismatch = 1001,
     kDisconnectReasonSnapshotSchemaMismatch = 1002,
     kDisconnectReasonPacketSchemaMismatch = 1003,
+    kDisconnectReasonCatalogMismatch = 1004,
 };
 
 struct WelcomePacket {
@@ -33,6 +36,8 @@ struct WelcomePacket {
     std::uint32_t server_tick = 0;
     std::uint32_t server_tick_rate = 0;
     std::uint32_t snapshot_rate = 0;
+    std::uint32_t catalog_version = 0;
+    std::uint64_t catalog_hash = 0;
 };
 
 struct PingPongPacket {

@@ -214,6 +214,15 @@ network_example::NetId spawned_area_effect(const std::vector<KernelEvent>& event
     return 0;
 }
 
+std::uint32_t projectile_count(const network_example::World& world) {
+    return static_cast<std::uint32_t>(
+        world.registry()
+            .view<
+                const network_example::ProjectileState,
+                const network_example::ProjectileTag>()
+            .size_hint());
+}
+
 void deterministic_projectile_paths_match_motion_models() {
     const glm::vec3 origin{0.0f, 1.0f, 0.0f};
     const glm::vec3 velocity{10.0f, 5.0f, 0.0f};
@@ -544,6 +553,64 @@ void projectile_weapon_fires_again_after_cooldown() {
     assert(weapon_state(world, player).ammo[network_example::kWeaponSlot2] == 28);
 }
 
+void local_predicted_spammer_can_spawn_many_low_damage_projectiles() {
+    network_example::World world;
+    const network_example::NetId player =
+        spawn_player(world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
+    const auto player_entity = world.find_entity(player);
+    assert(player_entity.has_value());
+    network_example::WeaponTuning& tuning =
+        world.registry().get<network_example::WeaponTuning>(*player_entity);
+    network_example::WeaponMechanicsDefinition& spammer =
+        tuning.definitions[network_example::kWeaponSlot2];
+    spammer.mode = network_example::WeaponFireMode::kProjectile;
+    spammer.magazine_size = 120;
+    spammer.damage = 1;
+    spammer.cooldown_ticks = 1;
+    spammer.reload_ticks = 30;
+    spammer.projectile_speed = 30.0f;
+    spammer.projectile_lifetime_seconds = 2.0f;
+    spammer.explosion_radius = 0.0f;
+    spammer.projectile_motion_model = network_example::ProjectileMotionModel::kLinear;
+    spammer.projectile_damage_shape =
+        network_example::ProjectileDamageShape::kDirectHit;
+    spammer.projectile_collision_mask = network_example::kCollisionLayerEnemy;
+    network_example::WeaponState& weapon = weapon_state(world, player);
+    weapon.ammo[network_example::kWeaponSlot2] = spammer.magazine_size;
+
+    std::vector<KernelEvent> all_events;
+    for (std::uint32_t tick = 0; tick < 12; ++tick) {
+        PlayerInput input = fire_input(network_example::kWeaponSlot2);
+        input.input_seq = tick + 1;
+        input.client_action_id = 1000 + tick;
+        std::vector<KernelEvent> events;
+        network_example::simulate_weapons(
+            world,
+            queue(input),
+            tick,
+            &events);
+        all_events.insert(all_events.end(), events.begin(), events.end());
+    }
+
+    require(count_events(all_events, KernelEventType_EntitySpawned) == 12);
+    require(projectile_count(world) == 12);
+    require(weapon.ammo[network_example::kWeaponSlot2] == 108);
+    auto view =
+        world.registry()
+            .view<
+                const network_example::ProjectileState,
+                const network_example::ProjectileTag>();
+    for (const entt::entity entity : view) {
+        const network_example::ProjectileState& projectile =
+            view.get<const network_example::ProjectileState>(entity);
+        require(projectile.damage == 1);
+        require(projectile.weapon_id == network_example::kWeaponSlot2);
+        require(
+            projectile.motion_model ==
+            network_example::ProjectileMotionModel::kLinear);
+    }
+}
+
 void projectile_rewind_spawns_from_historical_muzzle() {
     network_example::World world;
     const network_example::NetId player =
@@ -858,6 +925,7 @@ int main() {
     server_projectile_damage_to_player_is_pended();
     direct_hit_projectile_without_explosion_applies_damage();
     projectile_weapon_fires_again_after_cooldown();
+    local_predicted_spammer_can_spawn_many_low_damage_projectiles();
     projectile_rewind_spawns_from_historical_muzzle();
     projectile_without_rewind_uses_current_muzzle();
     projectile_historical_hit_query_hits_historical_target();

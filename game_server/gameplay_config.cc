@@ -2,13 +2,126 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstring>
 #include <filesystem>
 #include <stdexcept>
+#include <unordered_map>
 
 #include <yaml-cpp/yaml.h>
 
+#include "kernel/public/kernel_api.h"
+
 namespace network_example::game_server {
 namespace {
+
+constexpr std::uint64_t kFnvOffsetBasis = 14695981039346656037ull;
+constexpr std::uint64_t kFnvPrime = 1099511628211ull;
+constexpr const char* kDefaultGameplayCatalogPath =
+    "game_server/gameplay_catalog.yaml";
+
+void hash_bytes(std::uint64_t* hash, const void* data, std::size_t size) {
+    const auto* bytes = static_cast<const std::uint8_t*>(data);
+    for (std::size_t index = 0; index < size; ++index) {
+        *hash ^= bytes[index];
+        *hash *= kFnvPrime;
+    }
+}
+
+template <typename T>
+void hash_scalar(std::uint64_t* hash, const T& value) {
+    hash_bytes(hash, &value, sizeof(T));
+}
+
+void hash_float(std::uint64_t* hash, float value) {
+    std::uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    hash_scalar(hash, bits);
+}
+
+void hash_vec3(std::uint64_t* hash, const KernelVec3& value) {
+    hash_float(hash, value.x);
+    hash_float(hash, value.y);
+    hash_float(hash, value.z);
+}
+
+void hash_string(std::uint64_t* hash, const std::string& value) {
+    const auto size = static_cast<std::uint32_t>(value.size());
+    hash_scalar(hash, size);
+    hash_bytes(hash, value.data(), value.size());
+}
+
+void hash_weapon(std::uint64_t* hash, const KernelWeaponMechanicsDefinition& weapon) {
+    hash_scalar(hash, weapon.weapon_id);
+    hash_scalar(hash, weapon.fire_mode);
+    hash_scalar(hash, weapon.magazine_size);
+    hash_scalar(hash, weapon.damage);
+    hash_scalar(hash, weapon.cooldown_ticks);
+    hash_scalar(hash, weapon.reload_ticks);
+    hash_float(hash, weapon.max_range);
+    hash_scalar(hash, weapon.pellet_count);
+    hash_float(hash, weapon.pellet_spread);
+
+    hash_scalar(hash, weapon.projectile.motion_model);
+    hash_scalar(hash, weapon.projectile.hit_response);
+    hash_scalar(hash, weapon.projectile.damage_shape);
+    hash_float(hash, weapon.projectile.speed);
+    hash_float(hash, weapon.projectile.lifetime_seconds);
+    hash_float(hash, weapon.projectile.explosion_radius);
+    hash_vec3(hash, weapon.projectile.gravity);
+    hash_scalar(hash, weapon.projectile.collision_mask);
+    hash_scalar(hash, weapon.projectile.max_hit_count);
+    hash_scalar(hash, weapon.projectile.homing.homing_mode);
+    hash_scalar(hash, weapon.projectile.homing.sync_mode);
+    hash_scalar(hash, weapon.projectile.homing.boost_ticks);
+    hash_float(hash, weapon.projectile.homing.lock_on_range);
+    hash_float(hash, weapon.projectile.homing.lose_target_range);
+    hash_float(hash, weapon.projectile.homing.lock_cone_degrees);
+    hash_float(hash, weapon.projectile.homing.max_turn_rate_degrees_per_second);
+    hash_float(hash, weapon.projectile.homing.acceleration);
+    hash_float(hash, weapon.projectile.homing.max_speed);
+
+    hash_float(hash, weapon.area_effect.radius);
+    hash_scalar(hash, weapon.area_effect.damage_per_interval);
+    hash_scalar(hash, weapon.area_effect.damage_interval_ticks);
+    hash_scalar(hash, weapon.area_effect.lifetime_ticks);
+    hash_float(hash, weapon.area_effect.spawn_distance);
+    hash_scalar(hash, weapon.area_effect.collision_mask);
+
+    hash_float(hash, weapon.beam.length);
+    hash_float(hash, weapon.beam.radius);
+    hash_scalar(hash, weapon.beam.damage_per_second);
+    hash_scalar(hash, weapon.beam.lifetime_ticks);
+    hash_scalar(hash, weapon.beam.collision_mask);
+}
+
+void hash_collider_template(
+    std::uint64_t* hash,
+    const ColliderTemplateConfig& collider_template) {
+    hash_string(hash, collider_template.name);
+    const KernelColliderTemplateDefinition& definition =
+        collider_template.definition;
+    hash_scalar(hash, definition.template_id);
+    hash_scalar(hash, definition.shape_type);
+    hash_vec3(hash, definition.center);
+    hash_vec3(hash, definition.half_extents);
+    hash_float(hash, definition.radius);
+    hash_scalar(hash, definition.purpose_flags);
+    hash_scalar(hash, definition.layer_mask);
+}
+
+void hash_collider_binding(
+    std::uint64_t* hash,
+    const ColliderBindingConfig& collider_binding) {
+    const KernelColliderBindingDefinition& definition =
+        collider_binding.definition;
+    hash_scalar(hash, definition.entity_type);
+    hash_scalar(hash, definition.collider_template_id);
+    hash_vec3(hash, definition.local_position);
+    hash_float(hash, definition.local_rotation.x);
+    hash_float(hash, definition.local_rotation.y);
+    hash_float(hash, definition.local_rotation.z);
+    hash_float(hash, definition.local_rotation.w);
+}
 
 KernelWeaponMechanicsDefinition hitscan_weapon(
     std::uint8_t weapon_id,
@@ -235,8 +348,8 @@ bool validate_weapon_mechanics(
                               sizeof(KernelHomingMechanicsDefinition) &&
                           weapon.projectile.homing.homing_mode ==
                               KernelHomingMode_FireAndForget &&
-                          weapon.projectile.homing.sync_mode ==
-                              KernelProjectileSyncMode_HybridDeterministicThenSnapshot &&
+                          weapon.projectile.homing.sync_mode <=
+                              KernelProjectileSyncMode_ServerSnapshotOnly &&
                           weapon.projectile.homing.lock_on_range > 0.0f &&
                           weapon.projectile.homing.lose_target_range >=
                               weapon.projectile.homing.lock_on_range &&
@@ -346,17 +459,37 @@ std::uint8_t homing_mode_from_yaml(const YAML::Node& node) {
     throw std::runtime_error("unsupported homing_mode: " + value);
 }
 
-std::uint8_t homing_sync_mode_from_yaml(const YAML::Node& node) {
+std::uint8_t projectile_sync_mode_from_yaml(const YAML::Node& node) {
     const std::string value =
         node ? node.as<std::string>() : "hybrid_deterministic_then_snapshot";
+    if (value == "local_predicted_deterministic") {
+        return KernelProjectileSyncMode_LocalPredictedDeterministic;
+    }
+    if (value == "server_snapshot_only") {
+        return KernelProjectileSyncMode_ServerSnapshotOnly;
+    }
     if (value == "hybrid_deterministic_then_snapshot") {
         return KernelProjectileSyncMode_HybridDeterministicThenSnapshot;
     }
-    if (value == "local_predicted_deterministic" ||
-        value == "server_snapshot_only") {
-        throw std::runtime_error("unsupported homing sync_mode: " + value);
+    throw std::runtime_error("unsupported projectile sync_mode: " + value);
+}
+
+std::uint8_t projectile_sync_mode_from_weapon_yaml(const YAML::Node& node) {
+    if (!node || node["weapon_type"].as<std::string>() != "projectile") {
+        return KernelProjectileSyncMode_HybridDeterministicThenSnapshot;
     }
-    throw std::runtime_error("unsupported homing sync_mode: " + value);
+    const YAML::Node projectile = node["projectile"];
+    const std::uint8_t projectile_sync_mode =
+        projectile_sync_mode_from_yaml(projectile["sync_mode"]);
+    if (projectile["homing"] && projectile["homing"]["sync_mode"]) {
+        const std::uint8_t homing_sync_mode =
+            projectile_sync_mode_from_yaml(projectile["homing"]["sync_mode"]);
+        if (homing_sync_mode != projectile_sync_mode) {
+            throw std::runtime_error(
+                "projectile sync_mode must match homing sync_mode");
+        }
+    }
+    return projectile_sync_mode;
 }
 
 KernelVec3 vec3_from_yaml(const YAML::Node& node) {
@@ -436,7 +569,9 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(const YAML::Node& node) {
             weapon.projectile.homing.homing_mode =
                 homing_mode_from_yaml(homing["homing_mode"]);
             weapon.projectile.homing.sync_mode =
-                homing_sync_mode_from_yaml(homing["sync_mode"]);
+                projectile_sync_mode_from_yaml(
+                    homing["sync_mode"] ? homing["sync_mode"]
+                                        : projectile["sync_mode"]);
             weapon.projectile.homing.boost_ticks =
                 homing["boost_ticks"].as<std::uint32_t>();
             weapon.projectile.homing.lock_on_range =
@@ -497,94 +632,184 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(const YAML::Node& node) {
     throw std::runtime_error("unsupported weapon_type: " + type);
 }
 
+std::uint16_t entity_type_from_yaml(const YAML::Node& node) {
+    const std::string value = node.as<std::string>();
+    if (value == "player") {
+        return kEntityTypePlayer;
+    }
+    if (value == "enemy") {
+        return kEntityTypeEnemy;
+    }
+    if (value == "projectile") {
+        return 3;
+    }
+    if (value == "area_effect" || value == "explosion") {
+        return 4;
+    }
+    throw std::runtime_error("unsupported collider entity_type: " + value);
+}
+
+std::uint8_t collider_shape_type_from_yaml(const YAML::Node& node) {
+    const std::string value = node.as<std::string>();
+    if (value == "aabb") {
+        return KernelColliderShapeType_Aabb;
+    }
+    if (value == "sphere") {
+        return KernelColliderShapeType_Sphere;
+    }
+    throw std::runtime_error("unsupported collider shape: " + value);
+}
+
+std::uint32_t collider_purpose_from_yaml(const YAML::Node& node) {
+    const std::string value = node.as<std::string>();
+    if (value == "hit") {
+        return KernelColliderPurpose_Hit;
+    }
+    if (value == "damage") {
+        return KernelColliderPurpose_Damage;
+    }
+    throw std::runtime_error("unsupported collider purpose: " + value);
+}
+
+std::uint32_t collider_layer_from_yaml(const YAML::Node& node) {
+    return collision_mask_from_yaml(node);
+}
+
+std::filesystem::path resolve_catalog_path(
+    const std::filesystem::path& base_path,
+    const YAML::Node& node) {
+    std::filesystem::path path = node.as<std::string>();
+    if (path.is_relative()) {
+        path = base_path / path;
+    }
+    return path.lexically_normal();
+}
+
+ColliderCatalogConfig load_collider_catalog_from_file(const std::string& path) {
+    const YAML::Node document = YAML::LoadFile(path);
+    if (!document["templates"] || !document["bindings"]) {
+        throw std::runtime_error(
+            "collider catalog requires templates and bindings: " + path);
+    }
+
+    ColliderCatalogConfig colliders;
+    std::unordered_map<std::string, std::uint32_t> template_ids;
+    for (const YAML::Node& node : document["templates"]) {
+        ColliderTemplateConfig collider_template;
+        collider_template.name = node["name"].as<std::string>();
+        KernelColliderTemplateDefinition& definition =
+            collider_template.definition;
+        definition.struct_size = sizeof(KernelColliderTemplateDefinition);
+        definition.template_id = node["id"].as<std::uint32_t>();
+        definition.shape_type = collider_shape_type_from_yaml(node["shape"]);
+        definition.center = vec3_from_yaml(node["center"]);
+        definition.half_extents = vec3_from_yaml(node["half_extents"]);
+        definition.radius = node["radius"] ? node["radius"].as<float>() : 0.0f;
+        definition.purpose_flags = collider_purpose_from_yaml(node["purpose"]);
+        definition.layer_mask = collider_layer_from_yaml(node["layer"]);
+        if (template_ids.contains(collider_template.name)) {
+            throw std::runtime_error(
+                "duplicate collider template name: " + collider_template.name);
+        }
+        template_ids[collider_template.name] = definition.template_id;
+        colliders.templates.push_back(collider_template);
+    }
+
+    for (const YAML::Node& node : document["bindings"]) {
+        const std::string template_name =
+            node["collider_template"].as<std::string>();
+        const auto found = template_ids.find(template_name);
+        if (found == template_ids.end()) {
+            throw std::runtime_error(
+                "unknown collider template binding: " + template_name);
+        }
+        ColliderBindingConfig binding;
+        KernelColliderBindingDefinition& definition = binding.definition;
+        definition.struct_size = sizeof(KernelColliderBindingDefinition);
+        definition.entity_type = entity_type_from_yaml(node["entity_type"]);
+        definition.collider_template_id = found->second;
+        definition.local_position = vec3_from_yaml(node["local_position"]);
+        definition.local_rotation =
+            KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+        colliders.bindings.push_back(binding);
+    }
+    return colliders;
+}
+
+void apply_default_non_weapon_config(GameServerGameplayConfig* config) {
+    config->player = PlayerGameplayDefinition{};
+    config->enemy = EnemyGameplayDefinition{};
+    config->enemy.weapon_id = kEnemyRocketWeaponId;
+    config->enemy.ai.weapon_id = kEnemyRocketWeaponId;
+    config->enemy.ai.magazine_size = kEnemyRocketMagazine;
+    config->benchmark_projectile_groups = BenchmarkProjectileGroupsConfig{};
+}
+
+std::filesystem::path default_collider_template_path_for_weapon_dir(
+    const std::string& directory) {
+    return (std::filesystem::path(directory).parent_path() /
+            "collider_templates" /
+            "default.yaml")
+        .lexically_normal();
+}
+
 }  // namespace
 
+std::uint64_t compute_gameplay_catalog_hash(const WeaponCatalogConfig& weapons) {
+    std::uint64_t hash = kFnvOffsetBasis;
+    hash_scalar(&hash, weapons.catalog_version);
+    for (std::size_t index = 0; index < weapons.definitions.size(); ++index) {
+        const auto canonical_index = static_cast<std::uint32_t>(index);
+        hash_scalar(&hash, canonical_index);
+        hash_string(&hash, weapons.names[index]);
+        hash_scalar(&hash, weapons.projectile_sync_modes[index]);
+        hash_weapon(&hash, weapons.definitions[index]);
+    }
+    return hash == 0 ? kFnvOffsetBasis : hash;
+}
+
+std::uint64_t compute_gameplay_catalog_hash(
+    const GameServerGameplayConfig& config) {
+    std::uint64_t hash = compute_gameplay_catalog_hash(config.weapons);
+    hash_scalar(&hash, config.benchmark_projectile_groups.event_spawn_weapon_id);
+    hash_scalar(&hash, config.benchmark_projectile_groups.snapshot_only_weapon_id);
+    hash_scalar(&hash, config.benchmark_projectile_groups.hybrid_weapon_id);
+    std::vector<ColliderTemplateConfig> templates = config.colliders.templates;
+    std::sort(
+        templates.begin(),
+        templates.end(),
+        [](const ColliderTemplateConfig& lhs, const ColliderTemplateConfig& rhs) {
+            return lhs.definition.template_id < rhs.definition.template_id;
+        });
+    for (const ColliderTemplateConfig& collider_template : templates) {
+        hash_collider_template(&hash, collider_template);
+    }
+    std::vector<ColliderBindingConfig> bindings = config.colliders.bindings;
+    std::sort(
+        bindings.begin(),
+        bindings.end(),
+        [](const ColliderBindingConfig& lhs, const ColliderBindingConfig& rhs) {
+            if (lhs.definition.entity_type != rhs.definition.entity_type) {
+                return lhs.definition.entity_type < rhs.definition.entity_type;
+            }
+            return lhs.definition.collider_template_id <
+                   rhs.definition.collider_template_id;
+        });
+    for (const ColliderBindingConfig& collider_binding : bindings) {
+        hash_collider_binding(&hash, collider_binding);
+    }
+    return hash == 0 ? kFnvOffsetBasis : hash;
+}
+
 GameServerGameplayConfig default_game_server_gameplay_config() {
-    GameServerGameplayConfig config;
-    config.weapons.definitions = {{
-        hitscan_weapon(kWeaponRifle, 30, 25, 3, 30, 100.0f),
-        shotgun_weapon(kWeaponShotgun, 8, 10, 20, 45, 40.0f, 5, 0.035f),
-        projectile_weapon(
-            kWeaponGrenade,
-            30,
-            40,
-            30,
-            60,
-            15.0f,
-            3.0f,
-            4.0f,
-            KernelProjectileMotionModel_Parabolic,
-            KernelVec3{0.0f, -9.8f, 0.0f}),
-        projectile_weapon(
-            kWeaponRocket,
-            6,
-            45,
-            45,
-            75,
-            35.0f,
-            2.5f,
-            3.0f,
-            KernelProjectileMotionModel_Linear,
-            KernelVec3{0.0f, 0.0f, 0.0f}),
-        area_effect_weapon(
-            kWeaponFireFloor,
-            3,
-            12,
-            10,
-            30,
-            2.0f,
-            12,
-            2,
-            6,
-            1.0f,
-            KERNEL_COLLISION_LAYER_ENEMY),
-        beam_weapon(
-            kWeaponBeamRifle,
-            12,
-            30,
-            1,
-            45,
-            8.0f,
-            0.25f,
-            30,
-            2,
-            KERNEL_COLLISION_LAYER_ENEMY),
-        homing_projectile_weapon(
-            kWeaponHomingMissile,
-            4,
-            20,
-            15,
-            60,
-            20.0f,
-            3.0f,
-            0.0f,
-            2,
-            25.0f,
-            30.0f,
-            75.0f,
-            360.0f,
-            20.0f,
-            30.0f,
-            KERNEL_COLLISION_LAYER_ENEMY),
-    }};
-    config.weapons.names = {{
-        "Rifle",
-        "Shotgun",
-        "Grenade",
-        "Rocket",
-        "Fire Floor",
-        "Beam Rifle",
-        "Homing Missile",
-    }};
-    config.enemy.weapon_id = kWeaponRocket;
-    config.enemy.ai.weapon_id = kWeaponRocket;
-    config.enemy.ai.magazine_size = kEnemyRocketMagazine;
-    return config;
+    return load_gameplay_config_from_catalog_file(kDefaultGameplayCatalogPath);
 }
 
 GameServerGameplayConfig load_gameplay_config_from_weapon_template_directory(
     const std::string& directory) {
     GameServerGameplayConfig config;
+    config.weapons.projectile_sync_modes.fill(
+        KernelProjectileSyncMode_HybridDeterministicThenSnapshot);
     std::array<bool, kWeaponCount> seen{
         false,
         false,
@@ -612,6 +837,8 @@ GameServerGameplayConfig load_gameplay_config_from_weapon_template_directory(
         }
         seen[weapon.weapon_id] = true;
         config.weapons.definitions[weapon.weapon_id] = weapon;
+        config.weapons.projectile_sync_modes[weapon.weapon_id] =
+            projectile_sync_mode_from_weapon_yaml(document);
         config.weapons.names[weapon.weapon_id] =
             document["name"] ? document["name"].as<std::string>() : file.stem().string();
     }
@@ -620,11 +847,62 @@ GameServerGameplayConfig load_gameplay_config_from_weapon_template_directory(
             throw std::runtime_error("missing weapon template id " + std::to_string(index));
         }
     }
-    config.player = default_game_server_gameplay_config().player;
-    config.enemy = default_game_server_gameplay_config().enemy;
-    config.enemy.weapon_id = kWeaponRocket;
-    config.enemy.ai.weapon_id = kWeaponRocket;
-    config.enemy.ai.magazine_size = kEnemyRocketMagazine;
+    apply_default_non_weapon_config(&config);
+    config.colliders = load_collider_catalog_from_file(
+        default_collider_template_path_for_weapon_dir(directory).string());
+    config.weapons.catalog_hash = compute_gameplay_catalog_hash(config);
+    const std::vector<std::string> errors = validate_gameplay_config(config);
+    if (!errors.empty()) {
+        throw std::runtime_error(errors.front());
+    }
+    return config;
+}
+
+GameServerGameplayConfig load_gameplay_config_from_catalog_file(
+    const std::string& path) {
+    const std::filesystem::path catalog_path = path;
+    const std::filesystem::path base_path = catalog_path.parent_path();
+    const YAML::Node document = YAML::LoadFile(path);
+    if (!document["weapon_template_dir"] || !document["collider_template_file"]) {
+        throw std::runtime_error(
+            "gameplay catalog requires weapon_template_dir and "
+            "collider_template_file: " +
+            path);
+    }
+
+    const std::filesystem::path weapon_template_dir =
+        resolve_catalog_path(base_path, document["weapon_template_dir"]);
+    GameServerGameplayConfig config =
+        load_gameplay_config_from_weapon_template_directory(
+            weapon_template_dir.string());
+    config.weapons.catalog_version =
+        document["catalog_version"] ? document["catalog_version"].as<std::uint32_t>()
+                                    : config.weapons.catalog_version;
+
+    const std::filesystem::path collider_template_file =
+        resolve_catalog_path(base_path, document["collider_template_file"]);
+    config.colliders =
+        load_collider_catalog_from_file(collider_template_file.string());
+
+    if (document["benchmark_projectile_groups"]) {
+        const YAML::Node groups = document["benchmark_projectile_groups"];
+        config.benchmark_projectile_groups.event_spawn_weapon_id =
+            groups["event_spawn_weapon_id"]
+                ? static_cast<std::uint8_t>(
+                      groups["event_spawn_weapon_id"].as<int>())
+                : config.benchmark_projectile_groups.event_spawn_weapon_id;
+        config.benchmark_projectile_groups.snapshot_only_weapon_id =
+            groups["snapshot_only_weapon_id"]
+                ? static_cast<std::uint8_t>(
+                      groups["snapshot_only_weapon_id"].as<int>())
+                : config.benchmark_projectile_groups.snapshot_only_weapon_id;
+        config.benchmark_projectile_groups.hybrid_weapon_id =
+            groups["hybrid_weapon_id"]
+                ? static_cast<std::uint8_t>(groups["hybrid_weapon_id"].as<int>())
+                : config.benchmark_projectile_groups.hybrid_weapon_id;
+    }
+
+    config.weapons.catalog_hash = compute_gameplay_catalog_hash(config);
     const std::vector<std::string> errors = validate_gameplay_config(config);
     if (!errors.empty()) {
         throw std::runtime_error(errors.front());
@@ -644,6 +922,10 @@ std::vector<std::string> validate_gameplay_config(
         if (!validate_weapon_mechanics(weapon)) {
             errors.push_back("weapon mechanics must be valid");
         }
+        if (config.weapons.projectile_sync_modes[index] >
+            KernelProjectileSyncMode_ServerSnapshotOnly) {
+            errors.push_back("projectile sync mode must be valid");
+        }
     }
     if (config.player.health.hp == 0 || config.player.health.max_hp == 0 ||
         config.player.move_speed_meters_per_second <= 0.0f) {
@@ -657,7 +939,119 @@ std::vector<std::string> validate_gameplay_config(
         config.enemy.ai.reload_seconds <= 0.0f) {
         errors.push_back("enemy gameplay config must be valid");
     }
+    const auto is_projectile_weapon = [&config](std::uint8_t weapon_id) {
+        return weapon_id < kWeaponCount &&
+               config.weapons.definitions[weapon_id].fire_mode ==
+                   KernelWeaponFireMode_Projectile;
+    };
+    if (!is_projectile_weapon(
+            config.benchmark_projectile_groups.event_spawn_weapon_id) ||
+        !is_projectile_weapon(
+            config.benchmark_projectile_groups.snapshot_only_weapon_id) ||
+        !is_projectile_weapon(config.benchmark_projectile_groups.hybrid_weapon_id)) {
+        errors.push_back("benchmark projectile groups must reference projectile weapons");
+    }
+    if (config.colliders.templates.empty() || config.colliders.bindings.empty()) {
+        errors.push_back("collider catalog must include templates and bindings");
+    }
+    std::vector<std::uint32_t> collider_template_ids;
+    for (const ColliderTemplateConfig& collider_template :
+         config.colliders.templates) {
+        const KernelColliderTemplateDefinition& definition =
+            collider_template.definition;
+        if (definition.struct_size < sizeof(KernelColliderTemplateDefinition) ||
+            definition.template_id == 0 ||
+            definition.shape_type > KernelColliderShapeType_Sphere ||
+            definition.purpose_flags == 0 ||
+            definition.layer_mask == 0 ||
+            (definition.shape_type == KernelColliderShapeType_Aabb &&
+             (definition.half_extents.x <= 0.0f ||
+              definition.half_extents.y <= 0.0f ||
+              definition.half_extents.z <= 0.0f)) ||
+            (definition.shape_type == KernelColliderShapeType_Sphere &&
+             definition.radius <= 0.0f)) {
+            errors.push_back("collider template must be valid");
+        }
+        collider_template_ids.push_back(definition.template_id);
+    }
+    for (const ColliderBindingConfig& collider_binding :
+         config.colliders.bindings) {
+        const KernelColliderBindingDefinition& definition =
+            collider_binding.definition;
+        if (definition.struct_size < sizeof(KernelColliderBindingDefinition) ||
+            definition.entity_type == 0 ||
+            std::find(
+                collider_template_ids.begin(),
+                collider_template_ids.end(),
+                definition.collider_template_id) == collider_template_ids.end()) {
+            errors.push_back("collider binding must reference a valid template");
+        }
+    }
     return errors;
+}
+
+KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
+    const GameServerGameplayConfig& config) {
+    KernelGameplayCatalogStorage storage;
+    for (const KernelWeaponMechanicsDefinition& weapon :
+         config.weapons.definitions) {
+        if (weapon.fire_mode != KernelWeaponFireMode_Projectile) {
+            continue;
+        }
+        KernelProjectileTemplateDefinition projectile_template{};
+        projectile_template.struct_size = sizeof(projectile_template);
+        projectile_template.projectile_template_id = weapon.weapon_id;
+        projectile_template.weapon_id = weapon.weapon_id;
+        projectile_template.motion_model = weapon.projectile.motion_model;
+        projectile_template.sync_mode =
+            config.weapons.projectile_sync_modes[weapon.weapon_id];
+        projectile_template.hit_response = weapon.projectile.hit_response;
+        projectile_template.damage_shape = weapon.projectile.damage_shape;
+        projectile_template.damage = weapon.damage;
+        projectile_template.speed = weapon.projectile.speed;
+        projectile_template.lifetime_seconds = weapon.projectile.lifetime_seconds;
+        projectile_template.explosion_radius = weapon.projectile.explosion_radius;
+        projectile_template.gravity = weapon.projectile.gravity;
+        projectile_template.collider_template_id = 3;
+        projectile_template.explosion_template_id =
+            weapon.projectile.explosion_radius > 0.0f ? 4u : 0u;
+        projectile_template.collision_mask = weapon.projectile.collision_mask;
+        projectile_template.max_hit_count = weapon.projectile.max_hit_count;
+        storage.projectile_templates.push_back(projectile_template);
+    }
+    for (const ColliderTemplateConfig& collider_template :
+         config.colliders.templates) {
+        storage.collider_templates.push_back(collider_template.definition);
+    }
+    for (const ColliderBindingConfig& collider_binding :
+         config.colliders.bindings) {
+        storage.collider_bindings.push_back(collider_binding.definition);
+    }
+
+    storage.definition.struct_size = sizeof(storage.definition);
+    storage.definition.catalog_version = config.weapons.catalog_version;
+    storage.definition.catalog_hash = config.weapons.catalog_hash;
+    storage.definition.projectile_templates =
+        storage.projectile_templates.data();
+    storage.definition.projectile_template_count =
+        static_cast<std::uint32_t>(storage.projectile_templates.size());
+    storage.definition.collider_templates = storage.collider_templates.data();
+    storage.definition.collider_template_count =
+        static_cast<std::uint32_t>(storage.collider_templates.size());
+    storage.definition.collider_bindings = storage.collider_bindings.data();
+    storage.definition.collider_binding_count =
+        static_cast<std::uint32_t>(storage.collider_bindings.size());
+    return storage;
+}
+
+bool load_kernel_gameplay_catalog(
+    KernelHandle* kernel,
+    const GameServerGameplayConfig& config) {
+    if (kernel == nullptr || config.weapons.catalog_hash == 0) {
+        return false;
+    }
+    KernelGameplayCatalogStorage storage = build_kernel_gameplay_catalog(config);
+    return Kernel_LoadGameplayCatalog(kernel, &storage.definition);
 }
 
 KernelCombatStateDefinition make_player_combat_state(
@@ -684,8 +1078,11 @@ KernelCombatStateDefinition make_enemy_combat_state(
     combat_state.active_weapon_id = config.enemy.weapon_id;
     combat_state.hitbox_center = config.enemy.hitbox_center;
     combat_state.hitbox_half_extents = config.enemy.hitbox_half_extents;
-    combat_state.ammo[config.enemy.weapon_id] = kEnemyRocketMagazine;
-    combat_state.reserve_ammo[config.enemy.weapon_id] = kEnemyRocketReserveAmmo;
+    const KernelWeaponMechanicsDefinition& weapon =
+        config.weapons.definitions[config.enemy.weapon_id];
+    combat_state.ammo[config.enemy.weapon_id] = weapon.magazine_size;
+    combat_state.reserve_ammo[config.enemy.weapon_id] =
+        static_cast<std::uint16_t>(weapon.magazine_size * 2u);
     return combat_state;
 }
 

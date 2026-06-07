@@ -1,0 +1,7 @@
+catalog_version: 1
+weapon_template_dir: weapon_templates
+collider_template_file: collider_templates/default.yaml
+benchmark_projectile_groups:
+  event_spawn_weapon_id: 2
+  snapshot_only_weapon_id: 3
+  hybrid_weapon_id: 6

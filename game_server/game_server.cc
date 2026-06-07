@@ -8,7 +8,9 @@ namespace network_example::game_server {
 GameServer::GameServer(KernelHandle* kernel, GameServerGameplayConfig config)
     : kernel_(kernel),
       config_(std::move(config)),
-      enemy_manager_(kernel, config_) {}
+      enemy_manager_(kernel, config_) {
+    load_kernel_gameplay_catalog(kernel_, config_);
+}
 
 void GameServer::handle_event(const KernelEvent& event) {
     if (event.type == KernelEventType_PlayerJoined && event.net_id != 0) {

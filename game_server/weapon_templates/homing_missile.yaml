@@ -6,6 +6,7 @@ damage: 20
 cooldown_ticks: 15
 reload_ticks: 60
 projectile:
+  sync_mode: hybrid_deterministic_then_snapshot
   movement_model: homing
   hit_response: destroy
   damage_shape: direct_hit

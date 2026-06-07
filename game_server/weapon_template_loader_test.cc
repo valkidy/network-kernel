@@ -25,12 +25,65 @@ std::filesystem::path tmp_dir(const std::string& name) {
 }
 
 void write_file(const std::filesystem::path& path, const std::string& text) {
+    std::filesystem::create_directories(path.parent_path());
     std::ofstream file(path);
     assert(file.good());
     file << text;
 }
 
+void write_valid_collider_catalog(const std::filesystem::path& weapon_dir) {
+    write_file(
+        weapon_dir.parent_path() / "collider_templates" / "default.yaml",
+        "templates:\n"
+        "  - id: 1\n"
+        "    name: player_hit\n"
+        "    shape: aabb\n"
+        "    center: {x: 0.0, y: 0.0, z: 0.0}\n"
+        "    half_extents: {x: 0.35, y: 0.9, z: 0.35}\n"
+        "    radius: 0.0\n"
+        "    purpose: hit\n"
+        "    layer: player\n"
+        "  - id: 2\n"
+        "    name: enemy_hit\n"
+        "    shape: aabb\n"
+        "    center: {x: 0.0, y: 0.0, z: 0.0}\n"
+        "    half_extents: {x: 0.4, y: 0.8, z: 0.4}\n"
+        "    radius: 0.0\n"
+        "    purpose: hit\n"
+        "    layer: enemy\n"
+        "  - id: 3\n"
+        "    name: projectile_damage\n"
+        "    shape: aabb\n"
+        "    center: {x: 0.0, y: 0.0, z: 0.0}\n"
+        "    half_extents: {x: 0.1, y: 0.1, z: 0.1}\n"
+        "    radius: 0.0\n"
+        "    purpose: damage\n"
+        "    layer: projectile\n"
+        "  - id: 4\n"
+        "    name: explosion_damage\n"
+        "    shape: sphere\n"
+        "    center: {x: 0.0, y: 0.0, z: 0.0}\n"
+        "    half_extents: {x: 1.0, y: 1.0, z: 1.0}\n"
+        "    radius: 1.0\n"
+        "    purpose: damage\n"
+        "    layer: area_effect\n"
+        "bindings:\n"
+        "  - entity_type: player\n"
+        "    collider_template: player_hit\n"
+        "    local_position: {x: 0.0, y: 0.9, z: 0.0}\n"
+        "  - entity_type: enemy\n"
+        "    collider_template: enemy_hit\n"
+        "    local_position: {x: 0.0, y: 0.8, z: 0.0}\n"
+        "  - entity_type: projectile\n"
+        "    collider_template: projectile_damage\n"
+        "    local_position: {x: 0.0, y: 0.0, z: 0.0}\n"
+        "  - entity_type: area_effect\n"
+        "    collider_template: explosion_damage\n"
+        "    local_position: {x: 0.0, y: 0.0, z: 0.0}\n");
+}
+
 void write_valid_templates(const std::filesystem::path& dir) {
+    write_valid_collider_catalog(dir);
     write_file(
         dir / "rifle.yaml",
         "id: 0\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
@@ -41,17 +94,20 @@ void write_valid_templates(const std::filesystem::path& dir) {
         "damage: 10\ncooldown_ticks: 20\nreload_ticks: 45\nmax_range: 40.0\n"
         "pellet_count: 5\npellet_spread: 0.035\n");
     write_file(
-        dir / "grenade.yaml",
-        "id: 2\nname: Grenade\nweapon_type: projectile\nmagazine_size: 30\n"
-        "damage: 40\ncooldown_ticks: 30\nreload_ticks: 60\nprojectile:\n"
-        "  movement_model: parabolic\n  hit_response: destroy\n"
-        "  damage_shape: explosion\n  speed: 15.0\n  lifetime_seconds: 3.0\n"
-        "  explosion_radius: 4.0\n  collision_mask: damageable\n  max_hit_count: 1\n"
-        "  gravity: {x: 0.0, y: -9.8, z: 0.0}\n");
+        dir / "spammer.yaml",
+        "id: 2\nname: Projectile Spammer\nweapon_type: projectile\n"
+        "magazine_size: 120\n"
+        "damage: 1\ncooldown_ticks: 1\nreload_ticks: 30\nprojectile:\n"
+        "  sync_mode: local_predicted_deterministic\n"
+        "  movement_model: linear\n  hit_response: destroy\n"
+        "  damage_shape: direct_hit\n  speed: 30.0\n  lifetime_seconds: 2.0\n"
+        "  explosion_radius: 0.0\n  collision_mask: damageable\n  max_hit_count: 1\n"
+        "  gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
     write_file(
         dir / "rocket.yaml",
         "id: 3\nname: Rocket\nweapon_type: projectile\nmagazine_size: 6\n"
         "damage: 45\ncooldown_ticks: 45\nreload_ticks: 75\nprojectile:\n"
+        "  sync_mode: server_snapshot_only\n"
         "  movement_model: linear\n  hit_response: destroy\n"
         "  damage_shape: explosion\n  speed: 35.0\n  lifetime_seconds: 2.5\n"
         "  explosion_radius: 3.0\n  collision_mask: damageable\n  max_hit_count: 1\n"
@@ -72,6 +128,7 @@ void write_valid_templates(const std::filesystem::path& dir) {
         dir / "homing_missile.yaml",
         "id: 6\nname: Homing Missile\nweapon_type: projectile\nmagazine_size: 4\n"
         "damage: 20\ncooldown_ticks: 15\nreload_ticks: 60\nprojectile:\n"
+        "  sync_mode: hybrid_deterministic_then_snapshot\n"
         "  movement_model: homing\n  hit_response: destroy\n"
         "  damage_shape: direct_hit\n  speed: 20.0\n  lifetime_seconds: 3.0\n"
         "  explosion_radius: 0.0\n  collision_mask: enemy\n  max_hit_count: 1\n"
@@ -109,6 +166,14 @@ void valid_repo_templates_load_all_slots() {
            KernelWeaponFireMode_Hitscan);
     assert(config.weapons.definitions[network_example::game_server::kWeaponRocket]
                .projectile.damage_shape == KernelProjectileDamageShape_Explosion);
+    assert(config.weapons.definitions[network_example::game_server::kWeaponGrenade]
+               .damage == 1);
+    assert(config.weapons.definitions[network_example::game_server::kWeaponGrenade]
+               .cooldown_ticks == 1);
+    assert(config.weapons.definitions[network_example::game_server::kWeaponGrenade]
+               .magazine_size == 120);
+    assert(config.weapons.definitions[network_example::game_server::kWeaponGrenade]
+               .projectile.motion_model == KernelProjectileMotionModel_Linear);
     assert(config.weapons.definitions[network_example::game_server::kWeaponFireFloor]
                .fire_mode == KernelWeaponFireMode_AreaEffect);
     assert(config.weapons.definitions[network_example::game_server::kWeaponFireFloor]
@@ -121,6 +186,17 @@ void valid_repo_templates_load_all_slots() {
                .projectile.motion_model == KernelProjectileMotionModel_Homing);
     assert(config.weapons.definitions[network_example::game_server::kWeaponHomingMissile]
                .projectile.homing.lock_on_range == 25.0f);
+    assert(config.weapons.projectile_sync_modes
+               [network_example::game_server::kWeaponGrenade] ==
+           KernelProjectileSyncMode_LocalPredictedDeterministic);
+    assert(config.weapons.names[network_example::game_server::kWeaponGrenade] ==
+           "Projectile Spammer");
+    assert(config.weapons.projectile_sync_modes
+               [network_example::game_server::kWeaponRocket] ==
+           KernelProjectileSyncMode_ServerSnapshotOnly);
+    assert(config.weapons.projectile_sync_modes
+               [network_example::game_server::kWeaponHomingMissile] ==
+           KernelProjectileSyncMode_HybridDeterministicThenSnapshot);
     assert(config.weapons.names[network_example::game_server::kWeaponFireFloor] ==
            "Fire Floor");
     assert(config.weapons.names[network_example::game_server::kWeaponBeamRifle] ==
@@ -228,6 +304,36 @@ void invalid_templates_are_rejected() {
         "  damage_shape: direct_hit\n  speed: 1.0\n  lifetime_seconds: 1.0\n"
         "  collision_mask: damageable\n  max_hit_count: 1\n");
     assert(load_fails(bounce_dir));
+
+    const std::filesystem::path invalid_sync_dir = tmp_dir("invalid_sync");
+    write_valid_templates(invalid_sync_dir);
+    write_file(
+        invalid_sync_dir / "rocket.yaml",
+        "id: 3\nname: Bad Sync\nweapon_type: projectile\nmagazine_size: 1\n"
+        "damage: 1\ncooldown_ticks: 1\nreload_ticks: 1\nprojectile:\n"
+        "  sync_mode: remote_magic\n  movement_model: linear\n"
+        "  hit_response: destroy\n  damage_shape: direct_hit\n  speed: 1.0\n"
+        "  lifetime_seconds: 1.0\n  collision_mask: damageable\n"
+        "  max_hit_count: 1\n");
+    assert(load_fails(invalid_sync_dir));
+}
+
+void catalog_file_loads_colliders_and_benchmark_groups() {
+    const std::filesystem::path catalog_file =
+        runfiles_root() / "game_server" / "gameplay_catalog.yaml";
+    const network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::load_gameplay_config_from_catalog_file(
+            catalog_file.string());
+    assert(config.weapons.catalog_version == 1);
+    assert(config.weapons.catalog_hash != 0);
+    assert(config.colliders.templates.size() == 4);
+    assert(config.colliders.bindings.size() == 4);
+    assert(config.benchmark_projectile_groups.event_spawn_weapon_id ==
+           network_example::game_server::kWeaponGrenade);
+    assert(config.benchmark_projectile_groups.snapshot_only_weapon_id ==
+           network_example::game_server::kWeaponRocket);
+    assert(config.benchmark_projectile_groups.hybrid_weapon_id ==
+           network_example::game_server::kWeaponHomingMissile);
 }
 
 }  // namespace
@@ -235,5 +341,6 @@ void invalid_templates_are_rejected() {
 int main() {
     valid_repo_templates_load_all_slots();
     invalid_templates_are_rejected();
+    catalog_file_loads_colliders_and_benchmark_groups();
     return 0;
 }

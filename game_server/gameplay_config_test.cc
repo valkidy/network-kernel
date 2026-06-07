@@ -1,11 +1,22 @@
 #include "game_server/gameplay_config.h"
 
 #include <cassert>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
 #include "game_server/enemy.h"
 #include "kernel/public/kernel_types.h"
+
+namespace {
+
+void require(bool condition) {
+    if (!condition) {
+        std::abort();
+    }
+}
+
+}  // namespace
 
 int main() {
     const network_example::game_server::GameServerGameplayConfig config =
@@ -15,6 +26,18 @@ int main() {
     assert(errors.empty());
 
     assert(config.player.entity_type == network_example::game_server::kEntityTypePlayer);
+    require(config.weapons.catalog_version == 1);
+    require(config.weapons.catalog_hash != 0);
+    require(
+        config.weapons.catalog_hash ==
+        network_example::game_server::compute_gameplay_catalog_hash(config));
+    network_example::game_server::GameServerGameplayConfig changed_config = config;
+    changed_config.weapons
+        .definitions[network_example::game_server::kWeaponRocket]
+        .damage += 1;
+    require(
+        config.weapons.catalog_hash !=
+        network_example::game_server::compute_gameplay_catalog_hash(changed_config));
     assert(config.player.health.hp == 100);
     assert(config.player.move_speed_meters_per_second == 5.0f);
 
@@ -33,14 +56,42 @@ int main() {
     assert(rifle.max_range == 100.0f);
 
     const KernelWeaponMechanicsDefinition& rocket =
-        config.weapons.definitions[network_example::game_server::kEnemyRocketWeaponId];
-    assert(rocket.weapon_id == network_example::game_server::kEnemyRocketWeaponId);
+        config.weapons.definitions[network_example::game_server::kWeaponRocket];
+    assert(rocket.weapon_id == network_example::game_server::kWeaponRocket);
     assert(rocket.fire_mode == KernelWeaponFireMode_Projectile);
     assert(rocket.projectile.struct_size == sizeof(KernelProjectileMechanicsDefinition));
     assert(rocket.projectile.speed == 35.0f);
     assert(rocket.projectile.lifetime_seconds == 2.5f);
     assert(rocket.projectile.explosion_radius == 3.0f);
     assert(rocket.projectile.damage_shape == KernelProjectileDamageShape_Explosion);
+    assert(
+        config.weapons
+            .projectile_sync_modes[network_example::game_server::kWeaponGrenade] ==
+        KernelProjectileSyncMode_LocalPredictedDeterministic);
+    const KernelWeaponMechanicsDefinition& projectile_spammer =
+        config.weapons.definitions[network_example::game_server::kWeaponGrenade];
+    assert(projectile_spammer.fire_mode == KernelWeaponFireMode_Projectile);
+    assert(projectile_spammer.damage == 1);
+    assert(projectile_spammer.magazine_size == 120);
+    assert(projectile_spammer.cooldown_ticks == 1);
+    assert(
+        projectile_spammer.projectile.motion_model ==
+        KernelProjectileMotionModel_Linear);
+    assert(
+        projectile_spammer.projectile.damage_shape ==
+        KernelProjectileDamageShape_DirectHit);
+    assert(projectile_spammer.projectile.explosion_radius == 0.0f);
+    assert(config.weapons.names[network_example::game_server::kWeaponGrenade] ==
+           "Projectile Spammer");
+    assert(config.enemy.weapon_id == network_example::game_server::kWeaponGrenade);
+    assert(config.enemy.ai.weapon_id == network_example::game_server::kWeaponGrenade);
+    assert(config.enemy.ai.magazine_size == 120);
+    assert(
+        config.weapons
+            .projectile_sync_modes[network_example::game_server::kWeaponRocket] ==
+        KernelProjectileSyncMode_ServerSnapshotOnly);
+    assert(config.colliders.templates.size() == 4);
+    assert(config.colliders.bindings.size() == 4);
 
     const KernelWeaponMechanicsDefinition& fire_floor =
         config.weapons.definitions[network_example::game_server::kWeaponFireFloor];

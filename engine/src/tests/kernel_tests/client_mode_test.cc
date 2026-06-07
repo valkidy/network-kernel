@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <memory>
 #include <unordered_map>
@@ -23,11 +24,14 @@
 
 namespace {
 
-void require(bool condition) {
+void require_impl(bool condition, int line) {
     if (!condition) {
+        std::fprintf(stderr, "require failed at line %d\n", line);
         std::abort();
     }
 }
+
+#define require(condition) require_impl((condition), __LINE__)
 
 network_example::WorldSnapshot snapshot_with_entity(
     std::uint32_t server_tick,
@@ -341,7 +345,7 @@ void projectile_spawn_packet_uses_original_muzzle_position() {
     network_example::KernelEngine engine(config);
     engine.reset_runtime_state(KernelMode_DedicatedServer);
     auto loopback = std::make_unique<network_example::LoopbackTransport>();
-    assert(loopback->StartServer(7777));
+    require(loopback->StartServer(7777));
     auto* loopback_transport = loopback.get();
     engine.transport_ = std::move(loopback);
     for (std::uint32_t tick = 0; tick < 7; ++tick) {
@@ -356,7 +360,7 @@ void projectile_spawn_packet_uses_original_muzzle_position() {
             compensated_position,
             glm::vec3{0.0f, 0.0f, 35.0f});
     const auto projectile_entity = engine.world_.find_entity(projectile_net_id);
-    assert(projectile_entity.has_value());
+    require(projectile_entity.has_value());
     network_example::ProjectileState& projectile =
         engine.world_.registry().get<network_example::ProjectileState>(
             *projectile_entity);
@@ -372,26 +376,114 @@ void projectile_spawn_packet_uses_original_muzzle_position() {
             break;
         }
     }
-    assert(entity != nullptr);
-    assert(entity->position.z > -5.72f);
-    assert(entity->position.z < -5.71f);
+    require(entity != nullptr);
+    require(entity->position.z > -5.72f);
+    require(entity->position.z < -5.71f);
 
     engine.send_entity_spawn(7, *entity);
 
     network_example::TransportEvent event;
-    assert(loopback_transport->PollClientEvent(event));
+    require(loopback_transport->PollClientEvent(event));
     network_example::EntitySpawnPacket packet;
-    assert(network_example::decode_entity_spawn_packet(
+    require(network_example::decode_entity_spawn_packet(
         event.payload.data(),
         event.payload.size(),
         &packet));
-    assert(packet.net_id == projectile_net_id);
-    assert(packet.position.x > -7.34f);
-    assert(packet.position.x < -7.33f);
-    assert(packet.position.y > 0.99f);
-    assert(packet.position.y < 1.01f);
-    assert(packet.position.z > -9.22f);
-    assert(packet.position.z < -9.21f);
+    require(packet.net_id == projectile_net_id);
+    require(packet.position.x > -7.34f);
+    require(packet.position.x < -7.33f);
+    require(packet.position.y > 0.99f);
+    require(packet.position.y < 1.01f);
+    require(packet.position.z > -9.22f);
+    require(packet.position.z < -9.21f);
+
+    require(loopback_transport->PollClientEvent(event));
+    network_example::ProjectileSpawnBatchPacket batch;
+    require(network_example::decode_projectile_spawn_batch_packet(
+        event.payload.data(),
+        event.payload.size(),
+        &batch));
+    require(batch.server_tick == entity->spawn_tick);
+    require(batch.groups.size() == 1);
+    require(batch.groups[0].projectile_template_id == projectile.weapon_id);
+    require(batch.groups[0].records.size() == 1);
+    require(batch.groups[0].records[0].projectile_net_id == projectile_net_id);
+    require(batch.groups[0].records[0].spawn_position.x > -7.34f);
+    require(batch.groups[0].records[0].spawn_position.x < -7.33f);
+    require(batch.groups[0].records[0].spawn_position.z > -9.22f);
+    require(batch.groups[0].records[0].spawn_position.z < -9.21f);
+    require(batch.groups[0].records[0].initial_velocity.z == 35.0f);
+    KernelNetworkStats network_stats{};
+    network_stats.struct_size = sizeof(network_stats);
+    require(engine.get_network_stats(&network_stats));
+    require(network_stats.packet_count_sent >= 2);
+    require(network_stats.reliable_bytes_sent > 0);
+    require(network_stats.event_bytes_sent > 0);
+    require(network_stats.average_packet_size > 0);
+    require(network_stats.max_packet_size > 0);
+    require(network_stats.packet_serialization_cost_us > 0);
+}
+
+void snapshot_only_projectile_spawn_skips_event_batch() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+    KernelProjectileTemplateDefinition projectile_template{};
+    projectile_template.struct_size = sizeof(projectile_template);
+    projectile_template.projectile_template_id = 3;
+    projectile_template.weapon_id = 3;
+    projectile_template.sync_mode = KernelProjectileSyncMode_ServerSnapshotOnly;
+    KernelGameplayCatalogDefinition catalog{};
+    catalog.struct_size = sizeof(catalog);
+    catalog.catalog_version = 1;
+    catalog.catalog_hash = 0x7777ull;
+    catalog.projectile_templates = &projectile_template;
+    catalog.projectile_template_count = 1;
+    require(engine.load_gameplay_catalog(catalog));
+
+    auto loopback = std::make_unique<network_example::LoopbackTransport>();
+    require(loopback->StartServer(7778));
+    auto* loopback_transport = loopback.get();
+    engine.transport_ = std::move(loopback);
+
+    const network_example::NetId projectile_net_id =
+        engine.world_.spawn_projectile(
+            7,
+            glm::vec3{1.0f, 0.0f, 0.0f},
+            glm::vec3{2.0f, 0.0f, 0.0f});
+    const auto projectile_entity = engine.world_.find_entity(projectile_net_id);
+    require(projectile_entity.has_value());
+    network_example::ProjectileState& projectile =
+        engine.world_.registry().get<network_example::ProjectileState>(
+            *projectile_entity);
+    projectile.weapon_id = 3;
+
+    const network_example::WorldSnapshot snapshot =
+        network_example::build_world_snapshot(engine.world_, 1, 33, 0);
+    const network_example::EntitySnapshot* entity = nullptr;
+    for (const network_example::EntitySnapshot& snapshot_entity : snapshot.entities) {
+        if (snapshot_entity.net_id == projectile_net_id) {
+            entity = &snapshot_entity;
+            break;
+        }
+    }
+    require(entity != nullptr);
+
+    engine.send_entity_spawn(7, *entity);
+
+    network_example::TransportEvent event;
+    require(loopback_transport->PollClientEvent(event));
+    network_example::EntitySpawnPacket packet;
+    require(network_example::decode_entity_spawn_packet(
+        event.payload.data(),
+        event.payload.size(),
+        &packet));
+    require(packet.net_id == projectile_net_id);
+    require(!loopback_transport->PollClientEvent(event));
 }
 
 void render_states_at_time_interpolates_and_clamps() {
@@ -811,6 +903,228 @@ void server_rejects_mismatched_snapshot_schema_before_welcome() {
         network_example::kDisconnectReasonSnapshotSchemaMismatch);
 }
 
+void server_validates_catalog_hash_before_welcome() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine server(config);
+    KernelGameplayCatalogDefinition catalog{};
+    catalog.struct_size = sizeof(catalog);
+    catalog.catalog_version = 5;
+    catalog.catalog_hash = 0xaabbccddeeff0011ull;
+    require(server.load_gameplay_catalog(catalog));
+    auto transport = std::make_unique<network_example::LoopbackTransport>();
+    require(transport->StartServer(7777));
+    network_example::LoopbackTransport* loopback = transport.get();
+    server.transport_ = std::move(transport);
+    server.reset_runtime_state(KernelMode_DedicatedServer);
+
+    network_example::HandshakePacket matching;
+    matching.client_nonce = 1234;
+    matching.protocol_version = network_example::kProtocolVersion;
+    matching.snapshot_schema_version = network_example::kSnapshotSchemaVersion;
+    matching.packet_schema_version = network_example::kPacketSchemaVersion;
+    matching.catalog_version = 5;
+    matching.catalog_hash = 0xaabbccddeeff0011ull;
+    network_example::TransportEvent event;
+    event.type = network_example::TransportEventType::kMessage;
+    event.peer = 7;
+    event.channel = network_example::ChannelId::kSession;
+    event.payload = network_example::encode_handshake_packet(matching);
+    server.handle_server_handshake(event);
+
+    require(server.peer_sessions_.size() == 1);
+    network_example::TransportEvent response;
+    require(loopback->PollClientEvent(response));
+    network_example::WelcomePacket welcome;
+    require(network_example::decode_welcome_packet(
+        response.payload.data(),
+        response.payload.size(),
+        &welcome));
+    require(welcome.catalog_version == 5);
+    require(welcome.catalog_hash == 0xaabbccddeeff0011ull);
+
+    network_example::HandshakePacket mismatched = matching;
+    mismatched.catalog_hash ^= 1u;
+    event.peer = 8;
+    event.payload = network_example::encode_handshake_packet(mismatched);
+    server.handle_server_handshake(event);
+
+    require(server.peer_sessions_.size() == 1);
+    network_example::DisconnectPacket disconnect;
+    bool found_disconnect = false;
+    for (int attempt = 0; attempt < 8 && loopback->PollClientEvent(response); ++attempt) {
+        if (network_example::decode_disconnect_packet(
+                response.payload.data(),
+                response.payload.size(),
+                &disconnect)) {
+            found_disconnect = true;
+            break;
+        }
+    }
+    require(found_disconnect);
+    require(disconnect.reason_code == network_example::kDisconnectReasonCatalogMismatch);
+    KernelNetworkStats network_stats{};
+    network_stats.struct_size = sizeof(network_stats);
+    require(server.get_network_stats(&network_stats));
+    require(network_stats.packet_serialization_cost_us > 0);
+    require(network_stats.packet_deserialization_cost_us > 0);
+}
+
+void projectile_spawn_batch_renders_and_binds_to_snapshot() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+    KernelProjectileTemplateDefinition projectile_template{};
+    projectile_template.struct_size = sizeof(projectile_template);
+    projectile_template.projectile_template_id = 3;
+    projectile_template.weapon_id = 3;
+    projectile_template.motion_model = KernelProjectileMotionModel_Linear;
+    projectile_template.sync_mode = KernelProjectileSyncMode_HybridDeterministicThenSnapshot;
+    projectile_template.speed = 10.0f;
+    projectile_template.lifetime_seconds = 2.0f;
+    KernelGameplayCatalogDefinition catalog{};
+    catalog.struct_size = sizeof(catalog);
+    catalog.catalog_version = 9;
+    catalog.catalog_hash = 0x9999ull;
+    catalog.projectile_templates = &projectile_template;
+    catalog.projectile_template_count = 1;
+    require(client.load_gameplay_catalog(catalog));
+
+    network_example::ProjectileSpawnBatchPacket batch{};
+    batch.server_tick = 3;
+    batch.server_time_us = 100000;
+    batch.catalog_hash = 0x9999ull;
+    network_example::ProjectileSpawnGroup group{};
+    group.projectile_template_id = 3;
+    group.records.push_back(network_example::ProjectileSpawnRecord{
+        101,
+        11,
+        7,
+        1234,
+        glm::vec3{1.0f, 0.0f, 0.0f},
+        glm::vec3{10.0f, 0.0f, 0.0f},
+    });
+    batch.groups.push_back(group);
+    client.handle_client_projectile_spawn_batch(batch);
+
+    std::array<RenderEntityState, 4> states{};
+    std::uint32_t count =
+        client.get_render_states_at_time(100000, states.data(), states.size());
+    require(count == 1);
+    require(states[0].net_id == 101);
+    require(states[0].entity_type == static_cast<std::uint16_t>(
+        network_example::EntityType::kProjectile));
+    require(states[0].client_action_id == 1234);
+
+    std::array<KernelDebugInfo, 2> debug_records{};
+    for (KernelDebugInfo& debug_record : debug_records) {
+        debug_record.struct_size = sizeof(KernelDebugInfo);
+    }
+    KernelDebugRecordFilter debug_filter{};
+    debug_filter.struct_size = sizeof(debug_filter);
+    debug_filter.record_type_mask = KernelDebugRecordType_Projectile;
+    debug_filter.projectile_net_id = 404;
+    debug_filter.weapon_id = KERNEL_DEBUG_WILDCARD_U8;
+    debug_filter.motion_model = KERNEL_DEBUG_WILDCARD_U8;
+    debug_filter.sync_mode = KERNEL_DEBUG_WILDCARD_U8;
+    require(client.poll_debug_records(
+                &debug_filter,
+                debug_records.data(),
+                static_cast<std::uint32_t>(debug_records.size())) == 0);
+    debug_filter.projectile_net_id = 101;
+    require(client.poll_debug_records(
+                &debug_filter,
+                debug_records.data(),
+                static_cast<std::uint32_t>(debug_records.size())) == 1);
+    require(debug_records[0].record_type == KernelDebugRecordType_Projectile);
+    require(debug_records[0].data.projectile.projectile_net_id == 101);
+    require(debug_records[0].data.projectile.weapon_id == 3);
+    require(client.poll_debug_records(
+                &debug_filter,
+                debug_records.data(),
+                static_cast<std::uint32_t>(debug_records.size())) == 0);
+    KernelBenchmarkStats benchmark_stats{};
+    benchmark_stats.struct_size = sizeof(benchmark_stats);
+    require(client.get_benchmark_stats(&benchmark_stats));
+    require(benchmark_stats.total_entity_count == 1);
+    require(benchmark_stats.projectile_count == 1);
+    require(benchmark_stats.hybrid_projectile_count == 1);
+    require(benchmark_stats.hybrid_ratio == 1.0f);
+    require(benchmark_stats.render_solver_cost_us > 0);
+
+    client.handle_client_snapshot(projectile_snapshot(
+        4,
+        101,
+        7,
+        1234,
+        glm::vec3{2.0f, 0.0f, 0.0f},
+        glm::vec3{10.0f, 0.0f, 0.0f}));
+    require(client.predicted_projectiles_.size() == 1);
+    require(client.predicted_projectiles_[0].bound);
+    count = client.get_render_states_at_time(133333, states.data(), states.size());
+    require(count == 1);
+    require(states[0].net_id == 101);
+    require(client.get_benchmark_stats(&benchmark_stats));
+    require(benchmark_stats.hybrid_correction_cost_us > 0);
+}
+
+void hit_debug_records_filter_and_drain() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+    std::vector<network_example::ConfirmedDamage> ready_damage{
+        network_example::ConfirmedDamage{
+            12,
+            77,
+            100,
+            200,
+            7,
+            3,
+            25,
+            123456,
+            glm::vec3{1.0f, 2.0f, 3.0f},
+        },
+    };
+    engine.queue_hit_debug_records(ready_damage);
+
+    KernelDebugRecordFilter filter{};
+    filter.struct_size = sizeof(filter);
+    filter.record_type_mask = KernelDebugRecordType_Hit;
+    filter.weapon_id = KERNEL_DEBUG_WILDCARD_U8;
+    filter.source_net_id = 999;
+    std::array<KernelDebugInfo, 2> debug_records{};
+    require(engine.poll_debug_records(
+                &filter,
+                debug_records.data(),
+                static_cast<std::uint32_t>(debug_records.size())) == 0);
+
+    filter.source_net_id = 100;
+    require(engine.poll_debug_records(
+                &filter,
+                debug_records.data(),
+                static_cast<std::uint32_t>(debug_records.size())) == 1);
+    require(debug_records[0].record_type == KernelDebugRecordType_Hit);
+    require(debug_records[0].data.hit.source_net_id == 100);
+    require(debug_records[0].data.hit.target_net_id == 200);
+    require(debug_records[0].data.hit.weapon_id == 3);
+    require(debug_records[0].data.hit.position.y == 2.0f);
+    require(engine.poll_debug_records(
+                &filter,
+                debug_records.data(),
+                static_cast<std::uint32_t>(debug_records.size())) == 0);
+}
+
 }  // namespace
 
 int main() {
@@ -821,6 +1135,7 @@ int main() {
     client_applies_server_tick_config_from_welcome();
     client_clock_offset_smooths_after_initial_sync();
     projectile_spawn_packet_uses_original_muzzle_position();
+    snapshot_only_projectile_spawn_skips_event_batch();
     render_states_at_time_interpolates_and_clamps();
     remote_projectile_uses_interpolated_past_timeline();
     local_projectile_snapshot_fast_forwards_and_smooths();
@@ -829,6 +1144,9 @@ int main() {
     late_snapshot_is_stored_but_not_used_for_reconciliation();
     server_accepts_matching_handshake_versions();
     server_rejects_mismatched_snapshot_schema_before_welcome();
+    server_validates_catalog_hash_before_welcome();
+    projectile_spawn_batch_renders_and_binds_to_snapshot();
+    hit_debug_records_filter_and_drain();
 
     KernelConfig config{};
     config.mode = KernelMode_Client;

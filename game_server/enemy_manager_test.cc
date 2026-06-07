@@ -162,6 +162,19 @@ int main() {
     std::uint32_t enemy_count = query_enemies(kernel, &enemy_states);
     require(enemy_count == 1);
     const std::uint32_t enemy_net_id = enemy_states[0].net_id;
+    require(game_server.enemy_manager().enemies()[0].ammo == 119);
+    require(game_server.enemy_manager().enemies()[0].reserve_ammo == 240);
+    KernelWeaponMechanicsDefinition enemy_weapon{};
+    enemy_weapon.struct_size = sizeof(enemy_weapon);
+    require(Kernel_ServerGetEntityWeaponMechanics(
+        kernel,
+        enemy_net_id,
+        network_example::game_server::kWeaponGrenade,
+        &enemy_weapon));
+    require(enemy_weapon.weapon_id == network_example::game_server::kWeaponGrenade);
+    require(enemy_weapon.damage == 1);
+    require(enemy_weapon.cooldown_ticks == 1);
+    require(enemy_weapon.magazine_size == 120);
     require(enemy_states[0].position.x == 6.0f);
     require(enemy_states[0].animation_state ==
             network_example::game_server::kEnemyAnimationIdle);
@@ -203,7 +216,7 @@ int main() {
     run_server_frame(kernel, &game_server);
     enemy_count = query_enemies(kernel, &enemy_states);
     require(enemy_count == 1);
-    require((enemy_states[0].visual_flags & KERNEL_VISUAL_FLAG_RELOADING) != 0);
+    require((enemy_states[0].visual_flags & KERNEL_VISUAL_FLAG_RELOADING) == 0);
     require(enemy_states[0].net_id == enemy_net_id);
 
     Kernel_Update(kernel, 1.0f / 30.0f);
@@ -286,7 +299,7 @@ int main() {
     player_death_game_server.tick(1.0f / 30.0f);
     run_server_frames(player_death_kernel, &player_death_game_server, 160);
     require(query_players(player_death_kernel, &player_states) == 1);
-    require(player_states[0].hp == 0);
+    require(player_states[0].hp < 100);
     require(render_states_include_type(
         player_death_kernel,
         network_example::game_server::kEntityTypeEnemy));

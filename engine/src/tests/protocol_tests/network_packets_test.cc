@@ -155,6 +155,48 @@ int main() {
     assert(decoded_despawn.server_tick == 18);
     assert(decoded_despawn.reason == KernelDespawnReason_OutOfRange);
 
+    network_example::ProjectileSpawnBatchPacket batch{};
+    batch.server_tick = 77;
+    batch.server_time_us = 77000;
+    batch.catalog_hash = 0x8877665544332211ull;
+    network_example::ProjectileSpawnGroup group{};
+    group.projectile_template_id = 3;
+    group.records.push_back(network_example::ProjectileSpawnRecord{
+        101,
+        11,
+        7,
+        1234,
+        glm::vec3{1.0f, 2.0f, 3.0f},
+        glm::vec3{4.0f, 5.0f, 6.0f},
+    });
+    batch.groups.push_back(group);
+    const std::vector<std::uint8_t> batch_packet =
+        network_example::encode_projectile_spawn_batch_packet(batch, 47);
+    network_example::ProjectileSpawnBatchPacket decoded_batch{};
+    assert(network_example::decode_projectile_spawn_batch_packet(
+        batch_packet.data(),
+        batch_packet.size(),
+        &decoded_batch));
+    assert(decoded_batch.server_tick == 77);
+    assert(decoded_batch.server_time_us == 77000);
+    assert(decoded_batch.catalog_hash == 0x8877665544332211ull);
+    assert(decoded_batch.groups.size() == 1);
+    assert(decoded_batch.groups[0].projectile_template_id == 3);
+    assert(decoded_batch.groups[0].records.size() == 1);
+    assert(decoded_batch.groups[0].records[0].projectile_net_id == 101);
+    assert(decoded_batch.groups[0].records[0].owner_net_id == 11);
+    assert(decoded_batch.groups[0].records[0].owner_peer == 7);
+    assert(decoded_batch.groups[0].records[0].client_action_id == 1234);
+    assert(nearly_equal(decoded_batch.groups[0].records[0].spawn_position.y, 2.0f));
+    assert(nearly_equal(decoded_batch.groups[0].records[0].initial_velocity.z, 6.0f));
+
+    std::vector<std::uint8_t> bad_batch_crc = batch_packet;
+    bad_batch_crc.back() ^= 0xffu;
+    assert(!network_example::decode_projectile_spawn_batch_packet(
+        bad_batch_crc.data(),
+        bad_batch_crc.size(),
+        &decoded_batch));
+
     std::vector<std::uint8_t> bad_header = input_packet;
     bad_header[0] = 0;
     assert(!network_example::decode_input_packet(

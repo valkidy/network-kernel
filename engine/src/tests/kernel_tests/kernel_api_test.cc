@@ -72,6 +72,20 @@ int main() {
            sizeof(KernelLANDiscoveryResult));
     assert(abi_info.combat_state_definition_size ==
            sizeof(KernelCombatStateDefinition));
+    assert(abi_info.gameplay_catalog_definition_size ==
+           sizeof(KernelGameplayCatalogDefinition));
+    assert(abi_info.projectile_template_definition_size ==
+           sizeof(KernelProjectileTemplateDefinition));
+    assert(abi_info.collider_template_definition_size ==
+           sizeof(KernelColliderTemplateDefinition));
+    assert(abi_info.collider_binding_definition_size ==
+           sizeof(KernelColliderBindingDefinition));
+    assert(abi_info.benchmark_stats_size == sizeof(KernelBenchmarkStats));
+    assert(abi_info.network_stats_size == sizeof(KernelNetworkStats));
+    assert(abi_info.debug_record_filter_size == sizeof(KernelDebugRecordFilter));
+    assert(abi_info.debug_info_size == sizeof(KernelDebugInfo));
+    assert(abi_info.collider_shape_query_size == sizeof(KernelColliderShapeQuery));
+    assert(abi_info.collider_shape_view_size == sizeof(KernelColliderShapeView));
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CLIENT_MODE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LISTEN_SERVER_MODE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_DEDICATED_SERVER_MODE) != 0);
@@ -103,8 +117,14 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_BEAM_WEAPONS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_HOMING_PROJECTILES) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LAN_DISCOVERY) != 0);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_GAMEPLAY_CATALOG) != 0);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_PROJECTILE_SPAWN_BATCH) != 0);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_DEBUG_RECORDS) != 0);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_COLLIDER_SHAPE_QUERY) != 0);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_BENCHMARK_STATS) != 0);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 14u);
+    assert(KERNEL_ABI_VERSION == 15u);
     assert(KERNEL_MAX_WEAPONS == 7u);
     assert(KERNEL_LAN_DISCOVERY_DEFAULT_PORT == 47777u);
     assert(offsetof(PlayerInput, client_action_time_us) > offsetof(PlayerInput, input_seq));
@@ -152,9 +172,38 @@ int main() {
     Kernel_LANDiscovery_ClearResults(nullptr);
     Kernel_Update(nullptr, 1.0f / 30.0f);
     Kernel_SubmitInput(nullptr, 1, nullptr);
+    assert(!Kernel_LoadGameplayCatalog(nullptr, nullptr));
     assert(Kernel_GetRenderStates(nullptr, nullptr, 0) == 0);
     assert(Kernel_GetRenderStatesAtTime(nullptr, 0, nullptr, 0) == 0);
     assert(Kernel_PollEvents(nullptr, nullptr, 0) == 0);
+    KernelBenchmarkStats benchmark_stats{};
+    benchmark_stats.struct_size = sizeof(benchmark_stats);
+    assert(!Kernel_GetBenchmarkStats(nullptr, &benchmark_stats));
+    KernelNetworkStats network_stats{};
+    network_stats.struct_size = sizeof(network_stats);
+    assert(!Kernel_GetNetworkStats(nullptr, &network_stats));
+    KernelDebugRecordFilter debug_filter{};
+    debug_filter.struct_size = sizeof(debug_filter);
+    std::array<KernelDebugInfo, 4> debug_records{};
+    for (KernelDebugInfo& debug_record : debug_records) {
+        debug_record.struct_size = sizeof(KernelDebugInfo);
+    }
+    assert(Kernel_PollDebugRecords(
+               nullptr,
+               &debug_filter,
+               debug_records.data(),
+               static_cast<std::uint32_t>(debug_records.size())) == 0);
+    KernelColliderShapeQuery collider_query{};
+    collider_query.struct_size = sizeof(collider_query);
+    std::array<KernelColliderShapeView, 4> collider_shapes{};
+    for (KernelColliderShapeView& shape : collider_shapes) {
+        shape.struct_size = sizeof(KernelColliderShapeView);
+    }
+    assert(Kernel_QueryColliderShapes(
+               nullptr,
+               &collider_query,
+               collider_shapes.data(),
+               static_cast<std::uint32_t>(collider_shapes.size())) == 0);
     KernelLocalPlayerInfo local_info{};
     assert(!Kernel_GetLocalPlayerInfo(nullptr, &local_info));
     assert(!Kernel_GetLocalPlayerInfo(nullptr, nullptr));
@@ -205,6 +254,54 @@ int main() {
 
     KernelHandle* kernel = Kernel_Create(&config);
     assert(kernel != nullptr);
+    KernelProjectileTemplateDefinition projectile_template{};
+    projectile_template.struct_size = sizeof(projectile_template);
+    projectile_template.projectile_template_id = 3;
+    projectile_template.weapon_id = 3;
+    projectile_template.motion_model = KernelProjectileMotionModel_Linear;
+    projectile_template.sync_mode = KernelProjectileSyncMode_HybridDeterministicThenSnapshot;
+    projectile_template.speed = 35.0f;
+    projectile_template.lifetime_seconds = 2.5f;
+    projectile_template.explosion_radius = 3.0f;
+    projectile_template.gravity = KernelVec3{0.0f, 0.0f, 0.0f};
+    projectile_template.collider_template_id = 10;
+    projectile_template.damage = 5;
+    projectile_template.collision_mask = KERNEL_COLLISION_MASK_DAMAGEABLE;
+    projectile_template.max_hit_count = 1;
+    KernelColliderTemplateDefinition collider_template{};
+    collider_template.struct_size = sizeof(collider_template);
+    collider_template.template_id = 10;
+    collider_template.shape_type = KernelColliderShapeType_Aabb;
+    collider_template.half_extents = KernelVec3{0.25f, 0.25f, 0.25f};
+    collider_template.layer_mask = KERNEL_COLLISION_LAYER_PROJECTILE;
+    collider_template.purpose_flags = KernelColliderPurpose_Damage;
+    KernelColliderBindingDefinition collider_binding{};
+    collider_binding.struct_size = sizeof(collider_binding);
+    collider_binding.entity_type = 2;
+    collider_binding.collider_template_id = 10;
+    collider_binding.local_position = KernelVec3{0.0f, 0.8f, 0.0f};
+    KernelGameplayCatalogDefinition catalog{};
+    catalog.struct_size = sizeof(catalog);
+    catalog.catalog_version = 3;
+    catalog.catalog_hash = 0x1122334455667788ull;
+    catalog.projectile_templates = &projectile_template;
+    catalog.projectile_template_count = 1;
+    catalog.collider_templates = &collider_template;
+    catalog.collider_template_count = 1;
+    catalog.collider_bindings = &collider_binding;
+    catalog.collider_binding_count = 1;
+    assert(Kernel_LoadGameplayCatalog(kernel, &catalog));
+    benchmark_stats = KernelBenchmarkStats{};
+    benchmark_stats.struct_size = sizeof(benchmark_stats);
+    assert(Kernel_GetBenchmarkStats(kernel, &benchmark_stats));
+    assert(benchmark_stats.catalog_version == 3);
+    assert(benchmark_stats.catalog_hash == 0x1122334455667788ull);
+    assert(Kernel_GetNetworkStats(kernel, &network_stats));
+    assert(Kernel_PollDebugRecords(
+               kernel,
+               &debug_filter,
+               debug_records.data(),
+               static_cast<std::uint32_t>(debug_records.size())) == 0);
     assert(Kernel_GetLocalPlayerInfo(kernel, &local_info));
     assert(local_info.peer_id == 0);
     assert(local_info.player_net_id == 0);
@@ -239,6 +336,18 @@ int main() {
     combat_state.reserve_ammo[6] = 2;
     assert(!Kernel_ServerSetEntityCombatState(kernel, created_net_id, nullptr));
     assert(Kernel_ServerSetEntityCombatState(kernel, created_net_id, &combat_state));
+    const std::uint32_t collider_count = Kernel_QueryColliderShapes(
+        kernel,
+        &collider_query,
+        collider_shapes.data(),
+        static_cast<std::uint32_t>(collider_shapes.size()));
+    assert(collider_count == 1);
+    assert(collider_shapes[0].entity_net_id == created_net_id);
+    assert(collider_shapes[0].entity_type == 2);
+    assert(collider_shapes[0].collider_template_id == 10);
+    assert(collider_shapes[0].shape_type == KernelColliderShapeType_Aabb);
+    assert(collider_shapes[0].world_center.y == 0.8f);
+    assert(collider_shapes[0].half_extents.x == 0.25f);
 
     weapon_mechanics.weapon_id = 3;
     weapon_mechanics.fire_mode = KernelWeaponFireMode_Projectile;

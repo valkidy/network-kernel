@@ -26,6 +26,27 @@ struct EntityDespawnPacket {
     std::uint32_t reason = 0;
 };
 
+struct ProjectileSpawnRecord {
+    NetId projectile_net_id = 0;
+    NetId owner_net_id = 0;
+    PeerId owner_peer = 0;
+    std::uint32_t client_action_id = 0;
+    glm::vec3 spawn_position{0.0f, 0.0f, 0.0f};
+    glm::vec3 initial_velocity{0.0f, 0.0f, 0.0f};
+};
+
+struct ProjectileSpawnGroup {
+    std::uint32_t projectile_template_id = 0;
+    std::vector<ProjectileSpawnRecord> records;
+};
+
+struct ProjectileSpawnBatchPacket {
+    std::uint32_t server_tick = 0;
+    std::uint64_t server_time_us = 0;
+    std::uint64_t catalog_hash = 0;
+    std::vector<ProjectileSpawnGroup> groups;
+};
+
 std::vector<std::uint8_t> encode_input_packet(
     PeerId player_id,
     const PlayerInput& input,
@@ -72,6 +93,15 @@ bool decode_entity_despawn_packet(
     const std::uint8_t* data,
     std::size_t size,
     EntityDespawnPacket* out_packet);
+
+std::vector<std::uint8_t> encode_projectile_spawn_batch_packet(
+    const ProjectileSpawnBatchPacket& packet,
+    std::uint32_t sequence = 0);
+
+bool decode_projectile_spawn_batch_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    ProjectileSpawnBatchPacket* out_packet);
 
 }  // namespace network_example
 
