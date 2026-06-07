@@ -69,6 +69,7 @@ public static class NetworkKernelManagedAbiSmoke
                 kernel.ServerCreateEntity(createInfo, out uint enemyNetId) && enemyNetId != 0,
                 "Kernel_ServerCreateEntity failed.");
 
+            RequireAbi15Diagnostics(kernel, enemyNetId);
             ConfigureCombatAndWeapons(kernel, enemyNetId);
             Require(
                 kernel.ServerGetEntityState(enemyNetId, out KernelServerEntityState enemyState) &&
@@ -198,6 +199,79 @@ public static class NetworkKernelManagedAbiSmoke
         SetAndQueryWeapon(kernel, enemyNetId, AreaEffectWeapon(), 4);
         SetAndQueryWeapon(kernel, enemyNetId, BeamWeapon(), 5);
         SetAndQueryWeapon(kernel, enemyNetId, HomingWeapon(), 6);
+    }
+
+    private static void RequireAbi15Diagnostics(Kernel kernel, uint enemyNetId)
+    {
+        var colliderTemplates = new[]
+        {
+            new KernelColliderTemplateDefinition
+            {
+                struct_size = KernelColliderTemplateDefinition.StructSize,
+                template_id = 101,
+                shape_type = (byte)KernelColliderShapeType.Sphere,
+                center = new KernelVec3(0.0f, 0.5f, 0.0f),
+                radius = 0.75f,
+                purpose_flags = (uint)KernelColliderPurpose.Hit,
+                layer_mask = KernelConstants.CollisionLayerEnemy,
+            },
+        };
+        var colliderBindings = new[]
+        {
+            new KernelColliderBindingDefinition
+            {
+                struct_size = KernelColliderBindingDefinition.StructSize,
+                entity_type = (ushort)KernelEntityType.Enemy,
+                collider_template_id = 101,
+                local_position = new KernelVec3(0.0f, 0.1f, 0.0f),
+                local_rotation = new KernelQuat(0.0f, 0.0f, 0.0f, 1.0f),
+            },
+        };
+        var catalog = new KernelGameplayCatalog
+        {
+            CatalogVersion = 15,
+            CatalogHash = 0x1500UL,
+            ColliderTemplates = colliderTemplates,
+            ColliderBindings = colliderBindings,
+        };
+
+        Require(kernel.LoadGameplayCatalog(catalog), "Kernel_LoadGameplayCatalog failed.");
+
+        var shapeQuery = new KernelColliderShapeQuery
+        {
+            struct_size = KernelColliderShapeQuery.StructSize,
+            entity_net_id = enemyNetId,
+            purpose_mask = (uint)KernelColliderPurpose.Hit,
+        };
+        var shapes = new KernelColliderShapeView[4];
+        Require(
+            kernel.QueryColliderShapes(shapeQuery, shapes) == 1 &&
+            shapes[0].entity_net_id == enemyNetId &&
+            shapes[0].collider_template_id == 101 &&
+            shapes[0].shape_type == (byte)KernelColliderShapeType.Sphere,
+            "Kernel_QueryColliderShapes failed.");
+
+        Require(
+            kernel.TryGetBenchmarkStats(out KernelBenchmarkStats benchmarkStats) &&
+            benchmarkStats.catalog_version == 15 &&
+            benchmarkStats.catalog_hash == 0x1500UL,
+            "Kernel_GetBenchmarkStats failed.");
+        Require(
+            kernel.TryGetNetworkStats(out KernelNetworkStats networkStats) &&
+            networkStats.struct_size == KernelNetworkStats.StructSize,
+            "Kernel_GetNetworkStats failed.");
+
+        var debugFilter = new KernelDebugRecordFilter
+        {
+            struct_size = KernelDebugRecordFilter.StructSize,
+            record_type_mask = (uint)KernelDebugRecordType.Hit |
+                (uint)KernelDebugRecordType.Projectile,
+            weapon_id = KernelConstants.DebugWildcardU8,
+            motion_model = KernelConstants.DebugWildcardU8,
+            sync_mode = KernelConstants.DebugWildcardU8,
+        };
+        var debugRecords = new KernelDebugInfo[4];
+        kernel.PollDebugRecords(debugFilter, debugRecords);
     }
 
     private static void SetAndQueryWeapon(

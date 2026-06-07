@@ -85,6 +85,12 @@ namespace NetworkExample.Kernel
             ref PlayerInput input);
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_LoadGameplayCatalog(
+            IntPtr kernel,
+            ref KernelGameplayCatalogDefinition catalog);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern uint Kernel_GetRenderStates(
             IntPtr kernel,
             [Out] RenderEntityState[] outStates,
@@ -102,6 +108,32 @@ namespace NetworkExample.Kernel
             IntPtr kernel,
             [Out] KernelEvent[] outEvents,
             uint maxEvents);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_GetBenchmarkStats(
+            IntPtr kernel,
+            ref KernelBenchmarkStats outStats);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_GetNetworkStats(
+            IntPtr kernel,
+            ref KernelNetworkStats outStats);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint Kernel_PollDebugRecords(
+            IntPtr kernel,
+            IntPtr filter,
+            [Out] KernelDebugInfo[] outRecords,
+            uint maxRecords);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint Kernel_QueryColliderShapes(
+            IntPtr kernel,
+            IntPtr query,
+            [Out] KernelColliderShapeView[] outShapes,
+            uint maxShapes);
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)]

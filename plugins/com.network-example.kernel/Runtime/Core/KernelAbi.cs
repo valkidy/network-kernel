@@ -107,6 +107,30 @@ namespace NetworkExample.Kernel
                 info,
                 KernelConstants.CapabilityLANDiscovery,
                 "Kernel LAN discovery capability is missing.");
+            RequireCapability(
+                info,
+                KernelConstants.CapabilityGameplayCatalog,
+                "Kernel gameplay catalog capability is missing.");
+            RequireCapability(
+                info,
+                KernelConstants.CapabilityProjectileSpawnBatch,
+                "Kernel projectile spawn batch capability is missing.");
+            RequireCapability(
+                info,
+                KernelConstants.CapabilityDebugRecords,
+                "Kernel debug records capability is missing.");
+            RequireCapability(
+                info,
+                KernelConstants.CapabilityColliderShapeQuery,
+                "Kernel collider shape query capability is missing.");
+            RequireCapability(
+                info,
+                KernelConstants.CapabilityBenchmarkStats,
+                "Kernel benchmark stats capability is missing.");
+            RequireCapability(
+                info,
+                KernelConstants.CapabilityNetworkStats,
+                "Kernel network stats capability is missing.");
 
             RequireSize(nameof(KernelAbiInfo), info.struct_size, Marshal.SizeOf<KernelAbiInfo>());
             RequireSize(nameof(KernelConfig), info.kernel_config_size, Marshal.SizeOf<KernelConfig>());
@@ -176,6 +200,46 @@ namespace NetworkExample.Kernel
                 nameof(KernelLANDiscoveryResult),
                 info.lan_discovery_result_size,
                 Marshal.SizeOf<KernelLANDiscoveryResult>());
+            RequireSize(
+                nameof(KernelGameplayCatalogDefinition),
+                info.gameplay_catalog_definition_size,
+                Marshal.SizeOf<KernelGameplayCatalogDefinition>());
+            RequireSize(
+                nameof(KernelProjectileTemplateDefinition),
+                info.projectile_template_definition_size,
+                Marshal.SizeOf<KernelProjectileTemplateDefinition>());
+            RequireSize(
+                nameof(KernelColliderTemplateDefinition),
+                info.collider_template_definition_size,
+                Marshal.SizeOf<KernelColliderTemplateDefinition>());
+            RequireSize(
+                nameof(KernelColliderBindingDefinition),
+                info.collider_binding_definition_size,
+                Marshal.SizeOf<KernelColliderBindingDefinition>());
+            RequireSize(
+                nameof(KernelBenchmarkStats),
+                info.benchmark_stats_size,
+                Marshal.SizeOf<KernelBenchmarkStats>());
+            RequireSize(
+                nameof(KernelNetworkStats),
+                info.network_stats_size,
+                Marshal.SizeOf<KernelNetworkStats>());
+            RequireSize(
+                nameof(KernelDebugRecordFilter),
+                info.debug_record_filter_size,
+                Marshal.SizeOf<KernelDebugRecordFilter>());
+            RequireSize(
+                nameof(KernelDebugInfo),
+                info.debug_info_size,
+                Marshal.SizeOf<KernelDebugInfo>());
+            RequireSize(
+                nameof(KernelColliderShapeQuery),
+                info.collider_shape_query_size,
+                Marshal.SizeOf<KernelColliderShapeQuery>());
+            RequireSize(
+                nameof(KernelColliderShapeView),
+                info.collider_shape_view_size,
+                Marshal.SizeOf<KernelColliderShapeView>());
         }
 
         private static void RequireCapability(

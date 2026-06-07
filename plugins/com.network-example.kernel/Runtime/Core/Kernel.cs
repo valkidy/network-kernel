@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.InteropServices;
 
 namespace NetworkExample.Kernel
 {
@@ -83,6 +84,12 @@ namespace NetworkExample.Kernel
             KernelNative.Kernel_SubmitInput(handle, localPlayerId, ref input);
         }
 
+        public bool LoadGameplayCatalog(KernelGameplayCatalog catalog)
+        {
+            ThrowIfDisposed();
+            return LoadGameplayCatalog(handle, catalog);
+        }
+
         public bool TryGetLocalPlayerInfo(out KernelLocalPlayerInfo info)
         {
             ThrowIfDisposed();
@@ -124,6 +131,104 @@ namespace NetworkExample.Kernel
             }
 
             return KernelNative.Kernel_PollEvents(handle, events, (uint)events.Length);
+        }
+
+        public bool TryGetBenchmarkStats(out KernelBenchmarkStats stats)
+        {
+            ThrowIfDisposed();
+            stats = new KernelBenchmarkStats
+            {
+                struct_size = KernelBenchmarkStats.StructSize,
+            };
+            return KernelNative.Kernel_GetBenchmarkStats(handle, ref stats);
+        }
+
+        public bool TryGetNetworkStats(out KernelNetworkStats stats)
+        {
+            ThrowIfDisposed();
+            stats = new KernelNetworkStats
+            {
+                struct_size = KernelNetworkStats.StructSize,
+            };
+            return KernelNative.Kernel_GetNetworkStats(handle, ref stats);
+        }
+
+        public uint PollDebugRecords(
+            KernelDebugRecordFilter? filter,
+            KernelDebugInfo[] records)
+        {
+            ThrowIfDisposed();
+            if (records == null || records.Length == 0)
+            {
+                return 0;
+            }
+
+            IntPtr filterPtr = IntPtr.Zero;
+            try
+            {
+                if (filter.HasValue)
+                {
+                    KernelDebugRecordFilter nativeFilter = filter.Value;
+                    if (nativeFilter.struct_size == 0)
+                    {
+                        nativeFilter.struct_size = KernelDebugRecordFilter.StructSize;
+                    }
+                    filterPtr = Marshal.AllocHGlobal(Marshal.SizeOf<KernelDebugRecordFilter>());
+                    Marshal.StructureToPtr(nativeFilter, filterPtr, false);
+                }
+
+                return KernelNative.Kernel_PollDebugRecords(
+                    handle,
+                    filterPtr,
+                    records,
+                    (uint)records.Length);
+            }
+            finally
+            {
+                if (filterPtr != IntPtr.Zero)
+                {
+                    Marshal.FreeHGlobal(filterPtr);
+                }
+            }
+        }
+
+        public uint QueryColliderShapes(
+            KernelColliderShapeQuery? query,
+            KernelColliderShapeView[] shapes)
+        {
+            ThrowIfDisposed();
+            if (shapes == null || shapes.Length == 0)
+            {
+                return 0;
+            }
+
+            IntPtr queryPtr = IntPtr.Zero;
+            try
+            {
+                if (query.HasValue)
+                {
+                    KernelColliderShapeQuery nativeQuery = query.Value;
+                    if (nativeQuery.struct_size == 0)
+                    {
+                        nativeQuery.struct_size = KernelColliderShapeQuery.StructSize;
+                    }
+                    queryPtr = Marshal.AllocHGlobal(Marshal.SizeOf<KernelColliderShapeQuery>());
+                    Marshal.StructureToPtr(nativeQuery, queryPtr, false);
+                }
+
+                return KernelNative.Kernel_QueryColliderShapes(
+                    handle,
+                    queryPtr,
+                    shapes,
+                    (uint)shapes.Length);
+            }
+            finally
+            {
+                if (queryPtr != IntPtr.Zero)
+                {
+                    Marshal.FreeHGlobal(queryPtr);
+                }
+            }
         }
 
         public bool ServerCreateEntity(
@@ -312,6 +417,104 @@ namespace NetworkExample.Kernel
             ref KernelWeaponMechanicsDefinition weaponMechanics)
         {
             weaponMechanics.struct_size = KernelWeaponMechanicsDefinition.StructSize;
+        }
+
+        private static bool LoadGameplayCatalog(IntPtr kernel, KernelGameplayCatalog catalog)
+        {
+            KernelProjectileTemplateDefinition[] projectileTemplates =
+                catalog.ProjectileTemplates ?? new KernelProjectileTemplateDefinition[0];
+            KernelColliderTemplateDefinition[] colliderTemplates =
+                catalog.ColliderTemplates ?? new KernelColliderTemplateDefinition[0];
+            KernelColliderBindingDefinition[] colliderBindings =
+                catalog.ColliderBindings ?? new KernelColliderBindingDefinition[0];
+
+            PrepareProjectileTemplates(projectileTemplates);
+            PrepareColliderTemplates(colliderTemplates);
+            PrepareColliderBindings(colliderBindings);
+
+            GCHandle projectileTemplatesHandle = PinArray(projectileTemplates, out IntPtr projectileTemplatesPtr);
+            GCHandle colliderTemplatesHandle = PinArray(colliderTemplates, out IntPtr colliderTemplatesPtr);
+            GCHandle colliderBindingsHandle = PinArray(colliderBindings, out IntPtr colliderBindingsPtr);
+            try
+            {
+                var nativeCatalog = new KernelGameplayCatalogDefinition
+                {
+                    struct_size = KernelGameplayCatalogDefinition.StructSize,
+                    catalog_version = catalog.CatalogVersion,
+                    catalog_hash = catalog.CatalogHash,
+                    projectile_templates = projectileTemplatesPtr,
+                    projectile_template_count = (uint)projectileTemplates.Length,
+                    collider_templates = colliderTemplatesPtr,
+                    collider_template_count = (uint)colliderTemplates.Length,
+                    collider_bindings = colliderBindingsPtr,
+                    collider_binding_count = (uint)colliderBindings.Length,
+                };
+                return KernelNative.Kernel_LoadGameplayCatalog(kernel, ref nativeCatalog);
+            }
+            finally
+            {
+                FreeIfAllocated(projectileTemplatesHandle);
+                FreeIfAllocated(colliderTemplatesHandle);
+                FreeIfAllocated(colliderBindingsHandle);
+            }
+        }
+
+        private static void PrepareProjectileTemplates(
+            KernelProjectileTemplateDefinition[] templates)
+        {
+            for (int index = 0; index < templates.Length; ++index)
+            {
+                if (templates[index].struct_size == 0)
+                {
+                    templates[index].struct_size = KernelProjectileTemplateDefinition.StructSize;
+                }
+            }
+        }
+
+        private static void PrepareColliderTemplates(
+            KernelColliderTemplateDefinition[] templates)
+        {
+            for (int index = 0; index < templates.Length; ++index)
+            {
+                if (templates[index].struct_size == 0)
+                {
+                    templates[index].struct_size = KernelColliderTemplateDefinition.StructSize;
+                }
+            }
+        }
+
+        private static void PrepareColliderBindings(
+            KernelColliderBindingDefinition[] bindings)
+        {
+            for (int index = 0; index < bindings.Length; ++index)
+            {
+                if (bindings[index].struct_size == 0)
+                {
+                    bindings[index].struct_size = KernelColliderBindingDefinition.StructSize;
+                }
+            }
+        }
+
+        private static GCHandle PinArray<T>(T[] array, out IntPtr pointer)
+            where T : struct
+        {
+            if (array.Length == 0)
+            {
+                pointer = IntPtr.Zero;
+                return default(GCHandle);
+            }
+
+            GCHandle handle = GCHandle.Alloc(array, GCHandleType.Pinned);
+            pointer = handle.AddrOfPinnedObject();
+            return handle;
+        }
+
+        private static void FreeIfAllocated(GCHandle handle)
+        {
+            if (handle.IsAllocated)
+            {
+                handle.Free();
+            }
         }
 
         private void Dispose(bool disposing)

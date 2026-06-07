@@ -5,11 +5,12 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 14;
+        public const uint AbiVersion = 15;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const ushort LANDiscoveryDefaultPort = 47777;
         public const int MaxWeapons = 7;
+        public const byte DebugWildcardU8 = 0xff;
 
         public const ulong CapabilityClientMode = 0x0000000000000001UL;
         public const ulong CapabilityListenServerMode = 0x0000000000000002UL;
@@ -38,6 +39,12 @@ namespace NetworkExample.Kernel
         public const ulong CapabilityBeamWeapons = 0x0000000001000000UL;
         public const ulong CapabilityHomingProjectiles = 0x0000000002000000UL;
         public const ulong CapabilityLANDiscovery = 0x0000000004000000UL;
+        public const ulong CapabilityGameplayCatalog = 0x0000000008000000UL;
+        public const ulong CapabilityProjectileSpawnBatch = 0x0000000010000000UL;
+        public const ulong CapabilityDebugRecords = 0x0000000020000000UL;
+        public const ulong CapabilityColliderShapeQuery = 0x0000000040000000UL;
+        public const ulong CapabilityBenchmarkStats = 0x0000000080000000UL;
+        public const ulong CapabilityNetworkStats = 0x0000000100000000UL;
 
         public const uint CollisionLayerPlayer = 0x00000001U;
         public const uint CollisionLayerEnemy = 0x00000002U;
@@ -53,7 +60,7 @@ namespace NetworkExample.Kernel
     public static class NetworkKernelPackageInfo
     {
         public const string Name = "com.network-example.kernel";
-        public const string Version = "0.6.4";
+        public const string Version = "0.6.5";
     }
 
     public enum KernelMode
@@ -160,6 +167,27 @@ namespace NetworkExample.Kernel
         PiercingSegment = 2,
     }
 
+    public enum KernelColliderShapeType : byte
+    {
+        Aabb = 0,
+        Sphere = 1,
+    }
+
+    [Flags]
+    public enum KernelColliderPurpose : uint
+    {
+        Hit = 1U << 0,
+        Damage = 1U << 1,
+        Trigger = 1U << 2,
+    }
+
+    [Flags]
+    public enum KernelDebugRecordType : uint
+    {
+        Hit = 1U << 0,
+        Projectile = 1U << 1,
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     public struct KernelAbiInfo
     {
@@ -185,6 +213,16 @@ namespace NetworkExample.Kernel
         public uint lan_discovery_query_config_size;
         public uint lan_discovery_result_size;
         public ulong capability_flags;
+        public uint gameplay_catalog_definition_size;
+        public uint projectile_template_definition_size;
+        public uint collider_template_definition_size;
+        public uint collider_binding_definition_size;
+        public uint benchmark_stats_size;
+        public uint network_stats_size;
+        public uint debug_record_filter_size;
+        public uint debug_info_size;
+        public uint collider_shape_query_size;
+        public uint collider_shape_view_size;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
@@ -410,6 +448,224 @@ namespace NetworkExample.Kernel
         public bool valid;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelServerEntityState>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelColliderTemplateDefinition
+    {
+        public uint struct_size;
+        public uint template_id;
+        public byte shape_type;
+        public byte reserved0;
+        public ushort reserved1;
+        public KernelVec3 center;
+        public KernelVec3 half_extents;
+        public float radius;
+        public uint purpose_flags;
+        public uint layer_mask;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelColliderTemplateDefinition>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelColliderBindingDefinition
+    {
+        public uint struct_size;
+        public ushort entity_type;
+        public ushort reserved0;
+        public uint collider_template_id;
+        public KernelVec3 local_position;
+        public KernelQuat local_rotation;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelColliderBindingDefinition>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelProjectileTemplateDefinition
+    {
+        public uint struct_size;
+        public uint projectile_template_id;
+        public byte weapon_id;
+        public byte motion_model;
+        public byte sync_mode;
+        public byte hit_response;
+        public byte damage_shape;
+        public byte reserved0;
+        public ushort damage;
+        public float speed;
+        public float lifetime_seconds;
+        public float explosion_radius;
+        public KernelVec3 gravity;
+        public uint collider_template_id;
+        public uint explosion_template_id;
+        public uint collision_mask;
+        public uint max_hit_count;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelProjectileTemplateDefinition>();
+    }
+
+    public struct KernelGameplayCatalog
+    {
+        public uint CatalogVersion;
+        public ulong CatalogHash;
+        public KernelProjectileTemplateDefinition[] ProjectileTemplates;
+        public KernelColliderTemplateDefinition[] ColliderTemplates;
+        public KernelColliderBindingDefinition[] ColliderBindings;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct KernelGameplayCatalogDefinition
+    {
+        public uint struct_size;
+        public uint catalog_version;
+        public ulong catalog_hash;
+        public IntPtr projectile_templates;
+        public uint projectile_template_count;
+        public IntPtr collider_templates;
+        public uint collider_template_count;
+        public IntPtr collider_bindings;
+        public uint collider_binding_count;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelGameplayCatalogDefinition>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelBenchmarkStats
+    {
+        public uint struct_size;
+        public uint catalog_version;
+        public ulong catalog_hash;
+        public uint total_entity_count;
+        public uint projectile_count;
+        public uint event_spawn_projectile_count;
+        public uint snapshot_only_projectile_count;
+        public uint hybrid_projectile_count;
+        public float event_spawn_ratio;
+        public float snapshot_only_ratio;
+        public float hybrid_ratio;
+        public ulong render_solver_cost_us;
+        public ulong projectile_solver_cost_us;
+        public ulong hybrid_correction_cost_us;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelBenchmarkStats>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelNetworkStats
+    {
+        public uint struct_size;
+        public ulong snapshot_bytes_sent;
+        public ulong event_bytes_sent;
+        public ulong reliable_bytes_sent;
+        public ulong unreliable_bytes_sent;
+        public uint packet_count_sent;
+        public uint average_packet_size;
+        public uint max_packet_size;
+        public ulong packet_serialization_cost_us;
+        public ulong packet_deserialization_cost_us;
+        public ulong rtt_us;
+        public ulong jitter_us;
+        public float loss_ratio;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelNetworkStats>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelHitDebugInfo
+    {
+        public uint source_net_id;
+        public uint target_net_id;
+        public byte weapon_id;
+        public byte reserved0;
+        public ushort reserved1;
+        public KernelVec3 position;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelProjectileDebugInfo
+    {
+        public uint projectile_net_id;
+        public uint owner_net_id;
+        public uint owner_peer;
+        public byte weapon_id;
+        public byte motion_model;
+        public byte sync_mode;
+        public byte reserved0;
+        public KernelVec3 position;
+        public KernelVec3 velocity;
+    }
+
+    [StructLayout(LayoutKind.Explicit)]
+    public struct KernelDebugInfoData
+    {
+        [FieldOffset(0)]
+        public KernelHitDebugInfo hit;
+
+        [FieldOffset(0)]
+        public KernelProjectileDebugInfo projectile;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelDebugInfo
+    {
+        public uint struct_size;
+        public uint tick;
+        public byte record_type;
+        public byte flags;
+        public ushort reserved0;
+        public KernelDebugInfoData data;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelDebugInfo>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelDebugRecordFilter
+    {
+        public uint struct_size;
+        public uint record_type_mask;
+        public uint source_net_id;
+        public uint target_net_id;
+        public uint projectile_net_id;
+        public byte weapon_id;
+        public byte motion_model;
+        public byte sync_mode;
+        public byte reserved0;
+        public uint min_tick;
+        public uint max_tick;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelDebugRecordFilter>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelColliderShapeQuery
+    {
+        public uint struct_size;
+        public ushort entity_type_filter;
+        public ushort reserved0;
+        public uint entity_net_id;
+        public uint purpose_mask;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelColliderShapeQuery>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelColliderShapeView
+    {
+        public uint struct_size;
+        public uint entity_net_id;
+        public ushort entity_type;
+        public ushort reserved0;
+        public uint collider_template_id;
+        public byte shape_type;
+        public byte reserved1;
+        public ushort reserved2;
+        public KernelVec3 world_center;
+        public KernelVec3 half_extents;
+        public float radius;
+        public uint purpose_flags;
+        public uint layer_mask;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelColliderShapeView>();
     }
 
     [StructLayout(LayoutKind.Sequential)]
