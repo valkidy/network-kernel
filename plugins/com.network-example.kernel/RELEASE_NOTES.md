@@ -3,6 +3,11 @@
 - updates native plugins
 
 
+0.6.5 release notes:
+
+- updates native plugins
+
+
 0.6.4 release notes:
 
 - updates native combat tuning
