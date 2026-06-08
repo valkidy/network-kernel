@@ -492,6 +492,17 @@ std::uint8_t projectile_sync_mode_from_weapon_yaml(const YAML::Node& node) {
     return projectile_sync_mode;
 }
 
+EnemyAiProfile enemy_ai_profile_from_yaml(const YAML::Node& node) {
+    const std::string value = node ? node.as<std::string>() : "default";
+    if (value == "default") {
+        return EnemyAiProfile::kDefault;
+    }
+    if (value == "projectile_benchmark") {
+        return EnemyAiProfile::kProjectileBenchmark;
+    }
+    throw std::runtime_error("unsupported enemy ai_profile: " + value);
+}
+
 KernelVec3 vec3_from_yaml(const YAML::Node& node) {
     if (!node) {
         return KernelVec3{0.0f, 0.0f, 0.0f};
@@ -745,6 +756,69 @@ void apply_default_non_weapon_config(GameServerGameplayConfig* config) {
     config->benchmark_projectile_groups = BenchmarkProjectileGroupsConfig{};
 }
 
+void apply_catalog_player_config(
+    const YAML::Node& document,
+    GameServerGameplayConfig* config) {
+    const YAML::Node player = document["player"];
+    if (!player) {
+        return;
+    }
+    const YAML::Node health = player["health"];
+    if (health) {
+        config->player.health.hp =
+            health["hp"] ? health["hp"].as<std::uint16_t>() : config->player.health.hp;
+        config->player.health.max_hp =
+            health["max_hp"] ? health["max_hp"].as<std::uint16_t>()
+                             : config->player.health.max_hp;
+    }
+}
+
+void apply_catalog_enemy_config(
+    const YAML::Node& document,
+    GameServerGameplayConfig* config) {
+    const YAML::Node enemy = document["enemy"];
+    if (!enemy) {
+        return;
+    }
+    if (enemy["spawn_count"]) {
+        config->enemy.spawn_count = enemy["spawn_count"].as<std::uint32_t>();
+    }
+    if (enemy["spawn_radius"]) {
+        config->enemy.spawn_radius = enemy["spawn_radius"].as<float>();
+    }
+    if (enemy["spawn_seed"]) {
+        config->enemy.spawn_seed = enemy["spawn_seed"].as<std::uint32_t>();
+    }
+    if (enemy["spawn_position"]) {
+        config->enemy.spawn_position = vec3_from_yaml(enemy["spawn_position"]);
+    }
+    if (enemy["ai_profile"]) {
+        config->enemy.ai.profile = enemy_ai_profile_from_yaml(enemy["ai_profile"]);
+    }
+}
+
+void apply_catalog_weapon_overrides(
+    const YAML::Node& document,
+    GameServerGameplayConfig* config) {
+    const YAML::Node weapons = document["weapons"];
+    if (!weapons) {
+        return;
+    }
+    const YAML::Node spammer = weapons["projectile_spammer"];
+    if (!spammer) {
+        return;
+    }
+    KernelWeaponMechanicsDefinition& weapon =
+        config->weapons.definitions[kWeaponGrenade];
+    if (spammer["burst_count"]) {
+        weapon.pellet_count =
+            static_cast<std::uint8_t>(spammer["burst_count"].as<int>());
+    }
+    if (spammer["burst_spread_degrees"]) {
+        weapon.pellet_spread = spammer["burst_spread_degrees"].as<float>();
+    }
+}
+
 std::filesystem::path default_collider_template_path_for_weapon_dir(
     const std::string& directory) {
     return (std::filesystem::path(directory).parent_path() /
@@ -902,6 +976,10 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_file(
                 : config.benchmark_projectile_groups.hybrid_weapon_id;
     }
 
+    apply_catalog_player_config(document, &config);
+    apply_catalog_enemy_config(document, &config);
+    apply_catalog_weapon_overrides(document, &config);
+
     config.weapons.catalog_hash = compute_gameplay_catalog_hash(config);
     const std::vector<std::string> errors = validate_gameplay_config(config);
     if (!errors.empty()) {
@@ -934,6 +1012,8 @@ std::vector<std::string> validate_gameplay_config(
     if (config.enemy.health.hp == 0 || config.enemy.health.max_hp == 0 ||
         config.enemy.weapon_id >= kWeaponCount ||
         config.enemy.ai.weapon_id >= kWeaponCount ||
+        config.enemy.spawn_count == 0 ||
+        config.enemy.spawn_radius < 0.0f ||
         config.enemy.ai.magazine_size == 0 ||
         config.enemy.ai.fire_interval_seconds <= 0.0f ||
         config.enemy.ai.reload_seconds <= 0.0f) {

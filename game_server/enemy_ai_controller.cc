@@ -334,6 +334,26 @@ EnemyAiDecision EnemyAIController::decide(
     const EnemyAiTarget* nearest_player = nearest_target(
         enemy, players, config_.chase_range, &nearest_distance_squared);
 
+    if (config_.profile == EnemyAiProfile::kProjectileBenchmark) {
+        if (enemy.ammo == 0 && enemy.reserve_ammo > 0 && !enemy.is_reloading) {
+            EnemyAiDecision decision =
+                idle_decision(nearest_player != nullptr ? nearest_player->net_id : 0);
+            decision.should_reload = true;
+            return decision;
+        }
+        if (nearest_player == nullptr || enemy.is_reloading || enemy.ammo == 0) {
+            return idle_decision();
+        }
+        EnemyAiDecision decision = idle_decision(nearest_player->net_id);
+        decision.aim_direction =
+            normalized_direction(enemy.position, nearest_player->position);
+        if (length_squared(decision.aim_direction) <= kEpsilon * kEpsilon) {
+            decision.aim_direction = KernelVec3{1.0f, 0.0f, 0.0f};
+        }
+        decision.should_fire = true;
+        return decision;
+    }
+
     network_example::ai::AITreeInstance tree = make_enemy_tree();
     if (!tree.has_root()) {
         return idle_decision();

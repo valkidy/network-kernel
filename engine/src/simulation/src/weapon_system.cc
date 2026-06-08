@@ -144,6 +144,34 @@ std::vector<glm::vec3> pellet_directions(
     return directions;
 }
 
+std::vector<glm::vec3> projectile_burst_directions(
+    const glm::vec3& direction,
+    const WeaponMechanicsDefinition& definition) {
+    const std::uint8_t burst_count =
+        definition.pellet_count == 0 ? 1 : definition.pellet_count;
+    std::vector<glm::vec3> directions;
+    directions.reserve(burst_count);
+    if (burst_count == 1 || definition.pellet_spread == 0.0f) {
+        directions.push_back(direction);
+        return directions;
+    }
+
+    constexpr float kPi = 3.14159265358979323846f;
+    const float center = static_cast<float>(burst_count - 1) * 0.5f;
+    for (std::uint8_t index = 0; index < burst_count; ++index) {
+        const float degrees =
+            (static_cast<float>(index) - center) * definition.pellet_spread;
+        const float radians = degrees * kPi / 180.0f;
+        const float cos_angle = std::cos(radians);
+        const float sin_angle = std::sin(radians);
+        directions.push_back(glm::normalize(glm::vec3{
+            direction.x * cos_angle + direction.z * sin_angle,
+            direction.y,
+            -direction.x * sin_angle + direction.z * cos_angle}));
+    }
+    return directions;
+}
+
 bool find_hitscan_target(
     World& world,
     const HistoryFrame* rewind_frame,
@@ -555,42 +583,46 @@ void simulate_weapons(
                         ? static_cast<float>(current_tick - spawn_tick) *
                               context.fixed_delta_seconds
                         : 0.0f;
-                const glm::vec3 velocity = direction * definition->projectile_speed;
-                const NetId projectile = fire_projectile(
-                    world,
-                    *definition,
-                    current_tick,
-                    spawn_tick,
-                    player_identity.net_id,
-                    queued_input.owner_peer,
-                    queued_input.input.client_action_id,
-                    compensated_origin,
-                    velocity,
-                    elapsed_seconds,
-                    events);
-                if (context.history_buffer != nullptr &&
-                    context.rewind_frame != nullptr &&
-                    context.fixed_delta_seconds > 0.0f &&
-                    definition->projectile_motion_model !=
-                        ProjectileMotionModel::kHoming) {
-                    const auto projectile_entity = world.find_entity(projectile);
-                    if (projectile_entity.has_value()) {
-                        const ProjectileState projectile_state =
-                            world.registry().get<ProjectileState>(*projectile_entity);
-                        resolve_projectile_historical_hit(
-                            world,
-                            *context.history_buffer,
-                            projectile,
-                            player_identity.net_id,
-                            queued_input.owner_peer,
-                            projectile_state,
-                            compensated_origin,
-                            velocity,
-                            spawn_tick,
-                            current_tick,
-                            context.fixed_delta_seconds,
-                            events,
-                            damage_pipeline);
+                for (const glm::vec3& projectile_direction :
+                     projectile_burst_directions(direction, *definition)) {
+                    const glm::vec3 velocity =
+                        projectile_direction * definition->projectile_speed;
+                    const NetId projectile = fire_projectile(
+                        world,
+                        *definition,
+                        current_tick,
+                        spawn_tick,
+                        player_identity.net_id,
+                        queued_input.owner_peer,
+                        queued_input.input.client_action_id,
+                        compensated_origin,
+                        velocity,
+                        elapsed_seconds,
+                        events);
+                    if (context.history_buffer != nullptr &&
+                        context.rewind_frame != nullptr &&
+                        context.fixed_delta_seconds > 0.0f &&
+                        definition->projectile_motion_model !=
+                            ProjectileMotionModel::kHoming) {
+                        const auto projectile_entity = world.find_entity(projectile);
+                        if (projectile_entity.has_value()) {
+                            const ProjectileState projectile_state =
+                                world.registry().get<ProjectileState>(*projectile_entity);
+                            resolve_projectile_historical_hit(
+                                world,
+                                *context.history_buffer,
+                                projectile,
+                                player_identity.net_id,
+                                queued_input.owner_peer,
+                                projectile_state,
+                                compensated_origin,
+                                velocity,
+                                spawn_tick,
+                                current_tick,
+                                context.fixed_delta_seconds,
+                                events,
+                                damage_pipeline);
+                        }
                     }
                 }
             } else if (definition->mode == WeaponFireMode::kAreaEffect) {

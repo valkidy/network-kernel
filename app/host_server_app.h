@@ -3,6 +3,6 @@
 
 #include <cstdint>
 
-int RunHostServer(std::uint16_t port);
+int RunHostServer(std::uint16_t port, const char* gameplay_catalog_path);
 
 #endif  // APP_HOST_SERVER_APP_H_

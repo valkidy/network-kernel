@@ -13,17 +13,21 @@ namespace {
 
 constexpr std::uint16_t kDefaultPort = 7777;
 constexpr std::string_view kDefaultAddress = "127.0.0.1:7777";
+constexpr std::string_view kDefaultGameplayCatalog =
+    "game_server/gameplay_catalog.yaml";
 
 struct Options {
     std::string mode;
     std::string address{std::string(kDefaultAddress)};
+    std::string gameplay_catalog{std::string(kDefaultGameplayCatalog)};
     std::uint16_t port = kDefaultPort;
 };
 
 void print_usage() {
     spdlog::error(
         "usage: //app:app -- --mode=<dedicated_server|client|host_server> "
-        "[--address=127.0.0.1:7777] [--port=7777]");
+        "[--address=127.0.0.1:7777] [--port=7777] "
+        "[--gameplay-catalog=game_server/gameplay_catalog.yaml]");
 }
 
 bool parse_port(std::string_view text, std::uint16_t* out_port) {
@@ -83,6 +87,10 @@ bool parse_args(int argc, char** argv, Options* options) {
             }
             continue;
         }
+        if (read_value(arg, "--gameplay-catalog", &index, argc, argv, &value)) {
+            options->gameplay_catalog = value;
+            continue;
+        }
 
         spdlog::error("unknown argument: {}", arg);
         return false;
@@ -107,13 +115,15 @@ int main(int argc, char** argv) {
     }
 
     if (options.mode == "dedicated_server") {
-        return RunDedicatedServer(options.port);
+        return RunDedicatedServer(options.port, options.gameplay_catalog.c_str());
     }
     if (options.mode == "client") {
-        return RunClient(options.address.c_str());
+        return RunClient(
+            options.address.c_str(),
+            options.gameplay_catalog.c_str());
     }
     if (options.mode == "host_server") {
-        return RunHostServer(options.port);
+        return RunHostServer(options.port, options.gameplay_catalog.c_str());
     }
 
     spdlog::error("unknown mode: {}", options.mode);
