@@ -39,6 +39,9 @@ struct EnemyGameplayDefinition {
     std::uint16_t entity_type = kEntityTypeEnemy;
     EntityHealthDefinition health{kEnemyInitialHp, kEnemyInitialHp};
     KernelVec3 spawn_position{6.0f, 0.0f, 0.0f};
+    std::uint32_t spawn_count = 1;
+    float spawn_radius = 0.0f;
+    std::uint32_t spawn_seed = 1;
     KernelVec3 hitbox_center{0.0f, 0.8f, 0.0f};
     KernelVec3 hitbox_half_extents{0.4f, 0.8f, 0.4f};
     std::uint8_t weapon_id = kEnemyRocketWeaponId;

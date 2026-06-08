@@ -31,8 +31,14 @@ cc_test(
     data = glob([
         "collider_templates/*.yaml",
         "weapon_templates/*.yaml",
-    ]) + ["gameplay_catalog.yaml"],
-    deps = [":game_server"],
+    ]) + [
+        "gameplay_catalog.yaml",
+        "projectile_sync_benchmark_catalog.yaml",
+    ],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
 )
 
 cc_test(
@@ -41,8 +47,14 @@ cc_test(
     data = glob([
         "collider_templates/*.yaml",
         "weapon_templates/*.yaml",
-    ]) + ["gameplay_catalog.yaml"],
-    deps = [":game_server"],
+    ]) + [
+        "gameplay_catalog.yaml",
+        "projectile_sync_benchmark_catalog.yaml",
+    ],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
 )
 
 cc_library(
@@ -78,7 +90,10 @@ cc_test(
     data = glob([
         "collider_templates/*.yaml",
         "weapon_templates/*.yaml",
-    ]) + ["gameplay_catalog.yaml"],
+    ]) + [
+        "gameplay_catalog.yaml",
+        "projectile_sync_benchmark_catalog.yaml",
+    ],
     deps = [
         ":game_server",
         "//engine/src/kernel:kernel",
@@ -91,7 +106,10 @@ cc_test(
     data = glob([
         "collider_templates/*.yaml",
         "weapon_templates/*.yaml",
-    ]) + ["gameplay_catalog.yaml"],
+    ]) + [
+        "gameplay_catalog.yaml",
+        "projectile_sync_benchmark_catalog.yaml",
+    ],
     deps = [
         ":game_server_bridge",
         "//engine/src/kernel:kernel",

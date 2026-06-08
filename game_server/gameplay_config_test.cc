@@ -114,6 +114,22 @@ int main() {
     assert(config.weapons.names[network_example::game_server::kWeaponBeamRifle] ==
            "Beam Rifle");
 
+    const network_example::game_server::GameServerGameplayConfig benchmark_config =
+        network_example::game_server::load_gameplay_config_from_catalog_file(
+            "game_server/projectile_sync_benchmark_catalog.yaml");
+    assert(benchmark_config.player.health.hp == 5000);
+    assert(benchmark_config.player.health.max_hp == 5000);
+    assert(benchmark_config.enemy.spawn_count == 10);
+    assert(benchmark_config.enemy.spawn_radius == 5.0f);
+    assert(benchmark_config.enemy.spawn_seed == 4242u);
+    assert(
+        benchmark_config.enemy.ai.profile ==
+        network_example::game_server::EnemyAiProfile::kProjectileBenchmark);
+    const KernelWeaponMechanicsDefinition& benchmark_spammer =
+        benchmark_config.weapons.definitions[network_example::game_server::kWeaponGrenade];
+    assert(benchmark_spammer.pellet_count == 3);
+    assert(benchmark_spammer.pellet_spread == 15.0f);
+
     network_example::game_server::GameServerGameplayConfig invalid = config;
     invalid.weapons.definitions[0].damage = 0;
     assert(!network_example::game_server::validate_gameplay_config(invalid).empty());

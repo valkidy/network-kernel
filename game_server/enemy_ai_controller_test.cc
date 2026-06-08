@@ -178,5 +178,47 @@ int main() {
     require(overlapping.should_fire);
     assert_zero_velocity(overlapping.velocity);
 
+    network_example::game_server::EnemyAiConfig benchmark_config;
+    benchmark_config.profile =
+        network_example::game_server::EnemyAiProfile::kProjectileBenchmark;
+    network_example::game_server::EnemyAIController benchmark_controller(
+        benchmark_config);
+    enemy.hp = 20;
+    enemy.ammo = 3;
+    enemy.reserve_ammo = 3;
+    enemy.position = KernelVec3{0.0f, 0.0f, 0.0f};
+    const network_example::game_server::EnemyAiDecision benchmark_no_target =
+        benchmark_controller.decide(enemy, {});
+    require(benchmark_no_target.animation_state ==
+            network_example::game_server::kEnemyAnimationIdle);
+    require(benchmark_no_target.target_player_net_id == 0);
+    require(!benchmark_no_target.should_fire);
+    require(!benchmark_no_target.should_reload);
+    assert_zero_velocity(benchmark_no_target.velocity);
+
+    const network_example::game_server::EnemyAiDecision benchmark_attack =
+        benchmark_controller.decide(enemy, players);
+    require(benchmark_attack.target_player_net_id == 2);
+    require(benchmark_attack.should_fire);
+    require(!benchmark_attack.should_reload);
+    require(benchmark_attack.aim_direction.x > 0.9f);
+    assert_zero_velocity(benchmark_attack.velocity);
+
+    enemy.ammo = 0;
+    enemy.reserve_ammo = 3;
+    const network_example::game_server::EnemyAiDecision benchmark_reload_with_target =
+        benchmark_controller.decide(enemy, players);
+    require(benchmark_reload_with_target.target_player_net_id == 2);
+    require(!benchmark_reload_with_target.should_fire);
+    require(benchmark_reload_with_target.should_reload);
+    assert_zero_velocity(benchmark_reload_with_target.velocity);
+
+    const network_example::game_server::EnemyAiDecision benchmark_reload_without_target =
+        benchmark_controller.decide(enemy, {});
+    require(benchmark_reload_without_target.target_player_net_id == 0);
+    require(!benchmark_reload_without_target.should_fire);
+    require(benchmark_reload_without_target.should_reload);
+    assert_zero_velocity(benchmark_reload_without_target.velocity);
+
     return 0;
 }

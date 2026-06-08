@@ -59,14 +59,14 @@ void log_native_build_info() {
 
 }  // namespace
 
-int RunHostServer(std::uint16_t port) {
+int RunHostServer(std::uint16_t port, const char* gameplay_catalog_path) {
     log_native_build_info();
 
     network_example::game_server::GameServerGameplayConfig gameplay_config;
     try {
         gameplay_config =
             network_example::game_server::load_gameplay_config_from_catalog_file(
-                "game_server/gameplay_catalog.yaml");
+                gameplay_catalog_path);
     } catch (const std::exception& error) {
         spdlog::error("failed to load gameplay catalog: {}", error.what());
         return 1;

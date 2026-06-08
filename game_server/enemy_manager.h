@@ -26,7 +26,8 @@ public:
     const std::vector<Enemy>& enemies() const;
 
 private:
-    void spawn_initial_enemy();
+    void spawn_initial_enemies();
+    bool spawn_enemy_at(const KernelVec3& position);
     void prune_missing_enemies();
     bool apply_weapon_mechanics(std::uint32_t net_id) const;
 

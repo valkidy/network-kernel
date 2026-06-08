@@ -1,5 +1,6 @@
 #include <cassert>
 #include <cstddef>
+#include <cmath>
 #include <cstdlib>
 #include <vector>
 
@@ -611,6 +612,65 @@ void local_predicted_spammer_can_spawn_many_low_damage_projectiles() {
     }
 }
 
+void projectile_spammer_burst_spawns_three_spread_projectiles() {
+    network_example::World world;
+    const network_example::NetId player =
+        spawn_player(world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
+    const auto player_entity = world.find_entity(player);
+    assert(player_entity.has_value());
+    network_example::WeaponTuning& tuning =
+        world.registry().get<network_example::WeaponTuning>(*player_entity);
+    network_example::WeaponMechanicsDefinition& spammer =
+        tuning.definitions[network_example::kWeaponSlot2];
+    spammer.mode = network_example::WeaponFireMode::kProjectile;
+    spammer.magazine_size = 120;
+    spammer.damage = 1;
+    spammer.cooldown_ticks = 1;
+    spammer.reload_ticks = 30;
+    spammer.pellet_count = 3;
+    spammer.pellet_spread = 15.0f;
+    spammer.projectile_speed = 30.0f;
+    spammer.projectile_lifetime_seconds = 2.0f;
+    spammer.explosion_radius = 0.0f;
+    spammer.projectile_motion_model = network_example::ProjectileMotionModel::kLinear;
+    spammer.projectile_damage_shape =
+        network_example::ProjectileDamageShape::kDirectHit;
+    spammer.projectile_collision_mask = network_example::kCollisionLayerEnemy;
+    network_example::WeaponState& weapon = weapon_state(world, player);
+    weapon.ammo[network_example::kWeaponSlot2] = spammer.magazine_size;
+
+    PlayerInput input = fire_input(network_example::kWeaponSlot2);
+    input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
+    std::vector<KernelEvent> events;
+    network_example::simulate_weapons(world, queue(input), 0, &events);
+
+    require(count_events(events, KernelEventType_EntitySpawned) == 3);
+    require(projectile_count(world) == 3);
+    require(weapon.ammo[network_example::kWeaponSlot2] == 119);
+
+    bool saw_negative = false;
+    bool saw_center = false;
+    bool saw_positive = false;
+    auto view =
+        world.registry()
+            .view<
+                const network_example::ProjectileState,
+                const network_example::ProjectileTag>();
+    for (const entt::entity entity : view) {
+        const network_example::ProjectileState& projectile =
+            view.get<const network_example::ProjectileState>(entity);
+        require(projectile.damage == 1);
+        require(projectile.weapon_id == network_example::kWeaponSlot2);
+        const glm::vec3 direction = glm::normalize(projectile.initial_velocity);
+        saw_center = saw_center || (std::fabs(direction.z) < 0.001f);
+        saw_negative = saw_negative || direction.z < -0.25f;
+        saw_positive = saw_positive || direction.z > 0.25f;
+    }
+    require(saw_negative);
+    require(saw_center);
+    require(saw_positive);
+}
+
 void projectile_rewind_spawns_from_historical_muzzle() {
     network_example::World world;
     const network_example::NetId player =
@@ -926,6 +986,7 @@ int main() {
     direct_hit_projectile_without_explosion_applies_damage();
     projectile_weapon_fires_again_after_cooldown();
     local_predicted_spammer_can_spawn_many_low_damage_projectiles();
+    projectile_spammer_burst_spawns_three_spread_projectiles();
     projectile_rewind_spawns_from_historical_muzzle();
     projectile_without_rewind_uses_current_muzzle();
     projectile_historical_hit_query_hits_historical_target();

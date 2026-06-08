@@ -8,7 +8,13 @@
 
 namespace network_example::game_server {
 
+enum class EnemyAiProfile : std::uint8_t {
+    kDefault = 0,
+    kProjectileBenchmark = 1,
+};
+
 struct EnemyAiConfig {
+    EnemyAiProfile profile = EnemyAiProfile::kDefault;
     float chase_range = 12.0f;
     float move_speed = 2.5f;
     float patrol_speed = 1.25f;

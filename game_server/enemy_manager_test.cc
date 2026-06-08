@@ -72,6 +72,19 @@ std::uint32_t query_enemies(
         states);
 }
 
+std::uint32_t query_benchmark_enemies(
+    KernelHandle* kernel,
+    std::array<KernelServerEntityState, 16>* states) {
+    for (KernelServerEntityState& state : *states) {
+        state.struct_size = sizeof(KernelServerEntityState);
+    }
+    return Kernel_ServerQueryEntities(
+        kernel,
+        network_example::game_server::kEntityTypeEnemy,
+        states->data(),
+        static_cast<std::uint32_t>(states->size()));
+}
+
 std::uint32_t query_players(
     KernelHandle* kernel,
     std::array<KernelServerEntityState, 8>* states) {
@@ -329,5 +342,37 @@ int main() {
     require(enemy_states[0].velocity.z == 0.0f);
 
     Kernel_Destroy(dedicated_kernel);
+
+    KernelConfig benchmark_config = dedicated_server_config();
+    KernelHandle* benchmark_kernel = Kernel_Create(&benchmark_config);
+    require(benchmark_kernel != nullptr);
+    network_example::game_server::GameServerGameplayConfig benchmark_gameplay =
+        network_example::game_server::load_gameplay_config_from_catalog_file(
+            "game_server/projectile_sync_benchmark_catalog.yaml");
+    require(network_example::game_server::load_kernel_gameplay_catalog(
+        benchmark_kernel,
+        benchmark_gameplay));
+    require(Kernel_StartDedicatedServer(benchmark_kernel, 7784));
+
+    network_example::game_server::GameServer benchmark_game_server(
+        benchmark_kernel,
+        benchmark_gameplay);
+    benchmark_game_server.handle_event(player_joined);
+    benchmark_game_server.tick(1.0f / 30.0f);
+    std::array<KernelServerEntityState, 16> benchmark_enemy_states{};
+    const std::uint32_t benchmark_enemy_count =
+        query_benchmark_enemies(benchmark_kernel, &benchmark_enemy_states);
+    require(benchmark_enemy_count == 10);
+    require(benchmark_game_server.enemy_manager().enemy_count() == 10);
+    for (std::uint32_t index = 0; index < benchmark_enemy_count; ++index) {
+        const float dx = benchmark_enemy_states[index].position.x -
+                         benchmark_gameplay.enemy.spawn_position.x;
+        const float dz = benchmark_enemy_states[index].position.z -
+                         benchmark_gameplay.enemy.spawn_position.z;
+        require(dx * dx + dz * dz <= 25.0f);
+        require(benchmark_enemy_states[index].position.y == 0.0f);
+    }
+
+    Kernel_Destroy(benchmark_kernel);
     return 0;
 }

@@ -18,6 +18,7 @@ cc_binary(
     data = [
         "//game_server:collider_templates/default.yaml",
         "//game_server:gameplay_catalog.yaml",
+        "//game_server:projectile_sync_benchmark_catalog.yaml",
         "//game_server:weapon_templates/beam_rifle.yaml",
         "//game_server:weapon_templates/fire_floor.yaml",
         "//game_server:weapon_templates/homing_missile.yaml",
