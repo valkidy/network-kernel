@@ -4,7 +4,10 @@
 #include <chrono>
 #include <cstdint>
 #include <exception>
+#include <fstream>
+#include <string>
 #include <thread>
+#include <vector>
 
 #include <spdlog/spdlog.h>
 
@@ -53,16 +56,52 @@ void log_dedicated_server_build_info() {
         info.compiler_info);
 }
 
+std::vector<std::uint8_t> read_binary_file(const char* path) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file.good()) {
+        throw std::runtime_error(std::string("failed to open file: ") + path);
+    }
+    return std::vector<std::uint8_t>(
+        std::istreambuf_iterator<char>(file),
+        std::istreambuf_iterator<char>());
+}
+
 }  // namespace
 
-int RunDedicatedServer(std::uint16_t port, const char* gameplay_catalog_path) {
+int RunDedicatedServer(
+    std::uint16_t port,
+    const char* gameplay_catalog_path,
+    const char* gameplay_catalog_bundle_path,
+    const char* gameplay_catalog_entry_path) {
     log_dedicated_server_build_info();
 
     network_example::game_server::GameServerGameplayConfig gameplay_config;
     try {
-        gameplay_config =
-            network_example::game_server::load_gameplay_config_from_catalog_file(
-                gameplay_catalog_path);
+        if (gameplay_catalog_bundle_path != nullptr &&
+            gameplay_catalog_bundle_path[0] != '\0') {
+            const std::vector<std::uint8_t> bundle_bytes =
+                read_binary_file(gameplay_catalog_bundle_path);
+            gameplay_config =
+                network_example::game_server::load_gameplay_config_from_bundle_memory(
+                    bundle_bytes.data(),
+                    static_cast<std::uint32_t>(bundle_bytes.size()),
+                    gameplay_catalog_entry_path);
+            spdlog::info(
+                "loaded gameplay catalog bundle={} entry={} version={} hash={}",
+                gameplay_catalog_bundle_path,
+                gameplay_catalog_entry_path,
+                gameplay_config.weapons.catalog_version,
+                gameplay_config.weapons.catalog_hash);
+        } else {
+            gameplay_config =
+                network_example::game_server::load_gameplay_config_from_catalog_file(
+                    gameplay_catalog_path);
+            spdlog::info(
+                "loaded gameplay catalog file={} version={} hash={}",
+                gameplay_catalog_path,
+                gameplay_config.weapons.catalog_version,
+                gameplay_config.weapons.catalog_hash);
+        }
     } catch (const std::exception& error) {
         spdlog::error("failed to load gameplay catalog: {}", error.what());
         return 1;

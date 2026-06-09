@@ -33,6 +33,12 @@ GameServerHandle* GameServer_Create(KernelHandle* kernel);
 GameServerHandle* GameServer_CreateWithWeaponTemplateDirectory(
     KernelHandle* kernel,
     const char* template_directory);
+GameServerHandle* GameServer_CreateWithGameplayCatalogFromMemory(
+    KernelHandle* kernel,
+    const uint8_t* bundle_bytes,
+    uint32_t bundle_size,
+    const char* entry_path,
+    KernelGameplayCatalogLoadResult* out_result);
 void GameServer_Destroy(GameServerHandle* game_server);
 
 void GameServer_HandleEvent(

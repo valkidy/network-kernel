@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 15u
+#define KERNEL_ABI_VERSION 16u
 
 #define KERNEL_BUILD_INFO_TEXT_SIZE 128u
 #define KERNEL_LAN_DISCOVERY_TEXT_SIZE 128u
@@ -381,6 +381,17 @@ typedef struct KernelGameplayCatalogDefinition {
     const KernelColliderBindingDefinition* collider_bindings;
     uint32_t collider_binding_count;
 } KernelGameplayCatalogDefinition;
+
+typedef struct KernelGameplayCatalogLoadResult {
+    uint32_t struct_size;
+    bool success;
+    uint32_t catalog_version;
+    uint64_t catalog_hash;
+    uint32_t projectile_template_count;
+    uint32_t collider_template_count;
+    uint32_t collider_binding_count;
+    char error_message[256];
+} KernelGameplayCatalogLoadResult;
 
 typedef struct KernelBenchmarkStats {
     uint32_t struct_size;

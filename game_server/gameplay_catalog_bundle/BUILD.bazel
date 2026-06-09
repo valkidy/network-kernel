@@ -1,0 +1,31 @@
+licenses(["notice"])
+
+package(default_visibility = ["//visibility:public"])
+
+genrule(
+    name = "bundle",
+    srcs = ["//game_server:gameplay_catalog_bundle_sources"],
+    outs = ["bundle.zip"],
+    cmd = """
+set -euo pipefail
+out_path="$$(pwd)/$@"
+bundle_root="$(@D)/bundle_root"
+rm -rf "$$bundle_root"
+mkdir -p "$$bundle_root/weapon_templates" "$$bundle_root/collider_templates"
+for src in $(SRCS); do
+  case "$$src" in
+    */gameplay_catalog.yaml)
+      cp "$$src" "$$bundle_root/gameplay_catalog.yaml"
+      ;;
+    */weapon_templates/*.yaml)
+      cp "$$src" "$$bundle_root/weapon_templates/$$(basename "$$src")"
+      ;;
+    */collider_templates/*.yaml)
+      cp "$$src" "$$bundle_root/collider_templates/$$(basename "$$src")"
+      ;;
+  esac
+done
+(cd "$$bundle_root" && /usr/bin/zip -qr -X "$$out_path" gameplay_catalog.yaml weapon_templates collider_templates)
+rm -rf "$$bundle_root"
+""",
+)

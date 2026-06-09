@@ -5,6 +5,8 @@ magazine_size: 120
 damage: 1
 cooldown_ticks: 1
 reload_ticks: 30
+burst_count: 3
+burst_spread_degrees: 15.0
 projectile:
   sync_mode: local_predicted_deterministic
   movement_model: linear

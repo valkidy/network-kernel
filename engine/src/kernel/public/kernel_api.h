@@ -69,6 +69,13 @@ bool Kernel_LoadGameplayCatalog(
     KernelHandle* kernel,
     const KernelGameplayCatalogDefinition* catalog);
 
+bool Kernel_LoadGameplayCatalogFromMemory(
+    KernelHandle* kernel,
+    const uint8_t* bundle_bytes,
+    uint32_t bundle_size,
+    const char* entry_path,
+    KernelGameplayCatalogLoadResult* out_result);
+
 uint32_t Kernel_GetRenderStates(
     KernelHandle* kernel,
     RenderEntityState* out_states,

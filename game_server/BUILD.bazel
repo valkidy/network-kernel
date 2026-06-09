@@ -2,6 +2,16 @@ licenses(["notice"])
 
 package(default_visibility = ["//visibility:public"])
 
+filegroup(
+    name = "gameplay_catalog_bundle_sources",
+    srcs = glob([
+        "collider_templates/*.yaml",
+        "weapon_templates/*.yaml",
+    ]) + [
+        "gameplay_catalog.yaml",
+    ],
+)
+
 cc_library(
     name = "game_server",
     srcs = [
@@ -21,6 +31,7 @@ cc_library(
     deps = [
         "//engine/components/ai:ai",
         "//engine/src/kernel:kernel_api",
+        "@zip_archive//:zip",
         "@yaml-cpp//:yaml-cpp",
     ],
 )

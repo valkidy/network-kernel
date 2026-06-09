@@ -2,12 +2,17 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <memory>
 #include <stdexcept>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
 #include <yaml-cpp/yaml.h>
+#include <zip.h>
 
 #include "kernel/public/kernel_api.h"
 
@@ -18,6 +23,8 @@ constexpr std::uint64_t kFnvOffsetBasis = 14695981039346656037ull;
 constexpr std::uint64_t kFnvPrime = 1099511628211ull;
 constexpr const char* kDefaultGameplayCatalogPath =
     "game_server/gameplay_catalog.yaml";
+constexpr std::uint64_t kMaxYamlEntryBytes = 1024ull * 1024ull;
+constexpr std::uint64_t kMaxTotalYamlBytes = 8ull * 1024ull * 1024ull;
 
 void hash_bytes(std::uint64_t* hash, const void* data, std::size_t size) {
     const auto* bytes = static_cast<const std::uint8_t*>(data);
@@ -513,6 +520,249 @@ KernelVec3 vec3_from_yaml(const YAML::Node& node) {
         node["z"].as<float>()};
 }
 
+class GameplayConfigSource {
+public:
+    virtual ~GameplayConfigSource() = default;
+    virtual YAML::Node load_yaml(const std::string& path) const = 0;
+    virtual std::vector<std::string> list_yaml_files(
+        const std::string& directory) const = 0;
+    virtual std::string parent_path(const std::string& path) const = 0;
+    virtual std::string resolve_path(
+        const std::string& base_path,
+        const YAML::Node& node) const = 0;
+    virtual std::string default_collider_path_for_weapon_dir(
+        const std::string& directory) const = 0;
+};
+
+class FilesystemGameplayConfigSource final : public GameplayConfigSource {
+public:
+    YAML::Node load_yaml(const std::string& path) const override {
+        return YAML::LoadFile(path);
+    }
+
+    std::vector<std::string> list_yaml_files(
+        const std::string& directory) const override {
+        std::vector<std::string> files;
+        for (const std::filesystem::directory_entry& entry :
+             std::filesystem::directory_iterator(directory)) {
+            if (entry.is_regular_file() && entry.path().extension() == ".yaml") {
+                files.push_back(entry.path().string());
+            }
+        }
+        std::sort(files.begin(), files.end());
+        return files;
+    }
+
+    std::string parent_path(const std::string& path) const override {
+        return std::filesystem::path(path).parent_path().string();
+    }
+
+    std::string resolve_path(
+        const std::string& base_path,
+        const YAML::Node& node) const override {
+        std::filesystem::path path = node.as<std::string>();
+        if (path.is_relative()) {
+            path = std::filesystem::path(base_path) / path;
+        }
+        return path.lexically_normal().string();
+    }
+
+    std::string default_collider_path_for_weapon_dir(
+        const std::string& directory) const override {
+        return (std::filesystem::path(directory).parent_path() /
+                "collider_templates" /
+                "default.yaml")
+            .lexically_normal()
+            .string();
+    }
+};
+
+std::string normalize_archive_path(const std::string& path) {
+    if (path.empty() || path.front() == '/' || path.find(':') != std::string::npos) {
+        throw std::runtime_error("invalid archive path: " + path);
+    }
+
+    std::vector<std::string> parts;
+    std::string part;
+    for (const char value : path) {
+        const char normalized = value == '\\' ? '/' : value;
+        if (normalized == '/') {
+            if (!part.empty() && part != ".") {
+                if (part == "..") {
+                    throw std::runtime_error("invalid archive path: " + path);
+                }
+                parts.push_back(part);
+            }
+            part.clear();
+            continue;
+        }
+        part.push_back(normalized);
+    }
+    if (!part.empty() && part != ".") {
+        if (part == "..") {
+            throw std::runtime_error("invalid archive path: " + path);
+        }
+        parts.push_back(part);
+    }
+    if (parts.empty()) {
+        throw std::runtime_error("invalid archive path: " + path);
+    }
+
+    std::string normalized;
+    for (const std::string& component : parts) {
+        if (!normalized.empty()) {
+            normalized.push_back('/');
+        }
+        normalized += component;
+    }
+    return normalized;
+}
+
+std::string archive_parent_path(const std::string& path) {
+    const std::string normalized = normalize_archive_path(path);
+    const std::size_t separator = normalized.find_last_of('/');
+    return separator == std::string::npos ? std::string{} : normalized.substr(0, separator);
+}
+
+std::string archive_join_path(
+    const std::string& base_path,
+    const std::string& relative_path) {
+    if (base_path.empty()) {
+        return normalize_archive_path(relative_path);
+    }
+    return normalize_archive_path(base_path + "/" + relative_path);
+}
+
+bool has_yaml_extension(const std::string& path) {
+    constexpr const char* kYamlSuffix = ".yaml";
+    return path.size() >= 5 &&
+           path.compare(path.size() - 5, 5, kYamlSuffix) == 0;
+}
+
+class MemoryZipGameplayConfigSource final : public GameplayConfigSource {
+public:
+    MemoryZipGameplayConfigSource(
+        const std::uint8_t* bundle_bytes,
+        std::uint32_t bundle_size) {
+        if (bundle_bytes == nullptr || bundle_size == 0) {
+            throw std::runtime_error("gameplay catalog bundle is empty");
+        }
+
+        struct ZipStreamCloser {
+            void operator()(struct zip_t* zip) const {
+                zip_stream_close(zip);
+            }
+        };
+
+        std::unique_ptr<struct zip_t, ZipStreamCloser> archive(zip_stream_open(
+            reinterpret_cast<const char*>(bundle_bytes),
+            bundle_size,
+            0,
+            'r'));
+        if (!archive) {
+            throw std::runtime_error("failed to open gameplay catalog bundle");
+        }
+
+        const ssize_t total_entries = zip_entries_total(archive.get());
+        if (total_entries < 0) {
+            throw std::runtime_error("failed to list gameplay catalog bundle entries");
+        }
+
+        std::uint64_t total_yaml_bytes = 0;
+        for (ssize_t index = 0; index < total_entries; ++index) {
+            if (zip_entry_openbyindex(archive.get(), static_cast<std::size_t>(index)) != 0) {
+                throw std::runtime_error("failed to open gameplay catalog bundle entry");
+            }
+
+            const char* entry_name = zip_entry_name(archive.get());
+            if (entry_name == nullptr) {
+                throw std::runtime_error("gameplay catalog bundle entry has no name");
+            }
+            const std::string path = normalize_archive_path(entry_name);
+            if (zip_entry_issymlink(archive.get())) {
+                throw std::runtime_error("archive symlink entries are not supported: " + path);
+            }
+            if (zip_entry_isdir(archive.get())) {
+                zip_entry_close(archive.get());
+                continue;
+            }
+
+            const unsigned long long entry_size = zip_entry_size(archive.get());
+            if (entry_size > kMaxYamlEntryBytes) {
+                throw std::runtime_error("archive entry exceeds size limit: " + path);
+            }
+            total_yaml_bytes += entry_size;
+            if (total_yaml_bytes > kMaxTotalYamlBytes) {
+                throw std::runtime_error("archive YAML content exceeds total size limit");
+            }
+            if (files_.contains(path)) {
+                throw std::runtime_error("duplicate archive entry: " + path);
+            }
+
+            std::string data(static_cast<std::size_t>(entry_size), '\0');
+            if (entry_size > 0) {
+                const ssize_t read_size = zip_entry_noallocread(
+                    archive.get(),
+                    data.data(),
+                    data.size());
+                if (read_size != static_cast<ssize_t>(data.size())) {
+                    throw std::runtime_error("failed to read archive entry: " + path);
+                }
+            }
+            files_.emplace(path, std::move(data));
+            zip_entry_close(archive.get());
+        }
+    }
+
+    YAML::Node load_yaml(const std::string& path) const override {
+        const std::string normalized = normalize_archive_path(path);
+        const auto found = files_.find(normalized);
+        if (found == files_.end()) {
+            throw std::runtime_error("missing YAML file in bundle: " + normalized);
+        }
+        return YAML::Load(found->second);
+    }
+
+    std::vector<std::string> list_yaml_files(
+        const std::string& directory) const override {
+        const std::string normalized_directory = normalize_archive_path(directory);
+        const std::string prefix = normalized_directory + "/";
+        std::vector<std::string> files;
+        for (const auto& [path, contents] : files_) {
+            (void)contents;
+            if (!has_yaml_extension(path) || path.rfind(prefix, 0) != 0) {
+                continue;
+            }
+            const std::string rest = path.substr(prefix.size());
+            if (rest.find('/') == std::string::npos) {
+                files.push_back(path);
+            }
+        }
+        std::sort(files.begin(), files.end());
+        return files;
+    }
+
+    std::string parent_path(const std::string& path) const override {
+        return archive_parent_path(path);
+    }
+
+    std::string resolve_path(
+        const std::string& base_path,
+        const YAML::Node& node) const override {
+        return archive_join_path(base_path, node.as<std::string>());
+    }
+
+    std::string default_collider_path_for_weapon_dir(
+        const std::string& directory) const override {
+        return archive_join_path(
+            archive_parent_path(directory),
+            "collider_templates/default.yaml");
+    }
+
+private:
+    std::unordered_map<std::string, std::string> files_;
+};
+
 KernelWeaponMechanicsDefinition weapon_from_yaml(const YAML::Node& node) {
     const auto id = static_cast<std::uint8_t>(node["id"].as<int>());
     const std::uint16_t magazine_size = node["magazine_size"].as<std::uint16_t>();
@@ -564,6 +814,12 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(const YAML::Node& node) {
             projectile["explosion_radius"] ? projectile["explosion_radius"].as<float>() : 0.0f,
             motion_model_from_yaml(projectile["movement_model"]),
             vec3_from_yaml(projectile["gravity"]));
+        weapon.pellet_count =
+            node["burst_count"]
+                ? static_cast<std::uint8_t>(node["burst_count"].as<int>())
+                : 1;
+        weapon.pellet_spread =
+            node["burst_spread_degrees"] ? node["burst_spread_degrees"].as<float>() : 0.0f;
         weapon.projectile.hit_response = hit_response_from_yaml(projectile["hit_response"]);
         weapon.projectile.damage_shape = damage_shape_from_yaml(projectile["damage_shape"]);
         weapon.projectile.collision_mask =
@@ -686,18 +942,18 @@ std::uint32_t collider_layer_from_yaml(const YAML::Node& node) {
     return collision_mask_from_yaml(node);
 }
 
-std::filesystem::path resolve_catalog_path(
-    const std::filesystem::path& base_path,
-    const YAML::Node& node) {
-    std::filesystem::path path = node.as<std::string>();
-    if (path.is_relative()) {
-        path = base_path / path;
-    }
-    return path.lexically_normal();
-}
+void apply_default_non_weapon_config(GameServerGameplayConfig* config);
+void apply_catalog_player_config(
+    const YAML::Node& document,
+    GameServerGameplayConfig* config);
+void apply_catalog_enemy_config(
+    const YAML::Node& document,
+    GameServerGameplayConfig* config);
 
-ColliderCatalogConfig load_collider_catalog_from_file(const std::string& path) {
-    const YAML::Node document = YAML::LoadFile(path);
+ColliderCatalogConfig load_collider_catalog_from_source(
+    const GameplayConfigSource& source,
+    const std::string& path) {
+    const YAML::Node document = source.load_yaml(path);
     if (!document["templates"] || !document["bindings"]) {
         throw std::runtime_error(
             "collider catalog requires templates and bindings: " + path);
@@ -745,6 +1001,111 @@ ColliderCatalogConfig load_collider_catalog_from_file(const std::string& path) {
         colliders.bindings.push_back(binding);
     }
     return colliders;
+}
+
+GameServerGameplayConfig load_gameplay_config_from_weapon_template_source(
+    const GameplayConfigSource& source,
+    const std::string& directory) {
+    GameServerGameplayConfig config;
+    config.weapons.projectile_sync_modes.fill(
+        KernelProjectileSyncMode_HybridDeterministicThenSnapshot);
+    std::array<bool, kWeaponCount> seen{
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false};
+    const std::vector<std::string> files = source.list_yaml_files(directory);
+    for (const std::string& file : files) {
+        const YAML::Node document = source.load_yaml(file);
+        const KernelWeaponMechanicsDefinition weapon = weapon_from_yaml(document);
+        if (weapon.weapon_id >= kWeaponCount) {
+            throw std::runtime_error("weapon id out of range: " + file);
+        }
+        if (seen[weapon.weapon_id]) {
+            throw std::runtime_error("duplicate weapon id: " + file);
+        }
+        seen[weapon.weapon_id] = true;
+        config.weapons.definitions[weapon.weapon_id] = weapon;
+        config.weapons.projectile_sync_modes[weapon.weapon_id] =
+            projectile_sync_mode_from_weapon_yaml(document);
+        config.weapons.names[weapon.weapon_id] =
+            document["name"] ? document["name"].as<std::string>()
+                             : std::filesystem::path(file).stem().string();
+    }
+    for (std::size_t index = 0; index < seen.size(); ++index) {
+        if (!seen[index]) {
+            throw std::runtime_error("missing weapon template id " + std::to_string(index));
+        }
+    }
+    apply_default_non_weapon_config(&config);
+    config.colliders = load_collider_catalog_from_source(
+        source,
+        source.default_collider_path_for_weapon_dir(directory));
+    config.weapons.catalog_hash = compute_gameplay_catalog_hash(config);
+    const std::vector<std::string> errors = validate_gameplay_config(config);
+    if (!errors.empty()) {
+        throw std::runtime_error(errors.front());
+    }
+    return config;
+}
+
+GameServerGameplayConfig load_gameplay_config_from_catalog_source(
+    const GameplayConfigSource& source,
+    const std::string& path) {
+    const YAML::Node document = source.load_yaml(path);
+    if (!document["weapon_template_dir"] || !document["collider_template_file"]) {
+        throw std::runtime_error(
+            "gameplay catalog requires weapon_template_dir and "
+            "collider_template_file: " +
+            path);
+    }
+
+    const std::string base_path = source.parent_path(path);
+    const std::string weapon_template_dir =
+        source.resolve_path(base_path, document["weapon_template_dir"]);
+    GameServerGameplayConfig config =
+        load_gameplay_config_from_weapon_template_source(
+            source,
+            weapon_template_dir);
+    config.weapons.catalog_version =
+        document["catalog_version"] ? document["catalog_version"].as<std::uint32_t>()
+                                    : config.weapons.catalog_version;
+
+    const std::string collider_template_file =
+        source.resolve_path(base_path, document["collider_template_file"]);
+    config.colliders =
+        load_collider_catalog_from_source(source, collider_template_file);
+
+    if (document["benchmark_projectile_groups"]) {
+        const YAML::Node groups = document["benchmark_projectile_groups"];
+        config.benchmark_projectile_groups.event_spawn_weapon_id =
+            groups["event_spawn_weapon_id"]
+                ? static_cast<std::uint8_t>(
+                      groups["event_spawn_weapon_id"].as<int>())
+                : config.benchmark_projectile_groups.event_spawn_weapon_id;
+        config.benchmark_projectile_groups.snapshot_only_weapon_id =
+            groups["snapshot_only_weapon_id"]
+                ? static_cast<std::uint8_t>(
+                      groups["snapshot_only_weapon_id"].as<int>())
+                : config.benchmark_projectile_groups.snapshot_only_weapon_id;
+        config.benchmark_projectile_groups.hybrid_weapon_id =
+            groups["hybrid_weapon_id"]
+                ? static_cast<std::uint8_t>(groups["hybrid_weapon_id"].as<int>())
+                : config.benchmark_projectile_groups.hybrid_weapon_id;
+    }
+
+    apply_catalog_player_config(document, &config);
+    apply_catalog_enemy_config(document, &config);
+
+    config.weapons.catalog_hash = compute_gameplay_catalog_hash(config);
+    const std::vector<std::string> errors = validate_gameplay_config(config);
+    if (!errors.empty()) {
+        throw std::runtime_error(errors.front());
+    }
+    return config;
 }
 
 void apply_default_non_weapon_config(GameServerGameplayConfig* config) {
@@ -795,36 +1156,6 @@ void apply_catalog_enemy_config(
     if (enemy["ai_profile"]) {
         config->enemy.ai.profile = enemy_ai_profile_from_yaml(enemy["ai_profile"]);
     }
-}
-
-void apply_catalog_weapon_overrides(
-    const YAML::Node& document,
-    GameServerGameplayConfig* config) {
-    const YAML::Node weapons = document["weapons"];
-    if (!weapons) {
-        return;
-    }
-    const YAML::Node spammer = weapons["projectile_spammer"];
-    if (!spammer) {
-        return;
-    }
-    KernelWeaponMechanicsDefinition& weapon =
-        config->weapons.definitions[kWeaponGrenade];
-    if (spammer["burst_count"]) {
-        weapon.pellet_count =
-            static_cast<std::uint8_t>(spammer["burst_count"].as<int>());
-    }
-    if (spammer["burst_spread_degrees"]) {
-        weapon.pellet_spread = spammer["burst_spread_degrees"].as<float>();
-    }
-}
-
-std::filesystem::path default_collider_template_path_for_weapon_dir(
-    const std::string& directory) {
-    return (std::filesystem::path(directory).parent_path() /
-            "collider_templates" /
-            "default.yaml")
-        .lexically_normal();
 }
 
 }  // namespace
@@ -881,111 +1212,22 @@ GameServerGameplayConfig default_game_server_gameplay_config() {
 
 GameServerGameplayConfig load_gameplay_config_from_weapon_template_directory(
     const std::string& directory) {
-    GameServerGameplayConfig config;
-    config.weapons.projectile_sync_modes.fill(
-        KernelProjectileSyncMode_HybridDeterministicThenSnapshot);
-    std::array<bool, kWeaponCount> seen{
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false};
-    std::vector<std::filesystem::path> files;
-    for (const std::filesystem::directory_entry& entry :
-         std::filesystem::directory_iterator(directory)) {
-        if (entry.is_regular_file() && entry.path().extension() == ".yaml") {
-            files.push_back(entry.path());
-        }
-    }
-    std::sort(files.begin(), files.end());
-    for (const std::filesystem::path& file : files) {
-        const YAML::Node document = YAML::LoadFile(file.string());
-        const KernelWeaponMechanicsDefinition weapon = weapon_from_yaml(document);
-        if (weapon.weapon_id >= kWeaponCount) {
-            throw std::runtime_error("weapon id out of range: " + file.string());
-        }
-        if (seen[weapon.weapon_id]) {
-            throw std::runtime_error("duplicate weapon id: " + file.string());
-        }
-        seen[weapon.weapon_id] = true;
-        config.weapons.definitions[weapon.weapon_id] = weapon;
-        config.weapons.projectile_sync_modes[weapon.weapon_id] =
-            projectile_sync_mode_from_weapon_yaml(document);
-        config.weapons.names[weapon.weapon_id] =
-            document["name"] ? document["name"].as<std::string>() : file.stem().string();
-    }
-    for (std::size_t index = 0; index < seen.size(); ++index) {
-        if (!seen[index]) {
-            throw std::runtime_error("missing weapon template id " + std::to_string(index));
-        }
-    }
-    apply_default_non_weapon_config(&config);
-    config.colliders = load_collider_catalog_from_file(
-        default_collider_template_path_for_weapon_dir(directory).string());
-    config.weapons.catalog_hash = compute_gameplay_catalog_hash(config);
-    const std::vector<std::string> errors = validate_gameplay_config(config);
-    if (!errors.empty()) {
-        throw std::runtime_error(errors.front());
-    }
-    return config;
+    const FilesystemGameplayConfigSource source;
+    return load_gameplay_config_from_weapon_template_source(source, directory);
 }
 
 GameServerGameplayConfig load_gameplay_config_from_catalog_file(
     const std::string& path) {
-    const std::filesystem::path catalog_path = path;
-    const std::filesystem::path base_path = catalog_path.parent_path();
-    const YAML::Node document = YAML::LoadFile(path);
-    if (!document["weapon_template_dir"] || !document["collider_template_file"]) {
-        throw std::runtime_error(
-            "gameplay catalog requires weapon_template_dir and "
-            "collider_template_file: " +
-            path);
-    }
+    const FilesystemGameplayConfigSource source;
+    return load_gameplay_config_from_catalog_source(source, path);
+}
 
-    const std::filesystem::path weapon_template_dir =
-        resolve_catalog_path(base_path, document["weapon_template_dir"]);
-    GameServerGameplayConfig config =
-        load_gameplay_config_from_weapon_template_directory(
-            weapon_template_dir.string());
-    config.weapons.catalog_version =
-        document["catalog_version"] ? document["catalog_version"].as<std::uint32_t>()
-                                    : config.weapons.catalog_version;
-
-    const std::filesystem::path collider_template_file =
-        resolve_catalog_path(base_path, document["collider_template_file"]);
-    config.colliders =
-        load_collider_catalog_from_file(collider_template_file.string());
-
-    if (document["benchmark_projectile_groups"]) {
-        const YAML::Node groups = document["benchmark_projectile_groups"];
-        config.benchmark_projectile_groups.event_spawn_weapon_id =
-            groups["event_spawn_weapon_id"]
-                ? static_cast<std::uint8_t>(
-                      groups["event_spawn_weapon_id"].as<int>())
-                : config.benchmark_projectile_groups.event_spawn_weapon_id;
-        config.benchmark_projectile_groups.snapshot_only_weapon_id =
-            groups["snapshot_only_weapon_id"]
-                ? static_cast<std::uint8_t>(
-                      groups["snapshot_only_weapon_id"].as<int>())
-                : config.benchmark_projectile_groups.snapshot_only_weapon_id;
-        config.benchmark_projectile_groups.hybrid_weapon_id =
-            groups["hybrid_weapon_id"]
-                ? static_cast<std::uint8_t>(groups["hybrid_weapon_id"].as<int>())
-                : config.benchmark_projectile_groups.hybrid_weapon_id;
-    }
-
-    apply_catalog_player_config(document, &config);
-    apply_catalog_enemy_config(document, &config);
-    apply_catalog_weapon_overrides(document, &config);
-
-    config.weapons.catalog_hash = compute_gameplay_catalog_hash(config);
-    const std::vector<std::string> errors = validate_gameplay_config(config);
-    if (!errors.empty()) {
-        throw std::runtime_error(errors.front());
-    }
-    return config;
+GameServerGameplayConfig load_gameplay_config_from_bundle_memory(
+    const std::uint8_t* bundle_bytes,
+    std::uint32_t bundle_size,
+    const std::string& entry_path) {
+    const MemoryZipGameplayConfigSource source(bundle_bytes, bundle_size);
+    return load_gameplay_config_from_catalog_source(source, entry_path);
 }
 
 std::vector<std::string> validate_gameplay_config(

@@ -67,5 +67,10 @@ int main() {
     assert(network_example::gns_callback_router_has_owner_for_testing());
     network_example::gns_callback_router_clear_owner_for_testing(&first);
     assert(!network_example::gns_callback_router_has_owner_for_testing());
+
+    network_example::GnsTransport server;
+    assert(server.StartServer(7797));
+    assert(server.running());
+    server.Stop();
     return 0;
 }
