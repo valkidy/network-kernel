@@ -16,16 +16,7 @@ cc_binary(
         "main.cc",
     ],
     data = [
-        "//game_server:collider_templates/default.yaml",
-        "//game_server:gameplay_catalog.yaml",
-        "//game_server:projectile_sync_benchmark_catalog.yaml",
-        "//game_server:weapon_templates/beam_rifle.yaml",
-        "//game_server:weapon_templates/fire_floor.yaml",
-        "//game_server:weapon_templates/homing_missile.yaml",
-        "//game_server:weapon_templates/rifle.yaml",
-        "//game_server:weapon_templates/rocket.yaml",
-        "//game_server:weapon_templates/shotgun.yaml",
-        "//game_server:weapon_templates/spammer.yaml",
+        "//game_server/gameplay_catalog_bundle:bundle.zip",
         "//engine/src/kernel:network_kernel_shared",
     ],
     deps = [

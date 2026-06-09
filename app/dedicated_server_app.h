@@ -3,6 +3,10 @@
 
 #include <cstdint>
 
-int RunDedicatedServer(std::uint16_t port, const char* gameplay_catalog_path);
+int RunDedicatedServer(
+    std::uint16_t port,
+    const char* gameplay_catalog_path,
+    const char* gameplay_catalog_bundle_path,
+    const char* gameplay_catalog_entry_path);
 
 #endif  // APP_DEDICATED_SERVER_APP_H_

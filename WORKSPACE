@@ -206,3 +206,11 @@ http_archive(
     urls = ["https://github.com/jbeder/yaml-cpp/releases/download/yaml-cpp-0.9.0/yaml-cpp-yaml-cpp-0.9.0.tar.gz"],
     build_file = "@//third_party:yaml-cpp.BUILD",
 )
+
+http_archive(
+    name = "zip_archive",
+    build_file = "@//third_party:zip.BUILD",
+    sha256 = "44404237dc025952faa3d21abcd3696b5f0f1104e97e5c8cf39eeefa80b00e8c",
+    strip_prefix = "zip-0.3.9",
+    urls = ["https://github.com/kuba--/zip/archive/refs/tags/v0.3.9.tar.gz"],
+)

@@ -14,10 +14,6 @@ enemy:
     y: 0.0
     z: 0.0
   ai_profile: projectile_benchmark
-weapons:
-  projectile_spammer:
-    burst_count: 3
-    burst_spread_degrees: 15.0
 benchmark_projectile_groups:
   event_spawn_weapon_id: 2
   snapshot_only_weapon_id: 3

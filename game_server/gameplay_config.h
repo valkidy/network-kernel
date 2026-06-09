@@ -101,6 +101,10 @@ GameServerGameplayConfig load_gameplay_config_from_weapon_template_directory(
     const std::string& directory);
 GameServerGameplayConfig load_gameplay_config_from_catalog_file(
     const std::string& path);
+GameServerGameplayConfig load_gameplay_config_from_bundle_memory(
+    const std::uint8_t* bundle_bytes,
+    std::uint32_t bundle_size,
+    const std::string& entry_path);
 KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
     const GameServerGameplayConfig& config);
 bool load_kernel_gameplay_catalog(
