@@ -91,6 +91,15 @@ namespace NetworkExample.Kernel
             ref KernelGameplayCatalogDefinition catalog);
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_LoadGameplayCatalogFromMemory(
+            IntPtr kernel,
+            [In] byte[] bundleBytes,
+            uint bundleSize,
+            [MarshalAs(UnmanagedType.LPStr)] string entryPath,
+            ref KernelGameplayCatalogLoadResult outResult);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern uint Kernel_GetRenderStates(
             IntPtr kernel,
             [Out] RenderEntityState[] outStates,

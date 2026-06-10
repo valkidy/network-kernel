@@ -1,3 +1,4 @@
+using System;
 using NetworkExample.Kernel;
 using NetworkExample.Kernel.Host;
 using UnityEngine;
@@ -6,6 +7,12 @@ public sealed class NetworkKernelHostBehaviour : MonoBehaviour
 {
     [SerializeField]
     private ushort port = 7777;
+
+    [SerializeField]
+    private TextAsset gameplayCatalogBundle;
+
+    [SerializeField]
+    private string gameplayCatalogEntryPath = "gameplay_catalog.yaml";
 
     private readonly RenderEntityState[] states = new RenderEntityState[128];
     private readonly KernelEvent[] events = new KernelEvent[64];
@@ -19,7 +26,36 @@ public sealed class NetworkKernelHostBehaviour : MonoBehaviour
     private void Start()
     {
         host = new NetworkHost();
-        if (!host.Start(port))
+        bool started;
+        KernelGameplayCatalogLoadResult result = default;
+        try
+        {
+            started = gameplayCatalogBundle == null
+                ? host.Start(port)
+                : host.Start(
+                    port,
+                    gameplayCatalogBundle.bytes,
+                    gameplayCatalogEntryPath,
+                    out result);
+            if (gameplayCatalogBundle != null && started)
+            {
+                Debug.Log(
+                    $"Loaded gameplay catalog bundle version={result.catalog_version} " +
+                    $"hash={result.catalog_hash:x16} projectile_templates={result.projectile_template_count} " +
+                    $"collider_templates={result.collider_template_count} " +
+                    $"collider_bindings={result.collider_binding_count}");
+            }
+        }
+        catch (Exception exception)
+        {
+            Debug.LogError(
+                $"NetworkHost failed to load gameplay catalog bundle '{gameplayCatalogEntryPath}': " +
+                $"{exception.Message}");
+            enabled = false;
+            return;
+        }
+
+        if (!started)
         {
             Debug.LogError($"NetworkHost failed to listen on port {port}.");
             enabled = false;

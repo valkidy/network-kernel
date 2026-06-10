@@ -4,13 +4,14 @@ namespace NetworkExample.Kernel
 {
     public static class GameServerConstants
     {
-        public const uint AbiVersion = 2;
+        public const uint AbiVersion = 3;
 
         public const ulong CapabilityEnemyManager = 0x0000000000000001UL;
         public const ulong CapabilityEventHandling = 0x0000000000000002UL;
         public const ulong CapabilityDespawnAll = 0x0000000000000004UL;
         public const ulong CapabilityWeaponTemplateDirectory = 0x0000000000000008UL;
         public const ulong CapabilityWeaponTemplateQuery = 0x0000000000000010UL;
+        public const ulong CapabilityGameplayCatalogBundle = 0x0000000000000020UL;
     }
 
     [StructLayout(LayoutKind.Sequential)]

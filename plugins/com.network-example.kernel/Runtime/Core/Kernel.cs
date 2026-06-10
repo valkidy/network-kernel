@@ -90,6 +90,33 @@ namespace NetworkExample.Kernel
             return LoadGameplayCatalog(handle, catalog);
         }
 
+        public bool LoadGameplayCatalogFromMemory(
+            byte[] bundleBytes,
+            string entryPath,
+            out KernelGameplayCatalogLoadResult result)
+        {
+            ThrowIfDisposed();
+            if (bundleBytes == null)
+            {
+                throw new ArgumentNullException(nameof(bundleBytes));
+            }
+            if (entryPath == null)
+            {
+                throw new ArgumentNullException(nameof(entryPath));
+            }
+
+            result = new KernelGameplayCatalogLoadResult
+            {
+                struct_size = KernelGameplayCatalogLoadResult.StructSize,
+            };
+            return KernelNative.Kernel_LoadGameplayCatalogFromMemory(
+                handle,
+                bundleBytes,
+                (uint)bundleBytes.Length,
+                entryPath,
+                ref result);
+        }
+
         public bool TryGetLocalPlayerInfo(out KernelLocalPlayerInfo info)
         {
             ThrowIfDisposed();

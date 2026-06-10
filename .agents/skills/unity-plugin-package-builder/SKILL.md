@@ -100,8 +100,8 @@ Default behavior:
 5. Verify package layout, C/C# ABI version alignment, required exported
    `Kernel_*`/`GameServer_*` symbols for macOS and Windows, and Windows PE32+
    x86-64 DLL shape. Export checks are ABI-aware: the v8 baseline remains
-   compatible with the long-lived Unity plugin branch, while ABI 9-12 and
-   GameServer ABI 2 symbols are required when the native headers report those
+   compatible with the long-lived Unity plugin branch, while ABI 9-16 and
+   GameServer ABI 2-3 symbols are required when the native headers report those
    versions.
 6. Delete every `.DS_Store` under `plugins/com.network-example.kernel`, then
    pack a clean UPM tarball in

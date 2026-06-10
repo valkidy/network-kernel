@@ -8,6 +8,12 @@ public sealed class NetworkKernelClientBehaviour : MonoBehaviour
     [SerializeField]
     private string address = "127.0.0.1:7777";
 
+    [SerializeField]
+    private TextAsset gameplayCatalogBundle;
+
+    [SerializeField]
+    private string gameplayCatalogEntryPath = "gameplay_catalog.yaml";
+
     private readonly RenderEntityState[] states = new RenderEntityState[128];
     private readonly KernelEvent[] events = new KernelEvent[64];
     private NetworkClient client;
@@ -22,6 +28,13 @@ public sealed class NetworkKernelClientBehaviour : MonoBehaviour
         LogVersionInfo();
 
         client = new NetworkClient();
+        if (gameplayCatalogBundle != null &&
+            !LoadGameplayCatalogBundle(client))
+        {
+            enabled = false;
+            return;
+        }
+
         if (!client.Start(address))
         {
             Debug.LogError($"Kernel_StartClient failed for {address}.");
@@ -30,6 +43,27 @@ public sealed class NetworkKernelClientBehaviour : MonoBehaviour
         }
 
         Debug.Log($"Network kernel client connecting to {address}.");
+    }
+
+    private bool LoadGameplayCatalogBundle(NetworkClient networkClient)
+    {
+        if (networkClient.LoadGameplayCatalogFromMemory(
+                gameplayCatalogBundle.bytes,
+                gameplayCatalogEntryPath,
+                out KernelGameplayCatalogLoadResult result))
+        {
+            Debug.Log(
+                $"Loaded gameplay catalog bundle version={result.catalog_version} " +
+                $"hash={result.catalog_hash:x16} projectile_templates={result.projectile_template_count} " +
+                $"collider_templates={result.collider_template_count} " +
+                $"collider_bindings={result.collider_binding_count}");
+            return true;
+        }
+
+        Debug.LogError(
+            $"Kernel_LoadGameplayCatalogFromMemory failed for '{gameplayCatalogEntryPath}': " +
+            $"{result.error_message}");
+        return false;
     }
 
     private static void LogVersionInfo()

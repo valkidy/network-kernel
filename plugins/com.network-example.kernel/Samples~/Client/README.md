@@ -16,7 +16,11 @@ Before entering Play Mode on macOS:
    bazel run //app:app --config=macos -- --mode=dedicated_server
    ```
 
-3. Enter Play Mode. The sample connects to `127.0.0.1:7777` by default.
+3. Optional: build `//game_server/gameplay_catalog_bundle:bundle.zip`, copy the
+   output to a Unity asset named `gameplay_catalog_bundle.bytes`, and assign it
+   to the behaviour's gameplay catalog bundle field.
+
+4. Enter Play Mode. The sample connects to `127.0.0.1:7777` by default.
 
 The sample waits for `PlayerJoined`, reads the local player id through
 `TryGetLocalPlayerInfo`, submits input only while connected, passes a

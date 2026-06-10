@@ -30,6 +30,43 @@ namespace NetworkExample.Kernel.Host
             }
         }
 
+        public GameServer(
+            Kernel kernel,
+            byte[] bundleBytes,
+            string entryPath,
+            out KernelGameplayCatalogLoadResult loadResult)
+        {
+            if (kernel == null)
+            {
+                throw new ArgumentNullException(nameof(kernel));
+            }
+            if (bundleBytes == null)
+            {
+                throw new ArgumentNullException(nameof(bundleBytes));
+            }
+            if (entryPath == null)
+            {
+                throw new ArgumentNullException(nameof(entryPath));
+            }
+
+            GameServerAbi.ValidateNativeAbi();
+            loadResult = new KernelGameplayCatalogLoadResult
+            {
+                struct_size = KernelGameplayCatalogLoadResult.StructSize,
+            };
+            handle = GameServerNative.GameServer_CreateWithGameplayCatalogFromMemory(
+                kernel.Handle,
+                bundleBytes,
+                (uint)bundleBytes.Length,
+                entryPath,
+                ref loadResult);
+            if (handle == IntPtr.Zero)
+            {
+                throw new InvalidOperationException(
+                    $"GameServer_CreateWithGameplayCatalogFromMemory failed: {FormatLoadError(loadResult)}");
+            }
+        }
+
         public bool IsCreated => handle != IntPtr.Zero;
 
         public uint EnemyCount
@@ -97,6 +134,13 @@ namespace NetworkExample.Kernel.Host
             {
                 throw new ObjectDisposedException(nameof(GameServer));
             }
+        }
+
+        private static string FormatLoadError(KernelGameplayCatalogLoadResult loadResult)
+        {
+            return string.IsNullOrEmpty(loadResult.error_message)
+                ? "no native error message"
+                : loadResult.error_message;
         }
 
         ~GameServer()

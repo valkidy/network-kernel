@@ -31,6 +31,14 @@ namespace NetworkExample.Kernel.Client
             return kernel.StartClient(address);
         }
 
+        public bool LoadGameplayCatalogFromMemory(
+            byte[] bundleBytes,
+            string entryPath,
+            out KernelGameplayCatalogLoadResult result)
+        {
+            return kernel.LoadGameplayCatalogFromMemory(bundleBytes, entryPath, out result);
+        }
+
         public uint Update(float deltaSeconds, KernelEvent[] events)
         {
             kernel.Update(deltaSeconds);

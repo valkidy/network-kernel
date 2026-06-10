@@ -469,10 +469,20 @@ build_required_exports() {
       Kernel_QueryColliderShapes
     )
   fi
+  if [[ "$native_abi" -ge 16 ]]; then
+    REQUIRED_EXPORTS_BUILT+=(
+      Kernel_LoadGameplayCatalogFromMemory
+    )
+  fi
   if [[ "$native_game_server_abi" -ge 2 ]]; then
     REQUIRED_EXPORTS_BUILT+=(
       GameServer_CreateWithWeaponTemplateDirectory
       GameServer_QueryWeaponTemplate
+    )
+  fi
+  if [[ "$native_game_server_abi" -ge 3 ]]; then
+    REQUIRED_EXPORTS_BUILT+=(
+      GameServer_CreateWithGameplayCatalogFromMemory
     )
   fi
 }

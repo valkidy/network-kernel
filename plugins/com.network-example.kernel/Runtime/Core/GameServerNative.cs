@@ -20,6 +20,14 @@ namespace NetworkExample.Kernel
             [MarshalAs(UnmanagedType.LPStr)] string templateDirectory);
 
         [DllImport(KernelNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr GameServer_CreateWithGameplayCatalogFromMemory(
+            IntPtr kernel,
+            [In] byte[] bundleBytes,
+            uint bundleSize,
+            [MarshalAs(UnmanagedType.LPStr)] string entryPath,
+            ref KernelGameplayCatalogLoadResult outResult);
+
+        [DllImport(KernelNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern void GameServer_Destroy(IntPtr gameServer);
 
         [DllImport(KernelNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]

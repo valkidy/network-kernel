@@ -119,10 +119,22 @@ cat <<'SYMBOLS'
 00000000 T _Kernel_QueryColliderShapes
 SYMBOLS
 fi
+if [[ "${OMIT_ABI16_EXPORTS:-}" != "1" ]]; then
+cat <<'SYMBOLS'
+00000000 T _Kernel_LoadGameplayCatalogFromMemory
+SYMBOLS
+fi
 cat <<'SYMBOLS'
 00000000 T _GameServer_GetAbiInfo
 00000000 T _GameServer_Create
 00000000 T _GameServer_CreateWithWeaponTemplateDirectory
+SYMBOLS
+if [[ "${OMIT_GAME_SERVER_ABI3_EXPORTS:-}" != "1" ]]; then
+cat <<'SYMBOLS'
+00000000 T _GameServer_CreateWithGameplayCatalogFromMemory
+SYMBOLS
+fi
+cat <<'SYMBOLS'
 00000000 T _GameServer_Destroy
 00000000 T _GameServer_HandleEvent
 00000000 T _GameServer_Tick
@@ -181,16 +193,28 @@ cat <<'SYMBOLS'
 	[  39] Kernel_QueryColliderShapes
 SYMBOLS
 fi
+if [[ "${OMIT_ABI16_EXPORTS:-}" != "1" ]]; then
 cat <<'SYMBOLS'
-	[  40] GameServer_GetAbiInfo
-	[  41] GameServer_Create
-	[  42] GameServer_CreateWithWeaponTemplateDirectory
-	[  43] GameServer_Destroy
-	[  44] GameServer_HandleEvent
-	[  45] GameServer_Tick
-	[  46] GameServer_GetEnemyCount
-	[  47] GameServer_QueryWeaponTemplate
-	[  48] GameServer_DespawnAll
+	[  40] Kernel_LoadGameplayCatalogFromMemory
+SYMBOLS
+fi
+cat <<'SYMBOLS'
+	[  41] GameServer_GetAbiInfo
+	[  42] GameServer_Create
+	[  43] GameServer_CreateWithWeaponTemplateDirectory
+SYMBOLS
+if [[ "${OMIT_GAME_SERVER_ABI3_EXPORTS:-}" != "1" ]]; then
+cat <<'SYMBOLS'
+	[  44] GameServer_CreateWithGameplayCatalogFromMemory
+SYMBOLS
+fi
+cat <<'SYMBOLS'
+	[  45] GameServer_Destroy
+	[  46] GameServer_HandleEvent
+	[  47] GameServer_Tick
+	[  48] GameServer_GetEnemyCount
+	[  49] GameServer_QueryWeaponTemplate
+	[  50] GameServer_DespawnAll
 Import Table:
 SYMBOLS
 SH
@@ -550,6 +574,51 @@ CS
   assert_contains "$(cat "$output_file")" "Kernel_GetBenchmarkStats"
 }
 
+test_verify_requires_abi_16_config_bundle_exports() {
+  local sandbox_dir repo_dir output_file status
+  sandbox_dir="$(mktemp -d "${TMPDIR:-/tmp}/package-builder-abi16-exports.XXXXXX")"
+  repo_dir="$sandbox_dir/repo"
+  output_file="$sandbox_dir/output.txt"
+  make_fake_repo "$repo_dir" "feat-unity-plugin"
+
+  echo "#define KERNEL_ABI_VERSION 16u" > "$repo_dir/engine/src/kernel/public/kernel_types.h"
+  write_file "$repo_dir/plugins/com.network-example.kernel/Runtime/Core/KernelTypes.cs" <<'CS'
+namespace NetworkExample.Kernel {
+  public static class KernelConstants {
+    public const uint AbiVersion = 16;
+  }
+}
+CS
+
+  set +e
+  export OMIT_ABI16_EXPORTS=1
+  run_builder "$repo_dir" "$output_file" --mode verify --unity off --auto-commit off
+  status="$?"
+  unset OMIT_ABI16_EXPORTS
+  set -e
+
+  [[ "$status" -ne 0 ]] || fail "expected verify to fail when ABI 16 config bundle exports are missing"
+  assert_contains "$(cat "$output_file")" "Kernel_LoadGameplayCatalogFromMemory"
+}
+
+test_verify_requires_game_server_abi_3_config_bundle_exports() {
+  local sandbox_dir repo_dir output_file status
+  sandbox_dir="$(mktemp -d "${TMPDIR:-/tmp}/package-builder-game-server-abi3-exports.XXXXXX")"
+  repo_dir="$sandbox_dir/repo"
+  output_file="$sandbox_dir/output.txt"
+  make_fake_repo "$repo_dir" "feat-unity-plugin"
+
+  set +e
+  export OMIT_GAME_SERVER_ABI3_EXPORTS=1
+  run_builder "$repo_dir" "$output_file" --mode verify --unity off --auto-commit off
+  status="$?"
+  unset OMIT_GAME_SERVER_ABI3_EXPORTS
+  set -e
+
+  [[ "$status" -ne 0 ]] || fail "expected verify to fail when GameServer ABI 3 config bundle exports are missing"
+  assert_contains "$(cat "$output_file")" "GameServer_CreateWithGameplayCatalogFromMemory"
+}
+
 test_pack_removes_ds_store_files_from_package() {
   local sandbox_dir repo_dir output_file status
   sandbox_dir="$(mktemp -d "${TMPDIR:-/tmp}/package-builder-ds-store.XXXXXX")"
@@ -578,6 +647,8 @@ test_build_native_verifies_bazel_signed_dylib
 test_stage_verifies_staged_dylib_from_existing_build_output
 test_verify_fails_when_windows_runtime_dll_is_missing
 test_verify_requires_abi_15_kernel_exports
+test_verify_requires_abi_16_config_bundle_exports
+test_verify_requires_game_server_abi_3_config_bundle_exports
 test_pack_removes_ds_store_files_from_package
 
 echo "package_builder_finalize_test.sh: PASS"

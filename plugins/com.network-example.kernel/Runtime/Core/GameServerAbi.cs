@@ -45,6 +45,10 @@ namespace NetworkExample.Kernel
                 info,
                 GameServerConstants.CapabilityWeaponTemplateQuery,
                 "Game server weapon-template-query capability is missing.");
+            RequireCapability(
+                info,
+                GameServerConstants.CapabilityGameplayCatalogBundle,
+                "Game server gameplay-catalog-bundle capability is missing.");
             RequireSize(
                 nameof(GameServerAbiInfo),
                 info.struct_size,

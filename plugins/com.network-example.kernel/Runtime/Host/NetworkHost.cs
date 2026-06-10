@@ -67,6 +67,80 @@ namespace NetworkExample.Kernel.Host
             }
         }
 
+        public bool Start(
+            ushort port,
+            byte[] bundleBytes,
+            string entryPath,
+            out KernelGameplayCatalogLoadResult loadResult)
+        {
+            return Start(
+                port,
+                KernelConfig.CreateDefault(KernelMode.ListenServer),
+                bundleBytes,
+                entryPath,
+                out loadResult);
+        }
+
+        public bool Start(
+            ushort port,
+            KernelConfig config,
+            byte[] bundleBytes,
+            string entryPath,
+            out KernelGameplayCatalogLoadResult loadResult)
+        {
+            if (IsRunning)
+            {
+                throw new InvalidOperationException("NetworkHost is already running.");
+            }
+            if (bundleBytes == null)
+            {
+                throw new ArgumentNullException(nameof(bundleBytes));
+            }
+            if (entryPath == null)
+            {
+                throw new ArgumentNullException(nameof(entryPath));
+            }
+
+            config.mode = KernelMode.ListenServer;
+            Kernel newKernel = null;
+            GameServer newGameServer = null;
+            loadResult = default;
+            try
+            {
+                newKernel = new Kernel(config);
+                newGameServer = new GameServer(newKernel, bundleBytes, entryPath, out loadResult);
+                if (!newKernel.StartListenServer(port))
+                {
+                    newGameServer.Dispose();
+                    newKernel.Dispose();
+                    return false;
+                }
+
+                kernel = newKernel;
+                gameServer = newGameServer;
+                localClient.Reset();
+                if (kernel.TryGetLocalPlayerInfo(out KernelLocalPlayerInfo info) &&
+                    info.connected)
+                {
+                    localClient.ApplyEvent(
+                        kernel,
+                        new KernelEvent
+                        {
+                            type = KernelEventType.PlayerJoined,
+                            net_id = info.player_net_id,
+                            peer_id = info.peer_id,
+                        });
+                }
+                return true;
+            }
+            catch
+            {
+                newGameServer?.Dispose();
+                newKernel?.Dispose();
+                throw;
+            }
+        }
+
         public uint Update(float deltaSeconds, KernelEvent[] events)
         {
             ThrowIfNotRunning();

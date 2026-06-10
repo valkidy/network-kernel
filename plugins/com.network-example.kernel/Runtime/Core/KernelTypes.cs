@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 15;
+        public const uint AbiVersion = 16;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const ushort LANDiscoveryDefaultPort = 47777;
@@ -511,6 +511,23 @@ namespace NetworkExample.Kernel
         public KernelProjectileTemplateDefinition[] ProjectileTemplates;
         public KernelColliderTemplateDefinition[] ColliderTemplates;
         public KernelColliderBindingDefinition[] ColliderBindings;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
+    public struct KernelGameplayCatalogLoadResult
+    {
+        public uint struct_size;
+        [MarshalAs(UnmanagedType.I1)]
+        public bool success;
+        public uint catalog_version;
+        public ulong catalog_hash;
+        public uint projectile_template_count;
+        public uint collider_template_count;
+        public uint collider_binding_count;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)]
+        public string error_message;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelGameplayCatalogLoadResult>();
     }
 
     [StructLayout(LayoutKind.Sequential)]

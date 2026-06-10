@@ -1,7 +1,7 @@
 # Network Example Kernel Unity Package
 
 This package is the Unity package for the network-example native kernel
-ABI v14 plus the Game Server native bridge ABI v2.
+ABI v16 plus the Game Server native bridge ABI v3.
 It is intentionally a pure networking/runtime SDK: native networking and game
 server behavior stay in C++, while Unity projects own input sampling,
 prefab/entity mapping, animation, scene objects, cameras, UI, and render-state
@@ -62,6 +62,22 @@ plugins/com.network-example.kernel/Assets/Plugins/Windows/x86_64/network_kernel.
 Unity resolves the C# import name `network_kernel` to
 `libnetwork_kernel.dylib` on macOS and `network_kernel.dll` on Windows.
 
+## Gameplay Config Bundle
+
+The native server can load gameplay catalog, weapon template, and collider
+template YAML from the Bazel-generated config bundle. Build the bundle from the
+repo root:
+
+```text
+bazel build //game_server/gameplay_catalog_bundle:bundle.zip
+```
+
+Unity imports binary sample data as a `TextAsset` when the file uses a `.bytes`
+extension. Copy or rename the Bazel output `bundle.zip` to a project asset such
+as `gameplay_catalog_bundle.bytes`, then assign it to the sample behaviour's
+gameplay catalog bundle field. Keep the entry path at the default
+`gameplay_catalog.yaml` unless the bundle layout changes.
+
 ## Smoke Checks
 
 Required compile/ABI smoke:
@@ -80,8 +96,9 @@ Required compile/ABI smoke:
   it validates kernel and game-server ABI sizes, exercises
   create/start/update/input/render/event calls, player/enemy render-state
   health, projectile sync metadata,
-  server entity create/query/update/destroy calls, and a pure runtime
-  `NetworkHost` smoke without opening Unity Editor.
+  server entity create/query/update/destroy calls, gameplay config bundle
+  marshalling failure handling, and a pure runtime `NetworkHost` smoke without
+  opening Unity Editor.
 - Run `NetworkExample.Kernel.Editor.NetworkKernelAbiSmokeRunner.Run` in an
   environment where Unity batchmode licensing/headless execution works. In
   package-builder auto mode, missing or blocked Unity is reported as a skip
@@ -95,8 +112,8 @@ Required compile/ABI smoke:
   smoke through the native
   `GameServer_*` bridge, and destroys the handles.
 
-To confirm the packaged dylib has the ABI v14 kernel server exports and Game
-Server v2 bridge exports:
+To confirm the packaged dylib has the current kernel and Game Server bridge
+exports:
 
 ```text
 nm -gU plugins/com.network-example.kernel/Assets/Plugins/macOS/libnetwork_kernel.dylib | grep Kernel_Server

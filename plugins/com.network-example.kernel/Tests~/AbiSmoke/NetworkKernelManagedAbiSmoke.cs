@@ -236,6 +236,7 @@ public static class NetworkKernelManagedAbiSmoke
         };
 
         Require(kernel.LoadGameplayCatalog(catalog), "Kernel_LoadGameplayCatalog failed.");
+        RequireInvalidGameplayCatalogBundleFails(kernel);
 
         var shapeQuery = new KernelColliderShapeQuery
         {
@@ -272,6 +273,23 @@ public static class NetworkKernelManagedAbiSmoke
         };
         var debugRecords = new KernelDebugInfo[4];
         kernel.PollDebugRecords(debugFilter, debugRecords);
+    }
+
+    private static void RequireInvalidGameplayCatalogBundleFails(Kernel kernel)
+    {
+        byte[] invalidBundle = { 0x6e, 0x6b };
+        Require(
+            !kernel.LoadGameplayCatalogFromMemory(
+                invalidBundle,
+                "gameplay_catalog.yaml",
+                out KernelGameplayCatalogLoadResult result),
+            "Kernel_LoadGameplayCatalogFromMemory unexpectedly accepted invalid bundle bytes.");
+        Require(
+            result.struct_size == KernelGameplayCatalogLoadResult.StructSize,
+            "KernelGameplayCatalogLoadResult struct_size mismatch.");
+        Require(
+            !result.success,
+            "KernelGameplayCatalogLoadResult success flag mismatch.");
     }
 
     private static void SetAndQueryWeapon(
