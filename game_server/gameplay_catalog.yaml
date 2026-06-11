@@ -1,11 +1,11 @@
 catalog_version: 1
 weapon_template_dir: weapon_templates
+actor_template_dir: actor_templates
 collider_template_file: collider_templates/default.yaml
+player:
+  actor_template: player
 enemy:
-  spawn_count: 10
-  spawn_radius: 5.0
+  actor_template: enemy_grunt
+  spawn_count: 1
+  spawn_radius: 0.0
   spawn_seed: 4242
-benchmark_projectile_groups:
-  event_spawn_weapon_id: 2
-  snapshot_only_weapon_id: 3
-  hybrid_weapon_id: 6

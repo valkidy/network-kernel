@@ -698,7 +698,6 @@ bool validate_weapon_mechanics(const KernelWeaponMechanicsDefinition& definition
             definition.projectile.damage_shape > KernelProjectileDamageShape_PiercingSegment ||
             definition.projectile.hit_response == KernelProjectileHitResponse_Bounce ||
             definition.projectile.hit_response == KernelProjectileHitResponse_Attach ||
-            definition.projectile.collision_mask == 0 ||
             definition.projectile.max_hit_count == 0 ||
             definition.projectile.speed <= 0.0f ||
             definition.projectile.lifetime_seconds <= 0.0f) {
@@ -716,8 +715,7 @@ bool validate_weapon_mechanics(const KernelWeaponMechanicsDefinition& definition
                definition.area_effect.damage_per_interval > 0 &&
                definition.area_effect.damage_interval_ticks > 0 &&
                definition.area_effect.lifetime_ticks > 0 &&
-               definition.area_effect.spawn_distance >= 0.0f &&
-               definition.area_effect.collision_mask != 0;
+               definition.area_effect.spawn_distance >= 0.0f;
     }
     if (definition.fire_mode == KernelWeaponFireMode_Beam) {
         return definition.beam.struct_size >=
@@ -725,8 +723,7 @@ bool validate_weapon_mechanics(const KernelWeaponMechanicsDefinition& definition
                definition.beam.length > 0.0f &&
                definition.beam.radius > 0.0f &&
                definition.beam.damage_per_second > 0 &&
-               definition.beam.lifetime_ticks > 0 &&
-               definition.beam.collision_mask != 0;
+               definition.beam.lifetime_ticks > 0;
     }
     if (definition.max_range <= 0.0f) {
         return false;

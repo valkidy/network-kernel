@@ -543,7 +543,6 @@ bool Kernel_ServerValidateMechanicsConfig(
                        KernelProjectileHitResponse_Bounce &&
                    weapon_mechanics->projectile.hit_response !=
                        KernelProjectileHitResponse_Attach &&
-                   weapon_mechanics->projectile.collision_mask != 0 &&
                    weapon_mechanics->projectile.max_hit_count > 0 &&
                    weapon_mechanics->projectile.speed > 0.0f &&
                    weapon_mechanics->projectile.lifetime_seconds > 0.0f &&
@@ -573,8 +572,7 @@ bool Kernel_ServerValidateMechanicsConfig(
                    weapon_mechanics->area_effect.damage_per_interval > 0 &&
                    weapon_mechanics->area_effect.damage_interval_ticks > 0 &&
                    weapon_mechanics->area_effect.lifetime_ticks > 0 &&
-                   weapon_mechanics->area_effect.spawn_distance >= 0.0f &&
-                   weapon_mechanics->area_effect.collision_mask != 0;
+                   weapon_mechanics->area_effect.spawn_distance >= 0.0f;
         }
         if (weapon_mechanics->fire_mode == KernelWeaponFireMode_Beam) {
             return weapon_mechanics->beam.struct_size >=
@@ -582,8 +580,7 @@ bool Kernel_ServerValidateMechanicsConfig(
                    weapon_mechanics->beam.length > 0.0f &&
                    weapon_mechanics->beam.radius > 0.0f &&
                    weapon_mechanics->beam.damage_per_second > 0 &&
-                   weapon_mechanics->beam.lifetime_ticks > 0 &&
-                   weapon_mechanics->beam.collision_mask != 0;
+                   weapon_mechanics->beam.lifetime_ticks > 0;
         }
         if (weapon_mechanics->fire_mode != KernelWeaponFireMode_Beam &&
             weapon_mechanics->max_range <= 0.0f) {

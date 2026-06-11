@@ -29,7 +29,7 @@ The helper builds and runs:
 ## Expected Behavior
 
 - The host server mode starts, runs its scripted frames, and exits successfully.
-- The host server log includes a server-owned enemy render state (`type=2`), enemy rocket fire confirmation, projectile spawn, and rocket damage.
+- The host server log includes a server-owned enemy render state (`type=2`), actor-configured enemy fire confirmation, projectile spawn, and projectile damage.
 - The dedicated server mode starts on `127.0.0.1:7777`.
 - The client mode connects to that server and exits successfully.
 - After the client connects, the dedicated server log includes a server-owned enemy spawn event (`peer=0`).

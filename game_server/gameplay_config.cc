@@ -1,6 +1,7 @@
 #include "game_server/gameplay_config.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -128,6 +129,35 @@ void hash_collider_binding(
     hash_float(hash, definition.local_rotation.y);
     hash_float(hash, definition.local_rotation.z);
     hash_float(hash, definition.local_rotation.w);
+}
+
+void hash_actor_template(
+    std::uint64_t* hash,
+    const ActorTemplateConfig& actor_template) {
+    hash_scalar(hash, actor_template.actor_template_id);
+    hash_string(hash, actor_template.name);
+    hash_scalar(hash, actor_template.entity_type);
+    hash_scalar(hash, actor_template.health.hp);
+    hash_scalar(hash, actor_template.health.max_hp);
+    hash_vec3(hash, actor_template.hitbox_center);
+    hash_vec3(hash, actor_template.hitbox_half_extents);
+    hash_float(hash, actor_template.move_speed_meters_per_second);
+    hash_scalar(hash, actor_template.weapon_slot_count);
+    for (std::uint8_t index = 0; index < actor_template.weapon_slot_count; ++index) {
+        hash_scalar(hash, actor_template.weapon_slots[index]);
+    }
+    hash_scalar(hash, actor_template.active_weapon_slot);
+    hash_scalar(hash, actor_template.animation_idle);
+    hash_scalar(hash, actor_template.animation_chasing);
+    hash_scalar(hash, actor_template.ai.profile);
+    hash_float(hash, actor_template.ai.chase_range);
+    hash_float(hash, actor_template.ai.move_speed);
+    hash_float(hash, actor_template.ai.patrol_speed);
+    hash_float(hash, actor_template.ai.patrol_half_extent);
+    hash_float(hash, actor_template.ai.fire_interval_seconds);
+    hash_float(hash, actor_template.ai.reload_seconds);
+    hash_scalar(hash, actor_template.ai.weapon_id);
+    hash_scalar(hash, actor_template.ai.magazine_size);
 }
 
 KernelWeaponMechanicsDefinition hitscan_weapon(
@@ -345,7 +375,6 @@ bool validate_weapon_mechanics(
                weapon.projectile.hit_response != KernelProjectileHitResponse_Bounce &&
                weapon.projectile.hit_response != KernelProjectileHitResponse_Attach &&
                weapon.projectile.damage_shape <= KernelProjectileDamageShape_PiercingSegment &&
-               weapon.projectile.collision_mask != 0 &&
                weapon.projectile.max_hit_count > 0 &&
                weapon.projectile.speed > 0.0f &&
                weapon.projectile.lifetime_seconds > 0.0f &&
@@ -374,16 +403,14 @@ bool validate_weapon_mechanics(
                weapon.area_effect.damage_per_interval > 0 &&
                weapon.area_effect.damage_interval_ticks > 0 &&
                weapon.area_effect.lifetime_ticks > 0 &&
-               weapon.area_effect.spawn_distance >= 0.0f &&
-               weapon.area_effect.collision_mask != 0;
+               weapon.area_effect.spawn_distance >= 0.0f;
     }
     if (weapon.fire_mode == KernelWeaponFireMode_Beam) {
         return weapon.beam.struct_size >= sizeof(KernelBeamMechanicsDefinition) &&
                weapon.beam.length > 0.0f &&
                weapon.beam.radius > 0.0f &&
                weapon.beam.damage_per_second > 0 &&
-               weapon.beam.lifetime_ticks > 0 &&
-               weapon.beam.collision_mask != 0;
+               weapon.beam.lifetime_ticks > 0;
     }
     if (weapon.fire_mode != KernelWeaponFireMode_Beam &&
         weapon.max_range <= 0.0f) {
@@ -393,24 +420,63 @@ bool validate_weapon_mechanics(
            weapon.pellet_count != 0;
 }
 
+std::string trim_ascii(const std::string& value) {
+    const auto first = std::find_if_not(
+        value.begin(),
+        value.end(),
+        [](unsigned char ch) { return std::isspace(ch); });
+    const auto last = std::find_if_not(
+        value.rbegin(),
+        value.rend(),
+        [](unsigned char ch) { return std::isspace(ch); })
+                          .base();
+    return first >= last ? std::string{} : std::string(first, last);
+}
+
+std::uint32_t collision_mask_token_from_yaml(const std::string& token) {
+    if (token == "damageable") {
+        return KERNEL_COLLISION_MASK_DAMAGEABLE;
+    }
+    if (token == "none" || token == "0") {
+        return 0;
+    }
+    if (token == "enemy") {
+        return KERNEL_COLLISION_LAYER_ENEMY;
+    }
+    if (token == "player") {
+        return KERNEL_COLLISION_LAYER_PLAYER;
+    }
+    if (token == "projectile") {
+        return KERNEL_COLLISION_LAYER_PROJECTILE;
+    }
+    if (token == "area_effect") {
+        return KERNEL_COLLISION_LAYER_AREA_EFFECT;
+    }
+    throw std::runtime_error("unsupported collision_mask: " + token);
+}
+
 std::uint32_t collision_mask_from_yaml(const YAML::Node& node) {
-    if (!node || node.as<std::string>() == "damageable") {
+    if (!node) {
         return KERNEL_COLLISION_MASK_DAMAGEABLE;
     }
     const std::string value = node.as<std::string>();
-    if (value == "enemy") {
-        return KERNEL_COLLISION_LAYER_ENEMY;
+    std::uint32_t mask = 0;
+    std::size_t start = 0;
+    while (start <= value.size()) {
+        const std::size_t separator = value.find('|', start);
+        const std::string token = trim_ascii(value.substr(
+            start,
+            separator == std::string::npos ? std::string::npos : separator - start));
+        if (token.empty()) {
+            throw std::runtime_error("empty collision_mask token: " + value);
+        }
+        mask |= collision_mask_token_from_yaml(token);
+        if (separator == std::string::npos) {
+            break;
+        }
+        start = separator + 1;
     }
-    if (value == "player") {
-        return KERNEL_COLLISION_LAYER_PLAYER;
-    }
-    if (value == "projectile") {
-        return KERNEL_COLLISION_LAYER_PROJECTILE;
-    }
-    if (value == "area_effect") {
-        return KERNEL_COLLISION_LAYER_AREA_EFFECT;
-    }
-    throw std::runtime_error("unsupported collision_mask: " + value);
+    return mask;
 }
 
 std::uint8_t motion_model_from_yaml(const YAML::Node& node) {
@@ -503,9 +569,6 @@ EnemyAiProfile enemy_ai_profile_from_yaml(const YAML::Node& node) {
     const std::string value = node ? node.as<std::string>() : "default";
     if (value == "default") {
         return EnemyAiProfile::kDefault;
-    }
-    if (value == "projectile_benchmark") {
-        return EnemyAiProfile::kProjectileBenchmark;
     }
     throw std::runtime_error("unsupported enemy ai_profile: " + value);
 }
@@ -1003,6 +1066,232 @@ ColliderCatalogConfig load_collider_catalog_from_source(
     return colliders;
 }
 
+ActorTemplateConfig default_player_actor_template() {
+    ActorTemplateConfig actor_template;
+    actor_template.actor_template_id = 1;
+    actor_template.name = "player";
+    actor_template.entity_type = kEntityTypePlayer;
+    actor_template.health = EntityHealthDefinition{100, 100};
+    actor_template.hitbox_center = KernelVec3{0.0f, 0.9f, 0.0f};
+    actor_template.hitbox_half_extents = KernelVec3{0.35f, 0.9f, 0.35f};
+    actor_template.move_speed_meters_per_second = 5.0f;
+    actor_template.weapon_slots[0] = kWeaponRifle;
+    actor_template.weapon_slots[1] = kWeaponShotgun;
+    actor_template.weapon_slot_count = 2;
+    actor_template.active_weapon_slot = 0;
+    return actor_template;
+}
+
+ActorTemplateConfig default_enemy_actor_template() {
+    ActorTemplateConfig actor_template;
+    actor_template.actor_template_id = 2;
+    actor_template.name = "enemy_grunt";
+    actor_template.entity_type = kEntityTypeEnemy;
+    actor_template.health =
+        EntityHealthDefinition{kEnemyInitialHp, kEnemyInitialHp};
+    actor_template.hitbox_center = KernelVec3{0.0f, 0.8f, 0.0f};
+    actor_template.hitbox_half_extents = KernelVec3{0.4f, 0.8f, 0.4f};
+    actor_template.move_speed_meters_per_second = 2.5f;
+    actor_template.weapon_slots[0] = kEnemyRocketWeaponId;
+    actor_template.weapon_slot_count = 1;
+    actor_template.active_weapon_slot = 0;
+    actor_template.animation_idle = kEnemyAnimationIdle;
+    actor_template.animation_chasing = kEnemyAnimationChasing;
+    actor_template.ai.weapon_id = kEnemyRocketWeaponId;
+    actor_template.ai.magazine_size = kEnemyRocketMagazine;
+    actor_template.ai.animation_idle = actor_template.animation_idle;
+    actor_template.ai.animation_chasing = actor_template.animation_chasing;
+    return actor_template;
+}
+
+void apply_default_actor_templates(GameServerGameplayConfig* config) {
+    config->actor_templates.clear();
+    config->actor_templates.push_back(default_player_actor_template());
+    config->actor_templates.push_back(default_enemy_actor_template());
+    config->player.actor_template_id = 1;
+    config->enemy.actor_template_id = 2;
+}
+
+EnemyAiConfig ai_config_from_yaml(
+    const YAML::Node& node,
+    const ActorTemplateConfig& actor_template,
+    const WeaponCatalogConfig& weapons) {
+    EnemyAiConfig ai = actor_template.ai;
+    if (node) {
+        ai.profile = enemy_ai_profile_from_yaml(node["profile"]);
+        if (node["chase_range"]) {
+            ai.chase_range = node["chase_range"].as<float>();
+        }
+        if (node["move_speed"]) {
+            ai.move_speed = node["move_speed"].as<float>();
+        }
+        if (node["patrol_speed"]) {
+            ai.patrol_speed = node["patrol_speed"].as<float>();
+        }
+        if (node["patrol_half_extent"]) {
+            ai.patrol_half_extent = node["patrol_half_extent"].as<float>();
+        }
+        if (node["fire_interval_seconds"]) {
+            ai.fire_interval_seconds = node["fire_interval_seconds"].as<float>();
+        }
+        if (node["reload_seconds"]) {
+            ai.reload_seconds = node["reload_seconds"].as<float>();
+        }
+    }
+    const std::uint8_t weapon_id = active_weapon_id(actor_template);
+    ai.weapon_id = weapon_id;
+    ai.magazine_size = weapons.definitions[weapon_id].magazine_size;
+    if (!node || !node["move_speed"]) {
+        ai.move_speed = actor_template.move_speed_meters_per_second;
+    }
+    return ai;
+}
+
+ActorTemplateConfig actor_template_from_yaml(
+    const YAML::Node& node,
+    const WeaponCatalogConfig& weapons) {
+    ActorTemplateConfig actor_template;
+    actor_template.actor_template_id = node["id"].as<std::uint32_t>();
+    actor_template.name = node["name"].as<std::string>();
+    actor_template.entity_type = entity_type_from_yaml(node["entity_type"]);
+
+    const YAML::Node health = node["health"];
+    if (!health) {
+        throw std::runtime_error(
+            "actor template requires health: " + actor_template.name);
+    }
+    actor_template.health.hp = health["hp"].as<std::uint16_t>();
+    actor_template.health.max_hp = health["max_hp"].as<std::uint16_t>();
+
+    const YAML::Node movement = node["movement"];
+    if (!movement || !movement["move_speed_meters_per_second"]) {
+        throw std::runtime_error(
+            "actor template requires movement.move_speed_meters_per_second: " +
+            actor_template.name);
+    }
+    actor_template.move_speed_meters_per_second =
+        movement["move_speed_meters_per_second"].as<float>();
+
+    const YAML::Node hitbox = node["hitbox"];
+    if (!hitbox || !hitbox["center"] || !hitbox["half_extents"]) {
+        throw std::runtime_error(
+            "actor template requires hitbox center and half_extents: " +
+            actor_template.name);
+    }
+    actor_template.hitbox_center = vec3_from_yaml(hitbox["center"]);
+    actor_template.hitbox_half_extents = vec3_from_yaml(hitbox["half_extents"]);
+
+    const YAML::Node weapon_slots = node["weapon_slots"];
+    if (!weapon_slots || !weapon_slots.IsSequence()) {
+        throw std::runtime_error(
+            "actor template requires weapon_slots: " + actor_template.name);
+    }
+    if (weapon_slots.size() == 0 || weapon_slots.size() > actor_template.weapon_slots.size()) {
+        throw std::runtime_error(
+            "actor template weapon_slots count must be 1 to 4: " +
+            actor_template.name);
+    }
+    actor_template.weapon_slot_count =
+        static_cast<std::uint8_t>(weapon_slots.size());
+    for (std::size_t index = 0; index < weapon_slots.size(); ++index) {
+        const auto weapon_id =
+            static_cast<std::uint8_t>(weapon_slots[index].as<int>());
+        if (weapon_id >= kWeaponCount ||
+            weapons.definitions[weapon_id].weapon_id != weapon_id) {
+            throw std::runtime_error(
+                "actor template references unknown weapon id: " +
+                actor_template.name);
+        }
+        actor_template.weapon_slots[index] = weapon_id;
+    }
+    actor_template.active_weapon_slot =
+        node["active_weapon_slot"]
+            ? static_cast<std::uint8_t>(node["active_weapon_slot"].as<int>())
+            : 0;
+    if (actor_template.active_weapon_slot >= actor_template.weapon_slot_count) {
+        throw std::runtime_error(
+            "actor template active_weapon_slot is out of range: " +
+            actor_template.name);
+    }
+
+    const YAML::Node animations = node["animations"];
+    if (animations) {
+        if (animations["idle"]) {
+            actor_template.animation_idle =
+                animations["idle"].as<std::uint16_t>();
+        }
+        if (animations["chasing"]) {
+            actor_template.animation_chasing =
+                animations["chasing"].as<std::uint16_t>();
+        }
+    }
+    actor_template.ai = ai_config_from_yaml(node["ai"], actor_template, weapons);
+    actor_template.ai.animation_idle = actor_template.animation_idle;
+    actor_template.ai.animation_chasing = actor_template.animation_chasing;
+    return actor_template;
+}
+
+std::uint32_t actor_template_ref_from_yaml(
+    const YAML::Node& node,
+    const std::vector<ActorTemplateConfig>& actor_templates) {
+    if (!node || !node.IsScalar()) {
+        throw std::runtime_error("actor_template reference must be a scalar");
+    }
+    const std::string value = node.as<std::string>();
+    if (!value.empty() &&
+        std::all_of(value.begin(), value.end(), [](unsigned char ch) {
+            return std::isdigit(ch);
+        })) {
+        const std::uint32_t actor_template_id =
+            static_cast<std::uint32_t>(std::stoul(value));
+        for (const ActorTemplateConfig& actor_template : actor_templates) {
+            if (actor_template.actor_template_id == actor_template_id) {
+                return actor_template_id;
+            }
+        }
+        throw std::runtime_error("unknown actor_template id: " + value);
+    }
+    for (const ActorTemplateConfig& actor_template : actor_templates) {
+        if (actor_template.name == value) {
+            return actor_template.actor_template_id;
+        }
+    }
+    throw std::runtime_error("unknown actor_template name: " + value);
+}
+
+std::vector<ActorTemplateConfig> load_actor_templates_from_source(
+    const GameplayConfigSource& source,
+    const std::string& directory,
+    const WeaponCatalogConfig& weapons) {
+    std::vector<ActorTemplateConfig> actor_templates;
+    std::unordered_map<std::uint32_t, std::string> ids;
+    std::unordered_map<std::string, std::uint32_t> names;
+    const std::vector<std::string> files = source.list_yaml_files(directory);
+    for (const std::string& file : files) {
+        ActorTemplateConfig actor_template =
+            actor_template_from_yaml(source.load_yaml(file), weapons);
+        if (ids.contains(actor_template.actor_template_id)) {
+            throw std::runtime_error("duplicate actor template id: " + file);
+        }
+        if (names.contains(actor_template.name)) {
+            throw std::runtime_error("duplicate actor template name: " + file);
+        }
+        ids.emplace(actor_template.actor_template_id, file);
+        names.emplace(actor_template.name, actor_template.actor_template_id);
+        actor_templates.push_back(actor_template);
+    }
+    if (actor_templates.empty()) {
+        throw std::runtime_error("actor template directory is empty: " + directory);
+    }
+    std::sort(
+        actor_templates.begin(),
+        actor_templates.end(),
+        [](const ActorTemplateConfig& lhs, const ActorTemplateConfig& rhs) {
+            return lhs.actor_template_id < rhs.actor_template_id;
+        });
+    return actor_templates;
+}
+
 GameServerGameplayConfig load_gameplay_config_from_weapon_template_source(
     const GameplayConfigSource& source,
     const std::string& directory) {
@@ -1044,6 +1333,7 @@ GameServerGameplayConfig load_gameplay_config_from_weapon_template_source(
     config.colliders = load_collider_catalog_from_source(
         source,
         source.default_collider_path_for_weapon_dir(directory));
+    apply_default_actor_templates(&config);
     config.weapons.catalog_hash = compute_gameplay_catalog_hash(config);
     const std::vector<std::string> errors = validate_gameplay_config(config);
     if (!errors.empty()) {
@@ -1079,22 +1369,15 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     config.colliders =
         load_collider_catalog_from_source(source, collider_template_file);
 
-    if (document["benchmark_projectile_groups"]) {
-        const YAML::Node groups = document["benchmark_projectile_groups"];
-        config.benchmark_projectile_groups.event_spawn_weapon_id =
-            groups["event_spawn_weapon_id"]
-                ? static_cast<std::uint8_t>(
-                      groups["event_spawn_weapon_id"].as<int>())
-                : config.benchmark_projectile_groups.event_spawn_weapon_id;
-        config.benchmark_projectile_groups.snapshot_only_weapon_id =
-            groups["snapshot_only_weapon_id"]
-                ? static_cast<std::uint8_t>(
-                      groups["snapshot_only_weapon_id"].as<int>())
-                : config.benchmark_projectile_groups.snapshot_only_weapon_id;
-        config.benchmark_projectile_groups.hybrid_weapon_id =
-            groups["hybrid_weapon_id"]
-                ? static_cast<std::uint8_t>(groups["hybrid_weapon_id"].as<int>())
-                : config.benchmark_projectile_groups.hybrid_weapon_id;
+    if (document["actor_template_dir"]) {
+        const std::string actor_template_dir =
+            source.resolve_path(base_path, document["actor_template_dir"]);
+        config.actor_templates = load_actor_templates_from_source(
+            source,
+            actor_template_dir,
+            config.weapons);
+    } else {
+        apply_default_actor_templates(&config);
     }
 
     apply_catalog_player_config(document, &config);
@@ -1111,10 +1394,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
 void apply_default_non_weapon_config(GameServerGameplayConfig* config) {
     config->player = PlayerGameplayDefinition{};
     config->enemy = EnemyGameplayDefinition{};
-    config->enemy.weapon_id = kEnemyRocketWeaponId;
-    config->enemy.ai.weapon_id = kEnemyRocketWeaponId;
-    config->enemy.ai.magazine_size = kEnemyRocketMagazine;
-    config->benchmark_projectile_groups = BenchmarkProjectileGroupsConfig{};
+    apply_default_actor_templates(config);
 }
 
 void apply_catalog_player_config(
@@ -1124,13 +1404,9 @@ void apply_catalog_player_config(
     if (!player) {
         return;
     }
-    const YAML::Node health = player["health"];
-    if (health) {
-        config->player.health.hp =
-            health["hp"] ? health["hp"].as<std::uint16_t>() : config->player.health.hp;
-        config->player.health.max_hp =
-            health["max_hp"] ? health["max_hp"].as<std::uint16_t>()
-                             : config->player.health.max_hp;
+    if (player["actor_template"]) {
+        config->player.actor_template_id =
+            actor_template_ref_from_yaml(player["actor_template"], config->actor_templates);
     }
 }
 
@@ -1153,8 +1429,9 @@ void apply_catalog_enemy_config(
     if (enemy["spawn_position"]) {
         config->enemy.spawn_position = vec3_from_yaml(enemy["spawn_position"]);
     }
-    if (enemy["ai_profile"]) {
-        config->enemy.ai.profile = enemy_ai_profile_from_yaml(enemy["ai_profile"]);
+    if (enemy["actor_template"]) {
+        config->enemy.actor_template_id =
+            actor_template_ref_from_yaml(enemy["actor_template"], config->actor_templates);
     }
 }
 
@@ -1176,9 +1453,22 @@ std::uint64_t compute_gameplay_catalog_hash(const WeaponCatalogConfig& weapons) 
 std::uint64_t compute_gameplay_catalog_hash(
     const GameServerGameplayConfig& config) {
     std::uint64_t hash = compute_gameplay_catalog_hash(config.weapons);
-    hash_scalar(&hash, config.benchmark_projectile_groups.event_spawn_weapon_id);
-    hash_scalar(&hash, config.benchmark_projectile_groups.snapshot_only_weapon_id);
-    hash_scalar(&hash, config.benchmark_projectile_groups.hybrid_weapon_id);
+    hash_scalar(&hash, config.player.actor_template_id);
+    hash_scalar(&hash, config.enemy.actor_template_id);
+    hash_vec3(&hash, config.enemy.spawn_position);
+    hash_scalar(&hash, config.enemy.spawn_count);
+    hash_float(&hash, config.enemy.spawn_radius);
+    hash_scalar(&hash, config.enemy.spawn_seed);
+    std::vector<ActorTemplateConfig> actor_templates = config.actor_templates;
+    std::sort(
+        actor_templates.begin(),
+        actor_templates.end(),
+        [](const ActorTemplateConfig& lhs, const ActorTemplateConfig& rhs) {
+            return lhs.actor_template_id < rhs.actor_template_id;
+        });
+    for (const ActorTemplateConfig& actor_template : actor_templates) {
+        hash_actor_template(&hash, actor_template);
+    }
     std::vector<ColliderTemplateConfig> templates = config.colliders.templates;
     std::sort(
         templates.begin(),
@@ -1230,6 +1520,25 @@ GameServerGameplayConfig load_gameplay_config_from_bundle_memory(
     return load_gameplay_config_from_catalog_source(source, entry_path);
 }
 
+const ActorTemplateConfig* find_actor_template(
+    const GameServerGameplayConfig& config,
+    std::uint32_t actor_template_id) {
+    for (const ActorTemplateConfig& actor_template : config.actor_templates) {
+        if (actor_template.actor_template_id == actor_template_id) {
+            return &actor_template;
+        }
+    }
+    return nullptr;
+}
+
+std::uint8_t active_weapon_id(const ActorTemplateConfig& actor_template) {
+    if (actor_template.weapon_slot_count == 0 ||
+        actor_template.active_weapon_slot >= actor_template.weapon_slot_count) {
+        return 0;
+    }
+    return actor_template.weapon_slots[actor_template.active_weapon_slot];
+}
+
 std::vector<std::string> validate_gameplay_config(
     const GameServerGameplayConfig& config) {
     std::vector<std::string> errors;
@@ -1247,31 +1556,64 @@ std::vector<std::string> validate_gameplay_config(
             errors.push_back("projectile sync mode must be valid");
         }
     }
-    if (config.player.health.hp == 0 || config.player.health.max_hp == 0 ||
-        config.player.move_speed_meters_per_second <= 0.0f) {
-        errors.push_back("player health and move speed must be positive");
+    if (config.actor_templates.empty()) {
+        errors.push_back("actor templates must not be empty");
     }
-    if (config.enemy.health.hp == 0 || config.enemy.health.max_hp == 0 ||
-        config.enemy.weapon_id >= kWeaponCount ||
-        config.enemy.ai.weapon_id >= kWeaponCount ||
-        config.enemy.spawn_count == 0 ||
-        config.enemy.spawn_radius < 0.0f ||
-        config.enemy.ai.magazine_size == 0 ||
-        config.enemy.ai.fire_interval_seconds <= 0.0f ||
-        config.enemy.ai.reload_seconds <= 0.0f) {
+    std::vector<std::uint32_t> actor_template_ids;
+    std::vector<std::string> actor_template_names;
+    for (const ActorTemplateConfig& actor_template : config.actor_templates) {
+        if (actor_template.actor_template_id == 0 || actor_template.name.empty() ||
+            (actor_template.entity_type != kEntityTypePlayer &&
+             actor_template.entity_type != kEntityTypeEnemy) ||
+            actor_template.health.hp == 0 ||
+            actor_template.health.max_hp == 0 ||
+            actor_template.health.hp > actor_template.health.max_hp ||
+            actor_template.move_speed_meters_per_second <= 0.0f ||
+            actor_template.hitbox_half_extents.x <= 0.0f ||
+            actor_template.hitbox_half_extents.y <= 0.0f ||
+            actor_template.hitbox_half_extents.z <= 0.0f ||
+            actor_template.weapon_slot_count == 0 ||
+            actor_template.weapon_slot_count > actor_template.weapon_slots.size() ||
+            actor_template.active_weapon_slot >= actor_template.weapon_slot_count) {
+            errors.push_back("actor template must be valid");
+        }
+        for (std::uint8_t slot = 0; slot < actor_template.weapon_slot_count; ++slot) {
+            if (actor_template.weapon_slots[slot] >= kWeaponCount) {
+                errors.push_back("actor template weapon slot must reference a valid weapon");
+            }
+        }
+        if (actor_template.entity_type == kEntityTypeEnemy &&
+            (actor_template.ai.weapon_id >= kWeaponCount ||
+             actor_template.ai.magazine_size == 0 ||
+             actor_template.ai.fire_interval_seconds <= 0.0f ||
+             actor_template.ai.reload_seconds <= 0.0f)) {
+            errors.push_back("enemy actor template ai must be valid");
+        }
+        if (std::find(
+                actor_template_ids.begin(),
+                actor_template_ids.end(),
+                actor_template.actor_template_id) != actor_template_ids.end()) {
+            errors.push_back("actor template id must be unique");
+        }
+        if (std::find(
+                actor_template_names.begin(),
+                actor_template_names.end(),
+                actor_template.name) != actor_template_names.end()) {
+            errors.push_back("actor template name must be unique");
+        }
+        actor_template_ids.push_back(actor_template.actor_template_id);
+        actor_template_names.push_back(actor_template.name);
+    }
+    const ActorTemplateConfig* player_actor =
+        find_actor_template(config, config.player.actor_template_id);
+    if (player_actor == nullptr || player_actor->entity_type != kEntityTypePlayer) {
+        errors.push_back("player actor template must reference a player actor");
+    }
+    const ActorTemplateConfig* enemy_actor =
+        find_actor_template(config, config.enemy.actor_template_id);
+    if (enemy_actor == nullptr || enemy_actor->entity_type != kEntityTypeEnemy ||
+        config.enemy.spawn_count == 0 || config.enemy.spawn_radius < 0.0f) {
         errors.push_back("enemy gameplay config must be valid");
-    }
-    const auto is_projectile_weapon = [&config](std::uint8_t weapon_id) {
-        return weapon_id < kWeaponCount &&
-               config.weapons.definitions[weapon_id].fire_mode ==
-                   KernelWeaponFireMode_Projectile;
-    };
-    if (!is_projectile_weapon(
-            config.benchmark_projectile_groups.event_spawn_weapon_id) ||
-        !is_projectile_weapon(
-            config.benchmark_projectile_groups.snapshot_only_weapon_id) ||
-        !is_projectile_weapon(config.benchmark_projectile_groups.hybrid_weapon_id)) {
-        errors.push_back("benchmark projectile groups must reference projectile weapons");
     }
     if (config.colliders.templates.empty() || config.colliders.bindings.empty()) {
         errors.push_back("collider catalog must include templates and bindings");
@@ -1376,36 +1718,47 @@ bool load_kernel_gameplay_catalog(
     return Kernel_LoadGameplayCatalog(kernel, &storage.definition);
 }
 
-KernelCombatStateDefinition make_player_combat_state(
-    const GameServerGameplayConfig& config) {
+KernelCombatStateDefinition make_combat_state_from_actor_template(
+    const GameServerGameplayConfig& config,
+    const ActorTemplateConfig& actor_template) {
     KernelCombatStateDefinition combat_state{};
     combat_state.struct_size = sizeof(KernelCombatStateDefinition);
-    combat_state.hp = config.player.health.hp;
-    combat_state.max_hp = config.player.health.max_hp;
-    combat_state.active_weapon_id = kWeaponRifle;
+    combat_state.hp = actor_template.health.hp;
+    combat_state.max_hp = actor_template.health.max_hp;
+    combat_state.active_weapon_id = active_weapon_id(actor_template);
     combat_state.move_speed_meters_per_second =
-        config.player.move_speed_meters_per_second;
-    combat_state.hitbox_center = config.player.hitbox_center;
-    combat_state.hitbox_half_extents = config.player.hitbox_half_extents;
-    fill_default_ammo(config.weapons, &combat_state);
+        actor_template.move_speed_meters_per_second;
+    combat_state.hitbox_center = actor_template.hitbox_center;
+    combat_state.hitbox_half_extents = actor_template.hitbox_half_extents;
+    for (std::uint8_t slot = 0; slot < actor_template.weapon_slot_count; ++slot) {
+        const std::uint8_t weapon_id = actor_template.weapon_slots[slot];
+        const KernelWeaponMechanicsDefinition& weapon =
+            config.weapons.definitions[weapon_id];
+        combat_state.ammo[weapon_id] = weapon.magazine_size;
+        combat_state.reserve_ammo[weapon_id] =
+            static_cast<std::uint16_t>(weapon.magazine_size * 2u);
+    }
     return combat_state;
+}
+
+KernelCombatStateDefinition make_player_combat_state(
+    const GameServerGameplayConfig& config) {
+    const ActorTemplateConfig* actor_template =
+        find_actor_template(config, config.player.actor_template_id);
+    if (actor_template == nullptr) {
+        return KernelCombatStateDefinition{};
+    }
+    return make_combat_state_from_actor_template(config, *actor_template);
 }
 
 KernelCombatStateDefinition make_enemy_combat_state(
     const GameServerGameplayConfig& config) {
-    KernelCombatStateDefinition combat_state{};
-    combat_state.struct_size = sizeof(KernelCombatStateDefinition);
-    combat_state.hp = config.enemy.health.hp;
-    combat_state.max_hp = config.enemy.health.max_hp;
-    combat_state.active_weapon_id = config.enemy.weapon_id;
-    combat_state.hitbox_center = config.enemy.hitbox_center;
-    combat_state.hitbox_half_extents = config.enemy.hitbox_half_extents;
-    const KernelWeaponMechanicsDefinition& weapon =
-        config.weapons.definitions[config.enemy.weapon_id];
-    combat_state.ammo[config.enemy.weapon_id] = weapon.magazine_size;
-    combat_state.reserve_ammo[config.enemy.weapon_id] =
-        static_cast<std::uint16_t>(weapon.magazine_size * 2u);
-    return combat_state;
+    const ActorTemplateConfig* actor_template =
+        find_actor_template(config, config.enemy.actor_template_id);
+    if (actor_template == nullptr) {
+        return KernelCombatStateDefinition{};
+    }
+    return make_combat_state_from_actor_template(config, *actor_template);
 }
 
 }  // namespace network_example::game_server

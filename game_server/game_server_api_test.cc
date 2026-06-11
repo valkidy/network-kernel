@@ -158,6 +158,15 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip() {
     files.push_back({
         "collider_templates/default.yaml",
         read_text_file(root / "game_server" / "collider_templates" / "default.yaml")});
+    const std::vector<std::string> actor_files = {
+        "enemy_grunt.yaml",
+        "player.yaml",
+    };
+    for (const std::string& file : actor_files) {
+        files.push_back({
+            "actor_templates/" + file,
+            read_text_file(root / "game_server" / "actor_templates" / file)});
+    }
     const std::vector<std::string> weapon_files = {
         "beam_rifle.yaml",
         "fire_floor.yaml",

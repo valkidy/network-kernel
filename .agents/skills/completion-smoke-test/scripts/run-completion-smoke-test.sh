@@ -88,18 +88,18 @@ if ! grep -Eq "render_state net_id=[0-9]+ type=2 pos=\\(6" "$HOST_LOG"; then
   print_failure_context
   exit 1
 fi
-if ! grep -Eq "event type=6 .* net_id=[0-9]+ peer=0 code=3" "$HOST_LOG"; then
+if ! grep -Eq "event type=6 .* net_id=[0-9]+ peer=0 code=2" "$HOST_LOG"; then
   echo "ERROR: host_server did not report an enemy fire event" >&2
   print_failure_context
   exit 1
 fi
 if ! grep -Eq "event type=4 .* peer=0 code=3" "$HOST_LOG"; then
-  echo "ERROR: host_server did not report an enemy rocket projectile spawn" >&2
+  echo "ERROR: host_server did not report an enemy projectile spawn" >&2
   print_failure_context
   exit 1
 fi
-if ! grep -Eq "event type=8 .* peer=0 code=5" "$HOST_LOG"; then
-  echo "ERROR: host_server did not report enemy rocket damage" >&2
+if ! grep -Eq "event type=8 .* peer=0 code=1" "$HOST_LOG"; then
+  echo "ERROR: host_server did not report enemy projectile damage" >&2
   print_failure_context
   exit 1
 fi

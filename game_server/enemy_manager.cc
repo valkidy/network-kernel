@@ -16,12 +16,18 @@ bool is_enemy_destroyed_event(const KernelEvent& event, const Enemy& enemy) {
            event.net_id == enemy.net_id;
 }
 
+EnemyAiConfig enemy_ai_config(const GameServerGameplayConfig& config) {
+    const ActorTemplateConfig* actor_template =
+        find_actor_template(config, config.enemy.actor_template_id);
+    return actor_template == nullptr ? EnemyAiConfig{} : actor_template->ai;
+}
+
 }  // namespace
 
 EnemyManager::EnemyManager(KernelHandle* kernel, GameServerGameplayConfig config)
     : kernel_(kernel),
       config_(std::move(config)),
-      ai_(config_.enemy.ai) {}
+      ai_(enemy_ai_config(config_)) {}
 
 void EnemyManager::handle_event(const KernelEvent& event) {
     if (event.type == KernelEventType_PlayerJoined) {
@@ -94,13 +100,18 @@ void EnemyManager::spawn_initial_enemies() {
 }
 
 bool EnemyManager::spawn_enemy_at(const KernelVec3& position) {
+    const ActorTemplateConfig* actor_template =
+        find_actor_template(config_, config_.enemy.actor_template_id);
+    if (actor_template == nullptr) {
+        return false;
+    }
     KernelServerEntityCreateInfo create_info{};
     create_info.struct_size = sizeof(KernelServerEntityCreateInfo);
-    create_info.entity_type = config_.enemy.entity_type;
+    create_info.entity_type = actor_template->entity_type;
     create_info.owner_peer = 0;
     create_info.position = position;
     create_info.rotation = kIdentityRotation;
-    create_info.animation_state = config_.enemy.animation_idle;
+    create_info.animation_state = actor_template->animation_idle;
     create_info.visual_flags = 0;
 
     std::uint32_t net_id = 0;
@@ -119,18 +130,24 @@ bool EnemyManager::spawn_enemy_at(const KernelVec3& position) {
     enemy.position = create_info.position;
     enemy.patrol_anchor = create_info.position;
     enemy.velocity = KernelVec3{0.0f, 0.0f, 0.0f};
-    enemy.hp = config_.enemy.health.hp;
-    enemy.max_hp = config_.enemy.health.max_hp;
-    enemy.ammo = combat_state.ammo[config_.enemy.weapon_id];
-    enemy.reserve_ammo = combat_state.reserve_ammo[config_.enemy.weapon_id];
+    enemy.hp = combat_state.hp;
+    enemy.max_hp = combat_state.max_hp;
+    enemy.ammo = combat_state.ammo[combat_state.active_weapon_id];
+    enemy.reserve_ammo = combat_state.reserve_ammo[combat_state.active_weapon_id];
     enemy.animation_state = create_info.animation_state;
     enemies_.push_back(enemy);
     return true;
 }
 
 bool EnemyManager::apply_weapon_mechanics(std::uint32_t net_id) const {
-    for (const KernelWeaponMechanicsDefinition& weapon :
-         config_.weapons.definitions) {
+    const ActorTemplateConfig* actor_template =
+        find_actor_template(config_, config_.enemy.actor_template_id);
+    if (actor_template == nullptr) {
+        return false;
+    }
+    for (std::uint8_t slot = 0; slot < actor_template->weapon_slot_count; ++slot) {
+        const KernelWeaponMechanicsDefinition& weapon =
+            config_.weapons.definitions[actor_template->weapon_slots[slot]];
         if (!Kernel_ServerSetEntityWeaponMechanics(kernel_, net_id, &weapon)) {
             return false;
         }

@@ -1,0 +1,19 @@
+id: 2
+name: enemy_grunt
+entity_type: enemy
+health:
+  hp: 240
+  max_hp: 240
+movement:
+  move_speed_meters_per_second: 2.5
+hitbox:
+  center: {x: 0.0, y: 0.8, z: 0.0}
+  half_extents: {x: 0.4, y: 0.8, z: 0.4}
+weapon_slots:
+  - 2
+active_weapon_slot: 0
+animations:
+  idle: 0
+  chasing: 1
+ai:
+  profile: default

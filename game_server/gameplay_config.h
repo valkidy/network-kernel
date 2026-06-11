@@ -28,25 +28,30 @@ struct EntityHealthDefinition {
 };
 
 struct PlayerGameplayDefinition {
-    std::uint16_t entity_type = kEntityTypePlayer;
-    EntityHealthDefinition health{100, 100};
-    KernelVec3 hitbox_center{0.0f, 0.9f, 0.0f};
-    KernelVec3 hitbox_half_extents{0.35f, 0.9f, 0.35f};
-    float move_speed_meters_per_second = 5.0f;
+    std::uint32_t actor_template_id = 0;
 };
 
 struct EnemyGameplayDefinition {
-    std::uint16_t entity_type = kEntityTypeEnemy;
-    EntityHealthDefinition health{kEnemyInitialHp, kEnemyInitialHp};
+    std::uint32_t actor_template_id = 0;
     KernelVec3 spawn_position{6.0f, 0.0f, 0.0f};
     std::uint32_t spawn_count = 1;
     float spawn_radius = 0.0f;
     std::uint32_t spawn_seed = 1;
-    KernelVec3 hitbox_center{0.0f, 0.8f, 0.0f};
-    KernelVec3 hitbox_half_extents{0.4f, 0.8f, 0.4f};
-    std::uint8_t weapon_id = kEnemyRocketWeaponId;
-    std::uint16_t animation_idle = kEnemyAnimationIdle;
-    std::uint16_t animation_chasing = kEnemyAnimationChasing;
+};
+
+struct ActorTemplateConfig {
+    std::uint32_t actor_template_id = 0;
+    std::string name;
+    std::uint16_t entity_type = 0;
+    EntityHealthDefinition health{};
+    KernelVec3 hitbox_center{};
+    KernelVec3 hitbox_half_extents{};
+    float move_speed_meters_per_second = 0.0f;
+    std::array<std::uint8_t, 4> weapon_slots{};
+    std::uint8_t weapon_slot_count = 0;
+    std::uint8_t active_weapon_slot = 0;
+    std::uint16_t animation_idle = 0;
+    std::uint16_t animation_chasing = 0;
     EnemyAiConfig ai{};
 };
 
@@ -72,18 +77,12 @@ struct ColliderCatalogConfig {
     std::vector<ColliderBindingConfig> bindings;
 };
 
-struct BenchmarkProjectileGroupsConfig {
-    std::uint8_t event_spawn_weapon_id = kWeaponGrenade;
-    std::uint8_t snapshot_only_weapon_id = kWeaponRocket;
-    std::uint8_t hybrid_weapon_id = kWeaponHomingMissile;
-};
-
 struct GameServerGameplayConfig {
     WeaponCatalogConfig weapons;
     PlayerGameplayDefinition player;
     EnemyGameplayDefinition enemy;
+    std::vector<ActorTemplateConfig> actor_templates;
     ColliderCatalogConfig colliders;
-    BenchmarkProjectileGroupsConfig benchmark_projectile_groups;
 };
 
 struct KernelGameplayCatalogStorage {
@@ -112,6 +111,10 @@ bool load_kernel_gameplay_catalog(
     const GameServerGameplayConfig& config);
 std::vector<std::string> validate_gameplay_config(
     const GameServerGameplayConfig& config);
+const ActorTemplateConfig* find_actor_template(
+    const GameServerGameplayConfig& config,
+    std::uint32_t actor_template_id);
+std::uint8_t active_weapon_id(const ActorTemplateConfig& actor_template);
 
 KernelCombatStateDefinition make_player_combat_state(
     const GameServerGameplayConfig& config);

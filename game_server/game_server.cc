@@ -59,11 +59,18 @@ void GameServer::configure_player(std::uint32_t net_id) const {
     if (kernel_ == nullptr) {
         return;
     }
+    const ActorTemplateConfig* actor_template =
+        find_actor_template(config_, config_.player.actor_template_id);
+    if (actor_template == nullptr) {
+        return;
+    }
     KernelCombatStateDefinition combat_state = make_player_combat_state(config_);
     if (!Kernel_ServerSetEntityCombatState(kernel_, net_id, &combat_state)) {
         return;
     }
-    for (const KernelWeaponMechanicsDefinition& weapon : config_.weapons.definitions) {
+    for (std::uint8_t slot = 0; slot < actor_template->weapon_slot_count; ++slot) {
+        const KernelWeaponMechanicsDefinition& weapon =
+            config_.weapons.definitions[actor_template->weapon_slots[slot]];
         Kernel_ServerSetEntityWeaponMechanics(kernel_, net_id, &weapon);
     }
 }

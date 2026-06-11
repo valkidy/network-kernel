@@ -5,6 +5,7 @@ package(default_visibility = ["//visibility:public"])
 filegroup(
     name = "gameplay_catalog_bundle_sources",
     srcs = glob([
+        "actor_templates/*.yaml",
         "collider_templates/*.yaml",
         "weapon_templates/*.yaml",
     ]) + [
@@ -40,11 +41,11 @@ cc_test(
     name = "gameplay_config_test",
     srcs = ["gameplay_config_test.cc"],
     data = glob([
+        "actor_templates/*.yaml",
         "collider_templates/*.yaml",
         "weapon_templates/*.yaml",
     ]) + [
         "gameplay_catalog.yaml",
-        "projectile_sync_benchmark_catalog.yaml",
     ],
     deps = [
         ":game_server",
@@ -56,11 +57,11 @@ cc_test(
     name = "weapon_template_loader_test",
     srcs = ["weapon_template_loader_test.cc"],
     data = glob([
+        "actor_templates/*.yaml",
         "collider_templates/*.yaml",
         "weapon_templates/*.yaml",
     ]) + [
         "gameplay_catalog.yaml",
-        "projectile_sync_benchmark_catalog.yaml",
     ],
     deps = [
         ":game_server",
@@ -99,11 +100,11 @@ cc_test(
     name = "enemy_manager_test",
     srcs = ["enemy_manager_test.cc"],
     data = glob([
+        "actor_templates/*.yaml",
         "collider_templates/*.yaml",
         "weapon_templates/*.yaml",
     ]) + [
         "gameplay_catalog.yaml",
-        "projectile_sync_benchmark_catalog.yaml",
     ],
     deps = [
         ":game_server",
@@ -115,11 +116,11 @@ cc_test(
     name = "game_server_api_test",
     srcs = ["game_server_api_test.cc"],
     data = glob([
+        "actor_templates/*.yaml",
         "collider_templates/*.yaml",
         "weapon_templates/*.yaml",
     ]) + [
         "gameplay_catalog.yaml",
-        "projectile_sync_benchmark_catalog.yaml",
     ],
     deps = [
         ":game_server_bridge",
