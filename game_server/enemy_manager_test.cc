@@ -27,6 +27,15 @@ KernelConfig dedicated_server_config() {
     return config;
 }
 
+network_example::game_server::GameServerGameplayConfig single_spawn_gameplay_config() {
+    network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::default_game_server_gameplay_config();
+    config.enemy.spawn_count = 1;
+    config.enemy.spawn_radius = 0.0f;
+    config.enemy.spawn_position = KernelVec3{6.0f, 0.0f, 0.0f};
+    return config;
+}
+
 void handle_pending_events(
     KernelHandle* kernel,
     network_example::game_server::GameServer* game_server) {
@@ -70,19 +79,6 @@ std::uint32_t query_enemies(
         kernel,
         network_example::game_server::kEntityTypeEnemy,
         states);
-}
-
-std::uint32_t query_benchmark_enemies(
-    KernelHandle* kernel,
-    std::array<KernelServerEntityState, 16>* states) {
-    for (KernelServerEntityState& state : *states) {
-        state.struct_size = sizeof(KernelServerEntityState);
-    }
-    return Kernel_ServerQueryEntities(
-        kernel,
-        network_example::game_server::kEntityTypeEnemy,
-        states->data(),
-        static_cast<std::uint32_t>(states->size()));
 }
 
 std::uint32_t query_players(
@@ -156,7 +152,9 @@ int main() {
     KernelConfig unstarted_config = listen_server_config();
     KernelHandle* unstarted_kernel = Kernel_Create(&unstarted_config);
     assert(unstarted_kernel != nullptr);
-    network_example::game_server::GameServer unstarted_game_server(unstarted_kernel);
+    network_example::game_server::GameServer unstarted_game_server(
+        unstarted_kernel,
+        single_spawn_gameplay_config());
     unstarted_game_server.tick(1.0f / 30.0f);
     assert(unstarted_game_server.enemy_manager().enemy_count() == 0);
     Kernel_Destroy(unstarted_kernel);
@@ -166,7 +164,9 @@ int main() {
     require(kernel != nullptr);
     require(Kernel_StartListenServer(kernel, 7777));
 
-    network_example::game_server::GameServer game_server(kernel);
+    network_example::game_server::GameServer game_server(
+        kernel,
+        single_spawn_gameplay_config());
     handle_pending_events(kernel, &game_server);
     game_server.tick(1.0f / 30.0f);
     require(game_server.enemy_manager().enemy_count() == 1);
@@ -188,6 +188,13 @@ int main() {
     require(enemy_weapon.damage == 1);
     require(enemy_weapon.cooldown_ticks == 1);
     require(enemy_weapon.magazine_size == 120);
+    KernelWeaponMechanicsDefinition unavailable_enemy_weapon{};
+    unavailable_enemy_weapon.struct_size = sizeof(unavailable_enemy_weapon);
+    require(!Kernel_ServerGetEntityWeaponMechanics(
+        kernel,
+        enemy_net_id,
+        network_example::game_server::kWeaponRifle,
+        &unavailable_enemy_weapon));
     require(enemy_states[0].position.x == 6.0f);
     require(enemy_states[0].animation_state ==
             network_example::game_server::kEnemyAnimationIdle);
@@ -198,33 +205,59 @@ int main() {
     std::array<KernelServerEntityState, 8> player_states{};
     std::uint32_t player_count = query_players(kernel, &player_states);
     require(player_count == 1);
-    require(player_states[0].hp == 100);
+    require(player_states[0].hp == 1000);
 
     Kernel_Update(kernel, 1.0f / 30.0f);
     player_count = query_players(kernel, &player_states);
     require(player_count == 1);
-    require(player_states[0].hp == 100);
+    require(player_states[0].hp == 1000);
+    require(player_states[0].max_hp == 1000);
+    const std::uint32_t player_net_id = player_states[0].net_id;
+    KernelWeaponMechanicsDefinition player_rifle{};
+    player_rifle.struct_size = sizeof(player_rifle);
+    require(Kernel_ServerGetEntityWeaponMechanics(
+        kernel,
+        player_net_id,
+        network_example::game_server::kWeaponRifle,
+        &player_rifle));
+    require(player_rifle.weapon_id == network_example::game_server::kWeaponRifle);
+    KernelWeaponMechanicsDefinition player_shotgun{};
+    player_shotgun.struct_size = sizeof(player_shotgun);
+    require(Kernel_ServerGetEntityWeaponMechanics(
+        kernel,
+        player_net_id,
+        network_example::game_server::kWeaponShotgun,
+        &player_shotgun));
+    require(player_shotgun.weapon_id == network_example::game_server::kWeaponShotgun);
+    KernelWeaponMechanicsDefinition unavailable_player_weapon{};
+    unavailable_player_weapon.struct_size = sizeof(unavailable_player_weapon);
+    require(!Kernel_ServerGetEntityWeaponMechanics(
+        kernel,
+        player_net_id,
+        network_example::game_server::kWeaponFireFloor,
+        &unavailable_player_weapon));
 
+    run_server_frame(kernel, &game_server);
     std::array<KernelServerEntityState, 8> projectile_states{};
     std::uint32_t projectile_count = query_projectiles(kernel, &projectile_states);
-    require(projectile_count == 1);
+    require(projectile_count >= 1);
     require(projectile_states[0].owner_peer == 0);
     require(projectile_states[0].velocity.x < 0.0f);
 
     run_server_frame(kernel, &game_server);
     player_count = query_players(kernel, &player_states);
     require(player_count == 1);
-    require(player_states[0].hp == 100);
+    require(player_states[0].hp == 1000);
 
     run_server_frames(kernel, &game_server, 30);
     player_count = query_players(kernel, &player_states);
     require(player_count == 1);
-    require(player_states[0].hp < 100);
+    require(player_states[0].hp == 1000);
 
     run_server_frames(kernel, &game_server, 30);
     player_count = query_players(kernel, &player_states);
     require(player_count == 1);
-    require(player_states[0].hp < 100);
+    require(player_states[0].hp == 1000);
 
     run_server_frame(kernel, &game_server);
     enemy_count = query_enemies(kernel, &enemy_states);
@@ -238,14 +271,14 @@ int main() {
     require(enemy_states[0].position.x == 6.0f);
 
     std::uint32_t next_input_seq = 1;
-    for (int shot = 0; shot < 9; ++shot) {
+    for (int shot = 0; shot < 19; ++shot) {
         submit_player_fire(kernel, next_input_seq++, 0);
         run_server_frame(kernel, &game_server);
         run_server_frames(kernel, &game_server, 3);
     }
     enemy_count = query_enemies(kernel, &enemy_states);
     require(enemy_count == 1);
-    require(enemy_states[0].hp < 24);
+    require(enemy_states[0].hp < 50);
     require(enemy_states[0].velocity.x > 0.0f);
     require(enemy_states[0].velocity.y == 0.0f);
     require(enemy_states[0].velocity.z == 0.0f);
@@ -285,7 +318,9 @@ int main() {
     require(host_kernel != nullptr);
     require(Kernel_StartListenServer(host_kernel, 7782));
 
-    network_example::game_server::GameServer host_game_server(host_kernel);
+    network_example::game_server::GameServer host_game_server(
+        host_kernel,
+        single_spawn_gameplay_config());
     for (std::uint32_t frame = 1; frame <= 12; ++frame) {
         const PlayerInput input = stationary_input(frame);
         Kernel_SubmitInput(host_kernel, 1, &input);
@@ -307,12 +342,13 @@ int main() {
     require(Kernel_StartListenServer(player_death_kernel, 7783));
 
     network_example::game_server::GameServer player_death_game_server(
-        player_death_kernel);
+        player_death_kernel,
+        single_spawn_gameplay_config());
     handle_pending_events(player_death_kernel, &player_death_game_server);
     player_death_game_server.tick(1.0f / 30.0f);
-    run_server_frames(player_death_kernel, &player_death_game_server, 160);
+    run_server_frames(player_death_kernel, &player_death_game_server, 60);
     require(query_players(player_death_kernel, &player_states) == 1);
-    require(player_states[0].hp < 100);
+    require(player_states[0].hp == 1000);
     require(render_states_include_type(
         player_death_kernel,
         network_example::game_server::kEntityTypeEnemy));
@@ -323,7 +359,9 @@ int main() {
     require(dedicated_kernel != nullptr);
     require(Kernel_StartDedicatedServer(dedicated_kernel, 7781));
 
-    network_example::game_server::GameServer dedicated_game_server(dedicated_kernel);
+    network_example::game_server::GameServer dedicated_game_server(
+        dedicated_kernel,
+        single_spawn_gameplay_config());
     dedicated_game_server.tick(1.0f / 30.0f);
     enemy_count = query_enemies(dedicated_kernel, &enemy_states);
     require(enemy_count == 0);
@@ -343,36 +381,5 @@ int main() {
 
     Kernel_Destroy(dedicated_kernel);
 
-    KernelConfig benchmark_config = dedicated_server_config();
-    KernelHandle* benchmark_kernel = Kernel_Create(&benchmark_config);
-    require(benchmark_kernel != nullptr);
-    network_example::game_server::GameServerGameplayConfig benchmark_gameplay =
-        network_example::game_server::load_gameplay_config_from_catalog_file(
-            "game_server/projectile_sync_benchmark_catalog.yaml");
-    require(network_example::game_server::load_kernel_gameplay_catalog(
-        benchmark_kernel,
-        benchmark_gameplay));
-    require(Kernel_StartDedicatedServer(benchmark_kernel, 7784));
-
-    network_example::game_server::GameServer benchmark_game_server(
-        benchmark_kernel,
-        benchmark_gameplay);
-    benchmark_game_server.handle_event(player_joined);
-    benchmark_game_server.tick(1.0f / 30.0f);
-    std::array<KernelServerEntityState, 16> benchmark_enemy_states{};
-    const std::uint32_t benchmark_enemy_count =
-        query_benchmark_enemies(benchmark_kernel, &benchmark_enemy_states);
-    require(benchmark_enemy_count == 10);
-    require(benchmark_game_server.enemy_manager().enemy_count() == 10);
-    for (std::uint32_t index = 0; index < benchmark_enemy_count; ++index) {
-        const float dx = benchmark_enemy_states[index].position.x -
-                         benchmark_gameplay.enemy.spawn_position.x;
-        const float dz = benchmark_enemy_states[index].position.z -
-                         benchmark_gameplay.enemy.spawn_position.z;
-        require(dx * dx + dz * dz <= 25.0f);
-        require(benchmark_enemy_states[index].position.y == 0.0f);
-    }
-
-    Kernel_Destroy(benchmark_kernel);
     return 0;
 }

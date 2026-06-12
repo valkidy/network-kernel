@@ -109,6 +109,7 @@ inline constexpr std::uint32_t kCollisionLayerPlayer = 0x00000001u;
 inline constexpr std::uint32_t kCollisionLayerEnemy = 0x00000002u;
 inline constexpr std::uint32_t kCollisionLayerProjectile = 0x00000004u;
 inline constexpr std::uint32_t kCollisionLayerAreaEffect = 0x00000008u;
+inline constexpr std::uint32_t kCollisionMaskNone = 0x00000000u;
 inline constexpr std::uint32_t kCollisionMaskDamageable =
     kCollisionLayerPlayer | kCollisionLayerEnemy;
 

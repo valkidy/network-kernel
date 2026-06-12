@@ -124,7 +124,7 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_BENCHMARK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 15u);
+    assert(KERNEL_ABI_VERSION == 16u);
     assert(KERNEL_MAX_WEAPONS == 7u);
     assert(KERNEL_LAN_DISCOVERY_DEFAULT_PORT == 47777u);
     assert(offsetof(PlayerInput, client_action_time_us) > offsetof(PlayerInput, input_seq));
@@ -381,6 +381,13 @@ int main() {
     assert(queried_weapon.projectile.hit_response == KernelProjectileHitResponse_Destroy);
     assert(queried_weapon.projectile.damage_shape == KernelProjectileDamageShape_Explosion);
     assert(queried_weapon.projectile.collision_mask == KERNEL_COLLISION_MASK_DAMAGEABLE);
+    KernelWeaponMechanicsDefinition zero_projectile_mask = weapon_mechanics;
+    zero_projectile_mask.projectile.collision_mask = 0;
+    assert(Kernel_ServerValidateMechanicsConfig(&zero_projectile_mask));
+    assert(Kernel_ServerSetEntityWeaponMechanics(
+        kernel,
+        created_net_id,
+        &zero_projectile_mask));
 
     KernelWeaponMechanicsDefinition invalid_reserved_response = weapon_mechanics;
     invalid_reserved_response.projectile.hit_response = KernelProjectileHitResponse_Bounce;
@@ -462,6 +469,13 @@ int main() {
     assert(queried_weapon.fire_mode == KernelWeaponFireMode_AreaEffect);
     assert(queried_weapon.area_effect.radius == 2.5f);
     assert(queried_weapon.area_effect.damage_interval_ticks == 3);
+    KernelWeaponMechanicsDefinition zero_area_mask = area_weapon;
+    zero_area_mask.area_effect.collision_mask = 0;
+    assert(Kernel_ServerValidateMechanicsConfig(&zero_area_mask));
+    assert(Kernel_ServerSetEntityWeaponMechanics(
+        kernel,
+        created_net_id,
+        &zero_area_mask));
 
     KernelWeaponMechanicsDefinition beam_weapon{};
     beam_weapon.struct_size = sizeof(beam_weapon);
@@ -495,7 +509,8 @@ int main() {
     assert(!Kernel_ServerValidateMechanicsConfig(&invalid_beam));
     invalid_beam = beam_weapon;
     invalid_beam.beam.collision_mask = 0;
-    assert(!Kernel_ServerValidateMechanicsConfig(&invalid_beam));
+    assert(Kernel_ServerValidateMechanicsConfig(&invalid_beam));
+    assert(Kernel_ServerSetEntityWeaponMechanics(kernel, created_net_id, &invalid_beam));
 
     KernelVec3 enemy_position{5.0f, 0.0f, 0.0f};
     KernelQuat enemy_rotation{0.0f, 0.0f, 0.0f, 1.0f};
@@ -613,7 +628,7 @@ int main() {
     assert(area_effect_state.radius == 2.5f);
     assert(area_effect_state.damage_per_interval == 7);
     assert(area_effect_state.damage_interval_ticks == 3);
-    assert(area_effect_state.collision_mask == KERNEL_COLLISION_MASK_DAMAGEABLE);
+    assert(area_effect_state.collision_mask == 0);
 
     server_entity_input.buttons = InputButton_Fire;
     server_entity_input.selected_weapon = 5;
@@ -642,7 +657,7 @@ int main() {
     assert(beam_state.length == 6.0f);
     assert(beam_state.radius == 0.25f);
     assert(beam_state.damage_per_second == 30);
-    assert(beam_state.collision_mask == KERNEL_COLLISION_LAYER_ENEMY);
+    assert(beam_state.collision_mask == 0);
 
     server_entity_input.buttons = InputButton_Fire;
     server_entity_input.selected_weapon = 6;

@@ -182,19 +182,24 @@ network_example::ai::AIContext build_context(
     return context;
 }
 
-EnemyAiDecision idle_decision(std::uint32_t target_player_net_id = 0) {
+EnemyAiDecision idle_decision(
+    std::uint16_t animation_idle,
+    std::uint32_t target_player_net_id = 0) {
     return EnemyAiDecision{
         zero_vec3(),
         KernelVec3{1.0f, 0.0f, 0.0f},
-        kEnemyAnimationIdle,
+        animation_idle,
         target_player_net_id,
         false,
         false,
     };
 }
 
-EnemyAiDecision patrol_decision(const Enemy& enemy, float patrol_speed) {
-    EnemyAiDecision decision = idle_decision();
+EnemyAiDecision patrol_decision(
+    const Enemy& enemy,
+    float patrol_speed,
+    std::uint16_t animation_idle) {
+    EnemyAiDecision decision = idle_decision(animation_idle);
     decision.velocity = KernelVec3{
         static_cast<float>(enemy.patrol_direction) * patrol_speed,
         0.0f,
@@ -207,10 +212,12 @@ EnemyAiDecision execute_command(const network_example::ai::AICommand& command,
                                 const Enemy& enemy,
                                 const EnemyAiTarget* target,
                                 float move_speed,
-                                float patrol_speed) {
+                                float patrol_speed,
+                                std::uint16_t animation_idle,
+                                std::uint16_t animation_chasing) {
     const std::uint32_t target_net_id = target != nullptr ? target->net_id : 0;
     if (command.type == "AttackTarget" && target != nullptr) {
-        EnemyAiDecision decision = idle_decision(target_net_id);
+        EnemyAiDecision decision = idle_decision(animation_idle, target_net_id);
         decision.aim_direction = normalized_direction(enemy.position, target->position);
         if (length_squared(decision.aim_direction) <= kEpsilon * kEpsilon) {
             decision.aim_direction = KernelVec3{1.0f, 0.0f, 0.0f};
@@ -222,21 +229,21 @@ EnemyAiDecision execute_command(const network_example::ai::AICommand& command,
         return EnemyAiDecision{
             flee_velocity_from_target(enemy, *target, move_speed),
             KernelVec3{1.0f, 0.0f, 0.0f},
-            kEnemyAnimationChasing,
+            animation_chasing,
             target_net_id,
             false,
             false,
         };
     }
     if (command.type == "Reload") {
-        EnemyAiDecision decision = idle_decision(target_net_id);
+        EnemyAiDecision decision = idle_decision(animation_idle, target_net_id);
         decision.should_reload = true;
         return decision;
     }
     if (command.type == "Patrol") {
-        return patrol_decision(enemy, patrol_speed);
+        return patrol_decision(enemy, patrol_speed, animation_idle);
     }
-    return idle_decision(target_net_id);
+    return idle_decision(animation_idle, target_net_id);
 }
 
 void update_patrol_direction(const EnemyAiConfig& config, Enemy* enemy) {
@@ -334,29 +341,9 @@ EnemyAiDecision EnemyAIController::decide(
     const EnemyAiTarget* nearest_player = nearest_target(
         enemy, players, config_.chase_range, &nearest_distance_squared);
 
-    if (config_.profile == EnemyAiProfile::kProjectileBenchmark) {
-        if (enemy.ammo == 0 && enemy.reserve_ammo > 0 && !enemy.is_reloading) {
-            EnemyAiDecision decision =
-                idle_decision(nearest_player != nullptr ? nearest_player->net_id : 0);
-            decision.should_reload = true;
-            return decision;
-        }
-        if (nearest_player == nullptr || enemy.is_reloading || enemy.ammo == 0) {
-            return idle_decision();
-        }
-        EnemyAiDecision decision = idle_decision(nearest_player->net_id);
-        decision.aim_direction =
-            normalized_direction(enemy.position, nearest_player->position);
-        if (length_squared(decision.aim_direction) <= kEpsilon * kEpsilon) {
-            decision.aim_direction = KernelVec3{1.0f, 0.0f, 0.0f};
-        }
-        decision.should_fire = true;
-        return decision;
-    }
-
     network_example::ai::AITreeInstance tree = make_enemy_tree();
     if (!tree.has_root()) {
-        return idle_decision();
+        return idle_decision(config_.animation_idle);
     }
 
     network_example::ai::AIContext context =
@@ -364,14 +351,18 @@ EnemyAiDecision EnemyAIController::decide(
     network_example::ai::AICommandBuffer commands;
     tree.tick(context, &commands);
     if (commands.empty()) {
-        return idle_decision(nearest_player != nullptr ? nearest_player->net_id : 0);
+        return idle_decision(
+            config_.animation_idle,
+            nearest_player != nullptr ? nearest_player->net_id : 0);
     }
     return execute_command(
         commands.commands().front(),
         enemy,
         nearest_player,
         config_.move_speed,
-        config_.patrol_speed);
+        config_.patrol_speed,
+        config_.animation_idle,
+        config_.animation_chasing);
 }
 
 void EnemyAIController::tick(

@@ -101,7 +101,7 @@ void write_valid_templates(const std::filesystem::path& dir) {
         "  sync_mode: local_predicted_deterministic\n"
         "  movement_model: linear\n  hit_response: destroy\n"
         "  damage_shape: direct_hit\n  speed: 30.0\n  lifetime_seconds: 2.0\n"
-        "  explosion_radius: 0.0\n  collision_mask: damageable\n  max_hit_count: 1\n"
+        "  explosion_radius: 0.0\n  collision_mask: player\n  max_hit_count: 1\n"
         "  gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
     write_file(
         dir / "rocket.yaml",
@@ -318,7 +318,85 @@ void invalid_templates_are_rejected() {
     assert(load_fails(invalid_sync_dir));
 }
 
-void catalog_file_loads_colliders_and_benchmark_groups() {
+void collision_mask_expressions_are_loaded() {
+    const std::filesystem::path none_dir = tmp_dir("mask_none");
+    write_valid_templates(none_dir);
+    write_file(
+        none_dir / "rocket.yaml",
+        "id: 3\nname: Rocket\nweapon_type: projectile\nmagazine_size: 6\n"
+        "damage: 45\ncooldown_ticks: 45\nreload_ticks: 75\nprojectile:\n"
+        "  sync_mode: server_snapshot_only\n"
+        "  movement_model: linear\n  hit_response: destroy\n"
+        "  damage_shape: explosion\n  speed: 35.0\n  lifetime_seconds: 2.5\n"
+        "  explosion_radius: 3.0\n  collision_mask: none\n  max_hit_count: 1\n"
+        "  gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
+    network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            none_dir.string());
+    assert(config.weapons.definitions[network_example::game_server::kWeaponRocket]
+               .projectile.collision_mask == KERNEL_COLLISION_MASK_NONE);
+
+    const std::filesystem::path zero_dir = tmp_dir("mask_zero");
+    write_valid_templates(zero_dir);
+    write_file(
+        zero_dir / "beam_rifle.yaml",
+        "id: 5\nname: Beam Rifle\nweapon_type: beam\nmagazine_size: 12\n"
+        "damage: 30\ncooldown_ticks: 1\nreload_ticks: 45\nbeam:\n"
+        "  length: 8.0\n  radius: 0.25\n  damage_per_second: 30\n"
+        "  lifetime_ticks: 2\n  collision_mask: 0\n");
+    config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            zero_dir.string());
+    assert(config.weapons.definitions[network_example::game_server::kWeaponBeamRifle]
+               .beam.collision_mask == KERNEL_COLLISION_MASK_NONE);
+
+    const std::filesystem::path expression_dir = tmp_dir("mask_expression");
+    write_valid_templates(expression_dir);
+    write_file(
+        expression_dir / "fire_floor.yaml",
+        "id: 4\nname: Fire Floor\nweapon_type: area_effect\nmagazine_size: 3\n"
+        "damage: 12\ncooldown_ticks: 10\nreload_ticks: 30\narea_effect:\n"
+        "  radius: 2.0\n  damage_per_interval: 12\n  damage_interval_ticks: 2\n"
+        "  lifetime_ticks: 6\n  spawn_distance: 1.0\n"
+        "  collision_mask: enemy | player\n");
+    config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            expression_dir.string());
+    assert(config.weapons.definitions[network_example::game_server::kWeaponFireFloor]
+               .area_effect.collision_mask ==
+           (KERNEL_COLLISION_LAYER_ENEMY | KERNEL_COLLISION_LAYER_PLAYER));
+}
+
+void malformed_collision_masks_are_rejected() {
+    const std::filesystem::path unknown_dir = tmp_dir("mask_unknown");
+    write_valid_templates(unknown_dir);
+    write_file(
+        unknown_dir / "rocket.yaml",
+        "id: 3\nname: Rocket\nweapon_type: projectile\nmagazine_size: 6\n"
+        "damage: 45\ncooldown_ticks: 45\nreload_ticks: 75\nprojectile:\n"
+        "  sync_mode: server_snapshot_only\n"
+        "  movement_model: linear\n  hit_response: destroy\n"
+        "  damage_shape: explosion\n  speed: 35.0\n  lifetime_seconds: 2.5\n"
+        "  explosion_radius: 3.0\n  collision_mask: ghost\n  max_hit_count: 1\n"
+        "  gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
+    assert(load_fails(unknown_dir));
+
+    const std::filesystem::path empty_token_dir = tmp_dir("mask_empty_token");
+    write_valid_templates(empty_token_dir);
+    write_file(
+        empty_token_dir / "rocket.yaml",
+        "id: 3\nname: Rocket\nweapon_type: projectile\nmagazine_size: 6\n"
+        "damage: 45\ncooldown_ticks: 45\nreload_ticks: 75\nprojectile:\n"
+        "  sync_mode: server_snapshot_only\n"
+        "  movement_model: linear\n  hit_response: destroy\n"
+        "  damage_shape: explosion\n  speed: 35.0\n  lifetime_seconds: 2.5\n"
+        "  explosion_radius: 3.0\n  collision_mask: enemy |\n"
+        "  max_hit_count: 1\n"
+        "  gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
+    assert(load_fails(empty_token_dir));
+}
+
+void catalog_file_loads_colliders() {
     const std::filesystem::path catalog_file =
         runfiles_root() / "game_server" / "gameplay_catalog.yaml";
     const network_example::game_server::GameServerGameplayConfig config =
@@ -328,12 +406,6 @@ void catalog_file_loads_colliders_and_benchmark_groups() {
     assert(config.weapons.catalog_hash != 0);
     assert(config.colliders.templates.size() == 4);
     assert(config.colliders.bindings.size() == 4);
-    assert(config.benchmark_projectile_groups.event_spawn_weapon_id ==
-           network_example::game_server::kWeaponGrenade);
-    assert(config.benchmark_projectile_groups.snapshot_only_weapon_id ==
-           network_example::game_server::kWeaponRocket);
-    assert(config.benchmark_projectile_groups.hybrid_weapon_id ==
-           network_example::game_server::kWeaponHomingMissile);
 }
 
 }  // namespace
@@ -341,6 +413,8 @@ void catalog_file_loads_colliders_and_benchmark_groups() {
 int main() {
     valid_repo_templates_load_all_slots();
     invalid_templates_are_rejected();
-    catalog_file_loads_colliders_and_benchmark_groups();
+    collision_mask_expressions_are_loaded();
+    malformed_collision_masks_are_rejected();
+    catalog_file_loads_colliders();
     return 0;
 }

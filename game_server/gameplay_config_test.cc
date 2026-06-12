@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <string>
 #include <unordered_map>
@@ -123,6 +124,12 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip() {
     files.push_back({
         "collider_templates/default.yaml",
         read_text_file("game_server/collider_templates/default.yaml")});
+    files.push_back({
+        "actor_templates/player.yaml",
+        read_text_file("game_server/actor_templates/player.yaml")});
+    files.push_back({
+        "actor_templates/enemy_grunt.yaml",
+        read_text_file("game_server/actor_templates/enemy_grunt.yaml")});
 
     const std::vector<std::string> weapon_files = {
         "beam_rifle.yaml",
@@ -150,7 +157,7 @@ int main() {
         network_example::game_server::validate_gameplay_config(config);
     assert(errors.empty());
 
-    assert(config.player.entity_type == network_example::game_server::kEntityTypePlayer);
+    assert(config.player.actor_template_id == 1);
     require(config.weapons.catalog_version == 1);
     require(config.weapons.catalog_hash != 0);
     require(
@@ -163,14 +170,30 @@ int main() {
     require(
         config.weapons.catalog_hash !=
         network_example::game_server::compute_gameplay_catalog_hash(changed_config));
-    assert(config.player.health.hp == 100);
-    assert(config.player.move_speed_meters_per_second == 5.0f);
+    const KernelCombatStateDefinition player_combat_state =
+        network_example::game_server::make_player_combat_state(config);
+    assert(player_combat_state.hp == 1000);
+    assert(player_combat_state.max_hp == 1000);
+    assert(player_combat_state.move_speed_meters_per_second == 5.0f);
 
-    assert(config.enemy.entity_type == network_example::game_server::kEntityTypeEnemy);
-    assert(config.enemy.health.hp == network_example::game_server::kEnemyInitialHp);
-    assert(config.enemy.weapon_id == network_example::game_server::kEnemyRocketWeaponId);
+    assert(config.enemy.actor_template_id == 2);
     assert(config.enemy.spawn_position.x == 6.0f);
-    assert(config.enemy.ai.move_speed == 2.5f);
+    assert(config.enemy.spawn_count == 10);
+    assert(config.enemy.spawn_radius == 5.0f);
+    assert(config.enemy.spawn_seed == 4242);
+    const KernelCombatStateDefinition enemy_combat_state =
+        network_example::game_server::make_enemy_combat_state(config);
+    assert(enemy_combat_state.hp == 500);
+    assert(enemy_combat_state.max_hp == 500);
+    assert(
+        enemy_combat_state.active_weapon_id ==
+        network_example::game_server::kWeaponGrenade);
+    const network_example::game_server::ActorTemplateConfig* config_enemy_template =
+        network_example::game_server::find_actor_template(
+            config,
+            config.enemy.actor_template_id);
+    assert(config_enemy_template != nullptr);
+    assert(config_enemy_template->ai.move_speed == 2.5f);
 
     const KernelWeaponMechanicsDefinition& rifle =
         config.weapons.definitions[network_example::game_server::kWeaponRifle];
@@ -206,19 +229,40 @@ int main() {
         projectile_spammer.projectile.damage_shape ==
         KernelProjectileDamageShape_DirectHit);
     assert(projectile_spammer.projectile.explosion_radius == 0.0f);
+    assert(projectile_spammer.projectile.collision_mask == KERNEL_COLLISION_MASK_NONE);
     assert(projectile_spammer.pellet_count == 3);
     assert(projectile_spammer.pellet_spread == 15.0f);
     assert(config.weapons.names[network_example::game_server::kWeaponGrenade] ==
            "Projectile Spammer");
-    assert(config.enemy.weapon_id == network_example::game_server::kWeaponGrenade);
-    assert(config.enemy.ai.weapon_id == network_example::game_server::kWeaponGrenade);
-    assert(config.enemy.ai.magazine_size == 120);
+    assert(
+        network_example::game_server::active_weapon_id(*config_enemy_template) ==
+        network_example::game_server::kWeaponGrenade);
+    assert(config_enemy_template->ai.weapon_id ==
+           network_example::game_server::kWeaponGrenade);
+    assert(config_enemy_template->ai.magazine_size == 120);
     assert(
         config.weapons
             .projectile_sync_modes[network_example::game_server::kWeaponRocket] ==
         KernelProjectileSyncMode_ServerSnapshotOnly);
     assert(config.colliders.templates.size() == 4);
     assert(config.colliders.bindings.size() == 4);
+    assert(config.actor_templates.size() == 2);
+    const network_example::game_server::ActorTemplateConfig& player_template =
+        config.actor_templates[0];
+    assert(player_template.actor_template_id == 1);
+    assert(player_template.name == "player");
+    assert(player_template.entity_type == network_example::game_server::kEntityTypePlayer);
+    assert(player_template.weapon_slot_count == 2);
+    assert(player_template.weapon_slots[0] == network_example::game_server::kWeaponRifle);
+    assert(player_template.weapon_slots[1] == network_example::game_server::kWeaponShotgun);
+    assert(player_template.active_weapon_slot == 0);
+    const network_example::game_server::ActorTemplateConfig& enemy_template =
+        config.actor_templates[1];
+    assert(enemy_template.actor_template_id == 2);
+    assert(enemy_template.name == "enemy_grunt");
+    assert(enemy_template.entity_type == network_example::game_server::kEntityTypeEnemy);
+    assert(enemy_template.weapon_slot_count == 1);
+    assert(enemy_template.weapon_slots[0] == network_example::game_server::kWeaponGrenade);
 
     const KernelWeaponMechanicsDefinition& fire_floor =
         config.weapons.definitions[network_example::game_server::kWeaponFireFloor];
@@ -241,22 +285,6 @@ int main() {
     assert(config.weapons.names[network_example::game_server::kWeaponBeamRifle] ==
            "Beam Rifle");
 
-    const network_example::game_server::GameServerGameplayConfig benchmark_config =
-        network_example::game_server::load_gameplay_config_from_catalog_file(
-            "game_server/projectile_sync_benchmark_catalog.yaml");
-    assert(benchmark_config.player.health.hp == 5000);
-    assert(benchmark_config.player.health.max_hp == 5000);
-    assert(benchmark_config.enemy.spawn_count == 10);
-    assert(benchmark_config.enemy.spawn_radius == 5.0f);
-    assert(benchmark_config.enemy.spawn_seed == 4242u);
-    assert(
-        benchmark_config.enemy.ai.profile ==
-        network_example::game_server::EnemyAiProfile::kProjectileBenchmark);
-    const KernelWeaponMechanicsDefinition& benchmark_spammer =
-        benchmark_config.weapons.definitions[network_example::game_server::kWeaponGrenade];
-    assert(benchmark_spammer.pellet_count == 3);
-    assert(benchmark_spammer.pellet_spread == 15.0f);
-
     const std::vector<std::uint8_t> gameplay_bundle = make_gameplay_bundle_zip();
     const network_example::game_server::GameServerGameplayConfig bundle_config =
         network_example::game_server::load_gameplay_config_from_bundle_memory(
@@ -266,6 +294,8 @@ int main() {
     assert(bundle_config.weapons.catalog_hash == config.weapons.catalog_hash);
     assert(bundle_config.colliders.templates.size() == config.colliders.templates.size());
     assert(bundle_config.colliders.bindings.size() == config.colliders.bindings.size());
+    assert(bundle_config.actor_templates.size() == config.actor_templates.size());
+    assert(bundle_config.enemy.actor_template_id == config.enemy.actor_template_id);
 
     const std::vector<std::uint8_t> invalid_path_bundle = make_store_zip({
         {"../x.yaml", "catalog_version: 1\n"},
@@ -303,6 +333,14 @@ int main() {
     network_example::game_server::GameServerGameplayConfig invalid = config;
     invalid.weapons.definitions[0].damage = 0;
     assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
+
+    network_example::game_server::GameServerGameplayConfig actor_hash_changed =
+        config;
+    actor_hash_changed.actor_templates[0].health.hp += 1;
+    require(
+        config.weapons.catalog_hash !=
+        network_example::game_server::compute_gameplay_catalog_hash(
+            actor_hash_changed));
 
     return 0;
 }

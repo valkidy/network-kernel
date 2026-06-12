@@ -36,7 +36,7 @@ void handle_pending_events(
 }
 
 std::uint32_t query_enemy_count(KernelHandle* kernel) {
-    std::array<KernelServerEntityState, 8> states{};
+    std::array<KernelServerEntityState, 16> states{};
     for (KernelServerEntityState& state : states) {
         state.struct_size = sizeof(KernelServerEntityState);
     }
@@ -158,6 +158,15 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip() {
     files.push_back({
         "collider_templates/default.yaml",
         read_text_file(root / "game_server" / "collider_templates" / "default.yaml")});
+    const std::vector<std::string> actor_files = {
+        "enemy_grunt.yaml",
+        "player.yaml",
+    };
+    for (const std::string& file : actor_files) {
+        files.push_back({
+            "actor_templates/" + file,
+            read_text_file(root / "game_server" / "actor_templates" / file)});
+    }
     const std::vector<std::string> weapon_files = {
         "beam_rifle.yaml",
         "fire_floor.yaml",
@@ -263,8 +272,8 @@ int main() {
     assert(template_info.mechanics.projectile.homing.lock_on_range == 25.0f);
     handle_pending_events(kernel, game_server);
     GameServer_Tick(game_server, 1.0f / 30.0f);
-    assert(GameServer_GetEnemyCount(game_server) == 1);
-    assert(query_enemy_count(kernel) == 1);
+    assert(GameServer_GetEnemyCount(game_server) == 10);
+    assert(query_enemy_count(kernel) == 10);
 
     GameServer_DespawnAll(game_server, KernelDespawnReason_Destroyed);
     GameServer_Tick(game_server, 1.0f / 30.0f);

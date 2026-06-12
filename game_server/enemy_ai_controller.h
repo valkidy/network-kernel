@@ -10,7 +10,6 @@ namespace network_example::game_server {
 
 enum class EnemyAiProfile : std::uint8_t {
     kDefault = 0,
-    kProjectileBenchmark = 1,
 };
 
 struct EnemyAiConfig {
@@ -23,6 +22,8 @@ struct EnemyAiConfig {
     float reload_seconds = 1.0f;
     std::uint8_t weapon_id = kEnemyRocketWeaponId;
     std::uint16_t magazine_size = kEnemyRocketMagazine;
+    std::uint16_t animation_idle = kEnemyAnimationIdle;
+    std::uint16_t animation_chasing = kEnemyAnimationChasing;
 };
 
 class EnemyAIController {
