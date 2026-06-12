@@ -15,7 +15,7 @@ projectile:
   speed: 30.0
   lifetime_seconds: 2.0
   explosion_radius: 0.0
-  collision_mask: player
+  collision_mask: none
   max_hit_count: 1
   gravity:
     x: 0.0

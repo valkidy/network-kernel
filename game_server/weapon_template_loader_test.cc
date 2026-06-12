@@ -334,7 +334,7 @@ void collision_mask_expressions_are_loaded() {
         network_example::game_server::load_gameplay_config_from_weapon_template_directory(
             none_dir.string());
     assert(config.weapons.definitions[network_example::game_server::kWeaponRocket]
-               .projectile.collision_mask == 0);
+               .projectile.collision_mask == KERNEL_COLLISION_MASK_NONE);
 
     const std::filesystem::path zero_dir = tmp_dir("mask_zero");
     write_valid_templates(zero_dir);
@@ -348,7 +348,7 @@ void collision_mask_expressions_are_loaded() {
         network_example::game_server::load_gameplay_config_from_weapon_template_directory(
             zero_dir.string());
     assert(config.weapons.definitions[network_example::game_server::kWeaponBeamRifle]
-               .beam.collision_mask == 0);
+               .beam.collision_mask == KERNEL_COLLISION_MASK_NONE);
 
     const std::filesystem::path expression_dir = tmp_dir("mask_expression");
     write_valid_templates(expression_dir);

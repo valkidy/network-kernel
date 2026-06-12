@@ -172,18 +172,22 @@ int main() {
         network_example::game_server::compute_gameplay_catalog_hash(changed_config));
     const KernelCombatStateDefinition player_combat_state =
         network_example::game_server::make_player_combat_state(config);
-    assert(player_combat_state.hp == 100);
-    assert(player_combat_state.max_hp == 100);
+    assert(player_combat_state.hp == 1000);
+    assert(player_combat_state.max_hp == 1000);
     assert(player_combat_state.move_speed_meters_per_second == 5.0f);
 
     assert(config.enemy.actor_template_id == 2);
     assert(config.enemy.spawn_position.x == 6.0f);
+    assert(config.enemy.spawn_count == 10);
+    assert(config.enemy.spawn_radius == 5.0f);
+    assert(config.enemy.spawn_seed == 4242);
     const KernelCombatStateDefinition enemy_combat_state =
         network_example::game_server::make_enemy_combat_state(config);
-    assert(enemy_combat_state.hp == network_example::game_server::kEnemyInitialHp);
+    assert(enemy_combat_state.hp == 500);
+    assert(enemy_combat_state.max_hp == 500);
     assert(
         enemy_combat_state.active_weapon_id ==
-        network_example::game_server::kEnemyRocketWeaponId);
+        network_example::game_server::kWeaponGrenade);
     const network_example::game_server::ActorTemplateConfig* config_enemy_template =
         network_example::game_server::find_actor_template(
             config,
@@ -225,7 +229,7 @@ int main() {
         projectile_spammer.projectile.damage_shape ==
         KernelProjectileDamageShape_DirectHit);
     assert(projectile_spammer.projectile.explosion_radius == 0.0f);
-    assert(projectile_spammer.projectile.collision_mask == KERNEL_COLLISION_LAYER_PLAYER);
+    assert(projectile_spammer.projectile.collision_mask == KERNEL_COLLISION_MASK_NONE);
     assert(projectile_spammer.pellet_count == 3);
     assert(projectile_spammer.pellet_spread == 15.0f);
     assert(config.weapons.names[network_example::game_server::kWeaponGrenade] ==

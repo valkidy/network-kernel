@@ -122,7 +122,7 @@ int RunHostServer(std::uint16_t port, const char* gameplay_catalog_path) {
         game_server.tick(delta_seconds);
     }
 
-    std::array<RenderEntityState, 16> states{};
+    std::array<RenderEntityState, 64> states{};
     const std::uint32_t state_count =
         Kernel_GetRenderStates(kernel, states.data(), static_cast<std::uint32_t>(states.size()));
     for (std::uint32_t index = 0; index < state_count; ++index) {

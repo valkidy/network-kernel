@@ -205,13 +205,13 @@ int main() {
     std::array<KernelServerEntityState, 8> player_states{};
     std::uint32_t player_count = query_players(kernel, &player_states);
     require(player_count == 1);
-    require(player_states[0].hp == 100);
+    require(player_states[0].hp == 1000);
 
     Kernel_Update(kernel, 1.0f / 30.0f);
     player_count = query_players(kernel, &player_states);
     require(player_count == 1);
-    require(player_states[0].hp == 100);
-    require(player_states[0].max_hp == 100);
+    require(player_states[0].hp == 1000);
+    require(player_states[0].max_hp == 1000);
     const std::uint32_t player_net_id = player_states[0].net_id;
     KernelWeaponMechanicsDefinition player_rifle{};
     player_rifle.struct_size = sizeof(player_rifle);
@@ -247,17 +247,17 @@ int main() {
     run_server_frame(kernel, &game_server);
     player_count = query_players(kernel, &player_states);
     require(player_count == 1);
-    require(player_states[0].hp == 100);
+    require(player_states[0].hp == 1000);
 
     run_server_frames(kernel, &game_server, 30);
     player_count = query_players(kernel, &player_states);
     require(player_count == 1);
-    require(player_states[0].hp < 100);
+    require(player_states[0].hp == 1000);
 
     run_server_frames(kernel, &game_server, 30);
     player_count = query_players(kernel, &player_states);
     require(player_count == 1);
-    require(player_states[0].hp < 100);
+    require(player_states[0].hp == 1000);
 
     run_server_frame(kernel, &game_server);
     enemy_count = query_enemies(kernel, &enemy_states);
@@ -271,14 +271,14 @@ int main() {
     require(enemy_states[0].position.x == 6.0f);
 
     std::uint32_t next_input_seq = 1;
-    for (int shot = 0; shot < 9; ++shot) {
+    for (int shot = 0; shot < 19; ++shot) {
         submit_player_fire(kernel, next_input_seq++, 0);
         run_server_frame(kernel, &game_server);
         run_server_frames(kernel, &game_server, 3);
     }
     enemy_count = query_enemies(kernel, &enemy_states);
     require(enemy_count == 1);
-    require(enemy_states[0].hp < 24);
+    require(enemy_states[0].hp < 50);
     require(enemy_states[0].velocity.x > 0.0f);
     require(enemy_states[0].velocity.y == 0.0f);
     require(enemy_states[0].velocity.z == 0.0f);
@@ -348,7 +348,7 @@ int main() {
     player_death_game_server.tick(1.0f / 30.0f);
     run_server_frames(player_death_kernel, &player_death_game_server, 60);
     require(query_players(player_death_kernel, &player_states) == 1);
-    require(player_states[0].hp < 100);
+    require(player_states[0].hp == 1000);
     require(render_states_include_type(
         player_death_kernel,
         network_example::game_server::kEntityTypeEnemy));

@@ -36,7 +36,7 @@ void handle_pending_events(
 }
 
 std::uint32_t query_enemy_count(KernelHandle* kernel) {
-    std::array<KernelServerEntityState, 8> states{};
+    std::array<KernelServerEntityState, 16> states{};
     for (KernelServerEntityState& state : states) {
         state.struct_size = sizeof(KernelServerEntityState);
     }
@@ -272,8 +272,8 @@ int main() {
     assert(template_info.mechanics.projectile.homing.lock_on_range == 25.0f);
     handle_pending_events(kernel, game_server);
     GameServer_Tick(game_server, 1.0f / 30.0f);
-    assert(GameServer_GetEnemyCount(game_server) == 1);
-    assert(query_enemy_count(kernel) == 1);
+    assert(GameServer_GetEnemyCount(game_server) == 10);
+    assert(query_enemy_count(kernel) == 10);
 
     GameServer_DespawnAll(game_server, KernelDespawnReason_Destroyed);
     GameServer_Tick(game_server, 1.0f / 30.0f);

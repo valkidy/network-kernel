@@ -438,7 +438,7 @@ std::uint32_t collision_mask_token_from_yaml(const std::string& token) {
         return KERNEL_COLLISION_MASK_DAMAGEABLE;
     }
     if (token == "none" || token == "0") {
-        return 0;
+        return KERNEL_COLLISION_MASK_NONE;
     }
     if (token == "enemy") {
         return KERNEL_COLLISION_LAYER_ENEMY;

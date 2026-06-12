@@ -6,6 +6,6 @@ player:
   actor_template: player
 enemy:
   actor_template: enemy_grunt
-  spawn_count: 1
-  spawn_radius: 0.0
+  spawn_count: 10
+  spawn_radius: 5.0
   spawn_seed: 4242

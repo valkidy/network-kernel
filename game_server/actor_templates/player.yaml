@@ -2,8 +2,8 @@ id: 1
 name: player
 entity_type: player
 health:
-  hp: 100
-  max_hp: 100
+  hp: 1000
+  max_hp: 1000
 movement:
   move_speed_meters_per_second: 5.0
 hitbox:

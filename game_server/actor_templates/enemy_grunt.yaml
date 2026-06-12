@@ -2,8 +2,8 @@ id: 2
 name: enemy_grunt
 entity_type: enemy
 health:
-  hp: 240
-  max_hp: 240
+  hp: 500
+  max_hp: 500
 movement:
   move_speed_meters_per_second: 2.5
 hitbox:

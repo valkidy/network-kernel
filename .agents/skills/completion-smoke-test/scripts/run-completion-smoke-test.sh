@@ -83,7 +83,7 @@ fi
 
 echo "==> Running host_server mode"
 "$APP_BIN" --mode=host_server --port="$PORT" >"$HOST_LOG" 2>&1
-if ! grep -Eq "render_state net_id=[0-9]+ type=2 pos=\\(6" "$HOST_LOG"; then
+if ! grep -Eq "render_state net_id=[0-9]+ type=2 " "$HOST_LOG"; then
   echo "ERROR: host_server did not render the GameServer enemy" >&2
   print_failure_context
   exit 1
@@ -98,8 +98,8 @@ if ! grep -Eq "event type=4 .* peer=0 code=3" "$HOST_LOG"; then
   print_failure_context
   exit 1
 fi
-if ! grep -Eq "event type=8 .* peer=0 code=1" "$HOST_LOG"; then
-  echo "ERROR: host_server did not report enemy projectile damage" >&2
+if grep -Eq "event type=8 .* peer=0 code=1" "$HOST_LOG"; then
+  echo "ERROR: host_server reported enemy projectile damage despite spammer collision_mask=none" >&2
   print_failure_context
   exit 1
 fi
