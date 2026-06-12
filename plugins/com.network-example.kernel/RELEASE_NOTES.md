@@ -1,5 +1,10 @@
 0.6.5 release notes:
 
+- updates native plugins
+
+
+0.6.5 release notes:
+
 - adds managed gameplay config bundle loading APIs
 - wires client and host samples to optional TextAsset bundle loading
 
