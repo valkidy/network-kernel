@@ -300,7 +300,7 @@ void impact_response_spawns_area_effect_projectile_once() {
     rocket_template.impact_action =
         network_example::ProjectileImpactAction::kSpawnProjectile;
     rocket_template.impact_projectile_template_id = 8;
-    rocket_template.impact_destroy_self = true;
+    rocket_template.impact_destroy_self = 1u;
 
     network_example::RuntimeProjectileTemplate explosion_template;
     explosion_template.projectile_template_id = 8;

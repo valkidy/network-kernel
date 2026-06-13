@@ -4,13 +4,45 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 16u
+#define KERNEL_ABI_VERSION 17u
 
 #define KERNEL_BUILD_INFO_TEXT_SIZE 128u
 #define KERNEL_LAN_DISCOVERY_TEXT_SIZE 128u
 #define KERNEL_LAN_DISCOVERY_DEFAULT_PORT 47777u
 
 #define KERNEL_MAX_WEAPONS 7u
+
+#define KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED UINT32_C(0)
+#define KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS UINT32_C(1)
+
+#define KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_NONE UINT32_C(0)
+#define KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_ARGUMENT UINT32_C(1)
+#define KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_YAML UINT32_C(2)
+#define KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNSUPPORTED_CATALOG_VERSION UINT32_C(3)
+#define KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD UINT32_C(4)
+#define KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_MISSING_REQUIRED_FIELD UINT32_C(5)
+#define KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_FIELD_TYPE UINT32_C(6)
+#define KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_ENUM_VALUE UINT32_C(7)
+#define KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_DUPLICATE_TEMPLATE_ID UINT32_C(8)
+#define KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_DUPLICATE_TEMPLATE_NAME UINT32_C(9)
+#define KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_MISSING_TEMPLATE_REFERENCE UINT32_C(10)
+#define KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_NUMERIC_RANGE UINT32_C(11)
+#define KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_ARCHIVE_PATH UINT32_C(12)
+#define KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_DUPLICATE_ARCHIVE_ENTRY UINT32_C(13)
+#define KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_MISSING_BUNDLE_ENTRY UINT32_C(14)
+#define KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_KERNEL_REJECTED_CATALOG UINT32_C(15)
+#define KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN UINT32_C(255)
+
+#define KERNEL_GAMEPLAY_CATALOG_LOAD_SOURCE_UNKNOWN UINT32_C(0)
+#define KERNEL_GAMEPLAY_CATALOG_LOAD_SOURCE_FILESYSTEM UINT32_C(1)
+#define KERNEL_GAMEPLAY_CATALOG_LOAD_SOURCE_BUNDLE UINT32_C(2)
+
+#define KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_UNKNOWN UINT32_C(0)
+#define KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG UINT32_C(1)
+#define KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_WEAPON UINT32_C(2)
+#define KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_PROJECTILE UINT32_C(3)
+#define KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR UINT32_C(4)
+#define KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_COLLIDER UINT32_C(5)
 
 #define KERNEL_CAPABILITY_CLIENT_MODE UINT64_C(0x0000000000000001)
 #define KERNEL_CAPABILITY_LISTEN_SERVER_MODE UINT64_C(0x0000000000000002)
@@ -86,6 +118,7 @@ typedef struct KernelAbiInfo {
     uint32_t lan_discovery_result_size;
     uint64_t capability_flags;
     uint32_t gameplay_catalog_definition_size;
+    uint32_t gameplay_catalog_load_result_size;
     uint32_t projectile_template_definition_size;
     uint32_t collider_template_definition_size;
     uint32_t collider_binding_definition_size;
@@ -115,8 +148,8 @@ typedef struct KernelBuildInfo {
 typedef struct KernelLocalPlayerInfo {
     uint32_t peer_id;
     uint32_t player_net_id;
-    bool has_welcome;
-    bool connected;
+    uint32_t has_welcome;
+    uint32_t connected;
 } KernelLocalPlayerInfo;
 
 typedef struct KernelLANDiscoveryServerConfig {
@@ -142,7 +175,7 @@ typedef struct KernelLANDiscoveryResult {
     uint32_t snapshot_schema_version;
     uint32_t packet_schema_version;
     char git_commit[KERNEL_BUILD_INFO_TEXT_SIZE];
-    bool compatible;
+    uint32_t compatible;
 } KernelLANDiscoveryResult;
 
 typedef enum KernelMode {
@@ -322,7 +355,7 @@ typedef struct KernelServerEntityState {
     uint16_t max_hp;
     uint16_t animation_state;
     uint32_t visual_flags;
-    bool valid;
+    uint32_t valid;
 } KernelServerEntityState;
 
 typedef enum KernelColliderShapeType {
@@ -380,7 +413,7 @@ typedef struct KernelProjectileTemplateDefinition {
     uint8_t damage_shape;
     uint8_t projectile_kind;
     uint8_t impact_action;
-    bool impact_destroy_self;
+    uint32_t impact_destroy_self;
     uint8_t damage_falloff;
     uint8_t reserved0;
     uint16_t damage;
@@ -409,13 +442,22 @@ typedef struct KernelGameplayCatalogDefinition {
 
 typedef struct KernelGameplayCatalogLoadResult {
     uint32_t struct_size;
-    bool success;
+    uint32_t status;
     uint32_t catalog_version;
     uint64_t catalog_hash;
     uint32_t projectile_template_count;
     uint32_t collider_template_count;
     uint32_t collider_binding_count;
-    char error_message[256];
+    uint32_t error_code;
+    uint32_t source_kind;
+    uint32_t template_kind;
+    uint32_t template_id;
+    uint32_t field_id;
+    int32_t line;
+    int32_t column;
+    char path[128];
+    char field[64];
+    char diagnostic[256];
 } KernelGameplayCatalogLoadResult;
 
 typedef struct KernelBenchmarkStats {
@@ -527,7 +569,7 @@ typedef struct KernelColliderShapeView {
     KernelVec3 segment_end;
     uint32_t lifetime_ticks;
     uint32_t remaining_ticks;
-    bool has_resolved_damage;
+    uint32_t has_resolved_damage;
 } KernelColliderShapeView;
 
 typedef struct KernelHomingMechanicsDefinition {
@@ -608,7 +650,7 @@ typedef struct KernelBeamState {
     uint32_t expire_tick;
     uint8_t source_code;
     uint32_t collision_mask;
-    bool valid;
+    uint32_t valid;
 } KernelBeamState;
 
 typedef struct KernelAreaEffectState {
@@ -621,7 +663,7 @@ typedef struct KernelAreaEffectState {
     uint32_t expire_tick;
     uint8_t source_code;
     uint32_t collision_mask;
-    bool valid;
+    uint32_t valid;
 } KernelAreaEffectState;
 
 typedef struct KernelHomingState {
@@ -642,7 +684,7 @@ typedef struct KernelHomingState {
     float max_turn_rate_degrees_per_second;
     float acceleration;
     float max_speed;
-    bool valid;
+    uint32_t valid;
 } KernelHomingState;
 
 typedef struct KernelCombatStateDefinition {

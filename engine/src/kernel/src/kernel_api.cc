@@ -104,6 +104,8 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
         out_info->lan_discovery_result_size = sizeof(KernelLANDiscoveryResult);
         out_info->gameplay_catalog_definition_size =
             sizeof(KernelGameplayCatalogDefinition);
+        out_info->gameplay_catalog_load_result_size =
+            sizeof(KernelGameplayCatalogLoadResult);
         out_info->projectile_template_definition_size =
             sizeof(KernelProjectileTemplateDefinition);
         out_info->collider_template_definition_size =

@@ -47,6 +47,7 @@ cc_test(
         "projectile_templates/*.yaml",
         "weapon_templates/*.yaml",
     ]) + [
+        "//game_server/gameplay_catalog_bundle:bundle",
         "gameplay_catalog.yaml",
     ],
     deps = [

@@ -202,6 +202,7 @@ int main() {
     assert(GameServer_GetAbiInfo(&info, sizeof(info)));
     assert(info.struct_size == sizeof(GameServerAbiInfo));
     assert(info.abi_version == GAME_SERVER_ABI_VERSION);
+    assert(info.abi_version == 4u);
     assert((info.capability_flags & GAME_SERVER_CAPABILITY_ENEMY_MANAGER) != 0);
     assert((info.capability_flags & GAME_SERVER_CAPABILITY_EVENT_HANDLING) != 0);
     assert((info.capability_flags & GAME_SERVER_CAPABILITY_DESPAWN_ALL) != 0);
@@ -209,6 +210,8 @@ int main() {
     assert((info.capability_flags & GAME_SERVER_CAPABILITY_WEAPON_TEMPLATE_QUERY) != 0);
     assert((info.capability_flags & GAME_SERVER_CAPABILITY_GAMEPLAY_CATALOG_BUNDLE) != 0);
     assert(info.weapon_template_info_size == sizeof(GameServerWeaponTemplateInfo));
+    assert(info.gameplay_catalog_load_result_size ==
+           sizeof(KernelGameplayCatalogLoadResult));
     assert(!GameServer_GetAbiInfo(nullptr, sizeof(info)));
     assert(!GameServer_GetAbiInfo(&info, sizeof(info) - 1));
 
@@ -221,6 +224,10 @@ int main() {
                0,
                "gameplay_catalog.yaml",
                &load_result) == nullptr);
+    assert(load_result.status == KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED);
+    assert(load_result.error_code ==
+           KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_ARGUMENT);
+    assert(load_result.diagnostic[0] != '\0');
     GameServer_Destroy(nullptr);
     GameServer_HandleEvent(nullptr, nullptr);
     GameServer_Tick(nullptr, 1.0f / 30.0f);
@@ -243,7 +250,8 @@ int main() {
         static_cast<std::uint32_t>(gameplay_bundle.size()),
         "gameplay_catalog.yaml",
         &load_result));
-    assert(load_result.success);
+    assert(load_result.status == KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS);
+    assert(load_result.error_code == KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_NONE);
     assert(load_result.catalog_version == 1);
     assert(load_result.catalog_hash != 0);
     assert(load_result.projectile_template_count > 0);
@@ -335,7 +343,7 @@ int main() {
             "gameplay_catalog.yaml",
             &load_result);
     assert(bundle_game_server != nullptr);
-    assert(load_result.success);
+    assert(load_result.status == KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS);
     assert(load_result.catalog_hash != 0);
     template_info = GameServerWeaponTemplateInfo{};
     template_info.struct_size = sizeof(template_info);
@@ -349,6 +357,24 @@ int main() {
     dedicated_config.mode = KernelMode_DedicatedServer;
     KernelHandle* dedicated_kernel = Kernel_Create(&dedicated_config);
     assert(dedicated_kernel != nullptr);
+    load_result = KernelGameplayCatalogLoadResult{};
+    const std::vector<std::uint8_t> unsupported_version_bundle = make_store_zip({
+        {"gameplay_catalog.yaml", "catalog_version: 2\n"},
+    });
+    assert(!Kernel_LoadGameplayCatalogFromMemory(
+        dedicated_kernel,
+        unsupported_version_bundle.data(),
+        static_cast<std::uint32_t>(unsupported_version_bundle.size()),
+        "gameplay_catalog.yaml",
+        &load_result));
+    assert(load_result.status == KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED);
+    assert(
+        load_result.error_code ==
+        KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNSUPPORTED_CATALOG_VERSION);
+    assert(std::string(load_result.path) == "gameplay_catalog.yaml");
+    assert(std::string(load_result.field) == "catalog_version");
+    assert(load_result.diagnostic[0] != '\0');
+
     load_result = KernelGameplayCatalogLoadResult{};
     assert(Kernel_LoadGameplayCatalogFromMemory(
         dedicated_kernel,

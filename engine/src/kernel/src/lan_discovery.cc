@@ -250,8 +250,10 @@ bool parse_response(
     const KernelBuildInfo local_info = current_build_info();
     result.compatible =
         result.protocol_version == local_info.protocol_version &&
-        result.snapshot_schema_version == local_info.snapshot_schema_version &&
-        result.packet_schema_version == local_info.packet_schema_version;
+                result.snapshot_schema_version == local_info.snapshot_schema_version &&
+                result.packet_schema_version == local_info.packet_schema_version
+            ? 1u
+            : 0u;
     *out_result = result;
     return true;
 }

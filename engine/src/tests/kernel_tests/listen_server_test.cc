@@ -216,7 +216,7 @@ int main() {
     assert(player_query_count == 1);
     const KernelServerEntityState queried_player =
         find_server_entity(queried_players, player_query_count, before_player.net_id);
-    assert(queried_player.valid);
+    assert(queried_player.valid != 0u);
     assert(queried_player.entity_type == 1);
     assert(queried_player.hp == 100);
     assert(queried_player.max_hp == 100);
@@ -439,7 +439,7 @@ int main() {
     assert(enemy_query_count == 1);
     const KernelServerEntityState queried_enemy =
         find_server_entity(queried_enemies, enemy_query_count, enemy_net_id);
-    assert(queried_enemy.valid);
+    assert(queried_enemy.valid != 0u);
     assert(queried_enemy.position.x == enemy_create.position.x);
 
     Kernel_Update(kernel, 0.0f);

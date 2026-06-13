@@ -352,6 +352,76 @@ void invalid_templates_are_rejected() {
         "damage: 1\ncooldown_ticks: 1\nreload_ticks: 1\nmax_range: 1.0\n");
     assert(load_fails(duplicate_dir));
 
+    const std::filesystem::path duplicate_name_dir = tmp_dir("duplicate_name");
+    write_valid_templates(duplicate_name_dir);
+    write_file(
+        duplicate_name_dir / "duplicate_name.yaml",
+        "id: 4\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 1\n"
+        "damage: 1\ncooldown_ticks: 1\nreload_ticks: 1\nmax_range: 1.0\n"
+        "segment_collider: rifle_segment_damage\n");
+    assert(load_fails(duplicate_name_dir));
+
+    const std::filesystem::path unknown_weapon_field_dir =
+        tmp_dir("unknown_weapon_field");
+    write_valid_templates(unknown_weapon_field_dir);
+    write_file(
+        unknown_weapon_field_dir / "rifle.yaml",
+        "id: 0\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
+        "damage: 25\ncooldown_ticks: 3\nreload_ticks: 30\nmax_range: 100.0\n"
+        "segment_collider: rifle_segment_damage\nruntime_instance_id: 9\n");
+    assert(load_fails(unknown_weapon_field_dir));
+
+    const std::filesystem::path unknown_area_field_dir =
+        tmp_dir("unknown_area_field");
+    write_valid_templates(unknown_area_field_dir);
+    write_file(
+        unknown_area_field_dir / "fire_floor.yaml",
+        "id: 4\nname: Fire Floor\nweapon_type: area_effect\nmagazine_size: 3\n"
+        "damage: 12\ncooldown_ticks: 10\nreload_ticks: 30\narea_effect:\n"
+        "  collider_template: explosion_damage\n"
+        "  radius: 2.0\n  damage_per_interval: 12\n  damage_interval_ticks: 2\n"
+        "  lifetime_ticks: 6\n  spawn_distance: 1.0\n  collision_mask: enemy\n"
+        "  current_tick: 123\n");
+    assert(load_fails(unknown_area_field_dir));
+
+    const std::filesystem::path unknown_beam_field_dir =
+        tmp_dir("unknown_beam_field");
+    write_valid_templates(unknown_beam_field_dir);
+    write_file(
+        unknown_beam_field_dir / "beam_rifle.yaml",
+        "id: 5\nname: Beam Rifle\nweapon_type: beam\nmagazine_size: 12\n"
+        "damage: 30\ncooldown_ticks: 1\nreload_ticks: 45\nbeam:\n"
+        "  collider_template: beam_damage\n"
+        "  length: 8.0\n  radius: 0.25\n  damage_per_second: 30\n"
+        "  lifetime_ticks: 2\n  collision_mask: enemy\n  owner: player\n");
+    assert(load_fails(unknown_beam_field_dir));
+
+    const std::filesystem::path unknown_homing_field_dir =
+        tmp_dir("unknown_homing_field");
+    write_valid_templates(unknown_homing_field_dir);
+    write_file(
+        unknown_homing_field_dir.parent_path() /
+            "projectile_templates" / "homing_missile.yaml",
+        "id: 6\nname: homing_missile_projectile\ndamage: 20\n"
+        "sync_mode: hybrid_deterministic_then_snapshot\n"
+        "collider_template: sphere_damage\n"
+        "movement_model: homing\nhit_response: destroy\n"
+        "damage_shape: direct_hit\nspeed: 20.0\nlifetime_seconds: 3.0\n"
+        "collision_mask: enemy\nmax_hit_count: 1\n"
+        "gravity: {x: 0.0, y: 0.0, z: 0.0}\n"
+        "homing:\n"
+        "  homing_mode: fire_and_forget\n"
+        "  sync_mode: hybrid_deterministic_then_snapshot\n"
+        "  boost_ticks: 2\n"
+        "  lock_on_range: 25.0\n"
+        "  lose_target_range: 30.0\n"
+        "  lock_cone_degrees: 75.0\n"
+        "  max_turn_rate_degrees_per_second: 360.0\n"
+        "  acceleration: 20.0\n"
+        "  max_speed: 30.0\n"
+        "  owner_entity_id: 99\n");
+    assert(load_fails(unknown_homing_field_dir));
+
     const std::filesystem::path hitscan_projectile_dir = tmp_dir("hitscan_projectile");
     write_valid_templates(hitscan_projectile_dir);
     write_file(

@@ -347,6 +347,8 @@ int main() {
            sizeof(KernelLANDiscoveryResult));
     assert(abi_info.combat_state_definition_size ==
            sizeof(KernelCombatStateDefinition));
+    assert(abi_info.gameplay_catalog_load_result_size ==
+           sizeof(KernelGameplayCatalogLoadResult));
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LISTEN_SERVER_MODE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LOCAL_PLAYER_INFO) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_SERVER_ENTITY_CREATE) != 0);
@@ -393,6 +395,8 @@ int main() {
     assert(game_server_abi_info.abi_version == GAME_SERVER_ABI_VERSION);
     assert(game_server_abi_info.weapon_template_info_size ==
            sizeof(GameServerWeaponTemplateInfo));
+    assert(game_server_abi_info.gameplay_catalog_load_result_size ==
+           sizeof(KernelGameplayCatalogLoadResult));
     assert(
         (game_server_abi_info.capability_flags &
          GAME_SERVER_CAPABILITY_ENEMY_MANAGER) != 0);
@@ -426,8 +430,8 @@ int main() {
     assert(kernel_get_local_player_info(kernel, &local_info));
     assert(local_info.peer_id == 1);
     assert(local_info.player_net_id != 0);
-    assert(local_info.has_welcome);
-    assert(local_info.connected);
+    assert(local_info.has_welcome != 0u);
+    assert(local_info.connected != 0u);
     std::array<KernelEvent, 16> events{};
     std::uint32_t event_count = kernel_poll_events(
         kernel,

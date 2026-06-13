@@ -28,6 +28,7 @@ int main(void) {
     KernelBeamState beam_state;
     KernelHomingState homing_state;
     KernelGameplayCatalogDefinition gameplay_catalog;
+    KernelGameplayCatalogLoadResult gameplay_catalog_load_result;
     KernelProjectileTemplateDefinition projectile_template;
     KernelColliderTemplateDefinition collider_template;
     KernelColliderBindingDefinition collider_binding;
@@ -59,6 +60,7 @@ int main(void) {
     (void)beam_state;
     (void)homing_state;
     (void)gameplay_catalog;
+    (void)gameplay_catalog_load_result;
     (void)projectile_template;
     (void)collider_template;
     (void)collider_binding;
@@ -69,7 +71,10 @@ int main(void) {
     (void)collider_query;
     (void)collider_shape;
 
-    assert(KERNEL_ABI_VERSION == 16u);
+    assert(KERNEL_ABI_VERSION == 17u);
+    assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
+    assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
+    assert(KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD == 4u);
     assert(KERNEL_MAX_WEAPONS == 7u);
     assert(KERNEL_LAN_DISCOVERY_DEFAULT_PORT == 47777u);
     assert(sizeof(KernelAbiInfo) > 0u);
@@ -94,6 +99,7 @@ int main(void) {
     assert(sizeof(KernelBeamState) > 0u);
     assert(sizeof(KernelHomingState) > 0u);
     assert(sizeof(KernelGameplayCatalogDefinition) > 0u);
+    assert(sizeof(KernelGameplayCatalogLoadResult) > 0u);
     assert(sizeof(KernelProjectileTemplateDefinition) > 0u);
     assert(sizeof(KernelColliderTemplateDefinition) > 0u);
     assert(sizeof(KernelColliderBindingDefinition) > 0u);

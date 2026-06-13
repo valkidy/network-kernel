@@ -94,7 +94,7 @@ void configure_projectile_response_templates(network_example::World& world) {
     grenade_template.impact_action =
         network_example::ProjectileImpactAction::kSpawnProjectile;
     grenade_template.impact_projectile_template_id = 8;
-    grenade_template.impact_destroy_self = true;
+    grenade_template.impact_destroy_self = 1u;
 
     network_example::RuntimeProjectileTemplate area_template;
     area_template.projectile_template_id = 8;

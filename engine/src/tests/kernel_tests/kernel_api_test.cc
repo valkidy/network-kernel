@@ -74,6 +74,8 @@ int main() {
            sizeof(KernelCombatStateDefinition));
     assert(abi_info.gameplay_catalog_definition_size ==
            sizeof(KernelGameplayCatalogDefinition));
+    assert(abi_info.gameplay_catalog_load_result_size ==
+           sizeof(KernelGameplayCatalogLoadResult));
     assert(abi_info.projectile_template_definition_size ==
            sizeof(KernelProjectileTemplateDefinition));
     assert(abi_info.collider_template_definition_size ==
@@ -124,7 +126,10 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_BENCHMARK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 16u);
+    assert(KERNEL_ABI_VERSION == 17u);
+    assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
+    assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
+    assert(KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNSUPPORTED_CATALOG_VERSION == 3u);
     assert(KERNEL_MAX_WEAPONS == 7u);
     assert(KERNEL_LAN_DISCOVERY_DEFAULT_PORT == 47777u);
     assert(offsetof(PlayerInput, client_action_time_us) > offsetof(PlayerInput, input_seq));
@@ -305,8 +310,8 @@ int main() {
     assert(Kernel_GetLocalPlayerInfo(kernel, &local_info));
     assert(local_info.peer_id == 0);
     assert(local_info.player_net_id == 0);
-    assert(!local_info.has_welcome);
-    assert(!local_info.connected);
+    assert(local_info.has_welcome == 0u);
+    assert(local_info.connected == 0u);
     assert(!Kernel_GetLocalPlayerInfo(kernel, nullptr));
     assert(!Kernel_StartClient(kernel, nullptr));
     assert(!Kernel_StartClient(kernel, ""));
@@ -576,7 +581,7 @@ int main() {
     server_state = KernelServerEntityState{};
     server_state.struct_size = sizeof(server_state);
     assert(Kernel_ServerGetEntityState(kernel, created_net_id, &server_state));
-    assert(server_state.valid);
+    assert(server_state.valid != 0u);
     assert(server_state.net_id == created_net_id);
     assert(server_state.entity_type == 2);
     assert(server_state.animation_state == 7);
@@ -668,7 +673,7 @@ int main() {
     area_effect_state = KernelAreaEffectState{};
     area_effect_state.struct_size = sizeof(area_effect_state);
     assert(Kernel_ServerGetAreaEffectState(kernel, area_net_id, &area_effect_state));
-    assert(area_effect_state.valid);
+    assert(area_effect_state.valid != 0u);
     assert(area_effect_state.radius == 2.5f);
     assert(area_effect_state.damage_per_interval == 7);
     assert(area_effect_state.damage_interval_ticks == 3);
@@ -696,7 +701,7 @@ int main() {
     beam_state = KernelBeamState{};
     beam_state.struct_size = sizeof(beam_state);
     assert(Kernel_ServerGetBeamState(kernel, beam_net_id, &beam_state));
-    assert(beam_state.valid);
+    assert(beam_state.valid != 0u);
     assert(beam_state.shooter_net_id == created_net_id);
     assert(beam_state.length == 6.0f);
     assert(beam_state.radius == 0.25f);
@@ -725,7 +730,7 @@ int main() {
     homing_state = KernelHomingState{};
     homing_state.struct_size = sizeof(homing_state);
     assert(Kernel_ServerGetHomingState(kernel, homing_net_id, &homing_state));
-    assert(homing_state.valid);
+    assert(homing_state.valid != 0u);
     assert(homing_state.shooter_net_id == created_net_id);
     assert(homing_state.guidance_phase <= KernelMissileGuidancePhase_LostTarget);
     assert(homing_state.lock_on_range == 25.0f);

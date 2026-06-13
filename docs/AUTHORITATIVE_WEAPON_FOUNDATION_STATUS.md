@@ -19,11 +19,11 @@ as the baseline for future weapon milestones.
 
 ## Foundation Still Needed
 
-- Resync Unity package source and staged package with native ABI v12. Until
+- Resync Unity package source and staged package with native ABI v17. Until
   then, Unity verify/Editor smoke results do not represent current native
   behavior.
 - Update Unity C# mirror structs, constants, capability flags, and smoke tests
-  for ABI v12 before treating Unity validation as required.
+  for ABI v17 before treating Unity validation as required.
 - Keep ABI/status docs aligned with the current native header whenever
   `KERNEL_ABI_VERSION`, public structs, or exported query functions change.
 - Document ProjectileInteractionSystem v1 as internal-only behavior. Its current
@@ -72,4 +72,4 @@ bazel test //engine/src/tests/kernel_tests:kernel_api_test //engine/src/tests/pr
 
 Unity package builder verification is currently a known validation gap, not a
 required passing check, until the Unity package source is restored and aligned
-with ABI v12.
+with ABI v17.

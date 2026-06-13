@@ -6,10 +6,12 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <initializer_list>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include <yaml-cpp/yaml.h>
@@ -18,6 +20,29 @@
 #include "kernel/public/kernel_api.h"
 
 namespace network_example::game_server {
+
+DataLoadError::DataLoadError(
+    std::uint32_t error_code,
+    std::string diagnostic,
+    std::string path,
+    std::string field,
+    std::uint32_t source_kind,
+    std::uint32_t template_kind,
+    std::uint32_t template_id,
+    std::uint32_t field_id,
+    std::int32_t line,
+    std::int32_t column)
+    : std::runtime_error(diagnostic),
+      error_code(error_code),
+      path(std::move(path)),
+      field(std::move(field)),
+      source_kind(source_kind),
+      template_kind(template_kind),
+      template_id(template_id),
+      field_id(field_id),
+      line(line),
+      column(column) {}
+
 namespace {
 
 constexpr std::uint64_t kFnvOffsetBasis = 14695981039346656037ull;
@@ -658,12 +683,27 @@ public:
         const std::string& directory) const = 0;
     virtual std::string default_projectile_template_dir_for_weapon_dir(
         const std::string& directory) const = 0;
+    virtual std::uint32_t source_kind() const = 0;
 };
 
 class FilesystemGameplayConfigSource final : public GameplayConfigSource {
 public:
     YAML::Node load_yaml(const std::string& path) const override {
-        return YAML::LoadFile(path);
+        try {
+            return YAML::LoadFile(path);
+        } catch (const YAML::Exception& error) {
+            throw DataLoadError(
+                KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_YAML,
+                error.what(),
+                path,
+                {},
+                source_kind(),
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_UNKNOWN,
+                0,
+                0,
+                error.mark.line >= 0 ? error.mark.line + 1 : -1,
+                error.mark.column >= 0 ? error.mark.column + 1 : -1);
+        }
     }
 
     std::vector<std::string> list_yaml_files(
@@ -709,11 +749,20 @@ public:
             .lexically_normal()
             .string();
     }
+
+    std::uint32_t source_kind() const override {
+        return KERNEL_GAMEPLAY_CATALOG_LOAD_SOURCE_FILESYSTEM;
+    }
 };
 
 std::string normalize_archive_path(const std::string& path) {
     if (path.empty() || path.front() == '/' || path.find(':') != std::string::npos) {
-        throw std::runtime_error("invalid archive path: " + path);
+        throw DataLoadError(
+            KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_ARCHIVE_PATH,
+            "invalid archive path: " + path,
+            path,
+            {},
+            KERNEL_GAMEPLAY_CATALOG_LOAD_SOURCE_BUNDLE);
     }
 
     std::vector<std::string> parts;
@@ -723,7 +772,12 @@ std::string normalize_archive_path(const std::string& path) {
         if (normalized == '/') {
             if (!part.empty() && part != ".") {
                 if (part == "..") {
-                    throw std::runtime_error("invalid archive path: " + path);
+                    throw DataLoadError(
+                        KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_ARCHIVE_PATH,
+                        "invalid archive path: " + path,
+                        path,
+                        {},
+                        KERNEL_GAMEPLAY_CATALOG_LOAD_SOURCE_BUNDLE);
                 }
                 parts.push_back(part);
             }
@@ -734,12 +788,22 @@ std::string normalize_archive_path(const std::string& path) {
     }
     if (!part.empty() && part != ".") {
         if (part == "..") {
-            throw std::runtime_error("invalid archive path: " + path);
+            throw DataLoadError(
+                KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_ARCHIVE_PATH,
+                "invalid archive path: " + path,
+                path,
+                {},
+                KERNEL_GAMEPLAY_CATALOG_LOAD_SOURCE_BUNDLE);
         }
         parts.push_back(part);
     }
     if (parts.empty()) {
-        throw std::runtime_error("invalid archive path: " + path);
+        throw DataLoadError(
+            KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_ARCHIVE_PATH,
+            "invalid archive path: " + path,
+            path,
+            {},
+            KERNEL_GAMEPLAY_CATALOG_LOAD_SOURCE_BUNDLE);
     }
 
     std::string normalized;
@@ -830,7 +894,12 @@ public:
                 throw std::runtime_error("archive YAML content exceeds total size limit");
             }
             if (files_.contains(path)) {
-                throw std::runtime_error("duplicate archive entry: " + path);
+                throw DataLoadError(
+                    KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_DUPLICATE_ARCHIVE_ENTRY,
+                    "duplicate archive entry: " + path,
+                    path,
+                    {},
+                    KERNEL_GAMEPLAY_CATALOG_LOAD_SOURCE_BUNDLE);
             }
 
             std::string data(static_cast<std::size_t>(entry_size), '\0');
@@ -852,9 +921,28 @@ public:
         const std::string normalized = normalize_archive_path(path);
         const auto found = files_.find(normalized);
         if (found == files_.end()) {
-            throw std::runtime_error("missing YAML file in bundle: " + normalized);
+            throw DataLoadError(
+                KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_MISSING_BUNDLE_ENTRY,
+                "missing YAML file in bundle: " + normalized,
+                normalized,
+                {},
+                KERNEL_GAMEPLAY_CATALOG_LOAD_SOURCE_BUNDLE);
         }
-        return YAML::Load(found->second);
+        try {
+            return YAML::Load(found->second);
+        } catch (const YAML::Exception& error) {
+            throw DataLoadError(
+                KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_YAML,
+                error.what(),
+                normalized,
+                {},
+                source_kind(),
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_UNKNOWN,
+                0,
+                0,
+                error.mark.line >= 0 ? error.mark.line + 1 : -1,
+                error.mark.column >= 0 ? error.mark.column + 1 : -1);
+        }
     }
 
     std::vector<std::string> list_yaml_files(
@@ -900,11 +988,99 @@ public:
             "projectile_templates");
     }
 
+    std::uint32_t source_kind() const override {
+        return KERNEL_GAMEPLAY_CATALOG_LOAD_SOURCE_BUNDLE;
+    }
+
 private:
     std::unordered_map<std::string, std::string> files_;
 };
 
-KernelWeaponMechanicsDefinition weapon_from_yaml(const YAML::Node& node) {
+std::int32_t yaml_line(const YAML::Node& node) {
+    return node.Mark().line >= 0 ? node.Mark().line + 1 : -1;
+}
+
+std::int32_t yaml_column(const YAML::Node& node) {
+    return node.Mark().column >= 0 ? node.Mark().column + 1 : -1;
+}
+
+bool key_allowed(const std::string& key, std::initializer_list<const char*> keys) {
+    for (const char* allowed : keys) {
+        if (key == allowed) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void reject_unknown_keys(
+    const YAML::Node& node,
+    std::initializer_list<const char*> keys,
+    const std::string& path,
+    std::uint32_t source_kind,
+    std::uint32_t template_kind,
+    std::uint32_t template_id = 0) {
+    if (!node || !node.IsMap()) {
+        return;
+    }
+    for (const auto& entry : node) {
+        if (!entry.first.IsScalar()) {
+            throw DataLoadError(
+                KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_FIELD_TYPE,
+                "YAML field key must be a scalar",
+                path,
+                {},
+                source_kind,
+                template_kind,
+                template_id,
+                0,
+                yaml_line(entry.first),
+                yaml_column(entry.first));
+        }
+        const std::string key = entry.first.as<std::string>();
+        if (!key_allowed(key, keys)) {
+            throw DataLoadError(
+                KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD,
+                "unknown field: " + key,
+                path,
+                key,
+                source_kind,
+                template_kind,
+                template_id,
+                0,
+                yaml_line(entry.first),
+                yaml_column(entry.first));
+        }
+    }
+}
+
+KernelWeaponMechanicsDefinition weapon_from_yaml(
+    const YAML::Node& node,
+    const std::string& path,
+    std::uint32_t source_kind) {
+    reject_unknown_keys(
+        node,
+        {
+            "id",
+            "name",
+            "weapon_type",
+            "magazine_size",
+            "damage",
+            "cooldown_ticks",
+            "reload_ticks",
+            "max_range",
+            "pellet_count",
+            "pellet_spread",
+            "segment_collider",
+            "projectile_template",
+            "burst_count",
+            "burst_spread_degrees",
+            "area_effect",
+            "beam",
+        },
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_WEAPON);
     const auto id = static_cast<std::uint8_t>(node["id"].as<int>());
     const std::uint16_t magazine_size = node["magazine_size"].as<std::uint16_t>();
     const std::uint32_t cooldown_ticks = node["cooldown_ticks"].as<std::uint32_t>();
@@ -975,6 +1151,21 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(const YAML::Node& node) {
         if (!area_effect) {
             throw std::runtime_error("area_effect weapon requires area_effect block");
         }
+        reject_unknown_keys(
+            area_effect,
+            {
+                "collider_template",
+                "radius",
+                "damage_per_interval",
+                "damage_interval_ticks",
+                "lifetime_ticks",
+                "spawn_distance",
+                "collision_mask",
+            },
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_WEAPON,
+            id);
         return area_effect_weapon(
             id,
             magazine_size,
@@ -993,6 +1184,20 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(const YAML::Node& node) {
         if (!beam) {
             throw std::runtime_error("beam weapon requires beam block");
         }
+        reject_unknown_keys(
+            beam,
+            {
+                "collider_template",
+                "length",
+                "radius",
+                "damage_per_second",
+                "lifetime_ticks",
+                "collision_mask",
+            },
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_WEAPON,
+            id);
         return beam_weapon(
             id,
             magazine_size,
@@ -1069,6 +1274,12 @@ ColliderCatalogConfig load_collider_catalog_from_source(
     const GameplayConfigSource& source,
     const std::string& path) {
     const YAML::Node document = source.load_yaml(path);
+    reject_unknown_keys(
+        document,
+        {"templates", "bindings"},
+        path,
+        source.source_kind(),
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_COLLIDER);
     if (!document["templates"] || !document["bindings"]) {
         throw std::runtime_error(
             "collider catalog requires templates and bindings: " + path);
@@ -1076,7 +1287,26 @@ ColliderCatalogConfig load_collider_catalog_from_source(
 
     ColliderCatalogConfig colliders;
     std::unordered_map<std::string, std::uint32_t> template_ids;
+    std::unordered_map<std::uint32_t, std::string> template_names_by_id;
     for (const YAML::Node& node : document["templates"]) {
+        reject_unknown_keys(
+            node,
+            {
+                "id",
+                "name",
+                "shape",
+                "center",
+                "half_extents",
+                "radius",
+                "length",
+                "scatter_degrees",
+                "lifetime_ticks",
+                "purpose",
+                "layer",
+            },
+            path,
+            source.source_kind(),
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_COLLIDER);
         ColliderTemplateConfig collider_template;
         collider_template.name = node["name"].as<std::string>();
         KernelColliderTemplateDefinition& definition =
@@ -1099,11 +1329,29 @@ ColliderCatalogConfig load_collider_catalog_from_source(
             throw std::runtime_error(
                 "duplicate collider template name: " + collider_template.name);
         }
+        if (template_names_by_id.contains(definition.template_id)) {
+            throw DataLoadError(
+                KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_DUPLICATE_TEMPLATE_ID,
+                "duplicate collider template id: " +
+                    std::to_string(definition.template_id),
+                path,
+                "id",
+                source.source_kind(),
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_COLLIDER,
+                definition.template_id);
+        }
         template_ids[collider_template.name] = definition.template_id;
+        template_names_by_id[definition.template_id] = collider_template.name;
         colliders.templates.push_back(collider_template);
     }
 
     for (const YAML::Node& node : document["bindings"]) {
+        reject_unknown_keys(
+            node,
+            {"entity_type", "collider_template", "local_position"},
+            path,
+            source.source_kind(),
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_COLLIDER);
         const std::string template_name =
             node["collider_template"].as<std::string>();
         const auto found = template_ids.find(template_name);
@@ -1207,7 +1455,26 @@ EnemyAiConfig ai_config_from_yaml(
 
 ActorTemplateConfig actor_template_from_yaml(
     const YAML::Node& node,
+    const std::string& path,
+    std::uint32_t source_kind,
     const WeaponCatalogConfig& weapons) {
+    reject_unknown_keys(
+        node,
+        {
+            "id",
+            "name",
+            "entity_type",
+            "health",
+            "movement",
+            "hitbox",
+            "weapon_slots",
+            "active_weapon_slot",
+            "animations",
+            "ai",
+        },
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR);
     ActorTemplateConfig actor_template;
     actor_template.actor_template_id = node["id"].as<std::uint32_t>();
     actor_template.name = node["name"].as<std::string>();
@@ -1218,6 +1485,13 @@ ActorTemplateConfig actor_template_from_yaml(
         throw std::runtime_error(
             "actor template requires health: " + actor_template.name);
     }
+    reject_unknown_keys(
+        health,
+        {"hp", "max_hp"},
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+        actor_template.actor_template_id);
     actor_template.health.hp = health["hp"].as<std::uint16_t>();
     actor_template.health.max_hp = health["max_hp"].as<std::uint16_t>();
 
@@ -1227,6 +1501,13 @@ ActorTemplateConfig actor_template_from_yaml(
             "actor template requires movement.move_speed_meters_per_second: " +
             actor_template.name);
     }
+    reject_unknown_keys(
+        movement,
+        {"move_speed_meters_per_second"},
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+        actor_template.actor_template_id);
     actor_template.move_speed_meters_per_second =
         movement["move_speed_meters_per_second"].as<float>();
 
@@ -1236,6 +1517,13 @@ ActorTemplateConfig actor_template_from_yaml(
             "actor template requires hitbox center and half_extents: " +
             actor_template.name);
     }
+    reject_unknown_keys(
+        hitbox,
+        {"center", "half_extents"},
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+        actor_template.actor_template_id);
     actor_template.hitbox_center = vec3_from_yaml(hitbox["center"]);
     actor_template.hitbox_half_extents = vec3_from_yaml(hitbox["half_extents"]);
 
@@ -1274,6 +1562,13 @@ ActorTemplateConfig actor_template_from_yaml(
 
     const YAML::Node animations = node["animations"];
     if (animations) {
+        reject_unknown_keys(
+            animations,
+            {"idle", "chasing"},
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+            actor_template.actor_template_id);
         if (animations["idle"]) {
             actor_template.animation_idle =
                 animations["idle"].as<std::uint16_t>();
@@ -1282,6 +1577,23 @@ ActorTemplateConfig actor_template_from_yaml(
             actor_template.animation_chasing =
                 animations["chasing"].as<std::uint16_t>();
         }
+    }
+    if (node["ai"]) {
+        reject_unknown_keys(
+            node["ai"],
+            {
+                "profile",
+                "chase_range",
+                "move_speed",
+                "patrol_speed",
+                "patrol_half_extent",
+                "fire_interval_seconds",
+                "reload_seconds",
+            },
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+            actor_template.actor_template_id);
     }
     actor_template.ai = ai_config_from_yaml(node["ai"], actor_template, weapons);
     actor_template.ai.animation_idle = actor_template.animation_idle;
@@ -1327,7 +1639,11 @@ std::vector<ActorTemplateConfig> load_actor_templates_from_source(
     const std::vector<std::string> files = source.list_yaml_files(directory);
     for (const std::string& file : files) {
         ActorTemplateConfig actor_template =
-            actor_template_from_yaml(source.load_yaml(file), weapons);
+            actor_template_from_yaml(
+                source.load_yaml(file),
+                file,
+                source.source_kind(),
+                weapons);
         if (ids.contains(actor_template.actor_template_id)) {
             throw std::runtime_error("duplicate actor template id: " + file);
         }
@@ -1381,7 +1697,34 @@ std::uint32_t collider_template_id_from_ref(
 
 ProjectileTemplateConfig projectile_template_from_yaml(
     const YAML::Node& node,
+    const std::string& path,
+    std::uint32_t source_kind,
     const ColliderCatalogConfig& colliders) {
+    reject_unknown_keys(
+        node,
+        {
+            "id",
+            "name",
+            "kind",
+            "damage",
+            "sync_mode",
+            "collider_template",
+            "movement_model",
+            "hit_response",
+            "damage_shape",
+            "speed",
+            "lifetime_seconds",
+            "lifetime_ticks",
+            "damage_behavior",
+            "collision_mask",
+            "max_hit_count",
+            "gravity",
+            "impact_response",
+            "homing",
+        },
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_PROJECTILE);
     ProjectileTemplateConfig projectile_template;
     projectile_template.name = node["name"].as<std::string>();
     KernelProjectileTemplateDefinition& definition =
@@ -1406,6 +1749,18 @@ ProjectileTemplateConfig projectile_template_from_yaml(
                 "area_effect projectile requires damage_behavior: " +
                 projectile_template.name);
         }
+        reject_unknown_keys(
+            damage_behavior,
+            {
+                "type",
+                "damage_per_interval",
+                "damage_interval_ticks",
+                "falloff",
+            },
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_PROJECTILE,
+            definition.projectile_template_id);
         const std::string damage_type =
             damage_behavior["type"] ? damage_behavior["type"].as<std::string>()
                                     : "";
@@ -1442,12 +1797,20 @@ ProjectileTemplateConfig projectile_template_from_yaml(
 
     const YAML::Node impact_response = node["impact_response"];
     if (impact_response) {
+        reject_unknown_keys(
+            impact_response,
+            {"action", "projectile_template", "destroy_self"},
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_PROJECTILE,
+            definition.projectile_template_id);
         definition.impact_action =
             impact_action_from_yaml(impact_response["action"]);
         definition.impact_destroy_self =
-            impact_response["destroy_self"]
-                ? impact_response["destroy_self"].as<bool>()
-                : true;
+            !impact_response["destroy_self"] ||
+                    impact_response["destroy_self"].as<bool>()
+                ? 1u
+                : 0u;
         if (definition.impact_action ==
             KernelProjectileImpactAction_SpawnProjectile) {
             if (!impact_response["projectile_template"]) {
@@ -1467,6 +1830,23 @@ ProjectileTemplateConfig projectile_template_from_yaml(
                 "homing projectile template requires homing block: " +
                 projectile_template.name);
         }
+        reject_unknown_keys(
+            homing,
+            {
+                "homing_mode",
+                "sync_mode",
+                "boost_ticks",
+                "lock_on_range",
+                "lose_target_range",
+                "lock_cone_degrees",
+                "max_turn_rate_degrees_per_second",
+                "acceleration",
+                "max_speed",
+            },
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_PROJECTILE,
+            definition.projectile_template_id);
         projectile_template.homing.struct_size =
             sizeof(KernelHomingMechanicsDefinition);
         projectile_template.homing.homing_mode =
@@ -1513,7 +1893,11 @@ std::vector<ProjectileTemplateConfig> load_projectile_templates_from_source(
     const std::vector<std::string> files = source.list_yaml_files(directory);
     for (const std::string& file : files) {
         ProjectileTemplateConfig projectile_template =
-            projectile_template_from_yaml(source.load_yaml(file), colliders);
+            projectile_template_from_yaml(
+                source.load_yaml(file),
+                file,
+                source.source_kind(),
+                colliders);
         if (ids.contains(projectile_template.definition.projectile_template_id)) {
             throw std::runtime_error("duplicate projectile template id: " + file);
         }
@@ -1687,20 +2071,34 @@ WeaponCatalogConfig load_weapon_catalog_from_source(
     const std::vector<std::string> files = source.list_yaml_files(directory);
     for (const std::string& file : files) {
         const YAML::Node document = source.load_yaml(file);
-        const KernelWeaponMechanicsDefinition weapon = weapon_from_yaml(document);
+        const KernelWeaponMechanicsDefinition weapon =
+            weapon_from_yaml(document, file, source.source_kind());
         if (weapon.weapon_id >= kWeaponCount) {
             throw std::runtime_error("weapon id out of range: " + file);
         }
         if (seen[weapon.weapon_id]) {
             throw std::runtime_error("duplicate weapon id: " + file);
         }
+        const std::string name =
+            document["name"] ? document["name"].as<std::string>()
+                             : std::filesystem::path(file).stem().string();
+        for (std::size_t index = 0; index < weapons.names.size(); ++index) {
+            if (seen[index] && weapons.names[index] == name) {
+                throw DataLoadError(
+                    KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_DUPLICATE_TEMPLATE_NAME,
+                    "duplicate weapon name: " + name,
+                    file,
+                    "name",
+                    source.source_kind(),
+                    KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_WEAPON,
+                    weapon.weapon_id);
+            }
+        }
         seen[weapon.weapon_id] = true;
         weapons.definitions[weapon.weapon_id] = weapon;
         weapons.projectile_sync_modes[weapon.weapon_id] =
             projectile_sync_mode_from_weapon_yaml(document);
-        weapons.names[weapon.weapon_id] =
-            document["name"] ? document["name"].as<std::string>()
-                             : std::filesystem::path(file).stem().string();
+        weapons.names[weapon.weapon_id] = name;
     }
     for (std::size_t index = 0; index < seen.size(); ++index) {
         if (!seen[index]) {
@@ -1742,6 +2140,58 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     const GameplayConfigSource& source,
     const std::string& path) {
     const YAML::Node document = source.load_yaml(path);
+    reject_unknown_keys(
+        document,
+        {
+            "catalog_version",
+            "weapon_template_dir",
+            "projectile_template_dir",
+            "actor_template_dir",
+            "collider_template_file",
+            "player",
+            "enemy",
+        },
+        path,
+        source.source_kind(),
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+    if (document["player"]) {
+        reject_unknown_keys(
+            document["player"],
+            {"actor_template"},
+            path,
+            source.source_kind(),
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+    }
+    if (document["enemy"]) {
+        reject_unknown_keys(
+            document["enemy"],
+            {
+                "actor_template",
+                "spawn_count",
+                "spawn_radius",
+                "spawn_seed",
+                "spawn_position",
+            },
+            path,
+            source.source_kind(),
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+    }
+    const std::uint32_t catalog_version =
+        document["catalog_version"] ? document["catalog_version"].as<std::uint32_t>()
+                                    : 1u;
+    if (catalog_version != 1u) {
+        throw DataLoadError(
+            KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNSUPPORTED_CATALOG_VERSION,
+            "unsupported catalog_version: " + std::to_string(catalog_version),
+            path,
+            "catalog_version",
+            source.source_kind(),
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG,
+            0,
+            0,
+            yaml_line(document["catalog_version"]),
+            yaml_column(document["catalog_version"]));
+    }
     if (!document["weapon_template_dir"] || !document["projectile_template_dir"] ||
         !document["collider_template_file"]) {
         throw std::runtime_error(
@@ -1756,9 +2206,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     GameServerGameplayConfig config;
     config.weapons = load_weapon_catalog_from_source(source, weapon_template_dir);
     apply_default_non_weapon_config(&config);
-    config.weapons.catalog_version =
-        document["catalog_version"] ? document["catalog_version"].as<std::uint32_t>()
-                                    : config.weapons.catalog_version;
+    config.weapons.catalog_version = catalog_version;
 
     const std::string collider_template_file =
         source.resolve_path(base_path, document["collider_template_file"]);

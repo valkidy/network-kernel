@@ -453,7 +453,7 @@ KernelServerEntityState to_server_entity_state(
     state.owner_peer = identity.owner_peer;
     state.position = to_kernel_vec3(transform.position);
     state.rotation = to_kernel_quat(transform.rotation);
-    state.valid = true;
+    state.valid = 1u;
 
     if (world.registry().all_of<Velocity>(entity)) {
         state.velocity =
@@ -635,7 +635,7 @@ RuntimeProjectileTemplate to_runtime_projectile_template(
         to_projectile_damage_shape(definition.damage_shape);
     projectile_template.impact_action =
         to_projectile_impact_action(definition.impact_action);
-    projectile_template.impact_destroy_self = definition.impact_destroy_self;
+    projectile_template.impact_destroy_self = definition.impact_destroy_self != 0u;
     projectile_template.damage_falloff =
         to_projectile_damage_falloff(definition.damage_falloff);
     projectile_template.damage = definition.damage;
@@ -1329,7 +1329,7 @@ std::uint32_t KernelEngine::query_collider_shapes(
         shape.segment_end = to_kernel_vec3(collider.segment_end);
         shape.lifetime_ticks = collider.lifetime_ticks;
         shape.remaining_ticks = collider.remaining_ticks;
-        shape.has_resolved_damage = collider.has_resolved_damage;
+        shape.has_resolved_damage = collider.has_resolved_damage ? 1u : 0u;
         out_shapes[copied++] = shape;
     }
     return copied;
@@ -1467,9 +1467,11 @@ KernelLocalPlayerInfo KernelEngine::local_player_info() const {
     return KernelLocalPlayerInfo{
         local_client_peer_id_,
         local_player_net_id_,
-        has_welcome_,
+        has_welcome_ ? 1u : 0u,
         running_ && has_welcome_ && local_client_peer_id_ != 0 &&
-            local_player_net_id_ != 0,
+                local_player_net_id_ != 0
+            ? 1u
+            : 0u,
     };
 }
 

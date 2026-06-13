@@ -82,7 +82,7 @@ int main() {
     require(result.snapshot_schema_version != 0);
     require(result.packet_schema_version != 0);
     require(result.git_commit[0] != '\0');
-    require(result.compatible);
+    require(result.compatible != 0u);
 
     Kernel_LANDiscovery_ClearResults(discovery);
     result = KernelLANDiscoveryResult{};

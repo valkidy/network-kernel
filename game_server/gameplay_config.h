@@ -3,6 +3,7 @@
 
 #include <array>
 #include <cstdint>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -99,6 +100,30 @@ struct KernelGameplayCatalogStorage {
     std::vector<KernelColliderTemplateDefinition> collider_templates;
     std::vector<KernelColliderBindingDefinition> collider_bindings;
     KernelGameplayCatalogDefinition definition{};
+};
+
+struct DataLoadError : public std::runtime_error {
+    DataLoadError(
+        std::uint32_t error_code,
+        std::string diagnostic,
+        std::string path = {},
+        std::string field = {},
+        std::uint32_t source_kind = KERNEL_GAMEPLAY_CATALOG_LOAD_SOURCE_UNKNOWN,
+        std::uint32_t template_kind = KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_UNKNOWN,
+        std::uint32_t template_id = 0,
+        std::uint32_t field_id = 0,
+        std::int32_t line = -1,
+        std::int32_t column = -1);
+
+    std::uint32_t error_code = KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN;
+    std::string path;
+    std::string field;
+    std::uint32_t source_kind = KERNEL_GAMEPLAY_CATALOG_LOAD_SOURCE_UNKNOWN;
+    std::uint32_t template_kind = KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_UNKNOWN;
+    std::uint32_t template_id = 0;
+    std::uint32_t field_id = 0;
+    std::int32_t line = -1;
+    std::int32_t column = -1;
 };
 
 GameServerGameplayConfig default_game_server_gameplay_config();

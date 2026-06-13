@@ -11,7 +11,7 @@ set -euo pipefail
 out_path="$$(pwd)/$@"
 bundle_root="$(@D)/bundle_root"
 rm -rf "$$bundle_root"
-mkdir -p "$$bundle_root/weapon_templates" "$$bundle_root/collider_templates" "$$bundle_root/actor_templates"
+mkdir -p "$$bundle_root/weapon_templates" "$$bundle_root/projectile_templates" "$$bundle_root/collider_templates" "$$bundle_root/actor_templates"
 for src in $(SRCS); do
   case "$$src" in
     */gameplay_catalog.yaml)
@@ -19,6 +19,9 @@ for src in $(SRCS); do
       ;;
     */weapon_templates/*.yaml)
       cp "$$src" "$$bundle_root/weapon_templates/$$(basename "$$src")"
+      ;;
+    */projectile_templates/*.yaml)
+      cp "$$src" "$$bundle_root/projectile_templates/$$(basename "$$src")"
       ;;
     */actor_templates/*.yaml)
       cp "$$src" "$$bundle_root/actor_templates/$$(basename "$$src")"
@@ -28,7 +31,7 @@ for src in $(SRCS); do
       ;;
   esac
 done
-(cd "$$bundle_root" && /usr/bin/zip -qr -X "$$out_path" gameplay_catalog.yaml weapon_templates actor_templates collider_templates)
+(cd "$$bundle_root" && /usr/bin/zip -qr -X "$$out_path" gameplay_catalog.yaml weapon_templates projectile_templates actor_templates collider_templates)
 rm -rf "$$bundle_root"
 """,
 )
