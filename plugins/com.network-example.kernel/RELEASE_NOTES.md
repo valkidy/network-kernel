@@ -1,5 +1,11 @@
 0.6.5 release notes:
 
+- updates managed bindings for kernel ABI v17
+- updates managed bindings for GameServer ABI v4
+
+
+0.6.5 release notes:
+
 - updates native plugins
 
 
