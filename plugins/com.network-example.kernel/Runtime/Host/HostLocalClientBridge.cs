@@ -54,7 +54,7 @@ namespace NetworkExample.Kernel.Host
         {
             if (kernel == null ||
                 !kernel.TryGetLocalPlayerInfo(out KernelLocalPlayerInfo info) ||
-                !info.connected)
+                info.connected == 0)
             {
                 return;
             }

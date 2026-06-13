@@ -5,12 +5,44 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 16;
+        public const uint AbiVersion = 17;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
+        public const int GameplayCatalogLoadPathSize = 128;
+        public const int GameplayCatalogLoadFieldSize = 64;
+        public const int GameplayCatalogLoadDiagnosticSize = 256;
         public const ushort LANDiscoveryDefaultPort = 47777;
         public const int MaxWeapons = 7;
         public const byte DebugWildcardU8 = 0xff;
+
+        public const uint GameplayCatalogLoadStatusFailed = 0;
+        public const uint GameplayCatalogLoadStatusSuccess = 1;
+        public const uint GameplayCatalogLoadErrorNone = 0;
+        public const uint GameplayCatalogLoadErrorInvalidArgument = 1;
+        public const uint GameplayCatalogLoadErrorInvalidYaml = 2;
+        public const uint GameplayCatalogLoadErrorUnsupportedCatalogVersion = 3;
+        public const uint GameplayCatalogLoadErrorUnknownField = 4;
+        public const uint GameplayCatalogLoadErrorMissingRequiredField = 5;
+        public const uint GameplayCatalogLoadErrorInvalidFieldType = 6;
+        public const uint GameplayCatalogLoadErrorInvalidEnumValue = 7;
+        public const uint GameplayCatalogLoadErrorDuplicateTemplateId = 8;
+        public const uint GameplayCatalogLoadErrorDuplicateTemplateName = 9;
+        public const uint GameplayCatalogLoadErrorMissingTemplateReference = 10;
+        public const uint GameplayCatalogLoadErrorInvalidNumericRange = 11;
+        public const uint GameplayCatalogLoadErrorInvalidArchivePath = 12;
+        public const uint GameplayCatalogLoadErrorDuplicateArchiveEntry = 13;
+        public const uint GameplayCatalogLoadErrorMissingBundleEntry = 14;
+        public const uint GameplayCatalogLoadErrorKernelRejectedCatalog = 15;
+        public const uint GameplayCatalogLoadErrorUnknown = 255;
+        public const uint GameplayCatalogLoadSourceUnknown = 0;
+        public const uint GameplayCatalogLoadSourceFilesystem = 1;
+        public const uint GameplayCatalogLoadSourceBundle = 2;
+        public const uint GameplayCatalogTemplateKindUnknown = 0;
+        public const uint GameplayCatalogTemplateKindCatalog = 1;
+        public const uint GameplayCatalogTemplateKindWeapon = 2;
+        public const uint GameplayCatalogTemplateKindProjectile = 3;
+        public const uint GameplayCatalogTemplateKindActor = 4;
+        public const uint GameplayCatalogTemplateKindCollider = 5;
 
         public const ulong CapabilityClientMode = 0x0000000000000001UL;
         public const ulong CapabilityListenServerMode = 0x0000000000000002UL;
@@ -163,14 +195,33 @@ namespace NetworkExample.Kernel
     public enum KernelProjectileDamageShape : byte
     {
         DirectHit = 0,
-        Explosion = 1,
         PiercingSegment = 2,
+    }
+
+    public enum KernelProjectileKind : byte
+    {
+        Projectile = 0,
+        AreaEffect = 1,
+    }
+
+    public enum KernelProjectileImpactAction : byte
+    {
+        None = 0,
+        SpawnProjectile = 1,
+    }
+
+    public enum KernelProjectileDamageFalloff : byte
+    {
+        None = 0,
+        Linear = 1,
     }
 
     public enum KernelColliderShapeType : byte
     {
         Aabb = 0,
         Sphere = 1,
+        OrientedBox = 2,
+        Segment = 3,
     }
 
     [Flags]
@@ -214,6 +265,7 @@ namespace NetworkExample.Kernel
         public uint lan_discovery_result_size;
         public ulong capability_flags;
         public uint gameplay_catalog_definition_size;
+        public uint gameplay_catalog_load_result_size;
         public uint projectile_template_definition_size;
         public uint collider_template_definition_size;
         public uint collider_binding_definition_size;
@@ -255,10 +307,8 @@ namespace NetworkExample.Kernel
     {
         public uint peer_id;
         public uint player_net_id;
-        [MarshalAs(UnmanagedType.I1)]
-        public bool has_welcome;
-        [MarshalAs(UnmanagedType.I1)]
-        public bool connected;
+        public uint has_welcome;
+        public uint connected;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
@@ -299,8 +349,7 @@ namespace NetworkExample.Kernel
         public uint packet_schema_version;
         [MarshalAs(UnmanagedType.ByValTStr, SizeConst = KernelConstants.LANDiscoveryTextSize)]
         public string git_commit;
-        [MarshalAs(UnmanagedType.I1)]
-        public bool compatible;
+        public uint compatible;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelLANDiscoveryResult>();
     }
@@ -444,8 +493,7 @@ namespace NetworkExample.Kernel
         public ushort max_hp;
         public ushort animation_state;
         public uint visual_flags;
-        [MarshalAs(UnmanagedType.I1)]
-        public bool valid;
+        public uint valid;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelServerEntityState>();
     }
@@ -463,6 +511,9 @@ namespace NetworkExample.Kernel
         public float radius;
         public uint purpose_flags;
         public uint layer_mask;
+        public float segment_length;
+        public float scatter_degrees;
+        public uint lifetime_ticks;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelColliderTemplateDefinition>();
     }
@@ -490,16 +541,21 @@ namespace NetworkExample.Kernel
         public byte sync_mode;
         public byte hit_response;
         public byte damage_shape;
+        public byte projectile_kind;
+        public byte impact_action;
+        public uint impact_destroy_self;
+        public byte damage_falloff;
         public byte reserved0;
         public ushort damage;
         public float speed;
         public float lifetime_seconds;
-        public float explosion_radius;
         public KernelVec3 gravity;
         public uint collider_template_id;
-        public uint explosion_template_id;
         public uint collision_mask;
         public uint max_hit_count;
+        public uint impact_projectile_template_id;
+        public uint lifetime_ticks;
+        public uint damage_interval_ticks;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelProjectileTemplateDefinition>();
     }
@@ -517,15 +573,25 @@ namespace NetworkExample.Kernel
     public struct KernelGameplayCatalogLoadResult
     {
         public uint struct_size;
-        [MarshalAs(UnmanagedType.I1)]
-        public bool success;
+        public uint status;
         public uint catalog_version;
         public ulong catalog_hash;
         public uint projectile_template_count;
         public uint collider_template_count;
         public uint collider_binding_count;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)]
-        public string error_message;
+        public uint error_code;
+        public uint source_kind;
+        public uint template_kind;
+        public uint template_id;
+        public uint field_id;
+        public int line;
+        public int column;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = KernelConstants.GameplayCatalogLoadPathSize)]
+        public string path;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = KernelConstants.GameplayCatalogLoadFieldSize)]
+        public string field;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = KernelConstants.GameplayCatalogLoadDiagnosticSize)]
+        public string diagnostic;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelGameplayCatalogLoadResult>();
     }
@@ -681,6 +747,14 @@ namespace NetworkExample.Kernel
         public float radius;
         public uint purpose_flags;
         public uint layer_mask;
+        public uint collider_id;
+        public uint owner_net_id;
+        public KernelQuat world_rotation;
+        public KernelVec3 segment_start;
+        public KernelVec3 segment_end;
+        public uint lifetime_ticks;
+        public uint remaining_ticks;
+        public uint has_resolved_damage;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelColliderShapeView>();
     }
@@ -713,11 +787,11 @@ namespace NetworkExample.Kernel
         public byte reserved0;
         public float speed;
         public float lifetime_seconds;
-        public float explosion_radius;
         public KernelVec3 gravity;
         public uint collision_mask;
         public uint max_hit_count;
         public KernelHomingMechanicsDefinition homing;
+        public uint projectile_template_id;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelProjectileMechanicsDefinition>();
     }
@@ -765,6 +839,7 @@ namespace NetworkExample.Kernel
         public KernelProjectileMechanicsDefinition projectile;
         public KernelAreaEffectMechanicsDefinition area_effect;
         public KernelBeamMechanicsDefinition beam;
+        public uint segment_collider_template_id;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelWeaponMechanicsDefinition>();
     }
@@ -784,8 +859,7 @@ namespace NetworkExample.Kernel
         public uint expire_tick;
         public byte source_code;
         public uint collision_mask;
-        [MarshalAs(UnmanagedType.I1)]
-        public bool valid;
+        public uint valid;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelBeamState>();
     }
@@ -802,8 +876,7 @@ namespace NetworkExample.Kernel
         public uint expire_tick;
         public byte source_code;
         public uint collision_mask;
-        [MarshalAs(UnmanagedType.I1)]
-        public bool valid;
+        public uint valid;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelAreaEffectState>();
     }
@@ -828,8 +901,7 @@ namespace NetworkExample.Kernel
         public float max_turn_rate_degrees_per_second;
         public float acceleration;
         public float max_speed;
-        [MarshalAs(UnmanagedType.I1)]
-        public bool valid;
+        public uint valid;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelHomingState>();
     }

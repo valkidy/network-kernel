@@ -100,7 +100,7 @@ namespace NetworkExample.Kernel.Client
         private void RefreshLocalPlayerInfo()
         {
             if (!kernel.TryGetLocalPlayerInfo(out KernelLocalPlayerInfo info) ||
-                !info.connected)
+                info.connected == 0)
             {
                 return;
             }

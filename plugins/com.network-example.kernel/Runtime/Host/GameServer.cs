@@ -138,9 +138,12 @@ namespace NetworkExample.Kernel.Host
 
         private static string FormatLoadError(KernelGameplayCatalogLoadResult loadResult)
         {
-            return string.IsNullOrEmpty(loadResult.error_message)
-                ? "no native error message"
-                : loadResult.error_message;
+            if (!string.IsNullOrEmpty(loadResult.diagnostic))
+            {
+                return loadResult.diagnostic;
+            }
+
+            return $"error_code={loadResult.error_code} source={loadResult.source_kind}";
         }
 
         ~GameServer()

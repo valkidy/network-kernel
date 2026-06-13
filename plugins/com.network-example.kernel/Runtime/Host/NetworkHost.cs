@@ -46,7 +46,7 @@ namespace NetworkExample.Kernel.Host
                 gameServer = newGameServer;
                 localClient.Reset();
                 if (kernel.TryGetLocalPlayerInfo(out KernelLocalPlayerInfo info) &&
-                    info.connected)
+                    info.connected != 0)
                 {
                     localClient.ApplyEvent(
                         kernel,
@@ -120,7 +120,7 @@ namespace NetworkExample.Kernel.Host
                 gameServer = newGameServer;
                 localClient.Reset();
                 if (kernel.TryGetLocalPlayerInfo(out KernelLocalPlayerInfo info) &&
-                    info.connected)
+                    info.connected != 0)
                 {
                     localClient.ApplyEvent(
                         kernel,

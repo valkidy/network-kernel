@@ -44,7 +44,7 @@ public static class NetworkKernelManagedAbiSmoke
                 Require(
                     gameServer.QueryWeaponTemplate(4, out GameServerWeaponTemplateInfo templateInfo),
                     "GameServer_QueryWeaponTemplate failed.");
-                Require(templateInfo.valid, "GameServer weapon template was not valid.");
+                Require(templateInfo.valid != 0, "GameServer weapon template was not valid.");
                 Require(
                     templateInfo.mechanics.fire_mode == (byte)KernelWeaponFireMode.AreaEffect,
                     "GameServer weapon template did not expose area-effect mechanics.");
@@ -73,7 +73,7 @@ public static class NetworkKernelManagedAbiSmoke
             ConfigureCombatAndWeapons(kernel, enemyNetId);
             Require(
                 kernel.ServerGetEntityState(enemyNetId, out KernelServerEntityState enemyState) &&
-                enemyState.valid &&
+                enemyState.valid != 0 &&
                 enemyState.hp == 240 &&
                 enemyState.max_hp == 240,
                 "Kernel_ServerSetEntityCombatState did not update enemy health.");
@@ -109,7 +109,7 @@ public static class NetworkKernelManagedAbiSmoke
                 "NetworkHost smoke failed.");
             Require(
                 host.GameServer.QueryWeaponTemplate(6, out GameServerWeaponTemplateInfo homingTemplate) &&
-                homingTemplate.valid &&
+                homingTemplate.valid != 0 &&
                 homingTemplate.mechanics.projectile.motion_model ==
                     (byte)KernelProjectileMotionModel.Homing,
                 "NetworkHost GameServer homing template query failed.");
@@ -288,8 +288,8 @@ public static class NetworkKernelManagedAbiSmoke
             result.struct_size == KernelGameplayCatalogLoadResult.StructSize,
             "KernelGameplayCatalogLoadResult struct_size mismatch.");
         Require(
-            !result.success,
-            "KernelGameplayCatalogLoadResult success flag mismatch.");
+            result.status == KernelConstants.GameplayCatalogLoadStatusFailed,
+            "KernelGameplayCatalogLoadResult status mismatch.");
     }
 
     private static void SetAndQueryWeapon(
@@ -328,10 +328,9 @@ public static class NetworkKernelManagedAbiSmoke
                 struct_size = KernelProjectileMechanicsDefinition.StructSize,
                 motion_model = (byte)KernelProjectileMotionModel.Linear,
                 hit_response = (byte)KernelProjectileHitResponse.Destroy,
-                damage_shape = (byte)KernelProjectileDamageShape.Explosion,
+                damage_shape = (byte)KernelProjectileDamageShape.DirectHit,
                 speed = 35.0f,
                 lifetime_seconds = 2.5f,
-                explosion_radius = 3.0f,
                 collision_mask = KernelConstants.CollisionMaskDamageable,
                 max_hit_count = 1,
             },
@@ -391,7 +390,6 @@ public static class NetworkKernelManagedAbiSmoke
         weapon.weapon_id = 6;
         weapon.projectile.motion_model = (byte)KernelProjectileMotionModel.Homing;
         weapon.projectile.damage_shape = (byte)KernelProjectileDamageShape.DirectHit;
-        weapon.projectile.explosion_radius = 0.0f;
         weapon.projectile.collision_mask = KernelConstants.CollisionLayerEnemy;
         weapon.projectile.homing = new KernelHomingMechanicsDefinition
         {
@@ -414,7 +412,7 @@ public static class NetworkKernelManagedAbiSmoke
         uint areaNetId = FireAndFindSpawn(kernel, enemyNetId, 4, KernelEntityType.AreaEffect);
         Require(
             kernel.ServerGetAreaEffectState(areaNetId, out KernelAreaEffectState state) &&
-            state.valid &&
+            state.valid != 0 &&
             state.radius == 2.5f &&
             state.damage_interval_ticks == 3,
             "Kernel_ServerGetAreaEffectState failed.");
@@ -425,7 +423,7 @@ public static class NetworkKernelManagedAbiSmoke
         uint beamNetId = FireAndFindSpawn(kernel, enemyNetId, 5, KernelEntityType.Beam);
         Require(
             kernel.ServerGetBeamState(beamNetId, out KernelBeamState state) &&
-            state.valid &&
+            state.valid != 0 &&
             state.shooter_net_id == enemyNetId &&
             state.length == 6.0f,
             "Kernel_ServerGetBeamState failed.");
@@ -436,7 +434,7 @@ public static class NetworkKernelManagedAbiSmoke
         uint projectileNetId = FireAndFindSpawn(kernel, enemyNetId, 6, KernelEntityType.Projectile);
         Require(
             kernel.ServerGetHomingState(projectileNetId, out KernelHomingState state) &&
-            state.valid &&
+            state.valid != 0 &&
             state.shooter_net_id == enemyNetId &&
             state.lock_on_range == 25.0f,
             "Kernel_ServerGetHomingState failed.");

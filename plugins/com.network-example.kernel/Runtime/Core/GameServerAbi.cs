@@ -54,6 +54,10 @@ namespace NetworkExample.Kernel
                 info.struct_size,
                 Marshal.SizeOf<GameServerAbiInfo>());
             RequireSize(
+                nameof(KernelGameplayCatalogLoadResult),
+                info.gameplay_catalog_load_result_size,
+                Marshal.SizeOf<KernelGameplayCatalogLoadResult>());
+            RequireSize(
                 nameof(GameServerWeaponTemplateInfo),
                 info.weapon_template_info_size,
                 Marshal.SizeOf<GameServerWeaponTemplateInfo>());

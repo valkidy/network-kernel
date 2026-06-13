@@ -171,7 +171,7 @@ namespace NetworkExample.Kernel.Client
                 SnapshotSchemaVersion = result.snapshot_schema_version,
                 PacketSchemaVersion = result.packet_schema_version,
                 GitCommit = result.git_commit ?? string.Empty,
-                Compatible = result.compatible,
+                Compatible = result.compatible != 0,
             };
         }
     }

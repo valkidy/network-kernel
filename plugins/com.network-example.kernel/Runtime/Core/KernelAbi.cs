@@ -205,6 +205,10 @@ namespace NetworkExample.Kernel
                 info.gameplay_catalog_definition_size,
                 Marshal.SizeOf<KernelGameplayCatalogDefinition>());
             RequireSize(
+                nameof(KernelGameplayCatalogLoadResult),
+                info.gameplay_catalog_load_result_size,
+                Marshal.SizeOf<KernelGameplayCatalogLoadResult>());
+            RequireSize(
                 nameof(KernelProjectileTemplateDefinition),
                 info.projectile_template_definition_size,
                 Marshal.SizeOf<KernelProjectileTemplateDefinition>());

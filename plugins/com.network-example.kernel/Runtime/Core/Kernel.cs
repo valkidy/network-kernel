@@ -34,8 +34,8 @@ namespace NetworkExample.Kernel
             get
             {
                 return TryGetLocalPlayerInfo(out KernelLocalPlayerInfo info) &&
-                       info.has_welcome &&
-                       info.connected;
+                       info.has_welcome != 0 &&
+                       info.connected != 0;
             }
         }
 

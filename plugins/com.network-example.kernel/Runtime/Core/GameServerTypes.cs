@@ -4,7 +4,7 @@ namespace NetworkExample.Kernel
 {
     public static class GameServerConstants
     {
-        public const uint AbiVersion = 3;
+        public const uint AbiVersion = 4;
 
         public const ulong CapabilityEnemyManager = 0x0000000000000001UL;
         public const ulong CapabilityEventHandling = 0x0000000000000002UL;
@@ -20,6 +20,7 @@ namespace NetworkExample.Kernel
         public uint struct_size;
         public uint abi_version;
         public uint weapon_template_info_size;
+        public uint gameplay_catalog_load_result_size;
         public ulong capability_flags;
     }
 
@@ -32,8 +33,7 @@ namespace NetworkExample.Kernel
         [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)]
         public string name;
         public KernelWeaponMechanicsDefinition mechanics;
-        [MarshalAs(UnmanagedType.I1)]
-        public bool valid;
+        public uint valid;
 
         public static uint StructSize => (uint)Marshal.SizeOf<GameServerWeaponTemplateInfo>();
     }
