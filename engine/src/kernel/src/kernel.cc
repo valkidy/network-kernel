@@ -341,6 +341,77 @@ const KernelProjectileTemplateDefinition* find_projectile_template(
     return found == templates.end() ? nullptr : &*found;
 }
 
+bool projectile_template_has_impact_cycle(
+    const std::vector<KernelProjectileTemplateDefinition>& templates,
+    std::uint32_t projectile_template_id) {
+    std::unordered_set<std::uint32_t> visited;
+    std::uint32_t current = projectile_template_id;
+    while (current != 0) {
+        if (!visited.insert(current).second) {
+            return true;
+        }
+        const KernelProjectileTemplateDefinition* projectile_template =
+            find_projectile_template(templates, current);
+        if (projectile_template == nullptr ||
+            projectile_template->impact_action !=
+                KernelProjectileImpactAction_SpawnProjectile) {
+            return false;
+        }
+        current = projectile_template->impact_projectile_template_id;
+    }
+    return false;
+}
+
+ColliderShapeType to_collider_shape_type(std::uint8_t shape_type) {
+    if (shape_type == KernelColliderShapeType_Sphere) {
+        return ColliderShapeType::kSphere;
+    }
+    if (shape_type == KernelColliderShapeType_OrientedBox) {
+        return ColliderShapeType::kOrientedBox;
+    }
+    if (shape_type == KernelColliderShapeType_Segment) {
+        return ColliderShapeType::kSegment;
+    }
+    return ColliderShapeType::kAabb;
+}
+
+std::uint8_t to_kernel_collider_shape_type(ColliderShapeType shape_type) {
+    switch (shape_type) {
+        case ColliderShapeType::kSphere:
+            return KernelColliderShapeType_Sphere;
+        case ColliderShapeType::kOrientedBox:
+            return KernelColliderShapeType_OrientedBox;
+        case ColliderShapeType::kSegment:
+            return KernelColliderShapeType_Segment;
+        case ColliderShapeType::kAabb:
+        default:
+            return KernelColliderShapeType_Aabb;
+    }
+}
+
+ColliderWorldBounds collider_world_bounds(const ColliderInstance& collider) {
+    if (collider.shape_type == ColliderShapeType::kSegment) {
+        const glm::vec3 min_corner =
+            glm::min(collider.segment_start, collider.segment_end);
+        const glm::vec3 max_corner =
+            glm::max(collider.segment_start, collider.segment_end);
+        return ColliderWorldBounds{
+            (min_corner + max_corner) * 0.5f,
+            (max_corner - min_corner) * 0.5f + glm::vec3{collider.radius},
+        };
+    }
+    if (collider.shape_type == ColliderShapeType::kSphere) {
+        return ColliderWorldBounds{
+            collider.world_center,
+            glm::vec3{std::max(0.0f, collider.radius)},
+        };
+    }
+    return ColliderWorldBounds{
+        collider.world_center,
+        glm::abs(collider.half_extents),
+    };
+}
+
 void apply_input_prediction(
     EntitySnapshot* entity,
     const PlayerInput& input,
@@ -511,26 +582,83 @@ std::uint8_t to_kernel_projectile_hit_response(
 }
 
 ProjectileDamageShape to_projectile_damage_shape(std::uint8_t damage_shape) {
-    if (damage_shape == KernelProjectileDamageShape_Explosion) {
-        return ProjectileDamageShape::kExplosion;
-    }
     if (damage_shape == KernelProjectileDamageShape_PiercingSegment) {
         return ProjectileDamageShape::kPiercingSegment;
     }
     return ProjectileDamageShape::kDirectHit;
 }
 
+ProjectileKind to_projectile_kind(std::uint8_t projectile_kind) {
+    if (projectile_kind == KernelProjectileKind_AreaEffect) {
+        return ProjectileKind::kAreaEffect;
+    }
+    return ProjectileKind::kProjectile;
+}
+
+ProjectileImpactAction to_projectile_impact_action(std::uint8_t impact_action) {
+    if (impact_action == KernelProjectileImpactAction_SpawnProjectile) {
+        return ProjectileImpactAction::kSpawnProjectile;
+    }
+    return ProjectileImpactAction::kNone;
+}
+
+ProjectileDamageFalloff to_projectile_damage_falloff(std::uint8_t damage_falloff) {
+    if (damage_falloff == KernelProjectileDamageFalloff_Linear) {
+        return ProjectileDamageFalloff::kLinear;
+    }
+    return ProjectileDamageFalloff::kNone;
+}
+
 std::uint8_t to_kernel_projectile_damage_shape(
     ProjectileDamageShape damage_shape) {
     switch (damage_shape) {
-        case ProjectileDamageShape::kExplosion:
-            return KernelProjectileDamageShape_Explosion;
         case ProjectileDamageShape::kPiercingSegment:
             return KernelProjectileDamageShape_PiercingSegment;
         case ProjectileDamageShape::kDirectHit:
         default:
             return KernelProjectileDamageShape_DirectHit;
     }
+}
+
+RuntimeProjectileTemplate to_runtime_projectile_template(
+    const KernelProjectileTemplateDefinition& definition,
+    const KernelColliderTemplateDefinition* collider_template) {
+    RuntimeProjectileTemplate projectile_template{};
+    projectile_template.projectile_template_id = definition.projectile_template_id;
+    projectile_template.weapon_id = definition.weapon_id;
+    projectile_template.kind = to_projectile_kind(definition.projectile_kind);
+    projectile_template.motion_model =
+        to_projectile_motion_model(definition.motion_model);
+    projectile_template.hit_response =
+        to_projectile_hit_response(definition.hit_response);
+    projectile_template.damage_shape =
+        to_projectile_damage_shape(definition.damage_shape);
+    projectile_template.impact_action =
+        to_projectile_impact_action(definition.impact_action);
+    projectile_template.impact_destroy_self = definition.impact_destroy_self;
+    projectile_template.damage_falloff =
+        to_projectile_damage_falloff(definition.damage_falloff);
+    projectile_template.damage = definition.damage;
+    projectile_template.speed = definition.speed;
+    projectile_template.lifetime_seconds = definition.lifetime_seconds;
+    projectile_template.gravity = from_kernel_vec3(definition.gravity);
+    projectile_template.collider_template_id = definition.collider_template_id;
+    if (collider_template != nullptr) {
+        projectile_template.area_radius = collider_template->radius;
+        if (projectile_template.area_radius <= 0.0f) {
+            const glm::vec3 half_extents =
+                from_kernel_vec3(collider_template->half_extents);
+            projectile_template.area_radius =
+                std::max(half_extents.x, std::max(half_extents.y, half_extents.z));
+        }
+    }
+    projectile_template.collision_mask = definition.collision_mask;
+    projectile_template.max_hit_count = definition.max_hit_count;
+    projectile_template.impact_projectile_template_id =
+        definition.impact_projectile_template_id;
+    projectile_template.lifetime_ticks = definition.lifetime_ticks;
+    projectile_template.damage_interval_ticks = definition.damage_interval_ticks;
+    return projectile_template;
 }
 
 WeaponFireMode to_weapon_fire_mode(std::uint8_t fire_mode) {
@@ -561,10 +689,13 @@ WeaponMechanicsDefinition to_weapon_mechanics(
     mechanics.max_range = definition.max_range;
     mechanics.pellet_count = definition.pellet_count;
     mechanics.pellet_spread = definition.pellet_spread;
+    mechanics.segment_collider_template_id =
+        definition.segment_collider_template_id;
     mechanics.projectile_speed = definition.projectile.speed;
     mechanics.projectile_lifetime_seconds =
         definition.projectile.lifetime_seconds;
-    mechanics.explosion_radius = definition.projectile.explosion_radius;
+    mechanics.projectile_template_id =
+        definition.projectile.projectile_template_id;
     mechanics.projectile_motion_model =
         to_projectile_motion_model(definition.projectile.motion_model);
     mechanics.projectile_gravity = from_kernel_vec3(definition.projectile.gravity);
@@ -614,7 +745,11 @@ KernelWeaponMechanicsDefinition to_kernel_weapon_mechanics(
     definition.max_range = mechanics.max_range;
     definition.pellet_count = mechanics.pellet_count;
     definition.pellet_spread = mechanics.pellet_spread;
+    definition.segment_collider_template_id =
+        mechanics.segment_collider_template_id;
     definition.projectile.struct_size = sizeof(KernelProjectileMechanicsDefinition);
+    definition.projectile.projectile_template_id =
+        mechanics.projectile_template_id;
     definition.projectile.motion_model =
         to_kernel_projectile_motion_model(mechanics.projectile_motion_model);
     definition.projectile.hit_response =
@@ -624,7 +759,6 @@ KernelWeaponMechanicsDefinition to_kernel_weapon_mechanics(
     definition.projectile.speed = mechanics.projectile_speed;
     definition.projectile.lifetime_seconds =
         mechanics.projectile_lifetime_seconds;
-    definition.projectile.explosion_radius = mechanics.explosion_radius;
     definition.projectile.gravity = to_kernel_vec3(mechanics.projectile_gravity);
     definition.projectile.collision_mask = mechanics.projectile_collision_mask;
     definition.projectile.max_hit_count = mechanics.projectile_max_hit_count;
@@ -693,6 +827,7 @@ bool validate_weapon_mechanics(const KernelWeaponMechanicsDefinition& definition
     if (definition.fire_mode == KernelWeaponFireMode_Projectile) {
         if (definition.projectile.struct_size <
                 sizeof(KernelProjectileMechanicsDefinition) ||
+            definition.projectile.projectile_template_id == 0 ||
             definition.projectile.motion_model > KernelProjectileMotionModel_Homing ||
             definition.projectile.hit_response > KernelProjectileHitResponse_Attach ||
             definition.projectile.damage_shape > KernelProjectileDamageShape_PiercingSegment ||
@@ -726,6 +861,11 @@ bool validate_weapon_mechanics(const KernelWeaponMechanicsDefinition& definition
                definition.beam.lifetime_ticks > 0;
     }
     if (definition.max_range <= 0.0f) {
+        return false;
+    }
+    if ((definition.fire_mode == KernelWeaponFireMode_Hitscan ||
+         definition.fire_mode == KernelWeaponFireMode_Shotgun) &&
+        definition.segment_collider_template_id == 0) {
         return false;
     }
     if (definition.fire_mode == KernelWeaponFireMode_Shotgun &&
@@ -937,9 +1077,18 @@ bool KernelEngine::load_gameplay_catalog(
         if (projectile_template.struct_size <
                 sizeof(KernelProjectileTemplateDefinition) ||
             projectile_template.projectile_template_id == 0 ||
+            projectile_template.projectile_kind > KernelProjectileKind_AreaEffect ||
             projectile_template.motion_model > KernelProjectileMotionModel_Homing ||
             projectile_template.sync_mode >
-                KernelProjectileSyncMode_ServerSnapshotOnly) {
+                KernelProjectileSyncMode_ServerSnapshotOnly ||
+            projectile_template.impact_action >
+                KernelProjectileImpactAction_SpawnProjectile ||
+            projectile_template.damage_falloff >
+                KernelProjectileDamageFalloff_Linear ||
+            (projectile_template.damage_shape !=
+                 KernelProjectileDamageShape_DirectHit &&
+             projectile_template.damage_shape !=
+                 KernelProjectileDamageShape_PiercingSegment)) {
             return false;
         }
         projectile_templates_.push_back(projectile_template);
@@ -950,7 +1099,7 @@ bool KernelEngine::load_gameplay_catalog(
         if (collider_template.struct_size <
                 sizeof(KernelColliderTemplateDefinition) ||
             collider_template.template_id == 0 ||
-            collider_template.shape_type > KernelColliderShapeType_Sphere) {
+            collider_template.shape_type > KernelColliderShapeType_Segment) {
             return false;
         }
         collider_templates_.push_back(collider_template);
@@ -965,6 +1114,33 @@ bool KernelEngine::load_gameplay_catalog(
         }
         collider_bindings_.push_back(binding);
     }
+    for (const KernelProjectileTemplateDefinition& projectile_template :
+         projectile_templates_) {
+        if (find_collider_template(
+                collider_templates_,
+                projectile_template.collider_template_id) == nullptr ||
+            (projectile_template.impact_action ==
+                 KernelProjectileImpactAction_SpawnProjectile &&
+             (find_projectile_template(
+                  projectile_templates_,
+                  projectile_template.impact_projectile_template_id) == nullptr ||
+              projectile_template_has_impact_cycle(
+                  projectile_templates_,
+                  projectile_template.projectile_template_id)))) {
+            return false;
+        }
+    }
+    std::vector<RuntimeProjectileTemplate> runtime_projectile_templates;
+    runtime_projectile_templates.reserve(projectile_templates_.size());
+    for (const KernelProjectileTemplateDefinition& projectile_template :
+         projectile_templates_) {
+        runtime_projectile_templates.push_back(to_runtime_projectile_template(
+            projectile_template,
+            find_collider_template(
+                collider_templates_,
+                projectile_template.collider_template_id)));
+    }
+    world_.set_projectile_templates(runtime_projectile_templates);
     catalog_version_ = catalog.catalog_version;
     catalog_hash_ = catalog.catalog_hash;
     return true;
@@ -1114,62 +1290,177 @@ std::uint32_t KernelEngine::query_collider_shapes(
     }
 
     std::uint32_t copied = 0;
-    auto view = world_.registry().view<NetworkIdentity, EntityKind, Transform, Hitbox>();
-    for (const entt::entity entity : view) {
+    for (const ColliderInstance& collider :
+         world_.collider_registry().instances()) {
         if (copied >= max_shapes) {
             break;
         }
-        const NetworkIdentity& identity = view.get<NetworkIdentity>(entity);
-        const EntityKind& kind = view.get<EntityKind>(entity);
         if (query != nullptr) {
             if (query->entity_net_id != 0 &&
-                query->entity_net_id != identity.net_id) {
+                query->entity_net_id != collider.entity_net_id) {
                 continue;
             }
             if (query->entity_type_filter != 0 &&
-                query->entity_type_filter != static_cast<std::uint16_t>(kind.type)) {
+                query->entity_type_filter !=
+                    static_cast<std::uint16_t>(collider.entity_type)) {
+                continue;
+            }
+            if (query->purpose_mask != 0 &&
+                (collider.purpose_flags & query->purpose_mask) == 0) {
                 continue;
             }
         }
 
-        const Transform& transform = view.get<Transform>(entity);
-        const Hitbox& hitbox = view.get<Hitbox>(entity);
         KernelColliderShapeView shape{};
         shape.struct_size = sizeof(KernelColliderShapeView);
-        shape.entity_net_id = identity.net_id;
-        shape.entity_type = static_cast<std::uint16_t>(kind.type);
-        shape.shape_type = KernelColliderShapeType_Aabb;
-        shape.world_center = to_kernel_vec3(transform.position + hitbox.center);
-        shape.half_extents = to_kernel_vec3(hitbox.half_extents);
-        shape.radius = std::max(hitbox.half_extents.x, std::max(hitbox.half_extents.y, hitbox.half_extents.z));
-        shape.purpose_flags = KernelColliderPurpose_Hit;
-        shape.layer_mask = 0;
-
-        if (const KernelColliderBindingDefinition* binding =
-                find_collider_binding(collider_bindings_, kind.type)) {
-            if (const KernelColliderTemplateDefinition* collider_template =
-                    find_collider_template(
-                        collider_templates_,
-                        binding->collider_template_id)) {
-                shape.collider_template_id = collider_template->template_id;
-                shape.shape_type = collider_template->shape_type;
-                shape.world_center = to_kernel_vec3(
-                    transform.position +
-                    from_kernel_vec3(binding->local_position) +
-                    from_kernel_vec3(collider_template->center));
-                shape.half_extents = collider_template->half_extents;
-                shape.radius = collider_template->radius;
-                shape.purpose_flags = collider_template->purpose_flags;
-                shape.layer_mask = collider_template->layer_mask;
-            }
-        }
-        if (query != nullptr && query->purpose_mask != 0 &&
-            (shape.purpose_flags & query->purpose_mask) == 0) {
-            continue;
-        }
+        shape.entity_net_id = collider.entity_net_id;
+        shape.entity_type = static_cast<std::uint16_t>(collider.entity_type);
+        shape.collider_template_id = collider.collider_template_id;
+        shape.shape_type = to_kernel_collider_shape_type(collider.shape_type);
+        shape.world_center = to_kernel_vec3(collider.world_center);
+        shape.half_extents = to_kernel_vec3(collider.half_extents);
+        shape.radius = collider.radius;
+        shape.purpose_flags = collider.purpose_flags;
+        shape.layer_mask = collider.layer_mask;
+        shape.collider_id = collider.collider_id;
+        shape.owner_net_id = collider.owner_net_id;
+        shape.world_rotation = to_kernel_quat(collider.world_rotation);
+        shape.segment_start = to_kernel_vec3(collider.segment_start);
+        shape.segment_end = to_kernel_vec3(collider.segment_end);
+        shape.lifetime_ticks = collider.lifetime_ticks;
+        shape.remaining_ticks = collider.remaining_ticks;
+        shape.has_resolved_damage = collider.has_resolved_damage;
         out_shapes[copied++] = shape;
     }
     return copied;
+}
+
+void KernelEngine::materialize_entity_collider(NetId net_id) {
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value() ||
+        !world_.registry().all_of<NetworkIdentity, EntityKind, Transform>(*entity)) {
+        return;
+    }
+
+    const NetworkIdentity& identity =
+        world_.registry().get<NetworkIdentity>(*entity);
+    const EntityKind& kind = world_.registry().get<EntityKind>(*entity);
+    const Transform& transform = world_.registry().get<Transform>(*entity);
+    const KernelColliderBindingDefinition* binding =
+        find_collider_binding(collider_bindings_, kind.type);
+    if (binding == nullptr) {
+        return;
+    }
+    const KernelColliderTemplateDefinition* collider_template =
+        find_collider_template(collider_templates_, binding->collider_template_id);
+    if (collider_template == nullptr) {
+        return;
+    }
+
+    ColliderInstance collider{};
+    collider.collider_template_id = collider_template->template_id;
+    collider.owner_net_id = identity.net_id;
+    collider.entity_net_id = identity.net_id;
+    collider.entity_type = kind.type;
+    collider.shape_type = to_collider_shape_type(collider_template->shape_type);
+    collider.purpose_flags = collider_template->purpose_flags;
+    collider.layer_mask = collider_template->layer_mask;
+    collider.local_center =
+        from_kernel_vec3(binding->local_position) +
+        from_kernel_vec3(collider_template->center);
+    collider.local_rotation = from_kernel_quat(binding->local_rotation);
+    collider.world_rotation = transform.rotation * collider.local_rotation;
+    collider.world_center =
+        transform.position + transform.rotation * collider.local_center;
+    collider.half_extents = from_kernel_vec3(collider_template->half_extents);
+    collider.radius = collider_template->radius;
+    collider.world_bounds = collider_world_bounds(collider);
+    world_.collider_registry().upsert_entity_collider(
+        identity.net_id,
+        collider_template->template_id,
+        collider);
+}
+
+void KernelEngine::materialize_projectile_collider(NetId net_id) {
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value() ||
+        !world_.registry().all_of<
+            NetworkIdentity,
+            EntityKind,
+            Transform,
+            ProjectileState>(*entity) ||
+        world_.collider_registry().has_persistent_entity_collider(net_id)) {
+        return;
+    }
+
+    const NetworkIdentity& identity =
+        world_.registry().get<NetworkIdentity>(*entity);
+    const EntityKind& kind = world_.registry().get<EntityKind>(*entity);
+    const Transform& transform = world_.registry().get<Transform>(*entity);
+    const ProjectileState& projectile =
+        world_.registry().get<ProjectileState>(*entity);
+    const KernelProjectileTemplateDefinition* projectile_template =
+        find_projectile_template(
+            projectile_templates_,
+            projectile.projectile_template_id);
+    if (projectile_template == nullptr) {
+        return;
+    }
+    const KernelColliderTemplateDefinition* collider_template =
+        find_collider_template(
+            collider_templates_,
+            projectile_template->collider_template_id);
+    if (collider_template == nullptr) {
+        return;
+    }
+
+    ColliderInstance collider{};
+    collider.collider_template_id = collider_template->template_id;
+    collider.owner_net_id = projectile.shooter_net_id;
+    collider.entity_net_id = identity.net_id;
+    collider.entity_type = kind.type;
+    collider.shape_type = to_collider_shape_type(collider_template->shape_type);
+    collider.purpose_flags = collider_template->purpose_flags;
+    collider.layer_mask = collider_template->layer_mask;
+    collider.local_center = from_kernel_vec3(collider_template->center);
+    collider.local_rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+    collider.world_rotation = transform.rotation;
+    collider.world_center = transform.position + collider.local_center;
+    collider.half_extents = from_kernel_vec3(collider_template->half_extents);
+    collider.radius = collider_template->radius;
+    collider.world_bounds = collider_world_bounds(collider);
+    world_.collider_registry().upsert_entity_collider(
+        identity.net_id,
+        collider_template->template_id,
+        collider);
+}
+
+void KernelEngine::sync_entity_colliders_from_world() {
+    auto projectile_view =
+        world_.registry().view<NetworkIdentity, ProjectileState>();
+    for (const entt::entity entity : projectile_view) {
+        const NetworkIdentity& identity =
+            projectile_view.get<NetworkIdentity>(entity);
+        materialize_projectile_collider(identity.net_id);
+    }
+
+    for (ColliderInstance& collider :
+         world_.collider_registry().mutable_instances()) {
+        if (collider.lifetime_ticks != 0 || collider.entity_net_id == 0) {
+            continue;
+        }
+        const std::optional<entt::entity> entity =
+            world_.find_entity(collider.entity_net_id);
+        if (!entity.has_value() ||
+            !world_.registry().all_of<Transform>(*entity)) {
+            continue;
+        }
+        const Transform& transform = world_.registry().get<Transform>(*entity);
+        collider.world_rotation = transform.rotation * collider.local_rotation;
+        collider.world_center =
+            transform.position + transform.rotation * collider.local_center;
+        collider.world_bounds = collider_world_bounds(collider);
+    }
 }
 
 KernelLocalPlayerInfo KernelEngine::local_player_info() const {
@@ -1208,6 +1499,7 @@ bool KernelEngine::server_create_entity(
         world_.registry().get_or_emplace<ReplicationState>(*entity);
     replication.animation_state = create_info.animation_state;
     replication.visual_flags = create_info.visual_flags;
+    materialize_entity_collider(net_id);
 
     *out_net_id = net_id;
     push_event(
@@ -1253,6 +1545,7 @@ bool KernelEngine::server_set_entity_transform(
     Transform& transform = world_.registry().get<Transform>(*entity);
     transform.position = from_kernel_vec3(position);
     transform.rotation = from_kernel_quat(rotation);
+    sync_entity_colliders_from_world();
     return true;
 }
 
@@ -2298,7 +2591,9 @@ void KernelEngine::predict_local_projectile(const PlayerInput& input) {
     }
     std::uint8_t sync_mode = KernelProjectileSyncMode_HybridDeterministicThenSnapshot;
     if (const KernelProjectileTemplateDefinition* projectile_template =
-            find_projectile_template(projectile_templates_, weapon->id)) {
+            find_projectile_template(
+                projectile_templates_,
+                weapon->projectile_template_id)) {
         sync_mode = projectile_template->sync_mode;
     }
     if (sync_mode == KernelProjectileSyncMode_ServerSnapshotOnly) {
@@ -2685,6 +2980,7 @@ void KernelEngine::simulate_tick() {
     const std::uint64_t server_time_us =
         tick_time_us(tick_loop_.current_tick(), fixed_delta);
     const std::size_t first_tick_event = events_.size();
+    world_.collider_registry().expire_tick_lifetimes();
     advance_predicted_projectiles(fixed_delta);
     for (const QueuedInput& pending_input : pending_inputs_) {
         if (pending_input.controlled_net_id != 0) {
@@ -2744,6 +3040,7 @@ void KernelEngine::simulate_tick() {
         server_time_us,
         &events_,
         &damage_pipeline_);
+    sync_entity_colliders_from_world();
     const std::vector<ConfirmedDamage> ready_damage =
         damage_pipeline_.drain_ready_damage(world_, server_time_us);
     queue_hit_debug_records(ready_damage);
@@ -2904,7 +3201,9 @@ void KernelEngine::send_projectile_spawn_batch(
         world_.registry().get<ProjectileState>(*world_entity);
     const Velocity& velocity = world_.registry().get<Velocity>(*world_entity);
     const KernelProjectileTemplateDefinition* projectile_template =
-        find_projectile_template(projectile_templates_, projectile.weapon_id);
+        find_projectile_template(
+            projectile_templates_,
+            projectile.projectile_template_id);
     if (projectile_template != nullptr &&
         projectile_template->sync_mode ==
             KernelProjectileSyncMode_ServerSnapshotOnly) {
@@ -2923,7 +3222,7 @@ void KernelEngine::send_projectile_spawn_batch(
             : velocity.linear;
 
     ProjectileSpawnGroup group{};
-    group.projectile_template_id = projectile.weapon_id;
+    group.projectile_template_id = projectile.projectile_template_id;
     group.records.push_back(record);
 
     ProjectileSpawnBatchPacket batch{};

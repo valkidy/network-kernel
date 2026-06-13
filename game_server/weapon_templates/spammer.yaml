@@ -2,22 +2,8 @@ id: 2
 name: Projectile Spammer
 weapon_type: projectile
 magazine_size: 120
-damage: 1
 cooldown_ticks: 1
 reload_ticks: 30
 burst_count: 3
 burst_spread_degrees: 15.0
-projectile:
-  sync_mode: local_predicted_deterministic
-  movement_model: linear
-  hit_response: destroy
-  damage_shape: direct_hit
-  speed: 30.0
-  lifetime_seconds: 2.0
-  explosion_radius: 0.0
-  collision_mask: none
-  max_hit_count: 1
-  gravity:
-    x: 0.0
-    y: 0.0
-    z: 0.0
+projectile_template: spammer_projectile

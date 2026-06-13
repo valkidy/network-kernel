@@ -61,6 +61,7 @@ struct WeaponCatalogConfig {
     std::array<KernelWeaponMechanicsDefinition, kWeaponCount> definitions{};
     std::array<std::string, kWeaponCount> names{};
     std::array<std::uint8_t, kWeaponCount> projectile_sync_modes{};
+    std::array<std::uint32_t, kWeaponCount> collider_template_ids{};
 };
 
 struct ColliderTemplateConfig {
@@ -77,12 +78,20 @@ struct ColliderCatalogConfig {
     std::vector<ColliderBindingConfig> bindings;
 };
 
+struct ProjectileTemplateConfig {
+    std::string name;
+    KernelProjectileTemplateDefinition definition{};
+    KernelHomingMechanicsDefinition homing{};
+    std::string impact_projectile_template_ref;
+};
+
 struct GameServerGameplayConfig {
     WeaponCatalogConfig weapons;
     PlayerGameplayDefinition player;
     EnemyGameplayDefinition enemy;
     std::vector<ActorTemplateConfig> actor_templates;
     ColliderCatalogConfig colliders;
+    std::vector<ProjectileTemplateConfig> projectile_templates;
 };
 
 struct KernelGameplayCatalogStorage {

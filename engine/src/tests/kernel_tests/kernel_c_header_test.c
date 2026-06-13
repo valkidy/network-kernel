@@ -69,7 +69,7 @@ int main(void) {
     (void)collider_query;
     (void)collider_shape;
 
-    assert(KERNEL_ABI_VERSION == 15u);
+    assert(KERNEL_ABI_VERSION == 16u);
     assert(KERNEL_MAX_WEAPONS == 7u);
     assert(KERNEL_LAN_DISCOVERY_DEFAULT_PORT == 47777u);
     assert(sizeof(KernelAbiInfo) > 0u);

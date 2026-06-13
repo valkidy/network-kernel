@@ -436,6 +436,23 @@ int main() {
     for (std::uint32_t index = 0; index < event_count; ++index) {
         game_server_handle_event(game_server, &events[index]);
     }
+    KernelEvent joined_event{};
+    joined_event.type = KernelEventType_PlayerJoined;
+    joined_event.net_id = local_info.player_net_id;
+    joined_event.peer_id = local_info.peer_id;
+    game_server_handle_event(game_server, &joined_event);
+    KernelCombatStateDefinition local_combat{};
+    local_combat.struct_size = sizeof(local_combat);
+    local_combat.hp = 100;
+    local_combat.max_hp = 100;
+    local_combat.active_weapon_id = 0;
+    local_combat.move_speed_meters_per_second = 5.0f;
+    local_combat.hitbox_center = KernelVec3{0.0f, 0.9f, 0.0f};
+    local_combat.hitbox_half_extents = KernelVec3{0.35f, 0.9f, 0.35f};
+    assert(kernel_server_set_entity_combat_state(
+        kernel,
+        local_info.player_net_id,
+        &local_combat));
 
     KernelServerEntityCreateInfo create_info{};
     create_info.struct_size = sizeof(create_info);
@@ -464,12 +481,12 @@ int main() {
     rocket.cooldown_ticks = 30;
     rocket.reload_ticks = 30;
     rocket.projectile.struct_size = sizeof(KernelProjectileMechanicsDefinition);
+    rocket.projectile.projectile_template_id = 3;
     rocket.projectile.motion_model = KernelProjectileMotionModel_Linear;
     rocket.projectile.speed = 35.0f;
     rocket.projectile.lifetime_seconds = 2.5f;
-    rocket.projectile.explosion_radius = 3.0f;
     rocket.projectile.hit_response = KernelProjectileHitResponse_Destroy;
-    rocket.projectile.damage_shape = KernelProjectileDamageShape_Explosion;
+    rocket.projectile.damage_shape = KernelProjectileDamageShape_DirectHit;
     rocket.projectile.collision_mask = KERNEL_COLLISION_MASK_DAMAGEABLE;
     rocket.projectile.max_hit_count = 1;
     assert(kernel_server_validate_mechanics_config(&rocket));
@@ -477,7 +494,7 @@ int main() {
     KernelWeaponMechanicsDefinition queried_weapon{};
     queried_weapon.struct_size = sizeof(queried_weapon);
     assert(kernel_server_get_entity_weapon_mechanics(kernel, enemy, 3, &queried_weapon));
-    assert(queried_weapon.projectile.damage_shape == KernelProjectileDamageShape_Explosion);
+    assert(queried_weapon.projectile.damage_shape == KernelProjectileDamageShape_DirectHit);
     assert(kernel_server_set_entity_state(kernel, enemy, 4, 8));
     KernelServerEntityState server_state{};
     server_state.struct_size = sizeof(server_state);
@@ -530,7 +547,7 @@ int main() {
         game_server_handle_event(game_server, &events[index]);
     }
     game_server_tick(game_server, 1.0f / 30.0f);
-    assert(game_server_get_enemy_count(game_server) == 1);
+    assert(game_server_get_enemy_count(game_server) == 10);
     game_server_despawn_all(game_server, KernelDespawnReason_Destroyed);
     game_server_tick(game_server, 1.0f / 30.0f);
     assert(game_server_get_enemy_count(game_server) == 0);

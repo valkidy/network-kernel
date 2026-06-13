@@ -6,3 +6,4 @@ damage: 25
 cooldown_ticks: 3
 reload_ticks: 30
 max_range: 100.0
+segment_collider: rifle_segment_damage

@@ -271,6 +271,24 @@ void apply_hitscan_damage(
     std::uint64_t hit_time_us,
     std::vector<KernelEvent>* events,
     DamagePipeline* damage_pipeline) {
+    if (definition.segment_collider_template_id != 0) {
+        ColliderInstance segment{};
+        segment.collider_template_id = definition.segment_collider_template_id;
+        segment.owner_net_id = shooter_net_id;
+        segment.entity_net_id = shooter_net_id;
+        segment.entity_type = EntityType::kUnknown;
+        segment.shape_type = ColliderShapeType::kSegment;
+        segment.purpose_flags = KernelColliderPurpose_Damage;
+        segment.layer_mask = kCollisionLayerProjectile;
+        segment.segment_start = origin;
+        segment.segment_end = origin + direction * definition.max_range;
+        segment.world_center = (segment.segment_start + segment.segment_end) * 0.5f;
+        segment.lifetime_ticks = 3;
+        segment.remaining_ticks = 3;
+        segment.has_resolved_damage = true;
+        world.collider_registry().add_ephemeral_collider(segment);
+    }
+
     NetId target_net_id = 0;
     if (!find_hitscan_target(
             world,
@@ -331,6 +349,7 @@ NetId fire_projectile(
         ProjectileState& projectile_state =
             world.registry().get<ProjectileState>(*projectile_entity);
         projectile_state.weapon_id = definition.id;
+        projectile_state.projectile_template_id = definition.projectile_template_id;
         projectile_state.damage = definition.damage;
         projectile_state.spawn_tick = spawn_tick;
         projectile_state.client_action_id = client_action_id;
@@ -342,7 +361,6 @@ NetId fire_projectile(
         projectile_state.max_hit_count =
             std::max(1u, definition.projectile_max_hit_count);
         projectile_state.hit_count = 0;
-        projectile_state.explosion_radius = definition.explosion_radius;
         projectile_state.max_lifetime_seconds = definition.projectile_lifetime_seconds;
         projectile_state.age_seconds = age_seconds;
         projectile_state.spawn_position = origin;

@@ -31,6 +31,44 @@ templates:
     radius: 1.0
     purpose: damage
     layer: area_effect
+  - id: 5
+    name: rifle_segment_damage
+    shape: segment
+    center: {x: 0.0, y: 0.0, z: 0.0}
+    half_extents: {x: 0.0, y: 0.0, z: 0.0}
+    radius: 0.0
+    length: 100.0
+    scatter_degrees: 0.0
+    lifetime_ticks: 3
+    purpose: damage
+    layer: projectile
+  - id: 6
+    name: shotgun_segment_damage
+    shape: segment
+    center: {x: 0.0, y: 0.0, z: 0.0}
+    half_extents: {x: 0.0, y: 0.0, z: 0.0}
+    radius: 0.0
+    length: 40.0
+    scatter_degrees: 6.0
+    lifetime_ticks: 3
+    purpose: damage
+    layer: projectile
+  - id: 7
+    name: sphere_damage
+    shape: sphere
+    center: {x: 0.0, y: 0.0, z: 0.0}
+    half_extents: {x: 0.2, y: 0.2, z: 0.2}
+    radius: 0.2
+    purpose: damage
+    layer: projectile
+  - id: 8
+    name: beam_damage
+    shape: oriented_box
+    center: {x: 0.0, y: 0.0, z: 0.0}
+    half_extents: {x: 0.1, y: 0.1, z: 2.5}
+    radius: 0.0
+    purpose: damage
+    layer: projectile
 bindings:
   - entity_type: player
     collider_template: player_hit

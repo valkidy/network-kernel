@@ -1,6 +1,7 @@
 #include "simulation/public/simulation.h"
 
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 #include "simulation/public/collision_query.h"
@@ -83,6 +84,15 @@ void simulate_area_effects(
                 continue;
             }
 
+            std::uint16_t damage = area_effect.damage_per_interval;
+            if (area_effect.damage_falloff == ProjectileDamageFalloff::kLinear &&
+                area_effect.radius > 0.0f) {
+                const float falloff =
+                    1.0f - std::min(1.0f, hit.distance / area_effect.radius);
+                damage = static_cast<std::uint16_t>(
+                    std::max(1.0f, std::round(area_effect.damage_per_interval * falloff)));
+            }
+
             active_damage_pipeline->submit_damage_request(DamageRequest{
                 current_tick,
                 sequence_id++,
@@ -90,7 +100,7 @@ void simulate_area_effects(
                 hit.net_id,
                 identity.owner_peer,
                 area_effect.source_code,
-                area_effect.damage_per_interval,
+                damage,
                 server_time_us,
                 hit.position,
             });

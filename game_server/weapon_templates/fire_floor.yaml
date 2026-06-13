@@ -6,6 +6,7 @@ damage: 12
 cooldown_ticks: 10
 reload_ticks: 30
 area_effect:
+  collider_template: explosion_damage
   radius: 2.0
   damage_per_interval: 12
   damage_interval_ticks: 2

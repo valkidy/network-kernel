@@ -105,12 +105,12 @@ KernelWeaponMechanicsDefinition projectile_weapon(
     weapon.cooldown_ticks = 30;
     weapon.reload_ticks = 60;
     weapon.projectile.struct_size = sizeof(KernelProjectileMechanicsDefinition);
+    weapon.projectile.projectile_template_id = weapon_id;
     weapon.projectile.motion_model = motion_model;
     weapon.projectile.speed = speed;
     weapon.projectile.lifetime_seconds = 3.0f;
-    weapon.projectile.explosion_radius = 4.0f;
     weapon.projectile.hit_response = KernelProjectileHitResponse_Destroy;
-    weapon.projectile.damage_shape = KernelProjectileDamageShape_Explosion;
+    weapon.projectile.damage_shape = KernelProjectileDamageShape_DirectHit;
     weapon.projectile.collision_mask = KERNEL_COLLISION_MASK_DAMAGEABLE;
     weapon.projectile.max_hit_count = 1;
     if (motion_model == KernelProjectileMotionModel_Parabolic) {
@@ -146,6 +146,7 @@ void configure_local_player(KernelHandle* kernel, std::uint32_t player_net_id) {
     rifle.reload_ticks = 30;
     rifle.max_range = 100.0f;
     rifle.pellet_count = 1;
+    rifle.segment_collider_template_id = 5;
     assert(Kernel_ServerSetEntityWeaponMechanics(kernel, player_net_id, &rifle));
 
     KernelWeaponMechanicsDefinition grenade =
@@ -157,7 +158,6 @@ void configure_local_player(KernelHandle* kernel, std::uint32_t player_net_id) {
     rocket.damage = 45;
     rocket.reload_ticks = 75;
     rocket.projectile.lifetime_seconds = 2.5f;
-    rocket.projectile.explosion_radius = 3.0f;
     assert(Kernel_ServerSetEntityWeaponMechanics(kernel, player_net_id, &rocket));
 }
 

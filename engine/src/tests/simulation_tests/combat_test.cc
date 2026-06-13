@@ -1,6 +1,7 @@
 #include <cassert>
 #include <cstddef>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <vector>
 
@@ -11,11 +12,14 @@
 
 namespace {
 
-void require(bool condition) {
+void require_impl(bool condition, int line) {
     if (!condition) {
+        std::fprintf(stderr, "require failed at combat_test.cc:%d\n", line);
         std::abort();
     }
 }
+
+#define require(condition) require_impl((condition), __LINE__)
 
 network_example::Health& health(
     network_example::World& world,
@@ -82,6 +86,32 @@ network_example::WeaponMechanicsDefinition weapon_definition(
     return definition;
 }
 
+void configure_projectile_response_templates(network_example::World& world) {
+    network_example::RuntimeProjectileTemplate grenade_template;
+    grenade_template.projectile_template_id = network_example::kWeaponSlot2;
+    grenade_template.weapon_id = network_example::kWeaponSlot2;
+    grenade_template.kind = network_example::ProjectileKind::kProjectile;
+    grenade_template.impact_action =
+        network_example::ProjectileImpactAction::kSpawnProjectile;
+    grenade_template.impact_projectile_template_id = 8;
+    grenade_template.impact_destroy_self = true;
+
+    network_example::RuntimeProjectileTemplate area_template;
+    area_template.projectile_template_id = 8;
+    area_template.weapon_id = network_example::kWeaponSlot2;
+    area_template.kind = network_example::ProjectileKind::kAreaEffect;
+    area_template.damage = 40;
+    area_template.area_radius = 4.0f;
+    area_template.damage_interval_ticks = 45;
+    area_template.lifetime_ticks = 45;
+    area_template.collision_mask =
+        network_example::kCollisionLayerPlayer | network_example::kCollisionLayerEnemy;
+    area_template.damage_falloff =
+        network_example::ProjectileDamageFalloff::kLinear;
+
+    world.set_projectile_templates({grenade_template, area_template});
+}
+
 void configure_test_weapons(
     network_example::World& world,
     network_example::NetId net_id) {
@@ -131,16 +161,22 @@ void configure_test_weapons(
     }};
     tuning.definitions[network_example::kWeaponSlot1].pellet_count = 5;
     tuning.definitions[network_example::kWeaponSlot1].pellet_spread = 0.035f;
+    tuning.definitions[network_example::kWeaponSlot2].projectile_template_id =
+        network_example::kWeaponSlot2;
     tuning.definitions[network_example::kWeaponSlot2].projectile_speed = 15.0f;
     tuning.definitions[network_example::kWeaponSlot2].projectile_lifetime_seconds = 3.0f;
-    tuning.definitions[network_example::kWeaponSlot2].explosion_radius = 4.0f;
     tuning.definitions[network_example::kWeaponSlot2].projectile_motion_model =
         network_example::ProjectileMotionModel::kParabolic;
     tuning.definitions[network_example::kWeaponSlot2].projectile_gravity =
         glm::vec3{0.0f, -9.8f, 0.0f};
+    tuning.definitions[network_example::kWeaponSlot2].projectile_collision_mask =
+        network_example::kCollisionLayerEnemy;
+    tuning.definitions[network_example::kWeaponSlot3].projectile_template_id =
+        network_example::kWeaponSlot3;
     tuning.definitions[network_example::kWeaponSlot3].projectile_speed = 35.0f;
     tuning.definitions[network_example::kWeaponSlot3].projectile_lifetime_seconds = 2.5f;
-    tuning.definitions[network_example::kWeaponSlot3].explosion_radius = 3.0f;
+    tuning.definitions[network_example::kWeaponSlot3].projectile_collision_mask =
+        network_example::kCollisionLayerEnemy;
     tuning.definitions[network_example::kWeaponSlot4].area_effect_radius = 2.0f;
     tuning.definitions[network_example::kWeaponSlot4].area_effect_damage_per_interval = 12;
     tuning.definitions[network_example::kWeaponSlot4].area_effect_damage_interval_ticks = 2;
@@ -419,6 +455,7 @@ void shotgun_applies_multiple_pellets() {
 
 void grenade_sweeps_and_explodes_with_falloff() {
     network_example::World world;
+    configure_projectile_response_templates(world);
     spawn_player(world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
     const network_example::NetId near_enemy =
         spawn_enemy(world, glm::vec3{3.0f, 0.0f, 0.0f});
@@ -456,17 +493,19 @@ void grenade_sweeps_and_explodes_with_falloff() {
     network_example::simulate_projectiles(world, 0.2f, 1, &events);
 
     assert(!world.find_entity(projectile).has_value());
+    assert(count_events(events, KernelEventType_EntitySpawned) == 1);
+    network_example::simulate_area_effects(world, 1, &events, nullptr);
     assert(health(world, near_enemy).hp > 0);
     assert(health(world, near_enemy).hp < 50);
     assert(health(world, far_enemy).hp > 0);
     assert(health(world, far_enemy).hp < 50);
     assert(health(world, near_enemy).hp < health(world, far_enemy).hp);
-    assert(count_events(events, KernelEventType_Explosion) == 1);
     assert(count_events(events, KernelEventType_DamageApplied) >= 2);
 }
 
 void server_projectile_damage_to_player_is_pended() {
     network_example::World world;
+    configure_projectile_response_templates(world);
     const network_example::NetId player =
         spawn_player(world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
     const network_example::NetId projectile_net_id =
@@ -477,15 +516,16 @@ void server_projectile_damage_to_player_is_pended() {
     network_example::ProjectileState& projectile =
         projectile_state(world, projectile_net_id);
     projectile.weapon_id = network_example::kWeaponSlot2;
+    projectile.projectile_template_id = network_example::kWeaponSlot2;
     projectile.damage = 80;
-    projectile.explosion_radius = 4.0f;
     projectile.max_lifetime_seconds = 0.01f;
 
     network_example::DamagePipeline pipeline;
     std::vector<KernelEvent> events;
     network_example::simulate_projectiles(world, 0.02f, 0, &events, &pipeline);
     assert(health(world, player).hp == 100);
-    assert(count_events(events, KernelEventType_Explosion) == 1);
+    assert(count_events(events, KernelEventType_EntitySpawned) == 1);
+    network_example::simulate_area_effects(world, 0, 0, &events, &pipeline);
     assert(count_events(events, KernelEventType_DamageApplied) == 0);
     assert(pipeline.pending_count() == 1);
 
@@ -509,7 +549,6 @@ void direct_hit_projectile_without_explosion_applies_damage() {
     projectile.weapon_id = network_example::kWeaponSlot3;
     projectile.damage = 30;
     projectile.shooter_net_id = 1;
-    projectile.explosion_radius = 0.0f;
     projectile.max_lifetime_seconds = 1.0f;
     projectile.initial_velocity = glm::vec3{10.0f, 0.0f, 0.0f};
 
@@ -571,7 +610,6 @@ void local_predicted_spammer_can_spawn_many_low_damage_projectiles() {
     spammer.reload_ticks = 30;
     spammer.projectile_speed = 30.0f;
     spammer.projectile_lifetime_seconds = 2.0f;
-    spammer.explosion_radius = 0.0f;
     spammer.projectile_motion_model = network_example::ProjectileMotionModel::kLinear;
     spammer.projectile_damage_shape =
         network_example::ProjectileDamageShape::kDirectHit;
@@ -631,7 +669,6 @@ void projectile_spammer_burst_spawns_three_spread_projectiles() {
     spammer.pellet_spread = 15.0f;
     spammer.projectile_speed = 30.0f;
     spammer.projectile_lifetime_seconds = 2.0f;
-    spammer.explosion_radius = 0.0f;
     spammer.projectile_motion_model = network_example::ProjectileMotionModel::kLinear;
     spammer.projectile_damage_shape =
         network_example::ProjectileDamageShape::kDirectHit;
@@ -765,7 +802,7 @@ void projectile_historical_hit_query_hits_historical_target() {
     require(projectile != 0);
     require(!world.find_entity(projectile).has_value());
     require(health(world, enemy).hp < 50);
-    require(count_events(events, KernelEventType_Explosion) == 1);
+    require(count_events(events, KernelEventType_Explosion) == 0);
     require(count_events(events, KernelEventType_DamageApplied) >= 1);
 }
 

@@ -223,9 +223,23 @@ typedef enum KernelProjectileHitResponse {
 
 typedef enum KernelProjectileDamageShape {
     KernelProjectileDamageShape_DirectHit = 0,
-    KernelProjectileDamageShape_Explosion = 1,
     KernelProjectileDamageShape_PiercingSegment = 2,
 } KernelProjectileDamageShape;
+
+typedef enum KernelProjectileKind {
+    KernelProjectileKind_Projectile = 0,
+    KernelProjectileKind_AreaEffect = 1,
+} KernelProjectileKind;
+
+typedef enum KernelProjectileImpactAction {
+    KernelProjectileImpactAction_None = 0,
+    KernelProjectileImpactAction_SpawnProjectile = 1,
+} KernelProjectileImpactAction;
+
+typedef enum KernelProjectileDamageFalloff {
+    KernelProjectileDamageFalloff_None = 0,
+    KernelProjectileDamageFalloff_Linear = 1,
+} KernelProjectileDamageFalloff;
 
 typedef struct KernelVec2 {
     float x;
@@ -314,6 +328,8 @@ typedef struct KernelServerEntityState {
 typedef enum KernelColliderShapeType {
     KernelColliderShapeType_Aabb = 0,
     KernelColliderShapeType_Sphere = 1,
+    KernelColliderShapeType_OrientedBox = 2,
+    KernelColliderShapeType_Segment = 3,
 } KernelColliderShapeType;
 
 typedef enum KernelColliderPurpose {
@@ -340,6 +356,9 @@ typedef struct KernelColliderTemplateDefinition {
     float radius;
     uint32_t purpose_flags;
     uint32_t layer_mask;
+    float segment_length;
+    float scatter_degrees;
+    uint32_t lifetime_ticks;
 } KernelColliderTemplateDefinition;
 
 typedef struct KernelColliderBindingDefinition {
@@ -359,16 +378,21 @@ typedef struct KernelProjectileTemplateDefinition {
     uint8_t sync_mode;
     uint8_t hit_response;
     uint8_t damage_shape;
+    uint8_t projectile_kind;
+    uint8_t impact_action;
+    bool impact_destroy_self;
+    uint8_t damage_falloff;
     uint8_t reserved0;
     uint16_t damage;
     float speed;
     float lifetime_seconds;
-    float explosion_radius;
     KernelVec3 gravity;
     uint32_t collider_template_id;
-    uint32_t explosion_template_id;
     uint32_t collision_mask;
     uint32_t max_hit_count;
+    uint32_t impact_projectile_template_id;
+    uint32_t lifetime_ticks;
+    uint32_t damage_interval_ticks;
 } KernelProjectileTemplateDefinition;
 
 typedef struct KernelGameplayCatalogDefinition {
@@ -496,6 +520,14 @@ typedef struct KernelColliderShapeView {
     float radius;
     uint32_t purpose_flags;
     uint32_t layer_mask;
+    uint32_t collider_id;
+    uint32_t owner_net_id;
+    KernelQuat world_rotation;
+    KernelVec3 segment_start;
+    KernelVec3 segment_end;
+    uint32_t lifetime_ticks;
+    uint32_t remaining_ticks;
+    bool has_resolved_damage;
 } KernelColliderShapeView;
 
 typedef struct KernelHomingMechanicsDefinition {
@@ -520,11 +552,11 @@ typedef struct KernelProjectileMechanicsDefinition {
     uint8_t reserved0;
     float speed;
     float lifetime_seconds;
-    float explosion_radius;
     KernelVec3 gravity;
     uint32_t collision_mask;
     uint32_t max_hit_count;
     KernelHomingMechanicsDefinition homing;
+    uint32_t projectile_template_id;
 } KernelProjectileMechanicsDefinition;
 
 typedef struct KernelAreaEffectMechanicsDefinition {
@@ -560,6 +592,7 @@ typedef struct KernelWeaponMechanicsDefinition {
     KernelProjectileMechanicsDefinition projectile;
     KernelAreaEffectMechanicsDefinition area_effect;
     KernelBeamMechanicsDefinition beam;
+    uint32_t segment_collider_template_id;
 } KernelWeaponMechanicsDefinition;
 
 typedef struct KernelBeamState {

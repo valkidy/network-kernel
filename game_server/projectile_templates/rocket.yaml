@@ -1,0 +1,20 @@
+id: 3
+name: rocket_projectile
+damage: 45
+sync_mode: server_snapshot_only
+collider_template: projectile_damage
+movement_model: linear
+hit_response: destroy
+damage_shape: direct_hit
+speed: 35.0
+lifetime_seconds: 2.5
+collision_mask: damageable
+max_hit_count: 1
+gravity:
+  x: 0.0
+  y: 0.0
+  z: 0.0
+impact_response:
+  action: spawn_projectile
+  projectile_template: rocket_explosion
+  destroy_self: true

@@ -53,7 +53,8 @@ NetId World::spawn_area_effect(
     std::uint32_t expire_tick,
     std::uint16_t damage_per_interval,
     std::uint8_t source_code,
-    std::uint32_t collision_mask) {
+    std::uint32_t collision_mask,
+    ProjectileDamageFalloff damage_falloff) {
     const entt::entity entity =
         create_networked_entity(EntityType::kAreaEffect, owner_peer, position);
     registry().emplace<AreaEffectTag>(entity);
@@ -69,6 +70,7 @@ NetId World::spawn_area_effect(
             expire_tick,
             source_code,
             collision_mask,
+            damage_falloff,
             {},
         });
     return registry().get<NetworkIdentity>(entity).net_id;

@@ -181,6 +181,17 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip() {
             "weapon_templates/" + file,
             read_text_file(root / "game_server" / "weapon_templates" / file)});
     }
+    const std::vector<std::string> projectile_files = {
+        "homing_missile.yaml",
+        "rocket.yaml",
+        "rocket_explosion.yaml",
+        "spammer.yaml",
+    };
+    for (const std::string& file : projectile_files) {
+        files.push_back({
+            "projectile_templates/" + file,
+            read_text_file(root / "game_server" / "projectile_templates" / file)});
+    }
     return make_store_zip(files);
 }
 
@@ -236,7 +247,7 @@ int main() {
     assert(load_result.catalog_version == 1);
     assert(load_result.catalog_hash != 0);
     assert(load_result.projectile_template_count > 0);
-    assert(load_result.collider_template_count == 4);
+    assert(load_result.collider_template_count == 8);
     assert(load_result.collider_binding_count == 4);
 
     GameServerHandle* game_server = GameServer_Create(kernel);

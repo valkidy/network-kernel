@@ -68,13 +68,14 @@ void hash_weapon(std::uint64_t* hash, const KernelWeaponMechanicsDefinition& wea
     hash_float(hash, weapon.max_range);
     hash_scalar(hash, weapon.pellet_count);
     hash_float(hash, weapon.pellet_spread);
+    hash_scalar(hash, weapon.segment_collider_template_id);
 
+    hash_scalar(hash, weapon.projectile.projectile_template_id);
     hash_scalar(hash, weapon.projectile.motion_model);
     hash_scalar(hash, weapon.projectile.hit_response);
     hash_scalar(hash, weapon.projectile.damage_shape);
     hash_float(hash, weapon.projectile.speed);
     hash_float(hash, weapon.projectile.lifetime_seconds);
-    hash_float(hash, weapon.projectile.explosion_radius);
     hash_vec3(hash, weapon.projectile.gravity);
     hash_scalar(hash, weapon.projectile.collision_mask);
     hash_scalar(hash, weapon.projectile.max_hit_count);
@@ -113,6 +114,9 @@ void hash_collider_template(
     hash_vec3(hash, definition.center);
     hash_vec3(hash, definition.half_extents);
     hash_float(hash, definition.radius);
+    hash_float(hash, definition.segment_length);
+    hash_float(hash, definition.scatter_degrees);
+    hash_scalar(hash, definition.lifetime_ticks);
     hash_scalar(hash, definition.purpose_flags);
     hash_scalar(hash, definition.layer_mask);
 }
@@ -129,6 +133,43 @@ void hash_collider_binding(
     hash_float(hash, definition.local_rotation.y);
     hash_float(hash, definition.local_rotation.z);
     hash_float(hash, definition.local_rotation.w);
+}
+
+void hash_projectile_template(
+    std::uint64_t* hash,
+    const ProjectileTemplateConfig& projectile_template) {
+    hash_string(hash, projectile_template.name);
+    const KernelProjectileTemplateDefinition& definition =
+        projectile_template.definition;
+    hash_scalar(hash, definition.projectile_template_id);
+    hash_scalar(hash, definition.weapon_id);
+    hash_scalar(hash, definition.motion_model);
+    hash_scalar(hash, definition.sync_mode);
+    hash_scalar(hash, definition.hit_response);
+    hash_scalar(hash, definition.damage_shape);
+    hash_scalar(hash, definition.projectile_kind);
+    hash_scalar(hash, definition.impact_action);
+    hash_scalar(hash, definition.impact_destroy_self);
+    hash_scalar(hash, definition.damage_falloff);
+    hash_scalar(hash, definition.damage);
+    hash_float(hash, definition.speed);
+    hash_float(hash, definition.lifetime_seconds);
+    hash_vec3(hash, definition.gravity);
+    hash_scalar(hash, definition.collider_template_id);
+    hash_scalar(hash, definition.collision_mask);
+    hash_scalar(hash, definition.max_hit_count);
+    hash_scalar(hash, definition.impact_projectile_template_id);
+    hash_scalar(hash, definition.lifetime_ticks);
+    hash_scalar(hash, definition.damage_interval_ticks);
+    hash_scalar(hash, projectile_template.homing.homing_mode);
+    hash_scalar(hash, projectile_template.homing.sync_mode);
+    hash_scalar(hash, projectile_template.homing.boost_ticks);
+    hash_float(hash, projectile_template.homing.lock_on_range);
+    hash_float(hash, projectile_template.homing.lose_target_range);
+    hash_float(hash, projectile_template.homing.lock_cone_degrees);
+    hash_float(hash, projectile_template.homing.max_turn_rate_degrees_per_second);
+    hash_float(hash, projectile_template.homing.acceleration);
+    hash_float(hash, projectile_template.homing.max_speed);
 }
 
 void hash_actor_template(
@@ -211,7 +252,6 @@ KernelWeaponMechanicsDefinition projectile_weapon(
     std::uint32_t reload_ticks,
     float projectile_speed,
     float projectile_lifetime_seconds,
-    float explosion_radius,
     std::uint8_t motion_model,
     KernelVec3 gravity) {
     KernelWeaponMechanicsDefinition weapon{};
@@ -224,15 +264,13 @@ KernelWeaponMechanicsDefinition projectile_weapon(
     weapon.reload_ticks = reload_ticks;
     weapon.pellet_count = 1;
     weapon.projectile.struct_size = sizeof(KernelProjectileMechanicsDefinition);
+    weapon.projectile.projectile_template_id = weapon_id;
     weapon.projectile.motion_model = motion_model;
     weapon.projectile.speed = projectile_speed;
     weapon.projectile.lifetime_seconds = projectile_lifetime_seconds;
-    weapon.projectile.explosion_radius = explosion_radius;
     weapon.projectile.gravity = gravity;
     weapon.projectile.hit_response = KernelProjectileHitResponse_Destroy;
-    weapon.projectile.damage_shape =
-        explosion_radius > 0.0f ? KernelProjectileDamageShape_Explosion
-                                : KernelProjectileDamageShape_DirectHit;
+    weapon.projectile.damage_shape = KernelProjectileDamageShape_DirectHit;
     weapon.projectile.collision_mask = KERNEL_COLLISION_MASK_DAMAGEABLE;
     weapon.projectile.max_hit_count = 1;
     return weapon;
@@ -306,7 +344,6 @@ KernelWeaponMechanicsDefinition homing_projectile_weapon(
     std::uint32_t reload_ticks,
     float projectile_speed,
     float projectile_lifetime_seconds,
-    float explosion_radius,
     std::uint32_t boost_ticks,
     float lock_on_range,
     float lose_target_range,
@@ -323,12 +360,9 @@ KernelWeaponMechanicsDefinition homing_projectile_weapon(
         reload_ticks,
         projectile_speed,
         projectile_lifetime_seconds,
-        explosion_radius,
         KernelProjectileMotionModel_Homing,
         KernelVec3{0.0f, 0.0f, 0.0f});
-    weapon.projectile.damage_shape =
-        explosion_radius > 0.0f ? KernelProjectileDamageShape_Explosion
-                                : KernelProjectileDamageShape_DirectHit;
+    weapon.projectile.damage_shape = KernelProjectileDamageShape_DirectHit;
     weapon.projectile.collision_mask = collision_mask;
     weapon.projectile.homing.struct_size = sizeof(KernelHomingMechanicsDefinition);
     weapon.projectile.homing.homing_mode = KernelHomingMode_FireAndForget;
@@ -370,6 +404,7 @@ bool validate_weapon_mechanics(
     if (weapon.fire_mode == KernelWeaponFireMode_Projectile) {
         return weapon.projectile.struct_size >=
                    sizeof(KernelProjectileMechanicsDefinition) &&
+               weapon.projectile.projectile_template_id != 0 &&
                weapon.projectile.motion_model <= KernelProjectileMotionModel_Homing &&
                weapon.projectile.hit_response <= KernelProjectileHitResponse_Attach &&
                weapon.projectile.hit_response != KernelProjectileHitResponse_Bounce &&
@@ -414,6 +449,11 @@ bool validate_weapon_mechanics(
     }
     if (weapon.fire_mode != KernelWeaponFireMode_Beam &&
         weapon.max_range <= 0.0f) {
+        return false;
+    }
+    if ((weapon.fire_mode == KernelWeaponFireMode_Hitscan ||
+         weapon.fire_mode == KernelWeaponFireMode_Shotgun) &&
+        weapon.segment_collider_template_id == 0) {
         return false;
     }
     return weapon.fire_mode != KernelWeaponFireMode_Shotgun ||
@@ -513,7 +553,8 @@ std::uint8_t damage_shape_from_yaml(const YAML::Node& node) {
         return KernelProjectileDamageShape_DirectHit;
     }
     if (value == "explosion") {
-        return KernelProjectileDamageShape_Explosion;
+        throw std::runtime_error(
+            "projectile damage_shape explosion has moved to impact_response");
     }
     if (value == "piercing_segment") {
         return KernelProjectileDamageShape_PiercingSegment;
@@ -522,6 +563,39 @@ std::uint8_t damage_shape_from_yaml(const YAML::Node& node) {
         throw std::runtime_error("beam damage shape is not supported in this phase");
     }
     throw std::runtime_error("unsupported projectile damage_shape: " + value);
+}
+
+std::uint8_t projectile_kind_from_yaml(const YAML::Node& node) {
+    const std::string value = node ? node.as<std::string>() : "projectile";
+    if (value == "projectile") {
+        return KernelProjectileKind_Projectile;
+    }
+    if (value == "area_effect") {
+        return KernelProjectileKind_AreaEffect;
+    }
+    throw std::runtime_error("unsupported projectile kind: " + value);
+}
+
+std::uint8_t impact_action_from_yaml(const YAML::Node& node) {
+    const std::string value = node ? node.as<std::string>() : "none";
+    if (value == "none") {
+        return KernelProjectileImpactAction_None;
+    }
+    if (value == "spawn_projectile") {
+        return KernelProjectileImpactAction_SpawnProjectile;
+    }
+    throw std::runtime_error("unsupported projectile impact action: " + value);
+}
+
+std::uint8_t damage_falloff_from_yaml(const YAML::Node& node) {
+    const std::string value = node ? node.as<std::string>() : "none";
+    if (value == "none") {
+        return KernelProjectileDamageFalloff_None;
+    }
+    if (value == "linear") {
+        return KernelProjectileDamageFalloff_Linear;
+    }
+    throw std::runtime_error("unsupported projectile damage falloff: " + value);
 }
 
 std::uint8_t homing_mode_from_yaml(const YAML::Node& node) {
@@ -548,21 +622,8 @@ std::uint8_t projectile_sync_mode_from_yaml(const YAML::Node& node) {
 }
 
 std::uint8_t projectile_sync_mode_from_weapon_yaml(const YAML::Node& node) {
-    if (!node || node["weapon_type"].as<std::string>() != "projectile") {
-        return KernelProjectileSyncMode_HybridDeterministicThenSnapshot;
-    }
-    const YAML::Node projectile = node["projectile"];
-    const std::uint8_t projectile_sync_mode =
-        projectile_sync_mode_from_yaml(projectile["sync_mode"]);
-    if (projectile["homing"] && projectile["homing"]["sync_mode"]) {
-        const std::uint8_t homing_sync_mode =
-            projectile_sync_mode_from_yaml(projectile["homing"]["sync_mode"]);
-        if (homing_sync_mode != projectile_sync_mode) {
-            throw std::runtime_error(
-                "projectile sync_mode must match homing sync_mode");
-        }
-    }
-    return projectile_sync_mode;
+    (void)node;
+    return KernelProjectileSyncMode_HybridDeterministicThenSnapshot;
 }
 
 EnemyAiProfile enemy_ai_profile_from_yaml(const YAML::Node& node) {
@@ -594,6 +655,8 @@ public:
         const std::string& base_path,
         const YAML::Node& node) const = 0;
     virtual std::string default_collider_path_for_weapon_dir(
+        const std::string& directory) const = 0;
+    virtual std::string default_projectile_template_dir_for_weapon_dir(
         const std::string& directory) const = 0;
 };
 
@@ -635,6 +698,14 @@ public:
         return (std::filesystem::path(directory).parent_path() /
                 "collider_templates" /
                 "default.yaml")
+            .lexically_normal()
+            .string();
+    }
+
+    std::string default_projectile_template_dir_for_weapon_dir(
+        const std::string& directory) const override {
+        return (std::filesystem::path(directory).parent_path() /
+                "projectile_templates")
             .lexically_normal()
             .string();
     }
@@ -822,6 +893,13 @@ public:
             "collider_templates/default.yaml");
     }
 
+    std::string default_projectile_template_dir_for_weapon_dir(
+        const std::string& directory) const override {
+        return archive_join_path(
+            archive_parent_path(directory),
+            "projectile_templates");
+    }
+
 private:
     std::unordered_map<std::string, std::string> files_;
 };
@@ -829,10 +907,11 @@ private:
 KernelWeaponMechanicsDefinition weapon_from_yaml(const YAML::Node& node) {
     const auto id = static_cast<std::uint8_t>(node["id"].as<int>());
     const std::uint16_t magazine_size = node["magazine_size"].as<std::uint16_t>();
-    const std::uint16_t damage = node["damage"].as<std::uint16_t>();
     const std::uint32_t cooldown_ticks = node["cooldown_ticks"].as<std::uint32_t>();
     const std::uint32_t reload_ticks = node["reload_ticks"].as<std::uint32_t>();
     const std::string type = node["weapon_type"].as<std::string>();
+    const std::uint16_t damage =
+        node["damage"] ? node["damage"].as<std::uint16_t>() : 0u;
     if (type == "hitscan" || type == "shotgun") {
         if (node["projectile"] || node["area_effect"] || node["beam"]) {
             throw std::runtime_error(
@@ -862,62 +941,29 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(const YAML::Node& node) {
             throw std::runtime_error(
                 "projectile weapons must not define area_effect or beam");
         }
-        const YAML::Node projectile = node["projectile"];
-        if (!projectile) {
-            throw std::runtime_error("projectile weapon requires projectile block");
+        if (node["projectile"] || node["damage"]) {
+            throw std::runtime_error(
+                "projectile weapons must use projectile_template, not inline projectile data");
         }
-        KernelWeaponMechanicsDefinition weapon = projectile_weapon(
-            id,
-            magazine_size,
-            damage,
-            cooldown_ticks,
-            reload_ticks,
-            projectile["speed"].as<float>(),
-            projectile["lifetime_seconds"].as<float>(),
-            projectile["explosion_radius"] ? projectile["explosion_radius"].as<float>() : 0.0f,
-            motion_model_from_yaml(projectile["movement_model"]),
-            vec3_from_yaml(projectile["gravity"]));
+        if (!node["projectile_template"]) {
+            throw std::runtime_error(
+                "projectile weapon requires projectile_template");
+        }
+        KernelWeaponMechanicsDefinition weapon{};
+        weapon.struct_size = sizeof(KernelWeaponMechanicsDefinition);
+        weapon.weapon_id = id;
+        weapon.fire_mode = KernelWeaponFireMode_Projectile;
+        weapon.magazine_size = magazine_size;
+        weapon.cooldown_ticks = cooldown_ticks;
+        weapon.reload_ticks = reload_ticks;
+        weapon.pellet_count = 1;
+        weapon.projectile.struct_size = sizeof(KernelProjectileMechanicsDefinition);
         weapon.pellet_count =
             node["burst_count"]
                 ? static_cast<std::uint8_t>(node["burst_count"].as<int>())
                 : 1;
         weapon.pellet_spread =
             node["burst_spread_degrees"] ? node["burst_spread_degrees"].as<float>() : 0.0f;
-        weapon.projectile.hit_response = hit_response_from_yaml(projectile["hit_response"]);
-        weapon.projectile.damage_shape = damage_shape_from_yaml(projectile["damage_shape"]);
-        weapon.projectile.collision_mask =
-            collision_mask_from_yaml(projectile["collision_mask"]);
-        weapon.projectile.max_hit_count =
-            projectile["max_hit_count"] ? projectile["max_hit_count"].as<std::uint32_t>() : 1u;
-        if (weapon.projectile.motion_model == KernelProjectileMotionModel_Homing) {
-            const YAML::Node homing = projectile["homing"];
-            if (!homing) {
-                throw std::runtime_error("homing projectile requires homing block");
-            }
-            weapon.projectile.homing.struct_size =
-                sizeof(KernelHomingMechanicsDefinition);
-            weapon.projectile.homing.homing_mode =
-                homing_mode_from_yaml(homing["homing_mode"]);
-            weapon.projectile.homing.sync_mode =
-                projectile_sync_mode_from_yaml(
-                    homing["sync_mode"] ? homing["sync_mode"]
-                                        : projectile["sync_mode"]);
-            weapon.projectile.homing.boost_ticks =
-                homing["boost_ticks"].as<std::uint32_t>();
-            weapon.projectile.homing.lock_on_range =
-                homing["lock_on_range"].as<float>();
-            weapon.projectile.homing.lose_target_range =
-                homing["lose_target_range"].as<float>();
-            weapon.projectile.homing.lock_cone_degrees =
-                homing["lock_cone_degrees"].as<float>();
-            weapon.projectile.homing.max_turn_rate_degrees_per_second =
-                homing["max_turn_rate_degrees_per_second"].as<float>();
-            weapon.projectile.homing.acceleration =
-                homing["acceleration"].as<float>();
-            weapon.projectile.homing.max_speed = homing["max_speed"].as<float>();
-        } else if (projectile["homing"]) {
-            throw std::runtime_error("homing block requires movement_model: homing");
-        }
         return weapon;
     }
     if (type == "area_effect") {
@@ -987,6 +1033,12 @@ std::uint8_t collider_shape_type_from_yaml(const YAML::Node& node) {
     if (value == "sphere") {
         return KernelColliderShapeType_Sphere;
     }
+    if (value == "oriented_box") {
+        return KernelColliderShapeType_OrientedBox;
+    }
+    if (value == "segment") {
+        return KernelColliderShapeType_Segment;
+    }
     throw std::runtime_error("unsupported collider shape: " + value);
 }
 
@@ -1035,6 +1087,12 @@ ColliderCatalogConfig load_collider_catalog_from_source(
         definition.center = vec3_from_yaml(node["center"]);
         definition.half_extents = vec3_from_yaml(node["half_extents"]);
         definition.radius = node["radius"] ? node["radius"].as<float>() : 0.0f;
+        definition.segment_length =
+            node["length"] ? node["length"].as<float>() : 0.0f;
+        definition.scatter_degrees =
+            node["scatter_degrees"] ? node["scatter_degrees"].as<float>() : 0.0f;
+        definition.lifetime_ticks =
+            node["lifetime_ticks"] ? node["lifetime_ticks"].as<std::uint32_t>() : 0u;
         definition.purpose_flags = collider_purpose_from_yaml(node["purpose"]);
         definition.layer_mask = collider_layer_from_yaml(node["layer"]);
         if (template_ids.contains(collider_template.name)) {
@@ -1292,11 +1350,331 @@ std::vector<ActorTemplateConfig> load_actor_templates_from_source(
     return actor_templates;
 }
 
-GameServerGameplayConfig load_gameplay_config_from_weapon_template_source(
+std::uint32_t collider_template_id_from_ref(
+    const YAML::Node& node,
+    const ColliderCatalogConfig& colliders) {
+    if (!node || !node.IsScalar()) {
+        throw std::runtime_error("collider template reference must be a scalar");
+    }
+    const std::string value = node.as<std::string>();
+    if (!value.empty() &&
+        std::all_of(value.begin(), value.end(), [](unsigned char ch) {
+            return std::isdigit(ch);
+        })) {
+        const std::uint32_t template_id =
+            static_cast<std::uint32_t>(std::stoul(value));
+        for (const ColliderTemplateConfig& collider_template :
+             colliders.templates) {
+            if (collider_template.definition.template_id == template_id) {
+                return template_id;
+            }
+        }
+        throw std::runtime_error("unknown collider template id: " + value);
+    }
+    for (const ColliderTemplateConfig& collider_template : colliders.templates) {
+        if (collider_template.name == value) {
+            return collider_template.definition.template_id;
+        }
+    }
+    throw std::runtime_error("unknown collider template name: " + value);
+}
+
+ProjectileTemplateConfig projectile_template_from_yaml(
+    const YAML::Node& node,
+    const ColliderCatalogConfig& colliders) {
+    ProjectileTemplateConfig projectile_template;
+    projectile_template.name = node["name"].as<std::string>();
+    KernelProjectileTemplateDefinition& definition =
+        projectile_template.definition;
+    definition.struct_size = sizeof(KernelProjectileTemplateDefinition);
+    definition.projectile_template_id = node["id"].as<std::uint32_t>();
+    const std::string removed_radius_key = std::string("explosion_") + "radius";
+    if (node[removed_radius_key]) {
+        throw std::runtime_error(
+            "projectile template must use impact_response instead of removed radius field: " +
+            projectile_template.name);
+    }
+    definition.projectile_kind = projectile_kind_from_yaml(node["kind"]);
+    definition.collider_template_id =
+        collider_template_id_from_ref(node["collider_template"], colliders);
+    definition.collision_mask = collision_mask_from_yaml(node["collision_mask"]);
+
+    if (definition.projectile_kind == KernelProjectileKind_AreaEffect) {
+        const YAML::Node damage_behavior = node["damage_behavior"];
+        if (!damage_behavior) {
+            throw std::runtime_error(
+                "area_effect projectile requires damage_behavior: " +
+                projectile_template.name);
+        }
+        const std::string damage_type =
+            damage_behavior["type"] ? damage_behavior["type"].as<std::string>()
+                                    : "";
+        if (damage_type != "area_interval") {
+            throw std::runtime_error(
+                "area_effect projectile requires damage_behavior.type area_interval: " +
+                projectile_template.name);
+        }
+        definition.motion_model = KernelProjectileMotionModel_Linear;
+        definition.sync_mode = KernelProjectileSyncMode_ServerSnapshotOnly;
+        definition.hit_response = KernelProjectileHitResponse_Destroy;
+        definition.damage_shape = KernelProjectileDamageShape_DirectHit;
+        definition.damage =
+            damage_behavior["damage_per_interval"].as<std::uint16_t>();
+        definition.damage_interval_ticks =
+            damage_behavior["damage_interval_ticks"].as<std::uint32_t>();
+        definition.damage_falloff =
+            damage_falloff_from_yaml(damage_behavior["falloff"]);
+        definition.lifetime_ticks = node["lifetime_ticks"].as<std::uint32_t>();
+        definition.max_hit_count = 1;
+        return projectile_template;
+    }
+
+    definition.motion_model = motion_model_from_yaml(node["movement_model"]);
+    definition.sync_mode = projectile_sync_mode_from_yaml(node["sync_mode"]);
+    definition.hit_response = hit_response_from_yaml(node["hit_response"]);
+    definition.damage_shape = damage_shape_from_yaml(node["damage_shape"]);
+    definition.damage = node["damage"].as<std::uint16_t>();
+    definition.speed = node["speed"].as<float>();
+    definition.lifetime_seconds = node["lifetime_seconds"].as<float>();
+    definition.gravity = vec3_from_yaml(node["gravity"]);
+    definition.max_hit_count =
+        node["max_hit_count"] ? node["max_hit_count"].as<std::uint32_t>() : 1u;
+
+    const YAML::Node impact_response = node["impact_response"];
+    if (impact_response) {
+        definition.impact_action =
+            impact_action_from_yaml(impact_response["action"]);
+        definition.impact_destroy_self =
+            impact_response["destroy_self"]
+                ? impact_response["destroy_self"].as<bool>()
+                : true;
+        if (definition.impact_action ==
+            KernelProjectileImpactAction_SpawnProjectile) {
+            if (!impact_response["projectile_template"]) {
+                throw std::runtime_error(
+                    "spawn_projectile impact response requires projectile_template: " +
+                    projectile_template.name);
+            }
+            projectile_template.impact_projectile_template_ref =
+                impact_response["projectile_template"].as<std::string>();
+        }
+    }
+
+    if (definition.motion_model == KernelProjectileMotionModel_Homing) {
+        const YAML::Node homing = node["homing"];
+        if (!homing) {
+            throw std::runtime_error(
+                "homing projectile template requires homing block: " +
+                projectile_template.name);
+        }
+        projectile_template.homing.struct_size =
+            sizeof(KernelHomingMechanicsDefinition);
+        projectile_template.homing.homing_mode =
+            homing_mode_from_yaml(homing["homing_mode"]);
+        projectile_template.homing.sync_mode =
+            projectile_sync_mode_from_yaml(
+                homing["sync_mode"] ? homing["sync_mode"] : node["sync_mode"]);
+        if (projectile_template.homing.sync_mode != definition.sync_mode) {
+            throw std::runtime_error(
+                "projectile sync_mode must match homing sync_mode: " +
+                projectile_template.name);
+        }
+        projectile_template.homing.boost_ticks =
+            homing["boost_ticks"].as<std::uint32_t>();
+        projectile_template.homing.lock_on_range =
+            homing["lock_on_range"].as<float>();
+        projectile_template.homing.lose_target_range =
+            homing["lose_target_range"].as<float>();
+        projectile_template.homing.lock_cone_degrees =
+            homing["lock_cone_degrees"].as<float>();
+        projectile_template.homing.max_turn_rate_degrees_per_second =
+            homing["max_turn_rate_degrees_per_second"].as<float>();
+        projectile_template.homing.acceleration =
+            homing["acceleration"].as<float>();
+        projectile_template.homing.max_speed = homing["max_speed"].as<float>();
+    } else if (node["homing"]) {
+        throw std::runtime_error(
+            "homing block requires movement_model: homing");
+    }
+    return projectile_template;
+}
+
+ProjectileTemplateConfig* projectile_template_from_ref(
+    const YAML::Node& node,
+    std::vector<ProjectileTemplateConfig>* projectile_templates);
+
+std::vector<ProjectileTemplateConfig> load_projectile_templates_from_source(
+    const GameplayConfigSource& source,
+    const std::string& directory,
+    const ColliderCatalogConfig& colliders) {
+    std::vector<ProjectileTemplateConfig> projectile_templates;
+    std::unordered_map<std::uint32_t, std::string> ids;
+    std::unordered_map<std::string, std::uint32_t> names;
+    const std::vector<std::string> files = source.list_yaml_files(directory);
+    for (const std::string& file : files) {
+        ProjectileTemplateConfig projectile_template =
+            projectile_template_from_yaml(source.load_yaml(file), colliders);
+        if (ids.contains(projectile_template.definition.projectile_template_id)) {
+            throw std::runtime_error("duplicate projectile template id: " + file);
+        }
+        if (names.contains(projectile_template.name)) {
+            throw std::runtime_error(
+                "duplicate projectile template name: " + projectile_template.name);
+        }
+        ids.emplace(projectile_template.definition.projectile_template_id, file);
+        names.emplace(
+            projectile_template.name,
+            projectile_template.definition.projectile_template_id);
+        projectile_templates.push_back(projectile_template);
+    }
+    if (projectile_templates.empty()) {
+        throw std::runtime_error(
+            "projectile template directory is empty: " + directory);
+    }
+    std::sort(
+        projectile_templates.begin(),
+        projectile_templates.end(),
+        [](const ProjectileTemplateConfig& lhs,
+           const ProjectileTemplateConfig& rhs) {
+            return lhs.definition.projectile_template_id <
+                   rhs.definition.projectile_template_id;
+        });
+    for (ProjectileTemplateConfig& projectile_template : projectile_templates) {
+        if (projectile_template.definition.impact_action !=
+            KernelProjectileImpactAction_SpawnProjectile) {
+            continue;
+        }
+        YAML::Node ref_node(projectile_template.impact_projectile_template_ref);
+        ProjectileTemplateConfig* impact_template =
+            projectile_template_from_ref(ref_node, &projectile_templates);
+        projectile_template.definition.impact_projectile_template_id =
+            impact_template->definition.projectile_template_id;
+    }
+    for (const ProjectileTemplateConfig& projectile_template : projectile_templates) {
+        std::vector<std::uint32_t> visited;
+        const ProjectileTemplateConfig* current = &projectile_template;
+        while (current != nullptr &&
+               current->definition.impact_action ==
+                   KernelProjectileImpactAction_SpawnProjectile) {
+            const std::uint32_t current_id =
+                current->definition.projectile_template_id;
+            if (std::find(visited.begin(), visited.end(), current_id) !=
+                visited.end()) {
+                throw std::runtime_error(
+                    "projectile impact_response cycle: " +
+                    projectile_template.name);
+            }
+            visited.push_back(current_id);
+            current = projectile_template_from_ref(
+                YAML::Node(std::to_string(
+                    current->definition.impact_projectile_template_id)),
+                &projectile_templates);
+        }
+    }
+    return projectile_templates;
+}
+
+ProjectileTemplateConfig* projectile_template_from_ref(
+    const YAML::Node& node,
+    std::vector<ProjectileTemplateConfig>* projectile_templates) {
+    if (!node || !node.IsScalar()) {
+        throw std::runtime_error("projectile_template reference must be a scalar");
+    }
+    const std::string value = node.as<std::string>();
+    if (!value.empty() &&
+        std::all_of(value.begin(), value.end(), [](unsigned char ch) {
+            return std::isdigit(ch);
+        })) {
+        const std::uint32_t template_id =
+            static_cast<std::uint32_t>(std::stoul(value));
+        for (ProjectileTemplateConfig& projectile_template :
+             *projectile_templates) {
+            if (projectile_template.definition.projectile_template_id == template_id) {
+                return &projectile_template;
+            }
+        }
+        throw std::runtime_error("unknown projectile_template id: " + value);
+    }
+    for (ProjectileTemplateConfig& projectile_template : *projectile_templates) {
+        if (projectile_template.name == value) {
+            return &projectile_template;
+        }
+    }
+    throw std::runtime_error("unknown projectile_template name: " + value);
+}
+
+void apply_weapon_template_references(
+    const GameplayConfigSource& source,
+    const std::string& directory,
+    const ColliderCatalogConfig& colliders,
+    std::vector<ProjectileTemplateConfig>* projectile_templates,
+    WeaponCatalogConfig* weapons) {
+    const std::vector<std::string> files = source.list_yaml_files(directory);
+    for (const std::string& file : files) {
+        const YAML::Node document = source.load_yaml(file);
+        const auto weapon_id =
+            static_cast<std::uint8_t>(document["id"].as<int>());
+        const std::string type = document["weapon_type"].as<std::string>();
+        if (type == "hitscan" || type == "shotgun") {
+            if (!document["segment_collider"]) {
+                throw std::runtime_error(
+                    "instant weapon requires segment_collider: " + file);
+            }
+            const std::uint32_t template_id =
+                collider_template_id_from_ref(document["segment_collider"], colliders);
+            weapons->definitions[weapon_id].segment_collider_template_id = template_id;
+            weapons->collider_template_ids[weapon_id] = template_id;
+            continue;
+        }
+
+        if (type == "projectile") {
+            ProjectileTemplateConfig* projectile_template =
+                projectile_template_from_ref(
+                    document["projectile_template"],
+                    projectile_templates);
+            KernelWeaponMechanicsDefinition& weapon =
+                weapons->definitions[weapon_id];
+            KernelProjectileMechanicsDefinition& projectile = weapon.projectile;
+            const KernelProjectileTemplateDefinition& definition =
+                projectile_template->definition;
+            projectile_template->definition.weapon_id = weapon_id;
+            weapon.damage = definition.damage;
+            projectile.projectile_template_id = definition.projectile_template_id;
+            projectile.motion_model = definition.motion_model;
+            projectile.hit_response = definition.hit_response;
+            projectile.damage_shape = definition.damage_shape;
+            projectile.speed = definition.speed;
+            projectile.lifetime_seconds = definition.lifetime_seconds;
+            projectile.gravity = definition.gravity;
+            projectile.collision_mask = definition.collision_mask;
+            projectile.max_hit_count = definition.max_hit_count;
+            projectile.homing = projectile_template->homing;
+            weapons->projectile_sync_modes[weapon_id] = definition.sync_mode;
+            weapons->collider_template_ids[weapon_id] =
+                definition.collider_template_id;
+            continue;
+        }
+
+        YAML::Node collider_ref;
+        if (type == "area_effect") {
+            collider_ref = document["area_effect"]["collider_template"];
+        } else if (type == "beam") {
+            collider_ref = document["beam"]["collider_template"];
+        }
+        if (!collider_ref) {
+            throw std::runtime_error(
+                "weapon requires collider_template binding: " + file);
+        }
+        weapons->collider_template_ids[weapon_id] =
+            collider_template_id_from_ref(collider_ref, colliders);
+    }
+}
+
+WeaponCatalogConfig load_weapon_catalog_from_source(
     const GameplayConfigSource& source,
     const std::string& directory) {
-    GameServerGameplayConfig config;
-    config.weapons.projectile_sync_modes.fill(
+    WeaponCatalogConfig weapons;
+    weapons.projectile_sync_modes.fill(
         KernelProjectileSyncMode_HybridDeterministicThenSnapshot);
     std::array<bool, kWeaponCount> seen{
         false,
@@ -1317,10 +1695,10 @@ GameServerGameplayConfig load_gameplay_config_from_weapon_template_source(
             throw std::runtime_error("duplicate weapon id: " + file);
         }
         seen[weapon.weapon_id] = true;
-        config.weapons.definitions[weapon.weapon_id] = weapon;
-        config.weapons.projectile_sync_modes[weapon.weapon_id] =
+        weapons.definitions[weapon.weapon_id] = weapon;
+        weapons.projectile_sync_modes[weapon.weapon_id] =
             projectile_sync_mode_from_weapon_yaml(document);
-        config.weapons.names[weapon.weapon_id] =
+        weapons.names[weapon.weapon_id] =
             document["name"] ? document["name"].as<std::string>()
                              : std::filesystem::path(file).stem().string();
     }
@@ -1329,10 +1707,28 @@ GameServerGameplayConfig load_gameplay_config_from_weapon_template_source(
             throw std::runtime_error("missing weapon template id " + std::to_string(index));
         }
     }
+    return weapons;
+}
+
+GameServerGameplayConfig load_gameplay_config_from_weapon_template_source(
+    const GameplayConfigSource& source,
+    const std::string& directory) {
+    GameServerGameplayConfig config;
+    config.weapons = load_weapon_catalog_from_source(source, directory);
     apply_default_non_weapon_config(&config);
     config.colliders = load_collider_catalog_from_source(
         source,
         source.default_collider_path_for_weapon_dir(directory));
+    config.projectile_templates = load_projectile_templates_from_source(
+        source,
+        source.default_projectile_template_dir_for_weapon_dir(directory),
+        config.colliders);
+    apply_weapon_template_references(
+        source,
+        directory,
+        config.colliders,
+        &config.projectile_templates,
+        &config.weapons);
     apply_default_actor_templates(&config);
     config.weapons.catalog_hash = compute_gameplay_catalog_hash(config);
     const std::vector<std::string> errors = validate_gameplay_config(config);
@@ -1346,20 +1742,20 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     const GameplayConfigSource& source,
     const std::string& path) {
     const YAML::Node document = source.load_yaml(path);
-    if (!document["weapon_template_dir"] || !document["collider_template_file"]) {
+    if (!document["weapon_template_dir"] || !document["projectile_template_dir"] ||
+        !document["collider_template_file"]) {
         throw std::runtime_error(
             "gameplay catalog requires weapon_template_dir and "
-            "collider_template_file: " +
+            "projectile_template_dir and collider_template_file: " +
             path);
     }
 
     const std::string base_path = source.parent_path(path);
     const std::string weapon_template_dir =
         source.resolve_path(base_path, document["weapon_template_dir"]);
-    GameServerGameplayConfig config =
-        load_gameplay_config_from_weapon_template_source(
-            source,
-            weapon_template_dir);
+    GameServerGameplayConfig config;
+    config.weapons = load_weapon_catalog_from_source(source, weapon_template_dir);
+    apply_default_non_weapon_config(&config);
     config.weapons.catalog_version =
         document["catalog_version"] ? document["catalog_version"].as<std::uint32_t>()
                                     : config.weapons.catalog_version;
@@ -1368,6 +1764,18 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
         source.resolve_path(base_path, document["collider_template_file"]);
     config.colliders =
         load_collider_catalog_from_source(source, collider_template_file);
+    const std::string projectile_template_dir =
+        source.resolve_path(base_path, document["projectile_template_dir"]);
+    config.projectile_templates = load_projectile_templates_from_source(
+        source,
+        projectile_template_dir,
+        config.colliders);
+    apply_weapon_template_references(
+        source,
+        weapon_template_dir,
+        config.colliders,
+        &config.projectile_templates,
+        &config.weapons);
 
     if (document["actor_template_dir"]) {
         const std::string actor_template_dir =
@@ -1445,6 +1853,7 @@ std::uint64_t compute_gameplay_catalog_hash(const WeaponCatalogConfig& weapons) 
         hash_scalar(&hash, canonical_index);
         hash_string(&hash, weapons.names[index]);
         hash_scalar(&hash, weapons.projectile_sync_modes[index]);
+        hash_scalar(&hash, weapons.collider_template_ids[index]);
         hash_weapon(&hash, weapons.definitions[index]);
     }
     return hash == 0 ? kFnvOffsetBasis : hash;
@@ -1492,6 +1901,19 @@ std::uint64_t compute_gameplay_catalog_hash(
         });
     for (const ColliderBindingConfig& collider_binding : bindings) {
         hash_collider_binding(&hash, collider_binding);
+    }
+    std::vector<ProjectileTemplateConfig> projectile_templates =
+        config.projectile_templates;
+    std::sort(
+        projectile_templates.begin(),
+        projectile_templates.end(),
+        [](const ProjectileTemplateConfig& lhs,
+           const ProjectileTemplateConfig& rhs) {
+            return lhs.definition.projectile_template_id <
+                   rhs.definition.projectile_template_id;
+        });
+    for (const ProjectileTemplateConfig& projectile_template : projectile_templates) {
+        hash_projectile_template(&hash, projectile_template);
     }
     return hash == 0 ? kFnvOffsetBasis : hash;
 }
@@ -1554,6 +1976,9 @@ std::vector<std::string> validate_gameplay_config(
         if (config.weapons.projectile_sync_modes[index] >
             KernelProjectileSyncMode_ServerSnapshotOnly) {
             errors.push_back("projectile sync mode must be valid");
+        }
+        if (config.weapons.collider_template_ids[index] == 0) {
+            errors.push_back("weapon collider template binding must be valid");
         }
     }
     if (config.actor_templates.empty()) {
@@ -1625,7 +2050,7 @@ std::vector<std::string> validate_gameplay_config(
             collider_template.definition;
         if (definition.struct_size < sizeof(KernelColliderTemplateDefinition) ||
             definition.template_id == 0 ||
-            definition.shape_type > KernelColliderShapeType_Sphere ||
+            definition.shape_type > KernelColliderShapeType_Segment ||
             definition.purpose_flags == 0 ||
             definition.layer_mask == 0 ||
             (definition.shape_type == KernelColliderShapeType_Aabb &&
@@ -1633,7 +2058,11 @@ std::vector<std::string> validate_gameplay_config(
               definition.half_extents.y <= 0.0f ||
               definition.half_extents.z <= 0.0f)) ||
             (definition.shape_type == KernelColliderShapeType_Sphere &&
-             definition.radius <= 0.0f)) {
+             definition.radius <= 0.0f) ||
+            (definition.shape_type == KernelColliderShapeType_Segment &&
+             (definition.segment_length <= 0.0f ||
+              definition.scatter_degrees < 0.0f ||
+              definition.lifetime_ticks == 0))) {
             errors.push_back("collider template must be valid");
         }
         collider_template_ids.push_back(definition.template_id);
@@ -1651,37 +2080,98 @@ std::vector<std::string> validate_gameplay_config(
             errors.push_back("collider binding must reference a valid template");
         }
     }
+    if (config.projectile_templates.empty()) {
+        errors.push_back("projectile templates must not be empty");
+    }
+    std::vector<std::uint32_t> projectile_template_ids;
+    std::vector<std::string> projectile_template_names;
+    for (const ProjectileTemplateConfig& projectile_template :
+         config.projectile_templates) {
+        const KernelProjectileTemplateDefinition& definition =
+            projectile_template.definition;
+        if (definition.struct_size < sizeof(KernelProjectileTemplateDefinition) ||
+            definition.projectile_template_id == 0 ||
+            projectile_template.name.empty() ||
+            definition.projectile_kind > KernelProjectileKind_AreaEffect ||
+            definition.motion_model > KernelProjectileMotionModel_Homing ||
+            definition.sync_mode > KernelProjectileSyncMode_ServerSnapshotOnly ||
+            definition.hit_response > KernelProjectileHitResponse_Attach ||
+            definition.hit_response == KernelProjectileHitResponse_Bounce ||
+            definition.hit_response == KernelProjectileHitResponse_Attach ||
+            (definition.damage_shape != KernelProjectileDamageShape_DirectHit &&
+             definition.damage_shape != KernelProjectileDamageShape_PiercingSegment) ||
+            definition.impact_action > KernelProjectileImpactAction_SpawnProjectile ||
+            definition.damage_falloff > KernelProjectileDamageFalloff_Linear ||
+            definition.damage == 0 ||
+            std::find(
+                collider_template_ids.begin(),
+                collider_template_ids.end(),
+                definition.collider_template_id) == collider_template_ids.end() ||
+            (definition.projectile_kind == KernelProjectileKind_Projectile &&
+             (definition.speed <= 0.0f ||
+              definition.lifetime_seconds <= 0.0f ||
+              definition.max_hit_count == 0)) ||
+            (definition.projectile_kind == KernelProjectileKind_AreaEffect &&
+             (definition.lifetime_ticks == 0 ||
+              definition.damage_interval_ticks == 0)) ||
+            (definition.impact_action == KernelProjectileImpactAction_SpawnProjectile &&
+             definition.impact_projectile_template_id == 0) ||
+            (definition.motion_model != KernelProjectileMotionModel_Homing
+                 ? projectile_template.homing.struct_size != 0
+                 : projectile_template.homing.struct_size <
+                           sizeof(KernelHomingMechanicsDefinition) ||
+                       projectile_template.homing.homing_mode !=
+                           KernelHomingMode_FireAndForget ||
+                       projectile_template.homing.sync_mode >
+                           KernelProjectileSyncMode_ServerSnapshotOnly ||
+                       projectile_template.homing.lock_on_range <= 0.0f ||
+                       projectile_template.homing.lose_target_range <
+                           projectile_template.homing.lock_on_range ||
+                       projectile_template.homing.lock_cone_degrees <= 0.0f ||
+                       projectile_template.homing.lock_cone_degrees > 180.0f ||
+                       projectile_template.homing
+                               .max_turn_rate_degrees_per_second <= 0.0f ||
+                       projectile_template.homing.acceleration <= 0.0f ||
+                       projectile_template.homing.max_speed <= 0.0f)) {
+            errors.push_back("projectile template must be valid");
+        }
+        if (std::find(
+                projectile_template_ids.begin(),
+                projectile_template_ids.end(),
+                definition.projectile_template_id) !=
+            projectile_template_ids.end()) {
+            errors.push_back("projectile template id must be unique");
+        }
+        if (std::find(
+                projectile_template_names.begin(),
+                projectile_template_names.end(),
+                projectile_template.name) != projectile_template_names.end()) {
+            errors.push_back("projectile template name must be unique");
+        }
+        projectile_template_ids.push_back(definition.projectile_template_id);
+        projectile_template_names.push_back(projectile_template.name);
+    }
+    for (const KernelWeaponMechanicsDefinition& weapon :
+         config.weapons.definitions) {
+        if (weapon.fire_mode == KernelWeaponFireMode_Projectile &&
+            std::find(
+                projectile_template_ids.begin(),
+                projectile_template_ids.end(),
+                weapon.projectile.projectile_template_id) ==
+                projectile_template_ids.end()) {
+            errors.push_back(
+                "projectile weapon must reference a valid projectile template");
+        }
+    }
     return errors;
 }
 
 KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
     const GameServerGameplayConfig& config) {
     KernelGameplayCatalogStorage storage;
-    for (const KernelWeaponMechanicsDefinition& weapon :
-         config.weapons.definitions) {
-        if (weapon.fire_mode != KernelWeaponFireMode_Projectile) {
-            continue;
-        }
-        KernelProjectileTemplateDefinition projectile_template{};
-        projectile_template.struct_size = sizeof(projectile_template);
-        projectile_template.projectile_template_id = weapon.weapon_id;
-        projectile_template.weapon_id = weapon.weapon_id;
-        projectile_template.motion_model = weapon.projectile.motion_model;
-        projectile_template.sync_mode =
-            config.weapons.projectile_sync_modes[weapon.weapon_id];
-        projectile_template.hit_response = weapon.projectile.hit_response;
-        projectile_template.damage_shape = weapon.projectile.damage_shape;
-        projectile_template.damage = weapon.damage;
-        projectile_template.speed = weapon.projectile.speed;
-        projectile_template.lifetime_seconds = weapon.projectile.lifetime_seconds;
-        projectile_template.explosion_radius = weapon.projectile.explosion_radius;
-        projectile_template.gravity = weapon.projectile.gravity;
-        projectile_template.collider_template_id = 3;
-        projectile_template.explosion_template_id =
-            weapon.projectile.explosion_radius > 0.0f ? 4u : 0u;
-        projectile_template.collision_mask = weapon.projectile.collision_mask;
-        projectile_template.max_hit_count = weapon.projectile.max_hit_count;
-        storage.projectile_templates.push_back(projectile_template);
+    for (const ProjectileTemplateConfig& projectile_template :
+         config.projectile_templates) {
+        storage.projectile_templates.push_back(projectile_template.definition);
     }
     for (const ColliderTemplateConfig& collider_template :
          config.colliders.templates) {
