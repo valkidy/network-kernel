@@ -29,7 +29,7 @@ namespace {
 KernelConfig with_kernel_defaults(KernelConfig config) {
     config.tick = with_tick_defaults(config.tick);
     if (config.max_render_states == 0) {
-        config.max_render_states = 256;
+        config.max_render_states = 2048;
     }
     if (config.max_events == 0) {
         config.max_events = 256;
@@ -87,6 +87,7 @@ constexpr double kClientClockOffsetSmoothingFactor = 0.25;
 constexpr float kMaxHomingVisualExtrapolationSeconds = 0.2f;
 constexpr float kDefaultEntityRelevanceDistanceMeters = 40.0f;
 constexpr float kDefaultProjectileRelevanceDistanceMeters = 80.0f;
+constexpr std::uint32_t kLargeSyncPacketWarningBytes = 1200;
 
 const char* disconnect_reason_name(std::uint32_t reason_code) {
     switch (reason_code) {
@@ -101,6 +102,30 @@ const char* disconnect_reason_name(std::uint32_t reason_code) {
         default:
             return "Unknown";
     }
+}
+
+const char* channel_name(ChannelId channel) {
+    switch (channel) {
+        case ChannelId::kInput:
+            return "Input";
+        case ChannelId::kSnapshot:
+            return "Snapshot";
+        case ChannelId::kReliableEvent:
+            return "ReliableEvent";
+        case ChannelId::kSession:
+            return "Session";
+    }
+    return "Unknown";
+}
+
+const char* send_mode_name(SendMode mode) {
+    switch (mode) {
+        case SendMode::kUnreliable:
+            return "Unreliable";
+        case SendMode::kReliable:
+            return "Reliable";
+    }
+    return "Unknown";
 }
 
 std::uint32_t handshake_reject_reason(
@@ -2126,6 +2151,7 @@ void KernelEngine::handle_client_projectile_spawn_batch(
                 initial_velocity,
                 from_kernel_vec3(projectile_template->gravity),
                 to_projectile_motion_model(projectile_template->motion_model),
+                projectile_template->lifetime_seconds,
                 projectile_template->weapon_id,
                 projectile_template->sync_mode,
                 glm::vec3{0.0f, 0.0f, 0.0f},
@@ -2303,6 +2329,14 @@ void KernelEngine::handle_client_despawn(const EntityDespawnPacket& packet) {
                 return entity.net_id == packet.net_id;
             }),
         client_replicated_entities_.end());
+    predicted_projectiles_.erase(
+        std::remove_if(
+            predicted_projectiles_.begin(),
+            predicted_projectiles_.end(),
+            [&packet](const PredictedProjectile& projectile) {
+                return projectile.net_id == packet.net_id;
+            }),
+        predicted_projectiles_.end());
     events_.push_back(KernelEvent{
         KernelEventType_EntityDestroyed,
         packet.server_tick,
@@ -2631,6 +2665,7 @@ void KernelEngine::predict_local_projectile(const PlayerInput& input) {
         velocity,
         gravity,
         motion_model,
+        weapon->projectile_lifetime_seconds,
         weapon->id,
         sync_mode,
         glm::vec3{0.0f, 0.0f, 0.0f},
@@ -2905,6 +2940,15 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
             projectile.gravity,
             projectile.age_seconds);
     }
+    predicted_projectiles_.erase(
+        std::remove_if(
+            predicted_projectiles_.begin(),
+            predicted_projectiles_.end(),
+            [](const PredictedProjectile& projectile) {
+                return projectile.max_lifetime_seconds > 0.0f &&
+                       projectile.age_seconds >= projectile.max_lifetime_seconds;
+            }),
+        predicted_projectiles_.end());
     if (had_projectiles) {
         benchmark_stats_.projectile_solver_cost_us +=
             std::max<std::uint64_t>(1, elapsed_cost_us(cost_start));
@@ -3284,13 +3328,26 @@ void KernelEngine::rebuild_render_states_at_time(
     if ((config_.mode == KernelMode_ListenServer || config_.mode == KernelMode_Client) &&
         has_client_snapshot_) {
         rebuild_render_states_from_snapshot(client_render_time_us, consume_correction);
+        report_render_state_overflow_if_needed();
         benchmark_stats_.render_solver_cost_us +=
             std::max<std::uint64_t>(1, elapsed_cost_us(cost_start));
         return;
     }
     rebuild_render_states_from_world();
+    report_render_state_overflow_if_needed();
     benchmark_stats_.render_solver_cost_us +=
         std::max<std::uint64_t>(1, elapsed_cost_us(cost_start));
+}
+
+void KernelEngine::report_render_state_overflow_if_needed() {
+    if (render_states_.size() > config_.max_render_states) {
+        spdlog::error(
+            "[NetworkExample] render state count exceeds configured cap "
+            "render_states={} max_render_states={}",
+            render_states_.size(),
+            config_.max_render_states);
+        push_event(KernelEventType_Error, 0, 0, 25);
+    }
 }
 
 void KernelEngine::rebuild_render_states_from_world() {
@@ -3561,6 +3618,17 @@ void KernelEngine::record_sent_packet(
         network_stats_.snapshot_bytes_sent += packet_size;
     } else if (channel == ChannelId::kReliableEvent) {
         network_stats_.event_bytes_sent += packet_size;
+    }
+    if ((channel == ChannelId::kSnapshot ||
+         channel == ChannelId::kReliableEvent) &&
+        packet_size > kLargeSyncPacketWarningBytes) {
+        spdlog::warn(
+            "[NetworkExample] large sync packet size={} warning_threshold={} "
+            "send_mode={} channel={}",
+            packet_size,
+            kLargeSyncPacketWarningBytes,
+            send_mode_name(mode),
+            channel_name(channel));
     }
     network_stats_.packet_serialization_cost_us +=
         std::max<std::uint64_t>(1, elapsed_cost_us(cost_start));
