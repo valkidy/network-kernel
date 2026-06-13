@@ -138,6 +138,7 @@ private:
         glm::vec3 initial_velocity{0.0f, 0.0f, 0.0f};
         glm::vec3 gravity{0.0f, 0.0f, 0.0f};
         ProjectileMotionModel motion_model = ProjectileMotionModel::kLinear;
+        float max_lifetime_seconds = 0.0f;
         std::uint8_t weapon_id = 0;
         std::uint8_t sync_mode = KernelProjectileSyncMode_HybridDeterministicThenSnapshot;
         glm::vec3 correction_offset{0.0f, 0.0f, 0.0f};
@@ -175,6 +176,7 @@ private:
     void rebuild_render_states_from_snapshot(
         std::uint64_t client_render_time_us,
         bool consume_correction);
+    void report_render_state_overflow_if_needed();
     void handle_client_snapshot(WorldSnapshot snapshot);
     void store_client_snapshot(WorldSnapshot snapshot);
     void reconcile_local_prediction(const WorldSnapshot& snapshot);

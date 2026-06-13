@@ -60,6 +60,17 @@ void add_snapshot_entity(
     snapshot->entities.push_back(entity);
 }
 
+KernelColliderTemplateDefinition projectile_collider_template() {
+    KernelColliderTemplateDefinition collider_template{};
+    collider_template.struct_size = sizeof(collider_template);
+    collider_template.template_id = 10;
+    collider_template.shape_type = KernelColliderShapeType_Sphere;
+    collider_template.radius = 0.25f;
+    collider_template.layer_mask = KERNEL_COLLISION_LAYER_PROJECTILE;
+    collider_template.purpose_flags = KernelColliderPurpose_Damage;
+    return collider_template;
+}
+
 network_example::WorldSnapshot projectile_snapshot(
     std::uint32_t server_tick,
     network_example::NetId net_id,
@@ -437,12 +448,16 @@ void snapshot_only_projectile_spawn_skips_event_batch() {
     projectile_template.projectile_template_id = 3;
     projectile_template.weapon_id = 3;
     projectile_template.sync_mode = KernelProjectileSyncMode_ServerSnapshotOnly;
+    projectile_template.collider_template_id = 10;
+    KernelColliderTemplateDefinition collider_template = projectile_collider_template();
     KernelGameplayCatalogDefinition catalog{};
     catalog.struct_size = sizeof(catalog);
     catalog.catalog_version = 1;
     catalog.catalog_hash = 0x7777ull;
     catalog.projectile_templates = &projectile_template;
     catalog.projectile_template_count = 1;
+    catalog.collider_templates = &collider_template;
+    catalog.collider_template_count = 1;
     require(engine.load_gameplay_catalog(catalog));
 
     auto loopback = std::make_unique<network_example::LoopbackTransport>();
@@ -990,12 +1005,16 @@ void projectile_spawn_batch_renders_and_binds_to_snapshot() {
     projectile_template.sync_mode = KernelProjectileSyncMode_HybridDeterministicThenSnapshot;
     projectile_template.speed = 10.0f;
     projectile_template.lifetime_seconds = 2.0f;
+    projectile_template.collider_template_id = 10;
+    KernelColliderTemplateDefinition collider_template = projectile_collider_template();
     KernelGameplayCatalogDefinition catalog{};
     catalog.struct_size = sizeof(catalog);
     catalog.catalog_version = 9;
     catalog.catalog_hash = 0x9999ull;
     catalog.projectile_templates = &projectile_template;
     catalog.projectile_template_count = 1;
+    catalog.collider_templates = &collider_template;
+    catalog.collider_template_count = 1;
     require(client.load_gameplay_catalog(catalog));
 
     network_example::ProjectileSpawnBatchPacket batch{};
@@ -1076,6 +1095,124 @@ void projectile_spawn_batch_renders_and_binds_to_snapshot() {
     require(benchmark_stats.hybrid_correction_cost_us > 0);
 }
 
+void client_despawn_removes_predicted_projectile() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+
+    network_example::KernelEngine::PredictedProjectile projectile;
+    projectile.entity_id = 9000;
+    projectile.net_id = 101;
+    projectile.owner_peer = 7;
+    projectile.bound = true;
+    client.predicted_projectiles_.push_back(projectile);
+
+    client.handle_client_despawn(network_example::EntityDespawnPacket{
+        101,
+        12,
+        KernelDespawnReason_Destroyed,
+    });
+
+    require(client.predicted_projectiles_.empty());
+}
+
+void predicted_projectile_lifetime_cleanup_removes_batch_projectile() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+    KernelProjectileTemplateDefinition projectile_template{};
+    projectile_template.struct_size = sizeof(projectile_template);
+    projectile_template.projectile_template_id = 3;
+    projectile_template.weapon_id = 3;
+    projectile_template.motion_model = KernelProjectileMotionModel_Linear;
+    projectile_template.sync_mode = KernelProjectileSyncMode_HybridDeterministicThenSnapshot;
+    projectile_template.speed = 10.0f;
+    projectile_template.lifetime_seconds = 0.5f;
+    projectile_template.collider_template_id = 10;
+    KernelColliderTemplateDefinition collider_template = projectile_collider_template();
+    KernelGameplayCatalogDefinition catalog{};
+    catalog.struct_size = sizeof(catalog);
+    catalog.catalog_version = 9;
+    catalog.catalog_hash = 0x9999ull;
+    catalog.projectile_templates = &projectile_template;
+    catalog.projectile_template_count = 1;
+    catalog.collider_templates = &collider_template;
+    catalog.collider_template_count = 1;
+    require(client.load_gameplay_catalog(catalog));
+
+    network_example::ProjectileSpawnBatchPacket batch{};
+    batch.server_tick = 3;
+    batch.server_time_us = 100000;
+    batch.catalog_hash = 0x9999ull;
+    network_example::ProjectileSpawnGroup group{};
+    group.projectile_template_id = 3;
+    group.records.push_back(network_example::ProjectileSpawnRecord{
+        101,
+        11,
+        7,
+        1234,
+        glm::vec3{1.0f, 0.0f, 0.0f},
+        glm::vec3{10.0f, 0.0f, 0.0f},
+    });
+    batch.groups.push_back(group);
+    client.handle_client_projectile_spawn_batch(batch);
+    require(client.predicted_projectiles_.size() == 1);
+
+    client.advance_predicted_projectiles(0.6f);
+
+    require(client.predicted_projectiles_.empty());
+}
+
+void default_kernel_config_uses_larger_render_state_cap() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+
+    network_example::KernelEngine client(config);
+
+    require(client.config_.max_render_states == 2048);
+}
+
+void render_state_overflow_reports_error_event() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    config.max_render_states = 1;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+    network_example::WorldSnapshot snapshot;
+    snapshot.header.server_tick = 10;
+    add_snapshot_entity(&snapshot, 1, network_example::EntityType::kPlayer, 0.0f);
+    add_snapshot_entity(&snapshot, 2, network_example::EntityType::kEnemy, 1.0f);
+    client.handle_client_snapshot(snapshot);
+
+    std::array<RenderEntityState, 1> states{};
+    require(client.get_render_states_at_time(
+                333333,
+                states.data(),
+                static_cast<std::uint32_t>(states.size())) == 1);
+
+    std::array<KernelEvent, 4> events{};
+    const std::uint32_t event_count =
+        client.poll_events(events.data(), static_cast<std::uint32_t>(events.size()));
+    bool saw_overflow_error = false;
+    for (std::uint32_t index = 0; index < event_count; ++index) {
+        saw_overflow_error =
+            saw_overflow_error ||
+            (events[index].type == KernelEventType_Error && events[index].code == 25);
+    }
+    require(saw_overflow_error);
+}
+
 void hit_debug_records_filter_and_drain() {
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;
@@ -1147,6 +1284,10 @@ int main() {
     server_rejects_mismatched_snapshot_schema_before_welcome();
     server_validates_catalog_hash_before_welcome();
     projectile_spawn_batch_renders_and_binds_to_snapshot();
+    client_despawn_removes_predicted_projectile();
+    predicted_projectile_lifetime_cleanup_removes_batch_projectile();
+    default_kernel_config_uses_larger_render_state_cap();
+    render_state_overflow_reports_error_event();
     hit_debug_records_filter_and_drain();
 
     KernelConfig config{};
