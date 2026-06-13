@@ -61,7 +61,6 @@ network_example::WeaponMechanicsDefinition homing_weapon_definition() {
     definition.reload_ticks = 30;
     definition.projectile_speed = 5.0f;
     definition.projectile_lifetime_seconds = 3.0f;
-    definition.explosion_radius = 0.0f;
     definition.projectile_motion_model = network_example::ProjectileMotionModel::kHoming;
     definition.projectile_hit_response = network_example::ProjectileHitResponse::kDestroy;
     definition.projectile_damage_shape = network_example::ProjectileDamageShape::kDirectHit;

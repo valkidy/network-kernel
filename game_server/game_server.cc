@@ -51,7 +51,7 @@ bool GameServer::query_weapon_template(
     const std::string& name = config_.weapons.names[weapon_id];
     std::strncpy(out_info->name, name.c_str(), sizeof(out_info->name) - 1);
     out_info->mechanics = mechanics;
-    out_info->valid = true;
+    out_info->valid = 1u;
     return true;
 }
 

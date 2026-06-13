@@ -859,7 +859,7 @@ local Unity batchmode licensing/headless setup is available
 
 # Authoritative Weapon Current Status
 
-The native weapon foundation is currently at `KERNEL_ABI_VERSION == 12u` with
+The native weapon foundation is currently at `KERNEL_ABI_VERSION == 17u` with
 seven weapon slots. Server-owned systems exist for DamagePipeline, YAML weapon
 templates, AreaEffect, Beam, Homing v1, collision query helpers, projectile hit
 processing, and internal ProjectileInteractionSystem v1.
@@ -875,7 +875,7 @@ workspace package source under `plugins/com.network-example.kernel` is missing
 the expanded package files, and the packaged artifact under `plugins/output`
 contains managed bindings for an older ABI. Native Bazel tests remain the
 authoritative validation signal until the Unity package is restored and synced
-to ABI v12.
+to ABI v17.
 
 ---
 

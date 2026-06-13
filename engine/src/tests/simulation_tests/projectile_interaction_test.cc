@@ -282,6 +282,78 @@ void multiple_reactions_resolve_by_projectile_pair_order() {
     require(first_position.x < second_position.x);
 }
 
+void impact_response_spawns_area_effect_projectile_once() {
+    network_example::World world;
+    const network_example::NetId enemy =
+        world.spawn_enemy(glm::vec3{1.0f, 0.5f, 0.0f});
+    const auto enemy_entity = world.find_entity(enemy);
+    require(enemy_entity.has_value());
+    network_example::Health& health =
+        world.registry().get<network_example::Health>(*enemy_entity);
+    health.hp = 100;
+    health.max_hp = 100;
+
+    network_example::RuntimeProjectileTemplate rocket_template;
+    rocket_template.projectile_template_id = 3;
+    rocket_template.weapon_id = 3;
+    rocket_template.kind = network_example::ProjectileKind::kProjectile;
+    rocket_template.impact_action =
+        network_example::ProjectileImpactAction::kSpawnProjectile;
+    rocket_template.impact_projectile_template_id = 8;
+    rocket_template.impact_destroy_self = 1u;
+
+    network_example::RuntimeProjectileTemplate explosion_template;
+    explosion_template.projectile_template_id = 8;
+    explosion_template.kind = network_example::ProjectileKind::kAreaEffect;
+    explosion_template.damage = 45;
+    explosion_template.damage_interval_ticks = 45;
+    explosion_template.lifetime_ticks = 45;
+    explosion_template.area_radius = 2.5f;
+    explosion_template.collision_mask = network_example::kCollisionLayerEnemy;
+    world.set_projectile_templates({rocket_template, explosion_template});
+
+    const network_example::NetId rocket = spawn_test_projectile(
+        world,
+        1,
+        glm::vec3{0.0f, 0.5f, 0.0f},
+        glm::vec3{20.0f, 0.0f, 0.0f},
+        3,
+        network_example::kCollisionLayerEnemy);
+    const auto rocket_entity = world.find_entity(rocket);
+    require(rocket_entity.has_value());
+    network_example::ProjectileState& projectile =
+        world.registry().get<network_example::ProjectileState>(*rocket_entity);
+    projectile.projectile_template_id = 3;
+    projectile.shooter_net_id = rocket;
+
+    std::vector<KernelEvent> events;
+    network_example::simulate_projectiles(world, 0.05f, 1, &events);
+
+    require(!world.find_entity(rocket).has_value());
+    std::vector<network_example::NetId> area_effects;
+    for (const KernelEvent& event : events) {
+        if (event.type == KernelEventType_EntitySpawned &&
+            event.code ==
+                static_cast<std::uint32_t>(network_example::EntityType::kAreaEffect)) {
+            area_effects.push_back(event.net_id);
+        }
+    }
+    require(area_effects.size() == 1);
+
+    const auto area_entity = world.find_entity(area_effects[0]);
+    require(area_entity.has_value());
+    const network_example::AreaEffectState& area_effect =
+        world.registry().get<network_example::AreaEffectState>(*area_entity);
+    require(area_effect.damage_per_interval == 45);
+    require(area_effect.damage_interval_ticks == 45);
+    require(area_effect.expire_tick == 46);
+
+    network_example::simulate_area_effects(world, 1, &events, nullptr);
+    require(health.hp == 55);
+    network_example::simulate_area_effects(world, 2, &events, nullptr);
+    require(health.hp == 55);
+}
+
 }  // namespace
 
 int main() {
@@ -290,5 +362,6 @@ int main() {
     non_matching_weapon_ids_do_not_react();
     interaction_respects_masks_and_owner_peer_exclusion();
     multiple_reactions_resolve_by_projectile_pair_order();
+    impact_response_spawns_area_effect_projectile_once();
     return 0;
 }

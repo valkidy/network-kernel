@@ -8,3 +8,4 @@ reload_ticks: 45
 max_range: 40.0
 pellet_count: 5
 pellet_spread: 0.035
+segment_collider: shotgun_segment_damage

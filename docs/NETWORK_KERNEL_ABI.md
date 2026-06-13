@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 12u`.
+`KERNEL_ABI_VERSION == 17u`.
 
 ## Ownership
 
@@ -101,6 +101,14 @@ ABI version 12 adds fire-and-forget homing projectile mechanics and
 for presentation, while guided and lost-target phases remain server
 authoritative and use existing snapshot position/velocity fields.
 
+ABI version 13 through 16 add the gameplay catalog, projectile spawn batching,
+debug records, collider shape query, benchmark stats, and network stats
+surfaces used by the current native runtime.
+
+ABI version 17 removes deprecated free-form-only gameplay catalog load errors,
+adds structured `KernelGameplayCatalogLoadResult` status/error fields, and
+replaces public ABI struct `bool` fields with fixed-width `uint32_t` flags.
+
 The current projectile interaction foundation is internal C++ engine state. It
 does not add Kernel C ABI functions, does not change public struct layout, and
 does not require an ABI version bump beyond v12.
@@ -173,5 +181,5 @@ Current caveat: the workspace package source under
 `plugins/com.network-example.kernel` is not expanded with its package manifest,
 runtime C# files, editor tests, or staged dylib. The old packaged artifact under
 `plugins/output` contains managed bindings for an earlier ABI while the native
-header is v12. Unity package builder verify and Unity Editor smoke should be
-treated as stale until the package is restored and resynced with ABI v12.
+header is v17. Unity package builder verify and Unity Editor smoke should be
+treated as stale until the package is restored and resynced with ABI v17.

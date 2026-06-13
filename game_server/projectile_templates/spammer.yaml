@@ -1,0 +1,16 @@
+id: 2
+name: spammer_projectile
+damage: 1
+sync_mode: local_predicted_deterministic
+collider_template: sphere_damage
+movement_model: linear
+hit_response: destroy
+damage_shape: direct_hit
+speed: 30.0
+lifetime_seconds: 2.0
+collision_mask: none
+max_hit_count: 1
+gravity:
+  x: 0.0
+  y: 0.0
+  z: 0.0

@@ -6,6 +6,7 @@ damage: 30
 cooldown_ticks: 1
 reload_ticks: 45
 beam:
+  collider_template: beam_damage
   length: 8.0
   radius: 0.25
   damage_per_second: 30

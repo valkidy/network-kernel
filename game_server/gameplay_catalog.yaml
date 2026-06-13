@@ -1,5 +1,6 @@
 catalog_version: 1
 weapon_template_dir: weapon_templates
+projectile_template_dir: projectile_templates
 actor_template_dir: actor_templates
 collider_template_file: collider_templates/default.yaml
 player:

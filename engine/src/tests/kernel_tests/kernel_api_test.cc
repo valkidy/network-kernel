@@ -74,6 +74,8 @@ int main() {
            sizeof(KernelCombatStateDefinition));
     assert(abi_info.gameplay_catalog_definition_size ==
            sizeof(KernelGameplayCatalogDefinition));
+    assert(abi_info.gameplay_catalog_load_result_size ==
+           sizeof(KernelGameplayCatalogLoadResult));
     assert(abi_info.projectile_template_definition_size ==
            sizeof(KernelProjectileTemplateDefinition));
     assert(abi_info.collider_template_definition_size ==
@@ -124,7 +126,10 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_BENCHMARK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 16u);
+    assert(KERNEL_ABI_VERSION == 17u);
+    assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
+    assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
+    assert(KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNSUPPORTED_CATALOG_VERSION == 3u);
     assert(KERNEL_MAX_WEAPONS == 7u);
     assert(KERNEL_LAN_DISCOVERY_DEFAULT_PORT == 47777u);
     assert(offsetof(PlayerInput, client_action_time_us) > offsetof(PlayerInput, input_seq));
@@ -262,10 +267,10 @@ int main() {
     projectile_template.sync_mode = KernelProjectileSyncMode_HybridDeterministicThenSnapshot;
     projectile_template.speed = 35.0f;
     projectile_template.lifetime_seconds = 2.5f;
-    projectile_template.explosion_radius = 3.0f;
     projectile_template.gravity = KernelVec3{0.0f, 0.0f, 0.0f};
     projectile_template.collider_template_id = 10;
     projectile_template.damage = 5;
+    projectile_template.damage_shape = KernelProjectileDamageShape_DirectHit;
     projectile_template.collision_mask = KERNEL_COLLISION_MASK_DAMAGEABLE;
     projectile_template.max_hit_count = 1;
     KernelColliderTemplateDefinition collider_template{};
@@ -305,8 +310,8 @@ int main() {
     assert(Kernel_GetLocalPlayerInfo(kernel, &local_info));
     assert(local_info.peer_id == 0);
     assert(local_info.player_net_id == 0);
-    assert(!local_info.has_welcome);
-    assert(!local_info.connected);
+    assert(local_info.has_welcome == 0u);
+    assert(local_info.connected == 0u);
     assert(!Kernel_GetLocalPlayerInfo(kernel, nullptr));
     assert(!Kernel_StartClient(kernel, nullptr));
     assert(!Kernel_StartClient(kernel, ""));
@@ -346,8 +351,52 @@ int main() {
     assert(collider_shapes[0].entity_type == 2);
     assert(collider_shapes[0].collider_template_id == 10);
     assert(collider_shapes[0].shape_type == KernelColliderShapeType_Aabb);
+    assert(collider_shapes[0].collider_id != 0);
+    assert(collider_shapes[0].owner_net_id == created_net_id);
     assert(collider_shapes[0].world_center.y == 0.8f);
     assert(collider_shapes[0].half_extents.x == 0.25f);
+    assert(collider_shapes[0].remaining_ticks == 0);
+
+    KernelColliderTemplateDefinition changed_collider_template{};
+    changed_collider_template.struct_size = sizeof(changed_collider_template);
+    changed_collider_template.template_id = 11;
+    changed_collider_template.shape_type = KernelColliderShapeType_Sphere;
+    changed_collider_template.radius = 3.0f;
+    changed_collider_template.layer_mask = KERNEL_COLLISION_LAYER_PROJECTILE;
+    changed_collider_template.purpose_flags = KernelColliderPurpose_Damage;
+    std::array<KernelColliderTemplateDefinition, 2> changed_collider_templates = {
+        collider_template,
+        changed_collider_template,
+    };
+    KernelColliderBindingDefinition changed_collider_binding{};
+    changed_collider_binding.struct_size = sizeof(changed_collider_binding);
+    changed_collider_binding.entity_type = 2;
+    changed_collider_binding.collider_template_id = 11;
+    KernelGameplayCatalogDefinition changed_catalog{};
+    changed_catalog.struct_size = sizeof(changed_catalog);
+    changed_catalog.catalog_version = 4;
+    changed_catalog.catalog_hash = 0x8877665544332211ull;
+    changed_catalog.projectile_templates = &projectile_template;
+    changed_catalog.projectile_template_count = 1;
+    changed_catalog.collider_templates = changed_collider_templates.data();
+    changed_catalog.collider_template_count =
+        static_cast<std::uint32_t>(changed_collider_templates.size());
+    changed_catalog.collider_bindings = &changed_collider_binding;
+    changed_catalog.collider_binding_count = 1;
+    assert(Kernel_LoadGameplayCatalog(kernel, &changed_catalog));
+    for (KernelColliderShapeView& shape : collider_shapes) {
+        shape = KernelColliderShapeView{};
+        shape.struct_size = sizeof(KernelColliderShapeView);
+    }
+    assert(Kernel_QueryColliderShapes(
+               kernel,
+               &collider_query,
+               collider_shapes.data(),
+               static_cast<std::uint32_t>(collider_shapes.size())) == 1);
+    assert(collider_shapes[0].collider_template_id == 10);
+    assert(collider_shapes[0].shape_type == KernelColliderShapeType_Aabb);
+    assert(collider_shapes[0].half_extents.x == 0.25f);
+    assert(collider_shapes[0].radius != 3.0f);
 
     weapon_mechanics.weapon_id = 3;
     weapon_mechanics.fire_mode = KernelWeaponFireMode_Projectile;
@@ -356,12 +405,12 @@ int main() {
     weapon_mechanics.cooldown_ticks = 30;
     weapon_mechanics.reload_ticks = 30;
     weapon_mechanics.projectile.struct_size = sizeof(KernelProjectileMechanicsDefinition);
+    weapon_mechanics.projectile.projectile_template_id = 3;
     weapon_mechanics.projectile.speed = 35.0f;
     weapon_mechanics.projectile.lifetime_seconds = 2.5f;
-    weapon_mechanics.projectile.explosion_radius = 3.0f;
     weapon_mechanics.projectile.motion_model = KernelProjectileMotionModel_Linear;
     weapon_mechanics.projectile.hit_response = KernelProjectileHitResponse_Destroy;
-    weapon_mechanics.projectile.damage_shape = KernelProjectileDamageShape_Explosion;
+    weapon_mechanics.projectile.damage_shape = KernelProjectileDamageShape_DirectHit;
     weapon_mechanics.projectile.collision_mask = KERNEL_COLLISION_MASK_DAMAGEABLE;
     weapon_mechanics.projectile.max_hit_count = 1;
     assert(Kernel_ServerValidateMechanicsConfig(&weapon_mechanics));
@@ -379,7 +428,7 @@ int main() {
         &queried_weapon));
     assert(queried_weapon.weapon_id == 3);
     assert(queried_weapon.projectile.hit_response == KernelProjectileHitResponse_Destroy);
-    assert(queried_weapon.projectile.damage_shape == KernelProjectileDamageShape_Explosion);
+    assert(queried_weapon.projectile.damage_shape == KernelProjectileDamageShape_DirectHit);
     assert(queried_weapon.projectile.collision_mask == KERNEL_COLLISION_MASK_DAMAGEABLE);
     KernelWeaponMechanicsDefinition zero_projectile_mask = weapon_mechanics;
     zero_projectile_mask.projectile.collision_mask = 0;
@@ -397,9 +446,9 @@ int main() {
 
     KernelWeaponMechanicsDefinition homing_weapon = weapon_mechanics;
     homing_weapon.weapon_id = 6;
+    homing_weapon.projectile.projectile_template_id = 6;
     homing_weapon.projectile.motion_model = KernelProjectileMotionModel_Homing;
     homing_weapon.projectile.damage_shape = KernelProjectileDamageShape_DirectHit;
-    homing_weapon.projectile.explosion_radius = 0.0f;
     homing_weapon.projectile.homing.struct_size = sizeof(KernelHomingMechanicsDefinition);
     homing_weapon.projectile.homing.homing_mode = KernelHomingMode_FireAndForget;
     homing_weapon.projectile.homing.sync_mode =
@@ -532,7 +581,7 @@ int main() {
     server_state = KernelServerEntityState{};
     server_state.struct_size = sizeof(server_state);
     assert(Kernel_ServerGetEntityState(kernel, created_net_id, &server_state));
-    assert(server_state.valid);
+    assert(server_state.valid != 0u);
     assert(server_state.net_id == created_net_id);
     assert(server_state.entity_type == 2);
     assert(server_state.animation_state == 7);
@@ -624,7 +673,7 @@ int main() {
     area_effect_state = KernelAreaEffectState{};
     area_effect_state.struct_size = sizeof(area_effect_state);
     assert(Kernel_ServerGetAreaEffectState(kernel, area_net_id, &area_effect_state));
-    assert(area_effect_state.valid);
+    assert(area_effect_state.valid != 0u);
     assert(area_effect_state.radius == 2.5f);
     assert(area_effect_state.damage_per_interval == 7);
     assert(area_effect_state.damage_interval_ticks == 3);
@@ -652,7 +701,7 @@ int main() {
     beam_state = KernelBeamState{};
     beam_state.struct_size = sizeof(beam_state);
     assert(Kernel_ServerGetBeamState(kernel, beam_net_id, &beam_state));
-    assert(beam_state.valid);
+    assert(beam_state.valid != 0u);
     assert(beam_state.shooter_net_id == created_net_id);
     assert(beam_state.length == 6.0f);
     assert(beam_state.radius == 0.25f);
@@ -681,7 +730,7 @@ int main() {
     homing_state = KernelHomingState{};
     homing_state.struct_size = sizeof(homing_state);
     assert(Kernel_ServerGetHomingState(kernel, homing_net_id, &homing_state));
-    assert(homing_state.valid);
+    assert(homing_state.valid != 0u);
     assert(homing_state.shooter_net_id == created_net_id);
     assert(homing_state.guidance_phase <= KernelMissileGuidancePhase_LostTarget);
     assert(homing_state.lock_on_range == 25.0f);

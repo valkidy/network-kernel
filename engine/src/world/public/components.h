@@ -23,6 +23,41 @@ enum class EntityType : std::uint16_t {
     kBeam = 5,
 };
 
+enum class ColliderShapeType : std::uint8_t {
+    kAabb = 0,
+    kSphere = 1,
+    kOrientedBox = 2,
+    kSegment = 3,
+};
+
+struct ColliderWorldBounds {
+    glm::vec3 center{0.0f, 0.0f, 0.0f};
+    glm::vec3 half_extents{0.0f, 0.0f, 0.0f};
+};
+
+struct ColliderInstance {
+    std::uint32_t collider_id = 0;
+    std::uint32_t collider_template_id = 0;
+    NetId owner_net_id = 0;
+    NetId entity_net_id = 0;
+    EntityType entity_type = EntityType::kUnknown;
+    ColliderShapeType shape_type = ColliderShapeType::kAabb;
+    std::uint32_t purpose_flags = 0;
+    std::uint32_t layer_mask = 0;
+    glm::vec3 local_center{0.0f, 0.0f, 0.0f};
+    glm::quat local_rotation{1.0f, 0.0f, 0.0f, 0.0f};
+    glm::vec3 world_center{0.0f, 0.0f, 0.0f};
+    glm::quat world_rotation{1.0f, 0.0f, 0.0f, 0.0f};
+    glm::vec3 half_extents{0.0f, 0.0f, 0.0f};
+    float radius = 0.0f;
+    glm::vec3 segment_start{0.0f, 0.0f, 0.0f};
+    glm::vec3 segment_end{0.0f, 0.0f, 0.0f};
+    std::uint32_t lifetime_ticks = 0;
+    std::uint32_t remaining_ticks = 0;
+    bool has_resolved_damage = false;
+    ColliderWorldBounds world_bounds{};
+};
+
 struct NetworkIdentity {
     NetId net_id = 0;
     PeerId owner_peer = 0;
@@ -101,8 +136,22 @@ enum class ProjectileHitResponse : std::uint8_t {
 
 enum class ProjectileDamageShape : std::uint8_t {
     kDirectHit = 0,
-    kExplosion = 1,
     kPiercingSegment = 2,
+};
+
+enum class ProjectileKind : std::uint8_t {
+    kProjectile = 0,
+    kAreaEffect = 1,
+};
+
+enum class ProjectileImpactAction : std::uint8_t {
+    kNone = 0,
+    kSpawnProjectile = 1,
+};
+
+enum class ProjectileDamageFalloff : std::uint8_t {
+    kNone = 0,
+    kLinear = 1,
 };
 
 inline constexpr std::uint32_t kCollisionLayerPlayer = 0x00000001u;
@@ -132,9 +181,10 @@ struct WeaponMechanicsDefinition {
     float max_range = 0.0f;
     std::uint8_t pellet_count = 1;
     float pellet_spread = 0.0f;
+    std::uint32_t segment_collider_template_id = 0;
     float projectile_speed = 0.0f;
     float projectile_lifetime_seconds = 0.0f;
-    float explosion_radius = 0.0f;
+    std::uint32_t projectile_template_id = 0;
     ProjectileMotionModel projectile_motion_model = ProjectileMotionModel::kLinear;
     glm::vec3 projectile_gravity{0.0f, 0.0f, 0.0f};
     ProjectileHitResponse projectile_hit_response = ProjectileHitResponse::kDestroy;
@@ -177,6 +227,7 @@ struct Hitbox {
 
 struct ProjectileState {
     std::uint8_t weapon_id = 0;
+    std::uint32_t projectile_template_id = 0;
     std::uint16_t damage = 0;
     std::uint32_t spawn_tick = 0;
     std::uint32_t client_action_id = 0;
@@ -187,7 +238,6 @@ struct ProjectileState {
     std::uint32_t collision_mask = kCollisionMaskDamageable;
     std::uint32_t max_hit_count = 1;
     std::uint32_t hit_count = 0;
-    float explosion_radius = 0.0f;
     float max_lifetime_seconds = 0.0f;
     float age_seconds = 0.0f;
     glm::vec3 spawn_position{0.0f, 0.0f, 0.0f};
@@ -196,6 +246,29 @@ struct ProjectileState {
     // snapshots plus render-side correction after a physics module exists.
     glm::vec3 gravity{0.0f, 0.0f, 0.0f};
     glm::vec3 previous_position{0.0f, 0.0f, 0.0f};
+};
+
+struct RuntimeProjectileTemplate {
+    std::uint32_t projectile_template_id = 0;
+    std::uint8_t weapon_id = 0;
+    ProjectileKind kind = ProjectileKind::kProjectile;
+    ProjectileMotionModel motion_model = ProjectileMotionModel::kLinear;
+    ProjectileHitResponse hit_response = ProjectileHitResponse::kDestroy;
+    ProjectileDamageShape damage_shape = ProjectileDamageShape::kDirectHit;
+    ProjectileImpactAction impact_action = ProjectileImpactAction::kNone;
+    bool impact_destroy_self = true;
+    ProjectileDamageFalloff damage_falloff = ProjectileDamageFalloff::kNone;
+    std::uint16_t damage = 0;
+    float speed = 0.0f;
+    float lifetime_seconds = 0.0f;
+    glm::vec3 gravity{0.0f, 0.0f, 0.0f};
+    std::uint32_t collider_template_id = 0;
+    float area_radius = 0.0f;
+    std::uint32_t collision_mask = kCollisionMaskDamageable;
+    std::uint32_t max_hit_count = 1;
+    std::uint32_t impact_projectile_template_id = 0;
+    std::uint32_t lifetime_ticks = 0;
+    std::uint32_t damage_interval_ticks = 1;
 };
 
 struct HomingState {
@@ -220,6 +293,7 @@ struct AreaEffectState {
     std::uint32_t expire_tick = 0;
     std::uint8_t source_code = 0;
     std::uint32_t collision_mask = kCollisionMaskDamageable;
+    ProjectileDamageFalloff damage_falloff = ProjectileDamageFalloff::kNone;
     std::unordered_map<NetId, std::uint32_t> next_damage_tick_by_target;
 };
 

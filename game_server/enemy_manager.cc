@@ -164,7 +164,7 @@ void EnemyManager::prune_missing_enemies() {
                 KernelServerEntityState state{};
                 state.struct_size = sizeof(KernelServerEntityState);
                 return !Kernel_ServerGetEntityState(kernel_, enemy.net_id, &state) ||
-                       !state.valid;
+                       state.valid == 0u;
             }),
         enemies_.end());
 }

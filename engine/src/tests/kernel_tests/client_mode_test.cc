@@ -461,6 +461,7 @@ void snapshot_only_projectile_spawn_skips_event_batch() {
         engine.world_.registry().get<network_example::ProjectileState>(
             *projectile_entity);
     projectile.weapon_id = 3;
+    projectile.projectile_template_id = 3;
 
     const network_example::WorldSnapshot snapshot =
         network_example::build_world_snapshot(engine.world_, 1, 33, 0);

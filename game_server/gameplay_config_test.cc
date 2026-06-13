@@ -29,6 +29,22 @@ std::string read_text_file(const std::string& path) {
         std::istreambuf_iterator<char>());
 }
 
+std::vector<std::uint8_t> read_binary_file(const std::string& path) {
+    std::ifstream file(path, std::ios::binary);
+    require(file.good());
+    return std::vector<std::uint8_t>(
+        std::istreambuf_iterator<char>(file),
+        std::istreambuf_iterator<char>());
+}
+
+std::filesystem::path runfiles_root() {
+    const char* test_srcdir = std::getenv("TEST_SRCDIR");
+    const char* test_workspace = std::getenv("TEST_WORKSPACE");
+    require(test_srcdir != nullptr);
+    require(test_workspace != nullptr);
+    return std::filesystem::path(test_srcdir) / test_workspace;
+}
+
 void append_u16(std::vector<std::uint8_t>* out, std::uint16_t value) {
     out->push_back(static_cast<std::uint8_t>(value & 0xffu));
     out->push_back(static_cast<std::uint8_t>((value >> 8u) & 0xffu));
@@ -145,6 +161,17 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip() {
             "weapon_templates/" + file,
             read_text_file("game_server/weapon_templates/" + file)});
     }
+    const std::vector<std::string> projectile_files = {
+        "homing_missile.yaml",
+        "rocket.yaml",
+        "rocket_explosion.yaml",
+        "spammer.yaml",
+    };
+    for (const std::string& file : projectile_files) {
+        files.push_back({
+            "projectile_templates/" + file,
+            read_text_file("game_server/projectile_templates/" + file)});
+    }
     return make_store_zip(files);
 }
 
@@ -167,6 +194,11 @@ int main() {
     changed_config.weapons
         .definitions[network_example::game_server::kWeaponRocket]
         .damage += 1;
+    require(
+        config.weapons.catalog_hash !=
+        network_example::game_server::compute_gameplay_catalog_hash(changed_config));
+    changed_config = config;
+    changed_config.projectile_templates[1].definition.damage += 1;
     require(
         config.weapons.catalog_hash !=
         network_example::game_server::compute_gameplay_catalog_hash(changed_config));
@@ -202,6 +234,7 @@ int main() {
     assert(rifle.damage == 25);
     assert(rifle.magazine_size == 30);
     assert(rifle.max_range == 100.0f);
+    assert(rifle.segment_collider_template_id == 5);
 
     const KernelWeaponMechanicsDefinition& rocket =
         config.weapons.definitions[network_example::game_server::kWeaponRocket];
@@ -210,8 +243,7 @@ int main() {
     assert(rocket.projectile.struct_size == sizeof(KernelProjectileMechanicsDefinition));
     assert(rocket.projectile.speed == 35.0f);
     assert(rocket.projectile.lifetime_seconds == 2.5f);
-    assert(rocket.projectile.explosion_radius == 3.0f);
-    assert(rocket.projectile.damage_shape == KernelProjectileDamageShape_Explosion);
+    assert(rocket.projectile.damage_shape == KernelProjectileDamageShape_DirectHit);
     assert(
         config.weapons
             .projectile_sync_modes[network_example::game_server::kWeaponGrenade] ==
@@ -228,10 +260,11 @@ int main() {
     assert(
         projectile_spammer.projectile.damage_shape ==
         KernelProjectileDamageShape_DirectHit);
-    assert(projectile_spammer.projectile.explosion_radius == 0.0f);
     assert(projectile_spammer.projectile.collision_mask == KERNEL_COLLISION_MASK_NONE);
     assert(projectile_spammer.pellet_count == 3);
     assert(projectile_spammer.pellet_spread == 15.0f);
+    assert(config.weapons.collider_template_ids
+               [network_example::game_server::kWeaponGrenade] == 7);
     assert(config.weapons.names[network_example::game_server::kWeaponGrenade] ==
            "Projectile Spammer");
     assert(
@@ -244,7 +277,7 @@ int main() {
         config.weapons
             .projectile_sync_modes[network_example::game_server::kWeaponRocket] ==
         KernelProjectileSyncMode_ServerSnapshotOnly);
-    assert(config.colliders.templates.size() == 4);
+    assert(config.colliders.templates.size() == 8);
     assert(config.colliders.bindings.size() == 4);
     assert(config.actor_templates.size() == 2);
     const network_example::game_server::ActorTemplateConfig& player_template =
@@ -282,8 +315,58 @@ int main() {
     assert(beam_rifle.beam.radius == 0.25f);
     assert(beam_rifle.beam.damage_per_second == 30);
     assert(beam_rifle.beam.collision_mask == KERNEL_COLLISION_LAYER_ENEMY);
+    assert(config.weapons.collider_template_ids
+               [network_example::game_server::kWeaponBeamRifle] == 8);
     assert(config.weapons.names[network_example::game_server::kWeaponBeamRifle] ==
            "Beam Rifle");
+
+    const KernelWeaponMechanicsDefinition& homing_missile =
+        config.weapons.definitions[network_example::game_server::kWeaponHomingMissile];
+    assert(homing_missile.projectile.motion_model == KernelProjectileMotionModel_Homing);
+    assert(config.weapons.collider_template_ids
+               [network_example::game_server::kWeaponHomingMissile] == 7);
+    assert(config.projectile_templates.size() == 4);
+    bool found_homing_projectile = false;
+    bool found_rocket_projectile = false;
+    bool found_rocket_explosion = false;
+    bool found_spammer_projectile = false;
+    for (const network_example::game_server::ProjectileTemplateConfig& projectile :
+         config.projectile_templates) {
+        if (projectile.name == "spammer_projectile") {
+            found_spammer_projectile = true;
+            assert(projectile.definition.collider_template_id == 7);
+            assert(projectile.definition.damage == 1);
+        }
+        if (projectile.name == "rocket_projectile") {
+            found_rocket_projectile = true;
+            assert(projectile.definition.collider_template_id == 3);
+            assert(projectile.definition.damage_shape ==
+                   KernelProjectileDamageShape_DirectHit);
+            assert(projectile.definition.impact_action ==
+                   KernelProjectileImpactAction_SpawnProjectile);
+            assert(projectile.definition.impact_projectile_template_id == 8);
+            assert(projectile.definition.impact_destroy_self);
+        }
+        if (projectile.name == "rocket_explosion") {
+            found_rocket_explosion = true;
+            assert(projectile.definition.projectile_kind ==
+                   KernelProjectileKind_AreaEffect);
+            assert(projectile.definition.damage == 45);
+            assert(projectile.definition.damage_interval_ticks == 45);
+            assert(projectile.definition.lifetime_ticks == 45);
+            assert(projectile.definition.damage_falloff ==
+                   KernelProjectileDamageFalloff_Linear);
+        }
+        if (projectile.name == "homing_missile_projectile") {
+            found_homing_projectile = true;
+            assert(projectile.definition.collider_template_id == 7);
+            assert(projectile.homing.lock_on_range == 25.0f);
+        }
+    }
+    assert(found_spammer_projectile);
+    assert(found_rocket_projectile);
+    assert(found_rocket_explosion);
+    assert(found_homing_projectile);
 
     const std::vector<std::uint8_t> gameplay_bundle = make_gameplay_bundle_zip();
     const network_example::game_server::GameServerGameplayConfig bundle_config =
@@ -294,8 +377,134 @@ int main() {
     assert(bundle_config.weapons.catalog_hash == config.weapons.catalog_hash);
     assert(bundle_config.colliders.templates.size() == config.colliders.templates.size());
     assert(bundle_config.colliders.bindings.size() == config.colliders.bindings.size());
+    assert(bundle_config.projectile_templates.size() == config.projectile_templates.size());
     assert(bundle_config.actor_templates.size() == config.actor_templates.size());
     assert(bundle_config.enemy.actor_template_id == config.enemy.actor_template_id);
+
+    const std::vector<std::uint8_t> generated_bundle = read_binary_file(
+        (runfiles_root() / "game_server" / "gameplay_catalog_bundle" / "bundle.zip")
+            .string());
+    const network_example::game_server::GameServerGameplayConfig generated_bundle_config =
+        network_example::game_server::load_gameplay_config_from_bundle_memory(
+            generated_bundle.data(),
+            static_cast<std::uint32_t>(generated_bundle.size()),
+            "gameplay_catalog.yaml");
+    assert(generated_bundle_config.weapons.catalog_hash == config.weapons.catalog_hash);
+    assert(
+        generated_bundle_config.projectile_templates.size() ==
+        config.projectile_templates.size());
+
+    const std::vector<std::uint8_t> unsupported_version_bundle = make_store_zip({
+        {"gameplay_catalog.yaml", "catalog_version: 2\n"},
+    });
+    bool unsupported_version_rejected = false;
+    try {
+        (void)network_example::game_server::load_gameplay_config_from_bundle_memory(
+            unsupported_version_bundle.data(),
+            static_cast<std::uint32_t>(unsupported_version_bundle.size()),
+            "gameplay_catalog.yaml");
+    } catch (const std::exception& error) {
+        unsupported_version_rejected =
+            std::string(error.what()).find("unsupported catalog_version") !=
+            std::string::npos;
+    }
+    assert(unsupported_version_rejected);
+
+    const std::vector<std::uint8_t> unknown_catalog_field_bundle = make_store_zip({
+        {"gameplay_catalog.yaml", "catalog_version: 1\nsurprise: true\n"},
+    });
+    bool unknown_catalog_field_rejected = false;
+    try {
+        (void)network_example::game_server::load_gameplay_config_from_bundle_memory(
+            unknown_catalog_field_bundle.data(),
+            static_cast<std::uint32_t>(unknown_catalog_field_bundle.size()),
+            "gameplay_catalog.yaml");
+    } catch (const std::exception& error) {
+        unknown_catalog_field_rejected =
+            std::string(error.what()).find("unknown field") != std::string::npos;
+    }
+    assert(unknown_catalog_field_rejected);
+
+    const std::vector<std::uint8_t> unknown_nested_catalog_field_bundle = make_store_zip({
+        {"gameplay_catalog.yaml",
+         "catalog_version: 1\n"
+         "weapon_template_dir: weapon_templates\n"
+         "projectile_template_dir: projectile_templates\n"
+         "collider_template_file: collider_templates/default.yaml\n"
+         "player:\n"
+         "  actor_template: player\n"
+         "  current_hp: 12\n"},
+    });
+    bool unknown_nested_catalog_field_rejected = false;
+    try {
+        (void)network_example::game_server::load_gameplay_config_from_bundle_memory(
+            unknown_nested_catalog_field_bundle.data(),
+            static_cast<std::uint32_t>(unknown_nested_catalog_field_bundle.size()),
+            "gameplay_catalog.yaml");
+    } catch (const std::exception& error) {
+        unknown_nested_catalog_field_rejected =
+            std::string(error.what()).find("unknown field") != std::string::npos;
+    }
+    assert(unknown_nested_catalog_field_rejected);
+
+    std::vector<std::pair<std::string, std::string>> duplicate_collider_files;
+    duplicate_collider_files.push_back({
+        "gameplay_catalog.yaml",
+        "catalog_version: 1\n"
+        "weapon_template_dir: weapon_templates\n"
+        "projectile_template_dir: projectile_templates\n"
+        "collider_template_file: collider_templates/default.yaml\n"});
+    const std::vector<std::string> duplicate_collider_weapon_files = {
+        "beam_rifle.yaml",
+        "fire_floor.yaml",
+        "homing_missile.yaml",
+        "rifle.yaml",
+        "rocket.yaml",
+        "shotgun.yaml",
+        "spammer.yaml",
+    };
+    for (const std::string& file : duplicate_collider_weapon_files) {
+        duplicate_collider_files.push_back({
+            "weapon_templates/" + file,
+            read_text_file("game_server/weapon_templates/" + file)});
+    }
+    duplicate_collider_files.push_back({
+        "collider_templates/default.yaml",
+        "templates:\n"
+        "  - id: 1\n"
+        "    name: a\n"
+        "    shape: aabb\n"
+        "    center: {x: 0.0, y: 0.0, z: 0.0}\n"
+        "    half_extents: {x: 1.0, y: 1.0, z: 1.0}\n"
+        "    radius: 0.0\n"
+        "    purpose: hit\n"
+        "    layer: player\n"
+        "  - id: 1\n"
+        "    name: b\n"
+        "    shape: sphere\n"
+        "    center: {x: 0.0, y: 0.0, z: 0.0}\n"
+        "    half_extents: {x: 1.0, y: 1.0, z: 1.0}\n"
+        "    radius: 1.0\n"
+        "    purpose: damage\n"
+        "    layer: enemy\n"
+        "bindings:\n"
+        "  - entity_type: player\n"
+        "    collider_template: a\n"
+        "    local_position: {x: 0.0, y: 0.0, z: 0.0}\n"});
+    const std::vector<std::uint8_t> duplicate_collider_id_bundle =
+        make_store_zip(duplicate_collider_files);
+    bool duplicate_collider_id_rejected = false;
+    try {
+        (void)network_example::game_server::load_gameplay_config_from_bundle_memory(
+            duplicate_collider_id_bundle.data(),
+            static_cast<std::uint32_t>(duplicate_collider_id_bundle.size()),
+            "gameplay_catalog.yaml");
+    } catch (const std::exception& error) {
+        duplicate_collider_id_rejected =
+            std::string(error.what()).find("duplicate collider template id") !=
+            std::string::npos;
+    }
+    assert(duplicate_collider_id_rejected);
 
     const std::vector<std::uint8_t> invalid_path_bundle = make_store_zip({
         {"../x.yaml", "catalog_version: 1\n"},

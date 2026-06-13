@@ -6,7 +6,7 @@
 
 #include "kernel/public/kernel_types.h"
 
-#define GAME_SERVER_ABI_VERSION 3u
+#define GAME_SERVER_ABI_VERSION 4u
 
 #define GAME_SERVER_CAPABILITY_ENEMY_MANAGER UINT64_C(0x0000000000000001)
 #define GAME_SERVER_CAPABILITY_EVENT_HANDLING UINT64_C(0x0000000000000002)
@@ -23,6 +23,7 @@ typedef struct GameServerAbiInfo {
     uint32_t struct_size;
     uint32_t abi_version;
     uint32_t weapon_template_info_size;
+    uint32_t gameplay_catalog_load_result_size;
     uint64_t capability_flags;
 } GameServerAbiInfo;
 
@@ -32,7 +33,7 @@ typedef struct GameServerWeaponTemplateInfo {
     uint8_t fire_mode;
     char name[64];
     KernelWeaponMechanicsDefinition mechanics;
-    bool valid;
+    uint32_t valid;
 } GameServerWeaponTemplateInfo;
 
 #ifdef __cplusplus

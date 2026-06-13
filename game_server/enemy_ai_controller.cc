@@ -118,7 +118,7 @@ std::vector<EnemyAiTarget> query_players(KernelHandle* kernel) {
     std::vector<EnemyAiTarget> players;
     players.reserve(count);
     for (std::uint32_t index = 0; index < count; ++index) {
-        if (!states[index].valid) {
+        if (states[index].valid == 0u) {
             continue;
         }
         players.push_back(EnemyAiTarget{states[index].net_id, states[index].position});
@@ -377,7 +377,8 @@ void EnemyAIController::tick(
     for (Enemy& enemy : *enemies) {
         KernelServerEntityState state{};
         state.struct_size = sizeof(KernelServerEntityState);
-        if (!Kernel_ServerGetEntityState(kernel, enemy.net_id, &state) || !state.valid) {
+        if (!Kernel_ServerGetEntityState(kernel, enemy.net_id, &state) ||
+            state.valid == 0u) {
             continue;
         }
 

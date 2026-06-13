@@ -1,0 +1,11 @@
+id: 8
+name: rocket_explosion
+kind: area_effect
+collider_template: explosion_damage
+lifetime_ticks: 45
+damage_behavior:
+  type: area_interval
+  damage_per_interval: 45
+  damage_interval_ticks: 45
+  falloff: linear
+collision_mask: damageable

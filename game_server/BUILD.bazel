@@ -7,6 +7,7 @@ filegroup(
     srcs = glob([
         "actor_templates/*.yaml",
         "collider_templates/*.yaml",
+        "projectile_templates/*.yaml",
         "weapon_templates/*.yaml",
     ]) + [
         "gameplay_catalog.yaml",
@@ -43,8 +44,10 @@ cc_test(
     data = glob([
         "actor_templates/*.yaml",
         "collider_templates/*.yaml",
+        "projectile_templates/*.yaml",
         "weapon_templates/*.yaml",
     ]) + [
+        "//game_server/gameplay_catalog_bundle:bundle",
         "gameplay_catalog.yaml",
     ],
     deps = [
@@ -59,6 +62,7 @@ cc_test(
     data = glob([
         "actor_templates/*.yaml",
         "collider_templates/*.yaml",
+        "projectile_templates/*.yaml",
         "weapon_templates/*.yaml",
     ]) + [
         "gameplay_catalog.yaml",
@@ -102,6 +106,7 @@ cc_test(
     data = glob([
         "actor_templates/*.yaml",
         "collider_templates/*.yaml",
+        "projectile_templates/*.yaml",
         "weapon_templates/*.yaml",
     ]) + [
         "gameplay_catalog.yaml",
@@ -118,6 +123,7 @@ cc_test(
     data = glob([
         "actor_templates/*.yaml",
         "collider_templates/*.yaml",
+        "projectile_templates/*.yaml",
         "weapon_templates/*.yaml",
     ]) + [
         "gameplay_catalog.yaml",

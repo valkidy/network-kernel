@@ -247,6 +247,9 @@ private:
     PeerSession* find_session(PeerId peer);
     const PeerSession* find_session(PeerId peer) const;
     void remove_session(PeerId peer);
+    void materialize_entity_collider(NetId net_id);
+    void materialize_projectile_collider(NetId net_id);
+    void sync_entity_colliders_from_world();
 
     KernelConfig config_;
     TickLoop tick_loop_;
