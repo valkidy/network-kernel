@@ -12,6 +12,7 @@
 namespace network_example {
 
 inline constexpr std::uint32_t kSnapshotStateFlagHpUnknown = 1u << 0;
+inline constexpr std::uint32_t kSnapshotStateFlagProjectileHybridCorrection = 1u << 1;
 
 struct SnapshotHeader {
     std::uint32_t server_tick = 0;

@@ -116,6 +116,12 @@ entities as active, predicted, or stale. Out-of-range/despawn/destroy
 notifications are delivered through the dedicated lifecycle event queue so
 presentation callers do not infer lifecycle from a missing or stale snapshot.
 
+Snapshot schema version 6 refines the v2 sectioned snapshot payload. Actor
+records cover player, enemy, and future AI bot entities with optional owner,
+rotation, and hp fields. Projectile records split into compact snapshots and
+hybrid-correction snapshots; projectile rotation is omitted from the wire and
+derived from velocity for render state reconstruction.
+
 The current projectile interaction foundation is internal C++ engine state. It
 does not add Kernel C ABI functions, does not change public struct layout, and
 does not require an ABI version bump beyond v12.

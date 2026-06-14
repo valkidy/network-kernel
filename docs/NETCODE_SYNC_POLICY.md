@@ -86,7 +86,23 @@ They use snapshot interpolation:
 ```
 
 This applies to remote players, enemies, and remote projectiles that are
-replicated through snapshot sections.
+replicated through snapshot sections. Snapshot sections are byte-budgeted by
+encoded size, not by entity count:
+
+```text
+Actor:
+    player, enemy, and future AI bot render state
+    entity_type identifies the actor kind
+    hp/max_hp is optional and omitted actors decode as HpUnknown
+
+ProjectileCompact:
+    net_id + position + velocity + state + flags
+    used for server_snapshot_only projectile render interpolation
+
+ProjectileHybridCorrection:
+    compact projectile fields + owner_peer + spawn_tick + client_action_id
+    used when snapshot data corrects a predicted deterministic projectile
+```
 
 Remote deterministic projectiles may also be event-spawned and rendered by
 deterministic local presentation simulation from spawn metadata. In that mode,
@@ -132,7 +148,7 @@ Option A:
     end presentation from lifetime/despawn.
 
 Option B:
-    receive compact low-frequency projectile snapshots,
+    receive compact or hybrid-correction projectile snapshots,
     render from the delayed interpolation timeline.
 ```
 

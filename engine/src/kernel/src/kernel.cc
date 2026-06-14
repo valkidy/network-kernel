@@ -3191,12 +3191,57 @@ WorldSnapshot KernelEngine::build_snapshot_send_set(
         return send_snapshot;
     }
 
+    const auto prepare_send_entity =
+        [&](const EntitySnapshot& entity) -> std::optional<EntitySnapshot> {
+            EntitySnapshot send_entity = entity;
+            if (entity.type != EntityType::kProjectile) {
+                return send_entity;
+            }
+
+            std::uint8_t sync_mode =
+                KernelProjectileSyncMode_HybridDeterministicThenSnapshot;
+            const std::optional<entt::entity> world_entity =
+                world_.find_entity(entity.net_id);
+            if (!world_entity.has_value()) {
+                return send_entity;
+            }
+            if (world_.registry().all_of<HomingState>(*world_entity)) {
+                sync_mode = to_kernel_projectile_sync_mode(
+                    world_.registry().get<HomingState>(*world_entity).sync_mode);
+            } else if (world_.registry().all_of<ProjectileState>(*world_entity)) {
+                const ProjectileState& projectile =
+                    world_.registry().get<ProjectileState>(*world_entity);
+                if (const KernelProjectileTemplateDefinition* projectile_template =
+                        find_projectile_template(
+                            projectile_templates_,
+                            projectile.projectile_template_id)) {
+                    sync_mode = projectile_template->sync_mode;
+                }
+            }
+
+            if (sync_mode == KernelProjectileSyncMode_LocalPredictedDeterministic) {
+                return std::nullopt;
+            }
+            if (sync_mode == KernelProjectileSyncMode_HybridDeterministicThenSnapshot) {
+                send_entity.state_flags |=
+                    kSnapshotStateFlagProjectileHybridCorrection;
+            } else {
+                send_entity.state_flags &=
+                    ~kSnapshotStateFlagProjectileHybridCorrection;
+            }
+            return send_entity;
+        };
+
     const auto try_add_entity = [&](const EntitySnapshot& entity) -> bool {
-        const std::size_t entity_size = estimate_snapshot_entity_size(entity.type);
+        const std::optional<EntitySnapshot> send_entity = prepare_send_entity(entity);
+        if (!send_entity.has_value()) {
+            return false;
+        }
+        const std::size_t entity_size = estimate_snapshot_entity_size(*send_entity);
         if (estimated_size + entity_size > byte_budget) {
             return false;
         }
-        send_snapshot.entities.push_back(entity);
+        send_snapshot.entities.push_back(*send_entity);
         estimated_size += entity_size;
         return true;
     };

@@ -1,7 +1,12 @@
 #include "protocol/public/network_packets.h"
 
+#include <algorithm>
 #include <cstddef>
+#include <cmath>
 #include <utility>
+
+#include <glm/geometric.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include "protocol/src/packet_codec.h"
 
@@ -11,10 +16,13 @@ namespace {
 constexpr std::size_t kInputPayloadSize = 45;
 constexpr std::size_t kSnapshotHeaderPayloadSize = 16;
 constexpr std::size_t kSnapshotSectionHeaderPayloadSize = 4;
-constexpr std::size_t kPlayerSnapshotPayloadSize = 58;
-constexpr std::size_t kEnemySnapshotPayloadSize = 34;
-constexpr std::size_t kProjectileSnapshotPayloadSize = 62;
-constexpr std::size_t kGenericSnapshotPayloadSize = 60;
+constexpr std::size_t kActorSnapshotBasePayloadSize = 38;
+constexpr std::size_t kActorOwnerPeerPayloadSize = 4;
+constexpr std::size_t kActorRotationPayloadSize = 16;
+constexpr std::size_t kActorHealthPayloadSize = 4;
+constexpr std::size_t kProjectileCompactSnapshotPayloadSize = 34;
+constexpr std::size_t kProjectileHybridCorrectionSnapshotPayloadSize = 46;
+constexpr std::size_t kGenericSnapshotPayloadSize = 44;
 constexpr std::size_t kReliableEventPayloadSize = 34;
 constexpr std::size_t kEntitySpawnPayloadSize = 42;
 constexpr std::size_t kEntityDespawnPayloadSize = 12;
@@ -23,23 +31,78 @@ constexpr std::size_t kProjectileSpawnGroupHeaderPayloadSize = 8;
 constexpr std::size_t kProjectileSpawnRecordPayloadSize = 40;
 
 enum class SnapshotSectionType : std::uint16_t {
-    kPlayer = 1,
-    kEnemy = 2,
-    kProjectile = 3,
+    kActor = 1,
+    kProjectileCompact = 2,
+    kProjectileHybridCorrection = 3,
     kGeneric = 4,
 };
 
-SnapshotSectionType snapshot_section_type(EntityType type) {
-    switch (type) {
-        case EntityType::kPlayer:
-            return SnapshotSectionType::kPlayer;
-        case EntityType::kEnemy:
-            return SnapshotSectionType::kEnemy;
-        case EntityType::kProjectile:
-            return SnapshotSectionType::kProjectile;
-        default:
-            return SnapshotSectionType::kGeneric;
+enum ActorSnapshotRecordFlag : std::uint16_t {
+    kActorSnapshotHasOwnerPeer = 1u << 0,
+    kActorSnapshotHasRotation = 1u << 1,
+    kActorSnapshotHasHealth = 1u << 2,
+};
+
+bool is_actor_entity_type(EntityType type) {
+    return type == EntityType::kPlayer || type == EntityType::kEnemy;
+}
+
+std::uint16_t actor_record_flags(const EntitySnapshot& entity) {
+    std::uint16_t flags = 0;
+    if (entity.type == EntityType::kPlayer) {
+        flags |= kActorSnapshotHasOwnerPeer;
+        flags |= kActorSnapshotHasRotation;
+        if ((entity.state_flags & kSnapshotStateFlagHpUnknown) == 0u) {
+            flags |= kActorSnapshotHasHealth;
+        }
     }
+    return flags;
+}
+
+bool is_hybrid_correction_projectile(const EntitySnapshot& entity) {
+    return entity.type == EntityType::kProjectile &&
+           (entity.state_flags & kSnapshotStateFlagProjectileHybridCorrection) != 0u;
+}
+
+glm::quat projectile_rotation_from_velocity(const glm::vec3& velocity) {
+    const float speed = glm::length(velocity);
+    if (speed <= 0.001f) {
+        return glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+    }
+    const glm::vec3 from{1.0f, 0.0f, 0.0f};
+    const glm::vec3 to = velocity / speed;
+    const float dot = std::clamp(glm::dot(from, to), -1.0f, 1.0f);
+    if (dot > 0.999f) {
+        return glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+    }
+    if (dot < -0.999f) {
+        return glm::quat{0.0f, 0.0f, 1.0f, 0.0f};
+    }
+    const glm::vec3 axis = glm::normalize(glm::cross(from, to));
+    return glm::angleAxis(std::acos(dot), axis);
+}
+
+SnapshotSectionType snapshot_section_type(EntityType type) {
+    if (is_actor_entity_type(type)) {
+        return SnapshotSectionType::kActor;
+    }
+    if (type == EntityType::kProjectile) {
+        return SnapshotSectionType::kProjectileCompact;
+    }
+    return SnapshotSectionType::kGeneric;
+}
+
+SnapshotSectionType snapshot_section_type(const EntitySnapshot& entity) {
+    if (is_actor_entity_type(entity.type)) {
+        return SnapshotSectionType::kActor;
+    }
+    if (is_hybrid_correction_projectile(entity)) {
+        return SnapshotSectionType::kProjectileHybridCorrection;
+    }
+    if (entity.type == EntityType::kProjectile) {
+        return SnapshotSectionType::kProjectileCompact;
+    }
+    return SnapshotSectionType::kGeneric;
 }
 
 std::vector<const EntitySnapshot*> section_entities(
@@ -47,7 +110,7 @@ std::vector<const EntitySnapshot*> section_entities(
     SnapshotSectionType section_type) {
     std::vector<const EntitySnapshot*> entities;
     for (const EntitySnapshot& entity : snapshot.entities) {
-        if (snapshot_section_type(entity.type) == section_type) {
+        if (snapshot_section_type(entity) == section_type) {
             entities.push_back(&entity);
         }
     }
@@ -129,9 +192,9 @@ std::vector<std::uint8_t> encode_snapshot_packet(
     payload.write_u16(0);
 
     for (const SnapshotSectionType section_type : {
-             SnapshotSectionType::kPlayer,
-             SnapshotSectionType::kEnemy,
-             SnapshotSectionType::kProjectile,
+             SnapshotSectionType::kActor,
+             SnapshotSectionType::kProjectileCompact,
+             SnapshotSectionType::kProjectileHybridCorrection,
              SnapshotSectionType::kGeneric,
          }) {
         const std::vector<const EntitySnapshot*> entities =
@@ -141,26 +204,35 @@ std::vector<std::uint8_t> encode_snapshot_packet(
         for (const EntitySnapshot* entity : entities) {
             payload.write_u32(entity->net_id);
             switch (section_type) {
-                case SnapshotSectionType::kPlayer:
-                    payload.write_u32(entity->owner_peer);
-                    payload.write_vec3(entity->position);
-                    payload.write_quat(entity->rotation);
-                    payload.write_vec3(entity->velocity);
-                    payload.write_u16(entity->hp);
-                    payload.write_u16(entity->max_hp);
-                    payload.write_u16(entity->state);
-                    payload.write_u32(entity->flags);
-                    break;
-                case SnapshotSectionType::kEnemy:
+                case SnapshotSectionType::kActor: {
+                    const std::uint16_t record_flags = actor_record_flags(*entity);
+                    payload.write_u16(static_cast<std::uint16_t>(entity->type));
+                    payload.write_u16(record_flags);
                     payload.write_vec3(entity->position);
                     payload.write_vec3(entity->velocity);
                     payload.write_u16(entity->state);
                     payload.write_u32(entity->flags);
+                    if ((record_flags & kActorSnapshotHasOwnerPeer) != 0u) {
+                        payload.write_u32(entity->owner_peer);
+                    }
+                    if ((record_flags & kActorSnapshotHasRotation) != 0u) {
+                        payload.write_quat(entity->rotation);
+                    }
+                    if ((record_flags & kActorSnapshotHasHealth) != 0u) {
+                        payload.write_u16(entity->hp);
+                        payload.write_u16(entity->max_hp);
+                    }
                     break;
-                case SnapshotSectionType::kProjectile:
+                }
+                case SnapshotSectionType::kProjectileCompact:
+                    payload.write_vec3(entity->position);
+                    payload.write_vec3(entity->velocity);
+                    payload.write_u16(entity->state);
+                    payload.write_u32(entity->flags);
+                    break;
+                case SnapshotSectionType::kProjectileHybridCorrection:
                     payload.write_u32(entity->owner_peer);
                     payload.write_vec3(entity->position);
-                    payload.write_quat(entity->rotation);
                     payload.write_vec3(entity->velocity);
                     payload.write_u16(entity->state);
                     payload.write_u32(entity->flags);
@@ -234,21 +306,38 @@ bool decode_snapshot_packet(
                 return false;
             }
             switch (section_type) {
-                case SnapshotSectionType::kPlayer:
-                    entity.type = EntityType::kPlayer;
-                    if (!reader.read_u32(&entity.owner_peer) ||
+                case SnapshotSectionType::kActor: {
+                    std::uint16_t entity_type = 0;
+                    std::uint16_t record_flags = 0;
+                    if (!reader.read_u16(&entity_type) ||
+                        !reader.read_u16(&record_flags) ||
                         !reader.read_vec3(&entity.position) ||
-                        !reader.read_quat(&entity.rotation) ||
                         !reader.read_vec3(&entity.velocity) ||
-                        !reader.read_u16(&entity.hp) ||
-                        !reader.read_u16(&entity.max_hp) ||
                         !reader.read_u16(&entity.state) ||
                         !reader.read_u32(&entity.flags)) {
                         return false;
                     }
+                    entity.type = static_cast<EntityType>(entity_type);
+                    if ((record_flags & kActorSnapshotHasOwnerPeer) != 0u &&
+                        !reader.read_u32(&entity.owner_peer)) {
+                        return false;
+                    }
+                    if ((record_flags & kActorSnapshotHasRotation) != 0u &&
+                        !reader.read_quat(&entity.rotation)) {
+                        return false;
+                    }
+                    if ((record_flags & kActorSnapshotHasHealth) != 0u) {
+                        if (!reader.read_u16(&entity.hp) ||
+                            !reader.read_u16(&entity.max_hp)) {
+                            return false;
+                        }
+                    } else {
+                        entity.state_flags |= kSnapshotStateFlagHpUnknown;
+                    }
                     break;
-                case SnapshotSectionType::kEnemy:
-                    entity.type = EntityType::kEnemy;
+                }
+                case SnapshotSectionType::kProjectileCompact:
+                    entity.type = EntityType::kProjectile;
                     entity.state_flags |= kSnapshotStateFlagHpUnknown;
                     if (!reader.read_vec3(&entity.position) ||
                         !reader.read_vec3(&entity.velocity) ||
@@ -256,13 +345,14 @@ bool decode_snapshot_packet(
                         !reader.read_u32(&entity.flags)) {
                         return false;
                     }
+                    entity.rotation = projectile_rotation_from_velocity(entity.velocity);
                     break;
-                case SnapshotSectionType::kProjectile:
+                case SnapshotSectionType::kProjectileHybridCorrection:
                     entity.type = EntityType::kProjectile;
                     entity.state_flags |= kSnapshotStateFlagHpUnknown;
+                    entity.state_flags |= kSnapshotStateFlagProjectileHybridCorrection;
                     if (!reader.read_u32(&entity.owner_peer) ||
                         !reader.read_vec3(&entity.position) ||
-                        !reader.read_quat(&entity.rotation) ||
                         !reader.read_vec3(&entity.velocity) ||
                         !reader.read_u16(&entity.state) ||
                         !reader.read_u32(&entity.flags) ||
@@ -270,6 +360,7 @@ bool decode_snapshot_packet(
                         !reader.read_u32(&entity.client_action_id)) {
                         return false;
                     }
+                    entity.rotation = projectile_rotation_from_velocity(entity.velocity);
                     break;
                 case SnapshotSectionType::kGeneric: {
                     std::uint16_t entity_type = 0;
@@ -308,11 +399,37 @@ std::size_t estimate_snapshot_base_packet_size() {
 std::size_t estimate_snapshot_entity_size(EntityType type) {
     switch (type) {
         case EntityType::kPlayer:
-            return kPlayerSnapshotPayloadSize;
+            return kActorSnapshotBasePayloadSize +
+                   kActorOwnerPeerPayloadSize +
+                   kActorRotationPayloadSize +
+                   kActorHealthPayloadSize;
         case EntityType::kEnemy:
-            return kEnemySnapshotPayloadSize;
+            return kActorSnapshotBasePayloadSize;
         case EntityType::kProjectile:
-            return kProjectileSnapshotPayloadSize;
+            return kProjectileCompactSnapshotPayloadSize;
+        default:
+            return kGenericSnapshotPayloadSize;
+    }
+}
+
+std::size_t estimate_snapshot_entity_size(const EntitySnapshot& entity) {
+    switch (snapshot_section_type(entity)) {
+        case SnapshotSectionType::kActor:
+            return kActorSnapshotBasePayloadSize +
+                   ((actor_record_flags(entity) & kActorSnapshotHasOwnerPeer) != 0u
+                        ? kActorOwnerPeerPayloadSize
+                        : 0u) +
+                   ((actor_record_flags(entity) & kActorSnapshotHasRotation) != 0u
+                        ? kActorRotationPayloadSize
+                        : 0u) +
+                   ((actor_record_flags(entity) & kActorSnapshotHasHealth) != 0u
+                        ? kActorHealthPayloadSize
+                        : 0u);
+        case SnapshotSectionType::kProjectileCompact:
+            return kProjectileCompactSnapshotPayloadSize;
+        case SnapshotSectionType::kProjectileHybridCorrection:
+            return kProjectileHybridCorrectionSnapshotPayloadSize;
+        case SnapshotSectionType::kGeneric:
         default:
             return kGenericSnapshotPayloadSize;
     }
@@ -321,7 +438,7 @@ std::size_t estimate_snapshot_entity_size(EntityType type) {
 std::size_t estimate_snapshot_packet_size(const WorldSnapshot& snapshot) {
     std::size_t size = estimate_snapshot_base_packet_size();
     for (const EntitySnapshot& entity : snapshot.entities) {
-        size += estimate_snapshot_entity_size(entity.type);
+        size += estimate_snapshot_entity_size(entity);
     }
     return size;
 }
