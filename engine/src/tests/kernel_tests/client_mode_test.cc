@@ -1095,6 +1095,69 @@ void projectile_spawn_batch_renders_and_binds_to_snapshot() {
     require(benchmark_stats.hybrid_correction_cost_us > 0);
 }
 
+void projectile_spawn_event_and_batch_do_not_duplicate_render_state() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+    KernelProjectileTemplateDefinition projectile_template{};
+    projectile_template.struct_size = sizeof(projectile_template);
+    projectile_template.projectile_template_id = 3;
+    projectile_template.weapon_id = 3;
+    projectile_template.motion_model = KernelProjectileMotionModel_Linear;
+    projectile_template.sync_mode =
+        KernelProjectileSyncMode_LocalPredictedDeterministic;
+    projectile_template.speed = 30.0f;
+    projectile_template.lifetime_seconds = 2.0f;
+    projectile_template.collider_template_id = 10;
+    KernelColliderTemplateDefinition collider_template = projectile_collider_template();
+    KernelGameplayCatalogDefinition catalog{};
+    catalog.struct_size = sizeof(catalog);
+    catalog.catalog_version = 9;
+    catalog.catalog_hash = 0x9999ull;
+    catalog.projectile_templates = &projectile_template;
+    catalog.projectile_template_count = 1;
+    catalog.collider_templates = &collider_template;
+    catalog.collider_template_count = 1;
+    require(client.load_gameplay_catalog(catalog));
+
+    client.handle_client_spawn(network_example::EntitySpawnPacket{
+        101,
+        network_example::EntityType::kProjectile,
+        7,
+        3,
+        glm::vec3{1.0f, 0.0f, 0.0f},
+        glm::quat{1.0f, 0.0f, 0.0f, 0.0f},
+    });
+
+    network_example::ProjectileSpawnBatchPacket batch{};
+    batch.server_tick = 3;
+    batch.server_time_us = 100000;
+    batch.catalog_hash = 0x9999ull;
+    network_example::ProjectileSpawnGroup group{};
+    group.projectile_template_id = 3;
+    group.records.push_back(network_example::ProjectileSpawnRecord{
+        101,
+        11,
+        7,
+        1234,
+        glm::vec3{1.0f, 0.0f, 0.0f},
+        glm::vec3{30.0f, 0.0f, 0.0f},
+    });
+    batch.groups.push_back(group);
+    client.handle_client_projectile_spawn_batch(batch);
+
+    std::array<RenderEntityState, 4> states{};
+    std::uint32_t count =
+        client.get_render_states_at_time(100000, states.data(), states.size());
+    require(count == 1);
+    require(states[0].net_id == 101);
+    require(states[0].status == RenderEntityStatus_Predicted);
+}
+
 void client_despawn_removes_predicted_projectile() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
@@ -1260,6 +1323,47 @@ void predicted_projectile_lifetime_cleanup_removes_batch_projectile() {
     require(client.predicted_projectiles_.empty());
 }
 
+void client_update_advances_local_predicted_deterministic_projectile() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+
+    network_example::KernelEngine::PredictedProjectile projectile;
+    projectile.entity_id = 9000;
+    projectile.net_id = 101;
+    projectile.owner_peer = 7;
+    projectile.client_action_id = 1234;
+    projectile.position = glm::vec3{1.0f, 0.0f, 0.0f};
+    projectile.velocity = glm::vec3{30.0f, 0.0f, 0.0f};
+    projectile.spawn_position = projectile.position;
+    projectile.initial_velocity = projectile.velocity;
+    projectile.motion_model = network_example::ProjectileMotionModel::kLinear;
+    projectile.max_lifetime_seconds = 2.0f;
+    projectile.sync_mode = KernelProjectileSyncMode_LocalPredictedDeterministic;
+    projectile.bound = true;
+    client.predicted_projectiles_.push_back(projectile);
+
+    std::array<RenderEntityState, 4> states{};
+    std::uint32_t count =
+        client.get_render_states_at_time(0, states.data(), states.size());
+    require(count == 1);
+    require(states[0].position.x > 0.99f);
+    require(states[0].position.x < 1.01f);
+
+    client.update(1.0f / 30.0f);
+
+    count = client.get_render_states_at_time(33333, states.data(), states.size());
+    require(count == 1);
+    require(states[0].status == RenderEntityStatus_Predicted);
+    require(states[0].net_id == 101);
+    require(states[0].position.x > 1.99f);
+    require(states[0].position.x < 2.01f);
+}
+
 void default_kernel_config_uses_larger_render_state_cap() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
@@ -1373,11 +1477,13 @@ int main() {
     server_rejects_mismatched_snapshot_schema_before_welcome();
     server_validates_catalog_hash_before_welcome();
     projectile_spawn_batch_renders_and_binds_to_snapshot();
+    projectile_spawn_event_and_batch_do_not_duplicate_render_state();
     client_despawn_removes_predicted_projectile();
     budget_omitted_projectile_snapshot_does_not_delete_bound_prediction();
     destroyed_tombstone_blocks_older_snapshot_render();
     stale_render_state_marks_status_and_hp_unknown();
     predicted_projectile_lifetime_cleanup_removes_batch_projectile();
+    client_update_advances_local_predicted_deterministic_projectile();
     default_kernel_config_uses_larger_render_state_cap();
     render_state_overflow_reports_error_event();
     hit_debug_records_filter_and_drain();
