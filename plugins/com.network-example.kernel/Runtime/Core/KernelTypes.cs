@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 17;
+        public const uint AbiVersion = 18;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int GameplayCatalogLoadPathSize = 128;
@@ -77,6 +77,7 @@ namespace NetworkExample.Kernel
         public const ulong CapabilityColliderShapeQuery = 0x0000000040000000UL;
         public const ulong CapabilityBenchmarkStats = 0x0000000080000000UL;
         public const ulong CapabilityNetworkStats = 0x0000000100000000UL;
+        public const ulong CapabilityEntityLifecycleEvents = 0x0000000200000000UL;
 
         public const uint CollisionLayerPlayer = 0x00000001U;
         public const uint CollisionLayerEnemy = 0x00000002U;
@@ -87,12 +88,13 @@ namespace NetworkExample.Kernel
         public const uint VisualFlagMoving = 0x00000001U;
         public const uint VisualFlagReloading = 0x00000002U;
         public const uint VisualFlagDead = 0x00000004U;
+        public const uint VisualFlagHpUnknown = 0x00000008U;
     }
 
     public static class NetworkKernelPackageInfo
     {
         public const string Name = "com.network-example.kernel";
-        public const string Version = "0.6.5";
+        public const string Version = "0.6.6";
     }
 
     public enum KernelMode
@@ -123,6 +125,20 @@ namespace NetworkExample.Kernel
         Destroyed = 0,
         OutOfRange = 1,
         Disconnected = 2,
+    }
+
+    public enum RenderEntityStatus : uint
+    {
+        Active = 0,
+        Predicted = 1,
+        Stale = 2,
+    }
+
+    public enum KernelEntityLifecycleEventType
+    {
+        OutOfRange = 0,
+        Despawned = 1,
+        Destroyed = 2,
     }
 
     public enum KernelEntityType : ushort
@@ -463,6 +479,7 @@ namespace NetworkExample.Kernel
         public uint visual_flags;
         public uint spawn_tick;
         public uint client_action_id;
+        public RenderEntityStatus status;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -944,5 +961,16 @@ namespace NetworkExample.Kernel
         public uint code;
         public ulong event_time_us;
         public ulong presentation_time_us;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelEntityLifecycleEvent
+    {
+        public KernelEntityLifecycleEventType type;
+        public uint tick;
+        public uint net_id;
+        public KernelDespawnReason reason;
+        public KernelEntityType entity_type;
+        public uint owner_peer;
     }
 }

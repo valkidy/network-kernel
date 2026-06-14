@@ -1,3 +1,8 @@
+0.6.6 release notes:
+
+- updates managed bindings for kernel ABI v18
+
+
 0.6.5 release notes:
 
 - updates native plugins

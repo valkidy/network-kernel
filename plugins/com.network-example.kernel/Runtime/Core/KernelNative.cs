@@ -119,6 +119,12 @@ namespace NetworkExample.Kernel
             uint maxEvents);
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint Kernel_PollEntityLifecycleEvents(
+            IntPtr kernel,
+            [Out] KernelEntityLifecycleEvent[] outEvents,
+            uint maxEvents);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)]
         internal static extern bool Kernel_GetBenchmarkStats(
             IntPtr kernel,

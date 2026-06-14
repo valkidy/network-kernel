@@ -131,6 +131,10 @@ namespace NetworkExample.Kernel
                 info,
                 KernelConstants.CapabilityNetworkStats,
                 "Kernel network stats capability is missing.");
+            RequireCapability(
+                info,
+                KernelConstants.CapabilityEntityLifecycleEvents,
+                "Kernel entity lifecycle event capability is missing.");
 
             RequireSize(nameof(KernelAbiInfo), info.struct_size, Marshal.SizeOf<KernelAbiInfo>());
             RequireSize(nameof(KernelConfig), info.kernel_config_size, Marshal.SizeOf<KernelConfig>());

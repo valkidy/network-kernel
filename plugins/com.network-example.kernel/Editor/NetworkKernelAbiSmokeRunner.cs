@@ -16,6 +16,14 @@ namespace NetworkExample.Kernel.Editor
         {
             KernelAbi.ValidateNativeAbi();
             GameServerAbi.ValidateNativeAbi();
+            KernelAbiInfo info = KernelAbi.GetInfo();
+            Require(KernelConstants.AbiVersion == 18, "Managed kernel ABI version was not v18.");
+            Require(
+                (info.capability_flags & KernelConstants.CapabilityEntityLifecycleEvents) != 0,
+                "Kernel lifecycle event capability was missing.");
+            Require(
+                (KernelConstants.VisualFlagHpUnknown & KernelConstants.VisualFlagDead) == 0,
+                "Kernel HpUnknown visual flag overlapped Dead.");
             RequireLANDiscovery();
 
             using (var kernel = new Kernel(KernelConfig.CreateDefault(KernelMode.ListenServer)))
@@ -71,7 +79,7 @@ namespace NetworkExample.Kernel.Editor
                 kernel.Update(0.0f);
                 Require(kernel.GetRenderStates(states) > 0, "Kernel_GetRenderStates returned no states.");
                 Require(
-                    HasRenderEntityMaxHealth(states, enemyNetId, 240),
+                    HasActiveRenderEntityMaxHealth(states, enemyNetId, 240),
                     "Kernel_GetRenderStates missed enemy health.");
                 Require(
                     kernel.GetRenderStatesAtTime(33333, states) > 0,
@@ -84,6 +92,7 @@ namespace NetworkExample.Kernel.Editor
                 Require(
                     kernel.ServerDestroyEntity(enemyNetId, KernelDespawnReason.Destroyed),
                     "Kernel_ServerDestroyEntity failed.");
+                RequireDestroyedLifecycleEvent(kernel, enemyNetId, KernelEntityType.Enemy);
             }
 
             using (var host = new NetworkHost())
@@ -106,7 +115,7 @@ namespace NetworkExample.Kernel.Editor
                     "NetworkHost GameServer homing template query failed.");
             }
 
-            Debug.Log("Network kernel ABI 15 smoke passed.");
+            Debug.Log("Network kernel ABI 18 smoke passed.");
         }
 
         private static void RequireLANDiscovery()
@@ -453,7 +462,7 @@ namespace NetworkExample.Kernel.Editor
             throw new InvalidOperationException("Expected spawned entity was not observed.");
         }
 
-        private static bool HasRenderEntityMaxHealth(
+        private static bool HasActiveRenderEntityMaxHealth(
             RenderEntityState[] states,
             uint netId,
             ushort maxHp)
@@ -462,11 +471,34 @@ namespace NetworkExample.Kernel.Editor
             {
                 if (states[index].net_id == netId)
                 {
-                    return states[index].max_hp == maxHp && states[index].hp <= maxHp;
+                    return states[index].max_hp == maxHp &&
+                        states[index].hp <= maxHp &&
+                        states[index].status == RenderEntityStatus.Active;
                 }
             }
 
             return false;
+        }
+
+        private static void RequireDestroyedLifecycleEvent(
+            Kernel kernel,
+            uint netId,
+            KernelEntityType entityType)
+        {
+            var events = new KernelEntityLifecycleEvent[32];
+            uint eventCount = kernel.PollEntityLifecycleEvents(events);
+            for (int index = 0; index < Math.Min(events.Length, (int)eventCount); ++index)
+            {
+                if (events[index].net_id == netId &&
+                    events[index].type == KernelEntityLifecycleEventType.Destroyed &&
+                    events[index].reason == KernelDespawnReason.Destroyed &&
+                    events[index].entity_type == entityType)
+                {
+                    return;
+                }
+            }
+
+            throw new InvalidOperationException("Kernel_PollEntityLifecycleEvents missed destroyed entity.");
         }
 
         private static void Require(bool condition, string message)

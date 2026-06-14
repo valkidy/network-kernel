@@ -29,6 +29,13 @@ public static class NetworkKernelManagedAbiSmoke
         KernelAbiInfo info = KernelAbi.GetInfo();
         KernelBuildInfo buildInfo = KernelAbi.GetBuildInfo();
         GameServerAbiInfo gameServerInfo = GameServerAbi.GetInfo();
+        Require(KernelConstants.AbiVersion == 18, "Managed kernel ABI version was not v18.");
+        Require(
+            (info.capability_flags & KernelConstants.CapabilityEntityLifecycleEvents) != 0,
+            "Kernel lifecycle event capability was missing.");
+        Require(
+            (KernelConstants.VisualFlagHpUnknown & KernelConstants.VisualFlagDead) == 0,
+            "Kernel HpUnknown visual flag overlapped Dead.");
         Require(buildInfo.struct_size != 0, "Kernel_GetBuildInfo returned empty struct size.");
         Require(!string.IsNullOrEmpty(buildInfo.module_version), "Kernel_GetBuildInfo module version was empty.");
         Require(!string.IsNullOrEmpty(buildInfo.git_commit), "Kernel_GetBuildInfo git commit was empty.");
@@ -82,7 +89,7 @@ public static class NetworkKernelManagedAbiSmoke
             kernel.Update(0.0f);
             Require(kernel.GetRenderStates(states) > 0, "Kernel_GetRenderStates returned no states.");
             Require(
-                HasRenderEntityMaxHealth(states, enemyNetId, 240),
+                HasActiveRenderEntityMaxHealth(states, enemyNetId, 240),
                 "Kernel_GetRenderStates missed enemy health.");
             Require(
                 kernel.GetRenderStatesAtTime(33333, states) > 0,
@@ -95,6 +102,7 @@ public static class NetworkKernelManagedAbiSmoke
             Require(
                 kernel.ServerDestroyEntity(enemyNetId, KernelDespawnReason.Destroyed),
                 "Kernel_ServerDestroyEntity failed.");
+            RequireDestroyedLifecycleEvent(kernel, enemyNetId, KernelEntityType.Enemy);
         }
 
         using (var host = new NetworkHost())
@@ -470,7 +478,7 @@ public static class NetworkKernelManagedAbiSmoke
         throw new InvalidOperationException("Expected spawned entity was not observed.");
     }
 
-    private static bool HasRenderEntityMaxHealth(
+    private static bool HasActiveRenderEntityMaxHealth(
         RenderEntityState[] states,
         uint netId,
         ushort maxHp)
@@ -479,11 +487,34 @@ public static class NetworkKernelManagedAbiSmoke
         {
             if (states[index].net_id == netId)
             {
-                return states[index].max_hp == maxHp && states[index].hp <= maxHp;
+                return states[index].max_hp == maxHp &&
+                    states[index].hp <= maxHp &&
+                    states[index].status == RenderEntityStatus.Active;
             }
         }
 
         return false;
+    }
+
+    private static void RequireDestroyedLifecycleEvent(
+        Kernel kernel,
+        uint netId,
+        KernelEntityType entityType)
+    {
+        var events = new KernelEntityLifecycleEvent[32];
+        uint eventCount = kernel.PollEntityLifecycleEvents(events);
+        for (int index = 0; index < Math.Min(events.Length, (int)eventCount); ++index)
+        {
+            if (events[index].net_id == netId &&
+                events[index].type == KernelEntityLifecycleEventType.Destroyed &&
+                events[index].reason == KernelDespawnReason.Destroyed &&
+                events[index].entity_type == entityType)
+            {
+                return;
+            }
+        }
+
+        throw new InvalidOperationException("Kernel_PollEntityLifecycleEvents missed destroyed entity.");
     }
 
     private static void Require(bool condition, string message)

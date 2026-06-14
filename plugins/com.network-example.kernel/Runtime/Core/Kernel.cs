@@ -160,6 +160,20 @@ namespace NetworkExample.Kernel
             return KernelNative.Kernel_PollEvents(handle, events, (uint)events.Length);
         }
 
+        public uint PollEntityLifecycleEvents(KernelEntityLifecycleEvent[] events)
+        {
+            ThrowIfDisposed();
+            if (events == null || events.Length == 0)
+            {
+                return 0;
+            }
+
+            return KernelNative.Kernel_PollEntityLifecycleEvents(
+                handle,
+                events,
+                (uint)events.Length);
+        }
+
         public bool TryGetBenchmarkStats(out KernelBenchmarkStats stats)
         {
             ThrowIfDisposed();
