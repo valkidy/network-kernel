@@ -1,5 +1,10 @@
 0.6.6 release notes:
 
+- fixes projectile render state duplication
+
+
+0.6.6 release notes:
+
 - updates managed bindings for kernel ABI v18
 
 
