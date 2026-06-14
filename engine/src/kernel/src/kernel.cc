@@ -3538,6 +3538,11 @@ void KernelEngine::rebuild_render_states_from_snapshot(
         tick_time_us(snapshot.header.server_tick, tick_loop_.fixed_delta_seconds());
     has_client_render_time_ = true;
     std::unordered_set<NetId> rendered_entities;
+    for (const PredictedProjectile& projectile : predicted_projectiles_) {
+        if (projectile.net_id != 0) {
+            rendered_entities.insert(projectile.net_id);
+        }
+    }
     for (const EntitySnapshot& entity : snapshot.entities) {
         if (has_predicted_local_entity_ && entity.net_id == local_player_net_id_) {
             continue;
