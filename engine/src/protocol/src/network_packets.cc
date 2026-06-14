@@ -1,7 +1,12 @@
 #include "protocol/public/network_packets.h"
 
+#include <algorithm>
 #include <cstddef>
+#include <cmath>
 #include <utility>
+
+#include <glm/geometric.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include "protocol/src/packet_codec.h"
 
@@ -10,13 +15,107 @@ namespace {
 
 constexpr std::size_t kInputPayloadSize = 45;
 constexpr std::size_t kSnapshotHeaderPayloadSize = 16;
-constexpr std::size_t kEntitySnapshotPayloadSize = 68;
+constexpr std::size_t kSnapshotSectionHeaderPayloadSize = 4;
+constexpr std::size_t kActorSnapshotBasePayloadSize = 38;
+constexpr std::size_t kActorOwnerPeerPayloadSize = 4;
+constexpr std::size_t kActorRotationPayloadSize = 16;
+constexpr std::size_t kActorHealthPayloadSize = 4;
+constexpr std::size_t kProjectileCompactSnapshotPayloadSize = 34;
+constexpr std::size_t kProjectileHybridCorrectionSnapshotPayloadSize = 46;
+constexpr std::size_t kGenericSnapshotPayloadSize = 44;
 constexpr std::size_t kReliableEventPayloadSize = 34;
 constexpr std::size_t kEntitySpawnPayloadSize = 42;
 constexpr std::size_t kEntityDespawnPayloadSize = 12;
 constexpr std::size_t kProjectileSpawnBatchHeaderPayloadSize = 24;
 constexpr std::size_t kProjectileSpawnGroupHeaderPayloadSize = 8;
 constexpr std::size_t kProjectileSpawnRecordPayloadSize = 40;
+
+enum class SnapshotSectionType : std::uint16_t {
+    kActor = 1,
+    kProjectileCompact = 2,
+    kProjectileHybridCorrection = 3,
+    kGeneric = 4,
+};
+
+enum ActorSnapshotRecordFlag : std::uint16_t {
+    kActorSnapshotHasOwnerPeer = 1u << 0,
+    kActorSnapshotHasRotation = 1u << 1,
+    kActorSnapshotHasHealth = 1u << 2,
+};
+
+bool is_actor_entity_type(EntityType type) {
+    return type == EntityType::kPlayer || type == EntityType::kEnemy;
+}
+
+std::uint16_t actor_record_flags(const EntitySnapshot& entity) {
+    std::uint16_t flags = 0;
+    if (entity.type == EntityType::kPlayer) {
+        flags |= kActorSnapshotHasOwnerPeer;
+        flags |= kActorSnapshotHasRotation;
+        if ((entity.state_flags & kSnapshotStateFlagHpUnknown) == 0u) {
+            flags |= kActorSnapshotHasHealth;
+        }
+    }
+    return flags;
+}
+
+bool is_hybrid_correction_projectile(const EntitySnapshot& entity) {
+    return entity.type == EntityType::kProjectile &&
+           (entity.state_flags & kSnapshotStateFlagProjectileHybridCorrection) != 0u;
+}
+
+glm::quat projectile_rotation_from_velocity(const glm::vec3& velocity) {
+    const float speed = glm::length(velocity);
+    if (speed <= 0.001f) {
+        return glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+    }
+    const glm::vec3 from{1.0f, 0.0f, 0.0f};
+    const glm::vec3 to = velocity / speed;
+    const float dot = std::clamp(glm::dot(from, to), -1.0f, 1.0f);
+    if (dot > 0.999f) {
+        return glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+    }
+    if (dot < -0.999f) {
+        return glm::quat{0.0f, 0.0f, 1.0f, 0.0f};
+    }
+    const glm::vec3 axis = glm::normalize(glm::cross(from, to));
+    return glm::angleAxis(std::acos(dot), axis);
+}
+
+SnapshotSectionType snapshot_section_type(EntityType type) {
+    if (is_actor_entity_type(type)) {
+        return SnapshotSectionType::kActor;
+    }
+    if (type == EntityType::kProjectile) {
+        return SnapshotSectionType::kProjectileCompact;
+    }
+    return SnapshotSectionType::kGeneric;
+}
+
+SnapshotSectionType snapshot_section_type(const EntitySnapshot& entity) {
+    if (is_actor_entity_type(entity.type)) {
+        return SnapshotSectionType::kActor;
+    }
+    if (is_hybrid_correction_projectile(entity)) {
+        return SnapshotSectionType::kProjectileHybridCorrection;
+    }
+    if (entity.type == EntityType::kProjectile) {
+        return SnapshotSectionType::kProjectileCompact;
+    }
+    return SnapshotSectionType::kGeneric;
+}
+
+std::vector<const EntitySnapshot*> section_entities(
+    const WorldSnapshot& snapshot,
+    SnapshotSectionType section_type) {
+    std::vector<const EntitySnapshot*> entities;
+    for (const EntitySnapshot& entity : snapshot.entities) {
+        if (snapshot_section_type(entity) == section_type) {
+            entities.push_back(&entity);
+        }
+    }
+    return entities;
+}
 
 }  // namespace
 
@@ -85,26 +184,72 @@ std::vector<std::uint8_t> encode_snapshot_packet(
     const WorldSnapshot& snapshot,
     std::uint32_t sequence) {
     protocol_internal::PacketWriter payload;
-    payload.reserve(
-        kSnapshotHeaderPayloadSize + snapshot.entities.size() * kEntitySnapshotPayloadSize);
+    payload.reserve(estimate_snapshot_packet_size(snapshot) - kPacketHeaderSize);
     payload.write_u32(snapshot.header.server_tick);
     payload.write_u32(snapshot.header.server_time_ms);
     payload.write_u32(snapshot.header.last_processed_input_seq);
-    payload.write_u32(static_cast<std::uint32_t>(snapshot.entities.size()));
+    payload.write_u16(4);
+    payload.write_u16(0);
 
-    for (const EntitySnapshot& entity : snapshot.entities) {
-        payload.write_u32(entity.net_id);
-        payload.write_u16(static_cast<std::uint16_t>(entity.type));
-        payload.write_u32(entity.owner_peer);
-        payload.write_vec3(entity.position);
-        payload.write_quat(entity.rotation);
-        payload.write_vec3(entity.velocity);
-        payload.write_u16(entity.hp);
-        payload.write_u16(entity.max_hp);
-        payload.write_u16(entity.state);
-        payload.write_u32(entity.flags);
-        payload.write_u32(entity.spawn_tick);
-        payload.write_u32(entity.client_action_id);
+    for (const SnapshotSectionType section_type : {
+             SnapshotSectionType::kActor,
+             SnapshotSectionType::kProjectileCompact,
+             SnapshotSectionType::kProjectileHybridCorrection,
+             SnapshotSectionType::kGeneric,
+         }) {
+        const std::vector<const EntitySnapshot*> entities =
+            section_entities(snapshot, section_type);
+        payload.write_u16(static_cast<std::uint16_t>(section_type));
+        payload.write_u16(static_cast<std::uint16_t>(entities.size()));
+        for (const EntitySnapshot* entity : entities) {
+            payload.write_u32(entity->net_id);
+            switch (section_type) {
+                case SnapshotSectionType::kActor: {
+                    const std::uint16_t record_flags = actor_record_flags(*entity);
+                    payload.write_u16(static_cast<std::uint16_t>(entity->type));
+                    payload.write_u16(record_flags);
+                    payload.write_vec3(entity->position);
+                    payload.write_vec3(entity->velocity);
+                    payload.write_u16(entity->state);
+                    payload.write_u32(entity->flags);
+                    if ((record_flags & kActorSnapshotHasOwnerPeer) != 0u) {
+                        payload.write_u32(entity->owner_peer);
+                    }
+                    if ((record_flags & kActorSnapshotHasRotation) != 0u) {
+                        payload.write_quat(entity->rotation);
+                    }
+                    if ((record_flags & kActorSnapshotHasHealth) != 0u) {
+                        payload.write_u16(entity->hp);
+                        payload.write_u16(entity->max_hp);
+                    }
+                    break;
+                }
+                case SnapshotSectionType::kProjectileCompact:
+                    payload.write_vec3(entity->position);
+                    payload.write_vec3(entity->velocity);
+                    payload.write_u16(entity->state);
+                    payload.write_u32(entity->flags);
+                    break;
+                case SnapshotSectionType::kProjectileHybridCorrection:
+                    payload.write_u32(entity->owner_peer);
+                    payload.write_vec3(entity->position);
+                    payload.write_vec3(entity->velocity);
+                    payload.write_u16(entity->state);
+                    payload.write_u32(entity->flags);
+                    payload.write_u32(entity->spawn_tick);
+                    payload.write_u32(entity->client_action_id);
+                    break;
+                case SnapshotSectionType::kGeneric:
+                    payload.write_u16(static_cast<std::uint16_t>(entity->type));
+                    payload.write_u32(entity->owner_peer);
+                    payload.write_vec3(entity->position);
+                    payload.write_vec3(entity->velocity);
+                    payload.write_u16(entity->state);
+                    payload.write_u32(entity->flags);
+                    payload.write_u32(entity->state_flags);
+                    break;
+            }
+        }
     }
 
     return protocol_internal::wrap_packet(
@@ -132,40 +277,110 @@ bool decode_snapshot_packet(
 
     WorldSnapshot snapshot;
     protocol_internal::PacketReader reader(payload, payload_size);
-    std::uint32_t entity_count = 0;
+    std::uint16_t section_count = 0;
+    std::uint16_t reserved = 0;
     if (!reader.read_u32(&snapshot.header.server_tick) ||
         !reader.read_u32(&snapshot.header.server_time_ms) ||
         !reader.read_u32(&snapshot.header.last_processed_input_seq) ||
-        !reader.read_u32(&entity_count)) {
+        !reader.read_u16(&section_count) ||
+        !reader.read_u16(&reserved)) {
         return false;
     }
 
-    const std::size_t expected_size =
-        kSnapshotHeaderPayloadSize + entity_count * kEntitySnapshotPayloadSize;
-    if (payload_size != expected_size) {
+    if (section_count != 4 || reserved != 0) {
         return false;
     }
 
-    snapshot.entities.reserve(entity_count);
-    for (std::uint32_t index = 0; index < entity_count; ++index) {
-        EntitySnapshot entity;
-        std::uint16_t entity_type = 0;
-        if (!reader.read_u32(&entity.net_id) ||
-            !reader.read_u16(&entity_type) ||
-            !reader.read_u32(&entity.owner_peer) ||
-            !reader.read_vec3(&entity.position) ||
-            !reader.read_quat(&entity.rotation) ||
-            !reader.read_vec3(&entity.velocity) ||
-            !reader.read_u16(&entity.hp) ||
-            !reader.read_u16(&entity.max_hp) ||
-            !reader.read_u16(&entity.state) ||
-            !reader.read_u32(&entity.flags) ||
-            !reader.read_u32(&entity.spawn_tick) ||
-            !reader.read_u32(&entity.client_action_id)) {
+    for (std::uint16_t section_index = 0; section_index < section_count; ++section_index) {
+        std::uint16_t raw_section_type = 0;
+        std::uint16_t entity_count = 0;
+        if (!reader.read_u16(&raw_section_type) ||
+            !reader.read_u16(&entity_count)) {
             return false;
         }
-        entity.type = static_cast<EntityType>(entity_type);
-        snapshot.entities.push_back(entity);
+        const SnapshotSectionType section_type =
+            static_cast<SnapshotSectionType>(raw_section_type);
+        for (std::uint16_t index = 0; index < entity_count; ++index) {
+            EntitySnapshot entity;
+            if (!reader.read_u32(&entity.net_id)) {
+                return false;
+            }
+            switch (section_type) {
+                case SnapshotSectionType::kActor: {
+                    std::uint16_t entity_type = 0;
+                    std::uint16_t record_flags = 0;
+                    if (!reader.read_u16(&entity_type) ||
+                        !reader.read_u16(&record_flags) ||
+                        !reader.read_vec3(&entity.position) ||
+                        !reader.read_vec3(&entity.velocity) ||
+                        !reader.read_u16(&entity.state) ||
+                        !reader.read_u32(&entity.flags)) {
+                        return false;
+                    }
+                    entity.type = static_cast<EntityType>(entity_type);
+                    if ((record_flags & kActorSnapshotHasOwnerPeer) != 0u &&
+                        !reader.read_u32(&entity.owner_peer)) {
+                        return false;
+                    }
+                    if ((record_flags & kActorSnapshotHasRotation) != 0u &&
+                        !reader.read_quat(&entity.rotation)) {
+                        return false;
+                    }
+                    if ((record_flags & kActorSnapshotHasHealth) != 0u) {
+                        if (!reader.read_u16(&entity.hp) ||
+                            !reader.read_u16(&entity.max_hp)) {
+                            return false;
+                        }
+                    } else {
+                        entity.state_flags |= kSnapshotStateFlagHpUnknown;
+                    }
+                    break;
+                }
+                case SnapshotSectionType::kProjectileCompact:
+                    entity.type = EntityType::kProjectile;
+                    entity.state_flags |= kSnapshotStateFlagHpUnknown;
+                    if (!reader.read_vec3(&entity.position) ||
+                        !reader.read_vec3(&entity.velocity) ||
+                        !reader.read_u16(&entity.state) ||
+                        !reader.read_u32(&entity.flags)) {
+                        return false;
+                    }
+                    entity.rotation = projectile_rotation_from_velocity(entity.velocity);
+                    break;
+                case SnapshotSectionType::kProjectileHybridCorrection:
+                    entity.type = EntityType::kProjectile;
+                    entity.state_flags |= kSnapshotStateFlagHpUnknown;
+                    entity.state_flags |= kSnapshotStateFlagProjectileHybridCorrection;
+                    if (!reader.read_u32(&entity.owner_peer) ||
+                        !reader.read_vec3(&entity.position) ||
+                        !reader.read_vec3(&entity.velocity) ||
+                        !reader.read_u16(&entity.state) ||
+                        !reader.read_u32(&entity.flags) ||
+                        !reader.read_u32(&entity.spawn_tick) ||
+                        !reader.read_u32(&entity.client_action_id)) {
+                        return false;
+                    }
+                    entity.rotation = projectile_rotation_from_velocity(entity.velocity);
+                    break;
+                case SnapshotSectionType::kGeneric: {
+                    std::uint16_t entity_type = 0;
+                    if (!reader.read_u16(&entity_type) ||
+                        !reader.read_u32(&entity.owner_peer) ||
+                        !reader.read_vec3(&entity.position) ||
+                        !reader.read_vec3(&entity.velocity) ||
+                        !reader.read_u16(&entity.state) ||
+                        !reader.read_u32(&entity.flags) ||
+                        !reader.read_u32(&entity.state_flags)) {
+                        return false;
+                    }
+                    entity.type = static_cast<EntityType>(entity_type);
+                    break;
+                }
+                default:
+                    return false;
+            }
+            snapshot.entities.push_back(entity);
+        }
     }
 
     if (!reader.done()) {
@@ -174,6 +389,58 @@ bool decode_snapshot_packet(
 
     *out_snapshot = std::move(snapshot);
     return true;
+}
+
+std::size_t estimate_snapshot_base_packet_size() {
+    return kPacketHeaderSize + kSnapshotHeaderPayloadSize +
+           4 * kSnapshotSectionHeaderPayloadSize;
+}
+
+std::size_t estimate_snapshot_entity_size(EntityType type) {
+    switch (type) {
+        case EntityType::kPlayer:
+            return kActorSnapshotBasePayloadSize +
+                   kActorOwnerPeerPayloadSize +
+                   kActorRotationPayloadSize +
+                   kActorHealthPayloadSize;
+        case EntityType::kEnemy:
+            return kActorSnapshotBasePayloadSize;
+        case EntityType::kProjectile:
+            return kProjectileCompactSnapshotPayloadSize;
+        default:
+            return kGenericSnapshotPayloadSize;
+    }
+}
+
+std::size_t estimate_snapshot_entity_size(const EntitySnapshot& entity) {
+    switch (snapshot_section_type(entity)) {
+        case SnapshotSectionType::kActor:
+            return kActorSnapshotBasePayloadSize +
+                   ((actor_record_flags(entity) & kActorSnapshotHasOwnerPeer) != 0u
+                        ? kActorOwnerPeerPayloadSize
+                        : 0u) +
+                   ((actor_record_flags(entity) & kActorSnapshotHasRotation) != 0u
+                        ? kActorRotationPayloadSize
+                        : 0u) +
+                   ((actor_record_flags(entity) & kActorSnapshotHasHealth) != 0u
+                        ? kActorHealthPayloadSize
+                        : 0u);
+        case SnapshotSectionType::kProjectileCompact:
+            return kProjectileCompactSnapshotPayloadSize;
+        case SnapshotSectionType::kProjectileHybridCorrection:
+            return kProjectileHybridCorrectionSnapshotPayloadSize;
+        case SnapshotSectionType::kGeneric:
+        default:
+            return kGenericSnapshotPayloadSize;
+    }
+}
+
+std::size_t estimate_snapshot_packet_size(const WorldSnapshot& snapshot) {
+    std::size_t size = estimate_snapshot_base_packet_size();
+    for (const EntitySnapshot& entity : snapshot.entities) {
+        size += estimate_snapshot_entity_size(entity);
+    }
+    return size;
 }
 
 std::vector<std::uint8_t> encode_reliable_event_packet(

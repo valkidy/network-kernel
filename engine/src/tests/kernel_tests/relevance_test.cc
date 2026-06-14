@@ -90,6 +90,17 @@ int main() {
         0,
         glm::vec3{70.0f, 0.0f, 0.0f},
         glm::vec3{10.0f, 0.0f, 0.0f});
+    const std::optional<entt::entity> owned_projectile_entity =
+        engine.world_.find_entity(owned_projectile);
+    assert(owned_projectile_entity.has_value());
+    engine.world_.registry()
+        .get<network_example::ProjectileState>(*owned_projectile_entity)
+        .projectile_template_id = 77;
+    KernelProjectileTemplateDefinition predicted_template{};
+    predicted_template.struct_size = sizeof(predicted_template);
+    predicted_template.projectile_template_id = 77;
+    predicted_template.sync_mode = KernelProjectileSyncMode_LocalPredictedDeterministic;
+    engine.projectile_templates_.push_back(predicted_template);
 
     network_example::KernelEngine::PeerSession session_one{
         1,
@@ -116,6 +127,12 @@ int main() {
     assert(!contains_entity(player_one_snapshot, player_two));
     assert(!contains_entity(player_one_snapshot, far_enemy));
     assert(!contains_entity(player_one_snapshot, away_projectile));
+    const network_example::WorldSnapshot player_one_send_set =
+        engine.build_snapshot_send_set(
+            session_one,
+            player_one_snapshot,
+            network_example::estimate_snapshot_packet_size(player_one_snapshot));
+    assert(!contains_entity(player_one_send_set, owned_projectile));
 
     const network_example::WorldSnapshot player_two_snapshot =
         engine.build_relevant_snapshot(session_two, 100);
@@ -129,6 +146,17 @@ int main() {
     assert(!contains_entity(player_two_snapshot, toward_projectile));
 
     session_one.relevant_entities.insert(near_enemy);
+    const network_example::WorldSnapshot capped_relevant =
+        engine.build_relevant_snapshot(session_one, 150);
+    const network_example::WorldSnapshot send_set =
+        engine.build_snapshot_send_set(session_one, capped_relevant, 96);
+    assert(!contains_entity(send_set, near_enemy));
+    assert(contains_entity(capped_relevant, near_enemy));
+    engine.sync_session_relevance(&session_one, capped_relevant);
+    assert(!poll_despawn(
+        engine,
+        near_enemy,
+        KernelDespawnReason_OutOfRange));
     set_position(engine.world_, near_enemy, glm::vec3{90.0f, 0.0f, 0.0f});
     const network_example::WorldSnapshot after_range_change =
         engine.build_relevant_snapshot(session_one, 200);
@@ -138,6 +166,85 @@ int main() {
         engine,
         near_enemy,
         KernelDespawnReason_OutOfRange));
+
+    network_example::WorldSnapshot crowded;
+    crowded.header.server_tick = 30;
+    crowded.header.server_time_ms = 1000;
+    network_example::EntitySnapshot player_entity;
+    player_entity.net_id = 100;
+    player_entity.type = network_example::EntityType::kPlayer;
+    crowded.entities.push_back(player_entity);
+    network_example::EntitySnapshot enemy_entity;
+    enemy_entity.net_id = 101;
+    enemy_entity.type = network_example::EntityType::kEnemy;
+    crowded.entities.push_back(enemy_entity);
+    network_example::EntitySnapshot projectile_entity;
+    projectile_entity.net_id = 102;
+    projectile_entity.type = network_example::EntityType::kProjectile;
+    crowded.entities.push_back(projectile_entity);
+    const std::size_t player_budget =
+        network_example::estimate_snapshot_base_packet_size() +
+        network_example::estimate_snapshot_entity_size(player_entity);
+    const network_example::WorldSnapshot byte_budgeted =
+        engine.build_snapshot_send_set(session_one, crowded, player_budget);
+    assert(contains_entity(byte_budgeted, 100));
+    assert(!contains_entity(byte_budgeted, 101));
+    assert(!contains_entity(byte_budgeted, 102));
+    assert(network_example::estimate_snapshot_packet_size(byte_budgeted) <= player_budget);
+
+    const std::size_t player_enemy_budget =
+        network_example::estimate_snapshot_base_packet_size() +
+        network_example::estimate_snapshot_entity_size(player_entity) +
+        network_example::estimate_snapshot_entity_size(enemy_entity);
+    network_example::WorldSnapshot round_robin_relevant;
+    round_robin_relevant.header = crowded.header;
+    round_robin_relevant.entities.push_back(player_entity);
+    network_example::EntitySnapshot first_enemy = enemy_entity;
+    first_enemy.net_id = 201;
+    network_example::EntitySnapshot second_enemy = enemy_entity;
+    second_enemy.net_id = 202;
+    round_robin_relevant.entities.push_back(first_enemy);
+    round_robin_relevant.entities.push_back(second_enemy);
+    const network_example::WorldSnapshot first_round =
+        engine.build_snapshot_send_set(
+            session_one,
+            round_robin_relevant,
+            player_enemy_budget);
+    const network_example::WorldSnapshot second_round =
+        engine.build_snapshot_send_set(
+            session_one,
+            round_robin_relevant,
+            player_enemy_budget);
+    assert(contains_entity(first_round, 201));
+    assert(!contains_entity(first_round, 202));
+    assert(!contains_entity(second_round, 201));
+    assert(contains_entity(second_round, 202));
+
+    network_example::EntitySnapshot compact_projectile = projectile_entity;
+    compact_projectile.net_id = 301;
+    network_example::EntitySnapshot hybrid_projectile = projectile_entity;
+    hybrid_projectile.net_id = 302;
+    hybrid_projectile.owner_peer = 1;
+    hybrid_projectile.spawn_tick = 3;
+    hybrid_projectile.client_action_id = 99;
+    hybrid_projectile.state_flags |=
+        network_example::kSnapshotStateFlagProjectileHybridCorrection;
+    network_example::WorldSnapshot projectile_budget_relevant;
+    projectile_budget_relevant.header = crowded.header;
+    projectile_budget_relevant.entities.push_back(compact_projectile);
+    projectile_budget_relevant.entities.push_back(hybrid_projectile);
+    const std::size_t compact_only_budget =
+        network_example::estimate_snapshot_base_packet_size() +
+        network_example::estimate_snapshot_entity_size(compact_projectile);
+    const network_example::WorldSnapshot projectile_budgeted =
+        engine.build_snapshot_send_set(
+            session_one,
+            projectile_budget_relevant,
+            compact_only_budget);
+    assert(contains_entity(projectile_budgeted, 301));
+    assert(!contains_entity(projectile_budgeted, 302));
+    assert(network_example::estimate_snapshot_packet_size(projectile_budgeted) <=
+           compact_only_budget);
 
     return 0;
 }

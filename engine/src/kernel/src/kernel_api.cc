@@ -151,7 +151,8 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_DEBUG_RECORDS |
             KERNEL_CAPABILITY_COLLIDER_SHAPE_QUERY |
             KERNEL_CAPABILITY_BENCHMARK_STATS |
-            KERNEL_CAPABILITY_NETWORK_STATS;
+            KERNEL_CAPABILITY_NETWORK_STATS |
+            KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS;
         return true;
     });
 }
@@ -325,6 +326,18 @@ uint32_t Kernel_PollEvents(
             return 0u;
         }
         return kernel->engine->poll_events(out_events, max_events);
+    });
+}
+
+uint32_t Kernel_PollEntityLifecycleEvents(
+    KernelHandle* kernel,
+    KernelEntityLifecycleEvent* out_events,
+    uint32_t max_events) {
+    return abi_call("Kernel_PollEntityLifecycleEvents", 0u, [&]() -> std::uint32_t {
+        if (kernel == nullptr) {
+            return 0u;
+        }
+        return kernel->engine->poll_entity_lifecycle_events(out_events, max_events);
     });
 }
 

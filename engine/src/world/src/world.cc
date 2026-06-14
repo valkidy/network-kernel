@@ -1,6 +1,7 @@
 #include "world/public/world.h"
 
 #include <algorithm>
+#include <cstdlib>
 
 namespace network_example {
 
@@ -12,6 +13,7 @@ bool World::destroy(NetId net_id) {
     entities_by_net_id_.erase(net_id);
     collider_registry_.remove_entity_colliders(net_id);
     registry_.destroy(*entity);
+    tombstoned_net_ids_.insert(net_id);
     return true;
 }
 
@@ -183,6 +185,14 @@ std::uint32_t World::ColliderRegistry::allocate_collider_id() {
 }
 
 NetId World::allocate_net_id() {
+    while (next_net_id_ != 0 &&
+           (entities_by_net_id_.find(next_net_id_) != entities_by_net_id_.end() ||
+            tombstoned_net_ids_.find(next_net_id_) != tombstoned_net_ids_.end())) {
+        ++next_net_id_;
+    }
+    if (next_net_id_ == 0) {
+        std::abort();
+    }
     return next_net_id_++;
 }
 

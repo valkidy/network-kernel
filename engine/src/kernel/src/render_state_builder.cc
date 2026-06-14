@@ -54,6 +54,8 @@ RenderEntityState render_state_from_world_entity(
         const Health& health = world.registry().get<Health>(entity);
         hp = health.hp;
         max_hp = health.max_hp;
+    } else {
+        visual_flags |= kVisualFlagHpUnknown;
     }
     if (world.registry().all_of<ReplicationState>(entity)) {
         const ReplicationState& replication =
@@ -85,6 +87,7 @@ RenderEntityState render_state_from_world_entity(
         visual_flags,
         spawn_tick,
         client_action_id,
+        RenderEntityStatus_Active,
     };
 }
 
@@ -102,9 +105,13 @@ RenderEntityState render_state_from_snapshot_entity(
         entity.hp,
         entity.max_hp,
         entity.state,
-        entity.flags,
+        entity.flags |
+            ((entity.state_flags & kSnapshotStateFlagHpUnknown) != 0u
+                 ? kVisualFlagHpUnknown
+                 : 0u),
         entity.spawn_tick,
         entity.client_action_id,
+        RenderEntityStatus_Active,
     };
 }
 

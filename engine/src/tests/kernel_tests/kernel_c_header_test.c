@@ -71,7 +71,7 @@ int main(void) {
     (void)collider_query;
     (void)collider_shape;
 
-    assert(KERNEL_ABI_VERSION == 17u);
+    assert(KERNEL_ABI_VERSION == 18u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD == 4u);
@@ -140,6 +140,10 @@ int main(void) {
     assert(offsetof(RenderEntityState, entity_id) == 0u);
     assert(offsetof(RenderEntityState, hp) > offsetof(RenderEntityState, velocity));
     assert(offsetof(RenderEntityState, max_hp) > offsetof(RenderEntityState, hp));
+    assert(offsetof(RenderEntityState, status) > offsetof(RenderEntityState, client_action_id));
+    assert(RenderEntityStatus_Active == 0u);
+    assert((KERNEL_VISUAL_FLAG_HP_UNKNOWN & KERNEL_VISUAL_FLAG_DEAD) == 0u);
+    assert(sizeof(KernelEntityLifecycleEvent) > 0u);
     assert(offsetof(KernelEvent, event_time_us) > offsetof(KernelEvent, code));
     assert(offsetof(KernelEvent, presentation_time_us) > offsetof(KernelEvent, event_time_us));
     assert(offsetof(KernelWeaponMechanicsDefinition, area_effect) >

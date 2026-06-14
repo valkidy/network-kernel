@@ -859,7 +859,7 @@ local Unity batchmode licensing/headless setup is available
 
 # Authoritative Weapon Current Status
 
-The native weapon foundation is currently at `KERNEL_ABI_VERSION == 17u` with
+The native weapon foundation is currently at `KERNEL_ABI_VERSION == 18u` with
 seven weapon slots. Server-owned systems exist for DamagePipeline, YAML weapon
 templates, AreaEffect, Beam, Homing v1, collision query helpers, projectile hit
 processing, and internal ProjectileInteractionSystem v1.

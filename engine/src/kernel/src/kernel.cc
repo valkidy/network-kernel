@@ -89,6 +89,17 @@ constexpr float kDefaultEntityRelevanceDistanceMeters = 40.0f;
 constexpr float kDefaultProjectileRelevanceDistanceMeters = 80.0f;
 constexpr std::uint32_t kLargeSyncPacketWarningBytes = 1200;
 
+KernelEntityLifecycleEventType lifecycle_type_for_despawn_reason(
+    std::uint32_t reason) {
+    if (reason == KernelDespawnReason_OutOfRange) {
+        return KernelEntityLifecycleEventType_OutOfRange;
+    }
+    if (reason == KernelDespawnReason_Destroyed) {
+        return KernelEntityLifecycleEventType_Destroyed;
+    }
+    return KernelEntityLifecycleEventType_Despawned;
+}
+
 const char* disconnect_reason_name(std::uint32_t reason_code) {
     switch (reason_code) {
         case kDisconnectReasonProtocolVersionMismatch:
@@ -1203,6 +1214,22 @@ std::uint32_t KernelEngine::poll_events(KernelEvent* out_events, std::uint32_t m
     return count;
 }
 
+std::uint32_t KernelEngine::poll_entity_lifecycle_events(
+    KernelEntityLifecycleEvent* out_events,
+    std::uint32_t max_events) {
+    if (out_events == nullptr || max_events == 0) {
+        return 0;
+    }
+    const std::uint32_t count =
+        std::min(max_events, static_cast<std::uint32_t>(lifecycle_events_.size()));
+    std::memcpy(
+        out_events,
+        lifecycle_events_.data(),
+        sizeof(KernelEntityLifecycleEvent) * count);
+    lifecycle_events_.erase(lifecycle_events_.begin(), lifecycle_events_.begin() + count);
+    return count;
+}
+
 bool KernelEngine::get_benchmark_stats(KernelBenchmarkStats* out_stats) const {
     if (out_stats == nullptr || out_stats->struct_size < sizeof(KernelBenchmarkStats)) {
         return false;
@@ -1554,6 +1581,14 @@ bool KernelEngine::server_destroy_entity(NetId net_id, std::uint32_t reason) {
         }
     }
     push_event(KernelEventType_EntityDestroyed, net_id, 0, reason);
+    lifecycle_events_.push_back(KernelEntityLifecycleEvent{
+        lifecycle_type_for_despawn_reason(reason),
+        tick_loop_.current_tick(),
+        net_id,
+        reason,
+        0,
+        0,
+    });
     publish_snapshot();
     return true;
 }
@@ -1884,6 +1919,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     damage_pipeline_.clear();
     pending_inputs_.clear();
     events_.clear();
+    lifecycle_events_.clear();
     pending_presentation_events_.clear();
     render_states_.clear();
     latest_snapshot_ = WorldSnapshot{};
@@ -2287,7 +2323,14 @@ void KernelEngine::handle_server_ping_pong(const TransportEvent& transport_event
 }
 
 void KernelEngine::handle_client_spawn(const EntitySpawnPacket& packet) {
-    client_despawned_entities_.erase(packet.net_id);
+    const auto tombstone = client_despawned_entities_.find(packet.net_id);
+    if (tombstone != client_despawned_entities_.end() &&
+        (tombstone->second.reason == KernelDespawnReason_OutOfRange ||
+         packet.server_tick > tombstone->second.tick)) {
+        client_despawned_entities_.erase(tombstone);
+    } else if (tombstone != client_despawned_entities_.end()) {
+        return;
+    }
     auto found = std::find_if(
         client_replicated_entities_.begin(),
         client_replicated_entities_.end(),
@@ -2301,6 +2344,9 @@ void KernelEngine::handle_client_spawn(const EntitySpawnPacket& packet) {
             packet.owner_peer,
             packet.position,
             packet.rotation,
+            0,
+            0,
+            false,
             false,
         });
     } else {
@@ -2320,7 +2366,12 @@ void KernelEngine::handle_client_spawn(const EntitySpawnPacket& packet) {
 }
 
 void KernelEngine::handle_client_despawn(const EntityDespawnPacket& packet) {
-    client_despawned_entities_.insert(packet.net_id);
+    client_despawned_entities_[packet.net_id] = ClientEntityTombstone{
+        packet.server_tick,
+        packet.reason,
+    };
+    const KernelEntityLifecycleEventType lifecycle_type =
+        lifecycle_type_for_despawn_reason(packet.reason);
     client_replicated_entities_.erase(
         std::remove_if(
             client_replicated_entities_.begin(),
@@ -2344,6 +2395,14 @@ void KernelEngine::handle_client_despawn(const EntityDespawnPacket& packet) {
         0,
         packet.reason,
     });
+    lifecycle_events_.push_back(KernelEntityLifecycleEvent{
+        lifecycle_type,
+        packet.server_tick,
+        packet.net_id,
+        packet.reason,
+        0,
+        0,
+    });
 }
 
 void KernelEngine::clear_client_session() {
@@ -2353,6 +2412,7 @@ void KernelEngine::clear_client_session() {
     pending_prediction_inputs_.clear();
     predicted_projectiles_.clear();
     pending_presentation_events_.clear();
+    lifecycle_events_.clear();
     client_snapshot_buffer_.clear();
     client_replicated_entities_.clear();
     client_despawned_entities_.clear();
@@ -2507,7 +2567,6 @@ void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {
 void KernelEngine::reconcile_predicted_projectiles(const WorldSnapshot& snapshot) {
     const auto cost_start = std::chrono::steady_clock::now();
     bool corrected_projectile = false;
-    std::unordered_set<NetId> snapshot_projectiles;
     const float fixed_delta_seconds = tick_loop_.fixed_delta_seconds();
     const std::uint32_t local_tick =
         local_prediction_server_tick(snapshot.header.server_tick);
@@ -2521,7 +2580,6 @@ void KernelEngine::reconcile_predicted_projectiles(const WorldSnapshot& snapshot
         if (entity.type != EntityType::kProjectile) {
             continue;
         }
-        snapshot_projectiles.insert(entity.net_id);
         if (entity.client_action_id == 0) {
             continue;
         }
@@ -2572,16 +2630,6 @@ void KernelEngine::reconcile_predicted_projectiles(const WorldSnapshot& snapshot
                 return !projectile.bound &&
                        projectile.input_seq != 0 &&
                        projectile.input_seq <= snapshot.header.last_processed_input_seq;
-            }),
-        predicted_projectiles_.end());
-    predicted_projectiles_.erase(
-        std::remove_if(
-            predicted_projectiles_.begin(),
-            predicted_projectiles_.end(),
-            [&snapshot_projectiles](const PredictedProjectile& projectile) {
-                return projectile.bound &&
-                       snapshot_projectiles.find(projectile.net_id) ==
-                           snapshot_projectiles.end();
             }),
         predicted_projectiles_.end());
     if (corrected_projectile) {
@@ -2877,9 +2925,11 @@ void KernelEngine::append_predicted_local_render_state(bool consume_correction) 
 
     EntitySnapshot local = predicted_local_entity_;
     local.position += local_correction_offset_;
-    render_states_.push_back(render_state_from_snapshot_entity(
+    RenderEntityState state = render_state_from_snapshot_entity(
         local,
-        entity_id_for_net_id(local.net_id)));
+        entity_id_for_net_id(local.net_id));
+    state.status = RenderEntityStatus_Predicted;
+    render_states_.push_back(state);
 
     if (consume_correction) {
         local_correction_offset_ *= 0.5f;
@@ -2909,6 +2959,7 @@ void KernelEngine::append_predicted_projectile_render_states(bool consume_correc
             kVisualFlagMoving,
             projectile.spawn_tick,
             projectile.client_action_id,
+            RenderEntityStatus_Predicted,
         });
         if (consume_correction) {
             projectile.correction_offset *= 0.5f;
@@ -3129,6 +3180,111 @@ WorldSnapshot KernelEngine::build_relevant_snapshot(
     return filtered;
 }
 
+WorldSnapshot KernelEngine::build_snapshot_send_set(
+    PeerSession& session,
+    const WorldSnapshot& relevant_snapshot,
+    std::size_t byte_budget) const {
+    WorldSnapshot send_snapshot;
+    send_snapshot.header = relevant_snapshot.header;
+    std::size_t estimated_size = estimate_snapshot_base_packet_size();
+    if (byte_budget < estimated_size) {
+        return send_snapshot;
+    }
+
+    const auto prepare_send_entity =
+        [&](const EntitySnapshot& entity) -> std::optional<EntitySnapshot> {
+            EntitySnapshot send_entity = entity;
+            if (entity.type != EntityType::kProjectile) {
+                return send_entity;
+            }
+
+            std::uint8_t sync_mode =
+                KernelProjectileSyncMode_HybridDeterministicThenSnapshot;
+            const std::optional<entt::entity> world_entity =
+                world_.find_entity(entity.net_id);
+            if (!world_entity.has_value()) {
+                return send_entity;
+            }
+            if (world_.registry().all_of<HomingState>(*world_entity)) {
+                sync_mode = to_kernel_projectile_sync_mode(
+                    world_.registry().get<HomingState>(*world_entity).sync_mode);
+            } else if (world_.registry().all_of<ProjectileState>(*world_entity)) {
+                const ProjectileState& projectile =
+                    world_.registry().get<ProjectileState>(*world_entity);
+                if (const KernelProjectileTemplateDefinition* projectile_template =
+                        find_projectile_template(
+                            projectile_templates_,
+                            projectile.projectile_template_id)) {
+                    sync_mode = projectile_template->sync_mode;
+                }
+            }
+
+            if (sync_mode == KernelProjectileSyncMode_LocalPredictedDeterministic) {
+                return std::nullopt;
+            }
+            if (sync_mode == KernelProjectileSyncMode_HybridDeterministicThenSnapshot) {
+                send_entity.state_flags |=
+                    kSnapshotStateFlagProjectileHybridCorrection;
+            } else {
+                send_entity.state_flags &=
+                    ~kSnapshotStateFlagProjectileHybridCorrection;
+            }
+            return send_entity;
+        };
+
+    const auto try_add_entity = [&](const EntitySnapshot& entity) -> bool {
+        const std::optional<EntitySnapshot> send_entity = prepare_send_entity(entity);
+        if (!send_entity.has_value()) {
+            return false;
+        }
+        const std::size_t entity_size = estimate_snapshot_entity_size(*send_entity);
+        if (estimated_size + entity_size > byte_budget) {
+            return false;
+        }
+        send_snapshot.entities.push_back(*send_entity);
+        estimated_size += entity_size;
+        return true;
+    };
+
+    const auto add_round_robin_entities =
+        [&](EntityType type, std::size_t* cursor) {
+            std::vector<const EntitySnapshot*> entities;
+            for (const EntitySnapshot& entity : relevant_snapshot.entities) {
+                if (entity.type == type) {
+                    entities.push_back(&entity);
+                }
+            }
+            if (entities.empty()) {
+                *cursor = 0;
+                return;
+            }
+            const std::size_t start = *cursor % entities.size();
+            for (std::size_t offset = 0; offset < entities.size(); ++offset) {
+                const std::size_t index = (start + offset) % entities.size();
+                try_add_entity(*entities[index]);
+            }
+            *cursor = (start + 1) % entities.size();
+        };
+
+    for (const EntitySnapshot& entity : relevant_snapshot.entities) {
+        if (entity.type == EntityType::kPlayer) {
+            try_add_entity(entity);
+        }
+    }
+    add_round_robin_entities(EntityType::kEnemy, &session.enemy_snapshot_cursor);
+    add_round_robin_entities(
+        EntityType::kProjectile,
+        &session.projectile_snapshot_cursor);
+    for (const EntitySnapshot& entity : relevant_snapshot.entities) {
+        if (entity.type != EntityType::kPlayer &&
+            entity.type != EntityType::kEnemy &&
+            entity.type != EntityType::kProjectile) {
+            try_add_entity(entity);
+        }
+    }
+    return send_snapshot;
+}
+
 bool KernelEngine::is_entity_relevant_to_session(
     const PeerSession& session,
     const EntitySnapshot& entity,
@@ -3325,8 +3481,8 @@ void KernelEngine::rebuild_render_states_at_time(
     std::uint64_t client_render_time_us,
     bool consume_correction) {
     const auto cost_start = std::chrono::steady_clock::now();
-    if ((config_.mode == KernelMode_ListenServer || config_.mode == KernelMode_Client) &&
-        has_client_snapshot_) {
+    if (config_.mode == KernelMode_Client ||
+        (config_.mode == KernelMode_ListenServer && has_client_snapshot_)) {
         rebuild_render_states_from_snapshot(client_render_time_us, consume_correction);
         report_render_state_overflow_if_needed();
         benchmark_stats_.render_solver_cost_us +=
@@ -3386,36 +3542,53 @@ void KernelEngine::rebuild_render_states_from_snapshot(
         if (has_predicted_local_entity_ && entity.net_id == local_player_net_id_) {
             continue;
         }
-        if (client_despawned_entities_.find(entity.net_id) !=
-            client_despawned_entities_.end()) {
-            continue;
+        const auto tombstone = client_despawned_entities_.find(entity.net_id);
+        if (tombstone != client_despawned_entities_.end()) {
+            if (tombstone->second.reason != KernelDespawnReason_OutOfRange ||
+                snapshot.header.server_tick <= tombstone->second.tick) {
+                continue;
+            }
         }
         if (has_predicted_projectile_net_id(entity.net_id)) {
             rendered_entities.insert(entity.net_id);
             continue;
         }
-        render_states_.push_back(render_state_from_snapshot_entity(
-            entity,
-            entity_id_for_net_id(entity.net_id)));
-        rendered_entities.insert(entity.net_id);
+        EntitySnapshot render_entity = entity;
         auto replicated = std::find_if(
             client_replicated_entities_.begin(),
             client_replicated_entities_.end(),
             [&entity](const ClientReplicatedEntity& replicated_entity) {
                 return replicated_entity.net_id == entity.net_id;
             });
+        if ((render_entity.state_flags & kSnapshotStateFlagHpUnknown) != 0u) {
+            if (replicated != client_replicated_entities_.end() &&
+                replicated->hp_known) {
+                render_entity.hp = replicated->hp;
+                render_entity.max_hp = replicated->max_hp;
+                render_entity.state_flags &= ~kSnapshotStateFlagHpUnknown;
+            }
+        }
+        render_states_.push_back(render_state_from_snapshot_entity(
+            render_entity,
+            entity_id_for_net_id(entity.net_id)));
+        rendered_entities.insert(entity.net_id);
         if (replicated != client_replicated_entities_.end()) {
             replicated->active = true;
             replicated->position = entity.position;
             replicated->rotation = entity.rotation;
+            if ((entity.state_flags & kSnapshotStateFlagHpUnknown) == 0u) {
+                replicated->hp = entity.hp;
+                replicated->max_hp = entity.max_hp;
+                replicated->hp_known = true;
+            }
         }
     }
 
     for (const ClientReplicatedEntity& entity : client_replicated_entities_) {
+        const auto tombstone = client_despawned_entities_.find(entity.net_id);
         if (entity.net_id == local_player_net_id_ ||
             rendered_entities.find(entity.net_id) != rendered_entities.end() ||
-            client_despawned_entities_.find(entity.net_id) !=
-                client_despawned_entities_.end()) {
+            tombstone != client_despawned_entities_.end()) {
             continue;
         }
         render_states_.push_back(RenderEntityState{
@@ -3426,12 +3599,13 @@ void KernelEngine::rebuild_render_states_from_snapshot(
             to_kernel_vec3(entity.position),
             to_kernel_quat(entity.rotation),
             KernelVec3{0.0f, 0.0f, 0.0f},
+            entity.hp_known ? entity.hp : static_cast<std::uint16_t>(0),
+            entity.hp_known ? entity.max_hp : static_cast<std::uint16_t>(0),
+            0,
+            entity.hp_known ? 0u : kVisualFlagHpUnknown,
             0,
             0,
-            0,
-            0,
-            0,
-            0,
+            RenderEntityStatus_Stale,
         });
     }
 }
@@ -3459,8 +3633,12 @@ void KernelEngine::publish_snapshot() {
         const WorldSnapshot peer_snapshot =
             build_relevant_snapshot(local_listen_session_, server_time_ms);
         sync_session_relevance(&local_listen_session_, peer_snapshot);
+        const WorldSnapshot send_snapshot = build_snapshot_send_set(
+            local_listen_session_,
+            peer_snapshot,
+            kLargeSyncPacketWarningBytes);
         const std::vector<std::uint8_t> packet =
-            encode_snapshot_packet(peer_snapshot, next_packet_sequence_++);
+            encode_snapshot_packet(send_snapshot, next_packet_sequence_++);
         if (!loopback_transport_->Send(
                 kLocalListenPeerId,
                 packet.data(),
@@ -3484,8 +3662,12 @@ void KernelEngine::publish_snapshot() {
             const WorldSnapshot peer_snapshot =
                 build_relevant_snapshot(session, server_time_ms);
             sync_session_relevance(&session, peer_snapshot);
+            const WorldSnapshot send_snapshot = build_snapshot_send_set(
+                session,
+                peer_snapshot,
+                kLargeSyncPacketWarningBytes);
             const std::vector<std::uint8_t> packet =
-                encode_snapshot_packet(peer_snapshot, next_packet_sequence_++);
+                encode_snapshot_packet(send_snapshot, next_packet_sequence_++);
             if (!transport_->Send(
                     session.peer,
                     packet.data(),

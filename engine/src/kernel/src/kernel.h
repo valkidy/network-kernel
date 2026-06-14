@@ -44,6 +44,9 @@ public:
         RenderEntityState* out_states,
         std::uint32_t max_states);
     std::uint32_t poll_events(KernelEvent* out_events, std::uint32_t max_events);
+    std::uint32_t poll_entity_lifecycle_events(
+        KernelEntityLifecycleEvent* out_events,
+        std::uint32_t max_events);
     bool get_benchmark_stats(KernelBenchmarkStats* out_stats) const;
     bool get_network_stats(KernelNetworkStats* out_stats) const;
     std::uint32_t poll_debug_records(
@@ -106,6 +109,8 @@ private:
         std::uint32_t last_processed_input_seq = 0;
         bool welcomed = false;
         std::unordered_set<NetId> relevant_entities;
+        std::size_t enemy_snapshot_cursor = 0;
+        std::size_t projectile_snapshot_cursor = 0;
         std::uint32_t pending_clock_sync_nonce = 0;
         std::uint64_t pending_clock_sync_server_time_us = 0;
         std::uint64_t last_clock_sync_sent_server_time_us = 0;
@@ -120,7 +125,15 @@ private:
         PeerId owner_peer = 0;
         glm::vec3 position{0.0f, 0.0f, 0.0f};
         glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+        std::uint16_t hp = 0;
+        std::uint16_t max_hp = 0;
+        bool hp_known = false;
         bool active = false;
+    };
+
+    struct ClientEntityTombstone {
+        std::uint32_t tick = 0;
+        std::uint32_t reason = KernelDespawnReason_Destroyed;
     };
 
     struct PredictedProjectile {
@@ -229,6 +242,10 @@ private:
         PeerId peer,
         NetId net_id,
         std::uint32_t reason);
+    WorldSnapshot build_snapshot_send_set(
+        PeerSession& session,
+        const WorldSnapshot& relevant_snapshot,
+        std::size_t byte_budget) const;
     void send_client_handshake();
     void send_clock_sync_ping(
         PeerSession* session,
@@ -262,6 +279,7 @@ private:
     LoopbackTransport* loopback_transport_ = nullptr;
     std::vector<QueuedInput> pending_inputs_;
     std::vector<KernelEvent> events_;
+    std::vector<KernelEntityLifecycleEvent> lifecycle_events_;
     std::vector<KernelEvent> pending_presentation_events_;
     std::vector<RenderEntityState> render_states_;
     WorldSnapshot latest_snapshot_;
@@ -270,7 +288,7 @@ private:
     std::vector<PeerSession> peer_sessions_;
     PeerSession local_listen_session_;
     std::vector<ClientReplicatedEntity> client_replicated_entities_;
-    std::unordered_set<NetId> client_despawned_entities_;
+    std::unordered_map<NetId, ClientEntityTombstone> client_despawned_entities_;
     std::vector<PlayerInput> pending_prediction_inputs_;
     std::vector<PredictedProjectile> predicted_projectiles_;
     std::vector<KernelProjectileTemplateDefinition> projectile_templates_;

@@ -19,7 +19,7 @@ Weapon gameplay follows `docs/NETCODE_SYNC_POLICY.md`:
 The current native public ABI is:
 
 ```text
-KERNEL_ABI_VERSION == 17u
+KERNEL_ABI_VERSION == 18u
 KERNEL_MAX_WEAPONS == 7u
 ```
 
@@ -86,7 +86,7 @@ Unity package validation is stale relative to native ABI v17:
 - The existing `plugins/output/com.network-example.kernel-0.6.4.tgz` contains
   C# bindings whose managed ABI constant remains at 8, while native
   `kernel_types.h` reports
-  `KERNEL_ABI_VERSION == 17u`.
+  `KERNEL_ABI_VERSION == 18u`.
 - Therefore Unity package builder verify/Editor smoke cannot be used as a
   passing signal for the current native weapon foundation until the Unity
   package is resynced.
