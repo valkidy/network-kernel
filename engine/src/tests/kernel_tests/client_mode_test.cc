@@ -1118,6 +1118,95 @@ void client_despawn_removes_predicted_projectile() {
     });
 
     require(client.predicted_projectiles_.empty());
+
+    std::array<KernelEntityLifecycleEvent, 4> lifecycle_events{};
+    const std::uint32_t lifecycle_count =
+        client.poll_entity_lifecycle_events(
+            lifecycle_events.data(),
+            static_cast<std::uint32_t>(lifecycle_events.size()));
+    require(lifecycle_count == 1);
+    require(lifecycle_events[0].type == KernelEntityLifecycleEventType_Destroyed);
+    require(lifecycle_events[0].net_id == 101);
+    require(lifecycle_events[0].reason == KernelDespawnReason_Destroyed);
+}
+
+void budget_omitted_projectile_snapshot_does_not_delete_bound_prediction() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+
+    network_example::KernelEngine::PredictedProjectile projectile;
+    projectile.entity_id = 9000;
+    projectile.net_id = 101;
+    projectile.owner_peer = 7;
+    projectile.bound = true;
+    client.predicted_projectiles_.push_back(projectile);
+
+    network_example::WorldSnapshot omitted;
+    omitted.header.server_tick = 12;
+    client.handle_client_snapshot(omitted);
+
+    require(client.predicted_projectiles_.size() == 1);
+    require(client.predicted_projectiles_[0].net_id == 101);
+}
+
+void destroyed_tombstone_blocks_older_snapshot_render() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+    client.handle_client_despawn(network_example::EntityDespawnPacket{
+        21,
+        20,
+        KernelDespawnReason_Destroyed,
+    });
+
+    network_example::WorldSnapshot older;
+    older.header.server_tick = 10;
+    add_snapshot_entity(&older, 21, network_example::EntityType::kEnemy, 1.0f);
+    client.handle_client_snapshot(older);
+
+    std::array<RenderEntityState, 4> states{};
+    const std::uint32_t count =
+        client.get_render_states_at_time(333333, states.data(), states.size());
+    for (std::uint32_t index = 0; index < count; ++index) {
+        require(states[index].net_id != 21);
+    }
+}
+
+void stale_render_state_marks_status_and_hp_unknown() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+    client.handle_client_spawn(network_example::EntitySpawnPacket{
+        30,
+        network_example::EntityType::kEnemy,
+        0,
+        3,
+        glm::vec3{4.0f, 0.0f, 0.0f},
+        glm::quat{1.0f, 0.0f, 0.0f, 0.0f},
+    });
+
+    std::array<RenderEntityState, 4> states{};
+    const std::uint32_t count =
+        client.get_render_states_at_time(100000, states.data(), states.size());
+    require(count == 1);
+    require(states[0].net_id == 30);
+    require(states[0].status == RenderEntityStatus_Stale);
+    require((states[0].visual_flags & KERNEL_VISUAL_FLAG_HP_UNKNOWN) != 0u);
+    require(states[0].hp == 0);
+    require(states[0].max_hp == 0);
 }
 
 void predicted_projectile_lifetime_cleanup_removes_batch_projectile() {
@@ -1285,6 +1374,9 @@ int main() {
     server_validates_catalog_hash_before_welcome();
     projectile_spawn_batch_renders_and_binds_to_snapshot();
     client_despawn_removes_predicted_projectile();
+    budget_omitted_projectile_snapshot_does_not_delete_bound_prediction();
+    destroyed_tombstone_blocks_older_snapshot_render();
+    stale_render_state_marks_status_and_hp_unknown();
     predicted_projectile_lifetime_cleanup_removes_batch_projectile();
     default_kernel_config_uses_larger_render_state_cap();
     render_state_overflow_reports_error_event();

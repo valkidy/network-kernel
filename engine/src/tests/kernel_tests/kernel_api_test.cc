@@ -126,7 +126,8 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_BENCHMARK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 17u);
+    assert(KERNEL_ABI_VERSION == 18u);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS) != 0);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNSUPPORTED_CATALOG_VERSION == 3u);
@@ -140,6 +141,12 @@ int main() {
     assert(offsetof(RenderEntityState, net_id) > offsetof(RenderEntityState, entity_id));
     assert(offsetof(RenderEntityState, hp) > offsetof(RenderEntityState, velocity));
     assert(offsetof(RenderEntityState, max_hp) > offsetof(RenderEntityState, hp));
+    assert(offsetof(RenderEntityState, status) > offsetof(RenderEntityState, client_action_id));
+    assert(RenderEntityStatus_Active == 0u);
+    assert(RenderEntityStatus_Predicted == 1u);
+    assert(RenderEntityStatus_Stale == 2u);
+    assert((KERNEL_VISUAL_FLAG_HP_UNKNOWN & KERNEL_VISUAL_FLAG_DEAD) == 0u);
+    assert(sizeof(KernelEntityLifecycleEvent) > 0u);
     assert(!Kernel_GetAbiInfo(nullptr, sizeof(abi_info)));
     assert(!Kernel_GetAbiInfo(&abi_info, sizeof(abi_info) - 1));
 
@@ -181,6 +188,7 @@ int main() {
     assert(Kernel_GetRenderStates(nullptr, nullptr, 0) == 0);
     assert(Kernel_GetRenderStatesAtTime(nullptr, 0, nullptr, 0) == 0);
     assert(Kernel_PollEvents(nullptr, nullptr, 0) == 0);
+    assert(Kernel_PollEntityLifecycleEvents(nullptr, nullptr, 0) == 0);
     KernelBenchmarkStats benchmark_stats{};
     benchmark_stats.struct_size = sizeof(benchmark_stats);
     assert(!Kernel_GetBenchmarkStats(nullptr, &benchmark_stats));
@@ -744,6 +752,16 @@ int main() {
         kernel,
         created_net_id,
         KernelDespawnReason_Destroyed));
+    std::array<KernelEntityLifecycleEvent, 4> lifecycle_events{};
+    const std::uint32_t lifecycle_count =
+        Kernel_PollEntityLifecycleEvents(
+            kernel,
+            lifecycle_events.data(),
+            static_cast<std::uint32_t>(lifecycle_events.size()));
+    assert(lifecycle_count == 1);
+    assert(lifecycle_events[0].type == KernelEntityLifecycleEventType_Destroyed);
+    assert(lifecycle_events[0].net_id == created_net_id);
+    assert(lifecycle_events[0].reason == KernelDespawnReason_Destroyed);
 
     assert(!Kernel_ServerClearEntityWeaponMechanics(kernel, created_net_id, 3));
 

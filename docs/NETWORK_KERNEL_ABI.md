@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 17u`.
+`KERNEL_ABI_VERSION == 18u`.
 
 ## Ownership
 
@@ -108,6 +108,13 @@ surfaces used by the current native runtime.
 ABI version 17 removes deprecated free-form-only gameplay catalog load errors,
 adds structured `KernelGameplayCatalogLoadResult` status/error fields, and
 replaces public ABI struct `bool` fields with fixed-width `uint32_t` flags.
+
+ABI version 18 adds `RenderEntityState::status`, the
+`KERNEL_VISUAL_FLAG_HP_UNKNOWN` render flag, and
+`Kernel_PollEntityLifecycleEvents`. Render states report only renderable
+entities as active, predicted, or stale. Out-of-range/despawn/destroy
+notifications are delivered through the dedicated lifecycle event queue so
+presentation callers do not infer lifecycle from a missing or stale snapshot.
 
 The current projectile interaction foundation is internal C++ engine state. It
 does not add Kernel C ABI functions, does not change public struct layout, and

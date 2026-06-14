@@ -85,8 +85,13 @@ They use snapshot interpolation:
 4. Client renders that past world state.
 ```
 
-This applies to remote players, enemies, and remote projectiles that do not
-match a local predicted action.
+This applies to remote players, enemies, and remote projectiles that are
+replicated through snapshot sections.
+
+Remote deterministic projectiles may also be event-spawned and rendered by
+deterministic local presentation simulation from spawn metadata. In that mode,
+the reliable spawn/despawn stream owns lifecycle while compact low-frequency
+projectile snapshots remain optional correction data.
 
 ## Local-Owned Deterministic Projectiles
 
@@ -118,8 +123,21 @@ Instead:
 5. Snap only when the error is too large.
 ```
 
-Remote clients do not do fire prediction for that projectile. They render it
-from the delayed snapshot interpolation timeline.
+Remote clients do not do fire prediction for that projectile. They either:
+
+```text
+Option A:
+    receive the reliable projectile spawn event,
+    simulate deterministic render motion from spawn metadata,
+    end presentation from lifetime/despawn.
+
+Option B:
+    receive compact low-frequency projectile snapshots,
+    render from the delayed interpolation timeline.
+```
+
+The chosen remote path is independent from lifecycle truth. Missing an
+unreliable projectile snapshot is not a despawn signal.
 
 ## Server Projectile Authority
 

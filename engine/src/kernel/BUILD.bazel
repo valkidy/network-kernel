@@ -130,6 +130,7 @@ cc_shared_library(
             "-Wl,-exported_symbol,_Kernel_GetRenderStates",
             "-Wl,-exported_symbol,_Kernel_GetRenderStatesAtTime",
             "-Wl,-exported_symbol,_Kernel_PollEvents",
+            "-Wl,-exported_symbol,_Kernel_PollEntityLifecycleEvents",
             "-Wl,-exported_symbol,_Kernel_GetBenchmarkStats",
             "-Wl,-exported_symbol,_Kernel_GetNetworkStats",
             "-Wl,-exported_symbol,_Kernel_PollDebugRecords",

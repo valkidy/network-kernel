@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 17u
+#define KERNEL_ABI_VERSION 18u
 
 #define KERNEL_BUILD_INFO_TEXT_SIZE 128u
 #define KERNEL_LAN_DISCOVERY_TEXT_SIZE 128u
@@ -77,6 +77,7 @@
 #define KERNEL_CAPABILITY_COLLIDER_SHAPE_QUERY UINT64_C(0x0000000040000000)
 #define KERNEL_CAPABILITY_BENCHMARK_STATS UINT64_C(0x0000000080000000)
 #define KERNEL_CAPABILITY_NETWORK_STATS UINT64_C(0x0000000100000000)
+#define KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS UINT64_C(0x0000000200000000)
 
 #define KERNEL_COLLISION_LAYER_PLAYER UINT32_C(0x00000001)
 #define KERNEL_COLLISION_LAYER_ENEMY UINT32_C(0x00000002)
@@ -89,6 +90,7 @@
 #define KERNEL_VISUAL_FLAG_MOVING UINT32_C(0x00000001)
 #define KERNEL_VISUAL_FLAG_RELOADING UINT32_C(0x00000002)
 #define KERNEL_VISUAL_FLAG_DEAD UINT32_C(0x00000004)
+#define KERNEL_VISUAL_FLAG_HP_UNKNOWN UINT32_C(0x00000008)
 
 #ifdef __cplusplus
 extern "C" {
@@ -204,6 +206,18 @@ typedef enum KernelDespawnReason {
     KernelDespawnReason_OutOfRange = 1,
     KernelDespawnReason_Disconnected = 2,
 } KernelDespawnReason;
+
+typedef enum RenderEntityStatus {
+    RenderEntityStatus_Active = 0,
+    RenderEntityStatus_Predicted = 1,
+    RenderEntityStatus_Stale = 2,
+} RenderEntityStatus;
+
+typedef enum KernelEntityLifecycleEventType {
+    KernelEntityLifecycleEventType_OutOfRange = 0,
+    KernelEntityLifecycleEventType_Despawned = 1,
+    KernelEntityLifecycleEventType_Destroyed = 2,
+} KernelEntityLifecycleEventType;
 
 typedef enum InputButton {
     InputButton_MoveJump = 1u << 0,
@@ -331,6 +345,7 @@ typedef struct RenderEntityState {
     uint32_t visual_flags;
     uint32_t spawn_tick;
     uint32_t client_action_id;
+    uint32_t status;
 } RenderEntityState;
 
 typedef struct KernelServerEntityCreateInfo {
@@ -708,6 +723,15 @@ typedef struct KernelEvent {
     uint64_t event_time_us;
     uint64_t presentation_time_us;
 } KernelEvent;
+
+typedef struct KernelEntityLifecycleEvent {
+    KernelEntityLifecycleEventType type;
+    uint32_t tick;
+    uint32_t net_id;
+    uint32_t reason;
+    uint16_t entity_type;
+    uint32_t owner_peer;
+} KernelEntityLifecycleEvent;
 
 #ifdef __cplusplus
 }

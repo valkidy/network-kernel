@@ -92,6 +92,11 @@ uint32_t Kernel_PollEvents(
     KernelEvent* out_events,
     uint32_t max_events);
 
+uint32_t Kernel_PollEntityLifecycleEvents(
+    KernelHandle* kernel,
+    KernelEntityLifecycleEvent* out_events,
+    uint32_t max_events);
+
 bool Kernel_GetBenchmarkStats(
     KernelHandle* kernel,
     KernelBenchmarkStats* out_stats);

@@ -172,6 +172,11 @@ int main() {
         load_symbol<std::uint32_t(KernelHandle*, KernelEvent*, std::uint32_t)>(
             library,
             "Kernel_PollEvents");
+    auto* kernel_poll_entity_lifecycle_events =
+        load_symbol<std::uint32_t(
+            KernelHandle*,
+            KernelEntityLifecycleEvent*,
+            std::uint32_t)>(library, "Kernel_PollEntityLifecycleEvents");
     auto* kernel_get_local_player_info =
         load_symbol<bool(KernelHandle*, KernelLocalPlayerInfo*)>(
             library,
@@ -322,6 +327,8 @@ int main() {
     assert(abi_info.player_input_size == sizeof(PlayerInput));
     assert(abi_info.render_entity_state_size == sizeof(RenderEntityState));
     assert(abi_info.kernel_event_size == sizeof(KernelEvent));
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS) != 0);
+    assert(kernel_poll_entity_lifecycle_events(nullptr, nullptr, 0) == 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
     assert(abi_info.server_entity_create_info_size ==
            sizeof(KernelServerEntityCreateInfo));

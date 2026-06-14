@@ -1,6 +1,7 @@
 #ifndef PROTOCOL_PUBLIC_NETWORK_PACKETS_H_
 #define PROTOCOL_PUBLIC_NETWORK_PACKETS_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -66,6 +67,10 @@ bool decode_snapshot_packet(
     const std::uint8_t* data,
     std::size_t size,
     WorldSnapshot* out_snapshot);
+
+std::size_t estimate_snapshot_base_packet_size();
+std::size_t estimate_snapshot_entity_size(EntityType type);
+std::size_t estimate_snapshot_packet_size(const WorldSnapshot& snapshot);
 
 std::vector<std::uint8_t> encode_reliable_event_packet(
     const KernelEvent& event,

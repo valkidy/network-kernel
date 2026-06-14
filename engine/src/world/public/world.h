@@ -3,6 +3,7 @@
 
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <entt/entt.hpp>
@@ -92,6 +93,7 @@ private:
 
     entt::registry registry_;
     std::unordered_map<NetId, entt::entity> entities_by_net_id_;
+    std::unordered_set<NetId> tombstoned_net_ids_;
     std::vector<ProjectileInteractionRule> projectile_interaction_rules_;
     std::vector<RuntimeProjectileTemplate> projectile_templates_;
     ColliderRegistry collider_registry_;

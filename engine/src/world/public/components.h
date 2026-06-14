@@ -336,6 +336,7 @@ struct MovementState {
 inline constexpr std::uint32_t kVisualFlagMoving = 0x00000001u;
 inline constexpr std::uint32_t kVisualFlagReloading = 0x00000002u;
 inline constexpr std::uint32_t kVisualFlagDead = 0x00000004u;
+inline constexpr std::uint32_t kVisualFlagHpUnknown = 0x00000008u;
 
 struct ReplicationState {
     std::uint16_t animation_state = 0;

@@ -10,13 +10,49 @@ namespace {
 
 constexpr std::size_t kInputPayloadSize = 45;
 constexpr std::size_t kSnapshotHeaderPayloadSize = 16;
-constexpr std::size_t kEntitySnapshotPayloadSize = 68;
+constexpr std::size_t kSnapshotSectionHeaderPayloadSize = 4;
+constexpr std::size_t kPlayerSnapshotPayloadSize = 58;
+constexpr std::size_t kEnemySnapshotPayloadSize = 34;
+constexpr std::size_t kProjectileSnapshotPayloadSize = 62;
+constexpr std::size_t kGenericSnapshotPayloadSize = 60;
 constexpr std::size_t kReliableEventPayloadSize = 34;
 constexpr std::size_t kEntitySpawnPayloadSize = 42;
 constexpr std::size_t kEntityDespawnPayloadSize = 12;
 constexpr std::size_t kProjectileSpawnBatchHeaderPayloadSize = 24;
 constexpr std::size_t kProjectileSpawnGroupHeaderPayloadSize = 8;
 constexpr std::size_t kProjectileSpawnRecordPayloadSize = 40;
+
+enum class SnapshotSectionType : std::uint16_t {
+    kPlayer = 1,
+    kEnemy = 2,
+    kProjectile = 3,
+    kGeneric = 4,
+};
+
+SnapshotSectionType snapshot_section_type(EntityType type) {
+    switch (type) {
+        case EntityType::kPlayer:
+            return SnapshotSectionType::kPlayer;
+        case EntityType::kEnemy:
+            return SnapshotSectionType::kEnemy;
+        case EntityType::kProjectile:
+            return SnapshotSectionType::kProjectile;
+        default:
+            return SnapshotSectionType::kGeneric;
+    }
+}
+
+std::vector<const EntitySnapshot*> section_entities(
+    const WorldSnapshot& snapshot,
+    SnapshotSectionType section_type) {
+    std::vector<const EntitySnapshot*> entities;
+    for (const EntitySnapshot& entity : snapshot.entities) {
+        if (snapshot_section_type(entity.type) == section_type) {
+            entities.push_back(&entity);
+        }
+    }
+    return entities;
+}
 
 }  // namespace
 
@@ -85,26 +121,63 @@ std::vector<std::uint8_t> encode_snapshot_packet(
     const WorldSnapshot& snapshot,
     std::uint32_t sequence) {
     protocol_internal::PacketWriter payload;
-    payload.reserve(
-        kSnapshotHeaderPayloadSize + snapshot.entities.size() * kEntitySnapshotPayloadSize);
+    payload.reserve(estimate_snapshot_packet_size(snapshot) - kPacketHeaderSize);
     payload.write_u32(snapshot.header.server_tick);
     payload.write_u32(snapshot.header.server_time_ms);
     payload.write_u32(snapshot.header.last_processed_input_seq);
-    payload.write_u32(static_cast<std::uint32_t>(snapshot.entities.size()));
+    payload.write_u16(4);
+    payload.write_u16(0);
 
-    for (const EntitySnapshot& entity : snapshot.entities) {
-        payload.write_u32(entity.net_id);
-        payload.write_u16(static_cast<std::uint16_t>(entity.type));
-        payload.write_u32(entity.owner_peer);
-        payload.write_vec3(entity.position);
-        payload.write_quat(entity.rotation);
-        payload.write_vec3(entity.velocity);
-        payload.write_u16(entity.hp);
-        payload.write_u16(entity.max_hp);
-        payload.write_u16(entity.state);
-        payload.write_u32(entity.flags);
-        payload.write_u32(entity.spawn_tick);
-        payload.write_u32(entity.client_action_id);
+    for (const SnapshotSectionType section_type : {
+             SnapshotSectionType::kPlayer,
+             SnapshotSectionType::kEnemy,
+             SnapshotSectionType::kProjectile,
+             SnapshotSectionType::kGeneric,
+         }) {
+        const std::vector<const EntitySnapshot*> entities =
+            section_entities(snapshot, section_type);
+        payload.write_u16(static_cast<std::uint16_t>(section_type));
+        payload.write_u16(static_cast<std::uint16_t>(entities.size()));
+        for (const EntitySnapshot* entity : entities) {
+            payload.write_u32(entity->net_id);
+            switch (section_type) {
+                case SnapshotSectionType::kPlayer:
+                    payload.write_u32(entity->owner_peer);
+                    payload.write_vec3(entity->position);
+                    payload.write_quat(entity->rotation);
+                    payload.write_vec3(entity->velocity);
+                    payload.write_u16(entity->hp);
+                    payload.write_u16(entity->max_hp);
+                    payload.write_u16(entity->state);
+                    payload.write_u32(entity->flags);
+                    break;
+                case SnapshotSectionType::kEnemy:
+                    payload.write_vec3(entity->position);
+                    payload.write_vec3(entity->velocity);
+                    payload.write_u16(entity->state);
+                    payload.write_u32(entity->flags);
+                    break;
+                case SnapshotSectionType::kProjectile:
+                    payload.write_u32(entity->owner_peer);
+                    payload.write_vec3(entity->position);
+                    payload.write_quat(entity->rotation);
+                    payload.write_vec3(entity->velocity);
+                    payload.write_u16(entity->state);
+                    payload.write_u32(entity->flags);
+                    payload.write_u32(entity->spawn_tick);
+                    payload.write_u32(entity->client_action_id);
+                    break;
+                case SnapshotSectionType::kGeneric:
+                    payload.write_u16(static_cast<std::uint16_t>(entity->type));
+                    payload.write_u32(entity->owner_peer);
+                    payload.write_vec3(entity->position);
+                    payload.write_vec3(entity->velocity);
+                    payload.write_u16(entity->state);
+                    payload.write_u32(entity->flags);
+                    payload.write_u32(entity->state_flags);
+                    break;
+            }
+        }
     }
 
     return protocol_internal::wrap_packet(
@@ -132,40 +205,91 @@ bool decode_snapshot_packet(
 
     WorldSnapshot snapshot;
     protocol_internal::PacketReader reader(payload, payload_size);
-    std::uint32_t entity_count = 0;
+    std::uint16_t section_count = 0;
+    std::uint16_t reserved = 0;
     if (!reader.read_u32(&snapshot.header.server_tick) ||
         !reader.read_u32(&snapshot.header.server_time_ms) ||
         !reader.read_u32(&snapshot.header.last_processed_input_seq) ||
-        !reader.read_u32(&entity_count)) {
+        !reader.read_u16(&section_count) ||
+        !reader.read_u16(&reserved)) {
         return false;
     }
 
-    const std::size_t expected_size =
-        kSnapshotHeaderPayloadSize + entity_count * kEntitySnapshotPayloadSize;
-    if (payload_size != expected_size) {
+    if (section_count != 4 || reserved != 0) {
         return false;
     }
 
-    snapshot.entities.reserve(entity_count);
-    for (std::uint32_t index = 0; index < entity_count; ++index) {
-        EntitySnapshot entity;
-        std::uint16_t entity_type = 0;
-        if (!reader.read_u32(&entity.net_id) ||
-            !reader.read_u16(&entity_type) ||
-            !reader.read_u32(&entity.owner_peer) ||
-            !reader.read_vec3(&entity.position) ||
-            !reader.read_quat(&entity.rotation) ||
-            !reader.read_vec3(&entity.velocity) ||
-            !reader.read_u16(&entity.hp) ||
-            !reader.read_u16(&entity.max_hp) ||
-            !reader.read_u16(&entity.state) ||
-            !reader.read_u32(&entity.flags) ||
-            !reader.read_u32(&entity.spawn_tick) ||
-            !reader.read_u32(&entity.client_action_id)) {
+    for (std::uint16_t section_index = 0; section_index < section_count; ++section_index) {
+        std::uint16_t raw_section_type = 0;
+        std::uint16_t entity_count = 0;
+        if (!reader.read_u16(&raw_section_type) ||
+            !reader.read_u16(&entity_count)) {
             return false;
         }
-        entity.type = static_cast<EntityType>(entity_type);
-        snapshot.entities.push_back(entity);
+        const SnapshotSectionType section_type =
+            static_cast<SnapshotSectionType>(raw_section_type);
+        for (std::uint16_t index = 0; index < entity_count; ++index) {
+            EntitySnapshot entity;
+            if (!reader.read_u32(&entity.net_id)) {
+                return false;
+            }
+            switch (section_type) {
+                case SnapshotSectionType::kPlayer:
+                    entity.type = EntityType::kPlayer;
+                    if (!reader.read_u32(&entity.owner_peer) ||
+                        !reader.read_vec3(&entity.position) ||
+                        !reader.read_quat(&entity.rotation) ||
+                        !reader.read_vec3(&entity.velocity) ||
+                        !reader.read_u16(&entity.hp) ||
+                        !reader.read_u16(&entity.max_hp) ||
+                        !reader.read_u16(&entity.state) ||
+                        !reader.read_u32(&entity.flags)) {
+                        return false;
+                    }
+                    break;
+                case SnapshotSectionType::kEnemy:
+                    entity.type = EntityType::kEnemy;
+                    entity.state_flags |= kSnapshotStateFlagHpUnknown;
+                    if (!reader.read_vec3(&entity.position) ||
+                        !reader.read_vec3(&entity.velocity) ||
+                        !reader.read_u16(&entity.state) ||
+                        !reader.read_u32(&entity.flags)) {
+                        return false;
+                    }
+                    break;
+                case SnapshotSectionType::kProjectile:
+                    entity.type = EntityType::kProjectile;
+                    entity.state_flags |= kSnapshotStateFlagHpUnknown;
+                    if (!reader.read_u32(&entity.owner_peer) ||
+                        !reader.read_vec3(&entity.position) ||
+                        !reader.read_quat(&entity.rotation) ||
+                        !reader.read_vec3(&entity.velocity) ||
+                        !reader.read_u16(&entity.state) ||
+                        !reader.read_u32(&entity.flags) ||
+                        !reader.read_u32(&entity.spawn_tick) ||
+                        !reader.read_u32(&entity.client_action_id)) {
+                        return false;
+                    }
+                    break;
+                case SnapshotSectionType::kGeneric: {
+                    std::uint16_t entity_type = 0;
+                    if (!reader.read_u16(&entity_type) ||
+                        !reader.read_u32(&entity.owner_peer) ||
+                        !reader.read_vec3(&entity.position) ||
+                        !reader.read_vec3(&entity.velocity) ||
+                        !reader.read_u16(&entity.state) ||
+                        !reader.read_u32(&entity.flags) ||
+                        !reader.read_u32(&entity.state_flags)) {
+                        return false;
+                    }
+                    entity.type = static_cast<EntityType>(entity_type);
+                    break;
+                }
+                default:
+                    return false;
+            }
+            snapshot.entities.push_back(entity);
+        }
     }
 
     if (!reader.done()) {
@@ -174,6 +298,32 @@ bool decode_snapshot_packet(
 
     *out_snapshot = std::move(snapshot);
     return true;
+}
+
+std::size_t estimate_snapshot_base_packet_size() {
+    return kPacketHeaderSize + kSnapshotHeaderPayloadSize +
+           4 * kSnapshotSectionHeaderPayloadSize;
+}
+
+std::size_t estimate_snapshot_entity_size(EntityType type) {
+    switch (type) {
+        case EntityType::kPlayer:
+            return kPlayerSnapshotPayloadSize;
+        case EntityType::kEnemy:
+            return kEnemySnapshotPayloadSize;
+        case EntityType::kProjectile:
+            return kProjectileSnapshotPayloadSize;
+        default:
+            return kGenericSnapshotPayloadSize;
+    }
+}
+
+std::size_t estimate_snapshot_packet_size(const WorldSnapshot& snapshot) {
+    std::size_t size = estimate_snapshot_base_packet_size();
+    for (const EntitySnapshot& entity : snapshot.entities) {
+        size += estimate_snapshot_entity_size(entity.type);
+    }
+    return size;
 }
 
 std::vector<std::uint8_t> encode_reliable_event_packet(

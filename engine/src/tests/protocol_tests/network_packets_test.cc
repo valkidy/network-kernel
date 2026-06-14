@@ -66,6 +66,19 @@ int main() {
 
     const std::vector<std::uint8_t> snapshot_packet =
         network_example::encode_snapshot_packet(snapshot, 43);
+    assert(network_example::estimate_snapshot_packet_size(snapshot) ==
+           snapshot_packet.size());
+    const std::size_t projectile_size =
+        network_example::estimate_snapshot_entity_size(
+            network_example::EntityType::kProjectile);
+    const std::size_t enemy_size =
+        network_example::estimate_snapshot_entity_size(
+            network_example::EntityType::kEnemy);
+    const std::size_t player_size =
+        network_example::estimate_snapshot_entity_size(
+            network_example::EntityType::kPlayer);
+    assert(projectile_size != enemy_size);
+    assert(player_size != projectile_size);
     network_example::WorldSnapshot decoded_snapshot;
     assert(network_example::decode_snapshot_packet(
         snapshot_packet.data(),
@@ -83,10 +96,35 @@ int main() {
     assert(nearly_equal(decoded_snapshot.entities[0].velocity.z, 6.0f));
     assert(decoded_snapshot.entities[0].hp == 88);
     assert(decoded_snapshot.entities[0].max_hp == 120);
+    assert((decoded_snapshot.entities[0].state_flags &
+            network_example::kSnapshotStateFlagHpUnknown) == 0u);
     assert(decoded_snapshot.entities[0].state == 513);
     assert(decoded_snapshot.entities[0].flags == 0x01020304u);
     assert(decoded_snapshot.entities[0].spawn_tick == 12);
     assert(decoded_snapshot.entities[0].client_action_id == 1234);
+
+    network_example::WorldSnapshot enemy_snapshot;
+    enemy_snapshot.header.server_tick = 10;
+    enemy_snapshot.header.server_time_ms = 333;
+    network_example::EntitySnapshot enemy;
+    enemy.net_id = 6;
+    enemy.type = network_example::EntityType::kEnemy;
+    enemy.position = glm::vec3{7.0f, 8.0f, 9.0f};
+    enemy.velocity = glm::vec3{1.0f, 0.0f, 0.0f};
+    enemy_snapshot.entities.push_back(enemy);
+    const std::vector<std::uint8_t> enemy_packet =
+        network_example::encode_snapshot_packet(enemy_snapshot, 44);
+    network_example::WorldSnapshot decoded_enemy_snapshot;
+    assert(network_example::decode_snapshot_packet(
+        enemy_packet.data(),
+        enemy_packet.size(),
+        &decoded_enemy_snapshot));
+    assert(decoded_enemy_snapshot.entities.size() == 1);
+    assert(decoded_enemy_snapshot.entities[0].type == network_example::EntityType::kEnemy);
+    assert((decoded_enemy_snapshot.entities[0].state_flags &
+            network_example::kSnapshotStateFlagHpUnknown) != 0u);
+    assert(decoded_enemy_snapshot.entities[0].hp == 0);
+    assert(decoded_enemy_snapshot.entities[0].max_hp == 0);
 
     KernelEvent reliable_event{};
     reliable_event.type = KernelEventType_PlayerLeft;
