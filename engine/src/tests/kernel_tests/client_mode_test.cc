@@ -71,6 +71,17 @@ KernelColliderTemplateDefinition projectile_collider_template() {
     return collider_template;
 }
 
+KernelColliderTemplateDefinition actor_collider_template() {
+    KernelColliderTemplateDefinition collider_template{};
+    collider_template.struct_size = sizeof(collider_template);
+    collider_template.template_id = 20;
+    collider_template.shape_type = KernelColliderShapeType_Aabb;
+    collider_template.half_extents = KernelVec3{0.4f, 0.8f, 0.4f};
+    collider_template.layer_mask = KERNEL_COLLISION_LAYER_ENEMY;
+    collider_template.purpose_flags = KernelColliderPurpose_Hit;
+    return collider_template;
+}
+
 network_example::WorldSnapshot projectile_snapshot(
     std::uint32_t server_tick,
     network_example::NetId net_id,
@@ -90,6 +101,180 @@ network_example::WorldSnapshot projectile_snapshot(
     entity.client_action_id = client_action_id;
     snapshot.entities.push_back(entity);
     return snapshot;
+}
+
+void client_query_collider_shapes_reports_render_colliders() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+
+    KernelProjectileTemplateDefinition projectile_template{};
+    projectile_template.struct_size = sizeof(projectile_template);
+    projectile_template.projectile_template_id = 3;
+    projectile_template.weapon_id = 3;
+    projectile_template.motion_model = KernelProjectileMotionModel_Linear;
+    projectile_template.sync_mode = KernelProjectileSyncMode_HybridDeterministicThenSnapshot;
+    projectile_template.speed = 10.0f;
+    projectile_template.lifetime_seconds = 2.0f;
+    projectile_template.collider_template_id = 10;
+    KernelColliderTemplateDefinition projectile_collider =
+        projectile_collider_template();
+    KernelColliderTemplateDefinition actor_collider = actor_collider_template();
+    std::array<KernelColliderTemplateDefinition, 2> collider_templates = {
+        projectile_collider,
+        actor_collider,
+    };
+
+    KernelGameplayCatalogDefinition catalog{};
+    catalog.struct_size = sizeof(catalog);
+    catalog.catalog_version = 9;
+    catalog.catalog_hash = 0x9999ull;
+    catalog.projectile_templates = &projectile_template;
+    catalog.projectile_template_count = 1;
+    catalog.collider_templates = collider_templates.data();
+    catalog.collider_template_count =
+        static_cast<std::uint32_t>(collider_templates.size());
+    require(client.load_gameplay_catalog(catalog));
+
+    network_example::WorldSnapshot snapshot;
+    snapshot.header.server_tick = 3;
+    network_example::EntitySnapshot enemy;
+    enemy.net_id = 42;
+    enemy.type = network_example::EntityType::kEnemy;
+    enemy.position = glm::vec3{4.0f, 0.0f, 0.0f};
+    enemy.collider_template_id = 20;
+    snapshot.entities.push_back(enemy);
+    network_example::EntitySnapshot projectile;
+    projectile.net_id = 101;
+    projectile.type = network_example::EntityType::kProjectile;
+    projectile.owner_peer = 7;
+    projectile.position = glm::vec3{1.0f, 0.0f, 0.0f};
+    projectile.velocity = glm::vec3{10.0f, 0.0f, 0.0f};
+    projectile.spawn_tick = 3;
+    projectile.client_action_id = 1234;
+    projectile.projectile_template_id = 3;
+    projectile.collider_template_id = 10;
+    snapshot.entities.push_back(projectile);
+    client.handle_client_snapshot(snapshot);
+
+    std::array<RenderEntityState, 4> states{};
+    const std::uint32_t state_count =
+        client.get_render_states_at_time(100000, states.data(), states.size());
+    require(state_count == 2);
+    bool saw_projectile = false;
+    for (std::uint32_t index = 0; index < state_count; ++index) {
+        if (states[index].net_id == 101) {
+            saw_projectile = true;
+            require(states[index].projectile_template_id == 3);
+            require(states[index].collider_template_id == 10);
+        }
+    }
+    require(saw_projectile);
+
+    std::array<KernelColliderShapeView, 4> shapes{};
+    const std::uint32_t shape_count =
+        client.query_collider_shapes(nullptr, shapes.data(), shapes.size());
+    require(shape_count == 2);
+    bool saw_enemy_collider = false;
+    bool saw_projectile_collider = false;
+    for (std::uint32_t index = 0; index < shape_count; ++index) {
+        saw_enemy_collider =
+            saw_enemy_collider ||
+            (shapes[index].entity_net_id == 42 &&
+             shapes[index].collider_template_id == 20 &&
+             shapes[index].purpose_flags == KernelColliderPurpose_Hit);
+        saw_projectile_collider =
+            saw_projectile_collider ||
+            (shapes[index].entity_net_id == 101 &&
+             shapes[index].collider_template_id == 10 &&
+             shapes[index].shape_type == KernelColliderShapeType_Sphere &&
+             shapes[index].purpose_flags == KernelColliderPurpose_Damage);
+    }
+    require(saw_enemy_collider);
+    require(saw_projectile_collider);
+}
+
+void local_deterministic_prediction_query_uses_projectile_template_collider() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+
+    KernelProjectileTemplateDefinition projectile_template{};
+    projectile_template.struct_size = sizeof(projectile_template);
+    projectile_template.projectile_template_id = 3;
+    projectile_template.weapon_id = 2;
+    projectile_template.motion_model = KernelProjectileMotionModel_Linear;
+    projectile_template.sync_mode =
+        KernelProjectileSyncMode_LocalPredictedDeterministic;
+    projectile_template.speed = 30.0f;
+    projectile_template.lifetime_seconds = 2.0f;
+    projectile_template.collider_template_id = 10;
+    KernelColliderTemplateDefinition collider_template = projectile_collider_template();
+    KernelGameplayCatalogDefinition catalog{};
+    catalog.struct_size = sizeof(catalog);
+    catalog.catalog_version = 9;
+    catalog.catalog_hash = 0x9999ull;
+    catalog.projectile_templates = &projectile_template;
+    catalog.projectile_template_count = 1;
+    catalog.collider_templates = &collider_template;
+    catalog.collider_template_count = 1;
+    require(client.load_gameplay_catalog(catalog));
+
+    const network_example::NetId player_net_id =
+        client.world_.spawn_player(7, glm::vec3{0.0f, 0.0f, 0.0f});
+    const std::optional<entt::entity> player =
+        client.world_.find_entity(player_net_id);
+    require(player.has_value());
+    network_example::WeaponTuning& tuning =
+        client.world_.registry().get<network_example::WeaponTuning>(*player);
+    tuning.configured[2] = true;
+    tuning.definitions[2].id = 2;
+    tuning.definitions[2].mode = network_example::WeaponFireMode::kProjectile;
+    tuning.definitions[2].projectile_template_id = 3;
+    tuning.definitions[2].projectile_speed = 30.0f;
+    tuning.definitions[2].projectile_lifetime_seconds = 2.0f;
+    tuning.definitions[2].projectile_motion_model =
+        network_example::ProjectileMotionModel::kLinear;
+
+    client.local_client_peer_id_ = 7;
+    client.local_player_net_id_ = player_net_id;
+    PlayerInput input{};
+    input.input_seq = 1;
+    input.client_action_id = 1234;
+    input.buttons = InputButton_Fire;
+    input.selected_weapon = 2;
+    input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
+    client.predict_local_projectile(input);
+    require(client.predicted_projectiles_.size() == 1);
+    require(client.predicted_projectiles_[0].projectile_template_id == 3);
+    require(client.predicted_projectiles_[0].collider_template_id == 10);
+
+    client.rebuild_render_states();
+    std::array<RenderEntityState, 4> states{};
+    const std::uint32_t state_count =
+        client.get_render_states_at_time(0, states.data(), states.size());
+    require(state_count == 1);
+    require(states[0].net_id == 0);
+    require(states[0].status == RenderEntityStatus_Predicted);
+    require(states[0].projectile_template_id == 3);
+    require(states[0].collider_template_id == 10);
+
+    std::array<KernelColliderShapeView, 4> shapes{};
+    const std::uint32_t shape_count =
+        client.query_collider_shapes(nullptr, shapes.data(), shapes.size());
+    require(shape_count == 1);
+    require(shapes[0].entity_net_id == 0);
+    require(shapes[0].collider_template_id == 10);
+    require(shapes[0].shape_type == KernelColliderShapeType_Sphere);
+    require(shapes[0].purpose_flags == KernelColliderPurpose_Damage);
 }
 
 void presentation_gate_releases_at_render_time() {
@@ -1459,6 +1644,7 @@ void hit_debug_records_filter_and_drain() {
 }  // namespace
 
 int main() {
+    client_query_collider_shapes_reports_render_colliders();
     presentation_gate_releases_at_render_time();
     clock_sync_ping_pong_updates_peer_offset();
     compensation_clamps_not_rejects_client_local_time();
@@ -1478,6 +1664,7 @@ int main() {
     server_validates_catalog_hash_before_welcome();
     projectile_spawn_batch_renders_and_binds_to_snapshot();
     projectile_spawn_event_and_batch_do_not_duplicate_render_state();
+    local_deterministic_prediction_query_uses_projectile_template_collider();
     client_despawn_removes_predicted_projectile();
     budget_omitted_projectile_snapshot_does_not_delete_bound_prediction();
     destroyed_tombstone_blocks_older_snapshot_render();

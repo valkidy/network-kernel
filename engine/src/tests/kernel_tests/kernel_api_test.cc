@@ -126,7 +126,7 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_BENCHMARK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 18u);
+    assert(KERNEL_ABI_VERSION == 20u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS) != 0);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
@@ -142,6 +142,12 @@ int main() {
     assert(offsetof(RenderEntityState, hp) > offsetof(RenderEntityState, velocity));
     assert(offsetof(RenderEntityState, max_hp) > offsetof(RenderEntityState, hp));
     assert(offsetof(RenderEntityState, status) > offsetof(RenderEntityState, client_action_id));
+    assert(offsetof(RenderEntityState, projectile_template_id) >
+           offsetof(RenderEntityState, status));
+    assert(offsetof(RenderEntityState, collider_template_id) >
+           offsetof(RenderEntityState, projectile_template_id));
+    assert(offsetof(KernelCombatStateDefinition, collider_template_id) >
+           offsetof(KernelCombatStateDefinition, active_weapon_id));
     assert(RenderEntityStatus_Active == 0u);
     assert(RenderEntityStatus_Predicted == 1u);
     assert(RenderEntityStatus_Stale == 2u);
@@ -217,6 +223,9 @@ int main() {
                &collider_query,
                collider_shapes.data(),
                static_cast<std::uint32_t>(collider_shapes.size())) == 0);
+    assert(Kernel_GetProjectileTemplates(nullptr, nullptr, 0) == 0);
+    assert(Kernel_GetColliderTemplates(nullptr, nullptr, 0) == 0);
+    assert(Kernel_GetColliderBindings(nullptr, nullptr, 0) == 0);
     KernelLocalPlayerInfo local_info{};
     assert(!Kernel_GetLocalPlayerInfo(nullptr, &local_info));
     assert(!Kernel_GetLocalPlayerInfo(nullptr, nullptr));
@@ -285,14 +294,10 @@ int main() {
     collider_template.struct_size = sizeof(collider_template);
     collider_template.template_id = 10;
     collider_template.shape_type = KernelColliderShapeType_Aabb;
+    collider_template.center = KernelVec3{0.0f, 0.8f, 0.0f};
     collider_template.half_extents = KernelVec3{0.25f, 0.25f, 0.25f};
     collider_template.layer_mask = KERNEL_COLLISION_LAYER_PROJECTILE;
     collider_template.purpose_flags = KernelColliderPurpose_Damage;
-    KernelColliderBindingDefinition collider_binding{};
-    collider_binding.struct_size = sizeof(collider_binding);
-    collider_binding.entity_type = 2;
-    collider_binding.collider_template_id = 10;
-    collider_binding.local_position = KernelVec3{0.0f, 0.8f, 0.0f};
     KernelGameplayCatalogDefinition catalog{};
     catalog.struct_size = sizeof(catalog);
     catalog.catalog_version = 3;
@@ -301,9 +306,36 @@ int main() {
     catalog.projectile_template_count = 1;
     catalog.collider_templates = &collider_template;
     catalog.collider_template_count = 1;
-    catalog.collider_bindings = &collider_binding;
-    catalog.collider_binding_count = 1;
     assert(Kernel_LoadGameplayCatalog(kernel, &catalog));
+    assert(Kernel_GetProjectileTemplates(kernel, nullptr, 0) == 1);
+    assert(Kernel_GetColliderTemplates(kernel, nullptr, 0) == 1);
+    assert(Kernel_GetColliderBindings(kernel, nullptr, 0) == 0);
+    std::array<KernelProjectileTemplateDefinition, 1> read_projectile_templates{};
+    std::array<KernelColliderTemplateDefinition, 1> read_collider_templates{};
+    assert(Kernel_GetProjectileTemplates(
+               kernel,
+               read_projectile_templates.data(),
+               static_cast<std::uint32_t>(read_projectile_templates.size())) == 1);
+    assert(Kernel_GetColliderTemplates(
+               kernel,
+               read_collider_templates.data(),
+               static_cast<std::uint32_t>(read_collider_templates.size())) == 1);
+    std::array<KernelColliderBindingDefinition, 1> read_collider_bindings{};
+    assert(Kernel_GetColliderBindings(
+               kernel,
+               read_collider_bindings.data(),
+               static_cast<std::uint32_t>(read_collider_bindings.size())) == 0);
+    assert(read_projectile_templates[0].projectile_template_id == 3);
+    assert(read_projectile_templates[0].collider_template_id == 10);
+    assert(read_collider_templates[0].template_id == 10);
+    KernelColliderBindingDefinition rejected_binding{};
+    rejected_binding.struct_size = sizeof(rejected_binding);
+    rejected_binding.entity_type = 2;
+    rejected_binding.collider_template_id = 10;
+    KernelGameplayCatalogDefinition rejected_binding_catalog = catalog;
+    rejected_binding_catalog.collider_bindings = &rejected_binding;
+    rejected_binding_catalog.collider_binding_count = 1;
+    assert(!Kernel_LoadGameplayCatalog(kernel, &rejected_binding_catalog));
     benchmark_stats = KernelBenchmarkStats{};
     benchmark_stats.struct_size = sizeof(benchmark_stats);
     assert(Kernel_GetBenchmarkStats(kernel, &benchmark_stats));
@@ -337,6 +369,7 @@ int main() {
     combat_state.hp = 240;
     combat_state.max_hp = 240;
     combat_state.active_weapon_id = 3;
+    combat_state.collider_template_id = 10;
     combat_state.hitbox_center = KernelVec3{0.0f, 0.8f, 0.0f};
     combat_state.hitbox_half_extents = KernelVec3{0.4f, 0.8f, 0.4f};
     combat_state.ammo[3] = 3;
@@ -364,6 +397,20 @@ int main() {
     assert(collider_shapes[0].world_center.y == 0.8f);
     assert(collider_shapes[0].half_extents.x == 0.25f);
     assert(collider_shapes[0].remaining_ticks == 0);
+    assert(Kernel_QueryColliderShapes(
+               kernel,
+               nullptr,
+               collider_shapes.data(),
+               static_cast<std::uint32_t>(collider_shapes.size())) == 1);
+    KernelColliderShapeQuery query_all{};
+    query_all.struct_size = sizeof(query_all);
+    query_all.entity_net_id = 0;
+    query_all.purpose_mask = 0;
+    assert(Kernel_QueryColliderShapes(
+               kernel,
+               &query_all,
+               collider_shapes.data(),
+               static_cast<std::uint32_t>(collider_shapes.size())) == 1);
 
     KernelColliderTemplateDefinition changed_collider_template{};
     changed_collider_template.struct_size = sizeof(changed_collider_template);
@@ -376,10 +423,6 @@ int main() {
         collider_template,
         changed_collider_template,
     };
-    KernelColliderBindingDefinition changed_collider_binding{};
-    changed_collider_binding.struct_size = sizeof(changed_collider_binding);
-    changed_collider_binding.entity_type = 2;
-    changed_collider_binding.collider_template_id = 11;
     KernelGameplayCatalogDefinition changed_catalog{};
     changed_catalog.struct_size = sizeof(changed_catalog);
     changed_catalog.catalog_version = 4;
@@ -389,8 +432,6 @@ int main() {
     changed_catalog.collider_templates = changed_collider_templates.data();
     changed_catalog.collider_template_count =
         static_cast<std::uint32_t>(changed_collider_templates.size());
-    changed_catalog.collider_bindings = &changed_collider_binding;
-    changed_catalog.collider_binding_count = 1;
     assert(Kernel_LoadGameplayCatalog(kernel, &changed_catalog));
     for (KernelColliderShapeView& shape : collider_shapes) {
         shape = KernelColliderShapeView{};

@@ -146,20 +146,6 @@ void hash_collider_template(
     hash_scalar(hash, definition.layer_mask);
 }
 
-void hash_collider_binding(
-    std::uint64_t* hash,
-    const ColliderBindingConfig& collider_binding) {
-    const KernelColliderBindingDefinition& definition =
-        collider_binding.definition;
-    hash_scalar(hash, definition.entity_type);
-    hash_scalar(hash, definition.collider_template_id);
-    hash_vec3(hash, definition.local_position);
-    hash_float(hash, definition.local_rotation.x);
-    hash_float(hash, definition.local_rotation.y);
-    hash_float(hash, definition.local_rotation.z);
-    hash_float(hash, definition.local_rotation.w);
-}
-
 void hash_projectile_template(
     std::uint64_t* hash,
     const ProjectileTemplateConfig& projectile_template) {
@@ -203,6 +189,7 @@ void hash_actor_template(
     hash_scalar(hash, actor_template.actor_template_id);
     hash_string(hash, actor_template.name);
     hash_scalar(hash, actor_template.entity_type);
+    hash_scalar(hash, actor_template.collider_template_id);
     hash_scalar(hash, actor_template.health.hp);
     hash_scalar(hash, actor_template.health.max_hp);
     hash_vec3(hash, actor_template.hitbox_center);
@@ -1276,13 +1263,13 @@ ColliderCatalogConfig load_collider_catalog_from_source(
     const YAML::Node document = source.load_yaml(path);
     reject_unknown_keys(
         document,
-        {"templates", "bindings"},
+        {"templates"},
         path,
         source.source_kind(),
         KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_COLLIDER);
-    if (!document["templates"] || !document["bindings"]) {
+    if (!document["templates"]) {
         throw std::runtime_error(
-            "collider catalog requires templates and bindings: " + path);
+            "collider catalog requires templates: " + path);
     }
 
     ColliderCatalogConfig colliders;
@@ -1344,31 +1331,6 @@ ColliderCatalogConfig load_collider_catalog_from_source(
         template_names_by_id[definition.template_id] = collider_template.name;
         colliders.templates.push_back(collider_template);
     }
-
-    for (const YAML::Node& node : document["bindings"]) {
-        reject_unknown_keys(
-            node,
-            {"entity_type", "collider_template", "local_position"},
-            path,
-            source.source_kind(),
-            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_COLLIDER);
-        const std::string template_name =
-            node["collider_template"].as<std::string>();
-        const auto found = template_ids.find(template_name);
-        if (found == template_ids.end()) {
-            throw std::runtime_error(
-                "unknown collider template binding: " + template_name);
-        }
-        ColliderBindingConfig binding;
-        KernelColliderBindingDefinition& definition = binding.definition;
-        definition.struct_size = sizeof(KernelColliderBindingDefinition);
-        definition.entity_type = entity_type_from_yaml(node["entity_type"]);
-        definition.collider_template_id = found->second;
-        definition.local_position = vec3_from_yaml(node["local_position"]);
-        definition.local_rotation =
-            KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
-        colliders.bindings.push_back(binding);
-    }
     return colliders;
 }
 
@@ -1377,6 +1339,7 @@ ActorTemplateConfig default_player_actor_template() {
     actor_template.actor_template_id = 1;
     actor_template.name = "player";
     actor_template.entity_type = kEntityTypePlayer;
+    actor_template.collider_template_id = 1;
     actor_template.health = EntityHealthDefinition{100, 100};
     actor_template.hitbox_center = KernelVec3{0.0f, 0.9f, 0.0f};
     actor_template.hitbox_half_extents = KernelVec3{0.35f, 0.9f, 0.35f};
@@ -1393,6 +1356,7 @@ ActorTemplateConfig default_enemy_actor_template() {
     actor_template.actor_template_id = 2;
     actor_template.name = "enemy_grunt";
     actor_template.entity_type = kEntityTypeEnemy;
+    actor_template.collider_template_id = 2;
     actor_template.health =
         EntityHealthDefinition{kEnemyInitialHp, kEnemyInitialHp};
     actor_template.hitbox_center = KernelVec3{0.0f, 0.8f, 0.0f};
@@ -1453,17 +1417,47 @@ EnemyAiConfig ai_config_from_yaml(
     return ai;
 }
 
+std::uint32_t actor_collider_template_id_from_yaml(
+    const YAML::Node& node,
+    const ColliderCatalogConfig& colliders) {
+    if (!node || !node.IsScalar()) {
+        throw std::runtime_error("actor collider_template reference must be a scalar");
+    }
+    const std::string value = node.as<std::string>();
+    if (!value.empty() &&
+        std::all_of(value.begin(), value.end(), [](unsigned char ch) {
+            return std::isdigit(ch) != 0;
+        })) {
+        const std::uint32_t template_id = static_cast<std::uint32_t>(
+            std::stoul(value));
+        for (const ColliderTemplateConfig& collider_template : colliders.templates) {
+            if (collider_template.definition.template_id == template_id) {
+                return template_id;
+            }
+        }
+        throw std::runtime_error("unknown actor collider_template id: " + value);
+    }
+    for (const ColliderTemplateConfig& collider_template : colliders.templates) {
+        if (collider_template.name == value) {
+            return collider_template.definition.template_id;
+        }
+    }
+    throw std::runtime_error("unknown actor collider_template name: " + value);
+}
+
 ActorTemplateConfig actor_template_from_yaml(
     const YAML::Node& node,
     const std::string& path,
     std::uint32_t source_kind,
-    const WeaponCatalogConfig& weapons) {
+    const WeaponCatalogConfig& weapons,
+    const ColliderCatalogConfig& colliders) {
     reject_unknown_keys(
         node,
         {
             "id",
             "name",
             "entity_type",
+            "collider_template",
             "health",
             "movement",
             "hitbox",
@@ -1479,6 +1473,8 @@ ActorTemplateConfig actor_template_from_yaml(
     actor_template.actor_template_id = node["id"].as<std::uint32_t>();
     actor_template.name = node["name"].as<std::string>();
     actor_template.entity_type = entity_type_from_yaml(node["entity_type"]);
+    actor_template.collider_template_id =
+        actor_collider_template_id_from_yaml(node["collider_template"], colliders);
 
     const YAML::Node health = node["health"];
     if (!health) {
@@ -1632,7 +1628,8 @@ std::uint32_t actor_template_ref_from_yaml(
 std::vector<ActorTemplateConfig> load_actor_templates_from_source(
     const GameplayConfigSource& source,
     const std::string& directory,
-    const WeaponCatalogConfig& weapons) {
+    const WeaponCatalogConfig& weapons,
+    const ColliderCatalogConfig& colliders) {
     std::vector<ActorTemplateConfig> actor_templates;
     std::unordered_map<std::uint32_t, std::string> ids;
     std::unordered_map<std::string, std::uint32_t> names;
@@ -1643,7 +1640,8 @@ std::vector<ActorTemplateConfig> load_actor_templates_from_source(
                 source.load_yaml(file),
                 file,
                 source.source_kind(),
-                weapons);
+                weapons,
+                colliders);
         if (ids.contains(actor_template.actor_template_id)) {
             throw std::runtime_error("duplicate actor template id: " + file);
         }
@@ -2231,7 +2229,8 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
         config.actor_templates = load_actor_templates_from_source(
             source,
             actor_template_dir,
-            config.weapons);
+            config.weapons,
+            config.colliders);
     } else {
         apply_default_actor_templates(&config);
     }
@@ -2336,20 +2335,6 @@ std::uint64_t compute_gameplay_catalog_hash(
     for (const ColliderTemplateConfig& collider_template : templates) {
         hash_collider_template(&hash, collider_template);
     }
-    std::vector<ColliderBindingConfig> bindings = config.colliders.bindings;
-    std::sort(
-        bindings.begin(),
-        bindings.end(),
-        [](const ColliderBindingConfig& lhs, const ColliderBindingConfig& rhs) {
-            if (lhs.definition.entity_type != rhs.definition.entity_type) {
-                return lhs.definition.entity_type < rhs.definition.entity_type;
-            }
-            return lhs.definition.collider_template_id <
-                   rhs.definition.collider_template_id;
-        });
-    for (const ColliderBindingConfig& collider_binding : bindings) {
-        hash_collider_binding(&hash, collider_binding);
-    }
     std::vector<ProjectileTemplateConfig> projectile_templates =
         config.projectile_templates;
     std::sort(
@@ -2438,6 +2423,7 @@ std::vector<std::string> validate_gameplay_config(
         if (actor_template.actor_template_id == 0 || actor_template.name.empty() ||
             (actor_template.entity_type != kEntityTypePlayer &&
              actor_template.entity_type != kEntityTypeEnemy) ||
+            actor_template.collider_template_id == 0 ||
             actor_template.health.hp == 0 ||
             actor_template.health.max_hp == 0 ||
             actor_template.health.hp > actor_template.health.max_hp ||
@@ -2488,8 +2474,8 @@ std::vector<std::string> validate_gameplay_config(
         config.enemy.spawn_count == 0 || config.enemy.spawn_radius < 0.0f) {
         errors.push_back("enemy gameplay config must be valid");
     }
-    if (config.colliders.templates.empty() || config.colliders.bindings.empty()) {
-        errors.push_back("collider catalog must include templates and bindings");
+    if (config.colliders.templates.empty() || !config.colliders.bindings.empty()) {
+        errors.push_back("collider catalog must include templates and no bindings");
     }
     std::vector<std::uint32_t> collider_template_ids;
     for (const ColliderTemplateConfig& collider_template :
@@ -2515,17 +2501,12 @@ std::vector<std::string> validate_gameplay_config(
         }
         collider_template_ids.push_back(definition.template_id);
     }
-    for (const ColliderBindingConfig& collider_binding :
-         config.colliders.bindings) {
-        const KernelColliderBindingDefinition& definition =
-            collider_binding.definition;
-        if (definition.struct_size < sizeof(KernelColliderBindingDefinition) ||
-            definition.entity_type == 0 ||
-            std::find(
+    for (const ActorTemplateConfig& actor_template : config.actor_templates) {
+        if (std::find(
                 collider_template_ids.begin(),
                 collider_template_ids.end(),
-                definition.collider_template_id) == collider_template_ids.end()) {
-            errors.push_back("collider binding must reference a valid template");
+                actor_template.collider_template_id) == collider_template_ids.end()) {
+            errors.push_back("actor template collider must reference a valid template");
         }
     }
     if (config.projectile_templates.empty()) {
@@ -2625,11 +2606,6 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
          config.colliders.templates) {
         storage.collider_templates.push_back(collider_template.definition);
     }
-    for (const ColliderBindingConfig& collider_binding :
-         config.colliders.bindings) {
-        storage.collider_bindings.push_back(collider_binding.definition);
-    }
-
     storage.definition.struct_size = sizeof(storage.definition);
     storage.definition.catalog_version = config.weapons.catalog_version;
     storage.definition.catalog_hash = config.weapons.catalog_hash;
@@ -2640,9 +2616,6 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
     storage.definition.collider_templates = storage.collider_templates.data();
     storage.definition.collider_template_count =
         static_cast<std::uint32_t>(storage.collider_templates.size());
-    storage.definition.collider_bindings = storage.collider_bindings.data();
-    storage.definition.collider_binding_count =
-        static_cast<std::uint32_t>(storage.collider_bindings.size());
     return storage;
 }
 
@@ -2664,6 +2637,7 @@ KernelCombatStateDefinition make_combat_state_from_actor_template(
     combat_state.hp = actor_template.health.hp;
     combat_state.max_hp = actor_template.health.max_hp;
     combat_state.active_weapon_id = active_weapon_id(actor_template);
+    combat_state.collider_template_id = actor_template.collider_template_id;
     combat_state.move_speed_meters_per_second =
         actor_template.move_speed_meters_per_second;
     combat_state.hitbox_center = actor_template.hitbox_center;

@@ -384,6 +384,46 @@ uint32_t Kernel_QueryColliderShapes(
     });
 }
 
+uint32_t Kernel_GetProjectileTemplates(
+    KernelHandle* kernel,
+    KernelProjectileTemplateDefinition* out_templates,
+    uint32_t max_templates) {
+    return abi_call("Kernel_GetProjectileTemplates", 0u, [&]() -> std::uint32_t {
+        if (kernel == nullptr) {
+            return 0u;
+        }
+        return kernel->engine->get_projectile_templates(
+            out_templates,
+            max_templates);
+    });
+}
+
+uint32_t Kernel_GetColliderTemplates(
+    KernelHandle* kernel,
+    KernelColliderTemplateDefinition* out_templates,
+    uint32_t max_templates) {
+    return abi_call("Kernel_GetColliderTemplates", 0u, [&]() -> std::uint32_t {
+        if (kernel == nullptr) {
+            return 0u;
+        }
+        return kernel->engine->get_collider_templates(
+            out_templates,
+            max_templates);
+    });
+}
+
+uint32_t Kernel_GetColliderBindings(
+    KernelHandle* kernel,
+    KernelColliderBindingDefinition* out_bindings,
+    uint32_t max_bindings) {
+    return abi_call("Kernel_GetColliderBindings", 0u, [&]() -> std::uint32_t {
+        if (kernel == nullptr) {
+            return 0u;
+        }
+        return kernel->engine->get_collider_bindings(out_bindings, max_bindings);
+    });
+}
+
 bool Kernel_ServerCreateEntity(
     KernelHandle* kernel,
     const KernelServerEntityCreateInfo* create_info,

@@ -1,6 +1,7 @@
 id: 2
 name: enemy_grunt
 entity_type: enemy
+collider_template: enemy_hit
 health:
   hp: 500
   max_hp: 500

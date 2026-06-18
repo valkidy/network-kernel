@@ -168,6 +168,21 @@ int main() {
             std::uint64_t,
             RenderEntityState*,
             std::uint32_t)>(library, "Kernel_GetRenderStatesAtTime");
+    [[maybe_unused]] auto* kernel_get_projectile_templates =
+        load_symbol<std::uint32_t(
+            KernelHandle*,
+            KernelProjectileTemplateDefinition*,
+            std::uint32_t)>(library, "Kernel_GetProjectileTemplates");
+    [[maybe_unused]] auto* kernel_get_collider_templates =
+        load_symbol<std::uint32_t(
+            KernelHandle*,
+            KernelColliderTemplateDefinition*,
+            std::uint32_t)>(library, "Kernel_GetColliderTemplates");
+    [[maybe_unused]] auto* kernel_get_collider_bindings =
+        load_symbol<std::uint32_t(
+            KernelHandle*,
+            KernelColliderBindingDefinition*,
+            std::uint32_t)>(library, "Kernel_GetColliderBindings");
     auto* kernel_poll_events =
         load_symbol<std::uint32_t(KernelHandle*, KernelEvent*, std::uint32_t)>(
             library,
@@ -457,6 +472,7 @@ int main() {
     local_combat.hp = 100;
     local_combat.max_hp = 100;
     local_combat.active_weapon_id = 0;
+    local_combat.collider_template_id = 1;
     local_combat.move_speed_meters_per_second = 5.0f;
     local_combat.hitbox_center = KernelVec3{0.0f, 0.9f, 0.0f};
     local_combat.hitbox_half_extents = KernelVec3{0.35f, 0.9f, 0.35f};
@@ -478,6 +494,7 @@ int main() {
     combat_state.hp = 240;
     combat_state.max_hp = 240;
     combat_state.active_weapon_id = 3;
+    combat_state.collider_template_id = 2;
     combat_state.hitbox_center = KernelVec3{0.0f, 0.8f, 0.0f};
     combat_state.hitbox_half_extents = KernelVec3{0.4f, 0.8f, 0.4f};
     combat_state.ammo[3] = 3;
