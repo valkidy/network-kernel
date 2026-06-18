@@ -12,7 +12,8 @@ Unity Package Manager package. The deliverable is a UPM `.tgz`, not a
 ## Required Entry Point
 
 Use the bundled script as the only entry point for native build, native plugin
-staging, package packing, and Unity batchmode execution:
+staging, gameplay catalog bundle staging, package packing, and Unity batchmode
+execution:
 
 ```bash
 .agents/skills/unity-plugin-package-builder/scripts/run-unity-plugin-package-builder.sh
@@ -30,7 +31,7 @@ Common invocations:
 .agents/skills/unity-plugin-package-builder/scripts/run-unity-plugin-package-builder.sh \
   --release-note "updates native plugins"
 
-# Verify package layout/ABI/export symbols without building or staging.
+# Verify package layout/ABI/export symbols against already-staged package files.
 .agents/skills/unity-plugin-package-builder/scripts/run-unity-plugin-package-builder.sh --mode verify --unity off
 
 # Build and pack without launching Unity, still using the default release-note
@@ -82,6 +83,10 @@ The script supports:
   `plugins/com.network-example.kernel/RELEASE_NOTES.md`
 - `--auto-commit on|off`; defaults to `on`
 
+Set `BUNDLE_ARTIFACT_DIR=/absolute/path` when CI or a caller needs
+`bundle.zip`, `bundle.bytes`, and `bundle_manifest.json` copied to a known
+artifact directory. The default is `$OUTPUT_DIR/template-bundle`.
+
 Codesign is mandatory for every mode that creates or updates the macOS dylib:
 the Bazel target produces an ad-hoc signed dylib, and `build-native`/`stage`
 verify that signature with `codesign --verify`. Windows DLLs are not codesigned.
@@ -97,25 +102,30 @@ Default behavior:
    x86_64 support DLLs into
    `plugins/com.network-example.kernel/Assets/Plugins/Windows/x86_64/`.
 4. Verify the staged macOS dylib signature with `codesign --verify`.
-5. Verify package layout, C/C# ABI version alignment, required exported
+5. Build `//game_server/gameplay_catalog_bundle:bundle`, copy the generated
+   `bundle.zip` byte-for-byte to
+   `plugins/com.network-example.kernel/Runtime/Resources/gameplay_catalog_bundle/bundle.bytes`,
+   and copy bundle artifacts to `BUNDLE_ARTIFACT_DIR`.
+6. Verify package layout, C/C# ABI version alignment, required exported
    `Kernel_*`/`GameServer_*` symbols for macOS and Windows, and Windows PE32+
    x86-64 DLL shape. Export checks are ABI-aware: the v8 baseline remains
    compatible with the long-lived Unity plugin branch, while ABI 9-16 and
    GameServer ABI 2-3 symbols are required when the native headers report those
    versions.
-6. Delete every `.DS_Store` under `plugins/com.network-example.kernel`, then
+7. Delete every `.DS_Store` under `plugins/com.network-example.kernel`, then
    pack a clean UPM tarball in
    `plugins/output`.
-7. Optionally run Unity batchmode ABI smoke if Unity is auto-detected and the
+8. Optionally run Unity batchmode ABI smoke if Unity is auto-detected and the
    local license/headless environment works. Missing or blocked Unity should be
    reported as a clear skip, not a failure, unless the user provided an explicit
    Unity executable path. Override the default smoke timeout with
    `UNITY_TIMEOUT_SECONDS=<seconds>` when diagnosing slow Editor startup.
-8. If successful and `--auto-commit on`, prepend the supplied release-note
+9. If successful and `--auto-commit on`, prepend the supplied release-note
    bullets to `plugins/com.network-example.kernel/RELEASE_NOTES.md` and commit
    only when the dirty files are limited to staged native plugin assets under
-   `Assets/Plugins`, Unity package `.cs` files, `RELEASE_NOTES.md`, and
-   Unity's generated `RELEASE_NOTES.md.meta`.
+   `Assets/Plugins`, Unity package `.cs` files, the generated
+   `Runtime/Resources/gameplay_catalog_bundle/bundle.bytes`, `RELEASE_NOTES.md`,
+   and Unity's generated `RELEASE_NOTES.md.meta`.
 
 Auto commit details:
 
@@ -151,3 +161,5 @@ Report:
 - Verification status.
 - Whether Unity smoke passed, skipped, or failed.
 - Release-note path and auto-commit result when finalization runs.
+- Gameplay catalog bundle resource path and bundle artifact paths when staging
+  or packing runs.

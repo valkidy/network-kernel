@@ -95,6 +95,7 @@ jobs:
           OUTPUT_BASE: ${{ runner.temp }}/bazel-network-example-unity-package
           OPENSSL_LIB_DIR: /opt/homebrew/opt/openssl@3/lib
           MINGW_ROOT: /opt/homebrew/opt/mingw-w64/toolchain-x86_64
+          BUNDLE_ARTIFACT_DIR: ${{ runner.temp }}/template-bundle
         run: |
           set -euo pipefail
           if ! .agents/skills/unity-plugin-package-builder/scripts/run-unity-plugin-package-builder.sh \
@@ -148,4 +149,7 @@ jobs:
           path: |
             ${{ steps.metadata.outputs.artifact_path }}
             ${{ steps.metadata.outputs.metadata_path }}
+            ${{ runner.temp }}/template-bundle/bundle.zip
+            ${{ runner.temp }}/template-bundle/bundle.bytes
+            ${{ runner.temp }}/template-bundle/bundle_manifest.json
           retention-days: 14

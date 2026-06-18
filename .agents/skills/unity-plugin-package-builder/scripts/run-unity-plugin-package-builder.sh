@@ -17,11 +17,14 @@ MINGW_ROOT="${MINGW_ROOT:-/opt/homebrew/opt/mingw-w64/toolchain-x86_64}"
 PACKAGE_DIR_REL="plugins/com.network-example.kernel"
 PACKAGE_NAME="com.network-example.kernel"
 NATIVE_TARGET="//engine/src/kernel:network_kernel_shared"
+GAMEPLAY_CATALOG_BUNDLE_TARGET="//game_server/gameplay_catalog_bundle:bundle"
 BUILT_MACOS_DYLIB_SUBPATH="engine/src/kernel/signed/libnetwork_kernel.dylib"
 BUILT_WINDOWS_DLL_SUBPATH="engine/src/kernel/network_kernel.dll"
 STAGED_MACOS_DYLIB_REL="${PACKAGE_DIR_REL}/Assets/Plugins/macOS/libnetwork_kernel.dylib"
 STAGED_WINDOWS_DIR_REL="${PACKAGE_DIR_REL}/Assets/Plugins/Windows/x86_64"
 STAGED_WINDOWS_DLL_REL="${STAGED_WINDOWS_DIR_REL}/network_kernel.dll"
+BUNDLE_RESOURCE_DIR_REL="${PACKAGE_DIR_REL}/Runtime/Resources/gameplay_catalog_bundle"
+BUNDLE_RESOURCE_PATH_REL="${BUNDLE_RESOURCE_DIR_REL}/bundle.bytes"
 RELEASE_NOTES_REL="${PACKAGE_DIR_REL}/RELEASE_NOTES.md"
 RELEASE_NOTES_META_REL="${RELEASE_NOTES_REL}.meta"
 RELEASE_NOTES=()
@@ -218,10 +221,15 @@ BUILT_WINDOWS_DLL=""
 STAGED_MACOS_DYLIB="$repo_root/$STAGED_MACOS_DYLIB_REL"
 STAGED_WINDOWS_DIR="$repo_root/$STAGED_WINDOWS_DIR_REL"
 STAGED_WINDOWS_DLL="$repo_root/$STAGED_WINDOWS_DLL_REL"
+BUNDLE_RESOURCE_DIR="$repo_root/$BUNDLE_RESOURCE_DIR_REL"
+BUNDLE_RESOURCE_PATH="$repo_root/$BUNDLE_RESOURCE_PATH_REL"
 RELEASE_NOTES_PATH="$repo_root/$RELEASE_NOTES_REL"
 
 if [[ -z "$OUTPUT_DIR" ]]; then
   OUTPUT_DIR="$repo_root/plugins/output"
+fi
+if [[ -z "${BUNDLE_ARTIFACT_DIR:-}" ]]; then
+  BUNDLE_ARTIFACT_DIR="$OUTPUT_DIR/template-bundle"
 fi
 
 if command -v bazelisk >/dev/null 2>&1; then
@@ -351,6 +359,52 @@ copy_overwriting() {
     chmod u+w "$destination_path" 2>/dev/null || true
   fi
   cp "$source_path" "$destination_path"
+}
+
+stage_gameplay_catalog_bundle() {
+  note "Building gameplay catalog bundle: $GAMEPLAY_CATALOG_BUNDLE_TARGET"
+  "$BAZEL_CMD" \
+    --output_base="$OUTPUT_BASE" \
+    build \
+    "$GAMEPLAY_CATALOG_BUNDLE_TARGET" \
+    --symlink_prefix=/
+
+  local bundle_zip_output
+  bundle_zip_output="$("$BAZEL_CMD" \
+    --output_base="$OUTPUT_BASE" \
+    cquery \
+    "$GAMEPLAY_CATALOG_BUNDLE_TARGET" \
+    --output=files \
+    --symlink_prefix=/ | awk '/bundle[.]zip$/ { print; exit }')"
+
+  [[ -n "$bundle_zip_output" ]] || die "could not resolve generated bundle.zip for $GAMEPLAY_CATALOG_BUNDLE_TARGET"
+  local bundle_zip="$bundle_zip_output"
+  if [[ "$bundle_zip" != /* ]]; then
+    local bazel_bin
+    bazel_bin="$("$BAZEL_CMD" --output_base="$OUTPUT_BASE" info bazel-bin --symlink_prefix=/)"
+    bundle_zip="$bazel_bin/${bundle_zip_output##*/bin/}"
+  fi
+  [[ -f "$bundle_zip" ]] || die "generated bundle.zip does not exist: $bundle_zip"
+
+  mkdir -p "$BUNDLE_RESOURCE_DIR" "$BUNDLE_ARTIFACT_DIR"
+  copy_overwriting "$bundle_zip" "$BUNDLE_RESOURCE_PATH"
+  copy_overwriting "$bundle_zip" "$BUNDLE_ARTIFACT_DIR/bundle.zip"
+  copy_overwriting "$bundle_zip" "$BUNDLE_ARTIFACT_DIR/bundle.bytes"
+
+  cat > "$BUNDLE_ARTIFACT_DIR/bundle_manifest.json" <<JSON
+{
+  "schema_version": 1,
+  "format": "zip-as-bytes",
+  "resource_path": "Runtime/Resources/gameplay_catalog_bundle/bundle.bytes",
+  "resources_load_path": "gameplay_catalog_bundle/bundle",
+  "source_ref": "${GITHUB_REF:-}",
+  "source_ref_name": "${GITHUB_REF_NAME:-}",
+  "source_sha": "${GITHUB_SHA:-}",
+  "generated_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+}
+JSON
+
+  note "Staged gameplay catalog bundle: $BUNDLE_RESOURCE_PATH"
 }
 
 copy_openssl_windows_dll() {
@@ -525,6 +579,7 @@ verify_package() {
   [[ -f "$PACKAGE_DIR/Runtime/Core/GameServerTypes.cs" ]] || die "missing Runtime/Core/GameServerTypes.cs"
   [[ -f "$PACKAGE_DIR/Runtime/Client/NetworkClient.cs" ]] || die "missing Runtime/Client/NetworkClient.cs"
   [[ -f "$PACKAGE_DIR/Runtime/Host/NetworkHost.cs" ]] || die "missing Runtime/Host/NetworkHost.cs"
+  [[ -f "$BUNDLE_RESOURCE_PATH" ]] || die "missing $BUNDLE_RESOURCE_PATH_REL"
   [[ -f "$PACKAGE_DIR/Editor/NetworkKernelAbiSmokeRunner.cs" ]] || die "missing Editor/NetworkKernelAbiSmokeRunner.cs"
   [[ -f "$PACKAGE_DIR/Tests~/AbiSmoke/NetworkKernelManagedAbiSmoke.cs" ]] || die "missing Tests~/AbiSmoke/NetworkKernelManagedAbiSmoke.cs"
   grep -q 'LibraryName = "network_kernel"' "$PACKAGE_DIR/Runtime/Core/KernelNative.cs" ||
@@ -748,6 +803,9 @@ is_auto_commit_allowed_path() {
   if [[ "$path" == "$RELEASE_NOTES_REL" || "$path" == "$RELEASE_NOTES_META_REL" ]]; then
     return 0
   fi
+  if [[ "$path" == "$BUNDLE_RESOURCE_PATH_REL" ]]; then
+    return 0
+  fi
   if [[ "$path" == "$PACKAGE_DIR_REL/Assets/Plugins/"* ]]; then
     case "$path" in
       *.dll|*.dylib|*.meta) return 0 ;;
@@ -827,6 +885,7 @@ case "$MODE" in
   all)
     build_native
     stage_native
+    stage_gameplay_catalog_bundle
     pack_package
     run_unity_smoke
     ;;
@@ -835,12 +894,14 @@ case "$MODE" in
     ;;
   stage)
     stage_native
+    stage_gameplay_catalog_bundle
     verify_package
     ;;
   verify)
     verify_package
     ;;
   pack)
+    stage_gameplay_catalog_bundle
     pack_package
     run_unity_smoke
     ;;
@@ -857,6 +918,15 @@ if [[ -f "$STAGED_WINDOWS_DLL" ]]; then
 fi
 if [[ -n "$ARTIFACT_PATH" ]]; then
   echo "artifact=$ARTIFACT_PATH"
+fi
+if [[ -f "$BUNDLE_RESOURCE_PATH" ]]; then
+  echo "bundle_resource=$BUNDLE_RESOURCE_PATH"
+fi
+if [[ -f "$BUNDLE_ARTIFACT_DIR/bundle.zip" ]]; then
+  echo "bundle_artifact_dir=$BUNDLE_ARTIFACT_DIR"
+  echo "bundle_zip=$BUNDLE_ARTIFACT_DIR/bundle.zip"
+  echo "bundle_bytes=$BUNDLE_ARTIFACT_DIR/bundle.bytes"
+  echo "bundle_manifest=$BUNDLE_ARTIFACT_DIR/bundle_manifest.json"
 fi
 echo "unity=$UNITY_SETTING"
 echo "mode=$MODE"
