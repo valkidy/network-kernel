@@ -29,7 +29,7 @@ public static class NetworkKernelManagedAbiSmoke
         KernelAbiInfo info = KernelAbi.GetInfo();
         KernelBuildInfo buildInfo = KernelAbi.GetBuildInfo();
         GameServerAbiInfo gameServerInfo = GameServerAbi.GetInfo();
-        Require(KernelConstants.AbiVersion == 18, "Managed kernel ABI version was not v18.");
+        Require(KernelConstants.AbiVersion == 20, "Managed kernel ABI version was not v20.");
         Require(
             (info.capability_flags & KernelConstants.CapabilityEntityLifecycleEvents) != 0,
             "Kernel lifecycle event capability was missing.");
@@ -76,7 +76,7 @@ public static class NetworkKernelManagedAbiSmoke
                 kernel.ServerCreateEntity(createInfo, out uint enemyNetId) && enemyNetId != 0,
                 "Kernel_ServerCreateEntity failed.");
 
-            RequireAbi15Diagnostics(kernel, enemyNetId);
+            RequireAbi20Diagnostics(kernel);
             ConfigureCombatAndWeapons(kernel, enemyNetId);
             Require(
                 kernel.ServerGetEntityState(enemyNetId, out KernelServerEntityState enemyState) &&
@@ -91,6 +91,10 @@ public static class NetworkKernelManagedAbiSmoke
             Require(
                 HasActiveRenderEntityMaxHealth(states, enemyNetId, 240),
                 "Kernel_GetRenderStates missed enemy health.");
+            Require(
+                HasActiveRenderEntityColliderTemplate(states, enemyNetId, 101),
+                "Kernel_GetRenderStates missed enemy collider template id.");
+            RequireQueryAllColliderShape(kernel, enemyNetId);
             Require(
                 kernel.GetRenderStatesAtTime(33333, states) > 0,
                 "Kernel_GetRenderStatesAtTime returned no states.");
@@ -189,6 +193,7 @@ public static class NetworkKernelManagedAbiSmoke
         combat.hp = 240;
         combat.max_hp = 240;
         combat.active_weapon_id = 3;
+        combat.collider_template_id = 101;
         combat.hitbox_center = new KernelVec3(0.0f, 0.8f, 0.0f);
         combat.hitbox_half_extents = new KernelVec3(0.4f, 0.8f, 0.4f);
         combat.ammo[3] = 3;
@@ -209,7 +214,7 @@ public static class NetworkKernelManagedAbiSmoke
         SetAndQueryWeapon(kernel, enemyNetId, HomingWeapon(), 6);
     }
 
-    private static void RequireAbi15Diagnostics(Kernel kernel, uint enemyNetId)
+    private static void RequireAbi20Diagnostics(Kernel kernel)
     {
         var colliderTemplates = new[]
         {
@@ -224,46 +229,66 @@ public static class NetworkKernelManagedAbiSmoke
                 layer_mask = KernelConstants.CollisionLayerEnemy,
             },
         };
-        var colliderBindings = new[]
+        var projectileTemplates = new[]
         {
-            new KernelColliderBindingDefinition
+            new KernelProjectileTemplateDefinition
             {
-                struct_size = KernelColliderBindingDefinition.StructSize,
-                entity_type = (ushort)KernelEntityType.Enemy,
+                struct_size = KernelProjectileTemplateDefinition.StructSize,
+                projectile_template_id = 202,
+                weapon_id = 2,
+                motion_model = (byte)KernelProjectileMotionModel.Linear,
+                sync_mode = (byte)KernelProjectileSyncMode.LocalPredictedDeterministic,
+                hit_response = (byte)KernelProjectileHitResponse.Destroy,
+                damage_shape = (byte)KernelProjectileDamageShape.DirectHit,
+                projectile_kind = (byte)KernelProjectileKind.Projectile,
+                damage = 5,
+                speed = 30.0f,
+                lifetime_seconds = 2.0f,
                 collider_template_id = 101,
-                local_position = new KernelVec3(0.0f, 0.1f, 0.0f),
-                local_rotation = new KernelQuat(0.0f, 0.0f, 0.0f, 1.0f),
+                collision_mask = KernelConstants.CollisionMaskDamageable,
+                max_hit_count = 1,
             },
         };
         var catalog = new KernelGameplayCatalog
         {
-            CatalogVersion = 15,
-            CatalogHash = 0x1500UL,
+            CatalogVersion = 20,
+            CatalogHash = 0x2000UL,
+            ProjectileTemplates = projectileTemplates,
             ColliderTemplates = colliderTemplates,
-            ColliderBindings = colliderBindings,
         };
 
         Require(kernel.LoadGameplayCatalog(catalog), "Kernel_LoadGameplayCatalog failed.");
         RequireInvalidGameplayCatalogBundleFails(kernel);
-
-        var shapeQuery = new KernelColliderShapeQuery
-        {
-            struct_size = KernelColliderShapeQuery.StructSize,
-            entity_net_id = enemyNetId,
-            purpose_mask = (uint)KernelColliderPurpose.Hit,
-        };
-        var shapes = new KernelColliderShapeView[4];
         Require(
-            kernel.QueryColliderShapes(shapeQuery, shapes) == 1 &&
-            shapes[0].entity_net_id == enemyNetId &&
-            shapes[0].collider_template_id == 101 &&
-            shapes[0].shape_type == (byte)KernelColliderShapeType.Sphere,
-            "Kernel_QueryColliderShapes failed.");
+            kernel.GetColliderTemplates(null) == 1,
+            "Kernel_GetColliderTemplates count failed.");
+        var readColliders = new KernelColliderTemplateDefinition[1];
+        Require(
+            kernel.GetColliderTemplates(readColliders) == 1 &&
+            readColliders[0].template_id == 101 &&
+            readColliders[0].shape_type == (byte)KernelColliderShapeType.Sphere,
+            "Kernel_GetColliderTemplates read-back failed.");
+        Require(
+            kernel.GetProjectileTemplates(null) == 1,
+            "Kernel_GetProjectileTemplates count failed.");
+        var readProjectiles = new KernelProjectileTemplateDefinition[1];
+        Require(
+            kernel.GetProjectileTemplates(readProjectiles) == 1 &&
+            readProjectiles[0].projectile_template_id == 202 &&
+            readProjectiles[0].collider_template_id == 101,
+            "Kernel_GetProjectileTemplates read-back failed.");
+        Require(
+            kernel.GetColliderBindings(null) == 0,
+            "Kernel_GetColliderBindings count was not empty.");
+        var readBindings = new KernelColliderBindingDefinition[1];
+        Require(
+            kernel.GetColliderBindings(readBindings) == 0,
+            "Kernel_GetColliderBindings read-back was not empty.");
 
         Require(
             kernel.TryGetBenchmarkStats(out KernelBenchmarkStats benchmarkStats) &&
-            benchmarkStats.catalog_version == 15 &&
-            benchmarkStats.catalog_hash == 0x1500UL,
+            benchmarkStats.catalog_version == 20 &&
+            benchmarkStats.catalog_hash == 0x2000UL,
             "Kernel_GetBenchmarkStats failed.");
         Require(
             kernel.TryGetNetworkStats(out KernelNetworkStats networkStats) &&
@@ -281,6 +306,23 @@ public static class NetworkKernelManagedAbiSmoke
         };
         var debugRecords = new KernelDebugInfo[4];
         kernel.PollDebugRecords(debugFilter, debugRecords);
+    }
+
+    private static void RequireQueryAllColliderShape(Kernel kernel, uint enemyNetId)
+    {
+        var shapes = new KernelColliderShapeView[4];
+        uint count = kernel.QueryColliderShapes(null, shapes);
+        for (int index = 0; index < Math.Min(shapes.Length, (int)count); ++index)
+        {
+            if (shapes[index].entity_net_id == enemyNetId &&
+                shapes[index].collider_template_id == 101 &&
+                shapes[index].shape_type == (byte)KernelColliderShapeType.Sphere)
+            {
+                return;
+            }
+        }
+
+        throw new InvalidOperationException("Kernel_QueryColliderShapes query-all missed enemy collider.");
     }
 
     private static void RequireInvalidGameplayCatalogBundleFails(Kernel kernel)
@@ -489,6 +531,23 @@ public static class NetworkKernelManagedAbiSmoke
             {
                 return states[index].max_hp == maxHp &&
                     states[index].hp <= maxHp &&
+                    states[index].status == RenderEntityStatus.Active;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasActiveRenderEntityColliderTemplate(
+        RenderEntityState[] states,
+        uint netId,
+        uint colliderTemplateId)
+    {
+        for (int index = 0; index < states.Length; ++index)
+        {
+            if (states[index].net_id == netId)
+            {
+                return states[index].collider_template_id == colliderTemplateId &&
                     states[index].status == RenderEntityStatus.Active;
             }
         }

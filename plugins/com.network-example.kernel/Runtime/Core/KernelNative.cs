@@ -151,6 +151,24 @@ namespace NetworkExample.Kernel
             uint maxShapes);
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint Kernel_GetProjectileTemplates(
+            IntPtr kernel,
+            [Out] KernelProjectileTemplateDefinition[] outTemplates,
+            uint maxTemplates);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint Kernel_GetColliderTemplates(
+            IntPtr kernel,
+            [Out] KernelColliderTemplateDefinition[] outTemplates,
+            uint maxTemplates);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint Kernel_GetColliderBindings(
+            IntPtr kernel,
+            [Out] KernelColliderBindingDefinition[] outBindings,
+            uint maxBindings);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)]
         internal static extern bool Kernel_ServerCreateEntity(
             IntPtr kernel,

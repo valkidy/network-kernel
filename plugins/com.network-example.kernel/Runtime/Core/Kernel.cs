@@ -272,6 +272,48 @@ namespace NetworkExample.Kernel
             }
         }
 
+        public uint GetProjectileTemplates(KernelProjectileTemplateDefinition[] templates)
+        {
+            ThrowIfDisposed();
+            if (templates == null || templates.Length == 0)
+            {
+                return KernelNative.Kernel_GetProjectileTemplates(handle, null, 0);
+            }
+
+            return KernelNative.Kernel_GetProjectileTemplates(
+                handle,
+                templates,
+                (uint)templates.Length);
+        }
+
+        public uint GetColliderTemplates(KernelColliderTemplateDefinition[] templates)
+        {
+            ThrowIfDisposed();
+            if (templates == null || templates.Length == 0)
+            {
+                return KernelNative.Kernel_GetColliderTemplates(handle, null, 0);
+            }
+
+            return KernelNative.Kernel_GetColliderTemplates(
+                handle,
+                templates,
+                (uint)templates.Length);
+        }
+
+        public uint GetColliderBindings(KernelColliderBindingDefinition[] bindings)
+        {
+            ThrowIfDisposed();
+            if (bindings == null || bindings.Length == 0)
+            {
+                return KernelNative.Kernel_GetColliderBindings(handle, null, 0);
+            }
+
+            return KernelNative.Kernel_GetColliderBindings(
+                handle,
+                bindings,
+                (uint)bindings.Length);
+        }
+
         public bool ServerCreateEntity(
             KernelServerEntityCreateInfo createInfo,
             out uint netId)

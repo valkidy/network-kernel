@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 18;
+        public const uint AbiVersion = 20;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int GameplayCatalogLoadPathSize = 128;
@@ -480,6 +480,8 @@ namespace NetworkExample.Kernel
         public uint spawn_tick;
         public uint client_action_id;
         public RenderEntityStatus status;
+        public uint projectile_template_id;
+        public uint collider_template_id;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -736,6 +738,11 @@ namespace NetworkExample.Kernel
         public static uint StructSize => (uint)Marshal.SizeOf<KernelDebugRecordFilter>();
     }
 
+    /// <summary>
+    /// Filters active collider shape queries. Passing a null query to
+    /// Kernel.QueryColliderShapes applies no filters; zero-valued entity type,
+    /// entity net id, and purpose mask fields also mean no filter for that field.
+    /// </summary>
     [StructLayout(LayoutKind.Sequential)]
     public struct KernelColliderShapeQuery
     {
@@ -930,6 +937,7 @@ namespace NetworkExample.Kernel
         public ushort hp;
         public ushort max_hp;
         public byte active_weapon_id;
+        public uint collider_template_id;
         public float move_speed_meters_per_second;
         public KernelVec3 hitbox_center;
         public KernelVec3 hitbox_half_extents;
