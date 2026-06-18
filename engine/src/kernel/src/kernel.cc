@@ -1387,6 +1387,54 @@ std::uint32_t KernelEngine::query_collider_shapes(
     return copied;
 }
 
+std::uint32_t KernelEngine::get_projectile_templates(
+    KernelProjectileTemplateDefinition* out_templates,
+    std::uint32_t max_templates) const {
+    const std::uint32_t count =
+        static_cast<std::uint32_t>(projectile_templates_.size());
+    if (out_templates == nullptr || max_templates == 0) {
+        return count;
+    }
+    const std::uint32_t copied = std::min(count, max_templates);
+    std::memcpy(
+        out_templates,
+        projectile_templates_.data(),
+        sizeof(KernelProjectileTemplateDefinition) * copied);
+    return copied;
+}
+
+std::uint32_t KernelEngine::get_collider_templates(
+    KernelColliderTemplateDefinition* out_templates,
+    std::uint32_t max_templates) const {
+    const std::uint32_t count =
+        static_cast<std::uint32_t>(collider_templates_.size());
+    if (out_templates == nullptr || max_templates == 0) {
+        return count;
+    }
+    const std::uint32_t copied = std::min(count, max_templates);
+    std::memcpy(
+        out_templates,
+        collider_templates_.data(),
+        sizeof(KernelColliderTemplateDefinition) * copied);
+    return copied;
+}
+
+std::uint32_t KernelEngine::get_collider_bindings(
+    KernelColliderBindingDefinition* out_bindings,
+    std::uint32_t max_bindings) const {
+    const std::uint32_t count =
+        static_cast<std::uint32_t>(collider_bindings_.size());
+    if (out_bindings == nullptr || max_bindings == 0) {
+        return count;
+    }
+    const std::uint32_t copied = std::min(count, max_bindings);
+    std::memcpy(
+        out_bindings,
+        collider_bindings_.data(),
+        sizeof(KernelColliderBindingDefinition) * copied);
+    return copied;
+}
+
 void KernelEngine::materialize_entity_collider(NetId net_id) {
     const std::optional<entt::entity> entity = world_.find_entity(net_id);
     if (!entity.has_value() ||
@@ -1512,6 +1560,85 @@ void KernelEngine::sync_entity_colliders_from_world() {
         collider.world_center =
             transform.position + transform.rotation * collider.local_center;
         collider.world_bounds = collider_world_bounds(collider);
+    }
+}
+
+std::uint32_t KernelEngine::collider_template_id_for_entity_type(
+    EntityType entity_type) const {
+    const KernelColliderBindingDefinition* binding =
+        find_collider_binding(collider_bindings_, entity_type);
+    return binding == nullptr ? 0u : binding->collider_template_id;
+}
+
+std::uint32_t KernelEngine::collider_template_id_for_projectile_template(
+    std::uint32_t projectile_template_id) const {
+    const KernelProjectileTemplateDefinition* projectile_template =
+        find_projectile_template(projectile_templates_, projectile_template_id);
+    return projectile_template == nullptr
+               ? 0u
+               : projectile_template->collider_template_id;
+}
+
+void KernelEngine::sync_client_render_colliders() {
+    if (config_.mode != KernelMode_Client) {
+        return;
+    }
+
+    world_.collider_registry().mutable_instances().clear();
+    for (const RenderEntityState& state : render_states_) {
+        const EntityType entity_type =
+            static_cast<EntityType>(state.entity_type);
+        const std::uint32_t collider_template_id =
+            state.collider_template_id != 0u
+                ? state.collider_template_id
+                : collider_template_id_for_entity_type(entity_type);
+        if (collider_template_id == 0u) {
+            continue;
+        }
+        const KernelColliderTemplateDefinition* collider_template =
+            find_collider_template(collider_templates_, collider_template_id);
+        if (collider_template == nullptr) {
+            continue;
+        }
+
+        glm::vec3 local_center = from_kernel_vec3(collider_template->center);
+        glm::quat local_rotation{1.0f, 0.0f, 0.0f, 0.0f};
+        if (entity_type != EntityType::kProjectile) {
+            if (const KernelColliderBindingDefinition* binding =
+                    find_collider_binding(collider_bindings_, entity_type)) {
+                local_center += from_kernel_vec3(binding->local_position);
+                local_rotation = from_kernel_quat(binding->local_rotation);
+            }
+        }
+
+        const glm::quat render_rotation = from_kernel_quat(state.rotation);
+        ColliderInstance collider{};
+        collider.collider_template_id = collider_template->template_id;
+        collider.owner_net_id =
+            entity_type == EntityType::kProjectile ? 0u : state.net_id;
+        collider.entity_net_id = state.net_id;
+        collider.entity_type = entity_type;
+        collider.shape_type = to_collider_shape_type(collider_template->shape_type);
+        collider.purpose_flags = collider_template->purpose_flags;
+        collider.layer_mask = collider_template->layer_mask;
+        collider.local_center = local_center;
+        collider.local_rotation = local_rotation;
+        collider.world_rotation = render_rotation * local_rotation;
+        collider.world_center =
+            from_kernel_vec3(state.position) + render_rotation * local_center;
+        collider.half_extents = from_kernel_vec3(collider_template->half_extents);
+        collider.radius = collider_template->radius;
+        collider.lifetime_ticks = collider_template->lifetime_ticks;
+        collider.remaining_ticks = collider_template->lifetime_ticks;
+        collider.world_bounds = collider_world_bounds(collider);
+        if (state.net_id == 0) {
+            world_.collider_registry().add_ephemeral_collider(collider);
+        } else {
+            world_.collider_registry().upsert_entity_collider(
+                state.net_id,
+                collider_template->template_id,
+                collider);
+        }
     }
 }
 
@@ -2188,6 +2315,8 @@ void KernelEngine::handle_client_projectile_spawn_batch(
                 from_kernel_vec3(projectile_template->gravity),
                 to_projectile_motion_model(projectile_template->motion_model),
                 projectile_template->lifetime_seconds,
+                projectile_template->projectile_template_id,
+                projectile_template->collider_template_id,
                 projectile_template->weapon_id,
                 projectile_template->sync_mode,
                 glm::vec3{0.0f, 0.0f, 0.0f},
@@ -2613,6 +2742,12 @@ void KernelEngine::reconcile_predicted_projectiles(const WorldSnapshot& snapshot
         predicted->initial_velocity = entity.velocity;
         predicted->age_seconds = authoritative_age_seconds;
         predicted->spawn_tick = entity.spawn_tick;
+        if (entity.projectile_template_id != 0u) {
+            predicted->projectile_template_id = entity.projectile_template_id;
+        }
+        if (entity.collider_template_id != 0u) {
+            predicted->collider_template_id = entity.collider_template_id;
+        }
         predicted->bound = true;
         const glm::vec3 correction = previous_render_position - authoritative_now;
         predicted->correction_offset =
@@ -2674,11 +2809,13 @@ void KernelEngine::predict_local_projectile(const PlayerInput& input) {
         return;
     }
     std::uint8_t sync_mode = KernelProjectileSyncMode_HybridDeterministicThenSnapshot;
+    std::uint32_t collider_template_id = 0;
     if (const KernelProjectileTemplateDefinition* projectile_template =
             find_projectile_template(
                 projectile_templates_,
                 weapon->projectile_template_id)) {
         sync_mode = projectile_template->sync_mode;
+        collider_template_id = projectile_template->collider_template_id;
     }
     if (sync_mode == KernelProjectileSyncMode_ServerSnapshotOnly) {
         return;
@@ -2714,6 +2851,8 @@ void KernelEngine::predict_local_projectile(const PlayerInput& input) {
         gravity,
         motion_model,
         weapon->projectile_lifetime_seconds,
+        weapon->projectile_template_id,
+        collider_template_id,
         weapon->id,
         sync_mode,
         glm::vec3{0.0f, 0.0f, 0.0f},
@@ -2960,6 +3099,8 @@ void KernelEngine::append_predicted_projectile_render_states(bool consume_correc
             projectile.spawn_tick,
             projectile.client_action_id,
             RenderEntityStatus_Predicted,
+            projectile.projectile_template_id,
+            projectile.collider_template_id,
         });
         if (consume_correction) {
             projectile.correction_offset *= 0.5f;
@@ -3484,6 +3625,7 @@ void KernelEngine::rebuild_render_states_at_time(
     if (config_.mode == KernelMode_Client ||
         (config_.mode == KernelMode_ListenServer && has_client_snapshot_)) {
         rebuild_render_states_from_snapshot(client_render_time_us, consume_correction);
+        sync_client_render_colliders();
         report_render_state_overflow_if_needed();
         benchmark_stats_.render_solver_cost_us +=
             std::max<std::uint64_t>(1, elapsed_cost_us(cost_start));
@@ -3515,10 +3657,23 @@ void KernelEngine::rebuild_render_states_from_world() {
     auto view = world_.registry().view<const NetworkIdentity, const EntityKind, const Transform>();
     for (const entt::entity entity : view) {
         const NetworkIdentity& identity = view.get<const NetworkIdentity>(entity);
-        render_states_.push_back(render_state_from_world_entity(
+        RenderEntityState state = render_state_from_world_entity(
             world_,
             entity,
-            entity_id_for_net_id(identity.net_id)));
+            entity_id_for_net_id(identity.net_id));
+        const EntityKind& kind = view.get<const EntityKind>(entity);
+        if (kind.type == EntityType::kProjectile &&
+            world_.registry().all_of<ProjectileState>(entity)) {
+            const ProjectileState& projectile =
+                world_.registry().get<ProjectileState>(entity);
+            state.collider_template_id =
+                collider_template_id_for_projectile_template(
+                    projectile.projectile_template_id);
+        } else {
+            state.collider_template_id =
+                collider_template_id_for_entity_type(kind.type);
+        }
+        render_states_.push_back(state);
     }
 }
 
@@ -3611,6 +3766,8 @@ void KernelEngine::rebuild_render_states_from_snapshot(
             0,
             0,
             RenderEntityStatus_Stale,
+            0,
+            collider_template_id_for_entity_type(entity.type),
         });
     }
 }

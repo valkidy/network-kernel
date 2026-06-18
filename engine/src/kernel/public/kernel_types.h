@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 18u
+#define KERNEL_ABI_VERSION 19u
 
 #define KERNEL_BUILD_INFO_TEXT_SIZE 128u
 #define KERNEL_LAN_DISCOVERY_TEXT_SIZE 128u
@@ -346,6 +346,8 @@ typedef struct RenderEntityState {
     uint32_t spawn_tick;
     uint32_t client_action_id;
     uint32_t status;
+    uint32_t projectile_template_id;
+    uint32_t collider_template_id;
 } RenderEntityState;
 
 typedef struct KernelServerEntityCreateInfo {

@@ -20,8 +20,8 @@ constexpr std::size_t kActorSnapshotBasePayloadSize = 38;
 constexpr std::size_t kActorOwnerPeerPayloadSize = 4;
 constexpr std::size_t kActorRotationPayloadSize = 16;
 constexpr std::size_t kActorHealthPayloadSize = 4;
-constexpr std::size_t kProjectileCompactSnapshotPayloadSize = 34;
-constexpr std::size_t kProjectileHybridCorrectionSnapshotPayloadSize = 46;
+constexpr std::size_t kProjectileCompactSnapshotPayloadSize = 42;
+constexpr std::size_t kProjectileHybridCorrectionSnapshotPayloadSize = 54;
 constexpr std::size_t kGenericSnapshotPayloadSize = 44;
 constexpr std::size_t kReliableEventPayloadSize = 34;
 constexpr std::size_t kEntitySpawnPayloadSize = 42;
@@ -229,6 +229,8 @@ std::vector<std::uint8_t> encode_snapshot_packet(
                     payload.write_vec3(entity->velocity);
                     payload.write_u16(entity->state);
                     payload.write_u32(entity->flags);
+                    payload.write_u32(entity->projectile_template_id);
+                    payload.write_u32(entity->collider_template_id);
                     break;
                 case SnapshotSectionType::kProjectileHybridCorrection:
                     payload.write_u32(entity->owner_peer);
@@ -238,6 +240,8 @@ std::vector<std::uint8_t> encode_snapshot_packet(
                     payload.write_u32(entity->flags);
                     payload.write_u32(entity->spawn_tick);
                     payload.write_u32(entity->client_action_id);
+                    payload.write_u32(entity->projectile_template_id);
+                    payload.write_u32(entity->collider_template_id);
                     break;
                 case SnapshotSectionType::kGeneric:
                     payload.write_u16(static_cast<std::uint16_t>(entity->type));
@@ -342,7 +346,9 @@ bool decode_snapshot_packet(
                     if (!reader.read_vec3(&entity.position) ||
                         !reader.read_vec3(&entity.velocity) ||
                         !reader.read_u16(&entity.state) ||
-                        !reader.read_u32(&entity.flags)) {
+                        !reader.read_u32(&entity.flags) ||
+                        !reader.read_u32(&entity.projectile_template_id) ||
+                        !reader.read_u32(&entity.collider_template_id)) {
                         return false;
                     }
                     entity.rotation = projectile_rotation_from_velocity(entity.velocity);
@@ -357,7 +363,9 @@ bool decode_snapshot_packet(
                         !reader.read_u16(&entity.state) ||
                         !reader.read_u32(&entity.flags) ||
                         !reader.read_u32(&entity.spawn_tick) ||
-                        !reader.read_u32(&entity.client_action_id)) {
+                        !reader.read_u32(&entity.client_action_id) ||
+                        !reader.read_u32(&entity.projectile_template_id) ||
+                        !reader.read_u32(&entity.collider_template_id)) {
                         return false;
                     }
                     entity.rotation = projectile_rotation_from_velocity(entity.velocity);

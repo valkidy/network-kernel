@@ -117,6 +117,21 @@ uint32_t Kernel_QueryColliderShapes(
     KernelColliderShapeView* out_shapes,
     uint32_t max_shapes);
 
+uint32_t Kernel_GetProjectileTemplates(
+    KernelHandle* kernel,
+    KernelProjectileTemplateDefinition* out_templates,
+    uint32_t max_templates);
+
+uint32_t Kernel_GetColliderTemplates(
+    KernelHandle* kernel,
+    KernelColliderTemplateDefinition* out_templates,
+    uint32_t max_templates);
+
+uint32_t Kernel_GetColliderBindings(
+    KernelHandle* kernel,
+    KernelColliderBindingDefinition* out_bindings,
+    uint32_t max_bindings);
+
 bool Kernel_ServerCreateEntity(
     KernelHandle* kernel,
     const KernelServerEntityCreateInfo* create_info,

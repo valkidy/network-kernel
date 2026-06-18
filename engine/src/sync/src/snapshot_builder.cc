@@ -66,6 +66,14 @@ WorldSnapshot build_world_snapshot(
                 world.registry().get<ProjectileState>(entity);
             entity_snapshot.spawn_tick = projectile.spawn_tick;
             entity_snapshot.client_action_id = projectile.client_action_id;
+            entity_snapshot.projectile_template_id =
+                projectile.projectile_template_id;
+            if (const RuntimeProjectileTemplate* projectile_template =
+                    world.find_projectile_template(
+                        projectile.projectile_template_id)) {
+                entity_snapshot.collider_template_id =
+                    projectile_template->collider_template_id;
+            }
         }
         if (world.registry().all_of<HomingState>(entity)) {
             entity_snapshot.state = static_cast<std::uint16_t>(

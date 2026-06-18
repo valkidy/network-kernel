@@ -168,6 +168,21 @@ int main() {
             std::uint64_t,
             RenderEntityState*,
             std::uint32_t)>(library, "Kernel_GetRenderStatesAtTime");
+    [[maybe_unused]] auto* kernel_get_projectile_templates =
+        load_symbol<std::uint32_t(
+            KernelHandle*,
+            KernelProjectileTemplateDefinition*,
+            std::uint32_t)>(library, "Kernel_GetProjectileTemplates");
+    [[maybe_unused]] auto* kernel_get_collider_templates =
+        load_symbol<std::uint32_t(
+            KernelHandle*,
+            KernelColliderTemplateDefinition*,
+            std::uint32_t)>(library, "Kernel_GetColliderTemplates");
+    [[maybe_unused]] auto* kernel_get_collider_bindings =
+        load_symbol<std::uint32_t(
+            KernelHandle*,
+            KernelColliderBindingDefinition*,
+            std::uint32_t)>(library, "Kernel_GetColliderBindings");
     auto* kernel_poll_events =
         load_symbol<std::uint32_t(KernelHandle*, KernelEvent*, std::uint32_t)>(
             library,

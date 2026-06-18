@@ -57,6 +57,15 @@ public:
         const KernelColliderShapeQuery* query,
         KernelColliderShapeView* out_shapes,
         std::uint32_t max_shapes) const;
+    std::uint32_t get_projectile_templates(
+        KernelProjectileTemplateDefinition* out_templates,
+        std::uint32_t max_templates) const;
+    std::uint32_t get_collider_templates(
+        KernelColliderTemplateDefinition* out_templates,
+        std::uint32_t max_templates) const;
+    std::uint32_t get_collider_bindings(
+        KernelColliderBindingDefinition* out_bindings,
+        std::uint32_t max_bindings) const;
     KernelLocalPlayerInfo local_player_info() const;
     bool server_create_entity(
         const KernelServerEntityCreateInfo& create_info,
@@ -152,6 +161,8 @@ private:
         glm::vec3 gravity{0.0f, 0.0f, 0.0f};
         ProjectileMotionModel motion_model = ProjectileMotionModel::kLinear;
         float max_lifetime_seconds = 0.0f;
+        std::uint32_t projectile_template_id = 0;
+        std::uint32_t collider_template_id = 0;
         std::uint8_t weapon_id = 0;
         std::uint8_t sync_mode = KernelProjectileSyncMode_HybridDeterministicThenSnapshot;
         glm::vec3 correction_offset{0.0f, 0.0f, 0.0f};
@@ -269,6 +280,10 @@ private:
     void materialize_entity_collider(NetId net_id);
     void materialize_projectile_collider(NetId net_id);
     void sync_entity_colliders_from_world();
+    std::uint32_t collider_template_id_for_entity_type(EntityType entity_type) const;
+    std::uint32_t collider_template_id_for_projectile_template(
+        std::uint32_t projectile_template_id) const;
+    void sync_client_render_colliders();
 
     KernelConfig config_;
     TickLoop tick_loop_;

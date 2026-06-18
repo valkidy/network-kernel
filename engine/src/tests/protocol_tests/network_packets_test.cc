@@ -77,6 +77,8 @@ int main() {
     compact_projectile.velocity = glm::vec3{4.0f, 5.0f, 6.0f};
     compact_projectile.state = 514;
     compact_projectile.flags = 0x02030405u;
+    compact_projectile.projectile_template_id = 3;
+    compact_projectile.collider_template_id = 10;
     snapshot.entities.push_back(compact_projectile);
     network_example::EntitySnapshot hybrid_projectile = compact_projectile;
     hybrid_projectile.net_id = 7;
@@ -93,8 +95,8 @@ int main() {
            snapshot_packet.size());
     assert(network_example::estimate_snapshot_entity_size(player) == 62u);
     assert(network_example::estimate_snapshot_entity_size(enemy) == 38u);
-    assert(network_example::estimate_snapshot_entity_size(compact_projectile) == 34u);
-    assert(network_example::estimate_snapshot_entity_size(hybrid_projectile) == 46u);
+    assert(network_example::estimate_snapshot_entity_size(compact_projectile) == 42u);
+    assert(network_example::estimate_snapshot_entity_size(hybrid_projectile) == 54u);
     network_example::WorldSnapshot decoded_snapshot;
     assert(network_example::decode_snapshot_packet(
         snapshot_packet.data(),
@@ -126,11 +128,15 @@ int main() {
     assert(nearly_equal(decoded_snapshot.entities[2].velocity.z, 6.0f));
     assert(decoded_snapshot.entities[2].spawn_tick == 0);
     assert(decoded_snapshot.entities[2].client_action_id == 0);
+    assert(decoded_snapshot.entities[2].projectile_template_id == 3);
+    assert(decoded_snapshot.entities[2].collider_template_id == 10);
     assert(decoded_snapshot.entities[3].net_id == 7);
     assert(decoded_snapshot.entities[3].type == network_example::EntityType::kProjectile);
     assert(decoded_snapshot.entities[3].owner_peer == 3);
     assert(decoded_snapshot.entities[3].spawn_tick == 12);
     assert(decoded_snapshot.entities[3].client_action_id == 1234);
+    assert(decoded_snapshot.entities[3].projectile_template_id == 3);
+    assert(decoded_snapshot.entities[3].collider_template_id == 10);
     assert((decoded_snapshot.entities[3].state_flags &
             network_example::kSnapshotStateFlagProjectileHybridCorrection) != 0u);
 

@@ -126,7 +126,7 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_BENCHMARK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 18u);
+    assert(KERNEL_ABI_VERSION == 19u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS) != 0);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
@@ -142,6 +142,10 @@ int main() {
     assert(offsetof(RenderEntityState, hp) > offsetof(RenderEntityState, velocity));
     assert(offsetof(RenderEntityState, max_hp) > offsetof(RenderEntityState, hp));
     assert(offsetof(RenderEntityState, status) > offsetof(RenderEntityState, client_action_id));
+    assert(offsetof(RenderEntityState, projectile_template_id) >
+           offsetof(RenderEntityState, status));
+    assert(offsetof(RenderEntityState, collider_template_id) >
+           offsetof(RenderEntityState, projectile_template_id));
     assert(RenderEntityStatus_Active == 0u);
     assert(RenderEntityStatus_Predicted == 1u);
     assert(RenderEntityStatus_Stale == 2u);
@@ -217,6 +221,9 @@ int main() {
                &collider_query,
                collider_shapes.data(),
                static_cast<std::uint32_t>(collider_shapes.size())) == 0);
+    assert(Kernel_GetProjectileTemplates(nullptr, nullptr, 0) == 0);
+    assert(Kernel_GetColliderTemplates(nullptr, nullptr, 0) == 0);
+    assert(Kernel_GetColliderBindings(nullptr, nullptr, 0) == 0);
     KernelLocalPlayerInfo local_info{};
     assert(!Kernel_GetLocalPlayerInfo(nullptr, &local_info));
     assert(!Kernel_GetLocalPlayerInfo(nullptr, nullptr));
@@ -304,6 +311,29 @@ int main() {
     catalog.collider_bindings = &collider_binding;
     catalog.collider_binding_count = 1;
     assert(Kernel_LoadGameplayCatalog(kernel, &catalog));
+    assert(Kernel_GetProjectileTemplates(kernel, nullptr, 0) == 1);
+    assert(Kernel_GetColliderTemplates(kernel, nullptr, 0) == 1);
+    assert(Kernel_GetColliderBindings(kernel, nullptr, 0) == 1);
+    std::array<KernelProjectileTemplateDefinition, 1> read_projectile_templates{};
+    std::array<KernelColliderTemplateDefinition, 1> read_collider_templates{};
+    std::array<KernelColliderBindingDefinition, 1> read_collider_bindings{};
+    assert(Kernel_GetProjectileTemplates(
+               kernel,
+               read_projectile_templates.data(),
+               static_cast<std::uint32_t>(read_projectile_templates.size())) == 1);
+    assert(Kernel_GetColliderTemplates(
+               kernel,
+               read_collider_templates.data(),
+               static_cast<std::uint32_t>(read_collider_templates.size())) == 1);
+    assert(Kernel_GetColliderBindings(
+               kernel,
+               read_collider_bindings.data(),
+               static_cast<std::uint32_t>(read_collider_bindings.size())) == 1);
+    assert(read_projectile_templates[0].projectile_template_id == 3);
+    assert(read_projectile_templates[0].collider_template_id == 10);
+    assert(read_collider_templates[0].template_id == 10);
+    assert(read_collider_bindings[0].entity_type == 2);
+    assert(read_collider_bindings[0].collider_template_id == 10);
     benchmark_stats = KernelBenchmarkStats{};
     benchmark_stats.struct_size = sizeof(benchmark_stats);
     assert(Kernel_GetBenchmarkStats(kernel, &benchmark_stats));
@@ -364,6 +394,20 @@ int main() {
     assert(collider_shapes[0].world_center.y == 0.8f);
     assert(collider_shapes[0].half_extents.x == 0.25f);
     assert(collider_shapes[0].remaining_ticks == 0);
+    assert(Kernel_QueryColliderShapes(
+               kernel,
+               nullptr,
+               collider_shapes.data(),
+               static_cast<std::uint32_t>(collider_shapes.size())) == 1);
+    KernelColliderShapeQuery query_all{};
+    query_all.struct_size = sizeof(query_all);
+    query_all.entity_net_id = 0;
+    query_all.purpose_mask = 0;
+    assert(Kernel_QueryColliderShapes(
+               kernel,
+               &query_all,
+               collider_shapes.data(),
+               static_cast<std::uint32_t>(collider_shapes.size())) == 1);
 
     KernelColliderTemplateDefinition changed_collider_template{};
     changed_collider_template.struct_size = sizeof(changed_collider_template);

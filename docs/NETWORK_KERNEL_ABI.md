@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 18u`.
+`KERNEL_ABI_VERSION == 19u`.
 
 ## Ownership
 
@@ -116,11 +116,35 @@ entities as active, predicted, or stale. Out-of-range/despawn/destroy
 notifications are delivered through the dedicated lifecycle event queue so
 presentation callers do not infer lifecycle from a missing or stale snapshot.
 
+ABI version 19 adds `RenderEntityState::projectile_template_id` and
+`RenderEntityState::collider_template_id`, and adds
+`Kernel_GetProjectileTemplates`, `Kernel_GetColliderTemplates`, and
+`Kernel_GetColliderBindings`. The read-back functions return the loaded
+catalog definitions that the kernel accepted through `Kernel_LoadGameplayCatalog`
+or `Kernel_LoadGameplayCatalogFromMemory`; passing `NULL` or a zero capacity
+returns the available count without copying. Projectile collider resolution uses
+`ProjectileState::projectile_template_id` to select
+`KernelProjectileTemplateDefinition::collider_template_id`; this per-projectile
+template collider takes precedence over the generic `entity_type == projectile`
+collider binding.
+
 Snapshot schema version 6 refines the v2 sectioned snapshot payload. Actor
 records cover player, enemy, and future AI bot entities with optional owner,
 rotation, and hp fields. Projectile records split into compact snapshots and
 hybrid-correction snapshots; projectile rotation is omitted from the wire and
 derived from velocity for render state reconstruction.
+
+Snapshot schema version 7 adds projectile and collider template ids to both
+compact projectile snapshots and hybrid-correction projectile snapshots so
+clients can reconstruct exact render collider metadata from snapshot state.
+
+`Kernel_QueryColliderShapes` treats a `NULL` query as no filters. Within
+`KernelColliderShapeQuery`, `entity_net_id == 0`, `entity_type_filter == 0`,
+and `purpose_mask == 0` also mean no filter for that dimension. Persistent
+`hit` and `damage` colliders are queryable for the lifetime of their render
+entity on clients and for the lifetime of their gameplay entity on servers.
+Transient colliders, such as segment or beam volumes, are queryable while their
+`lifetime_ticks` / `remaining_ticks` keep them active.
 
 The current projectile interaction foundation is internal C++ engine state. It
 does not add Kernel C ABI functions, does not change public struct layout, and

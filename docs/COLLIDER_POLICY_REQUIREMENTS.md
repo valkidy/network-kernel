@@ -137,6 +137,13 @@ debug grouping later needs them, add fields in a separate ABI/API revision.
 The query must report the same size, transform, purpose, and layer that gameplay
 collision uses for that tick.
 
+Query filtering uses "zero means all" semantics: a null query has no filters,
+`entity_net_id == 0` matches all entities, `entity_type_filter == 0` matches all
+entity types, and `purpose_mask == 0` matches all purposes. Projectile collider
+selection uses the projectile template's `collider_template_id`; the generic
+`entity_type -> collider` binding is only a fallback for entity types without a
+per-instance projectile template.
+
 ## Collision Performance Policy
 
 Collision query should move toward a lightweight broad phase plus narrow phase:
