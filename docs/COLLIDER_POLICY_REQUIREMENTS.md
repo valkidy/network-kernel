@@ -56,11 +56,13 @@ Recommended ownership:
 | `weapon_template` | weapon id, fire mode, ammo, cooldown, reload, burst/RPM policy, references to projectile or segment collider templates |
 | `projectile_template` | projectile id, movement model, sync mode, lifetime, damage behavior, collider template reference |
 | `collider_template` | reusable shape geometry and purpose/layer defaults |
-| `actor_template` | actor stats, movement, loadout, and hitbox-derived actor collider inputs |
+| `actor_template` | actor stats, movement, loadout, and actor collider template reference |
 
-Projectile collider lookup should prefer `projectile_template_id`, not plain
-`EntityType::kProjectile`, because fireballs, rockets, and homing missiles can
-all be projectile entities with different shapes.
+Collider lookup must use one fixed path per entity family. Actor entities use
+their actor template's `collider_template`; projectile entities use their
+projectile template's `collider_template`. Do not add a parallel
+`entity_type -> collider` binding for either family, because generic bindings
+can hide the resolved runtime shape from client/debug tooling.
 
 ## Shape Requirements
 
@@ -139,10 +141,11 @@ collision uses for that tick.
 
 Query filtering uses "zero means all" semantics: a null query has no filters,
 `entity_net_id == 0` matches all entities, `entity_type_filter == 0` matches all
-entity types, and `purpose_mask == 0` matches all purposes. Projectile collider
-selection uses the projectile template's `collider_template_id`; the generic
-`entity_type -> collider` binding is only a fallback for entity types without a
-per-instance projectile template.
+entity types, and `purpose_mask == 0` matches all purposes. Query results should
+reflect the resolved runtime collider id carried by render/gameplay state:
+actors resolve through actor templates, projectiles resolve through projectile
+templates, and catalog-level entity-type bindings are not part of the runtime
+resolution path.
 
 ## Collision Performance Policy
 

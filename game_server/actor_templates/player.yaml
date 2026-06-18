@@ -1,6 +1,7 @@
 id: 1
 name: player
 entity_type: player
+collider_template: player_hit
 health:
   hp: 1000
   max_hp: 1000

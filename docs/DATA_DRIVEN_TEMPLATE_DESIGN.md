@@ -165,7 +165,7 @@ Ownership boundary:
 | Player actor choice | `gameplay_catalog.yaml` | References an actor template. |
 | Enemy actor choice | `gameplay_catalog.yaml` | References an actor template. |
 | Enemy spawn policy | `gameplay_catalog.yaml` | Scenario/encounter data, not actor-template data. |
-| Collider geometry/bindings | `collider_templates/default.yaml` | Kernel-packed collider templates and entity-type bindings. |
+| Collider geometry | `collider_templates/default.yaml` | Kernel-packed collider shapes; actor/projectile templates reference these shapes. |
 
 ## Gameplay Catalog Policy
 
@@ -290,11 +290,13 @@ Validation:
 Collider templates are already data-driven and kernel-packed:
 
 - `templates`: reusable collider geometry and layer/purpose metadata.
-- `bindings`: entity-type to collider-template bindings with local positions.
 
-Current policy keeps collider binding by `entity_type`. Do not move collider
-binding into actor templates unless a later design needs multiple actor
-archetypes of the same entity type to use different collider templates.
+Current policy forbids a parallel `entity_type -> collider_template` binding
+table. Actor templates and projectile templates each own their collider template
+reference, so every runtime entity family has one documented resolution path.
+This avoids the failure mode where gameplay materialization uses a
+template-specific collider while client/debug tooling falls back to a generic
+binding and observes the wrong shape.
 
 ## Runtime Flow
 
@@ -302,7 +304,7 @@ Loading order:
 
 1. Load the gameplay catalog root.
 2. Load weapon templates from `weapon_template_dir`.
-3. Load collider templates and bindings from `collider_template_file`.
+3. Load collider templates from `collider_template_file`.
 4. Load projectile templates from `projectile_template_dir` and resolve weapon
    projectile references.
 5. Load actor templates from `actor_template_dir` and validate actor loadouts
@@ -335,9 +337,9 @@ gameplay catalog ABI:
 
 - weapons may still be packed into kernel weapon mechanics definitions
 - projectile templates are loaded independently and packed for kernel use
-- collider templates and bindings may still be packed for kernel use
-- actor templates remain `game_server` configuration and runtime conversion
-  data
+- collider templates may still be packed for kernel use
+- actor templates remain `game_server` configuration, but their resolved
+  collider template id is packed into `KernelCombatStateDefinition`
 
 Do not add `KernelActorTemplateDefinition`, extend
 `KernelGameplayCatalogDefinition`, or update Unity managed ABI for actor
@@ -358,8 +360,8 @@ changes. It should cover:
 - player and enemy actor template references
 - enemy spawn position, count, radius, and seed
 - actor IDs, names, entity types, health, movement, hitboxes, weapon slots,
-  active slots, animation states, and AI tunables
-- collider template definitions and bindings
+  active slots, animation states, AI tunables, and collider template references
+- collider template definitions
 
 Hashing must sort unordered template collections by stable IDs so filesystem
 enumeration order does not affect compatibility checks.
@@ -414,8 +416,8 @@ These facts are not decided by the current design:
   versus `-1`.
 - Whether hot reload is required; if yes, cached template pointer invalidation
   must be designed before use.
-- Whether actor-specific collider bindings are needed for multiple actor
-  archetypes sharing one `entity_type`.
+- Whether future actor archetypes need additional collider metadata beyond the
+  existing actor-template `collider_template` reference.
 - The save-game/replay/runtime snapshot format, which must remain separate from
   template YAML if introduced.
 

@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 19u
+#define KERNEL_ABI_VERSION 20u
 
 #define KERNEL_BUILD_INFO_TEXT_SIZE 128u
 #define KERNEL_LAN_DISCOVERY_TEXT_SIZE 128u
@@ -709,6 +709,7 @@ typedef struct KernelCombatStateDefinition {
     uint16_t hp;
     uint16_t max_hp;
     uint8_t active_weapon_id;
+    uint32_t collider_template_id;
     float move_speed_meters_per_second;
     KernelVec3 hitbox_center;
     KernelVec3 hitbox_half_extents;

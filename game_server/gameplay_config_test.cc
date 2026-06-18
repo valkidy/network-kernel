@@ -207,6 +207,7 @@ int main() {
     assert(player_combat_state.hp == 1000);
     assert(player_combat_state.max_hp == 1000);
     assert(player_combat_state.move_speed_meters_per_second == 5.0f);
+    assert(player_combat_state.collider_template_id == 1);
 
     assert(config.enemy.actor_template_id == 2);
     assert(config.enemy.spawn_position.x == 6.0f);
@@ -217,6 +218,7 @@ int main() {
         network_example::game_server::make_enemy_combat_state(config);
     assert(enemy_combat_state.hp == 500);
     assert(enemy_combat_state.max_hp == 500);
+    assert(enemy_combat_state.collider_template_id == 2);
     assert(
         enemy_combat_state.active_weapon_id ==
         network_example::game_server::kWeaponGrenade);
@@ -278,13 +280,14 @@ int main() {
             .projectile_sync_modes[network_example::game_server::kWeaponRocket] ==
         KernelProjectileSyncMode_ServerSnapshotOnly);
     assert(config.colliders.templates.size() == 8);
-    assert(config.colliders.bindings.size() == 4);
+    assert(config.colliders.bindings.empty());
     assert(config.actor_templates.size() == 2);
     const network_example::game_server::ActorTemplateConfig& player_template =
         config.actor_templates[0];
     assert(player_template.actor_template_id == 1);
     assert(player_template.name == "player");
     assert(player_template.entity_type == network_example::game_server::kEntityTypePlayer);
+    assert(player_template.collider_template_id == 1);
     assert(player_template.weapon_slot_count == 2);
     assert(player_template.weapon_slots[0] == network_example::game_server::kWeaponRifle);
     assert(player_template.weapon_slots[1] == network_example::game_server::kWeaponShotgun);
@@ -294,6 +297,7 @@ int main() {
     assert(enemy_template.actor_template_id == 2);
     assert(enemy_template.name == "enemy_grunt");
     assert(enemy_template.entity_type == network_example::game_server::kEntityTypeEnemy);
+    assert(enemy_template.collider_template_id == 2);
     assert(enemy_template.weapon_slot_count == 1);
     assert(enemy_template.weapon_slots[0] == network_example::game_server::kWeaponGrenade);
 
@@ -376,7 +380,7 @@ int main() {
             "gameplay_catalog.yaml");
     assert(bundle_config.weapons.catalog_hash == config.weapons.catalog_hash);
     assert(bundle_config.colliders.templates.size() == config.colliders.templates.size());
-    assert(bundle_config.colliders.bindings.size() == config.colliders.bindings.size());
+    assert(bundle_config.colliders.bindings.empty());
     assert(bundle_config.projectile_templates.size() == config.projectile_templates.size());
     assert(bundle_config.actor_templates.size() == config.actor_templates.size());
     assert(bundle_config.enemy.actor_template_id == config.enemy.actor_template_id);
@@ -486,11 +490,7 @@ int main() {
         "    half_extents: {x: 1.0, y: 1.0, z: 1.0}\n"
         "    radius: 1.0\n"
         "    purpose: damage\n"
-        "    layer: enemy\n"
-        "bindings:\n"
-        "  - entity_type: player\n"
-        "    collider_template: a\n"
-        "    local_position: {x: 0.0, y: 0.0, z: 0.0}\n"});
+        "    layer: enemy\n"});
     const std::vector<std::uint8_t> duplicate_collider_id_bundle =
         make_store_zip(duplicate_collider_files);
     bool duplicate_collider_id_rejected = false;

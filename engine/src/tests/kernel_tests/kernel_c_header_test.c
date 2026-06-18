@@ -71,7 +71,7 @@ int main(void) {
     (void)collider_query;
     (void)collider_shape;
 
-    assert(KERNEL_ABI_VERSION == 19u);
+    assert(KERNEL_ABI_VERSION == 20u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD == 4u);
@@ -145,6 +145,8 @@ int main(void) {
            offsetof(RenderEntityState, status));
     assert(offsetof(RenderEntityState, collider_template_id) >
            offsetof(RenderEntityState, projectile_template_id));
+    assert(offsetof(KernelCombatStateDefinition, collider_template_id) >
+           offsetof(KernelCombatStateDefinition, active_weapon_id));
     assert(RenderEntityStatus_Active == 0u);
     assert((KERNEL_VISUAL_FLAG_HP_UNKNOWN & KERNEL_VISUAL_FLAG_DEAD) == 0u);
     assert(sizeof(KernelEntityLifecycleEvent) > 0u);

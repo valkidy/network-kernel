@@ -280,7 +280,6 @@ private:
     void materialize_entity_collider(NetId net_id);
     void materialize_projectile_collider(NetId net_id);
     void sync_entity_colliders_from_world();
-    std::uint32_t collider_template_id_for_entity_type(EntityType entity_type) const;
     std::uint32_t collider_template_id_for_projectile_template(
         std::uint32_t projectile_template_id) const;
     void sync_client_render_colliders();
@@ -308,7 +307,6 @@ private:
     std::vector<PredictedProjectile> predicted_projectiles_;
     std::vector<KernelProjectileTemplateDefinition> projectile_templates_;
     std::vector<KernelColliderTemplateDefinition> collider_templates_;
-    std::vector<KernelColliderBindingDefinition> collider_bindings_;
     std::vector<KernelDebugInfo> debug_records_;
     KernelNetworkStats network_stats_{};
     KernelBenchmarkStats benchmark_stats_{};

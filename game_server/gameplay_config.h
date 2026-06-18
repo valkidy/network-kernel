@@ -44,6 +44,7 @@ struct ActorTemplateConfig {
     std::uint32_t actor_template_id = 0;
     std::string name;
     std::uint16_t entity_type = 0;
+    std::uint32_t collider_template_id = 0;
     EntityHealthDefinition health{};
     KernelVec3 hitbox_center{};
     KernelVec3 hitbox_half_extents{};

@@ -222,6 +222,7 @@ struct WeaponTuning {
 struct Hitbox {
     glm::vec3 center{0.0f, 0.0f, 0.0f};
     glm::vec3 half_extents{0.5f, 0.5f, 0.5f};
+    std::uint32_t collider_template_id = 0;
     std::uint8_t hit_zone = 0;
 };
 

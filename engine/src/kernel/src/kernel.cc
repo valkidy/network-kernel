@@ -352,18 +352,6 @@ const KernelColliderTemplateDefinition* find_collider_template(
     return found == templates.end() ? nullptr : &*found;
 }
 
-const KernelColliderBindingDefinition* find_collider_binding(
-    const std::vector<KernelColliderBindingDefinition>& bindings,
-    EntityType entity_type) {
-    const auto found = std::find_if(
-        bindings.begin(),
-        bindings.end(),
-        [entity_type](const KernelColliderBindingDefinition& binding) {
-            return binding.entity_type == static_cast<std::uint16_t>(entity_type);
-        });
-    return found == bindings.end() ? nullptr : &*found;
-}
-
 const KernelProjectileTemplateDefinition* find_projectile_template(
     const std::vector<KernelProjectileTemplateDefinition>& templates,
     std::uint32_t projectile_template_id) {
@@ -1096,17 +1084,14 @@ bool KernelEngine::load_gameplay_catalog(
          catalog.projectile_templates == nullptr) ||
         (catalog.collider_template_count != 0 &&
          catalog.collider_templates == nullptr) ||
-        (catalog.collider_binding_count != 0 &&
-         catalog.collider_bindings == nullptr)) {
+        catalog.collider_binding_count != 0) {
         return false;
     }
 
     projectile_templates_.clear();
     collider_templates_.clear();
-    collider_bindings_.clear();
     projectile_templates_.reserve(catalog.projectile_template_count);
     collider_templates_.reserve(catalog.collider_template_count);
-    collider_bindings_.reserve(catalog.collider_binding_count);
     for (std::uint32_t index = 0; index < catalog.projectile_template_count; ++index) {
         const KernelProjectileTemplateDefinition& projectile_template =
             catalog.projectile_templates[index];
@@ -1139,16 +1124,6 @@ bool KernelEngine::load_gameplay_catalog(
             return false;
         }
         collider_templates_.push_back(collider_template);
-    }
-    for (std::uint32_t index = 0; index < catalog.collider_binding_count; ++index) {
-        const KernelColliderBindingDefinition& binding = catalog.collider_bindings[index];
-        if (binding.struct_size < sizeof(KernelColliderBindingDefinition) ||
-            binding.collider_template_id == 0 ||
-            find_collider_template(collider_templates_, binding.collider_template_id) ==
-                nullptr) {
-            return false;
-        }
-        collider_bindings_.push_back(binding);
     }
     for (const KernelProjectileTemplateDefinition& projectile_template :
          projectile_templates_) {
@@ -1422,37 +1397,32 @@ std::uint32_t KernelEngine::get_collider_templates(
 std::uint32_t KernelEngine::get_collider_bindings(
     KernelColliderBindingDefinition* out_bindings,
     std::uint32_t max_bindings) const {
-    const std::uint32_t count =
-        static_cast<std::uint32_t>(collider_bindings_.size());
-    if (out_bindings == nullptr || max_bindings == 0) {
-        return count;
-    }
-    const std::uint32_t copied = std::min(count, max_bindings);
-    std::memcpy(
-        out_bindings,
-        collider_bindings_.data(),
-        sizeof(KernelColliderBindingDefinition) * copied);
-    return copied;
+    (void)out_bindings;
+    (void)max_bindings;
+    return 0;
 }
 
 void KernelEngine::materialize_entity_collider(NetId net_id) {
     const std::optional<entt::entity> entity = world_.find_entity(net_id);
     if (!entity.has_value() ||
-        !world_.registry().all_of<NetworkIdentity, EntityKind, Transform>(*entity)) {
+        !world_.registry().all_of<NetworkIdentity, EntityKind, Transform, Hitbox>(
+            *entity)) {
         return;
     }
 
     const NetworkIdentity& identity =
         world_.registry().get<NetworkIdentity>(*entity);
     const EntityKind& kind = world_.registry().get<EntityKind>(*entity);
+    if (kind.type == EntityType::kProjectile) {
+        return;
+    }
     const Transform& transform = world_.registry().get<Transform>(*entity);
-    const KernelColliderBindingDefinition* binding =
-        find_collider_binding(collider_bindings_, kind.type);
-    if (binding == nullptr) {
+    const Hitbox& hitbox = world_.registry().get<Hitbox>(*entity);
+    if (hitbox.collider_template_id == 0) {
         return;
     }
     const KernelColliderTemplateDefinition* collider_template =
-        find_collider_template(collider_templates_, binding->collider_template_id);
+        find_collider_template(collider_templates_, hitbox.collider_template_id);
     if (collider_template == nullptr) {
         return;
     }
@@ -1465,10 +1435,8 @@ void KernelEngine::materialize_entity_collider(NetId net_id) {
     collider.shape_type = to_collider_shape_type(collider_template->shape_type);
     collider.purpose_flags = collider_template->purpose_flags;
     collider.layer_mask = collider_template->layer_mask;
-    collider.local_center =
-        from_kernel_vec3(binding->local_position) +
-        from_kernel_vec3(collider_template->center);
-    collider.local_rotation = from_kernel_quat(binding->local_rotation);
+    collider.local_center = from_kernel_vec3(collider_template->center);
+    collider.local_rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
     collider.world_rotation = transform.rotation * collider.local_rotation;
     collider.world_center =
         transform.position + transform.rotation * collider.local_center;
@@ -1563,13 +1531,6 @@ void KernelEngine::sync_entity_colliders_from_world() {
     }
 }
 
-std::uint32_t KernelEngine::collider_template_id_for_entity_type(
-    EntityType entity_type) const {
-    const KernelColliderBindingDefinition* binding =
-        find_collider_binding(collider_bindings_, entity_type);
-    return binding == nullptr ? 0u : binding->collider_template_id;
-}
-
 std::uint32_t KernelEngine::collider_template_id_for_projectile_template(
     std::uint32_t projectile_template_id) const {
     const KernelProjectileTemplateDefinition* projectile_template =
@@ -1588,10 +1549,7 @@ void KernelEngine::sync_client_render_colliders() {
     for (const RenderEntityState& state : render_states_) {
         const EntityType entity_type =
             static_cast<EntityType>(state.entity_type);
-        const std::uint32_t collider_template_id =
-            state.collider_template_id != 0u
-                ? state.collider_template_id
-                : collider_template_id_for_entity_type(entity_type);
+        const std::uint32_t collider_template_id = state.collider_template_id;
         if (collider_template_id == 0u) {
             continue;
         }
@@ -1603,14 +1561,6 @@ void KernelEngine::sync_client_render_colliders() {
 
         glm::vec3 local_center = from_kernel_vec3(collider_template->center);
         glm::quat local_rotation{1.0f, 0.0f, 0.0f, 0.0f};
-        if (entity_type != EntityType::kProjectile) {
-            if (const KernelColliderBindingDefinition* binding =
-                    find_collider_binding(collider_bindings_, entity_type)) {
-                local_center += from_kernel_vec3(binding->local_position);
-                local_rotation = from_kernel_quat(binding->local_rotation);
-            }
-        }
-
         const glm::quat render_rotation = from_kernel_quat(state.rotation);
         ColliderInstance collider{};
         collider.collider_template_id = collider_template->template_id;
@@ -1797,7 +1747,11 @@ bool KernelEngine::server_set_entity_combat_state(
     const KernelCombatStateDefinition& combat_state) {
     if (!running_ || !is_server_mode(config_.mode) || net_id == 0 ||
         combat_state.struct_size < sizeof(KernelCombatStateDefinition) ||
-        !valid_weapon_id(combat_state.active_weapon_id)) {
+        !valid_weapon_id(combat_state.active_weapon_id) ||
+        combat_state.collider_template_id == 0 ||
+        find_collider_template(
+            collider_templates_,
+            combat_state.collider_template_id) == nullptr) {
         return false;
     }
     const std::optional<entt::entity> entity = world_.find_entity(net_id);
@@ -1812,6 +1766,7 @@ bool KernelEngine::server_set_entity_combat_state(
     Hitbox& hitbox = world_.registry().get_or_emplace<Hitbox>(*entity);
     hitbox.center = from_kernel_vec3(combat_state.hitbox_center);
     hitbox.half_extents = from_kernel_vec3(combat_state.hitbox_half_extents);
+    hitbox.collider_template_id = combat_state.collider_template_id;
 
     MovementState& movement = world_.registry().get_or_emplace<MovementState>(*entity);
     movement.speed_meters_per_second = combat_state.move_speed_meters_per_second;
@@ -3669,9 +3624,11 @@ void KernelEngine::rebuild_render_states_from_world() {
             state.collider_template_id =
                 collider_template_id_for_projectile_template(
                     projectile.projectile_template_id);
+        } else if (world_.registry().all_of<Hitbox>(entity)) {
+            const Hitbox& hitbox = world_.registry().get<Hitbox>(entity);
+            state.collider_template_id = hitbox.collider_template_id;
         } else {
-            state.collider_template_id =
-                collider_template_id_for_entity_type(kind.type);
+            state.collider_template_id = 0;
         }
         render_states_.push_back(state);
     }
@@ -3767,7 +3724,7 @@ void KernelEngine::rebuild_render_states_from_snapshot(
             0,
             RenderEntityStatus_Stale,
             0,
-            collider_template_id_for_entity_type(entity.type),
+            0,
         });
     }
 }

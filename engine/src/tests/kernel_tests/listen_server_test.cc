@@ -125,6 +125,7 @@ void configure_local_player(KernelHandle* kernel, std::uint32_t player_net_id) {
     combat.hp = 100;
     combat.max_hp = 100;
     combat.active_weapon_id = 0;
+    combat.collider_template_id = 1;
     combat.move_speed_meters_per_second = 5.0f;
     combat.hitbox_center = KernelVec3{0.0f, 0.9f, 0.0f};
     combat.hitbox_half_extents = KernelVec3{0.35f, 0.9f, 0.35f};

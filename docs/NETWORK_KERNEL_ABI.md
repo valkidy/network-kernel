@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 19u`.
+`KERNEL_ABI_VERSION == 20u`.
 
 ## Ownership
 
@@ -124,9 +124,19 @@ catalog definitions that the kernel accepted through `Kernel_LoadGameplayCatalog
 or `Kernel_LoadGameplayCatalogFromMemory`; passing `NULL` or a zero capacity
 returns the available count without copying. Projectile collider resolution uses
 `ProjectileState::projectile_template_id` to select
-`KernelProjectileTemplateDefinition::collider_template_id`; this per-projectile
-template collider takes precedence over the generic `entity_type == projectile`
-collider binding.
+`KernelProjectileTemplateDefinition::collider_template_id`.
+
+ABI version 20 adds `KernelCombatStateDefinition::collider_template_id` so
+actor entities receive their resolved actor-template collider through the same
+combat-state path that already carries actor health, movement, hitbox, and
+loadout data. Collider catalog bindings are deprecated: accepted gameplay
+catalogs must set `collider_binding_count == 0`, and
+`Kernel_GetColliderBindings` is retained for symbol compatibility but always
+returns `0`. Collider resolution is now single-path by entity family: actors use
+their actor template's resolved collider template id, and projectiles use their
+projectile template's resolved collider template id. Client/debug tooling should
+consume the resolved `RenderEntityState::collider_template_id` rather than
+falling back to an `entity_type` binding.
 
 Snapshot schema version 6 refines the v2 sectioned snapshot payload. Actor
 records cover player, enemy, and future AI bot entities with optional owner,

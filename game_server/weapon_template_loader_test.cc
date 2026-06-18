@@ -104,20 +104,7 @@ void write_valid_collider_catalog(const std::filesystem::path& weapon_dir) {
         "    half_extents: {x: 0.1, y: 0.1, z: 2.5}\n"
         "    radius: 0.0\n"
         "    purpose: damage\n"
-        "    layer: projectile\n"
-        "bindings:\n"
-        "  - entity_type: player\n"
-        "    collider_template: player_hit\n"
-        "    local_position: {x: 0.0, y: 0.9, z: 0.0}\n"
-        "  - entity_type: enemy\n"
-        "    collider_template: enemy_hit\n"
-        "    local_position: {x: 0.0, y: 0.8, z: 0.0}\n"
-        "  - entity_type: projectile\n"
-        "    collider_template: projectile_damage\n"
-        "    local_position: {x: 0.0, y: 0.0, z: 0.0}\n"
-        "  - entity_type: area_effect\n"
-        "    collider_template: explosion_damage\n"
-        "    local_position: {x: 0.0, y: 0.0, z: 0.0}\n");
+        "    layer: projectile\n");
 }
 
 void write_valid_templates(const std::filesystem::path& dir) {
@@ -651,7 +638,7 @@ void catalog_file_loads_colliders() {
     assert(config.weapons.catalog_version == 1);
     assert(config.weapons.catalog_hash != 0);
     assert(config.colliders.templates.size() == 8);
-    assert(config.colliders.bindings.size() == 4);
+    assert(config.colliders.bindings.empty());
 }
 
 }  // namespace

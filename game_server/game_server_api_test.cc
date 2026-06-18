@@ -256,7 +256,7 @@ int main() {
     assert(load_result.catalog_hash != 0);
     assert(load_result.projectile_template_count > 0);
     assert(load_result.collider_template_count == 8);
-    assert(load_result.collider_binding_count == 4);
+    assert(load_result.collider_binding_count == 0);
 
     GameServerHandle* game_server = GameServer_Create(kernel);
     assert(game_server != nullptr);
