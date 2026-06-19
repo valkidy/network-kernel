@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 20;
+        public const uint AbiVersion = 22;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int GameplayCatalogLoadPathSize = 128;
@@ -78,17 +78,21 @@ namespace NetworkExample.Kernel
         public const ulong CapabilityBenchmarkStats = 0x0000000080000000UL;
         public const ulong CapabilityNetworkStats = 0x0000000100000000UL;
         public const ulong CapabilityEntityLifecycleEvents = 0x0000000200000000UL;
+        public const ulong CapabilityVisionStateQuery = 0x0000000400000000UL;
 
         public const uint CollisionLayerPlayer = 0x00000001U;
         public const uint CollisionLayerEnemy = 0x00000002U;
         public const uint CollisionLayerProjectile = 0x00000004U;
         public const uint CollisionLayerAreaEffect = 0x00000008U;
+        public const uint CollisionLayerAgentVision = 0x00000010U;
         public const uint CollisionMaskDamageable = CollisionLayerPlayer | CollisionLayerEnemy;
 
         public const uint VisualFlagMoving = 0x00000001U;
         public const uint VisualFlagReloading = 0x00000002U;
         public const uint VisualFlagDead = 0x00000004U;
         public const uint VisualFlagHpUnknown = 0x00000008U;
+        public const uint MaxVisibleHostiles = 16;
+        public const uint MaxVisibleAllies = 16;
     }
 
     public static class NetworkKernelPackageInfo
@@ -238,6 +242,7 @@ namespace NetworkExample.Kernel
         Sphere = 1,
         OrientedBox = 2,
         Segment = 3,
+        Cone = 4,
     }
 
     [Flags]
@@ -246,6 +251,24 @@ namespace NetworkExample.Kernel
         Hit = 1U << 0,
         Damage = 1U << 1,
         Trigger = 1U << 2,
+        Vision = 1U << 3,
+    }
+
+    public enum KernelAgentCamp : byte
+    {
+        Unknown = 0,
+        PlayerSide = 1,
+        EnemySide = 2,
+        Neutral = 3,
+    }
+
+    public enum KernelAgentRelation : byte
+    {
+        Unknown = 0,
+        Self = 1,
+        Hostile = 2,
+        Ally = 3,
+        Neutral = 4,
     }
 
     [Flags]
@@ -291,6 +314,9 @@ namespace NetworkExample.Kernel
         public uint debug_info_size;
         public uint collider_shape_query_size;
         public uint collider_shape_view_size;
+        public uint agent_vision_config_size;
+        public uint vision_state_query_size;
+        public uint vision_state_view_size;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
@@ -396,6 +422,25 @@ namespace NetworkExample.Kernel
             this.y = y;
             this.z = z;
         }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelVec4
+    {
+        public float x;
+        public float y;
+        public float z;
+        public float w;
+
+        public KernelVec4(float x, float y, float z, float w)
+        {
+            this.x = x;
+            this.y = y;
+            this.z = z;
+            this.w = w;
+        }
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelVec4>();
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -526,12 +571,9 @@ namespace NetworkExample.Kernel
         public byte reserved0;
         public ushort reserved1;
         public KernelVec3 center;
-        public KernelVec3 half_extents;
-        public float radius;
+        public KernelVec4 shape_params;
         public uint purpose_flags;
         public uint layer_mask;
-        public float segment_length;
-        public float scatter_degrees;
         public uint lifetime_ticks;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelColliderTemplateDefinition>();
@@ -767,8 +809,7 @@ namespace NetworkExample.Kernel
         public byte reserved1;
         public ushort reserved2;
         public KernelVec3 world_center;
-        public KernelVec3 half_extents;
-        public float radius;
+        public KernelVec4 shape_params;
         public uint purpose_flags;
         public uint layer_mask;
         public uint collider_id;
@@ -781,6 +822,68 @@ namespace NetworkExample.Kernel
         public uint has_resolved_damage;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelColliderShapeView>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelAgentVisionConfig
+    {
+        public uint struct_size;
+        public byte camp;
+        public byte reserved0;
+        public ushort reserved1;
+        public uint vision_collider_template_id;
+        public uint max_visible_hostiles;
+        public uint max_visible_allies;
+        public KernelVec3 local_origin;
+        public KernelVec3 local_forward;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelAgentVisionConfig>();
+    }
+
+    /// <summary>
+    /// Filters local runtime vision state queries. Passing a null query to
+    /// Kernel.QueryVisionState applies no filters; zero-valued entity type and
+    /// agent net id fields also mean no filter for that field.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelVisionStateQuery
+    {
+        public uint struct_size;
+        public ushort entity_type_filter;
+        public ushort reserved0;
+        public uint agent_net_id;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelVisionStateQuery>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelVisionStateView
+    {
+        public uint struct_size;
+        public uint agent_net_id;
+        public ushort entity_type;
+        public byte camp;
+        public byte reserved0;
+        public KernelVec3 vision_origin;
+        public KernelVec3 vision_forward;
+        public uint vision_collider_template_id;
+        public uint resolved_collider_template_id;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)]
+        public uint[] visible_hostiles;
+        public uint visible_hostile_count;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)]
+        public uint[] visible_allies;
+        public uint visible_ally_count;
+        public uint current_target_candidate;
+        public byte relation_to_current_target;
+        public byte reserved1;
+        public ushort reserved2;
+        public uint last_seen_target;
+        public KernelVec3 last_known_target_position;
+        public float time_since_last_seen_target;
+        public uint valid;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelVisionStateView>();
     }
 
     [StructLayout(LayoutKind.Sequential)]

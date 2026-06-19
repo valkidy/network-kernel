@@ -528,6 +528,20 @@ build_required_exports() {
       Kernel_LoadGameplayCatalogFromMemory
     )
   fi
+  if [[ "$native_abi" -ge 19 ]]; then
+    REQUIRED_EXPORTS_BUILT+=(
+      Kernel_GetProjectileTemplates
+      Kernel_GetColliderTemplates
+      Kernel_GetColliderBindings
+    )
+  fi
+  if [[ "$native_abi" -ge 21 ]]; then
+    REQUIRED_EXPORTS_BUILT+=(
+      Kernel_QueryVisionState
+      Kernel_ServerSetEntityVisionConfig
+      Kernel_ServerClearEntityVisionConfig
+    )
+  fi
   if [[ "$native_game_server_abi" -ge 2 ]]; then
     REQUIRED_EXPORTS_BUILT+=(
       GameServer_CreateWithWeaponTemplateDirectory

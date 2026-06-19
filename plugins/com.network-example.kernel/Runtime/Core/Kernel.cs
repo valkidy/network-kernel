@@ -272,6 +272,45 @@ namespace NetworkExample.Kernel
             }
         }
 
+        public uint QueryVisionState(
+            KernelVisionStateQuery? query,
+            KernelVisionStateView[] states)
+        {
+            ThrowIfDisposed();
+            if (states == null || states.Length == 0)
+            {
+                return 0;
+            }
+
+            IntPtr queryPtr = IntPtr.Zero;
+            try
+            {
+                if (query.HasValue)
+                {
+                    KernelVisionStateQuery nativeQuery = query.Value;
+                    if (nativeQuery.struct_size == 0)
+                    {
+                        nativeQuery.struct_size = KernelVisionStateQuery.StructSize;
+                    }
+                    queryPtr = Marshal.AllocHGlobal(Marshal.SizeOf<KernelVisionStateQuery>());
+                    Marshal.StructureToPtr(nativeQuery, queryPtr, false);
+                }
+
+                return KernelNative.Kernel_QueryVisionState(
+                    handle,
+                    queryPtr,
+                    states,
+                    (uint)states.Length);
+            }
+            finally
+            {
+                if (queryPtr != IntPtr.Zero)
+                {
+                    Marshal.FreeHGlobal(queryPtr);
+                }
+            }
+        }
+
         public uint GetProjectileTemplates(KernelProjectileTemplateDefinition[] templates)
         {
             ThrowIfDisposed();
@@ -387,6 +426,27 @@ namespace NetworkExample.Kernel
                 handle,
                 netId,
                 ref combatState);
+        }
+
+        public bool ServerSetEntityVisionConfig(
+            uint netId,
+            KernelAgentVisionConfig visionConfig)
+        {
+            ThrowIfDisposed();
+            if (visionConfig.struct_size == 0)
+            {
+                visionConfig.struct_size = KernelAgentVisionConfig.StructSize;
+            }
+            return KernelNative.Kernel_ServerSetEntityVisionConfig(
+                handle,
+                netId,
+                ref visionConfig);
+        }
+
+        public bool ServerClearEntityVisionConfig(uint netId)
+        {
+            ThrowIfDisposed();
+            return KernelNative.Kernel_ServerClearEntityVisionConfig(handle, netId);
         }
 
         public bool ServerSetEntityWeaponMechanics(

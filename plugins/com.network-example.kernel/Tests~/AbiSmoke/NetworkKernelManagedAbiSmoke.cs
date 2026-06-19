@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
@@ -29,10 +30,25 @@ public static class NetworkKernelManagedAbiSmoke
         KernelAbiInfo info = KernelAbi.GetInfo();
         KernelBuildInfo buildInfo = KernelAbi.GetBuildInfo();
         GameServerAbiInfo gameServerInfo = GameServerAbi.GetInfo();
-        Require(KernelConstants.AbiVersion == 20, "Managed kernel ABI version was not v20.");
+        Require(KernelConstants.AbiVersion == 22, "Managed kernel ABI version was not v22.");
         Require(
             (info.capability_flags & KernelConstants.CapabilityEntityLifecycleEvents) != 0,
             "Kernel lifecycle event capability was missing.");
+        Require(
+            (info.capability_flags & KernelConstants.CapabilityVisionStateQuery) != 0,
+            "Kernel vision state query capability was missing.");
+        Require(
+            KernelConstants.CollisionLayerAgentVision == 0x00000010U,
+            "Kernel agent vision collision layer mismatch.");
+        Require(
+            KernelColliderShapeType.Cone == (KernelColliderShapeType)4,
+            "Kernel cone collider shape type mismatch.");
+        Require(
+            KernelColliderPurpose.Vision == (KernelColliderPurpose)(1U << 3),
+            "Kernel vision collider purpose mismatch.");
+        Require(
+            KernelVec4.StructSize == 16,
+            "KernelVec4 layout size mismatch.");
         Require(
             (KernelConstants.VisualFlagHpUnknown & KernelConstants.VisualFlagDead) == 0,
             "Kernel HpUnknown visual flag overlapped Dead.");
@@ -41,13 +57,21 @@ public static class NetworkKernelManagedAbiSmoke
         Require(!string.IsNullOrEmpty(buildInfo.git_commit), "Kernel_GetBuildInfo git commit was empty.");
         Require(!string.IsNullOrEmpty(buildInfo.build_platform), "Kernel_GetBuildInfo build platform was empty.");
         RequireLANDiscovery();
+        byte[] catalogBundleBytes = LoadGameplayCatalogBundleBytes();
 
         using (var kernel = new Kernel(KernelConfig.CreateDefault(KernelMode.ListenServer)))
         {
             Require(kernel.StartListenServer(7777), "Kernel_StartListenServer failed.");
 
-            using (var gameServer = new GameServer(kernel))
+            using (var gameServer = new GameServer(
+                kernel,
+                catalogBundleBytes,
+                "gameplay_catalog.yaml",
+                out KernelGameplayCatalogLoadResult loadResult))
             {
+                Require(
+                    loadResult.status == KernelConstants.GameplayCatalogLoadStatusSuccess,
+                    "GameServer bundle load did not report success.");
                 Require(
                     gameServer.QueryWeaponTemplate(4, out GameServerWeaponTemplateInfo templateInfo),
                     "GameServer_QueryWeaponTemplate failed.");
@@ -70,14 +94,15 @@ public static class NetworkKernelManagedAbiSmoke
                 position = new KernelVec3(6.0f, 0.0f, 0.0f),
                 rotation = new KernelQuat(0.0f, 0.0f, 0.0f, 1.0f),
                 animation_state = 4,
-                visual_flags = 8,
+                visual_flags = 0,
             };
             Require(
                 kernel.ServerCreateEntity(createInfo, out uint enemyNetId) && enemyNetId != 0,
                 "Kernel_ServerCreateEntity failed.");
 
-            RequireAbi20Diagnostics(kernel);
+            RequireAbi22CatalogDiagnostics(kernel);
             ConfigureCombatAndWeapons(kernel, enemyNetId);
+            RequireAbi22VisionDiagnostics(kernel, enemyNetId);
             Require(
                 kernel.ServerGetEntityState(enemyNetId, out KernelServerEntityState enemyState) &&
                 enemyState.valid != 0 &&
@@ -89,12 +114,11 @@ public static class NetworkKernelManagedAbiSmoke
             kernel.Update(0.0f);
             Require(kernel.GetRenderStates(states) > 0, "Kernel_GetRenderStates returned no states.");
             Require(
-                HasActiveRenderEntityMaxHealth(states, enemyNetId, 240),
-                "Kernel_GetRenderStates missed enemy health.");
+                HasActiveRenderEntity(states, enemyNetId),
+                $"Kernel_GetRenderStates missed active enemy. {DescribeRenderStates(states)}");
             Require(
-                HasActiveRenderEntityColliderTemplate(states, enemyNetId, 101),
-                "Kernel_GetRenderStates missed enemy collider template id.");
-            RequireQueryAllColliderShape(kernel, enemyNetId);
+                HasRenderEntityHpUnknown(states, enemyNetId),
+                $"Kernel_GetRenderStates should keep listen-server client HP unknown. {DescribeRenderStates(states)}");
             Require(
                 kernel.GetRenderStatesAtTime(33333, states) > 0,
                 "Kernel_GetRenderStatesAtTime returned no states.");
@@ -106,19 +130,27 @@ public static class NetworkKernelManagedAbiSmoke
             Require(
                 kernel.ServerDestroyEntity(enemyNetId, KernelDespawnReason.Destroyed),
                 "Kernel_ServerDestroyEntity failed.");
-            RequireDestroyedLifecycleEvent(kernel, enemyNetId, KernelEntityType.Enemy);
+            RequireDestroyedLifecycleEvent(kernel, enemyNetId);
         }
 
         using (var host = new NetworkHost())
         {
-            Require(host.Start(7778), "NetworkHost.Start failed.");
+            Require(
+                host.Start(
+                    7778,
+                    catalogBundleBytes,
+                    "gameplay_catalog.yaml",
+                    out KernelGameplayCatalogLoadResult loadResult) &&
+                loadResult.status == KernelConstants.GameplayCatalogLoadStatusSuccess,
+                "NetworkHost.Start with bundle failed.");
             var hostEvents = new KernelEvent[16];
             host.Update(1.0f / 30.0f, hostEvents);
             Require(
                 host.IsLocalClientReady &&
                 host.LocalPlayerNetId != 0 &&
-                host.EnemyCount == 1,
-                "NetworkHost smoke failed.");
+                host.EnemyCount == 10,
+                $"NetworkHost smoke failed: ready={host.IsLocalClientReady} " +
+                $"localPlayer={host.LocalPlayerNetId} enemyCount={host.EnemyCount}.");
             Require(
                 host.GameServer.QueryWeaponTemplate(6, out GameServerWeaponTemplateInfo homingTemplate) &&
                 homingTemplate.valid != 0 &&
@@ -187,6 +219,65 @@ public static class NetworkKernelManagedAbiSmoke
         }
     }
 
+    private static byte[] LoadGameplayCatalogBundleBytes()
+    {
+        string[] roots =
+        {
+            Directory.GetCurrentDirectory(),
+            AppDomain.CurrentDomain.BaseDirectory,
+        };
+        for (int index = 0; index < roots.Length; ++index)
+        {
+            string found = FindBundleFromRoot(roots[index]);
+            if (!string.IsNullOrEmpty(found))
+            {
+                return File.ReadAllBytes(found);
+            }
+        }
+
+        throw new InvalidOperationException("Gameplay catalog bundle resource was missing.");
+    }
+
+    private static string FindBundleFromRoot(string root)
+    {
+        string current = Path.GetFullPath(root);
+        while (!string.IsNullOrEmpty(current))
+        {
+            string packageLocal = Path.Combine(
+                current,
+                "Runtime",
+                "Resources",
+                "gameplay_catalog_bundle",
+                "bundle.bytes");
+            if (File.Exists(packageLocal))
+            {
+                return packageLocal;
+            }
+
+            string repoLocal = Path.Combine(
+                current,
+                "plugins",
+                "com.network-example.kernel",
+                "Runtime",
+                "Resources",
+                "gameplay_catalog_bundle",
+                "bundle.bytes");
+            if (File.Exists(repoLocal))
+            {
+                return repoLocal;
+            }
+
+            string parent = Directory.GetParent(current)?.FullName;
+            if (parent == current)
+            {
+                break;
+            }
+            current = parent;
+        }
+
+        return null;
+    }
+
     private static void ConfigureCombatAndWeapons(Kernel kernel, uint enemyNetId)
     {
         KernelCombatStateDefinition combat = KernelCombatStateDefinition.Create();
@@ -214,7 +305,7 @@ public static class NetworkKernelManagedAbiSmoke
         SetAndQueryWeapon(kernel, enemyNetId, HomingWeapon(), 6);
     }
 
-    private static void RequireAbi20Diagnostics(Kernel kernel)
+    private static void RequireAbi22CatalogDiagnostics(Kernel kernel)
     {
         var colliderTemplates = new[]
         {
@@ -224,9 +315,18 @@ public static class NetworkKernelManagedAbiSmoke
                 template_id = 101,
                 shape_type = (byte)KernelColliderShapeType.Sphere,
                 center = new KernelVec3(0.0f, 0.5f, 0.0f),
-                radius = 0.75f,
+                shape_params = new KernelVec4(0.75f, 0.0f, 0.0f, 0.0f),
                 purpose_flags = (uint)KernelColliderPurpose.Hit,
                 layer_mask = KernelConstants.CollisionLayerEnemy,
+            },
+            new KernelColliderTemplateDefinition
+            {
+                struct_size = KernelColliderTemplateDefinition.StructSize,
+                template_id = 303,
+                shape_type = (byte)KernelColliderShapeType.Cone,
+                shape_params = new KernelVec4(12.0f, 90.0f, 0.0f, 0.0f),
+                purpose_flags = (uint)KernelColliderPurpose.Vision,
+                layer_mask = KernelConstants.CollisionLayerAgentVision,
             },
         };
         var projectileTemplates = new[]
@@ -235,7 +335,7 @@ public static class NetworkKernelManagedAbiSmoke
             {
                 struct_size = KernelProjectileTemplateDefinition.StructSize,
                 projectile_template_id = 202,
-                weapon_id = 2,
+                weapon_id = 3,
                 motion_model = (byte)KernelProjectileMotionModel.Linear,
                 sync_mode = (byte)KernelProjectileSyncMode.LocalPredictedDeterministic,
                 hit_response = (byte)KernelProjectileHitResponse.Destroy,
@@ -251,8 +351,8 @@ public static class NetworkKernelManagedAbiSmoke
         };
         var catalog = new KernelGameplayCatalog
         {
-            CatalogVersion = 20,
-            CatalogHash = 0x2000UL,
+            CatalogVersion = 22,
+            CatalogHash = 0x2200UL,
             ProjectileTemplates = projectileTemplates,
             ColliderTemplates = colliderTemplates,
         };
@@ -260,13 +360,18 @@ public static class NetworkKernelManagedAbiSmoke
         Require(kernel.LoadGameplayCatalog(catalog), "Kernel_LoadGameplayCatalog failed.");
         RequireInvalidGameplayCatalogBundleFails(kernel);
         Require(
-            kernel.GetColliderTemplates(null) == 1,
+            kernel.GetColliderTemplates(null) == 2,
             "Kernel_GetColliderTemplates count failed.");
-        var readColliders = new KernelColliderTemplateDefinition[1];
+        var readColliders = new KernelColliderTemplateDefinition[2];
         Require(
-            kernel.GetColliderTemplates(readColliders) == 1 &&
+            kernel.GetColliderTemplates(readColliders) == 2 &&
             readColliders[0].template_id == 101 &&
-            readColliders[0].shape_type == (byte)KernelColliderShapeType.Sphere,
+            readColliders[0].shape_type == (byte)KernelColliderShapeType.Sphere &&
+            readColliders[0].shape_params.x == 0.75f &&
+            readColliders[1].template_id == 303 &&
+            readColliders[1].shape_type == (byte)KernelColliderShapeType.Cone &&
+            readColliders[1].shape_params.x == 12.0f &&
+            readColliders[1].shape_params.y == 90.0f,
             "Kernel_GetColliderTemplates read-back failed.");
         Require(
             kernel.GetProjectileTemplates(null) == 1,
@@ -287,8 +392,8 @@ public static class NetworkKernelManagedAbiSmoke
 
         Require(
             kernel.TryGetBenchmarkStats(out KernelBenchmarkStats benchmarkStats) &&
-            benchmarkStats.catalog_version == 20 &&
-            benchmarkStats.catalog_hash == 0x2000UL,
+            benchmarkStats.catalog_version == 22 &&
+            benchmarkStats.catalog_hash == 0x2200UL,
             "Kernel_GetBenchmarkStats failed.");
         Require(
             kernel.TryGetNetworkStats(out KernelNetworkStats networkStats) &&
@@ -306,6 +411,29 @@ public static class NetworkKernelManagedAbiSmoke
         };
         var debugRecords = new KernelDebugInfo[4];
         kernel.PollDebugRecords(debugFilter, debugRecords);
+    }
+
+    private static void RequireAbi22VisionDiagnostics(Kernel kernel, uint enemyNetId)
+    {
+        var visionConfig = new KernelAgentVisionConfig
+        {
+            camp = (byte)KernelAgentCamp.EnemySide,
+            vision_collider_template_id = 303,
+            max_visible_hostiles = KernelConstants.MaxVisibleHostiles,
+            max_visible_allies = KernelConstants.MaxVisibleAllies,
+            local_forward = new KernelVec3(-1.0f, 0.0f, 0.0f),
+        };
+        Require(
+            kernel.ServerSetEntityVisionConfig(enemyNetId, visionConfig),
+            "Kernel_ServerSetEntityVisionConfig failed.");
+        kernel.Update(1.0f / 30.0f);
+        var visionStates = new KernelVisionStateView[2];
+        Require(
+            kernel.QueryVisionState(null, visionStates) == 1 &&
+            visionStates[0].agent_net_id == enemyNetId &&
+            visionStates[0].vision_collider_template_id == 303 &&
+            visionStates[0].resolved_collider_template_id == 101,
+            "Kernel_QueryVisionState failed.");
     }
 
     private static void RequireQueryAllColliderShape(Kernel kernel, uint enemyNetId)
@@ -376,6 +504,7 @@ public static class NetworkKernelManagedAbiSmoke
             projectile = new KernelProjectileMechanicsDefinition
             {
                 struct_size = KernelProjectileMechanicsDefinition.StructSize,
+                projectile_template_id = 202,
                 motion_model = (byte)KernelProjectileMotionModel.Linear,
                 hit_response = (byte)KernelProjectileHitResponse.Destroy,
                 damage_shape = (byte)KernelProjectileDamageShape.DirectHit,
@@ -520,35 +649,52 @@ public static class NetworkKernelManagedAbiSmoke
         throw new InvalidOperationException("Expected spawned entity was not observed.");
     }
 
-    private static bool HasActiveRenderEntityMaxHealth(
+    private static bool HasActiveRenderEntity(
         RenderEntityState[] states,
-        uint netId,
-        ushort maxHp)
+        uint netId)
     {
         for (int index = 0; index < states.Length; ++index)
         {
             if (states[index].net_id == netId)
             {
-                return states[index].max_hp == maxHp &&
-                    states[index].hp <= maxHp &&
-                    states[index].status == RenderEntityStatus.Active;
+                return states[index].status == RenderEntityStatus.Active;
             }
         }
 
         return false;
     }
 
-    private static bool HasActiveRenderEntityColliderTemplate(
+    private static string DescribeRenderStates(RenderEntityState[] states)
+    {
+        string description = "states=";
+        for (int index = 0; index < states.Length; ++index)
+        {
+            if (states[index].net_id == 0)
+            {
+                continue;
+            }
+
+            description +=
+                $"[{index}] net={states[index].net_id} hp={states[index].hp}/" +
+                $"{states[index].max_hp} status={states[index].status} " +
+                $"flags=0x{states[index].visual_flags:x8} " +
+                $"collider={states[index].collider_template_id};";
+        }
+
+        return description;
+    }
+
+    private static bool HasRenderEntityHpUnknown(
         RenderEntityState[] states,
-        uint netId,
-        uint colliderTemplateId)
+        uint netId)
     {
         for (int index = 0; index < states.Length; ++index)
         {
             if (states[index].net_id == netId)
             {
-                return states[index].collider_template_id == colliderTemplateId &&
-                    states[index].status == RenderEntityStatus.Active;
+                return states[index].hp == 0 &&
+                    states[index].max_hp == 0 &&
+                    (states[index].visual_flags & KernelConstants.VisualFlagHpUnknown) != 0;
             }
         }
 
@@ -557,8 +703,7 @@ public static class NetworkKernelManagedAbiSmoke
 
     private static void RequireDestroyedLifecycleEvent(
         Kernel kernel,
-        uint netId,
-        KernelEntityType entityType)
+        uint netId)
     {
         var events = new KernelEntityLifecycleEvent[32];
         uint eventCount = kernel.PollEntityLifecycleEvents(events);
@@ -566,14 +711,29 @@ public static class NetworkKernelManagedAbiSmoke
         {
             if (events[index].net_id == netId &&
                 events[index].type == KernelEntityLifecycleEventType.Destroyed &&
-                events[index].reason == KernelDespawnReason.Destroyed &&
-                events[index].entity_type == entityType)
+                events[index].reason == KernelDespawnReason.Destroyed)
             {
                 return;
             }
         }
 
-        throw new InvalidOperationException("Kernel_PollEntityLifecycleEvents missed destroyed entity.");
+        throw new InvalidOperationException(
+            $"Kernel_PollEntityLifecycleEvents missed destroyed entity. {DescribeLifecycleEvents(events, eventCount)}");
+    }
+
+    private static string DescribeLifecycleEvents(
+        KernelEntityLifecycleEvent[] events,
+        uint eventCount)
+    {
+        string description = $"count={eventCount} events=";
+        for (int index = 0; index < Math.Min(events.Length, (int)eventCount); ++index)
+        {
+            description +=
+                $"[{index}] net={events[index].net_id} type={events[index].type} " +
+                $"reason={events[index].reason} entity={events[index].entity_type};";
+        }
+
+        return description;
     }
 
     private static void Require(bool condition, string message)

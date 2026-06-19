@@ -135,6 +135,10 @@ namespace NetworkExample.Kernel
                 info,
                 KernelConstants.CapabilityEntityLifecycleEvents,
                 "Kernel entity lifecycle event capability is missing.");
+            RequireCapability(
+                info,
+                KernelConstants.CapabilityVisionStateQuery,
+                "Kernel vision state query capability is missing.");
 
             RequireSize(nameof(KernelAbiInfo), info.struct_size, Marshal.SizeOf<KernelAbiInfo>());
             RequireSize(nameof(KernelConfig), info.kernel_config_size, Marshal.SizeOf<KernelConfig>());
@@ -248,6 +252,18 @@ namespace NetworkExample.Kernel
                 nameof(KernelColliderShapeView),
                 info.collider_shape_view_size,
                 Marshal.SizeOf<KernelColliderShapeView>());
+            RequireSize(
+                nameof(KernelAgentVisionConfig),
+                info.agent_vision_config_size,
+                Marshal.SizeOf<KernelAgentVisionConfig>());
+            RequireSize(
+                nameof(KernelVisionStateQuery),
+                info.vision_state_query_size,
+                Marshal.SizeOf<KernelVisionStateQuery>());
+            RequireSize(
+                nameof(KernelVisionStateView),
+                info.vision_state_view_size,
+                Marshal.SizeOf<KernelVisionStateView>());
         }
 
         private static void RequireCapability(

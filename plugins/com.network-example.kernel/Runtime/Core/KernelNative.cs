@@ -151,6 +151,13 @@ namespace NetworkExample.Kernel
             uint maxShapes);
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint Kernel_QueryVisionState(
+            IntPtr kernel,
+            IntPtr query,
+            [Out] KernelVisionStateView[] outStates,
+            uint maxStates);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern uint Kernel_GetProjectileTemplates(
             IntPtr kernel,
             [Out] KernelProjectileTemplateDefinition[] outTemplates,
@@ -225,6 +232,19 @@ namespace NetworkExample.Kernel
             IntPtr kernel,
             uint netId,
             ref KernelCombatStateDefinition combatState);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerSetEntityVisionConfig(
+            IntPtr kernel,
+            uint netId,
+            ref KernelAgentVisionConfig visionConfig);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerClearEntityVisionConfig(
+            IntPtr kernel,
+            uint netId);
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)]
