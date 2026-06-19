@@ -55,6 +55,10 @@ jobs:
           required_paths=(
             "$PACKAGE_DIR/package.json"
             "$PACKAGE_DIR/Runtime/NetworkKernel.asmdef"
+            "$PACKAGE_DIR/Runtime/Resources.meta"
+            "$PACKAGE_DIR/Runtime/Resources/gameplay_catalog_bundle.meta"
+            "$PACKAGE_DIR/Runtime/Resources/gameplay_catalog_bundle/bundle.bytes"
+            "$PACKAGE_DIR/Runtime/Resources/gameplay_catalog_bundle/bundle.bytes.meta"
             "$PACKAGE_DIR/Editor/NetworkKernel.Editor.asmdef"
             "$PACKAGE_DIR/Assets/Plugins/macOS/libnetwork_kernel.dylib"
             "$PACKAGE_DIR/Assets/Plugins/Windows/x86_64/network_kernel.dll"

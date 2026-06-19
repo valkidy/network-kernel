@@ -105,7 +105,9 @@ Default behavior:
 5. Build `//game_server/gameplay_catalog_bundle:bundle`, copy the generated
    `bundle.zip` byte-for-byte to
    `plugins/com.network-example.kernel/Runtime/Resources/gameplay_catalog_bundle/bundle.bytes`,
-   and copy bundle artifacts to `BUNDLE_ARTIFACT_DIR`.
+   ensure Unity `.meta` companions exist for the resource folder, bundle
+   folder, and `bundle.bytes`, and copy bundle artifacts to
+   `BUNDLE_ARTIFACT_DIR`.
 6. Verify package layout, C/C# ABI version alignment, required exported
    `Kernel_*`/`GameServer_*` symbols for macOS and Windows, and Windows PE32+
    x86-64 DLL shape. Export checks are ABI-aware: the v8 baseline remains
@@ -125,7 +127,8 @@ Default behavior:
    only when the dirty files are limited to staged native plugin assets under
    `Assets/Plugins`, Unity package `.cs` files, the generated
    `Runtime/Resources/gameplay_catalog_bundle/bundle.bytes`, `RELEASE_NOTES.md`,
-   and Unity's generated `RELEASE_NOTES.md.meta`.
+   generated resource `.meta` companions, and Unity's generated
+   `RELEASE_NOTES.md.meta`.
 
 Auto commit details:
 

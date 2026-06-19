@@ -312,6 +312,35 @@ JSON
   echo "fake dylib" > "$repo_dir/plugins/com.network-example.kernel/Assets/Plugins/macOS/libnetwork_kernel.dylib"
   echo "fake dll" > "$repo_dir/plugins/com.network-example.kernel/Assets/Plugins/Windows/x86_64/network_kernel.dll"
   echo "existing bundle bytes" > "$repo_dir/plugins/com.network-example.kernel/Runtime/Resources/gameplay_catalog_bundle/bundle.bytes"
+  write_file "$repo_dir/plugins/com.network-example.kernel/Runtime/Resources.meta" <<'YAML'
+fileFormatVersion: 2
+guid: 10000000000000000000000000000001
+folderAsset: yes
+DefaultImporter:
+  externalObjects: {}
+  userData:
+  assetBundleName:
+  assetBundleVariant:
+YAML
+  write_file "$repo_dir/plugins/com.network-example.kernel/Runtime/Resources/gameplay_catalog_bundle.meta" <<'YAML'
+fileFormatVersion: 2
+guid: 10000000000000000000000000000002
+folderAsset: yes
+DefaultImporter:
+  externalObjects: {}
+  userData:
+  assetBundleName:
+  assetBundleVariant:
+YAML
+  write_file "$repo_dir/plugins/com.network-example.kernel/Runtime/Resources/gameplay_catalog_bundle/bundle.bytes.meta" <<'YAML'
+fileFormatVersion: 2
+guid: 10000000000000000000000000000003
+TextScriptImporter:
+  externalObjects: {}
+  userData:
+  assetBundleName:
+  assetBundleVariant:
+YAML
   for dll_name in libcrypto-4-x64.dll libssl-4-x64.dll libstdc++-6.dll libwinpthread-1.dll; do
     echo "fake support dll" > "$repo_dir/plugins/com.network-example.kernel/Assets/Plugins/Windows/x86_64/$dll_name"
   done
@@ -679,12 +708,46 @@ test_pack_stages_gameplay_catalog_bundle_and_writes_artifacts() {
   assert_contains "$(cat "$output_file")" "bundle_artifact_dir=$artifact_dir"
 }
 
+test_pack_creates_missing_gameplay_catalog_bundle_meta_files() {
+  local sandbox_dir repo_dir output_file status
+  sandbox_dir="$(mktemp -d "${TMPDIR:-/tmp}/package-builder-bundle-meta.XXXXXX")"
+  sandbox_dir="$(cd "$sandbox_dir" && pwd)"
+  repo_dir="$sandbox_dir/repo"
+  output_file="$sandbox_dir/output.txt"
+  make_fake_repo "$repo_dir" "feat-unity-plugin"
+  rm \
+    "$repo_dir/plugins/com.network-example.kernel/Runtime/Resources.meta" \
+    "$repo_dir/plugins/com.network-example.kernel/Runtime/Resources/gameplay_catalog_bundle.meta" \
+    "$repo_dir/plugins/com.network-example.kernel/Runtime/Resources/gameplay_catalog_bundle/bundle.bytes.meta"
+
+  set +e
+  run_builder "$repo_dir" "$output_file" --mode pack --unity off --auto-commit off
+  status="$?"
+  set -e
+
+  [[ "$status" -eq 0 ]] || fail "expected pack mode to recreate resource meta files; got status $status: $(cat "$output_file")"
+  [[ -f "$repo_dir/plugins/com.network-example.kernel/Runtime/Resources.meta" ]] ||
+    fail "expected Runtime/Resources.meta to be created"
+  [[ -f "$repo_dir/plugins/com.network-example.kernel/Runtime/Resources/gameplay_catalog_bundle.meta" ]] ||
+    fail "expected gameplay_catalog_bundle.meta to be created"
+  [[ -f "$repo_dir/plugins/com.network-example.kernel/Runtime/Resources/gameplay_catalog_bundle/bundle.bytes.meta" ]] ||
+    fail "expected bundle.bytes.meta to be created"
+  assert_contains "$(cat "$repo_dir/plugins/com.network-example.kernel/Runtime/Resources.meta")" "folderAsset: yes"
+  assert_contains "$(cat "$repo_dir/plugins/com.network-example.kernel/Runtime/Resources/gameplay_catalog_bundle.meta")" "folderAsset: yes"
+  assert_contains "$(cat "$repo_dir/plugins/com.network-example.kernel/Runtime/Resources/gameplay_catalog_bundle/bundle.bytes.meta")" "TextScriptImporter:"
+}
+
 test_auto_commit_allows_generated_gameplay_catalog_bundle() {
   local sandbox_dir repo_dir output_file subject
   sandbox_dir="$(mktemp -d "${TMPDIR:-/tmp}/package-builder-bundle-commit.XXXXXX")"
   repo_dir="$sandbox_dir/repo"
   output_file="$sandbox_dir/output.txt"
   make_fake_repo "$repo_dir" "feat-unity-plugin"
+  git -C "$repo_dir" rm -q \
+    plugins/com.network-example.kernel/Runtime/Resources.meta \
+    plugins/com.network-example.kernel/Runtime/Resources/gameplay_catalog_bundle.meta \
+    plugins/com.network-example.kernel/Runtime/Resources/gameplay_catalog_bundle/bundle.bytes.meta
+  git -C "$repo_dir" commit -qm "test: remove resource meta files"
 
   BUNDLE_ARTIFACT_DIR="$sandbox_dir/template-bundle" run_builder "$repo_dir" "$output_file" \
     --mode pack \
@@ -696,6 +759,12 @@ test_auto_commit_allows_generated_gameplay_catalog_bundle() {
   [[ "$subject" == "feat: bump Unity package to 0.6.4" ]] || fail "unexpected commit subject: $subject"
   git -C "$repo_dir" cat-file -e HEAD:plugins/com.network-example.kernel/Runtime/Resources/gameplay_catalog_bundle/bundle.bytes ||
     fail "expected generated gameplay catalog bundle to be auto committed"
+  git -C "$repo_dir" cat-file -e HEAD:plugins/com.network-example.kernel/Runtime/Resources.meta ||
+    fail "expected generated Resources.meta to be auto committed"
+  git -C "$repo_dir" cat-file -e HEAD:plugins/com.network-example.kernel/Runtime/Resources/gameplay_catalog_bundle.meta ||
+    fail "expected generated gameplay_catalog_bundle.meta to be auto committed"
+  git -C "$repo_dir" cat-file -e HEAD:plugins/com.network-example.kernel/Runtime/Resources/gameplay_catalog_bundle/bundle.bytes.meta ||
+    fail "expected generated bundle.bytes.meta to be auto committed"
   [[ -z "$(git -C "$repo_dir" status --short)" ]] || fail "expected clean fake repo after bundle auto commit"
 }
 
@@ -716,6 +785,23 @@ test_verify_fails_when_gameplay_catalog_bundle_is_missing() {
   assert_contains "$(cat "$output_file")" "Runtime/Resources/gameplay_catalog_bundle/bundle.bytes"
 }
 
+test_verify_fails_when_gameplay_catalog_bundle_meta_is_missing() {
+  local sandbox_dir repo_dir output_file status
+  sandbox_dir="$(mktemp -d "${TMPDIR:-/tmp}/package-builder-missing-bundle-meta.XXXXXX")"
+  repo_dir="$sandbox_dir/repo"
+  output_file="$sandbox_dir/output.txt"
+  make_fake_repo "$repo_dir" "feat-unity-plugin"
+  rm "$repo_dir/plugins/com.network-example.kernel/Runtime/Resources/gameplay_catalog_bundle/bundle.bytes.meta"
+
+  set +e
+  run_builder "$repo_dir" "$output_file" --mode verify --unity off --auto-commit off
+  status="$?"
+  set -e
+
+  [[ "$status" -ne 0 ]] || fail "expected verify to fail when gameplay catalog bundle meta is missing"
+  assert_contains "$(cat "$output_file")" "Runtime/Resources/gameplay_catalog_bundle/bundle.bytes.meta"
+}
+
 test_requires_feat_unity_plugin_branch
 test_release_notes_are_prepended_and_auto_committed_for_allowed_files
 test_auto_commit_skips_when_disallowed_files_are_dirty
@@ -728,7 +814,9 @@ test_verify_requires_abi_16_config_bundle_exports
 test_verify_requires_game_server_abi_3_config_bundle_exports
 test_pack_removes_ds_store_files_from_package
 test_pack_stages_gameplay_catalog_bundle_and_writes_artifacts
+test_pack_creates_missing_gameplay_catalog_bundle_meta_files
 test_auto_commit_allows_generated_gameplay_catalog_bundle
 test_verify_fails_when_gameplay_catalog_bundle_is_missing
+test_verify_fails_when_gameplay_catalog_bundle_meta_is_missing
 
 echo "package_builder_finalize_test.sh: PASS"

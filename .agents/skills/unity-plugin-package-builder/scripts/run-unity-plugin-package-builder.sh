@@ -25,6 +25,9 @@ STAGED_WINDOWS_DIR_REL="${PACKAGE_DIR_REL}/Assets/Plugins/Windows/x86_64"
 STAGED_WINDOWS_DLL_REL="${STAGED_WINDOWS_DIR_REL}/network_kernel.dll"
 BUNDLE_RESOURCE_DIR_REL="${PACKAGE_DIR_REL}/Runtime/Resources/gameplay_catalog_bundle"
 BUNDLE_RESOURCE_PATH_REL="${BUNDLE_RESOURCE_DIR_REL}/bundle.bytes"
+BUNDLE_RESOURCE_ROOT_META_REL="${PACKAGE_DIR_REL}/Runtime/Resources.meta"
+BUNDLE_RESOURCE_DIR_META_REL="${BUNDLE_RESOURCE_DIR_REL}.meta"
+BUNDLE_RESOURCE_META_REL="${BUNDLE_RESOURCE_PATH_REL}.meta"
 RELEASE_NOTES_REL="${PACKAGE_DIR_REL}/RELEASE_NOTES.md"
 RELEASE_NOTES_META_REL="${RELEASE_NOTES_REL}.meta"
 RELEASE_NOTES=()
@@ -223,6 +226,9 @@ STAGED_WINDOWS_DIR="$repo_root/$STAGED_WINDOWS_DIR_REL"
 STAGED_WINDOWS_DLL="$repo_root/$STAGED_WINDOWS_DLL_REL"
 BUNDLE_RESOURCE_DIR="$repo_root/$BUNDLE_RESOURCE_DIR_REL"
 BUNDLE_RESOURCE_PATH="$repo_root/$BUNDLE_RESOURCE_PATH_REL"
+BUNDLE_RESOURCE_ROOT_META="$repo_root/$BUNDLE_RESOURCE_ROOT_META_REL"
+BUNDLE_RESOURCE_DIR_META="$repo_root/$BUNDLE_RESOURCE_DIR_META_REL"
+BUNDLE_RESOURCE_META="$repo_root/$BUNDLE_RESOURCE_META_REL"
 RELEASE_NOTES_PATH="$repo_root/$RELEASE_NOTES_REL"
 
 if [[ -z "$OUTPUT_DIR" ]]; then
@@ -361,6 +367,49 @@ copy_overwriting() {
   cp "$source_path" "$destination_path"
 }
 
+write_unity_folder_meta_if_missing() {
+  local meta_path="$1"
+  local guid="$2"
+  if [[ -e "$meta_path" ]]; then
+    return 0
+  fi
+  mkdir -p "$(dirname "$meta_path")"
+  cat > "$meta_path" <<YAML
+fileFormatVersion: 2
+guid: $guid
+folderAsset: yes
+DefaultImporter:
+  externalObjects: {}
+  userData:
+  assetBundleName:
+  assetBundleVariant:
+YAML
+}
+
+write_unity_text_asset_meta_if_missing() {
+  local meta_path="$1"
+  local guid="$2"
+  if [[ -e "$meta_path" ]]; then
+    return 0
+  fi
+  mkdir -p "$(dirname "$meta_path")"
+  cat > "$meta_path" <<YAML
+fileFormatVersion: 2
+guid: $guid
+TextScriptImporter:
+  externalObjects: {}
+  userData:
+  assetBundleName:
+  assetBundleVariant:
+YAML
+}
+
+ensure_gameplay_catalog_bundle_meta() {
+  write_unity_folder_meta_if_missing "$BUNDLE_RESOURCE_ROOT_META" "9f69763cda94449ea9d69adbb86ed24d"
+  write_unity_folder_meta_if_missing "$BUNDLE_RESOURCE_DIR_META" "f9244f60b50143089f2f2259f54b8535"
+  write_unity_text_asset_meta_if_missing "$BUNDLE_RESOURCE_META" "fc3f3c5888084bc5986c59fc8f14951c"
+}
+
 stage_gameplay_catalog_bundle() {
   note "Building gameplay catalog bundle: $GAMEPLAY_CATALOG_BUNDLE_TARGET"
   "$BAZEL_CMD" \
@@ -388,6 +437,7 @@ stage_gameplay_catalog_bundle() {
 
   mkdir -p "$BUNDLE_RESOURCE_DIR" "$BUNDLE_ARTIFACT_DIR"
   copy_overwriting "$bundle_zip" "$BUNDLE_RESOURCE_PATH"
+  ensure_gameplay_catalog_bundle_meta
   copy_overwriting "$bundle_zip" "$BUNDLE_ARTIFACT_DIR/bundle.zip"
   copy_overwriting "$bundle_zip" "$BUNDLE_ARTIFACT_DIR/bundle.bytes"
 
@@ -593,7 +643,10 @@ verify_package() {
   [[ -f "$PACKAGE_DIR/Runtime/Core/GameServerTypes.cs" ]] || die "missing Runtime/Core/GameServerTypes.cs"
   [[ -f "$PACKAGE_DIR/Runtime/Client/NetworkClient.cs" ]] || die "missing Runtime/Client/NetworkClient.cs"
   [[ -f "$PACKAGE_DIR/Runtime/Host/NetworkHost.cs" ]] || die "missing Runtime/Host/NetworkHost.cs"
+  [[ -f "$BUNDLE_RESOURCE_ROOT_META" ]] || die "missing $BUNDLE_RESOURCE_ROOT_META_REL"
+  [[ -f "$BUNDLE_RESOURCE_DIR_META" ]] || die "missing $BUNDLE_RESOURCE_DIR_META_REL"
   [[ -f "$BUNDLE_RESOURCE_PATH" ]] || die "missing $BUNDLE_RESOURCE_PATH_REL"
+  [[ -f "$BUNDLE_RESOURCE_META" ]] || die "missing $BUNDLE_RESOURCE_META_REL"
   [[ -f "$PACKAGE_DIR/Editor/NetworkKernelAbiSmokeRunner.cs" ]] || die "missing Editor/NetworkKernelAbiSmokeRunner.cs"
   [[ -f "$PACKAGE_DIR/Tests~/AbiSmoke/NetworkKernelManagedAbiSmoke.cs" ]] || die "missing Tests~/AbiSmoke/NetworkKernelManagedAbiSmoke.cs"
   grep -q 'LibraryName = "network_kernel"' "$PACKAGE_DIR/Runtime/Core/KernelNative.cs" ||
@@ -817,9 +870,11 @@ is_auto_commit_allowed_path() {
   if [[ "$path" == "$RELEASE_NOTES_REL" || "$path" == "$RELEASE_NOTES_META_REL" ]]; then
     return 0
   fi
-  if [[ "$path" == "$BUNDLE_RESOURCE_PATH_REL" ]]; then
-    return 0
-  fi
+  case "$path" in
+    "$BUNDLE_RESOURCE_ROOT_META_REL"|"$BUNDLE_RESOURCE_DIR_META_REL"|"$BUNDLE_RESOURCE_PATH_REL"|"$BUNDLE_RESOURCE_META_REL")
+      return 0
+      ;;
+  esac
   if [[ "$path" == "$PACKAGE_DIR_REL/Assets/Plugins/"* ]]; then
     case "$path" in
       *.dll|*.dylib|*.meta) return 0 ;;
