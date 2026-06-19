@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 21u`.
+`KERNEL_ABI_VERSION == 22u`.
 
 ## Ownership
 
@@ -142,10 +142,20 @@ ABI version 21 adds the stable kernel perception query surface for Vision
 System v1. Server gameplay configures agent perception with
 `Kernel_ServerSetEntityVisionConfig` and may clear it with
 `Kernel_ServerClearEntityVisionConfig`. Presentation and gameplay consumers can
-read cone perception state through `Kernel_QueryVisionState`, including the
-vision shape template id, resolved collider template id, visible allies and
-hostiles, current hostile candidate, last seen target, and last known target
-position. The view intentionally excludes variable behavior/controller state.
+read cone perception state through `Kernel_QueryVisionState`, including visible
+allies and hostiles, current hostile candidate, last seen target, and last known
+target position. The view intentionally excludes variable behavior/controller
+state.
+
+ABI version 22 adds `KernelVec4`, compresses collider shape-specific template
+and debug view data into `KernelColliderTemplateDefinition::shape_params` and
+`KernelColliderShapeView::shape_params`, and adds cone vision colliders through
+`KernelColliderShapeType_Cone`, `KernelColliderPurpose_Vision`, and
+`KERNEL_COLLISION_LAYER_AGENT_VISION`. `KernelAgentVisionConfig` now references
+the vision cone by `vision_collider_template_id`, and
+`KernelVisionStateView` returns that id with the resolved actor collider id.
+Visual debuggers should read `Kernel_QueryVisionState` for runtime perception
+and `Kernel_GetColliderTemplates` for the referenced cone parameters.
 
 Snapshot schema version 6 refines the v2 sectioned snapshot payload. Actor
 records cover player, enemy, and future AI bot entities with optional owner,
@@ -167,7 +177,9 @@ Transient colliders, such as segment or beam volumes, are queryable while their
 
 `Kernel_QueryVisionState` treats a `NULL` query as no filters. Within
 `KernelVisionStateQuery`, `agent_net_id == 0` and `entity_type_filter == 0`
-also mean no filter for that dimension.
+also mean no filter for that dimension. The query returns host/server/local
+runtime state only; the ABI does not replicate perception state to pure remote
+clients in this revision.
 
 The current projectile interaction foundation is internal C++ engine state. It
 does not add Kernel C ABI functions, does not change public struct layout, and

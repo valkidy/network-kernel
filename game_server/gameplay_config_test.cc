@@ -229,10 +229,7 @@ int main() {
     assert(config_enemy_template != nullptr);
     assert(config_enemy_template->move_speed_meters_per_second == 2.5f);
     assert(config_enemy_template->vision.camp == KernelAgentCamp_EnemySide);
-    assert(config_enemy_template->vision.shape_kind == KernelVisionShapeKind_Cone);
-    assert(config_enemy_template->vision.vision_shape_template_id == 1);
-    assert(config_enemy_template->vision.view_range == 12.0f);
-    assert(config_enemy_template->vision.fov_degrees == 90.0f);
+    assert(config_enemy_template->vision.vision_collider_template_id == 9);
 
     const KernelWeaponMechanicsDefinition& rifle =
         config.weapons.definitions[network_example::game_server::kWeaponRifle];
@@ -284,7 +281,7 @@ int main() {
         config.weapons
             .projectile_sync_modes[network_example::game_server::kWeaponRocket] ==
         KernelProjectileSyncMode_ServerSnapshotOnly);
-    assert(config.colliders.templates.size() == 8);
+    assert(config.colliders.templates.size() == 9);
     assert(config.colliders.bindings.empty());
     assert(config.actor_templates.size() == 2);
     const network_example::game_server::ActorTemplateConfig& player_template =
@@ -298,7 +295,7 @@ int main() {
     assert(player_template.weapon_slots[1] == network_example::game_server::kWeaponShotgun);
     assert(player_template.active_weapon_slot == 0);
     assert(player_template.vision.camp == KernelAgentCamp_PlayerSide);
-    assert(player_template.vision.shape_kind == KernelVisionShapeKind_None);
+    assert(player_template.vision.vision_collider_template_id == 0);
     const network_example::game_server::ActorTemplateConfig& enemy_template =
         config.actor_templates[1];
     assert(enemy_template.actor_template_id == 2);
@@ -330,6 +327,21 @@ int main() {
                [network_example::game_server::kWeaponBeamRifle] == 8);
     assert(config.weapons.names[network_example::game_server::kWeaponBeamRifle] ==
            "Beam Rifle");
+
+    bool found_vision_collider = false;
+    for (const network_example::game_server::ColliderTemplateConfig& collider :
+         config.colliders.templates) {
+        if (collider.definition.template_id == 9) {
+            found_vision_collider = true;
+            assert(collider.name == "cone_vision");
+            assert(collider.definition.shape_type == KernelColliderShapeType_Cone);
+            assert(collider.definition.purpose_flags == KernelColliderPurpose_Vision);
+            assert(collider.definition.layer_mask == KERNEL_COLLISION_LAYER_AGENT_VISION);
+            assert(collider.definition.shape_params.x == 12.0f);
+            assert(collider.definition.shape_params.y == 90.0f);
+        }
+    }
+    assert(found_vision_collider);
 
     const KernelWeaponMechanicsDefinition& homing_missile =
         config.weapons.definitions[network_example::game_server::kWeaponHomingMissile];

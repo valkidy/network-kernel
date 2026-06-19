@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 21u
+#define KERNEL_ABI_VERSION 22u
 
 #define KERNEL_BUILD_INFO_TEXT_SIZE 128u
 #define KERNEL_LAN_DISCOVERY_TEXT_SIZE 128u
@@ -84,6 +84,7 @@
 #define KERNEL_COLLISION_LAYER_ENEMY UINT32_C(0x00000002)
 #define KERNEL_COLLISION_LAYER_PROJECTILE UINT32_C(0x00000004)
 #define KERNEL_COLLISION_LAYER_AREA_EFFECT UINT32_C(0x00000008)
+#define KERNEL_COLLISION_LAYER_AGENT_VISION UINT32_C(0x00000010)
 #define KERNEL_COLLISION_MASK_NONE UINT32_C(0x00000000)
 #define KERNEL_COLLISION_MASK_DAMAGEABLE \
     (KERNEL_COLLISION_LAYER_PLAYER | KERNEL_COLLISION_LAYER_ENEMY)
@@ -310,11 +311,6 @@ typedef enum KernelAgentRelation {
     KernelAgentRelation_Unknown = 4,
 } KernelAgentRelation;
 
-typedef enum KernelVisionShapeKind {
-    KernelVisionShapeKind_None = 0,
-    KernelVisionShapeKind_Cone = 1,
-} KernelVisionShapeKind;
-
 typedef struct KernelVec2 {
     float x;
     float y;
@@ -325,6 +321,13 @@ typedef struct KernelVec3 {
     float y;
     float z;
 } KernelVec3;
+
+typedef struct KernelVec4 {
+    float x;
+    float y;
+    float z;
+    float w;
+} KernelVec4;
 
 typedef struct KernelQuat {
     float x;
@@ -407,12 +410,14 @@ typedef enum KernelColliderShapeType {
     KernelColliderShapeType_Sphere = 1,
     KernelColliderShapeType_OrientedBox = 2,
     KernelColliderShapeType_Segment = 3,
+    KernelColliderShapeType_Cone = 4,
 } KernelColliderShapeType;
 
 typedef enum KernelColliderPurpose {
     KernelColliderPurpose_Hit = 1u << 0,
     KernelColliderPurpose_Damage = 1u << 1,
     KernelColliderPurpose_Trigger = 1u << 2,
+    KernelColliderPurpose_Vision = 1u << 3,
 } KernelColliderPurpose;
 
 typedef enum KernelDebugRecordType {
@@ -429,12 +434,9 @@ typedef struct KernelColliderTemplateDefinition {
     uint8_t reserved0;
     uint16_t reserved1;
     KernelVec3 center;
-    KernelVec3 half_extents;
-    float radius;
+    KernelVec4 shape_params;
     uint32_t purpose_flags;
     uint32_t layer_mask;
-    float segment_length;
-    float scatter_degrees;
     uint32_t lifetime_ticks;
 } KernelColliderTemplateDefinition;
 
@@ -602,8 +604,7 @@ typedef struct KernelColliderShapeView {
     uint8_t reserved1;
     uint16_t reserved2;
     KernelVec3 world_center;
-    KernelVec3 half_extents;
-    float radius;
+    KernelVec4 shape_params;
     uint32_t purpose_flags;
     uint32_t layer_mask;
     uint32_t collider_id;
@@ -619,11 +620,9 @@ typedef struct KernelColliderShapeView {
 typedef struct KernelAgentVisionConfig {
     uint32_t struct_size;
     uint8_t camp;
-    uint8_t shape_kind;
-    uint16_t reserved0;
-    uint32_t vision_shape_template_id;
-    float view_range;
-    float fov_degrees;
+    uint8_t reserved0;
+    uint16_t reserved1;
+    uint32_t vision_collider_template_id;
     uint32_t max_visible_hostiles;
     uint32_t max_visible_allies;
     KernelVec3 local_origin;
@@ -642,12 +641,10 @@ typedef struct KernelVisionStateView {
     uint32_t agent_net_id;
     uint16_t entity_type;
     uint8_t camp;
-    uint8_t shape_kind;
-    KernelVec3 position;
-    KernelVec3 forward;
-    float view_range;
-    float fov_degrees;
-    uint32_t vision_shape_template_id;
+    uint8_t reserved0;
+    KernelVec3 vision_origin;
+    KernelVec3 vision_forward;
+    uint32_t vision_collider_template_id;
     uint32_t resolved_collider_template_id;
     uint32_t visible_hostiles[KERNEL_MAX_VISIBLE_HOSTILES];
     uint32_t visible_hostile_count;

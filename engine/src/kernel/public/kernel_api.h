@@ -117,6 +117,11 @@ uint32_t Kernel_QueryColliderShapes(
     KernelColliderShapeView* out_shapes,
     uint32_t max_shapes);
 
+/*
+ * Queries local runtime perception state for host/server/debug tooling. This
+ * surface does not imply remote client replication; pure clients only see
+ * vision states that their local kernel has been configured to maintain.
+ */
 uint32_t Kernel_QueryVisionState(
     KernelHandle* kernel,
     const KernelVisionStateQuery* query,

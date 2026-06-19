@@ -125,7 +125,7 @@ void load_minimal_gameplay_catalog(KernelHandle* kernel) {
     player_hit.template_id = 1;
     player_hit.shape_type = KernelColliderShapeType_Aabb;
     player_hit.center = KernelVec3{0.0f, 0.9f, 0.0f};
-    player_hit.half_extents = KernelVec3{0.35f, 0.9f, 0.35f};
+    player_hit.shape_params = KernelVec4{0.35f, 0.9f, 0.35f, 0.0f};
     player_hit.purpose_flags = KernelColliderPurpose_Hit;
     player_hit.layer_mask = KERNEL_COLLISION_LAYER_PLAYER;
 
@@ -135,7 +135,7 @@ void load_minimal_gameplay_catalog(KernelHandle* kernel) {
     rifle_segment.shape_type = KernelColliderShapeType_Segment;
     rifle_segment.purpose_flags = KernelColliderPurpose_Damage;
     rifle_segment.layer_mask = KERNEL_COLLISION_MASK_DAMAGEABLE;
-    rifle_segment.segment_length = 100.0f;
+    rifle_segment.shape_params = KernelVec4{100.0f, 0.0f, 0.0f, 0.0f};
     rifle_segment.lifetime_ticks = 1;
 
     const std::array<KernelColliderTemplateDefinition, 2> collider_templates = {

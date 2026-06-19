@@ -38,6 +38,7 @@ int main(void) {
     KernelDebugInfo debug_info;
     KernelColliderShapeQuery collider_query;
     KernelColliderShapeView collider_shape;
+    KernelVec4 shape_params;
     KernelAgentVisionConfig agent_vision_config;
     KernelVisionStateQuery vision_query;
     KernelVisionStateView vision_state;
@@ -73,11 +74,12 @@ int main(void) {
     (void)debug_info;
     (void)collider_query;
     (void)collider_shape;
+    (void)shape_params;
     (void)agent_vision_config;
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 21u);
+    assert(KERNEL_ABI_VERSION == 22u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD == 4u);
@@ -117,12 +119,14 @@ int main(void) {
     assert(sizeof(KernelDebugInfo) > 0u);
     assert(sizeof(KernelColliderShapeQuery) > 0u);
     assert(sizeof(KernelColliderShapeView) > 0u);
+    assert(sizeof(KernelVec4) == 16u);
     assert(sizeof(KernelAgentVisionConfig) > 0u);
     assert(sizeof(KernelVisionStateQuery) > 0u);
     assert(sizeof(KernelVisionStateView) > 0u);
     assert(KernelAgentCamp_PlayerSide == 1);
     assert(KernelAgentRelation_Hostile == 2);
-    assert(KernelVisionShapeKind_Cone == 1);
+    assert(KernelColliderShapeType_Cone == 4);
+    assert(KernelColliderPurpose_Vision == (1u << 3));
     assert((KERNEL_CAPABILITY_CLIENT_MODE & KERNEL_CAPABILITY_RENDER_STATES) == 0u);
     assert((KERNEL_CAPABILITY_LAG_COMPENSATED_PROJECTILE &
             KERNEL_CAPABILITY_EVENT_PRESENTATION_TIME) == 0u);

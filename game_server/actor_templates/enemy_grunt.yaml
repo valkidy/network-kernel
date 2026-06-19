@@ -17,8 +17,6 @@ animations:
   idle: 0
   chasing: 1
 vision:
-  shape_template: 1
-  range: 12.0
-  fov_degrees: 90.0
+  collider_template: cone_vision
 ai:
   profile: default

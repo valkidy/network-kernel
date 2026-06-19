@@ -77,6 +77,13 @@ void hash_vec3(std::uint64_t* hash, const KernelVec3& value) {
     hash_float(hash, value.z);
 }
 
+void hash_vec4(std::uint64_t* hash, const KernelVec4& value) {
+    hash_float(hash, value.x);
+    hash_float(hash, value.y);
+    hash_float(hash, value.z);
+    hash_float(hash, value.w);
+}
+
 void hash_string(std::uint64_t* hash, const std::string& value) {
     const auto size = static_cast<std::uint32_t>(value.size());
     hash_scalar(hash, size);
@@ -137,10 +144,7 @@ void hash_collider_template(
     hash_scalar(hash, definition.template_id);
     hash_scalar(hash, definition.shape_type);
     hash_vec3(hash, definition.center);
-    hash_vec3(hash, definition.half_extents);
-    hash_float(hash, definition.radius);
-    hash_float(hash, definition.segment_length);
-    hash_float(hash, definition.scatter_degrees);
+    hash_vec4(hash, definition.shape_params);
     hash_scalar(hash, definition.lifetime_ticks);
     hash_scalar(hash, definition.purpose_flags);
     hash_scalar(hash, definition.layer_mask);
@@ -209,10 +213,7 @@ void hash_actor_template(
     hash_scalar(hash, actor_template.sentry.weapon_id);
     hash_scalar(hash, actor_template.sentry.magazine_size);
     hash_scalar(hash, actor_template.vision.camp);
-    hash_scalar(hash, actor_template.vision.shape_kind);
-    hash_scalar(hash, actor_template.vision.vision_shape_template_id);
-    hash_float(hash, actor_template.vision.view_range);
-    hash_float(hash, actor_template.vision.fov_degrees);
+    hash_scalar(hash, actor_template.vision.vision_collider_template_id);
     hash_scalar(hash, actor_template.vision.max_visible_hostiles);
     hash_scalar(hash, actor_template.vision.max_visible_allies);
     hash_vec3(hash, actor_template.vision.local_origin);
@@ -509,6 +510,9 @@ std::uint32_t collision_mask_token_from_yaml(const std::string& token) {
     }
     if (token == "area_effect") {
         return KERNEL_COLLISION_LAYER_AREA_EFFECT;
+    }
+    if (token == "agent_vision") {
+        return KERNEL_COLLISION_LAYER_AGENT_VISION;
     }
     throw std::runtime_error("unsupported collision_mask: " + token);
 }
@@ -1229,6 +1233,9 @@ std::uint8_t collider_shape_type_from_yaml(const YAML::Node& node) {
     if (value == "segment") {
         return KernelColliderShapeType_Segment;
     }
+    if (value == "cone") {
+        return KernelColliderShapeType_Cone;
+    }
     throw std::runtime_error("unsupported collider shape: " + value);
 }
 
@@ -1240,11 +1247,53 @@ std::uint32_t collider_purpose_from_yaml(const YAML::Node& node) {
     if (value == "damage") {
         return KernelColliderPurpose_Damage;
     }
+    if (value == "vision") {
+        return KernelColliderPurpose_Vision;
+    }
     throw std::runtime_error("unsupported collider purpose: " + value);
 }
 
 std::uint32_t collider_layer_from_yaml(const YAML::Node& node) {
     return collision_mask_from_yaml(node);
+}
+
+KernelVec4 collider_shape_params_from_yaml(
+    std::uint8_t shape_type,
+    const YAML::Node& node) {
+    if (shape_type == KernelColliderShapeType_Aabb ||
+        shape_type == KernelColliderShapeType_OrientedBox) {
+        return KernelVec4{
+            node["half_extents"]["x"].as<float>(),
+            node["half_extents"]["y"].as<float>(),
+            node["half_extents"]["z"].as<float>(),
+            0.0f,
+        };
+    }
+    if (shape_type == KernelColliderShapeType_Sphere) {
+        return KernelVec4{
+            node["radius"].as<float>(),
+            0.0f,
+            0.0f,
+            0.0f,
+        };
+    }
+    if (shape_type == KernelColliderShapeType_Segment) {
+        return KernelVec4{
+            node["length"].as<float>(),
+            node["radius"] ? node["radius"].as<float>() : 0.0f,
+            node["scatter_degrees"] ? node["scatter_degrees"].as<float>() : 0.0f,
+            0.0f,
+        };
+    }
+    if (shape_type == KernelColliderShapeType_Cone) {
+        return KernelVec4{
+            node["range"].as<float>(),
+            node["fov_degrees"].as<float>(),
+            0.0f,
+            0.0f,
+        };
+    }
+    return KernelVec4{};
 }
 
 void apply_default_non_weapon_config(GameServerGameplayConfig* config);
@@ -1254,6 +1303,9 @@ void apply_catalog_player_config(
 void apply_catalog_enemy_config(
     const YAML::Node& document,
     GameServerGameplayConfig* config);
+std::uint32_t collider_template_id_from_ref(
+    const YAML::Node& node,
+    const ColliderCatalogConfig& colliders);
 
 ColliderCatalogConfig load_collider_catalog_from_source(
     const GameplayConfigSource& source,
@@ -1285,6 +1337,8 @@ ColliderCatalogConfig load_collider_catalog_from_source(
                 "radius",
                 "length",
                 "scatter_degrees",
+                "range",
+                "fov_degrees",
                 "lifetime_ticks",
                 "purpose",
                 "layer",
@@ -1299,13 +1353,10 @@ ColliderCatalogConfig load_collider_catalog_from_source(
         definition.struct_size = sizeof(KernelColliderTemplateDefinition);
         definition.template_id = node["id"].as<std::uint32_t>();
         definition.shape_type = collider_shape_type_from_yaml(node["shape"]);
-        definition.center = vec3_from_yaml(node["center"]);
-        definition.half_extents = vec3_from_yaml(node["half_extents"]);
-        definition.radius = node["radius"] ? node["radius"].as<float>() : 0.0f;
-        definition.segment_length =
-            node["length"] ? node["length"].as<float>() : 0.0f;
-        definition.scatter_degrees =
-            node["scatter_degrees"] ? node["scatter_degrees"].as<float>() : 0.0f;
+        definition.center =
+            node["center"] ? vec3_from_yaml(node["center"]) : KernelVec3{};
+        definition.shape_params =
+            collider_shape_params_from_yaml(definition.shape_type, node);
         definition.lifetime_ticks =
             node["lifetime_ticks"] ? node["lifetime_ticks"].as<std::uint32_t>() : 0u;
         definition.purpose_flags = collider_purpose_from_yaml(node["purpose"]);
@@ -1348,7 +1399,6 @@ ActorTemplateConfig default_player_actor_template() {
     actor_template.active_weapon_slot = 0;
     actor_template.vision.struct_size = sizeof(KernelAgentVisionConfig);
     actor_template.vision.camp = KernelAgentCamp_PlayerSide;
-    actor_template.vision.shape_kind = KernelVisionShapeKind_None;
     return actor_template;
 }
 
@@ -1374,10 +1424,7 @@ ActorTemplateConfig default_enemy_actor_template() {
     actor_template.sentry.animation_attack = actor_template.animation_chasing;
     actor_template.vision.struct_size = sizeof(KernelAgentVisionConfig);
     actor_template.vision.camp = KernelAgentCamp_EnemySide;
-    actor_template.vision.shape_kind = KernelVisionShapeKind_Cone;
-    actor_template.vision.vision_shape_template_id = 1;
-    actor_template.vision.view_range = 12.0f;
-    actor_template.vision.fov_degrees = 90.0f;
+    actor_template.vision.vision_collider_template_id = 9;
     actor_template.vision.max_visible_hostiles = KERNEL_MAX_VISIBLE_HOSTILES;
     actor_template.vision.max_visible_allies = KERNEL_MAX_VISIBLE_ALLIES;
     actor_template.vision.local_forward = KernelVec3{-1.0f, 0.0f, 0.0f};
@@ -1420,6 +1467,7 @@ AgentSentryConfig sentry_config_from_yaml(
 KernelAgentVisionConfig vision_config_from_yaml(
     const YAML::Node& node,
     const ActorTemplateConfig& actor_template,
+    const ColliderCatalogConfig& colliders,
     const std::string& path,
     std::uint32_t source_kind) {
     KernelAgentVisionConfig vision = actor_template.vision;
@@ -1430,9 +1478,7 @@ KernelAgentVisionConfig vision_config_from_yaml(
     reject_unknown_keys(
         node,
         {
-            "shape_template",
-            "range",
-            "fov_degrees",
+            "collider_template",
             "max_visible_hostiles",
             "max_visible_allies",
         },
@@ -1440,14 +1486,9 @@ KernelAgentVisionConfig vision_config_from_yaml(
         source_kind,
         KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
         actor_template.actor_template_id);
-    if (node["shape_template"]) {
-        vision.vision_shape_template_id = node["shape_template"].as<std::uint32_t>();
-    }
-    if (node["range"]) {
-        vision.view_range = node["range"].as<float>();
-    }
-    if (node["fov_degrees"]) {
-        vision.fov_degrees = node["fov_degrees"].as<float>();
+    if (node["collider_template"]) {
+        vision.vision_collider_template_id =
+            collider_template_id_from_ref(node["collider_template"], colliders);
     }
     if (node["max_visible_hostiles"]) {
         vision.max_visible_hostiles = node["max_visible_hostiles"].as<std::uint32_t>();
@@ -1518,16 +1559,12 @@ ActorTemplateConfig actor_template_from_yaml(
     actor_template.vision.struct_size = sizeof(KernelAgentVisionConfig);
     if (actor_template.entity_type == kEntityTypeEnemy) {
         actor_template.vision.camp = KernelAgentCamp_EnemySide;
-        actor_template.vision.shape_kind = KernelVisionShapeKind_Cone;
-        actor_template.vision.vision_shape_template_id = 1;
-        actor_template.vision.view_range = 12.0f;
-        actor_template.vision.fov_degrees = 90.0f;
+        actor_template.vision.vision_collider_template_id = 9;
         actor_template.vision.max_visible_hostiles = KERNEL_MAX_VISIBLE_HOSTILES;
         actor_template.vision.max_visible_allies = KERNEL_MAX_VISIBLE_ALLIES;
         actor_template.vision.local_forward = KernelVec3{-1.0f, 0.0f, 0.0f};
     } else if (actor_template.entity_type == kEntityTypePlayer) {
         actor_template.vision.camp = KernelAgentCamp_PlayerSide;
-        actor_template.vision.shape_kind = KernelVisionShapeKind_None;
     }
     actor_template.collider_template_id =
         actor_collider_template_id_from_yaml(node["collider_template"], colliders);
@@ -1652,6 +1689,7 @@ ActorTemplateConfig actor_template_from_yaml(
     actor_template.vision = vision_config_from_yaml(
         node["vision"],
         actor_template,
+        colliders,
         path,
         source_kind);
     return actor_template;
@@ -2511,11 +2549,7 @@ std::vector<std::string> validate_gameplay_config(
             errors.push_back("agent sentry actor template must be valid");
         }
         if (actor_template.vision.struct_size < sizeof(KernelAgentVisionConfig) ||
-            actor_template.vision.camp > KernelAgentCamp_Neutral ||
-            actor_template.vision.shape_kind > KernelVisionShapeKind_Cone ||
-            actor_template.vision.view_range < 0.0f ||
-            actor_template.vision.fov_degrees < 0.0f ||
-            actor_template.vision.fov_degrees > 360.0f) {
+            actor_template.vision.camp > KernelAgentCamp_Neutral) {
             errors.push_back("actor template vision must be valid");
         }
         if (std::find(
@@ -2554,19 +2588,29 @@ std::vector<std::string> validate_gameplay_config(
             collider_template.definition;
         if (definition.struct_size < sizeof(KernelColliderTemplateDefinition) ||
             definition.template_id == 0 ||
-            definition.shape_type > KernelColliderShapeType_Segment ||
+            definition.shape_type > KernelColliderShapeType_Cone ||
             definition.purpose_flags == 0 ||
             definition.layer_mask == 0 ||
             (definition.shape_type == KernelColliderShapeType_Aabb &&
-             (definition.half_extents.x <= 0.0f ||
-              definition.half_extents.y <= 0.0f ||
-              definition.half_extents.z <= 0.0f)) ||
+             (definition.shape_params.x <= 0.0f ||
+              definition.shape_params.y <= 0.0f ||
+              definition.shape_params.z <= 0.0f)) ||
+            (definition.shape_type == KernelColliderShapeType_OrientedBox &&
+             (definition.shape_params.x <= 0.0f ||
+              definition.shape_params.y <= 0.0f ||
+              definition.shape_params.z <= 0.0f)) ||
             (definition.shape_type == KernelColliderShapeType_Sphere &&
-             definition.radius <= 0.0f) ||
+             definition.shape_params.x <= 0.0f) ||
             (definition.shape_type == KernelColliderShapeType_Segment &&
-             (definition.segment_length <= 0.0f ||
-              definition.scatter_degrees < 0.0f ||
-              definition.lifetime_ticks == 0))) {
+             (definition.shape_params.x <= 0.0f ||
+              definition.shape_params.y < 0.0f ||
+              definition.shape_params.z < 0.0f ||
+              definition.lifetime_ticks == 0)) ||
+            (definition.shape_type == KernelColliderShapeType_Cone &&
+             ((definition.purpose_flags & KernelColliderPurpose_Vision) == 0u ||
+              definition.shape_params.x <= 0.0f ||
+              definition.shape_params.y <= 0.0f ||
+              definition.shape_params.y > 360.0f))) {
             errors.push_back("collider template must be valid");
         }
         collider_template_ids.push_back(definition.template_id);
@@ -2577,6 +2621,22 @@ std::vector<std::string> validate_gameplay_config(
                 collider_template_ids.end(),
                 actor_template.collider_template_id) == collider_template_ids.end()) {
             errors.push_back("actor template collider must reference a valid template");
+        }
+        if (actor_template.vision.vision_collider_template_id == 0u) {
+            continue;
+        }
+        const auto vision_collider = std::find_if(
+            config.colliders.templates.begin(),
+            config.colliders.templates.end(),
+            [&](const ColliderTemplateConfig& collider_template) {
+                return collider_template.definition.template_id ==
+                    actor_template.vision.vision_collider_template_id;
+            });
+        if (vision_collider == config.colliders.templates.end() ||
+            vision_collider->definition.shape_type != KernelColliderShapeType_Cone ||
+            (vision_collider->definition.purpose_flags & KernelColliderPurpose_Vision) == 0u) {
+            errors.push_back(
+                "actor template vision must reference a cone vision collider");
         }
     }
     if (config.projectile_templates.empty()) {

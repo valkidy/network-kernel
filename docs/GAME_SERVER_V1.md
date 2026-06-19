@@ -70,8 +70,10 @@ the temporary game-server behavior is an Agent-named stationary sentry.
 
 `KernelVisionStateView` is perception data only: visible hostile/ally lists,
 current target candidate, last seen target, last known target position, vision
-shape template id, and resolved collider template id. It does not contain
-sentry behavior state or final attack decisions.
+collider template id, and resolved actor collider template id. Visual debugger
+code can read the cone dimensions from `Kernel_GetColliderTemplates` using the
+vision collider template id. It does not contain sentry behavior state or final
+attack decisions.
 
 ## Enemy v1 Behavior
 

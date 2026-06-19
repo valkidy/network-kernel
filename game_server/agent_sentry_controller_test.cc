@@ -25,20 +25,34 @@ KernelColliderTemplateDefinition collider_template() {
     collider.template_id = 1;
     collider.shape_type = KernelColliderShapeType_Aabb;
     collider.center = KernelVec3{0.0f, 0.8f, 0.0f};
-    collider.half_extents = KernelVec3{0.4f, 0.8f, 0.4f};
+    collider.shape_params = KernelVec4{0.4f, 0.8f, 0.4f, 0.0f};
     collider.purpose_flags = KernelColliderPurpose_Hit;
     collider.layer_mask = KERNEL_COLLISION_MASK_DAMAGEABLE;
     return collider;
 }
 
+KernelColliderTemplateDefinition vision_collider_template() {
+    KernelColliderTemplateDefinition collider{};
+    collider.struct_size = sizeof(collider);
+    collider.template_id = 2;
+    collider.shape_type = KernelColliderShapeType_Cone;
+    collider.shape_params = KernelVec4{10.0f, 90.0f, 0.0f, 0.0f};
+    collider.purpose_flags = KernelColliderPurpose_Vision;
+    collider.layer_mask = KERNEL_COLLISION_LAYER_AGENT_VISION;
+    return collider;
+}
+
 void load_catalog(KernelHandle* kernel) {
-    KernelColliderTemplateDefinition collider = collider_template();
+    const std::array<KernelColliderTemplateDefinition, 2> colliders = {
+        collider_template(),
+        vision_collider_template(),
+    };
     KernelGameplayCatalogDefinition catalog{};
     catalog.struct_size = sizeof(catalog);
     catalog.catalog_version = 1;
     catalog.catalog_hash = 1;
-    catalog.collider_templates = &collider;
-    catalog.collider_template_count = 1;
+    catalog.collider_templates = colliders.data();
+    catalog.collider_template_count = static_cast<std::uint32_t>(colliders.size());
     assert(Kernel_LoadGameplayCatalog(kernel, &catalog));
 }
 
@@ -75,14 +89,11 @@ void set_vision(
     KernelHandle* kernel,
     std::uint32_t net_id,
     std::uint8_t camp,
-    std::uint8_t shape_kind) {
+    std::uint32_t vision_collider_template_id) {
     KernelAgentVisionConfig vision{};
     vision.struct_size = sizeof(vision);
     vision.camp = camp;
-    vision.shape_kind = shape_kind;
-    vision.vision_shape_template_id = shape_kind == KernelVisionShapeKind_Cone ? 1 : 0;
-    vision.view_range = 10.0f;
-    vision.fov_degrees = 90.0f;
+    vision.vision_collider_template_id = vision_collider_template_id;
     vision.max_visible_hostiles = KERNEL_MAX_VISIBLE_HOSTILES;
     vision.max_visible_allies = KERNEL_MAX_VISIBLE_ALLIES;
     assert(Kernel_ServerSetEntityVisionConfig(kernel, net_id, &vision));
@@ -110,8 +121,8 @@ int main() {
     const std::uint32_t player_net_id =
         create_entity(kernel, network_example::game_server::kEntityTypePlayer, {5.0f, 0.0f, 0.0f});
     set_combat(kernel, enemy_net_id);
-    set_vision(kernel, enemy_net_id, KernelAgentCamp_EnemySide, KernelVisionShapeKind_Cone);
-    set_vision(kernel, player_net_id, KernelAgentCamp_PlayerSide, KernelVisionShapeKind_None);
+    set_vision(kernel, enemy_net_id, KernelAgentCamp_EnemySide, 2);
+    set_vision(kernel, player_net_id, KernelAgentCamp_PlayerSide, 0);
     Kernel_Update(kernel, 1.0f / 30.0f);
 
     network_example::game_server::Enemy enemy;

@@ -65,7 +65,7 @@ KernelColliderTemplateDefinition projectile_collider_template() {
     collider_template.struct_size = sizeof(collider_template);
     collider_template.template_id = 10;
     collider_template.shape_type = KernelColliderShapeType_Sphere;
-    collider_template.radius = 0.25f;
+    collider_template.shape_params = KernelVec4{0.25f, 0.0f, 0.0f, 0.0f};
     collider_template.layer_mask = KERNEL_COLLISION_LAYER_PROJECTILE;
     collider_template.purpose_flags = KernelColliderPurpose_Damage;
     return collider_template;
@@ -76,7 +76,7 @@ KernelColliderTemplateDefinition actor_collider_template() {
     collider_template.struct_size = sizeof(collider_template);
     collider_template.template_id = 20;
     collider_template.shape_type = KernelColliderShapeType_Aabb;
-    collider_template.half_extents = KernelVec3{0.4f, 0.8f, 0.4f};
+    collider_template.shape_params = KernelVec4{0.4f, 0.8f, 0.4f, 0.0f};
     collider_template.layer_mask = KERNEL_COLLISION_LAYER_ENEMY;
     collider_template.purpose_flags = KernelColliderPurpose_Hit;
     return collider_template;

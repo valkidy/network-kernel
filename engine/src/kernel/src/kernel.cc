@@ -69,10 +69,6 @@ bool is_valid_agent_camp(std::uint8_t camp) {
     return camp <= KernelAgentCamp_Neutral;
 }
 
-bool is_valid_vision_shape_kind(std::uint8_t shape_kind) {
-    return shape_kind <= KernelVisionShapeKind_Cone;
-}
-
 std::uint8_t classify_agent_relation(
     NetId self_id,
     std::uint8_t self_camp,
@@ -412,6 +408,47 @@ const KernelProjectileTemplateDefinition* find_projectile_template(
     return found == templates.end() ? nullptr : &*found;
 }
 
+glm::vec3 collider_template_half_extents(
+    const KernelColliderTemplateDefinition& collider_template) {
+    return glm::vec3{
+        collider_template.shape_params.x,
+        collider_template.shape_params.y,
+        collider_template.shape_params.z,
+    };
+}
+
+float collider_template_radius(
+    const KernelColliderTemplateDefinition& collider_template) {
+    return collider_template.shape_params.x;
+}
+
+float collider_template_cone_range(
+    const KernelColliderTemplateDefinition& collider_template) {
+    return collider_template.shape_params.x;
+}
+
+float collider_template_cone_fov_degrees(
+    const KernelColliderTemplateDefinition& collider_template) {
+    return collider_template.shape_params.y;
+}
+
+KernelVec4 collider_instance_shape_params(const ColliderInstance& collider) {
+    if (collider.shape_type == ColliderShapeType::kSphere) {
+        return KernelVec4{collider.radius, 0.0f, 0.0f, 0.0f};
+    }
+    if (collider.shape_type == ColliderShapeType::kSegment) {
+        const float length =
+            glm::length(collider.segment_end - collider.segment_start);
+        return KernelVec4{length, collider.radius, 0.0f, 0.0f};
+    }
+    return KernelVec4{
+        collider.half_extents.x,
+        collider.half_extents.y,
+        collider.half_extents.z,
+        0.0f,
+    };
+}
+
 bool projectile_template_has_impact_cycle(
     const std::vector<KernelProjectileTemplateDefinition>& templates,
     std::uint32_t projectile_template_id) {
@@ -443,6 +480,9 @@ ColliderShapeType to_collider_shape_type(std::uint8_t shape_type) {
     if (shape_type == KernelColliderShapeType_Segment) {
         return ColliderShapeType::kSegment;
     }
+    if (shape_type == KernelColliderShapeType_Cone) {
+        return ColliderShapeType::kCone;
+    }
     return ColliderShapeType::kAabb;
 }
 
@@ -454,6 +494,8 @@ std::uint8_t to_kernel_collider_shape_type(ColliderShapeType shape_type) {
             return KernelColliderShapeType_OrientedBox;
         case ColliderShapeType::kSegment:
             return KernelColliderShapeType_Segment;
+        case ColliderShapeType::kCone:
+            return KernelColliderShapeType_Cone;
         case ColliderShapeType::kAabb:
         default:
             return KernelColliderShapeType_Aabb;
@@ -715,10 +757,11 @@ RuntimeProjectileTemplate to_runtime_projectile_template(
     projectile_template.gravity = from_kernel_vec3(definition.gravity);
     projectile_template.collider_template_id = definition.collider_template_id;
     if (collider_template != nullptr) {
-        projectile_template.area_radius = collider_template->radius;
+        projectile_template.area_radius =
+            collider_template_radius(*collider_template);
         if (projectile_template.area_radius <= 0.0f) {
             const glm::vec3 half_extents =
-                from_kernel_vec3(collider_template->half_extents);
+                collider_template_half_extents(*collider_template);
             projectile_template.area_radius =
                 std::max(half_extents.x, std::max(half_extents.y, half_extents.z));
         }
@@ -1167,7 +1210,26 @@ bool KernelEngine::load_gameplay_catalog(
         if (collider_template.struct_size <
                 sizeof(KernelColliderTemplateDefinition) ||
             collider_template.template_id == 0 ||
-            collider_template.shape_type > KernelColliderShapeType_Segment) {
+            collider_template.shape_type > KernelColliderShapeType_Cone ||
+            (collider_template.shape_type == KernelColliderShapeType_Aabb &&
+             (collider_template.shape_params.x <= 0.0f ||
+              collider_template.shape_params.y <= 0.0f ||
+              collider_template.shape_params.z <= 0.0f)) ||
+            (collider_template.shape_type == KernelColliderShapeType_OrientedBox &&
+             (collider_template.shape_params.x <= 0.0f ||
+              collider_template.shape_params.y <= 0.0f ||
+              collider_template.shape_params.z <= 0.0f)) ||
+            (collider_template.shape_type == KernelColliderShapeType_Sphere &&
+             collider_template.shape_params.x <= 0.0f) ||
+            (collider_template.shape_type == KernelColliderShapeType_Segment &&
+             (collider_template.shape_params.x <= 0.0f ||
+              collider_template.shape_params.y < 0.0f ||
+              collider_template.shape_params.z < 0.0f)) ||
+            (collider_template.shape_type == KernelColliderShapeType_Cone &&
+             ((collider_template.purpose_flags & KernelColliderPurpose_Vision) == 0u ||
+              collider_template.shape_params.x <= 0.0f ||
+              collider_template.shape_params.y <= 0.0f ||
+              collider_template.shape_params.y > 360.0f))) {
             return false;
         }
         collider_templates_.push_back(collider_template);
@@ -1392,8 +1454,7 @@ std::uint32_t KernelEngine::query_collider_shapes(
         shape.collider_template_id = collider.collider_template_id;
         shape.shape_type = to_kernel_collider_shape_type(collider.shape_type);
         shape.world_center = to_kernel_vec3(collider.world_center);
-        shape.half_extents = to_kernel_vec3(collider.half_extents);
-        shape.radius = collider.radius;
+        shape.shape_params = collider_instance_shape_params(collider);
         shape.purpose_flags = collider.purpose_flags;
         shape.layer_mask = collider.layer_mask;
         shape.collider_id = collider.collider_id;
@@ -1523,8 +1584,8 @@ void KernelEngine::materialize_entity_collider(NetId net_id) {
     collider.world_rotation = transform.rotation * collider.local_rotation;
     collider.world_center =
         transform.position + transform.rotation * collider.local_center;
-    collider.half_extents = from_kernel_vec3(collider_template->half_extents);
-    collider.radius = collider_template->radius;
+    collider.half_extents = collider_template_half_extents(*collider_template);
+    collider.radius = collider_template_radius(*collider_template);
     collider.world_bounds = collider_world_bounds(collider);
     world_.collider_registry().upsert_entity_collider(
         identity.net_id,
@@ -1577,8 +1638,8 @@ void KernelEngine::materialize_projectile_collider(NetId net_id) {
     collider.local_rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
     collider.world_rotation = transform.rotation;
     collider.world_center = transform.position + collider.local_center;
-    collider.half_extents = from_kernel_vec3(collider_template->half_extents);
-    collider.radius = collider_template->radius;
+    collider.half_extents = collider_template_half_extents(*collider_template);
+    collider.radius = collider_template_radius(*collider_template);
     collider.world_bounds = collider_world_bounds(collider);
     world_.collider_registry().upsert_entity_collider(
         identity.net_id,
@@ -1659,8 +1720,8 @@ void KernelEngine::sync_client_render_colliders() {
         collider.world_rotation = render_rotation * local_rotation;
         collider.world_center =
             from_kernel_vec3(state.position) + render_rotation * local_center;
-        collider.half_extents = from_kernel_vec3(collider_template->half_extents);
-        collider.radius = collider_template->radius;
+        collider.half_extents = collider_template_half_extents(*collider_template);
+        collider.radius = collider_template_radius(*collider_template);
         collider.lifetime_ticks = collider_template->lifetime_ticks;
         collider.remaining_ticks = collider_template->lifetime_ticks;
         collider.world_bounds = collider_world_bounds(collider);
@@ -1881,16 +1942,23 @@ bool KernelEngine::server_set_entity_vision_config(
     const KernelAgentVisionConfig& vision_config) {
     if (!running_ || !is_server_mode(config_.mode) || net_id == 0 ||
         vision_config.struct_size < sizeof(KernelAgentVisionConfig) ||
-        !is_valid_agent_camp(vision_config.camp) ||
-        !is_valid_vision_shape_kind(vision_config.shape_kind) ||
-        vision_config.view_range < 0.0f ||
-        vision_config.fov_degrees < 0.0f ||
-        vision_config.fov_degrees > 360.0f) {
+        !is_valid_agent_camp(vision_config.camp)) {
         return false;
     }
     const std::optional<entt::entity> entity = world_.find_entity(net_id);
     if (!entity.has_value()) {
         return false;
+    }
+    if (vision_config.vision_collider_template_id != 0u) {
+        const KernelColliderTemplateDefinition* vision_collider =
+            find_collider_template(
+                collider_templates_,
+                vision_config.vision_collider_template_id);
+        if (vision_collider == nullptr ||
+            vision_collider->shape_type != KernelColliderShapeType_Cone ||
+            (vision_collider->purpose_flags & KernelColliderPurpose_Vision) == 0u) {
+            return false;
+        }
     }
 
     KernelAgentVisionConfig stored = vision_config;
@@ -3525,7 +3593,15 @@ void KernelEngine::update_vision_states(float delta_seconds) {
             stale_configs.push_back(agent_net_id);
             continue;
         }
-        if (config.shape_kind == KernelVisionShapeKind_Cone) {
+        const KernelColliderTemplateDefinition* vision_collider =
+            config.vision_collider_template_id == 0u
+                ? nullptr
+                : find_collider_template(
+                      collider_templates_,
+                      config.vision_collider_template_id);
+        if (vision_collider != nullptr &&
+            vision_collider->shape_type == KernelColliderShapeType_Cone &&
+            (vision_collider->purpose_flags & KernelColliderPurpose_Vision) != 0u) {
             active_agents.push_back(agent_net_id);
         } else {
             vision_states_.erase(agent_net_id);
@@ -3544,6 +3620,16 @@ void KernelEngine::update_vision_states(float delta_seconds) {
             continue;
         }
         const KernelAgentVisionConfig& config = config_iter->second;
+        const KernelColliderTemplateDefinition* vision_collider =
+            find_collider_template(
+                collider_templates_,
+                config.vision_collider_template_id);
+        if (vision_collider == nullptr) {
+            continue;
+        }
+        const float cone_range = collider_template_cone_range(*vision_collider);
+        const float fov_degrees =
+            collider_template_cone_fov_degrees(*vision_collider);
         const EntityKind& agent_kind =
             world_.registry().get<EntityKind>(*agent_entity);
         const Transform& agent_transform =
@@ -3566,12 +3652,9 @@ void KernelEngine::update_vision_states(float delta_seconds) {
         view.agent_net_id = agent_net_id;
         view.entity_type = static_cast<std::uint16_t>(agent_kind.type);
         view.camp = config.camp;
-        view.shape_kind = config.shape_kind;
-        view.position = to_kernel_vec3(origin);
-        view.forward = to_kernel_vec3(forward);
-        view.view_range = config.view_range;
-        view.fov_degrees = config.fov_degrees;
-        view.vision_shape_template_id = config.vision_shape_template_id;
+        view.vision_origin = to_kernel_vec3(origin);
+        view.vision_forward = to_kernel_vec3(forward);
+        view.vision_collider_template_id = config.vision_collider_template_id;
         if (world_.registry().all_of<Hitbox>(*agent_entity)) {
             view.resolved_collider_template_id =
                 world_.registry().get<Hitbox>(*agent_entity).collider_template_id;
@@ -3613,7 +3696,7 @@ void KernelEngine::update_vision_states(float delta_seconds) {
             glm::vec3 delta = candidate_transform.position - origin;
             delta.y = 0.0f;
             const float distance_squared = glm::dot(delta, delta);
-            if (distance_squared > config.view_range * config.view_range) {
+            if (distance_squared > cone_range * cone_range) {
                 continue;
             }
 
@@ -3621,7 +3704,7 @@ void KernelEngine::update_vision_states(float delta_seconds) {
             if (distance_squared > 0.0001f) {
                 const glm::vec3 direction = glm::normalize(delta);
                 const float half_fov_radians =
-                    config.fov_degrees * 0.5f *
+                    fov_degrees * 0.5f *
                     (std::acos(-1.0f) / 180.0f);
                 inside_angle = glm::dot(forward, direction) >=
                     std::cos(half_fov_radians);
