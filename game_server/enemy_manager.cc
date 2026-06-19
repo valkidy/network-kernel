@@ -16,10 +16,10 @@ bool is_enemy_destroyed_event(const KernelEvent& event, const Enemy& enemy) {
            event.net_id == enemy.net_id;
 }
 
-EnemyAiConfig enemy_ai_config(const GameServerGameplayConfig& config) {
+AgentSentryConfig agent_sentry_config(const GameServerGameplayConfig& config) {
     const ActorTemplateConfig* actor_template =
         find_actor_template(config, config.enemy.actor_template_id);
-    return actor_template == nullptr ? EnemyAiConfig{} : actor_template->ai;
+    return actor_template == nullptr ? AgentSentryConfig{} : actor_template->sentry;
 }
 
 }  // namespace
@@ -27,7 +27,7 @@ EnemyAiConfig enemy_ai_config(const GameServerGameplayConfig& config) {
 EnemyManager::EnemyManager(KernelHandle* kernel, GameServerGameplayConfig config)
     : kernel_(kernel),
       config_(std::move(config)),
-      ai_(enemy_ai_config(config_)) {}
+      sentry_(agent_sentry_config(config_)) {}
 
 void EnemyManager::handle_event(const KernelEvent& event) {
     if (event.type == KernelEventType_PlayerJoined) {
@@ -57,7 +57,7 @@ void EnemyManager::tick(float delta_seconds) {
     if (has_seen_player_ && !has_spawned_initial_enemy_) {
         spawn_initial_enemies();
     }
-    ai_.tick(kernel_, &enemies_, delta_seconds);
+    sentry_.tick(kernel_, &enemies_, delta_seconds);
 }
 
 void EnemyManager::despawn_all(std::uint32_t reason) {
@@ -120,6 +120,7 @@ bool EnemyManager::spawn_enemy_at(const KernelVec3& position) {
     }
     KernelCombatStateDefinition combat_state = make_enemy_combat_state(config_);
     if (!Kernel_ServerSetEntityCombatState(kernel_, net_id, &combat_state) ||
+        !Kernel_ServerSetEntityVisionConfig(kernel_, net_id, &actor_template->vision) ||
         !apply_weapon_mechanics(net_id)) {
         Kernel_ServerDestroyEntity(kernel_, net_id, KernelDespawnReason_Destroyed);
         return false;
@@ -135,6 +136,7 @@ bool EnemyManager::spawn_enemy_at(const KernelVec3& position) {
     enemy.ammo = combat_state.ammo[combat_state.active_weapon_id];
     enemy.reserve_ammo = combat_state.reserve_ammo[combat_state.active_weapon_id];
     enemy.animation_state = create_info.animation_state;
+    enemy.sentry.self_id = net_id;
     enemies_.push_back(enemy);
     return true;
 }

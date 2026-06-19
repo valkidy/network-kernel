@@ -92,10 +92,15 @@ The `//engine/components/ai:ai` Bazel target should expose only public headers
 under `include/ai`. Non-public headers and all `.cc` files stay hidden inside
 the target implementation.
 
-The dependency direction must remain:
+Status note: this target is intentionally left as a future large refactor
+surface. Vision System v1 removes the game-server dependency on the old Enemy
+behavior-tree adapter, but does not renovate `//engine/components/ai:ai` in the
+same task.
+
+The future adapter dependency direction must remain:
 
 ```text
-game_server or future gameplay layer
+future gameplay layer
   -> engine/components/ai
       -> C++ standard library
       -> yaml-cpp for YAML parsing
@@ -126,16 +131,19 @@ Gameplay integration happens through adapters that build `AIContext`, tick an
 `AITreeInstance`, and translate emitted `AICommand` values into game/server
 operations.
 
-Adapter direction is intentionally one-way:
+Adapter direction is intentionally one-way for future adapter integrations:
 
 ```text
-game_server
+future gameplay adapter
   -> //engine/components/ai:ai
   -> //engine/src/kernel:kernel_api
 
 //engine/components/ai:ai
   -> no //engine/src deps
 ```
+
+Vision System v1 intentionally removes the current game-server dependency on
+`//engine/components/ai:ai`; the target remains a future large refactor surface.
 
 ## Runtime Data Flow
 
@@ -697,7 +705,7 @@ and fails if any dependency label starts with:
 The same test should scan `engine/src/**/BUILD.bazel` and fail if an existing
 runtime module depends on `//engine/components/ai`. These checks are
 deliberately simple: they protect the component from accidental coupling while
-keeping `game_server` free to depend on the AI component through an adapter.
+keeping future gameplay adapters free to depend on the AI component.
 
 Focused commands:
 

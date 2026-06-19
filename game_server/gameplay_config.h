@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-#include "game_server/enemy_ai_controller.h"
+#include "game_server/agent_sentry_controller.h"
 #include "kernel/public/kernel_types.h"
 
 struct KernelHandle;
@@ -54,7 +54,8 @@ struct ActorTemplateConfig {
     std::uint8_t active_weapon_slot = 0;
     std::uint16_t animation_idle = 0;
     std::uint16_t animation_chasing = 0;
-    EnemyAiConfig ai{};
+    AgentSentryConfig sentry{};
+    KernelAgentVisionConfig vision{};
 };
 
 struct WeaponCatalogConfig {

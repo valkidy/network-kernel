@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 20u
+#define KERNEL_ABI_VERSION 21u
 
 #define KERNEL_BUILD_INFO_TEXT_SIZE 128u
 #define KERNEL_LAN_DISCOVERY_TEXT_SIZE 128u
@@ -78,6 +78,7 @@
 #define KERNEL_CAPABILITY_BENCHMARK_STATS UINT64_C(0x0000000080000000)
 #define KERNEL_CAPABILITY_NETWORK_STATS UINT64_C(0x0000000100000000)
 #define KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS UINT64_C(0x0000000200000000)
+#define KERNEL_CAPABILITY_VISION_STATE_QUERY UINT64_C(0x0000000400000000)
 
 #define KERNEL_COLLISION_LAYER_PLAYER UINT32_C(0x00000001)
 #define KERNEL_COLLISION_LAYER_ENEMY UINT32_C(0x00000002)
@@ -91,6 +92,9 @@
 #define KERNEL_VISUAL_FLAG_RELOADING UINT32_C(0x00000002)
 #define KERNEL_VISUAL_FLAG_DEAD UINT32_C(0x00000004)
 #define KERNEL_VISUAL_FLAG_HP_UNKNOWN UINT32_C(0x00000008)
+
+#define KERNEL_MAX_VISIBLE_HOSTILES 16u
+#define KERNEL_MAX_VISIBLE_ALLIES 16u
 
 #ifdef __cplusplus
 extern "C" {
@@ -130,6 +134,9 @@ typedef struct KernelAbiInfo {
     uint32_t debug_info_size;
     uint32_t collider_shape_query_size;
     uint32_t collider_shape_view_size;
+    uint32_t agent_vision_config_size;
+    uint32_t vision_state_query_size;
+    uint32_t vision_state_view_size;
 } KernelAbiInfo;
 
 typedef struct KernelBuildInfo {
@@ -287,6 +294,26 @@ typedef enum KernelProjectileDamageFalloff {
     KernelProjectileDamageFalloff_None = 0,
     KernelProjectileDamageFalloff_Linear = 1,
 } KernelProjectileDamageFalloff;
+
+typedef enum KernelAgentCamp {
+    KernelAgentCamp_Unknown = 0,
+    KernelAgentCamp_PlayerSide = 1,
+    KernelAgentCamp_EnemySide = 2,
+    KernelAgentCamp_Neutral = 3,
+} KernelAgentCamp;
+
+typedef enum KernelAgentRelation {
+    KernelAgentRelation_Self = 0,
+    KernelAgentRelation_Ally = 1,
+    KernelAgentRelation_Hostile = 2,
+    KernelAgentRelation_Neutral = 3,
+    KernelAgentRelation_Unknown = 4,
+} KernelAgentRelation;
+
+typedef enum KernelVisionShapeKind {
+    KernelVisionShapeKind_None = 0,
+    KernelVisionShapeKind_Cone = 1,
+} KernelVisionShapeKind;
 
 typedef struct KernelVec2 {
     float x;
@@ -588,6 +615,53 @@ typedef struct KernelColliderShapeView {
     uint32_t remaining_ticks;
     uint32_t has_resolved_damage;
 } KernelColliderShapeView;
+
+typedef struct KernelAgentVisionConfig {
+    uint32_t struct_size;
+    uint8_t camp;
+    uint8_t shape_kind;
+    uint16_t reserved0;
+    uint32_t vision_shape_template_id;
+    float view_range;
+    float fov_degrees;
+    uint32_t max_visible_hostiles;
+    uint32_t max_visible_allies;
+    KernelVec3 local_origin;
+    KernelVec3 local_forward;
+} KernelAgentVisionConfig;
+
+typedef struct KernelVisionStateQuery {
+    uint32_t struct_size;
+    uint16_t entity_type_filter;
+    uint16_t reserved0;
+    uint32_t agent_net_id;
+} KernelVisionStateQuery;
+
+typedef struct KernelVisionStateView {
+    uint32_t struct_size;
+    uint32_t agent_net_id;
+    uint16_t entity_type;
+    uint8_t camp;
+    uint8_t shape_kind;
+    KernelVec3 position;
+    KernelVec3 forward;
+    float view_range;
+    float fov_degrees;
+    uint32_t vision_shape_template_id;
+    uint32_t resolved_collider_template_id;
+    uint32_t visible_hostiles[KERNEL_MAX_VISIBLE_HOSTILES];
+    uint32_t visible_hostile_count;
+    uint32_t visible_allies[KERNEL_MAX_VISIBLE_ALLIES];
+    uint32_t visible_ally_count;
+    uint32_t current_target_candidate;
+    uint8_t relation_to_current_target;
+    uint8_t reserved1;
+    uint16_t reserved2;
+    uint32_t last_seen_target;
+    KernelVec3 last_known_target_position;
+    float time_since_last_seen_target;
+    uint32_t valid;
+} KernelVisionStateView;
 
 typedef struct KernelHomingMechanicsDefinition {
     uint32_t struct_size;

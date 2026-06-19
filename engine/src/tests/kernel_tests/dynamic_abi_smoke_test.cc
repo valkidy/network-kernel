@@ -183,6 +183,12 @@ int main() {
             KernelHandle*,
             KernelColliderBindingDefinition*,
             std::uint32_t)>(library, "Kernel_GetColliderBindings");
+    [[maybe_unused]] auto* kernel_query_vision_state =
+        load_symbol<std::uint32_t(
+            KernelHandle*,
+            const KernelVisionStateQuery*,
+            KernelVisionStateView*,
+            std::uint32_t)>(library, "Kernel_QueryVisionState");
     auto* kernel_poll_events =
         load_symbol<std::uint32_t(KernelHandle*, KernelEvent*, std::uint32_t)>(
             library,
@@ -259,6 +265,17 @@ int main() {
             const KernelCombatStateDefinition*)>(
             library,
             "Kernel_ServerSetEntityCombatState");
+    [[maybe_unused]] auto* kernel_server_set_entity_vision_config =
+        load_symbol<bool(
+            KernelHandle*,
+            std::uint32_t,
+            const KernelAgentVisionConfig*)>(
+            library,
+            "Kernel_ServerSetEntityVisionConfig");
+    [[maybe_unused]] auto* kernel_server_clear_entity_vision_config =
+        load_symbol<bool(KernelHandle*, std::uint32_t)>(
+            library,
+            "Kernel_ServerClearEntityVisionConfig");
     auto* kernel_server_set_entity_weapon_mechanics =
         load_symbol<bool(
             KernelHandle*,
@@ -371,6 +388,9 @@ int main() {
            sizeof(KernelCombatStateDefinition));
     assert(abi_info.gameplay_catalog_load_result_size ==
            sizeof(KernelGameplayCatalogLoadResult));
+    assert(abi_info.agent_vision_config_size == sizeof(KernelAgentVisionConfig));
+    assert(abi_info.vision_state_query_size == sizeof(KernelVisionStateQuery));
+    assert(abi_info.vision_state_view_size == sizeof(KernelVisionStateView));
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LISTEN_SERVER_MODE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LOCAL_PLAYER_INFO) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_SERVER_ENTITY_CREATE) != 0);
@@ -384,6 +404,7 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_BEAM_WEAPONS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_HOMING_PROJECTILES) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LAN_DISCOVERY) != 0);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
     assert(!kernel_get_abi_info(nullptr, sizeof(abi_info)));
     assert(!kernel_get_abi_info(&abi_info, sizeof(abi_info) - 1));
 

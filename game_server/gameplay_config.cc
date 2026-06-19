@@ -202,15 +202,21 @@ void hash_actor_template(
     hash_scalar(hash, actor_template.active_weapon_slot);
     hash_scalar(hash, actor_template.animation_idle);
     hash_scalar(hash, actor_template.animation_chasing);
-    hash_scalar(hash, actor_template.ai.profile);
-    hash_float(hash, actor_template.ai.chase_range);
-    hash_float(hash, actor_template.ai.move_speed);
-    hash_float(hash, actor_template.ai.patrol_speed);
-    hash_float(hash, actor_template.ai.patrol_half_extent);
-    hash_float(hash, actor_template.ai.fire_interval_seconds);
-    hash_float(hash, actor_template.ai.reload_seconds);
-    hash_scalar(hash, actor_template.ai.weapon_id);
-    hash_scalar(hash, actor_template.ai.magazine_size);
+    hash_float(hash, actor_template.sentry.alert_seconds);
+    hash_float(hash, actor_template.sentry.forget_seconds);
+    hash_float(hash, actor_template.sentry.fire_interval_seconds);
+    hash_float(hash, actor_template.sentry.reload_seconds);
+    hash_scalar(hash, actor_template.sentry.weapon_id);
+    hash_scalar(hash, actor_template.sentry.magazine_size);
+    hash_scalar(hash, actor_template.vision.camp);
+    hash_scalar(hash, actor_template.vision.shape_kind);
+    hash_scalar(hash, actor_template.vision.vision_shape_template_id);
+    hash_float(hash, actor_template.vision.view_range);
+    hash_float(hash, actor_template.vision.fov_degrees);
+    hash_scalar(hash, actor_template.vision.max_visible_hostiles);
+    hash_scalar(hash, actor_template.vision.max_visible_allies);
+    hash_vec3(hash, actor_template.vision.local_origin);
+    hash_vec3(hash, actor_template.vision.local_forward);
 }
 
 KernelWeaponMechanicsDefinition hitscan_weapon(
@@ -636,14 +642,6 @@ std::uint8_t projectile_sync_mode_from_yaml(const YAML::Node& node) {
 std::uint8_t projectile_sync_mode_from_weapon_yaml(const YAML::Node& node) {
     (void)node;
     return KernelProjectileSyncMode_HybridDeterministicThenSnapshot;
-}
-
-EnemyAiProfile enemy_ai_profile_from_yaml(const YAML::Node& node) {
-    const std::string value = node ? node.as<std::string>() : "default";
-    if (value == "default") {
-        return EnemyAiProfile::kDefault;
-    }
-    throw std::runtime_error("unsupported enemy ai_profile: " + value);
 }
 
 KernelVec3 vec3_from_yaml(const YAML::Node& node) {
@@ -1348,6 +1346,9 @@ ActorTemplateConfig default_player_actor_template() {
     actor_template.weapon_slots[1] = kWeaponShotgun;
     actor_template.weapon_slot_count = 2;
     actor_template.active_weapon_slot = 0;
+    actor_template.vision.struct_size = sizeof(KernelAgentVisionConfig);
+    actor_template.vision.camp = KernelAgentCamp_PlayerSide;
+    actor_template.vision.shape_kind = KernelVisionShapeKind_None;
     return actor_template;
 }
 
@@ -1362,15 +1363,24 @@ ActorTemplateConfig default_enemy_actor_template() {
     actor_template.hitbox_center = KernelVec3{0.0f, 0.8f, 0.0f};
     actor_template.hitbox_half_extents = KernelVec3{0.4f, 0.8f, 0.4f};
     actor_template.move_speed_meters_per_second = 2.5f;
-    actor_template.weapon_slots[0] = kEnemyRocketWeaponId;
+    actor_template.weapon_slots[0] = kAgentSpammerWeaponId;
     actor_template.weapon_slot_count = 1;
     actor_template.active_weapon_slot = 0;
     actor_template.animation_idle = kEnemyAnimationIdle;
     actor_template.animation_chasing = kEnemyAnimationChasing;
-    actor_template.ai.weapon_id = kEnemyRocketWeaponId;
-    actor_template.ai.magazine_size = kEnemyRocketMagazine;
-    actor_template.ai.animation_idle = actor_template.animation_idle;
-    actor_template.ai.animation_chasing = actor_template.animation_chasing;
+    actor_template.sentry.weapon_id = kAgentSpammerWeaponId;
+    actor_template.sentry.magazine_size = kAgentSpammerMagazine;
+    actor_template.sentry.animation_idle = actor_template.animation_idle;
+    actor_template.sentry.animation_attack = actor_template.animation_chasing;
+    actor_template.vision.struct_size = sizeof(KernelAgentVisionConfig);
+    actor_template.vision.camp = KernelAgentCamp_EnemySide;
+    actor_template.vision.shape_kind = KernelVisionShapeKind_Cone;
+    actor_template.vision.vision_shape_template_id = 1;
+    actor_template.vision.view_range = 12.0f;
+    actor_template.vision.fov_degrees = 90.0f;
+    actor_template.vision.max_visible_hostiles = KERNEL_MAX_VISIBLE_HOSTILES;
+    actor_template.vision.max_visible_allies = KERNEL_MAX_VISIBLE_ALLIES;
+    actor_template.vision.local_forward = KernelVec3{-1.0f, 0.0f, 0.0f};
     return actor_template;
 }
 
@@ -1382,39 +1392,70 @@ void apply_default_actor_templates(GameServerGameplayConfig* config) {
     config->enemy.actor_template_id = 2;
 }
 
-EnemyAiConfig ai_config_from_yaml(
+AgentSentryConfig sentry_config_from_yaml(
     const YAML::Node& node,
     const ActorTemplateConfig& actor_template,
     const WeaponCatalogConfig& weapons) {
-    EnemyAiConfig ai = actor_template.ai;
+    AgentSentryConfig sentry = actor_template.sentry;
     if (node) {
-        ai.profile = enemy_ai_profile_from_yaml(node["profile"]);
-        if (node["chase_range"]) {
-            ai.chase_range = node["chase_range"].as<float>();
-        }
-        if (node["move_speed"]) {
-            ai.move_speed = node["move_speed"].as<float>();
-        }
-        if (node["patrol_speed"]) {
-            ai.patrol_speed = node["patrol_speed"].as<float>();
-        }
-        if (node["patrol_half_extent"]) {
-            ai.patrol_half_extent = node["patrol_half_extent"].as<float>();
-        }
         if (node["fire_interval_seconds"]) {
-            ai.fire_interval_seconds = node["fire_interval_seconds"].as<float>();
+            sentry.fire_interval_seconds = node["fire_interval_seconds"].as<float>();
         }
         if (node["reload_seconds"]) {
-            ai.reload_seconds = node["reload_seconds"].as<float>();
+            sentry.reload_seconds = node["reload_seconds"].as<float>();
+        }
+        if (node["alert_seconds"]) {
+            sentry.alert_seconds = node["alert_seconds"].as<float>();
+        }
+        if (node["forget_seconds"]) {
+            sentry.forget_seconds = node["forget_seconds"].as<float>();
         }
     }
     const std::uint8_t weapon_id = active_weapon_id(actor_template);
-    ai.weapon_id = weapon_id;
-    ai.magazine_size = weapons.definitions[weapon_id].magazine_size;
-    if (!node || !node["move_speed"]) {
-        ai.move_speed = actor_template.move_speed_meters_per_second;
+    sentry.weapon_id = weapon_id;
+    sentry.magazine_size = weapons.definitions[weapon_id].magazine_size;
+    return sentry;
+}
+
+KernelAgentVisionConfig vision_config_from_yaml(
+    const YAML::Node& node,
+    const ActorTemplateConfig& actor_template,
+    const std::string& path,
+    std::uint32_t source_kind) {
+    KernelAgentVisionConfig vision = actor_template.vision;
+    vision.struct_size = sizeof(KernelAgentVisionConfig);
+    if (!node) {
+        return vision;
     }
-    return ai;
+    reject_unknown_keys(
+        node,
+        {
+            "shape_template",
+            "range",
+            "fov_degrees",
+            "max_visible_hostiles",
+            "max_visible_allies",
+        },
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+        actor_template.actor_template_id);
+    if (node["shape_template"]) {
+        vision.vision_shape_template_id = node["shape_template"].as<std::uint32_t>();
+    }
+    if (node["range"]) {
+        vision.view_range = node["range"].as<float>();
+    }
+    if (node["fov_degrees"]) {
+        vision.fov_degrees = node["fov_degrees"].as<float>();
+    }
+    if (node["max_visible_hostiles"]) {
+        vision.max_visible_hostiles = node["max_visible_hostiles"].as<std::uint32_t>();
+    }
+    if (node["max_visible_allies"]) {
+        vision.max_visible_allies = node["max_visible_allies"].as<std::uint32_t>();
+    }
+    return vision;
 }
 
 std::uint32_t actor_collider_template_id_from_yaml(
@@ -1465,6 +1506,7 @@ ActorTemplateConfig actor_template_from_yaml(
             "active_weapon_slot",
             "animations",
             "ai",
+            "vision",
         },
         path,
         source_kind,
@@ -1473,6 +1515,20 @@ ActorTemplateConfig actor_template_from_yaml(
     actor_template.actor_template_id = node["id"].as<std::uint32_t>();
     actor_template.name = node["name"].as<std::string>();
     actor_template.entity_type = entity_type_from_yaml(node["entity_type"]);
+    actor_template.vision.struct_size = sizeof(KernelAgentVisionConfig);
+    if (actor_template.entity_type == kEntityTypeEnemy) {
+        actor_template.vision.camp = KernelAgentCamp_EnemySide;
+        actor_template.vision.shape_kind = KernelVisionShapeKind_Cone;
+        actor_template.vision.vision_shape_template_id = 1;
+        actor_template.vision.view_range = 12.0f;
+        actor_template.vision.fov_degrees = 90.0f;
+        actor_template.vision.max_visible_hostiles = KERNEL_MAX_VISIBLE_HOSTILES;
+        actor_template.vision.max_visible_allies = KERNEL_MAX_VISIBLE_ALLIES;
+        actor_template.vision.local_forward = KernelVec3{-1.0f, 0.0f, 0.0f};
+    } else if (actor_template.entity_type == kEntityTypePlayer) {
+        actor_template.vision.camp = KernelAgentCamp_PlayerSide;
+        actor_template.vision.shape_kind = KernelVisionShapeKind_None;
+    }
     actor_template.collider_template_id =
         actor_collider_template_id_from_yaml(node["collider_template"], colliders);
 
@@ -1579,21 +1635,25 @@ ActorTemplateConfig actor_template_from_yaml(
             node["ai"],
             {
                 "profile",
-                "chase_range",
-                "move_speed",
-                "patrol_speed",
-                "patrol_half_extent",
                 "fire_interval_seconds",
                 "reload_seconds",
+                "alert_seconds",
+                "forget_seconds",
             },
             path,
             source_kind,
             KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
             actor_template.actor_template_id);
     }
-    actor_template.ai = ai_config_from_yaml(node["ai"], actor_template, weapons);
-    actor_template.ai.animation_idle = actor_template.animation_idle;
-    actor_template.ai.animation_chasing = actor_template.animation_chasing;
+    actor_template.sentry =
+        sentry_config_from_yaml(node["ai"], actor_template, weapons);
+    actor_template.sentry.animation_idle = actor_template.animation_idle;
+    actor_template.sentry.animation_attack = actor_template.animation_chasing;
+    actor_template.vision = vision_config_from_yaml(
+        node["vision"],
+        actor_template,
+        path,
+        source_kind);
     return actor_template;
 }
 
@@ -2442,11 +2502,21 @@ std::vector<std::string> validate_gameplay_config(
             }
         }
         if (actor_template.entity_type == kEntityTypeEnemy &&
-            (actor_template.ai.weapon_id >= kWeaponCount ||
-             actor_template.ai.magazine_size == 0 ||
-             actor_template.ai.fire_interval_seconds <= 0.0f ||
-             actor_template.ai.reload_seconds <= 0.0f)) {
-            errors.push_back("enemy actor template ai must be valid");
+            (actor_template.sentry.weapon_id >= kWeaponCount ||
+             actor_template.sentry.magazine_size == 0 ||
+             actor_template.sentry.fire_interval_seconds <= 0.0f ||
+             actor_template.sentry.reload_seconds <= 0.0f ||
+             actor_template.sentry.alert_seconds <= 0.0f ||
+             actor_template.sentry.forget_seconds <= 0.0f)) {
+            errors.push_back("agent sentry actor template must be valid");
+        }
+        if (actor_template.vision.struct_size < sizeof(KernelAgentVisionConfig) ||
+            actor_template.vision.camp > KernelAgentCamp_Neutral ||
+            actor_template.vision.shape_kind > KernelVisionShapeKind_Cone ||
+            actor_template.vision.view_range < 0.0f ||
+            actor_template.vision.fov_degrees < 0.0f ||
+            actor_template.vision.fov_degrees > 360.0f) {
+            errors.push_back("actor template vision must be valid");
         }
         if (std::find(
                 actor_template_ids.begin(),

@@ -118,6 +118,9 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
         out_info->debug_info_size = sizeof(KernelDebugInfo);
         out_info->collider_shape_query_size = sizeof(KernelColliderShapeQuery);
         out_info->collider_shape_view_size = sizeof(KernelColliderShapeView);
+        out_info->agent_vision_config_size = sizeof(KernelAgentVisionConfig);
+        out_info->vision_state_query_size = sizeof(KernelVisionStateQuery);
+        out_info->vision_state_view_size = sizeof(KernelVisionStateView);
         out_info->capability_flags =
             KERNEL_CAPABILITY_CLIENT_MODE |
             KERNEL_CAPABILITY_LISTEN_SERVER_MODE |
@@ -152,7 +155,8 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_COLLIDER_SHAPE_QUERY |
             KERNEL_CAPABILITY_BENCHMARK_STATS |
             KERNEL_CAPABILITY_NETWORK_STATS |
-            KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS;
+            KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS |
+            KERNEL_CAPABILITY_VISION_STATE_QUERY;
         return true;
     });
 }
@@ -384,6 +388,19 @@ uint32_t Kernel_QueryColliderShapes(
     });
 }
 
+uint32_t Kernel_QueryVisionState(
+    KernelHandle* kernel,
+    const KernelVisionStateQuery* query,
+    KernelVisionStateView* out_states,
+    uint32_t max_states) {
+    return abi_call("Kernel_QueryVisionState", 0u, [&]() -> std::uint32_t {
+        if (kernel == nullptr) {
+            return 0u;
+        }
+        return kernel->engine->query_vision_state(query, out_states, max_states);
+    });
+}
+
 uint32_t Kernel_GetProjectileTemplates(
     KernelHandle* kernel,
     KernelProjectileTemplateDefinition* out_templates,
@@ -501,6 +518,27 @@ bool Kernel_ServerSetEntityCombatState(
                kernel->engine->server_set_entity_combat_state(
                    net_id,
                    *combat_state);
+    });
+}
+
+bool Kernel_ServerSetEntityVisionConfig(
+    KernelHandle* kernel,
+    std::uint32_t net_id,
+    const KernelAgentVisionConfig* vision_config) {
+    return abi_call("Kernel_ServerSetEntityVisionConfig", false, [&]() {
+        return kernel != nullptr && vision_config != nullptr &&
+               kernel->engine->server_set_entity_vision_config(
+                   net_id,
+                   *vision_config);
+    });
+}
+
+bool Kernel_ServerClearEntityVisionConfig(
+    KernelHandle* kernel,
+    std::uint32_t net_id) {
+    return abi_call("Kernel_ServerClearEntityVisionConfig", false, [&]() {
+        return kernel != nullptr &&
+               kernel->engine->server_clear_entity_vision_config(net_id);
     });
 }
 

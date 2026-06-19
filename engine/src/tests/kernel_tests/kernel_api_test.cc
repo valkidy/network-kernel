@@ -88,6 +88,9 @@ int main() {
     assert(abi_info.debug_info_size == sizeof(KernelDebugInfo));
     assert(abi_info.collider_shape_query_size == sizeof(KernelColliderShapeQuery));
     assert(abi_info.collider_shape_view_size == sizeof(KernelColliderShapeView));
+    assert(abi_info.agent_vision_config_size == sizeof(KernelAgentVisionConfig));
+    assert(abi_info.vision_state_query_size == sizeof(KernelVisionStateQuery));
+    assert(abi_info.vision_state_view_size == sizeof(KernelVisionStateView));
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CLIENT_MODE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LISTEN_SERVER_MODE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_DEDICATED_SERVER_MODE) != 0);
@@ -125,8 +128,9 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_COLLIDER_SHAPE_QUERY) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_BENCHMARK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 20u);
+    assert(KERNEL_ABI_VERSION == 21u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS) != 0);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
@@ -223,6 +227,17 @@ int main() {
                &collider_query,
                collider_shapes.data(),
                static_cast<std::uint32_t>(collider_shapes.size())) == 0);
+    KernelVisionStateQuery vision_query{};
+    vision_query.struct_size = sizeof(vision_query);
+    std::array<KernelVisionStateView, 4> vision_states{};
+    for (KernelVisionStateView& vision_state : vision_states) {
+        vision_state.struct_size = sizeof(KernelVisionStateView);
+    }
+    assert(Kernel_QueryVisionState(
+               nullptr,
+               &vision_query,
+               vision_states.data(),
+               static_cast<std::uint32_t>(vision_states.size())) == 0);
     assert(Kernel_GetProjectileTemplates(nullptr, nullptr, 0) == 0);
     assert(Kernel_GetColliderTemplates(nullptr, nullptr, 0) == 0);
     assert(Kernel_GetColliderBindings(nullptr, nullptr, 0) == 0);
@@ -268,6 +283,10 @@ int main() {
     server_state.struct_size = sizeof(server_state);
     assert(!Kernel_ServerGetEntityState(nullptr, 1, &server_state));
     assert(Kernel_ServerQueryEntities(nullptr, 0, &server_state, 1) == 0);
+    KernelAgentVisionConfig vision_config{};
+    vision_config.struct_size = sizeof(vision_config);
+    assert(!Kernel_ServerSetEntityVisionConfig(nullptr, 1, &vision_config));
+    assert(!Kernel_ServerClearEntityVisionConfig(nullptr, 1));
 
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;
@@ -382,6 +401,89 @@ int main() {
     combat_state.reserve_ammo[6] = 2;
     assert(!Kernel_ServerSetEntityCombatState(kernel, created_net_id, nullptr));
     assert(Kernel_ServerSetEntityCombatState(kernel, created_net_id, &combat_state));
+    vision_config = KernelAgentVisionConfig{};
+    vision_config.struct_size = sizeof(vision_config);
+    vision_config.camp = KernelAgentCamp_EnemySide;
+    vision_config.shape_kind = KernelVisionShapeKind_Cone;
+    vision_config.view_range = 10.0f;
+    vision_config.fov_degrees = 90.0f;
+    vision_config.max_visible_hostiles = KERNEL_MAX_VISIBLE_HOSTILES;
+    vision_config.max_visible_allies = KERNEL_MAX_VISIBLE_ALLIES;
+    vision_config.vision_shape_template_id = 7;
+    assert(Kernel_ServerSetEntityVisionConfig(kernel, created_net_id, &vision_config));
+
+    KernelServerEntityCreateInfo player_create_info = create_info;
+    player_create_info.entity_type = 1;
+    player_create_info.position = KernelVec3{5.0f, 0.0f, 0.0f};
+    std::uint32_t visible_player_net_id = 0;
+    assert(Kernel_ServerCreateEntity(kernel, &player_create_info, &visible_player_net_id));
+    KernelAgentVisionConfig player_vision_config{};
+    player_vision_config.struct_size = sizeof(player_vision_config);
+    player_vision_config.camp = KernelAgentCamp_PlayerSide;
+    player_vision_config.shape_kind = KernelVisionShapeKind_None;
+    assert(Kernel_ServerSetEntityVisionConfig(
+        kernel,
+        visible_player_net_id,
+        &player_vision_config));
+    Kernel_Update(kernel, 1.0f / 30.0f);
+
+    assert(Kernel_QueryVisionState(kernel, nullptr, vision_states.data(), 1) == 1);
+    assert(Kernel_QueryVisionState(kernel, &vision_query, nullptr, 1) == 0);
+    assert(Kernel_QueryVisionState(kernel, &vision_query, vision_states.data(), 0) == 0);
+    assert(Kernel_QueryVisionState(
+               kernel,
+               &vision_query,
+               vision_states.data(),
+               static_cast<std::uint32_t>(vision_states.size())) == 1);
+    assert(vision_states[0].valid != 0u);
+    assert(vision_states[0].agent_net_id == created_net_id);
+    assert(vision_states[0].camp == KernelAgentCamp_EnemySide);
+    assert(vision_states[0].shape_kind == KernelVisionShapeKind_Cone);
+    assert(vision_states[0].vision_shape_template_id == 7);
+    assert(vision_states[0].resolved_collider_template_id == 10);
+    assert(vision_states[0].visible_hostile_count == 1);
+    assert(vision_states[0].visible_hostiles[0] == visible_player_net_id);
+    assert(vision_states[0].visible_ally_count == 0);
+    assert(vision_states[0].current_target_candidate == visible_player_net_id);
+    assert(vision_states[0].last_seen_target == visible_player_net_id);
+    assert(vision_states[0].last_known_target_position.x == 5.0f);
+    assert(vision_states[0].relation_to_current_target == KernelAgentRelation_Hostile);
+
+    KernelVec3 behind_position{-5.0f, 0.0f, 0.0f};
+    KernelQuat player_rotation{0.0f, 0.0f, 0.0f, 1.0f};
+    assert(Kernel_ServerSetEntityTransform(
+        kernel,
+        visible_player_net_id,
+        &behind_position,
+        &player_rotation));
+    Kernel_Update(kernel, 1.0f / 30.0f);
+    assert(Kernel_QueryVisionState(kernel, &vision_query, vision_states.data(), 1) == 1);
+    assert(vision_states[0].visible_hostile_count == 0);
+    assert(vision_states[0].current_target_candidate == 0);
+    assert(vision_states[0].last_seen_target == visible_player_net_id);
+    assert(vision_states[0].last_known_target_position.x == 5.0f);
+    assert(vision_states[0].time_since_last_seen_target > 0.0f);
+
+    KernelVec3 outside_range_position{15.0f, 0.0f, 0.0f};
+    assert(Kernel_ServerSetEntityTransform(
+        kernel,
+        visible_player_net_id,
+        &outside_range_position,
+        &player_rotation));
+    Kernel_Update(kernel, 1.0f / 30.0f);
+    assert(Kernel_QueryVisionState(kernel, &vision_query, vision_states.data(), 1) == 1);
+    assert(vision_states[0].visible_hostile_count == 0);
+
+    assert(Kernel_ServerClearEntityVisionConfig(kernel, visible_player_net_id));
+    assert(Kernel_ServerDestroyEntity(
+        kernel,
+        visible_player_net_id,
+        KernelDespawnReason_Destroyed));
+    std::array<KernelEntityLifecycleEvent, 4> drained_lifecycle_events{};
+    Kernel_PollEntityLifecycleEvents(
+        kernel,
+        drained_lifecycle_events.data(),
+        static_cast<std::uint32_t>(drained_lifecycle_events.size()));
     const std::uint32_t collider_count = Kernel_QueryColliderShapes(
         kernel,
         &collider_query,

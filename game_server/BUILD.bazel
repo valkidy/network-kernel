@@ -17,21 +17,20 @@ filegroup(
 cc_library(
     name = "game_server",
     srcs = [
-        "enemy_ai_controller.cc",
+        "agent_sentry_controller.cc",
         "enemy_manager.cc",
         "gameplay_config.cc",
         "game_server.cc",
     ],
     hdrs = [
+        "agent_sentry_controller.h",
         "enemy.h",
-        "enemy_ai_controller.h",
         "enemy_manager.h",
         "gameplay_config.h",
         "game_server.h",
         "public/game_server_types.h",
     ],
     deps = [
-        "//engine/components/ai:ai",
         "//engine/src/kernel:kernel_api",
         "@zip_archive//:zip",
         "@yaml-cpp//:yaml-cpp",
@@ -92,8 +91,8 @@ cc_library(
 )
 
 cc_test(
-    name = "enemy_ai_controller_test",
-    srcs = ["enemy_ai_controller_test.cc"],
+    name = "agent_sentry_controller_test",
+    srcs = ["agent_sentry_controller_test.cc"],
     deps = [
         ":game_server",
         "//engine/src/kernel:kernel",

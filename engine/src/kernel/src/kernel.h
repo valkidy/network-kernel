@@ -57,6 +57,10 @@ public:
         const KernelColliderShapeQuery* query,
         KernelColliderShapeView* out_shapes,
         std::uint32_t max_shapes) const;
+    std::uint32_t query_vision_state(
+        const KernelVisionStateQuery* query,
+        KernelVisionStateView* out_states,
+        std::uint32_t max_states) const;
     std::uint32_t get_projectile_templates(
         KernelProjectileTemplateDefinition* out_templates,
         std::uint32_t max_templates) const;
@@ -84,6 +88,10 @@ public:
     bool server_set_entity_combat_state(
         NetId net_id,
         const KernelCombatStateDefinition& combat_state);
+    bool server_set_entity_vision_config(
+        NetId net_id,
+        const KernelAgentVisionConfig& vision_config);
+    bool server_clear_entity_vision_config(NetId net_id);
     bool server_set_entity_weapon_mechanics(
         NetId net_id,
         const KernelWeaponMechanicsDefinition& weapon_mechanics);
@@ -167,6 +175,11 @@ private:
         std::uint8_t sync_mode = KernelProjectileSyncMode_HybridDeterministicThenSnapshot;
         glm::vec3 correction_offset{0.0f, 0.0f, 0.0f};
         bool bound = false;
+    };
+
+    struct VisionRuntimeState {
+        KernelVisionStateView view{};
+        bool has_last_seen_target = false;
     };
 
     void push_event(
@@ -283,6 +296,7 @@ private:
     std::uint32_t collider_template_id_for_projectile_template(
         std::uint32_t projectile_template_id) const;
     void sync_client_render_colliders();
+    void update_vision_states(float delta_seconds);
 
     KernelConfig config_;
     TickLoop tick_loop_;
@@ -308,6 +322,8 @@ private:
     std::vector<KernelProjectileTemplateDefinition> projectile_templates_;
     std::vector<KernelColliderTemplateDefinition> collider_templates_;
     std::vector<KernelDebugInfo> debug_records_;
+    std::unordered_map<NetId, KernelAgentVisionConfig> vision_configs_;
+    std::unordered_map<NetId, VisionRuntimeState> vision_states_;
     KernelNetworkStats network_stats_{};
     KernelBenchmarkStats benchmark_stats_{};
     std::uint32_t catalog_version_ = 0;

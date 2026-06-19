@@ -53,31 +53,25 @@ thread as the kernel owner:
 2. `Kernel_PollEvents()` drains kernel events.
 3. `GameServer::handle_event()` receives events such as `PlayerJoined` and
    `EntityDestroyed`.
-4. `GameServer::tick(dt)` runs `EnemyManager` and `EnemyAIController`.
-5. Enemy AI writes velocity and animation state back through the kernel API.
+4. `GameServer::tick(dt)` runs `EnemyManager` and `AgentSentryController`.
+5. Agent sentry behavior reads kernel vision state and writes stationary
+   velocity, animation state, and fire input requests back through the kernel
+   API.
 
 Enemy velocity written in step 5 is integrated by the kernel on the next
 `Kernel_Update()`. This keeps all world mutation on the server simulation
 thread.
 
-## Enemy AI Blackboard
+## Agent Vision And Sentry
 
-Game Server v1 uses `AIContext` as Blackboard v1. The enemy gameplay adapter
-rebuilds this tick-local read-only context before ticking the hardcoded enemy
-tree. Current and planned enemy feature keys include:
+Game Server v1 no longer uses the old hardcoded Enemy behavior tree. The stable
+perception core lives behind the kernel `Kernel_QueryVisionState` ABI, while
+the temporary game-server behavior is an Agent-named stationary sentry.
 
-- `hasVisibleEnemy`
-- `hp01`
-- `nearestEnemyId`
-- `hasAmmo`
-- `isReloading`
-- `enemyDistance`
-- `isAtTarget`
-
-The blackboard should contain perception and decision inputs only. Persistent
-state such as ammo counts, reload timers, fire intervals, patrol anchors, and
-patrol direction remains in GameServer or kernel-owned gameplay state, then is
-projected into the next tick's `AIContext` as scalar facts.
+`KernelVisionStateView` is perception data only: visible hostile/ally lists,
+current target candidate, last seen target, last known target position, vision
+shape template id, and resolved collider template id. It does not contain
+sentry behavior state or final attack decisions.
 
 ## Enemy v1 Behavior
 
@@ -97,19 +91,15 @@ The initial enemy state is deterministic:
 Repeated ticks do not create additional enemies while the managed enemy exists.
 If the v1 enemy is explicitly destroyed, it is not automatically respawned.
 
-`EnemyAIController` uses the hardcoded EnemySoldier YAML tree and supports five
-observable behavior bands:
+`AgentSentryController` supports three observable behavior bands:
 
-- Patrol: no player is inside the 12 meter visibility range; the enemy moves
-  along a deterministic route around its spawn anchor.
-- Attack: a player is visible and HP is above 50%; the enemy stops moving and
-  submits one rocket fire input per second toward the nearest player.
-- Reload: when the enemy attack branch has no rocket ammo and reserve ammo
-  remains, it submits a reload input and resumes firing after reload completes.
-- Flee: a player is visible and HP is below 10%; the enemy moves away from the
-  nearest player until no player is visible.
-- Hold: a player is visible and HP is between 10% and 50%; the enemy stops
-  moving and does not request help in v1.
+- Idle: the agent is stationary and has no visible target.
+- Alert: a visible hostile has been observed; if it remains visible for 3
+  seconds, the agent enters Attack. If the target is unseen for 5 seconds, the
+  agent returns to Idle.
+- Attack: the agent remains stationary and requests fire through the existing
+  weapon input path while vision still reports a target. Weapon cooldown,
+  mechanics, projectile spawning, and damage stay in kernel weapon systems.
 
 Visual moving state is derived by the kernel from non-zero velocity.
 
@@ -128,7 +118,7 @@ This version does not include:
 Run the focused game server tests:
 
 ```bash
-bazel test --config=macos -c opt //game_server:enemy_ai_controller_test
+bazel test --config=macos -c opt //game_server:agent_sentry_controller_test
 bazel test --config=macos -c opt //game_server:enemy_manager_test
 ```
 

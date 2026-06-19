@@ -227,7 +227,12 @@ int main() {
             config,
             config.enemy.actor_template_id);
     assert(config_enemy_template != nullptr);
-    assert(config_enemy_template->ai.move_speed == 2.5f);
+    assert(config_enemy_template->move_speed_meters_per_second == 2.5f);
+    assert(config_enemy_template->vision.camp == KernelAgentCamp_EnemySide);
+    assert(config_enemy_template->vision.shape_kind == KernelVisionShapeKind_Cone);
+    assert(config_enemy_template->vision.vision_shape_template_id == 1);
+    assert(config_enemy_template->vision.view_range == 12.0f);
+    assert(config_enemy_template->vision.fov_degrees == 90.0f);
 
     const KernelWeaponMechanicsDefinition& rifle =
         config.weapons.definitions[network_example::game_server::kWeaponRifle];
@@ -272,9 +277,9 @@ int main() {
     assert(
         network_example::game_server::active_weapon_id(*config_enemy_template) ==
         network_example::game_server::kWeaponGrenade);
-    assert(config_enemy_template->ai.weapon_id ==
+    assert(config_enemy_template->sentry.weapon_id ==
            network_example::game_server::kWeaponGrenade);
-    assert(config_enemy_template->ai.magazine_size == 120);
+    assert(config_enemy_template->sentry.magazine_size == 120);
     assert(
         config.weapons
             .projectile_sync_modes[network_example::game_server::kWeaponRocket] ==
@@ -292,6 +297,8 @@ int main() {
     assert(player_template.weapon_slots[0] == network_example::game_server::kWeaponRifle);
     assert(player_template.weapon_slots[1] == network_example::game_server::kWeaponShotgun);
     assert(player_template.active_weapon_slot == 0);
+    assert(player_template.vision.camp == KernelAgentCamp_PlayerSide);
+    assert(player_template.vision.shape_kind == KernelVisionShapeKind_None);
     const network_example::game_server::ActorTemplateConfig& enemy_template =
         config.actor_templates[1];
     assert(enemy_template.actor_template_id == 2);

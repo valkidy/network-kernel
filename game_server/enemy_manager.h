@@ -5,8 +5,8 @@
 #include <cstdint>
 #include <vector>
 
+#include "game_server/agent_sentry_controller.h"
 #include "game_server/enemy.h"
-#include "game_server/enemy_ai_controller.h"
 #include "game_server/gameplay_config.h"
 #include "kernel/public/kernel_api.h"
 
@@ -33,7 +33,7 @@ private:
 
     KernelHandle* kernel_ = nullptr;
     GameServerGameplayConfig config_;
-    EnemyAIController ai_;
+    AgentSentryController sentry_;
     std::vector<Enemy> enemies_;
     bool has_seen_player_ = false;
     bool has_spawned_initial_enemy_ = false;

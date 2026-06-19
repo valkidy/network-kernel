@@ -117,6 +117,12 @@ uint32_t Kernel_QueryColliderShapes(
     KernelColliderShapeView* out_shapes,
     uint32_t max_shapes);
 
+uint32_t Kernel_QueryVisionState(
+    KernelHandle* kernel,
+    const KernelVisionStateQuery* query,
+    KernelVisionStateView* out_states,
+    uint32_t max_states);
+
 uint32_t Kernel_GetProjectileTemplates(
     KernelHandle* kernel,
     KernelProjectileTemplateDefinition* out_templates,
@@ -168,6 +174,15 @@ bool Kernel_ServerSetEntityCombatState(
     KernelHandle* kernel,
     uint32_t net_id,
     const KernelCombatStateDefinition* combat_state);
+
+bool Kernel_ServerSetEntityVisionConfig(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    const KernelAgentVisionConfig* vision_config);
+
+bool Kernel_ServerClearEntityVisionConfig(
+    KernelHandle* kernel,
+    uint32_t net_id);
 
 bool Kernel_ServerSetEntityWeaponMechanics(
     KernelHandle* kernel,
