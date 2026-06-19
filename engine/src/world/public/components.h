@@ -28,6 +28,7 @@ enum class ColliderShapeType : std::uint8_t {
     kSphere = 1,
     kOrientedBox = 2,
     kSegment = 3,
+    kCone = 4,
 };
 
 struct ColliderWorldBounds {

@@ -68,6 +68,7 @@ void GameServer::configure_player(std::uint32_t net_id) const {
     if (!Kernel_ServerSetEntityCombatState(kernel_, net_id, &combat_state)) {
         return;
     }
+    Kernel_ServerSetEntityVisionConfig(kernel_, net_id, &actor_template->vision);
     for (std::uint8_t slot = 0; slot < actor_template->weapon_slot_count; ++slot) {
         const KernelWeaponMechanicsDefinition& weapon =
             config_.weapons.definitions[actor_template->weapon_slots[slot]];

@@ -119,6 +119,38 @@ KernelWeaponMechanicsDefinition projectile_weapon(
     return weapon;
 }
 
+void load_minimal_gameplay_catalog(KernelHandle* kernel) {
+    KernelColliderTemplateDefinition player_hit{};
+    player_hit.struct_size = sizeof(player_hit);
+    player_hit.template_id = 1;
+    player_hit.shape_type = KernelColliderShapeType_Aabb;
+    player_hit.center = KernelVec3{0.0f, 0.9f, 0.0f};
+    player_hit.shape_params = KernelVec4{0.35f, 0.9f, 0.35f, 0.0f};
+    player_hit.purpose_flags = KernelColliderPurpose_Hit;
+    player_hit.layer_mask = KERNEL_COLLISION_LAYER_PLAYER;
+
+    KernelColliderTemplateDefinition rifle_segment{};
+    rifle_segment.struct_size = sizeof(rifle_segment);
+    rifle_segment.template_id = 5;
+    rifle_segment.shape_type = KernelColliderShapeType_Segment;
+    rifle_segment.purpose_flags = KernelColliderPurpose_Damage;
+    rifle_segment.layer_mask = KERNEL_COLLISION_MASK_DAMAGEABLE;
+    rifle_segment.shape_params = KernelVec4{100.0f, 0.0f, 0.0f, 0.0f};
+    rifle_segment.lifetime_ticks = 1;
+
+    const std::array<KernelColliderTemplateDefinition, 2> collider_templates = {
+        player_hit,
+        rifle_segment,
+    };
+    KernelGameplayCatalogDefinition catalog{};
+    catalog.struct_size = sizeof(catalog);
+    catalog.catalog_version = 1;
+    catalog.collider_templates = collider_templates.data();
+    catalog.collider_template_count =
+        static_cast<std::uint32_t>(collider_templates.size());
+    assert(Kernel_LoadGameplayCatalog(kernel, &catalog));
+}
+
 void configure_local_player(KernelHandle* kernel, std::uint32_t player_net_id) {
     KernelCombatStateDefinition combat{};
     combat.struct_size = sizeof(combat);
@@ -172,6 +204,7 @@ int main() {
 
     KernelHandle* kernel = Kernel_Create(&config);
     assert(kernel != nullptr);
+    load_minimal_gameplay_catalog(kernel);
     assert(Kernel_StartListenServer(kernel, 7777));
 
     std::array<KernelEvent, 16> events{};

@@ -126,17 +126,6 @@ void run_server_frames(
     }
 }
 
-void submit_player_fire(KernelHandle* kernel,
-                        std::uint32_t input_seq,
-                        std::uint8_t weapon_id) {
-    PlayerInput input{};
-    input.input_seq = input_seq;
-    input.buttons = InputButton_Fire;
-    input.selected_weapon = weapon_id;
-    input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
-    Kernel_SubmitInput(kernel, 1, &input);
-}
-
 PlayerInput stationary_input(std::uint32_t input_seq) {
     PlayerInput input{};
     input.input_seq = input_seq;
@@ -175,7 +164,7 @@ int main() {
     std::uint32_t enemy_count = query_enemies(kernel, &enemy_states);
     require(enemy_count == 1);
     const std::uint32_t enemy_net_id = enemy_states[0].net_id;
-    require(game_server.enemy_manager().enemies()[0].ammo == 119);
+    require(game_server.enemy_manager().enemies()[0].ammo == 120);
     require(game_server.enemy_manager().enemies()[0].reserve_ammo == 240);
     KernelWeaponMechanicsDefinition enemy_weapon{};
     enemy_weapon.struct_size = sizeof(enemy_weapon);
@@ -237,12 +226,27 @@ int main() {
         network_example::game_server::kWeaponFireFloor,
         &unavailable_player_weapon));
 
-    run_server_frame(kernel, &game_server);
+    Kernel_Update(kernel, 1.0f / 30.0f);
+    game_server.tick(1.0f / 30.0f);
+    require(game_server.enemy_manager().enemies()[0].sentry.state ==
+            network_example::game_server::AgentSentryState::kAlert);
     std::array<KernelServerEntityState, 8> projectile_states{};
     std::uint32_t projectile_count = query_projectiles(kernel, &projectile_states);
+    require(projectile_count == 0);
+
+    run_server_frames(kernel, &game_server, 92);
+    require(game_server.enemy_manager().enemies()[0].sentry.state ==
+            network_example::game_server::AgentSentryState::kAttack);
+    projectile_count = query_projectiles(kernel, &projectile_states);
     require(projectile_count >= 1);
     require(projectile_states[0].owner_peer == 0);
     require(projectile_states[0].velocity.x < 0.0f);
+    enemy_count = query_enemies(kernel, &enemy_states);
+    require(enemy_count == 1);
+    require(enemy_states[0].position.x == 6.0f);
+    require(enemy_states[0].velocity.x == 0.0f);
+    require(enemy_states[0].velocity.y == 0.0f);
+    require(enemy_states[0].velocity.z == 0.0f);
 
     run_server_frame(kernel, &game_server);
     player_count = query_players(kernel, &player_states);
@@ -270,37 +274,27 @@ int main() {
     require(enemy_count == 1);
     require(enemy_states[0].position.x == 6.0f);
 
-    std::uint32_t next_input_seq = 1;
-    for (int shot = 0; shot < 19; ++shot) {
-        submit_player_fire(kernel, next_input_seq++, 0);
-        run_server_frame(kernel, &game_server);
-        run_server_frames(kernel, &game_server, 3);
-    }
-    enemy_count = query_enemies(kernel, &enemy_states);
-    require(enemy_count == 1);
-    require(enemy_states[0].hp < 50);
-    require(enemy_states[0].velocity.x > 0.0f);
-    require(enemy_states[0].velocity.y == 0.0f);
-    require(enemy_states[0].velocity.z == 0.0f);
-    const float fleeing_enemy_x = enemy_states[0].position.x;
-    run_server_frame(kernel, &game_server);
-    enemy_count = query_enemies(kernel, &enemy_states);
-    require(enemy_count == 1);
-    require(enemy_states[0].position.x > fleeing_enemy_x);
-
     KernelVec3 far_position{100.0f, 0.0f, 0.0f};
     KernelQuat identity_rotation{0.0f, 0.0f, 0.0f, 1.0f};
     require(Kernel_ServerSetEntityTransform(
         kernel,
-        enemy_net_id,
+        player_net_id,
         &far_position,
         &identity_rotation));
+    Kernel_Update(kernel, 1.0f / 30.0f);
     game_server.tick(1.0f / 30.0f);
     enemy_count = query_enemies(kernel, &enemy_states);
     require(enemy_count == 1);
+    require(game_server.enemy_manager().enemies()[0].sentry.state ==
+            network_example::game_server::AgentSentryState::kAlert);
+    run_server_frames(kernel, &game_server, 151);
+    enemy_count = query_enemies(kernel, &enemy_states);
+    require(enemy_count == 1);
+    require(game_server.enemy_manager().enemies()[0].sentry.state ==
+            network_example::game_server::AgentSentryState::kIdle);
     require(enemy_states[0].animation_state ==
             network_example::game_server::kEnemyAnimationIdle);
-    require(enemy_states[0].velocity.x != 0.0f);
+    require(enemy_states[0].velocity.x == 0.0f);
     require(enemy_states[0].velocity.y == 0.0f);
     require(enemy_states[0].velocity.z == 0.0f);
 
@@ -375,7 +369,7 @@ int main() {
     require(enemy_count == 1);
     require(enemy_states[0].animation_state ==
             network_example::game_server::kEnemyAnimationIdle);
-    require(enemy_states[0].velocity.x != 0.0f);
+    require(enemy_states[0].velocity.x == 0.0f);
     require(enemy_states[0].velocity.y == 0.0f);
     require(enemy_states[0].velocity.z == 0.0f);
 

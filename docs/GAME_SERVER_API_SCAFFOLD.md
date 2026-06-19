@@ -95,9 +95,9 @@ The game server layer gets these behaviors without owning replication logic:
 Game Server v1 adds a `game_server` layer that calls the prepared kernel API:
 
 - `EnemyManager` calls entity create/destroy.
-- `EnemyAIController` queries players/entities.
-- AI writes velocity, transform, animation state, and visual flags back to the
-  kernel.
+- `AgentSentryController` reads kernel vision state.
+- Agent sentry behavior writes stationary velocity, animation state, and fire
+  input requests back to the kernel.
 - Unity remains presentation-only and does not run AI or network tick logic.
 
 ## Implemented Checklist

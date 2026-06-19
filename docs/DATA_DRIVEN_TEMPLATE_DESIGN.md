@@ -339,7 +339,8 @@ gameplay catalog ABI:
 - projectile templates are loaded independently and packed for kernel use
 - collider templates may still be packed for kernel use
 - actor templates remain `game_server` configuration, but their resolved
-  collider template id is packed into `KernelCombatStateDefinition`
+  collider template id is packed into `KernelCombatStateDefinition`, and their
+  vision collider template id is packed into `KernelAgentVisionConfig`
 
 Do not add `KernelActorTemplateDefinition`, extend
 `KernelGameplayCatalogDefinition`, or update Unity managed ABI for actor
@@ -360,7 +361,8 @@ changes. It should cover:
 - player and enemy actor template references
 - enemy spawn position, count, radius, and seed
 - actor IDs, names, entity types, health, movement, hitboxes, weapon slots,
-  active slots, animation states, AI tunables, and collider template references
+  active slots, animation states, AI tunables, collider template references,
+  and vision collider template references
 - collider template definitions
 
 Hashing must sort unordered template collections by stable IDs so filesystem

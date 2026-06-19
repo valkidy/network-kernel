@@ -38,6 +38,10 @@ int main(void) {
     KernelDebugInfo debug_info;
     KernelColliderShapeQuery collider_query;
     KernelColliderShapeView collider_shape;
+    KernelVec4 shape_params;
+    KernelAgentVisionConfig agent_vision_config;
+    KernelVisionStateQuery vision_query;
+    KernelVisionStateView vision_state;
 
     (void)config;
     (void)build_info;
@@ -70,12 +74,18 @@ int main(void) {
     (void)debug_info;
     (void)collider_query;
     (void)collider_shape;
+    (void)shape_params;
+    (void)agent_vision_config;
+    (void)vision_query;
+    (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 20u);
+    assert(KERNEL_ABI_VERSION == 22u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD == 4u);
     assert(KERNEL_MAX_WEAPONS == 7u);
+    assert(KERNEL_MAX_VISIBLE_HOSTILES == 16u);
+    assert(KERNEL_MAX_VISIBLE_ALLIES == 16u);
     assert(KERNEL_LAN_DISCOVERY_DEFAULT_PORT == 47777u);
     assert(sizeof(KernelAbiInfo) > 0u);
     assert(sizeof(KernelBuildInfo) > 0u);
@@ -109,6 +119,14 @@ int main(void) {
     assert(sizeof(KernelDebugInfo) > 0u);
     assert(sizeof(KernelColliderShapeQuery) > 0u);
     assert(sizeof(KernelColliderShapeView) > 0u);
+    assert(sizeof(KernelVec4) == 16u);
+    assert(sizeof(KernelAgentVisionConfig) > 0u);
+    assert(sizeof(KernelVisionStateQuery) > 0u);
+    assert(sizeof(KernelVisionStateView) > 0u);
+    assert(KernelAgentCamp_PlayerSide == 1);
+    assert(KernelAgentRelation_Hostile == 2);
+    assert(KernelColliderShapeType_Cone == 4);
+    assert(KernelColliderPurpose_Vision == (1u << 3));
     assert((KERNEL_CAPABILITY_CLIENT_MODE & KERNEL_CAPABILITY_RENDER_STATES) == 0u);
     assert((KERNEL_CAPABILITY_LAG_COMPENSATED_PROJECTILE &
             KERNEL_CAPABILITY_EVENT_PRESENTATION_TIME) == 0u);
@@ -118,6 +136,8 @@ int main(void) {
             KERNEL_CAPABILITY_SERVER_ENTITY_CREATE) == 0u);
     assert((KERNEL_CAPABILITY_WEAPON_METADATA_QUERY &
             KERNEL_CAPABILITY_SERVER_MECHANICS_CONFIG) == 0u);
+    assert((KERNEL_CAPABILITY_VISION_STATE_QUERY &
+            KERNEL_CAPABILITY_COLLIDER_SHAPE_QUERY) == 0u);
     assert((KERNEL_CAPABILITY_AREA_EFFECT_WEAPONS &
             KERNEL_CAPABILITY_PROJECTILE_RESPONSE_MASKS) == 0u);
     assert((KERNEL_CAPABILITY_BEAM_WEAPONS &

@@ -104,7 +104,15 @@ void write_valid_collider_catalog(const std::filesystem::path& weapon_dir) {
         "    half_extents: {x: 0.1, y: 0.1, z: 2.5}\n"
         "    radius: 0.0\n"
         "    purpose: damage\n"
-        "    layer: projectile\n");
+        "    layer: projectile\n"
+        "  - id: 9\n"
+        "    name: cone_vision\n"
+        "    shape: cone\n"
+        "    center: {x: 0.0, y: 0.0, z: 0.0}\n"
+        "    range: 12.0\n"
+        "    fov_degrees: 90.0\n"
+        "    purpose: vision\n"
+        "    layer: agent_vision\n");
 }
 
 void write_valid_templates(const std::filesystem::path& dir) {
@@ -308,21 +316,21 @@ void valid_repo_templates_load_all_slots() {
         if (collider.definition.template_id == 6) {
             found_segment = true;
             assert(collider.definition.shape_type == KernelColliderShapeType_Segment);
-            assert(collider.definition.segment_length == 40.0f);
-            assert(collider.definition.scatter_degrees == 6.0f);
+            assert(collider.definition.shape_params.x == 40.0f);
+            assert(collider.definition.shape_params.z == 6.0f);
             assert(collider.definition.lifetime_ticks == 3);
         }
         if (collider.definition.template_id == 7) {
             found_sphere = true;
             assert(collider.definition.shape_type == KernelColliderShapeType_Sphere);
-            assert(collider.definition.radius == 0.2f);
+            assert(collider.definition.shape_params.x == 0.2f);
         }
         if (collider.definition.template_id == 8) {
             found_beam = true;
             assert(collider.definition.shape_type == KernelColliderShapeType_OrientedBox);
-            assert(collider.definition.half_extents.x == 0.1f);
-            assert(collider.definition.half_extents.y == 0.1f);
-            assert(collider.definition.half_extents.z == 2.5f);
+            assert(collider.definition.shape_params.x == 0.1f);
+            assert(collider.definition.shape_params.y == 0.1f);
+            assert(collider.definition.shape_params.z == 2.5f);
         }
     }
     assert(found_segment);
@@ -637,7 +645,7 @@ void catalog_file_loads_colliders() {
             catalog_file.string());
     assert(config.weapons.catalog_version == 1);
     assert(config.weapons.catalog_hash != 0);
-    assert(config.colliders.templates.size() == 8);
+    assert(config.colliders.templates.size() == 9);
     assert(config.colliders.bindings.empty());
 }
 

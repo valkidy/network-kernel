@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 20u`.
+`KERNEL_ABI_VERSION == 22u`.
 
 ## Ownership
 
@@ -138,6 +138,25 @@ projectile template's resolved collider template id. Client/debug tooling should
 consume the resolved `RenderEntityState::collider_template_id` rather than
 falling back to an `entity_type` binding.
 
+ABI version 21 adds the stable kernel perception query surface for Vision
+System v1. Server gameplay configures agent perception with
+`Kernel_ServerSetEntityVisionConfig` and may clear it with
+`Kernel_ServerClearEntityVisionConfig`. Presentation and gameplay consumers can
+read cone perception state through `Kernel_QueryVisionState`, including visible
+allies and hostiles, current hostile candidate, last seen target, and last known
+target position. The view intentionally excludes variable behavior/controller
+state.
+
+ABI version 22 adds `KernelVec4`, compresses collider shape-specific template
+and debug view data into `KernelColliderTemplateDefinition::shape_params` and
+`KernelColliderShapeView::shape_params`, and adds cone vision colliders through
+`KernelColliderShapeType_Cone`, `KernelColliderPurpose_Vision`, and
+`KERNEL_COLLISION_LAYER_AGENT_VISION`. `KernelAgentVisionConfig` now references
+the vision cone by `vision_collider_template_id`, and
+`KernelVisionStateView` returns that id with the resolved actor collider id.
+Visual debuggers should read `Kernel_QueryVisionState` for runtime perception
+and `Kernel_GetColliderTemplates` for the referenced cone parameters.
+
 Snapshot schema version 6 refines the v2 sectioned snapshot payload. Actor
 records cover player, enemy, and future AI bot entities with optional owner,
 rotation, and hp fields. Projectile records split into compact snapshots and
@@ -155,6 +174,12 @@ and `purpose_mask == 0` also mean no filter for that dimension. Persistent
 entity on clients and for the lifetime of their gameplay entity on servers.
 Transient colliders, such as segment or beam volumes, are queryable while their
 `lifetime_ticks` / `remaining_ticks` keep them active.
+
+`Kernel_QueryVisionState` treats a `NULL` query as no filters. Within
+`KernelVisionStateQuery`, `agent_net_id == 0` and `entity_type_filter == 0`
+also mean no filter for that dimension. The query returns host/server/local
+runtime state only; the ABI does not replicate perception state to pure remote
+clients in this revision.
 
 The current projectile interaction foundation is internal C++ engine state. It
 does not add Kernel C ABI functions, does not change public struct layout, and
@@ -225,8 +250,7 @@ checks `Kernel_GetLocalPlayerInfo`, updates the kernel, submits one input,
 polls events, reads render states, and destroys the handle.
 
 Current caveat: the workspace package source under
-`plugins/com.network-example.kernel` is not expanded with its package manifest,
-runtime C# files, editor tests, or staged dylib. The old packaged artifact under
-`plugins/output` contains managed bindings for an earlier ABI while the native
-header is v17. Unity package builder verify and Unity Editor smoke should be
-treated as stale until the package is restored and resynced with ABI v17.
+`plugins/com.network-example.kernel` contains the minimal Vision v1 managed ABI
+mirror and layout checks, but the native dylib is not staged in the package in
+this branch. The old packaged artifact under `plugins/output` may contain
+managed bindings for an earlier ABI and should not be treated as authoritative.
