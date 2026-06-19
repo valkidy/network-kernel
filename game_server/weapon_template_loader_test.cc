@@ -42,7 +42,7 @@ void write_valid_collider_catalog(const std::filesystem::path& weapon_dir) {
         "    half_extents: {x: 0.35, y: 0.9, z: 0.35}\n"
         "    radius: 0.0\n"
         "    purpose: hit\n"
-        "    layer: player\n"
+        "    layer: player_side\n"
         "  - id: 2\n"
         "    name: enemy_hit\n"
         "    shape: aabb\n"
@@ -50,7 +50,7 @@ void write_valid_collider_catalog(const std::filesystem::path& weapon_dir) {
         "    half_extents: {x: 0.4, y: 0.8, z: 0.4}\n"
         "    radius: 0.0\n"
         "    purpose: hit\n"
-        "    layer: enemy\n"
+        "    layer: hostile_side\n"
         "  - id: 3\n"
         "    name: projectile_damage\n"
         "    shape: aabb\n"
@@ -124,7 +124,7 @@ void write_valid_templates(const std::filesystem::path& dir) {
         "collider_template: sphere_damage\n"
         "movement_model: linear\nhit_response: destroy\n"
         "damage_shape: direct_hit\nspeed: 30.0\nlifetime_seconds: 2.0\n"
-        "collision_mask: player\nmax_hit_count: 1\n"
+        "collision_mask: player_side\nmax_hit_count: 1\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
     write_file(
         dir.parent_path() / "projectile_templates" / "rocket.yaml",
@@ -157,7 +157,7 @@ void write_valid_templates(const std::filesystem::path& dir) {
         "collider_template: sphere_damage\n"
         "movement_model: homing\nhit_response: destroy\n"
         "damage_shape: direct_hit\nspeed: 20.0\nlifetime_seconds: 3.0\n"
-        "collision_mask: enemy\nmax_hit_count: 1\n"
+        "collision_mask: hostile_side\nmax_hit_count: 1\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n"
         "homing:\n"
         "  homing_mode: fire_and_forget\n"
@@ -197,14 +197,14 @@ void write_valid_templates(const std::filesystem::path& dir) {
         "damage: 12\ncooldown_ticks: 10\nreload_ticks: 30\narea_effect:\n"
         "  collider_template: explosion_damage\n"
         "  radius: 2.0\n  damage_per_interval: 12\n  damage_interval_ticks: 2\n"
-        "  lifetime_ticks: 6\n  spawn_distance: 1.0\n  collision_mask: enemy\n");
+        "  lifetime_ticks: 6\n  spawn_distance: 1.0\n  collision_mask: hostile_side\n");
     write_file(
         dir / "beam_rifle.yaml",
         "id: 5\nname: Beam Rifle\nweapon_type: beam\nmagazine_size: 12\n"
         "damage: 30\ncooldown_ticks: 1\nreload_ticks: 45\nbeam:\n"
         "  collider_template: beam_damage\n"
         "  length: 8.0\n  radius: 0.25\n  damage_per_second: 30\n"
-        "  lifetime_ticks: 2\n  collision_mask: enemy\n");
+        "  lifetime_ticks: 2\n  collision_mask: hostile_side\n");
     write_file(
         dir / "homing_missile.yaml",
         "id: 6\nname: Homing Missile\nweapon_type: projectile\nmagazine_size: 4\n"
@@ -280,7 +280,7 @@ void valid_repo_templates_load_all_slots() {
     assert(config.weapons.collider_template_ids
                [network_example::game_server::kWeaponFireFloor] == 4);
     assert(config.weapons.definitions[network_example::game_server::kWeaponFireFloor]
-               .area_effect.collision_mask == KERNEL_COLLISION_LAYER_ENEMY);
+               .area_effect.collision_mask == KERNEL_COLLISION_LAYER_HOSTILE_SIDE);
     assert(config.weapons.definitions[network_example::game_server::kWeaponBeamRifle]
                .fire_mode == KernelWeaponFireMode_Beam);
     assert(config.weapons.collider_template_ids
@@ -375,7 +375,7 @@ void invalid_templates_are_rejected() {
         "damage: 12\ncooldown_ticks: 10\nreload_ticks: 30\narea_effect:\n"
         "  collider_template: explosion_damage\n"
         "  radius: 2.0\n  damage_per_interval: 12\n  damage_interval_ticks: 2\n"
-        "  lifetime_ticks: 6\n  spawn_distance: 1.0\n  collision_mask: enemy\n"
+        "  lifetime_ticks: 6\n  spawn_distance: 1.0\n  collision_mask: hostile_side\n"
         "  current_tick: 123\n");
     assert(load_fails(unknown_area_field_dir));
 
@@ -388,7 +388,7 @@ void invalid_templates_are_rejected() {
         "damage: 30\ncooldown_ticks: 1\nreload_ticks: 45\nbeam:\n"
         "  collider_template: beam_damage\n"
         "  length: 8.0\n  radius: 0.25\n  damage_per_second: 30\n"
-        "  lifetime_ticks: 2\n  collision_mask: enemy\n  owner: player\n");
+        "  lifetime_ticks: 2\n  collision_mask: hostile_side\n  owner: player\n");
     assert(load_fails(unknown_beam_field_dir));
 
     const std::filesystem::path unknown_homing_field_dir =
@@ -402,7 +402,7 @@ void invalid_templates_are_rejected() {
         "collider_template: sphere_damage\n"
         "movement_model: homing\nhit_response: destroy\n"
         "damage_shape: direct_hit\nspeed: 20.0\nlifetime_seconds: 3.0\n"
-        "collision_mask: enemy\nmax_hit_count: 1\n"
+        "collision_mask: hostile_side\nmax_hit_count: 1\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n"
         "homing:\n"
         "  homing_mode: fire_and_forget\n"
@@ -441,7 +441,7 @@ void invalid_templates_are_rejected() {
         "id: 5\nname: Beam\nweapon_type: beam\nmagazine_size: 1\n"
         "damage: 1\ncooldown_ticks: 1\nreload_ticks: 1\nbeam:\n"
         "  length: 0.0\n  radius: 0.25\n  damage_per_second: 30\n"
-        "  lifetime_ticks: 2\n  collision_mask: enemy\n");
+        "  lifetime_ticks: 2\n  collision_mask: hostile_side\n");
     assert(load_fails(invalid_beam_dir));
 
     const std::filesystem::path beam_on_hitscan_dir = tmp_dir("beam_on_hitscan");
@@ -474,7 +474,7 @@ void invalid_templates_are_rejected() {
         "collider_template: sphere_damage\n"
         "movement_model: homing\nhit_response: destroy\n"
         "damage_shape: direct_hit\nspeed: 1.0\nlifetime_seconds: 1.0\n"
-        "collision_mask: enemy\nmax_hit_count: 1\n"
+        "collision_mask: hostile_side\nmax_hit_count: 1\n"
         "homing:\n"
         "  homing_mode: retarget\n"
         "  sync_mode: hybrid_deterministic_then_snapshot\n"
@@ -601,13 +601,13 @@ void collision_mask_expressions_are_loaded() {
         "  collider_template: explosion_damage\n"
         "  radius: 2.0\n  damage_per_interval: 12\n  damage_interval_ticks: 2\n"
         "  lifetime_ticks: 6\n  spawn_distance: 1.0\n"
-        "  collision_mask: enemy | player\n");
+        "  collision_mask: player_side | hostile_side\n");
     config =
         network_example::game_server::load_gameplay_config_from_weapon_template_directory(
             expression_dir.string());
     assert(config.weapons.definitions[network_example::game_server::kWeaponFireFloor]
                .area_effect.collision_mask ==
-           (KERNEL_COLLISION_LAYER_ENEMY | KERNEL_COLLISION_LAYER_PLAYER));
+           (KERNEL_COLLISION_LAYER_HOSTILE_SIDE | KERNEL_COLLISION_LAYER_PLAYER_SIDE));
 }
 
 void malformed_collision_masks_are_rejected() {
@@ -631,7 +631,7 @@ void malformed_collision_masks_are_rejected() {
         "sync_mode: server_snapshot_only\ncollider_template: projectile_damage\n"
         "movement_model: linear\nhit_response: destroy\n"
         "damage_shape: direct_hit\nspeed: 35.0\nlifetime_seconds: 2.5\n"
-        "collision_mask: enemy |\n"
+        "collision_mask: hostile_side |\n"
         "max_hit_count: 1\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
     assert(load_fails(empty_token_dir));

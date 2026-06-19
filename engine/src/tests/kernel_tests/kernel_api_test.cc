@@ -130,7 +130,7 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 22u);
+    assert(KERNEL_ABI_VERSION == 24u);
     assert(sizeof(KernelVec4) == 16u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS) != 0);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
@@ -140,6 +140,8 @@ int main() {
     assert(KernelColliderShapeType_Cone == 4u);
     assert(KernelColliderPurpose_Vision == (1u << 3));
     assert(KERNEL_COLLISION_LAYER_AGENT_VISION == 0x00000010u);
+    assert(KERNEL_COLLISION_LAYER_NEUTRAL == 0x00000020u);
+    assert((KERNEL_COLLISION_MASK_DAMAGEABLE & KERNEL_COLLISION_LAYER_NEUTRAL) != 0u);
     assert(KERNEL_LAN_DISCOVERY_DEFAULT_PORT == 47777u);
     assert(offsetof(PlayerInput, client_action_time_us) > offsetof(PlayerInput, input_seq));
     assert(offsetof(PlayerInput, client_action_id) > offsetof(PlayerInput, client_action_time_us));
@@ -147,6 +149,7 @@ int main() {
     assert(offsetof(KernelEvent, presentation_time_us) > offsetof(KernelEvent, event_time_us));
     assert(offsetof(RenderEntityState, entity_id) == 0u);
     assert(offsetof(RenderEntityState, net_id) > offsetof(RenderEntityState, entity_id));
+    assert(offsetof(RenderEntityState, actor_type) > offsetof(RenderEntityState, entity_type));
     assert(offsetof(RenderEntityState, hp) > offsetof(RenderEntityState, velocity));
     assert(offsetof(RenderEntityState, max_hp) > offsetof(RenderEntityState, hp));
     assert(offsetof(RenderEntityState, status) > offsetof(RenderEntityState, client_action_id));
@@ -160,6 +163,8 @@ int main() {
            offsetof(KernelColliderTemplateDefinition, center));
     assert(offsetof(KernelAgentVisionConfig, vision_collider_template_id) >
            offsetof(KernelAgentVisionConfig, camp));
+    assert(KernelActorType_Player == 1u);
+    assert(KernelActorType_Agent == 2u);
     assert(RenderEntityStatus_Active == 0u);
     assert(RenderEntityStatus_Predicted == 1u);
     assert(RenderEntityStatus_Stale == 2u);
@@ -254,7 +259,8 @@ int main() {
     assert(!Kernel_GetLocalPlayerInfo(nullptr, nullptr));
     KernelServerEntityCreateInfo create_info{};
     create_info.struct_size = sizeof(create_info);
-    create_info.entity_type = 2;
+    create_info.entity_type = 1;
+    create_info.actor_type = KernelActorType_Agent;
     create_info.position = KernelVec3{1.0f, 0.0f, 0.0f};
     create_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
     std::uint32_t created_net_id = 0;
@@ -375,7 +381,7 @@ int main() {
     assert(read_collider_templates[1].shape_params.y == 90.0f);
     KernelColliderBindingDefinition rejected_binding{};
     rejected_binding.struct_size = sizeof(rejected_binding);
-    rejected_binding.entity_type = 2;
+    rejected_binding.entity_type = 1;
     rejected_binding.collider_template_id = 10;
     KernelGameplayCatalogDefinition rejected_binding_catalog = catalog;
     rejected_binding_catalog.collider_bindings = &rejected_binding;
@@ -437,6 +443,7 @@ int main() {
 
     KernelServerEntityCreateInfo player_create_info = create_info;
     player_create_info.entity_type = 1;
+    player_create_info.actor_type = KernelActorType_Player;
     player_create_info.position = KernelVec3{5.0f, 0.0f, 0.0f};
     std::uint32_t visible_player_net_id = 0;
     assert(Kernel_ServerCreateEntity(kernel, &player_create_info, &visible_player_net_id));
@@ -459,6 +466,8 @@ int main() {
                static_cast<std::uint32_t>(vision_states.size())) == 1);
     assert(vision_states[0].valid != 0u);
     assert(vision_states[0].agent_net_id == created_net_id);
+    assert(vision_states[0].entity_type == 1);
+    assert(vision_states[0].actor_type == KernelActorType_Agent);
     assert(vision_states[0].camp == KernelAgentCamp_EnemySide);
     assert(vision_states[0].vision_collider_template_id == 12);
     assert(vision_states[0].resolved_collider_template_id == 10);
@@ -512,7 +521,8 @@ int main() {
         static_cast<std::uint32_t>(collider_shapes.size()));
     assert(collider_count == 1);
     assert(collider_shapes[0].entity_net_id == created_net_id);
-    assert(collider_shapes[0].entity_type == 2);
+    assert(collider_shapes[0].entity_type == 1);
+    assert(collider_shapes[0].actor_type == KernelActorType_Agent);
     assert(collider_shapes[0].collider_template_id == 10);
     assert(collider_shapes[0].shape_type == KernelColliderShapeType_Aabb);
     assert(collider_shapes[0].collider_id != 0);
@@ -710,7 +720,7 @@ int main() {
     beam_weapon.beam.radius = 0.25f;
     beam_weapon.beam.damage_per_second = 30;
     beam_weapon.beam.lifetime_ticks = 2;
-    beam_weapon.beam.collision_mask = KERNEL_COLLISION_LAYER_ENEMY;
+    beam_weapon.beam.collision_mask = KERNEL_COLLISION_LAYER_HOSTILE_SIDE;
     assert(Kernel_ServerValidateMechanicsConfig(&beam_weapon));
     assert(Kernel_ServerSetEntityWeaponMechanics(kernel, created_net_id, &beam_weapon));
     queried_weapon = KernelWeaponMechanicsDefinition{};
@@ -754,7 +764,8 @@ int main() {
     assert(Kernel_ServerGetEntityState(kernel, created_net_id, &server_state));
     assert(server_state.valid != 0u);
     assert(server_state.net_id == created_net_id);
-    assert(server_state.entity_type == 2);
+    assert(server_state.entity_type == 1);
+    assert(server_state.actor_type == KernelActorType_Agent);
     assert(server_state.animation_state == 7);
     assert(
         server_state.visual_flags ==
@@ -769,10 +780,11 @@ int main() {
     }
     assert(Kernel_ServerQueryEntities(
                kernel,
-               2,
+               1,
                queried_states.data(),
                static_cast<std::uint32_t>(queried_states.size())) == 1);
     assert(queried_states[0].net_id == created_net_id);
+    assert(queried_states[0].actor_type == KernelActorType_Agent);
     assert(queried_states[0].hp == 240);
     assert(queried_states[0].max_hp == 240);
     assert(Kernel_ServerQueryEntities(

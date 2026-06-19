@@ -108,6 +108,7 @@ bool EnemyManager::spawn_enemy_at(const KernelVec3& position) {
     KernelServerEntityCreateInfo create_info{};
     create_info.struct_size = sizeof(KernelServerEntityCreateInfo);
     create_info.entity_type = actor_template->entity_type;
+    create_info.actor_type = actor_template->actor_type;
     create_info.owner_peer = 0;
     create_info.position = position;
     create_info.rotation = kIdentityRotation;

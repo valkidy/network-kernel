@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 22u
+#define KERNEL_ABI_VERSION 24u
 
 #define KERNEL_BUILD_INFO_TEXT_SIZE 128u
 #define KERNEL_LAN_DISCOVERY_TEXT_SIZE 128u
@@ -80,14 +80,16 @@
 #define KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS UINT64_C(0x0000000200000000)
 #define KERNEL_CAPABILITY_VISION_STATE_QUERY UINT64_C(0x0000000400000000)
 
-#define KERNEL_COLLISION_LAYER_PLAYER UINT32_C(0x00000001)
-#define KERNEL_COLLISION_LAYER_ENEMY UINT32_C(0x00000002)
+#define KERNEL_COLLISION_LAYER_PLAYER_SIDE UINT32_C(0x00000001)
+#define KERNEL_COLLISION_LAYER_HOSTILE_SIDE UINT32_C(0x00000002)
 #define KERNEL_COLLISION_LAYER_PROJECTILE UINT32_C(0x00000004)
 #define KERNEL_COLLISION_LAYER_AREA_EFFECT UINT32_C(0x00000008)
 #define KERNEL_COLLISION_LAYER_AGENT_VISION UINT32_C(0x00000010)
+#define KERNEL_COLLISION_LAYER_NEUTRAL UINT32_C(0x00000020)
 #define KERNEL_COLLISION_MASK_NONE UINT32_C(0x00000000)
 #define KERNEL_COLLISION_MASK_DAMAGEABLE \
-    (KERNEL_COLLISION_LAYER_PLAYER | KERNEL_COLLISION_LAYER_ENEMY)
+    (KERNEL_COLLISION_LAYER_PLAYER_SIDE | KERNEL_COLLISION_LAYER_HOSTILE_SIDE | \
+     KERNEL_COLLISION_LAYER_NEUTRAL)
 
 #define KERNEL_VISUAL_FLAG_MOVING UINT32_C(0x00000001)
 #define KERNEL_VISUAL_FLAG_RELOADING UINT32_C(0x00000002)
@@ -220,6 +222,12 @@ typedef enum RenderEntityStatus {
     RenderEntityStatus_Predicted = 1,
     RenderEntityStatus_Stale = 2,
 } RenderEntityStatus;
+
+typedef enum KernelActorType {
+    KernelActorType_Unknown = 0,
+    KernelActorType_Player = 1,
+    KernelActorType_Agent = 2,
+} KernelActorType;
 
 typedef enum KernelEntityLifecycleEventType {
     KernelEntityLifecycleEventType_OutOfRange = 0,
@@ -365,6 +373,7 @@ typedef struct RenderEntityState {
     uint64_t entity_id;
     uint32_t net_id;
     uint16_t entity_type;
+    uint16_t actor_type;
     uint32_t owner_peer;
     KernelVec3 position;
     KernelQuat rotation;
@@ -383,6 +392,7 @@ typedef struct RenderEntityState {
 typedef struct KernelServerEntityCreateInfo {
     uint32_t struct_size;
     uint16_t entity_type;
+    uint16_t actor_type;
     uint32_t owner_peer;
     KernelVec3 position;
     KernelQuat rotation;
@@ -394,6 +404,7 @@ typedef struct KernelServerEntityState {
     uint32_t struct_size;
     uint32_t net_id;
     uint16_t entity_type;
+    uint16_t actor_type;
     uint32_t owner_peer;
     KernelVec3 position;
     KernelQuat rotation;
@@ -589,7 +600,7 @@ typedef struct KernelDebugRecordFilter {
 typedef struct KernelColliderShapeQuery {
     uint32_t struct_size;
     uint16_t entity_type_filter;
-    uint16_t reserved0;
+    uint16_t actor_type_filter;
     uint32_t entity_net_id;
     uint32_t purpose_mask;
 } KernelColliderShapeQuery;
@@ -598,7 +609,7 @@ typedef struct KernelColliderShapeView {
     uint32_t struct_size;
     uint32_t entity_net_id;
     uint16_t entity_type;
-    uint16_t reserved0;
+    uint16_t actor_type;
     uint32_t collider_template_id;
     uint8_t shape_type;
     uint8_t reserved1;
@@ -632,7 +643,7 @@ typedef struct KernelAgentVisionConfig {
 typedef struct KernelVisionStateQuery {
     uint32_t struct_size;
     uint16_t entity_type_filter;
-    uint16_t reserved0;
+    uint16_t actor_type_filter;
     uint32_t agent_net_id;
 } KernelVisionStateQuery;
 
@@ -641,7 +652,7 @@ typedef struct KernelVisionStateView {
     uint32_t agent_net_id;
     uint16_t entity_type;
     uint8_t camp;
-    uint8_t reserved0;
+    uint8_t actor_type;
     KernelVec3 vision_origin;
     KernelVec3 vision_forward;
     uint32_t vision_collider_template_id;
@@ -804,6 +815,7 @@ typedef struct KernelEntityLifecycleEvent {
     uint32_t net_id;
     uint32_t reason;
     uint16_t entity_type;
+    uint16_t actor_type;
     uint32_t owner_peer;
 } KernelEntityLifecycleEvent;
 

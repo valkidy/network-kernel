@@ -79,7 +79,7 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 22u);
+    assert(KERNEL_ABI_VERSION == 24u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD == 4u);
@@ -123,6 +123,8 @@ int main(void) {
     assert(sizeof(KernelAgentVisionConfig) > 0u);
     assert(sizeof(KernelVisionStateQuery) > 0u);
     assert(sizeof(KernelVisionStateView) > 0u);
+    assert(KernelActorType_Player == 1);
+    assert(KernelActorType_Agent == 2);
     assert(KernelAgentCamp_PlayerSide == 1);
     assert(KernelAgentRelation_Hostile == 2);
     assert(KernelColliderShapeType_Cone == 4);
@@ -146,10 +148,11 @@ int main(void) {
             KERNEL_CAPABILITY_BEAM_WEAPONS) == 0u);
     assert((KERNEL_CAPABILITY_LAN_DISCOVERY &
             KERNEL_CAPABILITY_HOMING_PROJECTILES) == 0u);
-    assert((KERNEL_COLLISION_LAYER_PLAYER & KERNEL_COLLISION_LAYER_ENEMY) == 0u);
+    assert((KERNEL_COLLISION_LAYER_PLAYER_SIDE & KERNEL_COLLISION_LAYER_HOSTILE_SIDE) == 0u);
     assert((KERNEL_COLLISION_LAYER_PROJECTILE & KERNEL_COLLISION_LAYER_AREA_EFFECT) == 0u);
-    assert((KERNEL_COLLISION_MASK_DAMAGEABLE & KERNEL_COLLISION_LAYER_PLAYER) != 0u);
-    assert((KERNEL_COLLISION_MASK_DAMAGEABLE & KERNEL_COLLISION_LAYER_ENEMY) != 0u);
+    assert((KERNEL_COLLISION_MASK_DAMAGEABLE & KERNEL_COLLISION_LAYER_PLAYER_SIDE) != 0u);
+    assert((KERNEL_COLLISION_MASK_DAMAGEABLE & KERNEL_COLLISION_LAYER_HOSTILE_SIDE) != 0u);
+    assert((KERNEL_COLLISION_MASK_DAMAGEABLE & KERNEL_COLLISION_LAYER_NEUTRAL) != 0u);
     assert((KERNEL_VISUAL_FLAG_MOVING & KERNEL_VISUAL_FLAG_RELOADING) == 0u);
     assert((KERNEL_VISUAL_FLAG_MOVING & KERNEL_VISUAL_FLAG_DEAD) == 0u);
     assert((InputButton_Dodge & InputButton_Parry) == 0u);

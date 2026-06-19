@@ -126,7 +126,7 @@ private:
         std::uint32_t last_processed_input_seq = 0;
         bool welcomed = false;
         std::unordered_set<NetId> relevant_entities;
-        std::size_t enemy_snapshot_cursor = 0;
+        std::size_t actor_snapshot_cursor = 0;
         std::size_t projectile_snapshot_cursor = 0;
         std::uint32_t pending_clock_sync_nonce = 0;
         std::uint64_t pending_clock_sync_server_time_us = 0;
@@ -139,6 +139,7 @@ private:
     struct ClientReplicatedEntity {
         NetId net_id = 0;
         EntityType type = EntityType::kUnknown;
+        ActorType actor_type = ActorType::kUnknown;
         PeerId owner_peer = 0;
         glm::vec3 position{0.0f, 0.0f, 0.0f};
         glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};

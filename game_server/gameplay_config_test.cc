@@ -288,7 +288,8 @@ int main() {
         config.actor_templates[0];
     assert(player_template.actor_template_id == 1);
     assert(player_template.name == "player");
-    assert(player_template.entity_type == network_example::game_server::kEntityTypePlayer);
+    assert(player_template.entity_type == network_example::game_server::kEntityTypeActor);
+    assert(player_template.actor_type == network_example::game_server::kActorTypePlayer);
     assert(player_template.collider_template_id == 1);
     assert(player_template.weapon_slot_count == 2);
     assert(player_template.weapon_slots[0] == network_example::game_server::kWeaponRifle);
@@ -300,7 +301,8 @@ int main() {
         config.actor_templates[1];
     assert(enemy_template.actor_template_id == 2);
     assert(enemy_template.name == "enemy_grunt");
-    assert(enemy_template.entity_type == network_example::game_server::kEntityTypeEnemy);
+    assert(enemy_template.entity_type == network_example::game_server::kEntityTypeActor);
+    assert(enemy_template.actor_type == network_example::game_server::kActorTypeAgent);
     assert(enemy_template.collider_template_id == 2);
     assert(enemy_template.weapon_slot_count == 1);
     assert(enemy_template.weapon_slots[0] == network_example::game_server::kWeaponGrenade);
@@ -310,7 +312,7 @@ int main() {
     assert(fire_floor.weapon_id == network_example::game_server::kWeaponFireFloor);
     assert(fire_floor.fire_mode == KernelWeaponFireMode_AreaEffect);
     assert(fire_floor.area_effect.radius == 2.0f);
-    assert(fire_floor.area_effect.collision_mask == KERNEL_COLLISION_LAYER_ENEMY);
+    assert(fire_floor.area_effect.collision_mask == KERNEL_COLLISION_LAYER_HOSTILE_SIDE);
     assert(config.weapons.names[network_example::game_server::kWeaponFireFloor] ==
            "Fire Floor");
 
@@ -322,7 +324,7 @@ int main() {
     assert(beam_rifle.beam.length == 8.0f);
     assert(beam_rifle.beam.radius == 0.25f);
     assert(beam_rifle.beam.damage_per_second == 30);
-    assert(beam_rifle.beam.collision_mask == KERNEL_COLLISION_LAYER_ENEMY);
+    assert(beam_rifle.beam.collision_mask == KERNEL_COLLISION_LAYER_HOSTILE_SIDE);
     assert(config.weapons.collider_template_ids
                [network_example::game_server::kWeaponBeamRifle] == 8);
     assert(config.weapons.names[network_example::game_server::kWeaponBeamRifle] ==
@@ -501,7 +503,7 @@ int main() {
         "    half_extents: {x: 1.0, y: 1.0, z: 1.0}\n"
         "    radius: 0.0\n"
         "    purpose: hit\n"
-        "    layer: player\n"
+        "    layer: player_side\n"
         "  - id: 1\n"
         "    name: b\n"
         "    shape: sphere\n"
@@ -509,7 +511,7 @@ int main() {
         "    half_extents: {x: 1.0, y: 1.0, z: 1.0}\n"
         "    radius: 1.0\n"
         "    purpose: damage\n"
-        "    layer: enemy\n"});
+        "    layer: hostile_side\n"});
     const std::vector<std::uint8_t> duplicate_collider_id_bundle =
         make_store_zip(duplicate_collider_files);
     bool duplicate_collider_id_rejected = false;

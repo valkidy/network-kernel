@@ -13,11 +13,13 @@ std::uint32_t entity_collision_layer_for_entity(
     const World& world,
     entt::entity entity) {
     std::uint32_t entity_layer = 0;
+    // TODO: derive actor collision side from gameplay faction data instead of
+    // spawn tags once faction rules are data-driven.
     if (world.registry().all_of<PlayerTag>(entity)) {
-        entity_layer |= kCollisionLayerPlayer;
+        entity_layer |= kCollisionLayerPlayerSide;
     }
-    if (world.registry().all_of<EnemyTag>(entity)) {
-        entity_layer |= kCollisionLayerEnemy;
+    if (world.registry().all_of<AgentTag>(entity)) {
+        entity_layer |= kCollisionLayerHostileSide;
     }
     if (world.registry().all_of<ProjectileTag>(entity)) {
         entity_layer |= kCollisionLayerProjectile;

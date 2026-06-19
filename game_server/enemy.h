@@ -7,8 +7,9 @@
 
 namespace network_example::game_server {
 
-inline constexpr std::uint16_t kEntityTypePlayer = 1;
-inline constexpr std::uint16_t kEntityTypeEnemy = 2;
+inline constexpr std::uint16_t kEntityTypeActor = 1;
+inline constexpr std::uint16_t kActorTypePlayer = KernelActorType_Player;
+inline constexpr std::uint16_t kActorTypeAgent = KernelActorType_Agent;
 
 inline constexpr std::uint16_t kEnemyAnimationIdle = 0;
 inline constexpr std::uint16_t kEnemyAnimationChasing = 1;

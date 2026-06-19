@@ -198,12 +198,13 @@ NetId World::allocate_net_id() {
 
 entt::entity World::create_networked_entity(
     EntityType type,
+    ActorType actor_type,
     PeerId owner_peer,
     const glm::vec3& position) {
     const entt::entity entity = registry_.create();
     const NetId net_id = allocate_net_id();
     registry_.emplace<NetworkIdentity>(entity, NetworkIdentity{net_id, owner_peer});
-    registry_.emplace<EntityKind>(entity, EntityKind{type});
+    registry_.emplace<EntityKind>(entity, EntityKind{type, actor_type});
     registry_.emplace<Transform>(entity, Transform{position, glm::quat{1.0f, 0.0f, 0.0f, 0.0f}});
     entities_by_net_id_[net_id] = entity;
     return entity;

@@ -23,7 +23,7 @@ int main() {
             30,
             8,
             5,
-            network_example::kCollisionLayerEnemy);
+            network_example::kCollisionLayerHostileSide);
     assert(player == 1);
     assert(enemy == 2);
     assert(area == 3);
@@ -44,7 +44,12 @@ int main() {
     assert(beam_state.radius == 0.25f);
     assert(beam_state.damage_per_second == 30);
     assert(beam_state.expire_tick == 8);
-    assert(beam_state.collision_mask == network_example::kCollisionLayerEnemy);
+    static_assert(
+        network_example::kCollisionMaskDamageable ==
+        (network_example::kCollisionLayerPlayerSide |
+         network_example::kCollisionLayerHostileSide |
+         network_example::kCollisionLayerNeutral));
+    assert(beam_state.collision_mask == network_example::kCollisionLayerHostileSide);
     assert(
         world.registry().get<network_example::EntityKind>(*beam_entity).type ==
         network_example::EntityType::kBeam);

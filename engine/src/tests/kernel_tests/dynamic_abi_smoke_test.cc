@@ -504,7 +504,8 @@ int main() {
 
     KernelServerEntityCreateInfo create_info{};
     create_info.struct_size = sizeof(create_info);
-    create_info.entity_type = 2;
+    create_info.entity_type = 1;
+    create_info.actor_type = KernelActorType_Agent;
     create_info.position = KernelVec3{2.0f, 0.0f, 0.0f};
     create_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
     std::uint32_t enemy = 0;

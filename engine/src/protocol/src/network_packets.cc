@@ -16,7 +16,7 @@ namespace {
 constexpr std::size_t kInputPayloadSize = 45;
 constexpr std::size_t kSnapshotHeaderPayloadSize = 16;
 constexpr std::size_t kSnapshotSectionHeaderPayloadSize = 4;
-constexpr std::size_t kActorSnapshotBasePayloadSize = 38;
+constexpr std::size_t kActorSnapshotBasePayloadSize = 40;
 constexpr std::size_t kActorOwnerPeerPayloadSize = 4;
 constexpr std::size_t kActorRotationPayloadSize = 16;
 constexpr std::size_t kActorHealthPayloadSize = 4;
@@ -24,7 +24,7 @@ constexpr std::size_t kProjectileCompactSnapshotPayloadSize = 42;
 constexpr std::size_t kProjectileHybridCorrectionSnapshotPayloadSize = 54;
 constexpr std::size_t kGenericSnapshotPayloadSize = 44;
 constexpr std::size_t kReliableEventPayloadSize = 34;
-constexpr std::size_t kEntitySpawnPayloadSize = 42;
+constexpr std::size_t kEntitySpawnPayloadSize = 44;
 constexpr std::size_t kEntityDespawnPayloadSize = 12;
 constexpr std::size_t kProjectileSpawnBatchHeaderPayloadSize = 24;
 constexpr std::size_t kProjectileSpawnGroupHeaderPayloadSize = 8;
@@ -44,14 +44,13 @@ enum ActorSnapshotRecordFlag : std::uint16_t {
 };
 
 bool is_actor_entity_type(EntityType type) {
-    return type == EntityType::kPlayer || type == EntityType::kEnemy;
+    return type == EntityType::kActor;
 }
 
 std::uint16_t actor_record_flags(const EntitySnapshot& entity) {
-    std::uint16_t flags = 0;
-    if (entity.type == EntityType::kPlayer) {
+    std::uint16_t flags = kActorSnapshotHasRotation;
+    if (entity.actor_type == ActorType::kPlayer) {
         flags |= kActorSnapshotHasOwnerPeer;
-        flags |= kActorSnapshotHasRotation;
         if ((entity.state_flags & kSnapshotStateFlagHpUnknown) == 0u) {
             flags |= kActorSnapshotHasHealth;
         }
@@ -207,6 +206,7 @@ std::vector<std::uint8_t> encode_snapshot_packet(
                 case SnapshotSectionType::kActor: {
                     const std::uint16_t record_flags = actor_record_flags(*entity);
                     payload.write_u16(static_cast<std::uint16_t>(entity->type));
+                    payload.write_u16(static_cast<std::uint16_t>(entity->actor_type));
                     payload.write_u16(record_flags);
                     payload.write_vec3(entity->position);
                     payload.write_vec3(entity->velocity);
@@ -312,8 +312,10 @@ bool decode_snapshot_packet(
             switch (section_type) {
                 case SnapshotSectionType::kActor: {
                     std::uint16_t entity_type = 0;
+                    std::uint16_t actor_type = 0;
                     std::uint16_t record_flags = 0;
                     if (!reader.read_u16(&entity_type) ||
+                        !reader.read_u16(&actor_type) ||
                         !reader.read_u16(&record_flags) ||
                         !reader.read_vec3(&entity.position) ||
                         !reader.read_vec3(&entity.velocity) ||
@@ -322,6 +324,7 @@ bool decode_snapshot_packet(
                         return false;
                     }
                     entity.type = static_cast<EntityType>(entity_type);
+                    entity.actor_type = static_cast<ActorType>(actor_type);
                     if ((record_flags & kActorSnapshotHasOwnerPeer) != 0u &&
                         !reader.read_u32(&entity.owner_peer)) {
                         return false;
@@ -406,13 +409,9 @@ std::size_t estimate_snapshot_base_packet_size() {
 
 std::size_t estimate_snapshot_entity_size(EntityType type) {
     switch (type) {
-        case EntityType::kPlayer:
+        case EntityType::kActor:
             return kActorSnapshotBasePayloadSize +
-                   kActorOwnerPeerPayloadSize +
-                   kActorRotationPayloadSize +
-                   kActorHealthPayloadSize;
-        case EntityType::kEnemy:
-            return kActorSnapshotBasePayloadSize;
+                   kActorRotationPayloadSize;
         case EntityType::kProjectile:
             return kProjectileCompactSnapshotPayloadSize;
         default:
@@ -512,6 +511,7 @@ std::vector<std::uint8_t> encode_entity_spawn_packet(
     payload.reserve(kEntitySpawnPayloadSize);
     payload.write_u32(packet.net_id);
     payload.write_u16(static_cast<std::uint16_t>(packet.entity_type));
+    payload.write_u16(static_cast<std::uint16_t>(packet.actor_type));
     payload.write_u32(packet.owner_peer);
     payload.write_u32(packet.server_tick);
     payload.write_vec3(packet.position);
@@ -541,9 +541,11 @@ bool decode_entity_spawn_packet(
 
     EntitySpawnPacket packet{};
     std::uint16_t entity_type = 0;
+    std::uint16_t actor_type = 0;
     protocol_internal::PacketReader reader(payload, payload_size);
     if (!reader.read_u32(&packet.net_id) ||
         !reader.read_u16(&entity_type) ||
+        !reader.read_u16(&actor_type) ||
         !reader.read_u32(&packet.owner_peer) ||
         !reader.read_u32(&packet.server_tick) ||
         !reader.read_vec3(&packet.position) ||
@@ -552,6 +554,7 @@ bool decode_entity_spawn_packet(
         return false;
     }
     packet.entity_type = static_cast<EntityType>(entity_type);
+    packet.actor_type = static_cast<ActorType>(actor_type);
     *out_packet = packet;
     return true;
 }

@@ -88,6 +88,7 @@ private:
     NetId allocate_net_id();
     entt::entity create_networked_entity(
         EntityType type,
+        ActorType actor_type,
         PeerId owner_peer,
         const glm::vec3& position);
 

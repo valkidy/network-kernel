@@ -40,11 +40,18 @@ std::uint32_t query_enemy_count(KernelHandle* kernel) {
     for (KernelServerEntityState& state : states) {
         state.struct_size = sizeof(KernelServerEntityState);
     }
-    return Kernel_ServerQueryEntities(
+    const std::uint32_t count = Kernel_ServerQueryEntities(
         kernel,
-        2,
+        1,
         states.data(),
         static_cast<std::uint32_t>(states.size()));
+    std::uint32_t enemy_count = 0;
+    for (std::uint32_t index = 0; index < count; ++index) {
+        if (states[index].actor_type == KernelActorType_Agent) {
+            ++enemy_count;
+        }
+    }
+    return enemy_count;
 }
 
 std::filesystem::path runfiles_root() {
@@ -319,12 +326,12 @@ int main() {
     template_info.struct_size = sizeof(template_info);
     assert(GameServer_QueryWeaponTemplate(yaml_game_server, 4, &template_info));
     assert(template_info.mechanics.fire_mode == KernelWeaponFireMode_AreaEffect);
-    assert(template_info.mechanics.area_effect.collision_mask == KERNEL_COLLISION_LAYER_ENEMY);
+    assert(template_info.mechanics.area_effect.collision_mask == KERNEL_COLLISION_LAYER_HOSTILE_SIDE);
     template_info = GameServerWeaponTemplateInfo{};
     template_info.struct_size = sizeof(template_info);
     assert(GameServer_QueryWeaponTemplate(yaml_game_server, 5, &template_info));
     assert(template_info.mechanics.fire_mode == KernelWeaponFireMode_Beam);
-    assert(template_info.mechanics.beam.collision_mask == KERNEL_COLLISION_LAYER_ENEMY);
+    assert(template_info.mechanics.beam.collision_mask == KERNEL_COLLISION_LAYER_HOSTILE_SIDE);
     template_info = GameServerWeaponTemplateInfo{};
     template_info.struct_size = sizeof(template_info);
     assert(GameServer_QueryWeaponTemplate(yaml_game_server, 6, &template_info));

@@ -563,6 +563,7 @@ KernelServerEntityState to_server_entity_state(
     const Transform& transform = world.registry().get<Transform>(entity);
     state.net_id = identity.net_id;
     state.entity_type = static_cast<std::uint16_t>(kind.type);
+    state.actor_type = static_cast<std::uint16_t>(kind.actor_type);
     state.owner_peer = identity.owner_peer;
     state.position = to_kernel_vec3(transform.position);
     state.rotation = to_kernel_quat(transform.rotation);
@@ -1056,7 +1057,7 @@ bool KernelEngine::start_listen_server(std::uint16_t port) {
         KernelEventType_EntitySpawned,
         player,
         kLocalListenPeerId,
-        static_cast<std::uint32_t>(EntityType::kPlayer));
+        static_cast<std::uint32_t>(EntityType::kActor));
     publish_snapshot();
     poll_client_transport();
     rebuild_render_states();
@@ -1441,6 +1442,11 @@ std::uint32_t KernelEngine::query_collider_shapes(
                     static_cast<std::uint16_t>(collider.entity_type)) {
                 continue;
             }
+            if (query->actor_type_filter != 0 &&
+                query->actor_type_filter !=
+                    static_cast<std::uint16_t>(collider.actor_type)) {
+                continue;
+            }
             if (query->purpose_mask != 0 &&
                 (collider.purpose_flags & query->purpose_mask) == 0) {
                 continue;
@@ -1451,6 +1457,7 @@ std::uint32_t KernelEngine::query_collider_shapes(
         shape.struct_size = sizeof(KernelColliderShapeView);
         shape.entity_net_id = collider.entity_net_id;
         shape.entity_type = static_cast<std::uint16_t>(collider.entity_type);
+        shape.actor_type = static_cast<std::uint16_t>(collider.actor_type);
         shape.collider_template_id = collider.collider_template_id;
         shape.shape_type = to_kernel_collider_shape_type(collider.shape_type);
         shape.world_center = to_kernel_vec3(collider.world_center);
@@ -1496,6 +1503,10 @@ std::uint32_t KernelEngine::query_vision_state(
             }
             if (query->entity_type_filter != 0 &&
                 query->entity_type_filter != view.entity_type) {
+                continue;
+            }
+            if (query->actor_type_filter != 0 &&
+                query->actor_type_filter != view.actor_type) {
                 continue;
             }
         }
@@ -1576,6 +1587,7 @@ void KernelEngine::materialize_entity_collider(NetId net_id) {
     collider.owner_net_id = identity.net_id;
     collider.entity_net_id = identity.net_id;
     collider.entity_type = kind.type;
+    collider.actor_type = kind.actor_type;
     collider.shape_type = to_collider_shape_type(collider_template->shape_type);
     collider.purpose_flags = collider_template->purpose_flags;
     collider.layer_mask = collider_template->layer_mask;
@@ -1631,6 +1643,7 @@ void KernelEngine::materialize_projectile_collider(NetId net_id) {
     collider.owner_net_id = projectile.shooter_net_id;
     collider.entity_net_id = identity.net_id;
     collider.entity_type = kind.type;
+    collider.actor_type = kind.actor_type;
     collider.shape_type = to_collider_shape_type(collider_template->shape_type);
     collider.purpose_flags = collider_template->purpose_flags;
     collider.layer_mask = collider_template->layer_mask;
@@ -1712,6 +1725,7 @@ void KernelEngine::sync_client_render_colliders() {
             entity_type == EntityType::kProjectile ? 0u : state.net_id;
         collider.entity_net_id = state.net_id;
         collider.entity_type = entity_type;
+        collider.actor_type = static_cast<ActorType>(state.actor_type);
         collider.shape_type = to_collider_shape_type(collider_template->shape_type);
         collider.purpose_flags = collider_template->purpose_flags;
         collider.layer_mask = collider_template->layer_mask;
@@ -1757,12 +1771,13 @@ bool KernelEngine::server_create_entity(
     }
 
     const EntityType type = static_cast<EntityType>(create_info.entity_type);
+    const ActorType actor_type = static_cast<ActorType>(create_info.actor_type);
     NetId net_id = 0;
-    if (type == EntityType::kPlayer) {
+    if (type == EntityType::kActor && actor_type == ActorType::kPlayer) {
         net_id = world_.spawn_player(
             create_info.owner_peer,
             from_kernel_vec3(create_info.position));
-    } else if (type == EntityType::kEnemy) {
+    } else if (type == EntityType::kActor && actor_type == ActorType::kAgent) {
         net_id = world_.spawn_enemy(from_kernel_vec3(create_info.position));
     } else {
         return false;
@@ -1794,6 +1809,14 @@ bool KernelEngine::server_destroy_entity(NetId net_id, std::uint32_t reason) {
     if (!running_ || !is_server_mode(config_.mode) || net_id == 0) {
         return false;
     }
+    std::uint16_t entity_type = 0;
+    std::uint16_t actor_type = 0;
+    if (const std::optional<entt::entity> entity = world_.find_entity(net_id);
+        entity.has_value() && world_.registry().all_of<EntityKind>(*entity)) {
+        const EntityKind& kind = world_.registry().get<EntityKind>(*entity);
+        entity_type = static_cast<std::uint16_t>(kind.type);
+        actor_type = static_cast<std::uint16_t>(kind.actor_type);
+    }
     if (!world_.destroy(net_id)) {
         return false;
     }
@@ -1813,7 +1836,8 @@ bool KernelEngine::server_destroy_entity(NetId net_id, std::uint32_t reason) {
         tick_loop_.current_tick(),
         net_id,
         reason,
-        0,
+        entity_type,
+        actor_type,
         0,
     });
     publish_snapshot();
@@ -2624,6 +2648,7 @@ void KernelEngine::handle_client_spawn(const EntitySpawnPacket& packet) {
         client_replicated_entities_.push_back(ClientReplicatedEntity{
             packet.net_id,
             packet.entity_type,
+            packet.actor_type,
             packet.owner_peer,
             packet.position,
             packet.rotation,
@@ -2634,6 +2659,7 @@ void KernelEngine::handle_client_spawn(const EntitySpawnPacket& packet) {
         });
     } else {
         found->type = packet.entity_type;
+        found->actor_type = packet.actor_type;
         found->owner_peer = packet.owner_peer;
         found->position = packet.position;
         found->rotation = packet.rotation;
@@ -2655,6 +2681,18 @@ void KernelEngine::handle_client_despawn(const EntityDespawnPacket& packet) {
     };
     const KernelEntityLifecycleEventType lifecycle_type =
         lifecycle_type_for_despawn_reason(packet.reason);
+    std::uint16_t entity_type = 0;
+    std::uint16_t actor_type = 0;
+    const auto replicated = std::find_if(
+        client_replicated_entities_.begin(),
+        client_replicated_entities_.end(),
+        [&packet](const ClientReplicatedEntity& entity) {
+            return entity.net_id == packet.net_id;
+        });
+    if (replicated != client_replicated_entities_.end()) {
+        entity_type = static_cast<std::uint16_t>(replicated->type);
+        actor_type = static_cast<std::uint16_t>(replicated->actor_type);
+    }
     client_replicated_entities_.erase(
         std::remove_if(
             client_replicated_entities_.begin(),
@@ -2683,7 +2721,8 @@ void KernelEngine::handle_client_despawn(const EntityDespawnPacket& packet) {
         packet.server_tick,
         packet.net_id,
         packet.reason,
-        0,
+        entity_type,
+        actor_type,
         0,
     });
 }
@@ -2938,7 +2977,8 @@ void KernelEngine::predict_local_input(const PlayerInput& input) {
             predicted_local_entity_ = *latest;
         } else {
             predicted_local_entity_.net_id = local_player_net_id_;
-            predicted_local_entity_.type = EntityType::kPlayer;
+            predicted_local_entity_.type = EntityType::kActor;
+            predicted_local_entity_.actor_type = ActorType::kPlayer;
         }
         has_predicted_local_entity_ = true;
     }
@@ -3242,6 +3282,7 @@ void KernelEngine::append_predicted_projectile_render_states(bool consume_correc
             projectile.entity_id,
             projectile.net_id,
             static_cast<std::uint16_t>(EntityType::kProjectile),
+            static_cast<std::uint16_t>(ActorType::kUnknown),
             projectile.owner_peer,
             to_kernel_vec3(render_position),
             to_kernel_quat(projectile.rotation),
@@ -3543,10 +3584,12 @@ WorldSnapshot KernelEngine::build_snapshot_send_set(
     };
 
     const auto add_round_robin_entities =
-        [&](EntityType type, std::size_t* cursor) {
+        [&](EntityType type, ActorType actor_type, std::size_t* cursor) {
             std::vector<const EntitySnapshot*> entities;
             for (const EntitySnapshot& entity : relevant_snapshot.entities) {
-                if (entity.type == type) {
+                if (entity.type == type &&
+                    (actor_type == ActorType::kUnknown ||
+                     entity.actor_type == actor_type)) {
                     entities.push_back(&entity);
                 }
             }
@@ -3563,17 +3606,23 @@ WorldSnapshot KernelEngine::build_snapshot_send_set(
         };
 
     for (const EntitySnapshot& entity : relevant_snapshot.entities) {
-        if (entity.type == EntityType::kPlayer) {
+        if (entity.type == EntityType::kActor &&
+            entity.actor_type == ActorType::kPlayer) {
             try_add_entity(entity);
         }
     }
-    add_round_robin_entities(EntityType::kEnemy, &session.enemy_snapshot_cursor);
+    add_round_robin_entities(
+        EntityType::kActor,
+        ActorType::kAgent,
+        &session.actor_snapshot_cursor);
     add_round_robin_entities(
         EntityType::kProjectile,
+        ActorType::kUnknown,
         &session.projectile_snapshot_cursor);
     for (const EntitySnapshot& entity : relevant_snapshot.entities) {
-        if (entity.type != EntityType::kPlayer &&
-            entity.type != EntityType::kEnemy &&
+        if (!(entity.type == EntityType::kActor &&
+              (entity.actor_type == ActorType::kPlayer ||
+               entity.actor_type == ActorType::kAgent)) &&
             entity.type != EntityType::kProjectile) {
             try_add_entity(entity);
         }
@@ -3651,6 +3700,7 @@ void KernelEngine::update_vision_states(float delta_seconds) {
         view.struct_size = sizeof(KernelVisionStateView);
         view.agent_net_id = agent_net_id;
         view.entity_type = static_cast<std::uint16_t>(agent_kind.type);
+        view.actor_type = static_cast<std::uint8_t>(agent_kind.actor_type);
         view.camp = config.camp;
         view.vision_origin = to_kernel_vec3(origin);
         view.vision_forward = to_kernel_vec3(forward);
@@ -3820,6 +3870,7 @@ void KernelEngine::send_entity_spawn(PeerId peer, const EntitySnapshot& entity) 
         EntitySpawnPacket{
             entity.net_id,
             entity.type,
+            entity.actor_type,
             owner_peer,
             tick_loop_.current_tick(),
             spawn_position,
@@ -4072,6 +4123,7 @@ void KernelEngine::rebuild_render_states_from_snapshot(
             entity_id_for_net_id(entity.net_id),
             entity.net_id,
             static_cast<std::uint16_t>(entity.type),
+            static_cast<std::uint16_t>(entity.actor_type),
             entity.owner_peer,
             to_kernel_vec3(entity.position),
             to_kernel_quat(entity.rotation),
@@ -4404,7 +4456,7 @@ void KernelEngine::handle_server_handshake(const TransportEvent& transport_event
             KernelEventType_EntitySpawned,
             player,
             transport_event.peer,
-            static_cast<std::uint32_t>(EntityType::kPlayer));
+            static_cast<std::uint32_t>(EntityType::kActor));
     }
 
     const WelcomePacket welcome{

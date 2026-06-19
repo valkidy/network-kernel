@@ -47,7 +47,7 @@ void beam_damages_targets_with_dps_accumulator() {
             30,
             10,
             5,
-            network_example::kCollisionLayerEnemy);
+            network_example::kCollisionLayerHostileSide);
     (void)beam;
 
     network_example::DamagePipeline pipeline;
@@ -85,7 +85,7 @@ void beam_respects_range_radius_and_collision_mask() {
         30,
         10,
         5,
-        network_example::kCollisionLayerEnemy);
+        network_example::kCollisionLayerHostileSide);
 
     network_example::DamagePipeline pipeline;
     std::vector<KernelEvent> events;
@@ -116,7 +116,7 @@ void beam_expires_when_not_refreshed() {
             30,
             3,
             5,
-            network_example::kCollisionLayerEnemy);
+            network_example::kCollisionLayerHostileSide);
 
     std::vector<KernelEvent> events;
     network_example::simulate_beams(world, 3, 1.0f / 30.0f, 100000, &events, nullptr);
@@ -149,7 +149,7 @@ void beam_fire_spawns_or_refreshes_server_beam() {
     tuning.definitions[network_example::kWeaponSlot5].beam_damage_per_second = 30;
     tuning.definitions[network_example::kWeaponSlot5].beam_lifetime_ticks = 2;
     tuning.definitions[network_example::kWeaponSlot5].beam_collision_mask =
-        network_example::kCollisionLayerEnemy;
+        network_example::kCollisionLayerHostileSide;
 
     PlayerInput input{};
     input.buttons = InputButton_Fire;

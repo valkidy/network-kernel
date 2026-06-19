@@ -15,6 +15,7 @@ namespace network_example {
 struct EntitySpawnPacket {
     NetId net_id = 0;
     EntityType entity_type = EntityType::kUnknown;
+    ActorType actor_type = ActorType::kUnknown;
     PeerId owner_peer = 0;
     std::uint32_t server_tick = 0;
     glm::vec3 position{0.0f, 0.0f, 0.0f};

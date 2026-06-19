@@ -8,7 +8,8 @@ namespace {
 
 RenderEntityState find_player(const std::array<RenderEntityState, 16>& states, std::uint32_t count) {
     for (std::uint32_t index = 0; index < count; ++index) {
-        if (states[index].entity_type == 1) {
+        if (states[index].entity_type == 1 &&
+            states[index].actor_type == KernelActorType_Player) {
             return states[index];
         }
     }
@@ -20,7 +21,8 @@ bool has_non_player_state(
     const std::array<RenderEntityState, 16>& states,
     std::uint32_t count) {
     for (std::uint32_t index = 0; index < count; ++index) {
-        if (states[index].entity_type != 1) {
+        if (states[index].entity_type != 1 ||
+            states[index].actor_type != KernelActorType_Player) {
             return true;
         }
     }
@@ -127,7 +129,7 @@ void load_minimal_gameplay_catalog(KernelHandle* kernel) {
     player_hit.center = KernelVec3{0.0f, 0.9f, 0.0f};
     player_hit.shape_params = KernelVec4{0.35f, 0.9f, 0.35f, 0.0f};
     player_hit.purpose_flags = KernelColliderPurpose_Hit;
-    player_hit.layer_mask = KERNEL_COLLISION_LAYER_PLAYER;
+    player_hit.layer_mask = KERNEL_COLLISION_LAYER_PLAYER_SIDE;
 
     KernelColliderTemplateDefinition rifle_segment{};
     rifle_segment.struct_size = sizeof(rifle_segment);
@@ -252,6 +254,7 @@ int main() {
         find_server_entity(queried_players, player_query_count, before_player.net_id);
     assert(queried_player.valid != 0u);
     assert(queried_player.entity_type == 1);
+    assert(queried_player.actor_type == KernelActorType_Player);
     assert(queried_player.hp == 100);
     assert(queried_player.max_hp == 100);
 
@@ -456,7 +459,8 @@ int main() {
 
     KernelServerEntityCreateInfo enemy_create{};
     enemy_create.struct_size = sizeof(enemy_create);
-    enemy_create.entity_type = 2;
+    enemy_create.entity_type = 1;
+    enemy_create.actor_type = KernelActorType_Agent;
     enemy_create.position = KernelVec3{6.0f, 0.0f, 0.0f};
     enemy_create.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
     enemy_create.animation_state = 4;
@@ -467,13 +471,15 @@ int main() {
     std::array<KernelServerEntityState, 16> queried_enemies{};
     const std::uint32_t enemy_query_count = Kernel_ServerQueryEntities(
         kernel,
-        2,
+        1,
         queried_enemies.data(),
         static_cast<std::uint32_t>(queried_enemies.size()));
-    assert(enemy_query_count == 1);
+    assert(enemy_query_count >= 2);
     const KernelServerEntityState queried_enemy =
         find_server_entity(queried_enemies, enemy_query_count, enemy_net_id);
     assert(queried_enemy.valid != 0u);
+    assert(queried_enemy.entity_type == 1);
+    assert(queried_enemy.actor_type == KernelActorType_Agent);
     assert(queried_enemy.position.x == enemy_create.position.x);
 
     Kernel_Update(kernel, 0.0f);

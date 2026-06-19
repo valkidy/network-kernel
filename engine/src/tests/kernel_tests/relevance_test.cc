@@ -172,11 +172,13 @@ int main() {
     crowded.header.server_time_ms = 1000;
     network_example::EntitySnapshot player_entity;
     player_entity.net_id = 100;
-    player_entity.type = network_example::EntityType::kPlayer;
+    player_entity.type = network_example::EntityType::kActor;
+    player_entity.actor_type = network_example::ActorType::kPlayer;
     crowded.entities.push_back(player_entity);
     network_example::EntitySnapshot enemy_entity;
     enemy_entity.net_id = 101;
-    enemy_entity.type = network_example::EntityType::kEnemy;
+    enemy_entity.type = network_example::EntityType::kActor;
+    enemy_entity.actor_type = network_example::ActorType::kAgent;
     crowded.entities.push_back(enemy_entity);
     network_example::EntitySnapshot projectile_entity;
     projectile_entity.net_id = 102;

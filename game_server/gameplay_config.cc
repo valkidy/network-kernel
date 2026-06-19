@@ -193,6 +193,7 @@ void hash_actor_template(
     hash_scalar(hash, actor_template.actor_template_id);
     hash_string(hash, actor_template.name);
     hash_scalar(hash, actor_template.entity_type);
+    hash_scalar(hash, actor_template.actor_type);
     hash_scalar(hash, actor_template.collider_template_id);
     hash_scalar(hash, actor_template.health.hp);
     hash_scalar(hash, actor_template.health.max_hp);
@@ -499,11 +500,14 @@ std::uint32_t collision_mask_token_from_yaml(const std::string& token) {
     if (token == "none" || token == "0") {
         return KERNEL_COLLISION_MASK_NONE;
     }
-    if (token == "enemy") {
-        return KERNEL_COLLISION_LAYER_ENEMY;
+    if (token == "hostile_side") {
+        return KERNEL_COLLISION_LAYER_HOSTILE_SIDE;
     }
-    if (token == "player") {
-        return KERNEL_COLLISION_LAYER_PLAYER;
+    if (token == "player_side") {
+        return KERNEL_COLLISION_LAYER_PLAYER_SIDE;
+    }
+    if (token == "neutral") {
+        return KERNEL_COLLISION_LAYER_NEUTRAL;
     }
     if (token == "projectile") {
         return KERNEL_COLLISION_LAYER_PROJECTILE;
@@ -1204,11 +1208,8 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
 
 std::uint16_t entity_type_from_yaml(const YAML::Node& node) {
     const std::string value = node.as<std::string>();
-    if (value == "player") {
-        return kEntityTypePlayer;
-    }
-    if (value == "enemy") {
-        return kEntityTypeEnemy;
+    if (value == "player" || value == "enemy" || value == "agent") {
+        return kEntityTypeActor;
     }
     if (value == "projectile") {
         return 3;
@@ -1217,6 +1218,17 @@ std::uint16_t entity_type_from_yaml(const YAML::Node& node) {
         return 4;
     }
     throw std::runtime_error("unsupported collider entity_type: " + value);
+}
+
+std::uint16_t actor_type_from_yaml(const YAML::Node& node) {
+    const std::string value = node.as<std::string>();
+    if (value == "player") {
+        return kActorTypePlayer;
+    }
+    if (value == "enemy" || value == "agent") {
+        return kActorTypeAgent;
+    }
+    return KernelActorType_Unknown;
 }
 
 std::uint8_t collider_shape_type_from_yaml(const YAML::Node& node) {
@@ -1387,7 +1399,8 @@ ActorTemplateConfig default_player_actor_template() {
     ActorTemplateConfig actor_template;
     actor_template.actor_template_id = 1;
     actor_template.name = "player";
-    actor_template.entity_type = kEntityTypePlayer;
+    actor_template.entity_type = kEntityTypeActor;
+    actor_template.actor_type = kActorTypePlayer;
     actor_template.collider_template_id = 1;
     actor_template.health = EntityHealthDefinition{100, 100};
     actor_template.hitbox_center = KernelVec3{0.0f, 0.9f, 0.0f};
@@ -1406,7 +1419,8 @@ ActorTemplateConfig default_enemy_actor_template() {
     ActorTemplateConfig actor_template;
     actor_template.actor_template_id = 2;
     actor_template.name = "enemy_grunt";
-    actor_template.entity_type = kEntityTypeEnemy;
+    actor_template.entity_type = kEntityTypeActor;
+    actor_template.actor_type = kActorTypeAgent;
     actor_template.collider_template_id = 2;
     actor_template.health =
         EntityHealthDefinition{kEnemyInitialHp, kEnemyInitialHp};
@@ -1556,14 +1570,15 @@ ActorTemplateConfig actor_template_from_yaml(
     actor_template.actor_template_id = node["id"].as<std::uint32_t>();
     actor_template.name = node["name"].as<std::string>();
     actor_template.entity_type = entity_type_from_yaml(node["entity_type"]);
+    actor_template.actor_type = actor_type_from_yaml(node["entity_type"]);
     actor_template.vision.struct_size = sizeof(KernelAgentVisionConfig);
-    if (actor_template.entity_type == kEntityTypeEnemy) {
+    if (actor_template.actor_type == kActorTypeAgent) {
         actor_template.vision.camp = KernelAgentCamp_EnemySide;
         actor_template.vision.vision_collider_template_id = 9;
         actor_template.vision.max_visible_hostiles = KERNEL_MAX_VISIBLE_HOSTILES;
         actor_template.vision.max_visible_allies = KERNEL_MAX_VISIBLE_ALLIES;
         actor_template.vision.local_forward = KernelVec3{-1.0f, 0.0f, 0.0f};
-    } else if (actor_template.entity_type == kEntityTypePlayer) {
+    } else if (actor_template.actor_type == kActorTypePlayer) {
         actor_template.vision.camp = KernelAgentCamp_PlayerSide;
     }
     actor_template.collider_template_id =
@@ -2519,8 +2534,9 @@ std::vector<std::string> validate_gameplay_config(
     std::vector<std::string> actor_template_names;
     for (const ActorTemplateConfig& actor_template : config.actor_templates) {
         if (actor_template.actor_template_id == 0 || actor_template.name.empty() ||
-            (actor_template.entity_type != kEntityTypePlayer &&
-             actor_template.entity_type != kEntityTypeEnemy) ||
+            actor_template.entity_type != kEntityTypeActor ||
+            (actor_template.actor_type != kActorTypePlayer &&
+             actor_template.actor_type != kActorTypeAgent) ||
             actor_template.collider_template_id == 0 ||
             actor_template.health.hp == 0 ||
             actor_template.health.max_hp == 0 ||
@@ -2539,7 +2555,7 @@ std::vector<std::string> validate_gameplay_config(
                 errors.push_back("actor template weapon slot must reference a valid weapon");
             }
         }
-        if (actor_template.entity_type == kEntityTypeEnemy &&
+        if (actor_template.actor_type == kActorTypeAgent &&
             (actor_template.sentry.weapon_id >= kWeaponCount ||
              actor_template.sentry.magazine_size == 0 ||
              actor_template.sentry.fire_interval_seconds <= 0.0f ||
@@ -2569,12 +2585,14 @@ std::vector<std::string> validate_gameplay_config(
     }
     const ActorTemplateConfig* player_actor =
         find_actor_template(config, config.player.actor_template_id);
-    if (player_actor == nullptr || player_actor->entity_type != kEntityTypePlayer) {
+    if (player_actor == nullptr || player_actor->entity_type != kEntityTypeActor ||
+        player_actor->actor_type != kActorTypePlayer) {
         errors.push_back("player actor template must reference a player actor");
     }
     const ActorTemplateConfig* enemy_actor =
         find_actor_template(config, config.enemy.actor_template_id);
-    if (enemy_actor == nullptr || enemy_actor->entity_type != kEntityTypeEnemy ||
+    if (enemy_actor == nullptr || enemy_actor->entity_type != kEntityTypeActor ||
+        enemy_actor->actor_type != kActorTypeAgent ||
         config.enemy.spawn_count == 0 || config.enemy.spawn_radius < 0.0f) {
         errors.push_back("enemy gameplay config must be valid");
     }

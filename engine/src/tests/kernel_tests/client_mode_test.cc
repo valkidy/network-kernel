@@ -37,12 +37,15 @@ network_example::WorldSnapshot snapshot_with_entity(
     std::uint32_t server_tick,
     network_example::NetId net_id,
     network_example::EntityType type,
-    float position_x) {
+    float position_x,
+    network_example::ActorType actor_type =
+        network_example::ActorType::kUnknown) {
     network_example::WorldSnapshot snapshot;
     snapshot.header.server_tick = server_tick;
     network_example::EntitySnapshot entity;
     entity.net_id = net_id;
     entity.type = type;
+    entity.actor_type = actor_type;
     entity.position = glm::vec3{position_x, 0.0f, 0.0f};
     snapshot.entities.push_back(entity);
     return snapshot;
@@ -52,10 +55,13 @@ void add_snapshot_entity(
     network_example::WorldSnapshot* snapshot,
     network_example::NetId net_id,
     network_example::EntityType type,
-    float position_x) {
+    float position_x,
+    network_example::ActorType actor_type =
+        network_example::ActorType::kUnknown) {
     network_example::EntitySnapshot entity;
     entity.net_id = net_id;
     entity.type = type;
+    entity.actor_type = actor_type;
     entity.position = glm::vec3{position_x, 0.0f, 0.0f};
     snapshot->entities.push_back(entity);
 }
@@ -77,7 +83,7 @@ KernelColliderTemplateDefinition actor_collider_template() {
     collider_template.template_id = 20;
     collider_template.shape_type = KernelColliderShapeType_Aabb;
     collider_template.shape_params = KernelVec4{0.4f, 0.8f, 0.4f, 0.0f};
-    collider_template.layer_mask = KERNEL_COLLISION_LAYER_ENEMY;
+    collider_template.layer_mask = KERNEL_COLLISION_LAYER_HOSTILE_SIDE;
     collider_template.purpose_flags = KernelColliderPurpose_Hit;
     return collider_template;
 }
@@ -144,7 +150,8 @@ void client_query_collider_shapes_reports_render_colliders() {
     snapshot.header.server_tick = 3;
     network_example::EntitySnapshot enemy;
     enemy.net_id = 42;
-    enemy.type = network_example::EntityType::kEnemy;
+    enemy.type = network_example::EntityType::kActor;
+    enemy.actor_type = network_example::ActorType::kAgent;
     enemy.position = glm::vec3{4.0f, 0.0f, 0.0f};
     enemy.collider_template_id = 20;
     snapshot.entities.push_back(enemy);
@@ -707,13 +714,15 @@ void render_states_at_time_interpolates_and_clamps() {
     engine.handle_client_snapshot(snapshot_with_entity(
         10,
         42,
-        network_example::EntityType::kEnemy,
-        0.0f));
+        network_example::EntityType::kActor,
+        0.0f,
+        network_example::ActorType::kAgent));
     engine.handle_client_snapshot(snapshot_with_entity(
         12,
         42,
-        network_example::EntityType::kEnemy,
-        20.0f));
+        network_example::EntityType::kActor,
+        20.0f,
+        network_example::ActorType::kAgent));
 
     std::uint32_t count = engine.get_render_states_at_time(
         31000,
@@ -744,8 +753,9 @@ void render_states_at_time_interpolates_and_clamps() {
     single_snapshot_engine.handle_client_snapshot(snapshot_with_entity(
         10,
         77,
-        network_example::EntityType::kEnemy,
-        7.0f));
+        network_example::EntityType::kActor,
+        7.0f,
+        network_example::ActorType::kAgent));
     count = single_snapshot_engine.get_render_states_at_time(
         999999,
         states.data(),
@@ -769,8 +779,9 @@ void remote_projectile_uses_interpolated_past_timeline() {
     network_example::WorldSnapshot from = snapshot_with_entity(
         10,
         42,
-        network_example::EntityType::kEnemy,
-        0.0f);
+        network_example::EntityType::kActor,
+        0.0f,
+        network_example::ActorType::kAgent);
     add_snapshot_entity(
         &from,
         43,
@@ -779,8 +790,9 @@ void remote_projectile_uses_interpolated_past_timeline() {
     network_example::WorldSnapshot to = snapshot_with_entity(
         12,
         42,
-        network_example::EntityType::kEnemy,
-        20.0f);
+        network_example::EntityType::kActor,
+        20.0f,
+        network_example::ActorType::kAgent);
     add_snapshot_entity(
         &to,
         43,
@@ -925,15 +937,17 @@ void render_query_does_not_consume_local_correction() {
     engine.has_client_clock_sync_ = true;
     engine.local_player_net_id_ = 1;
     engine.predicted_local_entity_.net_id = 1;
-    engine.predicted_local_entity_.type = network_example::EntityType::kPlayer;
+    engine.predicted_local_entity_.type = network_example::EntityType::kActor;
+    engine.predicted_local_entity_.actor_type = network_example::ActorType::kPlayer;
     engine.predicted_local_entity_.position = glm::vec3{1.0f, 0.0f, 0.0f};
     engine.has_predicted_local_entity_ = true;
     engine.local_correction_offset_ = glm::vec3{4.0f, 0.0f, 0.0f};
     engine.latest_client_snapshot_ = snapshot_with_entity(
         10,
         1,
-        network_example::EntityType::kPlayer,
-        0.0f);
+        network_example::EntityType::kActor,
+        0.0f,
+        network_example::ActorType::kPlayer);
     engine.client_snapshot_buffer_.push_back(engine.latest_client_snapshot_);
     engine.has_client_snapshot_ = true;
 
@@ -985,8 +999,9 @@ void late_snapshot_is_stored_but_not_used_for_reconciliation() {
     network_example::WorldSnapshot newer = snapshot_with_entity(
         10,
         1,
-        network_example::EntityType::kPlayer,
-        10.0f);
+        network_example::EntityType::kActor,
+        10.0f,
+        network_example::ActorType::kPlayer);
     add_snapshot_entity(
         &newer,
         55,
@@ -1005,8 +1020,9 @@ void late_snapshot_is_stored_but_not_used_for_reconciliation() {
     network_example::WorldSnapshot older = snapshot_with_entity(
         8,
         1,
-        network_example::EntityType::kPlayer,
-        -20.0f);
+        network_example::EntityType::kActor,
+        -20.0f,
+        network_example::ActorType::kPlayer);
     engine.handle_client_snapshot(older);
 
     require(engine.latest_client_snapshot_.header.server_tick == 10);
@@ -1312,6 +1328,7 @@ void projectile_spawn_event_and_batch_do_not_duplicate_render_state() {
     client.handle_client_spawn(network_example::EntitySpawnPacket{
         101,
         network_example::EntityType::kProjectile,
+        network_example::ActorType::kUnknown,
         7,
         3,
         glm::vec3{1.0f, 0.0f, 0.0f},
@@ -1418,7 +1435,12 @@ void destroyed_tombstone_blocks_older_snapshot_render() {
 
     network_example::WorldSnapshot older;
     older.header.server_tick = 10;
-    add_snapshot_entity(&older, 21, network_example::EntityType::kEnemy, 1.0f);
+    add_snapshot_entity(
+        &older,
+        21,
+        network_example::EntityType::kActor,
+        1.0f,
+        network_example::ActorType::kAgent);
     client.handle_client_snapshot(older);
 
     std::array<RenderEntityState, 4> states{};
@@ -1439,7 +1461,8 @@ void stale_render_state_marks_status_and_hp_unknown() {
     client.reset_runtime_state(KernelMode_Client);
     client.handle_client_spawn(network_example::EntitySpawnPacket{
         30,
-        network_example::EntityType::kEnemy,
+        network_example::EntityType::kActor,
+        network_example::ActorType::kAgent,
         0,
         3,
         glm::vec3{4.0f, 0.0f, 0.0f},
@@ -1569,8 +1592,18 @@ void render_state_overflow_reports_error_event() {
     client.reset_runtime_state(KernelMode_Client);
     network_example::WorldSnapshot snapshot;
     snapshot.header.server_tick = 10;
-    add_snapshot_entity(&snapshot, 1, network_example::EntityType::kPlayer, 0.0f);
-    add_snapshot_entity(&snapshot, 2, network_example::EntityType::kEnemy, 1.0f);
+    add_snapshot_entity(
+        &snapshot,
+        1,
+        network_example::EntityType::kActor,
+        0.0f,
+        network_example::ActorType::kPlayer);
+    add_snapshot_entity(
+        &snapshot,
+        2,
+        network_example::EntityType::kActor,
+        1.0f,
+        network_example::ActorType::kAgent);
     client.handle_client_snapshot(snapshot);
 
     std::array<RenderEntityState, 1> states{};

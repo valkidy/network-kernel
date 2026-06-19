@@ -23,6 +23,7 @@ struct SnapshotHeader {
 struct EntitySnapshot {
     NetId net_id = 0;
     EntityType type = EntityType::kUnknown;
+    ActorType actor_type = ActorType::kUnknown;
     PeerId owner_peer = 0;
     glm::vec3 position{0.0f, 0.0f, 0.0f};
     glm::vec3 velocity{0.0f, 0.0f, 0.0f};
