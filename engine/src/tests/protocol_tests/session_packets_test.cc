@@ -67,6 +67,8 @@ int main() {
     ping_pong.server_send_time_us = 100000;
     ping_pong.client_receive_time_us = 141000;
     ping_pong.client_send_time_us = 142000;
+    ping_pong.server_rtt_us = 43000;
+    ping_pong.server_jitter_us = 2000;
     const std::vector<std::uint8_t> ping_pong_packet =
         network_example::encode_ping_pong_packet(ping_pong, 3);
     network_example::PingPongPacket decoded_ping_pong;
@@ -78,6 +80,8 @@ int main() {
     assert(decoded_ping_pong.server_send_time_us == 100000);
     assert(decoded_ping_pong.client_receive_time_us == 141000);
     assert(decoded_ping_pong.client_send_time_us == 142000);
+    assert(decoded_ping_pong.server_rtt_us == 43000);
+    assert(decoded_ping_pong.server_jitter_us == 2000);
 
     network_example::DisconnectPacket disconnect;
     disconnect.reason_code = 99;

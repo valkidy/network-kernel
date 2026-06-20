@@ -70,6 +70,8 @@ table PingPongPacket {
   server_send_time_us:ulong;
   client_receive_time_us:ulong;
   client_send_time_us:ulong;
+  server_rtt_us:ulong;
+  server_jitter_us:ulong;
 }
 
 table SnapshotPacket {

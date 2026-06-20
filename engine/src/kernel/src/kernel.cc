@@ -2375,6 +2375,9 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     local_last_processed_input_seq_ = 0;
     next_packet_sequence_ = 1;
     next_clock_sync_nonce_ = 1;
+    received_sequences_by_peer_.clear();
+    received_packet_count_ = 0;
+    lost_packet_count_ = 0;
     client_local_time_us_ = 0;
     client_clock_offset_us_ = 0;
     local_player_move_speed_meters_per_second_ = 0.0f;
@@ -2414,21 +2417,25 @@ void KernelEngine::poll_transport() {
             transport_event.type == TransportEventType::kMessage &&
             transport_event.channel == ChannelId::kSession &&
             config_.mode == KernelMode_DedicatedServer) {
+            record_received_packet_sequence(transport_event);
             handle_server_session_message(transport_event);
         } else if (
             transport_event.type == TransportEventType::kMessage &&
             transport_event.channel == ChannelId::kSession &&
             config_.mode == KernelMode_Client) {
+            record_received_packet_sequence(transport_event);
             handle_client_session_message(transport_event);
         } else if (
             transport_event.type == TransportEventType::kMessage &&
             transport_event.channel == ChannelId::kReliableEvent &&
             config_.mode == KernelMode_Client) {
+            record_received_packet_sequence(transport_event);
             handle_client_reliable_event(transport_event);
         } else if (
             transport_event.type == TransportEventType::kMessage &&
             transport_event.channel == ChannelId::kSnapshot &&
             config_.mode == KernelMode_Client) {
+            record_received_packet_sequence(transport_event);
             WorldSnapshot snapshot;
             const auto decode_start = std::chrono::steady_clock::now();
             if (!decode_snapshot_packet(
@@ -2447,6 +2454,7 @@ void KernelEngine::poll_transport() {
             transport_event.channel == ChannelId::kInput &&
             (config_.mode == KernelMode_DedicatedServer ||
              config_.mode == KernelMode_ListenServer)) {
+            record_received_packet_sequence(transport_event);
             const PeerSession* session = find_session(transport_event.peer);
             if (config_.mode == KernelMode_DedicatedServer &&
                 (session == nullptr || !session->welcomed)) {
@@ -2710,6 +2718,10 @@ void KernelEngine::handle_client_ping_pong(const TransportEvent& transport_event
     ping.client_receive_time_us = client_local_action_time_us();
     apply_client_clock_offset_sample(
         time_delta_us(ping.server_send_time_us, ping.client_receive_time_us));
+    if (ping.server_rtt_us != 0) {
+        network_stats_.rtt_us = ping.server_rtt_us;
+        network_stats_.jitter_us = ping.server_jitter_us;
+    }
     ping.client_send_time_us = client_local_action_time_us();
     const std::vector<std::uint8_t> packet =
         encode_ping_pong_packet(ping, next_packet_sequence_++);
@@ -2793,15 +2805,17 @@ void KernelEngine::handle_server_ping_pong(const TransportEvent& transport_event
         pong.client_send_time_us >= pong.client_receive_time_us
             ? pong.client_send_time_us - pong.client_receive_time_us
             : 0;
-    session->last_clock_sync_rtt_us =
+    const std::uint64_t rtt_us =
         server_elapsed >= client_elapsed ? server_elapsed - client_elapsed : 0;
-    if (network_stats_.rtt_us != 0) {
-        network_stats_.jitter_us =
-            network_stats_.rtt_us > session->last_clock_sync_rtt_us
-                ? network_stats_.rtt_us - session->last_clock_sync_rtt_us
-                : session->last_clock_sync_rtt_us - network_stats_.rtt_us;
+    if (session->last_clock_sync_rtt_us != 0) {
+        session->last_clock_sync_jitter_us =
+            session->last_clock_sync_rtt_us > rtt_us
+                ? session->last_clock_sync_rtt_us - rtt_us
+                : rtt_us - session->last_clock_sync_rtt_us;
     }
+    session->last_clock_sync_rtt_us = rtt_us;
     network_stats_.rtt_us = session->last_clock_sync_rtt_us;
+    network_stats_.jitter_us = session->last_clock_sync_jitter_us;
     session->pending_clock_sync_nonce = 0;
     session->pending_clock_sync_server_time_us = 0;
     session->has_clock_sync = true;
@@ -3007,6 +3021,7 @@ void KernelEngine::poll_client_transport() {
         if (transport_event.type != TransportEventType::kMessage) {
             continue;
         }
+        record_received_packet_sequence(transport_event);
         if (transport_event.channel == ChannelId::kReliableEvent) {
             handle_client_reliable_event(transport_event);
             continue;
@@ -4676,7 +4691,9 @@ void KernelEngine::send_clock_sync_ping(
     }
 
     const std::uint32_t nonce = next_clock_sync_nonce_++;
-    const PingPongPacket ping{nonce, server_time_us, 0, 0};
+    PingPongPacket ping{nonce, server_time_us, 0, 0};
+    ping.server_rtt_us = session->last_clock_sync_rtt_us;
+    ping.server_jitter_us = session->last_clock_sync_jitter_us;
     const std::vector<std::uint8_t> packet =
         encode_ping_pong_packet(ping, next_packet_sequence_++);
     if (!transport_->Send(
@@ -4739,6 +4756,46 @@ void KernelEngine::broadcast_reliable_event(const KernelEvent& event) {
         }
         send_reliable_event(session.peer, event);
     }
+}
+
+void KernelEngine::record_received_packet_sequence(
+    const TransportEvent& transport_event) {
+    PacketHeader header;
+    if (!decode_packet_header(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &header)) {
+        return;
+    }
+
+    ReceiveSequenceState& sequence_state =
+        received_sequences_by_peer_[transport_event.peer];
+    if (sequence_state.received_count == 0) {
+        sequence_state.last_sequence = header.sequence;
+        sequence_state.received_count = 1;
+        ++received_packet_count_;
+        network_stats_.loss_ratio = 0.0f;
+        return;
+    }
+
+    const std::uint32_t sequence_delta =
+        header.sequence - sequence_state.last_sequence;
+    constexpr std::uint32_t kForwardSequenceWindow = UINT32_C(0x80000000);
+    if (sequence_delta > 0 && sequence_delta < kForwardSequenceWindow) {
+        lost_packet_count_ += static_cast<std::uint64_t>(sequence_delta - 1);
+        sequence_state.last_sequence = header.sequence;
+        ++sequence_state.received_count;
+        ++received_packet_count_;
+    }
+
+    const std::uint64_t expected_packet_count =
+        received_packet_count_ + lost_packet_count_;
+    network_stats_.loss_ratio =
+        expected_packet_count == 0
+            ? 0.0f
+            : static_cast<float>(
+                  static_cast<double>(lost_packet_count_) /
+                  static_cast<double>(expected_packet_count));
 }
 
 void KernelEngine::record_sent_packet(

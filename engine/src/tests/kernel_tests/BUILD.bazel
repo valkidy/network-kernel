@@ -47,6 +47,15 @@ cc_test(
 )
 
 cc_test(
+    name = "network_stats_test",
+    srcs = ["network_stats_test.cc"],
+    deps = [
+        "//engine/src/kernel:kernel",
+        "//engine/src/transport:transport",
+    ],
+)
+
+cc_test(
     name = "listen_server_test",
     srcs = ["listen_server_test.cc"],
     deps = ["//engine/src/kernel:kernel"],

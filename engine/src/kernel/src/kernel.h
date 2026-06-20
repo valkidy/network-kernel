@@ -139,6 +139,7 @@ private:
         std::uint64_t pending_clock_sync_server_time_us = 0;
         std::uint64_t last_clock_sync_sent_server_time_us = 0;
         std::uint64_t last_clock_sync_rtt_us = 0;
+        std::uint64_t last_clock_sync_jitter_us = 0;
         std::int64_t clock_offset_us = 0;
         bool has_clock_sync = false;
     };
@@ -191,6 +192,11 @@ private:
     struct VisionRuntimeState {
         KernelVisionStateView view{};
         bool has_last_seen_target = false;
+    };
+
+    struct ReceiveSequenceState {
+        std::uint32_t last_sequence = 0;
+        std::uint64_t received_count = 0;
     };
 
     void push_event(
@@ -295,6 +301,7 @@ private:
     void send_due_clock_sync_pings(std::uint64_t server_time_us);
     void send_reliable_event(PeerId peer, const KernelEvent& event);
     void broadcast_reliable_event(const KernelEvent& event);
+    void record_received_packet_sequence(const TransportEvent& transport_event);
     void record_sent_packet(
         std::uint32_t packet_size,
         SendMode mode,
@@ -360,6 +367,9 @@ private:
     std::uint32_t local_last_processed_input_seq_ = 0;
     std::uint32_t next_packet_sequence_ = 1;
     std::uint32_t next_clock_sync_nonce_ = 1;
+    std::unordered_map<PeerId, ReceiveSequenceState> received_sequences_by_peer_;
+    std::uint64_t received_packet_count_ = 0;
+    std::uint64_t lost_packet_count_ = 0;
     std::uint64_t client_local_time_us_ = 0;
     std::int64_t client_clock_offset_us_ = 0;
     float local_player_move_speed_meters_per_second_ = 0.0f;
