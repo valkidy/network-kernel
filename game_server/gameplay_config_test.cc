@@ -132,7 +132,8 @@ std::vector<std::uint8_t> make_store_zip(
     return zip;
 }
 
-std::vector<std::uint8_t> make_gameplay_bundle_zip() {
+std::vector<std::uint8_t> make_gameplay_bundle_zip(
+    const std::string& enemy_actor_yaml) {
     std::vector<std::pair<std::string, std::string>> files;
     files.push_back({
         "gameplay_catalog.yaml",
@@ -145,7 +146,7 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip() {
         read_text_file("game_server/actor_templates/player.yaml")});
     files.push_back({
         "actor_templates/enemy_grunt.yaml",
-        read_text_file("game_server/actor_templates/enemy_grunt.yaml")});
+        enemy_actor_yaml});
 
     const std::vector<std::string> weapon_files = {
         "beam_rifle.yaml",
@@ -173,6 +174,11 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip() {
             read_text_file("game_server/projectile_templates/" + file)});
     }
     return make_store_zip(files);
+}
+
+std::vector<std::uint8_t> make_gameplay_bundle_zip() {
+    return make_gameplay_bundle_zip(
+        read_text_file("game_server/actor_templates/enemy_grunt.yaml"));
 }
 
 }  // namespace
@@ -283,6 +289,35 @@ int main() {
         network_example::game_server::kWeaponGrenade);
     assert(config_enemy_template->sentry.weapon_id ==
            network_example::game_server::kWeaponGrenade);
+    assert(config_enemy_template->sentry.alert_rotation_interval_ticks == 30);
+    assert(config_enemy_template->sentry.alert_rotation_degrees == 15.0f);
+
+    std::string tuned_enemy_actor =
+        read_text_file("game_server/actor_templates/enemy_grunt.yaml");
+    const std::string ai_marker = "ai:\n  profile: default\n";
+    const std::size_t ai_marker_position = tuned_enemy_actor.find(ai_marker);
+    require(ai_marker_position != std::string::npos);
+    tuned_enemy_actor.replace(
+        ai_marker_position,
+        ai_marker.size(),
+        "ai:\n"
+        "  profile: default\n"
+        "  alert_rotation_interval_ticks: 4\n"
+        "  alert_rotation_degrees: 22.5\n");
+    const std::vector<std::uint8_t> tuned_bundle =
+        make_gameplay_bundle_zip(tuned_enemy_actor);
+    const network_example::game_server::GameServerGameplayConfig tuned_config =
+        network_example::game_server::load_gameplay_config_from_bundle_memory(
+            tuned_bundle.data(),
+            static_cast<std::uint32_t>(tuned_bundle.size()),
+            "gameplay_catalog.yaml");
+    const network_example::game_server::ActorTemplateConfig* tuned_enemy_template =
+        network_example::game_server::find_actor_template(
+            tuned_config,
+            tuned_config.enemy.actor_template_id);
+    require(tuned_enemy_template != nullptr);
+    require(tuned_enemy_template->sentry.alert_rotation_interval_ticks == 4);
+    require(tuned_enemy_template->sentry.alert_rotation_degrees == 22.5f);
     assert(config_enemy_template->sentry.magazine_size == 120);
     assert(
         config.weapons
@@ -578,6 +613,25 @@ int main() {
         config.weapons.catalog_hash !=
         network_example::game_server::compute_gameplay_catalog_hash(
             actor_hash_changed));
+    actor_hash_changed = config;
+    actor_hash_changed.actor_templates[1].sentry.alert_rotation_interval_ticks += 1;
+    require(
+        config.weapons.catalog_hash !=
+        network_example::game_server::compute_gameplay_catalog_hash(
+            actor_hash_changed));
+    actor_hash_changed = config;
+    actor_hash_changed.actor_templates[1].sentry.alert_rotation_degrees += 1.0f;
+    require(
+        config.weapons.catalog_hash !=
+        network_example::game_server::compute_gameplay_catalog_hash(
+            actor_hash_changed));
+
+    invalid = config;
+    invalid.actor_templates[1].sentry.alert_rotation_interval_ticks = 0;
+    assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
+    invalid = config;
+    invalid.actor_templates[1].sentry.alert_rotation_degrees = 0.0f;
+    assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
 
     return 0;
 }

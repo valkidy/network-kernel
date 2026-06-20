@@ -1667,6 +1667,43 @@ void client_despawn_removes_predicted_projectile() {
     require(lifecycle_events[0].reason == KernelDespawnReason_Destroyed);
 }
 
+void out_of_range_despawn_keeps_local_deterministic_predicted_projectile() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+
+    network_example::KernelEngine::PredictedProjectile projectile;
+    projectile.entity_id = 9000;
+    projectile.net_id = 101;
+    projectile.owner_peer = 7;
+    projectile.position = glm::vec3{1.0f, 0.0f, 0.0f};
+    projectile.velocity = glm::vec3{10.0f, 0.0f, 0.0f};
+    projectile.spawn_position = projectile.position;
+    projectile.initial_velocity = projectile.velocity;
+    projectile.motion_model = network_example::ProjectileMotionModel::kLinear;
+    projectile.max_lifetime_seconds = 0.2f;
+    projectile.sync_mode = KernelProjectileSyncMode_LocalPredictedDeterministic;
+    projectile.bound = true;
+    client.predicted_projectiles_.push_back(projectile);
+
+    client.handle_client_despawn(network_example::EntityDespawnPacket{
+        101,
+        12,
+        KernelDespawnReason_OutOfRange,
+    });
+
+    require(client.predicted_projectiles_.size() == 1);
+    require(client.predicted_projectiles_[0].net_id == 101);
+
+    client.advance_predicted_projectiles(0.3f);
+
+    require(client.predicted_projectiles_.empty());
+}
+
 void budget_omitted_projectile_snapshot_does_not_delete_bound_prediction() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
@@ -2260,6 +2297,7 @@ int main() {
     projectile_spawn_event_and_batch_do_not_duplicate_render_state();
     local_deterministic_prediction_query_uses_projectile_template_collider();
     client_despawn_removes_predicted_projectile();
+    out_of_range_despawn_keeps_local_deterministic_predicted_projectile();
     budget_omitted_projectile_snapshot_does_not_delete_bound_prediction();
     destroyed_tombstone_blocks_older_snapshot_render();
     stale_render_state_marks_status_and_hp_unknown();

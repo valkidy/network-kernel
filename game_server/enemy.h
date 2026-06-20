@@ -29,6 +29,8 @@ struct AgentSentryRuntime {
     AgentSentryState state = AgentSentryState::kIdle;
     float state_timer = 0.0f;
     float time_without_target = 0.0f;
+    std::uint32_t alert_rotation_tick = 0;
+    std::uint32_t alert_rotation_step = 0;
     std::uint32_t target = 0;
 };
 

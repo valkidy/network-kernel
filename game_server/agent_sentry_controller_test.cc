@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cassert>
+#include <cmath>
 #include <cstdlib>
 #include <vector>
 
@@ -108,6 +109,18 @@ void run_frame(
     Kernel_Update(kernel, 1.0f / 30.0f);
 }
 
+KernelQuat query_rotation(KernelHandle* kernel, std::uint32_t net_id) {
+    KernelServerEntityState state{};
+    state.struct_size = sizeof(state);
+    assert(Kernel_ServerGetEntityState(kernel, net_id, &state));
+    assert(state.valid != 0u);
+    return state.rotation;
+}
+
+bool almost_equal(float lhs, float rhs, float tolerance = 0.001f) {
+    return std::fabs(lhs - rhs) <= tolerance;
+}
+
 }  // namespace
 
 int main() {
@@ -134,28 +147,53 @@ int main() {
 
     network_example::game_server::AgentSentryConfig sentry_config;
     sentry_config.fire_interval_seconds = 0.01f;
+    sentry_config.alert_seconds = 100.0f;
+    sentry_config.alert_rotation_interval_ticks = 2;
+    sentry_config.alert_rotation_degrees = 15.0f;
     network_example::game_server::AgentSentryController controller(sentry_config);
 
     run_frame(kernel, controller, &enemies);
     assert(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kAlert);
     assert(enemies[0].ammo == network_example::game_server::kAgentSpammerMagazine);
+    KernelQuat rotation = query_rotation(kernel, enemy_net_id);
+    assert(almost_equal(rotation.x, 0.0f));
+    assert(almost_equal(rotation.y, 0.0f));
+    assert(almost_equal(rotation.z, 0.0f));
+    assert(almost_equal(rotation.w, 1.0f));
 
-    for (int frame = 0; frame < 91; ++frame) {
-        run_frame(kernel, controller, &enemies);
-    }
-    assert(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kAttack);
     run_frame(kernel, controller, &enemies);
-    assert(enemies[0].ammo < network_example::game_server::kAgentSpammerMagazine);
+    rotation = query_rotation(kernel, enemy_net_id);
+    const float half_alert_rotation_radians =
+        (15.0f * 0.5f) * 3.14159265358979323846f / 180.0f;
+    assert(almost_equal(
+        std::fabs(rotation.y),
+        std::sin(half_alert_rotation_radians)));
+    assert(almost_equal(rotation.w, std::cos(half_alert_rotation_radians)));
 
-    KernelVec3 behind{-5.0f, 0.0f, 0.0f};
+    sentry_config.alert_seconds = 0.01f;
+    network_example::game_server::AgentSentryController attack_controller(sentry_config);
+
+    run_frame(kernel, attack_controller, &enemies);
+    assert(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kAttack);
+    KernelVec3 side_position{5.0f, 0.0f, 2.0f};
     KernelQuat identity{0.0f, 0.0f, 0.0f, 1.0f};
-    assert(Kernel_ServerSetEntityTransform(kernel, player_net_id, &behind, &identity));
+    assert(Kernel_ServerSetEntityTransform(kernel, player_net_id, &side_position, &identity));
     Kernel_Update(kernel, 1.0f / 30.0f);
-    controller.tick(kernel, &enemies, 1.0f / 30.0f);
+    attack_controller.tick(kernel, &enemies, 1.0f / 30.0f);
+    assert(enemies[0].ammo < network_example::game_server::kAgentSpammerMagazine);
+    rotation = query_rotation(kernel, enemy_net_id);
+    const float expected_yaw = std::atan2(2.0f, 5.0f);
+    assert(almost_equal(rotation.y, -std::sin(expected_yaw * 0.5f)));
+    assert(almost_equal(rotation.w, std::cos(expected_yaw * 0.5f)));
+
+    KernelVec3 out_of_range{100.0f, 0.0f, 0.0f};
+    assert(Kernel_ServerSetEntityTransform(kernel, player_net_id, &out_of_range, &identity));
+    Kernel_Update(kernel, 1.0f / 30.0f);
+    attack_controller.tick(kernel, &enemies, 1.0f / 30.0f);
     assert(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kAlert);
 
     for (int frame = 0; frame < 151; ++frame) {
-        run_frame(kernel, controller, &enemies);
+        run_frame(kernel, attack_controller, &enemies);
     }
     assert(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kIdle);
     assert(enemies[0].velocity.x == 0.0f);
