@@ -29,6 +29,7 @@ int main(void) {
     KernelHomingState homing_state;
     KernelGameplayCatalogDefinition gameplay_catalog;
     KernelGameplayCatalogLoadResult gameplay_catalog_load_result;
+    KernelActorTemplateDefinition actor_template;
     KernelProjectileTemplateDefinition projectile_template;
     KernelColliderTemplateDefinition collider_template;
     KernelColliderBindingDefinition collider_binding;
@@ -65,6 +66,7 @@ int main(void) {
     (void)homing_state;
     (void)gameplay_catalog;
     (void)gameplay_catalog_load_result;
+    (void)actor_template;
     (void)projectile_template;
     (void)collider_template;
     (void)collider_binding;
@@ -79,7 +81,7 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 24u);
+    assert(KERNEL_ABI_VERSION == 25u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD == 4u);
@@ -110,6 +112,7 @@ int main(void) {
     assert(sizeof(KernelHomingState) > 0u);
     assert(sizeof(KernelGameplayCatalogDefinition) > 0u);
     assert(sizeof(KernelGameplayCatalogLoadResult) > 0u);
+    assert(sizeof(KernelActorTemplateDefinition) > 0u);
     assert(sizeof(KernelProjectileTemplateDefinition) > 0u);
     assert(sizeof(KernelColliderTemplateDefinition) > 0u);
     assert(sizeof(KernelColliderBindingDefinition) > 0u);

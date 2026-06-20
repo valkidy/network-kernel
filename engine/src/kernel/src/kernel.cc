@@ -408,6 +408,18 @@ const KernelProjectileTemplateDefinition* find_projectile_template(
     return found == templates.end() ? nullptr : &*found;
 }
 
+const KernelActorTemplateDefinition* find_actor_template(
+    const std::vector<KernelActorTemplateDefinition>& templates,
+    std::uint32_t actor_template_id) {
+    const auto found = std::find_if(
+        templates.begin(),
+        templates.end(),
+        [actor_template_id](const KernelActorTemplateDefinition& actor_template) {
+            return actor_template.actor_template_id == actor_template_id;
+        });
+    return found == templates.end() ? nullptr : &*found;
+}
+
 glm::vec3 collider_template_half_extents(
     const KernelColliderTemplateDefinition& collider_template) {
     return glm::vec3{
@@ -564,6 +576,10 @@ KernelServerEntityState to_server_entity_state(
     state.net_id = identity.net_id;
     state.entity_type = static_cast<std::uint16_t>(kind.type);
     state.actor_type = static_cast<std::uint16_t>(kind.actor_type);
+    if (world.registry().all_of<ActorTemplateRef>(entity)) {
+        state.actor_template_id =
+            world.registry().get<ActorTemplateRef>(entity).actor_template_id;
+    }
     state.owner_peer = identity.owner_peer;
     state.position = to_kernel_vec3(transform.position);
     state.rotation = to_kernel_quat(transform.rotation);
@@ -1171,7 +1187,9 @@ bool KernelEngine::load_gameplay_catalog(
     if (catalog.struct_size < sizeof(KernelGameplayCatalogDefinition)) {
         return false;
     }
-    if ((catalog.projectile_template_count != 0 &&
+    if ((catalog.actor_template_count != 0 &&
+         catalog.actor_templates == nullptr) ||
+        (catalog.projectile_template_count != 0 &&
          catalog.projectile_templates == nullptr) ||
         (catalog.collider_template_count != 0 &&
          catalog.collider_templates == nullptr) ||
@@ -1179,10 +1197,28 @@ bool KernelEngine::load_gameplay_catalog(
         return false;
     }
 
+    actor_templates_.clear();
     projectile_templates_.clear();
     collider_templates_.clear();
+    actor_templates_.reserve(catalog.actor_template_count);
     projectile_templates_.reserve(catalog.projectile_template_count);
     collider_templates_.reserve(catalog.collider_template_count);
+    for (std::uint32_t index = 0; index < catalog.actor_template_count; ++index) {
+        const KernelActorTemplateDefinition& actor_template =
+            catalog.actor_templates[index];
+        if (actor_template.struct_size < sizeof(KernelActorTemplateDefinition) ||
+            actor_template.actor_template_id == 0 ||
+            actor_template.entity_type !=
+                static_cast<std::uint16_t>(EntityType::kActor) ||
+            (actor_template.actor_type != KernelActorType_Player &&
+             actor_template.actor_type != KernelActorType_Agent) ||
+            actor_template.collider_template_id == 0 ||
+            actor_template.vision.struct_size < sizeof(KernelAgentVisionConfig) ||
+            !is_valid_agent_camp(actor_template.vision.camp)) {
+            return false;
+        }
+        actor_templates_.push_back(actor_template);
+    }
     for (std::uint32_t index = 0; index < catalog.projectile_template_count; ++index) {
         const KernelProjectileTemplateDefinition& projectile_template =
             catalog.projectile_templates[index];
@@ -1249,6 +1285,25 @@ bool KernelEngine::load_gameplay_catalog(
                   projectile_templates_,
                   projectile_template.projectile_template_id)))) {
             return false;
+        }
+    }
+    for (const KernelActorTemplateDefinition& actor_template : actor_templates_) {
+        if (find_collider_template(
+                collider_templates_,
+                actor_template.collider_template_id) == nullptr) {
+            return false;
+        }
+        if (actor_template.vision.vision_collider_template_id != 0u) {
+            const KernelColliderTemplateDefinition* vision_collider =
+                find_collider_template(
+                    collider_templates_,
+                    actor_template.vision.vision_collider_template_id);
+            if (vision_collider == nullptr ||
+                vision_collider->shape_type != KernelColliderShapeType_Cone ||
+                (vision_collider->purpose_flags &
+                 KernelColliderPurpose_Vision) == 0u) {
+                return false;
+            }
         }
     }
     std::vector<RuntimeProjectileTemplate> runtime_projectile_templates;
@@ -1549,6 +1604,29 @@ std::uint32_t KernelEngine::get_collider_templates(
     return copied;
 }
 
+std::uint32_t KernelEngine::get_actor_templates(
+    KernelActorTemplateDefinition* out_templates,
+    std::uint32_t max_templates) const {
+    const std::uint32_t count =
+        static_cast<std::uint32_t>(actor_templates_.size());
+    if (out_templates == nullptr || max_templates == 0) {
+        return count;
+    }
+    const std::uint32_t copied = std::min(count, max_templates);
+    std::memcpy(
+        out_templates,
+        actor_templates_.data(),
+        sizeof(KernelActorTemplateDefinition) * copied);
+    return copied;
+}
+
+std::uint32_t KernelEngine::collider_template_id_for_actor_template(
+    std::uint32_t actor_template_id) const {
+    const KernelActorTemplateDefinition* actor_template =
+        find_actor_template(actor_templates_, actor_template_id);
+    return actor_template == nullptr ? 0u : actor_template->collider_template_id;
+}
+
 std::uint32_t KernelEngine::get_collider_bindings(
     KernelColliderBindingDefinition* out_bindings,
     std::uint32_t max_bindings) const {
@@ -1787,6 +1865,15 @@ bool KernelEngine::server_create_entity(
     if (!entity.has_value()) {
         return false;
     }
+    if (create_info.actor_template_id != 0u) {
+        if (find_actor_template(actor_templates_, create_info.actor_template_id) ==
+            nullptr) {
+            return false;
+        }
+        world_.registry().emplace_or_replace<ActorTemplateRef>(
+            *entity,
+            create_info.actor_template_id);
+    }
     Transform& transform = world_.registry().get<Transform>(*entity);
     transform.rotation = from_kernel_quat(create_info.rotation);
     ReplicationState& replication =
@@ -1802,6 +1889,27 @@ bool KernelEngine::server_create_entity(
         create_info.owner_peer,
         static_cast<std::uint32_t>(type));
     publish_snapshot();
+    return true;
+}
+
+bool KernelEngine::server_set_entity_actor_template(
+    NetId net_id,
+    std::uint32_t actor_template_id) {
+    if (!running_ || !is_server_mode(config_.mode) || net_id == 0 ||
+        actor_template_id == 0u ||
+        find_actor_template(actor_templates_, actor_template_id) == nullptr) {
+        return false;
+    }
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value() ||
+        !world_.registry().all_of<EntityKind>(*entity) ||
+        world_.registry().get<EntityKind>(*entity).type != EntityType::kActor) {
+        return false;
+    }
+    world_.registry().emplace_or_replace<ActorTemplateRef>(
+        *entity,
+        actor_template_id);
+    materialize_entity_collider(net_id);
     return true;
 }
 
@@ -2650,6 +2758,7 @@ void KernelEngine::handle_client_spawn(const EntitySpawnPacket& packet) {
             packet.entity_type,
             packet.actor_type,
             packet.owner_peer,
+            packet.actor_template_id,
             packet.position,
             packet.rotation,
             0,
@@ -2661,6 +2770,7 @@ void KernelEngine::handle_client_spawn(const EntitySpawnPacket& packet) {
         found->type = packet.entity_type;
         found->actor_type = packet.actor_type;
         found->owner_peer = packet.owner_peer;
+        found->actor_template_id = packet.actor_template_id;
         found->position = packet.position;
         found->rotation = packet.rotation;
         found->active = false;
@@ -2810,8 +2920,8 @@ void KernelEngine::handle_client_snapshot(WorldSnapshot snapshot) {
     }
     latest_client_snapshot_ = snapshot;
     has_client_snapshot_ = true;
-    sync_client_vision_states_from_snapshot(latest_client_snapshot_);
     store_client_snapshot(std::move(snapshot));
+    sync_client_vision_states_from_snapshot(latest_client_snapshot_);
     reconcile_local_prediction(latest_client_snapshot_);
     reconcile_predicted_projectiles(latest_client_snapshot_);
 }
@@ -2823,18 +2933,33 @@ void KernelEngine::sync_client_vision_states_from_snapshot(
     }
     vision_states_.clear();
     for (const EntitySnapshot& entity : snapshot.entities) {
-        if (entity.vision_collider_template_id == 0u) {
+        const KernelActorTemplateDefinition* actor_template =
+            find_actor_template(actor_templates_, entity.actor_template_id);
+        if (actor_template == nullptr ||
+            actor_template->vision.vision_collider_template_id == 0u) {
             continue;
         }
+        const glm::quat rotation = entity.rotation;
+        const glm::vec3 origin =
+            entity.position +
+            rotation * from_kernel_vec3(actor_template->vision.local_origin);
+        const glm::vec3 configured_forward =
+            from_kernel_vec3(actor_template->vision.local_forward);
+        const glm::vec3 forward =
+            glm::length(configured_forward) > 0.0001f
+                ? glm::normalize(rotation * configured_forward)
+                : glm::vec3{1.0f, 0.0f, 0.0f};
         KernelVisionStateView view{};
         view.struct_size = sizeof(KernelVisionStateView);
         view.agent_net_id = entity.net_id;
         view.entity_type = static_cast<std::uint16_t>(entity.type);
         view.actor_type = static_cast<std::uint8_t>(entity.actor_type);
-        view.vision_origin = to_kernel_vec3(entity.vision_origin);
-        view.vision_forward = to_kernel_vec3(entity.vision_forward);
-        view.vision_collider_template_id = entity.vision_collider_template_id;
-        view.resolved_collider_template_id = entity.collider_template_id;
+        view.camp = actor_template->vision.camp;
+        view.vision_origin = to_kernel_vec3(origin);
+        view.vision_forward = to_kernel_vec3(forward);
+        view.vision_collider_template_id =
+            actor_template->vision.vision_collider_template_id;
+        view.resolved_collider_template_id = actor_template->collider_template_id;
         view.valid = 1u;
         vision_states_[entity.net_id].view = view;
     }
@@ -3286,6 +3411,11 @@ void KernelEngine::append_predicted_local_render_state(bool consume_correction) 
     RenderEntityState state = render_state_from_snapshot_entity(
         local,
         entity_id_for_net_id(local.net_id));
+    if (state.entity_type == static_cast<std::uint16_t>(EntityType::kActor) &&
+        state.actor_template_id != 0u) {
+        state.collider_template_id =
+            collider_template_id_for_actor_template(state.actor_template_id);
+    }
     state.status = RenderEntityStatus_Predicted;
     render_states_.push_back(state);
 
@@ -3321,6 +3451,7 @@ void KernelEngine::append_predicted_projectile_render_states(bool consume_correc
             RenderEntityStatus_Predicted,
             projectile.projectile_template_id,
             projectile.collider_template_id,
+            0,
         });
         if (consume_correction) {
             projectile.correction_offset *= 0.5f;
@@ -3539,26 +3670,7 @@ WorldSnapshot KernelEngine::build_relevant_snapshot(
             filtered.entities.push_back(entity);
         }
     }
-    populate_snapshot_vision_debug(&filtered);
     return filtered;
-}
-
-void KernelEngine::populate_snapshot_vision_debug(WorldSnapshot* snapshot) const {
-    if (snapshot == nullptr) {
-        return;
-    }
-    for (EntitySnapshot& entity : snapshot->entities) {
-        const auto vision_state = vision_states_.find(entity.net_id);
-        if (vision_state == vision_states_.end() ||
-            vision_state->second.view.valid == 0u ||
-            vision_state->second.view.vision_collider_template_id == 0u) {
-            continue;
-        }
-        const KernelVisionStateView& view = vision_state->second.view;
-        entity.vision_collider_template_id = view.vision_collider_template_id;
-        entity.vision_origin = from_kernel_vec3(view.vision_origin);
-        entity.vision_forward = from_kernel_vec3(view.vision_forward);
-    }
 }
 
 WorldSnapshot KernelEngine::build_snapshot_send_set(
@@ -3917,6 +4029,7 @@ void KernelEngine::send_entity_spawn(PeerId peer, const EntitySnapshot& entity) 
             entity.actor_type,
             owner_peer,
             tick_loop_.current_tick(),
+            entity.actor_template_id,
             spawn_position,
             entity.rotation,
         },
@@ -4082,6 +4195,9 @@ void KernelEngine::rebuild_render_states_from_world() {
         } else if (world_.registry().all_of<Hitbox>(entity)) {
             const Hitbox& hitbox = world_.registry().get<Hitbox>(entity);
             state.collider_template_id = hitbox.collider_template_id;
+        } else if (kind.type == EntityType::kActor && state.actor_template_id != 0u) {
+            state.collider_template_id =
+                collider_template_id_for_actor_template(state.actor_template_id);
         } else {
             state.collider_template_id = 0;
         }
@@ -4143,6 +4259,12 @@ void KernelEngine::rebuild_render_states_from_snapshot(
         render_states_.push_back(render_state_from_snapshot_entity(
             render_entity,
             entity_id_for_net_id(entity.net_id)));
+        RenderEntityState& state = render_states_.back();
+        if (state.entity_type == static_cast<std::uint16_t>(EntityType::kActor) &&
+            state.actor_template_id != 0u) {
+            state.collider_template_id =
+                collider_template_id_for_actor_template(state.actor_template_id);
+        }
         rendered_entities.insert(entity.net_id);
         if (replicated != client_replicated_entities_.end()) {
             replicated->active = true;
@@ -4152,6 +4274,9 @@ void KernelEngine::rebuild_render_states_from_snapshot(
                 replicated->hp = entity.hp;
                 replicated->max_hp = entity.max_hp;
                 replicated->hp_known = true;
+            }
+            if (entity.actor_template_id != 0u) {
+                replicated->actor_template_id = entity.actor_template_id;
             }
         }
     }
@@ -4180,7 +4305,10 @@ void KernelEngine::rebuild_render_states_from_snapshot(
             0,
             RenderEntityStatus_Stale,
             0,
-            0,
+            entity.actor_template_id == 0u
+                ? 0u
+                : collider_template_id_for_actor_template(entity.actor_template_id),
+            entity.actor_template_id,
         });
     }
 }

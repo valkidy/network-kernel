@@ -230,6 +230,13 @@ int main() {
     assert(config_enemy_template->move_speed_meters_per_second == 2.5f);
     assert(config_enemy_template->vision.camp == KernelAgentCamp_EnemySide);
     assert(config_enemy_template->vision.vision_collider_template_id == 9);
+    const network_example::game_server::KernelGameplayCatalogStorage catalog =
+        network_example::game_server::build_kernel_gameplay_catalog(config);
+    assert(catalog.definition.actor_template_count == config.actor_templates.size());
+    assert(catalog.actor_templates.size() == config.actor_templates.size());
+    assert(catalog.actor_templates[1].actor_template_id == 2);
+    assert(catalog.actor_templates[1].collider_template_id == 2);
+    assert(catalog.actor_templates[1].vision.vision_collider_template_id == 9);
 
     const KernelWeaponMechanicsDefinition& rifle =
         config.weapons.definitions[network_example::game_server::kWeaponRifle];

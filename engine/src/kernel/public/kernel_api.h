@@ -118,9 +118,9 @@ uint32_t Kernel_QueryColliderShapes(
     uint32_t max_shapes);
 
 /*
- * Queries local runtime perception state for host/server/debug tooling. This
- * surface does not imply remote client replication; pure clients only see
- * vision states that their local kernel has been configured to maintain.
+ * Queries runtime perception state on host/server kernels and template-derived
+ * visual-debug state on pure clients when replicated actors carry an actor
+ * template id with vision config.
  */
 uint32_t Kernel_QueryVisionState(
     KernelHandle* kernel,
@@ -131,6 +131,11 @@ uint32_t Kernel_QueryVisionState(
 uint32_t Kernel_GetProjectileTemplates(
     KernelHandle* kernel,
     KernelProjectileTemplateDefinition* out_templates,
+    uint32_t max_templates);
+
+uint32_t Kernel_GetActorTemplates(
+    KernelHandle* kernel,
+    KernelActorTemplateDefinition* out_templates,
     uint32_t max_templates);
 
 uint32_t Kernel_GetColliderTemplates(
@@ -179,6 +184,11 @@ bool Kernel_ServerSetEntityCombatState(
     KernelHandle* kernel,
     uint32_t net_id,
     const KernelCombatStateDefinition* combat_state);
+
+bool Kernel_ServerSetEntityActorTemplate(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    uint32_t actor_template_id);
 
 bool Kernel_ServerSetEntityVisionConfig(
     KernelHandle* kernel,

@@ -76,6 +76,8 @@ int main() {
            sizeof(KernelGameplayCatalogDefinition));
     assert(abi_info.gameplay_catalog_load_result_size ==
            sizeof(KernelGameplayCatalogLoadResult));
+    assert(abi_info.actor_template_definition_size ==
+           sizeof(KernelActorTemplateDefinition));
     assert(abi_info.projectile_template_definition_size ==
            sizeof(KernelProjectileTemplateDefinition));
     assert(abi_info.collider_template_definition_size ==
@@ -130,7 +132,7 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 24u);
+    assert(KERNEL_ABI_VERSION == 25u);
     assert(sizeof(KernelVec4) == 16u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS) != 0);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
@@ -157,6 +159,8 @@ int main() {
            offsetof(RenderEntityState, status));
     assert(offsetof(RenderEntityState, collider_template_id) >
            offsetof(RenderEntityState, projectile_template_id));
+    assert(offsetof(RenderEntityState, actor_template_id) >
+           offsetof(RenderEntityState, collider_template_id));
     assert(offsetof(KernelCombatStateDefinition, collider_template_id) >
            offsetof(KernelCombatStateDefinition, active_weapon_id));
     assert(offsetof(KernelColliderTemplateDefinition, shape_params) >
@@ -343,21 +347,40 @@ int main() {
         collider_template,
         vision_collider_template,
     };
+    KernelActorTemplateDefinition actor_template{};
+    actor_template.struct_size = sizeof(actor_template);
+    actor_template.actor_template_id = 2;
+    actor_template.entity_type = 1;
+    actor_template.actor_type = KernelActorType_Agent;
+    actor_template.collider_template_id = 10;
+    actor_template.vision.struct_size = sizeof(KernelAgentVisionConfig);
+    actor_template.vision.camp = KernelAgentCamp_EnemySide;
+    actor_template.vision.vision_collider_template_id = 12;
+    actor_template.vision.local_origin = KernelVec3{0.0f, 1.5f, 0.0f};
+    actor_template.vision.local_forward = KernelVec3{-1.0f, 0.0f, 0.0f};
     KernelGameplayCatalogDefinition catalog{};
     catalog.struct_size = sizeof(catalog);
     catalog.catalog_version = 3;
     catalog.catalog_hash = 0x1122334455667788ull;
+    catalog.actor_templates = &actor_template;
+    catalog.actor_template_count = 1;
     catalog.projectile_templates = &projectile_template;
     catalog.projectile_template_count = 1;
     catalog.collider_templates = initial_collider_templates.data();
     catalog.collider_template_count =
         static_cast<std::uint32_t>(initial_collider_templates.size());
     assert(Kernel_LoadGameplayCatalog(kernel, &catalog));
+    assert(Kernel_GetActorTemplates(kernel, nullptr, 0) == 1);
     assert(Kernel_GetProjectileTemplates(kernel, nullptr, 0) == 1);
     assert(Kernel_GetColliderTemplates(kernel, nullptr, 0) == 2);
     assert(Kernel_GetColliderBindings(kernel, nullptr, 0) == 0);
+    std::array<KernelActorTemplateDefinition, 1> read_actor_templates{};
     std::array<KernelProjectileTemplateDefinition, 1> read_projectile_templates{};
     std::array<KernelColliderTemplateDefinition, 2> read_collider_templates{};
+    assert(Kernel_GetActorTemplates(
+               kernel,
+               read_actor_templates.data(),
+               static_cast<std::uint32_t>(read_actor_templates.size())) == 1);
     assert(Kernel_GetProjectileTemplates(
                kernel,
                read_projectile_templates.data(),
@@ -371,6 +394,10 @@ int main() {
                kernel,
                read_collider_bindings.data(),
                static_cast<std::uint32_t>(read_collider_bindings.size())) == 0);
+    assert(read_actor_templates[0].actor_template_id == 2);
+    assert(read_actor_templates[0].collider_template_id == 10);
+    assert(read_actor_templates[0].vision.vision_collider_template_id == 12);
+    assert(read_actor_templates[0].vision.local_origin.y == 1.5f);
     assert(read_projectile_templates[0].projectile_template_id == 3);
     assert(read_projectile_templates[0].collider_template_id == 10);
     assert(read_collider_templates[0].template_id == 10);

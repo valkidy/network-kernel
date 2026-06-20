@@ -46,6 +46,10 @@ WorldSnapshot build_world_snapshot(
         const EntityKind& kind = view.get<const EntityKind>(entity);
         entity_snapshot.type = kind.type;
         entity_snapshot.actor_type = kind.actor_type;
+        if (world.registry().all_of<ActorTemplateRef>(entity)) {
+            entity_snapshot.actor_template_id =
+                world.registry().get<ActorTemplateRef>(entity).actor_template_id;
+        }
         entity_snapshot.position = view.get<const Transform>(entity).position;
         entity_snapshot.rotation = view.get<const Transform>(entity).rotation;
         if (world.registry().all_of<Velocity>(entity)) {

@@ -173,6 +173,11 @@ int main() {
             KernelHandle*,
             KernelProjectileTemplateDefinition*,
             std::uint32_t)>(library, "Kernel_GetProjectileTemplates");
+    [[maybe_unused]] auto* kernel_get_actor_templates =
+        load_symbol<std::uint32_t(
+            KernelHandle*,
+            KernelActorTemplateDefinition*,
+            std::uint32_t)>(library, "Kernel_GetActorTemplates");
     [[maybe_unused]] auto* kernel_get_collider_templates =
         load_symbol<std::uint32_t(
             KernelHandle*,
@@ -367,6 +372,8 @@ int main() {
     assert(abi_info.server_entity_state_size == sizeof(KernelServerEntityState));
     assert(abi_info.weapon_mechanics_definition_size ==
            sizeof(KernelWeaponMechanicsDefinition));
+    assert(abi_info.actor_template_definition_size ==
+           sizeof(KernelActorTemplateDefinition));
     assert(abi_info.projectile_mechanics_definition_size ==
            sizeof(KernelProjectileMechanicsDefinition));
     assert(abi_info.area_effect_mechanics_definition_size ==

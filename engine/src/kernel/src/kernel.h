@@ -64,6 +64,9 @@ public:
     std::uint32_t get_projectile_templates(
         KernelProjectileTemplateDefinition* out_templates,
         std::uint32_t max_templates) const;
+    std::uint32_t get_actor_templates(
+        KernelActorTemplateDefinition* out_templates,
+        std::uint32_t max_templates) const;
     std::uint32_t get_collider_templates(
         KernelColliderTemplateDefinition* out_templates,
         std::uint32_t max_templates) const;
@@ -88,6 +91,9 @@ public:
     bool server_set_entity_combat_state(
         NetId net_id,
         const KernelCombatStateDefinition& combat_state);
+    bool server_set_entity_actor_template(
+        NetId net_id,
+        std::uint32_t actor_template_id);
     bool server_set_entity_vision_config(
         NetId net_id,
         const KernelAgentVisionConfig& vision_config);
@@ -141,6 +147,7 @@ private:
         EntityType type = EntityType::kUnknown;
         ActorType actor_type = ActorType::kUnknown;
         PeerId owner_peer = 0;
+        std::uint32_t actor_template_id = 0;
         glm::vec3 position{0.0f, 0.0f, 0.0f};
         glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
         std::uint16_t hp = 0;
@@ -254,7 +261,6 @@ private:
     WorldSnapshot build_relevant_snapshot(
         const PeerSession& session,
         std::uint32_t server_time_ms) const;
-    void populate_snapshot_vision_debug(WorldSnapshot* snapshot) const;
     bool is_entity_relevant_to_session(
         const PeerSession& session,
         const EntitySnapshot& entity,
@@ -297,6 +303,8 @@ private:
     void sync_entity_colliders_from_world();
     std::uint32_t collider_template_id_for_projectile_template(
         std::uint32_t projectile_template_id) const;
+    std::uint32_t collider_template_id_for_actor_template(
+        std::uint32_t actor_template_id) const;
     void sync_client_render_colliders();
     void sync_client_vision_states_from_snapshot(const WorldSnapshot& snapshot);
     void update_vision_states(float delta_seconds);
@@ -322,6 +330,7 @@ private:
     std::unordered_map<NetId, ClientEntityTombstone> client_despawned_entities_;
     std::vector<PlayerInput> pending_prediction_inputs_;
     std::vector<PredictedProjectile> predicted_projectiles_;
+    std::vector<KernelActorTemplateDefinition> actor_templates_;
     std::vector<KernelProjectileTemplateDefinition> projectile_templates_;
     std::vector<KernelColliderTemplateDefinition> collider_templates_;
     std::vector<KernelDebugInfo> debug_records_;

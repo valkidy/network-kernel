@@ -114,6 +114,7 @@ bool EnemyManager::spawn_enemy_at(const KernelVec3& position) {
     create_info.rotation = kIdentityRotation;
     create_info.animation_state = actor_template->animation_idle;
     create_info.visual_flags = 0;
+    create_info.actor_template_id = actor_template->actor_template_id;
 
     std::uint32_t net_id = 0;
     if (!Kernel_ServerCreateEntity(kernel_, &create_info, &net_id) || net_id == 0) {

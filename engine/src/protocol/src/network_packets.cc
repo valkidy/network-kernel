@@ -20,13 +20,12 @@ constexpr std::size_t kActorSnapshotBasePayloadSize = 40;
 constexpr std::size_t kActorOwnerPeerPayloadSize = 4;
 constexpr std::size_t kActorRotationPayloadSize = 16;
 constexpr std::size_t kActorHealthPayloadSize = 4;
-constexpr std::size_t kActorColliderTemplatePayloadSize = 4;
-constexpr std::size_t kActorVisionDebugPayloadSize = 28;
+constexpr std::size_t kActorTemplatePayloadSize = 4;
 constexpr std::size_t kProjectileCompactSnapshotPayloadSize = 42;
 constexpr std::size_t kProjectileHybridCorrectionSnapshotPayloadSize = 54;
 constexpr std::size_t kGenericSnapshotPayloadSize = 44;
 constexpr std::size_t kReliableEventPayloadSize = 34;
-constexpr std::size_t kEntitySpawnPayloadSize = 44;
+constexpr std::size_t kEntitySpawnPayloadSize = 48;
 constexpr std::size_t kEntityDespawnPayloadSize = 12;
 constexpr std::size_t kProjectileSpawnBatchHeaderPayloadSize = 24;
 constexpr std::size_t kProjectileSpawnGroupHeaderPayloadSize = 8;
@@ -43,8 +42,7 @@ enum ActorSnapshotRecordFlag : std::uint16_t {
     kActorSnapshotHasOwnerPeer = 1u << 0,
     kActorSnapshotHasRotation = 1u << 1,
     kActorSnapshotHasHealth = 1u << 2,
-    kActorSnapshotHasVisionDebug = 1u << 3,
-    kActorSnapshotHasColliderTemplate = 1u << 4,
+    kActorSnapshotHasActorTemplate = 1u << 3,
 };
 
 bool is_actor_entity_type(EntityType type) {
@@ -59,11 +57,8 @@ std::uint16_t actor_record_flags(const EntitySnapshot& entity) {
             flags |= kActorSnapshotHasHealth;
         }
     }
-    if (entity.vision_collider_template_id != 0u) {
-        flags |= kActorSnapshotHasVisionDebug;
-    }
-    if (entity.collider_template_id != 0u) {
-        flags |= kActorSnapshotHasColliderTemplate;
+    if (entity.actor_template_id != 0u) {
+        flags |= kActorSnapshotHasActorTemplate;
     }
     return flags;
 }
@@ -232,13 +227,8 @@ std::vector<std::uint8_t> encode_snapshot_packet(
                         payload.write_u16(entity->hp);
                         payload.write_u16(entity->max_hp);
                     }
-                    if ((record_flags & kActorSnapshotHasColliderTemplate) != 0u) {
-                        payload.write_u32(entity->collider_template_id);
-                    }
-                    if ((record_flags & kActorSnapshotHasVisionDebug) != 0u) {
-                        payload.write_u32(entity->vision_collider_template_id);
-                        payload.write_vec3(entity->vision_origin);
-                        payload.write_vec3(entity->vision_forward);
+                    if ((record_flags & kActorSnapshotHasActorTemplate) != 0u) {
+                        payload.write_u32(entity->actor_template_id);
                     }
                     break;
                 }
@@ -359,14 +349,8 @@ bool decode_snapshot_packet(
                     } else {
                         entity.state_flags |= kSnapshotStateFlagHpUnknown;
                     }
-                    if ((record_flags & kActorSnapshotHasColliderTemplate) != 0u &&
-                        !reader.read_u32(&entity.collider_template_id)) {
-                        return false;
-                    }
-                    if ((record_flags & kActorSnapshotHasVisionDebug) != 0u &&
-                        (!reader.read_u32(&entity.vision_collider_template_id) ||
-                         !reader.read_vec3(&entity.vision_origin) ||
-                         !reader.read_vec3(&entity.vision_forward))) {
+                    if ((record_flags & kActorSnapshotHasActorTemplate) != 0u &&
+                        !reader.read_u32(&entity.actor_template_id)) {
                         return false;
                     }
                     break;
@@ -460,11 +444,8 @@ std::size_t estimate_snapshot_entity_size(const EntitySnapshot& entity) {
                    ((actor_record_flags(entity) & kActorSnapshotHasHealth) != 0u
                         ? kActorHealthPayloadSize
                         : 0u) +
-                   ((actor_record_flags(entity) & kActorSnapshotHasColliderTemplate) != 0u
-                        ? kActorColliderTemplatePayloadSize
-                        : 0u) +
-                   ((actor_record_flags(entity) & kActorSnapshotHasVisionDebug) != 0u
-                        ? kActorVisionDebugPayloadSize
+                   ((actor_record_flags(entity) & kActorSnapshotHasActorTemplate) != 0u
+                        ? kActorTemplatePayloadSize
                         : 0u);
         case SnapshotSectionType::kProjectileCompact:
             return kProjectileCompactSnapshotPayloadSize;
@@ -548,6 +529,7 @@ std::vector<std::uint8_t> encode_entity_spawn_packet(
     payload.write_u16(static_cast<std::uint16_t>(packet.actor_type));
     payload.write_u32(packet.owner_peer);
     payload.write_u32(packet.server_tick);
+    payload.write_u32(packet.actor_template_id);
     payload.write_vec3(packet.position);
     payload.write_quat(packet.rotation);
     return protocol_internal::wrap_packet(
@@ -582,6 +564,7 @@ bool decode_entity_spawn_packet(
         !reader.read_u16(&actor_type) ||
         !reader.read_u32(&packet.owner_peer) ||
         !reader.read_u32(&packet.server_tick) ||
+        !reader.read_u32(&packet.actor_template_id) ||
         !reader.read_vec3(&packet.position) ||
         !reader.read_quat(&packet.rotation) ||
         !reader.done()) {

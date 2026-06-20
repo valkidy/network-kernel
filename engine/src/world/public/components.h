@@ -75,6 +75,10 @@ struct EntityKind {
     ActorType actor_type = ActorType::kUnknown;
 };
 
+struct ActorTemplateRef {
+    std::uint32_t actor_template_id = 0;
+};
+
 struct Transform {
     glm::vec3 position{0.0f, 0.0f, 0.0f};
     glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};

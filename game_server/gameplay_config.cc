@@ -2746,6 +2746,17 @@ std::vector<std::string> validate_gameplay_config(
 KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
     const GameServerGameplayConfig& config) {
     KernelGameplayCatalogStorage storage;
+    for (const ActorTemplateConfig& actor_template : config.actor_templates) {
+        KernelActorTemplateDefinition definition{};
+        definition.struct_size = sizeof(KernelActorTemplateDefinition);
+        definition.actor_template_id = actor_template.actor_template_id;
+        definition.entity_type = actor_template.entity_type;
+        definition.actor_type = actor_template.actor_type;
+        definition.collider_template_id = actor_template.collider_template_id;
+        definition.vision = actor_template.vision;
+        definition.vision.struct_size = sizeof(KernelAgentVisionConfig);
+        storage.actor_templates.push_back(definition);
+    }
     for (const ProjectileTemplateConfig& projectile_template :
          config.projectile_templates) {
         storage.projectile_templates.push_back(projectile_template.definition);
@@ -2757,6 +2768,9 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
     storage.definition.struct_size = sizeof(storage.definition);
     storage.definition.catalog_version = config.weapons.catalog_version;
     storage.definition.catalog_hash = config.weapons.catalog_hash;
+    storage.definition.actor_templates = storage.actor_templates.data();
+    storage.definition.actor_template_count =
+        static_cast<std::uint32_t>(storage.actor_templates.size());
     storage.definition.projectile_templates =
         storage.projectile_templates.data();
     storage.definition.projectile_template_count =

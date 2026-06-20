@@ -99,6 +99,7 @@ struct GameServerGameplayConfig {
 };
 
 struct KernelGameplayCatalogStorage {
+    std::vector<KernelActorTemplateDefinition> actor_templates;
     std::vector<KernelProjectileTemplateDefinition> projectile_templates;
     std::vector<KernelColliderTemplateDefinition> collider_templates;
     std::vector<KernelColliderBindingDefinition> collider_bindings;

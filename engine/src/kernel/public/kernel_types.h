@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 24u
+#define KERNEL_ABI_VERSION 25u
 
 #define KERNEL_BUILD_INFO_TEXT_SIZE 128u
 #define KERNEL_LAN_DISCOVERY_TEXT_SIZE 128u
@@ -128,6 +128,7 @@ typedef struct KernelAbiInfo {
     uint64_t capability_flags;
     uint32_t gameplay_catalog_definition_size;
     uint32_t gameplay_catalog_load_result_size;
+    uint32_t actor_template_definition_size;
     uint32_t projectile_template_definition_size;
     uint32_t collider_template_definition_size;
     uint32_t collider_binding_definition_size;
@@ -387,6 +388,7 @@ typedef struct RenderEntityState {
     uint32_t status;
     uint32_t projectile_template_id;
     uint32_t collider_template_id;
+    uint32_t actor_template_id;
 } RenderEntityState;
 
 typedef struct KernelServerEntityCreateInfo {
@@ -398,6 +400,7 @@ typedef struct KernelServerEntityCreateInfo {
     KernelQuat rotation;
     uint16_t animation_state;
     uint32_t visual_flags;
+    uint32_t actor_template_id;
 } KernelServerEntityCreateInfo;
 
 typedef struct KernelServerEntityState {
@@ -414,6 +417,7 @@ typedef struct KernelServerEntityState {
     uint16_t animation_state;
     uint32_t visual_flags;
     uint32_t valid;
+    uint32_t actor_template_id;
 } KernelServerEntityState;
 
 typedef enum KernelColliderShapeType {
@@ -460,6 +464,18 @@ typedef struct KernelColliderBindingDefinition {
     KernelQuat local_rotation;
 } KernelColliderBindingDefinition;
 
+typedef struct KernelAgentVisionConfig {
+    uint32_t struct_size;
+    uint8_t camp;
+    uint8_t reserved0;
+    uint16_t reserved1;
+    uint32_t vision_collider_template_id;
+    uint32_t max_visible_hostiles;
+    uint32_t max_visible_allies;
+    KernelVec3 local_origin;
+    KernelVec3 local_forward;
+} KernelAgentVisionConfig;
+
 typedef struct KernelProjectileTemplateDefinition {
     uint32_t struct_size;
     uint32_t projectile_template_id;
@@ -485,10 +501,21 @@ typedef struct KernelProjectileTemplateDefinition {
     uint32_t damage_interval_ticks;
 } KernelProjectileTemplateDefinition;
 
+typedef struct KernelActorTemplateDefinition {
+    uint32_t struct_size;
+    uint32_t actor_template_id;
+    uint16_t entity_type;
+    uint16_t actor_type;
+    uint32_t collider_template_id;
+    KernelAgentVisionConfig vision;
+} KernelActorTemplateDefinition;
+
 typedef struct KernelGameplayCatalogDefinition {
     uint32_t struct_size;
     uint32_t catalog_version;
     uint64_t catalog_hash;
+    const KernelActorTemplateDefinition* actor_templates;
+    uint32_t actor_template_count;
     const KernelProjectileTemplateDefinition* projectile_templates;
     uint32_t projectile_template_count;
     const KernelColliderTemplateDefinition* collider_templates;
@@ -627,18 +654,6 @@ typedef struct KernelColliderShapeView {
     uint32_t remaining_ticks;
     uint32_t has_resolved_damage;
 } KernelColliderShapeView;
-
-typedef struct KernelAgentVisionConfig {
-    uint32_t struct_size;
-    uint8_t camp;
-    uint8_t reserved0;
-    uint16_t reserved1;
-    uint32_t vision_collider_template_id;
-    uint32_t max_visible_hostiles;
-    uint32_t max_visible_allies;
-    KernelVec3 local_origin;
-    KernelVec3 local_forward;
-} KernelAgentVisionConfig;
 
 typedef struct KernelVisionStateQuery {
     uint32_t struct_size;

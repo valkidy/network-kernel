@@ -18,6 +18,7 @@ struct EntitySpawnPacket {
     ActorType actor_type = ActorType::kUnknown;
     PeerId owner_peer = 0;
     std::uint32_t server_tick = 0;
+    std::uint32_t actor_template_id = 0;
     glm::vec3 position{0.0f, 0.0f, 0.0f};
     glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
 };
