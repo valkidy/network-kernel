@@ -228,6 +228,8 @@ private:
     void report_render_state_overflow_if_needed();
     void handle_client_snapshot(WorldSnapshot snapshot);
     void store_client_snapshot(WorldSnapshot snapshot);
+    bool snapshot_entity_has_required_metadata(const EntitySnapshot& entity) const;
+    void diagnose_client_snapshot_metadata_waits();
     void reconcile_local_prediction(const WorldSnapshot& snapshot);
     void reconcile_predicted_projectiles(const WorldSnapshot& snapshot);
     void predict_local_input(const PlayerInput& input);
@@ -335,6 +337,7 @@ private:
     std::vector<PeerSession> peer_sessions_;
     PeerSession local_listen_session_;
     std::vector<ClientReplicatedEntity> client_replicated_entities_;
+    std::unordered_set<NetId> client_metadata_timeout_reported_entities_;
     std::unordered_map<NetId, ClientEntityTombstone> client_despawned_entities_;
     std::vector<PlayerInput> pending_prediction_inputs_;
     std::vector<PredictedProjectile> predicted_projectiles_;

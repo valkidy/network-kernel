@@ -27,6 +27,9 @@
 namespace network_example {
 namespace {
 
+constexpr std::uint32_t kClientSnapshotMetadataGraceTicks = 2;
+constexpr bool kDropStaleClientSnapshotsMissingMetadata = true;
+
 KernelConfig with_kernel_defaults(KernelConfig config) {
     config.tick = with_tick_defaults(config.tick);
     if (config.max_render_states == 0) {
@@ -2354,6 +2357,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     peer_sessions_.clear();
     local_listen_session_ = PeerSession{};
     client_replicated_entities_.clear();
+    client_metadata_timeout_reported_entities_.clear();
     client_despawned_entities_.clear();
     pending_prediction_inputs_.clear();
     predicted_projectiles_.clear();
@@ -2641,6 +2645,7 @@ void KernelEngine::handle_client_projectile_spawn_batch(
                 replicated->position = record.spawn_position;
                 replicated->rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
             }
+            client_metadata_timeout_reported_entities_.erase(record.projectile_net_id);
             if (projectile_template->sync_mode ==
                 KernelProjectileSyncMode_ServerSnapshotOnly) {
                 continue;
@@ -2842,6 +2847,7 @@ void KernelEngine::handle_client_spawn(const EntitySpawnPacket& packet) {
         found->rotation = packet.rotation;
         found->active = false;
     }
+    client_metadata_timeout_reported_entities_.erase(packet.net_id);
     if (has_client_snapshot_) {
         sync_client_vision_states_from_snapshot(latest_client_snapshot_);
         rebuild_render_states();
@@ -2888,6 +2894,7 @@ void KernelEngine::handle_client_template_update(
     } else {
         found->actor_template_id = packet.actor_template_id;
     }
+    client_metadata_timeout_reported_entities_.erase(packet.net_id);
     if (has_client_snapshot_) {
         sync_client_vision_states_from_snapshot(latest_client_snapshot_);
         rebuild_render_states();
@@ -2921,6 +2928,7 @@ void KernelEngine::handle_client_despawn(const EntityDespawnPacket& packet) {
                 return entity.net_id == packet.net_id;
             }),
         client_replicated_entities_.end());
+    client_metadata_timeout_reported_entities_.erase(packet.net_id);
     predicted_projectiles_.erase(
         std::remove_if(
             predicted_projectiles_.begin(),
@@ -2957,6 +2965,7 @@ void KernelEngine::clear_client_session() {
     lifecycle_events_.clear();
     client_snapshot_buffer_.clear();
     client_replicated_entities_.clear();
+    client_metadata_timeout_reported_entities_.clear();
     client_despawned_entities_.clear();
     latest_client_snapshot_ = WorldSnapshot{};
     predicted_local_entity_ = EntitySnapshot{};
@@ -3031,6 +3040,7 @@ void KernelEngine::handle_client_snapshot(WorldSnapshot snapshot) {
     latest_client_snapshot_ = snapshot;
     has_client_snapshot_ = true;
     store_client_snapshot(std::move(snapshot));
+    diagnose_client_snapshot_metadata_waits();
     sync_client_vision_states_from_snapshot(latest_client_snapshot_);
     reconcile_local_prediction(latest_client_snapshot_);
     reconcile_predicted_projectiles(latest_client_snapshot_);
@@ -3111,6 +3121,80 @@ void KernelEngine::store_client_snapshot(WorldSnapshot snapshot) {
                 static_cast<std::ptrdiff_t>(
                     client_snapshot_buffer_.size() - kMaxClientSnapshots));
     }
+}
+
+bool KernelEngine::snapshot_entity_has_required_metadata(
+    const EntitySnapshot& entity) const {
+    if (entity.net_id == 0) {
+        return true;
+    }
+    if (has_predicted_local_entity_ && entity.net_id == local_player_net_id_) {
+        return true;
+    }
+    if (has_predicted_projectile_net_id(entity.net_id)) {
+        return true;
+    }
+    const auto replicated = std::find_if(
+        client_replicated_entities_.begin(),
+        client_replicated_entities_.end(),
+        [&entity](const ClientReplicatedEntity& replicated_entity) {
+            return replicated_entity.net_id == entity.net_id;
+        });
+    if (entity.type == EntityType::kActor) {
+        return replicated != client_replicated_entities_.end() &&
+               replicated->actor_template_id != 0u;
+    }
+    if (entity.type == EntityType::kProjectile) {
+        return replicated != client_replicated_entities_.end() &&
+               replicated->projectile_template_id != 0u &&
+               replicated->collider_template_id != 0u;
+    }
+    return true;
+}
+
+void KernelEngine::diagnose_client_snapshot_metadata_waits() {
+    if (config_.mode != KernelMode_Client || !has_client_snapshot_) {
+        return;
+    }
+    const std::uint32_t latest_tick = latest_client_snapshot_.header.server_tick;
+    client_snapshot_buffer_.erase(
+        std::remove_if(
+            client_snapshot_buffer_.begin(),
+            client_snapshot_buffer_.end(),
+            [this, latest_tick](const WorldSnapshot& snapshot) {
+                if (latest_tick <= snapshot.header.server_tick ||
+                    latest_tick - snapshot.header.server_tick <=
+                        kClientSnapshotMetadataGraceTicks) {
+                    return false;
+                }
+
+                bool missing_metadata = false;
+                for (const EntitySnapshot& entity : snapshot.entities) {
+                    if (snapshot_entity_has_required_metadata(entity)) {
+                        continue;
+                    }
+                    missing_metadata = true;
+                    if (client_metadata_timeout_reported_entities_
+                            .insert(entity.net_id)
+                            .second) {
+                        ++network_stats_.replication_metadata_timeout_count;
+                        spdlog::warn(
+                            "[NetworkExample] client snapshot metadata timeout "
+                            "net_id={} snapshot_tick={} latest_tick={} grace_ticks={}",
+                            entity.net_id,
+                            snapshot.header.server_tick,
+                            latest_tick,
+                            kClientSnapshotMetadataGraceTicks);
+                    }
+                }
+                if (missing_metadata &&
+                    kDropStaleClientSnapshotsMissingMetadata) {
+                    ++network_stats_.replication_stale_snapshot_drop_count;
+                    return true;
+                }
+                return false;
+            }),
+        client_snapshot_buffer_.end());
 }
 
 void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {

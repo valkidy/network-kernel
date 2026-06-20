@@ -132,7 +132,7 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 25u);
+    assert(KERNEL_ABI_VERSION == 26u);
     assert(sizeof(KernelVec4) == 16u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS) != 0);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
@@ -161,6 +161,10 @@ int main() {
            offsetof(RenderEntityState, projectile_template_id));
     assert(offsetof(RenderEntityState, actor_template_id) >
            offsetof(RenderEntityState, collider_template_id));
+    assert(offsetof(KernelNetworkStats, replication_metadata_timeout_count) >
+           offsetof(KernelNetworkStats, loss_ratio));
+    assert(offsetof(KernelNetworkStats, replication_stale_snapshot_drop_count) >
+           offsetof(KernelNetworkStats, replication_metadata_timeout_count));
     assert(offsetof(KernelCombatStateDefinition, collider_template_id) >
            offsetof(KernelCombatStateDefinition, active_weapon_id));
     assert(offsetof(KernelColliderTemplateDefinition, shape_params) >

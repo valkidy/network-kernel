@@ -1512,6 +1512,61 @@ void projectile_snapshot_waits_for_reliable_metadata_before_render() {
     require(shapes[0].collider_template_id == 10);
 }
 
+void projectile_snapshot_missing_metadata_after_grace_ticks_is_diagnosed() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+    KernelProjectileTemplateDefinition projectile_template{};
+    projectile_template.struct_size = sizeof(projectile_template);
+    projectile_template.projectile_template_id = 3;
+    projectile_template.weapon_id = 3;
+    projectile_template.motion_model = KernelProjectileMotionModel_Linear;
+    projectile_template.sync_mode = KernelProjectileSyncMode_ServerSnapshotOnly;
+    projectile_template.speed = 10.0f;
+    projectile_template.lifetime_seconds = 2.0f;
+    projectile_template.collider_template_id = 10;
+    KernelColliderTemplateDefinition collider_template = projectile_collider_template();
+    KernelGameplayCatalogDefinition catalog{};
+    catalog.struct_size = sizeof(catalog);
+    catalog.catalog_version = 9;
+    catalog.catalog_hash = 0x9999ull;
+    catalog.projectile_templates = &projectile_template;
+    catalog.projectile_template_count = 1;
+    catalog.collider_templates = &collider_template;
+    catalog.collider_template_count = 1;
+    require(client.load_gameplay_catalog(catalog));
+
+    client.handle_client_snapshot(projectile_snapshot(
+        3,
+        101,
+        7,
+        1234,
+        glm::vec3{1.0f, 0.0f, 0.0f},
+        glm::vec3{10.0f, 0.0f, 0.0f}));
+    client.handle_client_snapshot(projectile_snapshot(
+        6,
+        101,
+        7,
+        1234,
+        glm::vec3{2.0f, 0.0f, 0.0f},
+        glm::vec3{10.0f, 0.0f, 0.0f}));
+
+    std::array<RenderEntityState, 4> states{};
+    require(client.get_render_states_at_time(200000, states.data(), states.size()) == 0);
+
+    KernelNetworkStats network_stats{};
+    network_stats.struct_size = sizeof(network_stats);
+    require(client.get_network_stats(&network_stats));
+    require(network_stats.replication_metadata_timeout_count == 1);
+    require(network_stats.replication_stale_snapshot_drop_count == 1);
+    require(client.client_snapshot_buffer_.size() == 1);
+    require(client.client_snapshot_buffer_[0].header.server_tick == 6);
+}
+
 void projectile_spawn_event_and_batch_do_not_duplicate_render_state() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
@@ -2201,6 +2256,7 @@ int main() {
     server_validates_catalog_hash_before_welcome();
     projectile_spawn_batch_renders_and_binds_to_snapshot();
     projectile_snapshot_waits_for_reliable_metadata_before_render();
+    projectile_snapshot_missing_metadata_after_grace_ticks_is_diagnosed();
     projectile_spawn_event_and_batch_do_not_duplicate_render_state();
     local_deterministic_prediction_query_uses_projectile_template_collider();
     client_despawn_removes_predicted_projectile();

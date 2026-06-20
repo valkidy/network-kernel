@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 25u
+#define KERNEL_ABI_VERSION 26u
 
 #define KERNEL_BUILD_INFO_TEXT_SIZE 128u
 #define KERNEL_LAN_DISCOVERY_TEXT_SIZE 128u
@@ -575,6 +575,8 @@ typedef struct KernelNetworkStats {
     uint64_t rtt_us;
     uint64_t jitter_us;
     float loss_ratio;
+    uint32_t replication_metadata_timeout_count;
+    uint32_t replication_stale_snapshot_drop_count;
 } KernelNetworkStats;
 
 typedef struct KernelHitDebugInfo {
