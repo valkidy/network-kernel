@@ -21,6 +21,7 @@ namespace network_example {
 class LoopbackTransport;
 struct EntityDespawnPacket;
 struct EntitySpawnPacket;
+struct EntityTemplateUpdatePacket;
 struct ProjectileSpawnBatchPacket;
 struct WelcomePacket;
 
@@ -148,6 +149,8 @@ private:
         ActorType actor_type = ActorType::kUnknown;
         PeerId owner_peer = 0;
         std::uint32_t actor_template_id = 0;
+        std::uint32_t projectile_template_id = 0;
+        std::uint32_t collider_template_id = 0;
         glm::vec3 position{0.0f, 0.0f, 0.0f};
         glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
         std::uint16_t hp = 0;
@@ -203,6 +206,7 @@ private:
     void handle_client_reliable_event(const TransportEvent& transport_event);
     void handle_client_projectile_spawn_batch(
         const ProjectileSpawnBatchPacket& packet);
+    void handle_client_template_update(const EntityTemplateUpdatePacket& packet);
     void handle_client_ping_pong(const TransportEvent& transport_event);
     void handle_server_ping_pong(const TransportEvent& transport_event);
     void apply_welcome(const WelcomePacket& welcome);
@@ -274,6 +278,10 @@ private:
         PeerId peer,
         NetId net_id,
         std::uint32_t reason);
+    void send_entity_template_update(
+        PeerId peer,
+        NetId net_id,
+        std::uint32_t actor_template_id);
     WorldSnapshot build_snapshot_send_set(
         PeerSession& session,
         const WorldSnapshot& relevant_snapshot,

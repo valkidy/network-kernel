@@ -71,7 +71,6 @@ int main() {
     enemy.velocity = glm::vec3{1.0f, 0.0f, 0.0f};
     enemy.state = 513;
     enemy.flags = 0x01020304u;
-    enemy.actor_template_id = 2;
     snapshot.entities.push_back(enemy);
     network_example::EntitySnapshot compact_projectile;
     compact_projectile.net_id = 5;
@@ -81,8 +80,6 @@ int main() {
     compact_projectile.velocity = glm::vec3{4.0f, 5.0f, 6.0f};
     compact_projectile.state = 514;
     compact_projectile.flags = 0x02030405u;
-    compact_projectile.projectile_template_id = 3;
-    compact_projectile.collider_template_id = 10;
     snapshot.entities.push_back(compact_projectile);
     network_example::EntitySnapshot hybrid_projectile = compact_projectile;
     hybrid_projectile.net_id = 7;
@@ -98,9 +95,9 @@ int main() {
     assert(network_example::estimate_snapshot_packet_size(snapshot) ==
            snapshot_packet.size());
     assert(network_example::estimate_snapshot_entity_size(player) == 64u);
-    assert(network_example::estimate_snapshot_entity_size(enemy) == 60u);
-    assert(network_example::estimate_snapshot_entity_size(compact_projectile) == 42u);
-    assert(network_example::estimate_snapshot_entity_size(hybrid_projectile) == 54u);
+    assert(network_example::estimate_snapshot_entity_size(enemy) == 56u);
+    assert(network_example::estimate_snapshot_entity_size(compact_projectile) == 34u);
+    assert(network_example::estimate_snapshot_entity_size(hybrid_projectile) == 46u);
     network_example::WorldSnapshot decoded_snapshot;
     assert(network_example::decode_snapshot_packet(
         snapshot_packet.data(),
@@ -125,7 +122,6 @@ int main() {
     assert(decoded_snapshot.entities[1].actor_type ==
            network_example::ActorType::kAgent);
     assert(nearly_equal(decoded_snapshot.entities[1].rotation.y, 1.0f));
-    assert(decoded_snapshot.entities[1].actor_template_id == 2);
     assert((decoded_snapshot.entities[1].state_flags &
             network_example::kSnapshotStateFlagHpUnknown) != 0u);
     assert(decoded_snapshot.entities[1].hp == 0);
@@ -138,15 +134,11 @@ int main() {
     assert(nearly_equal(decoded_snapshot.entities[2].velocity.z, 6.0f));
     assert(decoded_snapshot.entities[2].spawn_tick == 0);
     assert(decoded_snapshot.entities[2].client_action_id == 0);
-    assert(decoded_snapshot.entities[2].projectile_template_id == 3);
-    assert(decoded_snapshot.entities[2].collider_template_id == 10);
     assert(decoded_snapshot.entities[3].net_id == 7);
     assert(decoded_snapshot.entities[3].type == network_example::EntityType::kProjectile);
     assert(decoded_snapshot.entities[3].owner_peer == 3);
     assert(decoded_snapshot.entities[3].spawn_tick == 12);
     assert(decoded_snapshot.entities[3].client_action_id == 1234);
-    assert(decoded_snapshot.entities[3].projectile_template_id == 3);
-    assert(decoded_snapshot.entities[3].collider_template_id == 10);
     assert((decoded_snapshot.entities[3].state_flags &
             network_example::kSnapshotStateFlagProjectileHybridCorrection) != 0u);
 
@@ -220,6 +212,25 @@ int main() {
     assert(decoded_despawn.net_id == 41);
     assert(decoded_despawn.server_tick == 18);
     assert(decoded_despawn.reason == KernelDespawnReason_OutOfRange);
+
+    network_example::EntityTemplateUpdatePacket template_update{};
+    template_update.net_id = 41;
+    template_update.server_tick = 21;
+    template_update.actor_template_id = 2;
+    const std::vector<std::uint8_t> template_update_packet =
+        network_example::encode_entity_template_update_packet(template_update, 49);
+    network_example::EntityTemplateUpdatePacket decoded_template_update{};
+    assert(network_example::decode_entity_template_update_packet(
+        template_update_packet.data(),
+        template_update_packet.size(),
+        &decoded_template_update));
+    assert(decoded_template_update.net_id == 41);
+    assert(decoded_template_update.server_tick == 21);
+    assert(decoded_template_update.actor_template_id == 2);
+    assert(!network_example::decode_entity_template_update_packet(
+        despawn_packet.data(),
+        despawn_packet.size(),
+        &decoded_template_update));
 
     network_example::ProjectileSpawnBatchPacket batch{};
     batch.server_tick = 77;

@@ -46,10 +46,6 @@ WorldSnapshot build_world_snapshot(
         const EntityKind& kind = view.get<const EntityKind>(entity);
         entity_snapshot.type = kind.type;
         entity_snapshot.actor_type = kind.actor_type;
-        if (world.registry().all_of<ActorTemplateRef>(entity)) {
-            entity_snapshot.actor_template_id =
-                world.registry().get<ActorTemplateRef>(entity).actor_template_id;
-        }
         entity_snapshot.position = view.get<const Transform>(entity).position;
         entity_snapshot.rotation = view.get<const Transform>(entity).rotation;
         if (world.registry().all_of<Velocity>(entity)) {
@@ -59,10 +55,6 @@ WorldSnapshot build_world_snapshot(
             const Health& health = world.registry().get<Health>(entity);
             entity_snapshot.hp = health.hp;
             entity_snapshot.max_hp = health.max_hp;
-        }
-        if (world.registry().all_of<Hitbox>(entity)) {
-            entity_snapshot.collider_template_id =
-                world.registry().get<Hitbox>(entity).collider_template_id;
         }
         entity_snapshot.flags = derived_visual_flags(world, entity);
         if (world.registry().all_of<ReplicationState>(entity)) {
@@ -76,14 +68,6 @@ WorldSnapshot build_world_snapshot(
                 world.registry().get<ProjectileState>(entity);
             entity_snapshot.spawn_tick = projectile.spawn_tick;
             entity_snapshot.client_action_id = projectile.client_action_id;
-            entity_snapshot.projectile_template_id =
-                projectile.projectile_template_id;
-            if (const RuntimeProjectileTemplate* projectile_template =
-                    world.find_projectile_template(
-                        projectile.projectile_template_id)) {
-                entity_snapshot.collider_template_id =
-                    projectile_template->collider_template_id;
-            }
         }
         if (world.registry().all_of<HomingState>(entity)) {
             entity_snapshot.state = static_cast<std::uint16_t>(

@@ -155,12 +155,13 @@ void client_query_collider_shapes_reports_render_colliders() {
     projectile_template.speed = 10.0f;
     projectile_template.lifetime_seconds = 2.0f;
     projectile_template.collider_template_id = 10;
-    KernelColliderTemplateDefinition projectile_collider =
-        projectile_collider_template();
-    KernelColliderTemplateDefinition actor_collider = actor_collider_template();
-    std::array<KernelColliderTemplateDefinition, 2> collider_templates = {
-        projectile_collider,
-        actor_collider,
+    std::array<KernelColliderTemplateDefinition, 3> collider_templates = {
+        projectile_collider_template(),
+        actor_collider_template(),
+        vision_collider_template(),
+    };
+    std::array<KernelActorTemplateDefinition, 1> actor_templates = {
+        agent_actor_template(),
     };
 
     KernelGameplayCatalogDefinition catalog{};
@@ -169,10 +170,40 @@ void client_query_collider_shapes_reports_render_colliders() {
     catalog.catalog_hash = 0x9999ull;
     catalog.projectile_templates = &projectile_template;
     catalog.projectile_template_count = 1;
+    catalog.actor_templates = actor_templates.data();
+    catalog.actor_template_count =
+        static_cast<std::uint32_t>(actor_templates.size());
     catalog.collider_templates = collider_templates.data();
     catalog.collider_template_count =
         static_cast<std::uint32_t>(collider_templates.size());
     require(client.load_gameplay_catalog(catalog));
+
+    client.handle_client_spawn(network_example::EntitySpawnPacket{
+        42,
+        network_example::EntityType::kActor,
+        network_example::ActorType::kAgent,
+        0,
+        3,
+        2,
+        glm::vec3{4.0f, 0.0f, 0.0f},
+        glm::quat{1.0f, 0.0f, 0.0f, 0.0f},
+    });
+    network_example::ProjectileSpawnBatchPacket batch{};
+    batch.server_tick = 3;
+    batch.server_time_us = 100000;
+    batch.catalog_hash = 0x9999ull;
+    network_example::ProjectileSpawnGroup group{};
+    group.projectile_template_id = 3;
+    group.records.push_back(network_example::ProjectileSpawnRecord{
+        101,
+        11,
+        7,
+        1234,
+        glm::vec3{1.0f, 0.0f, 0.0f},
+        glm::vec3{10.0f, 0.0f, 0.0f},
+    });
+    batch.groups.push_back(group);
+    client.handle_client_projectile_spawn_batch(batch);
 
     network_example::WorldSnapshot snapshot;
     snapshot.header.server_tick = 3;
@@ -181,7 +212,6 @@ void client_query_collider_shapes_reports_render_colliders() {
     enemy.type = network_example::EntityType::kActor;
     enemy.actor_type = network_example::ActorType::kAgent;
     enemy.position = glm::vec3{4.0f, 0.0f, 0.0f};
-    enemy.collider_template_id = 20;
     snapshot.entities.push_back(enemy);
     network_example::EntitySnapshot projectile;
     projectile.net_id = 101;
@@ -191,8 +221,6 @@ void client_query_collider_shapes_reports_render_colliders() {
     projectile.velocity = glm::vec3{10.0f, 0.0f, 0.0f};
     projectile.spawn_tick = 3;
     projectile.client_action_id = 1234;
-    projectile.projectile_template_id = 3;
-    projectile.collider_template_id = 10;
     snapshot.entities.push_back(projectile);
     client.handle_client_snapshot(snapshot);
 
@@ -655,7 +683,7 @@ void projectile_spawn_packet_uses_original_muzzle_position() {
     require(network_stats.packet_serialization_cost_us > 0);
 }
 
-void snapshot_only_projectile_spawn_skips_event_batch() {
+void snapshot_only_projectile_spawn_sends_metadata_batch() {
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;
     config.tick.server_tick_rate = 30;
@@ -719,6 +747,85 @@ void snapshot_only_projectile_spawn_skips_event_batch() {
         event.payload.size(),
         &packet));
     require(packet.net_id == projectile_net_id);
+    require(loopback_transport->PollClientEvent(event));
+    network_example::ProjectileSpawnBatchPacket batch;
+    require(network_example::decode_projectile_spawn_batch_packet(
+        event.payload.data(),
+        event.payload.size(),
+        &batch));
+    require(batch.server_tick == entity->spawn_tick);
+    require(batch.groups.size() == 1);
+    require(batch.groups[0].projectile_template_id == 3);
+    require(batch.groups[0].records.size() == 1);
+    require(batch.groups[0].records[0].projectile_net_id == projectile_net_id);
+    require(!loopback_transport->PollClientEvent(event));
+}
+
+void server_actor_template_update_sends_reliable_metadata() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+    KernelColliderTemplateDefinition alternate_actor_collider =
+        actor_collider_template();
+    alternate_actor_collider.template_id = 21;
+    const std::array<KernelColliderTemplateDefinition, 2> colliders = {
+        actor_collider_template(),
+        alternate_actor_collider,
+    };
+    KernelActorTemplateDefinition initial_actor = agent_actor_template();
+    initial_actor.vision.vision_collider_template_id = 0;
+    KernelActorTemplateDefinition updated_actor = agent_actor_template();
+    updated_actor.actor_template_id = 4;
+    updated_actor.collider_template_id = 21;
+    updated_actor.vision.vision_collider_template_id = 0;
+    const std::array<KernelActorTemplateDefinition, 2> actor_templates = {
+        initial_actor,
+        updated_actor,
+    };
+    KernelGameplayCatalogDefinition catalog{};
+    catalog.struct_size = sizeof(catalog);
+    catalog.catalog_version = 1;
+    catalog.catalog_hash = 0x8888ull;
+    catalog.collider_templates = colliders.data();
+    catalog.collider_template_count = static_cast<std::uint32_t>(colliders.size());
+    catalog.actor_templates = actor_templates.data();
+    catalog.actor_template_count =
+        static_cast<std::uint32_t>(actor_templates.size());
+    require(engine.load_gameplay_catalog(catalog));
+
+    auto loopback = std::make_unique<network_example::LoopbackTransport>();
+    require(loopback->StartServer(7779));
+    auto* loopback_transport = loopback.get();
+    engine.transport_ = std::move(loopback);
+
+    const network_example::NetId actor_net_id =
+        engine.world_.spawn_enemy(glm::vec3{2.0f, 0.0f, 0.0f});
+    const auto actor_entity = engine.world_.find_entity(actor_net_id);
+    require(actor_entity.has_value());
+    engine.world_.registry().emplace<network_example::ActorTemplateRef>(
+        *actor_entity,
+        2);
+
+    engine.peer_sessions_.push_back(network_example::KernelEngine::PeerSession{});
+    engine.peer_sessions_.back().peer = 7;
+    engine.peer_sessions_.back().welcomed = true;
+    engine.peer_sessions_.back().relevant_entities.insert(actor_net_id);
+
+    require(engine.server_set_entity_actor_template(actor_net_id, 4));
+
+    network_example::TransportEvent event;
+    require(loopback_transport->PollClientEvent(event));
+    network_example::EntityTemplateUpdatePacket packet;
+    require(network_example::decode_entity_template_update_packet(
+        event.payload.data(),
+        event.payload.size(),
+        &packet));
+    require(packet.net_id == actor_net_id);
+    require(packet.actor_template_id == 4);
     require(!loopback_transport->PollClientEvent(event));
 }
 
@@ -1324,6 +1431,87 @@ void projectile_spawn_batch_renders_and_binds_to_snapshot() {
     require(benchmark_stats.hybrid_correction_cost_us > 0);
 }
 
+void projectile_snapshot_waits_for_reliable_metadata_before_render() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+    KernelProjectileTemplateDefinition projectile_template{};
+    projectile_template.struct_size = sizeof(projectile_template);
+    projectile_template.projectile_template_id = 3;
+    projectile_template.weapon_id = 3;
+    projectile_template.motion_model = KernelProjectileMotionModel_Linear;
+    projectile_template.sync_mode = KernelProjectileSyncMode_ServerSnapshotOnly;
+    projectile_template.speed = 10.0f;
+    projectile_template.lifetime_seconds = 2.0f;
+    projectile_template.collider_template_id = 10;
+    KernelColliderTemplateDefinition collider_template = projectile_collider_template();
+    KernelGameplayCatalogDefinition catalog{};
+    catalog.struct_size = sizeof(catalog);
+    catalog.catalog_version = 9;
+    catalog.catalog_hash = 0x9999ull;
+    catalog.projectile_templates = &projectile_template;
+    catalog.projectile_template_count = 1;
+    catalog.collider_templates = &collider_template;
+    catalog.collider_template_count = 1;
+    require(client.load_gameplay_catalog(catalog));
+
+    client.handle_client_snapshot(projectile_snapshot(
+        3,
+        101,
+        7,
+        1234,
+        glm::vec3{1.0f, 0.0f, 0.0f},
+        glm::vec3{10.0f, 0.0f, 0.0f}));
+
+    std::array<RenderEntityState, 4> states{};
+    std::uint32_t count =
+        client.get_render_states_at_time(100000, states.data(), states.size());
+    require(count == 0);
+    std::array<KernelColliderShapeView, 4> shapes{};
+    require(client.query_collider_shapes(nullptr, shapes.data(), shapes.size()) == 0);
+
+    client.handle_client_spawn(network_example::EntitySpawnPacket{
+        101,
+        network_example::EntityType::kProjectile,
+        network_example::ActorType::kUnknown,
+        7,
+        3,
+        0,
+        glm::vec3{1.0f, 0.0f, 0.0f},
+        glm::quat{1.0f, 0.0f, 0.0f, 0.0f},
+    });
+    network_example::ProjectileSpawnBatchPacket batch{};
+    batch.server_tick = 3;
+    batch.server_time_us = 100000;
+    batch.catalog_hash = 0x9999ull;
+    network_example::ProjectileSpawnGroup group{};
+    group.projectile_template_id = 3;
+    group.records.push_back(network_example::ProjectileSpawnRecord{
+        101,
+        11,
+        7,
+        1234,
+        glm::vec3{1.0f, 0.0f, 0.0f},
+        glm::vec3{10.0f, 0.0f, 0.0f},
+    });
+    batch.groups.push_back(group);
+    client.handle_client_projectile_spawn_batch(batch);
+
+    count = client.get_render_states_at_time(100000, states.data(), states.size());
+    require(count == 1);
+    require(states[0].net_id == 101);
+    require(states[0].status == RenderEntityStatus_Active);
+    require(states[0].projectile_template_id == 3);
+    require(states[0].collider_template_id == 10);
+    require(client.query_collider_shapes(nullptr, shapes.data(), shapes.size()) == 1);
+    require(shapes[0].entity_net_id == 101);
+    require(shapes[0].collider_template_id == 10);
+}
+
 void projectile_spawn_event_and_batch_do_not_duplicate_render_state() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
@@ -1494,7 +1682,7 @@ void stale_render_state_marks_status_and_hp_unknown() {
         network_example::ActorType::kAgent,
         0,
         3,
-        0,
+        2,
         glm::vec3{4.0f, 0.0f, 0.0f},
         glm::quat{1.0f, 0.0f, 0.0f, 0.0f},
     });
@@ -1508,6 +1696,85 @@ void stale_render_state_marks_status_and_hp_unknown() {
     require((states[0].visual_flags & KERNEL_VISUAL_FLAG_HP_UNKNOWN) != 0u);
     require(states[0].hp == 0);
     require(states[0].max_hp == 0);
+}
+
+void actor_template_update_rebinds_cached_snapshot_debug_metadata() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+    KernelColliderTemplateDefinition alternate_actor_collider =
+        actor_collider_template();
+    alternate_actor_collider.template_id = 21;
+    alternate_actor_collider.shape_params = KernelVec4{0.6f, 1.0f, 0.6f, 0.0f};
+    const std::array<KernelColliderTemplateDefinition, 3> colliders = {
+        actor_collider_template(),
+        alternate_actor_collider,
+        vision_collider_template(),
+    };
+    KernelActorTemplateDefinition initial_actor = agent_actor_template();
+    KernelActorTemplateDefinition updated_actor = agent_actor_template();
+    updated_actor.actor_template_id = 4;
+    updated_actor.collider_template_id = 21;
+    const std::array<KernelActorTemplateDefinition, 2> actor_templates = {
+        initial_actor,
+        updated_actor,
+    };
+    KernelGameplayCatalogDefinition catalog{};
+    catalog.struct_size = sizeof(catalog);
+    catalog.catalog_version = 1;
+    catalog.catalog_hash = 1;
+    catalog.collider_templates = colliders.data();
+    catalog.collider_template_count = static_cast<std::uint32_t>(colliders.size());
+    catalog.actor_templates = actor_templates.data();
+    catalog.actor_template_count =
+        static_cast<std::uint32_t>(actor_templates.size());
+    require(client.load_gameplay_catalog(catalog));
+
+    client.handle_client_spawn(network_example::EntitySpawnPacket{
+        30,
+        network_example::EntityType::kActor,
+        network_example::ActorType::kAgent,
+        0,
+        10,
+        2,
+        glm::vec3{4.0f, 0.0f, 0.0f},
+        glm::quat{1.0f, 0.0f, 0.0f, 0.0f},
+    });
+    client.handle_client_snapshot(snapshot_with_entity(
+        10,
+        30,
+        network_example::EntityType::kActor,
+        4.0f,
+        network_example::ActorType::kAgent));
+
+    std::array<RenderEntityState, 2> states{};
+    require(client.get_render_states_at_time(333333, states.data(), states.size()) == 1);
+    require(states[0].net_id == 30);
+    require(states[0].actor_template_id == 2);
+    require(states[0].collider_template_id == 20);
+
+    std::array<KernelColliderShapeView, 2> shapes{};
+    require(client.query_collider_shapes(nullptr, shapes.data(), shapes.size()) == 1);
+    require(shapes[0].entity_net_id == 30);
+    require(shapes[0].collider_template_id == 20);
+
+    client.handle_client_template_update(network_example::EntityTemplateUpdatePacket{
+        30,
+        11,
+        4,
+    });
+
+    require(client.get_render_states_at_time(333333, states.data(), states.size()) == 1);
+    require(states[0].net_id == 30);
+    require(states[0].actor_template_id == 4);
+    require(states[0].collider_template_id == 21);
+    require(client.query_collider_shapes(nullptr, shapes.data(), shapes.size()) == 1);
+    require(shapes[0].entity_net_id == 30);
+    require(shapes[0].collider_template_id == 21);
 }
 
 void client_query_vision_state_uses_actor_template_debug_replication() {
@@ -1542,7 +1809,6 @@ void client_query_vision_state_uses_actor_template_debug_replication() {
         network_example::EntityType::kActor,
         4.0f,
         network_example::ActorType::kAgent);
-    snapshot.entities[0].actor_template_id = 2;
     client.handle_client_snapshot(snapshot);
 
     KernelVisionStateQuery query{};
@@ -1553,7 +1819,24 @@ void client_query_vision_state_uses_actor_template_debug_replication() {
     for (KernelVisionStateView& state : states) {
         state.struct_size = sizeof(state);
     }
-    const std::uint32_t count = client.query_vision_state(
+    std::uint32_t count = client.query_vision_state(
+        &query,
+        states.data(),
+        static_cast<std::uint32_t>(states.size()));
+    require(count == 0);
+
+    client.handle_client_spawn(network_example::EntitySpawnPacket{
+        30,
+        network_example::EntityType::kActor,
+        network_example::ActorType::kAgent,
+        0,
+        10,
+        2,
+        glm::vec3{4.0f, 0.0f, 0.0f},
+        glm::quat{1.0f, 0.0f, 0.0f, 0.0f},
+    });
+
+    count = client.query_vision_state(
         &query,
         states.data(),
         static_cast<std::uint32_t>(states.size()));
@@ -1657,6 +1940,19 @@ void server_snapshot_send_set_carries_vision_debug_to_client() {
     query.agent_net_id = agent;
     std::array<KernelVisionStateView, 1> states{};
     states[0].struct_size = sizeof(KernelVisionStateView);
+    require(client.query_vision_state(&query, states.data(), 1) == 0);
+
+    client.handle_client_spawn(network_example::EntitySpawnPacket{
+        agent,
+        network_example::EntityType::kActor,
+        network_example::ActorType::kAgent,
+        0,
+        3,
+        2,
+        glm::vec3{4.0f, 0.0f, 0.0f},
+        glm::quat{1.0f, 0.0f, 0.0f, 0.0f},
+    });
+
     require(client.query_vision_state(&query, states.data(), 1) == 1);
     require(states[0].agent_net_id == agent);
     require(states[0].vision_collider_template_id == 12);
@@ -1777,6 +2073,26 @@ void render_state_overflow_reports_error_event() {
 
     network_example::KernelEngine client(config);
     client.reset_runtime_state(KernelMode_Client);
+    client.handle_client_spawn(network_example::EntitySpawnPacket{
+        1,
+        network_example::EntityType::kActor,
+        network_example::ActorType::kPlayer,
+        0,
+        10,
+        2,
+        glm::vec3{0.0f, 0.0f, 0.0f},
+        glm::quat{1.0f, 0.0f, 0.0f, 0.0f},
+    });
+    client.handle_client_spawn(network_example::EntitySpawnPacket{
+        2,
+        network_example::EntityType::kActor,
+        network_example::ActorType::kAgent,
+        0,
+        10,
+        2,
+        glm::vec3{1.0f, 0.0f, 0.0f},
+        glm::quat{1.0f, 0.0f, 0.0f, 0.0f},
+    });
     network_example::WorldSnapshot snapshot;
     snapshot.header.server_tick = 10;
     add_snapshot_entity(
@@ -1872,7 +2188,8 @@ int main() {
     client_applies_server_tick_config_from_welcome();
     client_clock_offset_smooths_after_initial_sync();
     projectile_spawn_packet_uses_original_muzzle_position();
-    snapshot_only_projectile_spawn_skips_event_batch();
+    snapshot_only_projectile_spawn_sends_metadata_batch();
+    server_actor_template_update_sends_reliable_metadata();
     render_states_at_time_interpolates_and_clamps();
     remote_projectile_uses_interpolated_past_timeline();
     local_projectile_snapshot_fast_forwards_and_smooths();
@@ -1883,12 +2200,14 @@ int main() {
     server_rejects_mismatched_snapshot_schema_before_welcome();
     server_validates_catalog_hash_before_welcome();
     projectile_spawn_batch_renders_and_binds_to_snapshot();
+    projectile_snapshot_waits_for_reliable_metadata_before_render();
     projectile_spawn_event_and_batch_do_not_duplicate_render_state();
     local_deterministic_prediction_query_uses_projectile_template_collider();
     client_despawn_removes_predicted_projectile();
     budget_omitted_projectile_snapshot_does_not_delete_bound_prediction();
     destroyed_tombstone_blocks_older_snapshot_render();
     stale_render_state_marks_status_and_hp_unknown();
+    actor_template_update_rebinds_cached_snapshot_debug_metadata();
     client_query_vision_state_uses_actor_template_debug_replication();
     server_snapshot_send_set_carries_vision_debug_to_client();
     predicted_projectile_lifetime_cleanup_removes_batch_projectile();

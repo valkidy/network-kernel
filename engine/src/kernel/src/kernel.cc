@@ -1910,6 +1910,21 @@ bool KernelEngine::server_set_entity_actor_template(
         *entity,
         actor_template_id);
     materialize_entity_collider(net_id);
+    if (config_.mode == KernelMode_ListenServer && loopback_transport_ != nullptr &&
+        local_listen_session_.relevant_entities.find(net_id) !=
+            local_listen_session_.relevant_entities.end()) {
+        send_entity_template_update(kLocalListenPeerId, net_id, actor_template_id);
+    }
+    if (config_.mode == KernelMode_DedicatedServer) {
+        for (const PeerSession& session : peer_sessions_) {
+            if (session.welcomed &&
+                session.relevant_entities.find(net_id) !=
+                    session.relevant_entities.end()) {
+                send_entity_template_update(session.peer, net_id, actor_template_id);
+            }
+        }
+    }
+    rebuild_render_states();
     return true;
 }
 
@@ -2548,6 +2563,17 @@ void KernelEngine::handle_client_reliable_event(const TransportEvent& transport_
         return;
     }
 
+    EntityTemplateUpdatePacket template_update{};
+    decode_start = std::chrono::steady_clock::now();
+    if (decode_entity_template_update_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &template_update)) {
+        record_packet_deserialization_cost(elapsed_cost_us(decode_start));
+        handle_client_template_update(template_update);
+        return;
+    }
+
     ProjectileSpawnBatchPacket projectile_batch{};
     decode_start = std::chrono::steady_clock::now();
     if (decode_projectile_spawn_batch_packet(
@@ -2579,8 +2605,47 @@ void KernelEngine::handle_client_projectile_spawn_batch(
             continue;
         }
         for (const ProjectileSpawnRecord& record : group.records) {
-            if (record.projectile_net_id == 0 ||
-                has_predicted_projectile_net_id(record.projectile_net_id)) {
+            if (record.projectile_net_id == 0) {
+                continue;
+            }
+            auto replicated = std::find_if(
+                client_replicated_entities_.begin(),
+                client_replicated_entities_.end(),
+                [&record](const ClientReplicatedEntity& entity) {
+                    return entity.net_id == record.projectile_net_id;
+                });
+            if (replicated == client_replicated_entities_.end()) {
+                client_replicated_entities_.push_back(ClientReplicatedEntity{
+                    record.projectile_net_id,
+                    EntityType::kProjectile,
+                    ActorType::kUnknown,
+                    record.owner_peer,
+                    0,
+                    projectile_template->projectile_template_id,
+                    projectile_template->collider_template_id,
+                    record.spawn_position,
+                    glm::quat{1.0f, 0.0f, 0.0f, 0.0f},
+                    0,
+                    0,
+                    false,
+                    false,
+                });
+            } else {
+                replicated->type = EntityType::kProjectile;
+                replicated->actor_type = ActorType::kUnknown;
+                replicated->owner_peer = record.owner_peer;
+                replicated->projectile_template_id =
+                    projectile_template->projectile_template_id;
+                replicated->collider_template_id =
+                    projectile_template->collider_template_id;
+                replicated->position = record.spawn_position;
+                replicated->rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+            }
+            if (projectile_template->sync_mode ==
+                KernelProjectileSyncMode_ServerSnapshotOnly) {
+                continue;
+            }
+            if (has_predicted_projectile_net_id(record.projectile_net_id)) {
                 continue;
             }
             const glm::vec3 spawn_position = record.spawn_position;
@@ -2759,6 +2824,8 @@ void KernelEngine::handle_client_spawn(const EntitySpawnPacket& packet) {
             packet.actor_type,
             packet.owner_peer,
             packet.actor_template_id,
+            0,
+            0,
             packet.position,
             packet.rotation,
             0,
@@ -2775,6 +2842,10 @@ void KernelEngine::handle_client_spawn(const EntitySpawnPacket& packet) {
         found->rotation = packet.rotation;
         found->active = false;
     }
+    if (has_client_snapshot_) {
+        sync_client_vision_states_from_snapshot(latest_client_snapshot_);
+        rebuild_render_states();
+    }
     events_.push_back(KernelEvent{
         KernelEventType_EntitySpawned,
         packet.server_tick,
@@ -2782,6 +2853,45 @@ void KernelEngine::handle_client_spawn(const EntitySpawnPacket& packet) {
         packet.owner_peer,
         static_cast<std::uint32_t>(packet.entity_type),
     });
+}
+
+void KernelEngine::handle_client_template_update(
+    const EntityTemplateUpdatePacket& packet) {
+    if (packet.net_id == 0 ||
+        packet.actor_template_id == 0u ||
+        find_actor_template(actor_templates_, packet.actor_template_id) == nullptr) {
+        push_event(KernelEventType_Error, packet.net_id, kServerPeerId, 26);
+        return;
+    }
+    auto found = std::find_if(
+        client_replicated_entities_.begin(),
+        client_replicated_entities_.end(),
+        [&packet](const ClientReplicatedEntity& entity) {
+            return entity.net_id == packet.net_id;
+        });
+    if (found == client_replicated_entities_.end()) {
+        client_replicated_entities_.push_back(ClientReplicatedEntity{
+            packet.net_id,
+            EntityType::kActor,
+            ActorType::kUnknown,
+            0,
+            packet.actor_template_id,
+            0,
+            0,
+            glm::vec3{0.0f, 0.0f, 0.0f},
+            glm::quat{1.0f, 0.0f, 0.0f, 0.0f},
+            0,
+            0,
+            false,
+            false,
+        });
+    } else {
+        found->actor_template_id = packet.actor_template_id;
+    }
+    if (has_client_snapshot_) {
+        sync_client_vision_states_from_snapshot(latest_client_snapshot_);
+        rebuild_render_states();
+    }
 }
 
 void KernelEngine::handle_client_despawn(const EntityDespawnPacket& packet) {
@@ -2933,8 +3043,17 @@ void KernelEngine::sync_client_vision_states_from_snapshot(
     }
     vision_states_.clear();
     for (const EntitySnapshot& entity : snapshot.entities) {
+        const auto replicated = std::find_if(
+            client_replicated_entities_.begin(),
+            client_replicated_entities_.end(),
+            [&entity](const ClientReplicatedEntity& replicated_entity) {
+                return replicated_entity.net_id == entity.net_id;
+            });
+        if (replicated == client_replicated_entities_.end()) {
+            continue;
+        }
         const KernelActorTemplateDefinition* actor_template =
-            find_actor_template(actor_templates_, entity.actor_template_id);
+            find_actor_template(actor_templates_, replicated->actor_template_id);
         if (actor_template == nullptr ||
             actor_template->vision.vision_collider_template_id == 0u) {
             continue;
@@ -3085,11 +3204,19 @@ void KernelEngine::reconcile_predicted_projectiles(const WorldSnapshot& snapshot
         predicted->initial_velocity = entity.velocity;
         predicted->age_seconds = authoritative_age_seconds;
         predicted->spawn_tick = entity.spawn_tick;
-        if (entity.projectile_template_id != 0u) {
-            predicted->projectile_template_id = entity.projectile_template_id;
-        }
-        if (entity.collider_template_id != 0u) {
-            predicted->collider_template_id = entity.collider_template_id;
+        if (predicted->projectile_template_id == 0u ||
+            predicted->collider_template_id == 0u) {
+            const auto replicated = std::find_if(
+                client_replicated_entities_.begin(),
+                client_replicated_entities_.end(),
+                [&entity](const ClientReplicatedEntity& replicated_entity) {
+                    return replicated_entity.net_id == entity.net_id;
+                });
+            if (replicated != client_replicated_entities_.end()) {
+                predicted->projectile_template_id =
+                    replicated->projectile_template_id;
+                predicted->collider_template_id = replicated->collider_template_id;
+            }
         }
         predicted->bound = true;
         const glm::vec3 correction = previous_render_position - authoritative_now;
@@ -4011,11 +4138,17 @@ void KernelEngine::sync_session_relevance(
 
 void KernelEngine::send_entity_spawn(PeerId peer, const EntitySnapshot& entity) {
     PeerId owner_peer = 0;
+    std::uint32_t actor_template_id = 0;
     glm::vec3 spawn_position = entity.position;
     const std::optional<entt::entity> world_entity = world_.find_entity(entity.net_id);
     if (world_entity.has_value() &&
         world_.registry().all_of<NetworkIdentity>(*world_entity)) {
         owner_peer = world_.registry().get<NetworkIdentity>(*world_entity).owner_peer;
+    }
+    if (world_entity.has_value() &&
+        world_.registry().all_of<ActorTemplateRef>(*world_entity)) {
+        actor_template_id =
+            world_.registry().get<ActorTemplateRef>(*world_entity).actor_template_id;
     }
     if (world_entity.has_value() &&
         world_.registry().all_of<ProjectileState>(*world_entity)) {
@@ -4029,7 +4162,7 @@ void KernelEngine::send_entity_spawn(PeerId peer, const EntitySnapshot& entity) 
             entity.actor_type,
             owner_peer,
             tick_loop_.current_tick(),
-            entity.actor_template_id,
+            actor_template_id,
             spawn_position,
             entity.rotation,
         },
@@ -4066,16 +4199,6 @@ void KernelEngine::send_projectile_spawn_batch(
     const ProjectileState& projectile =
         world_.registry().get<ProjectileState>(*world_entity);
     const Velocity& velocity = world_.registry().get<Velocity>(*world_entity);
-    const KernelProjectileTemplateDefinition* projectile_template =
-        find_projectile_template(
-            projectile_templates_,
-            projectile.projectile_template_id);
-    if (projectile_template != nullptr &&
-        projectile_template->sync_mode ==
-            KernelProjectileSyncMode_ServerSnapshotOnly) {
-        return;
-    }
-
     ProjectileSpawnRecord record{};
     record.projectile_net_id = entity.net_id;
     record.owner_net_id = projectile.shooter_net_id;
@@ -4129,6 +4252,32 @@ void KernelEngine::send_entity_despawn(
             SendMode::kReliable,
             ChannelId::kReliableEvent)) {
         push_event(KernelEventType_Error, net_id, peer, 17);
+    } else {
+        record_sent_packet(
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kReliableEvent);
+    }
+}
+
+void KernelEngine::send_entity_template_update(
+    PeerId peer,
+    NetId net_id,
+    std::uint32_t actor_template_id) {
+    const std::vector<std::uint8_t> packet = encode_entity_template_update_packet(
+        EntityTemplateUpdatePacket{
+            net_id,
+            tick_loop_.current_tick(),
+            actor_template_id,
+        },
+        next_packet_sequence_++);
+    if (!transport_->Send(
+            peer,
+            packet.data(),
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kReliableEvent)) {
+        push_event(KernelEventType_Error, net_id, peer, 27);
     } else {
         record_sent_packet(
             static_cast<std::uint32_t>(packet.size()),
@@ -4241,16 +4390,28 @@ void KernelEngine::rebuild_render_states_from_snapshot(
             rendered_entities.insert(entity.net_id);
             continue;
         }
-        EntitySnapshot render_entity = entity;
         auto replicated = std::find_if(
             client_replicated_entities_.begin(),
             client_replicated_entities_.end(),
             [&entity](const ClientReplicatedEntity& replicated_entity) {
                 return replicated_entity.net_id == entity.net_id;
             });
+        if (replicated == client_replicated_entities_.end()) {
+            continue;
+        }
+        if (entity.type == EntityType::kActor &&
+            replicated->actor_template_id == 0u) {
+            continue;
+        }
+        if (entity.type == EntityType::kProjectile &&
+            (replicated->projectile_template_id == 0u ||
+             replicated->collider_template_id == 0u)) {
+            continue;
+        }
+
+        EntitySnapshot render_entity = entity;
         if ((render_entity.state_flags & kSnapshotStateFlagHpUnknown) != 0u) {
-            if (replicated != client_replicated_entities_.end() &&
-                replicated->hp_known) {
+            if (replicated->hp_known) {
                 render_entity.hp = replicated->hp;
                 render_entity.max_hp = replicated->max_hp;
                 render_entity.state_flags &= ~kSnapshotStateFlagHpUnknown;
@@ -4261,23 +4422,23 @@ void KernelEngine::rebuild_render_states_from_snapshot(
             entity_id_for_net_id(entity.net_id)));
         RenderEntityState& state = render_states_.back();
         if (state.entity_type == static_cast<std::uint16_t>(EntityType::kActor) &&
-            state.actor_template_id != 0u) {
+            replicated->actor_template_id != 0u) {
+            state.actor_template_id = replicated->actor_template_id;
             state.collider_template_id =
-                collider_template_id_for_actor_template(state.actor_template_id);
+                collider_template_id_for_actor_template(replicated->actor_template_id);
+        } else if (
+            state.entity_type == static_cast<std::uint16_t>(EntityType::kProjectile)) {
+            state.projectile_template_id = replicated->projectile_template_id;
+            state.collider_template_id = replicated->collider_template_id;
         }
         rendered_entities.insert(entity.net_id);
-        if (replicated != client_replicated_entities_.end()) {
-            replicated->active = true;
-            replicated->position = entity.position;
-            replicated->rotation = entity.rotation;
-            if ((entity.state_flags & kSnapshotStateFlagHpUnknown) == 0u) {
-                replicated->hp = entity.hp;
-                replicated->max_hp = entity.max_hp;
-                replicated->hp_known = true;
-            }
-            if (entity.actor_template_id != 0u) {
-                replicated->actor_template_id = entity.actor_template_id;
-            }
+        replicated->active = true;
+        replicated->position = entity.position;
+        replicated->rotation = entity.rotation;
+        if ((entity.state_flags & kSnapshotStateFlagHpUnknown) == 0u) {
+            replicated->hp = entity.hp;
+            replicated->max_hp = entity.max_hp;
+            replicated->hp_known = true;
         }
     }
 
@@ -4288,6 +4449,18 @@ void KernelEngine::rebuild_render_states_from_snapshot(
             tombstone != client_despawned_entities_.end()) {
             continue;
         }
+        if (entity.type == EntityType::kActor && entity.actor_template_id == 0u) {
+            continue;
+        }
+        if (entity.type == EntityType::kProjectile &&
+            (entity.projectile_template_id == 0u ||
+             entity.collider_template_id == 0u)) {
+            continue;
+        }
+        const std::uint32_t collider_template_id =
+            entity.type == EntityType::kActor
+                ? collider_template_id_for_actor_template(entity.actor_template_id)
+                : entity.collider_template_id;
         render_states_.push_back(RenderEntityState{
             entity_id_for_net_id(entity.net_id),
             entity.net_id,
@@ -4304,10 +4477,8 @@ void KernelEngine::rebuild_render_states_from_snapshot(
             0,
             0,
             RenderEntityStatus_Stale,
-            0,
-            entity.actor_template_id == 0u
-                ? 0u
-                : collider_template_id_for_actor_template(entity.actor_template_id),
+            entity.projectile_template_id,
+            collider_template_id,
             entity.actor_template_id,
         });
     }

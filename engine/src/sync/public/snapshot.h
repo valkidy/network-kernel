@@ -35,9 +35,6 @@ struct EntitySnapshot {
     std::uint32_t state_flags = 0;
     std::uint32_t spawn_tick = 0;
     std::uint32_t client_action_id = 0;
-    std::uint32_t actor_template_id = 0;
-    std::uint32_t projectile_template_id = 0;
-    std::uint32_t collider_template_id = 0;
 };
 
 struct WorldSnapshot {

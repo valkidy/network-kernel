@@ -29,6 +29,12 @@ struct EntityDespawnPacket {
     std::uint32_t reason = 0;
 };
 
+struct EntityTemplateUpdatePacket {
+    NetId net_id = 0;
+    std::uint32_t server_tick = 0;
+    std::uint32_t actor_template_id = 0;
+};
+
 struct ProjectileSpawnRecord {
     NetId projectile_net_id = 0;
     NetId owner_net_id = 0;
@@ -101,6 +107,15 @@ bool decode_entity_despawn_packet(
     const std::uint8_t* data,
     std::size_t size,
     EntityDespawnPacket* out_packet);
+
+std::vector<std::uint8_t> encode_entity_template_update_packet(
+    const EntityTemplateUpdatePacket& packet,
+    std::uint32_t sequence = 0);
+
+bool decode_entity_template_update_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    EntityTemplateUpdatePacket* out_packet);
 
 std::vector<std::uint8_t> encode_projectile_spawn_batch_packet(
     const ProjectileSpawnBatchPacket& packet,

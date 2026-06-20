@@ -124,9 +124,9 @@ RenderEntityState render_state_from_snapshot_entity(
         entity.spawn_tick,
         entity.client_action_id,
         RenderEntityStatus_Active,
-        entity.projectile_template_id,
-        entity.collider_template_id,
-        entity.actor_template_id,
+        0,
+        0,
+        0,
     };
 }
 
