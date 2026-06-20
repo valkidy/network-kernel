@@ -16,11 +16,16 @@ using PeerId = std::uint32_t;
 
 enum class EntityType : std::uint16_t {
     kUnknown = 0,
-    kPlayer = 1,
-    kEnemy = 2,
+    kActor = 1,
     kProjectile = 3,
     kAreaEffect = 4,
     kBeam = 5,
+};
+
+enum class ActorType : std::uint16_t {
+    kUnknown = 0,
+    kPlayer = 1,
+    kAgent = 2,
 };
 
 enum class ColliderShapeType : std::uint8_t {
@@ -42,6 +47,7 @@ struct ColliderInstance {
     NetId owner_net_id = 0;
     NetId entity_net_id = 0;
     EntityType entity_type = EntityType::kUnknown;
+    ActorType actor_type = ActorType::kUnknown;
     ColliderShapeType shape_type = ColliderShapeType::kAabb;
     std::uint32_t purpose_flags = 0;
     std::uint32_t layer_mask = 0;
@@ -66,6 +72,11 @@ struct NetworkIdentity {
 
 struct EntityKind {
     EntityType type = EntityType::kUnknown;
+    ActorType actor_type = ActorType::kUnknown;
+};
+
+struct ActorTemplateRef {
+    std::uint32_t actor_template_id = 0;
 };
 
 struct Transform {
@@ -83,7 +94,7 @@ struct Health {
 };
 
 struct PlayerTag {};
-struct EnemyTag {};
+struct AgentTag {};
 struct ProjectileTag {};
 struct AreaEffectTag {};
 struct BeamTag {};
@@ -155,13 +166,14 @@ enum class ProjectileDamageFalloff : std::uint8_t {
     kLinear = 1,
 };
 
-inline constexpr std::uint32_t kCollisionLayerPlayer = 0x00000001u;
-inline constexpr std::uint32_t kCollisionLayerEnemy = 0x00000002u;
+inline constexpr std::uint32_t kCollisionLayerPlayerSide = 0x00000001u;
+inline constexpr std::uint32_t kCollisionLayerHostileSide = 0x00000002u;
 inline constexpr std::uint32_t kCollisionLayerProjectile = 0x00000004u;
 inline constexpr std::uint32_t kCollisionLayerAreaEffect = 0x00000008u;
+inline constexpr std::uint32_t kCollisionLayerNeutral = 0x00000020u;
 inline constexpr std::uint32_t kCollisionMaskNone = 0x00000000u;
 inline constexpr std::uint32_t kCollisionMaskDamageable =
-    kCollisionLayerPlayer | kCollisionLayerEnemy;
+    kCollisionLayerPlayerSide | kCollisionLayerHostileSide | kCollisionLayerNeutral;
 
 struct WeaponState {
     std::uint8_t weapon_id = 0;

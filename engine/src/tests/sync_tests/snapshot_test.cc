@@ -30,7 +30,7 @@ int main() {
             30,
             9,
             5,
-            network_example::kCollisionLayerEnemy);
+            network_example::kCollisionLayerHostileSide);
     const auto player_entity = world.find_entity(player);
     assert(player_entity.has_value());
     world.registry().get<network_example::Velocity>(*player_entity).linear =

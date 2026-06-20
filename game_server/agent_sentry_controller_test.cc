@@ -58,11 +58,12 @@ void load_catalog(KernelHandle* kernel) {
 
 std::uint32_t create_entity(
     KernelHandle* kernel,
-    std::uint16_t entity_type,
+    std::uint16_t actor_type,
     const KernelVec3& position) {
     KernelServerEntityCreateInfo create_info{};
     create_info.struct_size = sizeof(create_info);
-    create_info.entity_type = entity_type;
+    create_info.entity_type = network_example::game_server::kEntityTypeActor;
+    create_info.actor_type = actor_type;
     create_info.position = position;
     create_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
     std::uint32_t net_id = 0;
@@ -117,9 +118,9 @@ int main() {
     load_catalog(kernel);
 
     const std::uint32_t enemy_net_id =
-        create_entity(kernel, network_example::game_server::kEntityTypeEnemy, {0.0f, 0.0f, 0.0f});
+        create_entity(kernel, network_example::game_server::kActorTypeAgent, {0.0f, 0.0f, 0.0f});
     const std::uint32_t player_net_id =
-        create_entity(kernel, network_example::game_server::kEntityTypePlayer, {5.0f, 0.0f, 0.0f});
+        create_entity(kernel, network_example::game_server::kActorTypePlayer, {5.0f, 0.0f, 0.0f});
     set_combat(kernel, enemy_net_id);
     set_vision(kernel, enemy_net_id, KernelAgentCamp_EnemySide, 2);
     set_vision(kernel, player_net_id, KernelAgentCamp_PlayerSide, 0);

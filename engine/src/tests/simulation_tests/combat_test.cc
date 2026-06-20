@@ -105,7 +105,7 @@ void configure_projectile_response_templates(network_example::World& world) {
     area_template.damage_interval_ticks = 45;
     area_template.lifetime_ticks = 45;
     area_template.collision_mask =
-        network_example::kCollisionLayerPlayer | network_example::kCollisionLayerEnemy;
+        network_example::kCollisionLayerPlayerSide | network_example::kCollisionLayerHostileSide;
     area_template.damage_falloff =
         network_example::ProjectileDamageFalloff::kLinear;
 
@@ -170,20 +170,20 @@ void configure_test_weapons(
     tuning.definitions[network_example::kWeaponSlot2].projectile_gravity =
         glm::vec3{0.0f, -9.8f, 0.0f};
     tuning.definitions[network_example::kWeaponSlot2].projectile_collision_mask =
-        network_example::kCollisionLayerEnemy;
+        network_example::kCollisionLayerHostileSide;
     tuning.definitions[network_example::kWeaponSlot3].projectile_template_id =
         network_example::kWeaponSlot3;
     tuning.definitions[network_example::kWeaponSlot3].projectile_speed = 35.0f;
     tuning.definitions[network_example::kWeaponSlot3].projectile_lifetime_seconds = 2.5f;
     tuning.definitions[network_example::kWeaponSlot3].projectile_collision_mask =
-        network_example::kCollisionLayerEnemy;
+        network_example::kCollisionLayerHostileSide;
     tuning.definitions[network_example::kWeaponSlot4].area_effect_radius = 2.0f;
     tuning.definitions[network_example::kWeaponSlot4].area_effect_damage_per_interval = 12;
     tuning.definitions[network_example::kWeaponSlot4].area_effect_damage_interval_ticks = 2;
     tuning.definitions[network_example::kWeaponSlot4].area_effect_lifetime_ticks = 6;
     tuning.definitions[network_example::kWeaponSlot4].area_effect_spawn_distance = 1.0f;
     tuning.definitions[network_example::kWeaponSlot4].area_effect_collision_mask =
-        network_example::kCollisionLayerEnemy;
+        network_example::kCollisionLayerHostileSide;
 
     network_example::WeaponState& weapon =
         world.registry().get_or_emplace<network_example::WeaponState>(*entity);
@@ -613,7 +613,7 @@ void local_predicted_spammer_can_spawn_many_low_damage_projectiles() {
     spammer.projectile_motion_model = network_example::ProjectileMotionModel::kLinear;
     spammer.projectile_damage_shape =
         network_example::ProjectileDamageShape::kDirectHit;
-    spammer.projectile_collision_mask = network_example::kCollisionLayerEnemy;
+    spammer.projectile_collision_mask = network_example::kCollisionLayerHostileSide;
     network_example::WeaponState& weapon = weapon_state(world, player);
     weapon.ammo[network_example::kWeaponSlot2] = spammer.magazine_size;
 
@@ -672,7 +672,7 @@ void projectile_spammer_burst_spawns_three_spread_projectiles() {
     spammer.projectile_motion_model = network_example::ProjectileMotionModel::kLinear;
     spammer.projectile_damage_shape =
         network_example::ProjectileDamageShape::kDirectHit;
-    spammer.projectile_collision_mask = network_example::kCollisionLayerEnemy;
+    spammer.projectile_collision_mask = network_example::kCollisionLayerHostileSide;
     network_example::WeaponState& weapon = weapon_state(world, player);
     weapon.ammo[network_example::kWeaponSlot2] = spammer.magazine_size;
 
@@ -942,7 +942,7 @@ void area_effect_weapon_spawns_and_damages_enemy() {
     require(state.radius == 2.0f);
     require(state.damage_per_interval == 12);
     require(state.damage_interval_ticks == 2);
-    require(state.collision_mask == network_example::kCollisionLayerEnemy);
+    require(state.collision_mask == network_example::kCollisionLayerHostileSide);
 
     network_example::DamagePipeline pipeline;
     network_example::simulate_area_effects(world, 4, 133333, &events, &pipeline);
@@ -969,7 +969,7 @@ void piercing_projectile_damages_sorted_targets_up_to_max_hit_count() {
     state.shooter_net_id = 1;
     state.hit_response = network_example::ProjectileHitResponse::kContinue;
     state.damage_shape = network_example::ProjectileDamageShape::kPiercingSegment;
-    state.collision_mask = network_example::kCollisionLayerEnemy;
+    state.collision_mask = network_example::kCollisionLayerHostileSide;
     state.max_hit_count = 2;
     state.max_lifetime_seconds = 1.0f;
     state.spawn_position = glm::vec3{0.0f, 0.8f, 0.0f};
@@ -997,7 +997,7 @@ void projectile_collision_mask_excludes_players() {
     state.shooter_net_id = 0;
     state.hit_response = network_example::ProjectileHitResponse::kDestroy;
     state.damage_shape = network_example::ProjectileDamageShape::kDirectHit;
-    state.collision_mask = network_example::kCollisionLayerEnemy;
+    state.collision_mask = network_example::kCollisionLayerHostileSide;
     state.max_lifetime_seconds = 1.0f;
     state.spawn_position = glm::vec3{0.0f, 0.9f, 0.0f};
     state.initial_velocity = glm::vec3{20.0f, 0.0f, 0.0f};

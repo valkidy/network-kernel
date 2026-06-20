@@ -221,13 +221,14 @@ collision_mask = target layers this weapon effect can hit
 Do not introduce `collision_flags`. Friendly fire is represented by the mask:
 
 ```yaml
-collision_mask: enemy | player
-collision_mask: player
+collision_mask: hostile_side | player_side
+collision_mask: player_side
 collision_mask: none
 ```
 
-Supported tokens are `damageable`, `enemy`, `player`, `projectile`,
-`area_effect`, `none`, and numeric `0`. The parser supports `|` expressions.
+Supported tokens are `damageable`, `hostile_side`, `player_side`, `neutral`,
+`projectile`, `area_effect`, `none`, and numeric `0`. `damageable` expands to
+`player_side | hostile_side | neutral`. The parser supports `|` expressions.
 Unknown or empty tokens must be rejected.
 
 `collision_mask == 0` means the effect may still fire, exist, spawn, and sync,

@@ -8,7 +8,7 @@ hit_response: destroy
 damage_shape: direct_hit
 speed: 20.0
 lifetime_seconds: 3.0
-collision_mask: enemy
+collision_mask: hostile_side
 max_hit_count: 1
 gravity: {x: 0.0, y: 0.0, z: 0.0}
 homing:

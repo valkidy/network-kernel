@@ -45,6 +45,7 @@ RenderEntityState render_state_from_world_entity(
     std::uint32_t visual_flags = derived_visual_flags(world, entity);
     std::uint32_t spawn_tick = 0;
     std::uint32_t client_action_id = 0;
+    std::uint32_t actor_template_id = 0;
     std::uint32_t projectile_template_id = 0;
     std::uint16_t hp = 0;
     std::uint16_t max_hp = 0;
@@ -71,6 +72,10 @@ RenderEntityState render_state_from_world_entity(
         client_action_id = projectile.client_action_id;
         projectile_template_id = projectile.projectile_template_id;
     }
+    if (world.registry().all_of<ActorTemplateRef>(entity)) {
+        actor_template_id =
+            world.registry().get<ActorTemplateRef>(entity).actor_template_id;
+    }
     if (world.registry().all_of<HomingState>(entity)) {
         animation_state = static_cast<std::uint16_t>(
             world.registry().get<HomingState>(entity).phase);
@@ -79,6 +84,7 @@ RenderEntityState render_state_from_world_entity(
         entity_id,
         identity.net_id,
         static_cast<std::uint16_t>(kind.type),
+        static_cast<std::uint16_t>(kind.actor_type),
         identity.owner_peer,
         to_kernel_vec3(transform.position),
         to_kernel_quat(transform.rotation),
@@ -92,6 +98,7 @@ RenderEntityState render_state_from_world_entity(
         RenderEntityStatus_Active,
         projectile_template_id,
         0,
+        actor_template_id,
     };
 }
 
@@ -102,6 +109,7 @@ RenderEntityState render_state_from_snapshot_entity(
         entity_id,
         entity.net_id,
         static_cast<std::uint16_t>(entity.type),
+        static_cast<std::uint16_t>(entity.actor_type),
         entity.owner_peer,
         to_kernel_vec3(entity.position),
         to_kernel_quat(entity.rotation),
@@ -116,8 +124,9 @@ RenderEntityState render_state_from_snapshot_entity(
         entity.spawn_tick,
         entity.client_action_id,
         RenderEntityStatus_Active,
-        entity.projectile_template_id,
-        entity.collider_template_id,
+        0,
+        0,
+        0,
     };
 }
 

@@ -106,6 +106,8 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             sizeof(KernelGameplayCatalogDefinition);
         out_info->gameplay_catalog_load_result_size =
             sizeof(KernelGameplayCatalogLoadResult);
+        out_info->actor_template_definition_size =
+            sizeof(KernelActorTemplateDefinition);
         out_info->projectile_template_definition_size =
             sizeof(KernelProjectileTemplateDefinition);
         out_info->collider_template_definition_size =
@@ -415,6 +417,18 @@ uint32_t Kernel_GetProjectileTemplates(
     });
 }
 
+uint32_t Kernel_GetActorTemplates(
+    KernelHandle* kernel,
+    KernelActorTemplateDefinition* out_templates,
+    uint32_t max_templates) {
+    return abi_call("Kernel_GetActorTemplates", 0u, [&]() -> std::uint32_t {
+        if (kernel == nullptr) {
+            return 0u;
+        }
+        return kernel->engine->get_actor_templates(out_templates, max_templates);
+    });
+}
+
 uint32_t Kernel_GetColliderTemplates(
     KernelHandle* kernel,
     KernelColliderTemplateDefinition* out_templates,
@@ -518,6 +532,18 @@ bool Kernel_ServerSetEntityCombatState(
                kernel->engine->server_set_entity_combat_state(
                    net_id,
                    *combat_state);
+    });
+}
+
+bool Kernel_ServerSetEntityActorTemplate(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    uint32_t actor_template_id) {
+    return abi_call("Kernel_ServerSetEntityActorTemplate", false, [&]() {
+        return kernel != nullptr &&
+               kernel->engine->server_set_entity_actor_template(
+                   net_id,
+                   actor_template_id);
     });
 }
 

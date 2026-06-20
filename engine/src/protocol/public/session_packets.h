@@ -45,6 +45,8 @@ struct PingPongPacket {
     std::uint64_t server_send_time_us = 0;
     std::uint64_t client_receive_time_us = 0;
     std::uint64_t client_send_time_us = 0;
+    std::uint64_t server_rtt_us = 0;
+    std::uint64_t server_jitter_us = 0;
 };
 
 struct DisconnectPacket {

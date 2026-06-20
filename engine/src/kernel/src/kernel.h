@@ -21,6 +21,7 @@ namespace network_example {
 class LoopbackTransport;
 struct EntityDespawnPacket;
 struct EntitySpawnPacket;
+struct EntityTemplateUpdatePacket;
 struct ProjectileSpawnBatchPacket;
 struct WelcomePacket;
 
@@ -64,6 +65,9 @@ public:
     std::uint32_t get_projectile_templates(
         KernelProjectileTemplateDefinition* out_templates,
         std::uint32_t max_templates) const;
+    std::uint32_t get_actor_templates(
+        KernelActorTemplateDefinition* out_templates,
+        std::uint32_t max_templates) const;
     std::uint32_t get_collider_templates(
         KernelColliderTemplateDefinition* out_templates,
         std::uint32_t max_templates) const;
@@ -88,6 +92,9 @@ public:
     bool server_set_entity_combat_state(
         NetId net_id,
         const KernelCombatStateDefinition& combat_state);
+    bool server_set_entity_actor_template(
+        NetId net_id,
+        std::uint32_t actor_template_id);
     bool server_set_entity_vision_config(
         NetId net_id,
         const KernelAgentVisionConfig& vision_config);
@@ -126,12 +133,13 @@ private:
         std::uint32_t last_processed_input_seq = 0;
         bool welcomed = false;
         std::unordered_set<NetId> relevant_entities;
-        std::size_t enemy_snapshot_cursor = 0;
+        std::size_t actor_snapshot_cursor = 0;
         std::size_t projectile_snapshot_cursor = 0;
         std::uint32_t pending_clock_sync_nonce = 0;
         std::uint64_t pending_clock_sync_server_time_us = 0;
         std::uint64_t last_clock_sync_sent_server_time_us = 0;
         std::uint64_t last_clock_sync_rtt_us = 0;
+        std::uint64_t last_clock_sync_jitter_us = 0;
         std::int64_t clock_offset_us = 0;
         bool has_clock_sync = false;
     };
@@ -139,7 +147,11 @@ private:
     struct ClientReplicatedEntity {
         NetId net_id = 0;
         EntityType type = EntityType::kUnknown;
+        ActorType actor_type = ActorType::kUnknown;
         PeerId owner_peer = 0;
+        std::uint32_t actor_template_id = 0;
+        std::uint32_t projectile_template_id = 0;
+        std::uint32_t collider_template_id = 0;
         glm::vec3 position{0.0f, 0.0f, 0.0f};
         glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
         std::uint16_t hp = 0;
@@ -182,6 +194,11 @@ private:
         bool has_last_seen_target = false;
     };
 
+    struct ReceiveSequenceState {
+        std::uint32_t last_sequence = 0;
+        std::uint64_t received_count = 0;
+    };
+
     void push_event(
         KernelEventType type,
         NetId net_id = 0,
@@ -195,6 +212,7 @@ private:
     void handle_client_reliable_event(const TransportEvent& transport_event);
     void handle_client_projectile_spawn_batch(
         const ProjectileSpawnBatchPacket& packet);
+    void handle_client_template_update(const EntityTemplateUpdatePacket& packet);
     void handle_client_ping_pong(const TransportEvent& transport_event);
     void handle_server_ping_pong(const TransportEvent& transport_event);
     void apply_welcome(const WelcomePacket& welcome);
@@ -216,6 +234,8 @@ private:
     void report_render_state_overflow_if_needed();
     void handle_client_snapshot(WorldSnapshot snapshot);
     void store_client_snapshot(WorldSnapshot snapshot);
+    bool snapshot_entity_has_required_metadata(const EntitySnapshot& entity) const;
+    void diagnose_client_snapshot_metadata_waits();
     void reconcile_local_prediction(const WorldSnapshot& snapshot);
     void reconcile_predicted_projectiles(const WorldSnapshot& snapshot);
     void predict_local_input(const PlayerInput& input);
@@ -266,6 +286,10 @@ private:
         PeerId peer,
         NetId net_id,
         std::uint32_t reason);
+    void send_entity_template_update(
+        PeerId peer,
+        NetId net_id,
+        std::uint32_t actor_template_id);
     WorldSnapshot build_snapshot_send_set(
         PeerSession& session,
         const WorldSnapshot& relevant_snapshot,
@@ -277,6 +301,7 @@ private:
     void send_due_clock_sync_pings(std::uint64_t server_time_us);
     void send_reliable_event(PeerId peer, const KernelEvent& event);
     void broadcast_reliable_event(const KernelEvent& event);
+    void record_received_packet_sequence(const TransportEvent& transport_event);
     void record_sent_packet(
         std::uint32_t packet_size,
         SendMode mode,
@@ -295,7 +320,10 @@ private:
     void sync_entity_colliders_from_world();
     std::uint32_t collider_template_id_for_projectile_template(
         std::uint32_t projectile_template_id) const;
+    std::uint32_t collider_template_id_for_actor_template(
+        std::uint32_t actor_template_id) const;
     void sync_client_render_colliders();
+    void sync_client_vision_states_from_snapshot(const WorldSnapshot& snapshot);
     void update_vision_states(float delta_seconds);
 
     KernelConfig config_;
@@ -316,9 +344,11 @@ private:
     std::vector<PeerSession> peer_sessions_;
     PeerSession local_listen_session_;
     std::vector<ClientReplicatedEntity> client_replicated_entities_;
+    std::unordered_set<NetId> client_metadata_timeout_reported_entities_;
     std::unordered_map<NetId, ClientEntityTombstone> client_despawned_entities_;
     std::vector<PlayerInput> pending_prediction_inputs_;
     std::vector<PredictedProjectile> predicted_projectiles_;
+    std::vector<KernelActorTemplateDefinition> actor_templates_;
     std::vector<KernelProjectileTemplateDefinition> projectile_templates_;
     std::vector<KernelColliderTemplateDefinition> collider_templates_;
     std::vector<KernelDebugInfo> debug_records_;
@@ -337,6 +367,9 @@ private:
     std::uint32_t local_last_processed_input_seq_ = 0;
     std::uint32_t next_packet_sequence_ = 1;
     std::uint32_t next_clock_sync_nonce_ = 1;
+    std::unordered_map<PeerId, ReceiveSequenceState> received_sequences_by_peer_;
+    std::uint64_t received_packet_count_ = 0;
+    std::uint64_t lost_packet_count_ = 0;
     std::uint64_t client_local_time_us_ = 0;
     std::int64_t client_clock_offset_us_ = 0;
     float local_player_move_speed_meters_per_second_ = 0.0f;

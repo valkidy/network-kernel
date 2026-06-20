@@ -63,8 +63,8 @@ void segment_hits_are_sorted_by_distance_then_net_id() {
     require(hits[0].net_id == near);
     require(hits[1].net_id == far);
     require(hits[0].distance < hits[1].distance);
-    require(hits[0].entity_type == network_example::EntityType::kEnemy);
-    require(hits[0].collision_layer == network_example::kCollisionLayerEnemy);
+    require(hits[0].entity_type == network_example::EntityType::kActor);
+    require(hits[0].collision_layer == network_example::kCollisionLayerHostileSide);
     require(glm::length(hits[0].normal) > 0.9f);
     require(hits[0].normal.x < -0.9f);
 }
@@ -97,8 +97,8 @@ void sphere_overlap_respects_default_exclusions() {
 
     require(hits.size() == 1);
     require(hits[0].net_id == enemy);
-    require(hits[0].entity_type == network_example::EntityType::kEnemy);
-    require(hits[0].collision_layer == network_example::kCollisionLayerEnemy);
+    require(hits[0].entity_type == network_example::EntityType::kActor);
+    require(hits[0].collision_layer == network_example::kCollisionLayerHostileSide);
     require(glm::length(hits[0].normal) > 0.9f);
 }
 
@@ -150,9 +150,9 @@ void layer_helper_reports_entity_layers() {
         world.spawn_area_effect(1, glm::vec3{3.0f, 0.0f, 0.0f}, 1.0f, 1, 1, 10, 2);
 
     require(network_example::entity_collision_layer(world, player) ==
-            network_example::kCollisionLayerPlayer);
+            network_example::kCollisionLayerPlayerSide);
     require(network_example::entity_collision_layer(world, enemy) ==
-            network_example::kCollisionLayerEnemy);
+            network_example::kCollisionLayerHostileSide);
     require(network_example::entity_collision_layer(world, projectile) ==
             network_example::kCollisionLayerProjectile);
     require(network_example::entity_collision_layer(world, area) ==
@@ -172,7 +172,7 @@ void box_overlap_collects_hits_by_layer_and_order() {
     (void)player;
 
     network_example::QueryFilter filter;
-    filter.collision_mask = network_example::kCollisionLayerEnemy;
+    filter.collision_mask = network_example::kCollisionLayerHostileSide;
     const std::vector<network_example::QueryHit> hits =
         network_example::collect_box_overlaps(
             world,

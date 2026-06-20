@@ -4,7 +4,11 @@ namespace network_example {
 
 NetId World::spawn_player(PeerId owner_peer, const glm::vec3& position) {
     const entt::entity entity =
-        create_networked_entity(EntityType::kPlayer, owner_peer, position);
+        create_networked_entity(
+            EntityType::kActor,
+            ActorType::kPlayer,
+            owner_peer,
+            position);
     registry().emplace<PlayerTag>(entity);
     registry().emplace<Velocity>(entity);
     registry().emplace<Health>(entity);
@@ -16,8 +20,12 @@ NetId World::spawn_player(PeerId owner_peer, const glm::vec3& position) {
 }
 
 NetId World::spawn_enemy(const glm::vec3& position) {
-    const entt::entity entity = create_networked_entity(EntityType::kEnemy, 0, position);
-    registry().emplace<EnemyTag>(entity);
+    const entt::entity entity = create_networked_entity(
+        EntityType::kActor,
+        ActorType::kAgent,
+        0,
+        position);
+    registry().emplace<AgentTag>(entity);
     registry().emplace<Velocity>(entity);
     registry().emplace<Health>(entity);
     registry().emplace<WeaponState>(entity);
@@ -32,7 +40,11 @@ NetId World::spawn_projectile(
     const glm::vec3& position,
     const glm::vec3& velocity) {
     const entt::entity entity =
-        create_networked_entity(EntityType::kProjectile, owner_peer, position);
+        create_networked_entity(
+            EntityType::kProjectile,
+            ActorType::kUnknown,
+            owner_peer,
+            position);
     registry().emplace<ProjectileTag>(entity);
     registry().emplace<Velocity>(entity, Velocity{velocity});
     registry().emplace<Hitbox>(
@@ -56,7 +68,11 @@ NetId World::spawn_area_effect(
     std::uint32_t collision_mask,
     ProjectileDamageFalloff damage_falloff) {
     const entt::entity entity =
-        create_networked_entity(EntityType::kAreaEffect, owner_peer, position);
+        create_networked_entity(
+            EntityType::kAreaEffect,
+            ActorType::kUnknown,
+            owner_peer,
+            position);
     registry().emplace<AreaEffectTag>(entity);
     registry().emplace<Hitbox>(
         entity,
@@ -88,7 +104,11 @@ NetId World::spawn_beam(
     std::uint8_t source_code,
     std::uint32_t collision_mask) {
     const entt::entity entity =
-        create_networked_entity(EntityType::kBeam, owner_peer, origin);
+        create_networked_entity(
+            EntityType::kBeam,
+            ActorType::kUnknown,
+            owner_peer,
+            origin);
     registry().emplace<BeamTag>(entity);
     registry().emplace<Hitbox>(
         entity,

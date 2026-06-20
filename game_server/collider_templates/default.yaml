@@ -6,7 +6,7 @@ templates:
     half_extents: {x: 0.35, y: 0.9, z: 0.35}
     radius: 0.0
     purpose: hit
-    layer: player
+    layer: player_side
   - id: 2
     name: enemy_hit
     shape: aabb
@@ -14,7 +14,7 @@ templates:
     half_extents: {x: 0.4, y: 0.8, z: 0.4}
     radius: 0.0
     purpose: hit
-    layer: enemy
+    layer: hostile_side
   - id: 3
     name: projectile_damage
     shape: aabb

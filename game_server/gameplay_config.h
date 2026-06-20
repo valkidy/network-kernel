@@ -44,6 +44,7 @@ struct ActorTemplateConfig {
     std::uint32_t actor_template_id = 0;
     std::string name;
     std::uint16_t entity_type = 0;
+    std::uint16_t actor_type = 0;
     std::uint32_t collider_template_id = 0;
     EntityHealthDefinition health{};
     KernelVec3 hitbox_center{};
@@ -98,6 +99,7 @@ struct GameServerGameplayConfig {
 };
 
 struct KernelGameplayCatalogStorage {
+    std::vector<KernelActorTemplateDefinition> actor_templates;
     std::vector<KernelProjectileTemplateDefinition> projectile_templates;
     std::vector<KernelColliderTemplateDefinition> collider_templates;
     std::vector<KernelColliderBindingDefinition> collider_bindings;

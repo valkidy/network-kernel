@@ -43,7 +43,9 @@ WorldSnapshot build_world_snapshot(
         const NetworkIdentity& identity = view.get<const NetworkIdentity>(entity);
         entity_snapshot.net_id = identity.net_id;
         entity_snapshot.owner_peer = identity.owner_peer;
-        entity_snapshot.type = view.get<const EntityKind>(entity).type;
+        const EntityKind& kind = view.get<const EntityKind>(entity);
+        entity_snapshot.type = kind.type;
+        entity_snapshot.actor_type = kind.actor_type;
         entity_snapshot.position = view.get<const Transform>(entity).position;
         entity_snapshot.rotation = view.get<const Transform>(entity).rotation;
         if (world.registry().all_of<Velocity>(entity)) {
@@ -66,14 +68,6 @@ WorldSnapshot build_world_snapshot(
                 world.registry().get<ProjectileState>(entity);
             entity_snapshot.spawn_tick = projectile.spawn_tick;
             entity_snapshot.client_action_id = projectile.client_action_id;
-            entity_snapshot.projectile_template_id =
-                projectile.projectile_template_id;
-            if (const RuntimeProjectileTemplate* projectile_template =
-                    world.find_projectile_template(
-                        projectile.projectile_template_id)) {
-                entity_snapshot.collider_template_id =
-                    projectile_template->collider_template_id;
-            }
         }
         if (world.registry().all_of<HomingState>(entity)) {
             entity_snapshot.state = static_cast<std::uint16_t>(

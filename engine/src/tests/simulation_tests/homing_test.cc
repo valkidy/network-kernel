@@ -64,7 +64,7 @@ network_example::WeaponMechanicsDefinition homing_weapon_definition() {
     definition.projectile_motion_model = network_example::ProjectileMotionModel::kHoming;
     definition.projectile_hit_response = network_example::ProjectileHitResponse::kDestroy;
     definition.projectile_damage_shape = network_example::ProjectileDamageShape::kDirectHit;
-    definition.projectile_collision_mask = network_example::kCollisionLayerEnemy;
+    definition.projectile_collision_mask = network_example::kCollisionLayerHostileSide;
     definition.projectile_max_hit_count = 1;
     definition.homing_mode = network_example::HomingMode::kFireAndForget;
     definition.homing_sync_mode =

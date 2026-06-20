@@ -12,7 +12,9 @@ enum MessageType : ushort {
   PingPong = 9,
   Welcome = 10,
   EntitySpawn = 11,
-  EntityDespawn = 12
+  EntityDespawn = 12,
+  ProjectileSpawnBatch = 13,
+  EntityTemplateUpdate = 14
 }
 
 table Vec3 {
@@ -68,6 +70,8 @@ table PingPongPacket {
   server_send_time_us:ulong;
   client_receive_time_us:ulong;
   client_send_time_us:ulong;
+  server_rtt_us:ulong;
+  server_jitter_us:ulong;
 }
 
 table SnapshotPacket {
@@ -88,8 +92,10 @@ table ReliableEventPacket {
 table EntitySpawnPacket {
   net_id:uint;
   entity_type:ushort;
+  actor_type:ushort;
   owner_peer:uint;
   server_tick:uint;
+  actor_template_id:uint;
   position:Vec3;
   rotation:Quat;
 }
@@ -98,4 +104,31 @@ table EntityDespawnPacket {
   net_id:uint;
   server_tick:uint;
   reason:uint;
+}
+
+table EntityTemplateUpdatePacket {
+  net_id:uint;
+  server_tick:uint;
+  actor_template_id:uint;
+}
+
+table ProjectileSpawnRecord {
+  projectile_net_id:uint;
+  owner_net_id:uint;
+  owner_peer:uint;
+  client_action_id:uint;
+  spawn_position:Vec3;
+  initial_velocity:Vec3;
+}
+
+table ProjectileSpawnGroup {
+  projectile_template_id:uint;
+  records:[ProjectileSpawnRecord];
+}
+
+table ProjectileSpawnBatchPacket {
+  server_tick:uint;
+  server_time_us:ulong;
+  catalog_hash:uint;
+  groups:[ProjectileSpawnGroup];
 }

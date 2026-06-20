@@ -108,11 +108,13 @@ bool EnemyManager::spawn_enemy_at(const KernelVec3& position) {
     KernelServerEntityCreateInfo create_info{};
     create_info.struct_size = sizeof(KernelServerEntityCreateInfo);
     create_info.entity_type = actor_template->entity_type;
+    create_info.actor_type = actor_template->actor_type;
     create_info.owner_peer = 0;
     create_info.position = position;
     create_info.rotation = kIdentityRotation;
     create_info.animation_state = actor_template->animation_idle;
     create_info.visual_flags = 0;
+    create_info.actor_template_id = actor_template->actor_template_id;
 
     std::uint32_t net_id = 0;
     if (!Kernel_ServerCreateEntity(kernel_, &create_info, &net_id) || net_id == 0) {

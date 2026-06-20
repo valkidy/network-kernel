@@ -15,8 +15,10 @@ namespace network_example {
 struct EntitySpawnPacket {
     NetId net_id = 0;
     EntityType entity_type = EntityType::kUnknown;
+    ActorType actor_type = ActorType::kUnknown;
     PeerId owner_peer = 0;
     std::uint32_t server_tick = 0;
+    std::uint32_t actor_template_id = 0;
     glm::vec3 position{0.0f, 0.0f, 0.0f};
     glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
 };
@@ -25,6 +27,12 @@ struct EntityDespawnPacket {
     NetId net_id = 0;
     std::uint32_t server_tick = 0;
     std::uint32_t reason = 0;
+};
+
+struct EntityTemplateUpdatePacket {
+    NetId net_id = 0;
+    std::uint32_t server_tick = 0;
+    std::uint32_t actor_template_id = 0;
 };
 
 struct ProjectileSpawnRecord {
@@ -99,6 +107,15 @@ bool decode_entity_despawn_packet(
     const std::uint8_t* data,
     std::size_t size,
     EntityDespawnPacket* out_packet);
+
+std::vector<std::uint8_t> encode_entity_template_update_packet(
+    const EntityTemplateUpdatePacket& packet,
+    std::uint32_t sequence = 0);
+
+bool decode_entity_template_update_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    EntityTemplateUpdatePacket* out_packet);
 
 std::vector<std::uint8_t> encode_projectile_spawn_batch_packet(
     const ProjectileSpawnBatchPacket& packet,

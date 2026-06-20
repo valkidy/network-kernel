@@ -11,4 +11,4 @@ beam:
   radius: 0.25
   damage_per_second: 30
   lifetime_ticks: 2
-  collision_mask: enemy
+  collision_mask: hostile_side

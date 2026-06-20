@@ -11,7 +11,7 @@ constexpr std::size_t kHandshakePayloadSize = 4 + 2 + 2 + 2 + 4 + 8 +
                                               kHandshakeTextSize +
                                               kHandshakeTextSize;
 constexpr std::size_t kWelcomePayloadSize = 32;
-constexpr std::size_t kPingPongPayloadSize = 28;
+constexpr std::size_t kPingPongPayloadSize = 44;
 constexpr std::size_t kDisconnectPayloadSize = 4;
 
 }  // namespace
@@ -133,6 +133,8 @@ std::vector<std::uint8_t> encode_ping_pong_packet(
     payload.write_u64(packet.server_send_time_us);
     payload.write_u64(packet.client_receive_time_us);
     payload.write_u64(packet.client_send_time_us);
+    payload.write_u64(packet.server_rtt_us);
+    payload.write_u64(packet.server_jitter_us);
     return protocol_internal::wrap_packet(
         MessageType::kPingPong,
         payload.bytes(),
@@ -162,6 +164,8 @@ bool decode_ping_pong_packet(
         !reader.read_u64(&packet.server_send_time_us) ||
         !reader.read_u64(&packet.client_receive_time_us) ||
         !reader.read_u64(&packet.client_send_time_us) ||
+        !reader.read_u64(&packet.server_rtt_us) ||
+        !reader.read_u64(&packet.server_jitter_us) ||
         !reader.done()) {
         return false;
     }

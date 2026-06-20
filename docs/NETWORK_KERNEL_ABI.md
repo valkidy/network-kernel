@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 22u`.
+`KERNEL_ABI_VERSION == 25u`.
 
 ## Ownership
 
@@ -157,6 +157,21 @@ the vision cone by `vision_collider_template_id`, and
 Visual debuggers should read `Kernel_QueryVisionState` for runtime perception
 and `Kernel_GetColliderTemplates` for the referenced cone parameters.
 
+ABI version 23 unifies player and enemy entity categories under actor entities.
+Actor-specific classification is exposed through `actor_type` fields while the
+entity type remains `kActor` for player, agent, and future actor variants.
+
+ABI version 25 adds `KernelActorTemplateDefinition`, actor-template catalog
+load/read-back through `KernelGameplayCatalogDefinition::actor_templates` and
+`Kernel_GetActorTemplates`, `RenderEntityState::actor_template_id`, and
+`Kernel_ServerSetEntityActorTemplate`. Actor templates embed
+`KernelAgentVisionConfig` directly; remote clients use the replicated
+`actor_template_id` plus the local catalog's actor collider and vision collider
+template ids to reconstruct visual debugger shapes. `Kernel_QueryVisionState`
+on pure clients derives debug-only vision origin and forward from actor
+position, actor rotation, and the actor template's `vision.local_origin` /
+`vision.local_forward`.
+
 Snapshot schema version 6 refines the v2 sectioned snapshot payload. Actor
 records cover player, enemy, and future AI bot entities with optional owner,
 rotation, and hp fields. Projectile records split into compact snapshots and
@@ -166,6 +181,13 @@ derived from velocity for render state reconstruction.
 Snapshot schema version 7 adds projectile and collider template ids to both
 compact projectile snapshots and hybrid-correction projectile snapshots so
 clients can reconstruct exact render collider metadata from snapshot state.
+
+Snapshot schema version 10 replaces per-frame actor collider and vision debug
+payload with optional `actor_template_id` on actor records. Clients combine the
+actor template id, `Kernel_GetActorTemplates`, `Kernel_GetColliderTemplates`,
+`Kernel_QueryVisionState`, and `Kernel_QueryColliderShapes` to draw actor hit
+and vision shapes without receiving visible target lists or per-frame
+world-space vision origin/forward payload.
 
 `Kernel_QueryColliderShapes` treats a `NULL` query as no filters. Within
 `KernelColliderShapeQuery`, `entity_net_id == 0`, `entity_type_filter == 0`,
@@ -177,9 +199,10 @@ Transient colliders, such as segment or beam volumes, are queryable while their
 
 `Kernel_QueryVisionState` treats a `NULL` query as no filters. Within
 `KernelVisionStateQuery`, `agent_net_id == 0` and `entity_type_filter == 0`
-also mean no filter for that dimension. The query returns host/server/local
-runtime state only; the ABI does not replicate perception state to pure remote
-clients in this revision.
+also mean no filter for that dimension. Host/server kernels return runtime
+perception state. Pure clients return template-derived visual-debug state for
+replicated actors that carry an actor template id with embedded vision config;
+visible hostile/ally lists and current target state remain server-local.
 
 The current projectile interaction foundation is internal C++ engine state. It
 does not add Kernel C ABI functions, does not change public struct layout, and

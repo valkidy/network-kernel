@@ -72,21 +72,40 @@ std::uint32_t query_entities(
         static_cast<std::uint32_t>(states->size()));
 }
 
+std::uint32_t query_actors_by_type(
+    KernelHandle* kernel,
+    std::uint16_t actor_type,
+    std::array<KernelServerEntityState, 8>* states) {
+    std::array<KernelServerEntityState, 8> actor_states{};
+    const std::uint32_t count = query_entities(
+        kernel,
+        network_example::game_server::kEntityTypeActor,
+        &actor_states);
+    std::uint32_t write_index = 0;
+    for (std::uint32_t index = 0; index < count && write_index < states->size(); ++index) {
+        if (actor_states[index].actor_type != actor_type) {
+            continue;
+        }
+        (*states)[write_index++] = actor_states[index];
+    }
+    return write_index;
+}
+
 std::uint32_t query_enemies(
     KernelHandle* kernel,
     std::array<KernelServerEntityState, 8>* states) {
-    return query_entities(
+    return query_actors_by_type(
         kernel,
-        network_example::game_server::kEntityTypeEnemy,
+        network_example::game_server::kActorTypeAgent,
         states);
 }
 
 std::uint32_t query_players(
     KernelHandle* kernel,
     std::array<KernelServerEntityState, 8>* states) {
-    return query_entities(
+    return query_actors_by_type(
         kernel,
-        network_example::game_server::kEntityTypePlayer,
+        network_example::game_server::kActorTypePlayer,
         states);
 }
 
@@ -96,14 +115,15 @@ std::uint32_t query_projectiles(
     return query_entities(kernel, 3, states);
 }
 
-bool render_states_include_type(KernelHandle* kernel, std::uint16_t entity_type) {
+bool render_states_include_actor_type(KernelHandle* kernel, std::uint16_t actor_type) {
     std::array<RenderEntityState, 16> states{};
     const std::uint32_t count = Kernel_GetRenderStates(
         kernel,
         states.data(),
         static_cast<std::uint32_t>(states.size()));
     for (std::uint32_t index = 0; index < count; ++index) {
-        if (states[index].entity_type == entity_type) {
+        if (states[index].entity_type == network_example::game_server::kEntityTypeActor &&
+            states[index].actor_type == actor_type) {
             return true;
         }
     }
@@ -323,9 +343,9 @@ int main() {
         host_game_server.tick(1.0f / 30.0f);
     }
     require(host_game_server.enemy_manager().enemy_count() == 1);
-    require(render_states_include_type(
+    require(render_states_include_actor_type(
         host_kernel,
-        network_example::game_server::kEntityTypeEnemy));
+        network_example::game_server::kActorTypeAgent));
     Kernel_Destroy(host_kernel);
 
     KernelConfig player_death_config = listen_server_config();
@@ -343,9 +363,9 @@ int main() {
     run_server_frames(player_death_kernel, &player_death_game_server, 60);
     require(query_players(player_death_kernel, &player_states) == 1);
     require(player_states[0].hp == 1000);
-    require(render_states_include_type(
+    require(render_states_include_actor_type(
         player_death_kernel,
-        network_example::game_server::kEntityTypeEnemy));
+        network_example::game_server::kActorTypeAgent));
     Kernel_Destroy(player_death_kernel);
 
     KernelConfig dedicated_config = dedicated_server_config();
