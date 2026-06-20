@@ -20,6 +20,8 @@ constexpr std::size_t kActorSnapshotBasePayloadSize = 40;
 constexpr std::size_t kActorOwnerPeerPayloadSize = 4;
 constexpr std::size_t kActorRotationPayloadSize = 16;
 constexpr std::size_t kActorHealthPayloadSize = 4;
+constexpr std::size_t kActorColliderTemplatePayloadSize = 4;
+constexpr std::size_t kActorVisionDebugPayloadSize = 28;
 constexpr std::size_t kProjectileCompactSnapshotPayloadSize = 42;
 constexpr std::size_t kProjectileHybridCorrectionSnapshotPayloadSize = 54;
 constexpr std::size_t kGenericSnapshotPayloadSize = 44;
@@ -41,6 +43,8 @@ enum ActorSnapshotRecordFlag : std::uint16_t {
     kActorSnapshotHasOwnerPeer = 1u << 0,
     kActorSnapshotHasRotation = 1u << 1,
     kActorSnapshotHasHealth = 1u << 2,
+    kActorSnapshotHasVisionDebug = 1u << 3,
+    kActorSnapshotHasColliderTemplate = 1u << 4,
 };
 
 bool is_actor_entity_type(EntityType type) {
@@ -54,6 +58,12 @@ std::uint16_t actor_record_flags(const EntitySnapshot& entity) {
         if ((entity.state_flags & kSnapshotStateFlagHpUnknown) == 0u) {
             flags |= kActorSnapshotHasHealth;
         }
+    }
+    if (entity.vision_collider_template_id != 0u) {
+        flags |= kActorSnapshotHasVisionDebug;
+    }
+    if (entity.collider_template_id != 0u) {
+        flags |= kActorSnapshotHasColliderTemplate;
     }
     return flags;
 }
@@ -222,6 +232,14 @@ std::vector<std::uint8_t> encode_snapshot_packet(
                         payload.write_u16(entity->hp);
                         payload.write_u16(entity->max_hp);
                     }
+                    if ((record_flags & kActorSnapshotHasColliderTemplate) != 0u) {
+                        payload.write_u32(entity->collider_template_id);
+                    }
+                    if ((record_flags & kActorSnapshotHasVisionDebug) != 0u) {
+                        payload.write_u32(entity->vision_collider_template_id);
+                        payload.write_vec3(entity->vision_origin);
+                        payload.write_vec3(entity->vision_forward);
+                    }
                     break;
                 }
                 case SnapshotSectionType::kProjectileCompact:
@@ -341,6 +359,16 @@ bool decode_snapshot_packet(
                     } else {
                         entity.state_flags |= kSnapshotStateFlagHpUnknown;
                     }
+                    if ((record_flags & kActorSnapshotHasColliderTemplate) != 0u &&
+                        !reader.read_u32(&entity.collider_template_id)) {
+                        return false;
+                    }
+                    if ((record_flags & kActorSnapshotHasVisionDebug) != 0u &&
+                        (!reader.read_u32(&entity.vision_collider_template_id) ||
+                         !reader.read_vec3(&entity.vision_origin) ||
+                         !reader.read_vec3(&entity.vision_forward))) {
+                        return false;
+                    }
                     break;
                 }
                 case SnapshotSectionType::kProjectileCompact:
@@ -431,6 +459,12 @@ std::size_t estimate_snapshot_entity_size(const EntitySnapshot& entity) {
                         : 0u) +
                    ((actor_record_flags(entity) & kActorSnapshotHasHealth) != 0u
                         ? kActorHealthPayloadSize
+                        : 0u) +
+                   ((actor_record_flags(entity) & kActorSnapshotHasColliderTemplate) != 0u
+                        ? kActorColliderTemplatePayloadSize
+                        : 0u) +
+                   ((actor_record_flags(entity) & kActorSnapshotHasVisionDebug) != 0u
+                        ? kActorVisionDebugPayloadSize
                         : 0u);
         case SnapshotSectionType::kProjectileCompact:
             return kProjectileCompactSnapshotPayloadSize;

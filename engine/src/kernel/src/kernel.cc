@@ -2810,9 +2810,34 @@ void KernelEngine::handle_client_snapshot(WorldSnapshot snapshot) {
     }
     latest_client_snapshot_ = snapshot;
     has_client_snapshot_ = true;
+    sync_client_vision_states_from_snapshot(latest_client_snapshot_);
     store_client_snapshot(std::move(snapshot));
     reconcile_local_prediction(latest_client_snapshot_);
     reconcile_predicted_projectiles(latest_client_snapshot_);
+}
+
+void KernelEngine::sync_client_vision_states_from_snapshot(
+    const WorldSnapshot& snapshot) {
+    if (config_.mode != KernelMode_Client) {
+        return;
+    }
+    vision_states_.clear();
+    for (const EntitySnapshot& entity : snapshot.entities) {
+        if (entity.vision_collider_template_id == 0u) {
+            continue;
+        }
+        KernelVisionStateView view{};
+        view.struct_size = sizeof(KernelVisionStateView);
+        view.agent_net_id = entity.net_id;
+        view.entity_type = static_cast<std::uint16_t>(entity.type);
+        view.actor_type = static_cast<std::uint8_t>(entity.actor_type);
+        view.vision_origin = to_kernel_vec3(entity.vision_origin);
+        view.vision_forward = to_kernel_vec3(entity.vision_forward);
+        view.vision_collider_template_id = entity.vision_collider_template_id;
+        view.resolved_collider_template_id = entity.collider_template_id;
+        view.valid = 1u;
+        vision_states_[entity.net_id].view = view;
+    }
 }
 
 void KernelEngine::store_client_snapshot(WorldSnapshot snapshot) {
@@ -3514,7 +3539,26 @@ WorldSnapshot KernelEngine::build_relevant_snapshot(
             filtered.entities.push_back(entity);
         }
     }
+    populate_snapshot_vision_debug(&filtered);
     return filtered;
+}
+
+void KernelEngine::populate_snapshot_vision_debug(WorldSnapshot* snapshot) const {
+    if (snapshot == nullptr) {
+        return;
+    }
+    for (EntitySnapshot& entity : snapshot->entities) {
+        const auto vision_state = vision_states_.find(entity.net_id);
+        if (vision_state == vision_states_.end() ||
+            vision_state->second.view.valid == 0u ||
+            vision_state->second.view.vision_collider_template_id == 0u) {
+            continue;
+        }
+        const KernelVisionStateView& view = vision_state->second.view;
+        entity.vision_collider_template_id = view.vision_collider_template_id;
+        entity.vision_origin = from_kernel_vec3(view.vision_origin);
+        entity.vision_forward = from_kernel_vec3(view.vision_forward);
+    }
 }
 
 WorldSnapshot KernelEngine::build_snapshot_send_set(

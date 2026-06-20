@@ -88,6 +88,18 @@ KernelColliderTemplateDefinition actor_collider_template() {
     return collider_template;
 }
 
+KernelColliderTemplateDefinition vision_collider_template() {
+    KernelColliderTemplateDefinition collider_template{};
+    collider_template.struct_size = sizeof(collider_template);
+    collider_template.template_id = 12;
+    collider_template.shape_type = KernelColliderShapeType_Cone;
+    collider_template.center = KernelVec3{0.0f, 1.5f, 0.0f};
+    collider_template.shape_params = KernelVec4{8.0f, 90.0f, 0.0f, 0.0f};
+    collider_template.layer_mask = KERNEL_COLLISION_LAYER_AGENT_VISION;
+    collider_template.purpose_flags = KernelColliderPurpose_Vision;
+    return collider_template;
+}
+
 network_example::WorldSnapshot projectile_snapshot(
     std::uint32_t server_tick,
     network_example::NetId net_id,
@@ -1480,6 +1492,152 @@ void stale_render_state_marks_status_and_hp_unknown() {
     require(states[0].max_hp == 0);
 }
 
+void client_query_vision_state_uses_snapshot_debug_replication() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+    const std::array<KernelColliderTemplateDefinition, 2> colliders = {
+        actor_collider_template(),
+        vision_collider_template(),
+    };
+    KernelGameplayCatalogDefinition catalog{};
+    catalog.struct_size = sizeof(catalog);
+    catalog.catalog_version = 1;
+    catalog.catalog_hash = 1;
+    catalog.collider_templates = colliders.data();
+    catalog.collider_template_count = static_cast<std::uint32_t>(colliders.size());
+    require(client.load_gameplay_catalog(catalog));
+
+    network_example::WorldSnapshot snapshot = snapshot_with_entity(
+        10,
+        30,
+        network_example::EntityType::kActor,
+        4.0f,
+        network_example::ActorType::kAgent);
+    snapshot.entities[0].collider_template_id = 20;
+    snapshot.entities[0].vision_collider_template_id = 12;
+    snapshot.entities[0].vision_origin = glm::vec3{4.0f, 1.5f, 0.0f};
+    snapshot.entities[0].vision_forward = glm::vec3{-1.0f, 0.0f, 0.0f};
+    client.handle_client_snapshot(snapshot);
+
+    KernelVisionStateQuery query{};
+    query.struct_size = sizeof(query);
+    query.entity_type_filter = 1;
+    query.actor_type_filter = KernelActorType_Agent;
+    std::array<KernelVisionStateView, 2> states{};
+    for (KernelVisionStateView& state : states) {
+        state.struct_size = sizeof(state);
+    }
+    const std::uint32_t count = client.query_vision_state(
+        &query,
+        states.data(),
+        static_cast<std::uint32_t>(states.size()));
+    require(count == 1);
+    require(states[0].valid != 0u);
+    require(states[0].agent_net_id == 30);
+    require(states[0].entity_type == 1);
+    require(states[0].actor_type == KernelActorType_Agent);
+    require(states[0].vision_collider_template_id == 12);
+    require(states[0].resolved_collider_template_id == 20);
+    require(states[0].vision_origin.y == 1.5f);
+    require(states[0].vision_forward.x == -1.0f);
+    require(states[0].visible_hostile_count == 0);
+    require(states[0].visible_ally_count == 0);
+    require(states[0].current_target_candidate == 0);
+
+    client.rebuild_render_states();
+    std::array<KernelColliderShapeView, 2> shapes{};
+    for (KernelColliderShapeView& shape : shapes) {
+        shape.struct_size = sizeof(shape);
+    }
+    const std::uint32_t shape_count = client.query_collider_shapes(
+        nullptr,
+        shapes.data(),
+        static_cast<std::uint32_t>(shapes.size()));
+    require(shape_count == 1);
+    require(shapes[0].entity_net_id == 30);
+    require(shapes[0].entity_type == 1);
+    require(shapes[0].actor_type == KernelActorType_Agent);
+    require(shapes[0].collider_template_id == 20);
+}
+
+void server_snapshot_send_set_carries_vision_debug_to_client() {
+    KernelConfig server_config{};
+    server_config.mode = KernelMode_DedicatedServer;
+    server_config.tick.server_tick_rate = 30;
+    server_config.tick.snapshot_rate = 15;
+    network_example::KernelEngine server(server_config);
+    server.reset_runtime_state(KernelMode_DedicatedServer);
+
+    const network_example::NetId player =
+        server.world_.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+    const network_example::NetId agent =
+        server.world_.spawn_enemy(glm::vec3{4.0f, 0.0f, 0.0f});
+    const auto agent_entity = server.world_.find_entity(agent);
+    require(agent_entity.has_value());
+    server.world_.registry().get<network_example::Hitbox>(*agent_entity) =
+        network_example::Hitbox{
+            glm::vec3{0.0f, 0.8f, 0.0f},
+            glm::vec3{0.4f, 0.8f, 0.4f},
+            20u,
+        };
+    KernelVisionStateView view{};
+    view.struct_size = sizeof(view);
+    view.agent_net_id = agent;
+    view.entity_type = 1;
+    view.actor_type = KernelActorType_Agent;
+    view.vision_origin = KernelVec3{4.0f, 1.5f, 0.0f};
+    view.vision_forward = KernelVec3{-1.0f, 0.0f, 0.0f};
+    view.vision_collider_template_id = 12;
+    view.visible_hostile_count = 1;
+    view.visible_hostiles[0] = player;
+    view.current_target_candidate = player;
+    view.valid = 1u;
+    server.vision_states_[agent].view = view;
+
+    network_example::KernelEngine::PeerSession session{};
+    session.peer = 1;
+    session.player = player;
+    session.welcomed = true;
+    const network_example::WorldSnapshot relevant =
+        server.build_relevant_snapshot(session, 100);
+    const network_example::WorldSnapshot send_set =
+        server.build_snapshot_send_set(session, relevant, 4096);
+    const std::vector<std::uint8_t> packet =
+        network_example::encode_snapshot_packet(send_set, 7);
+    network_example::WorldSnapshot decoded;
+    require(network_example::decode_snapshot_packet(
+        packet.data(),
+        packet.size(),
+        &decoded));
+
+    KernelConfig client_config{};
+    client_config.mode = KernelMode_Client;
+    client_config.tick.server_tick_rate = 30;
+    client_config.tick.snapshot_rate = 15;
+    network_example::KernelEngine client(client_config);
+    client.reset_runtime_state(KernelMode_Client);
+    client.handle_client_snapshot(decoded);
+
+    KernelVisionStateQuery query{};
+    query.struct_size = sizeof(query);
+    query.agent_net_id = agent;
+    std::array<KernelVisionStateView, 1> states{};
+    states[0].struct_size = sizeof(KernelVisionStateView);
+    require(client.query_vision_state(&query, states.data(), 1) == 1);
+    require(states[0].agent_net_id == agent);
+    require(states[0].vision_collider_template_id == 12);
+    require(states[0].resolved_collider_template_id == 20);
+    require(states[0].vision_origin.y == 1.5f);
+    require(states[0].vision_forward.x == -1.0f);
+    require(states[0].visible_hostile_count == 0);
+    require(states[0].current_target_candidate == 0);
+}
+
 void predicted_projectile_lifetime_cleanup_removes_batch_projectile() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
@@ -1702,6 +1860,8 @@ int main() {
     budget_omitted_projectile_snapshot_does_not_delete_bound_prediction();
     destroyed_tombstone_blocks_older_snapshot_render();
     stale_render_state_marks_status_and_hp_unknown();
+    client_query_vision_state_uses_snapshot_debug_replication();
+    server_snapshot_send_set_carries_vision_debug_to_client();
     predicted_projectile_lifetime_cleanup_removes_batch_projectile();
     client_update_advances_local_predicted_deterministic_projectile();
     default_kernel_config_uses_larger_render_state_cap();

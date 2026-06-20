@@ -71,6 +71,10 @@ int main() {
     enemy.velocity = glm::vec3{1.0f, 0.0f, 0.0f};
     enemy.state = 513;
     enemy.flags = 0x01020304u;
+    enemy.collider_template_id = 10;
+    enemy.vision_collider_template_id = 12;
+    enemy.vision_origin = glm::vec3{7.0f, 9.5f, 9.0f};
+    enemy.vision_forward = glm::vec3{-1.0f, 0.0f, 0.0f};
     snapshot.entities.push_back(enemy);
     network_example::EntitySnapshot compact_projectile;
     compact_projectile.net_id = 5;
@@ -97,7 +101,7 @@ int main() {
     assert(network_example::estimate_snapshot_packet_size(snapshot) ==
            snapshot_packet.size());
     assert(network_example::estimate_snapshot_entity_size(player) == 64u);
-    assert(network_example::estimate_snapshot_entity_size(enemy) == 56u);
+    assert(network_example::estimate_snapshot_entity_size(enemy) == 88u);
     assert(network_example::estimate_snapshot_entity_size(compact_projectile) == 42u);
     assert(network_example::estimate_snapshot_entity_size(hybrid_projectile) == 54u);
     network_example::WorldSnapshot decoded_snapshot;
@@ -124,6 +128,10 @@ int main() {
     assert(decoded_snapshot.entities[1].actor_type ==
            network_example::ActorType::kAgent);
     assert(nearly_equal(decoded_snapshot.entities[1].rotation.y, 1.0f));
+    assert(decoded_snapshot.entities[1].collider_template_id == 10);
+    assert(decoded_snapshot.entities[1].vision_collider_template_id == 12);
+    assert(nearly_equal(decoded_snapshot.entities[1].vision_origin.y, 9.5f));
+    assert(nearly_equal(decoded_snapshot.entities[1].vision_forward.x, -1.0f));
     assert((decoded_snapshot.entities[1].state_flags &
             network_example::kSnapshotStateFlagHpUnknown) != 0u);
     assert(decoded_snapshot.entities[1].hp == 0);

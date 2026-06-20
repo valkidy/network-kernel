@@ -37,6 +37,9 @@ struct EntitySnapshot {
     std::uint32_t client_action_id = 0;
     std::uint32_t projectile_template_id = 0;
     std::uint32_t collider_template_id = 0;
+    std::uint32_t vision_collider_template_id = 0;
+    glm::vec3 vision_origin{0.0f, 0.0f, 0.0f};
+    glm::vec3 vision_forward{0.0f, 0.0f, 0.0f};
 };
 
 struct WorldSnapshot {

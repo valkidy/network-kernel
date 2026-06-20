@@ -254,6 +254,7 @@ private:
     WorldSnapshot build_relevant_snapshot(
         const PeerSession& session,
         std::uint32_t server_time_ms) const;
+    void populate_snapshot_vision_debug(WorldSnapshot* snapshot) const;
     bool is_entity_relevant_to_session(
         const PeerSession& session,
         const EntitySnapshot& entity,
@@ -297,6 +298,7 @@ private:
     std::uint32_t collider_template_id_for_projectile_template(
         std::uint32_t projectile_template_id) const;
     void sync_client_render_colliders();
+    void sync_client_vision_states_from_snapshot(const WorldSnapshot& snapshot);
     void update_vision_states(float delta_seconds);
 
     KernelConfig config_;

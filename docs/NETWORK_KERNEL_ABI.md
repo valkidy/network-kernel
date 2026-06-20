@@ -167,6 +167,13 @@ Snapshot schema version 7 adds projectile and collider template ids to both
 compact projectile snapshots and hybrid-correction projectile snapshots so
 clients can reconstruct exact render collider metadata from snapshot state.
 
+Snapshot schema version 9 adds optional actor collider template ids and optional
+vision debug data to actor snapshot records. Actor records with vision debug
+carry the vision collider template id plus world-space vision origin and
+forward. Clients can combine `Kernel_QueryVisionState`,
+`Kernel_QueryColliderShapes`, and `Kernel_GetColliderTemplates` to draw actor
+hit and vision shapes without receiving visible target lists.
+
 `Kernel_QueryColliderShapes` treats a `NULL` query as no filters. Within
 `KernelColliderShapeQuery`, `entity_net_id == 0`, `entity_type_filter == 0`,
 and `purpose_mask == 0` also mean no filter for that dimension. Persistent

@@ -9,8 +9,8 @@ namespace network_example {
 
 constexpr std::uint32_t kPacketMagic = 0x4e584b31u;
 constexpr std::uint16_t kProtocolVersion = 1;
-constexpr std::uint16_t kPacketSchemaVersion = 6;
-constexpr std::uint16_t kSnapshotSchemaVersion = 8;
+constexpr std::uint16_t kPacketSchemaVersion = 7;
+constexpr std::uint16_t kSnapshotSchemaVersion = 9;
 constexpr std::uint16_t kSchemaVersion = kPacketSchemaVersion;
 constexpr std::size_t kPacketHeaderSize = 28;
 

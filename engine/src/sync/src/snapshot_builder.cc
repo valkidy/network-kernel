@@ -56,6 +56,10 @@ WorldSnapshot build_world_snapshot(
             entity_snapshot.hp = health.hp;
             entity_snapshot.max_hp = health.max_hp;
         }
+        if (world.registry().all_of<Hitbox>(entity)) {
+            entity_snapshot.collider_template_id =
+                world.registry().get<Hitbox>(entity).collider_template_id;
+        }
         entity_snapshot.flags = derived_visual_flags(world, entity);
         if (world.registry().all_of<ReplicationState>(entity)) {
             const ReplicationState& replication =
