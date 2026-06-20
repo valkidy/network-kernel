@@ -18,7 +18,7 @@ namespace NetworkExample.Kernel.Editor
             KernelAbi.ValidateNativeAbi();
             GameServerAbi.ValidateNativeAbi();
             KernelAbiInfo info = KernelAbi.GetInfo();
-            Require(KernelConstants.AbiVersion == 22, "Managed kernel ABI version was not v22.");
+            Require(KernelConstants.AbiVersion == 26, "Managed kernel ABI version was not v26.");
             Require(
                 (info.capability_flags & KernelConstants.CapabilityEntityLifecycleEvents) != 0,
                 "Kernel lifecycle event capability was missing.");
@@ -77,7 +77,8 @@ namespace NetworkExample.Kernel.Editor
 
                 var createInfo = new KernelServerEntityCreateInfo
                 {
-                    entity_type = KernelEntityType.Enemy,
+                    entity_type = KernelEntityType.Actor,
+                    actor_type = KernelActorType.Agent,
                     position = new KernelVec3(6.0f, 0.0f, 0.0f),
                     rotation = new KernelQuat(0.0f, 0.0f, 0.0f, 1.0f),
                     animation_state = 4,
@@ -88,16 +89,20 @@ namespace NetworkExample.Kernel.Editor
                     enemyNetId != 0,
                     "Kernel_ServerCreateEntity failed.");
 
-                RequireAbi22CatalogDiagnostics(kernel);
+                RequireAbi26CatalogDiagnostics(kernel);
+                Require(
+                    kernel.ServerSetEntityActorTemplate(enemyNetId, 404),
+                    "Kernel_ServerSetEntityActorTemplate failed.");
                 ConfigureCombatAndWeapons(kernel, enemyNetId);
-                RequireAbi22VisionDiagnostics(kernel, enemyNetId);
+                RequireAbi26VisionDiagnostics(kernel, enemyNetId);
                 Require(
                     kernel.ServerGetEntityState(
                         enemyNetId,
                         out KernelServerEntityState enemyState) &&
                     enemyState.valid != 0 &&
                     enemyState.hp == 240 &&
-                    enemyState.max_hp == 240,
+                    enemyState.max_hp == 240 &&
+                    enemyState.actor_template_id == 404,
                     "Kernel_ServerSetEntityCombatState did not update enemy health.");
 
                 var states = new RenderEntityState[16];
@@ -151,7 +156,7 @@ namespace NetworkExample.Kernel.Editor
                     "NetworkHost GameServer homing template query failed.");
             }
 
-            Debug.Log("Network kernel ABI 22 smoke passed.");
+            Debug.Log("Network kernel ABI 26 smoke passed.");
         }
 
         private static void RequireLANDiscovery()
@@ -259,7 +264,7 @@ namespace NetworkExample.Kernel.Editor
             SetAndQueryWeapon(kernel, enemyNetId, HomingWeapon(), 6);
         }
 
-        private static void RequireAbi22CatalogDiagnostics(Kernel kernel)
+        private static void RequireAbi26CatalogDiagnostics(Kernel kernel)
         {
             var colliderTemplates = new[]
             {
@@ -271,7 +276,7 @@ namespace NetworkExample.Kernel.Editor
                     center = new KernelVec3(0.0f, 0.5f, 0.0f),
                     shape_params = new KernelVec4(0.75f, 0.0f, 0.0f, 0.0f),
                     purpose_flags = (uint)KernelColliderPurpose.Hit,
-                    layer_mask = KernelConstants.CollisionLayerEnemy,
+                    layer_mask = KernelConstants.CollisionLayerHostile,
                 },
                 new KernelColliderTemplateDefinition
                 {
@@ -303,10 +308,31 @@ namespace NetworkExample.Kernel.Editor
                     max_hit_count = 1,
                 },
             };
+            var actorTemplates = new[]
+            {
+                new KernelActorTemplateDefinition
+                {
+                    struct_size = KernelActorTemplateDefinition.StructSize,
+                    actor_template_id = 404,
+                    entity_type = KernelEntityType.Actor,
+                    actor_type = KernelActorType.Agent,
+                    collider_template_id = 101,
+                    vision = new KernelAgentVisionConfig
+                    {
+                        struct_size = KernelAgentVisionConfig.StructSize,
+                        camp = (byte)KernelAgentCamp.EnemySide,
+                        vision_collider_template_id = 303,
+                        max_visible_hostiles = KernelConstants.MaxVisibleHostiles,
+                        max_visible_allies = KernelConstants.MaxVisibleAllies,
+                        local_forward = new KernelVec3(-1.0f, 0.0f, 0.0f),
+                    },
+                },
+            };
             var catalog = new KernelGameplayCatalog
             {
-                CatalogVersion = 22,
-                CatalogHash = 0x2200UL,
+                CatalogVersion = 26,
+                CatalogHash = 0x2600UL,
+                ActorTemplates = actorTemplates,
                 ProjectileTemplates = projectileTemplates,
                 ColliderTemplates = colliderTemplates,
             };
@@ -337,6 +363,18 @@ namespace NetworkExample.Kernel.Editor
                 readProjectiles[0].collider_template_id == 101,
                 "Kernel_GetProjectileTemplates read-back failed.");
             Require(
+                kernel.GetActorTemplates(null) == 1,
+                "Kernel_GetActorTemplates count failed.");
+            var readActors = new KernelActorTemplateDefinition[1];
+            Require(
+                kernel.GetActorTemplates(readActors) == 1 &&
+                readActors[0].actor_template_id == 404 &&
+                readActors[0].entity_type == KernelEntityType.Actor &&
+                readActors[0].actor_type == KernelActorType.Agent &&
+                readActors[0].collider_template_id == 101 &&
+                readActors[0].vision.vision_collider_template_id == 303,
+                "Kernel_GetActorTemplates read-back failed.");
+            Require(
                 kernel.GetColliderBindings(null) == 0,
                 "Kernel_GetColliderBindings count was not empty.");
             var readBindings = new KernelColliderBindingDefinition[1];
@@ -346,12 +384,14 @@ namespace NetworkExample.Kernel.Editor
 
             Require(
                 kernel.TryGetBenchmarkStats(out KernelBenchmarkStats benchmarkStats) &&
-                benchmarkStats.catalog_version == 22 &&
-                benchmarkStats.catalog_hash == 0x2200UL,
+                benchmarkStats.catalog_version == 26 &&
+                benchmarkStats.catalog_hash == 0x2600UL,
                 "Kernel_GetBenchmarkStats failed.");
             Require(
                 kernel.TryGetNetworkStats(out KernelNetworkStats networkStats) &&
-                networkStats.struct_size == KernelNetworkStats.StructSize,
+                networkStats.struct_size == KernelNetworkStats.StructSize &&
+                networkStats.replication_metadata_timeout_count == 0 &&
+                networkStats.replication_stale_snapshot_drop_count == 0,
                 "Kernel_GetNetworkStats failed.");
 
             var debugFilter = new KernelDebugRecordFilter
@@ -367,7 +407,7 @@ namespace NetworkExample.Kernel.Editor
             kernel.PollDebugRecords(debugFilter, debugRecords);
         }
 
-        private static void RequireAbi22VisionDiagnostics(Kernel kernel, uint enemyNetId)
+        private static void RequireAbi26VisionDiagnostics(Kernel kernel, uint enemyNetId)
         {
             var visionConfig = new KernelAgentVisionConfig
             {

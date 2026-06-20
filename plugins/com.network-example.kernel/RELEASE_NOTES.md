@@ -1,5 +1,11 @@
 0.6.6 release notes:
 
+- aligns Unity bindings with kernel ABI v26
+- updates Unity ABI smoke coverage for actor templates
+
+
+0.6.6 release notes:
+
 - fixes projectile render state duplication
 
 

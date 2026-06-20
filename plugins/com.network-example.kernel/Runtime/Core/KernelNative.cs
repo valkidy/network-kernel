@@ -164,6 +164,12 @@ namespace NetworkExample.Kernel
             uint maxTemplates);
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint Kernel_GetActorTemplates(
+            IntPtr kernel,
+            [Out] KernelActorTemplateDefinition[] outTemplates,
+            uint maxTemplates);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern uint Kernel_GetColliderTemplates(
             IntPtr kernel,
             [Out] KernelColliderTemplateDefinition[] outTemplates,
@@ -232,6 +238,13 @@ namespace NetworkExample.Kernel
             IntPtr kernel,
             uint netId,
             ref KernelCombatStateDefinition combatState);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerSetEntityActorTemplate(
+            IntPtr kernel,
+            uint netId,
+            uint actorTemplateId);
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)]

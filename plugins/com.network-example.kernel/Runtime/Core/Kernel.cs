@@ -325,6 +325,20 @@ namespace NetworkExample.Kernel
                 (uint)templates.Length);
         }
 
+        public uint GetActorTemplates(KernelActorTemplateDefinition[] templates)
+        {
+            ThrowIfDisposed();
+            if (templates == null || templates.Length == 0)
+            {
+                return KernelNative.Kernel_GetActorTemplates(handle, null, 0);
+            }
+
+            return KernelNative.Kernel_GetActorTemplates(
+                handle,
+                templates,
+                (uint)templates.Length);
+        }
+
         public uint GetColliderTemplates(KernelColliderTemplateDefinition[] templates)
         {
             ThrowIfDisposed();
@@ -426,6 +440,15 @@ namespace NetworkExample.Kernel
                 handle,
                 netId,
                 ref combatState);
+        }
+
+        public bool ServerSetEntityActorTemplate(uint netId, uint actorTemplateId)
+        {
+            ThrowIfDisposed();
+            return KernelNative.Kernel_ServerSetEntityActorTemplate(
+                handle,
+                netId,
+                actorTemplateId);
         }
 
         public bool ServerSetEntityVisionConfig(
@@ -564,6 +587,8 @@ namespace NetworkExample.Kernel
 
         private static bool LoadGameplayCatalog(IntPtr kernel, KernelGameplayCatalog catalog)
         {
+            KernelActorTemplateDefinition[] actorTemplates =
+                catalog.ActorTemplates ?? new KernelActorTemplateDefinition[0];
             KernelProjectileTemplateDefinition[] projectileTemplates =
                 catalog.ProjectileTemplates ?? new KernelProjectileTemplateDefinition[0];
             KernelColliderTemplateDefinition[] colliderTemplates =
@@ -571,10 +596,12 @@ namespace NetworkExample.Kernel
             KernelColliderBindingDefinition[] colliderBindings =
                 catalog.ColliderBindings ?? new KernelColliderBindingDefinition[0];
 
+            PrepareActorTemplates(actorTemplates);
             PrepareProjectileTemplates(projectileTemplates);
             PrepareColliderTemplates(colliderTemplates);
             PrepareColliderBindings(colliderBindings);
 
+            GCHandle actorTemplatesHandle = PinArray(actorTemplates, out IntPtr actorTemplatesPtr);
             GCHandle projectileTemplatesHandle = PinArray(projectileTemplates, out IntPtr projectileTemplatesPtr);
             GCHandle colliderTemplatesHandle = PinArray(colliderTemplates, out IntPtr colliderTemplatesPtr);
             GCHandle colliderBindingsHandle = PinArray(colliderBindings, out IntPtr colliderBindingsPtr);
@@ -585,6 +612,8 @@ namespace NetworkExample.Kernel
                     struct_size = KernelGameplayCatalogDefinition.StructSize,
                     catalog_version = catalog.CatalogVersion,
                     catalog_hash = catalog.CatalogHash,
+                    actor_templates = actorTemplatesPtr,
+                    actor_template_count = (uint)actorTemplates.Length,
                     projectile_templates = projectileTemplatesPtr,
                     projectile_template_count = (uint)projectileTemplates.Length,
                     collider_templates = colliderTemplatesPtr,
@@ -596,9 +625,26 @@ namespace NetworkExample.Kernel
             }
             finally
             {
+                FreeIfAllocated(actorTemplatesHandle);
                 FreeIfAllocated(projectileTemplatesHandle);
                 FreeIfAllocated(colliderTemplatesHandle);
                 FreeIfAllocated(colliderBindingsHandle);
+            }
+        }
+
+        private static void PrepareActorTemplates(
+            KernelActorTemplateDefinition[] templates)
+        {
+            for (int index = 0; index < templates.Length; ++index)
+            {
+                if (templates[index].struct_size == 0)
+                {
+                    templates[index].struct_size = KernelActorTemplateDefinition.StructSize;
+                }
+                if (templates[index].vision.struct_size == 0)
+                {
+                    templates[index].vision.struct_size = KernelAgentVisionConfig.StructSize;
+                }
             }
         }
 

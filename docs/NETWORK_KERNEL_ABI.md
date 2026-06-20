@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 25u`.
+`KERNEL_ABI_VERSION == 26u`.
 
 ## Ownership
 
@@ -171,6 +171,11 @@ template ids to reconstruct visual debugger shapes. `Kernel_QueryVisionState`
 on pure clients derives debug-only vision origin and forward from actor
 position, actor rotation, and the actor template's `vision.local_origin` /
 `vision.local_forward`.
+
+ABI version 26 adds replication metadata diagnostics to `KernelNetworkStats`.
+Clients can inspect `replication_metadata_timeout_count` and
+`replication_stale_snapshot_drop_count` when template metadata needed by
+replicated snapshots arrives late or stale snapshots are dropped.
 
 Snapshot schema version 6 refines the v2 sectioned snapshot payload. Actor
 records cover player, enemy, and future AI bot entities with optional owner,

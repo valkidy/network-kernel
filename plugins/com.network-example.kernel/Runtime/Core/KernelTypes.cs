@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 22;
+        public const uint AbiVersion = 26;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int GameplayCatalogLoadPathSize = 128;
@@ -81,11 +81,14 @@ namespace NetworkExample.Kernel
         public const ulong CapabilityVisionStateQuery = 0x0000000400000000UL;
 
         public const uint CollisionLayerPlayer = 0x00000001U;
-        public const uint CollisionLayerEnemy = 0x00000002U;
+        public const uint CollisionLayerHostile = 0x00000002U;
+        public const uint CollisionLayerEnemy = CollisionLayerHostile;
         public const uint CollisionLayerProjectile = 0x00000004U;
         public const uint CollisionLayerAreaEffect = 0x00000008U;
         public const uint CollisionLayerAgentVision = 0x00000010U;
-        public const uint CollisionMaskDamageable = CollisionLayerPlayer | CollisionLayerEnemy;
+        public const uint CollisionLayerNeutral = 0x00000020U;
+        public const uint CollisionMaskDamageable =
+            CollisionLayerPlayer | CollisionLayerHostile | CollisionLayerNeutral;
 
         public const uint VisualFlagMoving = 0x00000001U;
         public const uint VisualFlagReloading = 0x00000002U;
@@ -148,11 +151,19 @@ namespace NetworkExample.Kernel
     public enum KernelEntityType : ushort
     {
         Unknown = 0,
-        Player = 1,
+        Actor = 1,
+        Player = Actor,
         Enemy = 2,
         Projectile = 3,
         AreaEffect = 4,
         Beam = 5,
+    }
+
+    public enum KernelActorType : ushort
+    {
+        Unknown = 0,
+        Player = 1,
+        Agent = 2,
     }
 
     [Flags]
@@ -264,11 +275,11 @@ namespace NetworkExample.Kernel
 
     public enum KernelAgentRelation : byte
     {
-        Unknown = 0,
-        Self = 1,
+        Self = 0,
+        Ally = 1,
         Hostile = 2,
-        Ally = 3,
-        Neutral = 4,
+        Neutral = 3,
+        Unknown = 4,
     }
 
     [Flags]
@@ -305,6 +316,7 @@ namespace NetworkExample.Kernel
         public ulong capability_flags;
         public uint gameplay_catalog_definition_size;
         public uint gameplay_catalog_load_result_size;
+        public uint actor_template_definition_size;
         public uint projectile_template_definition_size;
         public uint collider_template_definition_size;
         public uint collider_binding_definition_size;
@@ -514,6 +526,7 @@ namespace NetworkExample.Kernel
         public ulong entity_id;
         public uint net_id;
         public KernelEntityType entity_type;
+        public KernelActorType actor_type;
         public uint owner_peer;
         public KernelVec3 position;
         public KernelQuat rotation;
@@ -527,6 +540,7 @@ namespace NetworkExample.Kernel
         public RenderEntityStatus status;
         public uint projectile_template_id;
         public uint collider_template_id;
+        public uint actor_template_id;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -534,11 +548,13 @@ namespace NetworkExample.Kernel
     {
         public uint struct_size;
         public KernelEntityType entity_type;
+        public KernelActorType actor_type;
         public uint owner_peer;
         public KernelVec3 position;
         public KernelQuat rotation;
         public ushort animation_state;
         public uint visual_flags;
+        public uint actor_template_id;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelServerEntityCreateInfo>();
     }
@@ -549,6 +565,7 @@ namespace NetworkExample.Kernel
         public uint struct_size;
         public uint net_id;
         public KernelEntityType entity_type;
+        public KernelActorType actor_type;
         public uint owner_peer;
         public KernelVec3 position;
         public KernelQuat rotation;
@@ -558,6 +575,7 @@ namespace NetworkExample.Kernel
         public ushort animation_state;
         public uint visual_flags;
         public uint valid;
+        public uint actor_template_id;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelServerEntityState>();
     }
@@ -621,10 +639,24 @@ namespace NetworkExample.Kernel
         public static uint StructSize => (uint)Marshal.SizeOf<KernelProjectileTemplateDefinition>();
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelActorTemplateDefinition
+    {
+        public uint struct_size;
+        public uint actor_template_id;
+        public KernelEntityType entity_type;
+        public KernelActorType actor_type;
+        public uint collider_template_id;
+        public KernelAgentVisionConfig vision;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelActorTemplateDefinition>();
+    }
+
     public struct KernelGameplayCatalog
     {
         public uint CatalogVersion;
         public ulong CatalogHash;
+        public KernelActorTemplateDefinition[] ActorTemplates;
         public KernelProjectileTemplateDefinition[] ProjectileTemplates;
         public KernelColliderTemplateDefinition[] ColliderTemplates;
         public KernelColliderBindingDefinition[] ColliderBindings;
@@ -663,6 +695,8 @@ namespace NetworkExample.Kernel
         public uint struct_size;
         public uint catalog_version;
         public ulong catalog_hash;
+        public IntPtr actor_templates;
+        public uint actor_template_count;
         public IntPtr projectile_templates;
         public uint projectile_template_count;
         public IntPtr collider_templates;
@@ -710,6 +744,8 @@ namespace NetworkExample.Kernel
         public ulong rtt_us;
         public ulong jitter_us;
         public float loss_ratio;
+        public uint replication_metadata_timeout_count;
+        public uint replication_stale_snapshot_drop_count;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelNetworkStats>();
     }
@@ -790,7 +826,7 @@ namespace NetworkExample.Kernel
     {
         public uint struct_size;
         public ushort entity_type_filter;
-        public ushort reserved0;
+        public KernelActorType actor_type_filter;
         public uint entity_net_id;
         public uint purpose_mask;
 
@@ -803,7 +839,7 @@ namespace NetworkExample.Kernel
         public uint struct_size;
         public uint entity_net_id;
         public ushort entity_type;
-        public ushort reserved0;
+        public KernelActorType actor_type;
         public uint collider_template_id;
         public byte shape_type;
         public byte reserved1;
@@ -850,7 +886,7 @@ namespace NetworkExample.Kernel
     {
         public uint struct_size;
         public ushort entity_type_filter;
-        public ushort reserved0;
+        public KernelActorType actor_type_filter;
         public uint agent_net_id;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelVisionStateQuery>();
@@ -863,7 +899,7 @@ namespace NetworkExample.Kernel
         public uint agent_net_id;
         public ushort entity_type;
         public byte camp;
-        public byte reserved0;
+        public byte actor_type;
         public KernelVec3 vision_origin;
         public KernelVec3 vision_forward;
         public uint vision_collider_template_id;
@@ -1082,6 +1118,7 @@ namespace NetworkExample.Kernel
         public uint net_id;
         public KernelDespawnReason reason;
         public KernelEntityType entity_type;
+        public KernelActorType actor_type;
         public uint owner_peer;
     }
 }
