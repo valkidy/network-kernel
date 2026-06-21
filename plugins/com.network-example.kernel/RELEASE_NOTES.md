@@ -1,5 +1,10 @@
 0.6.6 release notes:
 
+- updates native plugins and gameplay catalog bundle
+
+
+0.6.6 release notes:
+
 - aligns Unity bindings with kernel ABI v26
 - updates Unity ABI smoke coverage for actor templates
 
