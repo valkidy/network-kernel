@@ -211,6 +211,8 @@ void hash_actor_template(
     hash_float(hash, actor_template.sentry.forget_seconds);
     hash_float(hash, actor_template.sentry.fire_interval_seconds);
     hash_float(hash, actor_template.sentry.reload_seconds);
+    hash_scalar(hash, actor_template.sentry.alert_rotation_interval_ticks);
+    hash_float(hash, actor_template.sentry.alert_rotation_degrees);
     hash_scalar(hash, actor_template.sentry.weapon_id);
     hash_scalar(hash, actor_template.sentry.magazine_size);
     hash_scalar(hash, actor_template.vision.camp);
@@ -1471,6 +1473,14 @@ AgentSentryConfig sentry_config_from_yaml(
         if (node["forget_seconds"]) {
             sentry.forget_seconds = node["forget_seconds"].as<float>();
         }
+        if (node["alert_rotation_interval_ticks"]) {
+            sentry.alert_rotation_interval_ticks =
+                node["alert_rotation_interval_ticks"].as<std::uint32_t>();
+        }
+        if (node["alert_rotation_degrees"]) {
+            sentry.alert_rotation_degrees =
+                node["alert_rotation_degrees"].as<float>();
+        }
     }
     const std::uint8_t weapon_id = active_weapon_id(actor_template);
     sentry.weapon_id = weapon_id;
@@ -1691,6 +1701,8 @@ ActorTemplateConfig actor_template_from_yaml(
                 "reload_seconds",
                 "alert_seconds",
                 "forget_seconds",
+                "alert_rotation_interval_ticks",
+                "alert_rotation_degrees",
             },
             path,
             source_kind,
@@ -2561,7 +2573,9 @@ std::vector<std::string> validate_gameplay_config(
              actor_template.sentry.fire_interval_seconds <= 0.0f ||
              actor_template.sentry.reload_seconds <= 0.0f ||
              actor_template.sentry.alert_seconds <= 0.0f ||
-             actor_template.sentry.forget_seconds <= 0.0f)) {
+             actor_template.sentry.forget_seconds <= 0.0f ||
+             actor_template.sentry.alert_rotation_interval_ticks == 0 ||
+             actor_template.sentry.alert_rotation_degrees <= 0.0f)) {
             errors.push_back("agent sentry actor template must be valid");
         }
         if (actor_template.vision.struct_size < sizeof(KernelAgentVisionConfig) ||

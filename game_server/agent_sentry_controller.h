@@ -14,6 +14,8 @@ struct AgentSentryConfig {
     float forget_seconds = 5.0f;
     float fire_interval_seconds = 1.0f;
     float reload_seconds = 1.0f;
+    std::uint32_t alert_rotation_interval_ticks = 30;
+    float alert_rotation_degrees = 15.0f;
     std::uint8_t weapon_id = kAgentSpammerWeaponId;
     std::uint16_t magazine_size = kAgentSpammerMagazine;
     std::uint16_t animation_idle = kEnemyAnimationIdle;

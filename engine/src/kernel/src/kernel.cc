@@ -2948,6 +2948,12 @@ void KernelEngine::handle_client_despawn(const EntityDespawnPacket& packet) {
             predicted_projectiles_.begin(),
             predicted_projectiles_.end(),
             [&packet](const PredictedProjectile& projectile) {
+                if (projectile.net_id == packet.net_id &&
+                    packet.reason == KernelDespawnReason_OutOfRange &&
+                    projectile.sync_mode ==
+                        KernelProjectileSyncMode_LocalPredictedDeterministic) {
+                    return false;
+                }
                 return projectile.net_id == packet.net_id;
             }),
         predicted_projectiles_.end());

@@ -7,6 +7,8 @@
 namespace network_example::game_server {
 namespace {
 
+constexpr float kPi = 3.14159265358979323846f;
+
 KernelVec3 zero_vec3() {
     return KernelVec3{0.0f, 0.0f, 0.0f};
 }
@@ -21,6 +23,56 @@ float length_squared(const KernelVec3& value) {
 
 KernelVec3 scale(const KernelVec3& value, float scalar) {
     return KernelVec3{value.x * scalar, value.y * scalar, value.z * scalar};
+}
+
+KernelQuat normalized(KernelQuat value) {
+    const float length_squared =
+        value.x * value.x + value.y * value.y + value.z * value.z + value.w * value.w;
+    if (length_squared <= 0.0001f * 0.0001f) {
+        return KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+    }
+    const float inverse_length = 1.0f / std::sqrt(length_squared);
+    return KernelQuat{
+        value.x * inverse_length,
+        value.y * inverse_length,
+        value.z * inverse_length,
+        value.w * inverse_length,
+    };
+}
+
+KernelQuat multiply(const KernelQuat& lhs, const KernelQuat& rhs) {
+    return normalized(KernelQuat{
+        lhs.w * rhs.x + lhs.x * rhs.w + lhs.y * rhs.z - lhs.z * rhs.y,
+        lhs.w * rhs.y - lhs.x * rhs.z + lhs.y * rhs.w + lhs.z * rhs.x,
+        lhs.w * rhs.z + lhs.x * rhs.y - lhs.y * rhs.x + lhs.z * rhs.w,
+        lhs.w * rhs.w - lhs.x * rhs.x - lhs.y * rhs.y - lhs.z * rhs.z,
+    });
+}
+
+KernelQuat yaw_rotation(float yaw_radians) {
+    const float half_yaw = yaw_radians * 0.5f;
+    return KernelQuat{0.0f, -std::sin(half_yaw), 0.0f, std::cos(half_yaw)};
+}
+
+KernelQuat apply_yaw_delta(const KernelQuat& rotation, float delta_degrees) {
+    const float yaw_radians = delta_degrees * (kPi / 180.0f);
+    return multiply(yaw_rotation(yaw_radians), rotation);
+}
+
+bool facing_rotation_toward(
+    const KernelVec3& from,
+    const KernelVec3& to,
+    KernelQuat* out_rotation) {
+    if (out_rotation == nullptr) {
+        return false;
+    }
+    KernelVec3 delta = subtract(to, from);
+    delta.y = 0.0f;
+    if (length_squared(delta) <= 0.0001f * 0.0001f) {
+        return false;
+    }
+    *out_rotation = yaw_rotation(std::atan2(delta.z, delta.x));
+    return true;
 }
 
 KernelVec3 normalized_direction(const KernelVec3& from, const KernelVec3& to) {
@@ -113,6 +165,37 @@ void transition_to(Enemy* enemy, AgentSentryState state) {
     enemy->sentry.state = state;
     enemy->sentry.state_timer = 0.0f;
     enemy->sentry.time_without_target = 0.0f;
+    enemy->sentry.alert_rotation_tick = 0;
+    enemy->sentry.alert_rotation_step = 0;
+}
+
+bool update_alert_facing(
+    const AgentSentryConfig& config,
+    Enemy* enemy,
+    const KernelQuat& current_rotation,
+    KernelQuat* out_rotation) {
+    if (enemy == nullptr || out_rotation == nullptr ||
+        config.alert_rotation_interval_ticks == 0 ||
+        config.alert_rotation_degrees <= 0.0f) {
+        return false;
+    }
+    ++enemy->sentry.alert_rotation_tick;
+    if (enemy->sentry.alert_rotation_tick < config.alert_rotation_interval_ticks) {
+        return false;
+    }
+    enemy->sentry.alert_rotation_tick = 0;
+    ++enemy->sentry.alert_rotation_step;
+    std::uint32_t random_bits =
+        enemy->net_id * 747796405u + enemy->sentry.alert_rotation_step * 2891336453u;
+    random_bits ^= random_bits >> 16u;
+    random_bits *= 2246822519u;
+    random_bits ^= random_bits >> 13u;
+    const bool positive_direction = (random_bits & 1u) == 0u;
+    const float delta_degrees =
+        positive_direction ? config.alert_rotation_degrees
+                           : -config.alert_rotation_degrees;
+    *out_rotation = apply_yaw_delta(current_rotation, delta_degrees);
+    return true;
 }
 
 }  // namespace
@@ -142,6 +225,8 @@ void AgentSentryController::tick(
         enemy.animation_state = config_.animation_idle;
         enemy.sentry.self_id = enemy.net_id;
         update_timers(config_, &enemy, delta_seconds);
+        KernelQuat desired_rotation = entity_state.rotation;
+        bool should_update_rotation = false;
 
         KernelVisionStateView vision_state{};
         const bool has_vision_state =
@@ -170,6 +255,13 @@ void AgentSentryController::tick(
                 enemy.sentry.target = 0;
                 transition_to(&enemy, AgentSentryState::kIdle);
             }
+            if (enemy.sentry.state == AgentSentryState::kAlert) {
+                should_update_rotation = update_alert_facing(
+                    config_,
+                    &enemy,
+                    entity_state.rotation,
+                    &desired_rotation);
+            }
         } else if (enemy.sentry.state == AgentSentryState::kAttack) {
             if (!has_visible_target) {
                 transition_to(&enemy, AgentSentryState::kAlert);
@@ -177,11 +269,24 @@ void AgentSentryController::tick(
                 enemy.animation_state = config_.animation_attack;
                 KernelVec3 target_position = vision_state.last_known_target_position;
                 get_entity_position(kernel, enemy.sentry.target, &target_position);
+                should_update_rotation =
+                    facing_rotation_toward(
+                        enemy.position,
+                        target_position,
+                        &desired_rotation) ||
+                    should_update_rotation;
                 request_fire(kernel, config_, &enemy, target_position);
             }
         }
 
         enemy.target_player_net_id = enemy.sentry.target;
+        if (should_update_rotation) {
+            Kernel_ServerSetEntityTransform(
+                kernel,
+                enemy.net_id,
+                &entity_state.position,
+                &desired_rotation);
+        }
         Kernel_ServerSetEntityVelocity(kernel, enemy.net_id, &enemy.velocity);
         Kernel_ServerSetEntityState(kernel, enemy.net_id, enemy.animation_state, 0);
     }
