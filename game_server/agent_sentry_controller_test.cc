@@ -3,6 +3,7 @@
 #include <array>
 #include <cassert>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <vector>
 
@@ -43,17 +44,37 @@ KernelColliderTemplateDefinition vision_collider_template() {
     return collider;
 }
 
+KernelProjectileTemplateDefinition projectile_template() {
+    KernelProjectileTemplateDefinition projectile{};
+    projectile.struct_size = sizeof(projectile);
+    projectile.projectile_template_id = 3;
+    projectile.weapon_id = network_example::game_server::kAgentSpammerWeaponId;
+    projectile.motion_model = KernelProjectileMotionModel_Linear;
+    projectile.sync_mode = KernelProjectileSyncMode_ServerSnapshotOnly;
+    projectile.speed = 30.0f;
+    projectile.lifetime_seconds = 1.0f;
+    projectile.collider_template_id = 1;
+    projectile.damage = 1;
+    projectile.damage_shape = KernelProjectileDamageShape_DirectHit;
+    projectile.collision_mask = KERNEL_COLLISION_MASK_NONE;
+    projectile.max_hit_count = 1;
+    return projectile;
+}
+
 void load_catalog(KernelHandle* kernel) {
     const std::array<KernelColliderTemplateDefinition, 2> colliders = {
         collider_template(),
         vision_collider_template(),
     };
+    const KernelProjectileTemplateDefinition projectile = projectile_template();
     KernelGameplayCatalogDefinition catalog{};
     catalog.struct_size = sizeof(catalog);
     catalog.catalog_version = 1;
     catalog.catalog_hash = 1;
     catalog.collider_templates = colliders.data();
     catalog.collider_template_count = static_cast<std::uint32_t>(colliders.size());
+    catalog.projectile_templates = &projectile;
+    catalog.projectile_template_count = 1;
     assert(Kernel_LoadGameplayCatalog(kernel, &catalog));
 }
 
@@ -73,7 +94,11 @@ std::uint32_t create_entity(
     return net_id;
 }
 
-void set_combat(KernelHandle* kernel, std::uint32_t net_id) {
+void set_combat(
+    KernelHandle* kernel,
+    std::uint32_t net_id,
+    std::uint16_t ammo,
+    std::uint16_t reserve_ammo) {
     KernelCombatStateDefinition combat{};
     combat.struct_size = sizeof(combat);
     combat.hp = 100;
@@ -83,8 +108,35 @@ void set_combat(KernelHandle* kernel, std::uint32_t net_id) {
     combat.hitbox_center = KernelVec3{0.0f, 0.8f, 0.0f};
     combat.hitbox_half_extents = KernelVec3{0.4f, 0.8f, 0.4f};
     combat.ammo[network_example::game_server::kAgentSpammerWeaponId] =
-        network_example::game_server::kAgentSpammerMagazine;
+        ammo;
+    combat.reserve_ammo[network_example::game_server::kAgentSpammerWeaponId] =
+        reserve_ammo;
     assert(Kernel_ServerSetEntityCombatState(kernel, net_id, &combat));
+}
+
+void set_spammer_weapon_mechanics(
+    KernelHandle* kernel,
+    std::uint32_t net_id,
+    std::uint16_t magazine_size,
+    std::uint32_t reload_ticks) {
+    KernelWeaponMechanicsDefinition weapon{};
+    weapon.struct_size = sizeof(weapon);
+    weapon.weapon_id = network_example::game_server::kAgentSpammerWeaponId;
+    weapon.fire_mode = KernelWeaponFireMode_Projectile;
+    weapon.magazine_size = magazine_size;
+    weapon.damage = 1;
+    weapon.cooldown_ticks = 1;
+    weapon.reload_ticks = reload_ticks;
+    weapon.projectile.struct_size = sizeof(KernelProjectileMechanicsDefinition);
+    weapon.projectile.projectile_template_id = 3;
+    weapon.projectile.speed = 30.0f;
+    weapon.projectile.lifetime_seconds = 1.0f;
+    weapon.projectile.motion_model = KernelProjectileMotionModel_Linear;
+    weapon.projectile.hit_response = KernelProjectileHitResponse_Destroy;
+    weapon.projectile.damage_shape = KernelProjectileDamageShape_DirectHit;
+    weapon.projectile.collision_mask = KERNEL_COLLISION_MASK_NONE;
+    weapon.projectile.max_hit_count = 1;
+    assert(Kernel_ServerSetEntityWeaponMechanics(kernel, net_id, &weapon));
 }
 
 void set_vision(
@@ -117,8 +169,26 @@ KernelQuat query_rotation(KernelHandle* kernel, std::uint32_t net_id) {
     return state.rotation;
 }
 
+KernelServerEntityState query_state(KernelHandle* kernel, std::uint32_t net_id) {
+    KernelServerEntityState state{};
+    state.struct_size = sizeof(state);
+    assert(Kernel_ServerGetEntityState(kernel, net_id, &state));
+    assert(state.valid != 0u);
+    return state;
+}
+
 bool almost_equal(float lhs, float rhs, float tolerance = 0.001f) {
     return std::fabs(lhs - rhs) <= tolerance;
+}
+
+float yaw_from_rotation(const KernelQuat& rotation) {
+    return 2.0f * std::atan2(-rotation.y, rotation.w);
+}
+
+void assert_rotation_faces(const KernelQuat& rotation, float x, float z) {
+    const float expected_yaw = std::atan2(z, x);
+    assert(almost_equal(rotation.y, -std::sin(expected_yaw * 0.5f)));
+    assert(almost_equal(rotation.w, std::cos(expected_yaw * 0.5f)));
 }
 
 }  // namespace
@@ -134,67 +204,85 @@ int main() {
         create_entity(kernel, network_example::game_server::kActorTypeAgent, {0.0f, 0.0f, 0.0f});
     const std::uint32_t player_net_id =
         create_entity(kernel, network_example::game_server::kActorTypePlayer, {5.0f, 0.0f, 0.0f});
-    set_combat(kernel, enemy_net_id);
+    set_combat(kernel, enemy_net_id, 2, 4);
+    set_spammer_weapon_mechanics(kernel, enemy_net_id, 2, 3);
     set_vision(kernel, enemy_net_id, KernelAgentCamp_EnemySide, 2);
     set_vision(kernel, player_net_id, KernelAgentCamp_PlayerSide, 0);
+    KernelQuat identity{0.0f, 0.0f, 0.0f, 1.0f};
+
+    KernelVec3 out_of_range{100.0f, 0.0f, 0.0f};
+    assert(Kernel_ServerSetEntityTransform(kernel, player_net_id, &out_of_range, &identity));
     Kernel_Update(kernel, 1.0f / 30.0f);
 
     network_example::game_server::Enemy enemy;
     enemy.net_id = enemy_net_id;
     enemy.position = KernelVec3{0.0f, 0.0f, 0.0f};
-    enemy.ammo = network_example::game_server::kAgentSpammerMagazine;
     std::vector<network_example::game_server::Enemy> enemies{enemy};
 
     network_example::game_server::AgentSentryConfig sentry_config;
-    sentry_config.fire_interval_seconds = 0.01f;
-    sentry_config.alert_seconds = 100.0f;
-    sentry_config.alert_rotation_interval_ticks = 2;
-    sentry_config.alert_rotation_degrees = 15.0f;
+    sentry_config.alert_ticks = 2;
+    sentry_config.forget_ticks = 3;
+    sentry_config.patrol_rotation_interval_ticks = 2;
+    sentry_config.patrol_rotation_min_degrees = 15.0f;
+    sentry_config.patrol_rotation_max_degrees = 30.0f;
     network_example::game_server::AgentSentryController controller(sentry_config);
 
     run_frame(kernel, controller, &enemies);
-    assert(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kAlert);
-    assert(enemies[0].ammo == network_example::game_server::kAgentSpammerMagazine);
+    assert(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kIdle);
     KernelQuat rotation = query_rotation(kernel, enemy_net_id);
-    assert(almost_equal(rotation.x, 0.0f));
-    assert(almost_equal(rotation.y, 0.0f));
-    assert(almost_equal(rotation.z, 0.0f));
-    assert(almost_equal(rotation.w, 1.0f));
-
+    assert(almost_equal(yaw_from_rotation(rotation), 0.0f));
     run_frame(kernel, controller, &enemies);
     rotation = query_rotation(kernel, enemy_net_id);
-    const float half_alert_rotation_radians =
-        (15.0f * 0.5f) * 3.14159265358979323846f / 180.0f;
-    assert(almost_equal(
-        std::fabs(rotation.y),
-        std::sin(half_alert_rotation_radians)));
-    assert(almost_equal(rotation.w, std::cos(half_alert_rotation_radians)));
+    const float patrol_degrees = std::fabs(yaw_from_rotation(rotation)) * 180.0f /
+                                 3.14159265358979323846f;
+    assert(patrol_degrees >= 15.0f);
+    assert(patrol_degrees <= 30.0f);
 
-    sentry_config.alert_seconds = 0.01f;
-    network_example::game_server::AgentSentryController attack_controller(sentry_config);
-
-    run_frame(kernel, attack_controller, &enemies);
-    assert(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kAttack);
-    KernelVec3 side_position{5.0f, 0.0f, 2.0f};
-    KernelQuat identity{0.0f, 0.0f, 0.0f, 1.0f};
-    assert(Kernel_ServerSetEntityTransform(kernel, player_net_id, &side_position, &identity));
+    KernelVec3 player_position{5.0f, 0.0f, 2.0f};
+    assert(Kernel_ServerSetEntityTransform(kernel, player_net_id, &player_position, &identity));
     Kernel_Update(kernel, 1.0f / 30.0f);
-    attack_controller.tick(kernel, &enemies, 1.0f / 30.0f);
-    assert(enemies[0].ammo < network_example::game_server::kAgentSpammerMagazine);
+    run_frame(kernel, controller, &enemies);
+    assert(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kAlert);
     rotation = query_rotation(kernel, enemy_net_id);
-    const float expected_yaw = std::atan2(2.0f, 5.0f);
-    assert(almost_equal(rotation.y, -std::sin(expected_yaw * 0.5f)));
-    assert(almost_equal(rotation.w, std::cos(expected_yaw * 0.5f)));
+    assert_rotation_faces(rotation, 5.0f, 2.0f);
+    KernelServerEntityState state = query_state(kernel, enemy_net_id);
+    assert(state.ammo[network_example::game_server::kAgentSpammerWeaponId] == 2);
 
-    KernelVec3 out_of_range{100.0f, 0.0f, 0.0f};
+    run_frame(kernel, controller, &enemies);
+    assert(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kAttack);
+    state = query_state(kernel, enemy_net_id);
+    assert(state.ammo[network_example::game_server::kAgentSpammerWeaponId] == 1);
+
+    run_frame(kernel, controller, &enemies);
+    state = query_state(kernel, enemy_net_id);
+    assert(state.ammo[network_example::game_server::kAgentSpammerWeaponId] == 0);
+
+    run_frame(kernel, controller, &enemies);
+    state = query_state(kernel, enemy_net_id);
+    assert(state.is_reloading != 0u);
+    assert(state.reload_remaining_ticks > 0u);
+    for (int tick = 0; tick < 3; ++tick) {
+        run_frame(kernel, controller, &enemies);
+    }
+    state = query_state(kernel, enemy_net_id);
+    assert(state.is_reloading == 0u);
+    assert(state.ammo[network_example::game_server::kAgentSpammerWeaponId] == 2);
+    assert(state.reserve_ammo[network_example::game_server::kAgentSpammerWeaponId] == 2);
+
     assert(Kernel_ServerSetEntityTransform(kernel, player_net_id, &out_of_range, &identity));
     Kernel_Update(kernel, 1.0f / 30.0f);
-    attack_controller.tick(kernel, &enemies, 1.0f / 30.0f);
+    for (int tick = 0; tick < 2; ++tick) {
+        run_frame(kernel, controller, &enemies);
+        assert(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kAttack);
+    }
+    run_frame(kernel, controller, &enemies);
     assert(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kAlert);
 
-    for (int frame = 0; frame < 151; ++frame) {
-        run_frame(kernel, attack_controller, &enemies);
+    for (int tick = 0; tick < 2; ++tick) {
+        run_frame(kernel, controller, &enemies);
+        assert(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kAlert);
     }
+    run_frame(kernel, controller, &enemies);
     assert(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kIdle);
     assert(enemies[0].velocity.x == 0.0f);
     assert(enemies[0].velocity.y == 0.0f);

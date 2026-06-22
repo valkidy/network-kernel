@@ -135,8 +135,6 @@ bool EnemyManager::spawn_enemy_at(const KernelVec3& position) {
     enemy.velocity = KernelVec3{0.0f, 0.0f, 0.0f};
     enemy.hp = combat_state.hp;
     enemy.max_hp = combat_state.max_hp;
-    enemy.ammo = combat_state.ammo[combat_state.active_weapon_id];
-    enemy.reserve_ammo = combat_state.reserve_ammo[combat_state.active_weapon_id];
     enemy.animation_state = create_info.animation_state;
     enemy.sentry.self_id = net_id;
     enemies_.push_back(enemy);

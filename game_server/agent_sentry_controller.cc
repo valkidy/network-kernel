@@ -75,6 +75,30 @@ bool facing_rotation_toward(
     return true;
 }
 
+bool facing_rotation_from_vision_toward(
+    const KernelVec3& from,
+    const KernelVec3& to,
+    const KernelVec3& current_forward,
+    const KernelQuat& current_rotation,
+    KernelQuat* out_rotation) {
+    if (out_rotation == nullptr) {
+        return false;
+    }
+    KernelVec3 target_delta = subtract(to, from);
+    target_delta.y = 0.0f;
+    KernelVec3 forward = current_forward;
+    forward.y = 0.0f;
+    if (length_squared(target_delta) <= 0.0001f * 0.0001f ||
+        length_squared(forward) <= 0.0001f * 0.0001f) {
+        return facing_rotation_toward(from, to, out_rotation);
+    }
+    const float target_yaw = std::atan2(target_delta.z, target_delta.x);
+    const float forward_yaw = std::atan2(forward.z, forward.x);
+    const float delta_degrees = (target_yaw - forward_yaw) * (180.0f / kPi);
+    *out_rotation = apply_yaw_delta(current_rotation, delta_degrees);
+    return true;
+}
+
 KernelVec3 normalized_direction(const KernelVec3& from, const KernelVec3& to) {
     const KernelVec3 delta = subtract(to, from);
     const float distance_squared = length_squared(delta);
@@ -82,28 +106,6 @@ KernelVec3 normalized_direction(const KernelVec3& from, const KernelVec3& to) {
         return KernelVec3{1.0f, 0.0f, 0.0f};
     }
     return scale(delta, 1.0f / std::sqrt(distance_squared));
-}
-
-void update_timers(const AgentSentryConfig& config, Enemy* enemy, float delta_seconds) {
-    enemy->fire_cooldown_seconds =
-        std::max(0.0f, enemy->fire_cooldown_seconds - delta_seconds);
-    if (!enemy->is_reloading) {
-        return;
-    }
-
-    enemy->reload_remaining_seconds -= delta_seconds;
-    if (enemy->reload_remaining_seconds > 0.0f) {
-        return;
-    }
-
-    const std::uint16_t missing_ammo =
-        static_cast<std::uint16_t>(config.magazine_size - enemy->ammo);
-    const std::uint16_t loaded_ammo = std::min(missing_ammo, enemy->reserve_ammo);
-    enemy->ammo = static_cast<std::uint16_t>(enemy->ammo + loaded_ammo);
-    enemy->reserve_ammo =
-        static_cast<std::uint16_t>(enemy->reserve_ammo - loaded_ammo);
-    enemy->reload_remaining_seconds = 0.0f;
-    enemy->is_reloading = false;
 }
 
 bool query_vision_state(
@@ -137,25 +139,22 @@ bool get_entity_position(
     return true;
 }
 
-void request_fire(
+void submit_weapon_input(
     KernelHandle* kernel,
     const AgentSentryConfig& config,
     Enemy* enemy,
-    const KernelVec3& target_position) {
-    if (enemy->is_reloading || enemy->fire_cooldown_seconds > 0.0f ||
-        enemy->ammo == 0) {
+    const KernelVec3& target_position,
+    std::uint32_t buttons) {
+    if (buttons == 0u) {
         return;
     }
 
     PlayerInput input{};
     input.input_seq = enemy->next_input_seq++;
-    input.buttons = InputButton_Fire;
+    input.buttons = buttons;
     input.selected_weapon = config.weapon_id;
     input.aim_dir = normalized_direction(enemy->position, target_position);
-    if (Kernel_ServerSubmitEntityInput(kernel, enemy->net_id, &input)) {
-        --enemy->ammo;
-        enemy->fire_cooldown_seconds = config.fire_interval_seconds;
-    }
+    Kernel_ServerSubmitEntityInput(kernel, enemy->net_id, &input);
 }
 
 void transition_to(Enemy* enemy, AgentSentryState state) {
@@ -163,39 +162,72 @@ void transition_to(Enemy* enemy, AgentSentryState state) {
         return;
     }
     enemy->sentry.state = state;
-    enemy->sentry.state_timer = 0.0f;
-    enemy->sentry.time_without_target = 0.0f;
-    enemy->sentry.alert_rotation_tick = 0;
-    enemy->sentry.alert_rotation_step = 0;
+    enemy->sentry.state_ticks = 0;
+    enemy->sentry.lost_target_ticks = 0;
+    enemy->sentry.patrol_rotation_tick = 0;
+    enemy->sentry.patrol_rotation_step = 0;
 }
 
-bool update_alert_facing(
+bool update_patrol_facing(
     const AgentSentryConfig& config,
     Enemy* enemy,
     const KernelQuat& current_rotation,
     KernelQuat* out_rotation) {
     if (enemy == nullptr || out_rotation == nullptr ||
-        config.alert_rotation_interval_ticks == 0 ||
-        config.alert_rotation_degrees <= 0.0f) {
+        config.patrol_rotation_interval_ticks == 0 ||
+        config.patrol_rotation_min_degrees <= 0.0f ||
+        config.patrol_rotation_max_degrees < config.patrol_rotation_min_degrees) {
         return false;
     }
-    ++enemy->sentry.alert_rotation_tick;
-    if (enemy->sentry.alert_rotation_tick < config.alert_rotation_interval_ticks) {
+    ++enemy->sentry.patrol_rotation_tick;
+    if (enemy->sentry.patrol_rotation_tick < config.patrol_rotation_interval_ticks) {
         return false;
     }
-    enemy->sentry.alert_rotation_tick = 0;
-    ++enemy->sentry.alert_rotation_step;
+    enemy->sentry.patrol_rotation_tick = 0;
+    ++enemy->sentry.patrol_rotation_step;
     std::uint32_t random_bits =
-        enemy->net_id * 747796405u + enemy->sentry.alert_rotation_step * 2891336453u;
+        enemy->net_id * 747796405u + enemy->sentry.patrol_rotation_step * 2891336453u;
     random_bits ^= random_bits >> 16u;
     random_bits *= 2246822519u;
     random_bits ^= random_bits >> 13u;
     const bool positive_direction = (random_bits & 1u) == 0u;
-    const float delta_degrees =
-        positive_direction ? config.alert_rotation_degrees
-                           : -config.alert_rotation_degrees;
+    const float unit =
+        static_cast<float>((random_bits >> 1u) & 0xffffu) / 65535.0f;
+    const float magnitude =
+        config.patrol_rotation_min_degrees +
+        (config.patrol_rotation_max_degrees - config.patrol_rotation_min_degrees) *
+            unit;
+    const float delta_degrees = positive_direction ? magnitude : -magnitude;
     *out_rotation = apply_yaw_delta(current_rotation, delta_degrees);
     return true;
+}
+
+bool target_position(
+    KernelHandle* kernel,
+    std::uint32_t target,
+    const KernelVisionStateView& vision_state,
+    KernelVec3* out_position) {
+    if (out_position == nullptr) {
+        return false;
+    }
+    *out_position = vision_state.last_known_target_position;
+    get_entity_position(kernel, target, out_position);
+    return target != 0;
+}
+
+std::uint32_t attack_buttons(
+    const AgentSentryConfig& config,
+    const KernelServerEntityState& entity_state) {
+    if (config.weapon_id >= KERNEL_MAX_WEAPONS || entity_state.is_reloading != 0u) {
+        return 0u;
+    }
+    if (entity_state.ammo[config.weapon_id] > 0) {
+        return InputButton_Fire;
+    }
+    if (entity_state.reserve_ammo[config.weapon_id] > 0) {
+        return InputButton_Reload;
+    }
+    return 0u;
 }
 
 }  // namespace
@@ -207,6 +239,7 @@ void AgentSentryController::tick(
     KernelHandle* kernel,
     std::vector<Enemy>* enemies,
     float delta_seconds) const {
+    (void)delta_seconds;
     if (kernel == nullptr || enemies == nullptr) {
         return;
     }
@@ -224,7 +257,6 @@ void AgentSentryController::tick(
         enemy.velocity = zero_vec3();
         enemy.animation_state = config_.animation_idle;
         enemy.sentry.self_id = enemy.net_id;
-        update_timers(config_, &enemy, delta_seconds);
         KernelQuat desired_rotation = entity_state.rotation;
         bool should_update_rotation = false;
 
@@ -236,46 +268,67 @@ void AgentSentryController::tick(
 
         if (has_visible_target) {
             enemy.sentry.target = vision_state.current_target_candidate;
-            enemy.sentry.time_without_target = 0.0f;
+            enemy.sentry.lost_target_ticks = 0;
         } else {
-            enemy.sentry.time_without_target += delta_seconds;
+            ++enemy.sentry.lost_target_ticks;
         }
 
         if (enemy.sentry.state == AgentSentryState::kIdle) {
             if (has_visible_target) {
                 transition_to(&enemy, AgentSentryState::kAlert);
-            }
-        } else if (enemy.sentry.state == AgentSentryState::kAlert) {
-            if (has_visible_target) {
-                enemy.sentry.state_timer += delta_seconds;
-                if (enemy.sentry.state_timer >= config_.alert_seconds) {
-                    transition_to(&enemy, AgentSentryState::kAttack);
-                }
-            } else if (enemy.sentry.time_without_target >= config_.forget_seconds) {
-                enemy.sentry.target = 0;
-                transition_to(&enemy, AgentSentryState::kIdle);
-            }
-            if (enemy.sentry.state == AgentSentryState::kAlert) {
-                should_update_rotation = update_alert_facing(
+            } else {
+                should_update_rotation = update_patrol_facing(
                     config_,
                     &enemy,
                     entity_state.rotation,
                     &desired_rotation);
             }
-        } else if (enemy.sentry.state == AgentSentryState::kAttack) {
-            if (!has_visible_target) {
-                transition_to(&enemy, AgentSentryState::kAlert);
-            } else {
-                enemy.animation_state = config_.animation_attack;
-                KernelVec3 target_position = vision_state.last_known_target_position;
-                get_entity_position(kernel, enemy.sentry.target, &target_position);
+        }
+
+        if (enemy.sentry.state == AgentSentryState::kAlert) {
+            if (has_visible_target) {
+                KernelVec3 target{};
+                target_position(kernel, enemy.sentry.target, vision_state, &target);
                 should_update_rotation =
-                    facing_rotation_toward(
+                    facing_rotation_from_vision_toward(
                         enemy.position,
-                        target_position,
+                        target,
+                        vision_state.vision_forward,
+                        entity_state.rotation,
                         &desired_rotation) ||
                     should_update_rotation;
-                request_fire(kernel, config_, &enemy, target_position);
+                ++enemy.sentry.state_ticks;
+                if (enemy.sentry.state_ticks >= config_.alert_ticks) {
+                    transition_to(&enemy, AgentSentryState::kAttack);
+                }
+            } else if (enemy.sentry.lost_target_ticks >= config_.forget_ticks) {
+                enemy.sentry.target = 0;
+                transition_to(&enemy, AgentSentryState::kIdle);
+            }
+        }
+
+        if (enemy.sentry.state == AgentSentryState::kAttack) {
+            if (has_visible_target) {
+                enemy.sentry.lost_target_ticks = 0;
+                enemy.animation_state = config_.animation_attack;
+                KernelVec3 target{};
+                target_position(kernel, enemy.sentry.target, vision_state, &target);
+                should_update_rotation =
+                    facing_rotation_from_vision_toward(
+                        enemy.position,
+                        target,
+                        vision_state.vision_forward,
+                        entity_state.rotation,
+                        &desired_rotation) ||
+                    should_update_rotation;
+                submit_weapon_input(
+                    kernel,
+                    config_,
+                    &enemy,
+                    target,
+                    attack_buttons(config_, entity_state));
+            } else if (enemy.sentry.lost_target_ticks >= config_.forget_ticks) {
+                transition_to(&enemy, AgentSentryState::kAlert);
             }
         }
 

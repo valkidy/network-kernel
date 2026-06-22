@@ -27,10 +27,10 @@ enum class AgentSentryState : std::uint8_t {
 struct AgentSentryRuntime {
     std::uint32_t self_id = 0;
     AgentSentryState state = AgentSentryState::kIdle;
-    float state_timer = 0.0f;
-    float time_without_target = 0.0f;
-    std::uint32_t alert_rotation_tick = 0;
-    std::uint32_t alert_rotation_step = 0;
+    std::uint32_t state_ticks = 0;
+    std::uint32_t lost_target_ticks = 0;
+    std::uint32_t patrol_rotation_tick = 0;
+    std::uint32_t patrol_rotation_step = 0;
     std::uint32_t target = 0;
 };
 
@@ -41,16 +41,11 @@ struct Enemy {
     KernelVec3 velocity{0.0f, 0.0f, 0.0f};
     std::uint16_t hp = kEnemyInitialHp;
     std::uint16_t max_hp = kEnemyInitialHp;
-    std::uint16_t ammo = kAgentSpammerMagazine;
-    std::uint16_t reserve_ammo = kAgentSpammerReserveAmmo;
     std::uint16_t animation_state = kEnemyAnimationIdle;
     std::uint32_t target_player_net_id = 0;
     std::uint32_t next_input_seq = 1;
-    float fire_cooldown_seconds = 0.0f;
-    float reload_remaining_seconds = 0.0f;
     AgentSentryRuntime sentry{};
     int patrol_direction = 1;
-    bool is_reloading = false;
 };
 
 }  // namespace network_example::game_server
