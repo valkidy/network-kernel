@@ -1,5 +1,10 @@
 0.6.6 release notes:
 
+- aligns Unity bindings with kernel ABI v27
+
+
+0.6.6 release notes:
+
 - updates native plugins and gameplay catalog bundle
 
 

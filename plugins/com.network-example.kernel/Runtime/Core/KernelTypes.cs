@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 26;
+        public const uint AbiVersion = 27;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int GameplayCatalogLoadPathSize = 128;
@@ -576,6 +576,15 @@ namespace NetworkExample.Kernel
         public uint visual_flags;
         public uint valid;
         public uint actor_template_id;
+        public byte active_weapon_id;
+        public byte reserved0;
+        public ushort reserved1;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = KernelConstants.MaxWeapons)]
+        public ushort[] ammo;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = KernelConstants.MaxWeapons)]
+        public ushort[] reserve_ammo;
+        public uint is_reloading;
+        public uint reload_remaining_ticks;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelServerEntityState>();
     }

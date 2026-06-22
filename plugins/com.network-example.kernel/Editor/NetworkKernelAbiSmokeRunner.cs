@@ -18,7 +18,7 @@ namespace NetworkExample.Kernel.Editor
             KernelAbi.ValidateNativeAbi();
             GameServerAbi.ValidateNativeAbi();
             KernelAbiInfo info = KernelAbi.GetInfo();
-            Require(KernelConstants.AbiVersion == 26, "Managed kernel ABI version was not v26.");
+            Require(KernelConstants.AbiVersion == 27, "Managed kernel ABI version was not v27.");
             Require(
                 (info.capability_flags & KernelConstants.CapabilityEntityLifecycleEvents) != 0,
                 "Kernel lifecycle event capability was missing.");
@@ -156,7 +156,7 @@ namespace NetworkExample.Kernel.Editor
                     "NetworkHost GameServer homing template query failed.");
             }
 
-            Debug.Log("Network kernel ABI 26 smoke passed.");
+            Debug.Log("Network kernel ABI 27 smoke passed.");
         }
 
         private static void RequireLANDiscovery()
