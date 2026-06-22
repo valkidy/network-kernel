@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 26u
+#define KERNEL_ABI_VERSION 27u
 
 #define KERNEL_BUILD_INFO_TEXT_SIZE 128u
 #define KERNEL_LAN_DISCOVERY_TEXT_SIZE 128u
@@ -418,6 +418,13 @@ typedef struct KernelServerEntityState {
     uint32_t visual_flags;
     uint32_t valid;
     uint32_t actor_template_id;
+    uint8_t active_weapon_id;
+    uint8_t reserved0;
+    uint16_t reserved1;
+    uint16_t ammo[KERNEL_MAX_WEAPONS];
+    uint16_t reserve_ammo[KERNEL_MAX_WEAPONS];
+    uint32_t is_reloading;
+    uint32_t reload_remaining_ticks;
 } KernelServerEntityState;
 
 typedef enum KernelColliderShapeType {

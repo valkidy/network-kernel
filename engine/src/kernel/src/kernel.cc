@@ -567,9 +567,13 @@ const EntitySnapshot* find_snapshot_entity(
     return &(*found);
 }
 
+constexpr std::uint32_t kKernelServerEntityStateBaseSize =
+    offsetof(KernelServerEntityState, active_weapon_id);
+
 KernelServerEntityState to_server_entity_state(
     const World& world,
-    entt::entity entity) {
+    entt::entity entity,
+    std::uint32_t current_tick) {
     KernelServerEntityState state{};
     state.struct_size = sizeof(KernelServerEntityState);
 
@@ -604,7 +608,39 @@ KernelServerEntityState to_server_entity_state(
         state.animation_state = replication.animation_state;
         state.visual_flags |= replication.visual_flags;
     }
+    if (world.registry().all_of<WeaponState>(entity)) {
+        const WeaponState& weapon = world.registry().get<WeaponState>(entity);
+        state.active_weapon_id = weapon.weapon_id;
+        for (std::size_t index = 0; index < kWeaponCount; ++index) {
+            state.ammo[index] = weapon.ammo[index];
+            state.reserve_ammo[index] = weapon.reserve_ammo[index];
+        }
+        state.is_reloading = weapon.is_reloading ? 1u : 0u;
+        state.reload_remaining_ticks =
+            weapon.is_reloading && weapon.reload_end_tick > current_tick
+                ? weapon.reload_end_tick - current_tick
+                : 0u;
+    }
     return state;
+}
+
+bool write_server_entity_state(
+    const World& world,
+    entt::entity entity,
+    std::uint32_t current_tick,
+    KernelServerEntityState* out_state) {
+    if (out_state == nullptr ||
+        out_state->struct_size < kKernelServerEntityStateBaseSize) {
+        return false;
+    }
+    const std::uint32_t requested_size = out_state->struct_size;
+    const KernelServerEntityState state =
+        to_server_entity_state(world, entity, current_tick);
+    std::memcpy(
+        out_state,
+        &state,
+        std::min<std::uint32_t>(requested_size, sizeof(KernelServerEntityState)));
+    return true;
 }
 
 std::uint32_t history_frame_count(const TickConfig& config) {
@@ -2295,15 +2331,18 @@ bool KernelEngine::server_get_entity_state(
     NetId net_id,
     KernelServerEntityState* out_state) const {
     if (!running_ || !is_server_mode(config_.mode) || out_state == nullptr ||
-        out_state->struct_size < sizeof(KernelServerEntityState)) {
+        out_state->struct_size < kKernelServerEntityStateBaseSize) {
         return false;
     }
     const std::optional<entt::entity> entity = world_.find_entity(net_id);
     if (!entity.has_value()) {
         return false;
     }
-    *out_state = to_server_entity_state(world_, *entity);
-    return true;
+    return write_server_entity_state(
+        world_,
+        *entity,
+        tick_loop_.current_tick(),
+        out_state);
 }
 
 std::uint32_t KernelEngine::server_query_entities(
@@ -2327,7 +2366,14 @@ std::uint32_t KernelEngine::server_query_entities(
         if (count >= max_states) {
             break;
         }
-        out_states[count++] = to_server_entity_state(world_, entity);
+        if (!write_server_entity_state(
+                world_,
+                entity,
+                tick_loop_.current_tick(),
+                &out_states[count])) {
+            break;
+        }
+        ++count;
     }
     return count;
 }

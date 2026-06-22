@@ -173,9 +173,11 @@ int main() {
     require(kernel != nullptr);
     require(Kernel_StartListenServer(kernel, 7777));
 
-    network_example::game_server::GameServer game_server(
-        kernel,
-        single_spawn_gameplay_config());
+    network_example::game_server::GameServerGameplayConfig gameplay_config =
+        single_spawn_gameplay_config();
+    gameplay_config.actor_templates[1].sentry.alert_ticks = 3;
+    gameplay_config.actor_templates[1].sentry.forget_ticks = 3;
+    network_example::game_server::GameServer game_server(kernel, gameplay_config);
     handle_pending_events(kernel, &game_server);
     game_server.tick(1.0f / 30.0f);
     require(game_server.enemy_manager().enemy_count() == 1);
@@ -184,8 +186,10 @@ int main() {
     std::uint32_t enemy_count = query_enemies(kernel, &enemy_states);
     require(enemy_count == 1);
     const std::uint32_t enemy_net_id = enemy_states[0].net_id;
-    require(game_server.enemy_manager().enemies()[0].ammo == 120);
-    require(game_server.enemy_manager().enemies()[0].reserve_ammo == 240);
+    require(enemy_states[0].ammo[network_example::game_server::kWeaponGrenade] == 120);
+    require(
+        enemy_states[0].reserve_ammo[network_example::game_server::kWeaponGrenade] ==
+        240);
     KernelWeaponMechanicsDefinition enemy_weapon{};
     enemy_weapon.struct_size = sizeof(enemy_weapon);
     require(Kernel_ServerGetEntityWeaponMechanics(
@@ -254,7 +258,7 @@ int main() {
     std::uint32_t projectile_count = query_projectiles(kernel, &projectile_states);
     require(projectile_count == 0);
 
-    run_server_frames(kernel, &game_server, 92);
+    run_server_frames(kernel, &game_server, 5);
     require(game_server.enemy_manager().enemies()[0].sentry.state ==
             network_example::game_server::AgentSentryState::kAttack);
     projectile_count = query_projectiles(kernel, &projectile_states);
@@ -306,8 +310,11 @@ int main() {
     enemy_count = query_enemies(kernel, &enemy_states);
     require(enemy_count == 1);
     require(game_server.enemy_manager().enemies()[0].sentry.state ==
+            network_example::game_server::AgentSentryState::kAttack);
+    run_server_frames(kernel, &game_server, 2);
+    require(game_server.enemy_manager().enemies()[0].sentry.state ==
             network_example::game_server::AgentSentryState::kAlert);
-    run_server_frames(kernel, &game_server, 151);
+    run_server_frames(kernel, &game_server, 3);
     enemy_count = query_enemies(kernel, &enemy_states);
     require(enemy_count == 1);
     require(game_server.enemy_manager().enemies()[0].sentry.state ==

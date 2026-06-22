@@ -132,7 +132,7 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 26u);
+    assert(KERNEL_ABI_VERSION == 27u);
     assert(sizeof(KernelVec4) == 16u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS) != 0);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
@@ -167,6 +167,16 @@ int main() {
            offsetof(KernelNetworkStats, replication_metadata_timeout_count));
     assert(offsetof(KernelCombatStateDefinition, collider_template_id) >
            offsetof(KernelCombatStateDefinition, active_weapon_id));
+    assert(offsetof(KernelServerEntityState, active_weapon_id) >
+           offsetof(KernelServerEntityState, actor_template_id));
+    assert(offsetof(KernelServerEntityState, ammo) >
+           offsetof(KernelServerEntityState, active_weapon_id));
+    assert(offsetof(KernelServerEntityState, reserve_ammo) >
+           offsetof(KernelServerEntityState, ammo));
+    assert(offsetof(KernelServerEntityState, is_reloading) >
+           offsetof(KernelServerEntityState, reserve_ammo));
+    assert(offsetof(KernelServerEntityState, reload_remaining_ticks) >
+           offsetof(KernelServerEntityState, is_reloading));
     assert(offsetof(KernelColliderTemplateDefinition, shape_params) >
            offsetof(KernelColliderTemplateDefinition, center));
     assert(offsetof(KernelAgentVisionConfig, vision_collider_template_id) >
@@ -805,6 +815,11 @@ int main() {
     assert(server_state.velocity.x == 1.0f);
     assert(server_state.hp == 240);
     assert(server_state.max_hp == 240);
+    assert(server_state.active_weapon_id == 3);
+    assert(server_state.ammo[3] == 3);
+    assert(server_state.reserve_ammo[3] == 6);
+    assert(server_state.is_reloading == 0u);
+    assert(server_state.reload_remaining_ticks == 0u);
     std::array<KernelServerEntityState, 4> queried_states{};
     for (KernelServerEntityState& queried_state : queried_states) {
         queried_state.struct_size = sizeof(KernelServerEntityState);
@@ -818,11 +833,55 @@ int main() {
     assert(queried_states[0].actor_type == KernelActorType_Agent);
     assert(queried_states[0].hp == 240);
     assert(queried_states[0].max_hp == 240);
+    assert(queried_states[0].active_weapon_id == 3);
+    assert(queried_states[0].ammo[3] == 3);
+    assert(queried_states[0].reserve_ammo[3] == 6);
     assert(Kernel_ServerQueryEntities(
                kernel,
                0,
                queried_states.data(),
                static_cast<std::uint32_t>(queried_states.size())) == 1);
+
+    server_entity_input.input_seq = 2;
+    server_entity_input.buttons = InputButton_Fire;
+    server_entity_input.selected_weapon = 3;
+    server_entity_input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
+    assert(Kernel_ServerSubmitEntityInput(
+        kernel,
+        created_net_id,
+        &server_entity_input));
+    Kernel_Update(kernel, 1.0f / 30.0f);
+    server_state = KernelServerEntityState{};
+    server_state.struct_size = sizeof(server_state);
+    assert(Kernel_ServerGetEntityState(kernel, created_net_id, &server_state));
+    assert(server_state.active_weapon_id == 3);
+    assert(server_state.ammo[3] == 2);
+    assert(server_state.reserve_ammo[3] == 6);
+
+    server_entity_input.input_seq = 3;
+    server_entity_input.buttons = InputButton_Reload;
+    server_entity_input.selected_weapon = 3;
+    assert(Kernel_ServerSubmitEntityInput(
+        kernel,
+        created_net_id,
+        &server_entity_input));
+    Kernel_Update(kernel, 1.0f / 30.0f);
+    server_state = KernelServerEntityState{};
+    server_state.struct_size = sizeof(server_state);
+    assert(Kernel_ServerGetEntityState(kernel, created_net_id, &server_state));
+    assert(server_state.is_reloading != 0u);
+    assert(server_state.reload_remaining_ticks > 0u);
+
+    for (int tick = 0; tick < 30; ++tick) {
+        Kernel_Update(kernel, 1.0f / 30.0f);
+    }
+    server_state = KernelServerEntityState{};
+    server_state.struct_size = sizeof(server_state);
+    assert(Kernel_ServerGetEntityState(kernel, created_net_id, &server_state));
+    assert(server_state.is_reloading == 0u);
+    assert(server_state.reload_remaining_ticks == 0u);
+    assert(server_state.ammo[3] == 3);
+    assert(server_state.reserve_ammo[3] == 5);
 
     PlayerInput input{};
     input.input_seq = 1;
