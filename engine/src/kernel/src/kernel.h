@@ -19,11 +19,18 @@
 namespace network_example {
 
 class LoopbackTransport;
+class EntityLifecycleSystem;
+class EntityStateSystem;
+class MovementSystem;
 struct EntityDespawnPacket;
 struct EntitySpawnPacket;
 struct EntityTemplateUpdatePacket;
 struct ProjectileSpawnBatchPacket;
 struct WelcomePacket;
+
+namespace simulation {
+class Dispatcher;
+}  // namespace simulation
 
 class KernelEngine {
 public:
@@ -127,6 +134,11 @@ public:
         std::uint32_t max_states) const;
 
 private:
+    friend class EntityLifecycleSystem;
+    friend class EntityStateSystem;
+    friend class MovementSystem;
+    friend class simulation::Dispatcher;
+
     struct PeerSession {
         PeerId peer = 0;
         NetId player = 0;

@@ -20,6 +20,8 @@
 #include "protocol/public/network_packets.h"
 #include "protocol/public/packet_header.h"
 #include "protocol/public/session_packets.h"
+#include "simulation/public/movement_solver.h"
+#include "simulation/src/systems.h"
 #include "transport/public/gns_transport.h"
 #include "transport/public/loopback_transport.h"
 #include "transport/public/network_simulator_transport.h"
@@ -276,15 +278,6 @@ std::uint32_t derived_visual_flags(const World& world, entt::entity entity) {
     return flags;
 }
 
-glm::vec3 input_move_to_world(const PlayerInput& input) {
-    glm::vec3 move{input.move.x, 0.0f, input.move.y};
-    const float length = glm::length(move);
-    if (length > 1.0f) {
-        move /= length;
-    }
-    return move;
-}
-
 glm::vec3 input_aim_to_world(const PlayerInput& input) {
     glm::vec3 aim{input.aim_dir.x, input.aim_dir.y, input.aim_dir.z};
     if (glm::length(aim) <= 0.0001f) {
@@ -538,18 +531,6 @@ ColliderWorldBounds collider_world_bounds(const ColliderInstance& collider) {
         collider.world_center,
         glm::abs(collider.half_extents),
     };
-}
-
-void apply_input_prediction(
-    EntitySnapshot* entity,
-    const PlayerInput& input,
-    float fixed_delta_seconds,
-    float move_speed_meters_per_second) {
-    if (entity == nullptr) {
-        return;
-    }
-    entity->velocity = input_move_to_world(input) * move_speed_meters_per_second;
-    entity->position += entity->velocity * fixed_delta_seconds;
 }
 
 const EntitySnapshot* find_snapshot_entity(
@@ -1882,200 +1863,48 @@ KernelLocalPlayerInfo KernelEngine::local_player_info() const {
 bool KernelEngine::server_create_entity(
     const KernelServerEntityCreateInfo& create_info,
     NetId* out_net_id) {
-    if (!running_ || !is_server_mode(config_.mode) || out_net_id == nullptr ||
-        create_info.struct_size < sizeof(KernelServerEntityCreateInfo)) {
-        return false;
-    }
-
-    const EntityType type = static_cast<EntityType>(create_info.entity_type);
-    const ActorType actor_type = static_cast<ActorType>(create_info.actor_type);
-    NetId net_id = 0;
-    if (type == EntityType::kActor && actor_type == ActorType::kPlayer) {
-        net_id = world_.spawn_player(
-            create_info.owner_peer,
-            from_kernel_vec3(create_info.position));
-    } else if (type == EntityType::kActor && actor_type == ActorType::kAgent) {
-        net_id = world_.spawn_enemy(from_kernel_vec3(create_info.position));
-    } else {
-        return false;
-    }
-
-    const std::optional<entt::entity> entity = world_.find_entity(net_id);
-    if (!entity.has_value()) {
-        return false;
-    }
-    if (create_info.actor_template_id != 0u) {
-        if (find_actor_template(actor_templates_, create_info.actor_template_id) ==
-            nullptr) {
-            return false;
-        }
-        world_.registry().emplace_or_replace<ActorTemplateRef>(
-            *entity,
-            create_info.actor_template_id);
-    }
-    Transform& transform = world_.registry().get<Transform>(*entity);
-    transform.rotation = from_kernel_quat(create_info.rotation);
-    ReplicationState& replication =
-        world_.registry().get_or_emplace<ReplicationState>(*entity);
-    replication.animation_state = create_info.animation_state;
-    replication.visual_flags = create_info.visual_flags;
-    materialize_entity_collider(net_id);
-
-    *out_net_id = net_id;
-    push_event(
-        KernelEventType_EntitySpawned,
-        net_id,
-        create_info.owner_peer,
-        static_cast<std::uint32_t>(type));
-    publish_snapshot();
-    return true;
+    return EntityLifecycleSystem{}.create_entity(*this, create_info, out_net_id);
 }
 
 bool KernelEngine::server_set_entity_actor_template(
     NetId net_id,
     std::uint32_t actor_template_id) {
-    if (!running_ || !is_server_mode(config_.mode) || net_id == 0 ||
-        actor_template_id == 0u ||
-        find_actor_template(actor_templates_, actor_template_id) == nullptr) {
-        return false;
-    }
-    const std::optional<entt::entity> entity = world_.find_entity(net_id);
-    if (!entity.has_value() ||
-        !world_.registry().all_of<EntityKind>(*entity) ||
-        world_.registry().get<EntityKind>(*entity).type != EntityType::kActor) {
-        return false;
-    }
-    world_.registry().emplace_or_replace<ActorTemplateRef>(
-        *entity,
+    return EntityStateSystem{}.set_actor_template(
+        *this,
+        net_id,
         actor_template_id);
-    materialize_entity_collider(net_id);
-    if (config_.mode == KernelMode_ListenServer && loopback_transport_ != nullptr &&
-        local_listen_session_.relevant_entities.find(net_id) !=
-            local_listen_session_.relevant_entities.end()) {
-        send_entity_template_update(kLocalListenPeerId, net_id, actor_template_id);
-    }
-    if (config_.mode == KernelMode_DedicatedServer) {
-        for (const PeerSession& session : peer_sessions_) {
-            if (session.welcomed &&
-                session.relevant_entities.find(net_id) !=
-                    session.relevant_entities.end()) {
-                send_entity_template_update(session.peer, net_id, actor_template_id);
-            }
-        }
-    }
-    rebuild_render_states();
-    return true;
 }
 
 bool KernelEngine::server_destroy_entity(NetId net_id, std::uint32_t reason) {
-    if (!running_ || !is_server_mode(config_.mode) || net_id == 0) {
-        return false;
-    }
-    std::uint16_t entity_type = 0;
-    std::uint16_t actor_type = 0;
-    if (const std::optional<entt::entity> entity = world_.find_entity(net_id);
-        entity.has_value() && world_.registry().all_of<EntityKind>(*entity)) {
-        const EntityKind& kind = world_.registry().get<EntityKind>(*entity);
-        entity_type = static_cast<std::uint16_t>(kind.type);
-        actor_type = static_cast<std::uint16_t>(kind.actor_type);
-    }
-    if (!world_.destroy(net_id)) {
-        return false;
-    }
-    vision_configs_.erase(net_id);
-    vision_states_.erase(net_id);
-    if (config_.mode == KernelMode_ListenServer && loopback_transport_ != nullptr) {
-        send_entity_despawn(kLocalListenPeerId, net_id, reason);
-    }
-    for (PeerSession& session : peer_sessions_) {
-        if (session.relevant_entities.erase(net_id) > 0) {
-            send_entity_despawn(session.peer, net_id, reason);
-        }
-    }
-    push_event(KernelEventType_EntityDestroyed, net_id, 0, reason);
-    lifecycle_events_.push_back(KernelEntityLifecycleEvent{
-        lifecycle_type_for_despawn_reason(reason),
-        tick_loop_.current_tick(),
-        net_id,
-        reason,
-        entity_type,
-        actor_type,
-        0,
-    });
-    publish_snapshot();
-    return true;
+    return EntityLifecycleSystem{}.destroy_entity(*this, net_id, reason);
 }
 
 bool KernelEngine::server_set_entity_transform(
     NetId net_id,
     const KernelVec3& position,
     const KernelQuat& rotation) {
-    if (!running_ || !is_server_mode(config_.mode)) {
-        return false;
-    }
-    const std::optional<entt::entity> entity = world_.find_entity(net_id);
-    if (!entity.has_value() || !world_.registry().all_of<Transform>(*entity)) {
-        return false;
-    }
-    Transform& transform = world_.registry().get<Transform>(*entity);
-    transform.position = from_kernel_vec3(position);
-    transform.rotation = from_kernel_quat(rotation);
-    sync_entity_colliders_from_world();
-    return true;
+    return EntityStateSystem{}.set_transform(*this, net_id, position, rotation);
 }
 
 bool KernelEngine::server_set_entity_velocity(
     NetId net_id,
     const KernelVec3& velocity) {
-    if (!running_ || !is_server_mode(config_.mode)) {
-        return false;
-    }
-    const std::optional<entt::entity> entity = world_.find_entity(net_id);
-    if (!entity.has_value() || !world_.registry().all_of<Velocity>(*entity)) {
-        return false;
-    }
-    world_.registry().get<Velocity>(*entity).linear = from_kernel_vec3(velocity);
-    return true;
+    return EntityStateSystem{}.set_velocity(*this, net_id, velocity);
 }
 
 bool KernelEngine::server_set_entity_state(
     NetId net_id,
     std::uint16_t animation_state,
     std::uint32_t visual_flags) {
-    if (!running_ || !is_server_mode(config_.mode)) {
-        return false;
-    }
-    const std::optional<entt::entity> entity = world_.find_entity(net_id);
-    if (!entity.has_value()) {
-        return false;
-    }
-    ReplicationState& replication =
-        world_.registry().get_or_emplace<ReplicationState>(*entity);
-    replication.animation_state = animation_state;
-    replication.visual_flags = visual_flags;
-    return true;
+    return EntityStateSystem{}.set_state(
+        *this,
+        net_id,
+        animation_state,
+        visual_flags);
 }
 
 bool KernelEngine::server_submit_entity_input(NetId net_id, const PlayerInput& input) {
-    if (!running_ || !is_server_mode(config_.mode) || net_id == 0) {
-        return false;
-    }
-    const std::optional<entt::entity> entity = world_.find_entity(net_id);
-    if (!entity.has_value() ||
-        !world_.registry().all_of<NetworkIdentity, Transform, WeaponState, Hitbox>(
-            *entity)) {
-        return false;
-    }
-
-    pending_inputs_.push_back(QueuedInput{
-        0,
-        input,
-        tick_loop_.current_tick(),
-        current_server_time_us(),
-        true,
-        net_id,
-    });
-    return true;
+    return MovementSystem{}.submit_input(*this, net_id, input);
 }
 
 bool KernelEngine::server_set_entity_combat_state(
@@ -3291,8 +3120,8 @@ void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {
 
     EntitySnapshot replayed = *authoritative;
     for (const PlayerInput& input : pending_prediction_inputs_) {
-        apply_input_prediction(
-            &replayed,
+        movement_solver::apply_player_input(
+            replayed,
             input,
             tick_loop_.fixed_delta_seconds(),
             local_player_move_speed_meters_per_second_);
@@ -3411,8 +3240,8 @@ void KernelEngine::predict_local_input(const PlayerInput& input) {
         has_predicted_local_entity_ = true;
     }
 
-    apply_input_prediction(
-        &predicted_local_entity_,
+    movement_solver::apply_player_input(
+        predicted_local_entity_,
         input,
         tick_loop_.fixed_delta_seconds(),
         local_player_move_speed_meters_per_second_);

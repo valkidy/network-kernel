@@ -1,6 +1,12 @@
 licenses(["notice"])
 
 cc_test(
+    name = "player_movement_test",
+    srcs = ["player_movement_test.cc"],
+    deps = ["//engine/src/simulation:simulation"],
+)
+
+cc_test(
     name = "hitscan_test",
     srcs = ["hitscan_test.cc"],
     deps = ["//engine/src/simulation:simulation"],
