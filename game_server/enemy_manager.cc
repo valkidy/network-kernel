@@ -5,6 +5,8 @@
 #include <random>
 #include <utility>
 
+#include "kernel/src/kernel_api_internal.h"
+
 namespace network_example::game_server {
 namespace {
 

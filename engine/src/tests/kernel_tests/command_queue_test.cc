@@ -6,6 +6,7 @@
 #include <entt/entt.hpp>
 
 #include "kernel/public/kernel_api.h"
+#include "kernel/src/kernel_api_internal.h"
 
 #define private public
 #include "kernel/src/kernel.h"

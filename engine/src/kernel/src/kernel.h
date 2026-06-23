@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "kernel/public/kernel_types.h"
+#include "kernel/src/kernel_api_internal.h"
 #include "kernel/src/tick_loop.h"
 #include "simulation/public/command.h"
 #include "simulation/public/simulation.h"

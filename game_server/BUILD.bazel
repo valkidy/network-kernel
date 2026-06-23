@@ -32,6 +32,7 @@ cc_library(
     ],
     deps = [
         "//engine/src/kernel:kernel_api",
+        "//engine/src/kernel:kernel_api_internal",
         "@zip_archive//:zip",
         "@yaml-cpp//:yaml-cpp",
     ],

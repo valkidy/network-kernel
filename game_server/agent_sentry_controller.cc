@@ -4,6 +4,8 @@
 #include <array>
 #include <cmath>
 
+#include "kernel/src/kernel_api_internal.h"
+
 namespace network_example::game_server {
 namespace {
 

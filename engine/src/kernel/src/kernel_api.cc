@@ -1,4 +1,4 @@
-#include "kernel/public/kernel_api.h"
+#include "kernel/src/kernel_api_internal.h"
 
 #include <cstdint>
 #include <cstring>

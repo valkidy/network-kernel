@@ -3,7 +3,10 @@ licenses(["notice"])
 cc_test(
     name = "command_queue_test",
     srcs = ["command_queue_test.cc"],
-    deps = ["//engine/src/kernel:kernel"],
+    deps = [
+        "//engine/src/kernel:kernel",
+        "//engine/src/kernel:kernel_api_internal",
+    ],
 )
 
 cc_test(

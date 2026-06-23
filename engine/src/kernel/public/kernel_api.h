@@ -158,16 +158,6 @@ bool Kernel_ServerDestroyEntity(
     uint32_t net_id,
     uint32_t reason);
 
-/*
- * Internal/experimental game_server migration bridge. Enqueues a lifecycle
- * command for the next simulation tick. Current version supports Destroy only;
- * Create is reserved for future async result/net_id handling.
- */
-bool Kernel_ServerEnqueueEntityLifecycle(
-    KernelHandle* kernel,
-    uint32_t command_source,
-    const KernelEntityLifecycleCommand* command);
-
 bool Kernel_ServerSetEntityTransform(
     KernelHandle* kernel,
     uint32_t net_id,
@@ -185,42 +175,8 @@ bool Kernel_ServerSetEntityState(
     uint16_t animation_state,
     uint32_t visual_flags);
 
-/*
- * Internal/experimental game_server migration bridge. Enqueues non-lifecycle
- * entity mutation commands for the next simulation tick.
- */
-bool Kernel_ServerEnqueueEntityTransform(
-    KernelHandle* kernel,
-    uint32_t command_source,
-    uint32_t net_id,
-    const KernelVec3* position,
-    const KernelQuat* rotation);
-
-bool Kernel_ServerEnqueueEntityVelocity(
-    KernelHandle* kernel,
-    uint32_t command_source,
-    uint32_t net_id,
-    const KernelVec3* velocity);
-
-bool Kernel_ServerEnqueueEntityState(
-    KernelHandle* kernel,
-    uint32_t command_source,
-    uint32_t net_id,
-    uint16_t animation_state,
-    uint32_t visual_flags);
-
 bool Kernel_ServerSubmitEntityInput(
     KernelHandle* kernel,
-    uint32_t net_id,
-    const PlayerInput* input);
-
-/*
- * Internal/experimental game_server migration bridge. Enqueues authoritative
- * entity input for the next simulation tick.
- */
-bool Kernel_ServerEnqueueEntityInput(
-    KernelHandle* kernel,
-    uint32_t command_source,
     uint32_t net_id,
     const PlayerInput* input);
 
