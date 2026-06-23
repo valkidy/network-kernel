@@ -1,6 +1,12 @@
 licenses(["notice"])
 
 cc_test(
+    name = "command_queue_test",
+    srcs = ["command_queue_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
     name = "entity_lifecycle_system_test",
     srcs = ["entity_lifecycle_system_test.cc"],
     deps = ["//engine/src/kernel:kernel"],

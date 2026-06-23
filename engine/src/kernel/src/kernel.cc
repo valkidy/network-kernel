@@ -21,6 +21,7 @@
 #include "protocol/public/packet_header.h"
 #include "protocol/public/session_packets.h"
 #include "simulation/public/movement_solver.h"
+#include "simulation/src/command_dispatcher.h"
 #include "simulation/src/systems.h"
 #include "transport/public/gns_transport.h"
 #include "transport/public/loopback_transport.h"
@@ -61,6 +62,33 @@ glm::quat from_kernel_quat(const KernelQuat& value) {
 
 bool is_server_mode(KernelMode mode) {
     return mode == KernelMode_DedicatedServer || mode == KernelMode_ListenServer;
+}
+
+bool to_simulation_command_source(
+    std::uint32_t command_source,
+    simulation::CommandSource* out_source) {
+    if (out_source == nullptr) {
+        return false;
+    }
+    switch (command_source) {
+        case KernelCommandSource_Internal:
+            *out_source = simulation::CommandSource::kInternal;
+            return true;
+        case KernelCommandSource_PlayerInput:
+            *out_source = simulation::CommandSource::kPlayerInput;
+            return true;
+        case KernelCommandSource_AI:
+            *out_source = simulation::CommandSource::kAi;
+            return true;
+        case KernelCommandSource_ControlPlane:
+            *out_source = simulation::CommandSource::kControlPlane;
+            return true;
+        case KernelCommandSource_Test:
+            *out_source = simulation::CommandSource::kTest;
+            return true;
+        default:
+            return false;
+    }
 }
 
 bool is_authoritative_combat_event(KernelEventType type) {
@@ -1879,6 +1907,29 @@ bool KernelEngine::server_destroy_entity(NetId net_id, std::uint32_t reason) {
     return EntityLifecycleSystem{}.destroy_entity(*this, net_id, reason);
 }
 
+bool KernelEngine::server_enqueue_entity_lifecycle(
+    std::uint32_t command_source,
+    const KernelEntityLifecycleCommand& command) {
+    if (!running_ || !is_server_mode(config_.mode) ||
+        command.struct_size < sizeof(KernelEntityLifecycleCommand)) {
+        return false;
+    }
+    simulation::CommandSource source{};
+    if (!to_simulation_command_source(command_source, &source)) {
+        return false;
+    }
+    if (command.command_type != KernelEntityLifecycleCommandType_Destroy) {
+        return false;
+    }
+
+    simulation::Command queued_command{};
+    queued_command.id = simulation::CommandId::kDestroyEntity;
+    queued_command.source = source;
+    queued_command.destroy_entity.net_id = command.net_id;
+    queued_command.destroy_entity.reason = command.reason;
+    return enqueue_simulation_command(queued_command);
+}
+
 bool KernelEngine::server_set_entity_transform(
     NetId net_id,
     const KernelVec3& position,
@@ -1905,6 +1956,86 @@ bool KernelEngine::server_set_entity_state(
 
 bool KernelEngine::server_submit_entity_input(NetId net_id, const PlayerInput& input) {
     return MovementSystem{}.submit_input(*this, net_id, input);
+}
+
+bool KernelEngine::server_enqueue_entity_transform(
+    std::uint32_t command_source,
+    NetId net_id,
+    const KernelVec3& position,
+    const KernelQuat& rotation) {
+    if (!running_ || !is_server_mode(config_.mode)) {
+        return false;
+    }
+    simulation::CommandSource source{};
+    if (!to_simulation_command_source(command_source, &source)) {
+        return false;
+    }
+    simulation::Command command{};
+    command.id = simulation::CommandId::kSetEntityTransform;
+    command.source = source;
+    command.set_entity_transform.net_id = net_id;
+    command.set_entity_transform.position = position;
+    command.set_entity_transform.rotation = rotation;
+    return enqueue_simulation_command(command);
+}
+
+bool KernelEngine::server_enqueue_entity_velocity(
+    std::uint32_t command_source,
+    NetId net_id,
+    const KernelVec3& velocity) {
+    if (!running_ || !is_server_mode(config_.mode)) {
+        return false;
+    }
+    simulation::CommandSource source{};
+    if (!to_simulation_command_source(command_source, &source)) {
+        return false;
+    }
+    simulation::Command command{};
+    command.id = simulation::CommandId::kSetEntityVelocity;
+    command.source = source;
+    command.set_entity_velocity.net_id = net_id;
+    command.set_entity_velocity.velocity = velocity;
+    return enqueue_simulation_command(command);
+}
+
+bool KernelEngine::server_enqueue_entity_state(
+    std::uint32_t command_source,
+    NetId net_id,
+    std::uint16_t animation_state,
+    std::uint32_t visual_flags) {
+    if (!running_ || !is_server_mode(config_.mode)) {
+        return false;
+    }
+    simulation::CommandSource source{};
+    if (!to_simulation_command_source(command_source, &source)) {
+        return false;
+    }
+    simulation::Command command{};
+    command.id = simulation::CommandId::kSetEntityState;
+    command.source = source;
+    command.set_entity_state.net_id = net_id;
+    command.set_entity_state.animation_state = animation_state;
+    command.set_entity_state.visual_flags = visual_flags;
+    return enqueue_simulation_command(command);
+}
+
+bool KernelEngine::server_enqueue_entity_input(
+    std::uint32_t command_source,
+    NetId net_id,
+    const PlayerInput& input) {
+    if (!running_ || !is_server_mode(config_.mode)) {
+        return false;
+    }
+    simulation::CommandSource source{};
+    if (!to_simulation_command_source(command_source, &source)) {
+        return false;
+    }
+    simulation::Command command{};
+    command.id = simulation::CommandId::kSubmitInput;
+    command.source = source;
+    command.submit_input.net_id = net_id;
+    command.submit_input.input = input;
+    return enqueue_simulation_command(command);
 }
 
 bool KernelEngine::server_set_entity_combat_state(
@@ -2221,6 +2352,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     world_ = World{};
     history_buffer_ = HistoryBuffer(history_frame_count(config_.tick));
     damage_pipeline_.clear();
+    command_queue_.clear();
     pending_inputs_.clear();
     events_.clear();
     lifecycle_events_.clear();
@@ -2241,6 +2373,21 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     vision_states_.clear();
     network_stats_ = KernelNetworkStats{};
     benchmark_stats_ = KernelBenchmarkStats{};
+    rejected_simulation_command_count_ = 0;
+    failed_simulation_command_count_ = 0;
+    command_queue_capacity_warning_count_ = 0;
+    last_command_queue_capacity_warning_tick_ = 0;
+    last_simulation_command_queue_depth_ = 0;
+    last_simulation_command_processed_count_ = 0;
+    simulation_tick_cost_samples_us_.fill(0);
+    simulation_tick_cost_sample_index_ = 0;
+    simulation_tick_cost_sample_count_ = 0;
+    simulation_tick_cost_sample_sum_us_ = 0;
+    last_simulation_tick_cost_us_ = 0;
+    average_simulation_tick_cost_us_ = 0;
+    simulation_tick_cost_warning_threshold_us_ = 0;
+    simulation_tick_cost_warning_count_ = 0;
+    last_simulation_tick_cost_warning_tick_ = 0;
     entity_ids_by_net_id_.clear();
     predicted_local_entity_ = EntitySnapshot{};
     local_correction_offset_ = glm::vec3{0.0f, 0.0f, 0.0f};
@@ -3671,12 +3818,104 @@ KernelEngine::PredictedProjectile* KernelEngine::find_predicted_projectile(
     return &(*found);
 }
 
+bool KernelEngine::enqueue_simulation_command(const simulation::Command& command) {
+    if (!command_queue_.enqueue(command)) {
+        ++rejected_simulation_command_count_;
+        return false;
+    }
+
+    const std::size_t queue_depth = command_queue_.size();
+    if (queue_depth >= simulation::CommandQueue::kWarningThreshold &&
+        (command_queue_capacity_warning_count_ == 0 ||
+         tick_loop_.current_tick() - last_command_queue_capacity_warning_tick_ >=
+             120)) {
+        ++command_queue_capacity_warning_count_;
+        last_command_queue_capacity_warning_tick_ = tick_loop_.current_tick();
+        spdlog::warn(
+            "[NetworkExample] simulation command queue depth={} warning_threshold={} "
+            "capacity={} rejected_count={}",
+            queue_depth,
+            simulation::CommandQueue::kWarningThreshold,
+            simulation::CommandQueue::kDefaultCapacity,
+            rejected_simulation_command_count_);
+    }
+    return true;
+}
+
+std::size_t KernelEngine::drain_simulation_commands() {
+    const auto commands = command_queue_.commands();
+    last_simulation_command_queue_depth_ = commands.size();
+
+    std::size_t processed_count = 0;
+    simulation::Dispatcher dispatcher;
+    for (const simulation::Command& command : commands) {
+        const simulation::CommandResult result = dispatcher.dispatch(*this, command);
+        if (!result.ok) {
+            ++failed_simulation_command_count_;
+        }
+        ++processed_count;
+    }
+    command_queue_.clear();
+    last_simulation_command_processed_count_ = processed_count;
+    return processed_count;
+}
+
+void KernelEngine::record_simulation_tick_cost(
+    std::uint64_t cost_us,
+    std::size_t queue_depth,
+    std::size_t processed_command_count) {
+    last_simulation_tick_cost_us_ = std::max<std::uint64_t>(cost_us, 1);
+    if (simulation_tick_cost_sample_count_ <
+        simulation_tick_cost_samples_us_.size()) {
+        ++simulation_tick_cost_sample_count_;
+    } else {
+        simulation_tick_cost_sample_sum_us_ -=
+            simulation_tick_cost_samples_us_[simulation_tick_cost_sample_index_];
+    }
+    simulation_tick_cost_samples_us_[simulation_tick_cost_sample_index_] =
+        last_simulation_tick_cost_us_;
+    simulation_tick_cost_sample_sum_us_ += last_simulation_tick_cost_us_;
+    simulation_tick_cost_sample_index_ =
+        (simulation_tick_cost_sample_index_ + 1) %
+        simulation_tick_cost_samples_us_.size();
+    average_simulation_tick_cost_us_ =
+        simulation_tick_cost_sample_sum_us_ / simulation_tick_cost_sample_count_;
+
+    const auto fixed_delta_us = static_cast<std::uint64_t>(
+        std::max(1.0, static_cast<double>(tick_loop_.fixed_delta_seconds()) *
+                          1'000'000.0));
+    const std::uint64_t default_threshold_us =
+        std::min<std::uint64_t>(8000, std::max<std::uint64_t>(1, fixed_delta_us / 4));
+    const std::uint64_t threshold_us =
+        simulation_tick_cost_warning_threshold_us_ == 0
+            ? default_threshold_us
+            : simulation_tick_cost_warning_threshold_us_;
+    if (average_simulation_tick_cost_us_ >= threshold_us &&
+        (simulation_tick_cost_warning_count_ == 0 ||
+         tick_loop_.current_tick() - last_simulation_tick_cost_warning_tick_ >=
+             120)) {
+        ++simulation_tick_cost_warning_count_;
+        last_simulation_tick_cost_warning_tick_ = tick_loop_.current_tick();
+        spdlog::warn(
+            "[NetworkExample] simulation tick avg_cost_us={} last_cost_us={} "
+            "threshold_us={} queue_depth={} processed_commands={}",
+            average_simulation_tick_cost_us_,
+            last_simulation_tick_cost_us_,
+            threshold_us,
+            queue_depth,
+            processed_command_count);
+    }
+}
+
 void KernelEngine::simulate_tick() {
+    const auto tick_cost_start = std::chrono::steady_clock::now();
     const float fixed_delta = tick_loop_.fixed_delta_seconds();
     const std::uint64_t server_time_us =
         tick_time_us(tick_loop_.current_tick(), fixed_delta);
     const std::size_t first_tick_event = events_.size();
     world_.collider_registry().expire_tick_lifetimes();
+    const std::size_t queue_depth = command_queue_.size();
+    const std::size_t processed_command_count = drain_simulation_commands();
     advance_predicted_projectiles(fixed_delta);
     for (const QueuedInput& pending_input : pending_inputs_) {
         if (pending_input.controlled_net_id != 0) {
@@ -3755,6 +3994,10 @@ void KernelEngine::simulate_tick() {
         publish_snapshot();
     }
     pending_inputs_.clear();
+    record_simulation_tick_cost(
+        elapsed_cost_us(tick_cost_start),
+        queue_depth,
+        processed_command_count);
     tick_loop_.advance_tick();
 }
 

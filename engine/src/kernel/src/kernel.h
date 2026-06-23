@@ -1,6 +1,7 @@
 #ifndef KERNEL_SRC_KERNEL_H_
 #define KERNEL_SRC_KERNEL_H_
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -10,6 +11,7 @@
 
 #include "kernel/public/kernel_types.h"
 #include "kernel/src/tick_loop.h"
+#include "simulation/public/command.h"
 #include "simulation/public/simulation.h"
 #include "sync/public/history_buffer.h"
 #include "sync/public/snapshot.h"
@@ -86,6 +88,9 @@ public:
         const KernelServerEntityCreateInfo& create_info,
         NetId* out_net_id);
     bool server_destroy_entity(NetId net_id, std::uint32_t reason);
+    bool server_enqueue_entity_lifecycle(
+        std::uint32_t command_source,
+        const KernelEntityLifecycleCommand& command);
     bool server_set_entity_transform(
         NetId net_id,
         const KernelVec3& position,
@@ -96,6 +101,24 @@ public:
         std::uint16_t animation_state,
         std::uint32_t visual_flags);
     bool server_submit_entity_input(NetId net_id, const PlayerInput& input);
+    bool server_enqueue_entity_transform(
+        std::uint32_t command_source,
+        NetId net_id,
+        const KernelVec3& position,
+        const KernelQuat& rotation);
+    bool server_enqueue_entity_velocity(
+        std::uint32_t command_source,
+        NetId net_id,
+        const KernelVec3& velocity);
+    bool server_enqueue_entity_state(
+        std::uint32_t command_source,
+        NetId net_id,
+        std::uint16_t animation_state,
+        std::uint32_t visual_flags);
+    bool server_enqueue_entity_input(
+        std::uint32_t command_source,
+        NetId net_id,
+        const PlayerInput& input);
     bool server_set_entity_combat_state(
         NetId net_id,
         const KernelCombatStateDefinition& combat_state);
@@ -233,6 +256,12 @@ private:
     void handle_client_despawn(const EntityDespawnPacket& packet);
     void clear_client_session();
     void simulate_tick();
+    bool enqueue_simulation_command(const simulation::Command& command);
+    std::size_t drain_simulation_commands();
+    void record_simulation_tick_cost(
+        std::uint64_t cost_us,
+        std::size_t queue_depth,
+        std::size_t processed_command_count);
     void release_presentable_events();
     void broadcast_combat_events(std::size_t first_event, std::size_t last_event);
     void rebuild_render_states();
@@ -366,6 +395,22 @@ private:
     std::vector<KernelDebugInfo> debug_records_;
     std::unordered_map<NetId, KernelAgentVisionConfig> vision_configs_;
     std::unordered_map<NetId, VisionRuntimeState> vision_states_;
+    simulation::CommandQueue command_queue_;
+    std::uint64_t rejected_simulation_command_count_ = 0;
+    std::uint64_t failed_simulation_command_count_ = 0;
+    std::uint32_t command_queue_capacity_warning_count_ = 0;
+    std::uint32_t last_command_queue_capacity_warning_tick_ = 0;
+    std::size_t last_simulation_command_queue_depth_ = 0;
+    std::size_t last_simulation_command_processed_count_ = 0;
+    std::array<std::uint64_t, 120> simulation_tick_cost_samples_us_{};
+    std::size_t simulation_tick_cost_sample_index_ = 0;
+    std::uint32_t simulation_tick_cost_sample_count_ = 0;
+    std::uint64_t simulation_tick_cost_sample_sum_us_ = 0;
+    std::uint64_t last_simulation_tick_cost_us_ = 0;
+    std::uint64_t average_simulation_tick_cost_us_ = 0;
+    std::uint64_t simulation_tick_cost_warning_threshold_us_ = 0;
+    std::uint32_t simulation_tick_cost_warning_count_ = 0;
+    std::uint32_t last_simulation_tick_cost_warning_tick_ = 0;
     KernelNetworkStats network_stats_{};
     KernelBenchmarkStats benchmark_stats_{};
     std::uint32_t catalog_version_ = 0;

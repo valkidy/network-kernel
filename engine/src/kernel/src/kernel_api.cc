@@ -475,6 +475,18 @@ bool Kernel_ServerDestroyEntity(
     });
 }
 
+bool Kernel_ServerEnqueueEntityLifecycle(
+    KernelHandle* kernel,
+    uint32_t command_source,
+    const KernelEntityLifecycleCommand* command) {
+    return abi_call("Kernel_ServerEnqueueEntityLifecycle", false, [&]() {
+        return kernel != nullptr && command != nullptr &&
+               kernel->engine->server_enqueue_entity_lifecycle(
+                   command_source,
+                   *command);
+    });
+}
+
 bool Kernel_ServerSetEntityTransform(
     KernelHandle* kernel,
     uint32_t net_id,
@@ -489,6 +501,22 @@ bool Kernel_ServerSetEntityTransform(
     });
 }
 
+bool Kernel_ServerEnqueueEntityTransform(
+    KernelHandle* kernel,
+    uint32_t command_source,
+    uint32_t net_id,
+    const KernelVec3* position,
+    const KernelQuat* rotation) {
+    return abi_call("Kernel_ServerEnqueueEntityTransform", false, [&]() {
+        return kernel != nullptr && position != nullptr && rotation != nullptr &&
+               kernel->engine->server_enqueue_entity_transform(
+                   command_source,
+                   net_id,
+                   *position,
+                   *rotation);
+    });
+}
+
 bool Kernel_ServerSetEntityVelocity(
     KernelHandle* kernel,
     uint32_t net_id,
@@ -496,6 +524,20 @@ bool Kernel_ServerSetEntityVelocity(
     return abi_call("Kernel_ServerSetEntityVelocity", false, [&]() {
         return kernel != nullptr && velocity != nullptr &&
                kernel->engine->server_set_entity_velocity(net_id, *velocity);
+    });
+}
+
+bool Kernel_ServerEnqueueEntityVelocity(
+    KernelHandle* kernel,
+    uint32_t command_source,
+    uint32_t net_id,
+    const KernelVec3* velocity) {
+    return abi_call("Kernel_ServerEnqueueEntityVelocity", false, [&]() {
+        return kernel != nullptr && velocity != nullptr &&
+               kernel->engine->server_enqueue_entity_velocity(
+                   command_source,
+                   net_id,
+                   *velocity);
     });
 }
 
@@ -513,6 +555,22 @@ bool Kernel_ServerSetEntityState(
     });
 }
 
+bool Kernel_ServerEnqueueEntityState(
+    KernelHandle* kernel,
+    uint32_t command_source,
+    uint32_t net_id,
+    uint16_t animation_state,
+    uint32_t visual_flags) {
+    return abi_call("Kernel_ServerEnqueueEntityState", false, [&]() {
+        return kernel != nullptr &&
+               kernel->engine->server_enqueue_entity_state(
+                   command_source,
+                   net_id,
+                   animation_state,
+                   visual_flags);
+    });
+}
+
 bool Kernel_ServerSubmitEntityInput(
     KernelHandle* kernel,
     uint32_t net_id,
@@ -520,6 +578,20 @@ bool Kernel_ServerSubmitEntityInput(
     return abi_call("Kernel_ServerSubmitEntityInput", false, [&]() {
         return kernel != nullptr && input != nullptr &&
                kernel->engine->server_submit_entity_input(net_id, *input);
+    });
+}
+
+bool Kernel_ServerEnqueueEntityInput(
+    KernelHandle* kernel,
+    uint32_t command_source,
+    uint32_t net_id,
+    const PlayerInput* input) {
+    return abi_call("Kernel_ServerEnqueueEntityInput", false, [&]() {
+        return kernel != nullptr && input != nullptr &&
+               kernel->engine->server_enqueue_entity_input(
+                   command_source,
+                   net_id,
+                   *input);
     });
 }
 

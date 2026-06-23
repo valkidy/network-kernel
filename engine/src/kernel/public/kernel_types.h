@@ -218,6 +218,23 @@ typedef enum KernelDespawnReason {
     KernelDespawnReason_Disconnected = 2,
 } KernelDespawnReason;
 
+typedef enum KernelCommandSource {
+    KernelCommandSource_Internal = 0,
+    KernelCommandSource_PlayerInput = 1,
+    KernelCommandSource_AI = 2,
+    KernelCommandSource_ControlPlane = 3,
+    KernelCommandSource_Test = 4,
+} KernelCommandSource;
+
+typedef enum KernelEntityLifecycleCommandType {
+    KernelEntityLifecycleCommandType_Destroy = 1,
+    /*
+     * Reserved for future async create support. Current enqueue lifecycle
+     * implementation rejects Create because create needs result/net_id handling.
+     */
+    KernelEntityLifecycleCommandType_Create = 2,
+} KernelEntityLifecycleCommandType;
+
 typedef enum RenderEntityStatus {
     RenderEntityStatus_Active = 0,
     RenderEntityStatus_Predicted = 1,
@@ -402,6 +419,18 @@ typedef struct KernelServerEntityCreateInfo {
     uint32_t visual_flags;
     uint32_t actor_template_id;
 } KernelServerEntityCreateInfo;
+
+typedef struct KernelEntityLifecycleCommand {
+    uint32_t struct_size;
+    uint32_t command_type;
+    uint32_t net_id;
+    uint32_t reason;
+    /*
+     * Reserved for future KernelEntityLifecycleCommandType_Create support.
+     * Current version only supports Destroy and ignores create_info.
+     */
+    KernelServerEntityCreateInfo create_info;
+} KernelEntityLifecycleCommand;
 
 typedef struct KernelServerEntityState {
     uint32_t struct_size;

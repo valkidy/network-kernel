@@ -1,6 +1,7 @@
 #ifndef SIMULATION_PUBLIC_COMMAND_H_
 #define SIMULATION_PUBLIC_COMMAND_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <span>
 #include <vector>
@@ -84,12 +85,25 @@ struct CommandResult {
 
 class CommandQueue {
 public:
-    void enqueue(const Command& command) {
+    static constexpr std::size_t kDefaultCapacity = 2048;
+    static constexpr std::size_t kWarningThreshold = 1536;
+
+    bool enqueue(
+        const Command& command,
+        std::size_t capacity = kDefaultCapacity) {
+        if (commands_.size() >= capacity) {
+            return false;
+        }
         commands_.push_back(command);
+        return true;
     }
 
     std::span<const Command> commands() const {
         return commands_;
+    }
+
+    std::size_t size() const {
+        return commands_.size();
     }
 
     void clear() {

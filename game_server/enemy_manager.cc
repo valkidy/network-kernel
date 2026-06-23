@@ -67,7 +67,15 @@ void EnemyManager::despawn_all(std::uint32_t reason) {
     }
 
     for (const Enemy& enemy : enemies_) {
-        Kernel_ServerDestroyEntity(kernel_, enemy.net_id, reason);
+        KernelEntityLifecycleCommand command{};
+        command.struct_size = sizeof(command);
+        command.command_type = KernelEntityLifecycleCommandType_Destroy;
+        command.net_id = enemy.net_id;
+        command.reason = reason;
+        Kernel_ServerEnqueueEntityLifecycle(
+            kernel_,
+            KernelCommandSource_Internal,
+            &command);
     }
     enemies_.clear();
 }
