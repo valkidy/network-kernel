@@ -17,3 +17,9 @@ cc_test(
     srcs = ["session_packets_test.cc"],
     deps = ["//engine/src/protocol:protocol"],
 )
+
+cc_test(
+    name = "sha256_test",
+    srcs = ["sha256_test.cc"],
+    deps = ["//engine/src/protocol:protocol"],
+)

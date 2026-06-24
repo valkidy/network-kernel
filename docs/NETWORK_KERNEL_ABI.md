@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 25u`.
+`KERNEL_ABI_VERSION == 28u`.
 
 ## Ownership
 
@@ -30,6 +30,19 @@ failures return `NULL`, `false`, or `0`.
 Additive changes must prefer new `Kernel_*` functions or new capability flags.
 Breaking changes to public struct layout, enum semantics, buffer ownership, or
 function signatures require a `KERNEL_ABI_VERSION` bump.
+
+ABI version 28 adds gameplay catalog bundle synchronization. Servers register
+an immutable bundle and manifest before listening. Clients may fetch that
+manifest and bundle over the reliable session channel, load the catalog through
+the existing memory API, and explicitly continue the normal handshake. Bundle
+bytes remain native-owned until copied into a caller-owned buffer with
+`Kernel_CopyGameplayCatalogBundle`; the kernel never retains caller output
+buffer pointers.
+
+Packet schema version 11 adds the pre-handshake gameplay catalog manifest,
+bundle request/chunk, and synchronization error messages. Existing handshake,
+welcome, protocol, and snapshot compatibility checks remain authoritative
+after catalog synchronization completes.
 
 ABI version 3 adds server-only gameplay scaffolding for external dedicated
 server logic. The kernel exposes generic entity create/destroy, transform,

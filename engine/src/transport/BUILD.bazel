@@ -6,12 +6,14 @@ cc_library(
     name = "transport",
     srcs = [
         "src/gns_transport.cc",
+        "src/listen_server_transport.cc",
         "src/loopback_transport.cc",
         "src/network_simulator_transport.cc",
     ],
     hdrs = [
         "public/gns_transport.h",
         "public/itransport.h",
+        "public/listen_server_transport.h",
         "public/loopback_transport.h",
         "public/network_simulator_transport.h",
     ],

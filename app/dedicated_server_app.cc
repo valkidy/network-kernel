@@ -72,15 +72,16 @@ int RunDedicatedServer(
     std::uint16_t port,
     const char* gameplay_catalog_path,
     const char* gameplay_catalog_bundle_path,
-    const char* gameplay_catalog_entry_path) {
+    const char* gameplay_catalog_entry_path,
+    const char* gameplay_catalog_content_namespace) {
     log_dedicated_server_build_info();
 
     network_example::game_server::GameServerGameplayConfig gameplay_config;
+    std::vector<std::uint8_t> bundle_bytes;
     try {
         if (gameplay_catalog_bundle_path != nullptr &&
             gameplay_catalog_bundle_path[0] != '\0') {
-            const std::vector<std::uint8_t> bundle_bytes =
-                read_binary_file(gameplay_catalog_bundle_path);
+            bundle_bytes = read_binary_file(gameplay_catalog_bundle_path);
             gameplay_config =
                 network_example::game_server::load_gameplay_config_from_bundle_memory(
                     bundle_bytes.data(),
@@ -112,8 +113,31 @@ int RunDedicatedServer(
     if (kernel == nullptr ||
         !network_example::game_server::load_kernel_gameplay_catalog(
             kernel,
-            gameplay_config) ||
-        !Kernel_StartDedicatedServer(kernel, port)) {
+            gameplay_config)) {
+        spdlog::error("failed to start dedicated server");
+        Kernel_Destroy(kernel);
+        return 1;
+    }
+    if (!bundle_bytes.empty()) {
+        KernelGameplayCatalogSyncServerConfig sync_config{};
+        sync_config.struct_size = sizeof(sync_config);
+        sync_config.bundle_bytes = bundle_bytes.data();
+        sync_config.bundle_size =
+            static_cast<std::uint32_t>(bundle_bytes.size());
+        sync_config.entry_path = gameplay_catalog_entry_path;
+        sync_config.content_namespace = gameplay_catalog_content_namespace;
+        KernelGameplayCatalogManifest manifest{};
+        manifest.struct_size = sizeof(manifest);
+        if (!Kernel_SetGameplayCatalogSyncBundle(
+                kernel,
+                &sync_config,
+                &manifest)) {
+            spdlog::error("failed to register gameplay catalog sync bundle");
+            Kernel_Destroy(kernel);
+            return 1;
+        }
+    }
+    if (!Kernel_StartDedicatedServer(kernel, port)) {
         spdlog::error("failed to start dedicated server");
         Kernel_Destroy(kernel);
         return 1;

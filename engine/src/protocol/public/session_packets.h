@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <array>
 #include <vector>
 
 #include "protocol/public/packet_header.h"
@@ -11,6 +12,12 @@
 namespace network_example {
 
 constexpr std::size_t kHandshakeTextSize = 64;
+constexpr std::size_t kGameplayCatalogEntryPathSize = 128;
+constexpr std::size_t kGameplayCatalogContentNamespaceSize = 64;
+constexpr std::size_t kGameplayCatalogSha256Size = 32;
+constexpr std::size_t kGameplayCatalogBundleChunkBytes = 32 * 1024;
+constexpr std::size_t kGameplayCatalogBundleChunkHeaderSize =
+    kGameplayCatalogSha256Size + 4 + 4 + 4;
 
 struct HandshakePacket {
     std::uint32_t client_nonce = 0;
@@ -53,6 +60,44 @@ struct DisconnectPacket {
     std::uint32_t reason_code = 0;
 };
 
+struct GameplayCatalogManifestRequestPacket {
+    std::uint16_t protocol_version = kProtocolVersion;
+    std::uint16_t snapshot_schema_version = kSnapshotSchemaVersion;
+    std::uint16_t packet_schema_version = kPacketSchemaVersion;
+};
+
+struct GameplayCatalogManifestPacket {
+    std::uint32_t catalog_version = 0;
+    std::uint64_t catalog_hash = 0;
+    std::uint32_t bundle_size = 0;
+    std::array<std::uint8_t, kGameplayCatalogSha256Size> bundle_sha256{};
+    char entry_path[kGameplayCatalogEntryPathSize] = {};
+    char content_namespace[kGameplayCatalogContentNamespaceSize] = {};
+};
+
+struct GameplayCatalogBundleRequestPacket {
+    std::array<std::uint8_t, kGameplayCatalogSha256Size> bundle_sha256{};
+};
+
+struct GameplayCatalogBundleChunkPacket {
+    std::array<std::uint8_t, kGameplayCatalogSha256Size> bundle_sha256{};
+    std::uint32_t offset = 0;
+    std::uint32_t total_size = 0;
+    std::vector<std::uint8_t> bytes;
+};
+
+enum class GameplayCatalogSyncErrorCode : std::uint32_t {
+    kUnsupported = 1,
+    kBundleUnavailable = 2,
+    kVersionMismatch = 3,
+    kInvalidRequest = 4,
+};
+
+struct GameplayCatalogSyncErrorPacket {
+    GameplayCatalogSyncErrorCode error_code =
+        GameplayCatalogSyncErrorCode::kInvalidRequest;
+};
+
 std::vector<std::uint8_t> encode_handshake_packet(
     const HandshakePacket& packet,
     std::uint32_t sequence = 0);
@@ -84,6 +129,46 @@ bool decode_disconnect_packet(
     const std::uint8_t* data,
     std::size_t size,
     DisconnectPacket* out_packet);
+
+std::vector<std::uint8_t> encode_gameplay_catalog_manifest_request_packet(
+    const GameplayCatalogManifestRequestPacket& packet,
+    std::uint32_t sequence = 0);
+bool decode_gameplay_catalog_manifest_request_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    GameplayCatalogManifestRequestPacket* out_packet);
+
+std::vector<std::uint8_t> encode_gameplay_catalog_manifest_packet(
+    const GameplayCatalogManifestPacket& packet,
+    std::uint32_t sequence = 0);
+bool decode_gameplay_catalog_manifest_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    GameplayCatalogManifestPacket* out_packet);
+
+std::vector<std::uint8_t> encode_gameplay_catalog_bundle_request_packet(
+    const GameplayCatalogBundleRequestPacket& packet,
+    std::uint32_t sequence = 0);
+bool decode_gameplay_catalog_bundle_request_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    GameplayCatalogBundleRequestPacket* out_packet);
+
+std::vector<std::uint8_t> encode_gameplay_catalog_bundle_chunk_packet(
+    const GameplayCatalogBundleChunkPacket& packet,
+    std::uint32_t sequence = 0);
+bool decode_gameplay_catalog_bundle_chunk_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    GameplayCatalogBundleChunkPacket* out_packet);
+
+std::vector<std::uint8_t> encode_gameplay_catalog_sync_error_packet(
+    const GameplayCatalogSyncErrorPacket& packet,
+    std::uint32_t sequence = 0);
+bool decode_gameplay_catalog_sync_error_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    GameplayCatalogSyncErrorPacket* out_packet);
 
 }  // namespace network_example
 

@@ -144,6 +144,36 @@ int main() {
         load_symbol<void(KernelHandle*)>(library, "Kernel_Destroy");
     [[maybe_unused]] auto* kernel_start_client =
         load_symbol<bool(KernelHandle*, const char*)>(library, "Kernel_StartClient");
+    [[maybe_unused]] auto* kernel_start_client_catalog_sync =
+        load_symbol<bool(
+            KernelHandle*,
+            const char*,
+            const KernelGameplayCatalogSyncClientConfig*)>(
+            library,
+            "Kernel_StartClientCatalogSync");
+    [[maybe_unused]] auto* kernel_set_gameplay_catalog_sync_bundle =
+        load_symbol<bool(
+            KernelHandle*,
+            const KernelGameplayCatalogSyncServerConfig*,
+            KernelGameplayCatalogManifest*)>(
+            library,
+            "Kernel_SetGameplayCatalogSyncBundle");
+    [[maybe_unused]] auto* kernel_get_gameplay_catalog_sync_status =
+        load_symbol<bool(KernelHandle*, KernelGameplayCatalogSyncStatus*)>(
+            library,
+            "Kernel_GetGameplayCatalogSyncStatus");
+    [[maybe_unused]] auto* kernel_request_gameplay_catalog_bundle =
+        load_symbol<bool(KernelHandle*)>(
+            library,
+            "Kernel_RequestGameplayCatalogBundle");
+    [[maybe_unused]] auto* kernel_copy_gameplay_catalog_bundle =
+        load_symbol<bool(KernelHandle*, std::uint8_t*, std::uint32_t, std::uint32_t*)>(
+            library,
+            "Kernel_CopyGameplayCatalogBundle");
+    [[maybe_unused]] auto* kernel_continue_client_handshake =
+        load_symbol<bool(KernelHandle*)>(
+            library,
+            "Kernel_ContinueClientHandshake");
     [[maybe_unused]] auto* kernel_start_dedicated_server =
         load_symbol<bool(KernelHandle*, std::uint16_t)>(
             library,
@@ -398,6 +428,12 @@ int main() {
     assert(abi_info.agent_vision_config_size == sizeof(KernelAgentVisionConfig));
     assert(abi_info.vision_state_query_size == sizeof(KernelVisionStateQuery));
     assert(abi_info.vision_state_view_size == sizeof(KernelVisionStateView));
+    assert(
+        abi_info.gameplay_catalog_manifest_size ==
+        sizeof(KernelGameplayCatalogManifest));
+    assert(
+        abi_info.gameplay_catalog_sync_status_size ==
+        sizeof(KernelGameplayCatalogSyncStatus));
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LISTEN_SERVER_MODE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LOCAL_PLAYER_INFO) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_SERVER_ENTITY_CREATE) != 0);
@@ -412,6 +448,9 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_HOMING_PROJECTILES) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LAN_DISCOVERY) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
+    assert(
+        (abi_info.capability_flags & KERNEL_CAPABILITY_GAMEPLAY_CATALOG_SYNC) !=
+        0);
     assert(!kernel_get_abi_info(nullptr, sizeof(abi_info)));
     assert(!kernel_get_abi_info(&abi_info, sizeof(abi_info) - 1));
 

@@ -123,6 +123,10 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
         out_info->agent_vision_config_size = sizeof(KernelAgentVisionConfig);
         out_info->vision_state_query_size = sizeof(KernelVisionStateQuery);
         out_info->vision_state_view_size = sizeof(KernelVisionStateView);
+        out_info->gameplay_catalog_manifest_size =
+            sizeof(KernelGameplayCatalogManifest);
+        out_info->gameplay_catalog_sync_status_size =
+            sizeof(KernelGameplayCatalogSyncStatus);
         out_info->capability_flags =
             KERNEL_CAPABILITY_CLIENT_MODE |
             KERNEL_CAPABILITY_LISTEN_SERVER_MODE |
@@ -158,7 +162,8 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_BENCHMARK_STATS |
             KERNEL_CAPABILITY_NETWORK_STATS |
             KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS |
-            KERNEL_CAPABILITY_VISION_STATE_QUERY;
+            KERNEL_CAPABILITY_VISION_STATE_QUERY |
+            KERNEL_CAPABILITY_GAMEPLAY_CATALOG_SYNC;
         return true;
     });
 }
@@ -255,6 +260,18 @@ bool Kernel_StartClient(KernelHandle* kernel, const char* address) {
     });
 }
 
+bool Kernel_StartClientCatalogSync(
+    KernelHandle* kernel,
+    const char* address,
+    const KernelGameplayCatalogSyncClientConfig* config) {
+    return abi_call("Kernel_StartClientCatalogSync", false, [&]() {
+        return kernel != nullptr && address != nullptr && address[0] != '\0' &&
+               config != nullptr &&
+               config->struct_size >= sizeof(KernelGameplayCatalogSyncClientConfig) &&
+               kernel->engine->start_client_catalog_sync(address, *config);
+    });
+}
+
 bool Kernel_StartListenServer(KernelHandle* kernel, uint16_t port) {
     return abi_call("Kernel_StartListenServer", false, [&]() {
         return kernel != nullptr && kernel->engine->start_listen_server(port);
@@ -264,6 +281,59 @@ bool Kernel_StartListenServer(KernelHandle* kernel, uint16_t port) {
 bool Kernel_StartDedicatedServer(KernelHandle* kernel, uint16_t port) {
     return abi_call("Kernel_StartDedicatedServer", false, [&]() {
         return kernel != nullptr && kernel->engine->start_dedicated_server(port);
+    });
+}
+
+bool Kernel_SetGameplayCatalogSyncBundle(
+    KernelHandle* kernel,
+    const KernelGameplayCatalogSyncServerConfig* config,
+    KernelGameplayCatalogManifest* out_manifest) {
+    return abi_call("Kernel_SetGameplayCatalogSyncBundle", false, [&]() {
+        return kernel != nullptr && config != nullptr &&
+               config->struct_size >= sizeof(KernelGameplayCatalogSyncServerConfig) &&
+               out_manifest != nullptr &&
+               out_manifest->struct_size >= sizeof(KernelGameplayCatalogManifest) &&
+               kernel->engine->set_gameplay_catalog_sync_bundle(
+                   *config,
+                   out_manifest);
+    });
+}
+
+bool Kernel_GetGameplayCatalogSyncStatus(
+    KernelHandle* kernel,
+    KernelGameplayCatalogSyncStatus* out_status) {
+    return abi_call("Kernel_GetGameplayCatalogSyncStatus", false, [&]() {
+        return kernel != nullptr && out_status != nullptr &&
+               out_status->struct_size >= sizeof(KernelGameplayCatalogSyncStatus) &&
+               kernel->engine->get_gameplay_catalog_sync_status(out_status);
+    });
+}
+
+bool Kernel_RequestGameplayCatalogBundle(KernelHandle* kernel) {
+    return abi_call("Kernel_RequestGameplayCatalogBundle", false, [&]() {
+        return kernel != nullptr &&
+               kernel->engine->request_gameplay_catalog_bundle();
+    });
+}
+
+bool Kernel_CopyGameplayCatalogBundle(
+    KernelHandle* kernel,
+    uint8_t* out_bundle,
+    uint32_t out_capacity,
+    uint32_t* out_bundle_size) {
+    return abi_call("Kernel_CopyGameplayCatalogBundle", false, [&]() {
+        return kernel != nullptr &&
+               kernel->engine->copy_gameplay_catalog_bundle(
+                   out_bundle,
+                   out_capacity,
+                   out_bundle_size);
+    });
+}
+
+bool Kernel_ContinueClientHandshake(KernelHandle* kernel) {
+    return abi_call("Kernel_ContinueClientHandshake", false, [&]() {
+        return kernel != nullptr &&
+               kernel->engine->continue_client_handshake();
     });
 }
 

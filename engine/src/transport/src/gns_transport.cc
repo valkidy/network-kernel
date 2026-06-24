@@ -206,7 +206,7 @@ void GnsTransport::Stop() {
     interface_ = nullptr;
     role_ = Role::kStopped;
     events_.clear();
-    next_peer_id_ = 1;
+    next_peer_id_ = 2;
 }
 
 bool GnsTransport::Send(
