@@ -93,6 +93,12 @@ int main() {
     assert(abi_info.agent_vision_config_size == sizeof(KernelAgentVisionConfig));
     assert(abi_info.vision_state_query_size == sizeof(KernelVisionStateQuery));
     assert(abi_info.vision_state_view_size == sizeof(KernelVisionStateView));
+    assert(
+        abi_info.gameplay_catalog_manifest_size ==
+        sizeof(KernelGameplayCatalogManifest));
+    assert(
+        abi_info.gameplay_catalog_sync_status_size ==
+        sizeof(KernelGameplayCatalogSyncStatus));
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CLIENT_MODE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LISTEN_SERVER_MODE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_DEDICATED_SERVER_MODE) != 0);
@@ -103,6 +109,9 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_SNAPSHOT_INTERPOLATION) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LAG_COMPENSATED_HITSCAN) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LOCAL_PLAYER_INFO) != 0);
+    assert(
+        (abi_info.capability_flags & KERNEL_CAPABILITY_GAMEPLAY_CATALOG_SYNC) !=
+        0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_SERVER_ENTITY_CREATE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_SERVER_ENTITY_DESTROY) != 0);
     assert(
@@ -447,6 +456,54 @@ int main() {
     assert(!Kernel_GetLocalPlayerInfo(kernel, nullptr));
     assert(!Kernel_StartClient(kernel, nullptr));
     assert(!Kernel_StartClient(kernel, ""));
+    KernelGameplayCatalogSyncClientConfig sync_client_config{};
+    sync_client_config.struct_size = sizeof(sync_client_config);
+    assert(!Kernel_StartClientCatalogSync(kernel, nullptr, &sync_client_config));
+    assert(!Kernel_StartClientCatalogSync(kernel, "", &sync_client_config));
+    assert(!Kernel_StartClientCatalogSync(kernel, "127.0.0.1:7777", nullptr));
+    KernelGameplayCatalogSyncStatus sync_status{};
+    sync_status.struct_size = sizeof(sync_status);
+    assert(Kernel_GetGameplayCatalogSyncStatus(kernel, &sync_status));
+    assert(sync_status.state == KernelGameplayCatalogSyncState_Idle);
+    assert(!Kernel_GetGameplayCatalogSyncStatus(kernel, nullptr));
+    assert(!Kernel_RequestGameplayCatalogBundle(kernel));
+    assert(!Kernel_CopyGameplayCatalogBundle(kernel, nullptr, 0, nullptr));
+    assert(!Kernel_ContinueClientHandshake(kernel));
+
+    const std::array<std::uint8_t, 4> sync_bundle = {1, 2, 3, 4};
+    KernelGameplayCatalogSyncServerConfig sync_server_config{};
+    sync_server_config.struct_size = sizeof(sync_server_config);
+    sync_server_config.bundle_bytes = sync_bundle.data();
+    sync_server_config.bundle_size =
+        static_cast<std::uint32_t>(sync_bundle.size());
+    sync_server_config.entry_path = "gameplay_catalog.yaml";
+    sync_server_config.content_namespace = nullptr;
+    KernelGameplayCatalogManifest manifest{};
+    manifest.struct_size = sizeof(manifest);
+    assert(Kernel_SetGameplayCatalogSyncBundle(
+        kernel,
+        &sync_server_config,
+        &manifest));
+    assert(manifest.bundle_size == sync_bundle.size());
+    assert(std::strcmp(manifest.entry_path, "gameplay_catalog.yaml") == 0);
+    assert(std::strcmp(manifest.content_namespace, "default") == 0);
+    assert(manifest.catalog_version == 3);
+    assert(manifest.catalog_hash == 0x1122334455667788ull);
+    KernelGameplayCatalogSyncServerConfig invalid_sync_server_config =
+        sync_server_config;
+    invalid_sync_server_config.entry_path = "../gameplay_catalog.yaml";
+    manifest.struct_size = sizeof(manifest);
+    require(!Kernel_SetGameplayCatalogSyncBundle(
+        kernel,
+        &invalid_sync_server_config,
+        &manifest));
+    invalid_sync_server_config = sync_server_config;
+    invalid_sync_server_config.content_namespace = "../production";
+    manifest.struct_size = sizeof(manifest);
+    require(!Kernel_SetGameplayCatalogSyncBundle(
+        kernel,
+        &invalid_sync_server_config,
+        &manifest));
     assert(!Kernel_ServerCreateEntity(kernel, &create_info, &created_net_id));
     assert(Kernel_StartDedicatedServer(kernel, 7777));
 

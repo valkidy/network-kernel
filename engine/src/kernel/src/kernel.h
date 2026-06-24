@@ -1,9 +1,9 @@
 #ifndef KERNEL_SRC_KERNEL_H_
 #define KERNEL_SRC_KERNEL_H_
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <array>
 #include <memory>
 #include <unordered_map>
 #include <unordered_set>
@@ -21,9 +21,9 @@
 
 namespace network_example {
 
-class LoopbackTransport;
 class EntityLifecycleSystem;
 class EntityStateSystem;
+class ListenServerTransport;
 class MovementSystem;
 struct EntityDespawnPacket;
 struct EntitySpawnPacket;
@@ -40,8 +40,22 @@ public:
     explicit KernelEngine(KernelConfig config);
 
     bool start_client(const char* address);
+    bool start_client_catalog_sync(
+        const char* address,
+        const KernelGameplayCatalogSyncClientConfig& config);
     bool start_listen_server(std::uint16_t port);
     bool start_dedicated_server(std::uint16_t port);
+    bool set_gameplay_catalog_sync_bundle(
+        const KernelGameplayCatalogSyncServerConfig& config,
+        KernelGameplayCatalogManifest* out_manifest);
+    bool get_gameplay_catalog_sync_status(
+        KernelGameplayCatalogSyncStatus* out_status) const;
+    bool request_gameplay_catalog_bundle();
+    bool copy_gameplay_catalog_bundle(
+        std::uint8_t* out_bundle,
+        std::uint32_t out_capacity,
+        std::uint32_t* out_bundle_size) const;
+    bool continue_client_handshake();
 
     void update(float delta_seconds);
     void submit_input(PeerId local_player_id, const PlayerInput& input);
@@ -235,6 +249,10 @@ private:
         std::uint64_t received_count = 0;
     };
 
+    struct GameplayCatalogTransfer {
+        std::size_t offset = 0;
+    };
+
     void push_event(
         KernelEventType type,
         NetId net_id = 0,
@@ -243,6 +261,19 @@ private:
     void reset_runtime_state(KernelMode mode);
     void poll_transport();
     void poll_client_transport();
+    void send_gameplay_catalog_manifest_request();
+    void handle_server_gameplay_catalog_manifest_request(
+        const TransportEvent& transport_event);
+    void handle_server_gameplay_catalog_bundle_request(
+        const TransportEvent& transport_event);
+    void handle_client_gameplay_catalog_manifest(
+        const TransportEvent& transport_event);
+    void handle_client_gameplay_catalog_bundle_chunk(
+        const TransportEvent& transport_event);
+    void handle_client_gameplay_catalog_sync_error(
+        const TransportEvent& transport_event);
+    void pump_gameplay_catalog_transfers();
+    void fail_gameplay_catalog_sync(KernelGameplayCatalogSyncError error);
     void handle_server_disconnect(const TransportEvent& transport_event);
     void handle_client_disconnect(PeerId peer);
     void handle_client_reliable_event(const TransportEvent& transport_event);
@@ -374,7 +405,7 @@ private:
     HistoryBuffer history_buffer_;
     DamagePipeline damage_pipeline_;
     std::unique_ptr<ITransport> transport_;
-    LoopbackTransport* loopback_transport_ = nullptr;
+    ListenServerTransport* listen_server_transport_ = nullptr;
     std::vector<QueuedInput> pending_inputs_;
     std::vector<KernelEvent> events_;
     std::vector<KernelEntityLifecycleEvent> lifecycle_events_;
@@ -416,6 +447,20 @@ private:
     KernelBenchmarkStats benchmark_stats_{};
     std::uint32_t catalog_version_ = 0;
     std::uint64_t catalog_hash_ = 0;
+    KernelGameplayCatalogManifest gameplay_catalog_manifest_{};
+    std::vector<std::uint8_t> gameplay_catalog_sync_bundle_;
+    std::vector<std::uint8_t> downloaded_gameplay_catalog_bundle_;
+    std::unordered_map<PeerId, GameplayCatalogTransfer>
+        gameplay_catalog_transfers_;
+    KernelGameplayCatalogSyncState gameplay_catalog_sync_state_ =
+        KernelGameplayCatalogSyncState_Idle;
+    KernelGameplayCatalogSyncError gameplay_catalog_sync_error_ =
+        KernelGameplayCatalogSyncError_None;
+    std::uint32_t gameplay_catalog_sync_max_bundle_size_ =
+        KERNEL_GAMEPLAY_CATALOG_SYNC_DEFAULT_MAX_BUNDLE_SIZE;
+    std::uint32_t gameplay_catalog_sync_timeout_ms_ =
+        KERNEL_GAMEPLAY_CATALOG_SYNC_DEFAULT_TIMEOUT_MS;
+    std::uint64_t gameplay_catalog_sync_elapsed_us_ = 0;
     std::unordered_map<NetId, std::uint64_t> entity_ids_by_net_id_;
     EntitySnapshot predicted_local_entity_;
     glm::vec3 local_correction_offset_{0.0f, 0.0f, 0.0f};

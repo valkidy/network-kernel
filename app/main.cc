@@ -23,7 +23,10 @@ struct Options {
     std::string gameplay_catalog{std::string(kDefaultGameplayCatalog)};
     std::string gameplay_catalog_bundle;
     std::string gameplay_catalog_entry{std::string(kDefaultGameplayCatalogEntry)};
+    std::string gameplay_catalog_content_namespace{"default"};
+    std::string gameplay_catalog_cache_directory;
     std::uint16_t port = kDefaultPort;
+    std::uint32_t host_frames = 12;
 };
 
 void print_usage() {
@@ -32,7 +35,9 @@ void print_usage() {
         "[--address=127.0.0.1:7777] [--port=7777] "
         "[--gameplay-catalog=game_server/gameplay_catalog.yaml] "
         "[--gameplay-catalog-bundle=path/to/bundle.zip] "
-        "[--gameplay-catalog-entry=gameplay_catalog.yaml]");
+        "[--gameplay-catalog-entry=gameplay_catalog.yaml] "
+        "[--catalog-content-namespace=default] "
+        "[--catalog-cache-dir=path] [--host-frames=12]");
 }
 
 bool parse_port(std::string_view text, std::uint16_t* out_port) {
@@ -45,6 +50,18 @@ bool parse_port(std::string_view text, std::uint16_t* out_port) {
     }
 
     *out_port = static_cast<std::uint16_t>(value);
+    return true;
+}
+
+bool parse_u32(std::string_view text, std::uint32_t* out_value) {
+    unsigned int value = 0;
+    const char* begin = text.data();
+    const char* end = begin + text.size();
+    const auto result = std::from_chars(begin, end, value);
+    if (result.ec != std::errc{} || result.ptr != end || value == 0) {
+        return false;
+    }
+    *out_value = value;
     return true;
 }
 
@@ -104,6 +121,21 @@ bool parse_args(int argc, char** argv, Options* options) {
             options->gameplay_catalog_entry = value;
             continue;
         }
+        if (read_value(arg, "--catalog-content-namespace", &index, argc, argv, &value)) {
+            options->gameplay_catalog_content_namespace = value;
+            continue;
+        }
+        if (read_value(arg, "--catalog-cache-dir", &index, argc, argv, &value)) {
+            options->gameplay_catalog_cache_directory = value;
+            continue;
+        }
+        if (read_value(arg, "--host-frames", &index, argc, argv, &value)) {
+            if (!parse_u32(value, &options->host_frames)) {
+                spdlog::error("invalid host frame count: {}", value);
+                return false;
+            }
+            continue;
+        }
 
         spdlog::error("unknown argument: {}", arg);
         return false;
@@ -132,15 +164,23 @@ int main(int argc, char** argv) {
             options.port,
             options.gameplay_catalog.c_str(),
             options.gameplay_catalog_bundle.c_str(),
-            options.gameplay_catalog_entry.c_str());
+            options.gameplay_catalog_entry.c_str(),
+            options.gameplay_catalog_content_namespace.c_str());
     }
     if (options.mode == "client") {
         return RunClient(
             options.address.c_str(),
-            options.gameplay_catalog.c_str());
+            options.gameplay_catalog.c_str(),
+            options.gameplay_catalog_cache_directory.c_str());
     }
     if (options.mode == "host_server") {
-        return RunHostServer(options.port, options.gameplay_catalog.c_str());
+        return RunHostServer(
+            options.port,
+            options.gameplay_catalog.c_str(),
+            options.gameplay_catalog_bundle.c_str(),
+            options.gameplay_catalog_entry.c_str(),
+            options.gameplay_catalog_content_namespace.c_str(),
+            options.host_frames);
     }
 
     spdlog::error("unknown mode: {}", options.mode);

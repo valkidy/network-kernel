@@ -4,11 +4,17 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 27u
+#define KERNEL_ABI_VERSION 28u
 
 #define KERNEL_BUILD_INFO_TEXT_SIZE 128u
 #define KERNEL_LAN_DISCOVERY_TEXT_SIZE 128u
 #define KERNEL_LAN_DISCOVERY_DEFAULT_PORT 47777u
+#define KERNEL_GAMEPLAY_CATALOG_ENTRY_PATH_SIZE 128u
+#define KERNEL_GAMEPLAY_CATALOG_CONTENT_NAMESPACE_SIZE 64u
+#define KERNEL_GAMEPLAY_CATALOG_SHA256_SIZE 32u
+#define KERNEL_GAMEPLAY_CATALOG_SYNC_DEFAULT_MAX_BUNDLE_SIZE \
+    UINT32_C(67108864)
+#define KERNEL_GAMEPLAY_CATALOG_SYNC_DEFAULT_TIMEOUT_MS UINT32_C(30000)
 
 #define KERNEL_MAX_WEAPONS 7u
 
@@ -79,6 +85,7 @@
 #define KERNEL_CAPABILITY_NETWORK_STATS UINT64_C(0x0000000100000000)
 #define KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS UINT64_C(0x0000000200000000)
 #define KERNEL_CAPABILITY_VISION_STATE_QUERY UINT64_C(0x0000000400000000)
+#define KERNEL_CAPABILITY_GAMEPLAY_CATALOG_SYNC UINT64_C(0x0000000800000000)
 
 #define KERNEL_COLLISION_LAYER_PLAYER_SIDE UINT32_C(0x00000001)
 #define KERNEL_COLLISION_LAYER_HOSTILE_SIDE UINT32_C(0x00000002)
@@ -141,6 +148,8 @@ typedef struct KernelAbiInfo {
     uint32_t agent_vision_config_size;
     uint32_t vision_state_query_size;
     uint32_t vision_state_view_size;
+    uint32_t gameplay_catalog_manifest_size;
+    uint32_t gameplay_catalog_sync_status_size;
 } KernelAbiInfo;
 
 typedef struct KernelBuildInfo {
@@ -550,6 +559,65 @@ typedef struct KernelGameplayCatalogLoadResult {
     char field[64];
     char diagnostic[256];
 } KernelGameplayCatalogLoadResult;
+
+typedef enum KernelGameplayCatalogSyncState {
+    KernelGameplayCatalogSyncState_Idle = 0,
+    KernelGameplayCatalogSyncState_Connecting = 1,
+    KernelGameplayCatalogSyncState_FetchingManifest = 2,
+    KernelGameplayCatalogSyncState_ManifestReady = 3,
+    KernelGameplayCatalogSyncState_Downloading = 4,
+    KernelGameplayCatalogSyncState_BundleReady = 5,
+    KernelGameplayCatalogSyncState_Handshaking = 6,
+    KernelGameplayCatalogSyncState_Ready = 7,
+    KernelGameplayCatalogSyncState_Failed = 8,
+    KernelGameplayCatalogSyncState_Disconnected = 9,
+} KernelGameplayCatalogSyncState;
+
+typedef enum KernelGameplayCatalogSyncError {
+    KernelGameplayCatalogSyncError_None = 0,
+    KernelGameplayCatalogSyncError_Unsupported = 1,
+    KernelGameplayCatalogSyncError_BundleUnavailable = 2,
+    KernelGameplayCatalogSyncError_VersionMismatch = 3,
+    KernelGameplayCatalogSyncError_InvalidManifest = 4,
+    KernelGameplayCatalogSyncError_BundleTooLarge = 5,
+    KernelGameplayCatalogSyncError_InvalidBundle = 6,
+    KernelGameplayCatalogSyncError_Timeout = 7,
+    KernelGameplayCatalogSyncError_Disconnected = 8,
+    KernelGameplayCatalogSyncError_InvalidState = 9,
+    KernelGameplayCatalogSyncError_Transport = 10,
+} KernelGameplayCatalogSyncError;
+
+typedef struct KernelGameplayCatalogManifest {
+    uint32_t struct_size;
+    uint32_t catalog_version;
+    uint64_t catalog_hash;
+    uint32_t bundle_size;
+    uint8_t bundle_sha256[KERNEL_GAMEPLAY_CATALOG_SHA256_SIZE];
+    char entry_path[KERNEL_GAMEPLAY_CATALOG_ENTRY_PATH_SIZE];
+    char content_namespace[KERNEL_GAMEPLAY_CATALOG_CONTENT_NAMESPACE_SIZE];
+} KernelGameplayCatalogManifest;
+
+typedef struct KernelGameplayCatalogSyncServerConfig {
+    uint32_t struct_size;
+    const uint8_t* bundle_bytes;
+    uint32_t bundle_size;
+    const char* entry_path;
+    const char* content_namespace;
+} KernelGameplayCatalogSyncServerConfig;
+
+typedef struct KernelGameplayCatalogSyncClientConfig {
+    uint32_t struct_size;
+    uint32_t max_bundle_size;
+    uint32_t timeout_ms;
+} KernelGameplayCatalogSyncClientConfig;
+
+typedef struct KernelGameplayCatalogSyncStatus {
+    uint32_t struct_size;
+    KernelGameplayCatalogSyncState state;
+    KernelGameplayCatalogSyncError error;
+    uint32_t received_bundle_size;
+    KernelGameplayCatalogManifest manifest;
+} KernelGameplayCatalogSyncStatus;
 
 typedef struct KernelBenchmarkStats {
     uint32_t struct_size;

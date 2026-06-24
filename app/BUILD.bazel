@@ -21,8 +21,10 @@ cc_binary(
     ],
     deps = [
         "//game_server:game_server",
+        "//game_server:game_server_bridge",
         "//engine/src/kernel:kernel",
         "//engine/src/kernel:tick_loop",
+        "//engine/src/protocol:protocol",
         "@fmt//:fmt",
         "@spdlog//:spdlog",
     ],

@@ -1325,6 +1325,216 @@ void server_validates_catalog_hash_before_welcome() {
     require(network_stats.packet_deserialization_cost_us > 0);
 }
 
+void gameplay_catalog_sync_supports_cache_hit_and_download() {
+    KernelConfig server_config{};
+    server_config.mode = KernelMode_DedicatedServer;
+    server_config.tick.server_tick_rate = 30;
+    server_config.tick.snapshot_rate = 15;
+    network_example::KernelEngine server(server_config);
+    KernelGameplayCatalogDefinition catalog{};
+    catalog.struct_size = sizeof(catalog);
+    catalog.catalog_version = 5;
+    catalog.catalog_hash = 0xaabbccddeeff0011ull;
+    require(server.load_gameplay_catalog(catalog));
+
+    const std::vector<std::uint8_t> bundle = {1, 2, 3, 4, 5, 6, 7};
+    KernelGameplayCatalogSyncServerConfig bundle_config{};
+    bundle_config.struct_size = sizeof(bundle_config);
+    bundle_config.bundle_bytes = bundle.data();
+    bundle_config.bundle_size = static_cast<std::uint32_t>(bundle.size());
+    bundle_config.entry_path = "gameplay_catalog.yaml";
+    bundle_config.content_namespace = "production";
+    KernelGameplayCatalogManifest registered_manifest{};
+    registered_manifest.struct_size = sizeof(registered_manifest);
+    require(server.set_gameplay_catalog_sync_bundle(
+        bundle_config,
+        &registered_manifest));
+
+    auto server_transport = std::make_unique<network_example::LoopbackTransport>();
+    require(server_transport->StartServer(7777));
+    network_example::LoopbackTransport* server_loopback = server_transport.get();
+    server.transport_ = std::move(server_transport);
+    server.reset_runtime_state(KernelMode_DedicatedServer);
+
+    network_example::GameplayCatalogManifestRequestPacket request;
+    network_example::TransportEvent request_event;
+    request_event.type = network_example::TransportEventType::kMessage;
+    request_event.peer = 7;
+    request_event.channel = network_example::ChannelId::kSession;
+    request_event.payload =
+        network_example::encode_gameplay_catalog_manifest_request_packet(request);
+    server.handle_server_session_message(request_event);
+
+    network_example::TransportEvent manifest_event;
+    require(server_loopback->PollClientEvent(manifest_event));
+    network_example::GameplayCatalogManifestPacket wire_manifest;
+    require(network_example::decode_gameplay_catalog_manifest_packet(
+        manifest_event.payload.data(),
+        manifest_event.payload.size(),
+        &wire_manifest));
+    require(wire_manifest.catalog_version == 5);
+    require(wire_manifest.catalog_hash == 0xaabbccddeeff0011ull);
+    require(wire_manifest.bundle_size == bundle.size());
+
+    KernelConfig client_config = server_config;
+    client_config.mode = KernelMode_Client;
+    network_example::KernelEngine cache_hit_client(client_config);
+    cache_hit_client.reset_runtime_state(KernelMode_Client);
+    cache_hit_client.gameplay_catalog_sync_state_ =
+        KernelGameplayCatalogSyncState_FetchingManifest;
+    cache_hit_client.gameplay_catalog_sync_max_bundle_size_ = 1024;
+    cache_hit_client.handle_client_session_message(manifest_event);
+    require(
+        cache_hit_client.gameplay_catalog_sync_state_ ==
+        KernelGameplayCatalogSyncState_ManifestReady);
+    require(cache_hit_client.load_gameplay_catalog(catalog));
+    auto cache_hit_transport =
+        std::make_unique<network_example::LoopbackTransport>();
+    require(cache_hit_transport->StartServer(7778));
+    network_example::LoopbackTransport* cache_hit_loopback =
+        cache_hit_transport.get();
+    cache_hit_client.transport_ = std::move(cache_hit_transport);
+    require(cache_hit_client.continue_client_handshake());
+    require(
+        cache_hit_client.gameplay_catalog_sync_state_ ==
+        KernelGameplayCatalogSyncState_Handshaking);
+    network_example::TransportEvent handshake_event;
+    require(cache_hit_loopback->PollClientEvent(handshake_event));
+    network_example::HandshakePacket handshake;
+    require(network_example::decode_handshake_packet(
+        handshake_event.payload.data(),
+        handshake_event.payload.size(),
+        &handshake));
+    require(handshake.catalog_hash == catalog.catalog_hash);
+
+    network_example::KernelEngine download_client(client_config);
+    download_client.reset_runtime_state(KernelMode_Client);
+    download_client.gameplay_catalog_sync_state_ =
+        KernelGameplayCatalogSyncState_FetchingManifest;
+    download_client.gameplay_catalog_sync_max_bundle_size_ = 1024;
+    download_client.handle_client_session_message(manifest_event);
+    auto download_transport =
+        std::make_unique<network_example::LoopbackTransport>();
+    require(download_transport->StartServer(7779));
+    network_example::LoopbackTransport* download_loopback =
+        download_transport.get();
+    download_client.transport_ = std::move(download_transport);
+    require(download_client.request_gameplay_catalog_bundle());
+
+    network_example::TransportEvent bundle_request_event;
+    require(download_loopback->PollClientEvent(bundle_request_event));
+    bundle_request_event.peer = 8;
+    server.handle_server_session_message(bundle_request_event);
+    server.pump_gameplay_catalog_transfers();
+
+    network_example::TransportEvent chunk_event;
+    require(server_loopback->PollClientEvent(chunk_event));
+    download_client.handle_client_session_message(chunk_event);
+    require(
+        download_client.gameplay_catalog_sync_state_ ==
+        KernelGameplayCatalogSyncState_BundleReady);
+    std::array<std::uint8_t, 16> copied{};
+    std::uint32_t copied_size = 0;
+    require(download_client.copy_gameplay_catalog_bundle(
+        copied.data(),
+        copied.size(),
+        &copied_size));
+    require(copied_size == bundle.size());
+    require(std::equal(bundle.begin(), bundle.end(), copied.begin()));
+
+    network_example::KernelEngine invalid_chunk_client(client_config);
+    invalid_chunk_client.reset_runtime_state(KernelMode_Client);
+    invalid_chunk_client.gameplay_catalog_sync_state_ =
+        KernelGameplayCatalogSyncState_FetchingManifest;
+    invalid_chunk_client.gameplay_catalog_sync_max_bundle_size_ = 1024;
+    invalid_chunk_client.handle_client_session_message(manifest_event);
+    invalid_chunk_client.gameplay_catalog_sync_state_ =
+        KernelGameplayCatalogSyncState_Downloading;
+    network_example::GameplayCatalogBundleChunkPacket invalid_chunk;
+    invalid_chunk.bundle_sha256 = wire_manifest.bundle_sha256;
+    invalid_chunk.offset = 1;
+    invalid_chunk.total_size = wire_manifest.bundle_size;
+    invalid_chunk.bytes = bundle;
+    network_example::TransportEvent invalid_chunk_event;
+    invalid_chunk_event.type = network_example::TransportEventType::kMessage;
+    invalid_chunk_event.peer = 0;
+    invalid_chunk_event.channel = network_example::ChannelId::kSession;
+    invalid_chunk_event.payload =
+        network_example::encode_gameplay_catalog_bundle_chunk_packet(
+            invalid_chunk);
+    invalid_chunk_client.handle_client_session_message(invalid_chunk_event);
+    require(
+        invalid_chunk_client.gameplay_catalog_sync_state_ ==
+        KernelGameplayCatalogSyncState_Failed);
+    require(
+        invalid_chunk_client.gameplay_catalog_sync_error_ ==
+        KernelGameplayCatalogSyncError_InvalidBundle);
+
+    network_example::KernelEngine unavailable_client(client_config);
+    unavailable_client.reset_runtime_state(KernelMode_Client);
+    unavailable_client.gameplay_catalog_sync_state_ =
+        KernelGameplayCatalogSyncState_FetchingManifest;
+    const network_example::GameplayCatalogSyncErrorPacket unavailable{
+        network_example::GameplayCatalogSyncErrorCode::kBundleUnavailable};
+    network_example::TransportEvent unavailable_event;
+    unavailable_event.type = network_example::TransportEventType::kMessage;
+    unavailable_event.peer = 0;
+    unavailable_event.channel = network_example::ChannelId::kSession;
+    unavailable_event.payload =
+        network_example::encode_gameplay_catalog_sync_error_packet(unavailable);
+    unavailable_client.handle_client_session_message(unavailable_event);
+    require(
+        unavailable_client.gameplay_catalog_sync_error_ ==
+        KernelGameplayCatalogSyncError_BundleUnavailable);
+
+    network_example::KernelEngine timeout_client(client_config);
+    timeout_client.reset_runtime_state(KernelMode_Client);
+    timeout_client.gameplay_catalog_sync_state_ =
+        KernelGameplayCatalogSyncState_FetchingManifest;
+    timeout_client.gameplay_catalog_sync_timeout_ms_ = 1;
+    timeout_client.update(0.002f);
+    require(
+        timeout_client.gameplay_catalog_sync_error_ ==
+        KernelGameplayCatalogSyncError_Timeout);
+}
+
+void listen_server_accepts_remote_handshake() {
+    KernelConfig config{};
+    config.mode = KernelMode_ListenServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine server(config);
+    auto transport = std::make_unique<network_example::LoopbackTransport>();
+    require(transport->StartServer(7780));
+    network_example::LoopbackTransport* loopback = transport.get();
+    server.transport_ = std::move(transport);
+    server.reset_runtime_state(KernelMode_ListenServer);
+
+    network_example::HandshakePacket handshake;
+    handshake.client_nonce = 1234;
+    handshake.protocol_version = network_example::kProtocolVersion;
+    handshake.snapshot_schema_version = network_example::kSnapshotSchemaVersion;
+    handshake.packet_schema_version = network_example::kPacketSchemaVersion;
+    network_example::TransportEvent event;
+    event.type = network_example::TransportEventType::kMessage;
+    event.peer = 2;
+    event.channel = network_example::ChannelId::kSession;
+    event.payload = network_example::encode_handshake_packet(handshake);
+    server.handle_server_session_message(event);
+
+    require(server.peer_sessions_.size() == 1);
+    require(server.peer_sessions_[0].peer == 2);
+    require(server.peer_sessions_[0].welcomed);
+    network_example::TransportEvent welcome_event;
+    require(loopback->PollClientEvent(welcome_event));
+    network_example::WelcomePacket welcome;
+    require(network_example::decode_welcome_packet(
+        welcome_event.payload.data(),
+        welcome_event.payload.size(),
+        &welcome));
+    require(welcome.assigned_peer_id == 2);
+}
+
 void projectile_spawn_batch_renders_and_binds_to_snapshot() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
@@ -2291,6 +2501,8 @@ int main() {
     server_accepts_matching_handshake_versions();
     server_rejects_mismatched_snapshot_schema_before_welcome();
     server_validates_catalog_hash_before_welcome();
+    gameplay_catalog_sync_supports_cache_hit_and_download();
+    listen_server_accepts_remote_handshake();
     projectile_spawn_batch_renders_and_binds_to_snapshot();
     projectile_snapshot_waits_for_reliable_metadata_before_render();
     projectile_snapshot_missing_metadata_after_grace_ticks_is_diagnosed();

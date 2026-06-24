@@ -55,8 +55,31 @@ KernelHandle* Kernel_Create(const KernelConfig* config);
 void Kernel_Destroy(KernelHandle* kernel);
 
 bool Kernel_StartClient(KernelHandle* kernel, const char* address);
+bool Kernel_StartClientCatalogSync(
+    KernelHandle* kernel,
+    const char* address,
+    const KernelGameplayCatalogSyncClientConfig* config);
 bool Kernel_StartListenServer(KernelHandle* kernel, uint16_t port);
 bool Kernel_StartDedicatedServer(KernelHandle* kernel, uint16_t port);
+
+bool Kernel_SetGameplayCatalogSyncBundle(
+    KernelHandle* kernel,
+    const KernelGameplayCatalogSyncServerConfig* config,
+    KernelGameplayCatalogManifest* out_manifest);
+
+bool Kernel_GetGameplayCatalogSyncStatus(
+    KernelHandle* kernel,
+    KernelGameplayCatalogSyncStatus* out_status);
+
+bool Kernel_RequestGameplayCatalogBundle(KernelHandle* kernel);
+
+bool Kernel_CopyGameplayCatalogBundle(
+    KernelHandle* kernel,
+    uint8_t* out_bundle,
+    uint32_t out_capacity,
+    uint32_t* out_bundle_size);
+
+bool Kernel_ContinueClientHandshake(KernelHandle* kernel);
 
 void Kernel_Update(KernelHandle* kernel, float delta_seconds);
 

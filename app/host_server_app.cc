@@ -1,8 +1,13 @@
 #include "host_server_app.h"
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <exception>
+#include <fstream>
+#include <string>
+#include <thread>
+#include <vector>
 
 #include <spdlog/spdlog.h>
 
@@ -57,16 +62,43 @@ void log_native_build_info() {
         info.compiler_info);
 }
 
+std::vector<std::uint8_t> read_binary_file(const char* path) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file.good()) {
+        throw std::runtime_error(std::string("failed to open file: ") + path);
+    }
+    return std::vector<std::uint8_t>(
+        std::istreambuf_iterator<char>(file),
+        std::istreambuf_iterator<char>());
+}
+
 }  // namespace
 
-int RunHostServer(std::uint16_t port, const char* gameplay_catalog_path) {
+int RunHostServer(
+    std::uint16_t port,
+    const char* gameplay_catalog_path,
+    const char* gameplay_catalog_bundle_path,
+    const char* gameplay_catalog_entry_path,
+    const char* gameplay_catalog_content_namespace,
+    std::uint32_t frame_count) {
     log_native_build_info();
 
     network_example::game_server::GameServerGameplayConfig gameplay_config;
+    std::vector<std::uint8_t> bundle_bytes;
     try {
-        gameplay_config =
-            network_example::game_server::load_gameplay_config_from_catalog_file(
-                gameplay_catalog_path);
+        if (gameplay_catalog_bundle_path != nullptr &&
+            gameplay_catalog_bundle_path[0] != '\0') {
+            bundle_bytes = read_binary_file(gameplay_catalog_bundle_path);
+            gameplay_config =
+                network_example::game_server::load_gameplay_config_from_bundle_memory(
+                    bundle_bytes.data(),
+                    static_cast<std::uint32_t>(bundle_bytes.size()),
+                    gameplay_catalog_entry_path);
+        } else {
+            gameplay_config =
+                network_example::game_server::load_gameplay_config_from_catalog_file(
+                    gameplay_catalog_path);
+        }
     } catch (const std::exception& error) {
         spdlog::error("failed to load gameplay catalog: {}", error.what());
         return 1;
@@ -77,34 +109,43 @@ int RunHostServer(std::uint16_t port, const char* gameplay_catalog_path) {
     if (kernel == nullptr ||
         !network_example::game_server::load_kernel_gameplay_catalog(
             kernel,
-            gameplay_config) ||
-        !Kernel_StartListenServer(kernel, port)) {
+            gameplay_config)) {
+        spdlog::error("failed to start listen server");
+        Kernel_Destroy(kernel);
+        return 1;
+    }
+    if (!bundle_bytes.empty()) {
+        KernelGameplayCatalogSyncServerConfig sync_config{};
+        sync_config.struct_size = sizeof(sync_config);
+        sync_config.bundle_bytes = bundle_bytes.data();
+        sync_config.bundle_size =
+            static_cast<std::uint32_t>(bundle_bytes.size());
+        sync_config.entry_path = gameplay_catalog_entry_path;
+        sync_config.content_namespace = gameplay_catalog_content_namespace;
+        KernelGameplayCatalogManifest manifest{};
+        manifest.struct_size = sizeof(manifest);
+        if (!Kernel_SetGameplayCatalogSyncBundle(
+                kernel,
+                &sync_config,
+                &manifest)) {
+            spdlog::error("failed to register gameplay catalog sync bundle");
+            Kernel_Destroy(kernel);
+            return 1;
+        }
+    }
+    if (!Kernel_StartListenServer(kernel, port)) {
         spdlog::error("failed to start listen server");
         Kernel_Destroy(kernel);
         return 1;
     }
 
-    constexpr std::array<float, 12> kFrameDeltas = {
-        1.0f / 30.0f,
-        1.0f / 30.0f,
-        1.0f / 30.0f,
-        1.0f / 30.0f,
-        1.0f / 30.0f,
-        1.0f / 30.0f,
-        1.0f / 30.0f,
-        1.0f / 30.0f,
-        1.0f / 30.0f,
-        1.0f / 30.0f,
-        1.0f / 30.0f,
-        1.0f / 30.0f,
-    };
-
     network_example::game_server::GameServer game_server(kernel, gameplay_config);
     std::uint32_t sequence = 1;
-    for (float delta_seconds : kFrameDeltas) {
+    constexpr float kDeltaSeconds = 1.0f / 30.0f;
+    for (std::uint32_t frame = 0; frame < frame_count; ++frame) {
         const PlayerInput input = scripted_input(sequence++);
         Kernel_SubmitInput(kernel, 1, &input);
-        Kernel_Update(kernel, delta_seconds);
+        Kernel_Update(kernel, kDeltaSeconds);
 
         std::array<KernelEvent, 32> events{};
         const std::uint32_t event_count =
@@ -119,7 +160,10 @@ int RunHostServer(std::uint16_t port, const char* gameplay_catalog_path) {
                 events[index].code);
             game_server.handle_event(events[index]);
         }
-        game_server.tick(delta_seconds);
+        game_server.tick(kDeltaSeconds);
+        if (frame_count > 12) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(33));
+        }
     }
 
     std::array<RenderEntityState, 64> states{};

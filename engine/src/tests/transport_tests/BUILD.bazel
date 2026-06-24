@@ -7,6 +7,12 @@ cc_test(
 )
 
 cc_test(
+    name = "listen_server_transport_test",
+    srcs = ["listen_server_transport_test.cc"],
+    deps = ["//engine/src/transport:transport"],
+)
+
+cc_test(
     name = "gns_transport_test",
     srcs = ["gns_transport_test.cc"],
     deps = ["//engine/src/transport:transport"],

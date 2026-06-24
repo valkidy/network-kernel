@@ -126,7 +126,7 @@ bool EntityLifecycleSystem::destroy_entity(
     engine.vision_configs_.erase(net_id);
     engine.vision_states_.erase(net_id);
     if (engine.config_.mode == KernelMode_ListenServer &&
-        engine.loopback_transport_ != nullptr) {
+        engine.listen_server_transport_ != nullptr) {
         engine.send_entity_despawn(kLocalListenPeerId, net_id, reason);
     }
     for (KernelEngine::PeerSession& session : engine.peer_sessions_) {
@@ -168,7 +168,7 @@ bool EntityStateSystem::set_actor_template(
         actor_template_id);
     engine.materialize_entity_collider(net_id);
     if (engine.config_.mode == KernelMode_ListenServer &&
-        engine.loopback_transport_ != nullptr &&
+        engine.listen_server_transport_ != nullptr &&
         engine.local_listen_session_.relevant_entities.find(net_id) !=
             engine.local_listen_session_.relevant_entities.end()) {
         engine.send_entity_template_update(
@@ -176,7 +176,7 @@ bool EntityStateSystem::set_actor_template(
             net_id,
             actor_template_id);
     }
-    if (engine.config_.mode == KernelMode_DedicatedServer) {
+    if (is_server_mode(engine.config_.mode)) {
         for (const KernelEngine::PeerSession& session : engine.peer_sessions_) {
             if (session.welcomed &&
                 session.relevant_entities.find(net_id) !=

@@ -1,16 +1,23 @@
 #include "client_app.h"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <exception>
+#include <filesystem>
+#include <fstream>
+#include <string>
 #include <thread>
+#include <vector>
 
 #include <spdlog/spdlog.h>
 
 #include "game_server/gameplay_config.h"
 #include "kernel/public/kernel_api.h"
 #include "kernel/src/tick_loop.h"
+#include "protocol/public/sha256.h"
 
 namespace {
 
@@ -87,28 +94,214 @@ void log_native_build_info() {
         info.compiler_info);
 }
 
+std::vector<std::uint8_t> read_binary_file(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file.good()) {
+        return {};
+    }
+    return std::vector<std::uint8_t>(
+        std::istreambuf_iterator<char>(file),
+        std::istreambuf_iterator<char>());
+}
+
+std::string digest_hex(const std::uint8_t* digest, std::size_t size) {
+    constexpr char kDigits[] = "0123456789abcdef";
+    std::string result;
+    result.reserve(size * 2);
+    for (std::size_t index = 0; index < size; ++index) {
+        result.push_back(kDigits[digest[index] >> 4]);
+        result.push_back(kDigits[digest[index] & 0x0f]);
+    }
+    return result;
+}
+
+bool bundle_matches_manifest(
+    const std::vector<std::uint8_t>& bundle,
+    const KernelGameplayCatalogManifest& manifest) {
+    if (bundle.size() != manifest.bundle_size) {
+        return false;
+    }
+    const std::array<std::uint8_t, 32> digest =
+        network_example::compute_sha256(bundle.data(), bundle.size());
+    return std::equal(
+        digest.begin(),
+        digest.end(),
+        std::begin(manifest.bundle_sha256));
+}
+
+bool wait_for_sync_state(
+    KernelHandle* kernel,
+    KernelGameplayCatalogSyncState first_terminal,
+    KernelGameplayCatalogSyncState second_terminal,
+    KernelGameplayCatalogSyncStatus* out_status) {
+    constexpr float kWaitDeltaSeconds = 1.0f / 60.0f;
+    for (std::uint32_t attempt = 0; attempt < 1800; ++attempt) {
+        Kernel_Update(kernel, kWaitDeltaSeconds);
+        out_status->struct_size = sizeof(*out_status);
+        if (!Kernel_GetGameplayCatalogSyncStatus(kernel, out_status)) {
+            return false;
+        }
+        if (out_status->state == first_terminal ||
+            out_status->state == second_terminal) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    }
+    return false;
+}
+
+bool start_client_with_catalog_sync(
+    KernelHandle* kernel,
+    const char* address,
+    const char* cache_directory) {
+    KernelGameplayCatalogSyncClientConfig sync_config{};
+    sync_config.struct_size = sizeof(sync_config);
+    if (!Kernel_StartClientCatalogSync(kernel, address, &sync_config)) {
+        return false;
+    }
+
+    KernelGameplayCatalogSyncStatus status{};
+    if (!wait_for_sync_state(
+            kernel,
+            KernelGameplayCatalogSyncState_ManifestReady,
+            KernelGameplayCatalogSyncState_Failed,
+            &status) ||
+        status.state != KernelGameplayCatalogSyncState_ManifestReady) {
+        spdlog::error(
+            "catalog manifest sync failed error={}",
+            static_cast<int>(status.error));
+        return false;
+    }
+
+    const std::array<std::uint8_t, 32> endpoint_digest =
+        network_example::compute_sha256(
+            reinterpret_cast<const std::uint8_t*>(address),
+            std::strlen(address));
+    const std::filesystem::path bundle_path =
+        std::filesystem::path(cache_directory) /
+        digest_hex(endpoint_digest.data(), 16) /
+        status.manifest.content_namespace /
+        digest_hex(
+            status.manifest.bundle_sha256,
+            KERNEL_GAMEPLAY_CATALOG_SHA256_SIZE) /
+        "bundle.zip";
+
+    std::vector<std::uint8_t> bundle = read_binary_file(bundle_path);
+    if (!bundle_matches_manifest(bundle, status.manifest)) {
+        bundle.clear();
+        if (!Kernel_RequestGameplayCatalogBundle(kernel) ||
+            !wait_for_sync_state(
+                kernel,
+                KernelGameplayCatalogSyncState_BundleReady,
+                KernelGameplayCatalogSyncState_Failed,
+                &status) ||
+            status.state != KernelGameplayCatalogSyncState_BundleReady) {
+            spdlog::error(
+                "catalog bundle download failed error={}",
+                static_cast<int>(status.error));
+            return false;
+        }
+        bundle.resize(status.manifest.bundle_size);
+        std::uint32_t copied_size = 0;
+        if (!Kernel_CopyGameplayCatalogBundle(
+                kernel,
+                bundle.data(),
+                static_cast<std::uint32_t>(bundle.size()),
+                &copied_size) ||
+            copied_size != bundle.size() ||
+            !bundle_matches_manifest(bundle, status.manifest)) {
+            spdlog::error("downloaded catalog bundle verification failed");
+            return false;
+        }
+
+        std::error_code filesystem_error;
+        std::filesystem::create_directories(
+            bundle_path.parent_path(),
+            filesystem_error);
+        if (!filesystem_error) {
+            const std::filesystem::path temporary_path =
+                bundle_path.string() + ".tmp";
+            {
+                std::ofstream output(temporary_path, std::ios::binary);
+                output.write(
+                    reinterpret_cast<const char*>(bundle.data()),
+                    static_cast<std::streamsize>(bundle.size()));
+            }
+            std::filesystem::remove(bundle_path, filesystem_error);
+            filesystem_error.clear();
+            std::filesystem::rename(
+                temporary_path,
+                bundle_path,
+                filesystem_error);
+            if (filesystem_error) {
+                spdlog::warn(
+                    "catalog cache write failed: {}",
+                    filesystem_error.message());
+            }
+        } else {
+            spdlog::warn(
+                "catalog cache directory unavailable: {}",
+                filesystem_error.message());
+        }
+    }
+
+    KernelGameplayCatalogLoadResult load_result{};
+    load_result.struct_size = sizeof(load_result);
+    if (!Kernel_LoadGameplayCatalogFromMemory(
+            kernel,
+            bundle.data(),
+            static_cast<std::uint32_t>(bundle.size()),
+            status.manifest.entry_path,
+            &load_result) ||
+        load_result.catalog_version != status.manifest.catalog_version ||
+        load_result.catalog_hash != status.manifest.catalog_hash) {
+        spdlog::error(
+            "catalog bundle load failed error={} diagnostic={}",
+            load_result.error_code,
+            load_result.diagnostic);
+        return false;
+    }
+    return Kernel_ContinueClientHandshake(kernel);
+}
+
 }  // namespace
 
-int RunClient(const char* address, const char* gameplay_catalog_path) {
+int RunClient(
+    const char* address,
+    const char* gameplay_catalog_path,
+    const char* gameplay_catalog_cache_directory) {
     log_native_build_info();
-
-    network_example::game_server::GameServerGameplayConfig gameplay_config;
-    try {
-        gameplay_config =
-            network_example::game_server::load_gameplay_config_from_catalog_file(
-                gameplay_catalog_path);
-    } catch (const std::exception& error) {
-        spdlog::error("failed to load gameplay catalog: {}", error.what());
-        return 1;
-    }
 
     KernelConfig config = default_config();
     KernelHandle* kernel = Kernel_Create(&config);
-    if (kernel == nullptr ||
-        !network_example::game_server::load_kernel_gameplay_catalog(
+    if (kernel == nullptr) {
+        spdlog::error("failed to create example client");
+        return 1;
+    }
+    bool started = false;
+    if (gameplay_catalog_cache_directory != nullptr &&
+        gameplay_catalog_cache_directory[0] != '\0') {
+        started = start_client_with_catalog_sync(
             kernel,
-            gameplay_config) ||
-        !Kernel_StartClient(kernel, address)) {
+            address,
+            gameplay_catalog_cache_directory);
+    } else {
+        try {
+            const network_example::game_server::GameServerGameplayConfig
+                gameplay_config =
+                    network_example::game_server::
+                        load_gameplay_config_from_catalog_file(
+                            gameplay_catalog_path);
+            started =
+                network_example::game_server::load_kernel_gameplay_catalog(
+                    kernel,
+                    gameplay_config) &&
+                Kernel_StartClient(kernel, address);
+        } catch (const std::exception& error) {
+            spdlog::error("failed to load gameplay catalog: {}", error.what());
+        }
+    }
+    if (!started) {
         spdlog::error("failed to start example client for {}", address);
         Kernel_Destroy(kernel);
         return 1;
