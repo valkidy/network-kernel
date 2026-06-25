@@ -5,13 +5,18 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 27;
+        public const uint AbiVersion = 28;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
+        public const int GameplayCatalogEntryPathSize = 128;
+        public const int GameplayCatalogContentNamespaceSize = 64;
+        public const int GameplayCatalogSha256Size = 32;
         public const int GameplayCatalogLoadPathSize = 128;
         public const int GameplayCatalogLoadFieldSize = 64;
         public const int GameplayCatalogLoadDiagnosticSize = 256;
         public const ushort LANDiscoveryDefaultPort = 47777;
+        public const uint GameplayCatalogSyncDefaultMaxBundleSize = 64U * 1024U * 1024U;
+        public const uint GameplayCatalogSyncDefaultTimeoutMs = 30000U;
         public const int MaxWeapons = 7;
         public const byte DebugWildcardU8 = 0xff;
 
@@ -79,6 +84,7 @@ namespace NetworkExample.Kernel
         public const ulong CapabilityNetworkStats = 0x0000000100000000UL;
         public const ulong CapabilityEntityLifecycleEvents = 0x0000000200000000UL;
         public const ulong CapabilityVisionStateQuery = 0x0000000400000000UL;
+        public const ulong CapabilityGameplayCatalogSync = 0x0000000800000000UL;
 
         public const uint CollisionLayerPlayer = 0x00000001U;
         public const uint CollisionLayerHostile = 0x00000002U;
@@ -132,6 +138,35 @@ namespace NetworkExample.Kernel
         Destroyed = 0,
         OutOfRange = 1,
         Disconnected = 2,
+    }
+
+    public enum KernelGameplayCatalogSyncState
+    {
+        Idle = 0,
+        Connecting = 1,
+        FetchingManifest = 2,
+        ManifestReady = 3,
+        Downloading = 4,
+        BundleReady = 5,
+        Handshaking = 6,
+        Ready = 7,
+        Failed = 8,
+        Disconnected = 9,
+    }
+
+    public enum KernelGameplayCatalogSyncError
+    {
+        None = 0,
+        Unsupported = 1,
+        BundleUnavailable = 2,
+        VersionMismatch = 3,
+        InvalidManifest = 4,
+        BundleTooLarge = 5,
+        InvalidBundle = 6,
+        Timeout = 7,
+        Disconnected = 8,
+        InvalidState = 9,
+        Transport = 10,
     }
 
     public enum RenderEntityStatus : uint
@@ -329,6 +364,8 @@ namespace NetworkExample.Kernel
         public uint agent_vision_config_size;
         public uint vision_state_query_size;
         public uint vision_state_view_size;
+        public uint gameplay_catalog_manifest_size;
+        public uint gameplay_catalog_sync_status_size;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
@@ -696,6 +733,86 @@ namespace NetworkExample.Kernel
         public string diagnostic;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelGameplayCatalogLoadResult>();
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
+    public struct KernelGameplayCatalogManifest
+    {
+        public uint struct_size;
+        public uint catalog_version;
+        public ulong catalog_hash;
+        public uint bundle_size;
+        [MarshalAs(
+            UnmanagedType.ByValArray,
+            SizeConst = KernelConstants.GameplayCatalogSha256Size,
+            ArraySubType = UnmanagedType.U1)]
+        public byte[] bundle_sha256;
+        [MarshalAs(
+            UnmanagedType.ByValTStr,
+            SizeConst = KernelConstants.GameplayCatalogEntryPathSize)]
+        public string entry_path;
+        [MarshalAs(
+            UnmanagedType.ByValTStr,
+            SizeConst = KernelConstants.GameplayCatalogContentNamespaceSize)]
+        public string content_namespace;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelGameplayCatalogManifest>();
+
+        public static KernelGameplayCatalogManifest Create()
+        {
+            return new KernelGameplayCatalogManifest
+            {
+                struct_size = StructSize,
+                bundle_sha256 = new byte[KernelConstants.GameplayCatalogSha256Size],
+                entry_path = string.Empty,
+                content_namespace = string.Empty,
+            };
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelGameplayCatalogSyncClientConfig
+    {
+        public uint struct_size;
+        public uint max_bundle_size;
+        public uint timeout_ms;
+
+        public static uint StructSize =>
+            (uint)Marshal.SizeOf<KernelGameplayCatalogSyncClientConfig>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct KernelGameplayCatalogSyncServerConfig
+    {
+        public uint struct_size;
+        public IntPtr bundle_bytes;
+        public uint bundle_size;
+        public IntPtr entry_path;
+        public IntPtr content_namespace;
+
+        public static uint StructSize =>
+            (uint)Marshal.SizeOf<KernelGameplayCatalogSyncServerConfig>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelGameplayCatalogSyncStatus
+    {
+        public uint struct_size;
+        public KernelGameplayCatalogSyncState state;
+        public KernelGameplayCatalogSyncError error;
+        public uint received_bundle_size;
+        public KernelGameplayCatalogManifest manifest;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelGameplayCatalogSyncStatus>();
+
+        public static KernelGameplayCatalogSyncStatus Create()
+        {
+            return new KernelGameplayCatalogSyncStatus
+            {
+                struct_size = StructSize,
+                manifest = KernelGameplayCatalogManifest.Create(),
+            };
+        }
     }
 
     [StructLayout(LayoutKind.Sequential)]

@@ -1,5 +1,10 @@
 0.6.6 release notes:
 
+- adds Unity gameplay catalog synchronization
+
+
+0.6.6 release notes:
+
 - aligns Unity bindings with kernel ABI v27
 
 

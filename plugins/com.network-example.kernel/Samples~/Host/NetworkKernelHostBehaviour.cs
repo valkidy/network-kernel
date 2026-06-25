@@ -14,6 +14,9 @@ public sealed class NetworkKernelHostBehaviour : MonoBehaviour
     [SerializeField]
     private string gameplayCatalogEntryPath = "gameplay_catalog.yaml";
 
+    [SerializeField]
+    private string gameplayCatalogContentNamespace = "default";
+
     private readonly RenderEntityState[] states = new RenderEntityState[128];
     private readonly KernelEvent[] events = new KernelEvent[64];
     private NetworkHost host;
@@ -34,8 +37,13 @@ public sealed class NetworkKernelHostBehaviour : MonoBehaviour
                 ? host.Start(port)
                 : host.Start(
                     port,
-                    gameplayCatalogBundle.bytes,
-                    gameplayCatalogEntryPath,
+                    new GameplayCatalogServerOptions
+                    {
+                        BundleBytes = gameplayCatalogBundle.bytes,
+                        EntryPath = gameplayCatalogEntryPath,
+                        ContentNamespace = gameplayCatalogContentNamespace,
+                        EnableClientSync = true,
+                    },
                     out result);
             if (gameplayCatalogBundle != null && started)
             {

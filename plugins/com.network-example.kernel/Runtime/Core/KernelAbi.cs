@@ -139,6 +139,10 @@ namespace NetworkExample.Kernel
                 info,
                 KernelConstants.CapabilityVisionStateQuery,
                 "Kernel vision state query capability is missing.");
+            RequireCapability(
+                info,
+                KernelConstants.CapabilityGameplayCatalogSync,
+                "Kernel gameplay catalog sync capability is missing.");
 
             RequireSize(nameof(KernelAbiInfo), info.struct_size, Marshal.SizeOf<KernelAbiInfo>());
             RequireSize(nameof(KernelConfig), info.kernel_config_size, Marshal.SizeOf<KernelConfig>());
@@ -268,6 +272,14 @@ namespace NetworkExample.Kernel
                 nameof(KernelVisionStateView),
                 info.vision_state_view_size,
                 Marshal.SizeOf<KernelVisionStateView>());
+            RequireSize(
+                nameof(KernelGameplayCatalogManifest),
+                info.gameplay_catalog_manifest_size,
+                Marshal.SizeOf<KernelGameplayCatalogManifest>());
+            RequireSize(
+                nameof(KernelGameplayCatalogSyncStatus),
+                info.gameplay_catalog_sync_status_size,
+                Marshal.SizeOf<KernelGameplayCatalogSyncStatus>());
         }
 
         private static void RequireCapability(

@@ -2,6 +2,14 @@ using System;
 
 namespace NetworkExample.Kernel.Host
 {
+    public sealed class GameplayCatalogServerOptions
+    {
+        public byte[] BundleBytes { get; set; }
+        public string EntryPath { get; set; } = "gameplay_catalog.yaml";
+        public string ContentNamespace { get; set; } = "default";
+        public bool EnableClientSync { get; set; } = true;
+    }
+
     public sealed class NetworkHost : IDisposable
     {
         private readonly HostLocalClientBridge localClient = new HostLocalClientBridge();
@@ -76,8 +84,11 @@ namespace NetworkExample.Kernel.Host
             return Start(
                 port,
                 KernelConfig.CreateDefault(KernelMode.ListenServer),
-                bundleBytes,
-                entryPath,
+                new GameplayCatalogServerOptions
+                {
+                    BundleBytes = bundleBytes,
+                    EntryPath = entryPath,
+                },
                 out loadResult);
         }
 
@@ -88,17 +99,52 @@ namespace NetworkExample.Kernel.Host
             string entryPath,
             out KernelGameplayCatalogLoadResult loadResult)
         {
+            return Start(
+                port,
+                config,
+                new GameplayCatalogServerOptions
+                {
+                    BundleBytes = bundleBytes,
+                    EntryPath = entryPath,
+                },
+                out loadResult);
+        }
+
+        public bool Start(
+            ushort port,
+            GameplayCatalogServerOptions catalog,
+            out KernelGameplayCatalogLoadResult loadResult)
+        {
+            return Start(
+                port,
+                KernelConfig.CreateDefault(KernelMode.ListenServer),
+                catalog,
+                out loadResult);
+        }
+
+        public bool Start(
+            ushort port,
+            KernelConfig config,
+            GameplayCatalogServerOptions catalog,
+            out KernelGameplayCatalogLoadResult loadResult)
+        {
             if (IsRunning)
             {
                 throw new InvalidOperationException("NetworkHost is already running.");
             }
-            if (bundleBytes == null)
+            if (catalog == null)
             {
-                throw new ArgumentNullException(nameof(bundleBytes));
+                throw new ArgumentNullException(nameof(catalog));
             }
-            if (entryPath == null)
+            if (catalog.BundleBytes == null)
             {
-                throw new ArgumentNullException(nameof(entryPath));
+                throw new ArgumentNullException(nameof(catalog.BundleBytes));
+            }
+            if (string.IsNullOrEmpty(catalog.EntryPath))
+            {
+                throw new ArgumentException(
+                    "Gameplay catalog entry path must not be empty.",
+                    nameof(catalog));
             }
 
             config.mode = KernelMode.ListenServer;
@@ -108,7 +154,22 @@ namespace NetworkExample.Kernel.Host
             try
             {
                 newKernel = new Kernel(config);
-                newGameServer = new GameServer(newKernel, bundleBytes, entryPath, out loadResult);
+                newGameServer = new GameServer(
+                    newKernel,
+                    catalog.BundleBytes,
+                    catalog.EntryPath,
+                    out loadResult);
+                if (catalog.EnableClientSync &&
+                    !newKernel.SetGameplayCatalogSyncBundle(
+                        catalog.BundleBytes,
+                        catalog.EntryPath,
+                        catalog.ContentNamespace,
+                        out KernelGameplayCatalogManifest _))
+                {
+                    newGameServer.Dispose();
+                    newKernel.Dispose();
+                    return false;
+                }
                 if (!newKernel.StartListenServer(port))
                 {
                     newGameServer.Dispose();

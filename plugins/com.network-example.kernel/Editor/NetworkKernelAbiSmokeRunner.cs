@@ -18,13 +18,24 @@ namespace NetworkExample.Kernel.Editor
             KernelAbi.ValidateNativeAbi();
             GameServerAbi.ValidateNativeAbi();
             KernelAbiInfo info = KernelAbi.GetInfo();
-            Require(KernelConstants.AbiVersion == 27, "Managed kernel ABI version was not v27.");
+            Require(KernelConstants.AbiVersion == 28, "Managed kernel ABI version was not v28.");
             Require(
                 (info.capability_flags & KernelConstants.CapabilityEntityLifecycleEvents) != 0,
                 "Kernel lifecycle event capability was missing.");
             Require(
                 (info.capability_flags & KernelConstants.CapabilityVisionStateQuery) != 0,
                 "Kernel vision state query capability was missing.");
+            Require(
+                (info.capability_flags & KernelConstants.CapabilityGameplayCatalogSync) != 0,
+                "Kernel gameplay catalog sync capability was missing.");
+            Require(
+                info.gameplay_catalog_manifest_size ==
+                    KernelGameplayCatalogManifest.StructSize,
+                "Kernel gameplay catalog manifest size mismatch.");
+            Require(
+                info.gameplay_catalog_sync_status_size ==
+                    KernelGameplayCatalogSyncStatus.StructSize,
+                "Kernel gameplay catalog sync status size mismatch.");
             Require(
                 KernelConstants.CollisionLayerAgentVision == 0x00000010U,
                 "Kernel agent vision collision layer mismatch.");
@@ -138,6 +149,15 @@ namespace NetworkExample.Kernel.Editor
                         out KernelGameplayCatalogLoadResult loadResult) &&
                     loadResult.status == KernelConstants.GameplayCatalogLoadStatusSuccess,
                     "NetworkHost.Start with bundle failed.");
+                Require(
+                    host.Kernel.TryGetGameplayCatalogSyncStatus(
+                        out KernelGameplayCatalogSyncStatus hostSyncStatus) &&
+                    hostSyncStatus.manifest.catalog_version == loadResult.catalog_version &&
+                    hostSyncStatus.manifest.catalog_hash == loadResult.catalog_hash &&
+                    hostSyncStatus.manifest.bundle_size == catalogBundleBytes.Length &&
+                    hostSyncStatus.manifest.entry_path == "gameplay_catalog.yaml" &&
+                    hostSyncStatus.manifest.content_namespace == "default",
+                    "NetworkHost did not publish the loaded gameplay catalog bundle.");
                 var hostEvents = new KernelEvent[16];
                 host.Update(1.0f / 30.0f, hostEvents);
                 Require(
@@ -156,7 +176,9 @@ namespace NetworkExample.Kernel.Editor
                     "NetworkHost GameServer homing template query failed.");
             }
 
-            Debug.Log("Network kernel ABI 27 smoke passed.");
+            RequireExternalGameplayCatalogSyncIfConfigured();
+
+            Debug.Log("Network kernel ABI 28 smoke passed.");
         }
 
         private static void RequireLANDiscovery()
@@ -205,6 +227,89 @@ namespace NetworkExample.Kernel.Editor
             using (var socket = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0)))
             {
                 return (ushort)((IPEndPoint)socket.Client.LocalEndPoint).Port;
+            }
+        }
+
+        private static void RequireExternalGameplayCatalogSyncIfConfigured()
+        {
+            string address = Environment.GetEnvironmentVariable(
+                "NETWORK_KERNEL_SYNC_SMOKE_ADDRESS");
+            if (string.IsNullOrWhiteSpace(address))
+            {
+                Debug.Log(
+                    "External gameplay catalog sync smoke skipped: " +
+                    "NETWORK_KERNEL_SYNC_SMOKE_ADDRESS is not set.");
+                return;
+            }
+
+            string cacheDirectory = Path.Combine(
+                Path.GetTempPath(),
+                "network-example-editor-catalog-sync-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                RequireCatalogSyncConnection(address, cacheDirectory, false);
+                RequireCatalogSyncConnection(address, cacheDirectory, true);
+            }
+            finally
+            {
+                try
+                {
+                    Directory.Delete(cacheDirectory, true);
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        private static void RequireCatalogSyncConnection(
+            string address,
+            string cacheDirectory,
+            bool expectCacheHit)
+        {
+            using (var client = new NetworkClient())
+            {
+                Require(
+                    client.Start(
+                        address,
+                        new GameplayCatalogSyncOptions
+                        {
+                            CacheDirectory = cacheDirectory,
+                            MaxBundleBytes =
+                                KernelConstants.GameplayCatalogSyncDefaultMaxBundleSize,
+                            Timeout = TimeSpan.FromSeconds(10),
+                        }),
+                    "Catalog sync client startup failed.");
+
+                var clientEvents = new KernelEvent[32];
+                for (int attempt = 0;
+                     attempt < 5000 &&
+                     (!client.IsReady ||
+                      client.ConnectionState != NetworkClientConnectionState.Ready);
+                     ++attempt)
+                {
+                    client.Update(1.0f / 120.0f, clientEvents);
+                    if (client.ConnectionState == NetworkClientConnectionState.Failed)
+                    {
+                        throw new InvalidOperationException(
+                            $"Catalog sync client failed: {client.CatalogSyncResult.Error} " +
+                            $"{client.CatalogSyncResult.ErrorMessage}");
+                    }
+                    Thread.Sleep(2);
+                }
+
+                Require(
+                    client.IsReady &&
+                    client.ConnectionState == NetworkClientConnectionState.Ready,
+                    $"Catalog sync client did not become ready; state={client.ConnectionState}.");
+                Require(
+                    client.CatalogSyncResult.CacheHit == expectCacheHit,
+                    $"Catalog sync cache expectation failed; expected={expectCacheHit} " +
+                    $"actual={client.CatalogSyncResult.CacheHit}.");
+                Require(
+                    client.CatalogSyncResult.LoadResult.status ==
+                        KernelConstants.GameplayCatalogLoadStatusSuccess,
+                    "Catalog sync client did not load the gameplay catalog.");
             }
         }
 

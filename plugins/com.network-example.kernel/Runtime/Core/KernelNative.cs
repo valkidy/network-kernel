@@ -69,11 +69,47 @@ namespace NetworkExample.Kernel
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_StartClientCatalogSync(
+            IntPtr kernel,
+            [MarshalAs(UnmanagedType.LPStr)] string address,
+            ref KernelGameplayCatalogSyncClientConfig config);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
         internal static extern bool Kernel_StartListenServer(IntPtr kernel, ushort port);
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)]
         internal static extern bool Kernel_StartDedicatedServer(IntPtr kernel, ushort port);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_SetGameplayCatalogSyncBundle(
+            IntPtr kernel,
+            ref KernelGameplayCatalogSyncServerConfig config,
+            ref KernelGameplayCatalogManifest outManifest);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_GetGameplayCatalogSyncStatus(
+            IntPtr kernel,
+            ref KernelGameplayCatalogSyncStatus outStatus);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_RequestGameplayCatalogBundle(IntPtr kernel);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_CopyGameplayCatalogBundle(
+            IntPtr kernel,
+            [Out] byte[] outBundle,
+            uint outCapacity,
+            out uint outBundleSize);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ContinueClientHandshake(IntPtr kernel);
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern void Kernel_Update(IntPtr kernel, float deltaSeconds);

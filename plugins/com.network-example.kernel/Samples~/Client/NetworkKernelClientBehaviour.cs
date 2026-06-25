@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using NetworkExample.Kernel;
 using NetworkExample.Kernel.Client;
 using UnityEngine;
@@ -20,6 +21,7 @@ public sealed class NetworkKernelClientBehaviour : MonoBehaviour
     private uint sequence = 1;
     private uint logFrame;
     private ulong clientRenderTimeUs;
+    private NetworkClientConnectionState lastConnectionState;
 
     private const byte RocketWeaponId = 3;
 
@@ -28,20 +30,37 @@ public sealed class NetworkKernelClientBehaviour : MonoBehaviour
         LogVersionInfo();
 
         client = new NetworkClient();
-        if (gameplayCatalogBundle != null &&
-            !LoadGameplayCatalogBundle(client))
+        bool started;
+        if (gameplayCatalogBundle != null)
         {
+            if (!LoadGameplayCatalogBundle(client))
+            {
+                enabled = false;
+                return;
+            }
+            started = client.Start(address);
+        }
+        else
+        {
+            started = client.Start(
+                address,
+                new GameplayCatalogSyncOptions
+                {
+                    CacheDirectory = Path.Combine(
+                        Application.persistentDataPath,
+                        "NetworkExample",
+                        "GameplayCatalogCache"),
+                });
+        }
+
+        if (!started)
+        {
+            Debug.LogError($"Network kernel client startup failed for {address}.");
             enabled = false;
             return;
         }
 
-        if (!client.Start(address))
-        {
-            Debug.LogError($"Kernel_StartClient failed for {address}.");
-            enabled = false;
-            return;
-        }
-
+        lastConnectionState = client.ConnectionState;
         Debug.Log($"Network kernel client connecting to {address}.");
     }
 
@@ -62,7 +81,7 @@ public sealed class NetworkKernelClientBehaviour : MonoBehaviour
 
         Debug.LogError(
             $"Kernel_LoadGameplayCatalogFromMemory failed for '{gameplayCatalogEntryPath}': " +
-            $"{result.error_message}");
+            $"{result.diagnostic}");
         return false;
     }
 
@@ -97,6 +116,7 @@ public sealed class NetworkKernelClientBehaviour : MonoBehaviour
 
         uint eventCount = client.Update(deltaSeconds, events);
         LogKernelEvents(eventCount);
+        LogConnectionState();
 
         if (client.IsReady && !client.IsDisconnected)
         {
@@ -123,6 +143,33 @@ public sealed class NetworkKernelClientBehaviour : MonoBehaviour
             Debug.Log(
                 $"client render states={stateCount} local_net_id={client.LocalPlayerNetId} " +
                 $"local_x={localState.position.x:0.00}");
+        }
+    }
+
+    private void LogConnectionState()
+    {
+        if (client.ConnectionState == lastConnectionState)
+        {
+            return;
+        }
+
+        lastConnectionState = client.ConnectionState;
+        GameplayCatalogSyncResult syncResult = client.CatalogSyncResult;
+        if (lastConnectionState == NetworkClientConnectionState.Ready)
+        {
+            Debug.Log(
+                $"Gameplay catalog sync ready cache_hit={syncResult.CacheHit} " +
+                $"memory_only={syncResult.MemoryOnly} warning={syncResult.CacheWarning}");
+        }
+        else if (lastConnectionState == NetworkClientConnectionState.Failed)
+        {
+            Debug.LogError(
+                $"Gameplay catalog sync failed error={syncResult.Error}: " +
+                $"{syncResult.ErrorMessage}");
+        }
+        else
+        {
+            Debug.Log($"Network client state={lastConnectionState}.");
         }
     }
 

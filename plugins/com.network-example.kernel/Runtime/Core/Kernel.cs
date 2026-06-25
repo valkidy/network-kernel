@@ -60,6 +60,26 @@ namespace NetworkExample.Kernel
             return KernelNative.Kernel_StartClient(handle, address);
         }
 
+        public bool StartClientCatalogSync(
+            string address,
+            uint maxBundleSize,
+            uint timeoutMs)
+        {
+            ThrowIfDisposed();
+            if (string.IsNullOrEmpty(address))
+            {
+                throw new ArgumentException("Client address must not be empty.", nameof(address));
+            }
+
+            var config = new KernelGameplayCatalogSyncClientConfig
+            {
+                struct_size = KernelGameplayCatalogSyncClientConfig.StructSize,
+                max_bundle_size = maxBundleSize,
+                timeout_ms = timeoutMs,
+            };
+            return KernelNative.Kernel_StartClientCatalogSync(handle, address, ref config);
+        }
+
         public bool StartListenServer(ushort port)
         {
             ThrowIfDisposed();
@@ -70,6 +90,102 @@ namespace NetworkExample.Kernel
         {
             ThrowIfDisposed();
             return KernelNative.Kernel_StartDedicatedServer(handle, port);
+        }
+
+        public bool SetGameplayCatalogSyncBundle(
+            byte[] bundleBytes,
+            string entryPath,
+            string contentNamespace,
+            out KernelGameplayCatalogManifest manifest)
+        {
+            ThrowIfDisposed();
+            if (bundleBytes == null)
+            {
+                throw new ArgumentNullException(nameof(bundleBytes));
+            }
+            if (bundleBytes.Length == 0)
+            {
+                throw new ArgumentException("Bundle bytes must not be empty.", nameof(bundleBytes));
+            }
+            if (string.IsNullOrEmpty(entryPath))
+            {
+                throw new ArgumentException("Entry path must not be empty.", nameof(entryPath));
+            }
+
+            GCHandle bundleHandle = default;
+            IntPtr entryPathPointer = IntPtr.Zero;
+            IntPtr contentNamespacePointer = IntPtr.Zero;
+            manifest = KernelGameplayCatalogManifest.Create();
+            try
+            {
+                bundleHandle = GCHandle.Alloc(bundleBytes, GCHandleType.Pinned);
+                entryPathPointer = Marshal.StringToHGlobalAnsi(entryPath);
+                if (!string.IsNullOrEmpty(contentNamespace))
+                {
+                    contentNamespacePointer = Marshal.StringToHGlobalAnsi(contentNamespace);
+                }
+
+                var config = new KernelGameplayCatalogSyncServerConfig
+                {
+                    struct_size = KernelGameplayCatalogSyncServerConfig.StructSize,
+                    bundle_bytes = bundleHandle.AddrOfPinnedObject(),
+                    bundle_size = (uint)bundleBytes.Length,
+                    entry_path = entryPathPointer,
+                    content_namespace = contentNamespacePointer,
+                };
+                return KernelNative.Kernel_SetGameplayCatalogSyncBundle(
+                    handle,
+                    ref config,
+                    ref manifest);
+            }
+            finally
+            {
+                FreeIfAllocated(bundleHandle);
+                if (entryPathPointer != IntPtr.Zero)
+                {
+                    Marshal.FreeHGlobal(entryPathPointer);
+                }
+                if (contentNamespacePointer != IntPtr.Zero)
+                {
+                    Marshal.FreeHGlobal(contentNamespacePointer);
+                }
+            }
+        }
+
+        public bool TryGetGameplayCatalogSyncStatus(
+            out KernelGameplayCatalogSyncStatus status)
+        {
+            ThrowIfDisposed();
+            status = KernelGameplayCatalogSyncStatus.Create();
+            return KernelNative.Kernel_GetGameplayCatalogSyncStatus(handle, ref status);
+        }
+
+        public bool RequestGameplayCatalogBundle()
+        {
+            ThrowIfDisposed();
+            return KernelNative.Kernel_RequestGameplayCatalogBundle(handle);
+        }
+
+        public bool CopyGameplayCatalogBundle(byte[] output, out uint copiedSize)
+        {
+            ThrowIfDisposed();
+            copiedSize = 0;
+            if (output == null || output.Length == 0)
+            {
+                return false;
+            }
+
+            return KernelNative.Kernel_CopyGameplayCatalogBundle(
+                handle,
+                output,
+                (uint)output.Length,
+                out copiedSize);
+        }
+
+        public bool ContinueClientHandshake()
+        {
+            ThrowIfDisposed();
+            return KernelNative.Kernel_ContinueClientHandshake(handle);
         }
 
         public void Update(float deltaSeconds)
