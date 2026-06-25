@@ -1,6 +1,27 @@
 licenses(["notice"])
 
 cc_test(
+    name = "command_queue_test",
+    srcs = ["command_queue_test.cc"],
+    deps = [
+        "//engine/src/kernel:kernel",
+        "//engine/src/kernel:kernel_api_internal",
+    ],
+)
+
+cc_test(
+    name = "entity_lifecycle_system_test",
+    srcs = ["entity_lifecycle_system_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
+    name = "simulation_command_dispatcher_test",
+    srcs = ["simulation_command_dispatcher_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
     name = "tick_loop_test",
     srcs = ["tick_loop_test.cc"],
     deps = ["//engine/src/kernel:tick_loop"],

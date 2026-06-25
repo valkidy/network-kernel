@@ -13,11 +13,13 @@ cc_library(
         "src/network_packets.cc",
         "src/packet_header.cc",
         "src/session_packets.cc",
+        "src/sha256.cc",
     ],
     hdrs = [
         "public/network_packets.h",
         "public/packet_header.h",
         "public/session_packets.h",
+        "public/sha256.h",
         "src/packet_codec.h",
     ],
     includes = [".."],

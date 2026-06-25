@@ -3,13 +3,16 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <array>
 #include <memory>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 #include "kernel/public/kernel_types.h"
+#include "kernel/src/kernel_api_internal.h"
 #include "kernel/src/tick_loop.h"
+#include "simulation/public/command.h"
 #include "simulation/public/simulation.h"
 #include "sync/public/history_buffer.h"
 #include "sync/public/snapshot.h"
@@ -18,20 +21,41 @@
 
 namespace network_example {
 
-class LoopbackTransport;
+class EntityLifecycleSystem;
+class EntityStateSystem;
+class ListenServerTransport;
+class MovementSystem;
 struct EntityDespawnPacket;
 struct EntitySpawnPacket;
 struct EntityTemplateUpdatePacket;
 struct ProjectileSpawnBatchPacket;
 struct WelcomePacket;
 
+namespace simulation {
+class Dispatcher;
+}  // namespace simulation
+
 class KernelEngine {
 public:
     explicit KernelEngine(KernelConfig config);
 
     bool start_client(const char* address);
+    bool start_client_catalog_sync(
+        const char* address,
+        const KernelGameplayCatalogSyncClientConfig& config);
     bool start_listen_server(std::uint16_t port);
     bool start_dedicated_server(std::uint16_t port);
+    bool set_gameplay_catalog_sync_bundle(
+        const KernelGameplayCatalogSyncServerConfig& config,
+        KernelGameplayCatalogManifest* out_manifest);
+    bool get_gameplay_catalog_sync_status(
+        KernelGameplayCatalogSyncStatus* out_status) const;
+    bool request_gameplay_catalog_bundle();
+    bool copy_gameplay_catalog_bundle(
+        std::uint8_t* out_bundle,
+        std::uint32_t out_capacity,
+        std::uint32_t* out_bundle_size) const;
+    bool continue_client_handshake();
 
     void update(float delta_seconds);
     void submit_input(PeerId local_player_id, const PlayerInput& input);
@@ -79,6 +103,9 @@ public:
         const KernelServerEntityCreateInfo& create_info,
         NetId* out_net_id);
     bool server_destroy_entity(NetId net_id, std::uint32_t reason);
+    bool server_enqueue_entity_lifecycle(
+        std::uint32_t command_source,
+        const KernelEntityLifecycleCommand& command);
     bool server_set_entity_transform(
         NetId net_id,
         const KernelVec3& position,
@@ -89,6 +116,24 @@ public:
         std::uint16_t animation_state,
         std::uint32_t visual_flags);
     bool server_submit_entity_input(NetId net_id, const PlayerInput& input);
+    bool server_enqueue_entity_transform(
+        std::uint32_t command_source,
+        NetId net_id,
+        const KernelVec3& position,
+        const KernelQuat& rotation);
+    bool server_enqueue_entity_velocity(
+        std::uint32_t command_source,
+        NetId net_id,
+        const KernelVec3& velocity);
+    bool server_enqueue_entity_state(
+        std::uint32_t command_source,
+        NetId net_id,
+        std::uint16_t animation_state,
+        std::uint32_t visual_flags);
+    bool server_enqueue_entity_input(
+        std::uint32_t command_source,
+        NetId net_id,
+        const PlayerInput& input);
     bool server_set_entity_combat_state(
         NetId net_id,
         const KernelCombatStateDefinition& combat_state);
@@ -127,6 +172,11 @@ public:
         std::uint32_t max_states) const;
 
 private:
+    friend class EntityLifecycleSystem;
+    friend class EntityStateSystem;
+    friend class MovementSystem;
+    friend class simulation::Dispatcher;
+
     struct PeerSession {
         PeerId peer = 0;
         NetId player = 0;
@@ -199,6 +249,10 @@ private:
         std::uint64_t received_count = 0;
     };
 
+    struct GameplayCatalogTransfer {
+        std::size_t offset = 0;
+    };
+
     void push_event(
         KernelEventType type,
         NetId net_id = 0,
@@ -207,6 +261,19 @@ private:
     void reset_runtime_state(KernelMode mode);
     void poll_transport();
     void poll_client_transport();
+    void send_gameplay_catalog_manifest_request();
+    void handle_server_gameplay_catalog_manifest_request(
+        const TransportEvent& transport_event);
+    void handle_server_gameplay_catalog_bundle_request(
+        const TransportEvent& transport_event);
+    void handle_client_gameplay_catalog_manifest(
+        const TransportEvent& transport_event);
+    void handle_client_gameplay_catalog_bundle_chunk(
+        const TransportEvent& transport_event);
+    void handle_client_gameplay_catalog_sync_error(
+        const TransportEvent& transport_event);
+    void pump_gameplay_catalog_transfers();
+    void fail_gameplay_catalog_sync(KernelGameplayCatalogSyncError error);
     void handle_server_disconnect(const TransportEvent& transport_event);
     void handle_client_disconnect(PeerId peer);
     void handle_client_reliable_event(const TransportEvent& transport_event);
@@ -221,6 +288,12 @@ private:
     void handle_client_despawn(const EntityDespawnPacket& packet);
     void clear_client_session();
     void simulate_tick();
+    bool enqueue_simulation_command(const simulation::Command& command);
+    std::size_t drain_simulation_commands();
+    void record_simulation_tick_cost(
+        std::uint64_t cost_us,
+        std::size_t queue_depth,
+        std::size_t processed_command_count);
     void release_presentable_events();
     void broadcast_combat_events(std::size_t first_event, std::size_t last_event);
     void rebuild_render_states();
@@ -332,7 +405,7 @@ private:
     HistoryBuffer history_buffer_;
     DamagePipeline damage_pipeline_;
     std::unique_ptr<ITransport> transport_;
-    LoopbackTransport* loopback_transport_ = nullptr;
+    ListenServerTransport* listen_server_transport_ = nullptr;
     std::vector<QueuedInput> pending_inputs_;
     std::vector<KernelEvent> events_;
     std::vector<KernelEntityLifecycleEvent> lifecycle_events_;
@@ -354,10 +427,40 @@ private:
     std::vector<KernelDebugInfo> debug_records_;
     std::unordered_map<NetId, KernelAgentVisionConfig> vision_configs_;
     std::unordered_map<NetId, VisionRuntimeState> vision_states_;
+    simulation::CommandQueue command_queue_;
+    std::uint64_t rejected_simulation_command_count_ = 0;
+    std::uint64_t failed_simulation_command_count_ = 0;
+    std::uint32_t command_queue_capacity_warning_count_ = 0;
+    std::uint32_t last_command_queue_capacity_warning_tick_ = 0;
+    std::size_t last_simulation_command_queue_depth_ = 0;
+    std::size_t last_simulation_command_processed_count_ = 0;
+    std::array<std::uint64_t, 120> simulation_tick_cost_samples_us_{};
+    std::size_t simulation_tick_cost_sample_index_ = 0;
+    std::uint32_t simulation_tick_cost_sample_count_ = 0;
+    std::uint64_t simulation_tick_cost_sample_sum_us_ = 0;
+    std::uint64_t last_simulation_tick_cost_us_ = 0;
+    std::uint64_t average_simulation_tick_cost_us_ = 0;
+    std::uint64_t simulation_tick_cost_warning_threshold_us_ = 0;
+    std::uint32_t simulation_tick_cost_warning_count_ = 0;
+    std::uint32_t last_simulation_tick_cost_warning_tick_ = 0;
     KernelNetworkStats network_stats_{};
     KernelBenchmarkStats benchmark_stats_{};
     std::uint32_t catalog_version_ = 0;
     std::uint64_t catalog_hash_ = 0;
+    KernelGameplayCatalogManifest gameplay_catalog_manifest_{};
+    std::vector<std::uint8_t> gameplay_catalog_sync_bundle_;
+    std::vector<std::uint8_t> downloaded_gameplay_catalog_bundle_;
+    std::unordered_map<PeerId, GameplayCatalogTransfer>
+        gameplay_catalog_transfers_;
+    KernelGameplayCatalogSyncState gameplay_catalog_sync_state_ =
+        KernelGameplayCatalogSyncState_Idle;
+    KernelGameplayCatalogSyncError gameplay_catalog_sync_error_ =
+        KernelGameplayCatalogSyncError_None;
+    std::uint32_t gameplay_catalog_sync_max_bundle_size_ =
+        KERNEL_GAMEPLAY_CATALOG_SYNC_DEFAULT_MAX_BUNDLE_SIZE;
+    std::uint32_t gameplay_catalog_sync_timeout_ms_ =
+        KERNEL_GAMEPLAY_CATALOG_SYNC_DEFAULT_TIMEOUT_MS;
+    std::uint64_t gameplay_catalog_sync_elapsed_us_ = 0;
     std::unordered_map<NetId, std::uint64_t> entity_ids_by_net_id_;
     EntitySnapshot predicted_local_entity_;
     glm::vec3 local_correction_offset_{0.0f, 0.0f, 0.0f};

@@ -79,7 +79,7 @@ private:
     std::unordered_map<PeerId, ConnectionHandle> peer_to_connection_;
     std::unordered_map<ConnectionHandle, PeerId> connection_to_peer_;
     std::deque<TransportEvent> events_;
-    PeerId next_peer_id_ = 1;
+    PeerId next_peer_id_ = 2;
     bool initialized_ = false;
 };
 

@@ -1,20 +1,8 @@
 #include "simulation/public/simulation.h"
 
-#include <cmath>
+#include "simulation/public/movement_solver.h"
 
 namespace network_example {
-namespace {
-
-glm::vec3 input_move_to_world(const PlayerInput& input) {
-    glm::vec3 move{input.move.x, 0.0f, input.move.y};
-    const float length = glm::length(move);
-    if (length > 1.0f) {
-        move /= length;
-    }
-    return move;
-}
-
-}  // namespace
 
 void simulate_player_movement(
     World& world,
@@ -31,7 +19,7 @@ void simulate_player_movement(
             const MovementState& movement = view.get<MovementState>(entity);
             Velocity& velocity = view.get<Velocity>(entity);
             Transform& transform = view.get<Transform>(entity);
-            velocity.linear = input_move_to_world(queued_input.input) *
+            velocity.linear = movement_solver::input_move_to_world(queued_input.input) *
                               movement.speed_meters_per_second;
             transform.position += velocity.linear * fixed_delta_seconds;
         }

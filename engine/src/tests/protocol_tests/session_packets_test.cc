@@ -39,6 +39,100 @@ int main() {
     assert(std::strcmp(decoded_handshake.module_version, "0.6.4-test") == 0);
     assert(std::strcmp(decoded_handshake.git_commit, "abcdef123456") == 0);
 
+    network_example::GameplayCatalogManifestRequestPacket manifest_request;
+    manifest_request.protocol_version = network_example::kProtocolVersion;
+    manifest_request.snapshot_schema_version = network_example::kSnapshotSchemaVersion;
+    manifest_request.packet_schema_version = network_example::kPacketSchemaVersion;
+    const std::vector<std::uint8_t> manifest_request_packet =
+        network_example::encode_gameplay_catalog_manifest_request_packet(
+            manifest_request,
+            2);
+    network_example::GameplayCatalogManifestRequestPacket decoded_manifest_request;
+    assert(network_example::decode_gameplay_catalog_manifest_request_packet(
+        manifest_request_packet.data(),
+        manifest_request_packet.size(),
+        &decoded_manifest_request));
+    assert(decoded_manifest_request.protocol_version == network_example::kProtocolVersion);
+    assert(
+        decoded_manifest_request.snapshot_schema_version ==
+        network_example::kSnapshotSchemaVersion);
+    assert(
+        decoded_manifest_request.packet_schema_version ==
+        network_example::kPacketSchemaVersion);
+
+    network_example::GameplayCatalogManifestPacket manifest;
+    manifest.catalog_version = 7;
+    manifest.catalog_hash = 0x1020304050607080ull;
+    manifest.bundle_size = 123456;
+    std::strncpy(
+        manifest.entry_path,
+        "gameplay_catalog.yaml",
+        sizeof(manifest.entry_path) - 1);
+    std::strncpy(
+        manifest.content_namespace,
+        "production",
+        sizeof(manifest.content_namespace) - 1);
+    for (std::size_t index = 0; index < manifest.bundle_sha256.size(); ++index) {
+        manifest.bundle_sha256[index] = static_cast<std::uint8_t>(index);
+    }
+    const std::vector<std::uint8_t> manifest_packet =
+        network_example::encode_gameplay_catalog_manifest_packet(manifest, 3);
+    network_example::GameplayCatalogManifestPacket decoded_manifest;
+    assert(network_example::decode_gameplay_catalog_manifest_packet(
+        manifest_packet.data(),
+        manifest_packet.size(),
+        &decoded_manifest));
+    assert(decoded_manifest.catalog_version == 7);
+    assert(decoded_manifest.catalog_hash == 0x1020304050607080ull);
+    assert(decoded_manifest.bundle_size == 123456);
+    assert(std::strcmp(decoded_manifest.entry_path, "gameplay_catalog.yaml") == 0);
+    assert(std::strcmp(decoded_manifest.content_namespace, "production") == 0);
+    assert(decoded_manifest.bundle_sha256 == manifest.bundle_sha256);
+
+    network_example::GameplayCatalogBundleRequestPacket bundle_request;
+    bundle_request.bundle_sha256 = manifest.bundle_sha256;
+    const std::vector<std::uint8_t> bundle_request_packet =
+        network_example::encode_gameplay_catalog_bundle_request_packet(
+            bundle_request,
+            4);
+    network_example::GameplayCatalogBundleRequestPacket decoded_bundle_request;
+    assert(network_example::decode_gameplay_catalog_bundle_request_packet(
+        bundle_request_packet.data(),
+        bundle_request_packet.size(),
+        &decoded_bundle_request));
+    assert(decoded_bundle_request.bundle_sha256 == manifest.bundle_sha256);
+
+    network_example::GameplayCatalogBundleChunkPacket chunk;
+    chunk.bundle_sha256 = manifest.bundle_sha256;
+    chunk.offset = 32768;
+    chunk.total_size = 65539;
+    chunk.bytes = {1, 2, 3};
+    const std::vector<std::uint8_t> chunk_packet =
+        network_example::encode_gameplay_catalog_bundle_chunk_packet(chunk, 5);
+    network_example::GameplayCatalogBundleChunkPacket decoded_chunk;
+    assert(network_example::decode_gameplay_catalog_bundle_chunk_packet(
+        chunk_packet.data(),
+        chunk_packet.size(),
+        &decoded_chunk));
+    assert(decoded_chunk.bundle_sha256 == manifest.bundle_sha256);
+    assert(decoded_chunk.offset == 32768);
+    assert(decoded_chunk.total_size == 65539);
+    assert(decoded_chunk.bytes == std::vector<std::uint8_t>({1, 2, 3}));
+
+    network_example::GameplayCatalogSyncErrorPacket sync_error;
+    sync_error.error_code =
+        network_example::GameplayCatalogSyncErrorCode::kBundleUnavailable;
+    const std::vector<std::uint8_t> sync_error_packet =
+        network_example::encode_gameplay_catalog_sync_error_packet(sync_error, 6);
+    network_example::GameplayCatalogSyncErrorPacket decoded_sync_error;
+    assert(network_example::decode_gameplay_catalog_sync_error_packet(
+        sync_error_packet.data(),
+        sync_error_packet.size(),
+        &decoded_sync_error));
+    assert(
+        decoded_sync_error.error_code ==
+        network_example::GameplayCatalogSyncErrorCode::kBundleUnavailable);
+
     network_example::WelcomePacket welcome;
     welcome.assigned_peer_id = 7;
     welcome.assigned_player_net_id = 11;
@@ -128,6 +222,17 @@ int main() {
         truncated_ping_pong.data(),
         truncated_ping_pong.size(),
         &decoded_ping_pong));
+
+    std::vector<std::uint8_t> oversized_chunk = chunk_packet;
+    oversized_chunk.resize(
+        network_example::kGameplayCatalogBundleChunkBytes +
+        network_example::kPacketHeaderSize +
+        network_example::kGameplayCatalogBundleChunkHeaderSize +
+        1);
+    assert(!network_example::decode_gameplay_catalog_bundle_chunk_packet(
+        oversized_chunk.data(),
+        oversized_chunk.size(),
+        &decoded_chunk));
 
     return 0;
 }

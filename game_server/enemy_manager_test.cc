@@ -328,6 +328,10 @@ int main() {
     game_server.enemy_manager().despawn_all(KernelDespawnReason_Destroyed);
     game_server.tick(1.0f / 30.0f);
     enemy_count = query_enemies(kernel, &enemy_states);
+    require(enemy_count == 1);
+    require(game_server.enemy_manager().enemy_count() == 0);
+    Kernel_Update(kernel, 1.0f / 30.0f);
+    enemy_count = query_enemies(kernel, &enemy_states);
     require(enemy_count == 0);
     require(game_server.enemy_manager().enemy_count() == 0);
 

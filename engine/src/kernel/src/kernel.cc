@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <cstddef>
 #include <cmath>
 #include <cstdio>
@@ -20,8 +21,12 @@
 #include "protocol/public/network_packets.h"
 #include "protocol/public/packet_header.h"
 #include "protocol/public/session_packets.h"
+#include "protocol/public/sha256.h"
+#include "simulation/public/movement_solver.h"
+#include "simulation/src/command_dispatcher.h"
+#include "simulation/src/systems.h"
 #include "transport/public/gns_transport.h"
-#include "transport/public/loopback_transport.h"
+#include "transport/public/listen_server_transport.h"
 #include "transport/public/network_simulator_transport.h"
 
 namespace network_example {
@@ -59,6 +64,71 @@ glm::quat from_kernel_quat(const KernelQuat& value) {
 
 bool is_server_mode(KernelMode mode) {
     return mode == KernelMode_DedicatedServer || mode == KernelMode_ListenServer;
+}
+
+bool to_simulation_command_source(
+    std::uint32_t command_source,
+    simulation::CommandSource* out_source) {
+    if (out_source == nullptr) {
+        return false;
+    }
+    switch (command_source) {
+        case KernelCommandSource_Internal:
+            *out_source = simulation::CommandSource::kInternal;
+            return true;
+        case KernelCommandSource_PlayerInput:
+            *out_source = simulation::CommandSource::kPlayerInput;
+            return true;
+        case KernelCommandSource_AI:
+            *out_source = simulation::CommandSource::kAi;
+            return true;
+        case KernelCommandSource_ControlPlane:
+            *out_source = simulation::CommandSource::kControlPlane;
+            return true;
+        case KernelCommandSource_Test:
+            *out_source = simulation::CommandSource::kTest;
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool is_valid_content_namespace(const char* value) {
+    if (value == nullptr || value[0] == '\0' ||
+        std::strcmp(value, ".") == 0 || std::strcmp(value, "..") == 0) {
+        return false;
+    }
+    for (const char* cursor = value; *cursor != '\0'; ++cursor) {
+        const unsigned char character = static_cast<unsigned char>(*cursor);
+        if (!std::isalnum(character) && character != '-' && character != '_' &&
+            character != '.') {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool is_valid_bundle_entry_path(const char* value) {
+    if (value == nullptr || value[0] == '\0' || value[0] == '/' ||
+        std::strchr(value, '\\') != nullptr) {
+        return false;
+    }
+    const char* segment = value;
+    for (const char* cursor = value;; ++cursor) {
+        if (*cursor != '/' && *cursor != '\0') {
+            continue;
+        }
+        const std::size_t segment_size = static_cast<std::size_t>(cursor - segment);
+        if (segment_size == 0 ||
+            (segment_size == 1 && segment[0] == '.') ||
+            (segment_size == 2 && segment[0] == '.' && segment[1] == '.')) {
+            return false;
+        }
+        if (*cursor == '\0') {
+            return true;
+        }
+        segment = cursor + 1;
+    }
 }
 
 bool is_authoritative_combat_event(KernelEventType type) {
@@ -274,15 +344,6 @@ std::uint32_t derived_visual_flags(const World& world, entt::entity entity) {
         flags |= kVisualFlagDead;
     }
     return flags;
-}
-
-glm::vec3 input_move_to_world(const PlayerInput& input) {
-    glm::vec3 move{input.move.x, 0.0f, input.move.y};
-    const float length = glm::length(move);
-    if (length > 1.0f) {
-        move /= length;
-    }
-    return move;
 }
 
 glm::vec3 input_aim_to_world(const PlayerInput& input) {
@@ -538,18 +599,6 @@ ColliderWorldBounds collider_world_bounds(const ColliderInstance& collider) {
         collider.world_center,
         glm::abs(collider.half_extents),
     };
-}
-
-void apply_input_prediction(
-    EntitySnapshot* entity,
-    const PlayerInput& input,
-    float fixed_delta_seconds,
-    float move_speed_meters_per_second) {
-    if (entity == nullptr) {
-        return;
-    }
-    entity->velocity = input_move_to_world(input) * move_speed_meters_per_second;
-    entity->position += entity->velocity * fixed_delta_seconds;
 }
 
 const EntitySnapshot* find_snapshot_entity(
@@ -1080,21 +1129,50 @@ bool KernelEngine::start_client(const char* address) {
         return false;
     }
 
-    loopback_transport_ = nullptr;
+    listen_server_transport_ = nullptr;
     transport_ = std::move(gns_transport);
     reset_runtime_state(KernelMode_Client);
     return true;
 }
 
+bool KernelEngine::start_client_catalog_sync(
+    const char* address,
+    const KernelGameplayCatalogSyncClientConfig& config) {
+    if (!start_client(address)) {
+        return false;
+    }
+    gameplay_catalog_sync_max_bundle_size_ =
+        config.max_bundle_size == 0
+            ? KERNEL_GAMEPLAY_CATALOG_SYNC_DEFAULT_MAX_BUNDLE_SIZE
+            : config.max_bundle_size;
+    gameplay_catalog_sync_timeout_ms_ =
+        config.timeout_ms == 0
+            ? KERNEL_GAMEPLAY_CATALOG_SYNC_DEFAULT_TIMEOUT_MS
+            : config.timeout_ms;
+    gameplay_catalog_sync_elapsed_us_ = 0;
+    gameplay_catalog_sync_error_ = KernelGameplayCatalogSyncError_None;
+    gameplay_catalog_sync_state_ = KernelGameplayCatalogSyncState_Connecting;
+    downloaded_gameplay_catalog_bundle_.clear();
+    gameplay_catalog_manifest_ = KernelGameplayCatalogManifest{};
+    gameplay_catalog_manifest_.struct_size =
+        sizeof(KernelGameplayCatalogManifest);
+    return true;
+}
+
 bool KernelEngine::start_listen_server(std::uint16_t port) {
-    auto loopback_transport = std::make_unique<LoopbackTransport>();
-    if (!loopback_transport->StartServer(port)) {
+    if (!gameplay_catalog_sync_bundle_.empty() &&
+        (gameplay_catalog_manifest_.catalog_version != catalog_version_ ||
+         gameplay_catalog_manifest_.catalog_hash != catalog_hash_)) {
+        return false;
+    }
+    auto listen_transport = std::make_unique<ListenServerTransport>();
+    if (!listen_transport->StartServer(port)) {
         push_event(KernelEventType_Error, 0, 0, 2);
         return false;
     }
 
-    loopback_transport_ = loopback_transport.get();
-    transport_ = std::move(loopback_transport);
+    listen_server_transport_ = listen_transport.get();
+    transport_ = std::move(listen_transport);
     reset_runtime_state(KernelMode_ListenServer);
 
     const NetId player =
@@ -1120,8 +1198,13 @@ bool KernelEngine::start_listen_server(std::uint16_t port) {
 }
 
 bool KernelEngine::start_dedicated_server(std::uint16_t port) {
+    if (!gameplay_catalog_sync_bundle_.empty() &&
+        (gameplay_catalog_manifest_.catalog_version != catalog_version_ ||
+         gameplay_catalog_manifest_.catalog_hash != catalog_hash_)) {
+        return false;
+    }
     auto gns_transport = std::make_unique<GnsTransport>();
-    loopback_transport_ = nullptr;
+    listen_server_transport_ = nullptr;
     if (!gns_transport->StartServer(port)) {
         push_event(KernelEventType_Error, 0, 0, 3);
         return false;
@@ -1131,6 +1214,148 @@ bool KernelEngine::start_dedicated_server(std::uint16_t port) {
     reset_runtime_state(KernelMode_DedicatedServer);
     publish_snapshot();
     rebuild_render_states();
+    return true;
+}
+
+bool KernelEngine::set_gameplay_catalog_sync_bundle(
+    const KernelGameplayCatalogSyncServerConfig& config,
+    KernelGameplayCatalogManifest* out_manifest) {
+    if (running_ || !is_server_mode(config_.mode) || catalog_hash_ == 0 ||
+        config.bundle_bytes == nullptr ||
+        config.bundle_size == 0 || config.entry_path == nullptr ||
+        config.entry_path[0] == '\0' || out_manifest == nullptr ||
+        std::strlen(config.entry_path) >= KERNEL_GAMEPLAY_CATALOG_ENTRY_PATH_SIZE ||
+        !is_valid_bundle_entry_path(config.entry_path)) {
+        return false;
+    }
+    const char* content_namespace =
+        config.content_namespace == nullptr || config.content_namespace[0] == '\0'
+            ? "default"
+            : config.content_namespace;
+    if (std::strlen(content_namespace) >=
+            KERNEL_GAMEPLAY_CATALOG_CONTENT_NAMESPACE_SIZE ||
+        !is_valid_content_namespace(content_namespace)) {
+        return false;
+    }
+
+    gameplay_catalog_sync_bundle_.assign(
+        config.bundle_bytes,
+        config.bundle_bytes + config.bundle_size);
+    gameplay_catalog_manifest_ = KernelGameplayCatalogManifest{};
+    gameplay_catalog_manifest_.struct_size =
+        sizeof(KernelGameplayCatalogManifest);
+    gameplay_catalog_manifest_.catalog_version = catalog_version_;
+    gameplay_catalog_manifest_.catalog_hash = catalog_hash_;
+    gameplay_catalog_manifest_.bundle_size = config.bundle_size;
+    const std::array<std::uint8_t, 32> digest =
+        compute_sha256(config.bundle_bytes, config.bundle_size);
+    std::memcpy(
+        gameplay_catalog_manifest_.bundle_sha256,
+        digest.data(),
+        digest.size());
+    std::snprintf(
+        gameplay_catalog_manifest_.entry_path,
+        sizeof(gameplay_catalog_manifest_.entry_path),
+        "%s",
+        config.entry_path);
+    std::snprintf(
+        gameplay_catalog_manifest_.content_namespace,
+        sizeof(gameplay_catalog_manifest_.content_namespace),
+        "%s",
+        content_namespace);
+    *out_manifest = gameplay_catalog_manifest_;
+    return true;
+}
+
+bool KernelEngine::get_gameplay_catalog_sync_status(
+    KernelGameplayCatalogSyncStatus* out_status) const {
+    if (out_status == nullptr) {
+        return false;
+    }
+    const std::uint32_t struct_size = out_status->struct_size;
+    *out_status = KernelGameplayCatalogSyncStatus{};
+    out_status->struct_size = struct_size;
+    out_status->state = gameplay_catalog_sync_state_;
+    out_status->error = gameplay_catalog_sync_error_;
+    out_status->received_bundle_size =
+        static_cast<std::uint32_t>(downloaded_gameplay_catalog_bundle_.size());
+    out_status->manifest = gameplay_catalog_manifest_;
+    out_status->manifest.struct_size = sizeof(KernelGameplayCatalogManifest);
+    return true;
+}
+
+bool KernelEngine::request_gameplay_catalog_bundle() {
+    if (config_.mode != KernelMode_Client ||
+        gameplay_catalog_sync_state_ !=
+            KernelGameplayCatalogSyncState_ManifestReady ||
+        transport_ == nullptr) {
+        return false;
+    }
+    GameplayCatalogBundleRequestPacket request;
+    std::copy(
+        std::begin(gameplay_catalog_manifest_.bundle_sha256),
+        std::end(gameplay_catalog_manifest_.bundle_sha256),
+        request.bundle_sha256.begin());
+    const std::vector<std::uint8_t> packet =
+        encode_gameplay_catalog_bundle_request_packet(
+            request,
+            next_packet_sequence_++);
+    if (!transport_->Send(
+            kServerPeerId,
+            packet.data(),
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kSession)) {
+        fail_gameplay_catalog_sync(KernelGameplayCatalogSyncError_Transport);
+        return false;
+    }
+    downloaded_gameplay_catalog_bundle_.clear();
+    downloaded_gameplay_catalog_bundle_.reserve(
+        gameplay_catalog_manifest_.bundle_size);
+    gameplay_catalog_sync_state_ = KernelGameplayCatalogSyncState_Downloading;
+    gameplay_catalog_sync_elapsed_us_ = 0;
+    return true;
+}
+
+bool KernelEngine::copy_gameplay_catalog_bundle(
+    std::uint8_t* out_bundle,
+    std::uint32_t out_capacity,
+    std::uint32_t* out_bundle_size) const {
+    if (gameplay_catalog_sync_state_ !=
+            KernelGameplayCatalogSyncState_BundleReady ||
+        out_bundle_size == nullptr) {
+        return false;
+    }
+    *out_bundle_size =
+        static_cast<std::uint32_t>(downloaded_gameplay_catalog_bundle_.size());
+    if (out_bundle == nullptr ||
+        out_capacity < downloaded_gameplay_catalog_bundle_.size()) {
+        return false;
+    }
+    std::memcpy(
+        out_bundle,
+        downloaded_gameplay_catalog_bundle_.data(),
+        downloaded_gameplay_catalog_bundle_.size());
+    return true;
+}
+
+bool KernelEngine::continue_client_handshake() {
+    if (config_.mode != KernelMode_Client ||
+        (gameplay_catalog_sync_state_ !=
+             KernelGameplayCatalogSyncState_ManifestReady &&
+         gameplay_catalog_sync_state_ !=
+             KernelGameplayCatalogSyncState_BundleReady) ||
+        catalog_version_ != gameplay_catalog_manifest_.catalog_version ||
+        catalog_hash_ != gameplay_catalog_manifest_.catalog_hash) {
+        return false;
+    }
+    send_client_handshake();
+    if (!client_handshake_sent_) {
+        fail_gameplay_catalog_sync(KernelGameplayCatalogSyncError_Transport);
+        return false;
+    }
+    gameplay_catalog_sync_state_ = KernelGameplayCatalogSyncState_Handshaking;
+    gameplay_catalog_sync_elapsed_us_ = 0;
     return true;
 }
 
@@ -1144,8 +1369,22 @@ void KernelEngine::update(float delta_seconds) {
         client_local_time_us_ += static_cast<std::uint64_t>(
             static_cast<double>(delta_seconds) * 1000000.0);
     }
+    if (delta_seconds > 0.0f &&
+        gameplay_catalog_sync_state_ >=
+            KernelGameplayCatalogSyncState_Connecting &&
+        gameplay_catalog_sync_state_ <=
+            KernelGameplayCatalogSyncState_Handshaking) {
+        gameplay_catalog_sync_elapsed_us_ += static_cast<std::uint64_t>(
+            static_cast<double>(delta_seconds) * 1000000.0);
+        if (gameplay_catalog_sync_elapsed_us_ >
+            static_cast<std::uint64_t>(gameplay_catalog_sync_timeout_ms_) *
+                1000u) {
+            fail_gameplay_catalog_sync(KernelGameplayCatalogSyncError_Timeout);
+        }
+    }
 
     poll_transport();
+    pump_gameplay_catalog_transfers();
     const std::uint32_t ticks_to_run = tick_loop_.accumulate(delta_seconds);
     for (std::uint32_t tick = 0; tick < ticks_to_run; ++tick) {
         simulate_tick();
@@ -1155,14 +1394,15 @@ void KernelEngine::update(float delta_seconds) {
 }
 
 void KernelEngine::submit_input(PeerId local_player_id, const PlayerInput& input) {
-    if (config_.mode == KernelMode_ListenServer && loopback_transport_ != nullptr) {
+    if (config_.mode == KernelMode_ListenServer &&
+        listen_server_transport_ != nullptr) {
         const PlayerInput input_to_send = prepare_client_input(input);
         predict_local_input(input_to_send);
         predict_local_projectile(input_to_send);
         rebuild_render_states();
         const std::vector<std::uint8_t> packet =
             encode_input_packet(local_player_id, input_to_send, next_packet_sequence_++);
-        if (!loopback_transport_->SendClient(
+        if (!listen_server_transport_->SendLocalClient(
                 local_player_id,
                 packet.data(),
                 static_cast<std::uint32_t>(packet.size()),
@@ -1882,200 +2122,151 @@ KernelLocalPlayerInfo KernelEngine::local_player_info() const {
 bool KernelEngine::server_create_entity(
     const KernelServerEntityCreateInfo& create_info,
     NetId* out_net_id) {
-    if (!running_ || !is_server_mode(config_.mode) || out_net_id == nullptr ||
-        create_info.struct_size < sizeof(KernelServerEntityCreateInfo)) {
-        return false;
-    }
-
-    const EntityType type = static_cast<EntityType>(create_info.entity_type);
-    const ActorType actor_type = static_cast<ActorType>(create_info.actor_type);
-    NetId net_id = 0;
-    if (type == EntityType::kActor && actor_type == ActorType::kPlayer) {
-        net_id = world_.spawn_player(
-            create_info.owner_peer,
-            from_kernel_vec3(create_info.position));
-    } else if (type == EntityType::kActor && actor_type == ActorType::kAgent) {
-        net_id = world_.spawn_enemy(from_kernel_vec3(create_info.position));
-    } else {
-        return false;
-    }
-
-    const std::optional<entt::entity> entity = world_.find_entity(net_id);
-    if (!entity.has_value()) {
-        return false;
-    }
-    if (create_info.actor_template_id != 0u) {
-        if (find_actor_template(actor_templates_, create_info.actor_template_id) ==
-            nullptr) {
-            return false;
-        }
-        world_.registry().emplace_or_replace<ActorTemplateRef>(
-            *entity,
-            create_info.actor_template_id);
-    }
-    Transform& transform = world_.registry().get<Transform>(*entity);
-    transform.rotation = from_kernel_quat(create_info.rotation);
-    ReplicationState& replication =
-        world_.registry().get_or_emplace<ReplicationState>(*entity);
-    replication.animation_state = create_info.animation_state;
-    replication.visual_flags = create_info.visual_flags;
-    materialize_entity_collider(net_id);
-
-    *out_net_id = net_id;
-    push_event(
-        KernelEventType_EntitySpawned,
-        net_id,
-        create_info.owner_peer,
-        static_cast<std::uint32_t>(type));
-    publish_snapshot();
-    return true;
+    return EntityLifecycleSystem{}.create_entity(*this, create_info, out_net_id);
 }
 
 bool KernelEngine::server_set_entity_actor_template(
     NetId net_id,
     std::uint32_t actor_template_id) {
-    if (!running_ || !is_server_mode(config_.mode) || net_id == 0 ||
-        actor_template_id == 0u ||
-        find_actor_template(actor_templates_, actor_template_id) == nullptr) {
-        return false;
-    }
-    const std::optional<entt::entity> entity = world_.find_entity(net_id);
-    if (!entity.has_value() ||
-        !world_.registry().all_of<EntityKind>(*entity) ||
-        world_.registry().get<EntityKind>(*entity).type != EntityType::kActor) {
-        return false;
-    }
-    world_.registry().emplace_or_replace<ActorTemplateRef>(
-        *entity,
+    return EntityStateSystem{}.set_actor_template(
+        *this,
+        net_id,
         actor_template_id);
-    materialize_entity_collider(net_id);
-    if (config_.mode == KernelMode_ListenServer && loopback_transport_ != nullptr &&
-        local_listen_session_.relevant_entities.find(net_id) !=
-            local_listen_session_.relevant_entities.end()) {
-        send_entity_template_update(kLocalListenPeerId, net_id, actor_template_id);
-    }
-    if (config_.mode == KernelMode_DedicatedServer) {
-        for (const PeerSession& session : peer_sessions_) {
-            if (session.welcomed &&
-                session.relevant_entities.find(net_id) !=
-                    session.relevant_entities.end()) {
-                send_entity_template_update(session.peer, net_id, actor_template_id);
-            }
-        }
-    }
-    rebuild_render_states();
-    return true;
 }
 
 bool KernelEngine::server_destroy_entity(NetId net_id, std::uint32_t reason) {
-    if (!running_ || !is_server_mode(config_.mode) || net_id == 0) {
+    return EntityLifecycleSystem{}.destroy_entity(*this, net_id, reason);
+}
+
+bool KernelEngine::server_enqueue_entity_lifecycle(
+    std::uint32_t command_source,
+    const KernelEntityLifecycleCommand& command) {
+    if (!running_ || !is_server_mode(config_.mode) ||
+        command.struct_size < sizeof(KernelEntityLifecycleCommand)) {
         return false;
     }
-    std::uint16_t entity_type = 0;
-    std::uint16_t actor_type = 0;
-    if (const std::optional<entt::entity> entity = world_.find_entity(net_id);
-        entity.has_value() && world_.registry().all_of<EntityKind>(*entity)) {
-        const EntityKind& kind = world_.registry().get<EntityKind>(*entity);
-        entity_type = static_cast<std::uint16_t>(kind.type);
-        actor_type = static_cast<std::uint16_t>(kind.actor_type);
-    }
-    if (!world_.destroy(net_id)) {
+    simulation::CommandSource source{};
+    if (!to_simulation_command_source(command_source, &source)) {
         return false;
     }
-    vision_configs_.erase(net_id);
-    vision_states_.erase(net_id);
-    if (config_.mode == KernelMode_ListenServer && loopback_transport_ != nullptr) {
-        send_entity_despawn(kLocalListenPeerId, net_id, reason);
+    if (command.command_type != KernelEntityLifecycleCommandType_Destroy) {
+        return false;
     }
-    for (PeerSession& session : peer_sessions_) {
-        if (session.relevant_entities.erase(net_id) > 0) {
-            send_entity_despawn(session.peer, net_id, reason);
-        }
-    }
-    push_event(KernelEventType_EntityDestroyed, net_id, 0, reason);
-    lifecycle_events_.push_back(KernelEntityLifecycleEvent{
-        lifecycle_type_for_despawn_reason(reason),
-        tick_loop_.current_tick(),
-        net_id,
-        reason,
-        entity_type,
-        actor_type,
-        0,
-    });
-    publish_snapshot();
-    return true;
+
+    simulation::Command queued_command{};
+    queued_command.id = simulation::CommandId::kDestroyEntity;
+    queued_command.source = source;
+    queued_command.destroy_entity.net_id = command.net_id;
+    queued_command.destroy_entity.reason = command.reason;
+    return enqueue_simulation_command(queued_command);
 }
 
 bool KernelEngine::server_set_entity_transform(
     NetId net_id,
     const KernelVec3& position,
     const KernelQuat& rotation) {
-    if (!running_ || !is_server_mode(config_.mode)) {
-        return false;
-    }
-    const std::optional<entt::entity> entity = world_.find_entity(net_id);
-    if (!entity.has_value() || !world_.registry().all_of<Transform>(*entity)) {
-        return false;
-    }
-    Transform& transform = world_.registry().get<Transform>(*entity);
-    transform.position = from_kernel_vec3(position);
-    transform.rotation = from_kernel_quat(rotation);
-    sync_entity_colliders_from_world();
-    return true;
+    return EntityStateSystem{}.set_transform(*this, net_id, position, rotation);
 }
 
 bool KernelEngine::server_set_entity_velocity(
     NetId net_id,
     const KernelVec3& velocity) {
-    if (!running_ || !is_server_mode(config_.mode)) {
-        return false;
-    }
-    const std::optional<entt::entity> entity = world_.find_entity(net_id);
-    if (!entity.has_value() || !world_.registry().all_of<Velocity>(*entity)) {
-        return false;
-    }
-    world_.registry().get<Velocity>(*entity).linear = from_kernel_vec3(velocity);
-    return true;
+    return EntityStateSystem{}.set_velocity(*this, net_id, velocity);
 }
 
 bool KernelEngine::server_set_entity_state(
     NetId net_id,
     std::uint16_t animation_state,
     std::uint32_t visual_flags) {
-    if (!running_ || !is_server_mode(config_.mode)) {
-        return false;
-    }
-    const std::optional<entt::entity> entity = world_.find_entity(net_id);
-    if (!entity.has_value()) {
-        return false;
-    }
-    ReplicationState& replication =
-        world_.registry().get_or_emplace<ReplicationState>(*entity);
-    replication.animation_state = animation_state;
-    replication.visual_flags = visual_flags;
-    return true;
+    return EntityStateSystem{}.set_state(
+        *this,
+        net_id,
+        animation_state,
+        visual_flags);
 }
 
 bool KernelEngine::server_submit_entity_input(NetId net_id, const PlayerInput& input) {
-    if (!running_ || !is_server_mode(config_.mode) || net_id == 0) {
-        return false;
-    }
-    const std::optional<entt::entity> entity = world_.find_entity(net_id);
-    if (!entity.has_value() ||
-        !world_.registry().all_of<NetworkIdentity, Transform, WeaponState, Hitbox>(
-            *entity)) {
-        return false;
-    }
+    return MovementSystem{}.submit_input(*this, net_id, input);
+}
 
-    pending_inputs_.push_back(QueuedInput{
-        0,
-        input,
-        tick_loop_.current_tick(),
-        current_server_time_us(),
-        true,
-        net_id,
-    });
-    return true;
+bool KernelEngine::server_enqueue_entity_transform(
+    std::uint32_t command_source,
+    NetId net_id,
+    const KernelVec3& position,
+    const KernelQuat& rotation) {
+    if (!running_ || !is_server_mode(config_.mode)) {
+        return false;
+    }
+    simulation::CommandSource source{};
+    if (!to_simulation_command_source(command_source, &source)) {
+        return false;
+    }
+    simulation::Command command{};
+    command.id = simulation::CommandId::kSetEntityTransform;
+    command.source = source;
+    command.set_entity_transform.net_id = net_id;
+    command.set_entity_transform.position = position;
+    command.set_entity_transform.rotation = rotation;
+    return enqueue_simulation_command(command);
+}
+
+bool KernelEngine::server_enqueue_entity_velocity(
+    std::uint32_t command_source,
+    NetId net_id,
+    const KernelVec3& velocity) {
+    if (!running_ || !is_server_mode(config_.mode)) {
+        return false;
+    }
+    simulation::CommandSource source{};
+    if (!to_simulation_command_source(command_source, &source)) {
+        return false;
+    }
+    simulation::Command command{};
+    command.id = simulation::CommandId::kSetEntityVelocity;
+    command.source = source;
+    command.set_entity_velocity.net_id = net_id;
+    command.set_entity_velocity.velocity = velocity;
+    return enqueue_simulation_command(command);
+}
+
+bool KernelEngine::server_enqueue_entity_state(
+    std::uint32_t command_source,
+    NetId net_id,
+    std::uint16_t animation_state,
+    std::uint32_t visual_flags) {
+    if (!running_ || !is_server_mode(config_.mode)) {
+        return false;
+    }
+    simulation::CommandSource source{};
+    if (!to_simulation_command_source(command_source, &source)) {
+        return false;
+    }
+    simulation::Command command{};
+    command.id = simulation::CommandId::kSetEntityState;
+    command.source = source;
+    command.set_entity_state.net_id = net_id;
+    command.set_entity_state.animation_state = animation_state;
+    command.set_entity_state.visual_flags = visual_flags;
+    return enqueue_simulation_command(command);
+}
+
+bool KernelEngine::server_enqueue_entity_input(
+    std::uint32_t command_source,
+    NetId net_id,
+    const PlayerInput& input) {
+    if (!running_ || !is_server_mode(config_.mode)) {
+        return false;
+    }
+    simulation::CommandSource source{};
+    if (!to_simulation_command_source(command_source, &source)) {
+        return false;
+    }
+    simulation::Command command{};
+    command.id = simulation::CommandId::kSubmitInput;
+    command.source = source;
+    command.submit_input.net_id = net_id;
+    command.submit_input.input = input;
+    return enqueue_simulation_command(command);
 }
 
 bool KernelEngine::server_set_entity_combat_state(
@@ -2392,6 +2583,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     world_ = World{};
     history_buffer_ = HistoryBuffer(history_frame_count(config_.tick));
     damage_pipeline_.clear();
+    command_queue_.clear();
     pending_inputs_.clear();
     events_.clear();
     lifecycle_events_.clear();
@@ -2412,6 +2604,21 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     vision_states_.clear();
     network_stats_ = KernelNetworkStats{};
     benchmark_stats_ = KernelBenchmarkStats{};
+    rejected_simulation_command_count_ = 0;
+    failed_simulation_command_count_ = 0;
+    command_queue_capacity_warning_count_ = 0;
+    last_command_queue_capacity_warning_tick_ = 0;
+    last_simulation_command_queue_depth_ = 0;
+    last_simulation_command_processed_count_ = 0;
+    simulation_tick_cost_samples_us_.fill(0);
+    simulation_tick_cost_sample_index_ = 0;
+    simulation_tick_cost_sample_count_ = 0;
+    simulation_tick_cost_sample_sum_us_ = 0;
+    last_simulation_tick_cost_us_ = 0;
+    average_simulation_tick_cost_us_ = 0;
+    simulation_tick_cost_warning_threshold_us_ = 0;
+    simulation_tick_cost_warning_count_ = 0;
+    last_simulation_tick_cost_warning_tick_ = 0;
     entity_ids_by_net_id_.clear();
     predicted_local_entity_ = EntitySnapshot{};
     local_correction_offset_ = glm::vec3{0.0f, 0.0f, 0.0f};
@@ -2430,6 +2637,11 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     current_render_time_us_ = 0;
     local_client_peer_id_ = 0;
     client_handshake_sent_ = false;
+    gameplay_catalog_transfers_.clear();
+    downloaded_gameplay_catalog_bundle_.clear();
+    gameplay_catalog_sync_state_ = KernelGameplayCatalogSyncState_Idle;
+    gameplay_catalog_sync_error_ = KernelGameplayCatalogSyncError_None;
+    gameplay_catalog_sync_elapsed_us_ = 0;
     has_welcome_ = false;
     has_client_snapshot_ = false;
     has_predicted_local_entity_ = false;
@@ -2444,12 +2656,24 @@ void KernelEngine::poll_transport() {
         if (transport_event.type == TransportEventType::kConnected) {
             push_event(KernelEventType_Connected, 0, transport_event.peer);
             if (config_.mode == KernelMode_Client) {
-                send_client_handshake();
+                if (gameplay_catalog_sync_state_ ==
+                    KernelGameplayCatalogSyncState_Connecting) {
+                    send_gameplay_catalog_manifest_request();
+                } else {
+                    send_client_handshake();
+                }
             }
         } else if (transport_event.type == TransportEventType::kDisconnected) {
-            if (config_.mode == KernelMode_DedicatedServer) {
+            if (is_server_mode(config_.mode)) {
                 handle_server_disconnect(transport_event);
             } else if (config_.mode == KernelMode_Client) {
+                if (gameplay_catalog_sync_state_ !=
+                        KernelGameplayCatalogSyncState_Idle &&
+                    gameplay_catalog_sync_state_ !=
+                        KernelGameplayCatalogSyncState_Ready) {
+                    fail_gameplay_catalog_sync(
+                        KernelGameplayCatalogSyncError_Disconnected);
+                }
                 handle_client_disconnect(transport_event.peer);
             } else {
                 const PeerSession* session = find_session(transport_event.peer);
@@ -2462,7 +2686,7 @@ void KernelEngine::poll_transport() {
         } else if (
             transport_event.type == TransportEventType::kMessage &&
             transport_event.channel == ChannelId::kSession &&
-            config_.mode == KernelMode_DedicatedServer) {
+            is_server_mode(config_.mode)) {
             record_received_packet_sequence(transport_event);
             handle_server_session_message(transport_event);
         } else if (
@@ -2502,7 +2726,11 @@ void KernelEngine::poll_transport() {
              config_.mode == KernelMode_ListenServer)) {
             record_received_packet_sequence(transport_event);
             const PeerSession* session = find_session(transport_event.peer);
-            if (config_.mode == KernelMode_DedicatedServer &&
+            const bool is_local_listen_peer =
+                config_.mode == KernelMode_ListenServer &&
+                transport_event.peer == kLocalListenPeerId &&
+                local_listen_session_.welcomed;
+            if (!is_local_listen_peer &&
                 (session == nullptr || !session->welcomed)) {
                 push_event(KernelEventType_Error, 0, transport_event.peer, 10);
                 continue;
@@ -2551,6 +2779,7 @@ void KernelEngine::poll_transport() {
 }
 
 void KernelEngine::handle_server_disconnect(const TransportEvent& transport_event) {
+    gameplay_catalog_transfers_.erase(transport_event.peer);
     const PeerSession* session = find_session(transport_event.peer);
     if (session == nullptr) {
         push_event(KernelEventType_Disconnected, 0, transport_event.peer);
@@ -2791,6 +3020,12 @@ void KernelEngine::apply_welcome(const WelcomePacket& welcome) {
     local_player_net_id_ = welcome.assigned_player_net_id;
     catalog_version_ = welcome.catalog_version;
     catalog_hash_ = welcome.catalog_hash;
+    if (gameplay_catalog_sync_state_ ==
+        KernelGameplayCatalogSyncState_Handshaking) {
+        gameplay_catalog_sync_state_ = KernelGameplayCatalogSyncState_Ready;
+        gameplay_catalog_sync_error_ = KernelGameplayCatalogSyncError_None;
+        downloaded_gameplay_catalog_bundle_.clear();
+    }
 
     TickConfig server_tick = config_.tick;
     if (welcome.server_tick_rate != 0) {
@@ -3064,12 +3299,12 @@ void KernelEngine::release_presentable_events() {
 }
 
 void KernelEngine::poll_client_transport() {
-    if (loopback_transport_ == nullptr) {
+    if (listen_server_transport_ == nullptr) {
         return;
     }
 
     TransportEvent transport_event;
-    while (loopback_transport_->PollClientEvent(transport_event)) {
+    while (listen_server_transport_->PollLocalClientEvent(transport_event)) {
         if (transport_event.type != TransportEventType::kMessage) {
             continue;
         }
@@ -3291,8 +3526,8 @@ void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {
 
     EntitySnapshot replayed = *authoritative;
     for (const PlayerInput& input : pending_prediction_inputs_) {
-        apply_input_prediction(
-            &replayed,
+        movement_solver::apply_player_input(
+            replayed,
             input,
             tick_loop_.fixed_delta_seconds(),
             local_player_move_speed_meters_per_second_);
@@ -3411,8 +3646,8 @@ void KernelEngine::predict_local_input(const PlayerInput& input) {
         has_predicted_local_entity_ = true;
     }
 
-    apply_input_prediction(
-        &predicted_local_entity_,
+    movement_solver::apply_player_input(
+        predicted_local_entity_,
         input,
         tick_loop_.fixed_delta_seconds(),
         local_player_move_speed_meters_per_second_);
@@ -3842,12 +4077,104 @@ KernelEngine::PredictedProjectile* KernelEngine::find_predicted_projectile(
     return &(*found);
 }
 
+bool KernelEngine::enqueue_simulation_command(const simulation::Command& command) {
+    if (!command_queue_.enqueue(command)) {
+        ++rejected_simulation_command_count_;
+        return false;
+    }
+
+    const std::size_t queue_depth = command_queue_.size();
+    if (queue_depth >= simulation::CommandQueue::kWarningThreshold &&
+        (command_queue_capacity_warning_count_ == 0 ||
+         tick_loop_.current_tick() - last_command_queue_capacity_warning_tick_ >=
+             120)) {
+        ++command_queue_capacity_warning_count_;
+        last_command_queue_capacity_warning_tick_ = tick_loop_.current_tick();
+        spdlog::warn(
+            "[NetworkExample] simulation command queue depth={} warning_threshold={} "
+            "capacity={} rejected_count={}",
+            queue_depth,
+            simulation::CommandQueue::kWarningThreshold,
+            simulation::CommandQueue::kDefaultCapacity,
+            rejected_simulation_command_count_);
+    }
+    return true;
+}
+
+std::size_t KernelEngine::drain_simulation_commands() {
+    const auto commands = command_queue_.commands();
+    last_simulation_command_queue_depth_ = commands.size();
+
+    std::size_t processed_count = 0;
+    simulation::Dispatcher dispatcher;
+    for (const simulation::Command& command : commands) {
+        const simulation::CommandResult result = dispatcher.dispatch(*this, command);
+        if (!result.ok) {
+            ++failed_simulation_command_count_;
+        }
+        ++processed_count;
+    }
+    command_queue_.clear();
+    last_simulation_command_processed_count_ = processed_count;
+    return processed_count;
+}
+
+void KernelEngine::record_simulation_tick_cost(
+    std::uint64_t cost_us,
+    std::size_t queue_depth,
+    std::size_t processed_command_count) {
+    last_simulation_tick_cost_us_ = std::max<std::uint64_t>(cost_us, 1);
+    if (simulation_tick_cost_sample_count_ <
+        simulation_tick_cost_samples_us_.size()) {
+        ++simulation_tick_cost_sample_count_;
+    } else {
+        simulation_tick_cost_sample_sum_us_ -=
+            simulation_tick_cost_samples_us_[simulation_tick_cost_sample_index_];
+    }
+    simulation_tick_cost_samples_us_[simulation_tick_cost_sample_index_] =
+        last_simulation_tick_cost_us_;
+    simulation_tick_cost_sample_sum_us_ += last_simulation_tick_cost_us_;
+    simulation_tick_cost_sample_index_ =
+        (simulation_tick_cost_sample_index_ + 1) %
+        simulation_tick_cost_samples_us_.size();
+    average_simulation_tick_cost_us_ =
+        simulation_tick_cost_sample_sum_us_ / simulation_tick_cost_sample_count_;
+
+    const auto fixed_delta_us = static_cast<std::uint64_t>(
+        std::max(1.0, static_cast<double>(tick_loop_.fixed_delta_seconds()) *
+                          1'000'000.0));
+    const std::uint64_t default_threshold_us =
+        std::min<std::uint64_t>(8000, std::max<std::uint64_t>(1, fixed_delta_us / 4));
+    const std::uint64_t threshold_us =
+        simulation_tick_cost_warning_threshold_us_ == 0
+            ? default_threshold_us
+            : simulation_tick_cost_warning_threshold_us_;
+    if (average_simulation_tick_cost_us_ >= threshold_us &&
+        (simulation_tick_cost_warning_count_ == 0 ||
+         tick_loop_.current_tick() - last_simulation_tick_cost_warning_tick_ >=
+             120)) {
+        ++simulation_tick_cost_warning_count_;
+        last_simulation_tick_cost_warning_tick_ = tick_loop_.current_tick();
+        spdlog::warn(
+            "[NetworkExample] simulation tick avg_cost_us={} last_cost_us={} "
+            "threshold_us={} queue_depth={} processed_commands={}",
+            average_simulation_tick_cost_us_,
+            last_simulation_tick_cost_us_,
+            threshold_us,
+            queue_depth,
+            processed_command_count);
+    }
+}
+
 void KernelEngine::simulate_tick() {
+    const auto tick_cost_start = std::chrono::steady_clock::now();
     const float fixed_delta = tick_loop_.fixed_delta_seconds();
     const std::uint64_t server_time_us =
         tick_time_us(tick_loop_.current_tick(), fixed_delta);
     const std::size_t first_tick_event = events_.size();
     world_.collider_registry().expire_tick_lifetimes();
+    const std::size_t queue_depth = command_queue_.size();
+    const std::size_t processed_command_count = drain_simulation_commands();
     advance_predicted_projectiles(fixed_delta);
     for (const QueuedInput& pending_input : pending_inputs_) {
         if (pending_input.controlled_net_id != 0) {
@@ -3926,6 +4253,10 @@ void KernelEngine::simulate_tick() {
         publish_snapshot();
     }
     pending_inputs_.clear();
+    record_simulation_tick_cost(
+        elapsed_cost_us(tick_cost_start),
+        queue_depth,
+        processed_command_count);
     tick_loop_.advance_tick();
 }
 
@@ -4650,7 +4981,8 @@ void KernelEngine::publish_snapshot() {
             latest_snapshot_.header.server_tick,
             latest_snapshot_.entities.size()));
 
-    if (config_.mode == KernelMode_ListenServer && loopback_transport_ != nullptr) {
+    if (config_.mode == KernelMode_ListenServer &&
+        listen_server_transport_ != nullptr) {
         local_listen_session_.peer = kLocalListenPeerId;
         local_listen_session_.player = local_player_net_id_;
         local_listen_session_.last_processed_input_seq = local_last_processed_input_seq_;
@@ -4664,7 +4996,7 @@ void KernelEngine::publish_snapshot() {
             kLargeSyncPacketWarningBytes);
         const std::vector<std::uint8_t> packet =
             encode_snapshot_packet(send_snapshot, next_packet_sequence_++);
-        if (!loopback_transport_->Send(
+        if (!listen_server_transport_->Send(
                 kLocalListenPeerId,
                 packet.data(),
                 static_cast<std::uint32_t>(packet.size()),
@@ -4679,7 +5011,7 @@ void KernelEngine::publish_snapshot() {
         }
     }
 
-    if (config_.mode == KernelMode_DedicatedServer) {
+    if (is_server_mode(config_.mode)) {
         for (PeerSession& session : peer_sessions_) {
             if (!session.welcomed) {
                 continue;
@@ -4710,6 +5042,30 @@ void KernelEngine::publish_snapshot() {
     }
 }
 
+void KernelEngine::send_gameplay_catalog_manifest_request() {
+    GameplayCatalogManifestRequestPacket request;
+    const std::vector<std::uint8_t> packet =
+        encode_gameplay_catalog_manifest_request_packet(
+            request,
+            next_packet_sequence_++);
+    if (!transport_->Send(
+            kServerPeerId,
+            packet.data(),
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kSession)) {
+        fail_gameplay_catalog_sync(KernelGameplayCatalogSyncError_Transport);
+        return;
+    }
+    record_sent_packet(
+        static_cast<std::uint32_t>(packet.size()),
+        SendMode::kReliable,
+        ChannelId::kSession);
+    gameplay_catalog_sync_state_ =
+        KernelGameplayCatalogSyncState_FetchingManifest;
+    gameplay_catalog_sync_elapsed_us_ = 0;
+}
+
 void KernelEngine::send_client_handshake() {
     if (client_handshake_sent_) {
         return;
@@ -4733,6 +5089,66 @@ void KernelEngine::send_client_handshake() {
         SendMode::kReliable,
         ChannelId::kSession);
     client_handshake_sent_ = true;
+}
+
+void KernelEngine::pump_gameplay_catalog_transfers() {
+    if (!is_server_mode(config_.mode) || transport_ == nullptr ||
+        gameplay_catalog_sync_bundle_.empty()) {
+        return;
+    }
+    for (auto iter = gameplay_catalog_transfers_.begin();
+         iter != gameplay_catalog_transfers_.end();) {
+        std::size_t chunks_sent = 0;
+        while (iter->second.offset < gameplay_catalog_sync_bundle_.size() &&
+               chunks_sent < 4) {
+            const std::size_t chunk_size = std::min(
+                kGameplayCatalogBundleChunkBytes,
+                gameplay_catalog_sync_bundle_.size() - iter->second.offset);
+            GameplayCatalogBundleChunkPacket chunk;
+            std::copy(
+                std::begin(gameplay_catalog_manifest_.bundle_sha256),
+                std::end(gameplay_catalog_manifest_.bundle_sha256),
+                chunk.bundle_sha256.begin());
+            chunk.offset = static_cast<std::uint32_t>(iter->second.offset);
+            chunk.total_size =
+                static_cast<std::uint32_t>(gameplay_catalog_sync_bundle_.size());
+            chunk.bytes.assign(
+                gameplay_catalog_sync_bundle_.begin() + iter->second.offset,
+                gameplay_catalog_sync_bundle_.begin() +
+                    iter->second.offset + chunk_size);
+            const std::vector<std::uint8_t> packet =
+                encode_gameplay_catalog_bundle_chunk_packet(
+                    chunk,
+                    next_packet_sequence_++);
+            if (!transport_->Send(
+                    iter->first,
+                    packet.data(),
+                    static_cast<std::uint32_t>(packet.size()),
+                    SendMode::kReliable,
+                    ChannelId::kSession)) {
+                push_event(KernelEventType_Error, 0, iter->first, 29);
+                break;
+            }
+            record_sent_packet(
+                static_cast<std::uint32_t>(packet.size()),
+                SendMode::kReliable,
+                ChannelId::kSession);
+            iter->second.offset += chunk_size;
+            ++chunks_sent;
+        }
+        if (iter->second.offset >= gameplay_catalog_sync_bundle_.size()) {
+            iter = gameplay_catalog_transfers_.erase(iter);
+        } else {
+            ++iter;
+        }
+    }
+}
+
+void KernelEngine::fail_gameplay_catalog_sync(
+    KernelGameplayCatalogSyncError error) {
+    gameplay_catalog_sync_error_ = error;
+    gameplay_catalog_sync_state_ = KernelGameplayCatalogSyncState_Failed;
+    downloaded_gameplay_catalog_bundle_.clear();
 }
 
 void KernelEngine::send_clock_sync_ping(
@@ -4768,7 +5184,7 @@ void KernelEngine::send_clock_sync_ping(
 }
 
 void KernelEngine::send_due_clock_sync_pings(std::uint64_t server_time_us) {
-    if (config_.mode != KernelMode_DedicatedServer) {
+    if (!is_server_mode(config_.mode)) {
         return;
     }
     for (PeerSession& session : peer_sessions_) {
@@ -5025,7 +5441,237 @@ void KernelEngine::handle_server_handshake(const TransportEvent& transport_event
     publish_snapshot();
 }
 
+void KernelEngine::handle_server_gameplay_catalog_manifest_request(
+    const TransportEvent& transport_event) {
+    GameplayCatalogManifestRequestPacket request;
+    if (!decode_gameplay_catalog_manifest_request_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &request)) {
+        return;
+    }
+
+    GameplayCatalogSyncErrorPacket error;
+    bool has_error = false;
+    if (request.protocol_version != kProtocolVersion ||
+        request.snapshot_schema_version != kSnapshotSchemaVersion ||
+        request.packet_schema_version != kPacketSchemaVersion) {
+        error.error_code = GameplayCatalogSyncErrorCode::kVersionMismatch;
+        has_error = true;
+    } else if (gameplay_catalog_sync_bundle_.empty()) {
+        error.error_code = GameplayCatalogSyncErrorCode::kBundleUnavailable;
+        has_error = true;
+    }
+
+    std::vector<std::uint8_t> packet;
+    if (has_error) {
+        packet = encode_gameplay_catalog_sync_error_packet(
+            error,
+            next_packet_sequence_++);
+    } else {
+        GameplayCatalogManifestPacket manifest;
+        manifest.catalog_version = gameplay_catalog_manifest_.catalog_version;
+        manifest.catalog_hash = gameplay_catalog_manifest_.catalog_hash;
+        manifest.bundle_size = gameplay_catalog_manifest_.bundle_size;
+        std::copy(
+            std::begin(gameplay_catalog_manifest_.bundle_sha256),
+            std::end(gameplay_catalog_manifest_.bundle_sha256),
+            manifest.bundle_sha256.begin());
+        std::memcpy(
+            manifest.entry_path,
+            gameplay_catalog_manifest_.entry_path,
+            sizeof(manifest.entry_path));
+        std::memcpy(
+            manifest.content_namespace,
+            gameplay_catalog_manifest_.content_namespace,
+            sizeof(manifest.content_namespace));
+        packet = encode_gameplay_catalog_manifest_packet(
+            manifest,
+            next_packet_sequence_++);
+    }
+    if (!transport_->Send(
+            transport_event.peer,
+            packet.data(),
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kSession)) {
+        push_event(KernelEventType_Error, 0, transport_event.peer, 28);
+    } else {
+        record_sent_packet(
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kSession);
+    }
+}
+
+void KernelEngine::handle_server_gameplay_catalog_bundle_request(
+    const TransportEvent& transport_event) {
+    GameplayCatalogBundleRequestPacket request;
+    if (!decode_gameplay_catalog_bundle_request_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &request)) {
+        return;
+    }
+    if (gameplay_catalog_sync_bundle_.empty() ||
+        !std::equal(
+            request.bundle_sha256.begin(),
+            request.bundle_sha256.end(),
+            std::begin(gameplay_catalog_manifest_.bundle_sha256))) {
+        const GameplayCatalogSyncErrorPacket error{
+            gameplay_catalog_sync_bundle_.empty()
+                ? GameplayCatalogSyncErrorCode::kBundleUnavailable
+                : GameplayCatalogSyncErrorCode::kInvalidRequest};
+        const std::vector<std::uint8_t> packet =
+            encode_gameplay_catalog_sync_error_packet(
+                error,
+                next_packet_sequence_++);
+        transport_->Send(
+            transport_event.peer,
+            packet.data(),
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kSession);
+        return;
+    }
+    gameplay_catalog_transfers_[transport_event.peer] = GameplayCatalogTransfer{};
+}
+
+void KernelEngine::handle_client_gameplay_catalog_manifest(
+    const TransportEvent& transport_event) {
+    GameplayCatalogManifestPacket manifest;
+    if (!decode_gameplay_catalog_manifest_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &manifest)) {
+        return;
+    }
+    if (gameplay_catalog_sync_state_ !=
+            KernelGameplayCatalogSyncState_FetchingManifest ||
+        manifest.bundle_size == 0 ||
+        manifest.bundle_size > gameplay_catalog_sync_max_bundle_size_ ||
+        manifest.entry_path[0] == '\0' ||
+        !is_valid_content_namespace(manifest.content_namespace)) {
+        fail_gameplay_catalog_sync(
+            manifest.bundle_size > gameplay_catalog_sync_max_bundle_size_
+                ? KernelGameplayCatalogSyncError_BundleTooLarge
+                : KernelGameplayCatalogSyncError_InvalidManifest);
+        return;
+    }
+    gameplay_catalog_manifest_ = KernelGameplayCatalogManifest{};
+    gameplay_catalog_manifest_.struct_size =
+        sizeof(KernelGameplayCatalogManifest);
+    gameplay_catalog_manifest_.catalog_version = manifest.catalog_version;
+    gameplay_catalog_manifest_.catalog_hash = manifest.catalog_hash;
+    gameplay_catalog_manifest_.bundle_size = manifest.bundle_size;
+    std::copy(
+        manifest.bundle_sha256.begin(),
+        manifest.bundle_sha256.end(),
+        std::begin(gameplay_catalog_manifest_.bundle_sha256));
+    std::memcpy(
+        gameplay_catalog_manifest_.entry_path,
+        manifest.entry_path,
+        sizeof(gameplay_catalog_manifest_.entry_path));
+    std::memcpy(
+        gameplay_catalog_manifest_.content_namespace,
+        manifest.content_namespace,
+        sizeof(gameplay_catalog_manifest_.content_namespace));
+    gameplay_catalog_sync_state_ =
+        KernelGameplayCatalogSyncState_ManifestReady;
+    gameplay_catalog_sync_elapsed_us_ = 0;
+}
+
+void KernelEngine::handle_client_gameplay_catalog_bundle_chunk(
+    const TransportEvent& transport_event) {
+    GameplayCatalogBundleChunkPacket chunk;
+    if (!decode_gameplay_catalog_bundle_chunk_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &chunk)) {
+        return;
+    }
+    if (gameplay_catalog_sync_state_ !=
+            KernelGameplayCatalogSyncState_Downloading ||
+        chunk.total_size != gameplay_catalog_manifest_.bundle_size ||
+        chunk.offset != downloaded_gameplay_catalog_bundle_.size() ||
+        chunk.bytes.empty() ||
+        chunk.offset + chunk.bytes.size() > chunk.total_size ||
+        !std::equal(
+            chunk.bundle_sha256.begin(),
+            chunk.bundle_sha256.end(),
+            std::begin(gameplay_catalog_manifest_.bundle_sha256))) {
+        fail_gameplay_catalog_sync(KernelGameplayCatalogSyncError_InvalidBundle);
+        return;
+    }
+    downloaded_gameplay_catalog_bundle_.insert(
+        downloaded_gameplay_catalog_bundle_.end(),
+        chunk.bytes.begin(),
+        chunk.bytes.end());
+    gameplay_catalog_sync_elapsed_us_ = 0;
+    if (downloaded_gameplay_catalog_bundle_.size() ==
+        gameplay_catalog_manifest_.bundle_size) {
+        const std::array<std::uint8_t, 32> digest = compute_sha256(
+            downloaded_gameplay_catalog_bundle_.data(),
+            downloaded_gameplay_catalog_bundle_.size());
+        if (!std::equal(
+                digest.begin(),
+                digest.end(),
+                std::begin(gameplay_catalog_manifest_.bundle_sha256))) {
+            fail_gameplay_catalog_sync(
+                KernelGameplayCatalogSyncError_InvalidBundle);
+            return;
+        }
+        gameplay_catalog_sync_state_ =
+            KernelGameplayCatalogSyncState_BundleReady;
+    }
+}
+
+void KernelEngine::handle_client_gameplay_catalog_sync_error(
+    const TransportEvent& transport_event) {
+    GameplayCatalogSyncErrorPacket error;
+    if (!decode_gameplay_catalog_sync_error_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &error)) {
+        return;
+    }
+    switch (error.error_code) {
+        case GameplayCatalogSyncErrorCode::kUnsupported:
+            fail_gameplay_catalog_sync(
+                KernelGameplayCatalogSyncError_Unsupported);
+            break;
+        case GameplayCatalogSyncErrorCode::kBundleUnavailable:
+            fail_gameplay_catalog_sync(
+                KernelGameplayCatalogSyncError_BundleUnavailable);
+            break;
+        case GameplayCatalogSyncErrorCode::kVersionMismatch:
+            fail_gameplay_catalog_sync(
+                KernelGameplayCatalogSyncError_VersionMismatch);
+            break;
+        case GameplayCatalogSyncErrorCode::kInvalidRequest:
+            fail_gameplay_catalog_sync(
+                KernelGameplayCatalogSyncError_InvalidState);
+            break;
+    }
+}
+
 void KernelEngine::handle_server_session_message(const TransportEvent& transport_event) {
+    GameplayCatalogManifestRequestPacket manifest_request;
+    if (decode_gameplay_catalog_manifest_request_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &manifest_request)) {
+        handle_server_gameplay_catalog_manifest_request(transport_event);
+        return;
+    }
+    GameplayCatalogBundleRequestPacket bundle_request;
+    if (decode_gameplay_catalog_bundle_request_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &bundle_request)) {
+        handle_server_gameplay_catalog_bundle_request(transport_event);
+        return;
+    }
     PingPongPacket ping;
     auto decode_start = std::chrono::steady_clock::now();
     if (decode_ping_pong_packet(
@@ -5042,6 +5688,30 @@ void KernelEngine::handle_server_session_message(const TransportEvent& transport
 }
 
 void KernelEngine::handle_client_session_message(const TransportEvent& transport_event) {
+    GameplayCatalogManifestPacket manifest;
+    if (decode_gameplay_catalog_manifest_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &manifest)) {
+        handle_client_gameplay_catalog_manifest(transport_event);
+        return;
+    }
+    GameplayCatalogBundleChunkPacket chunk;
+    if (decode_gameplay_catalog_bundle_chunk_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &chunk)) {
+        handle_client_gameplay_catalog_bundle_chunk(transport_event);
+        return;
+    }
+    GameplayCatalogSyncErrorPacket sync_error;
+    if (decode_gameplay_catalog_sync_error_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &sync_error)) {
+        handle_client_gameplay_catalog_sync_error(transport_event);
+        return;
+    }
     WelcomePacket welcome;
     auto decode_start = std::chrono::steady_clock::now();
     if (decode_welcome_packet(

@@ -1,4 +1,4 @@
-#include "kernel/public/kernel_api.h"
+#include "kernel/src/kernel_api_internal.h"
 
 #include <cstdint>
 #include <cstring>
@@ -123,6 +123,10 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
         out_info->agent_vision_config_size = sizeof(KernelAgentVisionConfig);
         out_info->vision_state_query_size = sizeof(KernelVisionStateQuery);
         out_info->vision_state_view_size = sizeof(KernelVisionStateView);
+        out_info->gameplay_catalog_manifest_size =
+            sizeof(KernelGameplayCatalogManifest);
+        out_info->gameplay_catalog_sync_status_size =
+            sizeof(KernelGameplayCatalogSyncStatus);
         out_info->capability_flags =
             KERNEL_CAPABILITY_CLIENT_MODE |
             KERNEL_CAPABILITY_LISTEN_SERVER_MODE |
@@ -158,7 +162,8 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_BENCHMARK_STATS |
             KERNEL_CAPABILITY_NETWORK_STATS |
             KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS |
-            KERNEL_CAPABILITY_VISION_STATE_QUERY;
+            KERNEL_CAPABILITY_VISION_STATE_QUERY |
+            KERNEL_CAPABILITY_GAMEPLAY_CATALOG_SYNC;
         return true;
     });
 }
@@ -255,6 +260,18 @@ bool Kernel_StartClient(KernelHandle* kernel, const char* address) {
     });
 }
 
+bool Kernel_StartClientCatalogSync(
+    KernelHandle* kernel,
+    const char* address,
+    const KernelGameplayCatalogSyncClientConfig* config) {
+    return abi_call("Kernel_StartClientCatalogSync", false, [&]() {
+        return kernel != nullptr && address != nullptr && address[0] != '\0' &&
+               config != nullptr &&
+               config->struct_size >= sizeof(KernelGameplayCatalogSyncClientConfig) &&
+               kernel->engine->start_client_catalog_sync(address, *config);
+    });
+}
+
 bool Kernel_StartListenServer(KernelHandle* kernel, uint16_t port) {
     return abi_call("Kernel_StartListenServer", false, [&]() {
         return kernel != nullptr && kernel->engine->start_listen_server(port);
@@ -264,6 +281,59 @@ bool Kernel_StartListenServer(KernelHandle* kernel, uint16_t port) {
 bool Kernel_StartDedicatedServer(KernelHandle* kernel, uint16_t port) {
     return abi_call("Kernel_StartDedicatedServer", false, [&]() {
         return kernel != nullptr && kernel->engine->start_dedicated_server(port);
+    });
+}
+
+bool Kernel_SetGameplayCatalogSyncBundle(
+    KernelHandle* kernel,
+    const KernelGameplayCatalogSyncServerConfig* config,
+    KernelGameplayCatalogManifest* out_manifest) {
+    return abi_call("Kernel_SetGameplayCatalogSyncBundle", false, [&]() {
+        return kernel != nullptr && config != nullptr &&
+               config->struct_size >= sizeof(KernelGameplayCatalogSyncServerConfig) &&
+               out_manifest != nullptr &&
+               out_manifest->struct_size >= sizeof(KernelGameplayCatalogManifest) &&
+               kernel->engine->set_gameplay_catalog_sync_bundle(
+                   *config,
+                   out_manifest);
+    });
+}
+
+bool Kernel_GetGameplayCatalogSyncStatus(
+    KernelHandle* kernel,
+    KernelGameplayCatalogSyncStatus* out_status) {
+    return abi_call("Kernel_GetGameplayCatalogSyncStatus", false, [&]() {
+        return kernel != nullptr && out_status != nullptr &&
+               out_status->struct_size >= sizeof(KernelGameplayCatalogSyncStatus) &&
+               kernel->engine->get_gameplay_catalog_sync_status(out_status);
+    });
+}
+
+bool Kernel_RequestGameplayCatalogBundle(KernelHandle* kernel) {
+    return abi_call("Kernel_RequestGameplayCatalogBundle", false, [&]() {
+        return kernel != nullptr &&
+               kernel->engine->request_gameplay_catalog_bundle();
+    });
+}
+
+bool Kernel_CopyGameplayCatalogBundle(
+    KernelHandle* kernel,
+    uint8_t* out_bundle,
+    uint32_t out_capacity,
+    uint32_t* out_bundle_size) {
+    return abi_call("Kernel_CopyGameplayCatalogBundle", false, [&]() {
+        return kernel != nullptr &&
+               kernel->engine->copy_gameplay_catalog_bundle(
+                   out_bundle,
+                   out_capacity,
+                   out_bundle_size);
+    });
+}
+
+bool Kernel_ContinueClientHandshake(KernelHandle* kernel) {
+    return abi_call("Kernel_ContinueClientHandshake", false, [&]() {
+        return kernel != nullptr &&
+               kernel->engine->continue_client_handshake();
     });
 }
 
@@ -475,6 +545,18 @@ bool Kernel_ServerDestroyEntity(
     });
 }
 
+bool Kernel_ServerEnqueueEntityLifecycle(
+    KernelHandle* kernel,
+    uint32_t command_source,
+    const KernelEntityLifecycleCommand* command) {
+    return abi_call("Kernel_ServerEnqueueEntityLifecycle", false, [&]() {
+        return kernel != nullptr && command != nullptr &&
+               kernel->engine->server_enqueue_entity_lifecycle(
+                   command_source,
+                   *command);
+    });
+}
+
 bool Kernel_ServerSetEntityTransform(
     KernelHandle* kernel,
     uint32_t net_id,
@@ -489,6 +571,22 @@ bool Kernel_ServerSetEntityTransform(
     });
 }
 
+bool Kernel_ServerEnqueueEntityTransform(
+    KernelHandle* kernel,
+    uint32_t command_source,
+    uint32_t net_id,
+    const KernelVec3* position,
+    const KernelQuat* rotation) {
+    return abi_call("Kernel_ServerEnqueueEntityTransform", false, [&]() {
+        return kernel != nullptr && position != nullptr && rotation != nullptr &&
+               kernel->engine->server_enqueue_entity_transform(
+                   command_source,
+                   net_id,
+                   *position,
+                   *rotation);
+    });
+}
+
 bool Kernel_ServerSetEntityVelocity(
     KernelHandle* kernel,
     uint32_t net_id,
@@ -496,6 +594,20 @@ bool Kernel_ServerSetEntityVelocity(
     return abi_call("Kernel_ServerSetEntityVelocity", false, [&]() {
         return kernel != nullptr && velocity != nullptr &&
                kernel->engine->server_set_entity_velocity(net_id, *velocity);
+    });
+}
+
+bool Kernel_ServerEnqueueEntityVelocity(
+    KernelHandle* kernel,
+    uint32_t command_source,
+    uint32_t net_id,
+    const KernelVec3* velocity) {
+    return abi_call("Kernel_ServerEnqueueEntityVelocity", false, [&]() {
+        return kernel != nullptr && velocity != nullptr &&
+               kernel->engine->server_enqueue_entity_velocity(
+                   command_source,
+                   net_id,
+                   *velocity);
     });
 }
 
@@ -513,6 +625,22 @@ bool Kernel_ServerSetEntityState(
     });
 }
 
+bool Kernel_ServerEnqueueEntityState(
+    KernelHandle* kernel,
+    uint32_t command_source,
+    uint32_t net_id,
+    uint16_t animation_state,
+    uint32_t visual_flags) {
+    return abi_call("Kernel_ServerEnqueueEntityState", false, [&]() {
+        return kernel != nullptr &&
+               kernel->engine->server_enqueue_entity_state(
+                   command_source,
+                   net_id,
+                   animation_state,
+                   visual_flags);
+    });
+}
+
 bool Kernel_ServerSubmitEntityInput(
     KernelHandle* kernel,
     uint32_t net_id,
@@ -520,6 +648,20 @@ bool Kernel_ServerSubmitEntityInput(
     return abi_call("Kernel_ServerSubmitEntityInput", false, [&]() {
         return kernel != nullptr && input != nullptr &&
                kernel->engine->server_submit_entity_input(net_id, *input);
+    });
+}
+
+bool Kernel_ServerEnqueueEntityInput(
+    KernelHandle* kernel,
+    uint32_t command_source,
+    uint32_t net_id,
+    const PlayerInput* input) {
+    return abi_call("Kernel_ServerEnqueueEntityInput", false, [&]() {
+        return kernel != nullptr && input != nullptr &&
+               kernel->engine->server_enqueue_entity_input(
+                   command_source,
+                   net_id,
+                   *input);
     });
 }
 

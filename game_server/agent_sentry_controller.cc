@@ -4,6 +4,8 @@
 #include <array>
 #include <cmath>
 
+#include "kernel/src/kernel_api_internal.h"
+
 namespace network_example::game_server {
 namespace {
 
@@ -154,7 +156,11 @@ void submit_weapon_input(
     input.buttons = buttons;
     input.selected_weapon = config.weapon_id;
     input.aim_dir = normalized_direction(enemy->position, target_position);
-    Kernel_ServerSubmitEntityInput(kernel, enemy->net_id, &input);
+    Kernel_ServerEnqueueEntityInput(
+        kernel,
+        KernelCommandSource_AI,
+        enemy->net_id,
+        &input);
 }
 
 void transition_to(Enemy* enemy, AgentSentryState state) {
@@ -334,14 +340,24 @@ void AgentSentryController::tick(
 
         enemy.target_player_net_id = enemy.sentry.target;
         if (should_update_rotation) {
-            Kernel_ServerSetEntityTransform(
+            Kernel_ServerEnqueueEntityTransform(
                 kernel,
+                KernelCommandSource_AI,
                 enemy.net_id,
                 &entity_state.position,
                 &desired_rotation);
         }
-        Kernel_ServerSetEntityVelocity(kernel, enemy.net_id, &enemy.velocity);
-        Kernel_ServerSetEntityState(kernel, enemy.net_id, enemy.animation_state, 0);
+        Kernel_ServerEnqueueEntityVelocity(
+            kernel,
+            KernelCommandSource_AI,
+            enemy.net_id,
+            &enemy.velocity);
+        Kernel_ServerEnqueueEntityState(
+            kernel,
+            KernelCommandSource_AI,
+            enemy.net_id,
+            enemy.animation_state,
+            0);
     }
 }
 

@@ -2,6 +2,13 @@ licenses(["notice"])
 
 package(default_visibility = ["//visibility:public"])
 
+exports_files([
+    "src/command_dispatcher.cc",
+    "src/command_dispatcher.h",
+    "src/systems.cc",
+    "src/systems.h",
+])
+
 cc_library(
     name = "simulation",
     srcs = [
@@ -10,12 +17,15 @@ cc_library(
         "src/collision_query.cc",
         "src/damage_pipeline.cc",
         "src/damage_system.cc",
+        "src/movement_solver.cc",
         "src/player_movement.cc",
         "src/projectile_system.cc",
         "src/weapon_system.cc",
     ],
     hdrs = [
+        "public/command.h",
         "public/collision_query.h",
+        "public/movement_solver.h",
         "public/simulation.h",
     ],
     includes = [".."],

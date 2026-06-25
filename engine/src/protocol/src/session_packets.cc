@@ -13,6 +13,12 @@ constexpr std::size_t kHandshakePayloadSize = 4 + 2 + 2 + 2 + 4 + 8 +
 constexpr std::size_t kWelcomePayloadSize = 32;
 constexpr std::size_t kPingPongPayloadSize = 44;
 constexpr std::size_t kDisconnectPayloadSize = 4;
+constexpr std::size_t kManifestRequestPayloadSize = 6;
+constexpr std::size_t kManifestPayloadSize =
+    4 + 8 + 4 + kGameplayCatalogSha256Size +
+    kGameplayCatalogEntryPathSize + kGameplayCatalogContentNamespaceSize;
+constexpr std::size_t kBundleRequestPayloadSize = kGameplayCatalogSha256Size;
+constexpr std::size_t kSyncErrorPayloadSize = 4;
 
 }  // namespace
 
@@ -210,6 +216,231 @@ bool decode_disconnect_packet(
     }
 
     *out_packet = packet;
+    return true;
+}
+
+std::vector<std::uint8_t> encode_gameplay_catalog_manifest_request_packet(
+    const GameplayCatalogManifestRequestPacket& packet,
+    std::uint32_t sequence) {
+    protocol_internal::PacketWriter payload;
+    payload.write_u16(packet.protocol_version);
+    payload.write_u16(packet.snapshot_schema_version);
+    payload.write_u16(packet.packet_schema_version);
+    return protocol_internal::wrap_packet(
+        MessageType::kGameplayCatalogManifestRequest,
+        payload.bytes(),
+        sequence);
+}
+
+bool decode_gameplay_catalog_manifest_request_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    GameplayCatalogManifestRequestPacket* out_packet) {
+    const std::uint8_t* payload = nullptr;
+    std::size_t payload_size = 0;
+    GameplayCatalogManifestRequestPacket packet;
+    if (out_packet == nullptr ||
+        !protocol_internal::unwrap_packet(
+            data,
+            size,
+            MessageType::kGameplayCatalogManifestRequest,
+            &payload,
+            &payload_size) ||
+        payload_size != kManifestRequestPayloadSize) {
+        return false;
+    }
+    protocol_internal::PacketReader reader(payload, payload_size);
+    if (!reader.read_u16(&packet.protocol_version) ||
+        !reader.read_u16(&packet.snapshot_schema_version) ||
+        !reader.read_u16(&packet.packet_schema_version) ||
+        !reader.done()) {
+        return false;
+    }
+    *out_packet = packet;
+    return true;
+}
+
+std::vector<std::uint8_t> encode_gameplay_catalog_manifest_packet(
+    const GameplayCatalogManifestPacket& packet,
+    std::uint32_t sequence) {
+    protocol_internal::PacketWriter payload;
+    payload.reserve(kManifestPayloadSize);
+    payload.write_u32(packet.catalog_version);
+    payload.write_u64(packet.catalog_hash);
+    payload.write_u32(packet.bundle_size);
+    payload.write_bytes(packet.bundle_sha256.data(), packet.bundle_sha256.size());
+    payload.write_bytes(packet.entry_path, sizeof(packet.entry_path));
+    payload.write_bytes(packet.content_namespace, sizeof(packet.content_namespace));
+    return protocol_internal::wrap_packet(
+        MessageType::kGameplayCatalogManifest,
+        payload.bytes(),
+        sequence);
+}
+
+bool decode_gameplay_catalog_manifest_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    GameplayCatalogManifestPacket* out_packet) {
+    const std::uint8_t* payload = nullptr;
+    std::size_t payload_size = 0;
+    GameplayCatalogManifestPacket packet;
+    if (out_packet == nullptr ||
+        !protocol_internal::unwrap_packet(
+            data,
+            size,
+            MessageType::kGameplayCatalogManifest,
+            &payload,
+            &payload_size) ||
+        payload_size != kManifestPayloadSize) {
+        return false;
+    }
+    protocol_internal::PacketReader reader(payload, payload_size);
+    if (!reader.read_u32(&packet.catalog_version) ||
+        !reader.read_u64(&packet.catalog_hash) ||
+        !reader.read_u32(&packet.bundle_size) ||
+        !reader.read_bytes(packet.bundle_sha256.data(), packet.bundle_sha256.size()) ||
+        !reader.read_bytes(packet.entry_path, sizeof(packet.entry_path)) ||
+        !reader.read_bytes(packet.content_namespace, sizeof(packet.content_namespace)) ||
+        !reader.done()) {
+        return false;
+    }
+    packet.entry_path[sizeof(packet.entry_path) - 1] = '\0';
+    packet.content_namespace[sizeof(packet.content_namespace) - 1] = '\0';
+    *out_packet = packet;
+    return true;
+}
+
+std::vector<std::uint8_t> encode_gameplay_catalog_bundle_request_packet(
+    const GameplayCatalogBundleRequestPacket& packet,
+    std::uint32_t sequence) {
+    protocol_internal::PacketWriter payload;
+    payload.write_bytes(packet.bundle_sha256.data(), packet.bundle_sha256.size());
+    return protocol_internal::wrap_packet(
+        MessageType::kGameplayCatalogBundleRequest,
+        payload.bytes(),
+        sequence);
+}
+
+bool decode_gameplay_catalog_bundle_request_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    GameplayCatalogBundleRequestPacket* out_packet) {
+    const std::uint8_t* payload = nullptr;
+    std::size_t payload_size = 0;
+    GameplayCatalogBundleRequestPacket packet;
+    if (out_packet == nullptr ||
+        !protocol_internal::unwrap_packet(
+            data,
+            size,
+            MessageType::kGameplayCatalogBundleRequest,
+            &payload,
+            &payload_size) ||
+        payload_size != kBundleRequestPayloadSize) {
+        return false;
+    }
+    protocol_internal::PacketReader reader(payload, payload_size);
+    if (!reader.read_bytes(packet.bundle_sha256.data(), packet.bundle_sha256.size()) ||
+        !reader.done()) {
+        return false;
+    }
+    *out_packet = packet;
+    return true;
+}
+
+std::vector<std::uint8_t> encode_gameplay_catalog_bundle_chunk_packet(
+    const GameplayCatalogBundleChunkPacket& packet,
+    std::uint32_t sequence) {
+    if (packet.bytes.size() > kGameplayCatalogBundleChunkBytes) {
+        return {};
+    }
+    protocol_internal::PacketWriter payload;
+    payload.reserve(kGameplayCatalogBundleChunkHeaderSize + packet.bytes.size());
+    payload.write_bytes(packet.bundle_sha256.data(), packet.bundle_sha256.size());
+    payload.write_u32(packet.offset);
+    payload.write_u32(packet.total_size);
+    payload.write_u32(static_cast<std::uint32_t>(packet.bytes.size()));
+    payload.write_bytes(packet.bytes.data(), packet.bytes.size());
+    return protocol_internal::wrap_packet(
+        MessageType::kGameplayCatalogBundleChunk,
+        payload.bytes(),
+        sequence);
+}
+
+bool decode_gameplay_catalog_bundle_chunk_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    GameplayCatalogBundleChunkPacket* out_packet) {
+    const std::uint8_t* payload = nullptr;
+    std::size_t payload_size = 0;
+    if (out_packet == nullptr ||
+        !protocol_internal::unwrap_packet(
+            data,
+            size,
+            MessageType::kGameplayCatalogBundleChunk,
+            &payload,
+            &payload_size) ||
+        payload_size < kGameplayCatalogBundleChunkHeaderSize ||
+        payload_size >
+            kGameplayCatalogBundleChunkHeaderSize + kGameplayCatalogBundleChunkBytes) {
+        return false;
+    }
+    GameplayCatalogBundleChunkPacket packet;
+    std::uint32_t chunk_size = 0;
+    protocol_internal::PacketReader reader(payload, payload_size);
+    if (!reader.read_bytes(packet.bundle_sha256.data(), packet.bundle_sha256.size()) ||
+        !reader.read_u32(&packet.offset) ||
+        !reader.read_u32(&packet.total_size) ||
+        !reader.read_u32(&chunk_size) ||
+        chunk_size > kGameplayCatalogBundleChunkBytes ||
+        payload_size != kGameplayCatalogBundleChunkHeaderSize + chunk_size) {
+        return false;
+    }
+    packet.bytes.resize(chunk_size);
+    if (!reader.read_bytes(packet.bytes.data(), packet.bytes.size()) || !reader.done()) {
+        return false;
+    }
+    *out_packet = std::move(packet);
+    return true;
+}
+
+std::vector<std::uint8_t> encode_gameplay_catalog_sync_error_packet(
+    const GameplayCatalogSyncErrorPacket& packet,
+    std::uint32_t sequence) {
+    protocol_internal::PacketWriter payload;
+    payload.write_u32(static_cast<std::uint32_t>(packet.error_code));
+    return protocol_internal::wrap_packet(
+        MessageType::kGameplayCatalogSyncError,
+        payload.bytes(),
+        sequence);
+}
+
+bool decode_gameplay_catalog_sync_error_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    GameplayCatalogSyncErrorPacket* out_packet) {
+    const std::uint8_t* payload = nullptr;
+    std::size_t payload_size = 0;
+    std::uint32_t error_code = 0;
+    if (out_packet == nullptr ||
+        !protocol_internal::unwrap_packet(
+            data,
+            size,
+            MessageType::kGameplayCatalogSyncError,
+            &payload,
+            &payload_size) ||
+        payload_size != kSyncErrorPayloadSize) {
+        return false;
+    }
+    protocol_internal::PacketReader reader(payload, payload_size);
+    if (!reader.read_u32(&error_code) || !reader.done() ||
+        error_code <
+            static_cast<std::uint32_t>(GameplayCatalogSyncErrorCode::kUnsupported) ||
+        error_code >
+            static_cast<std::uint32_t>(GameplayCatalogSyncErrorCode::kInvalidRequest)) {
+        return false;
+    }
+    out_packet->error_code =
+        static_cast<GameplayCatalogSyncErrorCode>(error_code);
     return true;
 }
 
