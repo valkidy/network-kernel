@@ -41,7 +41,7 @@ KernelConfig with_kernel_defaults(KernelConfig config) {
         config.max_render_states = 2048;
     }
     if (config.max_events == 0) {
-        config.max_events = 256;
+        config.max_events = 2048;
     }
     return config;
 }
