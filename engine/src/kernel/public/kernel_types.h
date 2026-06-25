@@ -4,7 +4,13 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 28u
+#define KERNEL_ABI_VERSION 29u
+
+#ifndef KERNEL_RPC
+#define KERNEL_RPC(metadata)
+#define KERNEL_RPC_INTERNAL(metadata)
+#define KERNEL_RPC_STRUCT(metadata)
+#endif
 
 #define KERNEL_BUILD_INFO_TEXT_SIZE 128u
 #define KERNEL_LAN_DISCOVERY_TEXT_SIZE 128u
@@ -86,6 +92,7 @@
 #define KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS UINT64_C(0x0000000200000000)
 #define KERNEL_CAPABILITY_VISION_STATE_QUERY UINT64_C(0x0000000400000000)
 #define KERNEL_CAPABILITY_GAMEPLAY_CATALOG_SYNC UINT64_C(0x0000000800000000)
+#define KERNEL_CAPABILITY_CONTROL_PLANE_RPC UINT64_C(0x0000001000000000)
 
 #define KERNEL_COLLISION_LAYER_PLAYER_SIDE UINT32_C(0x00000001)
 #define KERNEL_COLLISION_LAYER_HOSTILE_SIDE UINT32_C(0x00000002)
@@ -334,6 +341,7 @@ typedef struct KernelVec2 {
     float y;
 } KernelVec2;
 
+KERNEL_RPC_STRUCT(R"json({"type":"KernelVec3"})json")
 typedef struct KernelVec3 {
     float x;
     float y;
@@ -347,6 +355,7 @@ typedef struct KernelVec4 {
     float w;
 } KernelVec4;
 
+KERNEL_RPC_STRUCT(R"json({"type":"KernelQuat"})json")
 typedef struct KernelQuat {
     float x;
     float y;
@@ -400,6 +409,7 @@ typedef struct RenderEntityState {
     uint32_t actor_template_id;
 } RenderEntityState;
 
+KERNEL_RPC_STRUCT(R"json({"type":"KernelServerEntityCreateInfo"})json")
 typedef struct KernelServerEntityCreateInfo {
     uint32_t struct_size;
     uint16_t entity_type;

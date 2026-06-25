@@ -34,6 +34,15 @@ cc_test(
 )
 
 cc_test(
+    name = "kernel_rpc_test",
+    srcs = ["kernel_rpc_test.cc"],
+    deps = [
+        "//engine/src/kernel:kernel",
+        "@com_github_nlohmann_json//:json",
+    ],
+)
+
+cc_test(
     name = "lan_discovery_test",
     srcs = ["lan_discovery_test.cc"],
     deps = ["//engine/src/kernel:kernel"],

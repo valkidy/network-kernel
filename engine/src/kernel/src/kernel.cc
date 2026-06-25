@@ -1117,9 +1117,32 @@ KernelEngine::KernelEngine(KernelConfig config)
     : config_(with_kernel_defaults(config)),
       tick_loop_(config_.tick),
       history_buffer_(history_frame_count(config_.tick)),
-      transport_(std::make_unique<NetworkSimulatorTransport>()) {
+      transport_(std::make_unique<NetworkSimulatorTransport>()),
+      rpc_dispatcher_(&rpc_method_registry_, &rpc_response_store_) {
     render_states_.reserve(config_.max_render_states);
     events_.reserve(config_.max_events);
+}
+
+bool KernelEngine::invoke_rpc(
+    std::string_view request_json,
+    std::uint64_t* out_request_id) {
+    return rpc_dispatcher_.invoke(
+        *this,
+        request_json,
+        KernelRpcAuthority::kDeveloperWrite,
+        out_request_id);
+}
+
+bool KernelEngine::poll_rpc_response(
+    std::uint64_t request_id,
+    char* out_response_json,
+    std::uint32_t response_json_capacity,
+    std::uint32_t* out_response_json_size) {
+    return rpc_dispatcher_.poll(
+        request_id,
+        out_response_json,
+        response_json_capacity,
+        out_response_json_size);
 }
 
 bool KernelEngine::start_client(const char* address) {
@@ -2584,6 +2607,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     history_buffer_ = HistoryBuffer(history_frame_count(config_.tick));
     damage_pipeline_.clear();
     command_queue_.clear();
+    rpc_response_store_.clear();
     pending_inputs_.clear();
     events_.clear();
     lifecycle_events_.clear();
@@ -4109,6 +4133,10 @@ std::size_t KernelEngine::drain_simulation_commands() {
     simulation::Dispatcher dispatcher;
     for (const simulation::Command& command : commands) {
         const simulation::CommandResult result = dispatcher.dispatch(*this, command);
+        rpc_dispatcher_.complete_simulation_command(
+            command.completion_token,
+            command.id,
+            result);
         if (!result.ok) {
             ++failed_simulation_command_count_;
         }

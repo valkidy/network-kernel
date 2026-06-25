@@ -12,6 +12,7 @@ extern "C" {
 
 typedef struct KernelHandle KernelHandle;
 typedef struct KernelLANDiscoveryHandle KernelLANDiscoveryHandle;
+typedef uint64_t KernelRpcRequestId;
 
 /*
  * C ABI ownership and lifetime rules:
@@ -53,6 +54,19 @@ void Kernel_LANDiscovery_ClearResults(KernelLANDiscoveryHandle* discovery);
 
 KernelHandle* Kernel_Create(const KernelConfig* config);
 void Kernel_Destroy(KernelHandle* kernel);
+
+bool Kernel_InvokeRpcCommand(
+    KernelHandle* kernel,
+    const char* request_json,
+    uint32_t request_json_size,
+    KernelRpcRequestId* out_request_id);
+
+bool Kernel_PollRpcResponse(
+    KernelHandle* kernel,
+    KernelRpcRequestId request_id,
+    char* out_response_json,
+    uint32_t response_json_capacity,
+    uint32_t* out_response_json_size);
 
 bool Kernel_StartClient(KernelHandle* kernel, const char* address);
 bool Kernel_StartClientCatalogSync(
@@ -171,27 +185,57 @@ uint32_t Kernel_GetColliderBindings(
     KernelColliderBindingDefinition* out_bindings,
     uint32_t max_bindings);
 
+KERNEL_RPC(R"json({
+  "method":"world.create_entity",
+  "authority":"developer_write",
+  "phase":"simulation_tick",
+  "audit":true
+})json")
 bool Kernel_ServerCreateEntity(
     KernelHandle* kernel,
     const KernelServerEntityCreateInfo* create_info,
     uint32_t* out_net_id);
 
+KERNEL_RPC(R"json({
+  "method":"world.destroy_entity",
+  "authority":"developer_write",
+  "phase":"simulation_tick",
+  "audit":true
+})json")
 bool Kernel_ServerDestroyEntity(
     KernelHandle* kernel,
     uint32_t net_id,
     uint32_t reason);
 
+KERNEL_RPC(R"json({
+  "method":"world.set_transform",
+  "authority":"developer_write",
+  "phase":"simulation_tick",
+  "audit":true
+})json")
 bool Kernel_ServerSetEntityTransform(
     KernelHandle* kernel,
     uint32_t net_id,
     const KernelVec3* position,
     const KernelQuat* rotation);
 
+KERNEL_RPC(R"json({
+  "method":"world.set_velocity",
+  "authority":"developer_write",
+  "phase":"simulation_tick",
+  "audit":true
+})json")
 bool Kernel_ServerSetEntityVelocity(
     KernelHandle* kernel,
     uint32_t net_id,
     const KernelVec3* velocity);
 
+KERNEL_RPC(R"json({
+  "method":"world.set_entity_state",
+  "authority":"developer_write",
+  "phase":"simulation_tick",
+  "audit":true
+})json")
 bool Kernel_ServerSetEntityState(
     KernelHandle* kernel,
     uint32_t net_id,

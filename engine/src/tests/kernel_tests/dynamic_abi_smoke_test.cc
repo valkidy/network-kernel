@@ -142,6 +142,23 @@ int main() {
         load_symbol<KernelHandle*(const KernelConfig*)>(library, "Kernel_Create");
     auto* kernel_destroy =
         load_symbol<void(KernelHandle*)>(library, "Kernel_Destroy");
+    [[maybe_unused]] auto* kernel_invoke_rpc =
+        load_symbol<bool(
+            KernelHandle*,
+            const char*,
+            std::uint32_t,
+            KernelRpcRequestId*)>(
+            library,
+            "Kernel_InvokeRpcCommand");
+    [[maybe_unused]] auto* kernel_poll_rpc_response =
+        load_symbol<bool(
+            KernelHandle*,
+            KernelRpcRequestId,
+            char*,
+            std::uint32_t,
+            std::uint32_t*)>(
+            library,
+            "Kernel_PollRpcResponse");
     [[maybe_unused]] auto* kernel_start_client =
         load_symbol<bool(KernelHandle*, const char*)>(library, "Kernel_StartClient");
     [[maybe_unused]] auto* kernel_start_client_catalog_sync =

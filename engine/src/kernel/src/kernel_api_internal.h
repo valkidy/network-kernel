@@ -39,6 +39,81 @@ typedef struct KernelEntityLifecycleCommand {
     KernelServerEntityCreateInfo create_info;
 } KernelEntityLifecycleCommand;
 
+KERNEL_RPC_STRUCT(R"json({"type":"KernelRpcEntityStateView"})json")
+typedef struct KernelRpcEntityStateView {
+    uint32_t struct_size;
+    uint32_t net_id;
+    uint16_t entity_type;
+    uint16_t actor_type;
+    uint32_t owner_peer;
+    KernelVec3 position;
+    KernelQuat rotation;
+    KernelVec3 velocity;
+    uint16_t hp;
+    uint16_t max_hp;
+    uint16_t animation_state;
+    uint32_t visual_flags;
+    uint32_t valid;
+    uint32_t actor_template_id;
+} KernelRpcEntityStateView;
+
+KERNEL_RPC_INTERNAL(R"json({
+  "method":"dev.ping",
+  "authority":"developer_read_only",
+  "phase":"immediate_read_only"
+})json")
+bool KernelRpc_DevPing(KernelHandle* kernel);
+
+KERNEL_RPC_INTERNAL(R"json({
+  "method":"dev.list_methods",
+  "authority":"developer_read_only",
+  "phase":"immediate_read_only",
+  "result_schema":{
+    "type":"object",
+    "properties":{"methods":{"type":"array","items":{"type":"object"}}},
+    "required":["methods"],
+    "additionalProperties":false
+  }
+})json")
+bool KernelRpc_DevListMethods(KernelHandle* kernel);
+
+KERNEL_RPC_INTERNAL(R"json({
+  "method":"dev.describe_method",
+  "authority":"developer_read_only",
+  "phase":"immediate_read_only",
+  "params_schema":{
+    "type":"object",
+    "properties":{"method":{"type":"string"}},
+    "required":["method"],
+    "additionalProperties":false
+  },
+  "result_schema":{"type":"object"}
+})json")
+bool KernelRpc_DevDescribeMethod(KernelHandle* kernel);
+
+KERNEL_RPC_INTERNAL(R"json({
+  "method":"dev.get_schema",
+  "authority":"developer_read_only",
+  "phase":"immediate_read_only",
+  "result_schema":{
+    "type":"object",
+    "properties":{"schema":{"type":"object"}},
+    "required":["schema"],
+    "additionalProperties":false
+  }
+})json")
+bool KernelRpc_DevGetSchema(KernelHandle* kernel);
+
+KERNEL_RPC_INTERNAL(R"json({
+  "method":"world.get_entity_state",
+  "authority":"developer_read_only",
+  "phase":"immediate_read_only"
+})json")
+bool KernelRpc_GetEntityState(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    KernelRpcEntityStateView* out_state);
+
 /*
  * Internal/experimental game_server migration bridge. Enqueues a lifecycle
  * command for the next simulation tick. Current version supports Destroy only;

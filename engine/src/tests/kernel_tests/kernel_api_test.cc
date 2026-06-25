@@ -141,7 +141,8 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 27u);
+    assert(KERNEL_ABI_VERSION == 29u);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_CONTROL_PLANE_RPC) != 0);
     assert(sizeof(KernelVec4) == 16u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS) != 0);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
@@ -220,6 +221,21 @@ int main() {
     require(!Kernel_GetBuildInfo(&build_info, sizeof(build_info) - 1));
 
     assert(Kernel_Create(nullptr) == nullptr);
+    KernelRpcRequestId rpc_request_id = 0;
+    const char rpc_request[] =
+        R"({"jsonrpc":"2.0","id":1,"method":"dev.ping","params":{}})";
+    assert(!Kernel_InvokeRpcCommand(
+        nullptr,
+        rpc_request,
+        sizeof(rpc_request) - 1,
+        &rpc_request_id));
+    std::uint32_t rpc_response_size = 0;
+    assert(!Kernel_PollRpcResponse(
+        nullptr,
+        rpc_request_id,
+        nullptr,
+        0,
+        &rpc_response_size));
     assert(!Kernel_StartClient(nullptr, "127.0.0.1:9"));
     assert(!Kernel_StartListenServer(nullptr, 7777));
     assert(!Kernel_StartDedicatedServer(nullptr, 7777));

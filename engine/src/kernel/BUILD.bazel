@@ -29,6 +29,33 @@ cc_library(
     deps = [":kernel_api"],
 )
 
+genrule(
+    name = "kernel_rpc_codegen",
+    srcs = [
+        "public/kernel_api.h",
+        "public/kernel_types.h",
+        "src/kernel_api_internal.h",
+    ],
+    outs = [
+        "src/kernel_rpc_methods.generated.cc",
+        "src/kernel_rpc_methods.generated.h",
+        "src/kernel_rpc_schema.generated.json",
+    ],
+    cmd = """
+$(location //tools:kernel_rpc_codegen) \
+  --header $(location public/kernel_types.h) \
+  --header $(location public/kernel_api.h) \
+  --header $(location src/kernel_api_internal.h) \
+  --output-dir $(RULEDIR)/src
+""",
+    tools = ["//tools:kernel_rpc_codegen"],
+)
+
+filegroup(
+    name = "kernel_rpc_schema",
+    srcs = [":src/kernel_rpc_schema.generated.json"],
+)
+
 cc_library(
     name = "tick_loop",
     srcs = ["src/tick_loop.cc"],
@@ -68,6 +95,8 @@ cc_library(
         "src/build_info.cc",
         "src/kernel.cc",
         "src/kernel_api.cc",
+        "src/kernel_rpc.cc",
+        ":src/kernel_rpc_methods.generated.cc",
         "src/lan_discovery.cc",
         "src/render_state_builder.cc",
         "//engine/src/simulation:src/command_dispatcher.cc",
@@ -78,6 +107,8 @@ cc_library(
         "src/build_info.h",
         "src/kernel.h",
         "src/kernel_api_internal.h",
+        "src/kernel_rpc.h",
+        ":src/kernel_rpc_methods.generated.h",
         "src/lan_discovery.h",
         "src/render_state_builder.h",
         "//engine/src/simulation:src/command_dispatcher.h",
@@ -95,6 +126,7 @@ cc_library(
         "//engine/src/world:world",
         "@fmt//:fmt",
         "@glm//:glm",
+        "@com_github_nlohmann_json//:json",
         "@spdlog//:spdlog",
     ],
 )
@@ -126,6 +158,8 @@ cc_shared_library(
             "-lcrypto",
             "-Wl,-exported_symbol,_Kernel_Create",
             "-Wl,-exported_symbol,_Kernel_Destroy",
+            "-Wl,-exported_symbol,_Kernel_InvokeRpcCommand",
+            "-Wl,-exported_symbol,_Kernel_PollRpcResponse",
             "-Wl,-exported_symbol,_Kernel_GetAbiInfo",
             "-Wl,-exported_symbol,_Kernel_GetBuildInfo",
             "-Wl,-exported_symbol,_Kernel_GetLocalPlayerInfo",

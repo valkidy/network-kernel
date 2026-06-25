@@ -66,6 +66,36 @@ void Kernel_Destroy(KernelHandle* kernel) {
     });
 }
 
+bool Kernel_InvokeRpcCommand(
+    KernelHandle* kernel,
+    const char* request_json,
+    uint32_t request_json_size,
+    KernelRpcRequestId* out_request_id) {
+    return abi_call("Kernel_InvokeRpcCommand", false, [&]() {
+        return kernel != nullptr && kernel->engine != nullptr &&
+               request_json != nullptr && out_request_id != nullptr &&
+               kernel->engine->invoke_rpc(
+                   std::string_view(request_json, request_json_size),
+                   out_request_id);
+    });
+}
+
+bool Kernel_PollRpcResponse(
+    KernelHandle* kernel,
+    KernelRpcRequestId request_id,
+    char* out_response_json,
+    uint32_t response_json_capacity,
+    uint32_t* out_response_json_size) {
+    return abi_call("Kernel_PollRpcResponse", false, [&]() {
+        return kernel != nullptr && kernel->engine != nullptr &&
+               kernel->engine->poll_rpc_response(
+                   request_id,
+                   out_response_json,
+                   response_json_capacity,
+                   out_response_json_size);
+    });
+}
+
 bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
     return abi_call("Kernel_GetAbiInfo", false, [&]() {
         if (out_info == nullptr || out_info_size < sizeof(KernelAbiInfo)) {
@@ -163,7 +193,8 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_NETWORK_STATS |
             KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS |
             KERNEL_CAPABILITY_VISION_STATE_QUERY |
-            KERNEL_CAPABILITY_GAMEPLAY_CATALOG_SYNC;
+            KERNEL_CAPABILITY_GAMEPLAY_CATALOG_SYNC |
+            KERNEL_CAPABILITY_CONTROL_PLANE_RPC;
         return true;
     });
 }
