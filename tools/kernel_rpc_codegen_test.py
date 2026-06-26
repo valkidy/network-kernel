@@ -62,6 +62,21 @@ typedef struct Unsupported {
         ):
             kernel_rpc_codegen.parse_headers([("unsupported.h", header)])
 
+    def test_rejects_reserved_rpc_namespace(self):
+        header = r'''
+KERNEL_RPC_INTERNAL(R"json({
+  "method":"rpc.discover",
+  "authority":"developer_read_only",
+  "phase":"immediate_read_only"
+})json")
+bool KernelRpc_Discover(KernelHandle* kernel);
+'''
+        with self.assertRaisesRegex(
+            kernel_rpc_codegen.CodegenError,
+            "reserved rpc namespace",
+        ):
+            kernel_rpc_codegen.parse_headers([("reserved.h", header)])
+
     def test_writes_deterministic_outputs(self):
         header = r'''
 KERNEL_RPC_INTERNAL(R"json({
@@ -79,6 +94,22 @@ bool KernelRpc_DevPing(KernelHandle* kernel);
                 (output_dir / "kernel_rpc_schema.generated.json").read_text()
             )
             self.assertEqual("dev.ping", schema["methods"][0]["method"])
+            self.assertEqual(
+                "json-rpc-2.0-restricted",
+                schema["protocol_profile"]["name"],
+            )
+            self.assertFalse(schema["protocol_profile"]["batch"])
+            self.assertFalse(schema["protocol_profile"]["notifications"])
+            self.assertTrue(schema["protocol_profile"]["params_may_be_omitted"])
+            self.assertEqual(
+                -32603,
+                schema["error_codes"]["internal_error"],
+            )
+            self.assertEqual(
+                -32004,
+                schema["error_codes"]["execution_failed"],
+            )
+            self.assertNotIn("response_pending", schema["error_codes"])
             generated_header = (
                 output_dir / "kernel_rpc_methods.generated.h"
             ).read_text()

@@ -156,6 +156,11 @@ def parse_headers(headers: Sequence[Tuple[str, str]]) -> Model:
             method_name = metadata.get("method")
             if not isinstance(method_name, str) or not method_name:
                 raise CodegenError(f"{source}: RPC method metadata requires method")
+            if method_name == "rpc" or method_name.startswith("rpc."):
+                raise CodegenError(
+                    f"{source}: reserved rpc namespace cannot be registered: "
+                    f"{method_name}"
+                )
             if method_name in method_names:
                 raise CodegenError(f"{source}: duplicate RPC method {method_name}")
             method_names.add(method_name)
@@ -330,6 +335,26 @@ def build_schema(model: Model) -> dict:
         )
     return {
         "jsonrpc": "2.0",
+        "protocol_profile": {
+            "name": "json-rpc-2.0-restricted",
+            "batch": False,
+            "notifications": False,
+            "params_style": "object",
+            "params_may_be_omitted": True,
+            "null_id": False,
+        },
+        "error_codes": {
+            "parse_error": -32700,
+            "invalid_request": -32600,
+            "method_not_found": -32601,
+            "invalid_params": -32602,
+            "internal_error": -32603,
+            "permission_denied": -32001,
+            "wrong_execution_phase": -32002,
+            "not_implemented": -32003,
+            "execution_failed": -32004,
+            "resource_not_found": -32005,
+        },
         "methods": methods,
         "reserved_scopes": ["agent.*", "director.*", "admin.*"],
     }

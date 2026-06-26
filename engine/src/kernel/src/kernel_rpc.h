@@ -29,6 +29,20 @@ enum class KernelRpcExecutionPhase {
     kPostSimulation,
 };
 
+enum class KernelRpcErrorCode : int {
+    ParseError = -32700,
+    InvalidRequest = -32600,
+    MethodNotFound = -32601,
+    InvalidParams = -32602,
+    InternalError = -32603,
+
+    PermissionDenied = -32001,
+    WrongExecutionPhase = -32002,
+    NotImplemented = -32003,
+    ExecutionFailed = -32004,
+    ResourceNotFound = -32005,
+};
+
 struct KernelRpcMethodDescriptor {
     std::string method;
     KernelRpcAuthority authority = KernelRpcAuthority::kDeveloperReadOnly;
@@ -72,7 +86,7 @@ public:
     bool complete_result(std::uint64_t request_id, std::string result_json);
     bool complete_error(
         std::uint64_t request_id,
-        int code,
+        KernelRpcErrorCode code,
         std::string_view message);
     bool poll(
         std::uint64_t request_id,
@@ -109,6 +123,12 @@ public:
         const simulation::CommandResult& result);
 
 private:
+    bool invoke_request(
+        KernelEngine& engine,
+        std::string_view request_json,
+        KernelRpcAuthority caller_authority,
+        std::uint64_t request_id);
+
     KernelRpcMethodRegistry* registry_ = nullptr;
     KernelRpcResponseStore* response_store_ = nullptr;
 };

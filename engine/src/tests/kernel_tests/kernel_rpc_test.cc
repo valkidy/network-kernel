@@ -10,10 +10,24 @@
 #include <nlohmann/json.hpp>
 
 #include "kernel/public/kernel_api.h"
+#include "kernel/src/kernel_rpc.h"
 
 namespace {
 
 using Json = nlohmann::json;
+
+static_assert(
+    static_cast<int>(network_example::KernelRpcErrorCode::ParseError) ==
+    -32700);
+static_assert(
+    static_cast<int>(
+        network_example::KernelRpcErrorCode::WrongExecutionPhase) == -32002);
+static_assert(
+    static_cast<int>(network_example::KernelRpcErrorCode::ExecutionFailed) ==
+    -32004);
+static_assert(
+    static_cast<int>(network_example::KernelRpcErrorCode::ResourceNotFound) ==
+    -32005);
 
 KernelConfig server_config() {
     KernelConfig config{};
@@ -80,6 +94,13 @@ void dev_methods_and_protocol_errors() {
     assert(ping["jsonrpc"] == "2.0");
     assert(ping["id"] == "ping-1");
     assert(ping["result"]["ok"] == true);
+
+    Json ping_without_params = poll(
+        kernel,
+        invoke(
+            kernel,
+            R"({"jsonrpc":"2.0","id":"ping-2","method":"dev.ping"})"));
+    assert(ping_without_params["result"]["ok"] == true);
 
     Json parse_error = poll(kernel, invoke(kernel, "{broken"));
     assert(parse_error["id"].is_null());
@@ -149,6 +170,7 @@ void dev_methods_and_protocol_errors() {
             kernel,
             R"({"jsonrpc":"2.0","id":6,"method":"world.get_entity_state","params":{"net_id":1}})"));
     assert(non_server["error"]["code"] == -32002);
+    assert(non_server["error"]["message"] == "Wrong execution phase");
 
     assert(!Kernel_PollRpcResponse(kernel, 999999, nullptr, 0, nullptr));
     Kernel_Destroy(kernel);
@@ -207,6 +229,14 @@ void query_and_mutation_phase_behavior() {
                 std::to_string(net_id) + "}}"));
     assert(state["result"]["state"]["net_id"] == net_id);
     assert(state["result"]["state"]["position"]["x"] == 1.0f);
+
+    Json missing_state = poll(
+        kernel,
+        invoke(
+            kernel,
+            R"({"jsonrpc":"2.0","id":16,"method":"world.get_entity_state","params":{"net_id":4294967295}})"));
+    assert(missing_state["error"]["code"] == -32005);
+    assert(missing_state["error"]["message"] == "Resource not found");
 
     const KernelRpcRequestId transform_request = invoke(
         kernel,
@@ -277,6 +307,17 @@ void query_and_mutation_phase_behavior() {
     KernelServerEntityState destroyed{};
     destroyed.struct_size = sizeof(destroyed);
     assert(!Kernel_ServerGetEntityState(kernel, net_id, &destroyed));
+
+    const KernelRpcRequestId destroy_missing_request = invoke(
+        kernel,
+        std::string(
+            R"({"jsonrpc":"2.0","id":17,"method":"world.destroy_entity","params":{"net_id":)") +
+            std::to_string(net_id) +
+            R"(,"reason":1}})");
+    Kernel_Update(kernel, 1.0f / 30.0f);
+    Json destroy_missing = poll(kernel, destroy_missing_request);
+    assert(destroy_missing["error"]["code"] == -32004);
+    assert(destroy_missing["error"]["message"] == "Execution failed");
 
     Kernel_Destroy(kernel);
 }

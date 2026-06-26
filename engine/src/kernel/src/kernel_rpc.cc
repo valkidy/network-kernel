@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <exception>
 #include <limits>
 #include <optional>
 #include <unordered_map>
@@ -18,13 +19,6 @@ namespace network_example {
 namespace {
 
 using Json = nlohmann::json;
-
-constexpr int kParseError = -32700;
-constexpr int kInvalidRequest = -32600;
-constexpr int kMethodNotFound = -32601;
-constexpr int kInvalidParams = -32602;
-constexpr int kAuthorityDenied = -32001;
-constexpr int kExecutionFailed = -32002;
 
 KernelRpcAuthority parse_authority(std::string_view value) {
     if (value == "developer_write") {
@@ -296,7 +290,7 @@ bool KernelRpcResponseStore::complete_result(
 
 bool KernelRpcResponseStore::complete_error(
     std::uint64_t request_id,
-    int code,
+    KernelRpcErrorCode code,
     std::string_view message) {
     const auto found = impl_->entries.find(request_id);
     if (found == impl_->entries.end() || found->second.response.has_value()) {
@@ -305,7 +299,11 @@ bool KernelRpcResponseStore::complete_error(
     const Json response = {
         {"jsonrpc", "2.0"},
         {"id", Json::parse(found->second.external_id_json)},
-        {"error", {{"code", code}, {"message", message}}},
+        {"error",
+         {
+             {"code", static_cast<int>(code)},
+             {"message", message},
+         }},
     };
     found->second.response = response.dump();
     return true;
@@ -366,20 +364,46 @@ bool KernelRpcDispatcher::invoke(
     }
     const std::uint64_t request_id = *out_request_id;
 
+    try {
+        return invoke_request(
+            engine,
+            request_json,
+            caller_authority,
+            request_id);
+    } catch (const std::exception&) {
+        response_store_->complete_error(
+            request_id,
+            KernelRpcErrorCode::InternalError,
+            "Internal error");
+        return true;
+    } catch (...) {
+        response_store_->complete_error(
+            request_id,
+            KernelRpcErrorCode::InternalError,
+            "Internal error");
+        return true;
+    }
+}
+
+bool KernelRpcDispatcher::invoke_request(
+    KernelEngine& engine,
+    std::string_view request_json,
+    KernelRpcAuthority caller_authority,
+    std::uint64_t request_id) {
     Json request;
     try {
         request = Json::parse(request_json.begin(), request_json.end());
     } catch (const Json::parse_error&) {
         response_store_->complete_error(
             request_id,
-            kParseError,
+            KernelRpcErrorCode::ParseError,
             "Parse error");
         return true;
     }
     if (!request.is_object()) {
         response_store_->complete_error(
             request_id,
-            kInvalidRequest,
+            KernelRpcErrorCode::InvalidRequest,
             "Invalid request");
         return true;
     }
@@ -393,41 +417,53 @@ bool KernelRpcDispatcher::invoke(
         !request.contains("method") || !request["method"].is_string()) {
         response_store_->complete_error(
             request_id,
-            kInvalidRequest,
+            KernelRpcErrorCode::InvalidRequest,
             "Invalid request");
         return true;
     }
     const std::string method = request["method"].get<std::string>();
     response_store_->set_context(request_id, request["id"].dump(), method);
-    if (!request.contains("params") || !request["params"].is_object()) {
-        response_store_->complete_error(
-            request_id,
-            kInvalidParams,
-            "Invalid params");
-        return true;
+    Json empty_params = Json::object();
+    const Json* params = &empty_params;
+    if (request.contains("params")) {
+        if (!request["params"].is_object()) {
+            response_store_->complete_error(
+                request_id,
+                KernelRpcErrorCode::InvalidParams,
+                "Invalid params");
+            return true;
+        }
+        params = &request["params"];
     }
-    const Json& params = request["params"];
+    const Json& params_value = *params;
     const KernelRpcMethodDescriptor* descriptor = registry_->find(method);
     if (descriptor == nullptr) {
         response_store_->complete_error(
             request_id,
-            kMethodNotFound,
+            KernelRpcErrorCode::MethodNotFound,
             "Method not found");
         return true;
     }
     if (!authority_allows(caller_authority, descriptor->authority)) {
         response_store_->complete_error(
             request_id,
-            kAuthorityDenied,
-            "Authority denied");
+            KernelRpcErrorCode::PermissionDenied,
+            "Permission denied");
+        return true;
+    }
+    if (descriptor->implementation != "implemented") {
+        response_store_->complete_error(
+            request_id,
+            KernelRpcErrorCode::NotImplemented,
+            "Not implemented");
         return true;
     }
 
     if (method == "dev.ping") {
-        if (!params.empty()) {
+        if (!params_value.empty()) {
             response_store_->complete_error(
                 request_id,
-                kInvalidParams,
+                KernelRpcErrorCode::InvalidParams,
                 "Invalid params");
         } else {
             response_store_->complete_result(request_id, R"({"ok":true})");
@@ -435,10 +471,10 @@ bool KernelRpcDispatcher::invoke(
         return true;
     }
     if (method == "dev.list_methods") {
-        if (!params.empty()) {
+        if (!params_value.empty()) {
             response_store_->complete_error(
                 request_id,
-                kInvalidParams,
+                KernelRpcErrorCode::InvalidParams,
                 "Invalid params");
             return true;
         }
@@ -457,15 +493,16 @@ bool KernelRpcDispatcher::invoke(
         return true;
     }
     if (method == "dev.describe_method") {
-        if (!has_exact_fields(params, {"method"}) ||
-            !params["method"].is_string()) {
+        if (!has_exact_fields(params_value, {"method"}) ||
+            !params_value["method"].is_string()) {
             response_store_->complete_error(
                 request_id,
-                kInvalidParams,
+                KernelRpcErrorCode::InvalidParams,
                 "Invalid params");
             return true;
         }
-        const std::string requested = params["method"].get<std::string>();
+        const std::string requested =
+            params_value["method"].get<std::string>();
         const Json schema = Json::parse(registry_->schema_json());
         const auto found = std::find_if(
             schema.at("methods").begin(),
@@ -476,7 +513,7 @@ bool KernelRpcDispatcher::invoke(
         if (found == schema.at("methods").end()) {
             response_store_->complete_error(
                 request_id,
-                kMethodNotFound,
+                KernelRpcErrorCode::MethodNotFound,
                 "Method not found");
         } else {
             response_store_->complete_result(request_id, found->dump());
@@ -484,10 +521,10 @@ bool KernelRpcDispatcher::invoke(
         return true;
     }
     if (method == "dev.get_schema") {
-        if (!params.empty()) {
+        if (!params_value.empty()) {
             response_store_->complete_error(
                 request_id,
-                kInvalidParams,
+                KernelRpcErrorCode::InvalidParams,
                 "Invalid params");
         } else {
             const Json result = {
@@ -503,17 +540,17 @@ bool KernelRpcDispatcher::invoke(
          engine.config_.mode != KernelMode_DedicatedServer)) {
         response_store_->complete_error(
             request_id,
-            kExecutionFailed,
-            "Execution failed");
+            KernelRpcErrorCode::WrongExecutionPhase,
+            "Wrong execution phase");
         return true;
     }
     if (method == "world.get_entity_state") {
         std::uint32_t net_id = 0;
-        if (!has_exact_fields(params, {"net_id"}) ||
-            !read_integer(params, "net_id", &net_id)) {
+        if (!has_exact_fields(params_value, {"net_id"}) ||
+            !read_integer(params_value, "net_id", &net_id)) {
             response_store_->complete_error(
                 request_id,
-                kInvalidParams,
+                KernelRpcErrorCode::InvalidParams,
                 "Invalid params");
             return true;
         }
@@ -522,8 +559,8 @@ bool KernelRpcDispatcher::invoke(
         if (!engine.server_get_entity_state(net_id, &state)) {
             response_store_->complete_error(
                 request_id,
-                kExecutionFailed,
-                "Execution failed");
+                KernelRpcErrorCode::ResourceNotFound,
+                "Resource not found");
         } else {
             response_store_->complete_result(
                 request_id,
@@ -537,9 +574,9 @@ bool KernelRpcDispatcher::invoke(
     command.completion_token = request_id;
     bool valid_params = false;
     if (method == "world.create_entity") {
-        valid_params = has_exact_fields(params, {"create_info"}) &&
+        valid_params = has_exact_fields(params_value, {"create_info"}) &&
                        has_exact_fields(
-                           params["create_info"],
+                           params_value["create_info"],
                            {
                                "entity_type",
                                "actor_type",
@@ -551,7 +588,7 @@ bool KernelRpcDispatcher::invoke(
                                "actor_template_id",
                            });
         if (valid_params) {
-            const Json& value = params["create_info"];
+            const Json& value = params_value["create_info"];
             KernelServerEntityCreateInfo& info =
                 command.create_entity.create_info;
             info.struct_size = sizeof(info);
@@ -573,57 +610,59 @@ bool KernelRpcDispatcher::invoke(
             command.id = simulation::CommandId::kCreateEntity;
         }
     } else if (method == "world.destroy_entity") {
-        valid_params = has_exact_fields(params, {"net_id", "reason"}) &&
-                       read_integer(
-                           params,
-                           "net_id",
-                           &command.destroy_entity.net_id) &&
-                       read_integer(
-                           params,
-                           "reason",
-                           &command.destroy_entity.reason);
+        valid_params =
+            has_exact_fields(params_value, {"net_id", "reason"}) &&
+            read_integer(
+                params_value,
+                "net_id",
+                &command.destroy_entity.net_id) &&
+            read_integer(
+                params_value,
+                "reason",
+                &command.destroy_entity.reason);
         command.id = simulation::CommandId::kDestroyEntity;
     } else if (method == "world.set_transform") {
         valid_params =
             has_exact_fields(
-                params,
+                params_value,
                 {"net_id", "position", "rotation"}) &&
             read_integer(
-                params,
+                params_value,
                 "net_id",
                 &command.set_entity_transform.net_id) &&
             read_vec3(
-                params["position"],
+                params_value["position"],
                 &command.set_entity_transform.position) &&
             read_quat(
-                params["rotation"],
+                params_value["rotation"],
                 &command.set_entity_transform.rotation);
         command.id = simulation::CommandId::kSetEntityTransform;
     } else if (method == "world.set_velocity") {
-        valid_params = has_exact_fields(params, {"net_id", "velocity"}) &&
-                       read_integer(
-                           params,
-                           "net_id",
-                           &command.set_entity_velocity.net_id) &&
-                       read_vec3(
-                           params["velocity"],
-                           &command.set_entity_velocity.velocity);
+        valid_params =
+            has_exact_fields(params_value, {"net_id", "velocity"}) &&
+            read_integer(
+                params_value,
+                "net_id",
+                &command.set_entity_velocity.net_id) &&
+            read_vec3(
+                params_value["velocity"],
+                &command.set_entity_velocity.velocity);
         command.id = simulation::CommandId::kSetEntityVelocity;
     } else if (method == "world.set_entity_state") {
         valid_params =
             has_exact_fields(
-                params,
+                params_value,
                 {"net_id", "animation_state", "visual_flags"}) &&
             read_integer(
-                params,
+                params_value,
                 "net_id",
                 &command.set_entity_state.net_id) &&
             read_integer(
-                params,
+                params_value,
                 "animation_state",
                 &command.set_entity_state.animation_state) &&
             read_integer(
-                params,
+                params_value,
                 "visual_flags",
                 &command.set_entity_state.visual_flags);
         command.id = simulation::CommandId::kSetEntityState;
@@ -631,14 +670,14 @@ bool KernelRpcDispatcher::invoke(
     if (!valid_params) {
         response_store_->complete_error(
             request_id,
-            kInvalidParams,
+            KernelRpcErrorCode::InvalidParams,
             "Invalid params");
         return true;
     }
     if (!engine.enqueue_simulation_command(command)) {
         response_store_->complete_error(
             request_id,
-            kExecutionFailed,
+            KernelRpcErrorCode::ExecutionFailed,
             "Execution failed");
     }
     return true;
@@ -667,7 +706,7 @@ void KernelRpcDispatcher::complete_simulation_command(
     if (!result.ok) {
         response_store_->complete_error(
             completion_token,
-            kExecutionFailed,
+            KernelRpcErrorCode::ExecutionFailed,
             "Execution failed");
         return;
     }
