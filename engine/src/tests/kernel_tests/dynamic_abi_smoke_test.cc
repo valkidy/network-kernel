@@ -142,6 +142,23 @@ int main() {
         load_symbol<KernelHandle*(const KernelConfig*)>(library, "Kernel_Create");
     auto* kernel_destroy =
         load_symbol<void(KernelHandle*)>(library, "Kernel_Destroy");
+    [[maybe_unused]] auto* kernel_invoke_rpc =
+        load_symbol<bool(
+            KernelHandle*,
+            const char*,
+            std::uint32_t,
+            KernelRpcRequestId*)>(
+            library,
+            "Kernel_InvokeRpcCommand");
+    [[maybe_unused]] auto* kernel_poll_rpc_response =
+        load_symbol<bool(
+            KernelHandle*,
+            KernelRpcRequestId,
+            char*,
+            std::uint32_t,
+            std::uint32_t*)>(
+            library,
+            "Kernel_PollRpcResponse");
     [[maybe_unused]] auto* kernel_start_client =
         load_symbol<bool(KernelHandle*, const char*)>(library, "Kernel_StartClient");
     [[maybe_unused]] auto* kernel_start_client_catalog_sync =
@@ -289,6 +306,10 @@ int main() {
         load_symbol<bool(KernelHandle*, std::uint32_t, std::uint16_t, std::uint32_t)>(
             library,
             "Kernel_ServerSetEntityState");
+    auto* kernel_server_set_entity_health =
+        load_symbol<bool(KernelHandle*, std::uint32_t, std::uint16_t)>(
+            library,
+            "Kernel_ServerSetEntityHealth");
     [[maybe_unused]] auto* kernel_server_submit_entity_input =
         load_symbol<bool(KernelHandle*, std::uint32_t, const PlayerInput*)>(
             library,
@@ -599,6 +620,12 @@ int main() {
     assert(server_state.hp == 240);
     assert(server_state.max_hp == 240);
     assert(server_state.animation_state == 4);
+    assert(kernel_server_set_entity_health(kernel, enemy, 123));
+    server_state = KernelServerEntityState{};
+    server_state.struct_size = sizeof(server_state);
+    assert(kernel_server_get_entity_state(kernel, enemy, &server_state));
+    assert(server_state.hp == 123);
+    assert(server_state.max_hp == 240);
     assert(kernel_server_destroy_entity(
         kernel,
         enemy,

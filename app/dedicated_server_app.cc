@@ -21,8 +21,8 @@ KernelConfig default_config() {
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;
     config.tick = network_example::current_netcode_preset();
-    config.max_render_states = 256;
-    config.max_events = 256;
+    config.max_render_states = 2048;
+    config.max_events = 2048;
     return config;
 }
 

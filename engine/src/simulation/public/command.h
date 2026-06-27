@@ -20,6 +20,7 @@ enum class CommandId : std::uint8_t {
     kSetEntityVelocity,
     kSetEntityState,
     kSetEntityActorTemplate,
+    kSetEntityHealth,
 };
 
 enum class CommandSource : std::uint8_t {
@@ -69,6 +70,7 @@ struct SetEntityActorTemplate {
 struct Command {
     CommandId id = CommandId::kUnknown;
     CommandSource source = CommandSource::kInternal;
+    std::uint64_t completion_token = 0;
     CreateEntity create_entity{};
     DestroyEntity destroy_entity{};
     SubmitInput submit_input{};

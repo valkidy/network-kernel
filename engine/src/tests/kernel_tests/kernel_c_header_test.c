@@ -81,7 +81,7 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 28u);
+    assert(KERNEL_ABI_VERSION == 30u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD == 4u);
@@ -128,6 +128,7 @@ int main(void) {
     assert(sizeof(KernelVisionStateView) > 0u);
     assert(KernelActorType_Player == 1);
     assert(KernelActorType_Agent == 2);
+    assert(sizeof(&Kernel_ServerSetEntityHealth) > 0u);
     assert(KernelAgentCamp_PlayerSide == 1);
     assert(KernelAgentRelation_Hostile == 2);
     assert(KernelColliderShapeType_Cone == 4);

@@ -5,12 +5,14 @@
 #include <cstdint>
 #include <array>
 #include <memory>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 #include "kernel/public/kernel_types.h"
 #include "kernel/src/kernel_api_internal.h"
+#include "kernel/src/kernel_rpc.h"
 #include "kernel/src/tick_loop.h"
 #include "simulation/public/command.h"
 #include "simulation/public/simulation.h"
@@ -56,6 +58,14 @@ public:
         std::uint32_t out_capacity,
         std::uint32_t* out_bundle_size) const;
     bool continue_client_handshake();
+    bool invoke_rpc(
+        std::string_view request_json,
+        std::uint64_t* out_request_id);
+    bool poll_rpc_response(
+        std::uint64_t request_id,
+        char* out_response_json,
+        std::uint32_t response_json_capacity,
+        std::uint32_t* out_response_json_size);
 
     void update(float delta_seconds);
     void submit_input(PeerId local_player_id, const PlayerInput& input);
@@ -115,6 +125,7 @@ public:
         NetId net_id,
         std::uint16_t animation_state,
         std::uint32_t visual_flags);
+    bool server_set_entity_health(NetId net_id, std::uint16_t hp);
     bool server_submit_entity_input(NetId net_id, const PlayerInput& input);
     bool server_enqueue_entity_transform(
         std::uint32_t command_source,
@@ -175,6 +186,8 @@ private:
     friend class EntityLifecycleSystem;
     friend class EntityStateSystem;
     friend class MovementSystem;
+    friend class KernelRpcDispatcher;
+    friend class KernelRpcWorldHandlers;
     friend class simulation::Dispatcher;
 
     struct PeerSession {
@@ -428,6 +441,9 @@ private:
     std::unordered_map<NetId, KernelAgentVisionConfig> vision_configs_;
     std::unordered_map<NetId, VisionRuntimeState> vision_states_;
     simulation::CommandQueue command_queue_;
+    KernelRpcMethodRegistry rpc_method_registry_;
+    KernelRpcResponseStore rpc_response_store_;
+    KernelRpcDispatcher rpc_dispatcher_;
     std::uint64_t rejected_simulation_command_count_ = 0;
     std::uint64_t failed_simulation_command_count_ = 0;
     std::uint32_t command_queue_capacity_warning_count_ = 0;

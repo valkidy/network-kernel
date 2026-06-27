@@ -24,8 +24,8 @@ KernelConfig default_config() {
     // The short host-server smoke sample reads render states after only a few
     // scripted frames, so keep per-tick snapshots for that local presentation path.
     config.tick.snapshot_rate = config.tick.server_tick_rate;
-    config.max_render_states = 256;
-    config.max_events = 256;
+    config.max_render_states = 2048;
+    config.max_events = 2048;
     return config;
 }
 

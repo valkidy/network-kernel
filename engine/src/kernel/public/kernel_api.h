@@ -12,6 +12,7 @@ extern "C" {
 
 typedef struct KernelHandle KernelHandle;
 typedef struct KernelLANDiscoveryHandle KernelLANDiscoveryHandle;
+typedef uint64_t KernelRpcRequestId;
 
 /*
  * C ABI ownership and lifetime rules:
@@ -53,6 +54,19 @@ void Kernel_LANDiscovery_ClearResults(KernelLANDiscoveryHandle* discovery);
 
 KernelHandle* Kernel_Create(const KernelConfig* config);
 void Kernel_Destroy(KernelHandle* kernel);
+
+bool Kernel_InvokeRpcCommand(
+    KernelHandle* kernel,
+    const char* request_json,
+    uint32_t request_json_size,
+    KernelRpcRequestId* out_request_id);
+
+bool Kernel_PollRpcResponse(
+    KernelHandle* kernel,
+    KernelRpcRequestId request_id,
+    char* out_response_json,
+    uint32_t response_json_capacity,
+    uint32_t* out_response_json_size);
 
 bool Kernel_StartClient(KernelHandle* kernel, const char* address);
 bool Kernel_StartClientCatalogSync(
@@ -171,32 +185,98 @@ uint32_t Kernel_GetColliderBindings(
     KernelColliderBindingDefinition* out_bindings,
     uint32_t max_bindings);
 
+KERNEL_RPC(R"json({
+  "method":"world.create_entity",
+  "authority":"developer_write",
+  "phase":"simulation_tick",
+  "audit":true,
+  "params":[
+    {"name":"create_info","type":"KernelServerEntityCreateInfo","passing":"const_ptr"}
+  ]
+})json")
 bool Kernel_ServerCreateEntity(
     KernelHandle* kernel,
     const KernelServerEntityCreateInfo* create_info,
     uint32_t* out_net_id);
 
+KERNEL_RPC(R"json({
+  "method":"world.destroy_entity",
+  "authority":"developer_write",
+  "phase":"simulation_tick",
+  "audit":true,
+  "params":[
+    {"name":"net_id","type":"uint32_t","passing":"value"},
+    {"name":"reason","type":"uint32_t","passing":"value"}
+  ]
+})json")
 bool Kernel_ServerDestroyEntity(
     KernelHandle* kernel,
     uint32_t net_id,
     uint32_t reason);
 
+KERNEL_RPC(R"json({
+  "method":"world.set_transform",
+  "authority":"developer_write",
+  "phase":"simulation_tick",
+  "audit":true,
+  "params":[
+    {"name":"net_id","type":"uint32_t","passing":"value"},
+    {"name":"position","type":"KernelVec3","passing":"const_ptr"},
+    {"name":"rotation","type":"KernelQuat","passing":"const_ptr"}
+  ]
+})json")
 bool Kernel_ServerSetEntityTransform(
     KernelHandle* kernel,
     uint32_t net_id,
     const KernelVec3* position,
     const KernelQuat* rotation);
 
+KERNEL_RPC(R"json({
+  "method":"world.set_velocity",
+  "authority":"developer_write",
+  "phase":"simulation_tick",
+  "audit":true,
+  "params":[
+    {"name":"net_id","type":"uint32_t","passing":"value"},
+    {"name":"velocity","type":"KernelVec3","passing":"const_ptr"}
+  ]
+})json")
 bool Kernel_ServerSetEntityVelocity(
     KernelHandle* kernel,
     uint32_t net_id,
     const KernelVec3* velocity);
 
+KERNEL_RPC(R"json({
+  "method":"world.set_entity_state",
+  "authority":"developer_write",
+  "phase":"simulation_tick",
+  "audit":true,
+  "params":[
+    {"name":"net_id","type":"uint32_t","passing":"value"},
+    {"name":"animation_state","type":"uint16_t","passing":"value"},
+    {"name":"visual_flags","type":"uint32_t","passing":"value"}
+  ]
+})json")
 bool Kernel_ServerSetEntityState(
     KernelHandle* kernel,
     uint32_t net_id,
     uint16_t animation_state,
     uint32_t visual_flags);
+
+KERNEL_RPC(R"json({
+  "method":"world.set_entity_health",
+  "authority":"developer_write",
+  "phase":"simulation_tick",
+  "audit":true,
+  "params":[
+    {"name":"net_id","type":"uint32_t","passing":"value"},
+    {"name":"hp","type":"uint16_t","passing":"value"}
+  ]
+})json")
+bool Kernel_ServerSetEntityHealth(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    uint16_t hp);
 
 bool Kernel_ServerSubmitEntityInput(
     KernelHandle* kernel,
