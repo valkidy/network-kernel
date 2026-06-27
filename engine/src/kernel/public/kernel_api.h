@@ -242,6 +242,17 @@ bool Kernel_ServerSetEntityState(
     uint16_t animation_state,
     uint32_t visual_flags);
 
+KERNEL_RPC(R"json({
+  "method":"world.set_entity_health",
+  "authority":"developer_write",
+  "phase":"simulation_tick",
+  "audit":true
+})json")
+bool Kernel_ServerSetEntityHealth(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    uint16_t hp);
+
 bool Kernel_ServerSubmitEntityInput(
     KernelHandle* kernel,
     uint32_t net_id,

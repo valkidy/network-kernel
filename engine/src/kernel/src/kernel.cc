@@ -2208,6 +2208,18 @@ bool KernelEngine::server_set_entity_state(
         visual_flags);
 }
 
+bool KernelEngine::server_set_entity_health(NetId net_id, std::uint16_t hp) {
+    if (!running_ || !is_server_mode(config_.mode) || net_id == 0) {
+        return false;
+    }
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value() || !world_.registry().all_of<Health>(*entity)) {
+        return false;
+    }
+    world_.registry().get<Health>(*entity).hp = hp;
+    return true;
+}
+
 bool KernelEngine::server_submit_entity_input(NetId net_id, const PlayerInput& input) {
     return MovementSystem{}.submit_input(*this, net_id, input);
 }

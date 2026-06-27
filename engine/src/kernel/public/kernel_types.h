@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 29u
+#define KERNEL_ABI_VERSION 30u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)

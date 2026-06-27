@@ -54,6 +54,12 @@ CommandResult Dispatcher::dispatch(
                     command.set_entity_state.animation_state,
                     command.set_entity_state.visual_flags),
                 command.set_entity_state.net_id};
+        case CommandId::kSetEntityHealth:
+            return CommandResult{
+                engine.server_set_entity_health(
+                    command.set_entity_state.net_id,
+                    command.set_entity_state.animation_state),
+                command.set_entity_state.net_id};
         case CommandId::kSetEntityActorTemplate:
             return CommandResult{
                 EntityStateSystem{}.set_actor_template(

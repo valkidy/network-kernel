@@ -20,6 +20,7 @@ enum class CommandId : std::uint8_t {
     kSetEntityVelocity,
     kSetEntityState,
     kSetEntityActorTemplate,
+    kSetEntityHealth,
 };
 
 enum class CommandSource : std::uint8_t {

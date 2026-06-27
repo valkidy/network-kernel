@@ -125,6 +125,7 @@ public:
         NetId net_id,
         std::uint16_t animation_state,
         std::uint32_t visual_flags);
+    bool server_set_entity_health(NetId net_id, std::uint16_t hp);
     bool server_submit_entity_input(NetId net_id, const PlayerInput& input);
     bool server_enqueue_entity_transform(
         std::uint32_t command_source,

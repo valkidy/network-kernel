@@ -37,6 +37,65 @@ bool has_version_revision_suffix(const char* value) {
     return all_digits(text.c_str() + std::strlen(kPrefix));
 }
 
+void server_set_entity_health_updates_hp_only() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    KernelHandle* kernel = Kernel_Create(&config);
+    assert(kernel != nullptr);
+
+    KernelColliderTemplateDefinition collider_template{};
+    collider_template.struct_size = sizeof(collider_template);
+    collider_template.template_id = 10;
+    collider_template.shape_type = KernelColliderShapeType_Aabb;
+    collider_template.center = KernelVec3{0.0f, 0.8f, 0.0f};
+    collider_template.shape_params = KernelVec4{0.25f, 0.25f, 0.25f, 0.0f};
+    collider_template.layer_mask = KERNEL_COLLISION_LAYER_PROJECTILE;
+    collider_template.purpose_flags = KernelColliderPurpose_Damage;
+    std::array<KernelColliderTemplateDefinition, 1> collider_templates = {
+        collider_template,
+    };
+    KernelGameplayCatalogDefinition catalog{};
+    catalog.struct_size = sizeof(catalog);
+    catalog.catalog_version = 33;
+    catalog.catalog_hash = 0x33445566ull;
+    catalog.collider_templates = collider_templates.data();
+    catalog.collider_template_count =
+        static_cast<std::uint32_t>(collider_templates.size());
+    assert(Kernel_LoadGameplayCatalog(kernel, &catalog));
+    assert(Kernel_StartDedicatedServer(kernel, 7812));
+
+    KernelServerEntityCreateInfo create_info{};
+    create_info.struct_size = sizeof(create_info);
+    create_info.entity_type = 1;
+    create_info.actor_type = KernelActorType_Agent;
+    create_info.position = KernelVec3{1.0f, 0.0f, 0.0f};
+    create_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+    std::uint32_t net_id = 0;
+    assert(Kernel_ServerCreateEntity(kernel, &create_info, &net_id));
+
+    KernelCombatStateDefinition combat_state{};
+    combat_state.struct_size = sizeof(combat_state);
+    combat_state.hp = 240;
+    combat_state.max_hp = 240;
+    combat_state.collider_template_id = 10;
+    combat_state.hitbox_center = KernelVec3{0.0f, 0.8f, 0.0f};
+    combat_state.hitbox_half_extents = KernelVec3{0.4f, 0.8f, 0.4f};
+    assert(Kernel_ServerSetEntityCombatState(kernel, net_id, &combat_state));
+
+    assert(Kernel_ServerSetEntityHealth(kernel, net_id, 123));
+    assert(!Kernel_ServerSetEntityHealth(kernel, 0xffffffffu, 1));
+    KernelServerEntityState state{};
+    state.struct_size = sizeof(state);
+    assert(Kernel_ServerGetEntityState(kernel, net_id, &state));
+    assert(state.hp == 123);
+    assert(state.max_hp == 240);
+
+    Kernel_Destroy(kernel);
+}
+
 }  // namespace
 
 int main() {
@@ -141,7 +200,7 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 29u);
+    assert(KERNEL_ABI_VERSION == 30u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CONTROL_PLANE_RPC) != 0);
     assert(sizeof(KernelVec4) == 16u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS) != 0);
@@ -316,6 +375,7 @@ int main() {
         &create_info.rotation));
     assert(!Kernel_ServerSetEntityVelocity(nullptr, 1, &create_info.position));
     assert(!Kernel_ServerSetEntityState(nullptr, 1, 2, 3));
+    assert(!Kernel_ServerSetEntityHealth(nullptr, 1, 2));
     PlayerInput server_entity_input{};
     assert(!Kernel_ServerSubmitEntityInput(nullptr, 1, &server_entity_input));
     KernelCombatStateDefinition combat_state{};
@@ -1104,5 +1164,6 @@ int main() {
     assert(!Kernel_ServerClearEntityWeaponMechanics(kernel, created_net_id, 3));
 
     Kernel_Destroy(kernel);
+    server_set_entity_health_updates_hp_only();
     return 0;
 }

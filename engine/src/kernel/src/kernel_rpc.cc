@@ -5,6 +5,7 @@
 #include <exception>
 #include <limits>
 #include <optional>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 
@@ -111,7 +112,29 @@ bool read_integer(const Json& object, const char* name, T* out_value) {
         return false;
     }
     try {
-        *out_value = object[name].get<T>();
+        if constexpr (std::is_unsigned_v<T>) {
+            std::uint64_t value = 0;
+            if (object[name].is_number_unsigned()) {
+                value = object[name].get<std::uint64_t>();
+            } else {
+                const auto signed_value = object[name].get<std::int64_t>();
+                if (signed_value < 0) {
+                    return false;
+                }
+                value = static_cast<std::uint64_t>(signed_value);
+            }
+            if (value > std::numeric_limits<T>::max()) {
+                return false;
+            }
+            *out_value = static_cast<T>(value);
+        } else {
+            const auto value = object[name].get<std::int64_t>();
+            if (value < static_cast<std::int64_t>(std::numeric_limits<T>::min()) ||
+                value > static_cast<std::int64_t>(std::numeric_limits<T>::max())) {
+                return false;
+            }
+            *out_value = static_cast<T>(value);
+        }
         return true;
     } catch (const Json::exception&) {
         return false;
@@ -666,6 +689,18 @@ bool KernelRpcDispatcher::invoke_request(
                 "visual_flags",
                 &command.set_entity_state.visual_flags);
         command.id = simulation::CommandId::kSetEntityState;
+    } else if (method == "world.set_entity_health") {
+        valid_params =
+            has_exact_fields(params_value, {"net_id", "hp"}) &&
+            read_integer(
+                params_value,
+                "net_id",
+                &command.set_entity_state.net_id) &&
+            read_integer(
+                params_value,
+                "hp",
+                &command.set_entity_state.animation_state);
+        command.id = simulation::CommandId::kSetEntityHealth;
     }
     if (!valid_params) {
         response_store_->complete_error(

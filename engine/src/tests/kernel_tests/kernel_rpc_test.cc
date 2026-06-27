@@ -2,6 +2,7 @@
 #undef NDEBUG
 #endif
 
+#include <array>
 #include <cassert>
 #include <cstdint>
 #include <string>
@@ -35,6 +36,28 @@ KernelConfig server_config() {
     config.tick.server_tick_rate = 30;
     config.tick.snapshot_rate = 15;
     return config;
+}
+
+void load_health_catalog(KernelHandle* kernel) {
+    KernelColliderTemplateDefinition collider_template{};
+    collider_template.struct_size = sizeof(collider_template);
+    collider_template.template_id = 10;
+    collider_template.shape_type = KernelColliderShapeType_Aabb;
+    collider_template.center = KernelVec3{0.0f, 0.8f, 0.0f};
+    collider_template.shape_params = KernelVec4{0.25f, 0.25f, 0.25f, 0.0f};
+    collider_template.layer_mask = KERNEL_COLLISION_LAYER_PROJECTILE;
+    collider_template.purpose_flags = KernelColliderPurpose_Damage;
+    std::array<KernelColliderTemplateDefinition, 1> collider_templates = {
+        collider_template,
+    };
+    KernelGameplayCatalogDefinition catalog{};
+    catalog.struct_size = sizeof(catalog);
+    catalog.catalog_version = 1;
+    catalog.catalog_hash = 0x1234ull;
+    catalog.collider_templates = collider_templates.data();
+    catalog.collider_template_count =
+        static_cast<std::uint32_t>(collider_templates.size());
+    assert(Kernel_LoadGameplayCatalog(kernel, &catalog));
 }
 
 KernelRpcRequestId invoke(KernelHandle* kernel, const std::string& request) {
@@ -209,6 +232,7 @@ void query_and_mutation_phase_behavior() {
     KernelConfig config = server_config();
     KernelHandle* kernel = Kernel_Create(&config);
     assert(kernel != nullptr);
+    load_health_catalog(kernel);
     assert(Kernel_StartDedicatedServer(kernel, 7811));
 
     KernelServerEntityCreateInfo create_info{};
@@ -219,6 +243,15 @@ void query_and_mutation_phase_behavior() {
     create_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
     std::uint32_t net_id = 0;
     assert(Kernel_ServerCreateEntity(kernel, &create_info, &net_id));
+    KernelCombatStateDefinition combat_state{};
+    combat_state.struct_size = sizeof(combat_state);
+    combat_state.hp = 240;
+    combat_state.max_hp = 240;
+    combat_state.active_weapon_id = 0;
+    combat_state.collider_template_id = 10;
+    combat_state.hitbox_center = KernelVec3{0.0f, 0.8f, 0.0f};
+    combat_state.hitbox_half_extents = KernelVec3{0.4f, 0.8f, 0.4f};
+    assert(Kernel_ServerSetEntityCombatState(kernel, net_id, &combat_state));
 
     Json state = poll(
         kernel,
@@ -286,6 +319,32 @@ void query_and_mutation_phase_behavior() {
     assert(updated.velocity.z == 3.0f);
     assert(updated.animation_state == 7);
     assert((updated.visual_flags & 9u) == 9u);
+    assert(updated.hp == 240);
+    assert(updated.max_hp == 240);
+
+    const KernelRpcRequestId invalid_health_request = invoke(
+        kernel,
+        std::string(
+            R"({"jsonrpc":"2.0","id":18,"method":"world.set_entity_health","params":{"net_id":)") +
+            std::to_string(net_id) +
+            R"(,"hp":70000}})");
+    Json invalid_health = poll(kernel, invalid_health_request);
+    assert(invalid_health["error"]["code"] == -32602);
+
+    const KernelRpcRequestId health_request = invoke(
+        kernel,
+        std::string(
+            R"({"jsonrpc":"2.0","id":19,"method":"world.set_entity_health","params":{"net_id":)") +
+            std::to_string(net_id) + R"(,"hp":123}})");
+    assert(!response_ready(kernel, health_request));
+    Kernel_Update(kernel, 1.0f / 30.0f);
+    assert(poll(kernel, health_request)["result"]["ok"] == true);
+
+    KernelServerEntityState health_updated{};
+    health_updated.struct_size = sizeof(health_updated);
+    assert(Kernel_ServerGetEntityState(kernel, net_id, &health_updated));
+    assert(health_updated.hp == 123);
+    assert(health_updated.max_hp == 240);
 
     const KernelRpcRequestId create_request = invoke(
         kernel,
@@ -307,6 +366,16 @@ void query_and_mutation_phase_behavior() {
     KernelServerEntityState destroyed{};
     destroyed.struct_size = sizeof(destroyed);
     assert(!Kernel_ServerGetEntityState(kernel, net_id, &destroyed));
+
+    const KernelRpcRequestId health_destroyed_request = invoke(
+        kernel,
+        std::string(
+            R"({"jsonrpc":"2.0","id":20,"method":"world.set_entity_health","params":{"net_id":)") +
+            std::to_string(net_id) + R"(,"hp":1}})");
+    Kernel_Update(kernel, 1.0f / 30.0f);
+    Json health_destroyed = poll(kernel, health_destroyed_request);
+    assert(health_destroyed["error"]["code"] == -32004);
+    assert(health_destroyed["error"]["message"] == "Execution failed");
 
     const KernelRpcRequestId destroy_missing_request = invoke(
         kernel,

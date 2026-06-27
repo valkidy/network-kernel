@@ -656,6 +656,16 @@ bool Kernel_ServerSetEntityState(
     });
 }
 
+bool Kernel_ServerSetEntityHealth(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    uint16_t hp) {
+    return abi_call("Kernel_ServerSetEntityHealth", false, [&]() {
+        return kernel != nullptr &&
+               kernel->engine->server_set_entity_health(net_id, hp);
+    });
+}
+
 bool Kernel_ServerEnqueueEntityState(
     KernelHandle* kernel,
     uint32_t command_source,

@@ -28,11 +28,24 @@ bool Kernel_Example(
     KernelHandle* kernel,
     const ExampleInput* input,
     uint32_t* out_value);
+
+KERNEL_RPC(R"json({
+  "method":"world.set_entity_health",
+  "authority":"developer_write",
+  "phase":"simulation_tick"
+})json")
+bool Kernel_ServerSetEntityHealth(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    uint16_t hp);
 '''
         model = kernel_rpc_codegen.parse_headers([("example.h", header)])
 
         self.assertEqual(["ExampleInput"], sorted(model.structs))
-        self.assertEqual(["world.example"], [method.name for method in model.methods])
+        self.assertEqual(
+            ["world.example", "world.set_entity_health"],
+            [method.name for method in model.methods],
+        )
         schema = kernel_rpc_codegen.build_schema(model)
         method = schema["methods"][0]
         self.assertEqual("object", method["params"]["type"])
@@ -47,6 +60,11 @@ bool Kernel_Example(
         self.assertNotIn(
             "struct_size",
             method["params"]["properties"]["input"]["properties"],
+        )
+        health_method = schema["methods"][1]
+        self.assertEqual(
+            {"net_id", "hp"},
+            set(health_method["params"]["properties"]),
         )
 
     def test_rejects_fixed_arrays(self):
