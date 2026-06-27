@@ -18,7 +18,7 @@ namespace NetworkExample.Kernel.Editor
             KernelAbi.ValidateNativeAbi();
             GameServerAbi.ValidateNativeAbi();
             KernelAbiInfo info = KernelAbi.GetInfo();
-            Require(KernelConstants.AbiVersion == 28, "Managed kernel ABI version was not v28.");
+            Require(KernelConstants.AbiVersion == 30, "Managed kernel ABI version was not v30.");
             Require(
                 (info.capability_flags & KernelConstants.CapabilityEntityLifecycleEvents) != 0,
                 "Kernel lifecycle event capability was missing.");
@@ -28,6 +28,9 @@ namespace NetworkExample.Kernel.Editor
             Require(
                 (info.capability_flags & KernelConstants.CapabilityGameplayCatalogSync) != 0,
                 "Kernel gameplay catalog sync capability was missing.");
+            Require(
+                (info.capability_flags & KernelConstants.CapabilityControlPlaneRpc) != 0,
+                "Kernel control-plane RPC capability was missing.");
             Require(
                 info.gameplay_catalog_manifest_size ==
                     KernelGameplayCatalogManifest.StructSize,
@@ -115,6 +118,18 @@ namespace NetworkExample.Kernel.Editor
                     enemyState.max_hp == 240 &&
                     enemyState.actor_template_id == 404,
                     "Kernel_ServerSetEntityCombatState did not update enemy health.");
+                Require(
+                    kernel.ServerSetEntityHealth(enemyNetId, 123),
+                    "Kernel_ServerSetEntityHealth failed.");
+                Require(
+                    kernel.ServerGetEntityState(
+                        enemyNetId,
+                        out enemyState) &&
+                    enemyState.valid != 0 &&
+                    enemyState.hp == 123 &&
+                    enemyState.max_hp == 240,
+                    "Kernel_ServerSetEntityHealth did not update hp only.");
+                RequireControlPlaneRpc(kernel, enemyNetId);
 
                 var states = new RenderEntityState[16];
                 kernel.Update(0.0f);
@@ -178,7 +193,31 @@ namespace NetworkExample.Kernel.Editor
 
             RequireExternalGameplayCatalogSyncIfConfigured();
 
-            Debug.Log("Network kernel ABI 28 smoke passed.");
+            Debug.Log("Network kernel ABI 30 smoke passed.");
+        }
+
+        private static void RequireControlPlaneRpc(Kernel kernel, uint enemyNetId)
+        {
+            string requestJson =
+                "{\"jsonrpc\":\"2.0\",\"id\":101,\"method\":\"world.set_entity_health\",\"params\":{\"net_id\":" +
+                enemyNetId +
+                ",\"hp\":77}}";
+            Require(
+                kernel.InvokeRpcCommand(requestJson, out ulong requestId) && requestId != 0,
+                "Kernel_InvokeRpcCommand failed.");
+
+            kernel.Update(1.0f / 30.0f);
+            Require(
+                kernel.TryPollRpcResponse(requestId, out string responseJson) &&
+                !string.IsNullOrEmpty(responseJson) &&
+                responseJson.Contains("\"result\""),
+                "Kernel_PollRpcResponse did not return a successful response.");
+
+            Require(
+                kernel.ServerGetEntityState(enemyNetId, out KernelServerEntityState state) &&
+                state.valid != 0 &&
+                state.hp == 77,
+                "Control-plane RPC did not update entity health.");
         }
 
         private static void RequireLANDiscovery()

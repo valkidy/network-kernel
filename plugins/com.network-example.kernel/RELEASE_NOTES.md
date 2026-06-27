@@ -1,5 +1,11 @@
 0.6.6 release notes:
 
+- aligns Unity API with kernel ABI 30
+- adds control-plane RPC and entity health bindings
+
+
+0.6.6 release notes:
+
 - adds Unity gameplay catalog synchronization
 
 

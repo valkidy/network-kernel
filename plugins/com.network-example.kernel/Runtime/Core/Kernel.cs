@@ -1,5 +1,6 @@
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace NetworkExample.Kernel
 {
@@ -90,6 +91,70 @@ namespace NetworkExample.Kernel
         {
             ThrowIfDisposed();
             return KernelNative.Kernel_StartDedicatedServer(handle, port);
+        }
+
+        public bool InvokeRpcCommand(string requestJson, out ulong requestId)
+        {
+            ThrowIfDisposed();
+            if (requestJson == null)
+            {
+                throw new ArgumentNullException(nameof(requestJson));
+            }
+
+            byte[] requestBytes = Encoding.UTF8.GetBytes(requestJson);
+            return KernelNative.Kernel_InvokeRpcCommand(
+                handle,
+                requestBytes,
+                (uint)requestBytes.Length,
+                out requestId);
+        }
+
+        public bool TryPollRpcResponse(ulong requestId, out string responseJson)
+        {
+            ThrowIfDisposed();
+            responseJson = null;
+            if (!KernelNative.Kernel_PollRpcResponse(
+                    handle,
+                    requestId,
+                    IntPtr.Zero,
+                    0,
+                    out uint requiredSize) &&
+                requiredSize == 0)
+            {
+                return false;
+            }
+            if (requiredSize > int.MaxValue)
+            {
+                throw new InvalidOperationException(
+                    $"Kernel RPC response is too large: {requiredSize} bytes.");
+            }
+            if (requiredSize == 0)
+            {
+                return false;
+            }
+
+            IntPtr responsePtr = Marshal.AllocHGlobal((int)requiredSize);
+            try
+            {
+                if (!KernelNative.Kernel_PollRpcResponse(
+                        handle,
+                        requestId,
+                        responsePtr,
+                        requiredSize,
+                        out uint responseSize))
+                {
+                    return false;
+                }
+
+                byte[] responseBytes = new byte[responseSize];
+                Marshal.Copy(responsePtr, responseBytes, 0, (int)responseSize);
+                responseJson = Encoding.UTF8.GetString(responseBytes);
+                return true;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(responsePtr);
+            }
         }
 
         public bool SetGameplayCatalogSyncBundle(
@@ -528,6 +593,12 @@ namespace NetworkExample.Kernel
                 netId,
                 animationState,
                 visualFlags);
+        }
+
+        public bool ServerSetEntityHealth(uint netId, ushort hp)
+        {
+            ThrowIfDisposed();
+            return KernelNative.Kernel_ServerSetEntityHealth(handle, netId, hp);
         }
 
         public bool ServerSubmitEntityInput(uint netId, PlayerInput input)

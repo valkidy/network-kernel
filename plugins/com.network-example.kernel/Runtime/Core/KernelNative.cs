@@ -63,6 +63,23 @@ namespace NetworkExample.Kernel
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_InvokeRpcCommand(
+            IntPtr kernel,
+            [In] byte[] requestJson,
+            uint requestJsonSize,
+            out ulong outRequestId);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_PollRpcResponse(
+            IntPtr kernel,
+            ulong requestId,
+            IntPtr outResponseJson,
+            uint responseJsonCapacity,
+            out uint outResponseJsonSize);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
         internal static extern bool Kernel_StartClient(
             IntPtr kernel,
             [MarshalAs(UnmanagedType.LPStr)] string address);
@@ -253,6 +270,13 @@ namespace NetworkExample.Kernel
             uint netId,
             ushort animationState,
             uint visualFlags);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerSetEntityHealth(
+            IntPtr kernel,
+            uint netId,
+            ushort hp);
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)]

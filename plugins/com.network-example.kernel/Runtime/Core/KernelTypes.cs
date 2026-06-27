@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 28;
+        public const uint AbiVersion = 30;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int GameplayCatalogEntryPathSize = 128;
@@ -85,6 +85,7 @@ namespace NetworkExample.Kernel
         public const ulong CapabilityEntityLifecycleEvents = 0x0000000200000000UL;
         public const ulong CapabilityVisionStateQuery = 0x0000000400000000UL;
         public const ulong CapabilityGameplayCatalogSync = 0x0000000800000000UL;
+        public const ulong CapabilityControlPlaneRpc = 0x0000001000000000UL;
 
         public const uint CollisionLayerPlayer = 0x00000001U;
         public const uint CollisionLayerHostile = 0x00000002U;
