@@ -1,0 +1,138 @@
+#include "kernel/src/kernel_rpc_json_binding.h"
+
+#include <algorithm>
+
+namespace network_example::rpc_json {
+
+bool has_exact_fields(
+    const Json& object,
+    std::initializer_list<std::string_view> required) {
+    if (!object.is_object() || object.size() != required.size()) {
+        return false;
+    }
+    return std::all_of(
+        required.begin(),
+        required.end(),
+        [&object](std::string_view field) {
+            return object.contains(std::string(field));
+        });
+}
+
+bool read_json(const Json& value, bool* out_value) {
+    if (out_value == nullptr || !value.is_boolean()) {
+        return false;
+    }
+    *out_value = value.get<bool>();
+    return true;
+}
+
+bool read_json(const Json& value, float* out_value) {
+    if (out_value == nullptr || !value.is_number()) {
+        return false;
+    }
+    try {
+        *out_value = value.get<float>();
+        return true;
+    } catch (const Json::exception&) {
+        return false;
+    }
+}
+
+bool read_json(const Json& value, double* out_value) {
+    if (out_value == nullptr || !value.is_number()) {
+        return false;
+    }
+    try {
+        *out_value = value.get<double>();
+        return true;
+    } catch (const Json::exception&) {
+        return false;
+    }
+}
+
+bool read_json(const Json& value, KernelVec3* out_value) {
+    if (out_value == nullptr ||
+        !has_exact_fields(value, {"x", "y", "z"})) {
+        return false;
+    }
+    return read_param(value, "x", &out_value->x) &&
+           read_param(value, "y", &out_value->y) &&
+           read_param(value, "z", &out_value->z);
+}
+
+bool read_json(const Json& value, KernelQuat* out_value) {
+    if (out_value == nullptr ||
+        !has_exact_fields(value, {"x", "y", "z", "w"})) {
+        return false;
+    }
+    return read_param(value, "x", &out_value->x) &&
+           read_param(value, "y", &out_value->y) &&
+           read_param(value, "z", &out_value->z) &&
+           read_param(value, "w", &out_value->w);
+}
+
+bool read_json(const Json& value, KernelServerEntityCreateInfo* out_value) {
+    if (out_value == nullptr ||
+        !has_exact_fields(
+            value,
+            {
+                "entity_type",
+                "actor_type",
+                "owner_peer",
+                "position",
+                "rotation",
+                "animation_state",
+                "visual_flags",
+                "actor_template_id",
+            })) {
+        return false;
+    }
+    out_value->struct_size = sizeof(*out_value);
+    return read_param(value, "entity_type", &out_value->entity_type) &&
+           read_param(value, "actor_type", &out_value->actor_type) &&
+           read_param(value, "owner_peer", &out_value->owner_peer) &&
+           read_param(value, "position", &out_value->position) &&
+           read_param(value, "rotation", &out_value->rotation) &&
+           read_param(
+               value,
+               "animation_state",
+               &out_value->animation_state) &&
+           read_param(value, "visual_flags", &out_value->visual_flags) &&
+           read_param(
+               value,
+               "actor_template_id",
+               &out_value->actor_template_id);
+}
+
+Json vec3_json(const KernelVec3& value) {
+    return {{"x", value.x}, {"y", value.y}, {"z", value.z}};
+}
+
+Json quat_json(const KernelQuat& value) {
+    return {
+        {"x", value.x},
+        {"y", value.y},
+        {"z", value.z},
+        {"w", value.w},
+    };
+}
+
+Json entity_state_json(const KernelServerEntityState& state) {
+    return {
+        {"net_id", state.net_id},
+        {"entity_type", state.entity_type},
+        {"actor_type", state.actor_type},
+        {"owner_peer", state.owner_peer},
+        {"position", vec3_json(state.position)},
+        {"rotation", quat_json(state.rotation)},
+        {"velocity", vec3_json(state.velocity)},
+        {"hp", state.hp},
+        {"max_hp", state.max_hp},
+        {"animation_state", state.animation_state},
+        {"visual_flags", state.visual_flags},
+        {"valid", state.valid},
+        {"actor_template_id", state.actor_template_id},
+    };
+}
+
+}  // namespace network_example::rpc_json

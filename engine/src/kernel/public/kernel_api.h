@@ -189,7 +189,10 @@ KERNEL_RPC(R"json({
   "method":"world.create_entity",
   "authority":"developer_write",
   "phase":"simulation_tick",
-  "audit":true
+  "audit":true,
+  "params":[
+    {"name":"create_info","type":"KernelServerEntityCreateInfo","passing":"const_ptr"}
+  ]
 })json")
 bool Kernel_ServerCreateEntity(
     KernelHandle* kernel,
@@ -200,7 +203,11 @@ KERNEL_RPC(R"json({
   "method":"world.destroy_entity",
   "authority":"developer_write",
   "phase":"simulation_tick",
-  "audit":true
+  "audit":true,
+  "params":[
+    {"name":"net_id","type":"uint32_t","passing":"value"},
+    {"name":"reason","type":"uint32_t","passing":"value"}
+  ]
 })json")
 bool Kernel_ServerDestroyEntity(
     KernelHandle* kernel,
@@ -211,7 +218,12 @@ KERNEL_RPC(R"json({
   "method":"world.set_transform",
   "authority":"developer_write",
   "phase":"simulation_tick",
-  "audit":true
+  "audit":true,
+  "params":[
+    {"name":"net_id","type":"uint32_t","passing":"value"},
+    {"name":"position","type":"KernelVec3","passing":"const_ptr"},
+    {"name":"rotation","type":"KernelQuat","passing":"const_ptr"}
+  ]
 })json")
 bool Kernel_ServerSetEntityTransform(
     KernelHandle* kernel,
@@ -223,7 +235,11 @@ KERNEL_RPC(R"json({
   "method":"world.set_velocity",
   "authority":"developer_write",
   "phase":"simulation_tick",
-  "audit":true
+  "audit":true,
+  "params":[
+    {"name":"net_id","type":"uint32_t","passing":"value"},
+    {"name":"velocity","type":"KernelVec3","passing":"const_ptr"}
+  ]
 })json")
 bool Kernel_ServerSetEntityVelocity(
     KernelHandle* kernel,
@@ -234,7 +250,12 @@ KERNEL_RPC(R"json({
   "method":"world.set_entity_state",
   "authority":"developer_write",
   "phase":"simulation_tick",
-  "audit":true
+  "audit":true,
+  "params":[
+    {"name":"net_id","type":"uint32_t","passing":"value"},
+    {"name":"animation_state","type":"uint16_t","passing":"value"},
+    {"name":"visual_flags","type":"uint32_t","passing":"value"}
+  ]
 })json")
 bool Kernel_ServerSetEntityState(
     KernelHandle* kernel,
@@ -246,7 +267,11 @@ KERNEL_RPC(R"json({
   "method":"world.set_entity_health",
   "authority":"developer_write",
   "phase":"simulation_tick",
-  "audit":true
+  "audit":true,
+  "params":[
+    {"name":"net_id","type":"uint32_t","passing":"value"},
+    {"name":"hp","type":"uint16_t","passing":"value"}
+  ]
 })json")
 bool Kernel_ServerSetEntityHealth(
     KernelHandle* kernel,

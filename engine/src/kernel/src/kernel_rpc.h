@@ -7,12 +7,17 @@
 #include <string_view>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 namespace network_example {
 
 class KernelEngine;
+class KernelRpcMethodRegistry;
+class KernelRpcResponseStore;
 
 namespace simulation {
 enum class CommandId : std::uint8_t;
+struct Command;
 struct CommandResult;
 }  // namespace simulation
 
@@ -43,12 +48,29 @@ enum class KernelRpcErrorCode : int {
     ResourceNotFound = -32005,
 };
 
+using KernelRpcMethodHandler = bool (*)(
+    KernelEngine& engine,
+    const nlohmann::json& params,
+    std::uint64_t request_id,
+    KernelRpcResponseStore& response_store,
+    const KernelRpcMethodRegistry& registry);
+
+struct KernelRpcParameterDescriptor {
+    std::string name;
+    std::string type;
+    std::string passing;
+    std::string direction;
+};
+
 struct KernelRpcMethodDescriptor {
     std::string method;
     KernelRpcAuthority authority = KernelRpcAuthority::kDeveloperReadOnly;
     KernelRpcExecutionPhase phase =
         KernelRpcExecutionPhase::kImmediateReadOnly;
     std::string implementation;
+    bool internal = false;
+    std::vector<KernelRpcParameterDescriptor> parameters;
+    KernelRpcMethodHandler handler = nullptr;
 };
 
 class KernelRpcMethodRegistry {

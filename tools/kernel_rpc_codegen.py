@@ -22,6 +22,14 @@ class Field:
 
 
 @dataclasses.dataclass(frozen=True)
+class ParameterDescriptor:
+    name: str
+    c_type: str
+    passing: str
+    direction: str
+
+
+@dataclasses.dataclass(frozen=True)
 class Struct:
     name: str
     metadata: dict
@@ -237,6 +245,58 @@ def _validate_model(structs: Dict[str, Struct], methods: Sequence[Method]) -> No
                 raise CodegenError(
                     f"{method.name}: output parameter cannot be const"
                 )
+        _validate_annotation_params(method)
+
+
+def _parameter_descriptor(parameter: Field) -> ParameterDescriptor:
+    is_output = bool(parameter.pointer and not parameter.is_const)
+    name = parameter.name
+    if is_output and name.startswith("out_"):
+        name = name[4:]
+    if not parameter.pointer:
+        passing = "value"
+    elif parameter.is_const:
+        passing = "const_ptr"
+    else:
+        passing = "mutable_ptr"
+    return ParameterDescriptor(
+        name=name,
+        c_type=parameter.c_type,
+        passing=passing,
+        direction="output" if is_output else "input",
+    )
+
+
+def _method_parameter_descriptors(method: Method) -> Tuple[ParameterDescriptor, ...]:
+    return tuple(
+        _parameter_descriptor(parameter)
+        for parameter in method.parameters[1:]
+    )
+
+
+def _validate_annotation_params(method: Method) -> None:
+    annotation_params = method.metadata.get("params")
+    expected = [
+        {
+            "name": descriptor.name,
+            "type": descriptor.c_type,
+            "passing": descriptor.passing,
+        }
+        for descriptor in _method_parameter_descriptors(method)
+        if descriptor.direction == "input"
+    ]
+    if annotation_params is None and expected and not method.internal:
+        raise CodegenError(
+            f"{method.name}: public RPC input parameters require annotation params"
+        )
+    if annotation_params is None:
+        return
+    if not isinstance(annotation_params, list):
+        raise CodegenError(f"{method.name}: annotation params must be an array")
+    if annotation_params != expected:
+        raise CodegenError(
+            f"{method.name}: annotation params do not match function signature"
+        )
 
 
 def _json_type(field: Field, structs: Dict[str, Struct]) -> dict:
@@ -365,6 +425,21 @@ def _raw_string(text: str) -> str:
     return f'R"{delimiter}({text}){delimiter}"'
 
 
+def _generated_passing(value: str) -> str:
+    return {
+        "value": "KernelRpcGeneratedPassing::kValue",
+        "const_ptr": "KernelRpcGeneratedPassing::kConstPtr",
+        "mutable_ptr": "KernelRpcGeneratedPassing::kMutablePtr",
+    }[value]
+
+
+def _generated_direction(value: str) -> str:
+    return {
+        "input": "KernelRpcGeneratedDirection::kInput",
+        "output": "KernelRpcGeneratedDirection::kOutput",
+    }[value]
+
+
 def write_outputs(model: Model, output_dir: pathlib.Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     schema_text = json.dumps(build_schema(model), indent=2, sort_keys=True) + "\n"
@@ -376,12 +451,31 @@ def write_outputs(model: Model, output_dir: pathlib.Path) -> None:
 
 namespace network_example {
 
+enum class KernelRpcGeneratedPassing {
+    kValue,
+    kConstPtr,
+    kMutablePtr,
+};
+
+enum class KernelRpcGeneratedDirection {
+    kInput,
+    kOutput,
+};
+
+struct KernelRpcGeneratedParamDescriptor {
+    const char* name;
+    const char* type;
+    KernelRpcGeneratedPassing passing;
+    KernelRpcGeneratedDirection direction;
+};
+
 struct KernelRpcGeneratedMethodDescriptor {
     const char* method;
     const char* authority;
     const char* phase;
     const char* symbol;
     bool internal;
+    std::span<const KernelRpcGeneratedParamDescriptor> params;
 };
 
 std::span<const KernelRpcGeneratedMethodDescriptor> generated_kernel_rpc_methods();
@@ -391,6 +485,32 @@ std::string_view generated_kernel_rpc_schema();
 
 #endif  // KERNEL_RPC_METHODS_GENERATED_H_
 """
+    param_arrays = []
+    method_param_array_names = []
+    for index, method in enumerate(model.methods):
+        array_name = f"kMethod{index}Params"
+        method_param_array_names.append(array_name)
+        descriptors = _method_parameter_descriptors(method)
+        param_rows = "\n".join(
+            "    {"
+            + ", ".join(
+                [
+                    json.dumps(descriptor.name),
+                    json.dumps(descriptor.c_type),
+                    _generated_passing(descriptor.passing),
+                    _generated_direction(descriptor.direction),
+                ]
+            )
+            + "},"
+            for descriptor in descriptors
+        )
+        param_arrays.append(
+            f"""constexpr std::array<KernelRpcGeneratedParamDescriptor, {len(descriptors)}>
+    {array_name}{{{{
+{param_rows}
+}}}};
+"""
+        )
     rows = "\n".join(
         "    {"
         + ", ".join(
@@ -400,10 +520,17 @@ std::string_view generated_kernel_rpc_schema();
                 json.dumps(method.metadata["phase"]),
                 json.dumps(method.symbol),
                 "true" if method.internal else "false",
+                (
+                    "std::span<const KernelRpcGeneratedParamDescriptor>{"
+                    + method_param_array_names[index]
+                    + "}"
+                    if _method_parameter_descriptors(method)
+                    else "std::span<const KernelRpcGeneratedParamDescriptor>{}"
+                ),
             ]
         )
         + "},"
-        for method in model.methods
+        for index, method in enumerate(model.methods)
     )
     source = f"""#include "kernel/src/kernel_rpc_methods.generated.h"
 
@@ -412,6 +539,7 @@ std::string_view generated_kernel_rpc_schema();
 namespace network_example {{
 namespace {{
 
+{"".join(param_arrays)}
 constexpr std::array<KernelRpcGeneratedMethodDescriptor, {len(model.methods)}>
     kMethods{{{{
 {rows}

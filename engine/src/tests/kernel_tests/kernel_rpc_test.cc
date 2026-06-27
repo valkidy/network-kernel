@@ -105,6 +105,34 @@ Json poll(KernelHandle* kernel, KernelRpcRequestId request_id) {
 }
 
 void dev_methods_and_protocol_errors() {
+    network_example::KernelRpcMethodRegistry registry;
+    const network_example::KernelRpcMethodDescriptor* velocity_descriptor =
+        registry.find("world.set_velocity");
+    assert(velocity_descriptor != nullptr);
+    assert(velocity_descriptor->parameters.size() == 2);
+    assert(velocity_descriptor->parameters[0].name == "net_id");
+    assert(velocity_descriptor->parameters[0].type == "uint32_t");
+    assert(velocity_descriptor->parameters[0].passing == "value");
+    assert(velocity_descriptor->parameters[0].direction == "input");
+    assert(velocity_descriptor->parameters[1].name == "velocity");
+    assert(velocity_descriptor->parameters[1].type == "KernelVec3");
+    assert(velocity_descriptor->parameters[1].passing == "const_ptr");
+    assert(velocity_descriptor->parameters[1].direction == "input");
+
+    const network_example::KernelRpcMethodDescriptor* create_descriptor =
+        registry.find("world.create_entity");
+    assert(create_descriptor != nullptr);
+    assert(create_descriptor->parameters.size() == 2);
+    assert(create_descriptor->parameters[0].name == "create_info");
+    assert(create_descriptor->parameters[0].type ==
+           "KernelServerEntityCreateInfo");
+    assert(create_descriptor->parameters[0].passing == "const_ptr");
+    assert(create_descriptor->parameters[0].direction == "input");
+    assert(create_descriptor->parameters[1].name == "net_id");
+    assert(create_descriptor->parameters[1].type == "uint32_t");
+    assert(create_descriptor->parameters[1].passing == "mutable_ptr");
+    assert(create_descriptor->parameters[1].direction == "output");
+
     KernelConfig config = server_config();
     KernelHandle* kernel = Kernel_Create(&config);
     assert(kernel != nullptr);
@@ -252,6 +280,40 @@ void query_and_mutation_phase_behavior() {
     combat_state.hitbox_center = KernelVec3{0.0f, 0.8f, 0.0f};
     combat_state.hitbox_half_extents = KernelVec3{0.4f, 0.8f, 0.4f};
     assert(Kernel_ServerSetEntityCombatState(kernel, net_id, &combat_state));
+
+    Json missing_rotation = poll(
+        kernel,
+        invoke(
+            kernel,
+            std::string(
+                R"({"jsonrpc":"2.0","id":21,"method":"world.set_transform","params":{"net_id":)") +
+                std::to_string(net_id) +
+                R"(,"position":{"x":5.0,"y":0.0,"z":6.0}}})"));
+    assert(missing_rotation["error"]["code"] == -32602);
+
+    Json extra_velocity_field = poll(
+        kernel,
+        invoke(
+            kernel,
+            std::string(
+                R"({"jsonrpc":"2.0","id":22,"method":"world.set_velocity","params":{"net_id":)") +
+                std::to_string(net_id) +
+                R"(,"velocity":{"x":2.0,"y":0.0,"z":3.0},"unexpected":true}})"));
+    assert(extra_velocity_field["error"]["code"] == -32602);
+
+    Json wrong_net_id_type = poll(
+        kernel,
+        invoke(
+            kernel,
+            R"({"jsonrpc":"2.0","id":23,"method":"world.destroy_entity","params":{"net_id":"not-a-number","reason":1}})"));
+    assert(wrong_net_id_type["error"]["code"] == -32602);
+
+    Json extra_create_info_field = poll(
+        kernel,
+        invoke(
+            kernel,
+            R"({"jsonrpc":"2.0","id":24,"method":"world.create_entity","params":{"create_info":{"entity_type":1,"actor_type":1,"owner_peer":0,"position":{"x":9.0,"y":0.0,"z":0.0},"rotation":{"x":0.0,"y":0.0,"z":0.0,"w":1.0},"animation_state":0,"visual_flags":0,"actor_template_id":0,"unexpected":1}}})"));
+    assert(extra_create_info_field["error"]["code"] == -32602);
 
     Json state = poll(
         kernel,

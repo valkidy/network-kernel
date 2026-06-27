@@ -187,6 +187,7 @@ private:
     friend class EntityStateSystem;
     friend class MovementSystem;
     friend class KernelRpcDispatcher;
+    friend class KernelRpcWorldHandlers;
     friend class simulation::Dispatcher;
 
     struct PeerSession {
