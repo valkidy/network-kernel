@@ -107,7 +107,10 @@ bool KernelRpc_DevGetSchema(KernelHandle* kernel);
 KERNEL_RPC_INTERNAL(R"json({
   "method":"world.get_entity_state",
   "authority":"developer_read_only",
-  "phase":"immediate_read_only"
+  "phase":"immediate_read_only",
+  "params":[
+    {"name":"net_id","type":"uint32_t","passing":"value"}
+  ]
 })json")
 bool KernelRpc_GetEntityState(
     KernelHandle* kernel,

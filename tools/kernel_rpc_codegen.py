@@ -285,9 +285,9 @@ def _validate_annotation_params(method: Method) -> None:
         for descriptor in _method_parameter_descriptors(method)
         if descriptor.direction == "input"
     ]
-    if annotation_params is None and expected and not method.internal:
+    if annotation_params is None and expected:
         raise CodegenError(
-            f"{method.name}: public RPC input parameters require annotation params"
+            f"{method.name}: RPC input parameters require annotation params"
         )
     if annotation_params is None:
         return

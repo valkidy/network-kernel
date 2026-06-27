@@ -102,7 +102,7 @@ bool KernelRpc_Discover(KernelHandle* kernel);
         ):
             kernel_rpc_codegen.parse_headers([("reserved.h", header)])
 
-    def test_rejects_public_rpc_inputs_without_annotation_params(self):
+    def test_rejects_rpc_inputs_without_annotation_params(self):
         header = r'''
 KERNEL_RPC(R"json({
   "method":"world.set_entity_health",
@@ -116,7 +116,25 @@ bool Kernel_ServerSetEntityHealth(
 '''
         with self.assertRaisesRegex(
             kernel_rpc_codegen.CodegenError,
-            "public RPC input parameters require annotation params",
+            "RPC input parameters require annotation params",
+        ):
+            kernel_rpc_codegen.parse_headers([("missing_params.h", header)])
+
+    def test_rejects_internal_rpc_inputs_without_annotation_params(self):
+        header = r'''
+KERNEL_RPC_INTERNAL(R"json({
+  "method":"world.get_entity_state",
+  "authority":"developer_read_only",
+  "phase":"immediate_read_only"
+})json")
+bool KernelRpc_GetEntityState(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    uint32_t* out_state);
+'''
+        with self.assertRaisesRegex(
+            kernel_rpc_codegen.CodegenError,
+            "RPC input parameters require annotation params",
         ):
             kernel_rpc_codegen.parse_headers([("missing_params.h", header)])
 
