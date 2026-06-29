@@ -109,7 +109,7 @@ void beam_damages_targets_with_dps_accumulator() {
             10,
             5,
             network_example::kCollisionLayerHostileSide);
-    (void)beam;
+    assert(beam != 0);
 
     network_example::DamagePipeline pipeline;
     std::vector<KernelEvent> events;

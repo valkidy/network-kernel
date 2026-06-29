@@ -94,10 +94,7 @@ KernelServerEntityState find_server_entity(
     return KernelServerEntityState{};
 }
 
-KernelWeaponMechanicsDefinition projectile_weapon(
-    std::uint8_t weapon_id,
-    float speed,
-    std::uint8_t motion_model) {
+KernelWeaponMechanicsDefinition projectile_weapon(std::uint8_t weapon_id) {
     KernelWeaponMechanicsDefinition weapon{};
     weapon.struct_size = sizeof(weapon);
     weapon.weapon_id = weapon_id;
@@ -107,10 +104,6 @@ KernelWeaponMechanicsDefinition projectile_weapon(
     weapon.cooldown_ticks = 30;
     weapon.reload_ticks = 60;
     weapon.projectile_template_id = weapon_id;
-    (void)speed;
-    if (motion_model == KernelProjectileMotionModel_Parabolic) {
-        return weapon;
-    }
     return weapon;
 }
 
@@ -223,11 +216,9 @@ void configure_local_player(KernelHandle* kernel, std::uint32_t player_net_id) {
     rifle.segment_collider_template_id = 5;
     assert(Kernel_ServerSetEntityWeaponMechanics(kernel, player_net_id, &rifle));
 
-    KernelWeaponMechanicsDefinition grenade =
-        projectile_weapon(2, 15.0f, KernelProjectileMotionModel_Parabolic);
+    KernelWeaponMechanicsDefinition grenade = projectile_weapon(2);
     assert(Kernel_ServerSetEntityWeaponMechanics(kernel, player_net_id, &grenade));
-    KernelWeaponMechanicsDefinition rocket =
-        projectile_weapon(3, 35.0f, KernelProjectileMotionModel_Linear);
+    KernelWeaponMechanicsDefinition rocket = projectile_weapon(3);
     rocket.magazine_size = 6;
     rocket.damage = 45;
     rocket.reload_ticks = 75;

@@ -90,7 +90,8 @@ std::string shell_quote(const std::string& value) {
     return quoted;
 }
 
-void verify_exported_symbols(const std::filesystem::path& library_path) {
+void verify_exported_symbols(
+    [[maybe_unused]] const std::filesystem::path& library_path) {
 #if defined(__APPLE__)
     const std::string command = "nm -gU " + shell_quote(library_path.string());
     FILE* pipe = popen(command.c_str(), "r");
@@ -118,8 +119,6 @@ void verify_exported_symbols(const std::filesystem::path& library_path) {
     const int status = pclose(pipe);
     assert(status == 0);
     assert(unexpected_symbols.empty());
-#else
-    (void)library_path;
 #endif
 }
 

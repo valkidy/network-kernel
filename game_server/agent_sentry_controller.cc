@@ -244,8 +244,7 @@ AgentSentryController::AgentSentryController(AgentSentryConfig config)
 void AgentSentryController::tick(
     KernelHandle* kernel,
     std::vector<Enemy>* enemies,
-    float delta_seconds) const {
-    (void)delta_seconds;
+    float) const {
     if (kernel == nullptr || enemies == nullptr) {
         return;
     }

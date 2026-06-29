@@ -79,8 +79,6 @@ void segment_hits_are_sorted_by_distance_then_net_id() {
     network_example::World world;
     const network_example::NetId far = spawn_target(world, glm::vec3{5.0f, 0.0f, 0.0f});
     const network_example::NetId near = spawn_target(world, glm::vec3{2.0f, 0.0f, 0.0f});
-    (void)far;
-    (void)near;
 
     const std::vector<network_example::QueryHit> hits =
         network_example::collect_segment_hits(
@@ -105,15 +103,9 @@ void sphere_overlap_respects_default_exclusions() {
         world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
     const network_example::NetId enemy =
         spawn_target(world, glm::vec3{1.0f, 0.0f, 0.0f});
-    const network_example::NetId friendly =
-        world.spawn_player(1, glm::vec3{1.2f, 0.0f, 0.0f});
-    const network_example::NetId projectile =
-        world.spawn_projectile(0, glm::vec3{1.4f, 0.5f, 0.0f}, glm::vec3{0.0f});
-    const network_example::NetId area =
-        spawn_area_projectile(world, 0, glm::vec3{1.6f, 0.0f, 0.0f}, 2.0f);
-    (void)friendly;
-    (void)projectile;
-    (void)area;
+    world.spawn_player(1, glm::vec3{1.2f, 0.0f, 0.0f});
+    world.spawn_projectile(0, glm::vec3{1.4f, 0.5f, 0.0f}, glm::vec3{0.0f});
+    spawn_area_projectile(world, 0, glm::vec3{1.6f, 0.0f, 0.0f}, 2.0f);
 
     network_example::QueryFilter filter;
     filter.ignored_net_id = source;
@@ -138,8 +130,6 @@ void projectile_hits_require_explicit_inclusion() {
         world.spawn_projectile(1, glm::vec3{2.0f, 0.5f, 0.0f}, glm::vec3{0.0f});
     const network_example::NetId second =
         world.spawn_projectile(2, glm::vec3{3.0f, 0.5f, 0.0f}, glm::vec3{0.0f});
-    (void)first;
-    (void)second;
 
     network_example::QueryFilter default_filter;
     default_filter.collision_mask = network_example::kCollisionLayerProjectile;
@@ -196,10 +186,7 @@ void box_overlap_collects_hits_by_layer_and_order() {
         spawn_target(world, glm::vec3{1.5f, 0.0f, 0.0f});
     const network_example::NetId near =
         spawn_target(world, glm::vec3{0.25f, 0.0f, 0.0f});
-    const network_example::NetId player =
-        world.spawn_player(2, glm::vec3{0.5f, 0.0f, 0.0f});
-    (void)far;
-    (void)player;
+    world.spawn_player(2, glm::vec3{0.5f, 0.0f, 0.0f});
 
     network_example::QueryFilter filter;
     filter.collision_mask = network_example::kCollisionLayerHostileSide;

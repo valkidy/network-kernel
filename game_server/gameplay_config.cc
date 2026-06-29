@@ -243,45 +243,12 @@ KernelWeaponMechanicsDefinition shotgun_weapon(
     return weapon;
 }
 
-KernelWeaponMechanicsDefinition projectile_weapon(
-    std::uint8_t weapon_id,
-    std::uint16_t magazine_size,
-    std::uint16_t damage,
-    std::uint32_t cooldown_ticks,
-    std::uint32_t reload_ticks,
-    float projectile_speed,
-    float projectile_lifetime_seconds,
-    std::uint8_t motion_model,
-    KernelVec3 gravity) {
-    KernelWeaponMechanicsDefinition weapon{};
-    weapon.struct_size = sizeof(KernelWeaponMechanicsDefinition);
-    weapon.weapon_id = weapon_id;
-    weapon.fire_mode = KernelWeaponFireMode_Projectile;
-    weapon.magazine_size = magazine_size;
-    weapon.damage = damage;
-    weapon.cooldown_ticks = cooldown_ticks;
-    weapon.reload_ticks = reload_ticks;
-    weapon.pellet_count = 1;
-    weapon.projectile_template_id = weapon_id;
-    (void)projectile_speed;
-    (void)projectile_lifetime_seconds;
-    (void)motion_model;
-    (void)gravity;
-    return weapon;
-}
-
 KernelWeaponMechanicsDefinition area_effect_weapon(
     std::uint8_t weapon_id,
     std::uint16_t magazine_size,
     std::uint16_t damage,
     std::uint32_t cooldown_ticks,
-    std::uint32_t reload_ticks,
-    float radius,
-    std::uint16_t damage_per_interval,
-    std::uint32_t damage_interval_ticks,
-    std::uint32_t lifetime_ticks,
-    float spawn_distance,
-    std::uint32_t collision_mask) {
+    std::uint32_t reload_ticks) {
     KernelWeaponMechanicsDefinition weapon{};
     weapon.struct_size = sizeof(KernelWeaponMechanicsDefinition);
     weapon.weapon_id = weapon_id;
@@ -292,12 +259,6 @@ KernelWeaponMechanicsDefinition area_effect_weapon(
     weapon.reload_ticks = reload_ticks;
     weapon.pellet_count = 1;
     weapon.projectile_template_id = weapon_id;
-    (void)radius;
-    (void)damage_per_interval;
-    (void)damage_interval_ticks;
-    (void)lifetime_ticks;
-    (void)spawn_distance;
-    (void)collision_mask;
     return weapon;
 }
 
@@ -306,12 +267,7 @@ KernelWeaponMechanicsDefinition beam_weapon(
     std::uint16_t magazine_size,
     std::uint16_t damage,
     std::uint32_t cooldown_ticks,
-    std::uint32_t reload_ticks,
-    float length,
-    float radius,
-    std::uint16_t damage_per_second,
-    std::uint32_t lifetime_ticks,
-    std::uint32_t collision_mask) {
+    std::uint32_t reload_ticks) {
     KernelWeaponMechanicsDefinition weapon{};
     weapon.struct_size = sizeof(KernelWeaponMechanicsDefinition);
     weapon.weapon_id = weapon_id;
@@ -322,48 +278,6 @@ KernelWeaponMechanicsDefinition beam_weapon(
     weapon.reload_ticks = reload_ticks;
     weapon.pellet_count = 1;
     weapon.projectile_template_id = weapon_id;
-    (void)length;
-    (void)radius;
-    (void)damage_per_second;
-    (void)lifetime_ticks;
-    (void)collision_mask;
-    return weapon;
-}
-
-KernelWeaponMechanicsDefinition homing_projectile_weapon(
-    std::uint8_t weapon_id,
-    std::uint16_t magazine_size,
-    std::uint16_t damage,
-    std::uint32_t cooldown_ticks,
-    std::uint32_t reload_ticks,
-    float projectile_speed,
-    float projectile_lifetime_seconds,
-    std::uint32_t boost_ticks,
-    float lock_on_range,
-    float lose_target_range,
-    float lock_cone_degrees,
-    float max_turn_rate_degrees_per_second,
-    float acceleration,
-    float max_speed,
-    std::uint32_t collision_mask) {
-    KernelWeaponMechanicsDefinition weapon = projectile_weapon(
-        weapon_id,
-        magazine_size,
-        damage,
-        cooldown_ticks,
-        reload_ticks,
-        projectile_speed,
-        projectile_lifetime_seconds,
-        KernelProjectileMotionModel_Homing,
-        KernelVec3{0.0f, 0.0f, 0.0f});
-    (void)boost_ticks;
-    (void)lock_on_range;
-    (void)lose_target_range;
-    (void)lock_cone_degrees;
-    (void)max_turn_rate_degrees_per_second;
-    (void)acceleration;
-    (void)max_speed;
-    (void)collision_mask;
     return weapon;
 }
 
@@ -574,8 +488,7 @@ std::uint8_t projectile_sync_mode_from_yaml(const YAML::Node& node) {
     throw std::runtime_error("unsupported projectile sync_mode: " + value);
 }
 
-std::uint8_t projectile_sync_mode_from_weapon_yaml(const YAML::Node& node) {
-    (void)node;
+std::uint8_t projectile_sync_mode_from_weapon_yaml(const YAML::Node&) {
     return KernelProjectileSyncMode_HybridDeterministicThenSnapshot;
 }
 
@@ -870,8 +783,8 @@ public:
         const std::string normalized_directory = normalize_archive_path(directory);
         const std::string prefix = normalized_directory + "/";
         std::vector<std::string> files;
-        for (const auto& [path, contents] : files_) {
-            (void)contents;
+        for (const auto& entry : files_) {
+            const std::string& path = entry.first;
             if (!has_yaml_extension(path) || path.rfind(prefix, 0) != 0) {
                 continue;
             }
@@ -1075,13 +988,7 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
             magazine_size,
             damage,
             cooldown_ticks,
-            reload_ticks,
-            0.0f,
-            0,
-            0,
-            0,
-            0.0f,
-            0);
+            reload_ticks);
     }
     if (type == "beam") {
         if (node["projectile"] || node["area_effect"] || node["beam"]) {
@@ -1096,12 +1003,7 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
             magazine_size,
             damage,
             cooldown_ticks,
-            reload_ticks,
-            0.0f,
-            0.0f,
-            0,
-            0,
-            0);
+            reload_ticks);
     }
     throw std::runtime_error("unsupported weapon_type: " + type);
 }
@@ -1354,11 +1256,10 @@ void apply_default_actor_templates(GameServerGameplayConfig* config) {
 }
 
 AgentSentryConfig sentry_config_from_yaml(
-    const YAML::Node& node,
+    const YAML::Node&,
     const ActorTemplateConfig& actor_template,
     const WeaponCatalogConfig& weapons) {
     AgentSentryConfig sentry = actor_template.sentry;
-    (void)node;
     const std::uint8_t weapon_id = active_weapon_id(actor_template);
     sentry.weapon_id = weapon_id;
     sentry.magazine_size = weapons.definitions[weapon_id].magazine_size;

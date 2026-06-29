@@ -1906,10 +1906,8 @@ std::uint32_t KernelEngine::collider_template_id_for_actor_template(
 }
 
 std::uint32_t KernelEngine::get_collider_bindings(
-    KernelColliderBindingDefinition* out_bindings,
-    std::uint32_t max_bindings) const {
-    (void)out_bindings;
-    (void)max_bindings;
+    KernelColliderBindingDefinition*,
+    std::uint32_t) const {
     return 0;
 }
 

@@ -791,7 +791,7 @@ void projectile_without_rewind_uses_current_muzzle() {
     assert(transform.position.x < 10.01f);
     assert(projectile_state(world, projectile).spawn_tick == 7);
     assert(projectile_state(world, projectile).age_seconds == 0.0f);
-    (void)player;
+    assert(player != 0);
 }
 
 void projectile_historical_hit_query_hits_historical_target() {
