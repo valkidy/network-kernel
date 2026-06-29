@@ -165,12 +165,6 @@ public:
         NetId net_id,
         std::uint8_t weapon_id,
         KernelWeaponMechanicsDefinition* out_weapon_mechanics) const;
-    bool server_get_area_effect_state(
-        NetId net_id,
-        KernelAreaEffectState* out_state) const;
-    bool server_get_beam_state(
-        NetId net_id,
-        KernelBeamState* out_state) const;
     bool server_get_homing_state(
         NetId net_id,
         KernelHomingState* out_state) const;

@@ -85,7 +85,6 @@ struct ColliderCatalogConfig {
 struct ProjectileTemplateConfig {
     std::string name;
     KernelProjectileTemplateDefinition definition{};
-    KernelHomingMechanicsDefinition homing{};
     std::string impact_projectile_template_ref;
 };
 

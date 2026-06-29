@@ -53,35 +53,11 @@ bool spawn_projectile_from_template(
     const std::uint8_t weapon_id =
         projectile_template.weapon_id == 0 ? source_weapon_id
                                            : projectile_template.weapon_id;
-    if (projectile_template.kind == ProjectileKind::kAreaEffect) {
-        const NetId area_effect = world.spawn_area_effect(
-            owner_peer,
-            position,
-            projectile_template.area_radius,
-            projectile_template.damage_interval_ticks,
-            current_tick + std::max(1u, projectile_template.lifetime_ticks),
-            projectile_template.damage,
-            weapon_id,
-            projectile_template.collision_mask,
-            projectile_template.damage_falloff);
-        push_event(
-            events,
-            KernelEventType_EntitySpawned,
-            current_tick,
-            area_effect,
-            owner_peer,
-            static_cast<std::uint32_t>(EntityType::kAreaEffect),
-            tick_time_us(current_tick, fixed_delta_seconds),
-            tick_time_us(current_tick, fixed_delta_seconds));
-        if (out_entity_type != nullptr) {
-            *out_entity_type = static_cast<std::uint32_t>(EntityType::kAreaEffect);
-        }
-        return true;
-    }
-
     const glm::vec3 velocity =
-        normalized_or(direction, glm::vec3{1.0f, 0.0f, 0.0f}) *
-        projectile_template.speed;
+        projectile_template.projectile_type == ProjectileType::kAreaEffect
+            ? glm::vec3{0.0f, 0.0f, 0.0f}
+            : normalized_or(direction, glm::vec3{1.0f, 0.0f, 0.0f}) *
+                  projectile_template.speed;
     const NetId projectile_net_id = world.spawn_projectile(
         owner_peer,
         position,
@@ -108,6 +84,46 @@ bool spawn_projectile_from_template(
     projectile.initial_velocity = velocity;
     projectile.gravity = projectile_template.gravity;
     projectile.previous_position = position;
+    if (projectile_template.projectile_type == ProjectileType::kAreaEffect) {
+        world.registry().replace<Hitbox>(
+            *projectile_entity,
+            Hitbox{
+                {0.0f, 0.0f, 0.0f},
+                {projectile_template.area_radius,
+                 projectile_template.area_radius,
+                 projectile_template.area_radius},
+                projectile_template.collider_template_id});
+        world.registry().emplace<ProjectileAreaEffectRuntime>(
+            *projectile_entity,
+            ProjectileAreaEffectRuntime{
+                projectile_template.area_radius,
+                projectile_template.damage,
+                projectile_template.damage_interval_ticks == 0
+                    ? 1u
+                    : projectile_template.damage_interval_ticks,
+                current_tick + std::max(1u, projectile_template.lifetime_ticks),
+                weapon_id,
+                projectile_template.collision_mask,
+                projectile_template.damage_falloff,
+                {},
+            });
+    }
+    if (projectile_template.projectile_type == ProjectileType::kBeam) {
+        world.registry().emplace<ProjectileBeamRuntime>(
+            *projectile_entity,
+            ProjectileBeamRuntime{
+                shooter_net_id,
+                position,
+                normalized_or(direction, glm::vec3{1.0f, 0.0f, 0.0f}),
+                projectile_template.beam_length,
+                projectile_template.beam_radius,
+                projectile_template.damage,
+                current_tick + std::max(1u, projectile_template.lifetime_ticks),
+                weapon_id,
+                projectile_template.collision_mask,
+                {},
+            });
+    }
     push_event(
         events,
         KernelEventType_EntitySpawned,
@@ -402,13 +418,12 @@ bool apply_projectile_impact_response(
     const RuntimeProjectileTemplate* projectile_template =
         world.find_projectile_template(projectile.projectile_template_id);
     if (projectile_template == nullptr ||
-        projectile_template->impact_action !=
-            ProjectileImpactAction::kSpawnProjectile) {
+        projectile_template->impact_spawn_projectile_template_id == 0u) {
         return false;
     }
     const RuntimeProjectileTemplate* impact_projectile_template =
         world.find_projectile_template(
-            projectile_template->impact_projectile_template_id);
+            projectile_template->impact_spawn_projectile_template_id);
     if (impact_projectile_template == nullptr) {
         return false;
     }
@@ -674,7 +689,7 @@ void process_projectile_interactions(
             push_unique_net_id(&consumed_projectiles, match.rhs_net_id);
         }
 
-        if (match.rule->area_effect.enabled) {
+        if (match.rule->spawn_projectile_template_id != 0u) {
             const NetId source_net_id =
                 match.lhs_is_rule_lhs ? match.lhs_net_id : match.rhs_net_id;
             PeerId owner_peer = 0;
@@ -684,26 +699,25 @@ void process_projectile_interactions(
                 owner_peer =
                     world.registry().get<NetworkIdentity>(*source_entity).owner_peer;
             }
-            const ProjectileInteractionAreaEffectSpawn& spawn =
-                match.rule->area_effect;
-            const NetId area_effect = world.spawn_area_effect(
+            const RuntimeProjectileTemplate* spawn_template =
+                world.find_projectile_template(
+                    match.rule->spawn_projectile_template_id);
+            if (spawn_template == nullptr) {
+                continue;
+            }
+            (void)spawn_projectile_from_template(
+                world,
+                *spawn_template,
                 owner_peer,
+                source_net_id,
+                0,
+                0,
                 match.position,
-                spawn.radius,
-                spawn.damage_interval_ticks,
-                current_tick + spawn.lifetime_ticks,
-                spawn.damage_per_interval,
-                spawn.source_code,
-                spawn.collision_mask);
-            push_event(
-                events,
-                KernelEventType_EntitySpawned,
+                glm::vec3{1.0f, 0.0f, 0.0f},
                 current_tick,
-                area_effect,
-                owner_peer,
-                static_cast<std::uint32_t>(EntityType::kAreaEffect),
-                tick_time_us(current_tick, fixed_delta_seconds),
-                tick_time_us(current_tick, fixed_delta_seconds));
+                fixed_delta_seconds,
+                events,
+                nullptr);
         }
     }
 }

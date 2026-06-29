@@ -318,16 +318,6 @@ bool Kernel_ServerGetEntityWeaponMechanics(
     uint8_t weapon_id,
     KernelWeaponMechanicsDefinition* out_weapon_mechanics);
 
-bool Kernel_ServerGetAreaEffectState(
-    KernelHandle* kernel,
-    uint32_t net_id,
-    KernelAreaEffectState* out_state);
-
-bool Kernel_ServerGetBeamState(
-    KernelHandle* kernel,
-    uint32_t net_id,
-    KernelBeamState* out_state);
-
 bool Kernel_ServerGetHomingState(
     KernelHandle* kernel,
     uint32_t net_id,

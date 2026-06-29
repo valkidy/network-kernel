@@ -24,9 +24,6 @@ std::uint32_t entity_collision_layer_for_entity(
     if (world.registry().all_of<ProjectileTag>(entity)) {
         entity_layer |= kCollisionLayerProjectile;
     }
-    if (world.registry().all_of<AreaEffectTag>(entity)) {
-        entity_layer |= kCollisionLayerAreaEffect;
-    }
     return entity_layer;
 }
 
@@ -50,12 +47,6 @@ bool query_includes_entity(
         return false;
     }
     if (!filter.include_projectiles && world.registry().all_of<ProjectileTag>(entity)) {
-        return false;
-    }
-    if (!filter.include_area_effects && world.registry().all_of<AreaEffectTag>(entity)) {
-        return false;
-    }
-    if (world.registry().all_of<BeamTag>(entity)) {
         return false;
     }
     if (world.registry().all_of<Health>(entity) &&

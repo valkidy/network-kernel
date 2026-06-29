@@ -45,11 +45,17 @@ void simulate_area_effects(
     }
 
     std::vector<NetId> area_effects_to_destroy;
-    auto view = world.registry().view<NetworkIdentity, Transform, AreaEffectState, AreaEffectTag>();
+    auto view = world.registry().view<
+        NetworkIdentity,
+        Transform,
+        ProjectileState,
+        ProjectileAreaEffectRuntime,
+        ProjectileTag>();
     for (const entt::entity entity : view) {
         const NetworkIdentity& identity = view.get<NetworkIdentity>(entity);
         const Transform& transform = view.get<Transform>(entity);
-        AreaEffectState& area_effect = view.get<AreaEffectState>(entity);
+        ProjectileAreaEffectRuntime& area_effect =
+            view.get<ProjectileAreaEffectRuntime>(entity);
 
         if (area_effect.expire_tick != 0 && current_tick >= area_effect.expire_tick) {
             area_effects_to_destroy.push_back(identity.net_id);

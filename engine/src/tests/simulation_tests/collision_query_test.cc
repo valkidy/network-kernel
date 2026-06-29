@@ -28,6 +28,36 @@ network_example::NetId spawn_target(
     return target;
 }
 
+network_example::NetId spawn_area_projectile(
+    network_example::World& world,
+    network_example::PeerId owner_peer,
+    const glm::vec3& position,
+    float radius) {
+    const network_example::NetId area =
+        world.spawn_projectile(owner_peer, position, glm::vec3{0.0f});
+    const auto entity = world.find_entity(area);
+    assert(entity.has_value());
+    world.registry().replace<network_example::Hitbox>(
+        *entity,
+        network_example::Hitbox{
+            {0.0f, 0.0f, 0.0f},
+            {radius, radius, radius},
+            0});
+    world.registry().emplace<network_example::ProjectileAreaEffectRuntime>(
+        *entity,
+        network_example::ProjectileAreaEffectRuntime{
+            radius,
+            1,
+            1,
+            10,
+            3,
+            network_example::kCollisionMaskDamageable,
+            network_example::ProjectileDamageFalloff::kNone,
+            {},
+        });
+    return area;
+}
+
 void ray_aabb_hit_and_miss() {
     float distance = 0.0f;
     require(network_example::ray_intersects_aabb(
@@ -80,7 +110,7 @@ void sphere_overlap_respects_default_exclusions() {
     const network_example::NetId projectile =
         world.spawn_projectile(0, glm::vec3{1.4f, 0.5f, 0.0f}, glm::vec3{0.0f});
     const network_example::NetId area =
-        world.spawn_area_effect(0, glm::vec3{1.6f, 0.0f, 0.0f}, 2.0f, 1, 1, 10, 3);
+        spawn_area_projectile(world, 0, glm::vec3{1.6f, 0.0f, 0.0f}, 2.0f);
     (void)friendly;
     (void)projectile;
     (void)area;
@@ -147,7 +177,7 @@ void layer_helper_reports_entity_layers() {
     const network_example::NetId projectile =
         world.spawn_projectile(1, glm::vec3{2.0f, 0.0f, 0.0f}, glm::vec3{0.0f});
     const network_example::NetId area =
-        world.spawn_area_effect(1, glm::vec3{3.0f, 0.0f, 0.0f}, 1.0f, 1, 1, 10, 2);
+        spawn_area_projectile(world, 1, glm::vec3{3.0f, 0.0f, 0.0f}, 1.0f);
 
     require(network_example::entity_collision_layer(world, player) ==
             network_example::kCollisionLayerPlayerSide);
@@ -156,7 +186,7 @@ void layer_helper_reports_entity_layers() {
     require(network_example::entity_collision_layer(world, projectile) ==
             network_example::kCollisionLayerProjectile);
     require(network_example::entity_collision_layer(world, area) ==
-            network_example::kCollisionLayerAreaEffect);
+            network_example::kCollisionLayerProjectile);
     require(network_example::entity_collision_layer(world, 9999) == 0);
 }
 

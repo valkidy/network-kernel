@@ -44,6 +44,13 @@ glm::vec3 input_aim_to_world(const PlayerInput& input) {
     return glm::normalize(aim);
 }
 
+glm::vec3 normalized_or(const glm::vec3& value, const glm::vec3& fallback) {
+    if (glm::length(value) <= 0.0001f) {
+        return fallback;
+    }
+    return glm::normalize(value);
+}
+
 void push_event(
     std::vector<KernelEvent>* events,
     KernelEventType type,
@@ -320,6 +327,7 @@ void apply_hitscan_damage(
 NetId fire_projectile(
     World& world,
     const WeaponMechanicsDefinition& definition,
+    const RuntimeProjectileTemplate& projectile_template,
     std::uint32_t event_tick,
     std::uint32_t spawn_tick,
     NetId shooter_net_id,
@@ -332,13 +340,13 @@ NetId fire_projectile(
     const glm::vec3 current_position = projectile_position_at(
         origin,
         velocity,
-        definition.projectile_motion_model,
-        definition.projectile_gravity,
+        projectile_template.motion_model,
+        projectile_template.gravity,
         age_seconds);
     const glm::vec3 current_velocity = projectile_velocity_at(
         velocity,
-        definition.projectile_motion_model,
-        definition.projectile_gravity,
+        projectile_template.motion_model,
+        projectile_template.gravity,
         age_seconds);
     const NetId projectile = world.spawn_projectile(
         shooter_peer_id,
@@ -349,40 +357,81 @@ NetId fire_projectile(
         ProjectileState& projectile_state =
             world.registry().get<ProjectileState>(*projectile_entity);
         projectile_state.weapon_id = definition.id;
-        projectile_state.projectile_template_id = definition.projectile_template_id;
-        projectile_state.damage = definition.damage;
+        projectile_state.projectile_template_id =
+            projectile_template.projectile_template_id;
+        projectile_state.damage = projectile_template.damage;
         projectile_state.spawn_tick = spawn_tick;
         projectile_state.client_action_id = client_action_id;
         projectile_state.shooter_net_id = shooter_net_id;
-        projectile_state.motion_model = definition.projectile_motion_model;
-        projectile_state.hit_response = definition.projectile_hit_response;
-        projectile_state.damage_shape = definition.projectile_damage_shape;
-        projectile_state.collision_mask = definition.projectile_collision_mask;
+        projectile_state.motion_model = projectile_template.motion_model;
+        projectile_state.hit_response = projectile_template.hit_response;
+        projectile_state.damage_shape = projectile_template.damage_shape;
+        projectile_state.collision_mask = projectile_template.collision_mask;
         projectile_state.max_hit_count =
-            std::max(1u, definition.projectile_max_hit_count);
+            std::max(1u, projectile_template.max_hit_count);
         projectile_state.hit_count = 0;
-        projectile_state.max_lifetime_seconds = definition.projectile_lifetime_seconds;
+        projectile_state.max_lifetime_seconds = projectile_template.lifetime_seconds;
         projectile_state.age_seconds = age_seconds;
         projectile_state.spawn_position = origin;
         projectile_state.initial_velocity = velocity;
-        projectile_state.gravity = definition.projectile_gravity;
+        projectile_state.gravity = projectile_template.gravity;
         projectile_state.previous_position = current_position;
-        if (definition.projectile_motion_model == ProjectileMotionModel::kHoming) {
+        if (projectile_template.motion_model == ProjectileMotionModel::kHoming) {
             world.registry().emplace<HomingState>(
                 *projectile_entity,
                 HomingState{
-                    definition.homing_mode,
-                    definition.homing_sync_mode,
+                    projectile_template.homing_mode,
+                    projectile_template.sync_mode,
                     MissileGuidancePhase::kBoost,
                     0,
-                    definition.homing_boost_ticks,
-                    spawn_tick + definition.homing_boost_ticks,
-                    definition.homing_lock_on_range,
-                    definition.homing_lose_target_range,
-                    definition.homing_lock_cone_degrees,
-                    definition.homing_max_turn_rate_degrees_per_second,
-                    definition.homing_acceleration,
-                    definition.homing_max_speed});
+                    projectile_template.homing_boost_ticks,
+                    spawn_tick + projectile_template.homing_boost_ticks,
+                    projectile_template.homing_lock_on_range,
+                    projectile_template.homing_lose_target_range,
+                    projectile_template.homing_lock_cone_degrees,
+                    projectile_template.homing_max_turn_rate_degrees_per_second,
+                    projectile_template.homing_acceleration,
+                    projectile_template.homing_max_speed});
+        }
+        if (projectile_template.projectile_type == ProjectileType::kAreaEffect) {
+            world.registry().replace<Hitbox>(
+                *projectile_entity,
+                Hitbox{
+                    {0.0f, 0.0f, 0.0f},
+                    {projectile_template.area_radius,
+                     projectile_template.area_radius,
+                     projectile_template.area_radius},
+                    projectile_template.collider_template_id});
+            world.registry().emplace<ProjectileAreaEffectRuntime>(
+                *projectile_entity,
+                ProjectileAreaEffectRuntime{
+                    projectile_template.area_radius,
+                    projectile_template.damage,
+                    projectile_template.damage_interval_ticks == 0
+                        ? 1u
+                        : projectile_template.damage_interval_ticks,
+                    event_tick + std::max(1u, projectile_template.lifetime_ticks),
+                    definition.id,
+                    projectile_template.collision_mask,
+                    projectile_template.damage_falloff,
+                    {},
+                });
+        }
+        if (projectile_template.projectile_type == ProjectileType::kBeam) {
+            world.registry().emplace<ProjectileBeamRuntime>(
+                *projectile_entity,
+                ProjectileBeamRuntime{
+                    shooter_net_id,
+                    current_position,
+                    normalized_or(velocity, glm::vec3{1.0f, 0.0f, 0.0f}),
+                    projectile_template.beam_length,
+                    projectile_template.beam_radius,
+                    projectile_template.damage,
+                    event_tick + std::max(1u, projectile_template.lifetime_ticks),
+                    definition.id,
+                    projectile_template.collision_mask,
+                    {},
+                });
         }
     }
     push_event(
@@ -393,89 +442,6 @@ NetId fire_projectile(
         shooter_peer_id,
         static_cast<std::uint32_t>(EntityType::kProjectile));
     return projectile;
-}
-
-NetId fire_area_effect(
-    World& world,
-    const WeaponMechanicsDefinition& definition,
-    std::uint32_t current_tick,
-    PeerId owner_peer,
-    const glm::vec3& origin,
-    const glm::vec3& direction,
-    std::vector<KernelEvent>* events) {
-    const glm::vec3 position =
-        origin + direction * definition.area_effect_spawn_distance;
-    const std::uint32_t expire_tick =
-        current_tick + std::max(1u, definition.area_effect_lifetime_ticks);
-    const NetId area_effect = world.spawn_area_effect(
-        owner_peer,
-        position,
-        definition.area_effect_radius,
-        definition.area_effect_damage_interval_ticks,
-        expire_tick,
-        definition.area_effect_damage_per_interval,
-        definition.id,
-        definition.area_effect_collision_mask);
-    push_event(
-        events,
-        KernelEventType_EntitySpawned,
-        current_tick,
-        area_effect,
-        owner_peer,
-        static_cast<std::uint32_t>(EntityType::kAreaEffect));
-    return area_effect;
-}
-
-NetId fire_beam(
-    World& world,
-    const WeaponMechanicsDefinition& definition,
-    std::uint32_t current_tick,
-    NetId shooter_net_id,
-    PeerId owner_peer,
-    const glm::vec3& origin,
-    const glm::vec3& direction,
-    std::vector<KernelEvent>* events) {
-    const std::uint32_t expire_tick =
-        current_tick + std::max(1u, definition.beam_lifetime_ticks);
-    auto beam_view = world.registry().view<NetworkIdentity, Transform, BeamState, BeamTag>();
-    for (const entt::entity entity : beam_view) {
-        const NetworkIdentity& identity = beam_view.get<NetworkIdentity>(entity);
-        BeamState& beam = beam_view.get<BeamState>(entity);
-        if (beam.shooter_net_id != shooter_net_id ||
-            beam.source_code != definition.id) {
-            continue;
-        }
-        Transform& transform = beam_view.get<Transform>(entity);
-        transform.position = origin;
-        beam.origin = origin;
-        beam.direction = direction;
-        beam.length = definition.beam_length;
-        beam.radius = definition.beam_radius;
-        beam.damage_per_second = definition.beam_damage_per_second;
-        beam.expire_tick = expire_tick;
-        beam.collision_mask = definition.beam_collision_mask;
-        return identity.net_id;
-    }
-
-    const NetId beam = world.spawn_beam(
-        owner_peer,
-        shooter_net_id,
-        origin,
-        direction,
-        definition.beam_length,
-        definition.beam_radius,
-        definition.beam_damage_per_second,
-        expire_tick,
-        definition.id,
-        definition.beam_collision_mask);
-    push_event(
-        events,
-        KernelEventType_EntitySpawned,
-        current_tick,
-        beam,
-        owner_peer,
-        static_cast<std::uint32_t>(EntityType::kBeam));
-    return beam;
 }
 
 void complete_all_reloads(World& world, std::uint32_t current_tick) {
@@ -587,6 +553,11 @@ void simulate_weapons(
                         damage_pipeline);
                 }
             } else if (definition->mode == WeaponFireMode::kProjectile) {
+                const RuntimeProjectileTemplate* projectile_template =
+                    world.find_projectile_template(definition->projectile_template_id);
+                if (projectile_template == nullptr) {
+                    continue;
+                }
                 const Hitbox& shooter_hitbox = player_view.get<Hitbox>(player_entity);
                 const glm::vec3 compensated_origin =
                     compensated_projectile_origin(
@@ -604,10 +575,11 @@ void simulate_weapons(
                 for (const glm::vec3& projectile_direction :
                      projectile_burst_directions(direction, *definition)) {
                     const glm::vec3 velocity =
-                        projectile_direction * definition->projectile_speed;
+                        projectile_direction * projectile_template->speed;
                     const NetId projectile = fire_projectile(
                         world,
                         *definition,
+                        *projectile_template,
                         current_tick,
                         spawn_tick,
                         player_identity.net_id,
@@ -620,7 +592,7 @@ void simulate_weapons(
                     if (context.history_buffer != nullptr &&
                         context.rewind_frame != nullptr &&
                         context.fixed_delta_seconds > 0.0f &&
-                        definition->projectile_motion_model !=
+                        projectile_template->motion_model !=
                             ProjectileMotionModel::kHoming) {
                         const auto projectile_entity = world.find_entity(projectile);
                         if (projectile_entity.has_value()) {
@@ -643,25 +615,6 @@ void simulate_weapons(
                         }
                     }
                 }
-            } else if (definition->mode == WeaponFireMode::kAreaEffect) {
-                fire_area_effect(
-                    world,
-                    *definition,
-                    current_tick,
-                    queued_input.owner_peer,
-                    origin,
-                    direction,
-                    events);
-            } else if (definition->mode == WeaponFireMode::kBeam) {
-                fire_beam(
-                    world,
-                    *definition,
-                    current_tick,
-                    player_identity.net_id,
-                    queued_input.owner_peer,
-                    origin,
-                    direction,
-                    events);
             }
         }
     }

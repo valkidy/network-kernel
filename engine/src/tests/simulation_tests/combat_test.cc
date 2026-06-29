@@ -90,16 +90,20 @@ void configure_projectile_response_templates(network_example::World& world) {
     network_example::RuntimeProjectileTemplate grenade_template;
     grenade_template.projectile_template_id = network_example::kWeaponSlot2;
     grenade_template.weapon_id = network_example::kWeaponSlot2;
-    grenade_template.kind = network_example::ProjectileKind::kProjectile;
-    grenade_template.impact_action =
-        network_example::ProjectileImpactAction::kSpawnProjectile;
-    grenade_template.impact_projectile_template_id = 8;
+    grenade_template.projectile_type = network_example::ProjectileType::kStandard;
+    grenade_template.motion_model = network_example::ProjectileMotionModel::kParabolic;
+    grenade_template.damage = 40;
+    grenade_template.speed = 15.0f;
+    grenade_template.lifetime_seconds = 3.0f;
+    grenade_template.gravity = glm::vec3{0.0f, -9.8f, 0.0f};
+    grenade_template.collision_mask = network_example::kCollisionLayerHostileSide;
+    grenade_template.impact_spawn_projectile_template_id = 8;
     grenade_template.impact_destroy_self = 1u;
 
     network_example::RuntimeProjectileTemplate area_template;
     area_template.projectile_template_id = 8;
     area_template.weapon_id = network_example::kWeaponSlot2;
-    area_template.kind = network_example::ProjectileKind::kAreaEffect;
+    area_template.projectile_type = network_example::ProjectileType::kAreaEffect;
     area_template.damage = 40;
     area_template.area_radius = 4.0f;
     area_template.damage_interval_ticks = 45;
@@ -109,7 +113,33 @@ void configure_projectile_response_templates(network_example::World& world) {
     area_template.damage_falloff =
         network_example::ProjectileDamageFalloff::kLinear;
 
-    world.set_projectile_templates({grenade_template, area_template});
+    network_example::RuntimeProjectileTemplate rocket_template;
+    rocket_template.projectile_template_id = network_example::kWeaponSlot3;
+    rocket_template.weapon_id = network_example::kWeaponSlot3;
+    rocket_template.projectile_type = network_example::ProjectileType::kStandard;
+    rocket_template.damage = 45;
+    rocket_template.speed = 35.0f;
+    rocket_template.lifetime_seconds = 2.5f;
+    rocket_template.collision_mask = network_example::kCollisionLayerHostileSide;
+
+    network_example::RuntimeProjectileTemplate fire_floor_template;
+    fire_floor_template.projectile_template_id = network_example::kWeaponSlot4;
+    fire_floor_template.weapon_id = network_example::kWeaponSlot4;
+    fire_floor_template.projectile_type =
+        network_example::ProjectileType::kAreaEffect;
+    fire_floor_template.damage = 12;
+    fire_floor_template.area_radius = 2.0f;
+    fire_floor_template.damage_interval_ticks = 2;
+    fire_floor_template.lifetime_ticks = 6;
+    fire_floor_template.collision_mask =
+        network_example::kCollisionLayerHostileSide;
+
+    world.set_projectile_templates({
+        grenade_template,
+        area_template,
+        rocket_template,
+        fire_floor_template,
+    });
 }
 
 void configure_test_weapons(
@@ -153,7 +183,7 @@ void configure_test_weapons(
             75),
         weapon_definition(
             network_example::kWeaponSlot4,
-            network_example::WeaponFireMode::kAreaEffect,
+            network_example::WeaponFireMode::kProjectile,
             3,
             12,
             10,
@@ -163,27 +193,11 @@ void configure_test_weapons(
     tuning.definitions[network_example::kWeaponSlot1].pellet_spread = 0.035f;
     tuning.definitions[network_example::kWeaponSlot2].projectile_template_id =
         network_example::kWeaponSlot2;
-    tuning.definitions[network_example::kWeaponSlot2].projectile_speed = 15.0f;
-    tuning.definitions[network_example::kWeaponSlot2].projectile_lifetime_seconds = 3.0f;
-    tuning.definitions[network_example::kWeaponSlot2].projectile_motion_model =
-        network_example::ProjectileMotionModel::kParabolic;
-    tuning.definitions[network_example::kWeaponSlot2].projectile_gravity =
-        glm::vec3{0.0f, -9.8f, 0.0f};
-    tuning.definitions[network_example::kWeaponSlot2].projectile_collision_mask =
-        network_example::kCollisionLayerHostileSide;
     tuning.definitions[network_example::kWeaponSlot3].projectile_template_id =
         network_example::kWeaponSlot3;
-    tuning.definitions[network_example::kWeaponSlot3].projectile_speed = 35.0f;
-    tuning.definitions[network_example::kWeaponSlot3].projectile_lifetime_seconds = 2.5f;
-    tuning.definitions[network_example::kWeaponSlot3].projectile_collision_mask =
-        network_example::kCollisionLayerHostileSide;
-    tuning.definitions[network_example::kWeaponSlot4].area_effect_radius = 2.0f;
-    tuning.definitions[network_example::kWeaponSlot4].area_effect_damage_per_interval = 12;
-    tuning.definitions[network_example::kWeaponSlot4].area_effect_damage_interval_ticks = 2;
-    tuning.definitions[network_example::kWeaponSlot4].area_effect_lifetime_ticks = 6;
-    tuning.definitions[network_example::kWeaponSlot4].area_effect_spawn_distance = 1.0f;
-    tuning.definitions[network_example::kWeaponSlot4].area_effect_collision_mask =
-        network_example::kCollisionLayerHostileSide;
+    tuning.definitions[network_example::kWeaponSlot4].projectile_template_id =
+        network_example::kWeaponSlot4;
+    configure_projectile_response_templates(world);
 
     network_example::WeaponState& weapon =
         world.registry().get_or_emplace<network_example::WeaponState>(*entity);
@@ -244,7 +258,7 @@ network_example::NetId spawned_projectile(const std::vector<KernelEvent>& events
 network_example::NetId spawned_area_effect(const std::vector<KernelEvent>& events) {
     for (const KernelEvent& event : events) {
         if (event.type == KernelEventType_EntitySpawned &&
-            event.code == static_cast<std::uint32_t>(network_example::EntityType::kAreaEffect)) {
+            event.code == static_cast<std::uint32_t>(network_example::EntityType::kProjectile)) {
             return event.net_id;
         }
     }
@@ -608,12 +622,16 @@ void local_predicted_spammer_can_spawn_many_low_damage_projectiles() {
     spammer.damage = 1;
     spammer.cooldown_ticks = 1;
     spammer.reload_ticks = 30;
-    spammer.projectile_speed = 30.0f;
-    spammer.projectile_lifetime_seconds = 2.0f;
-    spammer.projectile_motion_model = network_example::ProjectileMotionModel::kLinear;
-    spammer.projectile_damage_shape =
-        network_example::ProjectileDamageShape::kDirectHit;
-    spammer.projectile_collision_mask = network_example::kCollisionLayerHostileSide;
+    spammer.projectile_template_id = network_example::kWeaponSlot2;
+    network_example::RuntimeProjectileTemplate spammer_template;
+    spammer_template.projectile_template_id = network_example::kWeaponSlot2;
+    spammer_template.weapon_id = network_example::kWeaponSlot2;
+    spammer_template.projectile_type = network_example::ProjectileType::kStandard;
+    spammer_template.damage = 1;
+    spammer_template.speed = 30.0f;
+    spammer_template.lifetime_seconds = 2.0f;
+    spammer_template.collision_mask = network_example::kCollisionLayerHostileSide;
+    world.set_projectile_templates({spammer_template});
     network_example::WeaponState& weapon = weapon_state(world, player);
     weapon.ammo[network_example::kWeaponSlot2] = spammer.magazine_size;
 
@@ -667,12 +685,16 @@ void projectile_spammer_burst_spawns_three_spread_projectiles() {
     spammer.reload_ticks = 30;
     spammer.pellet_count = 3;
     spammer.pellet_spread = 15.0f;
-    spammer.projectile_speed = 30.0f;
-    spammer.projectile_lifetime_seconds = 2.0f;
-    spammer.projectile_motion_model = network_example::ProjectileMotionModel::kLinear;
-    spammer.projectile_damage_shape =
-        network_example::ProjectileDamageShape::kDirectHit;
-    spammer.projectile_collision_mask = network_example::kCollisionLayerHostileSide;
+    spammer.projectile_template_id = network_example::kWeaponSlot2;
+    network_example::RuntimeProjectileTemplate spammer_template;
+    spammer_template.projectile_template_id = network_example::kWeaponSlot2;
+    spammer_template.weapon_id = network_example::kWeaponSlot2;
+    spammer_template.projectile_type = network_example::ProjectileType::kStandard;
+    spammer_template.damage = 1;
+    spammer_template.speed = 30.0f;
+    spammer_template.lifetime_seconds = 2.0f;
+    spammer_template.collision_mask = network_example::kCollisionLayerHostileSide;
+    world.set_projectile_templates({spammer_template});
     network_example::WeaponState& weapon = weapon_state(world, player);
     weapon.ammo[network_example::kWeaponSlot2] = spammer.magazine_size;
 
@@ -937,8 +959,9 @@ void area_effect_weapon_spawns_and_damages_enemy() {
     require(area != 0);
     const auto area_entity = world.find_entity(area);
     require(area_entity.has_value());
-    const network_example::AreaEffectState& state =
-        world.registry().get<network_example::AreaEffectState>(*area_entity);
+    const network_example::ProjectileAreaEffectRuntime& state =
+        world.registry().get<network_example::ProjectileAreaEffectRuntime>(
+            *area_entity);
     require(state.radius == 2.0f);
     require(state.damage_per_interval == 12);
     require(state.damage_interval_ticks == 2);

@@ -25,7 +25,7 @@ void push_event(
 }
 
 std::uint32_t tick_damage_units(
-    const BeamState& beam,
+    const ProjectileBeamRuntime& beam,
     float fixed_delta_seconds) {
     if (fixed_delta_seconds <= 0.0f) {
         return 0;
@@ -53,11 +53,16 @@ void simulate_beams(
     }
 
     std::vector<NetId> beams_to_destroy;
-    auto view = world.registry().view<NetworkIdentity, Transform, BeamState, BeamTag>();
+    auto view = world.registry().view<
+        NetworkIdentity,
+        Transform,
+        ProjectileState,
+        ProjectileBeamRuntime,
+        ProjectileTag>();
     for (const entt::entity entity : view) {
         const NetworkIdentity& identity = view.get<NetworkIdentity>(entity);
         Transform& transform = view.get<Transform>(entity);
-        BeamState& beam = view.get<BeamState>(entity);
+        ProjectileBeamRuntime& beam = view.get<ProjectileBeamRuntime>(entity);
 
         if (beam.expire_tick != 0 && current_tick >= beam.expire_tick) {
             beams_to_destroy.push_back(identity.net_id);

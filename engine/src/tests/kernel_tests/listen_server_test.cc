@@ -106,19 +106,42 @@ KernelWeaponMechanicsDefinition projectile_weapon(
     weapon.damage = 40;
     weapon.cooldown_ticks = 30;
     weapon.reload_ticks = 60;
-    weapon.projectile.struct_size = sizeof(KernelProjectileMechanicsDefinition);
-    weapon.projectile.projectile_template_id = weapon_id;
-    weapon.projectile.motion_model = motion_model;
-    weapon.projectile.speed = speed;
-    weapon.projectile.lifetime_seconds = 3.0f;
-    weapon.projectile.hit_response = KernelProjectileHitResponse_Destroy;
-    weapon.projectile.damage_shape = KernelProjectileDamageShape_DirectHit;
-    weapon.projectile.collision_mask = KERNEL_COLLISION_MASK_DAMAGEABLE;
-    weapon.projectile.max_hit_count = 1;
+    weapon.projectile_template_id = weapon_id;
+    (void)speed;
     if (motion_model == KernelProjectileMotionModel_Parabolic) {
-        weapon.projectile.gravity = KernelVec3{0.0f, -9.8f, 0.0f};
+        return weapon;
     }
     return weapon;
+}
+
+KernelProjectileTemplateDefinition projectile_template(
+    std::uint32_t template_id,
+    std::uint8_t weapon_id,
+    float speed,
+    float lifetime_seconds,
+    std::uint8_t motion_model) {
+    KernelProjectileTemplateDefinition projectile{};
+    projectile.struct_size = sizeof(projectile);
+    projectile.projectile_template_id = template_id;
+    projectile.weapon_id = weapon_id;
+    projectile.mechanics.struct_size = sizeof(KernelProjectileMechanicsDefinition);
+    projectile.mechanics.projectile_type = KernelProjectileType_Standard;
+    projectile.mechanics.motion_model = motion_model;
+    projectile.mechanics.sync_mode =
+        KernelProjectileSyncMode_HybridDeterministicThenSnapshot;
+    projectile.mechanics.hit_response = KernelProjectileHitResponse_Destroy;
+    projectile.mechanics.damage_shape = KernelProjectileDamageShape_DirectHit;
+    projectile.mechanics.damage = weapon_id == 3 ? 45 : 40;
+    projectile.mechanics.speed = speed;
+    projectile.mechanics.lifetime_seconds = lifetime_seconds;
+    projectile.mechanics.collider_template_id = 10;
+    projectile.mechanics.collision_mask = KERNEL_COLLISION_MASK_DAMAGEABLE;
+    projectile.mechanics.max_hit_count = 1;
+    projectile.mechanics.flags = 1u;
+    if (motion_model == KernelProjectileMotionModel_Parabolic) {
+        projectile.mechanics.gravity = KernelVec3{0.0f, -9.8f, 0.0f};
+    }
+    return projectile;
 }
 
 void load_minimal_gameplay_catalog(KernelHandle* kernel) {
@@ -140,9 +163,22 @@ void load_minimal_gameplay_catalog(KernelHandle* kernel) {
     rifle_segment.shape_params = KernelVec4{100.0f, 0.0f, 0.0f, 0.0f};
     rifle_segment.lifetime_ticks = 1;
 
-    const std::array<KernelColliderTemplateDefinition, 2> collider_templates = {
+    KernelColliderTemplateDefinition projectile_hit{};
+    projectile_hit.struct_size = sizeof(projectile_hit);
+    projectile_hit.template_id = 10;
+    projectile_hit.shape_type = KernelColliderShapeType_Sphere;
+    projectile_hit.purpose_flags = KernelColliderPurpose_Damage;
+    projectile_hit.layer_mask = KERNEL_COLLISION_LAYER_PROJECTILE;
+    projectile_hit.shape_params = KernelVec4{0.25f, 0.0f, 0.0f, 0.0f};
+
+    const std::array<KernelColliderTemplateDefinition, 3> collider_templates = {
         player_hit,
         rifle_segment,
+        projectile_hit,
+    };
+    const std::array<KernelProjectileTemplateDefinition, 2> projectile_templates = {
+        projectile_template(2, 2, 15.0f, 3.0f, KernelProjectileMotionModel_Parabolic),
+        projectile_template(3, 3, 35.0f, 2.5f, KernelProjectileMotionModel_Linear),
     };
     KernelGameplayCatalogDefinition catalog{};
     catalog.struct_size = sizeof(catalog);
@@ -150,6 +186,9 @@ void load_minimal_gameplay_catalog(KernelHandle* kernel) {
     catalog.collider_templates = collider_templates.data();
     catalog.collider_template_count =
         static_cast<std::uint32_t>(collider_templates.size());
+    catalog.projectile_templates = projectile_templates.data();
+    catalog.projectile_template_count =
+        static_cast<std::uint32_t>(projectile_templates.size());
     assert(Kernel_LoadGameplayCatalog(kernel, &catalog));
 }
 
@@ -192,7 +231,6 @@ void configure_local_player(KernelHandle* kernel, std::uint32_t player_net_id) {
     rocket.magazine_size = 6;
     rocket.damage = 45;
     rocket.reload_ticks = 75;
-    rocket.projectile.lifetime_seconds = 2.5f;
     assert(Kernel_ServerSetEntityWeaponMechanics(kernel, player_net_id, &rocket));
 }
 

@@ -50,6 +50,28 @@ network_example::NetId spawn_test_projectile(
     return net_id;
 }
 
+network_example::RuntimeProjectileTemplate area_effect_template(
+    std::uint32_t template_id,
+    std::uint8_t weapon_id,
+    float radius,
+    std::uint16_t damage,
+    std::uint32_t damage_interval_ticks,
+    std::uint32_t lifetime_ticks,
+    std::uint32_t collision_mask) {
+    network_example::RuntimeProjectileTemplate projectile_template;
+    projectile_template.projectile_template_id = template_id;
+    projectile_template.weapon_id = weapon_id;
+    projectile_template.projectile_type = network_example::ProjectileType::kAreaEffect;
+    projectile_template.motion_model = network_example::ProjectileMotionModel::kLinear;
+    projectile_template.damage_shape = network_example::ProjectileDamageShape::kDirectHit;
+    projectile_template.damage = damage;
+    projectile_template.damage_interval_ticks = damage_interval_ticks;
+    projectile_template.lifetime_ticks = lifetime_ticks;
+    projectile_template.area_radius = radius;
+    projectile_template.collision_mask = collision_mask;
+    return projectile_template;
+}
+
 void matching_projectiles_destroy_without_damage() {
     network_example::World world;
     const network_example::NetId lhs = spawn_test_projectile(
@@ -95,6 +117,16 @@ void matching_interaction_spawns_area_effect() {
         glm::vec3{1.0f, 0.5f, 0.0f},
         glm::vec3{-10.0f, 0.0f, 0.0f},
         4);
+    world.set_projectile_templates({
+        area_effect_template(
+            8,
+            9,
+            2.5f,
+            12,
+            3,
+            7,
+            network_example::kCollisionLayerHostileSide),
+    });
 
     network_example::ProjectileInteractionRule rule;
     rule.lhs_weapon_id = 3;
@@ -102,13 +134,7 @@ void matching_interaction_spawns_area_effect() {
     rule.symmetric = true;
     rule.destroy_lhs = true;
     rule.destroy_rhs = true;
-    rule.area_effect.enabled = true;
-    rule.area_effect.radius = 2.5f;
-    rule.area_effect.damage_interval_ticks = 3;
-    rule.area_effect.lifetime_ticks = 7;
-    rule.area_effect.damage_per_interval = 12;
-    rule.area_effect.source_code = 9;
-    rule.area_effect.collision_mask = network_example::kCollisionLayerHostileSide;
+    rule.spawn_projectile_template_id = 8;
     world.add_projectile_interaction_rule(rule);
 
     std::vector<KernelEvent> events;
@@ -122,14 +148,16 @@ void matching_interaction_spawns_area_effect() {
         if (event.type == KernelEventType_EntitySpawned) {
             area_effect_net_id = event.net_id;
             require(event.code ==
-                    static_cast<std::uint32_t>(network_example::EntityType::kAreaEffect));
+                    static_cast<std::uint32_t>(network_example::EntityType::kProjectile));
         }
     }
     const auto area_entity = world.find_entity(area_effect_net_id);
     require(area_entity.has_value());
-    require(world.registry().all_of<network_example::AreaEffectState>(*area_entity));
-    const network_example::AreaEffectState& area_effect =
-        world.registry().get<network_example::AreaEffectState>(*area_entity);
+    require(world.registry().all_of<network_example::ProjectileAreaEffectRuntime>(
+        *area_entity));
+    const network_example::ProjectileAreaEffectRuntime& area_effect =
+        world.registry().get<network_example::ProjectileAreaEffectRuntime>(
+            *area_entity);
     require(area_effect.radius == 2.5f);
     require(area_effect.damage_interval_ticks == 3);
     require(area_effect.expire_tick == 12);
@@ -248,6 +276,16 @@ void multiple_reactions_resolve_by_projectile_pair_order() {
         glm::vec3{5.0f, 0.5f, 0.0f},
         glm::vec3{-10.0f, 0.0f, 0.0f},
         2);
+    world.set_projectile_templates({
+        area_effect_template(
+            8,
+            9,
+            1.0f,
+            0,
+            1,
+            3,
+            network_example::kCollisionMaskDamageable),
+    });
 
     network_example::ProjectileInteractionRule rule;
     rule.lhs_weapon_id = 1;
@@ -255,10 +293,7 @@ void multiple_reactions_resolve_by_projectile_pair_order() {
     rule.symmetric = true;
     rule.destroy_lhs = true;
     rule.destroy_rhs = true;
-    rule.area_effect.enabled = true;
-    rule.area_effect.radius = 1.0f;
-    rule.area_effect.damage_interval_ticks = 1;
-    rule.area_effect.lifetime_ticks = 3;
+    rule.spawn_projectile_template_id = 8;
     world.add_projectile_interaction_rule(rule);
 
     std::vector<KernelEvent> events;
@@ -296,21 +331,21 @@ void impact_response_spawns_area_effect_projectile_once() {
     network_example::RuntimeProjectileTemplate rocket_template;
     rocket_template.projectile_template_id = 3;
     rocket_template.weapon_id = 3;
-    rocket_template.kind = network_example::ProjectileKind::kProjectile;
-    rocket_template.impact_action =
-        network_example::ProjectileImpactAction::kSpawnProjectile;
-    rocket_template.impact_projectile_template_id = 8;
+    rocket_template.projectile_type = network_example::ProjectileType::kStandard;
+    rocket_template.impact_spawn_projectile_template_id = 8;
     rocket_template.impact_destroy_self = 1u;
 
-    network_example::RuntimeProjectileTemplate explosion_template;
-    explosion_template.projectile_template_id = 8;
-    explosion_template.kind = network_example::ProjectileKind::kAreaEffect;
-    explosion_template.damage = 45;
-    explosion_template.damage_interval_ticks = 45;
-    explosion_template.lifetime_ticks = 45;
-    explosion_template.area_radius = 2.5f;
-    explosion_template.collision_mask = network_example::kCollisionLayerHostileSide;
-    world.set_projectile_templates({rocket_template, explosion_template});
+    world.set_projectile_templates({
+        rocket_template,
+        area_effect_template(
+            8,
+            3,
+            2.5f,
+            45,
+            45,
+            45,
+            network_example::kCollisionLayerHostileSide),
+    });
 
     const network_example::NetId rocket = spawn_test_projectile(
         world,
@@ -334,7 +369,7 @@ void impact_response_spawns_area_effect_projectile_once() {
     for (const KernelEvent& event : events) {
         if (event.type == KernelEventType_EntitySpawned &&
             event.code ==
-                static_cast<std::uint32_t>(network_example::EntityType::kAreaEffect)) {
+                static_cast<std::uint32_t>(network_example::EntityType::kProjectile)) {
             area_effects.push_back(event.net_id);
         }
     }
@@ -342,8 +377,9 @@ void impact_response_spawns_area_effect_projectile_once() {
 
     const auto area_entity = world.find_entity(area_effects[0]);
     require(area_entity.has_value());
-    const network_example::AreaEffectState& area_effect =
-        world.registry().get<network_example::AreaEffectState>(*area_entity);
+    const network_example::ProjectileAreaEffectRuntime& area_effect =
+        world.registry().get<network_example::ProjectileAreaEffectRuntime>(
+            *area_entity);
     require(area_effect.damage_per_interval == 45);
     require(area_effect.damage_interval_ticks == 45);
     require(area_effect.expire_tick == 46);

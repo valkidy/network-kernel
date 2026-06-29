@@ -5,6 +5,20 @@
 
 #include "kernel/public/kernel_api.h"
 
+_Static_assert(KERNEL_ABI_VERSION == 31u, "projectile refactor bumps ABI");
+_Static_assert(
+    offsetof(KernelWeaponMechanicsDefinition, projectile_template_id) >
+        offsetof(KernelWeaponMechanicsDefinition, pellet_spread),
+    "weapon mechanics reference projectile templates instead of duplicating mechanics");
+_Static_assert(
+    offsetof(KernelProjectileTemplateDefinition, mechanics) >
+        offsetof(KernelProjectileTemplateDefinition, weapon_id),
+    "projectile templates own projectile mechanics");
+_Static_assert(
+    offsetof(KernelProjectileMechanicsDefinition, projectile_type) >
+        offsetof(KernelProjectileMechanicsDefinition, struct_size),
+    "projectile mechanics use projectile_type naming");
+
 int main(void) {
     KernelAbiInfo abi_info;
     KernelBuildInfo build_info;
@@ -21,11 +35,7 @@ int main(void) {
     KernelCombatStateDefinition combat_state;
     KernelWeaponMechanicsDefinition weapon_mechanics;
     KernelProjectileMechanicsDefinition projectile_mechanics;
-    KernelAreaEffectMechanicsDefinition area_effect_mechanics;
-    KernelBeamMechanicsDefinition beam_mechanics;
     KernelHomingMechanicsDefinition homing_mechanics;
-    KernelAreaEffectState area_effect_state;
-    KernelBeamState beam_state;
     KernelHomingState homing_state;
     KernelGameplayCatalogDefinition gameplay_catalog;
     KernelGameplayCatalogLoadResult gameplay_catalog_load_result;
@@ -58,11 +68,7 @@ int main(void) {
     (void)combat_state;
     (void)weapon_mechanics;
     (void)projectile_mechanics;
-    (void)area_effect_mechanics;
-    (void)beam_mechanics;
     (void)homing_mechanics;
-    (void)area_effect_state;
-    (void)beam_state;
     (void)homing_state;
     (void)gameplay_catalog;
     (void)gameplay_catalog_load_result;
@@ -81,7 +87,7 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 30u);
+    assert(KERNEL_ABI_VERSION == 31u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD == 4u);
@@ -104,11 +110,7 @@ int main(void) {
     assert(sizeof(KernelCombatStateDefinition) > 0u);
     assert(sizeof(KernelWeaponMechanicsDefinition) > 0u);
     assert(sizeof(KernelProjectileMechanicsDefinition) > 0u);
-    assert(sizeof(KernelAreaEffectMechanicsDefinition) > 0u);
-    assert(sizeof(KernelBeamMechanicsDefinition) > 0u);
     assert(sizeof(KernelHomingMechanicsDefinition) > 0u);
-    assert(sizeof(KernelAreaEffectState) > 0u);
-    assert(sizeof(KernelBeamState) > 0u);
     assert(sizeof(KernelHomingState) > 0u);
     assert(sizeof(KernelGameplayCatalogDefinition) > 0u);
     assert(sizeof(KernelGameplayCatalogLoadResult) > 0u);
@@ -144,16 +146,11 @@ int main(void) {
             KERNEL_CAPABILITY_SERVER_MECHANICS_CONFIG) == 0u);
     assert((KERNEL_CAPABILITY_VISION_STATE_QUERY &
             KERNEL_CAPABILITY_COLLIDER_SHAPE_QUERY) == 0u);
-    assert((KERNEL_CAPABILITY_AREA_EFFECT_WEAPONS &
-            KERNEL_CAPABILITY_PROJECTILE_RESPONSE_MASKS) == 0u);
-    assert((KERNEL_CAPABILITY_BEAM_WEAPONS &
-            KERNEL_CAPABILITY_AREA_EFFECT_WEAPONS) == 0u);
-    assert((KERNEL_CAPABILITY_HOMING_PROJECTILES &
-            KERNEL_CAPABILITY_BEAM_WEAPONS) == 0u);
+    assert((KERNEL_CAPABILITY_PROJECTILE_RESPONSE_MASKS &
+            KERNEL_CAPABILITY_HOMING_PROJECTILES) == 0u);
     assert((KERNEL_CAPABILITY_LAN_DISCOVERY &
             KERNEL_CAPABILITY_HOMING_PROJECTILES) == 0u);
     assert((KERNEL_COLLISION_LAYER_PLAYER_SIDE & KERNEL_COLLISION_LAYER_HOSTILE_SIDE) == 0u);
-    assert((KERNEL_COLLISION_LAYER_PROJECTILE & KERNEL_COLLISION_LAYER_AREA_EFFECT) == 0u);
     assert((KERNEL_COLLISION_MASK_DAMAGEABLE & KERNEL_COLLISION_LAYER_PLAYER_SIDE) != 0u);
     assert((KERNEL_COLLISION_MASK_DAMAGEABLE & KERNEL_COLLISION_LAYER_HOSTILE_SIDE) != 0u);
     assert((KERNEL_COLLISION_MASK_DAMAGEABLE & KERNEL_COLLISION_LAYER_NEUTRAL) != 0u);
@@ -179,10 +176,6 @@ int main(void) {
     assert(sizeof(KernelEntityLifecycleEvent) > 0u);
     assert(offsetof(KernelEvent, event_time_us) > offsetof(KernelEvent, code));
     assert(offsetof(KernelEvent, presentation_time_us) > offsetof(KernelEvent, event_time_us));
-    assert(offsetof(KernelWeaponMechanicsDefinition, area_effect) >
-           offsetof(KernelWeaponMechanicsDefinition, projectile));
-    assert(offsetof(KernelWeaponMechanicsDefinition, beam) >
-           offsetof(KernelWeaponMechanicsDefinition, area_effect));
     assert(sizeof(state.entity_id) == sizeof(uint64_t));
     assert(sizeof(build_info.module_name) == KERNEL_BUILD_INFO_TEXT_SIZE);
     assert(sizeof(build_info.module_file_name) == KERNEL_BUILD_INFO_TEXT_SIZE);

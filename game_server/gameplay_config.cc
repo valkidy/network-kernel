@@ -101,38 +101,7 @@ void hash_weapon(std::uint64_t* hash, const KernelWeaponMechanicsDefinition& wea
     hash_scalar(hash, weapon.pellet_count);
     hash_float(hash, weapon.pellet_spread);
     hash_scalar(hash, weapon.segment_collider_template_id);
-
-    hash_scalar(hash, weapon.projectile.projectile_template_id);
-    hash_scalar(hash, weapon.projectile.motion_model);
-    hash_scalar(hash, weapon.projectile.hit_response);
-    hash_scalar(hash, weapon.projectile.damage_shape);
-    hash_float(hash, weapon.projectile.speed);
-    hash_float(hash, weapon.projectile.lifetime_seconds);
-    hash_vec3(hash, weapon.projectile.gravity);
-    hash_scalar(hash, weapon.projectile.collision_mask);
-    hash_scalar(hash, weapon.projectile.max_hit_count);
-    hash_scalar(hash, weapon.projectile.homing.homing_mode);
-    hash_scalar(hash, weapon.projectile.homing.sync_mode);
-    hash_scalar(hash, weapon.projectile.homing.boost_ticks);
-    hash_float(hash, weapon.projectile.homing.lock_on_range);
-    hash_float(hash, weapon.projectile.homing.lose_target_range);
-    hash_float(hash, weapon.projectile.homing.lock_cone_degrees);
-    hash_float(hash, weapon.projectile.homing.max_turn_rate_degrees_per_second);
-    hash_float(hash, weapon.projectile.homing.acceleration);
-    hash_float(hash, weapon.projectile.homing.max_speed);
-
-    hash_float(hash, weapon.area_effect.radius);
-    hash_scalar(hash, weapon.area_effect.damage_per_interval);
-    hash_scalar(hash, weapon.area_effect.damage_interval_ticks);
-    hash_scalar(hash, weapon.area_effect.lifetime_ticks);
-    hash_float(hash, weapon.area_effect.spawn_distance);
-    hash_scalar(hash, weapon.area_effect.collision_mask);
-
-    hash_float(hash, weapon.beam.length);
-    hash_float(hash, weapon.beam.radius);
-    hash_scalar(hash, weapon.beam.damage_per_second);
-    hash_scalar(hash, weapon.beam.lifetime_ticks);
-    hash_scalar(hash, weapon.beam.collision_mask);
+    hash_scalar(hash, weapon.projectile_template_id);
 }
 
 void hash_collider_template(
@@ -156,35 +125,44 @@ void hash_projectile_template(
     hash_string(hash, projectile_template.name);
     const KernelProjectileTemplateDefinition& definition =
         projectile_template.definition;
+    const KernelProjectileMechanicsDefinition& mechanics = definition.mechanics;
     hash_scalar(hash, definition.projectile_template_id);
     hash_scalar(hash, definition.weapon_id);
-    hash_scalar(hash, definition.motion_model);
-    hash_scalar(hash, definition.sync_mode);
-    hash_scalar(hash, definition.hit_response);
-    hash_scalar(hash, definition.damage_shape);
-    hash_scalar(hash, definition.projectile_kind);
-    hash_scalar(hash, definition.impact_action);
-    hash_scalar(hash, definition.impact_destroy_self);
-    hash_scalar(hash, definition.damage_falloff);
-    hash_scalar(hash, definition.damage);
-    hash_float(hash, definition.speed);
-    hash_float(hash, definition.lifetime_seconds);
-    hash_vec3(hash, definition.gravity);
-    hash_scalar(hash, definition.collider_template_id);
-    hash_scalar(hash, definition.collision_mask);
-    hash_scalar(hash, definition.max_hit_count);
-    hash_scalar(hash, definition.impact_projectile_template_id);
-    hash_scalar(hash, definition.lifetime_ticks);
-    hash_scalar(hash, definition.damage_interval_ticks);
-    hash_scalar(hash, projectile_template.homing.homing_mode);
-    hash_scalar(hash, projectile_template.homing.sync_mode);
-    hash_scalar(hash, projectile_template.homing.boost_ticks);
-    hash_float(hash, projectile_template.homing.lock_on_range);
-    hash_float(hash, projectile_template.homing.lose_target_range);
-    hash_float(hash, projectile_template.homing.lock_cone_degrees);
-    hash_float(hash, projectile_template.homing.max_turn_rate_degrees_per_second);
-    hash_float(hash, projectile_template.homing.acceleration);
-    hash_float(hash, projectile_template.homing.max_speed);
+    hash_scalar(hash, mechanics.projectile_type);
+    hash_scalar(hash, mechanics.motion_model);
+    hash_scalar(hash, mechanics.sync_mode);
+    hash_scalar(hash, mechanics.hit_response);
+    hash_scalar(hash, mechanics.damage_shape);
+    hash_scalar(hash, mechanics.damage_falloff);
+    hash_scalar(hash, mechanics.damage);
+    hash_float(hash, mechanics.speed);
+    hash_float(hash, mechanics.lifetime_seconds);
+    hash_vec3(hash, mechanics.gravity);
+    hash_scalar(hash, mechanics.collider_template_id);
+    hash_scalar(hash, mechanics.collision_mask);
+    hash_scalar(hash, mechanics.max_hit_count);
+    hash_scalar(hash, mechanics.flags);
+    hash_scalar(hash, mechanics.homing.homing_mode);
+    hash_scalar(hash, mechanics.homing.sync_mode);
+    hash_scalar(hash, mechanics.homing.boost_ticks);
+    hash_float(hash, mechanics.homing.lock_on_range);
+    hash_float(hash, mechanics.homing.lose_target_range);
+    hash_float(hash, mechanics.homing.lock_cone_degrees);
+    hash_float(hash, mechanics.homing.max_turn_rate_degrees_per_second);
+    hash_float(hash, mechanics.homing.acceleration);
+    hash_float(hash, mechanics.homing.max_speed);
+    hash_float(hash, mechanics.area_effect.radius);
+    hash_scalar(hash, mechanics.area_effect.damage_per_interval);
+    hash_scalar(hash, mechanics.area_effect.damage_interval_ticks);
+    hash_scalar(hash, mechanics.area_effect.lifetime_ticks);
+    hash_scalar(hash, mechanics.area_effect.collision_mask);
+    hash_float(hash, mechanics.beam.length);
+    hash_float(hash, mechanics.beam.radius);
+    hash_scalar(hash, mechanics.beam.damage_per_second);
+    hash_scalar(hash, mechanics.beam.lifetime_ticks);
+    hash_scalar(hash, mechanics.beam.collision_mask);
+    hash_scalar(hash, mechanics.impact_spawn_projectile_template_id);
+    hash_scalar(hash, mechanics.expire_spawn_projectile_template_id);
 }
 
 void hash_actor_template(
@@ -284,16 +262,11 @@ KernelWeaponMechanicsDefinition projectile_weapon(
     weapon.cooldown_ticks = cooldown_ticks;
     weapon.reload_ticks = reload_ticks;
     weapon.pellet_count = 1;
-    weapon.projectile.struct_size = sizeof(KernelProjectileMechanicsDefinition);
-    weapon.projectile.projectile_template_id = weapon_id;
-    weapon.projectile.motion_model = motion_model;
-    weapon.projectile.speed = projectile_speed;
-    weapon.projectile.lifetime_seconds = projectile_lifetime_seconds;
-    weapon.projectile.gravity = gravity;
-    weapon.projectile.hit_response = KernelProjectileHitResponse_Destroy;
-    weapon.projectile.damage_shape = KernelProjectileDamageShape_DirectHit;
-    weapon.projectile.collision_mask = KERNEL_COLLISION_MASK_DAMAGEABLE;
-    weapon.projectile.max_hit_count = 1;
+    weapon.projectile_template_id = weapon_id;
+    (void)projectile_speed;
+    (void)projectile_lifetime_seconds;
+    (void)motion_model;
+    (void)gravity;
     return weapon;
 }
 
@@ -312,19 +285,19 @@ KernelWeaponMechanicsDefinition area_effect_weapon(
     KernelWeaponMechanicsDefinition weapon{};
     weapon.struct_size = sizeof(KernelWeaponMechanicsDefinition);
     weapon.weapon_id = weapon_id;
-    weapon.fire_mode = KernelWeaponFireMode_AreaEffect;
+    weapon.fire_mode = KernelWeaponFireMode_Projectile;
     weapon.magazine_size = magazine_size;
     weapon.damage = damage;
     weapon.cooldown_ticks = cooldown_ticks;
     weapon.reload_ticks = reload_ticks;
     weapon.pellet_count = 1;
-    weapon.area_effect.struct_size = sizeof(KernelAreaEffectMechanicsDefinition);
-    weapon.area_effect.radius = radius;
-    weapon.area_effect.damage_per_interval = damage_per_interval;
-    weapon.area_effect.damage_interval_ticks = damage_interval_ticks;
-    weapon.area_effect.lifetime_ticks = lifetime_ticks;
-    weapon.area_effect.spawn_distance = spawn_distance;
-    weapon.area_effect.collision_mask = collision_mask;
+    weapon.projectile_template_id = weapon_id;
+    (void)radius;
+    (void)damage_per_interval;
+    (void)damage_interval_ticks;
+    (void)lifetime_ticks;
+    (void)spawn_distance;
+    (void)collision_mask;
     return weapon;
 }
 
@@ -342,18 +315,18 @@ KernelWeaponMechanicsDefinition beam_weapon(
     KernelWeaponMechanicsDefinition weapon{};
     weapon.struct_size = sizeof(KernelWeaponMechanicsDefinition);
     weapon.weapon_id = weapon_id;
-    weapon.fire_mode = KernelWeaponFireMode_Beam;
+    weapon.fire_mode = KernelWeaponFireMode_Projectile;
     weapon.magazine_size = magazine_size;
     weapon.damage = damage;
     weapon.cooldown_ticks = cooldown_ticks;
     weapon.reload_ticks = reload_ticks;
     weapon.pellet_count = 1;
-    weapon.beam.struct_size = sizeof(KernelBeamMechanicsDefinition);
-    weapon.beam.length = length;
-    weapon.beam.radius = radius;
-    weapon.beam.damage_per_second = damage_per_second;
-    weapon.beam.lifetime_ticks = lifetime_ticks;
-    weapon.beam.collision_mask = collision_mask;
+    weapon.projectile_template_id = weapon_id;
+    (void)length;
+    (void)radius;
+    (void)damage_per_second;
+    (void)lifetime_ticks;
+    (void)collision_mask;
     return weapon;
 }
 
@@ -383,20 +356,14 @@ KernelWeaponMechanicsDefinition homing_projectile_weapon(
         projectile_lifetime_seconds,
         KernelProjectileMotionModel_Homing,
         KernelVec3{0.0f, 0.0f, 0.0f});
-    weapon.projectile.damage_shape = KernelProjectileDamageShape_DirectHit;
-    weapon.projectile.collision_mask = collision_mask;
-    weapon.projectile.homing.struct_size = sizeof(KernelHomingMechanicsDefinition);
-    weapon.projectile.homing.homing_mode = KernelHomingMode_FireAndForget;
-    weapon.projectile.homing.sync_mode =
-        KernelProjectileSyncMode_HybridDeterministicThenSnapshot;
-    weapon.projectile.homing.boost_ticks = boost_ticks;
-    weapon.projectile.homing.lock_on_range = lock_on_range;
-    weapon.projectile.homing.lose_target_range = lose_target_range;
-    weapon.projectile.homing.lock_cone_degrees = lock_cone_degrees;
-    weapon.projectile.homing.max_turn_rate_degrees_per_second =
-        max_turn_rate_degrees_per_second;
-    weapon.projectile.homing.acceleration = acceleration;
-    weapon.projectile.homing.max_speed = max_speed;
+    (void)boost_ticks;
+    (void)lock_on_range;
+    (void)lose_target_range;
+    (void)lock_cone_degrees;
+    (void)max_turn_rate_degrees_per_second;
+    (void)acceleration;
+    (void)max_speed;
+    (void)collision_mask;
     return weapon;
 }
 
@@ -419,57 +386,13 @@ bool validate_weapon_mechanics(
         weapon.damage == 0 ||
         weapon.cooldown_ticks == 0 ||
         weapon.reload_ticks == 0 ||
-            weapon.fire_mode > KernelWeaponFireMode_Beam) {
+        weapon.fire_mode > KernelWeaponFireMode_Projectile) {
         return false;
     }
     if (weapon.fire_mode == KernelWeaponFireMode_Projectile) {
-        return weapon.projectile.struct_size >=
-                   sizeof(KernelProjectileMechanicsDefinition) &&
-               weapon.projectile.projectile_template_id != 0 &&
-               weapon.projectile.motion_model <= KernelProjectileMotionModel_Homing &&
-               weapon.projectile.hit_response <= KernelProjectileHitResponse_Attach &&
-               weapon.projectile.hit_response != KernelProjectileHitResponse_Bounce &&
-               weapon.projectile.hit_response != KernelProjectileHitResponse_Attach &&
-               weapon.projectile.damage_shape <= KernelProjectileDamageShape_PiercingSegment &&
-               weapon.projectile.max_hit_count > 0 &&
-               weapon.projectile.speed > 0.0f &&
-               weapon.projectile.lifetime_seconds > 0.0f &&
-               (weapon.projectile.motion_model != KernelProjectileMotionModel_Homing
-                    ? weapon.projectile.homing.struct_size == 0
-                    : weapon.projectile.homing.struct_size >=
-                              sizeof(KernelHomingMechanicsDefinition) &&
-                          weapon.projectile.homing.homing_mode ==
-                              KernelHomingMode_FireAndForget &&
-                          weapon.projectile.homing.sync_mode <=
-                              KernelProjectileSyncMode_ServerSnapshotOnly &&
-                          weapon.projectile.homing.lock_on_range > 0.0f &&
-                          weapon.projectile.homing.lose_target_range >=
-                              weapon.projectile.homing.lock_on_range &&
-                          weapon.projectile.homing.lock_cone_degrees > 0.0f &&
-                          weapon.projectile.homing.lock_cone_degrees <= 180.0f &&
-                          weapon.projectile.homing
-                                  .max_turn_rate_degrees_per_second > 0.0f &&
-                          weapon.projectile.homing.acceleration > 0.0f &&
-                          weapon.projectile.homing.max_speed > 0.0f);
+        return weapon.projectile_template_id != 0;
     }
-    if (weapon.fire_mode == KernelWeaponFireMode_AreaEffect) {
-        return weapon.area_effect.struct_size >=
-                   sizeof(KernelAreaEffectMechanicsDefinition) &&
-               weapon.area_effect.radius > 0.0f &&
-               weapon.area_effect.damage_per_interval > 0 &&
-               weapon.area_effect.damage_interval_ticks > 0 &&
-               weapon.area_effect.lifetime_ticks > 0 &&
-               weapon.area_effect.spawn_distance >= 0.0f;
-    }
-    if (weapon.fire_mode == KernelWeaponFireMode_Beam) {
-        return weapon.beam.struct_size >= sizeof(KernelBeamMechanicsDefinition) &&
-               weapon.beam.length > 0.0f &&
-               weapon.beam.radius > 0.0f &&
-               weapon.beam.damage_per_second > 0 &&
-               weapon.beam.lifetime_ticks > 0;
-    }
-    if (weapon.fire_mode != KernelWeaponFireMode_Beam &&
-        weapon.max_range <= 0.0f) {
+    if (weapon.max_range <= 0.0f) {
         return false;
     }
     if ((weapon.fire_mode == KernelWeaponFireMode_Hitscan ||
@@ -514,7 +437,7 @@ std::uint32_t collision_mask_token_from_yaml(const std::string& token) {
         return KERNEL_COLLISION_LAYER_PROJECTILE;
     }
     if (token == "area_effect") {
-        return KERNEL_COLLISION_LAYER_AREA_EFFECT;
+        return KERNEL_COLLISION_LAYER_PROJECTILE;
     }
     if (token == "agent_vision") {
         return KERNEL_COLLISION_LAYER_AGENT_VISION;
@@ -592,24 +515,27 @@ std::uint8_t damage_shape_from_yaml(const YAML::Node& node) {
     throw std::runtime_error("unsupported projectile damage_shape: " + value);
 }
 
-std::uint8_t projectile_kind_from_yaml(const YAML::Node& node) {
+std::uint8_t projectile_type_from_yaml(const YAML::Node& node) {
     const std::string value = node ? node.as<std::string>() : "projectile";
-    if (value == "projectile") {
-        return KernelProjectileKind_Projectile;
+    if (value == "projectile" || value == "standard") {
+        return KernelProjectileType_Standard;
     }
     if (value == "area_effect") {
-        return KernelProjectileKind_AreaEffect;
+        return KernelProjectileType_AreaEffect;
     }
-    throw std::runtime_error("unsupported projectile kind: " + value);
+    if (value == "beam") {
+        return KernelProjectileType_Beam;
+    }
+    throw std::runtime_error("unsupported projectile type: " + value);
 }
 
-std::uint8_t impact_action_from_yaml(const YAML::Node& node) {
+bool impact_spawns_projectile_from_yaml(const YAML::Node& node) {
     const std::string value = node ? node.as<std::string>() : "none";
     if (value == "none") {
-        return KernelProjectileImpactAction_None;
+        return false;
     }
     if (value == "spawn_projectile") {
-        return KernelProjectileImpactAction_SpawnProjectile;
+        return true;
     }
     throw std::runtime_error("unsupported projectile impact action: " + value);
 }
@@ -1127,7 +1053,6 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
         weapon.cooldown_ticks = cooldown_ticks;
         weapon.reload_ticks = reload_ticks;
         weapon.pellet_count = 1;
-        weapon.projectile.struct_size = sizeof(KernelProjectileMechanicsDefinition);
         weapon.pellet_count =
             node["burst_count"]
                 ? static_cast<std::uint8_t>(node["burst_count"].as<int>())
@@ -1137,72 +1062,46 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
         return weapon;
     }
     if (type == "area_effect") {
-        if (node["projectile"] || node["beam"]) {
+        if (node["projectile"] || node["area_effect"] || node["beam"]) {
             throw std::runtime_error(
-                "area_effect weapons must not define projectile or beam");
+                "area_effect weapons must use projectile_template, not inline mechanics");
         }
-        const YAML::Node area_effect = node["area_effect"];
-        if (!area_effect) {
-            throw std::runtime_error("area_effect weapon requires area_effect block");
+        if (!node["projectile_template"]) {
+            throw std::runtime_error(
+                "area_effect weapon requires projectile_template");
         }
-        reject_unknown_keys(
-            area_effect,
-            {
-                "collider_template",
-                "radius",
-                "damage_per_interval",
-                "damage_interval_ticks",
-                "lifetime_ticks",
-                "spawn_distance",
-                "collision_mask",
-            },
-            path,
-            source_kind,
-            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_WEAPON,
-            id);
         return area_effect_weapon(
             id,
             magazine_size,
             damage,
             cooldown_ticks,
             reload_ticks,
-            area_effect["radius"].as<float>(),
-            area_effect["damage_per_interval"].as<std::uint16_t>(),
-            area_effect["damage_interval_ticks"].as<std::uint32_t>(),
-            area_effect["lifetime_ticks"].as<std::uint32_t>(),
-            area_effect["spawn_distance"].as<float>(),
-            collision_mask_from_yaml(area_effect["collision_mask"]));
+            0.0f,
+            0,
+            0,
+            0,
+            0.0f,
+            0);
     }
     if (type == "beam") {
-        const YAML::Node beam = node["beam"];
-        if (!beam) {
-            throw std::runtime_error("beam weapon requires beam block");
+        if (node["projectile"] || node["area_effect"] || node["beam"]) {
+            throw std::runtime_error(
+                "beam weapons must use projectile_template, not inline mechanics");
         }
-        reject_unknown_keys(
-            beam,
-            {
-                "collider_template",
-                "length",
-                "radius",
-                "damage_per_second",
-                "lifetime_ticks",
-                "collision_mask",
-            },
-            path,
-            source_kind,
-            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_WEAPON,
-            id);
+        if (!node["projectile_template"]) {
+            throw std::runtime_error("beam weapon requires projectile_template");
+        }
         return beam_weapon(
             id,
             magazine_size,
             damage,
             cooldown_ticks,
             reload_ticks,
-            beam["length"].as<float>(),
-            beam["radius"].as<float>(),
-            beam["damage_per_second"].as<std::uint16_t>(),
-            beam["lifetime_ticks"] ? beam["lifetime_ticks"].as<std::uint32_t>() : 2u,
-            collision_mask_from_yaml(beam["collision_mask"]));
+            0.0f,
+            0.0f,
+            0,
+            0,
+            0);
     }
     throw std::runtime_error("unsupported weapon_type: " + type);
 }
@@ -1790,6 +1689,30 @@ std::uint32_t collider_template_id_from_ref(
     throw std::runtime_error("unknown collider template name: " + value);
 }
 
+const ColliderTemplateConfig* collider_template_from_id(
+    const ColliderCatalogConfig& colliders,
+    std::uint32_t template_id) {
+    for (const ColliderTemplateConfig& collider_template : colliders.templates) {
+        if (collider_template.definition.template_id == template_id) {
+            return &collider_template;
+        }
+    }
+    return nullptr;
+}
+
+float collider_template_radius_for_area(
+    const ColliderTemplateConfig& collider_template) {
+    const KernelColliderTemplateDefinition& definition =
+        collider_template.definition;
+    if (definition.shape_type == KernelColliderShapeType_Sphere ||
+        definition.shape_type == KernelColliderShapeType_Segment) {
+        return definition.shape_params.x;
+    }
+    return std::max(
+        definition.shape_params.x,
+        std::max(definition.shape_params.y, definition.shape_params.z));
+}
+
 ProjectileTemplateConfig projectile_template_from_yaml(
     const YAML::Node& node,
     const std::string& path,
@@ -1800,6 +1723,8 @@ ProjectileTemplateConfig projectile_template_from_yaml(
         {
             "id",
             "name",
+            "type",
+            "projectile_type",
             "kind",
             "damage",
             "sync_mode",
@@ -1816,6 +1741,7 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             "gravity",
             "impact_response",
             "homing",
+            "beam",
         },
         path,
         source_kind,
@@ -1826,18 +1752,23 @@ ProjectileTemplateConfig projectile_template_from_yaml(
         projectile_template.definition;
     definition.struct_size = sizeof(KernelProjectileTemplateDefinition);
     definition.projectile_template_id = node["id"].as<std::uint32_t>();
+    KernelProjectileMechanicsDefinition& mechanics = definition.mechanics;
+    mechanics.struct_size = sizeof(KernelProjectileMechanicsDefinition);
     const std::string removed_radius_key = std::string("explosion_") + "radius";
     if (node[removed_radius_key]) {
         throw std::runtime_error(
             "projectile template must use impact_response instead of removed radius field: " +
             projectile_template.name);
     }
-    definition.projectile_kind = projectile_kind_from_yaml(node["kind"]);
-    definition.collider_template_id =
+    mechanics.projectile_type = projectile_type_from_yaml(
+        node["projectile_type"] ? node["projectile_type"]
+                                : (node["type"] ? node["type"] : node["kind"]));
+    mechanics.collider_template_id =
         collider_template_id_from_ref(node["collider_template"], colliders);
-    definition.collision_mask = collision_mask_from_yaml(node["collision_mask"]);
+    mechanics.collision_mask = collision_mask_from_yaml(node["collision_mask"]);
+    mechanics.flags = 1u;
 
-    if (definition.projectile_kind == KernelProjectileKind_AreaEffect) {
+    if (mechanics.projectile_type == KernelProjectileType_AreaEffect) {
         const YAML::Node damage_behavior = node["damage_behavior"];
         if (!damage_behavior) {
             throw std::runtime_error(
@@ -1864,31 +1795,72 @@ ProjectileTemplateConfig projectile_template_from_yaml(
                 "area_effect projectile requires damage_behavior.type area_interval: " +
                 projectile_template.name);
         }
-        definition.motion_model = KernelProjectileMotionModel_Linear;
-        definition.sync_mode = KernelProjectileSyncMode_ServerSnapshotOnly;
-        definition.hit_response = KernelProjectileHitResponse_Destroy;
-        definition.damage_shape = KernelProjectileDamageShape_DirectHit;
-        definition.damage =
+        mechanics.motion_model = KernelProjectileMotionModel_Linear;
+        mechanics.sync_mode = KernelProjectileSyncMode_ServerSnapshotOnly;
+        mechanics.hit_response = KernelProjectileHitResponse_Destroy;
+        mechanics.damage_shape = KernelProjectileDamageShape_DirectHit;
+        mechanics.damage =
             damage_behavior["damage_per_interval"].as<std::uint16_t>();
-        definition.damage_interval_ticks =
-            damage_behavior["damage_interval_ticks"].as<std::uint32_t>();
-        definition.damage_falloff =
+        mechanics.damage_falloff =
             damage_falloff_from_yaml(damage_behavior["falloff"]);
-        definition.lifetime_ticks = node["lifetime_ticks"].as<std::uint32_t>();
-        definition.max_hit_count = 1;
+        mechanics.max_hit_count = 1;
+        mechanics.area_effect.struct_size =
+            sizeof(KernelAreaEffectMechanicsDefinition);
+        const ColliderTemplateConfig* area_collider =
+            collider_template_from_id(colliders, mechanics.collider_template_id);
+        mechanics.area_effect.radius =
+            area_collider == nullptr ? 0.0f : collider_template_radius_for_area(*area_collider);
+        mechanics.area_effect.damage_per_interval = mechanics.damage;
+        mechanics.area_effect.damage_interval_ticks =
+            damage_behavior["damage_interval_ticks"].as<std::uint32_t>();
+        mechanics.area_effect.lifetime_ticks =
+            node["lifetime_ticks"].as<std::uint32_t>();
+        mechanics.area_effect.collision_mask = mechanics.collision_mask;
         return projectile_template;
     }
 
-    definition.motion_model = motion_model_from_yaml(node["movement_model"]);
-    definition.sync_mode = projectile_sync_mode_from_yaml(node["sync_mode"]);
-    definition.hit_response = hit_response_from_yaml(node["hit_response"]);
-    definition.damage_shape = damage_shape_from_yaml(node["damage_shape"]);
-    definition.damage = node["damage"].as<std::uint16_t>();
-    definition.speed = node["speed"].as<float>();
-    definition.lifetime_seconds = node["lifetime_seconds"].as<float>();
-    definition.gravity = vec3_from_yaml(node["gravity"]);
-    definition.max_hit_count =
+    mechanics.motion_model = motion_model_from_yaml(node["movement_model"]);
+    mechanics.sync_mode = projectile_sync_mode_from_yaml(node["sync_mode"]);
+    mechanics.hit_response = hit_response_from_yaml(node["hit_response"]);
+    mechanics.damage_shape = damage_shape_from_yaml(node["damage_shape"]);
+    mechanics.damage = node["damage"].as<std::uint16_t>();
+    mechanics.speed = node["speed"].as<float>();
+    mechanics.lifetime_seconds = node["lifetime_seconds"].as<float>();
+    mechanics.gravity = vec3_from_yaml(node["gravity"]);
+    mechanics.max_hit_count =
         node["max_hit_count"] ? node["max_hit_count"].as<std::uint32_t>() : 1u;
+
+    if (mechanics.projectile_type == KernelProjectileType_Beam) {
+        const YAML::Node beam = node["beam"];
+        if (!beam) {
+            throw std::runtime_error(
+                "beam projectile template requires beam block: " +
+                projectile_template.name);
+        }
+        reject_unknown_keys(
+            beam,
+            {
+                "length",
+                "radius",
+                "damage_per_second",
+                "lifetime_ticks",
+                "collision_mask",
+            },
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_PROJECTILE,
+            definition.projectile_template_id);
+        mechanics.beam.struct_size = sizeof(KernelBeamMechanicsDefinition);
+        mechanics.beam.length = beam["length"].as<float>();
+        mechanics.beam.radius = beam["radius"].as<float>();
+        mechanics.beam.damage_per_second =
+            beam["damage_per_second"].as<std::uint16_t>();
+        mechanics.beam.lifetime_ticks =
+            beam["lifetime_ticks"] ? beam["lifetime_ticks"].as<std::uint32_t>() : 2u;
+        mechanics.beam.collision_mask = collision_mask_from_yaml(beam["collision_mask"]);
+    } else if (node["beam"]) {
+        throw std::runtime_error("beam block requires projectile type: beam");
+    }
 
     const YAML::Node impact_response = node["impact_response"];
     if (impact_response) {
@@ -1899,15 +1871,11 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             source_kind,
             KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_PROJECTILE,
             definition.projectile_template_id);
-        definition.impact_action =
-            impact_action_from_yaml(impact_response["action"]);
-        definition.impact_destroy_self =
-            !impact_response["destroy_self"] ||
-                    impact_response["destroy_self"].as<bool>()
-                ? 1u
-                : 0u;
-        if (definition.impact_action ==
-            KernelProjectileImpactAction_SpawnProjectile) {
+        if (impact_response["destroy_self"] &&
+            !impact_response["destroy_self"].as<bool>()) {
+            mechanics.flags &= ~1u;
+        }
+        if (impact_spawns_projectile_from_yaml(impact_response["action"])) {
             if (!impact_response["projectile_template"]) {
                 throw std::runtime_error(
                     "spawn_projectile impact response requires projectile_template: " +
@@ -1918,7 +1886,7 @@ ProjectileTemplateConfig projectile_template_from_yaml(
         }
     }
 
-    if (definition.motion_model == KernelProjectileMotionModel_Homing) {
+    if (mechanics.motion_model == KernelProjectileMotionModel_Homing) {
         const YAML::Node homing = node["homing"];
         if (!homing) {
             throw std::runtime_error(
@@ -1942,31 +1910,31 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             source_kind,
             KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_PROJECTILE,
             definition.projectile_template_id);
-        projectile_template.homing.struct_size =
+        mechanics.homing.struct_size =
             sizeof(KernelHomingMechanicsDefinition);
-        projectile_template.homing.homing_mode =
+        mechanics.homing.homing_mode =
             homing_mode_from_yaml(homing["homing_mode"]);
-        projectile_template.homing.sync_mode =
+        mechanics.homing.sync_mode =
             projectile_sync_mode_from_yaml(
                 homing["sync_mode"] ? homing["sync_mode"] : node["sync_mode"]);
-        if (projectile_template.homing.sync_mode != definition.sync_mode) {
+        if (mechanics.homing.sync_mode != mechanics.sync_mode) {
             throw std::runtime_error(
                 "projectile sync_mode must match homing sync_mode: " +
                 projectile_template.name);
         }
-        projectile_template.homing.boost_ticks =
+        mechanics.homing.boost_ticks =
             homing["boost_ticks"].as<std::uint32_t>();
-        projectile_template.homing.lock_on_range =
+        mechanics.homing.lock_on_range =
             homing["lock_on_range"].as<float>();
-        projectile_template.homing.lose_target_range =
+        mechanics.homing.lose_target_range =
             homing["lose_target_range"].as<float>();
-        projectile_template.homing.lock_cone_degrees =
+        mechanics.homing.lock_cone_degrees =
             homing["lock_cone_degrees"].as<float>();
-        projectile_template.homing.max_turn_rate_degrees_per_second =
+        mechanics.homing.max_turn_rate_degrees_per_second =
             homing["max_turn_rate_degrees_per_second"].as<float>();
-        projectile_template.homing.acceleration =
+        mechanics.homing.acceleration =
             homing["acceleration"].as<float>();
-        projectile_template.homing.max_speed = homing["max_speed"].as<float>();
+        mechanics.homing.max_speed = homing["max_speed"].as<float>();
     } else if (node["homing"]) {
         throw std::runtime_error(
             "homing block requires movement_model: homing");
@@ -2017,24 +1985,22 @@ std::vector<ProjectileTemplateConfig> load_projectile_templates_from_source(
            const ProjectileTemplateConfig& rhs) {
             return lhs.definition.projectile_template_id <
                    rhs.definition.projectile_template_id;
-        });
+    });
     for (ProjectileTemplateConfig& projectile_template : projectile_templates) {
-        if (projectile_template.definition.impact_action !=
-            KernelProjectileImpactAction_SpawnProjectile) {
+        if (projectile_template.impact_projectile_template_ref.empty()) {
             continue;
         }
         YAML::Node ref_node(projectile_template.impact_projectile_template_ref);
         ProjectileTemplateConfig* impact_template =
             projectile_template_from_ref(ref_node, &projectile_templates);
-        projectile_template.definition.impact_projectile_template_id =
+        projectile_template.definition.mechanics.impact_spawn_projectile_template_id =
             impact_template->definition.projectile_template_id;
     }
     for (const ProjectileTemplateConfig& projectile_template : projectile_templates) {
         std::vector<std::uint32_t> visited;
         const ProjectileTemplateConfig* current = &projectile_template;
         while (current != nullptr &&
-               current->definition.impact_action ==
-                   KernelProjectileImpactAction_SpawnProjectile) {
+               current->definition.mechanics.impact_spawn_projectile_template_id != 0u) {
             const std::uint32_t current_id =
                 current->definition.projectile_template_id;
             if (std::find(visited.begin(), visited.end(), current_id) !=
@@ -2046,7 +2012,8 @@ std::vector<ProjectileTemplateConfig> load_projectile_templates_from_source(
             visited.push_back(current_id);
             current = projectile_template_from_ref(
                 YAML::Node(std::to_string(
-                    current->definition.impact_projectile_template_id)),
+                    current->definition.mechanics
+                        .impact_spawn_projectile_template_id)),
                 &projectile_templates);
         }
     }
@@ -2106,31 +2073,23 @@ void apply_weapon_template_references(
             continue;
         }
 
-        if (type == "projectile") {
+        if (type == "projectile" || type == "area_effect" || type == "beam") {
             ProjectileTemplateConfig* projectile_template =
                 projectile_template_from_ref(
                     document["projectile_template"],
                     projectile_templates);
             KernelWeaponMechanicsDefinition& weapon =
                 weapons->definitions[weapon_id];
-            KernelProjectileMechanicsDefinition& projectile = weapon.projectile;
             const KernelProjectileTemplateDefinition& definition =
                 projectile_template->definition;
             projectile_template->definition.weapon_id = weapon_id;
-            weapon.damage = definition.damage;
-            projectile.projectile_template_id = definition.projectile_template_id;
-            projectile.motion_model = definition.motion_model;
-            projectile.hit_response = definition.hit_response;
-            projectile.damage_shape = definition.damage_shape;
-            projectile.speed = definition.speed;
-            projectile.lifetime_seconds = definition.lifetime_seconds;
-            projectile.gravity = definition.gravity;
-            projectile.collision_mask = definition.collision_mask;
-            projectile.max_hit_count = definition.max_hit_count;
-            projectile.homing = projectile_template->homing;
-            weapons->projectile_sync_modes[weapon_id] = definition.sync_mode;
+            weapon.fire_mode = KernelWeaponFireMode_Projectile;
+            weapon.projectile_template_id = definition.projectile_template_id;
+            weapon.damage = definition.mechanics.damage;
+            weapons->projectile_sync_modes[weapon_id] =
+                definition.mechanics.sync_mode;
             weapons->collider_template_ids[weapon_id] =
-                definition.collider_template_id;
+                definition.mechanics.collider_template_id;
             continue;
         }
 
@@ -2652,50 +2611,62 @@ std::vector<std::string> validate_gameplay_config(
          config.projectile_templates) {
         const KernelProjectileTemplateDefinition& definition =
             projectile_template.definition;
+        const KernelProjectileMechanicsDefinition& mechanics =
+            definition.mechanics;
         if (definition.struct_size < sizeof(KernelProjectileTemplateDefinition) ||
             definition.projectile_template_id == 0 ||
             projectile_template.name.empty() ||
-            definition.projectile_kind > KernelProjectileKind_AreaEffect ||
-            definition.motion_model > KernelProjectileMotionModel_Homing ||
-            definition.sync_mode > KernelProjectileSyncMode_ServerSnapshotOnly ||
-            definition.hit_response > KernelProjectileHitResponse_Attach ||
-            definition.hit_response == KernelProjectileHitResponse_Bounce ||
-            definition.hit_response == KernelProjectileHitResponse_Attach ||
-            (definition.damage_shape != KernelProjectileDamageShape_DirectHit &&
-             definition.damage_shape != KernelProjectileDamageShape_PiercingSegment) ||
-            definition.impact_action > KernelProjectileImpactAction_SpawnProjectile ||
-            definition.damage_falloff > KernelProjectileDamageFalloff_Linear ||
-            definition.damage == 0 ||
+            mechanics.struct_size < sizeof(KernelProjectileMechanicsDefinition) ||
+            mechanics.projectile_type > KernelProjectileType_Beam ||
+            mechanics.motion_model > KernelProjectileMotionModel_Homing ||
+            mechanics.sync_mode > KernelProjectileSyncMode_ServerSnapshotOnly ||
+            mechanics.hit_response > KernelProjectileHitResponse_Attach ||
+            mechanics.hit_response == KernelProjectileHitResponse_Bounce ||
+            mechanics.hit_response == KernelProjectileHitResponse_Attach ||
+            (mechanics.damage_shape != KernelProjectileDamageShape_DirectHit &&
+             mechanics.damage_shape != KernelProjectileDamageShape_PiercingSegment) ||
+            mechanics.damage_falloff > KernelProjectileDamageFalloff_Linear ||
+            mechanics.damage == 0 ||
             std::find(
                 collider_template_ids.begin(),
                 collider_template_ids.end(),
-                definition.collider_template_id) == collider_template_ids.end() ||
-            (definition.projectile_kind == KernelProjectileKind_Projectile &&
-             (definition.speed <= 0.0f ||
-              definition.lifetime_seconds <= 0.0f ||
-              definition.max_hit_count == 0)) ||
-            (definition.projectile_kind == KernelProjectileKind_AreaEffect &&
-             (definition.lifetime_ticks == 0 ||
-              definition.damage_interval_ticks == 0)) ||
-            (definition.impact_action == KernelProjectileImpactAction_SpawnProjectile &&
-             definition.impact_projectile_template_id == 0) ||
-            (definition.motion_model != KernelProjectileMotionModel_Homing
-                 ? projectile_template.homing.struct_size != 0
-                 : projectile_template.homing.struct_size <
+                mechanics.collider_template_id) == collider_template_ids.end() ||
+            (mechanics.projectile_type == KernelProjectileType_Standard &&
+             (mechanics.speed <= 0.0f ||
+              mechanics.lifetime_seconds <= 0.0f ||
+              mechanics.max_hit_count == 0)) ||
+            (mechanics.projectile_type == KernelProjectileType_AreaEffect &&
+             (mechanics.area_effect.struct_size <
+                  sizeof(KernelAreaEffectMechanicsDefinition) ||
+              mechanics.area_effect.radius <= 0.0f ||
+              mechanics.area_effect.damage_per_interval == 0 ||
+              mechanics.area_effect.damage_interval_ticks == 0 ||
+              mechanics.area_effect.lifetime_ticks == 0)) ||
+            (mechanics.projectile_type == KernelProjectileType_Beam &&
+             (mechanics.beam.struct_size < sizeof(KernelBeamMechanicsDefinition) ||
+              mechanics.beam.length <= 0.0f ||
+              mechanics.beam.radius <= 0.0f ||
+              mechanics.beam.damage_per_second == 0 ||
+              mechanics.beam.lifetime_ticks == 0)) ||
+            (mechanics.impact_spawn_projectile_template_id == 0 &&
+             !projectile_template.impact_projectile_template_ref.empty()) ||
+            (mechanics.motion_model != KernelProjectileMotionModel_Homing
+                 ? mechanics.homing.struct_size != 0
+                 : mechanics.homing.struct_size <
                            sizeof(KernelHomingMechanicsDefinition) ||
-                       projectile_template.homing.homing_mode !=
+                       mechanics.homing.homing_mode !=
                            KernelHomingMode_FireAndForget ||
-                       projectile_template.homing.sync_mode >
+                       mechanics.homing.sync_mode >
                            KernelProjectileSyncMode_ServerSnapshotOnly ||
-                       projectile_template.homing.lock_on_range <= 0.0f ||
-                       projectile_template.homing.lose_target_range <
-                           projectile_template.homing.lock_on_range ||
-                       projectile_template.homing.lock_cone_degrees <= 0.0f ||
-                       projectile_template.homing.lock_cone_degrees > 180.0f ||
-                       projectile_template.homing
+                       mechanics.homing.lock_on_range <= 0.0f ||
+                       mechanics.homing.lose_target_range <
+                           mechanics.homing.lock_on_range ||
+                       mechanics.homing.lock_cone_degrees <= 0.0f ||
+                       mechanics.homing.lock_cone_degrees > 180.0f ||
+                       mechanics.homing
                                .max_turn_rate_degrees_per_second <= 0.0f ||
-                       projectile_template.homing.acceleration <= 0.0f ||
-                       projectile_template.homing.max_speed <= 0.0f)) {
+                       mechanics.homing.acceleration <= 0.0f ||
+                       mechanics.homing.max_speed <= 0.0f)) {
             errors.push_back("projectile template must be valid");
         }
         if (std::find(
@@ -2720,7 +2691,7 @@ std::vector<std::string> validate_gameplay_config(
             std::find(
                 projectile_template_ids.begin(),
                 projectile_template_ids.end(),
-                weapon.projectile.projectile_template_id) ==
+                weapon.projectile_template_id) ==
                 projectile_template_ids.end()) {
             errors.push_back(
                 "projectile weapon must reference a valid projectile template");

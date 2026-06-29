@@ -49,15 +49,19 @@ KernelProjectileTemplateDefinition projectile_template() {
     projectile.struct_size = sizeof(projectile);
     projectile.projectile_template_id = 3;
     projectile.weapon_id = network_example::game_server::kAgentSpammerWeaponId;
-    projectile.motion_model = KernelProjectileMotionModel_Linear;
-    projectile.sync_mode = KernelProjectileSyncMode_ServerSnapshotOnly;
-    projectile.speed = 30.0f;
-    projectile.lifetime_seconds = 1.0f;
-    projectile.collider_template_id = 1;
-    projectile.damage = 1;
-    projectile.damage_shape = KernelProjectileDamageShape_DirectHit;
-    projectile.collision_mask = KERNEL_COLLISION_MASK_NONE;
-    projectile.max_hit_count = 1;
+    projectile.mechanics.struct_size = sizeof(KernelProjectileMechanicsDefinition);
+    projectile.mechanics.projectile_type = KernelProjectileType_Standard;
+    projectile.mechanics.motion_model = KernelProjectileMotionModel_Linear;
+    projectile.mechanics.sync_mode = KernelProjectileSyncMode_ServerSnapshotOnly;
+    projectile.mechanics.hit_response = KernelProjectileHitResponse_Destroy;
+    projectile.mechanics.damage_shape = KernelProjectileDamageShape_DirectHit;
+    projectile.mechanics.damage = 1;
+    projectile.mechanics.speed = 30.0f;
+    projectile.mechanics.lifetime_seconds = 1.0f;
+    projectile.mechanics.collider_template_id = 1;
+    projectile.mechanics.collision_mask = KERNEL_COLLISION_MASK_NONE;
+    projectile.mechanics.max_hit_count = 1;
+    projectile.mechanics.flags = 1u;
     return projectile;
 }
 
@@ -127,15 +131,7 @@ void set_spammer_weapon_mechanics(
     weapon.damage = 1;
     weapon.cooldown_ticks = 1;
     weapon.reload_ticks = reload_ticks;
-    weapon.projectile.struct_size = sizeof(KernelProjectileMechanicsDefinition);
-    weapon.projectile.projectile_template_id = 3;
-    weapon.projectile.speed = 30.0f;
-    weapon.projectile.lifetime_seconds = 1.0f;
-    weapon.projectile.motion_model = KernelProjectileMotionModel_Linear;
-    weapon.projectile.hit_response = KernelProjectileHitResponse_Destroy;
-    weapon.projectile.damage_shape = KernelProjectileDamageShape_DirectHit;
-    weapon.projectile.collision_mask = KERNEL_COLLISION_MASK_NONE;
-    weapon.projectile.max_hit_count = 1;
+    weapon.projectile_template_id = 3;
     assert(Kernel_ServerSetEntityWeaponMechanics(kernel, net_id, &weapon));
 }
 

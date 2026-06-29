@@ -163,6 +163,8 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
             read_text_file("game_server/weapon_templates/" + file)});
     }
     const std::vector<std::string> projectile_files = {
+        "beam_rifle_beam.yaml",
+        "fire_floor_area.yaml",
         "homing_missile.yaml",
         "rocket.yaml",
         "rocket_explosion.yaml",
@@ -204,7 +206,7 @@ int main() {
         config.weapons.catalog_hash !=
         network_example::game_server::compute_gameplay_catalog_hash(changed_config));
     changed_config = config;
-    changed_config.projectile_templates[1].definition.damage += 1;
+    changed_config.projectile_templates[1].definition.mechanics.damage += 1;
     require(
         config.weapons.catalog_hash !=
         network_example::game_server::compute_gameplay_catalog_hash(changed_config));
@@ -257,10 +259,7 @@ int main() {
         config.weapons.definitions[network_example::game_server::kWeaponRocket];
     assert(rocket.weapon_id == network_example::game_server::kWeaponRocket);
     assert(rocket.fire_mode == KernelWeaponFireMode_Projectile);
-    assert(rocket.projectile.struct_size == sizeof(KernelProjectileMechanicsDefinition));
-    assert(rocket.projectile.speed == 35.0f);
-    assert(rocket.projectile.lifetime_seconds == 2.5f);
-    assert(rocket.projectile.damage_shape == KernelProjectileDamageShape_DirectHit);
+    assert(rocket.projectile_template_id == 3);
     assert(
         config.weapons
             .projectile_sync_modes[network_example::game_server::kWeaponGrenade] ==
@@ -271,13 +270,7 @@ int main() {
     assert(projectile_spammer.damage == 1);
     assert(projectile_spammer.magazine_size == 120);
     assert(projectile_spammer.cooldown_ticks == 1);
-    assert(
-        projectile_spammer.projectile.motion_model ==
-        KernelProjectileMotionModel_Linear);
-    assert(
-        projectile_spammer.projectile.damage_shape ==
-        KernelProjectileDamageShape_DirectHit);
-    assert(projectile_spammer.projectile.collision_mask == KERNEL_COLLISION_MASK_NONE);
+    assert(projectile_spammer.projectile_template_id == 2);
     assert(projectile_spammer.pellet_count == 3);
     assert(projectile_spammer.pellet_spread == 15.0f);
     assert(config.weapons.collider_template_ids
@@ -328,21 +321,16 @@ int main() {
     const KernelWeaponMechanicsDefinition& fire_floor =
         config.weapons.definitions[network_example::game_server::kWeaponFireFloor];
     assert(fire_floor.weapon_id == network_example::game_server::kWeaponFireFloor);
-    assert(fire_floor.fire_mode == KernelWeaponFireMode_AreaEffect);
-    assert(fire_floor.area_effect.radius == 2.0f);
-    assert(fire_floor.area_effect.collision_mask == KERNEL_COLLISION_LAYER_HOSTILE_SIDE);
+    assert(fire_floor.fire_mode == KernelWeaponFireMode_Projectile);
+    assert(fire_floor.projectile_template_id == 4);
     assert(config.weapons.names[network_example::game_server::kWeaponFireFloor] ==
            "Fire Floor");
 
     const KernelWeaponMechanicsDefinition& beam_rifle =
         config.weapons.definitions[network_example::game_server::kWeaponBeamRifle];
     assert(beam_rifle.weapon_id == network_example::game_server::kWeaponBeamRifle);
-    assert(beam_rifle.fire_mode == KernelWeaponFireMode_Beam);
-    assert(beam_rifle.beam.struct_size == sizeof(KernelBeamMechanicsDefinition));
-    assert(beam_rifle.beam.length == 8.0f);
-    assert(beam_rifle.beam.radius == 0.25f);
-    assert(beam_rifle.beam.damage_per_second == 30);
-    assert(beam_rifle.beam.collision_mask == KERNEL_COLLISION_LAYER_HOSTILE_SIDE);
+    assert(beam_rifle.fire_mode == KernelWeaponFireMode_Projectile);
+    assert(beam_rifle.projectile_template_id == 5);
     assert(config.weapons.collider_template_ids
                [network_example::game_server::kWeaponBeamRifle] == 8);
     assert(config.weapons.names[network_example::game_server::kWeaponBeamRifle] ==
@@ -365,51 +353,66 @@ int main() {
 
     const KernelWeaponMechanicsDefinition& homing_missile =
         config.weapons.definitions[network_example::game_server::kWeaponHomingMissile];
-    assert(homing_missile.projectile.motion_model == KernelProjectileMotionModel_Homing);
+    assert(homing_missile.projectile_template_id == 6);
     assert(config.weapons.collider_template_ids
                [network_example::game_server::kWeaponHomingMissile] == 7);
-    assert(config.projectile_templates.size() == 4);
+    assert(config.projectile_templates.size() == 6);
     bool found_homing_projectile = false;
     bool found_rocket_projectile = false;
     bool found_rocket_explosion = false;
     bool found_spammer_projectile = false;
+    bool found_fire_floor_area = false;
+    bool found_beam_rifle_beam = false;
     for (const network_example::game_server::ProjectileTemplateConfig& projectile :
          config.projectile_templates) {
         if (projectile.name == "spammer_projectile") {
             found_spammer_projectile = true;
-            assert(projectile.definition.collider_template_id == 7);
-            assert(projectile.definition.damage == 1);
+            assert(projectile.definition.mechanics.collider_template_id == 7);
+            assert(projectile.definition.mechanics.damage == 1);
         }
         if (projectile.name == "rocket_projectile") {
             found_rocket_projectile = true;
-            assert(projectile.definition.collider_template_id == 3);
-            assert(projectile.definition.damage_shape ==
+            assert(projectile.definition.mechanics.collider_template_id == 3);
+            assert(projectile.definition.mechanics.damage_shape ==
                    KernelProjectileDamageShape_DirectHit);
-            assert(projectile.definition.impact_action ==
-                   KernelProjectileImpactAction_SpawnProjectile);
-            assert(projectile.definition.impact_projectile_template_id == 8);
-            assert(projectile.definition.impact_destroy_self);
+            assert(projectile.definition.mechanics
+                       .impact_spawn_projectile_template_id == 8);
+            assert((projectile.definition.mechanics.flags & 1u) != 0u);
         }
         if (projectile.name == "rocket_explosion") {
             found_rocket_explosion = true;
-            assert(projectile.definition.projectile_kind ==
-                   KernelProjectileKind_AreaEffect);
-            assert(projectile.definition.damage == 45);
-            assert(projectile.definition.damage_interval_ticks == 45);
-            assert(projectile.definition.lifetime_ticks == 45);
-            assert(projectile.definition.damage_falloff ==
+            assert(projectile.definition.mechanics.projectile_type ==
+                   KernelProjectileType_AreaEffect);
+            assert(projectile.definition.mechanics.damage == 45);
+            assert(projectile.definition.mechanics.area_effect.damage_interval_ticks == 45);
+            assert(projectile.definition.mechanics.area_effect.lifetime_ticks == 45);
+            assert(projectile.definition.mechanics.damage_falloff ==
                    KernelProjectileDamageFalloff_Linear);
         }
         if (projectile.name == "homing_missile_projectile") {
             found_homing_projectile = true;
-            assert(projectile.definition.collider_template_id == 7);
-            assert(projectile.homing.lock_on_range == 25.0f);
+            assert(projectile.definition.mechanics.collider_template_id == 7);
+            assert(projectile.definition.mechanics.homing.lock_on_range == 25.0f);
+        }
+        if (projectile.name == "fire_floor_area") {
+            found_fire_floor_area = true;
+            assert(projectile.definition.mechanics.projectile_type ==
+                   KernelProjectileType_AreaEffect);
+            assert(projectile.definition.mechanics.area_effect.damage_per_interval == 12);
+        }
+        if (projectile.name == "beam_rifle_beam") {
+            found_beam_rifle_beam = true;
+            assert(projectile.definition.mechanics.projectile_type ==
+                   KernelProjectileType_Beam);
+            assert(projectile.definition.mechanics.beam.damage_per_second == 30);
         }
     }
     assert(found_spammer_projectile);
     assert(found_rocket_projectile);
     assert(found_rocket_explosion);
     assert(found_homing_projectile);
+    assert(found_fire_floor_area);
+    assert(found_beam_rifle_beam);
 
     const std::vector<std::uint8_t> gameplay_bundle = make_gameplay_bundle_zip();
     const network_example::game_server::GameServerGameplayConfig bundle_config =

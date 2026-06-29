@@ -18,8 +18,6 @@ enum class EntityType : std::uint16_t {
     kUnknown = 0,
     kActor = 1,
     kProjectile = 3,
-    kAreaEffect = 4,
-    kBeam = 5,
 };
 
 enum class ActorType : std::uint16_t {
@@ -96,8 +94,6 @@ struct Health {
 struct PlayerTag {};
 struct AgentTag {};
 struct ProjectileTag {};
-struct AreaEffectTag {};
-struct BeamTag {};
 
 inline constexpr std::size_t kWeaponCount = 7;
 inline constexpr std::uint8_t kWeaponSlot0 = 0;
@@ -112,8 +108,6 @@ enum class WeaponFireMode : std::uint8_t {
     kHitscan = 0,
     kShotgun = 1,
     kProjectile = 2,
-    kAreaEffect = 3,
-    kBeam = 4,
 };
 
 enum class ProjectileMotionModel : std::uint8_t {
@@ -151,14 +145,10 @@ enum class ProjectileDamageShape : std::uint8_t {
     kPiercingSegment = 2,
 };
 
-enum class ProjectileKind : std::uint8_t {
-    kProjectile = 0,
+enum class ProjectileType : std::uint8_t {
+    kStandard = 0,
     kAreaEffect = 1,
-};
-
-enum class ProjectileImpactAction : std::uint8_t {
-    kNone = 0,
-    kSpawnProjectile = 1,
+    kBeam = 2,
 };
 
 enum class ProjectileDamageFalloff : std::uint8_t {
@@ -169,7 +159,6 @@ enum class ProjectileDamageFalloff : std::uint8_t {
 inline constexpr std::uint32_t kCollisionLayerPlayerSide = 0x00000001u;
 inline constexpr std::uint32_t kCollisionLayerHostileSide = 0x00000002u;
 inline constexpr std::uint32_t kCollisionLayerProjectile = 0x00000004u;
-inline constexpr std::uint32_t kCollisionLayerAreaEffect = 0x00000008u;
 inline constexpr std::uint32_t kCollisionLayerNeutral = 0x00000020u;
 inline constexpr std::uint32_t kCollisionMaskNone = 0x00000000u;
 inline constexpr std::uint32_t kCollisionMaskDamageable =
@@ -195,36 +184,7 @@ struct WeaponMechanicsDefinition {
     std::uint8_t pellet_count = 1;
     float pellet_spread = 0.0f;
     std::uint32_t segment_collider_template_id = 0;
-    float projectile_speed = 0.0f;
-    float projectile_lifetime_seconds = 0.0f;
     std::uint32_t projectile_template_id = 0;
-    ProjectileMotionModel projectile_motion_model = ProjectileMotionModel::kLinear;
-    glm::vec3 projectile_gravity{0.0f, 0.0f, 0.0f};
-    ProjectileHitResponse projectile_hit_response = ProjectileHitResponse::kDestroy;
-    ProjectileDamageShape projectile_damage_shape = ProjectileDamageShape::kDirectHit;
-    std::uint32_t projectile_collision_mask = kCollisionMaskDamageable;
-    std::uint32_t projectile_max_hit_count = 1;
-    float area_effect_radius = 0.0f;
-    std::uint16_t area_effect_damage_per_interval = 0;
-    std::uint32_t area_effect_damage_interval_ticks = 1;
-    std::uint32_t area_effect_lifetime_ticks = 0;
-    float area_effect_spawn_distance = 0.0f;
-    std::uint32_t area_effect_collision_mask = kCollisionMaskDamageable;
-    float beam_length = 0.0f;
-    float beam_radius = 0.0f;
-    std::uint16_t beam_damage_per_second = 0;
-    std::uint32_t beam_lifetime_ticks = 1;
-    std::uint32_t beam_collision_mask = kCollisionMaskDamageable;
-    HomingMode homing_mode = HomingMode::kFireAndForget;
-    ProjectileSyncMode homing_sync_mode =
-        ProjectileSyncMode::kHybridDeterministicThenSnapshot;
-    std::uint32_t homing_boost_ticks = 0;
-    float homing_lock_on_range = 0.0f;
-    float homing_lose_target_range = 0.0f;
-    float homing_lock_cone_degrees = 0.0f;
-    float homing_max_turn_rate_degrees_per_second = 0.0f;
-    float homing_acceleration = 0.0f;
-    float homing_max_speed = 0.0f;
 };
 
 struct WeaponTuning {
@@ -265,11 +225,11 @@ struct ProjectileState {
 struct RuntimeProjectileTemplate {
     std::uint32_t projectile_template_id = 0;
     std::uint8_t weapon_id = 0;
-    ProjectileKind kind = ProjectileKind::kProjectile;
+    ProjectileType projectile_type = ProjectileType::kStandard;
     ProjectileMotionModel motion_model = ProjectileMotionModel::kLinear;
+    ProjectileSyncMode sync_mode = ProjectileSyncMode::kHybridDeterministicThenSnapshot;
     ProjectileHitResponse hit_response = ProjectileHitResponse::kDestroy;
     ProjectileDamageShape damage_shape = ProjectileDamageShape::kDirectHit;
-    ProjectileImpactAction impact_action = ProjectileImpactAction::kNone;
     bool impact_destroy_self = true;
     ProjectileDamageFalloff damage_falloff = ProjectileDamageFalloff::kNone;
     std::uint16_t damage = 0;
@@ -280,9 +240,20 @@ struct RuntimeProjectileTemplate {
     float area_radius = 0.0f;
     std::uint32_t collision_mask = kCollisionMaskDamageable;
     std::uint32_t max_hit_count = 1;
-    std::uint32_t impact_projectile_template_id = 0;
+    std::uint32_t impact_spawn_projectile_template_id = 0;
+    std::uint32_t expire_spawn_projectile_template_id = 0;
     std::uint32_t lifetime_ticks = 0;
     std::uint32_t damage_interval_ticks = 1;
+    float beam_length = 0.0f;
+    float beam_radius = 0.0f;
+    HomingMode homing_mode = HomingMode::kFireAndForget;
+    std::uint32_t homing_boost_ticks = 0;
+    float homing_lock_on_range = 0.0f;
+    float homing_lose_target_range = 0.0f;
+    float homing_lock_cone_degrees = 0.0f;
+    float homing_max_turn_rate_degrees_per_second = 0.0f;
+    float homing_acceleration = 0.0f;
+    float homing_max_speed = 0.0f;
 };
 
 struct HomingState {
@@ -300,7 +271,7 @@ struct HomingState {
     float max_speed = 0.0f;
 };
 
-struct AreaEffectState {
+struct ProjectileAreaEffectRuntime {
     float radius = 0.0f;
     std::uint16_t damage_per_interval = 0;
     std::uint32_t damage_interval_ticks = 1;
@@ -311,26 +282,16 @@ struct AreaEffectState {
     std::unordered_map<NetId, std::uint32_t> next_damage_tick_by_target;
 };
 
-struct ProjectileInteractionAreaEffectSpawn {
-    bool enabled = false;
-    float radius = 0.0f;
-    std::uint32_t damage_interval_ticks = 1;
-    std::uint32_t lifetime_ticks = 0;
-    std::uint16_t damage_per_interval = 0;
-    std::uint8_t source_code = 0;
-    std::uint32_t collision_mask = kCollisionMaskDamageable;
-};
-
 struct ProjectileInteractionRule {
     std::uint8_t lhs_weapon_id = 0;
     std::uint8_t rhs_weapon_id = 0;
     bool symmetric = true;
     bool destroy_lhs = true;
     bool destroy_rhs = true;
-    ProjectileInteractionAreaEffectSpawn area_effect{};
+    std::uint32_t spawn_projectile_template_id = 0;
 };
 
-struct BeamState {
+struct ProjectileBeamRuntime {
     NetId shooter_net_id = 0;
     glm::vec3 origin{0.0f, 0.0f, 0.0f};
     glm::vec3 direction{1.0f, 0.0f, 0.0f};
