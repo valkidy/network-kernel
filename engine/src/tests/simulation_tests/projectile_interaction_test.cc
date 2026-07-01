@@ -195,6 +195,46 @@ void non_matching_weapon_ids_do_not_react() {
     require(count_events(events, KernelEventType_DamageApplied) == 0);
 }
 
+void interaction_uses_swept_projectile_collision_geometry() {
+    network_example::World world;
+    const network_example::NetId lhs = spawn_test_projectile(
+        world,
+        1,
+        glm::vec3{0.0f, 0.5f, 0.0f},
+        glm::vec3{10.0f, 0.0f, 0.0f},
+        1);
+    const network_example::NetId rhs = spawn_test_projectile(
+        world,
+        2,
+        glm::vec3{1.0f, 0.5f, 0.35f},
+        glm::vec3{0.0f, 0.0f, 0.0f},
+        2);
+    const auto lhs_entity = world.find_entity(lhs);
+    require(lhs_entity.has_value());
+    network_example::ProjectileState& lhs_projectile =
+        world.registry().get<network_example::ProjectileState>(*lhs_entity);
+    lhs_projectile.has_collision_geometry = true;
+    lhs_projectile.collision_geometry.shape_type =
+        network_example::ColliderShapeType::kSphere;
+    lhs_projectile.collision_geometry.radius = 0.25f;
+    lhs_projectile.collision_query_mode =
+        network_example::ProjectileCollisionQueryMode::kAuto;
+
+    network_example::ProjectileInteractionRule rule;
+    rule.lhs_weapon_id = 1;
+    rule.rhs_weapon_id = 2;
+    rule.symmetric = true;
+    rule.destroy_lhs = true;
+    rule.destroy_rhs = true;
+    world.add_projectile_interaction_rule(rule);
+
+    std::vector<KernelEvent> events;
+    network_example::simulate_projectiles(world, 0.1f, 1, &events);
+
+    require(!world.find_entity(lhs).has_value());
+    require(!world.find_entity(rhs).has_value());
+}
+
 void interaction_respects_masks_and_owner_peer_exclusion() {
     {
         network_example::World world;
@@ -396,6 +436,7 @@ int main() {
     matching_projectiles_destroy_without_damage();
     matching_interaction_spawns_area_effect();
     non_matching_weapon_ids_do_not_react();
+    interaction_uses_swept_projectile_collision_geometry();
     interaction_respects_masks_and_owner_peer_exclusion();
     multiple_reactions_resolve_by_projectile_pair_order();
     impact_response_spawns_area_effect_projectile_once();

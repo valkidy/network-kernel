@@ -834,6 +834,20 @@ ProjectileDamageFalloff to_projectile_damage_falloff(std::uint8_t damage_falloff
     return ProjectileDamageFalloff::kNone;
 }
 
+ProjectileCollisionQueryMode to_projectile_collision_query_mode(
+    std::uint8_t collision_query_mode) {
+    if (collision_query_mode == KernelProjectileCollisionQueryMode_Overlap) {
+        return ProjectileCollisionQueryMode::kOverlap;
+    }
+    if (collision_query_mode == KernelProjectileCollisionQueryMode_Sweep) {
+        return ProjectileCollisionQueryMode::kSweep;
+    }
+    if (collision_query_mode == KernelProjectileCollisionQueryMode_Ray) {
+        return ProjectileCollisionQueryMode::kRay;
+    }
+    return ProjectileCollisionQueryMode::kAuto;
+}
+
 std::uint8_t to_kernel_projectile_damage_shape(
     ProjectileDamageShape damage_shape) {
     switch (damage_shape) {
@@ -843,6 +857,24 @@ std::uint8_t to_kernel_projectile_damage_shape(
         default:
             return KernelProjectileDamageShape_DirectHit;
     }
+}
+
+ProjectileCollisionGeometry projectile_collision_geometry_from_template(
+    const KernelColliderTemplateDefinition& collider_template) {
+    ProjectileCollisionGeometry geometry{};
+    geometry.shape_type = to_collider_shape_type(collider_template.shape_type);
+    geometry.center = from_kernel_vec3(collider_template.center);
+    geometry.half_extents = collider_template_half_extents(collider_template);
+    geometry.radius = collider_template_radius(collider_template);
+    if (collider_template.shape_type == KernelColliderShapeType_Segment) {
+        geometry.length = collider_template.shape_params.x;
+        geometry.radius = collider_template.shape_params.y;
+        geometry.angle_degrees = collider_template.shape_params.z;
+    } else if (collider_template.shape_type == KernelColliderShapeType_Cone) {
+        geometry.length = collider_template.shape_params.x;
+        geometry.angle_degrees = collider_template.shape_params.y;
+    }
+    return geometry;
 }
 
 RuntimeProjectileTemplate to_runtime_projectile_template(
@@ -865,12 +897,17 @@ RuntimeProjectileTemplate to_runtime_projectile_template(
     projectile_template.impact_destroy_self = (mechanics.flags & 1u) != 0u;
     projectile_template.damage_falloff =
         to_projectile_damage_falloff(mechanics.damage_falloff);
+    projectile_template.collision_query_mode =
+        to_projectile_collision_query_mode(mechanics.collision_query_mode);
     projectile_template.damage = mechanics.damage;
     projectile_template.speed = mechanics.speed;
     projectile_template.lifetime_seconds = mechanics.lifetime_seconds;
     projectile_template.gravity = from_kernel_vec3(mechanics.gravity);
     projectile_template.collider_template_id = mechanics.collider_template_id;
     if (collider_template != nullptr) {
+        projectile_template.has_collision_geometry = true;
+        projectile_template.collision_geometry =
+            projectile_collision_geometry_from_template(*collider_template);
         projectile_template.area_radius =
             collider_template_radius(*collider_template);
         if (projectile_template.area_radius <= 0.0f) {
@@ -900,6 +937,16 @@ RuntimeProjectileTemplate to_runtime_projectile_template(
     }
     projectile_template.beam_length = mechanics.beam.length;
     projectile_template.beam_radius = mechanics.beam.radius;
+    if (projectile_template.has_collision_geometry &&
+        (projectile_template.collision_geometry.shape_type == ColliderShapeType::kAabb ||
+         projectile_template.collision_geometry.shape_type ==
+             ColliderShapeType::kOrientedBox)) {
+        projectile_template.beam_length =
+            projectile_template.collision_geometry.half_extents.z * 2.0f;
+        projectile_template.beam_radius = std::max(
+            projectile_template.collision_geometry.half_extents.x,
+            projectile_template.collision_geometry.half_extents.y);
+    }
     if (mechanics.beam.damage_per_second > 0u) {
         projectile_template.damage = mechanics.beam.damage_per_second;
     }
@@ -1009,6 +1056,7 @@ bool validate_projectile_mechanics(
         mechanics.hit_response > KernelProjectileHitResponse_Attach ||
         mechanics.damage_shape > KernelProjectileDamageShape_PiercingSegment ||
         mechanics.damage_falloff > KernelProjectileDamageFalloff_Linear ||
+        mechanics.collision_query_mode > KernelProjectileCollisionQueryMode_Ray ||
         mechanics.hit_response == KernelProjectileHitResponse_Bounce ||
         mechanics.hit_response == KernelProjectileHitResponse_Attach ||
         mechanics.damage == 0 ||
@@ -1548,9 +1596,10 @@ bool KernelEngine::load_gameplay_catalog(
          projectile_templates_) {
         const KernelProjectileMechanicsDefinition& mechanics =
             projectile_template.mechanics;
-        if (find_collider_template(
-                collider_templates_,
-                mechanics.collider_template_id) == nullptr ||
+        const KernelColliderTemplateDefinition* projectile_collider =
+            find_collider_template(collider_templates_, mechanics.collider_template_id);
+        if (projectile_collider == nullptr ||
+            projectile_collider->shape_type == KernelColliderShapeType_Cone ||
             (mechanics.impact_spawn_projectile_template_id != 0u &&
              (find_projectile_template(
                   projectile_templates_,

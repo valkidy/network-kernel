@@ -130,6 +130,13 @@ int main(void) {
     assert(sizeof(KernelVisionStateView) > 0u);
     assert(KernelActorType_Player == 1);
     assert(KernelActorType_Agent == 2);
+    assert(KernelProjectileCollisionQueryMode_Auto == 0);
+    assert(KernelProjectileCollisionQueryMode_Overlap == 1);
+    assert(KernelProjectileCollisionQueryMode_Sweep == 2);
+    assert(KernelProjectileCollisionQueryMode_Ray == 3);
+    assert(offsetof(KernelProjectileMechanicsDefinition, collision_query_mode) >
+           offsetof(KernelProjectileMechanicsDefinition,
+                    expire_spawn_projectile_template_id));
     assert(sizeof(&Kernel_ServerSetEntityHealth) > 0u);
     assert(KernelAgentCamp_PlayerSide == 1);
     assert(KernelAgentRelation_Hostile == 2);

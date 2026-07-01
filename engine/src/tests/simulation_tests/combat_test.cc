@@ -1008,6 +1008,102 @@ void piercing_projectile_damages_sorted_targets_up_to_max_hit_count() {
     require(count_events(events, KernelEventType_DamageApplied) == 2);
 }
 
+void sphere_projectile_uses_swept_collider_geometry() {
+    network_example::World world;
+    const network_example::NetId enemy =
+        spawn_enemy(world, glm::vec3{1.0f, 0.0f, 0.7f});
+    const network_example::NetId projectile =
+        world.spawn_projectile(
+            1,
+            glm::vec3{0.0f, 0.8f, 0.0f},
+            glm::vec3{20.0f, 0.0f, 0.0f});
+    network_example::ProjectileState& state = projectile_state(world, projectile);
+    state.weapon_id = network_example::kWeaponSlot3;
+    state.damage = 10;
+    state.hit_response = network_example::ProjectileHitResponse::kDestroy;
+    state.damage_shape = network_example::ProjectileDamageShape::kDirectHit;
+    state.collision_mask = network_example::kCollisionLayerHostileSide;
+    state.max_lifetime_seconds = 1.0f;
+    state.spawn_position = glm::vec3{0.0f, 0.8f, 0.0f};
+    state.initial_velocity = glm::vec3{20.0f, 0.0f, 0.0f};
+    state.has_collision_geometry = true;
+    state.collision_geometry.shape_type = network_example::ColliderShapeType::kSphere;
+    state.collision_geometry.radius = 0.3f;
+    state.collision_query_mode =
+        network_example::ProjectileCollisionQueryMode::kAuto;
+    std::vector<KernelEvent> events;
+
+    network_example::simulate_projectiles(world, 0.1f, 7, &events);
+
+    require(!world.find_entity(projectile).has_value());
+    require(health(world, enemy).hp == 40);
+    require(count_events(events, KernelEventType_DamageApplied) == 1);
+}
+
+void box_projectile_uses_swept_collider_geometry() {
+    network_example::World world;
+    const network_example::NetId enemy =
+        spawn_enemy(world, glm::vec3{1.0f, 0.0f, 0.75f});
+    const network_example::NetId projectile =
+        world.spawn_projectile(
+            1,
+            glm::vec3{0.0f, 0.8f, 0.0f},
+            glm::vec3{20.0f, 0.0f, 0.0f});
+    network_example::ProjectileState& state = projectile_state(world, projectile);
+    state.weapon_id = network_example::kWeaponSlot3;
+    state.damage = 10;
+    state.hit_response = network_example::ProjectileHitResponse::kDestroy;
+    state.damage_shape = network_example::ProjectileDamageShape::kDirectHit;
+    state.collision_mask = network_example::kCollisionLayerHostileSide;
+    state.max_lifetime_seconds = 1.0f;
+    state.spawn_position = glm::vec3{0.0f, 0.8f, 0.0f};
+    state.initial_velocity = glm::vec3{20.0f, 0.0f, 0.0f};
+    state.has_collision_geometry = true;
+    state.collision_geometry.shape_type = network_example::ColliderShapeType::kAabb;
+    state.collision_geometry.half_extents = glm::vec3{0.2f, 0.2f, 0.35f};
+    state.collision_query_mode =
+        network_example::ProjectileCollisionQueryMode::kAuto;
+    std::vector<KernelEvent> events;
+
+    network_example::simulate_projectiles(world, 0.1f, 8, &events);
+
+    require(!world.find_entity(projectile).has_value());
+    require(health(world, enemy).hp == 40);
+    require(count_events(events, KernelEventType_DamageApplied) == 1);
+}
+
+void overlap_query_mode_does_not_sweep_moving_projectile() {
+    network_example::World world;
+    const network_example::NetId enemy =
+        spawn_enemy(world, glm::vec3{1.0f, 0.0f, 0.7f});
+    const network_example::NetId projectile =
+        world.spawn_projectile(
+            1,
+            glm::vec3{0.0f, 0.8f, 0.0f},
+            glm::vec3{20.0f, 0.0f, 0.0f});
+    network_example::ProjectileState& state = projectile_state(world, projectile);
+    state.weapon_id = network_example::kWeaponSlot3;
+    state.damage = 10;
+    state.hit_response = network_example::ProjectileHitResponse::kDestroy;
+    state.damage_shape = network_example::ProjectileDamageShape::kDirectHit;
+    state.collision_mask = network_example::kCollisionLayerHostileSide;
+    state.max_lifetime_seconds = 1.0f;
+    state.spawn_position = glm::vec3{0.0f, 0.8f, 0.0f};
+    state.initial_velocity = glm::vec3{20.0f, 0.0f, 0.0f};
+    state.has_collision_geometry = true;
+    state.collision_geometry.shape_type = network_example::ColliderShapeType::kSphere;
+    state.collision_geometry.radius = 0.3f;
+    state.collision_query_mode =
+        network_example::ProjectileCollisionQueryMode::kOverlap;
+    std::vector<KernelEvent> events;
+
+    network_example::simulate_projectiles(world, 0.1f, 9, &events);
+
+    require(world.find_entity(projectile).has_value());
+    require(health(world, enemy).hp == 50);
+    require(count_events(events, KernelEventType_DamageApplied) == 0);
+}
+
 void projectile_collision_mask_excludes_players() {
     network_example::World world;
     const network_example::NetId target_player =
@@ -1055,6 +1151,9 @@ int main() {
     rewind_shotgun_respects_range();
     area_effect_weapon_spawns_and_damages_enemy();
     piercing_projectile_damages_sorted_targets_up_to_max_hit_count();
+    sphere_projectile_uses_swept_collider_geometry();
+    box_projectile_uses_swept_collider_geometry();
+    overlap_query_mode_does_not_sweep_moving_projectile();
     projectile_collision_mask_excludes_players();
     return 0;
 }

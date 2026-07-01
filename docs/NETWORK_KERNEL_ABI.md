@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 28u`.
+`KERNEL_ABI_VERSION == 31u`.
 
 ## Ownership
 
@@ -38,6 +38,12 @@ the existing memory API, and explicitly continue the normal handshake. Bundle
 bytes remain native-owned until copied into a caller-owned buffer with
 `Kernel_CopyGameplayCatalogBundle`; the kernel never retains caller output
 buffer pointers.
+
+ABI version 31 adds `KernelProjectileCollisionQueryMode` and
+`KernelProjectileMechanicsDefinition::collision_query_mode`. Projectile
+gameplay hit detection now derives collision geometry from the resolved
+`KernelColliderTemplateDefinition` where supported, while `damage_shape`
+continues to describe how confirmed hits apply damage.
 
 Packet schema version 11 adds the pre-handshake gameplay catalog manifest,
 bundle request/chunk, and synchronization error messages. Existing handshake,

@@ -226,6 +226,30 @@ void swept_sphere_hits_thick_projectile_target() {
     require(swept_hits[0].net_id == target);
 }
 
+void swept_box_hits_thick_projectile_target() {
+    network_example::World world;
+    const network_example::NetId target =
+        spawn_target(world, glm::vec3{2.0f, 0.0f, 0.55f});
+
+    const std::vector<network_example::QueryHit> thin_hits =
+        network_example::collect_segment_hits(
+            world,
+            glm::vec3{0.0f, 0.5f, 0.0f},
+            glm::vec3{4.0f, 0.5f, 0.0f},
+            network_example::QueryFilter{});
+    require(thin_hits.empty());
+
+    const std::vector<network_example::QueryHit> swept_hits =
+        network_example::collect_swept_box_hits(
+            world,
+            glm::vec3{0.0f, 0.5f, 0.0f},
+            glm::vec3{4.0f, 0.5f, 0.0f},
+            glm::vec3{0.2f, 0.2f, 0.35f},
+            network_example::QueryFilter{});
+    require(swept_hits.size() == 1);
+    require(swept_hits[0].net_id == target);
+}
+
 }  // namespace
 
 int main() {
@@ -236,5 +260,6 @@ int main() {
     layer_helper_reports_entity_layers();
     box_overlap_collects_hits_by_layer_and_order();
     swept_sphere_hits_thick_projectile_target();
+    swept_box_hits_thick_projectile_target();
     return 0;
 }

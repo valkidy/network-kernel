@@ -98,19 +98,17 @@ glm::vec3 normal_from_overlap_center(
 }
 
 QueryHit make_query_hit(
-    const World& world,
-    entt::entity entity,
-    NetId net_id,
+    const QueryCandidate& candidate,
     float distance,
     const glm::vec3& position,
     const glm::vec3& normal) {
     return QueryHit{
-        net_id,
+        candidate.net_id,
         distance,
         position,
         normalized_or_zero(normal),
-        entity_type_for_entity(world, entity),
-        entity_collision_layer_for_entity(world, entity),
+        candidate.entity_type,
+        candidate.collision_layer,
     };
 }
 
@@ -196,6 +194,40 @@ bool ray_intersects_aabb(
     return true;
 }
 
+std::vector<QueryCandidate> collect_projectile_query_candidates(
+    World& world,
+    const glm::vec3& bounds_center,
+    const glm::vec3& bounds_half_extents,
+    const QueryFilter& filter) {
+    std::vector<QueryCandidate> candidates;
+    auto view = world.registry().view<NetworkIdentity, Transform, Hitbox>();
+    for (const entt::entity entity : view) {
+        const NetworkIdentity& identity = view.get<NetworkIdentity>(entity);
+        if (!query_includes_entity(world, entity, identity, filter)) {
+            continue;
+        }
+
+        const Transform& transform = view.get<Transform>(entity);
+        const Hitbox& hitbox = view.get<Hitbox>(entity);
+        const glm::vec3 center = transform.position + hitbox.center;
+        if (!aabb_overlaps_aabb(
+                bounds_center,
+                bounds_half_extents,
+                center,
+                hitbox.half_extents)) {
+            continue;
+        }
+        candidates.push_back(QueryCandidate{
+            identity.net_id,
+            center,
+            hitbox.half_extents,
+            entity_type_for_entity(world, entity),
+            entity_collision_layer_for_entity(world, entity),
+        });
+    }
+    return candidates;
+}
+
 std::vector<QueryHit> collect_swept_sphere_hits(
     World& world,
     const glm::vec3& segment_start,
@@ -211,36 +243,38 @@ std::vector<QueryHit> collect_swept_sphere_hits(
         return {};
     }
     const glm::vec3 direction = displacement / length;
+    const glm::vec3 min_corner =
+        glm::min(segment_start, segment_end) - glm::vec3{radius};
+    const glm::vec3 max_corner =
+        glm::max(segment_start, segment_end) + glm::vec3{radius};
+    const glm::vec3 bounds_center = (min_corner + max_corner) * 0.5f;
+    const glm::vec3 bounds_half_extents = (max_corner - min_corner) * 0.5f;
 
     std::vector<QueryHit> hits;
-    auto view = world.registry().view<NetworkIdentity, Transform, Hitbox>();
-    for (const entt::entity entity : view) {
-        const NetworkIdentity& identity = view.get<NetworkIdentity>(entity);
-        if (!query_includes_entity(world, entity, identity, filter)) {
-            continue;
-        }
-
-        const Transform& transform = view.get<Transform>(entity);
-        const Hitbox& hitbox = view.get<Hitbox>(entity);
+    const std::vector<QueryCandidate> candidates =
+        collect_projectile_query_candidates(
+            world,
+            bounds_center,
+            bounds_half_extents,
+            filter);
+    for (const QueryCandidate& candidate : candidates) {
         float distance = 0.0f;
         if (ray_intersects_aabb(
                 segment_start,
                 direction,
-                transform.position + hitbox.center,
-                hitbox.half_extents + glm::vec3{radius},
+                candidate.center,
+                candidate.half_extents + glm::vec3{radius},
                 &distance) &&
             distance <= length) {
             const glm::vec3 position = segment_start + direction * distance;
             hits.push_back(make_query_hit(
-                world,
-                entity,
-                identity.net_id,
+                candidate,
                 distance,
                 position,
                 normal_from_aabb_surface(
                     position,
-                    transform.position + hitbox.center,
-                    hitbox.half_extents + glm::vec3{radius},
+                    candidate.center,
+                    candidate.half_extents + glm::vec3{radius},
                     direction)));
         }
     }
@@ -259,36 +293,90 @@ std::vector<QueryHit> collect_segment_hits(
         return {};
     }
     const glm::vec3 direction = displacement / length;
+    const glm::vec3 min_corner = glm::min(segment_start, segment_end);
+    const glm::vec3 max_corner = glm::max(segment_start, segment_end);
+    const glm::vec3 bounds_center = (min_corner + max_corner) * 0.5f;
+    const glm::vec3 bounds_half_extents = (max_corner - min_corner) * 0.5f;
 
     std::vector<QueryHit> hits;
-    auto view = world.registry().view<NetworkIdentity, Transform, Hitbox>();
-    for (const entt::entity entity : view) {
-        const NetworkIdentity& identity = view.get<NetworkIdentity>(entity);
-        if (!query_includes_entity(world, entity, identity, filter)) {
-            continue;
-        }
-
-        const Transform& transform = view.get<Transform>(entity);
-        const Hitbox& hitbox = view.get<Hitbox>(entity);
+    const std::vector<QueryCandidate> candidates =
+        collect_projectile_query_candidates(
+            world,
+            bounds_center,
+            bounds_half_extents,
+            filter);
+    for (const QueryCandidate& candidate : candidates) {
         float distance = 0.0f;
         if (ray_intersects_aabb(
                 segment_start,
                 direction,
-                transform.position + hitbox.center,
-                hitbox.half_extents,
+                candidate.center,
+                candidate.half_extents,
                 &distance) &&
             distance <= length) {
             const glm::vec3 position = segment_start + direction * distance;
             hits.push_back(make_query_hit(
-                world,
-                entity,
-                identity.net_id,
+                candidate,
                 distance,
                 position,
                 normal_from_aabb_surface(
                     position,
-                    transform.position + hitbox.center,
-                    hitbox.half_extents,
+                    candidate.center,
+                    candidate.half_extents,
+                    direction)));
+        }
+    }
+    sort_hits(&hits);
+    return hits;
+}
+
+std::vector<QueryHit> collect_swept_box_hits(
+    World& world,
+    const glm::vec3& segment_start,
+    const glm::vec3& segment_end,
+    const glm::vec3& half_extents,
+    const QueryFilter& filter) {
+    if (half_extents.x < 0.0f || half_extents.y < 0.0f || half_extents.z < 0.0f) {
+        return {};
+    }
+    const glm::vec3 displacement = segment_end - segment_start;
+    const float length = glm::length(displacement);
+    if (length <= 0.0001f) {
+        return collect_box_overlaps(world, segment_end, half_extents, filter);
+    }
+    const glm::vec3 direction = displacement / length;
+    const glm::vec3 min_corner =
+        glm::min(segment_start, segment_end) - half_extents;
+    const glm::vec3 max_corner =
+        glm::max(segment_start, segment_end) + half_extents;
+    const glm::vec3 bounds_center = (min_corner + max_corner) * 0.5f;
+    const glm::vec3 bounds_half_extents = (max_corner - min_corner) * 0.5f;
+
+    std::vector<QueryHit> hits;
+    const std::vector<QueryCandidate> candidates =
+        collect_projectile_query_candidates(
+            world,
+            bounds_center,
+            bounds_half_extents,
+            filter);
+    for (const QueryCandidate& candidate : candidates) {
+        float distance = 0.0f;
+        if (ray_intersects_aabb(
+                segment_start,
+                direction,
+                candidate.center,
+                candidate.half_extents + half_extents,
+                &distance) &&
+            distance <= length) {
+            const glm::vec3 position = segment_start + direction * distance;
+            hits.push_back(make_query_hit(
+                candidate,
+                distance,
+                position,
+                normal_from_aabb_surface(
+                    position,
+                    candidate.center,
+                    candidate.half_extents + half_extents,
                     direction)));
         }
     }
@@ -306,28 +394,19 @@ std::vector<QueryHit> collect_box_overlaps(
     }
 
     std::vector<QueryHit> hits;
-    auto view = world.registry().view<NetworkIdentity, Transform, Hitbox>();
-    for (const entt::entity entity : view) {
-        const NetworkIdentity& identity = view.get<NetworkIdentity>(entity);
-        if (!query_includes_entity(world, entity, identity, filter)) {
-            continue;
-        }
-
-        const Transform& transform = view.get<Transform>(entity);
-        const Hitbox& hitbox = view.get<Hitbox>(entity);
-        const glm::vec3 hitbox_center = transform.position + hitbox.center;
+    const std::vector<QueryCandidate> candidates =
+        collect_projectile_query_candidates(world, center, half_extents, filter);
+    for (const QueryCandidate& candidate : candidates) {
         if (aabb_overlaps_aabb(
                 center,
                 half_extents,
-                hitbox_center,
-                hitbox.half_extents)) {
+                candidate.center,
+                candidate.half_extents)) {
             hits.push_back(make_query_hit(
-                world,
-                entity,
-                identity.net_id,
-                distance_to_aabb(center, hitbox_center, hitbox.half_extents),
+                candidate,
+                distance_to_aabb(center, candidate.center, candidate.half_extents),
                 center,
-                normal_from_overlap_center(center, hitbox_center)));
+                normal_from_overlap_center(center, candidate.center)));
         }
     }
     sort_hits(&hits);
@@ -344,28 +423,23 @@ std::vector<QueryHit> collect_sphere_overlaps(
     }
 
     std::vector<QueryHit> hits;
-    auto view = world.registry().view<NetworkIdentity, Transform, Hitbox>();
-    for (const entt::entity entity : view) {
-        const NetworkIdentity& identity = view.get<NetworkIdentity>(entity);
-        if (!query_includes_entity(world, entity, identity, filter)) {
-            continue;
-        }
-
-        const Transform& transform = view.get<Transform>(entity);
-        const Hitbox& hitbox = view.get<Hitbox>(entity);
+    const std::vector<QueryCandidate> candidates =
+        collect_projectile_query_candidates(
+            world,
+            center,
+            glm::vec3{radius},
+            filter);
+    for (const QueryCandidate& candidate : candidates) {
         const float distance = distance_to_aabb(
             center,
-            transform.position + hitbox.center,
-            hitbox.half_extents);
+            candidate.center,
+            candidate.half_extents);
         if (distance <= radius) {
-            const glm::vec3 hitbox_center = transform.position + hitbox.center;
             hits.push_back(make_query_hit(
-                world,
-                entity,
-                identity.net_id,
+                candidate,
                 distance,
                 center,
-                normal_from_overlap_center(center, hitbox_center)));
+                normal_from_overlap_center(center, candidate.center)));
         }
     }
     sort_hits(&hits);

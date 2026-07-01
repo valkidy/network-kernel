@@ -156,6 +156,22 @@ enum class ProjectileDamageFalloff : std::uint8_t {
     kLinear = 1,
 };
 
+enum class ProjectileCollisionQueryMode : std::uint8_t {
+    kAuto = 0,
+    kOverlap = 1,
+    kSweep = 2,
+    kRay = 3,
+};
+
+struct ProjectileCollisionGeometry {
+    ColliderShapeType shape_type = ColliderShapeType::kSegment;
+    glm::vec3 center{0.0f, 0.0f, 0.0f};
+    glm::vec3 half_extents{0.0f, 0.0f, 0.0f};
+    float radius = 0.0f;
+    float length = 0.0f;
+    float angle_degrees = 0.0f;
+};
+
 inline constexpr std::uint32_t kCollisionLayerPlayerSide = 0x00000001u;
 inline constexpr std::uint32_t kCollisionLayerHostileSide = 0x00000002u;
 inline constexpr std::uint32_t kCollisionLayerProjectile = 0x00000004u;
@@ -209,6 +225,10 @@ struct ProjectileState {
     ProjectileMotionModel motion_model = ProjectileMotionModel::kLinear;
     ProjectileHitResponse hit_response = ProjectileHitResponse::kDestroy;
     ProjectileDamageShape damage_shape = ProjectileDamageShape::kDirectHit;
+    ProjectileCollisionQueryMode collision_query_mode =
+        ProjectileCollisionQueryMode::kAuto;
+    ProjectileCollisionGeometry collision_geometry{};
+    bool has_collision_geometry = false;
     std::uint32_t collision_mask = kCollisionMaskDamageable;
     std::uint32_t max_hit_count = 1;
     std::uint32_t hit_count = 0;
@@ -230,6 +250,10 @@ struct RuntimeProjectileTemplate {
     ProjectileSyncMode sync_mode = ProjectileSyncMode::kHybridDeterministicThenSnapshot;
     ProjectileHitResponse hit_response = ProjectileHitResponse::kDestroy;
     ProjectileDamageShape damage_shape = ProjectileDamageShape::kDirectHit;
+    ProjectileCollisionQueryMode collision_query_mode =
+        ProjectileCollisionQueryMode::kAuto;
+    ProjectileCollisionGeometry collision_geometry{};
+    bool has_collision_geometry = false;
     bool impact_destroy_self = true;
     ProjectileDamageFalloff damage_falloff = ProjectileDamageFalloff::kNone;
     std::uint16_t damage = 0;

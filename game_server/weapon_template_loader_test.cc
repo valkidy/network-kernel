@@ -101,7 +101,7 @@ void write_valid_collider_catalog(const std::filesystem::path& weapon_dir) {
         "    name: beam_damage\n"
         "    shape: oriented_box\n"
         "    center: {x: 0.0, y: 0.0, z: 0.0}\n"
-        "    half_extents: {x: 0.1, y: 0.1, z: 2.5}\n"
+        "    half_extents: {x: 0.25, y: 0.25, z: 4.0}\n"
         "    radius: 0.0\n"
         "    purpose: damage\n"
         "    layer: projectile\n"
@@ -287,6 +287,8 @@ void valid_repo_templates_load_all_slots() {
             assert(projectile_template.mechanics.collider_template_id == 3);
             assert(projectile_template.mechanics
                        .impact_spawn_projectile_template_id == 8);
+            assert(projectile_template.mechanics.collision_query_mode ==
+                   KernelProjectileCollisionQueryMode_Auto);
         }
         if (projectile_template.projectile_template_id == 8) {
             found_rocket_explosion_template = true;
@@ -357,14 +359,38 @@ void valid_repo_templates_load_all_slots() {
         if (collider.definition.template_id == 8) {
             found_beam = true;
             assert(collider.definition.shape_type == KernelColliderShapeType_OrientedBox);
-            assert(collider.definition.shape_params.x == 0.1f);
-            assert(collider.definition.shape_params.y == 0.1f);
-            assert(collider.definition.shape_params.z == 2.5f);
+            assert(collider.definition.shape_params.x == 0.25f);
+            assert(collider.definition.shape_params.y == 0.25f);
+            assert(collider.definition.shape_params.z == 4.0f);
         }
     }
     assert(found_segment);
     assert(found_sphere);
     assert(found_beam);
+}
+
+void projectile_collision_query_modes_are_loaded() {
+    const std::filesystem::path dir = tmp_dir("collision_query_mode");
+    write_valid_templates(dir);
+    write_file(
+        dir.parent_path() / "projectile_templates" / "rocket.yaml",
+        "id: 3\nname: rocket_projectile\ndamage: 45\n"
+        "sync_mode: server_snapshot_only\n"
+        "collider_template: projectile_damage\n"
+        "movement_model: linear\nhit_response: destroy\n"
+        "damage_shape: direct_hit\nspeed: 35.0\nlifetime_seconds: 2.5\n"
+        "collision_query_mode: overlap\n"
+        "collision_mask: damageable\nmax_hit_count: 1\n"
+        "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
+
+    const network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            dir.string());
+
+    assert(projectile_mechanics(config, 2).collision_query_mode ==
+           KernelProjectileCollisionQueryMode_Auto);
+    assert(projectile_mechanics(config, 3).collision_query_mode ==
+           KernelProjectileCollisionQueryMode_Overlap);
 }
 
 void invalid_templates_are_rejected() {
@@ -587,6 +613,19 @@ void invalid_templates_are_rejected() {
         "cooldown_ticks: 45\nreload_ticks: 75\n"
         "projectile_template: missing_projectile\n");
     assert(load_fails(unknown_projectile_dir));
+
+    const std::filesystem::path cone_projectile_dir =
+        tmp_dir("cone_projectile_collider");
+    write_valid_templates(cone_projectile_dir);
+    write_file(
+        cone_projectile_dir.parent_path() / "projectile_templates" / "rocket.yaml",
+        "id: 3\nname: rocket_projectile\ndamage: 45\n"
+        "sync_mode: server_snapshot_only\ncollider_template: cone_vision\n"
+        "movement_model: linear\nhit_response: destroy\n"
+        "damage_shape: direct_hit\nspeed: 35.0\nlifetime_seconds: 2.5\n"
+        "collision_mask: damageable\nmax_hit_count: 1\n"
+        "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
+    assert(load_fails(cone_projectile_dir));
 }
 
 void collision_mask_expressions_are_loaded() {
@@ -688,6 +727,7 @@ void catalog_file_loads_colliders() {
 
 int main() {
     valid_repo_templates_load_all_slots();
+    projectile_collision_query_modes_are_loaded();
     invalid_templates_are_rejected();
     collision_mask_expressions_are_loaded();
     malformed_collision_masks_are_rejected();

@@ -134,6 +134,7 @@ void hash_projectile_template(
     hash_scalar(hash, mechanics.hit_response);
     hash_scalar(hash, mechanics.damage_shape);
     hash_scalar(hash, mechanics.damage_falloff);
+    hash_scalar(hash, mechanics.collision_query_mode);
     hash_scalar(hash, mechanics.damage);
     hash_float(hash, mechanics.speed);
     hash_float(hash, mechanics.lifetime_seconds);
@@ -463,6 +464,23 @@ std::uint8_t damage_falloff_from_yaml(const YAML::Node& node) {
         return KernelProjectileDamageFalloff_Linear;
     }
     throw std::runtime_error("unsupported projectile damage falloff: " + value);
+}
+
+std::uint8_t collision_query_mode_from_yaml(const YAML::Node& node) {
+    const std::string value = node ? node.as<std::string>() : "auto";
+    if (value == "auto") {
+        return KernelProjectileCollisionQueryMode_Auto;
+    }
+    if (value == "overlap") {
+        return KernelProjectileCollisionQueryMode_Overlap;
+    }
+    if (value == "sweep" || value == "swept") {
+        return KernelProjectileCollisionQueryMode_Sweep;
+    }
+    if (value == "ray") {
+        return KernelProjectileCollisionQueryMode_Ray;
+    }
+    throw std::runtime_error("unsupported projectile collision_query_mode: " + value);
 }
 
 std::uint8_t homing_mode_from_yaml(const YAML::Node& node) {
@@ -1633,6 +1651,8 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             "movement_model",
             "hit_response",
             "damage_shape",
+            "collision_query",
+            "collision_query_mode",
             "speed",
             "lifetime_seconds",
             "lifetime_ticks",
@@ -1661,12 +1681,20 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             "projectile template must use impact_response instead of removed radius field: " +
             projectile_template.name);
     }
+    if (node["collision_query"] && node["collision_query_mode"]) {
+        throw std::runtime_error(
+            "projectile template must not set both collision_query and collision_query_mode: " +
+            projectile_template.name);
+    }
     mechanics.projectile_type = projectile_type_from_yaml(
         node["projectile_type"] ? node["projectile_type"]
                                 : (node["type"] ? node["type"] : node["kind"]));
     mechanics.collider_template_id =
         collider_template_id_from_ref(node["collider_template"], colliders);
     mechanics.collision_mask = collision_mask_from_yaml(node["collision_mask"]);
+    mechanics.collision_query_mode = collision_query_mode_from_yaml(
+        node["collision_query_mode"] ? node["collision_query_mode"]
+                                     : node["collision_query"]);
     mechanics.flags = 1u;
 
     if (mechanics.projectile_type == KernelProjectileType_AreaEffect) {
@@ -2527,6 +2555,7 @@ std::vector<std::string> validate_gameplay_config(
             (mechanics.damage_shape != KernelProjectileDamageShape_DirectHit &&
              mechanics.damage_shape != KernelProjectileDamageShape_PiercingSegment) ||
             mechanics.damage_falloff > KernelProjectileDamageFalloff_Linear ||
+            mechanics.collision_query_mode > KernelProjectileCollisionQueryMode_Ray ||
             mechanics.damage == 0 ||
             std::find(
                 collider_template_ids.begin(),
@@ -2569,6 +2598,17 @@ std::vector<std::string> validate_gameplay_config(
                        mechanics.homing.acceleration <= 0.0f ||
                        mechanics.homing.max_speed <= 0.0f)) {
             errors.push_back("projectile template must be valid");
+        }
+        const auto projectile_collider = std::find_if(
+            config.colliders.templates.begin(),
+            config.colliders.templates.end(),
+            [&](const ColliderTemplateConfig& collider_template) {
+                return collider_template.definition.template_id ==
+                    mechanics.collider_template_id;
+            });
+        if (projectile_collider != config.colliders.templates.end() &&
+            projectile_collider->definition.shape_type == KernelColliderShapeType_Cone) {
+            errors.push_back("projectile template must not reference cone collider");
         }
         if (std::find(
                 projectile_template_ids.begin(),

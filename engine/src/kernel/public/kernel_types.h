@@ -308,6 +308,13 @@ typedef enum KernelProjectileDamageFalloff {
     KernelProjectileDamageFalloff_Linear = 1,
 } KernelProjectileDamageFalloff;
 
+typedef enum KernelProjectileCollisionQueryMode {
+    KernelProjectileCollisionQueryMode_Auto = 0,
+    KernelProjectileCollisionQueryMode_Overlap = 1,
+    KernelProjectileCollisionQueryMode_Sweep = 2,
+    KernelProjectileCollisionQueryMode_Ray = 3,
+} KernelProjectileCollisionQueryMode;
+
 typedef enum KernelAgentCamp {
     KernelAgentCamp_Unknown = 0,
     KernelAgentCamp_PlayerSide = 1,
@@ -545,7 +552,9 @@ typedef struct KernelProjectileMechanicsDefinition {
     KernelBeamMechanicsDefinition beam;
     uint32_t impact_spawn_projectile_template_id;
     uint32_t expire_spawn_projectile_template_id;
-    uint32_t reserved0;
+    uint8_t collision_query_mode;
+    uint8_t reserved0;
+    uint16_t reserved1;
 } KernelProjectileMechanicsDefinition;
 
 typedef struct KernelProjectileTemplateDefinition {
