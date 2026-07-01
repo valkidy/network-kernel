@@ -7,7 +7,7 @@ movement_model: linear
 hit_response: destroy
 damage_shape: direct_hit
 speed: 30.0
-lifetime_seconds: 2.0
+lifetime_ticks: 60
 collision_mask: none
 max_hit_count: 1
 gravity:

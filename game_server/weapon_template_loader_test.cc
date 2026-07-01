@@ -123,7 +123,7 @@ void write_valid_templates(const std::filesystem::path& dir) {
         "sync_mode: local_predicted_deterministic\n"
         "collider_template: sphere_damage\n"
         "movement_model: linear\nhit_response: destroy\n"
-        "damage_shape: direct_hit\nspeed: 30.0\nlifetime_seconds: 2.0\n"
+        "damage_shape: direct_hit\nspeed: 30.0\nlifetime_ticks: 60\n"
         "collision_mask: player_side\nmax_hit_count: 1\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
     write_file(
@@ -132,7 +132,7 @@ void write_valid_templates(const std::filesystem::path& dir) {
         "sync_mode: server_snapshot_only\n"
         "collider_template: projectile_damage\n"
         "movement_model: linear\nhit_response: destroy\n"
-        "damage_shape: direct_hit\nspeed: 35.0\nlifetime_seconds: 2.5\n"
+        "damage_shape: direct_hit\nspeed: 35.0\nlifetime_ticks: 75\n"
         "collision_mask: damageable\nmax_hit_count: 1\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n"
         "impact_response:\n"
@@ -156,7 +156,7 @@ void write_valid_templates(const std::filesystem::path& dir) {
         "sync_mode: hybrid_deterministic_then_snapshot\n"
         "collider_template: sphere_damage\n"
         "movement_model: homing\nhit_response: destroy\n"
-        "damage_shape: direct_hit\nspeed: 20.0\nlifetime_seconds: 3.0\n"
+        "damage_shape: direct_hit\nspeed: 20.0\nlifetime_ticks: 90\n"
         "collision_mask: hostile_side\nmax_hit_count: 1\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n"
         "homing:\n"
@@ -166,7 +166,7 @@ void write_valid_templates(const std::filesystem::path& dir) {
         "  lock_on_range: 25.0\n"
         "  lose_target_range: 30.0\n"
         "  lock_cone_degrees: 75.0\n"
-        "  max_turn_rate_degrees_per_second: 360.0\n"
+        "  max_turn_degrees_per_tick: 12.0\n"
         "  acceleration: 20.0\n"
         "  max_speed: 30.0\n");
     write_file(
@@ -186,13 +186,13 @@ void write_valid_templates(const std::filesystem::path& dir) {
         "sync_mode: server_snapshot_only\n"
         "collider_template: beam_damage\n"
         "movement_model: linear\nhit_response: destroy\n"
-        "damage_shape: direct_hit\nspeed: 0.0\nlifetime_seconds: 0.0\n"
+        "damage_shape: direct_hit\nspeed: 0.0\nlifetime_ticks: 0\n"
         "collision_mask: hostile_side\nmax_hit_count: 1\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n"
         "beam:\n"
         "  length: 8.0\n"
         "  radius: 0.25\n"
-        "  damage_per_second: 30\n"
+        "  damage_per_tick: 1\n"
         "  lifetime_ticks: 2\n"
         "  collision_mask: hostile_side\n");
     write_file(
@@ -378,7 +378,7 @@ void projectile_collision_query_modes_are_loaded() {
         "sync_mode: server_snapshot_only\n"
         "collider_template: projectile_damage\n"
         "movement_model: linear\nhit_response: destroy\n"
-        "damage_shape: direct_hit\nspeed: 35.0\nlifetime_seconds: 2.5\n"
+        "damage_shape: direct_hit\nspeed: 35.0\nlifetime_ticks: 75\n"
         "collision_query_mode: overlap\n"
         "collision_mask: damageable\nmax_hit_count: 1\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
@@ -442,7 +442,7 @@ void invalid_templates_are_rejected() {
         "id: 5\nname: Beam Rifle\nweapon_type: beam\nmagazine_size: 12\n"
         "damage: 30\ncooldown_ticks: 1\nreload_ticks: 45\nbeam:\n"
         "  collider_template: beam_damage\n"
-        "  length: 8.0\n  radius: 0.25\n  damage_per_second: 30\n"
+        "  length: 8.0\n  radius: 0.25\n  damage_per_tick: 1\n"
         "  lifetime_ticks: 2\n  collision_mask: hostile_side\n  owner: player\n");
     assert(load_fails(unknown_beam_field_dir));
 
@@ -456,7 +456,7 @@ void invalid_templates_are_rejected() {
         "sync_mode: hybrid_deterministic_then_snapshot\n"
         "collider_template: sphere_damage\n"
         "movement_model: homing\nhit_response: destroy\n"
-        "damage_shape: direct_hit\nspeed: 20.0\nlifetime_seconds: 3.0\n"
+        "damage_shape: direct_hit\nspeed: 20.0\nlifetime_ticks: 90\n"
         "collision_mask: hostile_side\nmax_hit_count: 1\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n"
         "homing:\n"
@@ -466,7 +466,7 @@ void invalid_templates_are_rejected() {
         "  lock_on_range: 25.0\n"
         "  lose_target_range: 30.0\n"
         "  lock_cone_degrees: 75.0\n"
-        "  max_turn_rate_degrees_per_second: 360.0\n"
+        "  max_turn_degrees_per_tick: 12.0\n"
         "  acceleration: 20.0\n"
         "  max_speed: 30.0\n"
         "  owner_entity_id: 99\n");
@@ -495,7 +495,7 @@ void invalid_templates_are_rejected() {
         invalid_beam_dir / "beam_rifle.yaml",
         "id: 5\nname: Beam\nweapon_type: beam\nmagazine_size: 1\n"
         "damage: 1\ncooldown_ticks: 1\nreload_ticks: 1\nbeam:\n"
-        "  length: 0.0\n  radius: 0.25\n  damage_per_second: 30\n"
+        "  length: 0.0\n  radius: 0.25\n  damage_per_tick: 1\n"
         "  lifetime_ticks: 2\n  collision_mask: hostile_side\n");
     assert(load_fails(invalid_beam_dir));
 
@@ -515,7 +515,7 @@ void invalid_templates_are_rejected() {
         "id: 3\nname: rocket_projectile\ndamage: 1\n"
         "sync_mode: server_snapshot_only\ncollider_template: projectile_damage\n"
         "movement_model: homing\nhit_response: destroy\n"
-        "damage_shape: direct_hit\nspeed: 1.0\nlifetime_seconds: 1.0\n"
+        "damage_shape: direct_hit\nspeed: 1.0\nlifetime_ticks: 30\n"
         "collision_mask: damageable\nmax_hit_count: 1\n");
     assert(load_fails(homing_dir));
 
@@ -528,7 +528,7 @@ void invalid_templates_are_rejected() {
         "sync_mode: hybrid_deterministic_then_snapshot\n"
         "collider_template: sphere_damage\n"
         "movement_model: homing\nhit_response: destroy\n"
-        "damage_shape: direct_hit\nspeed: 1.0\nlifetime_seconds: 1.0\n"
+        "damage_shape: direct_hit\nspeed: 1.0\nlifetime_ticks: 30\n"
         "collision_mask: hostile_side\nmax_hit_count: 1\n"
         "homing:\n"
         "  homing_mode: retarget\n"
@@ -537,7 +537,7 @@ void invalid_templates_are_rejected() {
         "  lock_on_range: 10.0\n"
         "  lose_target_range: 12.0\n"
         "  lock_cone_degrees: 75.0\n"
-        "  max_turn_rate_degrees_per_second: 360.0\n"
+        "  max_turn_degrees_per_tick: 12.0\n"
         "  acceleration: 10.0\n"
         "  max_speed: 20.0\n");
     assert(load_fails(invalid_homing_dir));
@@ -549,7 +549,7 @@ void invalid_templates_are_rejected() {
         "id: 3\nname: rocket_projectile\ndamage: 1\n"
         "sync_mode: server_snapshot_only\ncollider_template: projectile_damage\n"
         "movement_model: linear\nhit_response: destroy\n"
-        "damage_shape: direct_hit\nspeed: 1.0\nlifetime_seconds: 1.0\n"
+        "damage_shape: direct_hit\nspeed: 1.0\nlifetime_ticks: 30\n"
         "collision_mask: damageable\nmax_hit_count: 1\n"
         "homing: {homing_mode: fire_and_forget}\n");
     assert(load_fails(homing_on_linear_dir));
@@ -561,7 +561,7 @@ void invalid_templates_are_rejected() {
         "id: 3\nname: rocket_projectile\ndamage: 1\n"
         "sync_mode: server_snapshot_only\ncollider_template: projectile_damage\n"
         "movement_model: linear\nhit_response: bounce\n"
-        "damage_shape: direct_hit\nspeed: 1.0\nlifetime_seconds: 1.0\n"
+        "damage_shape: direct_hit\nspeed: 1.0\nlifetime_ticks: 30\n"
         "collision_mask: damageable\nmax_hit_count: 1\n");
     assert(load_fails(bounce_dir));
 
@@ -572,7 +572,7 @@ void invalid_templates_are_rejected() {
         "id: 3\nname: rocket_projectile\ndamage: 1\n"
         "sync_mode: remote_magic\ncollider_template: projectile_damage\n"
         "movement_model: linear\nhit_response: destroy\n"
-        "damage_shape: direct_hit\nspeed: 1.0\nlifetime_seconds: 1.0\n"
+        "damage_shape: direct_hit\nspeed: 1.0\nlifetime_ticks: 30\n"
         "collision_mask: damageable\nmax_hit_count: 1\n");
     assert(load_fails(invalid_sync_dir));
 
@@ -584,7 +584,7 @@ void invalid_templates_are_rejected() {
         std::string("id: 3\nname: rocket_projectile\ndamage: 45\n")
             + "sync_mode: server_snapshot_only\ncollider_template: projectile_damage\n"
               "movement_model: linear\nhit_response: destroy\n"
-              "damage_shape: direct_hit\nspeed: 35.0\nlifetime_seconds: 2.5\n"
+              "damage_shape: direct_hit\nspeed: 35.0\nlifetime_ticks: 75\n"
             + removed_radius_key
             + ": 3.0\ncollision_mask: damageable\nmax_hit_count: 1\n"
               "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
@@ -599,7 +599,7 @@ void invalid_templates_are_rejected() {
         "id: 3\nname: rocket_projectile\ndamage: 45\n"
         "sync_mode: server_snapshot_only\ncollider_template: projectile_damage\n"
         "movement_model: linear\nhit_response: destroy\n"
-        "damage_shape: explosion\nspeed: 35.0\nlifetime_seconds: 2.5\n"
+        "damage_shape: explosion\nspeed: 35.0\nlifetime_ticks: 75\n"
         "collision_mask: damageable\nmax_hit_count: 1\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
     assert(load_fails(explosion_damage_shape_dir));
@@ -622,7 +622,7 @@ void invalid_templates_are_rejected() {
         "id: 3\nname: rocket_projectile\ndamage: 45\n"
         "sync_mode: server_snapshot_only\ncollider_template: cone_vision\n"
         "movement_model: linear\nhit_response: destroy\n"
-        "damage_shape: direct_hit\nspeed: 35.0\nlifetime_seconds: 2.5\n"
+        "damage_shape: direct_hit\nspeed: 35.0\nlifetime_ticks: 75\n"
         "collision_mask: damageable\nmax_hit_count: 1\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
     assert(load_fails(cone_projectile_dir));
@@ -636,7 +636,7 @@ void collision_mask_expressions_are_loaded() {
         "id: 3\nname: rocket_projectile\ndamage: 45\n"
         "sync_mode: server_snapshot_only\ncollider_template: projectile_damage\n"
         "movement_model: linear\nhit_response: destroy\n"
-        "damage_shape: direct_hit\nspeed: 35.0\nlifetime_seconds: 2.5\n"
+        "damage_shape: direct_hit\nspeed: 35.0\nlifetime_ticks: 75\n"
         "collision_mask: none\nmax_hit_count: 1\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
     network_example::game_server::GameServerGameplayConfig config =
@@ -652,11 +652,11 @@ void collision_mask_expressions_are_loaded() {
         "sync_mode: server_snapshot_only\n"
         "collider_template: beam_damage\n"
         "movement_model: linear\nhit_response: destroy\n"
-        "damage_shape: direct_hit\nspeed: 0.0\nlifetime_seconds: 0.0\n"
+        "damage_shape: direct_hit\nspeed: 0.0\nlifetime_ticks: 0\n"
         "collision_mask: 0\nmax_hit_count: 1\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n"
         "beam:\n"
-        "  length: 8.0\n  radius: 0.25\n  damage_per_second: 30\n"
+        "  length: 8.0\n  radius: 0.25\n  damage_per_tick: 1\n"
         "  lifetime_ticks: 2\n  collision_mask: 0\n");
     config =
         network_example::game_server::load_gameplay_config_from_weapon_template_directory(
@@ -692,7 +692,7 @@ void malformed_collision_masks_are_rejected() {
         "id: 3\nname: rocket_projectile\ndamage: 45\n"
         "sync_mode: server_snapshot_only\ncollider_template: projectile_damage\n"
         "movement_model: linear\nhit_response: destroy\n"
-        "damage_shape: direct_hit\nspeed: 35.0\nlifetime_seconds: 2.5\n"
+        "damage_shape: direct_hit\nspeed: 35.0\nlifetime_ticks: 75\n"
         "collision_mask: ghost\nmax_hit_count: 1\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
     assert(load_fails(unknown_dir));
@@ -704,7 +704,7 @@ void malformed_collision_masks_are_rejected() {
         "id: 3\nname: rocket_projectile\ndamage: 45\n"
         "sync_mode: server_snapshot_only\ncollider_template: projectile_damage\n"
         "movement_model: linear\nhit_response: destroy\n"
-        "damage_shape: direct_hit\nspeed: 35.0\nlifetime_seconds: 2.5\n"
+        "damage_shape: direct_hit\nspeed: 35.0\nlifetime_ticks: 75\n"
         "collision_mask: hostile_side |\n"
         "max_hit_count: 1\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");

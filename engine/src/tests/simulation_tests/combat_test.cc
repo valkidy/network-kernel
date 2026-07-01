@@ -94,7 +94,7 @@ void configure_projectile_response_templates(network_example::World& world) {
     grenade_template.motion_model = network_example::ProjectileMotionModel::kParabolic;
     grenade_template.damage = 40;
     grenade_template.speed = 15.0f;
-    grenade_template.lifetime_seconds = 3.0f;
+    grenade_template.lifetime_ticks = 90;
     grenade_template.gravity = glm::vec3{0.0f, -9.8f, 0.0f};
     grenade_template.collision_mask = network_example::kCollisionLayerHostileSide;
     grenade_template.impact_spawn_projectile_template_id = 8;
@@ -119,7 +119,7 @@ void configure_projectile_response_templates(network_example::World& world) {
     rocket_template.projectile_type = network_example::ProjectileType::kStandard;
     rocket_template.damage = 45;
     rocket_template.speed = 35.0f;
-    rocket_template.lifetime_seconds = 2.5f;
+    rocket_template.lifetime_ticks = 75;
     rocket_template.collision_mask = network_example::kCollisionLayerHostileSide;
 
     network_example::RuntimeProjectileTemplate fire_floor_template;
@@ -532,7 +532,7 @@ void server_projectile_damage_to_player_is_pended() {
     projectile.weapon_id = network_example::kWeaponSlot2;
     projectile.projectile_template_id = network_example::kWeaponSlot2;
     projectile.damage = 80;
-    projectile.max_lifetime_seconds = 0.01f;
+    projectile.max_lifetime_ticks = 1;
 
     network_example::DamagePipeline pipeline;
     std::vector<KernelEvent> events;
@@ -563,7 +563,7 @@ void direct_hit_projectile_without_explosion_applies_damage() {
     projectile.weapon_id = network_example::kWeaponSlot3;
     projectile.damage = 30;
     projectile.shooter_net_id = 1;
-    projectile.max_lifetime_seconds = 1.0f;
+    projectile.max_lifetime_ticks = 30;
     projectile.initial_velocity = glm::vec3{10.0f, 0.0f, 0.0f};
 
     std::vector<KernelEvent> events;
@@ -629,7 +629,7 @@ void local_predicted_spammer_can_spawn_many_low_damage_projectiles() {
     spammer_template.projectile_type = network_example::ProjectileType::kStandard;
     spammer_template.damage = 1;
     spammer_template.speed = 30.0f;
-    spammer_template.lifetime_seconds = 2.0f;
+    spammer_template.lifetime_ticks = 60;
     spammer_template.collision_mask = network_example::kCollisionLayerHostileSide;
     world.set_projectile_templates({spammer_template});
     network_example::WeaponState& weapon = weapon_state(world, player);
@@ -692,7 +692,7 @@ void projectile_spammer_burst_spawns_three_spread_projectiles() {
     spammer_template.projectile_type = network_example::ProjectileType::kStandard;
     spammer_template.damage = 1;
     spammer_template.speed = 30.0f;
-    spammer_template.lifetime_seconds = 2.0f;
+    spammer_template.lifetime_ticks = 60;
     spammer_template.collision_mask = network_example::kCollisionLayerHostileSide;
     world.set_projectile_templates({spammer_template});
     network_example::WeaponState& weapon = weapon_state(world, player);
@@ -766,7 +766,7 @@ void projectile_rewind_spawns_from_historical_muzzle() {
     assert(transform.position.y > 0.95f);
     assert(transform.position.y < 0.96f);
     assert(projectile_state(world, projectile).spawn_tick == 4);
-    assert(projectile_state(world, projectile).age_seconds > 0.09f);
+    assert(projectile_state(world, projectile).age_ticks == 3u);
 }
 
 void projectile_without_rewind_uses_current_muzzle() {
@@ -790,7 +790,7 @@ void projectile_without_rewind_uses_current_muzzle() {
     assert(transform.position.x > 9.99f);
     assert(transform.position.x < 10.01f);
     assert(projectile_state(world, projectile).spawn_tick == 7);
-    assert(projectile_state(world, projectile).age_seconds == 0.0f);
+    assert(projectile_state(world, projectile).age_ticks == 0u);
     assert(player != 0);
 }
 
@@ -994,7 +994,7 @@ void piercing_projectile_damages_sorted_targets_up_to_max_hit_count() {
     state.damage_shape = network_example::ProjectileDamageShape::kPiercingSegment;
     state.collision_mask = network_example::kCollisionLayerHostileSide;
     state.max_hit_count = 2;
-    state.max_lifetime_seconds = 1.0f;
+    state.max_lifetime_ticks = 30;
     state.spawn_position = glm::vec3{0.0f, 0.8f, 0.0f};
     state.initial_velocity = glm::vec3{30.0f, 0.0f, 0.0f};
     std::vector<KernelEvent> events;
@@ -1023,7 +1023,7 @@ void sphere_projectile_uses_swept_collider_geometry() {
     state.hit_response = network_example::ProjectileHitResponse::kDestroy;
     state.damage_shape = network_example::ProjectileDamageShape::kDirectHit;
     state.collision_mask = network_example::kCollisionLayerHostileSide;
-    state.max_lifetime_seconds = 1.0f;
+    state.max_lifetime_ticks = 30;
     state.spawn_position = glm::vec3{0.0f, 0.8f, 0.0f};
     state.initial_velocity = glm::vec3{20.0f, 0.0f, 0.0f};
     state.has_collision_geometry = true;
@@ -1055,7 +1055,7 @@ void box_projectile_uses_swept_collider_geometry() {
     state.hit_response = network_example::ProjectileHitResponse::kDestroy;
     state.damage_shape = network_example::ProjectileDamageShape::kDirectHit;
     state.collision_mask = network_example::kCollisionLayerHostileSide;
-    state.max_lifetime_seconds = 1.0f;
+    state.max_lifetime_ticks = 30;
     state.spawn_position = glm::vec3{0.0f, 0.8f, 0.0f};
     state.initial_velocity = glm::vec3{20.0f, 0.0f, 0.0f};
     state.has_collision_geometry = true;
@@ -1087,7 +1087,7 @@ void overlap_query_mode_does_not_sweep_moving_projectile() {
     state.hit_response = network_example::ProjectileHitResponse::kDestroy;
     state.damage_shape = network_example::ProjectileDamageShape::kDirectHit;
     state.collision_mask = network_example::kCollisionLayerHostileSide;
-    state.max_lifetime_seconds = 1.0f;
+    state.max_lifetime_ticks = 30;
     state.spawn_position = glm::vec3{0.0f, 0.8f, 0.0f};
     state.initial_velocity = glm::vec3{20.0f, 0.0f, 0.0f};
     state.has_collision_geometry = true;
@@ -1117,7 +1117,7 @@ void projectile_collision_mask_excludes_players() {
     state.hit_response = network_example::ProjectileHitResponse::kDestroy;
     state.damage_shape = network_example::ProjectileDamageShape::kDirectHit;
     state.collision_mask = network_example::kCollisionLayerHostileSide;
-    state.max_lifetime_seconds = 1.0f;
+    state.max_lifetime_ticks = 30;
     state.spawn_position = glm::vec3{0.0f, 0.9f, 0.0f};
     state.initial_velocity = glm::vec3{20.0f, 0.0f, 0.0f};
     std::vector<KernelEvent> events;

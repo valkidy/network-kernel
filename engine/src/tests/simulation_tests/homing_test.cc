@@ -75,7 +75,7 @@ network_example::RuntimeProjectileTemplate homing_projectile_template() {
     projectile_template.damage_shape = network_example::ProjectileDamageShape::kDirectHit;
     projectile_template.damage = 20;
     projectile_template.speed = 5.0f;
-    projectile_template.lifetime_seconds = 3.0f;
+    projectile_template.lifetime_ticks = 90;
     projectile_template.collision_mask = network_example::kCollisionLayerHostileSide;
     projectile_template.max_hit_count = 1;
     projectile_template.homing_mode = network_example::HomingMode::kFireAndForget;
@@ -83,7 +83,7 @@ network_example::RuntimeProjectileTemplate homing_projectile_template() {
     projectile_template.homing_lock_on_range = 20.0f;
     projectile_template.homing_lose_target_range = 25.0f;
     projectile_template.homing_lock_cone_degrees = 75.0f;
-    projectile_template.homing_max_turn_rate_degrees_per_second = 720.0f;
+    projectile_template.homing_max_turn_degrees_per_tick = 24.0f;
     projectile_template.homing_acceleration = 30.0f;
     projectile_template.homing_max_speed = 10.0f;
     return projectile_template;

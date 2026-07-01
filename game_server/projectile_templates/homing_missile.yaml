@@ -7,7 +7,7 @@ movement_model: homing
 hit_response: destroy
 damage_shape: direct_hit
 speed: 20.0
-lifetime_seconds: 3.0
+lifetime_ticks: 90
 collision_mask: hostile_side
 max_hit_count: 1
 gravity: {x: 0.0, y: 0.0, z: 0.0}
@@ -18,6 +18,6 @@ homing:
   lock_on_range: 25.0
   lose_target_range: 30.0
   lock_cone_degrees: 75.0
-  max_turn_rate_degrees_per_second: 360.0
+  max_turn_degrees_per_tick: 12.0
   acceleration: 20.0
   max_speed: 30.0

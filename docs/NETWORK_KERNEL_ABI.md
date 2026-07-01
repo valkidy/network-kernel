@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 31u`.
+`KERNEL_ABI_VERSION == 32u`.
 
 ## Ownership
 
@@ -44,6 +44,10 @@ ABI version 31 adds `KernelProjectileCollisionQueryMode` and
 gameplay hit detection now derives collision geometry from the resolved
 `KernelColliderTemplateDefinition` where supported, while `damage_shape`
 continues to describe how confirmed hits apply damage.
+
+ABI version 32 changes projectile time-related mechanics parameters to tick
+units: standard projectile lifetime uses `lifetime_ticks`, beam damage uses
+`damage_per_tick`, and homing turn rate uses `max_turn_degrees_per_tick`.
 
 Packet schema version 11 adds the pre-handshake gameplay catalog manifest,
 bundle request/chunk, and synchronization error messages. Existing handshake,

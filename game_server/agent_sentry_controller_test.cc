@@ -57,7 +57,7 @@ KernelProjectileTemplateDefinition projectile_template() {
     projectile.mechanics.damage_shape = KernelProjectileDamageShape_DirectHit;
     projectile.mechanics.damage = 1;
     projectile.mechanics.speed = 30.0f;
-    projectile.mechanics.lifetime_seconds = 1.0f;
+    projectile.mechanics.lifetime_ticks = 30;
     projectile.mechanics.collider_template_id = 1;
     projectile.mechanics.collision_mask = KERNEL_COLLISION_MASK_NONE;
     projectile.mechanics.max_hit_count = 1;

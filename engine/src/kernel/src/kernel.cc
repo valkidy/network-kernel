@@ -901,7 +901,7 @@ RuntimeProjectileTemplate to_runtime_projectile_template(
         to_projectile_collision_query_mode(mechanics.collision_query_mode);
     projectile_template.damage = mechanics.damage;
     projectile_template.speed = mechanics.speed;
-    projectile_template.lifetime_seconds = mechanics.lifetime_seconds;
+    projectile_template.lifetime_ticks = mechanics.lifetime_ticks;
     projectile_template.gravity = from_kernel_vec3(mechanics.gravity);
     projectile_template.collider_template_id = mechanics.collider_template_id;
     if (collider_template != nullptr) {
@@ -923,7 +923,9 @@ RuntimeProjectileTemplate to_runtime_projectile_template(
         mechanics.impact_spawn_projectile_template_id;
     projectile_template.expire_spawn_projectile_template_id =
         mechanics.expire_spawn_projectile_template_id;
-    projectile_template.lifetime_ticks = mechanics.area_effect.lifetime_ticks;
+    if (mechanics.area_effect.lifetime_ticks > 0u) {
+        projectile_template.lifetime_ticks = mechanics.area_effect.lifetime_ticks;
+    }
     projectile_template.damage_interval_ticks =
         mechanics.area_effect.damage_interval_ticks;
     if (mechanics.area_effect.radius > 0.0f) {
@@ -947,8 +949,8 @@ RuntimeProjectileTemplate to_runtime_projectile_template(
             projectile_template.collision_geometry.half_extents.x,
             projectile_template.collision_geometry.half_extents.y);
     }
-    if (mechanics.beam.damage_per_second > 0u) {
-        projectile_template.damage = mechanics.beam.damage_per_second;
+    if (mechanics.beam.damage_per_tick > 0u) {
+        projectile_template.damage = mechanics.beam.damage_per_tick;
     }
     if (mechanics.beam.lifetime_ticks > 0u) {
         projectile_template.lifetime_ticks = mechanics.beam.lifetime_ticks;
@@ -963,8 +965,8 @@ RuntimeProjectileTemplate to_runtime_projectile_template(
         mechanics.homing.lose_target_range;
     projectile_template.homing_lock_cone_degrees =
         mechanics.homing.lock_cone_degrees;
-    projectile_template.homing_max_turn_rate_degrees_per_second =
-        mechanics.homing.max_turn_rate_degrees_per_second;
+    projectile_template.homing_max_turn_degrees_per_tick =
+        mechanics.homing.max_turn_degrees_per_tick;
     projectile_template.homing_acceleration = mechanics.homing.acceleration;
     projectile_template.homing_max_speed = mechanics.homing.max_speed;
     return projectile_template;
@@ -1025,7 +1027,7 @@ bool validate_homing_mechanics(const KernelHomingMechanicsDefinition& homing) {
            homing.lose_target_range >= homing.lock_on_range &&
            homing.lock_cone_degrees > 0.0f &&
            homing.lock_cone_degrees <= 180.0f &&
-           homing.max_turn_rate_degrees_per_second > 0.0f &&
+           homing.max_turn_degrees_per_tick > 0.0f &&
            homing.acceleration > 0.0f &&
            homing.max_speed > 0.0f;
 }
@@ -1043,7 +1045,7 @@ bool validate_beam_mechanics(const KernelBeamMechanicsDefinition& beam) {
     return beam.struct_size >= sizeof(KernelBeamMechanicsDefinition) &&
            beam.length > 0.0f &&
            beam.radius > 0.0f &&
-           beam.damage_per_second > 0 &&
+           beam.damage_per_tick > 0 &&
            beam.lifetime_ticks > 0;
 }
 
@@ -1065,7 +1067,7 @@ bool validate_projectile_mechanics(
         return false;
     }
     if (mechanics.projectile_type == KernelProjectileType_Standard &&
-        (mechanics.speed <= 0.0f || mechanics.lifetime_seconds <= 0.0f)) {
+        (mechanics.speed <= 0.0f || mechanics.lifetime_ticks == 0u)) {
         return false;
     }
     if (mechanics.motion_model == KernelProjectileMotionModel_Homing) {
@@ -2505,8 +2507,8 @@ bool KernelEngine::server_get_homing_state(
     out_state->lock_on_range = homing.lock_on_range;
     out_state->lose_target_range = homing.lose_target_range;
     out_state->lock_cone_degrees = homing.lock_cone_degrees;
-    out_state->max_turn_rate_degrees_per_second =
-        homing.max_turn_rate_degrees_per_second;
+    out_state->max_turn_degrees_per_tick =
+        homing.max_turn_degrees_per_tick;
     out_state->acceleration = homing.acceleration;
     out_state->max_speed = homing.max_speed;
     out_state->valid = true;
@@ -2941,7 +2943,7 @@ void KernelEngine::handle_client_projectile_spawn_batch(
                 0,
                 record.client_action_id,
                 packet.server_tick,
-                0.0f,
+                0,
                 spawn_position,
                 glm::quat{1.0f, 0.0f, 0.0f, 0.0f},
                 initial_velocity,
@@ -2949,7 +2951,7 @@ void KernelEngine::handle_client_projectile_spawn_batch(
                 initial_velocity,
                 from_kernel_vec3(projectile_template->mechanics.gravity),
                 to_projectile_motion_model(projectile_template->mechanics.motion_model),
-                projectile_template->mechanics.lifetime_seconds,
+                projectile_template->mechanics.lifetime_ticks,
                 projectile_template->projectile_template_id,
                 projectile_template->mechanics.collider_template_id,
                 projectile_template->weapon_id,
@@ -3549,8 +3551,12 @@ void KernelEngine::reconcile_predicted_projectiles(const WorldSnapshot& snapshot
         local_tick > snapshot.header.server_tick
             ? local_tick - snapshot.header.server_tick
             : 0;
-    const float snapshot_age_seconds =
-        static_cast<float>(fast_forward_ticks) * fixed_delta_seconds;
+    const std::uint32_t max_homing_visual_ticks =
+        fixed_delta_seconds > 0.0f
+            ? static_cast<std::uint32_t>(
+                  kMaxHomingVisualExtrapolationSeconds / fixed_delta_seconds)
+            : 0u;
+    const std::uint32_t snapshot_age_ticks = fast_forward_ticks;
     for (const EntitySnapshot& entity : snapshot.entities) {
         if (entity.type != EntityType::kProjectile) {
             continue;
@@ -3563,10 +3569,12 @@ void KernelEngine::reconcile_predicted_projectiles(const WorldSnapshot& snapshot
         if (predicted == nullptr) {
             continue;
         }
-        const float authoritative_age_seconds =
+        const std::uint32_t authoritative_age_ticks =
             predicted->motion_model == ProjectileMotionModel::kHoming
-                ? std::min(snapshot_age_seconds, kMaxHomingVisualExtrapolationSeconds)
-                : snapshot_age_seconds;
+                ? std::min(snapshot_age_ticks, max_homing_visual_ticks)
+                : snapshot_age_ticks;
+        const float authoritative_age_duration =
+            static_cast<float>(authoritative_age_ticks) * fixed_delta_seconds;
         const glm::vec3 previous_render_position =
             predicted->position + predicted->correction_offset;
         const glm::vec3 authoritative_now = projectile_position_at(
@@ -3574,19 +3582,19 @@ void KernelEngine::reconcile_predicted_projectiles(const WorldSnapshot& snapshot
             entity.velocity,
             predicted->motion_model,
             predicted->gravity,
-            authoritative_age_seconds);
+            authoritative_age_duration);
         const glm::vec3 authoritative_velocity_now = projectile_velocity_at(
             entity.velocity,
             predicted->motion_model,
             predicted->gravity,
-            authoritative_age_seconds);
+            authoritative_age_duration);
         predicted->net_id = entity.net_id;
         predicted->position = authoritative_now;
         predicted->rotation = entity.rotation;
         predicted->velocity = authoritative_velocity_now;
         predicted->spawn_position = entity.position;
         predicted->initial_velocity = entity.velocity;
-        predicted->age_seconds = authoritative_age_seconds;
+        predicted->age_ticks = authoritative_age_ticks;
         predicted->spawn_tick = entity.spawn_tick;
         if (predicted->projectile_template_id == 0u ||
             predicted->collider_template_id == 0u) {
@@ -3698,7 +3706,7 @@ void KernelEngine::predict_local_projectile(const PlayerInput& input) {
         input.input_seq,
         input.client_action_id,
         tick_loop_.current_tick(),
-        0.0f,
+        0,
         origin,
         glm::quat{1.0f, 0.0f, 0.0f, 0.0f},
         velocity,
@@ -3706,7 +3714,7 @@ void KernelEngine::predict_local_projectile(const PlayerInput& input) {
         velocity,
         gravity,
         motion_model,
-        mechanics.lifetime_seconds,
+        mechanics.lifetime_ticks,
         weapon->projectile_template_id,
         collider_template_id,
         weapon->id,
@@ -3982,26 +3990,28 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
     const auto cost_start = std::chrono::steady_clock::now();
     const bool had_projectiles = !predicted_projectiles_.empty();
     for (PredictedProjectile& projectile : predicted_projectiles_) {
-        projectile.age_seconds += fixed_delta_seconds;
+        projectile.age_ticks += 1;
+        const float projectile_age_duration =
+            static_cast<float>(projectile.age_ticks) * fixed_delta_seconds;
         projectile.position = projectile_position_at(
             projectile.spawn_position,
             projectile.initial_velocity,
             projectile.motion_model,
             projectile.gravity,
-            projectile.age_seconds);
+            projectile_age_duration);
         projectile.velocity = projectile_velocity_at(
             projectile.initial_velocity,
             projectile.motion_model,
             projectile.gravity,
-            projectile.age_seconds);
+            projectile_age_duration);
     }
     predicted_projectiles_.erase(
         std::remove_if(
             predicted_projectiles_.begin(),
             predicted_projectiles_.end(),
             [](const PredictedProjectile& projectile) {
-                return projectile.max_lifetime_seconds > 0.0f &&
-                       projectile.age_seconds >= projectile.max_lifetime_seconds;
+                return projectile.max_lifetime_ticks > 0u &&
+                       projectile.age_ticks >= projectile.max_lifetime_ticks;
             }),
         predicted_projectiles_.end());
     if (had_projectiles) {

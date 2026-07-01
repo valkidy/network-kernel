@@ -5,7 +5,7 @@
 
 #include "kernel/public/kernel_api.h"
 
-_Static_assert(KERNEL_ABI_VERSION == 31u, "projectile refactor bumps ABI");
+_Static_assert(KERNEL_ABI_VERSION == 32u, "projectile tick parameters bump ABI");
 _Static_assert(
     offsetof(KernelWeaponMechanicsDefinition, projectile_template_id) >
         offsetof(KernelWeaponMechanicsDefinition, pellet_spread),
@@ -87,7 +87,7 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 31u);
+    assert(KERNEL_ABI_VERSION == 32u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD == 4u);
@@ -137,6 +137,12 @@ int main(void) {
     assert(offsetof(KernelProjectileMechanicsDefinition, collision_query_mode) >
            offsetof(KernelProjectileMechanicsDefinition,
                     expire_spawn_projectile_template_id));
+    assert(offsetof(KernelProjectileMechanicsDefinition, lifetime_ticks) >
+           offsetof(KernelProjectileMechanicsDefinition, speed));
+    assert(offsetof(KernelHomingMechanicsDefinition, max_turn_degrees_per_tick) >
+           offsetof(KernelHomingMechanicsDefinition, lock_cone_degrees));
+    assert(offsetof(KernelBeamMechanicsDefinition, damage_per_tick) >
+           offsetof(KernelBeamMechanicsDefinition, radius));
     assert(sizeof(&Kernel_ServerSetEntityHealth) > 0u);
     assert(KernelAgentCamp_PlayerSide == 1);
     assert(KernelAgentRelation_Hostile == 2);

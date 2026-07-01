@@ -111,7 +111,7 @@ KernelProjectileTemplateDefinition projectile_template(
     std::uint32_t template_id,
     std::uint8_t weapon_id,
     float speed,
-    float lifetime_seconds,
+    std::uint32_t lifetime_ticks,
     std::uint8_t motion_model) {
     KernelProjectileTemplateDefinition projectile{};
     projectile.struct_size = sizeof(projectile);
@@ -126,7 +126,7 @@ KernelProjectileTemplateDefinition projectile_template(
     projectile.mechanics.damage_shape = KernelProjectileDamageShape_DirectHit;
     projectile.mechanics.damage = weapon_id == 3 ? 45 : 40;
     projectile.mechanics.speed = speed;
-    projectile.mechanics.lifetime_seconds = lifetime_seconds;
+    projectile.mechanics.lifetime_ticks = lifetime_ticks;
     projectile.mechanics.collider_template_id = 10;
     projectile.mechanics.collision_mask = KERNEL_COLLISION_MASK_DAMAGEABLE;
     projectile.mechanics.max_hit_count = 1;
@@ -170,8 +170,8 @@ void load_minimal_gameplay_catalog(KernelHandle* kernel) {
         projectile_hit,
     };
     const std::array<KernelProjectileTemplateDefinition, 2> projectile_templates = {
-        projectile_template(2, 2, 15.0f, 3.0f, KernelProjectileMotionModel_Parabolic),
-        projectile_template(3, 3, 35.0f, 2.5f, KernelProjectileMotionModel_Linear),
+        projectile_template(2, 2, 15.0f, 90, KernelProjectileMotionModel_Parabolic),
+        projectile_template(3, 3, 35.0f, 75, KernelProjectileMotionModel_Linear),
     };
     KernelGameplayCatalogDefinition catalog{};
     catalog.struct_size = sizeof(catalog);
@@ -235,8 +235,8 @@ int main() {
 
     KernelHandle* kernel = Kernel_Create(&config);
     assert(kernel != nullptr);
-    load_minimal_gameplay_catalog(kernel);
     assert(Kernel_StartListenServer(kernel, 7777));
+    load_minimal_gameplay_catalog(kernel);
 
     std::array<KernelEvent, 16> events{};
     const std::uint32_t event_count =
@@ -273,6 +273,9 @@ int main() {
     assert(before_player.hp == 100);
     assert(before_player.max_hp == 100);
     std::array<KernelServerEntityState, 16> queried_players{};
+    for (KernelServerEntityState& state : queried_players) {
+        state.struct_size = sizeof(KernelServerEntityState);
+    }
     const std::uint32_t player_query_count = Kernel_ServerQueryEntities(
         kernel,
         1,
@@ -366,7 +369,7 @@ int main() {
     assert(predicted_projectile.entity_id != 0);
     assert(predicted_projectile.net_id == 0);
 
-    Kernel_Update(kernel, 1.0f);
+    Kernel_Update(kernel, 1.0f / 30.0f);
 
     std::array<KernelEvent, 16> projectile_events{};
     const std::uint32_t projectile_event_count = Kernel_PollEvents(
@@ -498,6 +501,9 @@ int main() {
     assert(Kernel_ServerCreateEntity(kernel, &enemy_create, &enemy_net_id));
     assert(enemy_net_id != 0);
     std::array<KernelServerEntityState, 16> queried_enemies{};
+    for (KernelServerEntityState& state : queried_enemies) {
+        state.struct_size = sizeof(KernelServerEntityState);
+    }
     const std::uint32_t enemy_query_count = Kernel_ServerQueryEntities(
         kernel,
         1,

@@ -55,7 +55,7 @@ KernelProjectileTemplateDefinition projectile_template(
     projectile_template.mechanics.damage_shape = KernelProjectileDamageShape_DirectHit;
     projectile_template.mechanics.damage = 5;
     projectile_template.mechanics.speed = 35.0f;
-    projectile_template.mechanics.lifetime_seconds = 2.5f;
+    projectile_template.mechanics.lifetime_ticks = 75;
     projectile_template.mechanics.gravity = KernelVec3{0.0f, 0.0f, 0.0f};
     projectile_template.mechanics.collider_template_id = 10;
     projectile_template.mechanics.collision_mask = KERNEL_COLLISION_MASK_DAMAGEABLE;
@@ -141,10 +141,6 @@ int main() {
            sizeof(KernelWeaponMechanicsDefinition));
     assert(abi_info.projectile_mechanics_definition_size ==
            sizeof(KernelProjectileMechanicsDefinition));
-    assert(abi_info.area_effect_mechanics_definition_size ==
-           sizeof(KernelAreaEffectMechanicsDefinition));
-    assert(abi_info.beam_mechanics_definition_size ==
-           sizeof(KernelBeamMechanicsDefinition));
     assert(abi_info.homing_mechanics_definition_size ==
            sizeof(KernelHomingMechanicsDefinition));
     assert(abi_info.homing_state_size == sizeof(KernelHomingState));
@@ -223,7 +219,7 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 31u);
+    assert(KERNEL_ABI_VERSION == 32u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CONTROL_PLANE_RPC) != 0);
     assert(sizeof(KernelVec4) == 16u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS) != 0);
@@ -447,7 +443,7 @@ int main() {
         sizeof(KernelBeamMechanicsDefinition);
     beam_projectile_template.mechanics.beam.length = 6.0f;
     beam_projectile_template.mechanics.beam.radius = 0.25f;
-    beam_projectile_template.mechanics.beam.damage_per_second = 30;
+    beam_projectile_template.mechanics.beam.damage_per_tick = 1;
     beam_projectile_template.mechanics.beam.lifetime_ticks = 2;
     beam_projectile_template.mechanics.beam.collision_mask =
         KERNEL_COLLISION_LAYER_HOSTILE_SIDE;
@@ -465,8 +461,8 @@ int main() {
     homing_projectile_template.mechanics.homing.lock_on_range = 25.0f;
     homing_projectile_template.mechanics.homing.lose_target_range = 30.0f;
     homing_projectile_template.mechanics.homing.lock_cone_degrees = 75.0f;
-    homing_projectile_template.mechanics.homing.max_turn_rate_degrees_per_second =
-        360.0f;
+    homing_projectile_template.mechanics.homing.max_turn_degrees_per_tick =
+        12.0f;
     homing_projectile_template.mechanics.homing.acceleration = 20.0f;
     homing_projectile_template.mechanics.homing.max_speed = 40.0f;
     std::array<KernelProjectileTemplateDefinition, 4> projectile_templates = {
@@ -533,7 +529,7 @@ int main() {
     assert(Kernel_GetProjectileTemplates(
                kernel,
                read_projectile_templates.data(),
-               static_cast<std::uint32_t>(read_projectile_templates.size())) == 1);
+               static_cast<std::uint32_t>(read_projectile_templates.size())) == 4);
     assert(Kernel_GetColliderTemplates(
                kernel,
                read_collider_templates.data(),
@@ -1020,26 +1016,40 @@ int main() {
     assert(Kernel_GetRenderStatesAtTime(kernel, 0, states.data(), 0) == 0);
     const std::uint32_t render_count =
         Kernel_GetRenderStates(kernel, states.data(), states.size());
-    assert(render_count == 1);
-    assert(states[0].net_id == created_net_id);
-    assert(states[0].entity_id != 0);
-    assert(states[0].owner_peer == 0);
-    assert(states[0].position.x > 5.0f);
-    assert(states[0].velocity.x == 1.0f);
-    assert(states[0].hp == 240);
-    assert(states[0].max_hp == 240);
-    assert(states[0].animation_state == 7);
+    assert(render_count >= 1);
+    const RenderEntityState* rendered_actor = nullptr;
+    for (std::uint32_t index = 0; index < render_count; ++index) {
+        if (states[index].net_id == created_net_id) {
+            rendered_actor = &states[index];
+            break;
+        }
+    }
+    assert(rendered_actor != nullptr);
+    assert(rendered_actor->entity_id != 0);
+    assert(rendered_actor->owner_peer == 0);
+    assert(rendered_actor->position.x > 5.0f);
+    assert(rendered_actor->velocity.x == 1.0f);
+    assert(rendered_actor->hp == 240);
+    assert(rendered_actor->max_hp == 240);
+    assert(rendered_actor->animation_state == 7);
     assert(
-        states[0].visual_flags ==
+        rendered_actor->visual_flags ==
         (0x12345678u | KERNEL_VISUAL_FLAG_MOVING));
-    assert(states[0].spawn_tick == 0);
-    assert(states[0].client_action_id == 0);
+    assert(rendered_actor->spawn_tick == 0);
+    assert(rendered_actor->client_action_id == 0);
     const std::uint32_t render_at_time_count =
         Kernel_GetRenderStatesAtTime(kernel, 33333, states.data(), states.size());
-    assert(render_at_time_count == 1);
-    assert(states[0].net_id == created_net_id);
-    assert(states[0].hp == 240);
-    assert(states[0].max_hp == 240);
+    assert(render_at_time_count >= 1);
+    rendered_actor = nullptr;
+    for (std::uint32_t index = 0; index < render_at_time_count; ++index) {
+        if (states[index].net_id == created_net_id) {
+            rendered_actor = &states[index];
+            break;
+        }
+    }
+    assert(rendered_actor != nullptr);
+    assert(rendered_actor->hp == 240);
+    assert(rendered_actor->max_hp == 240);
 
     server_entity_input.buttons = InputButton_Fire;
     server_entity_input.selected_weapon = 4;

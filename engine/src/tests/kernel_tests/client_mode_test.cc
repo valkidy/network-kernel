@@ -105,7 +105,7 @@ KernelProjectileTemplateDefinition projectile_template(
     std::uint8_t weapon_id,
     std::uint8_t sync_mode =
         KernelProjectileSyncMode_HybridDeterministicThenSnapshot,
-    float lifetime_seconds = 2.0f) {
+    std::uint32_t lifetime_ticks = 60) {
     KernelProjectileTemplateDefinition projectile_template{};
     projectile_template.struct_size = sizeof(projectile_template);
     projectile_template.projectile_template_id = template_id;
@@ -119,7 +119,7 @@ KernelProjectileTemplateDefinition projectile_template(
     projectile_template.mechanics.damage_shape = KernelProjectileDamageShape_DirectHit;
     projectile_template.mechanics.damage = 5;
     projectile_template.mechanics.speed = 10.0f;
-    projectile_template.mechanics.lifetime_seconds = lifetime_seconds;
+    projectile_template.mechanics.lifetime_ticks = lifetime_ticks;
     projectile_template.mechanics.collider_template_id = 10;
     projectile_template.mechanics.collision_mask = KERNEL_COLLISION_MASK_DAMAGEABLE;
     projectile_template.mechanics.max_hit_count = 1;
@@ -1008,8 +1008,7 @@ void local_projectile_snapshot_fast_forwards_and_smooths() {
     assert(bound.bound);
     assert(bound.spawn_position.x == 5.0f);
     assert(bound.initial_velocity.x == 100.0f);
-    assert(bound.age_seconds > 0.0099f);
-    assert(bound.age_seconds < 0.0101f);
+    assert(bound.age_ticks == 10u);
     assert(bound.position.x > 5.99f);
     assert(bound.position.x < 6.01f);
     assert(bound.correction_offset.x > 0.19f);
@@ -1066,8 +1065,7 @@ void homing_projectile_snapshot_extrapolation_is_bounded() {
     const network_example::KernelEngine::PredictedProjectile& bound =
         engine.predicted_projectiles_[0];
     assert(bound.bound);
-    assert(bound.age_seconds > 0.199f);
-    assert(bound.age_seconds < 0.201f);
+    assert(bound.age_ticks == 200u);
     assert(bound.position.x > 24.99f);
     assert(bound.position.x < 25.01f);
 }
@@ -1887,7 +1885,7 @@ void out_of_range_despawn_keeps_local_deterministic_predicted_projectile() {
     projectile.spawn_position = projectile.position;
     projectile.initial_velocity = projectile.velocity;
     projectile.motion_model = network_example::ProjectileMotionModel::kLinear;
-    projectile.max_lifetime_seconds = 0.2f;
+    projectile.max_lifetime_ticks = 1;
     projectile.sync_mode = KernelProjectileSyncMode_LocalPredictedDeterministic;
     projectile.bound = true;
     client.predicted_projectiles_.push_back(projectile);
@@ -2324,7 +2322,7 @@ void client_update_advances_local_predicted_deterministic_projectile() {
     projectile.spawn_position = projectile.position;
     projectile.initial_velocity = projectile.velocity;
     projectile.motion_model = network_example::ProjectileMotionModel::kLinear;
-    projectile.max_lifetime_seconds = 2.0f;
+    projectile.max_lifetime_ticks = 60;
     projectile.sync_mode = KernelProjectileSyncMode_LocalPredictedDeterministic;
     projectile.bound = true;
     client.predicted_projectiles_.push_back(projectile);

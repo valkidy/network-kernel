@@ -46,7 +46,7 @@ network_example::NetId spawn_test_projectile(
     projectile.previous_position = position;
     projectile.damage = 50;
     projectile.collision_mask = collision_mask;
-    projectile.max_lifetime_seconds = 1.0f;
+    projectile.max_lifetime_ticks = 30;
     return net_id;
 }
 

@@ -335,19 +335,22 @@ NetId fire_projectile(
     std::uint32_t client_action_id,
     const glm::vec3& origin,
     const glm::vec3& velocity,
-    float age_seconds,
+    float fixed_delta_seconds,
+    std::uint32_t age_ticks,
     std::vector<KernelEvent>* events) {
+    const float age_duration =
+        static_cast<float>(age_ticks) * fixed_delta_seconds;
     const glm::vec3 current_position = projectile_position_at(
         origin,
         velocity,
         projectile_template.motion_model,
         projectile_template.gravity,
-        age_seconds);
+        age_duration);
     const glm::vec3 current_velocity = projectile_velocity_at(
         velocity,
         projectile_template.motion_model,
         projectile_template.gravity,
-        age_seconds);
+        age_duration);
     const NetId projectile = world.spawn_projectile(
         shooter_peer_id,
         current_position,
@@ -370,8 +373,8 @@ NetId fire_projectile(
         projectile_state.max_hit_count =
             std::max(1u, projectile_template.max_hit_count);
         projectile_state.hit_count = 0;
-        projectile_state.max_lifetime_seconds = projectile_template.lifetime_seconds;
-        projectile_state.age_seconds = age_seconds;
+        projectile_state.max_lifetime_ticks = projectile_template.lifetime_ticks;
+        projectile_state.age_ticks = age_ticks;
         projectile_state.spawn_position = origin;
         projectile_state.initial_velocity = velocity;
         projectile_state.gravity = projectile_template.gravity;
@@ -389,7 +392,7 @@ NetId fire_projectile(
                     projectile_template.homing_lock_on_range,
                     projectile_template.homing_lose_target_range,
                     projectile_template.homing_lock_cone_degrees,
-                    projectile_template.homing_max_turn_rate_degrees_per_second,
+                    projectile_template.homing_max_turn_degrees_per_tick,
                     projectile_template.homing_acceleration,
                     projectile_template.homing_max_speed});
         }
@@ -567,11 +570,8 @@ void simulate_weapons(
                         origin);
                 const std::uint32_t spawn_tick =
                     context.rewind_frame != nullptr ? context.rewind_tick : current_tick;
-                const float elapsed_seconds =
-                    context.fixed_delta_seconds > 0.0f && current_tick > spawn_tick
-                        ? static_cast<float>(current_tick - spawn_tick) *
-                              context.fixed_delta_seconds
-                        : 0.0f;
+                const std::uint32_t elapsed_ticks =
+                    current_tick > spawn_tick ? current_tick - spawn_tick : 0u;
                 for (const glm::vec3& projectile_direction :
                      projectile_burst_directions(direction, *definition)) {
                     const glm::vec3 velocity =
@@ -587,7 +587,8 @@ void simulate_weapons(
                         queued_input.input.client_action_id,
                         compensated_origin,
                         velocity,
-                        elapsed_seconds,
+                        context.fixed_delta_seconds,
+                        elapsed_ticks,
                         events);
                     if (context.history_buffer != nullptr &&
                         context.rewind_frame != nullptr &&

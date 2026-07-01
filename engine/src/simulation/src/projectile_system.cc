@@ -82,7 +82,7 @@ bool spawn_projectile_from_template(
     projectile.has_collision_geometry = projectile_template.has_collision_geometry;
     projectile.collision_mask = projectile_template.collision_mask;
     projectile.max_hit_count = std::max(1u, projectile_template.max_hit_count);
-    projectile.max_lifetime_seconds = projectile_template.lifetime_seconds;
+    projectile.max_lifetime_ticks = projectile_template.lifetime_ticks;
     projectile.spawn_position = position;
     projectile.initial_velocity = velocity;
     projectile.gravity = projectile_template.gravity;
@@ -282,16 +282,18 @@ void advance_homing_projectile(
     HomingState& homing,
     float fixed_delta_seconds,
     std::uint32_t current_tick) {
-    const float next_age_seconds = projectile.age_seconds + fixed_delta_seconds;
+    const std::uint32_t next_age_ticks = projectile.age_ticks + 1;
+    const float next_age_duration =
+        static_cast<float>(next_age_ticks) * fixed_delta_seconds;
     if (homing.phase == MissileGuidancePhase::kBoost) {
         transform.position = projectile_position_at(
             projectile.spawn_position,
             projectile.initial_velocity,
             ProjectileMotionModel::kLinear,
             glm::vec3{0.0f},
-            next_age_seconds);
+            next_age_duration);
         velocity.linear = projectile.initial_velocity;
-        projectile.age_seconds = next_age_seconds;
+        projectile.age_ticks = next_age_ticks;
         if (current_tick >= homing.guidance_start_tick) {
             const NetId target = acquire_homing_target(
                 world,
@@ -324,8 +326,7 @@ void advance_homing_projectile(
 
     if (homing.phase == MissileGuidancePhase::kGuided) {
         const float max_turn =
-            degrees_to_radians(homing.max_turn_rate_degrees_per_second) *
-            fixed_delta_seconds;
+            degrees_to_radians(homing.max_turn_degrees_per_tick);
         const glm::vec3 direction = steer_direction(
             velocity.linear,
             target_center - transform.position,
@@ -337,7 +338,7 @@ void advance_homing_projectile(
     }
 
     transform.position += velocity.linear * fixed_delta_seconds;
-    projectile.age_seconds = next_age_seconds;
+    projectile.age_ticks = next_age_ticks;
 }
 
 enum class ProjectileCollisionQueryType {
@@ -957,20 +958,21 @@ void simulate_projectiles(
                 fixed_delta_seconds,
                 current_tick);
         } else {
-            const float next_age_seconds =
-                projectile.age_seconds + fixed_delta_seconds;
+            const std::uint32_t next_age_ticks = projectile.age_ticks + 1;
+            const float next_age_duration =
+                static_cast<float>(next_age_ticks) * fixed_delta_seconds;
             transform.position = projectile_position_at(
                 projectile.spawn_position,
                 projectile.initial_velocity,
                 projectile.motion_model,
                 projectile.gravity,
-                next_age_seconds);
+                next_age_duration);
             velocity.linear = projectile_velocity_at(
                 projectile.initial_velocity,
                 projectile.motion_model,
                 projectile.gravity,
-                next_age_seconds);
-            projectile.age_seconds = next_age_seconds;
+                next_age_duration);
+            projectile.age_ticks = next_age_ticks;
         }
     }
 
@@ -1000,8 +1002,8 @@ void simulate_projectiles(
             projectile.previous_position,
             transform.position,
             filter);
-        const bool expired = projectile.max_lifetime_seconds > 0.0f &&
-                             projectile.age_seconds >= projectile.max_lifetime_seconds;
+        const bool expired = projectile.max_lifetime_ticks > 0u &&
+                             projectile.age_ticks >= projectile.max_lifetime_ticks;
         if (hits.empty() && !expired) {
             continue;
         }

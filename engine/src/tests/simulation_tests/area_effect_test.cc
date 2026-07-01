@@ -62,7 +62,7 @@ network_example::NetId spawn_area_projectile(
     projectile.weapon_id = source_code;
     projectile.damage = damage_per_interval;
     projectile.collision_mask = network_example::kCollisionMaskDamageable;
-    projectile.max_lifetime_seconds = 0.0f;
+    projectile.max_lifetime_ticks = 0;
     world.registry().replace<network_example::Hitbox>(
         *entity,
         network_example::Hitbox{{0.0f, 0.0f, 0.0f}, {radius, radius, radius}, 0});

@@ -8,13 +8,13 @@ movement_model: linear
 hit_response: destroy
 damage_shape: direct_hit
 speed: 0.0
-lifetime_seconds: 0.0
+lifetime_ticks: 0
 collision_mask: hostile_side
 max_hit_count: 1
 gravity: {x: 0.0, y: 0.0, z: 0.0}
 beam:
   length: 8.0
   radius: 0.25
-  damage_per_second: 30
+  damage_per_tick: 1
   lifetime_ticks: 2
   collision_mask: hostile_side

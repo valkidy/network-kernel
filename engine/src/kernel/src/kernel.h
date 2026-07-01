@@ -229,7 +229,7 @@ private:
         std::uint32_t input_seq = 0;
         std::uint32_t client_action_id = 0;
         std::uint32_t spawn_tick = 0;
-        float age_seconds = 0.0f;
+        std::uint32_t age_ticks = 0;
         glm::vec3 position{0.0f, 0.0f, 0.0f};
         glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
         glm::vec3 velocity{0.0f, 0.0f, 0.0f};
@@ -237,7 +237,7 @@ private:
         glm::vec3 initial_velocity{0.0f, 0.0f, 0.0f};
         glm::vec3 gravity{0.0f, 0.0f, 0.0f};
         ProjectileMotionModel motion_model = ProjectileMotionModel::kLinear;
-        float max_lifetime_seconds = 0.0f;
+        std::uint32_t max_lifetime_ticks = 0;
         std::uint32_t projectile_template_id = 0;
         std::uint32_t collider_template_id = 0;
         std::uint8_t weapon_id = 0;

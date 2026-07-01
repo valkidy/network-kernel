@@ -40,7 +40,7 @@ network_example::NetId spawn_projectile_beam(
     const glm::vec3& direction,
     float length,
     float radius,
-    std::uint16_t damage_per_second,
+    std::uint16_t damage_per_tick,
     std::uint32_t expire_tick,
     std::uint8_t source_code,
     std::uint32_t collision_mask) {
@@ -51,10 +51,10 @@ network_example::NetId spawn_projectile_beam(
     network_example::ProjectileState& projectile =
         world.registry().get<network_example::ProjectileState>(*entity);
     projectile.weapon_id = source_code;
-    projectile.damage = damage_per_second;
+    projectile.damage = damage_per_tick;
     projectile.shooter_net_id = shooter_net_id;
     projectile.collision_mask = collision_mask;
-    projectile.max_lifetime_seconds = 0.0f;
+    projectile.max_lifetime_ticks = 0;
     world.registry().emplace<network_example::ProjectileBeamRuntime>(
         *entity,
         network_example::ProjectileBeamRuntime{
@@ -63,7 +63,7 @@ network_example::NetId spawn_projectile_beam(
             direction,
             length,
             radius,
-            damage_per_second,
+            damage_per_tick,
             expire_tick,
             source_code,
             collision_mask,
@@ -81,9 +81,8 @@ network_example::RuntimeProjectileTemplate beam_template(
     projectile_template.projectile_type = network_example::ProjectileType::kBeam;
     projectile_template.motion_model = network_example::ProjectileMotionModel::kLinear;
     projectile_template.speed = 0.0f;
-    projectile_template.damage = 30;
+    projectile_template.damage = 1;
     projectile_template.lifetime_ticks = 2;
-    projectile_template.lifetime_seconds = 0.0f;
     projectile_template.beam_length = 6.0f;
     projectile_template.beam_radius = 0.25f;
     projectile_template.collision_mask = network_example::kCollisionLayerHostileSide;
@@ -105,7 +104,7 @@ void beam_damages_targets_with_dps_accumulator() {
             glm::vec3{1.0f, 0.0f, 0.0f},
             5.0f,
             0.25f,
-            30,
+            1,
             10,
             5,
             network_example::kCollisionLayerHostileSide);
@@ -144,7 +143,7 @@ void beam_respects_range_radius_and_collision_mask() {
         glm::vec3{1.0f, 0.0f, 0.0f},
         4.0f,
         0.25f,
-        30,
+        1,
         10,
         5,
         network_example::kCollisionLayerHostileSide);
@@ -176,7 +175,7 @@ void beam_expires_when_not_refreshed() {
             glm::vec3{1.0f, 0.0f, 0.0f},
             5.0f,
             0.25f,
-            30,
+            1,
             3,
             5,
             network_example::kCollisionLayerHostileSide);
@@ -234,7 +233,7 @@ void beam_fire_spawns_or_refreshes_server_beam() {
         world.registry().get<network_example::ProjectileBeamRuntime>(*beam_entity);
     require(state.shooter_net_id == player);
     require(state.length == 6.0f);
-    require(state.damage_per_second == 30);
+    require(state.damage_per_tick == 1);
     require(state.expire_tick == 3);
 }
 

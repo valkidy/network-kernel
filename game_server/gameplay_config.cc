@@ -137,7 +137,7 @@ void hash_projectile_template(
     hash_scalar(hash, mechanics.collision_query_mode);
     hash_scalar(hash, mechanics.damage);
     hash_float(hash, mechanics.speed);
-    hash_float(hash, mechanics.lifetime_seconds);
+    hash_scalar(hash, mechanics.lifetime_ticks);
     hash_vec3(hash, mechanics.gravity);
     hash_scalar(hash, mechanics.collider_template_id);
     hash_scalar(hash, mechanics.collision_mask);
@@ -149,7 +149,7 @@ void hash_projectile_template(
     hash_float(hash, mechanics.homing.lock_on_range);
     hash_float(hash, mechanics.homing.lose_target_range);
     hash_float(hash, mechanics.homing.lock_cone_degrees);
-    hash_float(hash, mechanics.homing.max_turn_rate_degrees_per_second);
+    hash_float(hash, mechanics.homing.max_turn_degrees_per_tick);
     hash_float(hash, mechanics.homing.acceleration);
     hash_float(hash, mechanics.homing.max_speed);
     hash_float(hash, mechanics.area_effect.radius);
@@ -159,7 +159,7 @@ void hash_projectile_template(
     hash_scalar(hash, mechanics.area_effect.collision_mask);
     hash_float(hash, mechanics.beam.length);
     hash_float(hash, mechanics.beam.radius);
-    hash_scalar(hash, mechanics.beam.damage_per_second);
+    hash_scalar(hash, mechanics.beam.damage_per_tick);
     hash_scalar(hash, mechanics.beam.lifetime_ticks);
     hash_scalar(hash, mechanics.beam.collision_mask);
     hash_scalar(hash, mechanics.impact_spawn_projectile_template_id);
@@ -1654,7 +1654,6 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             "collision_query",
             "collision_query_mode",
             "speed",
-            "lifetime_seconds",
             "lifetime_ticks",
             "damage_behavior",
             "collision_mask",
@@ -1754,7 +1753,7 @@ ProjectileTemplateConfig projectile_template_from_yaml(
     mechanics.damage_shape = damage_shape_from_yaml(node["damage_shape"]);
     mechanics.damage = node["damage"].as<std::uint16_t>();
     mechanics.speed = node["speed"].as<float>();
-    mechanics.lifetime_seconds = node["lifetime_seconds"].as<float>();
+    mechanics.lifetime_ticks = node["lifetime_ticks"].as<std::uint32_t>();
     mechanics.gravity = vec3_from_yaml(node["gravity"]);
     mechanics.max_hit_count =
         node["max_hit_count"] ? node["max_hit_count"].as<std::uint32_t>() : 1u;
@@ -1771,7 +1770,7 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             {
                 "length",
                 "radius",
-                "damage_per_second",
+                "damage_per_tick",
                 "lifetime_ticks",
                 "collision_mask",
             },
@@ -1782,8 +1781,8 @@ ProjectileTemplateConfig projectile_template_from_yaml(
         mechanics.beam.struct_size = sizeof(KernelBeamMechanicsDefinition);
         mechanics.beam.length = beam["length"].as<float>();
         mechanics.beam.radius = beam["radius"].as<float>();
-        mechanics.beam.damage_per_second =
-            beam["damage_per_second"].as<std::uint16_t>();
+        mechanics.beam.damage_per_tick =
+            beam["damage_per_tick"].as<std::uint16_t>();
         mechanics.beam.lifetime_ticks =
             beam["lifetime_ticks"] ? beam["lifetime_ticks"].as<std::uint32_t>() : 2u;
         mechanics.beam.collision_mask = collision_mask_from_yaml(beam["collision_mask"]);
@@ -1831,7 +1830,7 @@ ProjectileTemplateConfig projectile_template_from_yaml(
                 "lock_on_range",
                 "lose_target_range",
                 "lock_cone_degrees",
-                "max_turn_rate_degrees_per_second",
+                "max_turn_degrees_per_tick",
                 "acceleration",
                 "max_speed",
             },
@@ -1859,8 +1858,8 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             homing["lose_target_range"].as<float>();
         mechanics.homing.lock_cone_degrees =
             homing["lock_cone_degrees"].as<float>();
-        mechanics.homing.max_turn_rate_degrees_per_second =
-            homing["max_turn_rate_degrees_per_second"].as<float>();
+        mechanics.homing.max_turn_degrees_per_tick =
+            homing["max_turn_degrees_per_tick"].as<float>();
         mechanics.homing.acceleration =
             homing["acceleration"].as<float>();
         mechanics.homing.max_speed = homing["max_speed"].as<float>();
@@ -2563,7 +2562,7 @@ std::vector<std::string> validate_gameplay_config(
                 mechanics.collider_template_id) == collider_template_ids.end() ||
             (mechanics.projectile_type == KernelProjectileType_Standard &&
              (mechanics.speed <= 0.0f ||
-              mechanics.lifetime_seconds <= 0.0f ||
+              mechanics.lifetime_ticks == 0 ||
               mechanics.max_hit_count == 0)) ||
             (mechanics.projectile_type == KernelProjectileType_AreaEffect &&
              (mechanics.area_effect.struct_size <
@@ -2576,7 +2575,7 @@ std::vector<std::string> validate_gameplay_config(
              (mechanics.beam.struct_size < sizeof(KernelBeamMechanicsDefinition) ||
               mechanics.beam.length <= 0.0f ||
               mechanics.beam.radius <= 0.0f ||
-              mechanics.beam.damage_per_second == 0 ||
+              mechanics.beam.damage_per_tick == 0 ||
               mechanics.beam.lifetime_ticks == 0)) ||
             (mechanics.impact_spawn_projectile_template_id == 0 &&
              !projectile_template.impact_projectile_template_ref.empty()) ||
@@ -2594,7 +2593,7 @@ std::vector<std::string> validate_gameplay_config(
                        mechanics.homing.lock_cone_degrees <= 0.0f ||
                        mechanics.homing.lock_cone_degrees > 180.0f ||
                        mechanics.homing
-                               .max_turn_rate_degrees_per_second <= 0.0f ||
+                               .max_turn_degrees_per_tick <= 0.0f ||
                        mechanics.homing.acceleration <= 0.0f ||
                        mechanics.homing.max_speed <= 0.0f)) {
             errors.push_back("projectile template must be valid");

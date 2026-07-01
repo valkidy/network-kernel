@@ -404,7 +404,7 @@ int main() {
             found_beam_rifle_beam = true;
             assert(projectile.definition.mechanics.projectile_type ==
                    KernelProjectileType_Beam);
-            assert(projectile.definition.mechanics.beam.damage_per_second == 30);
+            assert(projectile.definition.mechanics.beam.damage_per_tick == 1);
         }
     }
     assert(found_spammer_projectile);

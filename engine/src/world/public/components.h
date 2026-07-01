@@ -157,9 +157,13 @@ enum class ProjectileDamageFalloff : std::uint8_t {
 };
 
 enum class ProjectileCollisionQueryMode : std::uint8_t {
+    // Select overlap, sweep, or ray from collider geometry and projectile motion.
     kAuto = 0,
+    // Test the projectile volume only at its current transform.
     kOverlap = 1,
+    // Test the projectile volume swept from its previous to current transform.
     kSweep = 2,
+    // Test a thin segment/ray and ignore projectile volume extents.
     kRay = 3,
 };
 
@@ -232,8 +236,8 @@ struct ProjectileState {
     std::uint32_t collision_mask = kCollisionMaskDamageable;
     std::uint32_t max_hit_count = 1;
     std::uint32_t hit_count = 0;
-    float max_lifetime_seconds = 0.0f;
-    float age_seconds = 0.0f;
+    std::uint32_t max_lifetime_ticks = 0;
+    std::uint32_t age_ticks = 0;
     glm::vec3 spawn_position{0.0f, 0.0f, 0.0f};
     glm::vec3 initial_velocity{0.0f, 0.0f, 0.0f};
     // Future non-deterministic physics projectiles should use authoritative
@@ -258,7 +262,7 @@ struct RuntimeProjectileTemplate {
     ProjectileDamageFalloff damage_falloff = ProjectileDamageFalloff::kNone;
     std::uint16_t damage = 0;
     float speed = 0.0f;
-    float lifetime_seconds = 0.0f;
+    std::uint32_t lifetime_ticks = 0;
     glm::vec3 gravity{0.0f, 0.0f, 0.0f};
     std::uint32_t collider_template_id = 0;
     float area_radius = 0.0f;
@@ -266,7 +270,6 @@ struct RuntimeProjectileTemplate {
     std::uint32_t max_hit_count = 1;
     std::uint32_t impact_spawn_projectile_template_id = 0;
     std::uint32_t expire_spawn_projectile_template_id = 0;
-    std::uint32_t lifetime_ticks = 0;
     std::uint32_t damage_interval_ticks = 1;
     float beam_length = 0.0f;
     float beam_radius = 0.0f;
@@ -275,7 +278,7 @@ struct RuntimeProjectileTemplate {
     float homing_lock_on_range = 0.0f;
     float homing_lose_target_range = 0.0f;
     float homing_lock_cone_degrees = 0.0f;
-    float homing_max_turn_rate_degrees_per_second = 0.0f;
+    float homing_max_turn_degrees_per_tick = 0.0f;
     float homing_acceleration = 0.0f;
     float homing_max_speed = 0.0f;
 };
@@ -290,7 +293,7 @@ struct HomingState {
     float lock_on_range = 0.0f;
     float lose_target_range = 0.0f;
     float lock_cone_degrees = 0.0f;
-    float max_turn_rate_degrees_per_second = 0.0f;
+    float max_turn_degrees_per_tick = 0.0f;
     float acceleration = 0.0f;
     float max_speed = 0.0f;
 };
@@ -321,7 +324,7 @@ struct ProjectileBeamRuntime {
     glm::vec3 direction{1.0f, 0.0f, 0.0f};
     float length = 0.0f;
     float radius = 0.0f;
-    std::uint16_t damage_per_second = 0;
+    std::uint16_t damage_per_tick = 0;
     std::uint32_t expire_tick = 0;
     std::uint8_t source_code = 0;
     std::uint32_t collision_mask = kCollisionMaskDamageable;

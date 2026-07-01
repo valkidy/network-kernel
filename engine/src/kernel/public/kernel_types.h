@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 31u
+#define KERNEL_ABI_VERSION 32u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -309,9 +309,13 @@ typedef enum KernelProjectileDamageFalloff {
 } KernelProjectileDamageFalloff;
 
 typedef enum KernelProjectileCollisionQueryMode {
+    /* Select overlap, sweep, or ray from collider geometry and projectile motion. */
     KernelProjectileCollisionQueryMode_Auto = 0,
+    /* Test the projectile volume only at its current transform. */
     KernelProjectileCollisionQueryMode_Overlap = 1,
+    /* Test the projectile volume swept from its previous to current transform. */
     KernelProjectileCollisionQueryMode_Sweep = 2,
+    /* Test a thin segment/ray and ignore projectile volume extents. */
     KernelProjectileCollisionQueryMode_Ray = 3,
 } KernelProjectileCollisionQueryMode;
 
@@ -505,7 +509,7 @@ typedef struct KernelHomingMechanicsDefinition {
     float lock_on_range;
     float lose_target_range;
     float lock_cone_degrees;
-    float max_turn_rate_degrees_per_second;
+    float max_turn_degrees_per_tick;
     float acceleration;
     float max_speed;
 } KernelHomingMechanicsDefinition;
@@ -525,7 +529,7 @@ typedef struct KernelBeamMechanicsDefinition {
     uint32_t struct_size;
     float length;
     float radius;
-    uint16_t damage_per_second;
+    uint16_t damage_per_tick;
     uint16_t reserved0;
     uint32_t lifetime_ticks;
     uint32_t collision_mask;
@@ -541,7 +545,7 @@ typedef struct KernelProjectileMechanicsDefinition {
     uint8_t damage_falloff;
     uint16_t damage;
     float speed;
-    float lifetime_seconds;
+    uint32_t lifetime_ticks;
     KernelVec3 gravity;
     uint32_t collider_template_id;
     uint32_t collision_mask;
@@ -842,7 +846,7 @@ typedef struct KernelHomingState {
     float lock_on_range;
     float lose_target_range;
     float lock_cone_degrees;
-    float max_turn_rate_degrees_per_second;
+    float max_turn_degrees_per_tick;
     float acceleration;
     float max_speed;
     uint32_t valid;
