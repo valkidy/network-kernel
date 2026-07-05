@@ -1,7 +1,7 @@
-#include "ai/ai_context.h"
-#include "ai/ai_node.h"
-#include "ai/ai_tree.h"
-#include "ai/node_factory.h"
+#include "ai_context.h"
+#include "ai_node.h"
+#include "ai_tree.h"
+#include "node_factory.h"
 
 #include <cassert>
 #include <memory>
@@ -18,7 +18,7 @@ public:
 
     network_example::ai::NodeStatus tick(
         const network_example::ai::AIContext&,
-        network_example::ai::AICommandBuffer*) override {
+        network_example::ai::IntentBuffer*) override {
         ++tick_count;
         if (next_status_ < statuses_.size()) {
             return statuses_[next_status_++];
@@ -27,7 +27,7 @@ public:
     }
 
     void halt(const network_example::ai::AIContext&,
-              network_example::ai::AICommandBuffer*) override {
+              network_example::ai::IntentBuffer*) override {
         ++halt_count;
     }
 
@@ -50,7 +50,7 @@ int main() {
     using network_example::ai::NodeStatus;
 
     network_example::ai::AIContext context;
-    network_example::ai::AICommandBuffer commands;
+    network_example::ai::IntentBuffer commands;
 
     auto selector_first = node({NodeStatus::kFailure});
     auto selector_second = node({NodeStatus::kRunning, NodeStatus::kSuccess});

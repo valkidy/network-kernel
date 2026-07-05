@@ -8,7 +8,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "ai/ai_tree.h"
+#include "ai_tree.h"
 
 namespace network_example::ai {
 

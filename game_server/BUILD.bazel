@@ -17,12 +17,16 @@ filegroup(
 cc_library(
     name = "game_server",
     srcs = [
+        "actor_intent_executor.cc",
+        "ai_perception_adapter.cc",
         "agent_sentry_controller.cc",
         "enemy_manager.cc",
         "gameplay_config.cc",
         "game_server.cc",
     ],
     hdrs = [
+        "actor_intent_executor.h",
+        "ai_perception_adapter.h",
         "agent_sentry_controller.h",
         "enemy.h",
         "enemy_manager.h",
@@ -31,6 +35,7 @@ cc_library(
         "public/game_server_types.h",
     ],
     deps = [
+        "//engine/components/ai:ai",
         "//engine/src/kernel:kernel_api",
         "//engine/src/kernel:kernel_api_internal",
         "@zip_archive//:zip",
@@ -96,6 +101,16 @@ cc_test(
     srcs = ["agent_sentry_controller_test.cc"],
     deps = [
         ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "actor_intent_executor_test",
+    srcs = ["actor_intent_executor_test.cc"],
+    deps = [
+        ":game_server",
+        "//engine/components/ai:ai",
         "//engine/src/kernel:kernel",
     ],
 )

@@ -1,7 +1,7 @@
-#include "ai/ai_context.h"
-#include "ai/ai_tree.h"
-#include "ai/node_factory.h"
-#include "ai/yaml_loader.h"
+#include "ai_context.h"
+#include "ai_tree.h"
+#include "node_factory.h"
+#include "yaml_loader.h"
 
 #include <cassert>
 #include <cstdint>
@@ -89,7 +89,7 @@ int main() {
 
     network_example::ai::AITreeInstance tree(std::move(result.root));
     network_example::ai::AIContext context;
-    network_example::ai::AICommandBuffer commands;
+    network_example::ai::IntentBuffer commands;
     context.set_feature("hasVisibleEnemy", true);
     context.set_feature("hp01", 0.9f);
     context.set_feature("hasAmmo", true);
@@ -97,9 +97,9 @@ int main() {
     assert(tree.tick(context, &commands) ==
            network_example::ai::NodeStatus::kSuccess);
     assert(commands.size() == 1);
-    assert(commands.commands()[0].type == "AttackTarget");
+    assert(commands.intents()[0].type == "AttackTarget");
 
-    network_example::ai::AICommandBuffer reload_commands;
+    network_example::ai::IntentBuffer reload_commands;
     network_example::ai::YamlLoadResult reload_result =
         network_example::ai::load_tree_from_yaml(valid_tree_yaml());
     network_example::ai::AITreeInstance reload_tree(std::move(reload_result.root));
@@ -111,9 +111,9 @@ int main() {
     assert(reload_tree.tick(reload_context, &reload_commands) ==
            network_example::ai::NodeStatus::kSuccess);
     assert(reload_commands.size() == 1);
-    assert(reload_commands.commands()[0].type == "Reload");
+    assert(reload_commands.intents()[0].type == "Reload");
 
-    network_example::ai::AICommandBuffer hold_commands;
+    network_example::ai::IntentBuffer hold_commands;
     network_example::ai::YamlLoadResult hold_result =
         network_example::ai::load_tree_from_yaml(valid_tree_yaml());
     network_example::ai::AITreeInstance hold_tree(std::move(hold_result.root));
@@ -125,7 +125,7 @@ int main() {
     assert(hold_tree.tick(hold_context, &hold_commands) ==
            network_example::ai::NodeStatus::kSuccess);
     assert(hold_commands.size() == 1);
-    assert(hold_commands.commands()[0].type == "StopMovement");
+    assert(hold_commands.intents()[0].type == "StopMovement");
 
     network_example::ai::YamlLoadResult unknown_node =
         network_example::ai::load_tree_from_yaml(R"yaml(

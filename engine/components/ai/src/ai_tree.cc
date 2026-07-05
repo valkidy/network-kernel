@@ -1,4 +1,4 @@
-#include "ai/ai_tree.h"
+#include "ai_tree.h"
 
 #include <utility>
 
@@ -7,16 +7,16 @@ namespace network_example::ai {
 AITreeInstance::AITreeInstance(NodePtr root) : root_(std::move(root)) {}
 
 NodeStatus AITreeInstance::tick(const AIContext& context,
-                                AICommandBuffer* commands) {
+                                IntentBuffer* intents) {
     if (root_ == nullptr) {
         return NodeStatus::kFailure;
     }
-    return root_->tick(context, commands);
+    return root_->tick(context, intents);
 }
 
-void AITreeInstance::halt(const AIContext& context, AICommandBuffer* commands) {
+void AITreeInstance::halt(const AIContext& context, IntentBuffer* intents) {
     if (root_ != nullptr) {
-        root_->halt(context, commands);
+        root_->halt(context, intents);
     }
 }
 

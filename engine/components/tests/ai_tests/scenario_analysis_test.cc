@@ -1,4 +1,4 @@
-#include "ai/scenario_analysis.h"
+#include "scenario_analysis.h"
 
 #include <cassert>
 #include <string>

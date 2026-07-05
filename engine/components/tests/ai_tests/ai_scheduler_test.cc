@@ -1,4 +1,4 @@
-#include "ai/ai_scheduler.h"
+#include "ai_scheduler.h"
 
 #include <cassert>
 

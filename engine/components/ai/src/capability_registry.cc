@@ -1,4 +1,4 @@
-#include "ai/capability_registry.h"
+#include "capability_registry.h"
 
 #include <utility>
 
@@ -22,7 +22,9 @@ void add_missing_suggestions(const std::vector<std::string>& missing,
 
 bool CapabilityReport::supported() const {
     return missing_features.empty() && missing_nodes.empty() &&
-           missing_scores.empty() && missing_queries.empty();
+           missing_scores.empty() && missing_queries.empty() &&
+           missing_gameplay_systems.empty() && missing_executors.empty() &&
+           missing_data.empty() && missing_actions.empty();
 }
 
 void CapabilityRegistry::add_feature(std::string name) {
@@ -41,6 +43,22 @@ void CapabilityRegistry::add_query(std::string name) {
     queries_.insert(std::move(name));
 }
 
+void CapabilityRegistry::add_gameplay_system(std::string name) {
+    gameplay_systems_.insert(std::move(name));
+}
+
+void CapabilityRegistry::add_executor(std::string name) {
+    executors_.insert(std::move(name));
+}
+
+void CapabilityRegistry::add_data(std::string name) {
+    data_.insert(std::move(name));
+}
+
+void CapabilityRegistry::add_action(std::string name) {
+    actions_.insert(std::move(name));
+}
+
 bool CapabilityRegistry::has_feature(std::string_view name) const {
     return contains(features_, name);
 }
@@ -55,6 +73,22 @@ bool CapabilityRegistry::has_score_function(std::string_view name) const {
 
 bool CapabilityRegistry::has_query(std::string_view name) const {
     return contains(queries_, name);
+}
+
+bool CapabilityRegistry::has_gameplay_system(std::string_view name) const {
+    return contains(gameplay_systems_, name);
+}
+
+bool CapabilityRegistry::has_executor(std::string_view name) const {
+    return contains(executors_, name);
+}
+
+bool CapabilityRegistry::has_data(std::string_view name) const {
+    return contains(data_, name);
+}
+
+bool CapabilityRegistry::has_action(std::string_view name) const {
+    return contains(actions_, name);
 }
 
 CapabilityReport CapabilityRegistry::validate(
@@ -80,6 +114,26 @@ CapabilityReport CapabilityRegistry::validate(
             report.missing_queries.push_back(query);
         }
     }
+    for (const std::string& system : requirements.required_gameplay_systems) {
+        if (!has_gameplay_system(system)) {
+            report.missing_gameplay_systems.push_back(system);
+        }
+    }
+    for (const std::string& executor : requirements.required_executors) {
+        if (!has_executor(executor)) {
+            report.missing_executors.push_back(executor);
+        }
+    }
+    for (const std::string& data : requirements.required_data) {
+        if (!has_data(data)) {
+            report.missing_data.push_back(data);
+        }
+    }
+    for (const std::string& action : requirements.required_actions) {
+        if (!has_action(action)) {
+            report.missing_actions.push_back(action);
+        }
+    }
 
     add_missing_suggestions(
         report.missing_features, "Add feature: ", &report.suggested_extensions);
@@ -89,6 +143,16 @@ CapabilityReport CapabilityRegistry::validate(
         report.missing_scores, "Add score: ", &report.suggested_extensions);
     add_missing_suggestions(
         report.missing_queries, "Add query: ", &report.suggested_extensions);
+    add_missing_suggestions(
+        report.missing_gameplay_systems,
+        "Add gameplay system: ",
+        &report.suggested_extensions);
+    add_missing_suggestions(
+        report.missing_executors, "Add executor: ", &report.suggested_extensions);
+    add_missing_suggestions(
+        report.missing_data, "Add data: ", &report.suggested_extensions);
+    add_missing_suggestions(
+        report.missing_actions, "Add action: ", &report.suggested_extensions);
     return report;
 }
 
@@ -123,6 +187,21 @@ CapabilityRegistry make_default_capability_registry() {
     registry.add_score_function("Score.AttackWhenHealthy");
     registry.add_score_function("Score.FleeWhenCriticalHp");
     registry.add_score_function("Score.RequestHelpWhenInjured");
+
+    registry.add_query("Query.NearestEnemy");
+    registry.add_query("Query.VisibleHostiles");
+
+    registry.add_gameplay_system("System.Vision");
+    registry.add_gameplay_system("System.Weapon");
+    registry.add_gameplay_system("System.Combat");
+
+    registry.add_executor("Executor.ActorIntent");
+
+    registry.add_data("Data.TargetPosition");
+    registry.add_data("Data.WeaponStatus");
+
+    registry.add_action("Action.AttackTarget");
+    registry.add_action("Action.Reload");
     return registry;
 }
 

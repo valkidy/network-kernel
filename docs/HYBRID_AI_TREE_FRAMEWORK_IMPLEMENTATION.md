@@ -20,7 +20,7 @@ The draft has the right core shape:
 
 - `Tick(context) -> NodeStatus` keeps execution state separate from utility
   scores.
-- `AICommandBuffer` keeps tree decisions decoupled from gameplay mutation.
+- `IntentBuffer` keeps tree decisions decoupled from gameplay mutation.
 - Cached `AIContext` features keep expensive perception outside tree execution.
 - YAML validation before runtime instancing is the correct safety boundary.
 - `Running` and `Halt` are enough to prepare for async action nodes.
@@ -52,7 +52,7 @@ Implement the framework as a new component package:
 
 ```text
 engine/components/ai/
-  include/ai/
+  include/
   src/
   BUILD.bazel
 
@@ -67,7 +67,7 @@ as physics, should follow the same shape:
 
 ```text
 engine/components/physics/
-  include/physics/
+  include/
   src/
   BUILD.bazel
 ```
@@ -84,12 +84,12 @@ boundary, not part of the public API name.
 Use component-local include paths without exposing the internal folder layout:
 
 ```cpp
-#include "ai/ai_context.h"
-#include "ai/ai_tree.h"
+#include "ai_context.h"
+#include "ai_tree.h"
 ```
 
 The `//engine/components/ai:ai` Bazel target should expose only public headers
-under `include/ai`. Non-public headers and all `.cc` files stay hidden inside
+under `include`. Non-public headers and all `.cc` files stay hidden inside
 the target implementation.
 
 Status note: this target is intentionally left as a future large refactor
@@ -128,7 +128,7 @@ Forbidden dependencies:
 - any `//app/...` target
 
 Gameplay integration happens through adapters that build `AIContext`, tick an
-`AITreeInstance`, and translate emitted `AICommand` values into game/server
+`AITreeInstance`, and translate emitted `ScopedIntent` values into game/server
 operations.
 
 Adapter direction is intentionally one-way for future adapter integrations:
@@ -151,7 +151,7 @@ Vision System v1 intentionally removes the current game-server dependency on
 Perception / gameplay feature extraction
     -> AIContext
     -> AITreeInstance::tick()
-    -> NodeStatus + AICommandBuffer
+    -> NodeStatus + IntentBuffer
     -> gameplay command adapter
     -> kernel or gameplay systems
 ```
@@ -181,17 +181,17 @@ and `engine/src`.
 Create:
 
 ```text
-engine/components/ai/include/ai/node_status.h
-engine/components/ai/include/ai/ai_value.h
-engine/components/ai/include/ai/ai_context.h
-engine/components/ai/include/ai/ai_command.h
-engine/components/ai/include/ai/ai_node.h
-engine/components/ai/include/ai/ai_tree.h
-engine/components/ai/include/ai/node_factory.h
-engine/components/ai/include/ai/capability_registry.h
-engine/components/ai/include/ai/yaml_loader.h
-engine/components/ai/include/ai/scenario_analysis.h
-engine/components/ai/include/ai/ai_scheduler.h
+engine/components/ai/include/node_status.h
+engine/components/ai/include/ai_value.h
+engine/components/ai/include/ai_context.h
+engine/components/ai/include/ai_intent.h
+engine/components/ai/include/ai_node.h
+engine/components/ai/include/ai_tree.h
+engine/components/ai/include/node_factory.h
+engine/components/ai/include/capability_registry.h
+engine/components/ai/include/yaml_loader.h
+engine/components/ai/include/scenario_analysis.h
+engine/components/ai/include/ai_scheduler.h
 ```
 
 Responsibilities:
@@ -199,7 +199,7 @@ Responsibilities:
 - `node_status.h`: `enum class NodeStatus { kSuccess, kFailure, kRunning };`
 - `ai_value.h`: typed scalar values for feature and command parameters.
 - `ai_context.h`: read-only feature bag passed into ticks.
-- `ai_command.h`: command object and command buffer.
+- `ai_intent.h`: scoped intent object, status, and intent buffer.
 - `ai_node.h`: base node interface with `tick()` and `halt()`.
 - `ai_tree.h`: owns the root node and tree instance state.
 - `node_factory.h`: registry-backed YAML node construction.
@@ -215,7 +215,6 @@ Create:
 
 ```text
 engine/components/ai/src/ai_context.cc
-engine/components/ai/src/ai_command.cc
 engine/components/ai/src/composite_nodes.cc
 engine/components/ai/src/condition_nodes.cc
 engine/components/ai/src/action_nodes.cc
@@ -275,12 +274,14 @@ coverScore
 dangerScore
 ```
 
-### AICommandBuffer
+### IntentBuffer
 
-Use a generic command envelope so the AI package stays independent:
+Use a generic scoped intent envelope so the AI package stays independent:
 
 ```text
-AICommand
+ScopedIntent
+  scope: actor | director | world
+  subject: generic entity id
   type: string
   params: map<string, AIValue>
 ```
@@ -309,9 +310,9 @@ class AINode {
 public:
     virtual ~AINode() = default;
     virtual NodeStatus tick(const AIContext& context,
-                            AICommandBuffer* commands) = 0;
+                            IntentBuffer* intents) = 0;
     virtual void halt(const AIContext& context,
-                      AICommandBuffer* commands) = 0;
+                      IntentBuffer* intents) = 0;
 };
 ```
 
@@ -587,7 +588,7 @@ Deliver:
 - `NodeStatus`
 - `AIValue`
 - `AIContext`
-- `AICommand` and `AICommandBuffer`
+- `ScopedIntent` and `IntentBuffer`
 - `AINode`
 - `AITreeInstance`
 - programmatic construction tests

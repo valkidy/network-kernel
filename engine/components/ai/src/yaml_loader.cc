@@ -1,4 +1,4 @@
-#include "ai/yaml_loader.h"
+#include "yaml_loader.h"
 
 #include <algorithm>
 #include <string>
@@ -7,7 +7,7 @@
 
 #include <yaml-cpp/yaml.h>
 
-#include "ai/node_factory.h"
+#include "node_factory.h"
 
 namespace network_example::ai {
 namespace {
