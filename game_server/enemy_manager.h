@@ -27,6 +27,7 @@ public:
 
 private:
     void spawn_initial_enemies();
+    bool spawn_director();
     bool spawn_enemy_at(const KernelVec3& position);
     void prune_missing_enemies();
     bool apply_weapon_mechanics(std::uint32_t net_id) const;
@@ -35,6 +36,7 @@ private:
     GameServerGameplayConfig config_;
     AgentSentryController sentry_;
     std::vector<Enemy> enemies_;
+    std::uint32_t director_net_id_ = 0;
     bool has_seen_player_ = false;
     bool has_spawned_initial_enemy_ = false;
 };

@@ -179,6 +179,7 @@ public:
 private:
     friend class EntityLifecycleSystem;
     friend class EntityStateSystem;
+    friend class DirectorAISystem;
     friend class MovementSystem;
     friend class KernelRpcDispatcher;
     friend class KernelRpcWorldHandlers;
@@ -428,6 +429,7 @@ private:
     std::unordered_map<NetId, ClientEntityTombstone> client_despawned_entities_;
     std::vector<PlayerInput> pending_prediction_inputs_;
     std::vector<PredictedProjectile> predicted_projectiles_;
+    std::vector<KernelEntityTemplateDefinition> entity_templates_;
     std::vector<KernelActorTemplateDefinition> actor_templates_;
     std::vector<KernelProjectileTemplateDefinition> projectile_templates_;
     std::vector<KernelColliderTemplateDefinition> collider_templates_;

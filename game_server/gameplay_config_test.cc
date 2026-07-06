@@ -303,7 +303,7 @@ int main() {
     assert(player_template.actor_type == network_example::game_server::kActorTypePlayer);
     assert(player_template.collider_template_id == 1);
     assert(player_template.weapon_slot_count == 2);
-    assert(player_template.weapon_slots[0] == network_example::game_server::kWeaponRifle);
+    assert(player_template.weapon_slots[0] == network_example::game_server::kWeaponRocket);
     assert(player_template.weapon_slots[1] == network_example::game_server::kWeaponShotgun);
     assert(player_template.active_weapon_slot == 0);
     assert(player_template.vision.camp == KernelAgentCamp_PlayerSide);

@@ -5,7 +5,7 @@
 
 #include "kernel/public/kernel_api.h"
 
-_Static_assert(KERNEL_ABI_VERSION == 32u, "projectile tick parameters bump ABI");
+_Static_assert(KERNEL_ABI_VERSION == 33u, "entity templates bump ABI");
 _Static_assert(
     offsetof(KernelWeaponMechanicsDefinition, projectile_template_id) >
         offsetof(KernelWeaponMechanicsDefinition, pellet_spread),
@@ -40,6 +40,8 @@ int main(void) {
     KernelGameplayCatalogDefinition gameplay_catalog;
     KernelGameplayCatalogLoadResult gameplay_catalog_load_result;
     KernelActorTemplateDefinition actor_template;
+    KernelEntityAiDefinition entity_ai;
+    KernelEntityTemplateDefinition entity_template;
     KernelProjectileTemplateDefinition projectile_template;
     KernelColliderTemplateDefinition collider_template;
     KernelColliderBindingDefinition collider_binding;
@@ -73,6 +75,8 @@ int main(void) {
     (void)gameplay_catalog;
     (void)gameplay_catalog_load_result;
     (void)actor_template;
+    (void)entity_ai;
+    (void)entity_template;
     (void)projectile_template;
     (void)collider_template;
     (void)collider_binding;
@@ -87,7 +91,7 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 32u);
+    assert(KERNEL_ABI_VERSION == 33u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD == 4u);
@@ -115,6 +119,10 @@ int main(void) {
     assert(sizeof(KernelGameplayCatalogDefinition) > 0u);
     assert(sizeof(KernelGameplayCatalogLoadResult) > 0u);
     assert(sizeof(KernelActorTemplateDefinition) > 0u);
+    assert(sizeof(KernelEntityAiDefinition) > 0u);
+    assert(sizeof(KernelEntityTemplateDefinition) > 0u);
+    assert(sizeof(KernelAreaEffectMechanicsDefinition) > 0u);
+    assert(sizeof(KernelBeamMechanicsDefinition) > 0u);
     assert(sizeof(KernelProjectileTemplateDefinition) > 0u);
     assert(sizeof(KernelColliderTemplateDefinition) > 0u);
     assert(sizeof(KernelColliderBindingDefinition) > 0u);
@@ -130,6 +138,13 @@ int main(void) {
     assert(sizeof(KernelVisionStateView) > 0u);
     assert(KernelActorType_Player == 1);
     assert(KernelActorType_Agent == 2);
+    assert(KernelEntityType_Actor == 1);
+    assert(KernelEntityType_Projectile == 3);
+    assert(KernelEntityType_Director == 5);
+    assert(KernelAiControllerType_Sentry == 1);
+    assert(KernelAiControllerType_Director == 2);
+    assert((KERNEL_ENTITY_COMPONENT_SERVER_ONLY &
+            KERNEL_ENTITY_COMPONENT_DIRECTOR_RUNTIME) == 0u);
     assert(KernelProjectileCollisionQueryMode_Auto == 0);
     assert(KernelProjectileCollisionQueryMode_Overlap == 1);
     assert(KernelProjectileCollisionQueryMode_Sweep == 2);
@@ -184,6 +199,10 @@ int main(void) {
            offsetof(RenderEntityState, projectile_template_id));
     assert(offsetof(KernelCombatStateDefinition, collider_template_id) >
            offsetof(KernelCombatStateDefinition, active_weapon_id));
+    assert(offsetof(KernelServerEntityCreateInfo, entity_template_id) >
+           offsetof(KernelServerEntityCreateInfo, actor_template_id));
+    assert(offsetof(KernelEntityTemplateDefinition, ai) >
+           offsetof(KernelEntityTemplateDefinition, vision));
     assert(RenderEntityStatus_Active == 0u);
     assert((KERNEL_VISUAL_FLAG_HP_UNKNOWN & KERNEL_VISUAL_FLAG_DEAD) == 0u);
     assert(sizeof(KernelEntityLifecycleEvent) > 0u);

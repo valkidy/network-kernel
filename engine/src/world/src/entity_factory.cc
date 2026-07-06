@@ -35,6 +35,16 @@ NetId World::spawn_enemy(const glm::vec3& position) {
     return registry().get<NetworkIdentity>(entity).net_id;
 }
 
+NetId World::spawn_entity(
+    EntityType type,
+    ActorType actor_type,
+    PeerId owner_peer,
+    const glm::vec3& position) {
+    const entt::entity entity =
+        create_networked_entity(type, actor_type, owner_peer, position);
+    return registry().get<NetworkIdentity>(entity).net_id;
+}
+
 NetId World::spawn_projectile(
     PeerId owner_peer,
     const glm::vec3& position,

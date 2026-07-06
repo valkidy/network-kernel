@@ -27,6 +27,102 @@ KernelServerEntityCreateInfo player_create_info() {
     return create_info;
 }
 
+KernelColliderTemplateDefinition hit_collider_template() {
+    KernelColliderTemplateDefinition collider{};
+    collider.struct_size = sizeof(collider);
+    collider.template_id = 20;
+    collider.shape_type = KernelColliderShapeType_Aabb;
+    collider.center = KernelVec3{0.0f, 0.8f, 0.0f};
+    collider.shape_params = KernelVec4{0.4f, 0.8f, 0.4f, 0.0f};
+    collider.purpose_flags = KernelColliderPurpose_Hit;
+    collider.layer_mask = KERNEL_COLLISION_LAYER_HOSTILE_SIDE;
+    return collider;
+}
+
+KernelEntityTemplateDefinition director_template() {
+    KernelEntityTemplateDefinition entity_template{};
+    entity_template.struct_size = sizeof(entity_template);
+    entity_template.entity_template_id = 100;
+    entity_template.entity_type = KernelEntityType_Director;
+    entity_template.component_flags =
+        KERNEL_ENTITY_COMPONENT_SERVER_ONLY | KERNEL_ENTITY_COMPONENT_TRANSFORM |
+        KERNEL_ENTITY_COMPONENT_AGENT_RUNTIME |
+        KERNEL_ENTITY_COMPONENT_DIRECTOR_RUNTIME;
+    entity_template.ai.struct_size = sizeof(entity_template.ai);
+    entity_template.ai.controller_type = KernelAiControllerType_Director;
+    entity_template.ai.tick_interval = 2;
+    entity_template.ai.spawn_target_count = 3;
+    entity_template.ai.spawn_entity_template_id = 200;
+    entity_template.ai.spawn_actor_template_id = 2;
+    entity_template.ai.spawn_position = KernelVec3{6.0f, 0.0f, 0.0f};
+    entity_template.ai.spawn_radius = 1.0f;
+    entity_template.ai.spawn_seed = 99;
+    return entity_template;
+}
+
+KernelEntityTemplateDefinition agent_entity_template() {
+    KernelEntityTemplateDefinition entity_template{};
+    entity_template.struct_size = sizeof(entity_template);
+    entity_template.entity_template_id = 200;
+    entity_template.entity_type = KernelEntityType_Actor;
+    entity_template.actor_type = KernelActorType_Agent;
+    entity_template.actor_template_id = 2;
+    entity_template.component_flags =
+        KERNEL_ENTITY_COMPONENT_TRANSFORM | KERNEL_ENTITY_COMPONENT_VELOCITY |
+        KERNEL_ENTITY_COMPONENT_HEALTH | KERNEL_ENTITY_COMPONENT_HITBOX |
+        KERNEL_ENTITY_COMPONENT_AGENT_RUNTIME |
+        KERNEL_ENTITY_COMPONENT_SENTRY_RUNTIME;
+    entity_template.collider_template_id = 20;
+    entity_template.combat.struct_size = sizeof(entity_template.combat);
+    entity_template.combat.hp = 100;
+    entity_template.combat.max_hp = 100;
+    entity_template.combat.hitbox_center = KernelVec3{0.0f, 0.8f, 0.0f};
+    entity_template.combat.hitbox_half_extents = KernelVec3{0.4f, 0.8f, 0.4f};
+    entity_template.vision.struct_size = sizeof(entity_template.vision);
+    entity_template.vision.camp = KernelAgentCamp_EnemySide;
+    entity_template.ai.struct_size = sizeof(entity_template.ai);
+    entity_template.ai.controller_type = KernelAiControllerType_Sentry;
+    entity_template.ai.tick_interval = 1;
+    return entity_template;
+}
+
+KernelActorTemplateDefinition agent_actor_template() {
+    KernelActorTemplateDefinition actor_template{};
+    actor_template.struct_size = sizeof(actor_template);
+    actor_template.actor_template_id = 2;
+    actor_template.entity_type = KernelEntityType_Actor;
+    actor_template.actor_type = KernelActorType_Agent;
+    actor_template.collider_template_id = 20;
+    actor_template.vision.struct_size = sizeof(actor_template.vision);
+    actor_template.vision.camp = KernelAgentCamp_EnemySide;
+    return actor_template;
+}
+
+void load_director_catalog(network_example::KernelEngine* engine) {
+    const std::array<KernelColliderTemplateDefinition, 1> colliders = {
+        hit_collider_template(),
+    };
+    const std::array<KernelActorTemplateDefinition, 1> actors = {
+        agent_actor_template(),
+    };
+    const std::array<KernelEntityTemplateDefinition, 2> entity_templates = {
+        director_template(),
+        agent_entity_template(),
+    };
+    KernelGameplayCatalogDefinition catalog{};
+    catalog.struct_size = sizeof(catalog);
+    catalog.catalog_version = 1;
+    catalog.catalog_hash = 1;
+    catalog.collider_templates = colliders.data();
+    catalog.collider_template_count = static_cast<std::uint32_t>(colliders.size());
+    catalog.actor_templates = actors.data();
+    catalog.actor_template_count = static_cast<std::uint32_t>(actors.size());
+    catalog.entity_templates = entity_templates.data();
+    catalog.entity_template_count =
+        static_cast<std::uint32_t>(entity_templates.size());
+    assert(engine->load_gameplay_catalog(catalog));
+}
+
 void lifecycle_system_create_matches_legacy_path() {
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;
@@ -55,6 +151,91 @@ void lifecycle_system_create_matches_legacy_path() {
     assert(engine.events_.size() == 1);
     assert(engine.events_[0].type == KernelEventType_EntitySpawned);
     assert(engine.latest_snapshot_.entities.size() == 1);
+}
+
+void lifecycle_system_materializes_server_only_director_template() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+    load_director_catalog(&engine);
+
+    KernelServerEntityCreateInfo create_info{};
+    create_info.struct_size = sizeof(create_info);
+    create_info.entity_template_id = 100;
+    create_info.position = KernelVec3{1.0f, 0.0f, 2.0f};
+    create_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+
+    std::uint32_t net_id = 0;
+    assert(engine.server_create_entity(create_info, &net_id));
+    const std::optional<entt::entity> entity = engine.world_.find_entity(net_id);
+    assert(entity.has_value());
+    assert(engine.world_.registry().all_of<network_example::ServerOnly>(*entity));
+    assert(engine.world_.registry().all_of<network_example::AgentRuntime>(*entity));
+    assert(engine.world_.registry().all_of<network_example::DirectorRuntime>(*entity));
+    const network_example::EntityKind& kind =
+        engine.world_.registry().get<network_example::EntityKind>(*entity);
+    assert(kind.type == network_example::EntityType::kDirector);
+
+    std::array<RenderEntityState, 4> render_states{};
+    assert(engine.get_render_states(render_states.data(), render_states.size()) == 0);
+    assert(engine.latest_snapshot_.entities.empty());
+}
+
+void director_runtime_spawns_agents_until_target_count() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+    load_director_catalog(&engine);
+
+    KernelServerEntityCreateInfo create_info{};
+    create_info.struct_size = sizeof(create_info);
+    create_info.entity_template_id = 100;
+    create_info.position = KernelVec3{0.0f, 0.0f, 0.0f};
+    create_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+
+    std::uint32_t director = 0;
+    assert(engine.server_create_entity(create_info, &director));
+
+    engine.update(1.0f / 30.0f);
+    assert(engine.command_queue_.size() == 3);
+    engine.update(1.0f / 30.0f);
+    assert(engine.last_simulation_command_processed_count_ == 3);
+    assert(engine.failed_simulation_command_count_ == 0);
+    for (std::uint32_t tick = 0; tick < 4; ++tick) {
+        engine.update(1.0f / 30.0f);
+    }
+
+    std::array<KernelServerEntityState, 8> states{};
+    for (KernelServerEntityState& state : states) {
+        state.struct_size = sizeof(state);
+    }
+    const std::uint32_t count = engine.server_query_entities(
+        network_example::EntityType::kActor,
+        states.data(),
+        static_cast<std::uint32_t>(states.size()));
+    std::uint32_t agent_count = 0;
+    for (std::uint32_t index = 0; index < count; ++index) {
+        if (states[index].actor_type == KernelActorType_Agent) {
+            ++agent_count;
+            assert(states[index].actor_template_id == 2);
+            const std::optional<entt::entity> agent_entity =
+                engine.world_.find_entity(states[index].net_id);
+            assert(agent_entity.has_value());
+            assert(engine.world_.registry().all_of<network_example::AgentRuntime>(
+                *agent_entity));
+            assert(engine.world_.registry().all_of<network_example::AgentSentryRuntime>(
+                *agent_entity));
+            assert(engine.vision_configs_.find(states[index].net_id) !=
+                   engine.vision_configs_.end());
+        }
+    }
+    assert(agent_count == 3);
 }
 
 void lifecycle_system_destroy_matches_legacy_side_effects() {
@@ -92,6 +273,8 @@ void lifecycle_system_destroy_matches_legacy_side_effects() {
 
 int main() {
     lifecycle_system_create_matches_legacy_path();
+    lifecycle_system_materializes_server_only_director_template();
+    director_runtime_spawns_agents_until_target_count();
     lifecycle_system_destroy_matches_legacy_side_effects();
     return 0;
 }

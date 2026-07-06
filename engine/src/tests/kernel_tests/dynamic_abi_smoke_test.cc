@@ -416,6 +416,10 @@ int main() {
            sizeof(KernelWeaponMechanicsDefinition));
     assert(abi_info.actor_template_definition_size ==
            sizeof(KernelActorTemplateDefinition));
+    assert(abi_info.entity_template_definition_size ==
+           sizeof(KernelEntityTemplateDefinition));
+    assert(abi_info.entity_ai_definition_size ==
+           sizeof(KernelEntityAiDefinition));
     assert(abi_info.projectile_mechanics_definition_size ==
            sizeof(KernelProjectileMechanicsDefinition));
     assert(abi_info.area_effect_mechanics_definition_size ==

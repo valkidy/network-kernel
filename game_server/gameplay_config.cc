@@ -51,7 +51,6 @@ constexpr const char* kDefaultGameplayCatalogPath =
     "game_server/gameplay_catalog.yaml";
 constexpr std::uint64_t kMaxYamlEntryBytes = 1024ull * 1024ull;
 constexpr std::uint64_t kMaxTotalYamlBytes = 8ull * 1024ull * 1024ull;
-
 void hash_bytes(std::uint64_t* hash, const void* data, std::size_t size) {
     const auto* bytes = static_cast<const std::uint8_t*>(data);
     for (std::size_t index = 0; index < size; ++index) {
@@ -2640,6 +2639,10 @@ std::vector<std::string> validate_gameplay_config(
     return errors;
 }
 
+KernelCombatStateDefinition make_combat_state_from_actor_template(
+    const GameServerGameplayConfig& config,
+    const ActorTemplateConfig& actor_template);
+
 KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
     const GameServerGameplayConfig& config) {
     KernelGameplayCatalogStorage storage;
@@ -2653,7 +2656,54 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
         definition.vision = actor_template.vision;
         definition.vision.struct_size = sizeof(KernelAgentVisionConfig);
         storage.actor_templates.push_back(definition);
+
+        KernelEntityTemplateDefinition entity_template{};
+        entity_template.struct_size = sizeof(KernelEntityTemplateDefinition);
+        entity_template.entity_template_id = actor_template.actor_template_id;
+        entity_template.entity_type = actor_template.entity_type;
+        entity_template.actor_type = actor_template.actor_type;
+        entity_template.actor_template_id = actor_template.actor_template_id;
+        entity_template.collider_template_id = actor_template.collider_template_id;
+        entity_template.component_flags =
+            KERNEL_ENTITY_COMPONENT_TRANSFORM |
+            KERNEL_ENTITY_COMPONENT_VELOCITY |
+            KERNEL_ENTITY_COMPONENT_HEALTH |
+            KERNEL_ENTITY_COMPONENT_HITBOX |
+            KERNEL_ENTITY_COMPONENT_WEAPON_STATE;
+        entity_template.animation_state = actor_template.animation_idle;
+        entity_template.combat =
+            make_combat_state_from_actor_template(config, actor_template);
+        entity_template.vision = actor_template.vision;
+        entity_template.vision.struct_size = sizeof(KernelAgentVisionConfig);
+        entity_template.ai.struct_size = sizeof(KernelEntityAiDefinition);
+        if (actor_template.actor_type == kActorTypeAgent) {
+            entity_template.component_flags |=
+                KERNEL_ENTITY_COMPONENT_AGENT_RUNTIME |
+                KERNEL_ENTITY_COMPONENT_SENTRY_RUNTIME;
+            entity_template.ai.controller_type = KernelAiControllerType_Sentry;
+            entity_template.ai.tick_interval = 1;
+        }
+        storage.entity_templates.push_back(entity_template);
     }
+    KernelEntityTemplateDefinition director_template{};
+    director_template.struct_size = sizeof(KernelEntityTemplateDefinition);
+    director_template.entity_template_id = kDefaultDirectorEntityTemplateId;
+    director_template.entity_type = KernelEntityType_Director;
+    director_template.component_flags =
+        KERNEL_ENTITY_COMPONENT_TRANSFORM |
+        KERNEL_ENTITY_COMPONENT_SERVER_ONLY |
+        KERNEL_ENTITY_COMPONENT_AGENT_RUNTIME |
+        KERNEL_ENTITY_COMPONENT_DIRECTOR_RUNTIME;
+    director_template.ai.struct_size = sizeof(KernelEntityAiDefinition);
+    director_template.ai.controller_type = KernelAiControllerType_Director;
+    director_template.ai.tick_interval = 1;
+    director_template.ai.spawn_target_count = config.enemy.spawn_count;
+    director_template.ai.spawn_entity_template_id = config.enemy.actor_template_id;
+    director_template.ai.spawn_actor_template_id = config.enemy.actor_template_id;
+    director_template.ai.spawn_position = config.enemy.spawn_position;
+    director_template.ai.spawn_radius = config.enemy.spawn_radius;
+    director_template.ai.spawn_seed = config.enemy.spawn_seed;
+    storage.entity_templates.push_back(director_template);
     for (const ProjectileTemplateConfig& projectile_template :
          config.projectile_templates) {
         storage.projectile_templates.push_back(projectile_template.definition);
@@ -2668,6 +2718,9 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
     storage.definition.actor_templates = storage.actor_templates.data();
     storage.definition.actor_template_count =
         static_cast<std::uint32_t>(storage.actor_templates.size());
+    storage.definition.entity_templates = storage.entity_templates.data();
+    storage.definition.entity_template_count =
+        static_cast<std::uint32_t>(storage.entity_templates.size());
     storage.definition.projectile_templates =
         storage.projectile_templates.data();
     storage.definition.projectile_template_count =

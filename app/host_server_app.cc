@@ -141,6 +141,7 @@ int RunHostServer(
 
     network_example::game_server::GameServer game_server(kernel, gameplay_config);
     std::uint32_t sequence = 1;
+    bool observed_agent_render = false;
     constexpr float kDeltaSeconds = 1.0f / 30.0f;
     for (std::uint32_t frame = 0; frame < frame_count; ++frame) {
         const PlayerInput input = scripted_input(sequence++);
@@ -161,10 +162,25 @@ int RunHostServer(
             game_server.handle_event(events[index]);
         }
         game_server.tick(kDeltaSeconds);
+        std::array<RenderEntityState, 64> frame_states{};
+        const std::uint32_t frame_state_count = Kernel_GetRenderStates(
+            kernel,
+            frame_states.data(),
+            static_cast<std::uint32_t>(frame_states.size()));
+        for (std::uint32_t index = 0; index < frame_state_count; ++index) {
+            observed_agent_render =
+                observed_agent_render ||
+                (frame_states[index].entity_type == KernelEntityType_Actor &&
+                 frame_states[index].actor_type == KernelActorType_Agent);
+        }
         if (frame_count > 12) {
             std::this_thread::sleep_for(std::chrono::milliseconds(33));
         }
     }
+
+    spdlog::info(
+        "host_server observed_agent_render={}",
+        observed_agent_render ? 1 : 0);
 
     std::array<RenderEntityState, 64> states{};
     const std::uint32_t state_count =
@@ -172,9 +188,10 @@ int RunHostServer(
     for (std::uint32_t index = 0; index < state_count; ++index) {
         const RenderEntityState& state = states[index];
         spdlog::info(
-            "render_state net_id={} type={} pos=({}, {}, {})",
+            "render_state net_id={} type={} actor={} pos=({}, {}, {})",
             state.net_id,
             state.entity_type,
+            state.actor_type,
             state.position.x,
             state.position.y,
             state.position.z);

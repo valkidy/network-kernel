@@ -484,6 +484,18 @@ const KernelActorTemplateDefinition* find_actor_template(
     return found == templates.end() ? nullptr : &*found;
 }
 
+const KernelEntityTemplateDefinition* find_entity_template(
+    const std::vector<KernelEntityTemplateDefinition>& templates,
+    std::uint32_t entity_template_id) {
+    const auto found = std::find_if(
+        templates.begin(),
+        templates.end(),
+        [entity_template_id](const KernelEntityTemplateDefinition& entity_template) {
+            return entity_template.entity_template_id == entity_template_id;
+        });
+    return found == templates.end() ? nullptr : &*found;
+}
+
 glm::vec3 collider_template_half_extents(
     const KernelColliderTemplateDefinition& collider_template) {
     return glm::vec3{
@@ -1526,13 +1538,17 @@ bool KernelEngine::load_gameplay_catalog(
          catalog.projectile_templates == nullptr) ||
         (catalog.collider_template_count != 0 &&
          catalog.collider_templates == nullptr) ||
+        (catalog.entity_template_count != 0 &&
+         catalog.entity_templates == nullptr) ||
         catalog.collider_binding_count != 0) {
         return false;
     }
 
+    entity_templates_.clear();
     actor_templates_.clear();
     projectile_templates_.clear();
     collider_templates_.clear();
+    entity_templates_.reserve(catalog.entity_template_count);
     actor_templates_.reserve(catalog.actor_template_count);
     projectile_templates_.reserve(catalog.projectile_template_count);
     collider_templates_.reserve(catalog.collider_template_count);
@@ -1551,6 +1567,28 @@ bool KernelEngine::load_gameplay_catalog(
             return false;
         }
         actor_templates_.push_back(actor_template);
+    }
+    for (std::uint32_t index = 0; index < catalog.entity_template_count; ++index) {
+        const KernelEntityTemplateDefinition& entity_template =
+            catalog.entity_templates[index];
+        if (entity_template.struct_size < sizeof(KernelEntityTemplateDefinition) ||
+            entity_template.entity_template_id == 0 ||
+            (entity_template.entity_type != KernelEntityType_Actor &&
+             entity_template.entity_type != KernelEntityType_Director) ||
+            entity_template.ai.struct_size < sizeof(KernelEntityAiDefinition) ||
+            entity_template.ai.controller_type > KernelAiControllerType_Director) {
+            return false;
+        }
+        if (entity_template.entity_type == KernelEntityType_Director &&
+            ((entity_template.component_flags &
+             KERNEL_ENTITY_COMPONENT_DIRECTOR_RUNTIME) == 0u ||
+             entity_template.ai.controller_type != KernelAiControllerType_Director ||
+             entity_template.ai.tick_interval == 0u ||
+             (entity_template.ai.spawn_actor_template_id == 0u &&
+              entity_template.ai.spawn_entity_template_id == 0u))) {
+            return false;
+        }
+        entity_templates_.push_back(entity_template);
     }
     for (std::uint32_t index = 0; index < catalog.projectile_template_count; ++index) {
         const KernelProjectileTemplateDefinition& projectile_template =
@@ -1633,6 +1671,31 @@ bool KernelEngine::load_gameplay_catalog(
                  KernelColliderPurpose_Vision) == 0u) {
                 return false;
             }
+        }
+    }
+    for (const KernelEntityTemplateDefinition& entity_template : entity_templates_) {
+        if (entity_template.actor_template_id != 0u &&
+            find_actor_template(actor_templates_, entity_template.actor_template_id) ==
+                nullptr) {
+            return false;
+        }
+        if (entity_template.ai.spawn_actor_template_id != 0u &&
+            find_actor_template(
+                actor_templates_,
+                entity_template.ai.spawn_actor_template_id) == nullptr) {
+            return false;
+        }
+        if (entity_template.ai.spawn_entity_template_id != 0u &&
+            find_entity_template(
+                entity_templates_,
+                entity_template.ai.spawn_entity_template_id) == nullptr) {
+            return false;
+        }
+        if (entity_template.collider_template_id != 0u &&
+            find_collider_template(
+                collider_templates_,
+                entity_template.collider_template_id) == nullptr) {
+            return false;
         }
     }
     std::vector<RuntimeProjectileTemplate> runtime_projectile_templates;
@@ -4258,6 +4321,7 @@ void KernelEngine::simulate_tick() {
         &events_);
     destroy_dead_entities(world_, tick_loop_.current_tick(), &events_);
     update_vision_states(fixed_delta);
+    DirectorAISystem{}.update(*this);
     const std::size_t last_tick_event = events_.size();
     broadcast_combat_events(first_tick_event, last_tick_event);
     send_due_clock_sync_pings(server_time_us);
@@ -4823,6 +4887,9 @@ void KernelEngine::rebuild_render_states_from_world() {
     }
     auto view = world_.registry().view<const NetworkIdentity, const EntityKind, const Transform>();
     for (const entt::entity entity : view) {
+        if (world_.registry().all_of<ServerOnly>(entity)) {
+            continue;
+        }
         const NetworkIdentity& identity = view.get<const NetworkIdentity>(entity);
         RenderEntityState state = render_state_from_world_entity(
             world_,

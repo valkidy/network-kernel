@@ -40,6 +40,9 @@ void EnemyManager::handle_event(const KernelEvent& event) {
     if (event.type != KernelEventType_EntityDestroyed) {
         return;
     }
+    if (event.net_id == director_net_id_) {
+        director_net_id_ = 0;
+    }
     enemies_.erase(
         std::remove_if(
             enemies_.begin(),
@@ -79,6 +82,18 @@ void EnemyManager::despawn_all(std::uint32_t reason) {
             KernelCommandSource_Internal,
             &command);
     }
+    if (director_net_id_ != 0) {
+        KernelEntityLifecycleCommand command{};
+        command.struct_size = sizeof(command);
+        command.command_type = KernelEntityLifecycleCommandType_Destroy;
+        command.net_id = director_net_id_;
+        command.reason = reason;
+        Kernel_ServerEnqueueEntityLifecycle(
+            kernel_,
+            KernelCommandSource_Internal,
+            &command);
+        director_net_id_ = 0;
+    }
     enemies_.clear();
 }
 
@@ -91,6 +106,7 @@ const std::vector<Enemy>& EnemyManager::enemies() const {
 }
 
 void EnemyManager::spawn_initial_enemies() {
+    spawn_director();
     std::mt19937 rng(config_.enemy.spawn_seed);
     std::uniform_real_distribution<float> unit_distribution(0.0f, 1.0f);
     const KernelVec3 center = config_.enemy.spawn_position;
@@ -109,6 +125,27 @@ void EnemyManager::spawn_initial_enemies() {
     has_spawned_initial_enemy_ = true;
 }
 
+bool EnemyManager::spawn_director() {
+    if (director_net_id_ != 0) {
+        return true;
+    }
+
+    KernelServerEntityCreateInfo create_info{};
+    create_info.struct_size = sizeof(KernelServerEntityCreateInfo);
+    create_info.entity_type = KernelEntityType_Director;
+    create_info.owner_peer = 0;
+    create_info.position = config_.enemy.spawn_position;
+    create_info.rotation = kIdentityRotation;
+    create_info.entity_template_id = kDefaultDirectorEntityTemplateId;
+
+    std::uint32_t net_id = 0;
+    if (!Kernel_ServerCreateEntity(kernel_, &create_info, &net_id) || net_id == 0) {
+        return false;
+    }
+    director_net_id_ = net_id;
+    return true;
+}
+
 bool EnemyManager::spawn_enemy_at(const KernelVec3& position) {
     const ActorTemplateConfig* actor_template =
         find_actor_template(config_, config_.enemy.actor_template_id);
@@ -125,6 +162,7 @@ bool EnemyManager::spawn_enemy_at(const KernelVec3& position) {
     create_info.animation_state = actor_template->animation_idle;
     create_info.visual_flags = 0;
     create_info.actor_template_id = actor_template->actor_template_id;
+    create_info.entity_template_id = actor_template->actor_template_id;
 
     std::uint32_t net_id = 0;
     if (!Kernel_ServerCreateEntity(kernel_, &create_info, &net_id) || net_id == 0) {
@@ -168,6 +206,14 @@ bool EnemyManager::apply_weapon_mechanics(std::uint32_t net_id) const {
 }
 
 void EnemyManager::prune_missing_enemies() {
+    if (director_net_id_ != 0) {
+        KernelServerEntityState state{};
+        state.struct_size = sizeof(KernelServerEntityState);
+        if (!Kernel_ServerGetEntityState(kernel_, director_net_id_, &state) ||
+            state.valid == 0u) {
+            director_net_id_ = 0;
+        }
+    }
     enemies_.erase(
         std::remove_if(
             enemies_.begin(),

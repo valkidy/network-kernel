@@ -73,7 +73,7 @@ echo "==> Running GameServer focused tests"
   --config=macos \
   --copt=-Wunused-function \
   -c opt \
-  //game_server:enemy_ai_controller_test \
+  //game_server:agent_sentry_controller_test \
   //game_server:enemy_manager_test
 
 if [[ ! -x "$APP_BIN" ]]; then
@@ -82,8 +82,8 @@ if [[ ! -x "$APP_BIN" ]]; then
 fi
 
 echo "==> Running host_server mode"
-"$APP_BIN" --mode=host_server --port="$PORT" >"$HOST_LOG" 2>&1
-if ! grep -Eq "render_state net_id=[0-9]+ type=2 " "$HOST_LOG"; then
+"$APP_BIN" --mode=host_server --port="$PORT" --host-frames=120 >"$HOST_LOG" 2>&1
+if ! grep -Eq "host_server observed_agent_render=1" "$HOST_LOG"; then
   echo "ERROR: host_server did not render the GameServer enemy" >&2
   print_failure_context
   exit 1

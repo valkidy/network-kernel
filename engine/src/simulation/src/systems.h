@@ -53,6 +53,11 @@ public:
         const PlayerInput& input) const;
 };
 
+class DirectorAISystem {
+public:
+    void update(KernelEngine& engine) const;
+};
+
 }  // namespace network_example
 
 #endif  // SIMULATION_SRC_SYSTEMS_H_

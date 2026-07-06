@@ -18,6 +18,7 @@ enum class EntityType : std::uint16_t {
     kUnknown = 0,
     kActor = 1,
     kProjectile = 3,
+    kDirector = 5,
 };
 
 enum class ActorType : std::uint16_t {
@@ -94,6 +95,48 @@ struct Health {
 struct PlayerTag {};
 struct AgentTag {};
 struct ProjectileTag {};
+struct ServerOnly {};
+
+enum class AiControllerType : std::uint32_t {
+    kNone = 0,
+    kSentry = 1,
+    kDirector = 2,
+};
+
+struct AgentRuntime {
+    std::uint32_t ai_profile_id = 0;
+    AiControllerType controller_type = AiControllerType::kNone;
+    std::uint32_t tick_interval = 1;
+    std::uint32_t next_tick = 0;
+    std::uint32_t blackboard_id = 0;
+};
+
+enum class AgentSentryState : std::uint8_t {
+    kIdle = 0,
+    kAlert = 1,
+    kAttack = 2,
+};
+
+struct AgentSentryRuntime {
+    AgentSentryState state = AgentSentryState::kIdle;
+    NetId target_net_id = 0;
+    std::uint32_t state_ticks = 0;
+    std::uint32_t lost_target_ticks = 0;
+    std::uint32_t patrol_rotation_tick = 0;
+    std::uint32_t patrol_rotation_step = 0;
+};
+
+struct DirectorRuntime {
+    std::uint32_t tick_interval = 1;
+    std::uint32_t next_tick = 0;
+    std::uint32_t spawn_target_count = 0;
+    std::uint32_t spawn_entity_template_id = 0;
+    std::uint32_t spawn_actor_template_id = 0;
+    glm::vec3 spawn_position{0.0f, 0.0f, 0.0f};
+    float spawn_radius = 0.0f;
+    std::uint32_t spawn_seed = 1;
+    std::uint32_t spawn_cursor = 0;
+};
 
 inline constexpr std::size_t kWeaponCount = 7;
 inline constexpr std::uint8_t kWeaponSlot0 = 0;

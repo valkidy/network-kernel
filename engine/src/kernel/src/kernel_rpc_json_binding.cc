@@ -1,6 +1,7 @@
 #include "kernel/src/kernel_rpc_json_binding.h"
 
 #include <algorithm>
+#include <array>
 
 namespace network_example::rpc_json {
 
@@ -72,36 +73,46 @@ bool read_json(const Json& value, KernelQuat* out_value) {
 }
 
 bool read_json(const Json& value, KernelServerEntityCreateInfo* out_value) {
-    if (out_value == nullptr ||
-        !has_exact_fields(
-            value,
-            {
-                "entity_type",
-                "actor_type",
-                "owner_peer",
-                "position",
-                "rotation",
-                "animation_state",
-                "visual_flags",
-                "actor_template_id",
-            })) {
+    constexpr std::array<std::string_view, 8> kRequiredFields = {
+        "entity_type",
+        "actor_type",
+        "owner_peer",
+        "position",
+        "rotation",
+        "animation_state",
+        "visual_flags",
+        "actor_template_id",
+    };
+    if (out_value == nullptr || !value.is_object() ||
+        (value.size() != kRequiredFields.size() &&
+         value.size() != kRequiredFields.size() + 1u)) {
+        return false;
+    }
+    for (std::string_view field : kRequiredFields) {
+        if (!value.contains(std::string(field))) {
+            return false;
+        }
+    }
+    if (value.size() == kRequiredFields.size() + 1u &&
+        !value.contains("entity_template_id")) {
         return false;
     }
     out_value->struct_size = sizeof(*out_value);
-    return read_param(value, "entity_type", &out_value->entity_type) &&
-           read_param(value, "actor_type", &out_value->actor_type) &&
-           read_param(value, "owner_peer", &out_value->owner_peer) &&
-           read_param(value, "position", &out_value->position) &&
-           read_param(value, "rotation", &out_value->rotation) &&
-           read_param(
-               value,
-               "animation_state",
-               &out_value->animation_state) &&
-           read_param(value, "visual_flags", &out_value->visual_flags) &&
-           read_param(
-               value,
-               "actor_template_id",
-               &out_value->actor_template_id);
+    if (!read_param(value, "entity_type", &out_value->entity_type) ||
+        !read_param(value, "actor_type", &out_value->actor_type) ||
+        !read_param(value, "owner_peer", &out_value->owner_peer) ||
+        !read_param(value, "position", &out_value->position) ||
+        !read_param(value, "rotation", &out_value->rotation) ||
+        !read_param(value, "animation_state", &out_value->animation_state) ||
+        !read_param(value, "visual_flags", &out_value->visual_flags) ||
+        !read_param(value, "actor_template_id", &out_value->actor_template_id)) {
+        return false;
+    }
+    if (value.contains("entity_template_id") &&
+        !read_param(value, "entity_template_id", &out_value->entity_template_id)) {
+        return false;
+    }
+    return true;
 }
 
 Json vec3_json(const KernelVec3& value) {

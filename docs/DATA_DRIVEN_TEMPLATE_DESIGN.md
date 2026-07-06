@@ -333,19 +333,19 @@ Enemy runtime:
 
 ## ABI Boundary
 
-The current version intentionally keeps actor templates outside the kernel
-gameplay catalog ABI:
+The kernel gameplay catalog ABI now carries the compact runtime-facing template
+surface needed by server materialization:
 
-- weapons may still be packed into kernel weapon mechanics definitions
+- weapons are packed into kernel weapon mechanics definitions
 - projectile templates are loaded independently and packed for kernel use
-- collider templates may still be packed for kernel use
-- actor templates remain `game_server` configuration, but their resolved
-  collider template id is packed into `KernelCombatStateDefinition`, and their
-  vision collider template id is packed into `KernelAgentVisionConfig`
+- collider templates are packed for kernel collision/debug queries
+- actor templates are packed into `KernelActorTemplateDefinition`
+- entity templates are packed into `KernelEntityTemplateDefinition` for
+  component-driven actor and server-only director creation
 
-Do not add `KernelActorTemplateDefinition`, extend
-`KernelGameplayCatalogDefinition`, or update Unity managed ABI for actor
-templates without a separate ABI design.
+Authoring-only YAML names, file paths, and editor metadata still remain in
+`game_server`. ABI-facing templates use stable numeric ids and fixed-width
+plain C structs only.
 
 ABI-facing structs must avoid `std::string`, `std::vector`, virtual methods,
 non-trivial constructors/destructors, implicit array ownership, and unstable

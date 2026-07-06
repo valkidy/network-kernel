@@ -24,18 +24,21 @@ KernelServerEntityCreateInfo player_create_info() {
     return create_info;
 }
 
-network_example::KernelEngine running_server() {
+KernelConfig server_config() {
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;
     config.tick.server_tick_rate = 30;
     config.tick.snapshot_rate = 15;
-    network_example::KernelEngine engine(config);
-    engine.reset_runtime_state(KernelMode_DedicatedServer);
-    return engine;
+    return config;
+}
+
+void reset_running_server(network_example::KernelEngine* engine) {
+    engine->reset_runtime_state(KernelMode_DedicatedServer);
 }
 
 void dispatcher_routes_create_and_destroy_to_lifecycle_system() {
-    network_example::KernelEngine engine = running_server();
+    network_example::KernelEngine engine(server_config());
+    reset_running_server(&engine);
     network_example::simulation::Dispatcher dispatcher;
 
     network_example::simulation::Command create{};
@@ -62,7 +65,8 @@ void dispatcher_routes_create_and_destroy_to_lifecycle_system() {
 }
 
 void dispatcher_routes_submit_input_to_movement_system() {
-    network_example::KernelEngine engine = running_server();
+    network_example::KernelEngine engine(server_config());
+    reset_running_server(&engine);
     std::uint32_t net_id = 0;
     assert(engine.server_create_entity(player_create_info(), &net_id));
 

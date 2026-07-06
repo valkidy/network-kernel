@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 32u
+#define KERNEL_ABI_VERSION 33u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -110,6 +110,16 @@
 #define KERNEL_MAX_VISIBLE_HOSTILES 16u
 #define KERNEL_MAX_VISIBLE_ALLIES 16u
 
+#define KERNEL_ENTITY_COMPONENT_TRANSFORM UINT32_C(0x00000001)
+#define KERNEL_ENTITY_COMPONENT_VELOCITY UINT32_C(0x00000002)
+#define KERNEL_ENTITY_COMPONENT_HEALTH UINT32_C(0x00000004)
+#define KERNEL_ENTITY_COMPONENT_WEAPON_STATE UINT32_C(0x00000008)
+#define KERNEL_ENTITY_COMPONENT_HITBOX UINT32_C(0x00000010)
+#define KERNEL_ENTITY_COMPONENT_AGENT_RUNTIME UINT32_C(0x00000020)
+#define KERNEL_ENTITY_COMPONENT_SENTRY_RUNTIME UINT32_C(0x00000040)
+#define KERNEL_ENTITY_COMPONENT_DIRECTOR_RUNTIME UINT32_C(0x00000080)
+#define KERNEL_ENTITY_COMPONENT_SERVER_ONLY UINT32_C(0x00000100)
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -126,6 +136,8 @@ typedef struct KernelAbiInfo {
     uint32_t server_entity_state_size;
     uint32_t weapon_mechanics_definition_size;
     uint32_t projectile_mechanics_definition_size;
+    uint32_t area_effect_mechanics_definition_size;
+    uint32_t beam_mechanics_definition_size;
     uint32_t combat_state_definition_size;
     uint32_t homing_mechanics_definition_size;
     uint32_t homing_state_size;
@@ -150,6 +162,8 @@ typedef struct KernelAbiInfo {
     uint32_t vision_state_view_size;
     uint32_t gameplay_catalog_manifest_size;
     uint32_t gameplay_catalog_sync_status_size;
+    uint32_t entity_template_definition_size;
+    uint32_t entity_ai_definition_size;
 } KernelAbiInfo;
 
 typedef struct KernelBuildInfo {
@@ -238,6 +252,19 @@ typedef enum KernelActorType {
     KernelActorType_Player = 1,
     KernelActorType_Agent = 2,
 } KernelActorType;
+
+typedef enum KernelEntityType {
+    KernelEntityType_Unknown = 0,
+    KernelEntityType_Actor = 1,
+    KernelEntityType_Projectile = 3,
+    KernelEntityType_Director = 5,
+} KernelEntityType;
+
+typedef enum KernelAiControllerType {
+    KernelAiControllerType_None = 0,
+    KernelAiControllerType_Sentry = 1,
+    KernelAiControllerType_Director = 2,
+} KernelAiControllerType;
 
 typedef enum KernelEntityLifecycleEventType {
     KernelEntityLifecycleEventType_OutOfRange = 0,
@@ -418,6 +445,7 @@ typedef struct KernelServerEntityCreateInfo {
     uint16_t animation_state;
     uint32_t visual_flags;
     uint32_t actor_template_id;
+    uint32_t entity_template_id;
 } KernelServerEntityCreateInfo;
 
 typedef struct KernelServerEntityState {
@@ -579,6 +607,9 @@ typedef struct KernelActorTemplateDefinition {
     KernelAgentVisionConfig vision;
 } KernelActorTemplateDefinition;
 
+typedef struct KernelEntityAiDefinition KernelEntityAiDefinition;
+typedef struct KernelEntityTemplateDefinition KernelEntityTemplateDefinition;
+
 typedef struct KernelGameplayCatalogDefinition {
     uint32_t struct_size;
     uint32_t catalog_version;
@@ -591,6 +622,8 @@ typedef struct KernelGameplayCatalogDefinition {
     uint32_t collider_template_count;
     const KernelColliderBindingDefinition* collider_bindings;
     uint32_t collider_binding_count;
+    const KernelEntityTemplateDefinition* entity_templates;
+    uint32_t entity_template_count;
 } KernelGameplayCatalogDefinition;
 
 typedef struct KernelGameplayCatalogLoadResult {
@@ -864,6 +897,36 @@ typedef struct KernelCombatStateDefinition {
     uint16_t ammo[KERNEL_MAX_WEAPONS];
     uint16_t reserve_ammo[KERNEL_MAX_WEAPONS];
 } KernelCombatStateDefinition;
+
+struct KernelEntityAiDefinition {
+    uint32_t struct_size;
+    uint32_t controller_type;
+    uint32_t ai_profile_id;
+    uint32_t tick_interval;
+    uint32_t blackboard_id;
+    uint32_t spawn_target_count;
+    uint32_t spawn_entity_template_id;
+    uint32_t spawn_actor_template_id;
+    KernelVec3 spawn_position;
+    float spawn_radius;
+    uint32_t spawn_seed;
+};
+
+struct KernelEntityTemplateDefinition {
+    uint32_t struct_size;
+    uint32_t entity_template_id;
+    uint16_t entity_type;
+    uint16_t actor_type;
+    uint32_t actor_template_id;
+    uint32_t component_flags;
+    uint32_t collider_template_id;
+    uint16_t animation_state;
+    uint16_t reserved0;
+    uint32_t visual_flags;
+    KernelCombatStateDefinition combat;
+    KernelAgentVisionConfig vision;
+    KernelEntityAiDefinition ai;
+};
 
 typedef struct KernelEvent {
     KernelEventType type;

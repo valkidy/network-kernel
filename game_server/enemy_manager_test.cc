@@ -115,6 +115,12 @@ std::uint32_t query_projectiles(
     return query_entities(kernel, 3, states);
 }
 
+std::uint32_t query_directors(
+    KernelHandle* kernel,
+    std::array<KernelServerEntityState, 8>* states) {
+    return query_entities(kernel, KernelEntityType_Director, states);
+}
+
 bool render_states_include_actor_type(KernelHandle* kernel, std::uint16_t actor_type) {
     std::array<RenderEntityState, 16> states{};
     const std::uint32_t count = Kernel_GetRenderStates(
@@ -181,6 +187,8 @@ int main() {
     handle_pending_events(kernel, &game_server);
     game_server.tick(1.0f / 30.0f);
     require(game_server.enemy_manager().enemy_count() == 1);
+    std::array<KernelServerEntityState, 8> director_states{};
+    require(query_directors(kernel, &director_states) == 1);
 
     std::array<KernelServerEntityState, 8> enemy_states{};
     std::uint32_t enemy_count = query_enemies(kernel, &enemy_states);
@@ -226,14 +234,14 @@ int main() {
     require(player_states[0].hp == 1000);
     require(player_states[0].max_hp == 1000);
     const std::uint32_t player_net_id = player_states[0].net_id;
-    KernelWeaponMechanicsDefinition player_rifle{};
-    player_rifle.struct_size = sizeof(player_rifle);
+    KernelWeaponMechanicsDefinition player_rocket{};
+    player_rocket.struct_size = sizeof(player_rocket);
     require(Kernel_ServerGetEntityWeaponMechanics(
         kernel,
         player_net_id,
-        network_example::game_server::kWeaponRifle,
-        &player_rifle));
-    require(player_rifle.weapon_id == network_example::game_server::kWeaponRifle);
+        network_example::game_server::kWeaponRocket,
+        &player_rocket));
+    require(player_rocket.weapon_id == network_example::game_server::kWeaponRocket);
     KernelWeaponMechanicsDefinition player_shotgun{};
     player_shotgun.struct_size = sizeof(player_shotgun);
     require(Kernel_ServerGetEntityWeaponMechanics(
@@ -333,6 +341,7 @@ int main() {
     Kernel_Update(kernel, 1.0f / 30.0f);
     enemy_count = query_enemies(kernel, &enemy_states);
     require(enemy_count == 0);
+    require(query_directors(kernel, &director_states) == 0);
     require(game_server.enemy_manager().enemy_count() == 0);
 
     Kernel_Destroy(kernel);

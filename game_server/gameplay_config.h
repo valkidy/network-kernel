@@ -22,6 +22,7 @@ inline constexpr std::uint8_t kWeaponFireFloor = 4;
 inline constexpr std::uint8_t kWeaponBeamRifle = 5;
 inline constexpr std::uint8_t kWeaponHomingMissile = 6;
 inline constexpr std::size_t kWeaponCount = KERNEL_MAX_WEAPONS;
+inline constexpr std::uint32_t kDefaultDirectorEntityTemplateId = 100;
 
 struct EntityHealthDefinition {
     std::uint16_t hp = 0;
@@ -98,6 +99,7 @@ struct GameServerGameplayConfig {
 };
 
 struct KernelGameplayCatalogStorage {
+    std::vector<KernelEntityTemplateDefinition> entity_templates;
     std::vector<KernelActorTemplateDefinition> actor_templates;
     std::vector<KernelProjectileTemplateDefinition> projectile_templates;
     std::vector<KernelColliderTemplateDefinition> collider_templates;

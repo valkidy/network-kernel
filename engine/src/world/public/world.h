@@ -19,6 +19,11 @@ public:
 
     NetId spawn_player(PeerId owner_peer, const glm::vec3& position);
     NetId spawn_enemy(const glm::vec3& position);
+    NetId spawn_entity(
+        EntityType type,
+        ActorType actor_type,
+        PeerId owner_peer,
+        const glm::vec3& position);
     NetId spawn_projectile(
         PeerId owner_peer,
         const glm::vec3& position,
