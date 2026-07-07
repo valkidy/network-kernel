@@ -39,3 +39,9 @@ filegroup(
     name = "empty",
     srcs = [],
 )
+
+sh_test(
+    name = "cc_toolchain_config_test",
+    srcs = ["cc_toolchain_config_test.sh"],
+    data = ["cc_toolchain_config.bzl"],
+)

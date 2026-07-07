@@ -8,8 +8,6 @@ load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
 
 _MINGW_ROOT = "/opt/homebrew/opt/mingw-w64/toolchain-x86_64"
 _MINGW_PREFIX = _MINGW_ROOT + "/bin/x86_64-w64-mingw32-"
-_MINGW_GCC_VERSION = "15.2.0"
-_MINGW_GCC_LIB = _MINGW_ROOT + "/lib/gcc/x86_64-w64-mingw32/" + _MINGW_GCC_VERSION
 
 def _impl(ctx):
     tool_paths = [
@@ -31,11 +29,8 @@ def _impl(ctx):
     ]
 
     cxx_builtin_include_directories = [
-        _MINGW_ROOT + "/x86_64-w64-mingw32/include/c++/" + _MINGW_GCC_VERSION,
-        _MINGW_ROOT + "/x86_64-w64-mingw32/include/c++/" + _MINGW_GCC_VERSION + "/x86_64-w64-mingw32",
-        _MINGW_ROOT + "/x86_64-w64-mingw32/include/c++/" + _MINGW_GCC_VERSION + "/backward",
-        _MINGW_GCC_LIB + "/include",
-        _MINGW_GCC_LIB + "/include-fixed",
+        _MINGW_ROOT + "/x86_64-w64-mingw32/include/c++",
+        _MINGW_ROOT + "/lib/gcc/x86_64-w64-mingw32",
         _MINGW_ROOT + "/x86_64-w64-mingw32/include",
     ]
 
