@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 33u
+#define KERNEL_ABI_VERSION 34u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -109,6 +109,7 @@
 
 #define KERNEL_MAX_VISIBLE_HOSTILES 16u
 #define KERNEL_MAX_VISIBLE_ALLIES 16u
+#define KERNEL_MAX_VISIBLE_NEUTRALS 16u
 
 #define KERNEL_ENTITY_COMPONENT_TRANSFORM UINT32_C(0x00000001)
 #define KERNEL_ENTITY_COMPONENT_VELOCITY UINT32_C(0x00000002)
@@ -524,6 +525,7 @@ typedef struct KernelAgentVisionConfig {
     uint32_t vision_collider_template_id;
     uint32_t max_visible_hostiles;
     uint32_t max_visible_allies;
+    uint32_t max_visible_neutrals;
     KernelVec3 local_origin;
     KernelVec3 local_forward;
 } KernelAgentVisionConfig;
@@ -839,6 +841,8 @@ typedef struct KernelVisionStateView {
     uint32_t visible_hostile_count;
     uint32_t visible_allies[KERNEL_MAX_VISIBLE_ALLIES];
     uint32_t visible_ally_count;
+    uint32_t visible_neutrals[KERNEL_MAX_VISIBLE_NEUTRALS];
+    uint32_t visible_neutral_count;
     uint32_t current_target_candidate;
     uint8_t relation_to_current_target;
     uint8_t reserved1;

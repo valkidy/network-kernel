@@ -33,7 +33,7 @@ struct PlayerGameplayDefinition {
     std::uint32_t actor_template_id = 0;
 };
 
-struct EnemyGameplayDefinition {
+struct AgentSpawnDefinition {
     std::uint32_t actor_template_id = 0;
     KernelVec3 spawn_position{6.0f, 0.0f, 0.0f};
     std::uint32_t spawn_count = 1;
@@ -46,6 +46,8 @@ struct ActorTemplateConfig {
     std::string name;
     std::uint16_t entity_type = 0;
     std::uint16_t actor_type = 0;
+    bool server_only = false;
+    KernelVec3 transform_position{};
     std::uint32_t collider_template_id = 0;
     EntityHealthDefinition health{};
     KernelVec3 hitbox_center{};
@@ -58,7 +60,18 @@ struct ActorTemplateConfig {
     std::uint16_t animation_chasing = 0;
     AgentSentryConfig sentry{};
     KernelAgentVisionConfig vision{};
+    std::uint32_t ai_controller_type = KernelAiControllerType_None;
+    std::uint32_t ai_tick_interval = 1;
+    std::uint32_t director_spawn_target_count = 0;
+    std::uint32_t director_spawn_entity_template_id = 0;
+    std::uint32_t director_spawn_actor_template_id = 0;
+    std::string director_spawn_entity_template_ref;
+    KernelVec3 director_spawn_position{};
+    float director_spawn_radius = 0.0f;
+    std::uint32_t director_spawn_seed = 1;
 };
+
+using EntityTemplateConfig = ActorTemplateConfig;
 
 struct WeaponCatalogConfig {
     std::uint32_t catalog_version = 1;
@@ -92,7 +105,8 @@ struct ProjectileTemplateConfig {
 struct GameServerGameplayConfig {
     WeaponCatalogConfig weapons;
     PlayerGameplayDefinition player;
-    EnemyGameplayDefinition enemy;
+    AgentSpawnDefinition agent;
+    std::vector<EntityTemplateConfig> entity_templates;
     std::vector<ActorTemplateConfig> actor_templates;
     ColliderCatalogConfig colliders;
     std::vector<ProjectileTemplateConfig> projectile_templates;
@@ -157,7 +171,7 @@ std::uint8_t active_weapon_id(const ActorTemplateConfig& actor_template);
 
 KernelCombatStateDefinition make_player_combat_state(
     const GameServerGameplayConfig& config);
-KernelCombatStateDefinition make_enemy_combat_state(
+KernelCombatStateDefinition make_agent_combat_state(
     const GameServerGameplayConfig& config);
 
 }  // namespace network_example::game_server

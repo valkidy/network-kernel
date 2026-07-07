@@ -172,6 +172,8 @@ void hash_actor_template(
     hash_string(hash, actor_template.name);
     hash_scalar(hash, actor_template.entity_type);
     hash_scalar(hash, actor_template.actor_type);
+    hash_scalar(hash, actor_template.server_only);
+    hash_vec3(hash, actor_template.transform_position);
     hash_scalar(hash, actor_template.collider_template_id);
     hash_scalar(hash, actor_template.health.hp);
     hash_scalar(hash, actor_template.health.max_hp);
@@ -196,8 +198,18 @@ void hash_actor_template(
     hash_scalar(hash, actor_template.vision.vision_collider_template_id);
     hash_scalar(hash, actor_template.vision.max_visible_hostiles);
     hash_scalar(hash, actor_template.vision.max_visible_allies);
+    hash_scalar(hash, actor_template.vision.max_visible_neutrals);
     hash_vec3(hash, actor_template.vision.local_origin);
     hash_vec3(hash, actor_template.vision.local_forward);
+    hash_scalar(hash, actor_template.ai_controller_type);
+    hash_scalar(hash, actor_template.ai_tick_interval);
+    hash_scalar(hash, actor_template.director_spawn_target_count);
+    hash_scalar(hash, actor_template.director_spawn_entity_template_id);
+    hash_scalar(hash, actor_template.director_spawn_actor_template_id);
+    hash_string(hash, actor_template.director_spawn_entity_template_ref);
+    hash_vec3(hash, actor_template.director_spawn_position);
+    hash_float(hash, actor_template.director_spawn_radius);
+    hash_scalar(hash, actor_template.director_spawn_seed);
 }
 
 KernelWeaponMechanicsDefinition hitscan_weapon(
@@ -1027,6 +1039,12 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
 
 std::uint16_t entity_type_from_yaml(const YAML::Node& node) {
     const std::string value = node.as<std::string>();
+    if (value == "actor") {
+        return kEntityTypeActor;
+    }
+    if (value == "director") {
+        return KernelEntityType_Director;
+    }
     if (value == "player" || value == "enemy" || value == "agent") {
         return kEntityTypeActor;
     }
@@ -1040,6 +1058,9 @@ std::uint16_t entity_type_from_yaml(const YAML::Node& node) {
 }
 
 std::uint16_t actor_type_from_yaml(const YAML::Node& node) {
+    if (!node) {
+        return KernelActorType_Unknown;
+    }
     const std::string value = node.as<std::string>();
     if (value == "player") {
         return kActorTypePlayer;
@@ -1048,6 +1069,34 @@ std::uint16_t actor_type_from_yaml(const YAML::Node& node) {
         return kActorTypeAgent;
     }
     return KernelActorType_Unknown;
+}
+
+std::uint16_t authored_entity_type_from_yaml(const YAML::Node& node) {
+    const std::string value = node.as<std::string>();
+    if (value == "actor") {
+        return kEntityTypeActor;
+    }
+    if (value == "director") {
+        return KernelEntityType_Director;
+    }
+    throw std::runtime_error("unsupported entity_type: " + value);
+}
+
+std::uint8_t camp_from_yaml(const YAML::Node& node) {
+    if (!node) {
+        return KernelAgentCamp_Unknown;
+    }
+    const std::string value = node.as<std::string>();
+    if (value == "player_side") {
+        return KernelAgentCamp_PlayerSide;
+    }
+    if (value == "enemy_side") {
+        return KernelAgentCamp_EnemySide;
+    }
+    if (value == "neutral") {
+        return KernelAgentCamp_Neutral;
+    }
+    throw std::runtime_error("unsupported camp: " + value);
 }
 
 std::uint8_t collider_shape_type_from_yaml(const YAML::Node& node) {
@@ -1131,7 +1180,7 @@ void apply_default_non_weapon_config(GameServerGameplayConfig* config);
 void apply_catalog_player_config(
     const YAML::Node& document,
     GameServerGameplayConfig* config);
-void apply_catalog_enemy_config(
+void apply_catalog_agent_config(
     const YAML::Node& document,
     GameServerGameplayConfig* config);
 std::uint32_t collider_template_id_from_ref(
@@ -1234,23 +1283,23 @@ ActorTemplateConfig default_player_actor_template() {
     return actor_template;
 }
 
-ActorTemplateConfig default_enemy_actor_template() {
+ActorTemplateConfig default_sentry_actor_template() {
     ActorTemplateConfig actor_template;
     actor_template.actor_template_id = 2;
-    actor_template.name = "enemy_grunt";
+    actor_template.name = "sentry_grunt";
     actor_template.entity_type = kEntityTypeActor;
     actor_template.actor_type = kActorTypeAgent;
     actor_template.collider_template_id = 2;
     actor_template.health =
-        EntityHealthDefinition{kEnemyInitialHp, kEnemyInitialHp};
+        EntityHealthDefinition{kAgentInitialHp, kAgentInitialHp};
     actor_template.hitbox_center = KernelVec3{0.0f, 0.8f, 0.0f};
     actor_template.hitbox_half_extents = KernelVec3{0.4f, 0.8f, 0.4f};
     actor_template.move_speed_meters_per_second = 2.5f;
     actor_template.weapon_slots[0] = kAgentSpammerWeaponId;
     actor_template.weapon_slot_count = 1;
     actor_template.active_weapon_slot = 0;
-    actor_template.animation_idle = kEnemyAnimationIdle;
-    actor_template.animation_chasing = kEnemyAnimationChasing;
+    actor_template.animation_idle = kAgentAnimationIdle;
+    actor_template.animation_chasing = kAgentAnimationChasing;
     actor_template.sentry.weapon_id = kAgentSpammerWeaponId;
     actor_template.sentry.magazine_size = kAgentSpammerMagazine;
     actor_template.sentry.animation_idle = actor_template.animation_idle;
@@ -1260,16 +1309,20 @@ ActorTemplateConfig default_enemy_actor_template() {
     actor_template.vision.vision_collider_template_id = 9;
     actor_template.vision.max_visible_hostiles = KERNEL_MAX_VISIBLE_HOSTILES;
     actor_template.vision.max_visible_allies = KERNEL_MAX_VISIBLE_ALLIES;
+    actor_template.vision.max_visible_neutrals = KERNEL_MAX_VISIBLE_NEUTRALS;
     actor_template.vision.local_forward = KernelVec3{-1.0f, 0.0f, 0.0f};
+    actor_template.ai_controller_type = KernelAiControllerType_Sentry;
+    actor_template.ai_tick_interval = 1;
     return actor_template;
 }
 
 void apply_default_actor_templates(GameServerGameplayConfig* config) {
     config->actor_templates.clear();
     config->actor_templates.push_back(default_player_actor_template());
-    config->actor_templates.push_back(default_enemy_actor_template());
+    config->actor_templates.push_back(default_sentry_actor_template());
+    config->entity_templates = config->actor_templates;
     config->player.actor_template_id = 1;
-    config->enemy.actor_template_id = 2;
+    config->agent.actor_template_id = 2;
 }
 
 AgentSentryConfig sentry_config_from_yaml(
@@ -1300,6 +1353,7 @@ KernelAgentVisionConfig vision_config_from_yaml(
             "collider_template",
             "max_visible_hostiles",
             "max_visible_allies",
+            "max_visible_neutrals",
         },
         path,
         source_kind,
@@ -1314,6 +1368,9 @@ KernelAgentVisionConfig vision_config_from_yaml(
     }
     if (node["max_visible_allies"]) {
         vision.max_visible_allies = node["max_visible_allies"].as<std::uint32_t>();
+    }
+    if (node["max_visible_neutrals"]) {
+        vision.max_visible_neutrals = node["max_visible_neutrals"].as<std::uint32_t>();
     }
     return vision;
 }
@@ -1358,6 +1415,8 @@ ActorTemplateConfig actor_template_from_yaml(
             "id",
             "name",
             "entity_type",
+            "actor_type",
+            "camp",
             "collider_template",
             "health",
             "movement",
@@ -1375,16 +1434,24 @@ ActorTemplateConfig actor_template_from_yaml(
     actor_template.actor_template_id = node["id"].as<std::uint32_t>();
     actor_template.name = node["name"].as<std::string>();
     actor_template.entity_type = entity_type_from_yaml(node["entity_type"]);
-    actor_template.actor_type = actor_type_from_yaml(node["entity_type"]);
+    actor_template.actor_type =
+        node["actor_type"] ? actor_type_from_yaml(node["actor_type"])
+                           : actor_type_from_yaml(node["entity_type"]);
     actor_template.vision.struct_size = sizeof(KernelAgentVisionConfig);
     if (actor_template.actor_type == kActorTypeAgent) {
         actor_template.vision.camp = KernelAgentCamp_EnemySide;
         actor_template.vision.vision_collider_template_id = 9;
         actor_template.vision.max_visible_hostiles = KERNEL_MAX_VISIBLE_HOSTILES;
         actor_template.vision.max_visible_allies = KERNEL_MAX_VISIBLE_ALLIES;
+        actor_template.vision.max_visible_neutrals = KERNEL_MAX_VISIBLE_NEUTRALS;
         actor_template.vision.local_forward = KernelVec3{-1.0f, 0.0f, 0.0f};
+        actor_template.ai_controller_type = KernelAiControllerType_Sentry;
+        actor_template.ai_tick_interval = 1;
     } else if (actor_template.actor_type == kActorTypePlayer) {
         actor_template.vision.camp = KernelAgentCamp_PlayerSide;
+    }
+    if (node["camp"]) {
+        actor_template.vision.camp = camp_from_yaml(node["camp"]);
     }
     actor_template.collider_template_id =
         actor_collider_template_id_from_yaml(node["collider_template"], colliders);
@@ -1491,12 +1558,29 @@ ActorTemplateConfig actor_template_from_yaml(
         reject_unknown_keys(
             node["ai"],
             {
+                "controller",
                 "profile",
+                "tick_interval",
             },
             path,
             source_kind,
             KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
             actor_template.actor_template_id);
+        if (node["ai"]["controller"]) {
+            const std::string controller =
+                node["ai"]["controller"].as<std::string>();
+            if (controller == "sentry") {
+                actor_template.ai_controller_type = KernelAiControllerType_Sentry;
+            } else if (controller == "director") {
+                actor_template.ai_controller_type = KernelAiControllerType_Director;
+            } else {
+                throw std::runtime_error("unsupported ai.controller: " + controller);
+            }
+        }
+        if (node["ai"]["tick_interval"]) {
+            actor_template.ai_tick_interval =
+                node["ai"]["tick_interval"].as<std::uint32_t>();
+        }
     }
     actor_template.sentry =
         sentry_config_from_yaml(node["ai"], actor_template, weapons);
@@ -1509,6 +1593,134 @@ ActorTemplateConfig actor_template_from_yaml(
         path,
         source_kind);
     return actor_template;
+}
+
+EntityTemplateConfig entity_template_from_yaml(
+    const YAML::Node& node,
+    const std::string& path,
+    std::uint32_t source_kind,
+    const WeaponCatalogConfig& weapons,
+    const ColliderCatalogConfig& colliders) {
+    const std::uint16_t entity_type =
+        authored_entity_type_from_yaml(node["entity_type"]);
+    if (entity_type == kEntityTypeActor) {
+        EntityTemplateConfig entity_template =
+            actor_template_from_yaml(node, path, source_kind, weapons, colliders);
+        entity_template.entity_type = kEntityTypeActor;
+        return entity_template;
+    }
+
+    reject_unknown_keys(
+        node,
+        {
+            "id",
+            "name",
+            "entity_type",
+            "server_only",
+            "transform",
+            "ai",
+            "director",
+        },
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR);
+    EntityTemplateConfig entity_template;
+    entity_template.actor_template_id = node["id"].as<std::uint32_t>();
+    entity_template.name = node["name"].as<std::string>();
+    entity_template.entity_type = KernelEntityType_Director;
+    entity_template.server_only =
+        node["server_only"] ? node["server_only"].as<bool>() : true;
+
+    if (node["transform"]) {
+        reject_unknown_keys(
+            node["transform"],
+            {"position"},
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+            entity_template.actor_template_id);
+        if (node["transform"]["position"]) {
+            entity_template.transform_position =
+                vec3_from_yaml(node["transform"]["position"]);
+        }
+    }
+    entity_template.director_spawn_position = entity_template.transform_position;
+
+    const YAML::Node ai = node["ai"];
+    if (!ai || !ai["controller"]) {
+        throw std::runtime_error("director template requires ai.controller: " +
+                                 entity_template.name);
+    }
+    reject_unknown_keys(
+        ai,
+        {
+            "controller",
+            "profile",
+            "tick_interval",
+        },
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+        entity_template.actor_template_id);
+    const std::string controller = ai["controller"].as<std::string>();
+    if (controller != "director") {
+        throw std::runtime_error("director template requires ai.controller: director");
+    }
+    entity_template.ai_controller_type = KernelAiControllerType_Director;
+    entity_template.ai_tick_interval =
+        ai["tick_interval"] ? ai["tick_interval"].as<std::uint32_t>() : 1u;
+
+    const YAML::Node director = node["director"];
+    if (!director) {
+        throw std::runtime_error("director template requires director block: " +
+                                 entity_template.name);
+    }
+    reject_unknown_keys(
+        director,
+        {"kind", "spawn"},
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+        entity_template.actor_template_id);
+    const std::string kind =
+        director["kind"] ? director["kind"].as<std::string>() : std::string{};
+    if (kind != "world_rule") {
+        throw std::runtime_error("unsupported director.kind: " + kind);
+    }
+    const YAML::Node spawn = director["spawn"];
+    if (!spawn) {
+        throw std::runtime_error("director template requires director.spawn: " +
+                                 entity_template.name);
+    }
+    reject_unknown_keys(
+        spawn,
+        {
+            "target_count",
+            "entity_template",
+            "radius",
+            "seed",
+            "position",
+        },
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+        entity_template.actor_template_id);
+    entity_template.director_spawn_target_count =
+        spawn["target_count"] ? spawn["target_count"].as<std::uint32_t>() : 0u;
+    if (!spawn["entity_template"]) {
+        throw std::runtime_error("director.spawn requires entity_template: " +
+                                 entity_template.name);
+    }
+    entity_template.director_spawn_entity_template_ref =
+        spawn["entity_template"].as<std::string>();
+    entity_template.director_spawn_radius =
+        spawn["radius"] ? spawn["radius"].as<float>() : 0.0f;
+    entity_template.director_spawn_seed =
+        spawn["seed"] ? spawn["seed"].as<std::uint32_t>() : 1u;
+    if (spawn["position"]) {
+        entity_template.director_spawn_position = vec3_from_yaml(spawn["position"]);
+    }
+    return entity_template;
 }
 
 std::uint32_t actor_template_ref_from_yaml(
@@ -1537,6 +1749,45 @@ std::uint32_t actor_template_ref_from_yaml(
         }
     }
     throw std::runtime_error("unknown actor_template name: " + value);
+}
+
+std::uint32_t entity_template_ref_from_yaml(
+    const YAML::Node& node,
+    const std::vector<EntityTemplateConfig>& entity_templates) {
+    if (!node || !node.IsScalar()) {
+        throw std::runtime_error("entity_template reference must be a scalar");
+    }
+    const std::string value = node.as<std::string>();
+    if (!value.empty() &&
+        std::all_of(value.begin(), value.end(), [](unsigned char ch) {
+            return std::isdigit(ch) != 0;
+        })) {
+        const std::uint32_t entity_template_id =
+            static_cast<std::uint32_t>(std::stoul(value));
+        for (const EntityTemplateConfig& entity_template : entity_templates) {
+            if (entity_template.actor_template_id == entity_template_id) {
+                return entity_template_id;
+            }
+        }
+        throw std::runtime_error("unknown entity_template id: " + value);
+    }
+    for (const EntityTemplateConfig& entity_template : entity_templates) {
+        if (entity_template.name == value) {
+            return entity_template.actor_template_id;
+        }
+    }
+    throw std::runtime_error("unknown entity_template name: " + value);
+}
+
+std::vector<ActorTemplateConfig> actor_templates_from_entity_templates(
+    const std::vector<EntityTemplateConfig>& entity_templates) {
+    std::vector<ActorTemplateConfig> actor_templates;
+    for (const EntityTemplateConfig& entity_template : entity_templates) {
+        if (entity_template.entity_type == kEntityTypeActor) {
+            actor_templates.push_back(entity_template);
+        }
+    }
+    return actor_templates;
 }
 
 std::vector<ActorTemplateConfig> load_actor_templates_from_source(
@@ -1576,6 +1827,69 @@ std::vector<ActorTemplateConfig> load_actor_templates_from_source(
             return lhs.actor_template_id < rhs.actor_template_id;
         });
     return actor_templates;
+}
+
+std::vector<EntityTemplateConfig> load_entity_templates_from_source(
+    const GameplayConfigSource& source,
+    const std::string& directory,
+    const WeaponCatalogConfig& weapons,
+    const ColliderCatalogConfig& colliders) {
+    std::vector<EntityTemplateConfig> entity_templates;
+    std::unordered_map<std::uint32_t, std::string> ids;
+    std::unordered_map<std::string, std::uint32_t> names;
+    const std::vector<std::string> files = source.list_yaml_files(directory);
+    for (const std::string& file : files) {
+        EntityTemplateConfig entity_template =
+            entity_template_from_yaml(
+                source.load_yaml(file),
+                file,
+                source.source_kind(),
+                weapons,
+                colliders);
+        if (ids.contains(entity_template.actor_template_id)) {
+            throw std::runtime_error("duplicate entity template id: " + file);
+        }
+        if (names.contains(entity_template.name)) {
+            throw std::runtime_error("duplicate entity template name: " + file);
+        }
+        ids.emplace(entity_template.actor_template_id, file);
+        names.emplace(entity_template.name, entity_template.actor_template_id);
+        entity_templates.push_back(entity_template);
+    }
+    if (entity_templates.empty()) {
+        throw std::runtime_error("entity template directory is empty: " + directory);
+    }
+    std::sort(
+        entity_templates.begin(),
+        entity_templates.end(),
+        [](const EntityTemplateConfig& lhs, const EntityTemplateConfig& rhs) {
+            return lhs.actor_template_id < rhs.actor_template_id;
+        });
+    for (EntityTemplateConfig& entity_template : entity_templates) {
+        if (entity_template.entity_type != KernelEntityType_Director ||
+            entity_template.director_spawn_entity_template_ref.empty()) {
+            continue;
+        }
+        const YAML::Node ref(entity_template.director_spawn_entity_template_ref);
+        entity_template.director_spawn_entity_template_id =
+            entity_template_ref_from_yaml(ref, entity_templates);
+        const auto actor_match = std::find_if(
+            entity_templates.begin(),
+            entity_templates.end(),
+            [&](const EntityTemplateConfig& candidate) {
+                return candidate.actor_template_id ==
+                           entity_template.director_spawn_entity_template_id &&
+                       candidate.entity_type == kEntityTypeActor;
+            });
+        if (actor_match == entity_templates.end()) {
+            throw std::runtime_error(
+                "director.spawn entity_template must reference an actor: " +
+                entity_template.name);
+        }
+        entity_template.director_spawn_actor_template_id =
+            entity_template.director_spawn_entity_template_id;
+    }
+    return entity_templates;
 }
 
 std::uint32_t collider_template_id_from_ref(
@@ -2128,6 +2442,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             "weapon_template_dir",
             "projectile_template_dir",
             "actor_template_dir",
+            "entity_template_dir",
             "collider_template_file",
             "player",
             "enemy",
@@ -2138,7 +2453,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     if (document["player"]) {
         reject_unknown_keys(
             document["player"],
-            {"actor_template"},
+            {"actor_template", "entity_template"},
             path,
             source.source_kind(),
             KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
@@ -2206,7 +2521,17 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
         &config.projectile_templates,
         &config.weapons);
 
-    if (document["actor_template_dir"]) {
+    if (document["entity_template_dir"]) {
+        const std::string entity_template_dir =
+            source.resolve_path(base_path, document["entity_template_dir"]);
+        config.entity_templates = load_entity_templates_from_source(
+            source,
+            entity_template_dir,
+            config.weapons,
+            config.colliders);
+        config.actor_templates =
+            actor_templates_from_entity_templates(config.entity_templates);
+    } else if (document["actor_template_dir"]) {
         const std::string actor_template_dir =
             source.resolve_path(base_path, document["actor_template_dir"]);
         config.actor_templates = load_actor_templates_from_source(
@@ -2214,12 +2539,13 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             actor_template_dir,
             config.weapons,
             config.colliders);
+        config.entity_templates = config.actor_templates;
     } else {
         apply_default_actor_templates(&config);
     }
 
     apply_catalog_player_config(document, &config);
-    apply_catalog_enemy_config(document, &config);
+    apply_catalog_agent_config(document, &config);
 
     config.weapons.catalog_hash = compute_gameplay_catalog_hash(config);
     const std::vector<std::string> errors = validate_gameplay_config(config);
@@ -2231,7 +2557,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
 
 void apply_default_non_weapon_config(GameServerGameplayConfig* config) {
     config->player = PlayerGameplayDefinition{};
-    config->enemy = EnemyGameplayDefinition{};
+    config->agent = AgentSpawnDefinition{};
     apply_default_actor_templates(config);
 }
 
@@ -2246,30 +2572,49 @@ void apply_catalog_player_config(
         config->player.actor_template_id =
             actor_template_ref_from_yaml(player["actor_template"], config->actor_templates);
     }
+    if (player["entity_template"]) {
+        config->player.actor_template_id =
+            entity_template_ref_from_yaml(player["entity_template"], config->entity_templates);
+    }
 }
 
-void apply_catalog_enemy_config(
+void apply_catalog_agent_config(
     const YAML::Node& document,
     GameServerGameplayConfig* config) {
-    const YAML::Node enemy = document["enemy"];
-    if (!enemy) {
+    const YAML::Node agent = document["enemy"];
+    if (!agent) {
+        const auto director = std::find_if(
+            config->entity_templates.begin(),
+            config->entity_templates.end(),
+            [](const EntityTemplateConfig& entity_template) {
+                return entity_template.entity_type == KernelEntityType_Director &&
+                       entity_template.director_spawn_actor_template_id != 0u;
+            });
+        if (director != config->entity_templates.end()) {
+            config->agent.actor_template_id =
+                director->director_spawn_actor_template_id;
+            config->agent.spawn_count = director->director_spawn_target_count;
+            config->agent.spawn_radius = director->director_spawn_radius;
+            config->agent.spawn_seed = director->director_spawn_seed;
+            config->agent.spawn_position = director->director_spawn_position;
+        }
         return;
     }
-    if (enemy["spawn_count"]) {
-        config->enemy.spawn_count = enemy["spawn_count"].as<std::uint32_t>();
+    if (agent["spawn_count"]) {
+        config->agent.spawn_count = agent["spawn_count"].as<std::uint32_t>();
     }
-    if (enemy["spawn_radius"]) {
-        config->enemy.spawn_radius = enemy["spawn_radius"].as<float>();
+    if (agent["spawn_radius"]) {
+        config->agent.spawn_radius = agent["spawn_radius"].as<float>();
     }
-    if (enemy["spawn_seed"]) {
-        config->enemy.spawn_seed = enemy["spawn_seed"].as<std::uint32_t>();
+    if (agent["spawn_seed"]) {
+        config->agent.spawn_seed = agent["spawn_seed"].as<std::uint32_t>();
     }
-    if (enemy["spawn_position"]) {
-        config->enemy.spawn_position = vec3_from_yaml(enemy["spawn_position"]);
+    if (agent["spawn_position"]) {
+        config->agent.spawn_position = vec3_from_yaml(agent["spawn_position"]);
     }
-    if (enemy["actor_template"]) {
-        config->enemy.actor_template_id =
-            actor_template_ref_from_yaml(enemy["actor_template"], config->actor_templates);
+    if (agent["actor_template"]) {
+        config->agent.actor_template_id =
+            actor_template_ref_from_yaml(agent["actor_template"], config->actor_templates);
     }
 }
 
@@ -2293,11 +2638,11 @@ std::uint64_t compute_gameplay_catalog_hash(
     const GameServerGameplayConfig& config) {
     std::uint64_t hash = compute_gameplay_catalog_hash(config.weapons);
     hash_scalar(&hash, config.player.actor_template_id);
-    hash_scalar(&hash, config.enemy.actor_template_id);
-    hash_vec3(&hash, config.enemy.spawn_position);
-    hash_scalar(&hash, config.enemy.spawn_count);
-    hash_float(&hash, config.enemy.spawn_radius);
-    hash_scalar(&hash, config.enemy.spawn_seed);
+    hash_scalar(&hash, config.agent.actor_template_id);
+    hash_vec3(&hash, config.agent.spawn_position);
+    hash_scalar(&hash, config.agent.spawn_count);
+    hash_float(&hash, config.agent.spawn_radius);
+    hash_scalar(&hash, config.agent.spawn_seed);
     std::vector<ActorTemplateConfig> actor_templates = config.actor_templates;
     std::sort(
         actor_templates.begin(),
@@ -2307,6 +2652,16 @@ std::uint64_t compute_gameplay_catalog_hash(
         });
     for (const ActorTemplateConfig& actor_template : actor_templates) {
         hash_actor_template(&hash, actor_template);
+    }
+    std::vector<EntityTemplateConfig> entity_templates = config.entity_templates;
+    std::sort(
+        entity_templates.begin(),
+        entity_templates.end(),
+        [](const EntityTemplateConfig& lhs, const EntityTemplateConfig& rhs) {
+            return lhs.actor_template_id < rhs.actor_template_id;
+        });
+    for (const EntityTemplateConfig& entity_template : entity_templates) {
+        hash_actor_template(&hash, entity_template);
     }
     std::vector<ColliderTemplateConfig> templates = config.colliders.templates;
     std::sort(
@@ -2461,12 +2816,12 @@ std::vector<std::string> validate_gameplay_config(
         player_actor->actor_type != kActorTypePlayer) {
         errors.push_back("player actor template must reference a player actor");
     }
-    const ActorTemplateConfig* enemy_actor =
-        find_actor_template(config, config.enemy.actor_template_id);
-    if (enemy_actor == nullptr || enemy_actor->entity_type != kEntityTypeActor ||
-        enemy_actor->actor_type != kActorTypeAgent ||
-        config.enemy.spawn_count == 0 || config.enemy.spawn_radius < 0.0f) {
-        errors.push_back("enemy gameplay config must be valid");
+    const ActorTemplateConfig* agent_actor =
+        find_actor_template(config, config.agent.actor_template_id);
+    if (agent_actor == nullptr || agent_actor->entity_type != kEntityTypeActor ||
+        agent_actor->actor_type != kActorTypeAgent ||
+        config.agent.spawn_count == 0 || config.agent.spawn_radius < 0.0f) {
+        errors.push_back("agent gameplay config must be valid");
     }
     if (config.colliders.templates.empty() || !config.colliders.bindings.empty()) {
         errors.push_back("collider catalog must include templates and no bindings");
@@ -2656,54 +3011,98 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
         definition.vision = actor_template.vision;
         definition.vision.struct_size = sizeof(KernelAgentVisionConfig);
         storage.actor_templates.push_back(definition);
+    }
 
+    bool has_director_template = false;
+    const std::vector<EntityTemplateConfig>& entity_templates =
+        config.entity_templates.empty() ? config.actor_templates : config.entity_templates;
+    for (const EntityTemplateConfig& authored_template : entity_templates) {
         KernelEntityTemplateDefinition entity_template{};
         entity_template.struct_size = sizeof(KernelEntityTemplateDefinition);
-        entity_template.entity_template_id = actor_template.actor_template_id;
-        entity_template.entity_type = actor_template.entity_type;
-        entity_template.actor_type = actor_template.actor_type;
-        entity_template.actor_template_id = actor_template.actor_template_id;
-        entity_template.collider_template_id = actor_template.collider_template_id;
-        entity_template.component_flags =
-            KERNEL_ENTITY_COMPONENT_TRANSFORM |
-            KERNEL_ENTITY_COMPONENT_VELOCITY |
-            KERNEL_ENTITY_COMPONENT_HEALTH |
-            KERNEL_ENTITY_COMPONENT_HITBOX |
-            KERNEL_ENTITY_COMPONENT_WEAPON_STATE;
-        entity_template.animation_state = actor_template.animation_idle;
-        entity_template.combat =
-            make_combat_state_from_actor_template(config, actor_template);
-        entity_template.vision = actor_template.vision;
-        entity_template.vision.struct_size = sizeof(KernelAgentVisionConfig);
+        entity_template.entity_template_id = authored_template.actor_template_id;
+        entity_template.entity_type = authored_template.entity_type;
+        entity_template.actor_type = authored_template.actor_type;
+        entity_template.actor_template_id =
+            authored_template.entity_type == kEntityTypeActor
+                ? authored_template.actor_template_id
+                : 0u;
+        entity_template.collider_template_id = authored_template.collider_template_id;
         entity_template.ai.struct_size = sizeof(KernelEntityAiDefinition);
-        if (actor_template.actor_type == kActorTypeAgent) {
-            entity_template.component_flags |=
+
+        if (authored_template.entity_type == kEntityTypeActor) {
+            entity_template.component_flags =
+                KERNEL_ENTITY_COMPONENT_TRANSFORM |
+                KERNEL_ENTITY_COMPONENT_VELOCITY |
+                KERNEL_ENTITY_COMPONENT_HEALTH |
+                KERNEL_ENTITY_COMPONENT_HITBOX |
+                KERNEL_ENTITY_COMPONENT_WEAPON_STATE;
+            entity_template.animation_state = authored_template.animation_idle;
+            entity_template.combat =
+                make_combat_state_from_actor_template(config, authored_template);
+            entity_template.vision = authored_template.vision;
+            entity_template.vision.struct_size = sizeof(KernelAgentVisionConfig);
+            if (authored_template.actor_type == kActorTypeAgent) {
+                entity_template.component_flags |=
+                    KERNEL_ENTITY_COMPONENT_AGENT_RUNTIME |
+                    KERNEL_ENTITY_COMPONENT_SENTRY_RUNTIME;
+                entity_template.ai.controller_type =
+                    authored_template.ai_controller_type == KernelAiControllerType_None
+                        ? KernelAiControllerType_Sentry
+                        : authored_template.ai_controller_type;
+                entity_template.ai.tick_interval =
+                    authored_template.ai_tick_interval == 0u
+                        ? 1u
+                        : authored_template.ai_tick_interval;
+            }
+        } else if (authored_template.entity_type == KernelEntityType_Director) {
+            has_director_template = true;
+            entity_template.component_flags =
+                KERNEL_ENTITY_COMPONENT_TRANSFORM |
                 KERNEL_ENTITY_COMPONENT_AGENT_RUNTIME |
-                KERNEL_ENTITY_COMPONENT_SENTRY_RUNTIME;
-            entity_template.ai.controller_type = KernelAiControllerType_Sentry;
-            entity_template.ai.tick_interval = 1;
+                KERNEL_ENTITY_COMPONENT_DIRECTOR_RUNTIME;
+            if (authored_template.server_only) {
+                entity_template.component_flags |= KERNEL_ENTITY_COMPONENT_SERVER_ONLY;
+            }
+            entity_template.ai.controller_type = KernelAiControllerType_Director;
+            entity_template.ai.tick_interval =
+                authored_template.ai_tick_interval == 0u
+                    ? 1u
+                    : authored_template.ai_tick_interval;
+            entity_template.ai.spawn_target_count =
+                authored_template.director_spawn_target_count;
+            entity_template.ai.spawn_entity_template_id =
+                authored_template.director_spawn_entity_template_id;
+            entity_template.ai.spawn_actor_template_id =
+                authored_template.director_spawn_actor_template_id;
+            entity_template.ai.spawn_position =
+                authored_template.director_spawn_position;
+            entity_template.ai.spawn_radius =
+                authored_template.director_spawn_radius;
+            entity_template.ai.spawn_seed = authored_template.director_spawn_seed;
         }
         storage.entity_templates.push_back(entity_template);
     }
-    KernelEntityTemplateDefinition director_template{};
-    director_template.struct_size = sizeof(KernelEntityTemplateDefinition);
-    director_template.entity_template_id = kDefaultDirectorEntityTemplateId;
-    director_template.entity_type = KernelEntityType_Director;
-    director_template.component_flags =
-        KERNEL_ENTITY_COMPONENT_TRANSFORM |
-        KERNEL_ENTITY_COMPONENT_SERVER_ONLY |
-        KERNEL_ENTITY_COMPONENT_AGENT_RUNTIME |
-        KERNEL_ENTITY_COMPONENT_DIRECTOR_RUNTIME;
-    director_template.ai.struct_size = sizeof(KernelEntityAiDefinition);
-    director_template.ai.controller_type = KernelAiControllerType_Director;
-    director_template.ai.tick_interval = 1;
-    director_template.ai.spawn_target_count = config.enemy.spawn_count;
-    director_template.ai.spawn_entity_template_id = config.enemy.actor_template_id;
-    director_template.ai.spawn_actor_template_id = config.enemy.actor_template_id;
-    director_template.ai.spawn_position = config.enemy.spawn_position;
-    director_template.ai.spawn_radius = config.enemy.spawn_radius;
-    director_template.ai.spawn_seed = config.enemy.spawn_seed;
-    storage.entity_templates.push_back(director_template);
+    if (!has_director_template) {
+        KernelEntityTemplateDefinition director_template{};
+        director_template.struct_size = sizeof(KernelEntityTemplateDefinition);
+        director_template.entity_template_id = kDefaultDirectorEntityTemplateId;
+        director_template.entity_type = KernelEntityType_Director;
+        director_template.component_flags =
+            KERNEL_ENTITY_COMPONENT_TRANSFORM |
+            KERNEL_ENTITY_COMPONENT_SERVER_ONLY |
+            KERNEL_ENTITY_COMPONENT_AGENT_RUNTIME |
+            KERNEL_ENTITY_COMPONENT_DIRECTOR_RUNTIME;
+        director_template.ai.struct_size = sizeof(KernelEntityAiDefinition);
+        director_template.ai.controller_type = KernelAiControllerType_Director;
+        director_template.ai.tick_interval = 1;
+        director_template.ai.spawn_target_count = config.agent.spawn_count;
+        director_template.ai.spawn_entity_template_id = config.agent.actor_template_id;
+        director_template.ai.spawn_actor_template_id = config.agent.actor_template_id;
+        director_template.ai.spawn_position = config.agent.spawn_position;
+        director_template.ai.spawn_radius = config.agent.spawn_radius;
+        director_template.ai.spawn_seed = config.agent.spawn_seed;
+        storage.entity_templates.push_back(director_template);
+    }
     for (const ProjectileTemplateConfig& projectile_template :
          config.projectile_templates) {
         storage.projectile_templates.push_back(projectile_template.definition);
@@ -2775,10 +3174,10 @@ KernelCombatStateDefinition make_player_combat_state(
     return make_combat_state_from_actor_template(config, *actor_template);
 }
 
-KernelCombatStateDefinition make_enemy_combat_state(
+KernelCombatStateDefinition make_agent_combat_state(
     const GameServerGameplayConfig& config) {
     const ActorTemplateConfig* actor_template =
-        find_actor_template(config, config.enemy.actor_template_id);
+        find_actor_template(config, config.agent.actor_template_id);
     if (actor_template == nullptr) {
         return KernelCombatStateDefinition{};
     }

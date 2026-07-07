@@ -7,16 +7,16 @@ in `game_server`. It merges the first completed template pass with the broader
 data-driven rules for template loading, runtime binding, serialization, and ABI
 safety.
 
-The current file layout remains unchanged:
+The current file layout is:
 
 ```text
 game_server/gameplay_catalog.yaml
   -> weapon_template_dir: game_server/weapon_templates/*.yaml
   -> projectile_template_dir: game_server/projectile_templates/*.yaml
-  -> actor_template_dir: game_server/actor_templates/*.yaml
+  -> entity_template_dir: game_server/entity_templates/*.yaml
   -> collider_template_file: game_server/collider_templates/default.yaml
-  -> player.actor_template
-  -> enemy.actor_template and enemy spawn policy
+  -> player.entity_template
+  -> director entity template spawn policy
 ```
 
 This policy describes how to extend that layout without turning authoring YAML
@@ -141,15 +141,10 @@ invalidation policy.
 catalog_version: 1
 weapon_template_dir: weapon_templates
 projectile_template_dir: projectile_templates
-actor_template_dir: actor_templates
+entity_template_dir: entity_templates
 collider_template_file: collider_templates/default.yaml
 player:
-  actor_template: player
-enemy:
-  actor_template: enemy_grunt
-  spawn_count: 1
-  spawn_radius: 0.0
-  spawn_seed: 4242
+  entity_template: player
 ```
 
 Ownership boundary:
@@ -161,10 +156,9 @@ Ownership boundary:
 | Weapon mechanics | `weapon_templates/*.yaml` | Reusable weapon behavior by stable weapon ID. |
 | Projectile mechanics | `projectile_templates/*.yaml` | Movement, sync, lifetime, damage, collider reference. |
 | Area/beam target rules | Weapon template mode blocks | Use `collision_mask`; do not add `collision_flags`. |
-| Actor stats and loadout | `actor_templates/*.yaml` | Reusable actor definition by stable actor ID/name. |
-| Player actor choice | `gameplay_catalog.yaml` | References an actor template. |
-| Enemy actor choice | `gameplay_catalog.yaml` | References an actor template. |
-| Enemy spawn policy | `gameplay_catalog.yaml` | Scenario/encounter data, not actor-template data. |
+| Entity composition | `entity_templates/*.yaml` | Reusable actor/director definition by stable entity ID/name. |
+| Player actor choice | `gameplay_catalog.yaml` | References an entity template. |
+| Agent spawn policy | director entity template | World-rule Director AI owns initial and replacement spawn policy. |
 | Collider geometry | `collider_templates/default.yaml` | Kernel-packed collider shapes; actor/projectile templates reference these shapes. |
 
 ## Gameplay Catalog Policy
@@ -174,14 +168,10 @@ which default actor templates/spawn policy are used. It should not own weapon
 mechanics, actor stats, collider geometry, friendly-fire rules, or ABI layout
 changes.
 
-`weapon_template_dir`, `projectile_template_dir`, and `collider_template_file`
-are required. `actor_template_dir` is supported by the first actor-template
-pass. Compatibility loaders may synthesize defaults when actor templates are
-absent, but new catalog data should provide actor templates explicitly.
-
-Player and enemy `actor_template` references may use a template name or numeric
-ID for authoring. Loaders must resolve them to canonical IDs and reject broken
-or ambiguous references.
+`weapon_template_dir`, `projectile_template_dir`, `entity_template_dir`, and
+`collider_template_file` are required for new catalog data. `actor_template_dir`
+and `actor_template` references remain compatibility paths, but new authoring
+should use `entity_template_dir` and `entity_template` references.
 
 ## Weapon Template Policy
 
@@ -245,12 +235,15 @@ runtime player and enemy combat state, but is not packed into
 `KernelGameplayCatalogDefinition` and does not change the kernel or Unity
 managed ABI.
 
-Actor templates own reusable actor facts:
+Actor entity templates own reusable actor facts. Hostility is determined by
+camp/relation and AI policy; `enemy` is not an entity type:
 
 ```yaml
 id: 2
-name: enemy_grunt
-entity_type: enemy
+name: sentry_grunt
+entity_type: actor
+actor_type: agent
+camp: enemy_side
 health:
   hp: 240
   max_hp: 240
@@ -266,18 +259,37 @@ animations:
   idle: 0
   chasing: 1
 ai:
+  controller: sentry
   profile: default
 ```
 
-Actor templates must not own enemy spawn count/radius/seed/position, encounter
-composition, catalog source paths, weapon mechanics, or collider binding policy
-beyond local hitbox/combat-state fields.
+Director entity templates own world-rule spawn policy:
+
+```yaml
+id: 100
+name: earth_mother
+entity_type: director
+server_only: true
+transform:
+  position: {x: 6.0, y: 0.0, z: 0.0}
+ai:
+  controller: director
+  profile: earth_mother
+  tick_interval: 10
+director:
+  kind: world_rule
+  spawn:
+    target_count: 10
+    entity_template: sentry_grunt
+    radius: 5.0
+```
 
 Validation:
 
 - `id` must be nonzero and unique.
 - `name` must be non-empty and unique.
-- `entity_type` is currently `player` or `enemy`.
+- `entity_type` is `actor` or `director`; `entity_type: enemy` is rejected.
+- actor templates declare `actor_type` and `camp`.
 - health values must be positive, with `hp <= max_hp`.
 - movement speed must be positive.
 - hitbox center and half extents are required; half extents must be positive.
@@ -308,9 +320,9 @@ Loading order:
 3. Load collider templates from `collider_template_file`.
 4. Load projectile templates from `projectile_template_dir` and resolve weapon
    projectile references.
-5. Load actor templates from `actor_template_dir` and validate actor loadouts
+5. Load entity templates from `entity_template_dir` and validate actor loadouts
    against loaded weapon templates.
-6. Resolve `player.actor_template` and `enemy.actor_template`.
+6. Resolve `player.entity_template` and director spawn entity-template refs.
 7. Compute the gameplay catalog hash from all gameplay-affecting data.
 8. Validate the assembled `GameServerGameplayConfig`.
 
@@ -322,14 +334,15 @@ Player runtime:
 3. `make_player_combat_state` builds combat state from actor stats/loadout.
 4. Game server applies only the actor's configured weapon slots.
 
-Enemy runtime:
+Agent/director runtime:
 
-1. `EnemyManager` resolves the configured enemy actor template.
-2. Enemy placement uses `enemy.spawn_*` catalog settings.
-3. The kernel entity is created with the actor template entity type and
-   animation state.
-4. `make_enemy_combat_state` builds combat state from actor stats/loadout.
-5. Enemy AI uses template-derived weapon and movement settings.
+1. `GameServer` bootstraps configured server-only director entities.
+2. `DirectorRuntime` enqueues entity-template create work to maintain target
+   agent counts.
+3. `EntityLifecycleSystem::create_entity` materializes template-declared
+   components.
+4. `AgentRuntimeManager` observes live agent actors from kernel state and
+   applies game-server weapon mechanics for sentry controllers.
 
 ## ABI Boundary
 
@@ -375,7 +388,7 @@ template source needed to reconstruct the same config from memory:
 - `gameplay_catalog.yaml`
 - `weapon_templates/*.yaml`
 - `projectile_templates/*.yaml`
-- `actor_templates/*.yaml`
+- `entity_templates/*.yaml`
 - `collider_templates/default.yaml`
 
 Filesystem loading and bundle-memory loading should produce equivalent gameplay
@@ -429,10 +442,11 @@ These facts are not decided by the current design:
 - `gameplay_catalog.yaml` remains a composition root.
 - Weapon mechanics stay in weapon templates.
 - Projectile mechanics stay in projectile templates.
-- Actor stats and loadouts stay in actor templates.
-- Enemy spawn policy stays in the catalog, not in actor templates.
+- Actor stats and loadouts stay in actor entity templates.
+- Agent spawn policy stays in director entity templates.
 - Runtime state does not enter template YAML.
-- Actor templates remain game-server-local unless an ABI design says otherwise.
+- Entity templates remain read-only authoring/catalog data; runtime ownership
+  stays with ECS/kernel state.
 - Collision targeting uses `collision_mask`, not `collision_flags`.
 - `collision_mask: none` and `collision_mask: 0` still allow projectile
   spawn/sync while preventing damage targets.

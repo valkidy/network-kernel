@@ -6,7 +6,7 @@
 #include "ai_intent.h"
 #include "capability_registry.h"
 #include "game_server/ai_perception_adapter.h"
-#include "game_server/enemy.h"
+#include "game_server/agent_runtime.h"
 #include "kernel/src/kernel_api_internal.h"
 
 namespace network_example::game_server {
@@ -27,7 +27,7 @@ public:
 
     ActorIntentExecutionResult execute(
         KernelHandle* kernel,
-        Enemy* actor,
+        AgentRuntimeState* actor,
         const ai::ScopedIntent& intent,
         const SentryPerceptionSnapshot& perception) const;
 

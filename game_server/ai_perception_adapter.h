@@ -4,7 +4,7 @@
 #include <cstdint>
 
 #include "ai_context.h"
-#include "game_server/enemy.h"
+#include "game_server/agent_runtime.h"
 #include "kernel/public/kernel_api.h"
 
 namespace network_example::game_server {

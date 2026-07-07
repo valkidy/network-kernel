@@ -152,7 +152,7 @@ void set_vision(
 void run_frame(
     KernelHandle* kernel,
     const network_example::game_server::AgentSentryController& controller,
-    std::vector<network_example::game_server::Enemy>* enemies) {
+    std::vector<network_example::game_server::AgentRuntimeState>* enemies) {
     controller.tick(kernel, enemies, 1.0f / 30.0f);
     Kernel_Update(kernel, 1.0f / 30.0f);
 }
@@ -210,10 +210,10 @@ int main() {
     assert(Kernel_ServerSetEntityTransform(kernel, player_net_id, &out_of_range, &identity));
     Kernel_Update(kernel, 1.0f / 30.0f);
 
-    network_example::game_server::Enemy enemy;
+    network_example::game_server::AgentRuntimeState enemy;
     enemy.net_id = enemy_net_id;
     enemy.position = KernelVec3{0.0f, 0.0f, 0.0f};
-    std::vector<network_example::game_server::Enemy> enemies{enemy};
+    std::vector<network_example::game_server::AgentRuntimeState> enemies{enemy};
 
     network_example::game_server::AgentSentryConfig sentry_config;
     sentry_config.alert_ticks = 2;
@@ -235,6 +235,12 @@ int main() {
     assert(patrol_degrees <= 30.0f);
 
     KernelVec3 player_position{5.0f, 0.0f, 2.0f};
+    KernelVec3 agent_position{0.0f, 0.0f, 0.0f};
+    assert(Kernel_ServerSetEntityTransform(
+        kernel,
+        enemy_net_id,
+        &agent_position,
+        &identity));
     assert(Kernel_ServerSetEntityTransform(kernel, player_net_id, &player_position, &identity));
     Kernel_Update(kernel, 1.0f / 30.0f);
     run_frame(kernel, controller, &enemies);

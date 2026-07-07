@@ -178,10 +178,20 @@ bool EntityLifecycleSystem::create_entity(
                     entity_template->combat.hp,
                     entity_template->combat.max_hp,
                 });
+            MovementState& movement = registry.get_or_emplace<MovementState>(*entity);
+            movement.speed_meters_per_second =
+                entity_template->combat.move_speed_meters_per_second;
         }
         if ((entity_template->component_flags &
              KERNEL_ENTITY_COMPONENT_WEAPON_STATE) != 0u) {
-            registry.get_or_emplace<WeaponState>(*entity);
+            WeaponState& weapon = registry.get_or_emplace<WeaponState>(*entity);
+            weapon.weapon_id =
+                static_cast<std::uint8_t>(entity_template->combat.active_weapon_id);
+            for (std::size_t index = 0; index < kWeaponCount; ++index) {
+                weapon.ammo[index] = entity_template->combat.ammo[index];
+                weapon.reserve_ammo[index] =
+                    entity_template->combat.reserve_ammo[index];
+            }
             registry.get_or_emplace<WeaponTuning>(*entity);
         }
         if ((entity_template->component_flags & KERNEL_ENTITY_COMPONENT_HITBOX) !=

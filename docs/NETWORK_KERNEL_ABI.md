@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 33u`.
+`KERNEL_ABI_VERSION == 34u`.
 
 ## Ownership
 
@@ -57,6 +57,11 @@ and director spawn policy fields, and `KernelServerEntityCreateInfo` gains
 metadata path. Director entities use `KernelEntityType_Director`, receive a
 normal `NetId` for lifecycle/query ownership, and are excluded from snapshot and
 render-state output when materialized with the server-only component flag.
+
+ABI version 34 adds neutral visibility reporting. `KernelAgentVisionConfig`
+now includes `max_visible_neutrals`, and `KernelVisionStateView` reports
+`visible_neutrals` separately from allies and hostiles. Neutral actors are
+observable by AI but are not selected as default attack targets.
 
 Packet schema version 11 adds the pre-handshake gameplay catalog manifest,
 bundle request/chunk, and synchronization error messages. Existing handshake,

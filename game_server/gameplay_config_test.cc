@@ -10,7 +10,7 @@
 #include <utility>
 #include <vector>
 
-#include "game_server/enemy.h"
+#include "game_server/agent_runtime.h"
 #include "kernel/public/kernel_types.h"
 
 namespace {
@@ -133,7 +133,7 @@ std::vector<std::uint8_t> make_store_zip(
 }
 
 std::vector<std::uint8_t> make_gameplay_bundle_zip(
-    const std::string& enemy_actor_yaml) {
+    const std::string& sentry_actor_yaml) {
     std::vector<std::pair<std::string, std::string>> files;
     files.push_back({
         "gameplay_catalog.yaml",
@@ -142,11 +142,14 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
         "collider_templates/default.yaml",
         read_text_file("game_server/collider_templates/default.yaml")});
     files.push_back({
-        "actor_templates/player.yaml",
-        read_text_file("game_server/actor_templates/player.yaml")});
+        "entity_templates/player.yaml",
+        read_text_file("game_server/entity_templates/player.yaml")});
     files.push_back({
-        "actor_templates/enemy_grunt.yaml",
-        enemy_actor_yaml});
+        "entity_templates/sentry_grunt.yaml",
+        sentry_actor_yaml});
+    files.push_back({
+        "entity_templates/earth_mother.yaml",
+        read_text_file("game_server/entity_templates/earth_mother.yaml")});
 
     const std::vector<std::string> weapon_files = {
         "beam_rifle.yaml",
@@ -180,7 +183,127 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
 
 std::vector<std::uint8_t> make_gameplay_bundle_zip() {
     return make_gameplay_bundle_zip(
-        read_text_file("game_server/actor_templates/enemy_grunt.yaml"));
+        read_text_file("game_server/entity_templates/sentry_grunt.yaml"));
+}
+
+std::vector<std::uint8_t> make_entity_template_bundle_zip(
+    const std::string& sentry_template_yaml) {
+    std::vector<std::pair<std::string, std::string>> files;
+    files.push_back({
+        "gameplay_catalog.yaml",
+        "catalog_version: 1\n"
+        "weapon_template_dir: weapon_templates\n"
+        "projectile_template_dir: projectile_templates\n"
+        "entity_template_dir: entity_templates\n"
+        "collider_template_file: collider_templates/default.yaml\n"
+        "player:\n"
+        "  entity_template: player\n"});
+    files.push_back({
+        "collider_templates/default.yaml",
+        read_text_file("game_server/collider_templates/default.yaml")});
+    files.push_back({
+        "entity_templates/player.yaml",
+        "id: 1\n"
+        "name: player\n"
+        "entity_type: actor\n"
+        "actor_type: player\n"
+        "camp: player_side\n"
+        "collider_template: player_hit\n"
+        "health:\n"
+        "  hp: 1000\n"
+        "  max_hp: 1000\n"
+        "movement:\n"
+        "  move_speed_meters_per_second: 5.0\n"
+        "hitbox:\n"
+        "  center: {x: 0.0, y: 0.9, z: 0.0}\n"
+        "  half_extents: {x: 0.35, y: 0.9, z: 0.35}\n"
+        "weapon_slots:\n"
+        "  - 3\n"
+        "  - 1\n"
+        "active_weapon_slot: 0\n"
+        "animations:\n"
+        "  idle: 0\n"
+        "  chasing: 1\n"});
+    files.push_back({
+        "entity_templates/sentry_grunt.yaml",
+        sentry_template_yaml});
+    files.push_back({
+        "entity_templates/earth_mother.yaml",
+        "id: 100\n"
+        "name: earth_mother\n"
+        "entity_type: director\n"
+        "server_only: true\n"
+        "transform:\n"
+        "  position: {x: 0.0, y: 0.0, z: 0.0}\n"
+        "ai:\n"
+        "  controller: director\n"
+        "  profile: earth_mother\n"
+        "  tick_interval: 10\n"
+        "director:\n"
+        "  kind: world_rule\n"
+        "  spawn:\n"
+        "    target_count: 10\n"
+        "    entity_template: sentry_grunt\n"
+        "    radius: 5.0\n"
+        "    seed: 4242\n"});
+
+    const std::vector<std::string> weapon_files = {
+        "beam_rifle.yaml",
+        "fire_floor.yaml",
+        "homing_missile.yaml",
+        "rifle.yaml",
+        "rocket.yaml",
+        "shotgun.yaml",
+        "spammer.yaml",
+    };
+    for (const std::string& file : weapon_files) {
+        files.push_back({
+            "weapon_templates/" + file,
+            read_text_file("game_server/weapon_templates/" + file)});
+    }
+    const std::vector<std::string> projectile_files = {
+        "beam_rifle_beam.yaml",
+        "fire_floor_area.yaml",
+        "homing_missile.yaml",
+        "rocket.yaml",
+        "rocket_explosion.yaml",
+        "spammer.yaml",
+    };
+    for (const std::string& file : projectile_files) {
+        files.push_back({
+            "projectile_templates/" + file,
+            read_text_file("game_server/projectile_templates/" + file)});
+    }
+    return make_store_zip(files);
+}
+
+std::string sentry_grunt_entity_template_yaml(std::string entity_type) {
+    return
+        "id: 2\n"
+        "name: sentry_grunt\n"
+        "entity_type: " + entity_type + "\n"
+        "actor_type: agent\n"
+        "camp: enemy_side\n"
+        "collider_template: enemy_hit\n"
+        "health:\n"
+        "  hp: 500\n"
+        "  max_hp: 500\n"
+        "movement:\n"
+        "  move_speed_meters_per_second: 2.5\n"
+        "hitbox:\n"
+        "  center: {x: 0.0, y: 0.8, z: 0.0}\n"
+        "  half_extents: {x: 0.4, y: 0.8, z: 0.4}\n"
+        "weapon_slots:\n"
+        "  - 2\n"
+        "active_weapon_slot: 0\n"
+        "animations:\n"
+        "  idle: 0\n"
+        "  chasing: 1\n"
+        "vision:\n"
+        "  collider_template: cone_vision\n"
+        "ai:\n"
+        "  controller: sentry\n"
+        "  profile: default\n";
 }
 
 }  // namespace
@@ -191,6 +314,52 @@ int main() {
     const std::vector<std::string> errors =
         network_example::game_server::validate_gameplay_config(config);
     assert(errors.empty());
+
+    const std::vector<std::uint8_t> entity_bundle =
+        make_entity_template_bundle_zip(
+            sentry_grunt_entity_template_yaml("actor"));
+    const network_example::game_server::GameServerGameplayConfig entity_config =
+        network_example::game_server::load_gameplay_config_from_bundle_memory(
+            entity_bundle.data(),
+            static_cast<std::uint32_t>(entity_bundle.size()),
+            "gameplay_catalog.yaml");
+    assert(entity_config.entity_templates.size() == 3);
+    assert(entity_config.entity_templates[1].name == "sentry_grunt");
+    assert(entity_config.entity_templates[1].actor_type ==
+           network_example::game_server::kActorTypeAgent);
+    assert(entity_config.entity_templates[1].vision.camp == KernelAgentCamp_EnemySide);
+    assert(entity_config.entity_templates[2].name == "earth_mother");
+    assert(entity_config.entity_templates[2].entity_type == KernelEntityType_Director);
+    const network_example::game_server::KernelGameplayCatalogStorage
+        entity_catalog =
+            network_example::game_server::build_kernel_gameplay_catalog(entity_config);
+    assert(entity_catalog.definition.entity_template_count == 3);
+    assert(entity_catalog.entity_templates[2].entity_type == KernelEntityType_Director);
+    assert(
+        (entity_catalog.entity_templates[2].component_flags &
+         KERNEL_ENTITY_COMPONENT_SERVER_ONLY) != 0u);
+    assert(
+        entity_catalog.entity_templates[2].ai.controller_type ==
+        KernelAiControllerType_Director);
+    assert(entity_catalog.entity_templates[2].ai.tick_interval == 10);
+    assert(entity_catalog.entity_templates[2].ai.spawn_target_count == 10);
+    assert(entity_catalog.entity_templates[2].ai.spawn_entity_template_id == 2);
+
+    const std::vector<std::uint8_t> invalid_enemy_entity_bundle =
+        make_entity_template_bundle_zip(
+            sentry_grunt_entity_template_yaml("enemy"));
+    bool enemy_entity_type_rejected = false;
+    try {
+        (void)network_example::game_server::load_gameplay_config_from_bundle_memory(
+            invalid_enemy_entity_bundle.data(),
+            static_cast<std::uint32_t>(invalid_enemy_entity_bundle.size()),
+            "gameplay_catalog.yaml");
+    } catch (const std::exception& error) {
+        enemy_entity_type_rejected =
+            std::string(error.what()).find("unsupported entity_type: enemy") !=
+            std::string::npos;
+    }
+    assert(enemy_entity_type_rejected);
 
     assert(config.player.actor_template_id == 1);
     require(config.weapons.catalog_version == 1);
@@ -217,13 +386,13 @@ int main() {
     assert(player_combat_state.move_speed_meters_per_second == 5.0f);
     assert(player_combat_state.collider_template_id == 1);
 
-    assert(config.enemy.actor_template_id == 2);
-    assert(config.enemy.spawn_position.x == 6.0f);
-    assert(config.enemy.spawn_count == 10);
-    assert(config.enemy.spawn_radius == 5.0f);
-    assert(config.enemy.spawn_seed == 4242);
+    assert(config.agent.actor_template_id == 2);
+    assert(config.agent.spawn_position.x == 6.0f);
+    assert(config.agent.spawn_count == 10);
+    assert(config.agent.spawn_radius == 5.0f);
+    assert(config.agent.spawn_seed == 4242);
     const KernelCombatStateDefinition enemy_combat_state =
-        network_example::game_server::make_enemy_combat_state(config);
+        network_example::game_server::make_agent_combat_state(config);
     assert(enemy_combat_state.hp == 500);
     assert(enemy_combat_state.max_hp == 500);
     assert(enemy_combat_state.collider_template_id == 2);
@@ -233,7 +402,7 @@ int main() {
     const network_example::game_server::ActorTemplateConfig* config_enemy_template =
         network_example::game_server::find_actor_template(
             config,
-            config.enemy.actor_template_id);
+            config.agent.actor_template_id);
     assert(config_enemy_template != nullptr);
     assert(config_enemy_template->move_speed_meters_per_second == 2.5f);
     assert(config_enemy_template->vision.camp == KernelAgentCamp_EnemySide);
@@ -311,7 +480,7 @@ int main() {
     const network_example::game_server::ActorTemplateConfig& enemy_template =
         config.actor_templates[1];
     assert(enemy_template.actor_template_id == 2);
-    assert(enemy_template.name == "enemy_grunt");
+    assert(enemy_template.name == "sentry_grunt");
     assert(enemy_template.entity_type == network_example::game_server::kEntityTypeActor);
     assert(enemy_template.actor_type == network_example::game_server::kActorTypeAgent);
     assert(enemy_template.collider_template_id == 2);
@@ -425,7 +594,7 @@ int main() {
     assert(bundle_config.colliders.bindings.empty());
     assert(bundle_config.projectile_templates.size() == config.projectile_templates.size());
     assert(bundle_config.actor_templates.size() == config.actor_templates.size());
-    assert(bundle_config.enemy.actor_template_id == config.enemy.actor_template_id);
+    assert(bundle_config.agent.actor_template_id == config.agent.actor_template_id);
 
     const std::vector<std::uint8_t> generated_bundle = read_binary_file(
         (runfiles_root() / "game_server" / "gameplay_catalog_bundle" / "bundle.zip")

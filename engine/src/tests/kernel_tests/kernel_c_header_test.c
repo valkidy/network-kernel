@@ -5,7 +5,7 @@
 
 #include "kernel/public/kernel_api.h"
 
-_Static_assert(KERNEL_ABI_VERSION == 33u, "entity templates bump ABI");
+_Static_assert(KERNEL_ABI_VERSION == 34u, "neutral vision bump ABI");
 _Static_assert(
     offsetof(KernelWeaponMechanicsDefinition, projectile_template_id) >
         offsetof(KernelWeaponMechanicsDefinition, pellet_spread),
@@ -91,7 +91,7 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 33u);
+    assert(KERNEL_ABI_VERSION == 34u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD == 4u);
@@ -136,6 +136,7 @@ int main(void) {
     assert(sizeof(KernelAgentVisionConfig) > 0u);
     assert(sizeof(KernelVisionStateQuery) > 0u);
     assert(sizeof(KernelVisionStateView) > 0u);
+    assert(KERNEL_MAX_VISIBLE_NEUTRALS == 16u);
     assert(KernelActorType_Player == 1);
     assert(KernelActorType_Agent == 2);
     assert(KernelEntityType_Actor == 1);
@@ -158,6 +159,10 @@ int main(void) {
            offsetof(KernelHomingMechanicsDefinition, lock_cone_degrees));
     assert(offsetof(KernelBeamMechanicsDefinition, damage_per_tick) >
            offsetof(KernelBeamMechanicsDefinition, radius));
+    assert(offsetof(KernelAgentVisionConfig, max_visible_neutrals) >
+           offsetof(KernelAgentVisionConfig, max_visible_allies));
+    assert(offsetof(KernelVisionStateView, visible_neutrals) >
+           offsetof(KernelVisionStateView, visible_ally_count));
     assert(sizeof(&Kernel_ServerSetEntityHealth) > 0u);
     assert(KernelAgentCamp_PlayerSide == 1);
     assert(KernelAgentRelation_Hostile == 2);

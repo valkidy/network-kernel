@@ -2469,6 +2469,9 @@ bool KernelEngine::server_set_entity_vision_config(
     if (stored.max_visible_allies > KERNEL_MAX_VISIBLE_ALLIES) {
         stored.max_visible_allies = KERNEL_MAX_VISIBLE_ALLIES;
     }
+    if (stored.max_visible_neutrals > KERNEL_MAX_VISIBLE_NEUTRALS) {
+        stored.max_visible_neutrals = KERNEL_MAX_VISIBLE_NEUTRALS;
+    }
     vision_configs_[net_id] = stored;
     vision_states_[net_id].view.struct_size = sizeof(KernelVisionStateView);
     return true;
@@ -4579,7 +4582,8 @@ void KernelEngine::update_vision_states(float delta_seconds) {
                 candidate_identity.net_id,
                 candidate_config.camp);
             if (relation != KernelAgentRelation_Ally &&
-                relation != KernelAgentRelation_Hostile) {
+                relation != KernelAgentRelation_Hostile &&
+                relation != KernelAgentRelation_Neutral) {
                 continue;
             }
 
@@ -4622,9 +4626,16 @@ void KernelEngine::update_vision_states(float delta_seconds) {
                     runtime_state.has_last_seen_target = true;
                 }
             } else if (
+                relation == KernelAgentRelation_Ally &&
                 view.visible_ally_count < config.max_visible_allies &&
                 view.visible_ally_count < KERNEL_MAX_VISIBLE_ALLIES) {
                 view.visible_allies[view.visible_ally_count++] =
+                    candidate_identity.net_id;
+            } else if (
+                relation == KernelAgentRelation_Neutral &&
+                view.visible_neutral_count < config.max_visible_neutrals &&
+                view.visible_neutral_count < KERNEL_MAX_VISIBLE_NEUTRALS) {
+                view.visible_neutrals[view.visible_neutral_count++] =
                     candidate_identity.net_id;
             }
         }

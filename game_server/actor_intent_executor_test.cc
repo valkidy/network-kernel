@@ -155,7 +155,7 @@ int main() {
     const std::uint32_t target = create_actor(kernel, {5.0f, 0.0f, 0.0f});
     set_weapon(kernel, actor);
 
-    network_example::game_server::Enemy enemy;
+    network_example::game_server::AgentRuntimeState enemy;
     enemy.net_id = actor;
     network_example::game_server::ActorIntentExecutor executor;
 
@@ -213,7 +213,7 @@ int main() {
     const std::uint32_t empty_actor = create_actor(kernel, {1.0f, 0.0f, 0.0f});
     set_weapon(kernel, empty_actor);
     set_combat(kernel, empty_actor, 0, 0);
-    network_example::game_server::Enemy empty_enemy;
+    network_example::game_server::AgentRuntimeState empty_enemy;
     empty_enemy.net_id = empty_actor;
     result = executor.execute(
         kernel,

@@ -653,11 +653,23 @@ int main() {
     for (std::uint32_t index = 0; index < event_count; ++index) {
         game_server_handle_event(game_server, &events[index]);
     }
+    for (int frame = 0; frame < 3; ++frame) {
+        game_server_tick(game_server, 1.0f / 30.0f);
+        kernel_update(kernel, 1.0f / 30.0f);
+        event_count = kernel_poll_events(
+            kernel,
+            events.data(),
+            static_cast<std::uint32_t>(events.size()));
+        for (std::uint32_t index = 0; index < event_count; ++index) {
+            game_server_handle_event(game_server, &events[index]);
+        }
+    }
     game_server_tick(game_server, 1.0f / 30.0f);
     assert(game_server_get_enemy_count(game_server) == 10);
     game_server_despawn_all(game_server, KernelDespawnReason_Destroyed);
     game_server_tick(game_server, 1.0f / 30.0f);
     assert(game_server_get_enemy_count(game_server) == 0);
+    kernel_update(kernel, 1.0f / 30.0f);
 
     game_server_destroy(game_server);
     kernel_destroy(kernel);

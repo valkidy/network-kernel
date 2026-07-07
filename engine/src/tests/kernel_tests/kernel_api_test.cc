@@ -219,7 +219,7 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 32u);
+    assert(KERNEL_ABI_VERSION == 34u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CONTROL_PLANE_RPC) != 0);
     assert(sizeof(KernelVec4) == 16u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS) != 0);
@@ -664,6 +664,7 @@ int main() {
     vision_config.camp = KernelAgentCamp_EnemySide;
     vision_config.max_visible_hostiles = KERNEL_MAX_VISIBLE_HOSTILES;
     vision_config.max_visible_allies = KERNEL_MAX_VISIBLE_ALLIES;
+    vision_config.max_visible_neutrals = KERNEL_MAX_VISIBLE_NEUTRALS;
     vision_config.vision_collider_template_id = 12;
     assert(Kernel_ServerSetEntityVisionConfig(kernel, created_net_id, &vision_config));
 
@@ -700,6 +701,7 @@ int main() {
     assert(vision_states[0].visible_hostile_count == 1);
     assert(vision_states[0].visible_hostiles[0] == visible_player_net_id);
     assert(vision_states[0].visible_ally_count == 0);
+    assert(vision_states[0].visible_neutral_count == 0);
     assert(vision_states[0].current_target_candidate == visible_player_net_id);
     assert(vision_states[0].last_seen_target == visible_player_net_id);
     assert(vision_states[0].last_known_target_position.x == 5.0f);
@@ -730,10 +732,32 @@ int main() {
     assert(Kernel_QueryVisionState(kernel, &vision_query, vision_states.data(), 1) == 1);
     assert(vision_states[0].visible_hostile_count == 0);
 
+    KernelVec3 neutral_position{3.0f, 0.0f, 0.0f};
+    player_create_info.position = neutral_position;
+    std::uint32_t visible_neutral_net_id = 0;
+    assert(Kernel_ServerCreateEntity(kernel, &player_create_info, &visible_neutral_net_id));
+    KernelAgentVisionConfig neutral_vision_config{};
+    neutral_vision_config.struct_size = sizeof(neutral_vision_config);
+    neutral_vision_config.camp = KernelAgentCamp_Neutral;
+    assert(Kernel_ServerSetEntityVisionConfig(
+        kernel,
+        visible_neutral_net_id,
+        &neutral_vision_config));
+    Kernel_Update(kernel, 1.0f / 30.0f);
+    assert(Kernel_QueryVisionState(kernel, &vision_query, vision_states.data(), 1) == 1);
+    assert(vision_states[0].visible_hostile_count == 0);
+    assert(vision_states[0].visible_neutral_count == 1);
+    assert(vision_states[0].visible_neutrals[0] == visible_neutral_net_id);
+    assert(vision_states[0].current_target_candidate == 0);
+
     assert(Kernel_ServerClearEntityVisionConfig(kernel, visible_player_net_id));
     assert(Kernel_ServerDestroyEntity(
         kernel,
         visible_player_net_id,
+        KernelDespawnReason_Destroyed));
+    assert(Kernel_ServerDestroyEntity(
+        kernel,
+        visible_neutral_net_id,
         KernelDespawnReason_Destroyed));
     std::array<KernelEntityLifecycleEvent, 4> drained_lifecycle_events{};
     Kernel_PollEntityLifecycleEvents(

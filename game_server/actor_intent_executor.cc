@@ -67,7 +67,7 @@ ActorIntentExecutor::ActorIntentExecutor(ActorIntentExecutorConfig config)
 
 ActorIntentExecutionResult ActorIntentExecutor::execute(
     KernelHandle* kernel,
-    Enemy* actor,
+    AgentRuntimeState* actor,
     const ai::ScopedIntent& intent,
     const SentryPerceptionSnapshot& perception) const {
     ActorIntentExecutionResult result;

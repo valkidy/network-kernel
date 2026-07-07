@@ -3,6 +3,7 @@
 #include <array>
 #include <cassert>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -33,6 +34,18 @@ void handle_pending_events(
     for (std::uint32_t index = 0; index < count; ++index) {
         GameServer_HandleEvent(game_server, &events[index]);
     }
+}
+
+void run_game_server_frames(
+    KernelHandle* kernel,
+    GameServerHandle* game_server,
+    int count) {
+    for (int index = 0; index < count; ++index) {
+        GameServer_Tick(game_server, 1.0f / 30.0f);
+        Kernel_Update(kernel, 1.0f / 30.0f);
+        handle_pending_events(kernel, game_server);
+    }
+    GameServer_Tick(game_server, 1.0f / 30.0f);
 }
 
 std::uint32_t query_enemy_count(KernelHandle* kernel) {
@@ -165,14 +178,15 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip() {
     files.push_back({
         "collider_templates/default.yaml",
         read_text_file(root / "game_server" / "collider_templates" / "default.yaml")});
-    const std::vector<std::string> actor_files = {
-        "enemy_grunt.yaml",
+    const std::vector<std::string> entity_files = {
+        "earth_mother.yaml",
         "player.yaml",
+        "sentry_grunt.yaml",
     };
-    for (const std::string& file : actor_files) {
+    for (const std::string& file : entity_files) {
         files.push_back({
-            "actor_templates/" + file,
-            read_text_file(root / "game_server" / "actor_templates" / file)});
+            "entity_templates/" + file,
+            read_text_file(root / "game_server" / "entity_templates" / file)});
     }
     const std::vector<std::string> weapon_files = {
         "beam_rifle.yaml",
@@ -189,6 +203,8 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip() {
             read_text_file(root / "game_server" / "weapon_templates" / file)});
     }
     const std::vector<std::string> projectile_files = {
+        "beam_rifle_beam.yaml",
+        "fire_floor_area.yaml",
         "homing_missile.yaml",
         "rocket.yaml",
         "rocket_explosion.yaml",
@@ -251,12 +267,21 @@ int main() {
 
     const std::vector<std::uint8_t> gameplay_bundle = make_gameplay_bundle_zip();
     load_result = KernelGameplayCatalogLoadResult{};
-    assert(Kernel_LoadGameplayCatalogFromMemory(
+    const bool loaded_catalog = Kernel_LoadGameplayCatalogFromMemory(
         kernel,
         gameplay_bundle.data(),
         static_cast<std::uint32_t>(gameplay_bundle.size()),
         "gameplay_catalog.yaml",
-        &load_result));
+        &load_result);
+    if (!loaded_catalog) {
+        std::fprintf(
+            stderr,
+            "catalog load failed: %s path=%s field=%s\n",
+            load_result.diagnostic,
+            load_result.path,
+            load_result.field);
+    }
+    assert(loaded_catalog);
     assert(load_result.status == KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS);
     assert(load_result.error_code == KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_NONE);
     assert(load_result.catalog_version == 1);
@@ -294,13 +319,14 @@ int main() {
     assert(template_info.fire_mode == KernelWeaponFireMode_Projectile);
     assert(template_info.mechanics.projectile_template_id == 6);
     handle_pending_events(kernel, game_server);
-    GameServer_Tick(game_server, 1.0f / 30.0f);
+    run_game_server_frames(kernel, game_server, 3);
     assert(GameServer_GetEnemyCount(game_server) == 10);
     assert(query_enemy_count(kernel) == 10);
 
     GameServer_DespawnAll(game_server, KernelDespawnReason_Destroyed);
     GameServer_Tick(game_server, 1.0f / 30.0f);
     assert(GameServer_GetEnemyCount(game_server) == 0);
+    Kernel_Update(kernel, 1.0f / 30.0f);
     assert(query_enemy_count(kernel) == 0);
 
     GameServer_Destroy(game_server);

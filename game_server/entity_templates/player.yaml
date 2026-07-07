@@ -1,6 +1,8 @@
 id: 1
 name: player
-entity_type: player
+entity_type: actor
+actor_type: player
+camp: player_side
 collider_template: player_hit
 health:
   hp: 1000

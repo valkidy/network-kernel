@@ -21,7 +21,7 @@ The helper builds and runs:
 
 - `//app:app`
 - `//game_server:agent_sentry_controller_test`
-- `//game_server:enemy_manager_test`
+- `//game_server:agent_runtime_manager_test`
 - `bazel-bin/app/app --mode=host_server --port=7777 --host-frames=120`
 - `bazel-bin/app/app --mode=dedicated_server --port=7777`
 - `bazel-bin/app/app --mode=client --address=127.0.0.1:7777`
@@ -29,10 +29,10 @@ The helper builds and runs:
 ## Expected Behavior
 
 - The host server mode starts, runs its scripted frames, and exits successfully.
-- The host server log includes `observed_agent_render=1`, actor-configured enemy fire confirmation, projectile spawn, and no enemy projectile damage while the spammer projectile `collision_mask` is `none`.
+- The host server log includes `observed_agent_render=1`, actor-configured agent fire confirmation, projectile spawn, and no agent projectile damage while the spammer projectile `collision_mask` is `none`.
 - The dedicated server mode starts on `127.0.0.1:7777`.
 - The client mode connects to that server and exits successfully.
-- After the client connects, the dedicated server log includes a server-owned enemy spawn event (`peer=0`).
+- After the client connects, the dedicated server log includes a server-owned agent spawn event (`peer=0`).
 - The helper exits nonzero if either binary is missing, the server exits early, readiness times out, or the client fails.
 - The helper always attempts to stop the background server before exiting.
 
