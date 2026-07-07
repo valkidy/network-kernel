@@ -48,23 +48,44 @@ Common invocations:
 ```
 
 When the user invokes `/unity-package`, `$unity-plugin-package-builder`, or asks
-to build/pack the Unity package without extra options, include at least one
-`--release-note` by default so the script can complete its normal release-note
-and auto-commit finalization. Prefer a concise bullet inferred from the actual
-diff, such as `updates native plugins` for native asset-only staging or `adds
-HP and MaxHP to Unity render states` for visible ABI/API changes. Only omit
+to build/pack the Unity package without extra options, first perform the Unity
+API alignment preflight below, then include at least one `--release-note` by
+default so the script can complete its normal release-note and auto-commit
+finalization. Prefer a concise bullet inferred from the actual diff, such as
+`updates native plugins` for native asset-only staging or `aligns Unity plugin
+API with kernel ABI <version>` for visible ABI/API changes. Only omit
 `--release-note` when the user explicitly asks for verify-only, no commit, or
 `--auto-commit off`.
 
+## Unity API Alignment Preflight
+
+For `/unity-package` and normal build/pack requests, before invoking the
+package builder script:
+
+1. Check the current git branch. It must be exactly `feat-unity-plugin`. If it
+   is not, stop immediately and report the failure reason; do not switch
+   branches, edit files, run builds, stage assets, or package.
+2. Reference the C++ kernel public API and update the Unity plugin API before
+   building the package. Keep the pass targeted:
+   - Compare `engine/src/kernel/public/kernel_api.h` and
+     `engine/src/kernel/public/kernel_types.h` against
+     `plugins/com.network-example.kernel/Runtime/Core/KernelNative.cs`,
+     `KernelTypes.cs`, `KernelAbi.cs`, and `Kernel.cs`.
+   - Include `game_server/public/game_server_api.h` and
+     `game_server/public/game_server_types.h` when GameServer bindings or
+     ABI checks are involved.
+   - Align managed ABI constants, struct layouts, enums, P/Invoke exports,
+     wrapper methods, editor smoke, and managed smoke with the native headers.
+   - If the pass finds required native C++/ABI changes, stop and use
+     `unity-plugin-plan-guideline` instead of continuing package-builder work.
+3. After the Unity API is aligned, run the bundled script as the only build,
+   stage, verify, pack, release-note, and optional Unity batchmode entry point.
+
 ## Branch And Safety
 
-- The script must run on `feat-unity-plugin`; it stops immediately on any other
-  branch and reports the current branch.
-- For compatibility testing only, integration branches named `integration/*`
-  may run the script when
-  `UNITY_PACKAGE_BUILDER_ALLOW_INTEGRATION_BRANCH=1` is set. This override
-  requires `--auto-commit off` and must not be used for official package
-  publishing.
+- The script and `/unity-package` workflow must run only on `feat-unity-plugin`.
+  If the current branch is anything else, stop immediately and report the
+  current branch as the failure reason.
 - Stop and ask before switching branches.
 - Stop and ask before overwriting unrelated dirty files under
   `plugins/com.network-example.kernel/`, `engine/src/kernel/`, or this skill.
@@ -94,35 +115,36 @@ verify that signature with `codesign --verify`. Windows DLLs are not codesigned.
 
 Default behavior:
 
-1. Build `//engine/src/kernel:network_kernel_shared` for macOS and
+1. Require the current git branch to be exactly `feat-unity-plugin`.
+2. Build `//engine/src/kernel:network_kernel_shared` for macOS and
    Windows x86_64. The macOS target returns the Bazel ad-hoc signed dylib.
-2. Stage `bazel-bin/engine/src/kernel/signed/libnetwork_kernel.dylib` into
+3. Stage `bazel-bin/engine/src/kernel/signed/libnetwork_kernel.dylib` into
    `plugins/com.network-example.kernel/Assets/Plugins/macOS/`.
-3. Stage `bazel-bin/engine/src/kernel/network_kernel.dll` plus the Windows
+4. Stage `bazel-bin/engine/src/kernel/network_kernel.dll` plus the Windows
    x86_64 support DLLs into
    `plugins/com.network-example.kernel/Assets/Plugins/Windows/x86_64/`.
-4. Verify the staged macOS dylib signature with `codesign --verify`.
-5. Build `//game_server/gameplay_catalog_bundle:bundle`, copy the generated
+5. Verify the staged macOS dylib signature with `codesign --verify`.
+6. Build `//game_server/gameplay_catalog_bundle:bundle`, copy the generated
    `bundle.zip` byte-for-byte to
    `plugins/com.network-example.kernel/Runtime/Resources/gameplay_catalog_bundle/bundle.bytes`,
    ensure Unity `.meta` companions exist for the resource folder, bundle
    folder, and `bundle.bytes`, and copy bundle artifacts to
    `BUNDLE_ARTIFACT_DIR`.
-6. Verify package layout, C/C# ABI version alignment, required exported
+7. Verify package layout, C/C# ABI version alignment, required exported
    `Kernel_*`/`GameServer_*` symbols for macOS and Windows, and Windows PE32+
    x86-64 DLL shape. Export checks are ABI-aware: the v8 baseline remains
    compatible with the long-lived Unity plugin branch, while ABI 9-16 and
    GameServer ABI 2-3 symbols are required when the native headers report those
    versions.
-7. Delete every `.DS_Store` under `plugins/com.network-example.kernel`, then
+8. Delete every `.DS_Store` under `plugins/com.network-example.kernel`, then
    pack a clean UPM tarball in
    `plugins/output`.
-8. Optionally run Unity batchmode ABI smoke if Unity is auto-detected and the
+9. Optionally run Unity batchmode ABI smoke if Unity is auto-detected and the
    local license/headless environment works. Missing or blocked Unity should be
    reported as a clear skip, not a failure, unless the user provided an explicit
    Unity executable path. Override the default smoke timeout with
    `UNITY_TIMEOUT_SECONDS=<seconds>` when diagnosing slow Editor startup.
-9. If successful and `--auto-commit on`, prepend the supplied release-note
+10. If successful and `--auto-commit on`, prepend the supplied release-note
    bullets to `plugins/com.network-example.kernel/RELEASE_NOTES.md` and commit
    only when the dirty files are limited to staged native plugin assets under
    `Assets/Plugins`, Unity package `.cs` files, the generated
