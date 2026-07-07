@@ -545,10 +545,10 @@ build_required_exports() {
       Kernel_ServerValidateMechanicsConfig
     )
   fi
-  if [[ "$native_abi" -ge 10 ]]; then
+  if [[ "$native_abi" -ge 10 && "$native_abi" -lt 34 ]]; then
     REQUIRED_EXPORTS_BUILT+=(Kernel_ServerGetAreaEffectState)
   fi
-  if [[ "$native_abi" -ge 11 ]]; then
+  if [[ "$native_abi" -ge 11 && "$native_abi" -lt 34 ]]; then
     REQUIRED_EXPORTS_BUILT+=(Kernel_ServerGetBeamState)
   fi
   if [[ "$native_abi" -ge 12 ]]; then

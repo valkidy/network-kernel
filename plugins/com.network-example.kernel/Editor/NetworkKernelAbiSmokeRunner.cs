@@ -18,7 +18,7 @@ namespace NetworkExample.Kernel.Editor
             KernelAbi.ValidateNativeAbi();
             GameServerAbi.ValidateNativeAbi();
             KernelAbiInfo info = KernelAbi.GetInfo();
-            Require(KernelConstants.AbiVersion == 30, "Managed kernel ABI version was not v30.");
+            Require(KernelConstants.AbiVersion == 34, "Managed kernel ABI version was not v34.");
             Require(
                 (info.capability_flags & KernelConstants.CapabilityEntityLifecycleEvents) != 0,
                 "Kernel lifecycle event capability was missing.");
@@ -78,8 +78,9 @@ namespace NetworkExample.Kernel.Editor
                     Require(templateInfo.valid != 0, "GameServer weapon template was not valid.");
                     Require(
                         templateInfo.mechanics.fire_mode ==
-                            (byte)KernelWeaponFireMode.AreaEffect,
-                        "GameServer weapon template did not expose area-effect mechanics.");
+                            (byte)KernelWeaponFireMode.Projectile &&
+                        templateInfo.mechanics.projectile_template_id == 4,
+                        "GameServer weapon template did not expose area-effect projectile mechanics.");
                 }
 
                 Require(
@@ -144,8 +145,8 @@ namespace NetworkExample.Kernel.Editor
                     kernel.GetRenderStatesAtTime(33333, states) > 0,
                     "Kernel_GetRenderStatesAtTime returned no states.");
 
-                RequireAreaEffectFire(kernel, enemyNetId);
-                RequireBeamFire(kernel, enemyNetId);
+                RequireProjectileTemplateFire(kernel, enemyNetId, 4);
+                RequireProjectileTemplateFire(kernel, enemyNetId, 5);
                 RequireHomingFire(kernel, enemyNetId);
 
                 Require(
@@ -186,14 +187,15 @@ namespace NetworkExample.Kernel.Editor
                         6,
                         out GameServerWeaponTemplateInfo homingTemplate) &&
                     homingTemplate.valid != 0 &&
-                    homingTemplate.mechanics.projectile.motion_model ==
-                        (byte)KernelProjectileMotionModel.Homing,
+                    homingTemplate.mechanics.fire_mode ==
+                        (byte)KernelWeaponFireMode.Projectile &&
+                    homingTemplate.mechanics.projectile_template_id == 6,
                     "NetworkHost GameServer homing template query failed.");
             }
 
             RequireExternalGameplayCatalogSyncIfConfigured();
 
-            Debug.Log("Network kernel ABI 30 smoke passed.");
+            Debug.Log("Network kernel ABI 34 smoke passed.");
         }
 
         private static void RequireControlPlaneRpc(Kernel kernel, uint enemyNetId)
@@ -439,17 +441,28 @@ namespace NetworkExample.Kernel.Editor
                     struct_size = KernelProjectileTemplateDefinition.StructSize,
                     projectile_template_id = 202,
                     weapon_id = 3,
-                    motion_model = (byte)KernelProjectileMotionModel.Linear,
-                    sync_mode = (byte)KernelProjectileSyncMode.LocalPredictedDeterministic,
-                    hit_response = (byte)KernelProjectileHitResponse.Destroy,
-                    damage_shape = (byte)KernelProjectileDamageShape.DirectHit,
-                    projectile_kind = (byte)KernelProjectileKind.Projectile,
-                    damage = 5,
-                    speed = 30.0f,
-                    lifetime_seconds = 2.0f,
-                    collider_template_id = 101,
-                    collision_mask = KernelConstants.CollisionMaskDamageable,
-                    max_hit_count = 1,
+                    mechanics = StandardProjectileMechanics(5, 30.0f, 60),
+                },
+                new KernelProjectileTemplateDefinition
+                {
+                    struct_size = KernelProjectileTemplateDefinition.StructSize,
+                    projectile_template_id = 204,
+                    weapon_id = 4,
+                    mechanics = AreaEffectProjectileMechanics(),
+                },
+                new KernelProjectileTemplateDefinition
+                {
+                    struct_size = KernelProjectileTemplateDefinition.StructSize,
+                    projectile_template_id = 205,
+                    weapon_id = 5,
+                    mechanics = BeamProjectileMechanics(),
+                },
+                new KernelProjectileTemplateDefinition
+                {
+                    struct_size = KernelProjectileTemplateDefinition.StructSize,
+                    projectile_template_id = 206,
+                    weapon_id = 6,
+                    mechanics = HomingProjectileMechanics(),
                 },
             };
             var actorTemplates = new[]
@@ -498,13 +511,19 @@ namespace NetworkExample.Kernel.Editor
                 readColliders[1].shape_params.y == 90.0f,
                 "Kernel_GetColliderTemplates read-back failed.");
             Require(
-                kernel.GetProjectileTemplates(null) == 1,
+                kernel.GetProjectileTemplates(null) == 4,
                 "Kernel_GetProjectileTemplates count failed.");
-            var readProjectiles = new KernelProjectileTemplateDefinition[1];
+            var readProjectiles = new KernelProjectileTemplateDefinition[4];
             Require(
-                kernel.GetProjectileTemplates(readProjectiles) == 1 &&
+                kernel.GetProjectileTemplates(readProjectiles) == 4 &&
                 readProjectiles[0].projectile_template_id == 202 &&
-                readProjectiles[0].collider_template_id == 101,
+                readProjectiles[0].mechanics.collider_template_id == 101 &&
+                readProjectiles[1].mechanics.projectile_type ==
+                    (byte)KernelProjectileType.AreaEffect &&
+                readProjectiles[2].mechanics.projectile_type ==
+                    (byte)KernelProjectileType.Beam &&
+                readProjectiles[3].mechanics.motion_model ==
+                    (byte)KernelProjectileMotionModel.Homing,
                 "Kernel_GetProjectileTemplates read-back failed.");
             Require(
                 kernel.GetActorTemplates(null) == 1,
@@ -629,87 +648,73 @@ namespace NetworkExample.Kernel.Editor
                 "Kernel_ServerGetEntityWeaponMechanics failed.");
         }
 
-        private static KernelWeaponMechanicsDefinition RocketWeapon()
+        private static KernelProjectileMechanicsDefinition StandardProjectileMechanics(
+            ushort damage,
+            float speed,
+            uint lifetimeTicks)
         {
-            return new KernelWeaponMechanicsDefinition
+            return new KernelProjectileMechanicsDefinition
             {
-                struct_size = KernelWeaponMechanicsDefinition.StructSize,
-                weapon_id = 3,
-                fire_mode = (byte)KernelWeaponFireMode.Projectile,
-                magazine_size = 3,
-                damage = 5,
-                cooldown_ticks = 30,
-                reload_ticks = 30,
-                projectile = new KernelProjectileMechanicsDefinition
-                {
-                    struct_size = KernelProjectileMechanicsDefinition.StructSize,
-                    projectile_template_id = 202,
-                    motion_model = (byte)KernelProjectileMotionModel.Linear,
-                    hit_response = (byte)KernelProjectileHitResponse.Destroy,
-                    damage_shape = (byte)KernelProjectileDamageShape.DirectHit,
-                    speed = 35.0f,
-                    lifetime_seconds = 2.5f,
-                    collision_mask = KernelConstants.CollisionMaskDamageable,
-                    max_hit_count = 1,
-                },
+                struct_size = KernelProjectileMechanicsDefinition.StructSize,
+                projectile_type = (byte)KernelProjectileType.Standard,
+                motion_model = (byte)KernelProjectileMotionModel.Linear,
+                hit_response = (byte)KernelProjectileHitResponse.Destroy,
+                damage_shape = (byte)KernelProjectileDamageShape.DirectHit,
+                sync_mode = (byte)KernelProjectileSyncMode.LocalPredictedDeterministic,
+                damage = damage,
+                speed = speed,
+                lifetime_ticks = lifetimeTicks,
+                collider_template_id = 101,
+                collision_mask = KernelConstants.CollisionMaskDamageable,
+                max_hit_count = 1,
+                collision_query_mode = (byte)KernelProjectileCollisionQueryMode.Auto,
             };
         }
 
-        private static KernelWeaponMechanicsDefinition AreaEffectWeapon()
+        private static KernelProjectileMechanicsDefinition AreaEffectProjectileMechanics()
         {
-            return new KernelWeaponMechanicsDefinition
+            KernelProjectileMechanicsDefinition mechanics =
+                StandardProjectileMechanics(7, 0.0f, 9);
+            mechanics.projectile_type = (byte)KernelProjectileType.AreaEffect;
+            mechanics.area_effect = new KernelAreaEffectMechanicsDefinition
             {
-                struct_size = KernelWeaponMechanicsDefinition.StructSize,
-                weapon_id = 4,
-                fire_mode = (byte)KernelWeaponFireMode.AreaEffect,
-                magazine_size = 2,
-                damage = 7,
-                cooldown_ticks = 10,
-                reload_ticks = 30,
-                area_effect = new KernelAreaEffectMechanicsDefinition
-                {
-                    struct_size = KernelAreaEffectMechanicsDefinition.StructSize,
-                    radius = 2.5f,
-                    damage_per_interval = 7,
-                    damage_interval_ticks = 3,
-                    lifetime_ticks = 9,
-                    spawn_distance = 1.5f,
-                    collision_mask = KernelConstants.CollisionMaskDamageable,
-                },
+                struct_size = KernelAreaEffectMechanicsDefinition.StructSize,
+                radius = 2.5f,
+                damage_per_interval = 7,
+                damage_interval_ticks = 3,
+                lifetime_ticks = 9,
+                spawn_distance = 1.5f,
+                collision_mask = KernelConstants.CollisionMaskDamageable,
             };
+            return mechanics;
         }
 
-        private static KernelWeaponMechanicsDefinition BeamWeapon()
+        private static KernelProjectileMechanicsDefinition BeamProjectileMechanics()
         {
-            return new KernelWeaponMechanicsDefinition
+            KernelProjectileMechanicsDefinition mechanics =
+                StandardProjectileMechanics(30, 0.0f, 2);
+            mechanics.projectile_type = (byte)KernelProjectileType.Beam;
+            mechanics.beam = new KernelBeamMechanicsDefinition
             {
-                struct_size = KernelWeaponMechanicsDefinition.StructSize,
-                weapon_id = 5,
-                fire_mode = (byte)KernelWeaponFireMode.Beam,
-                magazine_size = 2,
-                damage = 30,
-                cooldown_ticks = 1,
-                reload_ticks = 30,
-                beam = new KernelBeamMechanicsDefinition
-                {
-                    struct_size = KernelBeamMechanicsDefinition.StructSize,
-                    length = 6.0f,
-                    radius = 0.25f,
-                    damage_per_second = 30,
-                    lifetime_ticks = 2,
-                    collision_mask = KernelConstants.CollisionLayerEnemy,
-                },
+                struct_size = KernelBeamMechanicsDefinition.StructSize,
+                length = 6.0f,
+                radius = 0.25f,
+                damage_per_tick = 30,
+                lifetime_ticks = 2,
+                collision_mask = KernelConstants.CollisionLayerEnemy,
             };
+            return mechanics;
         }
 
-        private static KernelWeaponMechanicsDefinition HomingWeapon()
+        private static KernelProjectileMechanicsDefinition HomingProjectileMechanics()
         {
-            KernelWeaponMechanicsDefinition weapon = RocketWeapon();
-            weapon.weapon_id = 6;
-            weapon.projectile.motion_model = (byte)KernelProjectileMotionModel.Homing;
-            weapon.projectile.damage_shape = (byte)KernelProjectileDamageShape.DirectHit;
-            weapon.projectile.collision_mask = KernelConstants.CollisionLayerEnemy;
-            weapon.projectile.homing = new KernelHomingMechanicsDefinition
+            KernelProjectileMechanicsDefinition mechanics =
+                StandardProjectileMechanics(5, 35.0f, 75);
+            mechanics.motion_model = (byte)KernelProjectileMotionModel.Homing;
+            mechanics.sync_mode =
+                (byte)KernelProjectileSyncMode.HybridDeterministicThenSnapshot;
+            mechanics.collision_mask = KernelConstants.CollisionLayerEnemy;
+            mechanics.homing = new KernelHomingMechanicsDefinition
             {
                 struct_size = KernelHomingMechanicsDefinition.StructSize,
                 homing_mode = (byte)KernelHomingMode.FireAndForget,
@@ -718,33 +723,59 @@ namespace NetworkExample.Kernel.Editor
                 lock_on_range = 25.0f,
                 lose_target_range = 30.0f,
                 lock_cone_degrees = 75.0f,
-                max_turn_rate_degrees_per_second = 360.0f,
+                max_turn_degrees_per_tick = 12.0f,
                 acceleration = 20.0f,
                 max_speed = 40.0f,
             };
-            return weapon;
+            return mechanics;
         }
 
-        private static void RequireAreaEffectFire(Kernel kernel, uint enemyNetId)
+        private static KernelWeaponMechanicsDefinition RocketWeapon()
         {
-            uint areaNetId = FireAndFindSpawn(kernel, enemyNetId, 4, KernelEntityType.AreaEffect);
-            Require(
-                kernel.ServerGetAreaEffectState(areaNetId, out KernelAreaEffectState state) &&
-                state.valid != 0 &&
-                state.radius == 2.5f &&
-                state.damage_interval_ticks == 3,
-                "Kernel_ServerGetAreaEffectState failed.");
+            return ProjectileWeapon(3, 202, 5, 30, 30);
         }
 
-        private static void RequireBeamFire(Kernel kernel, uint enemyNetId)
+        private static KernelWeaponMechanicsDefinition AreaEffectWeapon()
         {
-            uint beamNetId = FireAndFindSpawn(kernel, enemyNetId, 5, KernelEntityType.Beam);
-            Require(
-                kernel.ServerGetBeamState(beamNetId, out KernelBeamState state) &&
-                state.valid != 0 &&
-                state.shooter_net_id == enemyNetId &&
-                state.length == 6.0f,
-                "Kernel_ServerGetBeamState failed.");
+            return ProjectileWeapon(4, 204, 7, 10, 30);
+        }
+
+        private static KernelWeaponMechanicsDefinition BeamWeapon()
+        {
+            return ProjectileWeapon(5, 205, 30, 1, 30);
+        }
+
+        private static KernelWeaponMechanicsDefinition HomingWeapon()
+        {
+            return ProjectileWeapon(6, 206, 5, 30, 30);
+        }
+
+        private static KernelWeaponMechanicsDefinition ProjectileWeapon(
+            byte weaponId,
+            uint projectileTemplateId,
+            ushort damage,
+            uint cooldownTicks,
+            uint reloadTicks)
+        {
+            return new KernelWeaponMechanicsDefinition
+            {
+                struct_size = KernelWeaponMechanicsDefinition.StructSize,
+                weapon_id = weaponId,
+                fire_mode = (byte)KernelWeaponFireMode.Projectile,
+                magazine_size = 3,
+                damage = damage,
+                cooldown_ticks = cooldownTicks,
+                reload_ticks = reloadTicks,
+                projectile_template_id = projectileTemplateId,
+            };
+        }
+
+        private static void RequireProjectileTemplateFire(
+            Kernel kernel,
+            uint enemyNetId,
+            byte weaponId)
+        {
+            FireAndFindSpawn(kernel, enemyNetId, weaponId, KernelEntityType.Projectile);
         }
 
         private static void RequireHomingFire(Kernel kernel, uint enemyNetId)

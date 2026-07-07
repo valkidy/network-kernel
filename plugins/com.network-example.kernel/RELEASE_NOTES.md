@@ -1,6 +1,11 @@
 0.6.6 release notes:
 
-- aligns Unity API with kernel ABI 30
+- aligns Unity plugin API with kernel ABI 34
+
+
+0.6.6 release notes:
+
+- aligns Unity API with kernel ABI 34
 - adds control-plane RPC and entity health bindings
 
 

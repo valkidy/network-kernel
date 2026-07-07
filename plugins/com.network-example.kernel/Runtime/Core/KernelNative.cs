@@ -343,20 +343,6 @@ namespace NetworkExample.Kernel
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)]
-        internal static extern bool Kernel_ServerGetAreaEffectState(
-            IntPtr kernel,
-            uint netId,
-            ref KernelAreaEffectState outState);
-
-        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-        [return: MarshalAs(UnmanagedType.I1)]
-        internal static extern bool Kernel_ServerGetBeamState(
-            IntPtr kernel,
-            uint netId,
-            ref KernelBeamState outState);
-
-        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-        [return: MarshalAs(UnmanagedType.I1)]
         internal static extern bool Kernel_ServerGetHomingState(
             IntPtr kernel,
             uint netId,

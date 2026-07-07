@@ -89,16 +89,8 @@ namespace NetworkExample.Kernel
                 "Kernel weapon metadata query capability is missing.");
             RequireCapability(
                 info,
-                KernelConstants.CapabilityAreaEffectWeapons,
-                "Kernel area-effect weapon capability is missing.");
-            RequireCapability(
-                info,
                 KernelConstants.CapabilityProjectileResponseMasks,
                 "Kernel projectile response-mask capability is missing.");
-            RequireCapability(
-                info,
-                KernelConstants.CapabilityBeamWeapons,
-                "Kernel beam weapon capability is missing.");
             RequireCapability(
                 info,
                 KernelConstants.CapabilityHomingProjectiles,
@@ -177,25 +169,17 @@ namespace NetworkExample.Kernel
                 info.projectile_mechanics_definition_size,
                 Marshal.SizeOf<KernelProjectileMechanicsDefinition>());
             RequireSize(
-                nameof(KernelCombatStateDefinition),
-                info.combat_state_definition_size,
-                Marshal.SizeOf<KernelCombatStateDefinition>());
-            RequireSize(
                 nameof(KernelAreaEffectMechanicsDefinition),
                 info.area_effect_mechanics_definition_size,
                 Marshal.SizeOf<KernelAreaEffectMechanicsDefinition>());
-            RequireSize(
-                nameof(KernelAreaEffectState),
-                info.area_effect_state_size,
-                Marshal.SizeOf<KernelAreaEffectState>());
             RequireSize(
                 nameof(KernelBeamMechanicsDefinition),
                 info.beam_mechanics_definition_size,
                 Marshal.SizeOf<KernelBeamMechanicsDefinition>());
             RequireSize(
-                nameof(KernelBeamState),
-                info.beam_state_size,
-                Marshal.SizeOf<KernelBeamState>());
+                nameof(KernelCombatStateDefinition),
+                info.combat_state_definition_size,
+                Marshal.SizeOf<KernelCombatStateDefinition>());
             RequireSize(
                 nameof(KernelHomingMechanicsDefinition),
                 info.homing_mechanics_definition_size,
@@ -284,6 +268,14 @@ namespace NetworkExample.Kernel
                 nameof(KernelGameplayCatalogSyncStatus),
                 info.gameplay_catalog_sync_status_size,
                 Marshal.SizeOf<KernelGameplayCatalogSyncStatus>());
+            RequireSize(
+                nameof(KernelEntityTemplateDefinition),
+                info.entity_template_definition_size,
+                Marshal.SizeOf<KernelEntityTemplateDefinition>());
+            RequireSize(
+                nameof(KernelEntityAiDefinition),
+                info.entity_ai_definition_size,
+                Marshal.SizeOf<KernelEntityAiDefinition>());
         }
 
         private static void RequireCapability(

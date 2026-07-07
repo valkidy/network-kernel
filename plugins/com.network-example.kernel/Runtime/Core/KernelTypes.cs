@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 30;
+        public const uint AbiVersion = 34;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int GameplayCatalogEntryPathSize = 128;
@@ -71,9 +71,7 @@ namespace NetworkExample.Kernel
         public const ulong CapabilityRenderStatesAtTime = 0x0000000000080000UL;
         public const ulong CapabilityServerMechanicsConfig = 0x0000000000100000UL;
         public const ulong CapabilityWeaponMetadataQuery = 0x0000000000200000UL;
-        public const ulong CapabilityAreaEffectWeapons = 0x0000000000400000UL;
         public const ulong CapabilityProjectileResponseMasks = 0x0000000000800000UL;
-        public const ulong CapabilityBeamWeapons = 0x0000000001000000UL;
         public const ulong CapabilityHomingProjectiles = 0x0000000002000000UL;
         public const ulong CapabilityLANDiscovery = 0x0000000004000000UL;
         public const ulong CapabilityGameplayCatalog = 0x0000000008000000UL;
@@ -87,11 +85,12 @@ namespace NetworkExample.Kernel
         public const ulong CapabilityGameplayCatalogSync = 0x0000000800000000UL;
         public const ulong CapabilityControlPlaneRpc = 0x0000001000000000UL;
 
-        public const uint CollisionLayerPlayer = 0x00000001U;
-        public const uint CollisionLayerHostile = 0x00000002U;
-        public const uint CollisionLayerEnemy = CollisionLayerHostile;
+        public const uint CollisionLayerPlayerSide = 0x00000001U;
+        public const uint CollisionLayerHostileSide = 0x00000002U;
+        public const uint CollisionLayerPlayer = CollisionLayerPlayerSide;
+        public const uint CollisionLayerHostile = CollisionLayerHostileSide;
+        public const uint CollisionLayerEnemy = CollisionLayerHostileSide;
         public const uint CollisionLayerProjectile = 0x00000004U;
-        public const uint CollisionLayerAreaEffect = 0x00000008U;
         public const uint CollisionLayerAgentVision = 0x00000010U;
         public const uint CollisionLayerNeutral = 0x00000020U;
         public const uint CollisionMaskDamageable =
@@ -103,6 +102,7 @@ namespace NetworkExample.Kernel
         public const uint VisualFlagHpUnknown = 0x00000008U;
         public const uint MaxVisibleHostiles = 16;
         public const uint MaxVisibleAllies = 16;
+        public const uint MaxVisibleNeutrals = 16;
     }
 
     public static class NetworkKernelPackageInfo
@@ -189,10 +189,8 @@ namespace NetworkExample.Kernel
         Unknown = 0,
         Actor = 1,
         Player = Actor,
-        Enemy = 2,
         Projectile = 3,
-        AreaEffect = 4,
-        Beam = 5,
+        Director = 5,
     }
 
     public enum KernelActorType : ushort
@@ -220,8 +218,6 @@ namespace NetworkExample.Kernel
         Hitscan = 0,
         Shotgun = 1,
         Projectile = 2,
-        AreaEffect = 3,
-        Beam = 4,
     }
 
     public enum KernelProjectileMotionModel : byte
@@ -265,16 +261,19 @@ namespace NetworkExample.Kernel
         PiercingSegment = 2,
     }
 
-    public enum KernelProjectileKind : byte
+    public enum KernelProjectileType : byte
     {
-        Projectile = 0,
+        Standard = 0,
         AreaEffect = 1,
+        Beam = 2,
     }
 
-    public enum KernelProjectileImpactAction : byte
+    public enum KernelProjectileCollisionQueryMode : byte
     {
-        None = 0,
-        SpawnProjectile = 1,
+        Auto = 0,
+        Overlap = 1,
+        Sweep = 2,
+        Ray = 3,
     }
 
     public enum KernelProjectileDamageFalloff : byte
@@ -318,6 +317,13 @@ namespace NetworkExample.Kernel
         Unknown = 4,
     }
 
+    public enum KernelAiControllerType : uint
+    {
+        None = 0,
+        Sentry = 1,
+        Director = 2,
+    }
+
     [Flags]
     public enum KernelDebugRecordType : uint
     {
@@ -339,11 +345,9 @@ namespace NetworkExample.Kernel
         public uint server_entity_state_size;
         public uint weapon_mechanics_definition_size;
         public uint projectile_mechanics_definition_size;
-        public uint combat_state_definition_size;
         public uint area_effect_mechanics_definition_size;
-        public uint area_effect_state_size;
         public uint beam_mechanics_definition_size;
-        public uint beam_state_size;
+        public uint combat_state_definition_size;
         public uint homing_mechanics_definition_size;
         public uint homing_state_size;
         public uint lan_discovery_server_config_size;
@@ -367,6 +371,8 @@ namespace NetworkExample.Kernel
         public uint vision_state_view_size;
         public uint gameplay_catalog_manifest_size;
         public uint gameplay_catalog_sync_status_size;
+        public uint entity_template_definition_size;
+        public uint entity_ai_definition_size;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
@@ -593,6 +599,7 @@ namespace NetworkExample.Kernel
         public ushort animation_state;
         public uint visual_flags;
         public uint actor_template_id;
+        public uint entity_template_id;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelServerEntityCreateInfo>();
     }
@@ -663,25 +670,9 @@ namespace NetworkExample.Kernel
         public uint struct_size;
         public uint projectile_template_id;
         public byte weapon_id;
-        public byte motion_model;
-        public byte sync_mode;
-        public byte hit_response;
-        public byte damage_shape;
-        public byte projectile_kind;
-        public byte impact_action;
-        public uint impact_destroy_self;
-        public byte damage_falloff;
         public byte reserved0;
-        public ushort damage;
-        public float speed;
-        public float lifetime_seconds;
-        public KernelVec3 gravity;
-        public uint collider_template_id;
-        public uint collision_mask;
-        public uint max_hit_count;
-        public uint impact_projectile_template_id;
-        public uint lifetime_ticks;
-        public uint damage_interval_ticks;
+        public ushort reserved1;
+        public KernelProjectileMechanicsDefinition mechanics;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelProjectileTemplateDefinition>();
     }
@@ -707,6 +698,7 @@ namespace NetworkExample.Kernel
         public KernelProjectileTemplateDefinition[] ProjectileTemplates;
         public KernelColliderTemplateDefinition[] ColliderTemplates;
         public KernelColliderBindingDefinition[] ColliderBindings;
+        public KernelEntityTemplateDefinition[] EntityTemplates;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
@@ -830,6 +822,8 @@ namespace NetworkExample.Kernel
         public uint collider_template_count;
         public IntPtr collider_bindings;
         public uint collider_binding_count;
+        public IntPtr entity_templates;
+        public uint entity_template_count;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelGameplayCatalogDefinition>();
     }
@@ -997,6 +991,7 @@ namespace NetworkExample.Kernel
         public uint vision_collider_template_id;
         public uint max_visible_hostiles;
         public uint max_visible_allies;
+        public uint max_visible_neutrals;
         public KernelVec3 local_origin;
         public KernelVec3 local_forward;
 
@@ -1037,6 +1032,9 @@ namespace NetworkExample.Kernel
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)]
         public uint[] visible_allies;
         public uint visible_ally_count;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)]
+        public uint[] visible_neutrals;
+        public uint visible_neutral_count;
         public uint current_target_candidate;
         public byte relation_to_current_target;
         public byte reserved1;
@@ -1060,7 +1058,7 @@ namespace NetworkExample.Kernel
         public float lock_on_range;
         public float lose_target_range;
         public float lock_cone_degrees;
-        public float max_turn_rate_degrees_per_second;
+        public float max_turn_degrees_per_tick;
         public float acceleration;
         public float max_speed;
 
@@ -1071,17 +1069,28 @@ namespace NetworkExample.Kernel
     public struct KernelProjectileMechanicsDefinition
     {
         public uint struct_size;
+        public byte projectile_type;
         public byte motion_model;
         public byte hit_response;
         public byte damage_shape;
-        public byte reserved0;
+        public byte sync_mode;
+        public byte damage_falloff;
+        public ushort damage;
         public float speed;
-        public float lifetime_seconds;
+        public uint lifetime_ticks;
         public KernelVec3 gravity;
+        public uint collider_template_id;
         public uint collision_mask;
         public uint max_hit_count;
+        public uint flags;
         public KernelHomingMechanicsDefinition homing;
-        public uint projectile_template_id;
+        public KernelAreaEffectMechanicsDefinition area_effect;
+        public KernelBeamMechanicsDefinition beam;
+        public uint impact_spawn_projectile_template_id;
+        public uint expire_spawn_projectile_template_id;
+        public byte collision_query_mode;
+        public byte reserved0;
+        public ushort reserved1;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelProjectileMechanicsDefinition>();
     }
@@ -1092,6 +1101,7 @@ namespace NetworkExample.Kernel
         public uint struct_size;
         public float radius;
         public ushort damage_per_interval;
+        public ushort reserved0;
         public uint damage_interval_ticks;
         public uint lifetime_ticks;
         public float spawn_distance;
@@ -1106,7 +1116,8 @@ namespace NetworkExample.Kernel
         public uint struct_size;
         public float length;
         public float radius;
-        public ushort damage_per_second;
+        public ushort damage_per_tick;
+        public ushort reserved0;
         public uint lifetime_ticks;
         public uint collision_mask;
 
@@ -1126,49 +1137,10 @@ namespace NetworkExample.Kernel
         public float max_range;
         public byte pellet_count;
         public float pellet_spread;
-        public KernelProjectileMechanicsDefinition projectile;
-        public KernelAreaEffectMechanicsDefinition area_effect;
-        public KernelBeamMechanicsDefinition beam;
+        public uint projectile_template_id;
         public uint segment_collider_template_id;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelWeaponMechanicsDefinition>();
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    public struct KernelBeamState
-    {
-        public uint struct_size;
-        public uint net_id;
-        public uint owner_peer;
-        public uint shooter_net_id;
-        public KernelVec3 origin;
-        public KernelVec3 direction;
-        public float length;
-        public float radius;
-        public ushort damage_per_second;
-        public uint expire_tick;
-        public byte source_code;
-        public uint collision_mask;
-        public uint valid;
-
-        public static uint StructSize => (uint)Marshal.SizeOf<KernelBeamState>();
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    public struct KernelAreaEffectState
-    {
-        public uint struct_size;
-        public uint net_id;
-        public uint owner_peer;
-        public float radius;
-        public ushort damage_per_interval;
-        public uint damage_interval_ticks;
-        public uint expire_tick;
-        public byte source_code;
-        public uint collision_mask;
-        public uint valid;
-
-        public static uint StructSize => (uint)Marshal.SizeOf<KernelAreaEffectState>();
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -1188,7 +1160,7 @@ namespace NetworkExample.Kernel
         public float lock_on_range;
         public float lose_target_range;
         public float lock_cone_degrees;
-        public float max_turn_rate_degrees_per_second;
+        public float max_turn_degrees_per_tick;
         public float acceleration;
         public float max_speed;
         public uint valid;
@@ -1223,6 +1195,44 @@ namespace NetworkExample.Kernel
                 reserve_ammo = new ushort[KernelConstants.MaxWeapons],
             };
         }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelEntityAiDefinition
+    {
+        public uint struct_size;
+        public KernelAiControllerType controller_type;
+        public uint ai_profile_id;
+        public uint tick_interval;
+        public uint blackboard_id;
+        public uint spawn_target_count;
+        public uint spawn_entity_template_id;
+        public uint spawn_actor_template_id;
+        public KernelVec3 spawn_position;
+        public float spawn_radius;
+        public uint spawn_seed;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelEntityAiDefinition>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelEntityTemplateDefinition
+    {
+        public uint struct_size;
+        public uint entity_template_id;
+        public KernelEntityType entity_type;
+        public KernelActorType actor_type;
+        public uint actor_template_id;
+        public uint component_flags;
+        public uint collider_template_id;
+        public ushort animation_state;
+        public ushort reserved0;
+        public uint visual_flags;
+        public KernelCombatStateDefinition combat;
+        public KernelAgentVisionConfig vision;
+        public KernelEntityAiDefinition ai;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelEntityTemplateDefinition>();
     }
 
     [StructLayout(LayoutKind.Sequential)]

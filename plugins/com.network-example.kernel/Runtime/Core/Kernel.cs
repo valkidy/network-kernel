@@ -697,26 +697,6 @@ namespace NetworkExample.Kernel
                 ref weaponMechanics);
         }
 
-        public bool ServerGetAreaEffectState(uint netId, out KernelAreaEffectState state)
-        {
-            ThrowIfDisposed();
-            state = new KernelAreaEffectState
-            {
-                struct_size = KernelAreaEffectState.StructSize,
-            };
-            return KernelNative.Kernel_ServerGetAreaEffectState(handle, netId, ref state);
-        }
-
-        public bool ServerGetBeamState(uint netId, out KernelBeamState state)
-        {
-            ThrowIfDisposed();
-            state = new KernelBeamState
-            {
-                struct_size = KernelBeamState.StructSize,
-            };
-            return KernelNative.Kernel_ServerGetBeamState(handle, netId, ref state);
-        }
-
         public bool ServerGetHomingState(uint netId, out KernelHomingState state)
         {
             ThrowIfDisposed();
@@ -772,6 +752,28 @@ namespace NetworkExample.Kernel
             weaponMechanics.struct_size = KernelWeaponMechanicsDefinition.StructSize;
         }
 
+        private static void PrepareProjectileMechanics(
+            ref KernelProjectileMechanicsDefinition projectileMechanics)
+        {
+            if (projectileMechanics.struct_size == 0)
+            {
+                projectileMechanics.struct_size = KernelProjectileMechanicsDefinition.StructSize;
+            }
+            if (projectileMechanics.homing.struct_size == 0)
+            {
+                projectileMechanics.homing.struct_size = KernelHomingMechanicsDefinition.StructSize;
+            }
+            if (projectileMechanics.area_effect.struct_size == 0)
+            {
+                projectileMechanics.area_effect.struct_size =
+                    KernelAreaEffectMechanicsDefinition.StructSize;
+            }
+            if (projectileMechanics.beam.struct_size == 0)
+            {
+                projectileMechanics.beam.struct_size = KernelBeamMechanicsDefinition.StructSize;
+            }
+        }
+
         private static bool LoadGameplayCatalog(IntPtr kernel, KernelGameplayCatalog catalog)
         {
             KernelActorTemplateDefinition[] actorTemplates =
@@ -782,16 +784,20 @@ namespace NetworkExample.Kernel
                 catalog.ColliderTemplates ?? new KernelColliderTemplateDefinition[0];
             KernelColliderBindingDefinition[] colliderBindings =
                 catalog.ColliderBindings ?? new KernelColliderBindingDefinition[0];
+            KernelEntityTemplateDefinition[] entityTemplates =
+                catalog.EntityTemplates ?? new KernelEntityTemplateDefinition[0];
 
             PrepareActorTemplates(actorTemplates);
             PrepareProjectileTemplates(projectileTemplates);
             PrepareColliderTemplates(colliderTemplates);
             PrepareColliderBindings(colliderBindings);
+            PrepareEntityTemplates(entityTemplates);
 
             GCHandle actorTemplatesHandle = PinArray(actorTemplates, out IntPtr actorTemplatesPtr);
             GCHandle projectileTemplatesHandle = PinArray(projectileTemplates, out IntPtr projectileTemplatesPtr);
             GCHandle colliderTemplatesHandle = PinArray(colliderTemplates, out IntPtr colliderTemplatesPtr);
             GCHandle colliderBindingsHandle = PinArray(colliderBindings, out IntPtr colliderBindingsPtr);
+            IntPtr entityTemplatesPtr = MarshalArray(entityTemplates);
             try
             {
                 var nativeCatalog = new KernelGameplayCatalogDefinition
@@ -807,6 +813,8 @@ namespace NetworkExample.Kernel
                     collider_template_count = (uint)colliderTemplates.Length,
                     collider_bindings = colliderBindingsPtr,
                     collider_binding_count = (uint)colliderBindings.Length,
+                    entity_templates = entityTemplatesPtr,
+                    entity_template_count = (uint)entityTemplates.Length,
                 };
                 return KernelNative.Kernel_LoadGameplayCatalog(kernel, ref nativeCatalog);
             }
@@ -816,6 +824,7 @@ namespace NetworkExample.Kernel
                 FreeIfAllocated(projectileTemplatesHandle);
                 FreeIfAllocated(colliderTemplatesHandle);
                 FreeIfAllocated(colliderBindingsHandle);
+                FreeMarshaledArray(entityTemplatesPtr, entityTemplates.Length);
             }
         }
 
@@ -843,6 +852,27 @@ namespace NetworkExample.Kernel
                 if (templates[index].struct_size == 0)
                 {
                     templates[index].struct_size = KernelProjectileTemplateDefinition.StructSize;
+                }
+                PrepareProjectileMechanics(ref templates[index].mechanics);
+            }
+        }
+
+        private static void PrepareEntityTemplates(KernelEntityTemplateDefinition[] templates)
+        {
+            for (int index = 0; index < templates.Length; ++index)
+            {
+                if (templates[index].struct_size == 0)
+                {
+                    templates[index].struct_size = KernelEntityTemplateDefinition.StructSize;
+                }
+                PrepareCombatState(ref templates[index].combat);
+                if (templates[index].vision.struct_size == 0)
+                {
+                    templates[index].vision.struct_size = KernelAgentVisionConfig.StructSize;
+                }
+                if (templates[index].ai.struct_size == 0)
+                {
+                    templates[index].ai.struct_size = KernelEntityAiDefinition.StructSize;
                 }
             }
         }
@@ -883,6 +913,42 @@ namespace NetworkExample.Kernel
             GCHandle handle = GCHandle.Alloc(array, GCHandleType.Pinned);
             pointer = handle.AddrOfPinnedObject();
             return handle;
+        }
+
+        private static IntPtr MarshalArray<T>(T[] array)
+            where T : struct
+        {
+            if (array.Length == 0)
+            {
+                return IntPtr.Zero;
+            }
+
+            int elementSize = Marshal.SizeOf<T>();
+            IntPtr pointer = Marshal.AllocHGlobal(elementSize * array.Length);
+            for (int index = 0; index < array.Length; ++index)
+            {
+                Marshal.StructureToPtr(
+                    array[index],
+                    IntPtr.Add(pointer, index * elementSize),
+                    false);
+            }
+            return pointer;
+        }
+
+        private static void FreeMarshaledArray<T>(IntPtr pointer, int length)
+            where T : struct
+        {
+            if (pointer == IntPtr.Zero)
+            {
+                return;
+            }
+
+            int elementSize = Marshal.SizeOf<T>();
+            for (int index = 0; index < length; ++index)
+            {
+                Marshal.DestroyStructure<T>(IntPtr.Add(pointer, index * elementSize));
+            }
+            Marshal.FreeHGlobal(pointer);
         }
 
         private static void FreeIfAllocated(GCHandle handle)
