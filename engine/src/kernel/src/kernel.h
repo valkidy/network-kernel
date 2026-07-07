@@ -16,6 +16,7 @@
 #include "kernel/src/tick_loop.h"
 #include "simulation/public/command.h"
 #include "simulation/public/simulation.h"
+#include "simulation/src/systems.h"
 #include "sync/public/history_buffer.h"
 #include "sync/public/snapshot.h"
 #include "transport/public/itransport.h"
@@ -25,6 +26,7 @@ namespace network_example {
 
 class EntityLifecycleSystem;
 class EntityStateSystem;
+class DirectorIntentExecutor;
 class ListenServerTransport;
 class MovementSystem;
 struct EntityDespawnPacket;
@@ -180,6 +182,7 @@ private:
     friend class EntityLifecycleSystem;
     friend class EntityStateSystem;
     friend class DirectorAISystem;
+    friend class DirectorIntentExecutor;
     friend class MovementSystem;
     friend class KernelRpcDispatcher;
     friend class KernelRpcWorldHandlers;
@@ -436,6 +439,7 @@ private:
     std::vector<KernelDebugInfo> debug_records_;
     std::unordered_map<NetId, KernelAgentVisionConfig> vision_configs_;
     std::unordered_map<NetId, VisionRuntimeState> vision_states_;
+    std::vector<ai::ScopedIntent> pending_director_intents_;
     simulation::CommandQueue command_queue_;
     KernelRpcMethodRegistry rpc_method_registry_;
     KernelRpcResponseStore rpc_response_store_;
@@ -446,6 +450,10 @@ private:
     std::uint32_t last_command_queue_capacity_warning_tick_ = 0;
     std::size_t last_simulation_command_queue_depth_ = 0;
     std::size_t last_simulation_command_processed_count_ = 0;
+    std::size_t last_director_intent_processed_count_ = 0;
+    std::uint32_t last_director_intent_created_count_ = 0;
+    std::uint32_t last_director_intent_failed_count_ = 0;
+    std::uint32_t last_director_intent_unsupported_count_ = 0;
     std::array<std::uint64_t, 120> simulation_tick_cost_samples_us_{};
     std::size_t simulation_tick_cost_sample_index_ = 0;
     std::uint32_t simulation_tick_cost_sample_count_ = 0;

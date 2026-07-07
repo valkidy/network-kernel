@@ -1,7 +1,9 @@
 #include <array>
 #include <cassert>
 #include <cstdint>
+#include <string>
 #include <type_traits>
+#include <variant>
 
 #include <entt/entt.hpp>
 #include <glm/glm.hpp>
@@ -189,6 +191,96 @@ void lifecycle_system_materializes_server_only_director_template() {
     assert(engine.latest_snapshot_.entities.empty());
 }
 
+void director_ai_emits_spawn_intent_without_enqueueing_create_command() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+    load_director_catalog(&engine);
+
+    KernelServerEntityCreateInfo create_info{};
+    create_info.struct_size = sizeof(create_info);
+    create_info.entity_template_id = 100;
+    create_info.position = KernelVec3{0.0f, 0.0f, 0.0f};
+    create_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+
+    std::uint32_t director = 0;
+    assert(engine.server_create_entity(create_info, &director));
+
+    network_example::DirectorAISystem{}.update(engine);
+
+    assert(engine.command_queue_.size() == 0);
+    assert(engine.pending_director_intents_.size() == 1);
+    const network_example::ai::ScopedIntent& intent =
+        engine.pending_director_intents_[0];
+    assert(intent.scope == network_example::ai::IntentScope::kDirector);
+    assert(intent.type == "SpawnAgent");
+    assert(intent.subject == director);
+    assert(std::get<std::uint32_t>(intent.params.at("count")) == 3);
+    assert(std::get<std::uint32_t>(
+               intent.params.at("spawn_entity_template_id")) == 200);
+    assert(std::get<std::uint32_t>(
+               intent.params.at("spawn_actor_template_id")) == 2);
+    assert(std::get<float>(intent.params.at("spawn_position_x")) == 6.0f);
+    assert(std::get<float>(intent.params.at("spawn_radius")) == 1.0f);
+}
+
+void director_intent_executor_reports_unsupported_intent() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+
+    network_example::ai::ScopedIntent intent{};
+    intent.scope = network_example::ai::IntentScope::kDirector;
+    intent.type = "UnknownDirectorIntent";
+    intent.subject = 777;
+
+    const network_example::DirectorIntentExecutionResult result =
+        network_example::DirectorIntentExecutor{}.execute(engine, intent);
+
+    assert(result.status == network_example::ai::IntentStatus::kFailed);
+    assert(result.unsupported);
+    assert(result.created_count == 0);
+    assert(engine.command_queue_.size() == 0);
+}
+
+void director_intent_executor_rejects_invalid_source_director() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+    load_director_catalog(&engine);
+
+    network_example::ai::ScopedIntent intent{};
+    intent.scope = network_example::ai::IntentScope::kDirector;
+    intent.type = "SpawnAgent";
+    intent.subject = 777;
+    intent.params["count"] = std::uint32_t{1};
+    intent.params["spawn_target_count"] = std::uint32_t{3};
+    intent.params["spawn_entity_template_id"] = std::uint32_t{200};
+    intent.params["spawn_actor_template_id"] = std::uint32_t{2};
+    intent.params["spawn_position_x"] = 6.0f;
+    intent.params["spawn_position_y"] = 0.0f;
+    intent.params["spawn_position_z"] = 0.0f;
+    intent.params["spawn_radius"] = 1.0f;
+    intent.params["spawn_cursor"] = std::uint32_t{0};
+
+    const network_example::DirectorIntentExecutionResult result =
+        network_example::DirectorIntentExecutor{}.execute(engine, intent);
+
+    assert(result.status == network_example::ai::IntentStatus::kFailed);
+    assert(!result.unsupported);
+    assert(result.created_count == 0);
+    assert(engine.command_queue_.size() == 0);
+}
+
 void director_runtime_spawns_agents_until_target_count() {
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;
@@ -209,6 +301,11 @@ void director_runtime_spawns_agents_until_target_count() {
 
     engine.update(1.0f / 30.0f);
     assert(engine.command_queue_.size() == 3);
+    assert(engine.pending_director_intents_.empty());
+    assert(engine.last_director_intent_processed_count_ == 1);
+    assert(engine.last_director_intent_created_count_ == 3);
+    assert(engine.last_director_intent_failed_count_ == 0);
+    assert(engine.last_director_intent_unsupported_count_ == 0);
     engine.update(1.0f / 30.0f);
     assert(engine.last_simulation_command_processed_count_ == 3);
     assert(engine.failed_simulation_command_count_ == 0);
@@ -279,6 +376,9 @@ void lifecycle_system_destroy_matches_legacy_side_effects() {
 int main() {
     lifecycle_system_create_matches_legacy_path();
     lifecycle_system_materializes_server_only_director_template();
+    director_ai_emits_spawn_intent_without_enqueueing_create_command();
+    director_intent_executor_reports_unsupported_intent();
+    director_intent_executor_rejects_invalid_source_director();
     director_runtime_spawns_agents_until_target_count();
     lifecycle_system_destroy_matches_legacy_side_effects();
     return 0;

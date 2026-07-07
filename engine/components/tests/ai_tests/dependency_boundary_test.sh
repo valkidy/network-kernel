@@ -9,8 +9,9 @@ if grep -E '"//engine/src|"//game_server|"//app' "${ai_build}" >/dev/null; then
 fi
 
 for engine_build in "${TEST_SRCDIR}/${TEST_WORKSPACE}"/engine/src/*/BUILD.bazel; do
-  if grep -F '"//engine/components/ai' "${engine_build}" >/dev/null; then
-    echo "engine/src modules must not depend on engine/components/ai"
+  if grep -F '"//engine/components/ai' "${engine_build}" |
+      grep -Fv '"//engine/components/ai:ai_intent"' >/dev/null; then
+    echo "engine/src modules must not depend on engine/components/ai except ai_intent"
     echo "Found forbidden dependency in ${engine_build}"
     exit 1
   fi

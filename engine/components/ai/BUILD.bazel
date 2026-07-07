@@ -5,6 +5,15 @@ package(default_visibility = ["//visibility:public"])
 exports_files(["BUILD.bazel"])
 
 cc_library(
+    name = "ai_intent",
+    hdrs = [
+        "include/ai_intent.h",
+        "include/ai_value.h",
+    ],
+    strip_include_prefix = "include",
+)
+
+cc_library(
     name = "ai",
     srcs = [
         "src/ai_context.cc",
@@ -28,5 +37,8 @@ cc_library(
         "include/yaml_loader.h",
     ],
     strip_include_prefix = "include",
-    deps = ["@yaml-cpp//:yaml-cpp"],
+    deps = [
+        ":ai_intent",
+        "@yaml-cpp//:yaml-cpp",
+    ],
 )

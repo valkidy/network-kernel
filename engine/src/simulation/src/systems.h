@@ -3,6 +3,7 @@
 
 #include <cstdint>
 
+#include "ai_intent.h"
 #include "kernel/public/kernel_types.h"
 #include "world/public/components.h"
 
@@ -51,6 +52,21 @@ public:
         KernelEngine& engine,
         NetId net_id,
         const PlayerInput& input) const;
+};
+
+struct DirectorIntentExecutionResult {
+    ai::IntentStatus status = ai::IntentStatus::kFailed;
+    bool unsupported = false;
+    std::uint32_t created_count = 0;
+};
+
+class DirectorIntentExecutor {
+public:
+    DirectorIntentExecutionResult execute(
+        KernelEngine& engine,
+        const ai::ScopedIntent& intent) const;
+
+    void update(KernelEngine& engine) const;
 };
 
 class DirectorAISystem {

@@ -125,6 +125,7 @@ cc_library(
         ":kernel_api_internal",
         ":kernel_types",
         ":tick_loop",
+        "//engine/components/ai:ai_intent",
         "//engine/src/protocol:protocol",
         "//engine/src/simulation:simulation",
         "//engine/src/sync:sync",

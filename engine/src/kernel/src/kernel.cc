@@ -2666,6 +2666,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     debug_records_.clear();
     vision_configs_.clear();
     vision_states_.clear();
+    pending_director_intents_.clear();
     network_stats_ = KernelNetworkStats{};
     benchmark_stats_ = KernelBenchmarkStats{};
     rejected_simulation_command_count_ = 0;
@@ -2674,6 +2675,10 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     last_command_queue_capacity_warning_tick_ = 0;
     last_simulation_command_queue_depth_ = 0;
     last_simulation_command_processed_count_ = 0;
+    last_director_intent_processed_count_ = 0;
+    last_director_intent_created_count_ = 0;
+    last_director_intent_failed_count_ = 0;
+    last_director_intent_unsupported_count_ = 0;
     simulation_tick_cost_samples_us_.fill(0);
     simulation_tick_cost_sample_index_ = 0;
     simulation_tick_cost_sample_count_ = 0;
@@ -4325,6 +4330,7 @@ void KernelEngine::simulate_tick() {
     destroy_dead_entities(world_, tick_loop_.current_tick(), &events_);
     update_vision_states(fixed_delta);
     DirectorAISystem{}.update(*this);
+    DirectorIntentExecutor{}.update(*this);
     const std::size_t last_tick_event = events_.size();
     broadcast_combat_events(first_tick_event, last_tick_event);
     send_due_clock_sync_pings(server_time_us);
