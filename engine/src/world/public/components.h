@@ -111,20 +111,7 @@ struct AgentRuntime {
     std::uint32_t blackboard_id = 0;
 };
 
-enum class AgentSentryState : std::uint8_t {
-    kIdle = 0,
-    kAlert = 1,
-    kAttack = 2,
-};
-
-struct AgentSentryRuntime {
-    AgentSentryState state = AgentSentryState::kIdle;
-    NetId target_net_id = 0;
-    std::uint32_t state_ticks = 0;
-    std::uint32_t lost_target_ticks = 0;
-    std::uint32_t patrol_rotation_tick = 0;
-    std::uint32_t patrol_rotation_step = 0;
-};
+struct AgentSentryRuntime {};
 
 struct DirectorRuntime {
     std::uint32_t tick_interval = 1;

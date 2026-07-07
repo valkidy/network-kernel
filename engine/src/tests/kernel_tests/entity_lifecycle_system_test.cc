@@ -1,6 +1,7 @@
 #include <array>
 #include <cassert>
 #include <cstdint>
+#include <type_traits>
 
 #include <entt/entt.hpp>
 #include <glm/glm.hpp>
@@ -13,6 +14,10 @@
 #undef private
 
 namespace {
+
+static_assert(
+    std::is_empty_v<network_example::AgentSentryRuntime>,
+    "Kernel AgentSentryRuntime must stay an empty marker; game_server owns sentry AI state.");
 
 KernelServerEntityCreateInfo player_create_info() {
     KernelServerEntityCreateInfo create_info{};
