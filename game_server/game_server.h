@@ -1,7 +1,7 @@
 #ifndef GAME_SERVER_GAME_SERVER_H_
 #define GAME_SERVER_GAME_SERVER_H_
 
-#include "game_server/enemy_manager.h"
+#include "game_server/agent_runtime_manager.h"
 #include "game_server/gameplay_config.h"
 #include "game_server/public/game_server_types.h"
 #include "kernel/public/kernel_api.h"
@@ -17,8 +17,8 @@ public:
     void handle_event(const KernelEvent& event);
     void tick(float delta_seconds);
 
-    EnemyManager& enemy_manager();
-    const EnemyManager& enemy_manager() const;
+    AgentRuntimeManager& agent_runtime_manager();
+    const AgentRuntimeManager& agent_runtime_manager() const;
     bool query_weapon_template(
         std::uint8_t weapon_id,
         GameServerWeaponTemplateInfo* out_info) const;
@@ -28,7 +28,7 @@ private:
 
     KernelHandle* kernel_ = nullptr;
     GameServerGameplayConfig config_;
-    EnemyManager enemy_manager_;
+    AgentRuntimeManager agent_runtime_manager_;
 };
 
 }  // namespace network_example::game_server

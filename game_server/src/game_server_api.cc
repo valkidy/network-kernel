@@ -303,7 +303,7 @@ std::uint32_t GameServer_GetEnemyCount(GameServerHandle* game_server) {
 
     try {
         return static_cast<std::uint32_t>(
-            game_server->server.enemy_manager().enemy_count());
+            game_server->server.agent_runtime_manager().agent_count());
     } catch (...) {
         return 0;
     }
@@ -332,7 +332,7 @@ void GameServer_DespawnAll(
     }
 
     try {
-        game_server->server.enemy_manager().despawn_all(reason);
+        game_server->server.agent_runtime_manager().despawn_all(reason);
     } catch (...) {
     }
 }

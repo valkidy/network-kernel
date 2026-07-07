@@ -4,8 +4,8 @@
 #include <string>
 #include <vector>
 
-#include "ai/ai_tree.h"
-#include "ai/capability_registry.h"
+#include "ai_tree.h"
+#include "capability_registry.h"
 
 namespace network_example::ai {
 

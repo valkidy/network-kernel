@@ -1,4 +1,4 @@
-#include "ai/yaml_loader.h"
+#include "yaml_loader.h"
 
 #include <algorithm>
 #include <string>
@@ -7,7 +7,7 @@
 
 #include <yaml-cpp/yaml.h>
 
-#include "ai/node_factory.h"
+#include "node_factory.h"
 
 namespace network_example::ai {
 namespace {
@@ -121,8 +121,8 @@ void collect_node_requirements(
     ScenarioRequirements* requirements) {
     add_unique(&requirements->required_nodes, config.type);
 
-    if (config.type == "Condition.HasVisibleEnemy") {
-        add_unique(&requirements->required_features, "hasVisibleEnemy");
+    if (config.type == "Condition.HasVisibleHostile") {
+        add_unique(&requirements->required_features, "hasVisibleHostile");
     } else if (config.type == "Condition.HpAbove" ||
                config.type == "Condition.HpBelow") {
         add_unique(&requirements->required_features, "hp01");
@@ -138,7 +138,7 @@ void collect_node_requirements(
         const auto target = config.params.find("target");
         add_unique(
             &requirements->required_features,
-            target == config.params.end() ? "nearestEnemyId" : target->second);
+            target == config.params.end() ? "nearestHostileId" : target->second);
     }
 
     for (const NodeConfig& child : config.children) {

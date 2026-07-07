@@ -7,8 +7,8 @@ cc_test(
 )
 
 cc_test(
-    name = "command_buffer_test",
-    srcs = ["command_buffer_test.cc"],
+    name = "ai_intent_test",
+    srcs = ["ai_intent_test.cc"],
     deps = ["//engine/components/ai:ai"],
 )
 

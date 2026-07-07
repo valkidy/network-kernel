@@ -1,12 +1,7 @@
 catalog_version: 1
 weapon_template_dir: weapon_templates
 projectile_template_dir: projectile_templates
-actor_template_dir: actor_templates
+entity_template_dir: entity_templates
 collider_template_file: collider_templates/default.yaml
 player:
-  actor_template: player
-enemy:
-  actor_template: enemy_grunt
-  spawn_count: 10
-  spawn_radius: 5.0
-  spawn_seed: 4242
+  entity_template: player

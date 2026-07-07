@@ -49,15 +49,19 @@ KernelProjectileTemplateDefinition projectile_template() {
     projectile.struct_size = sizeof(projectile);
     projectile.projectile_template_id = 3;
     projectile.weapon_id = network_example::game_server::kAgentSpammerWeaponId;
-    projectile.motion_model = KernelProjectileMotionModel_Linear;
-    projectile.sync_mode = KernelProjectileSyncMode_ServerSnapshotOnly;
-    projectile.speed = 30.0f;
-    projectile.lifetime_seconds = 1.0f;
-    projectile.collider_template_id = 1;
-    projectile.damage = 1;
-    projectile.damage_shape = KernelProjectileDamageShape_DirectHit;
-    projectile.collision_mask = KERNEL_COLLISION_MASK_NONE;
-    projectile.max_hit_count = 1;
+    projectile.mechanics.struct_size = sizeof(KernelProjectileMechanicsDefinition);
+    projectile.mechanics.projectile_type = KernelProjectileType_Standard;
+    projectile.mechanics.motion_model = KernelProjectileMotionModel_Linear;
+    projectile.mechanics.sync_mode = KernelProjectileSyncMode_ServerSnapshotOnly;
+    projectile.mechanics.hit_response = KernelProjectileHitResponse_Destroy;
+    projectile.mechanics.damage_shape = KernelProjectileDamageShape_DirectHit;
+    projectile.mechanics.damage = 1;
+    projectile.mechanics.speed = 30.0f;
+    projectile.mechanics.lifetime_ticks = 30;
+    projectile.mechanics.collider_template_id = 1;
+    projectile.mechanics.collision_mask = KERNEL_COLLISION_MASK_NONE;
+    projectile.mechanics.max_hit_count = 1;
+    projectile.mechanics.flags = 1u;
     return projectile;
 }
 
@@ -127,15 +131,7 @@ void set_spammer_weapon_mechanics(
     weapon.damage = 1;
     weapon.cooldown_ticks = 1;
     weapon.reload_ticks = reload_ticks;
-    weapon.projectile.struct_size = sizeof(KernelProjectileMechanicsDefinition);
-    weapon.projectile.projectile_template_id = 3;
-    weapon.projectile.speed = 30.0f;
-    weapon.projectile.lifetime_seconds = 1.0f;
-    weapon.projectile.motion_model = KernelProjectileMotionModel_Linear;
-    weapon.projectile.hit_response = KernelProjectileHitResponse_Destroy;
-    weapon.projectile.damage_shape = KernelProjectileDamageShape_DirectHit;
-    weapon.projectile.collision_mask = KERNEL_COLLISION_MASK_NONE;
-    weapon.projectile.max_hit_count = 1;
+    weapon.projectile_template_id = 3;
     assert(Kernel_ServerSetEntityWeaponMechanics(kernel, net_id, &weapon));
 }
 
@@ -156,7 +152,7 @@ void set_vision(
 void run_frame(
     KernelHandle* kernel,
     const network_example::game_server::AgentSentryController& controller,
-    std::vector<network_example::game_server::Enemy>* enemies) {
+    std::vector<network_example::game_server::AgentRuntimeState>* enemies) {
     controller.tick(kernel, enemies, 1.0f / 30.0f);
     Kernel_Update(kernel, 1.0f / 30.0f);
 }
@@ -214,10 +210,10 @@ int main() {
     assert(Kernel_ServerSetEntityTransform(kernel, player_net_id, &out_of_range, &identity));
     Kernel_Update(kernel, 1.0f / 30.0f);
 
-    network_example::game_server::Enemy enemy;
+    network_example::game_server::AgentRuntimeState enemy;
     enemy.net_id = enemy_net_id;
     enemy.position = KernelVec3{0.0f, 0.0f, 0.0f};
-    std::vector<network_example::game_server::Enemy> enemies{enemy};
+    std::vector<network_example::game_server::AgentRuntimeState> enemies{enemy};
 
     network_example::game_server::AgentSentryConfig sentry_config;
     sentry_config.alert_ticks = 2;
@@ -225,6 +221,7 @@ int main() {
     sentry_config.patrol_rotation_interval_ticks = 2;
     sentry_config.patrol_rotation_min_degrees = 15.0f;
     sentry_config.patrol_rotation_max_degrees = 30.0f;
+    sentry_config.weapon_id = network_example::game_server::kAgentSpammerWeaponId;
     network_example::game_server::AgentSentryController controller(sentry_config);
 
     run_frame(kernel, controller, &enemies);
@@ -239,6 +236,12 @@ int main() {
     assert(patrol_degrees <= 30.0f);
 
     KernelVec3 player_position{5.0f, 0.0f, 2.0f};
+    KernelVec3 agent_position{0.0f, 0.0f, 0.0f};
+    assert(Kernel_ServerSetEntityTransform(
+        kernel,
+        enemy_net_id,
+        &agent_position,
+        &identity));
     assert(Kernel_ServerSetEntityTransform(kernel, player_net_id, &player_position, &identity));
     Kernel_Update(kernel, 1.0f / 30.0f);
     run_frame(kernel, controller, &enemies);

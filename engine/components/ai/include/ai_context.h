@@ -7,7 +7,7 @@
 #include <string_view>
 #include <unordered_map>
 
-#include "ai/ai_value.h"
+#include "ai_value.h"
 
 namespace network_example::ai {
 

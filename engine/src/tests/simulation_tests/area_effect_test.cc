@@ -44,11 +44,49 @@ std::uint32_t count_damage_events(const std::vector<KernelEvent>& events) {
     return count;
 }
 
+network_example::NetId spawn_area_projectile(
+    network_example::World& world,
+    network_example::PeerId owner_peer,
+    const glm::vec3& position,
+    float radius,
+    std::uint32_t damage_interval_ticks,
+    std::uint32_t expire_tick,
+    std::uint16_t damage_per_interval,
+    std::uint8_t source_code) {
+    const network_example::NetId net_id =
+        world.spawn_projectile(owner_peer, position, glm::vec3{0.0f, 0.0f, 0.0f});
+    const auto entity = world.find_entity(net_id);
+    assert(entity.has_value());
+    network_example::ProjectileState& projectile =
+        world.registry().get<network_example::ProjectileState>(*entity);
+    projectile.weapon_id = source_code;
+    projectile.damage = damage_per_interval;
+    projectile.collision_mask = network_example::kCollisionMaskDamageable;
+    projectile.max_lifetime_ticks = 0;
+    world.registry().replace<network_example::Hitbox>(
+        *entity,
+        network_example::Hitbox{{0.0f, 0.0f, 0.0f}, {radius, radius, radius}, 0});
+    world.registry().emplace<network_example::ProjectileAreaEffectRuntime>(
+        *entity,
+        network_example::ProjectileAreaEffectRuntime{
+            radius,
+            damage_per_interval,
+            damage_interval_ticks,
+            expire_tick,
+            source_code,
+            network_example::kCollisionMaskDamageable,
+            network_example::ProjectileDamageFalloff::kNone,
+            {},
+        });
+    return net_id;
+}
+
 void area_effect_damages_only_targets_inside_radius() {
     network_example::World world;
     const network_example::NetId inside = spawn_enemy(world, glm::vec3{1.0f, 0.0f, 0.0f});
     const network_example::NetId outside = spawn_enemy(world, glm::vec3{5.0f, 0.0f, 0.0f});
-    world.spawn_area_effect(0, glm::vec3{0.0f, 0.5f, 0.0f}, 2.0f, 10, 0, 20, 7);
+    spawn_area_projectile(
+        world, 0, glm::vec3{0.0f, 0.5f, 0.0f}, 2.0f, 10, 0, 20, 7);
     network_example::DamagePipeline pipeline;
     std::vector<KernelEvent> events;
 
@@ -63,7 +101,8 @@ void area_effect_damages_only_targets_inside_radius() {
 void area_effect_respects_per_target_damage_interval() {
     network_example::World world;
     const network_example::NetId target = spawn_enemy(world, glm::vec3{1.0f, 0.0f, 0.0f});
-    world.spawn_area_effect(0, glm::vec3{0.0f, 0.5f, 0.0f}, 2.0f, 10, 0, 20, 7);
+    spawn_area_projectile(
+        world, 0, glm::vec3{0.0f, 0.5f, 0.0f}, 2.0f, 10, 0, 20, 7);
     network_example::DamagePipeline pipeline;
     std::vector<KernelEvent> events;
 
@@ -87,7 +126,8 @@ void server_owned_area_effect_uses_player_damage_grace() {
     assert(entity.has_value());
     world.registry().get<network_example::Hitbox>(*entity) =
         network_example::Hitbox{{0.0f, 0.5f, 0.0f}, {0.25f, 0.5f, 0.25f}, 0};
-    world.spawn_area_effect(0, glm::vec3{0.0f, 0.5f, 0.0f}, 2.0f, 10, 0, 20, 7);
+    spawn_area_projectile(
+        world, 0, glm::vec3{0.0f, 0.5f, 0.0f}, 2.0f, 10, 0, 20, 7);
     network_example::DamagePipeline pipeline;
     std::vector<KernelEvent> events;
 
@@ -106,7 +146,8 @@ void server_owned_area_effect_uses_player_damage_grace() {
 void area_effect_expires_at_expire_tick() {
     network_example::World world;
     const network_example::NetId area =
-        world.spawn_area_effect(0, glm::vec3{0.0f, 0.5f, 0.0f}, 2.0f, 10, 3, 20, 7);
+        spawn_area_projectile(
+            world, 0, glm::vec3{0.0f, 0.5f, 0.0f}, 2.0f, 10, 3, 20, 7);
     network_example::DamagePipeline pipeline;
     std::vector<KernelEvent> events;
 
@@ -122,7 +163,8 @@ void area_effect_damage_order_is_deterministic() {
     network_example::World world;
     const network_example::NetId first = spawn_enemy(world, glm::vec3{2.0f, 0.0f, 0.0f});
     const network_example::NetId second = spawn_enemy(world, glm::vec3{1.0f, 0.0f, 0.0f});
-    world.spawn_area_effect(0, glm::vec3{0.0f, 0.5f, 0.0f}, 3.0f, 1, 0, 10, 9);
+    spawn_area_projectile(
+        world, 0, glm::vec3{0.0f, 0.5f, 0.0f}, 3.0f, 1, 0, 10, 9);
     network_example::DamagePipeline pipeline;
     std::vector<KernelEvent> events;
 

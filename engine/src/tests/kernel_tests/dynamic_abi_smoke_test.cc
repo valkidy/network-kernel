@@ -90,7 +90,8 @@ std::string shell_quote(const std::string& value) {
     return quoted;
 }
 
-void verify_exported_symbols(const std::filesystem::path& library_path) {
+void verify_exported_symbols(
+    [[maybe_unused]] const std::filesystem::path& library_path) {
 #if defined(__APPLE__)
     const std::string command = "nm -gU " + shell_quote(library_path.string());
     FILE* pipe = popen(command.c_str(), "r");
@@ -118,8 +119,6 @@ void verify_exported_symbols(const std::filesystem::path& library_path) {
     const int status = pclose(pipe);
     assert(status == 0);
     assert(unexpected_symbols.empty());
-#else
-    (void)library_path;
 #endif
 }
 
@@ -355,14 +354,6 @@ int main() {
             KernelWeaponMechanicsDefinition*)>(
             library,
             "Kernel_ServerGetEntityWeaponMechanics");
-    [[maybe_unused]] auto* kernel_server_get_area_effect_state =
-        load_symbol<bool(KernelHandle*, std::uint32_t, KernelAreaEffectState*)>(
-            library,
-            "Kernel_ServerGetAreaEffectState");
-    [[maybe_unused]] auto* kernel_server_get_beam_state =
-        load_symbol<bool(KernelHandle*, std::uint32_t, KernelBeamState*)>(
-            library,
-            "Kernel_ServerGetBeamState");
     [[maybe_unused]] auto* kernel_server_get_homing_state =
         load_symbol<bool(KernelHandle*, std::uint32_t, KernelHomingState*)>(
             library,
@@ -425,6 +416,10 @@ int main() {
            sizeof(KernelWeaponMechanicsDefinition));
     assert(abi_info.actor_template_definition_size ==
            sizeof(KernelActorTemplateDefinition));
+    assert(abi_info.entity_template_definition_size ==
+           sizeof(KernelEntityTemplateDefinition));
+    assert(abi_info.entity_ai_definition_size ==
+           sizeof(KernelEntityAiDefinition));
     assert(abi_info.projectile_mechanics_definition_size ==
            sizeof(KernelProjectileMechanicsDefinition));
     assert(abi_info.area_effect_mechanics_definition_size ==
@@ -433,8 +428,6 @@ int main() {
            sizeof(KernelBeamMechanicsDefinition));
     assert(abi_info.homing_mechanics_definition_size ==
            sizeof(KernelHomingMechanicsDefinition));
-    assert(abi_info.area_effect_state_size == sizeof(KernelAreaEffectState));
-    assert(abi_info.beam_state_size == sizeof(KernelBeamState));
     assert(abi_info.homing_state_size == sizeof(KernelHomingState));
     assert(abi_info.lan_discovery_server_config_size ==
            sizeof(KernelLANDiscoveryServerConfig));
@@ -463,9 +456,7 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_RENDER_STATES_AT_TIME) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_SERVER_MECHANICS_CONFIG) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_WEAPON_METADATA_QUERY) != 0);
-    assert((abi_info.capability_flags & KERNEL_CAPABILITY_AREA_EFFECT_WEAPONS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_PROJECTILE_RESPONSE_MASKS) != 0);
-    assert((abi_info.capability_flags & KERNEL_CAPABILITY_BEAM_WEAPONS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_HOMING_PROJECTILES) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LAN_DISCOVERY) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
@@ -536,7 +527,8 @@ int main() {
     GameServerWeaponTemplateInfo template_info{};
     template_info.struct_size = sizeof(template_info);
     assert(game_server_query_weapon_template(game_server, 4, &template_info));
-    assert(template_info.mechanics.fire_mode == KernelWeaponFireMode_AreaEffect);
+    assert(template_info.mechanics.fire_mode == KernelWeaponFireMode_Projectile);
+    assert(template_info.mechanics.projectile_template_id != 0u);
     assert(kernel_get_local_player_info(kernel, &local_info));
     assert(local_info.peer_id == 1);
     assert(local_info.player_net_id != 0);
@@ -597,21 +589,13 @@ int main() {
     rocket.damage = 5;
     rocket.cooldown_ticks = 30;
     rocket.reload_ticks = 30;
-    rocket.projectile.struct_size = sizeof(KernelProjectileMechanicsDefinition);
-    rocket.projectile.projectile_template_id = 3;
-    rocket.projectile.motion_model = KernelProjectileMotionModel_Linear;
-    rocket.projectile.speed = 35.0f;
-    rocket.projectile.lifetime_seconds = 2.5f;
-    rocket.projectile.hit_response = KernelProjectileHitResponse_Destroy;
-    rocket.projectile.damage_shape = KernelProjectileDamageShape_DirectHit;
-    rocket.projectile.collision_mask = KERNEL_COLLISION_MASK_DAMAGEABLE;
-    rocket.projectile.max_hit_count = 1;
+    rocket.projectile_template_id = 3;
     assert(kernel_server_validate_mechanics_config(&rocket));
     assert(kernel_server_set_entity_weapon_mechanics(kernel, enemy, &rocket));
     KernelWeaponMechanicsDefinition queried_weapon{};
     queried_weapon.struct_size = sizeof(queried_weapon);
     assert(kernel_server_get_entity_weapon_mechanics(kernel, enemy, 3, &queried_weapon));
-    assert(queried_weapon.projectile.damage_shape == KernelProjectileDamageShape_DirectHit);
+    assert(queried_weapon.projectile_template_id == 3);
     assert(kernel_server_set_entity_state(kernel, enemy, 4, 8));
     KernelServerEntityState server_state{};
     server_state.struct_size = sizeof(server_state);
@@ -669,11 +653,23 @@ int main() {
     for (std::uint32_t index = 0; index < event_count; ++index) {
         game_server_handle_event(game_server, &events[index]);
     }
+    for (int frame = 0; frame < 3; ++frame) {
+        game_server_tick(game_server, 1.0f / 30.0f);
+        kernel_update(kernel, 1.0f / 30.0f);
+        event_count = kernel_poll_events(
+            kernel,
+            events.data(),
+            static_cast<std::uint32_t>(events.size()));
+        for (std::uint32_t index = 0; index < event_count; ++index) {
+            game_server_handle_event(game_server, &events[index]);
+        }
+    }
     game_server_tick(game_server, 1.0f / 30.0f);
     assert(game_server_get_enemy_count(game_server) == 10);
     game_server_despawn_all(game_server, KernelDespawnReason_Destroyed);
     game_server_tick(game_server, 1.0f / 30.0f);
     assert(game_server_get_enemy_count(game_server) == 0);
+    kernel_update(kernel, 1.0f / 30.0f);
 
     game_server_destroy(game_server);
     kernel_destroy(kernel);

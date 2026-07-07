@@ -39,6 +39,9 @@ WorldSnapshot build_world_snapshot(
         const EntityKind,
         const Transform>();
     for (const entt::entity entity : view) {
+        if (world.registry().all_of<ServerOnly>(entity)) {
+            continue;
+        }
         EntitySnapshot entity_snapshot;
         const NetworkIdentity& identity = view.get<const NetworkIdentity>(entity);
         entity_snapshot.net_id = identity.net_id;

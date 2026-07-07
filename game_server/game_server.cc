@@ -8,7 +8,7 @@ namespace network_example::game_server {
 GameServer::GameServer(KernelHandle* kernel, GameServerGameplayConfig config)
     : kernel_(kernel),
       config_(std::move(config)),
-      enemy_manager_(kernel, config_) {
+      agent_runtime_manager_(kernel, config_) {
     load_kernel_gameplay_catalog(kernel_, config_);
 }
 
@@ -16,19 +16,19 @@ void GameServer::handle_event(const KernelEvent& event) {
     if (event.type == KernelEventType_PlayerJoined && event.net_id != 0) {
         configure_player(event.net_id);
     }
-    enemy_manager_.handle_event(event);
+    agent_runtime_manager_.handle_event(event);
 }
 
 void GameServer::tick(float delta_seconds) {
-    enemy_manager_.tick(delta_seconds);
+    agent_runtime_manager_.tick(delta_seconds);
 }
 
-EnemyManager& GameServer::enemy_manager() {
-    return enemy_manager_;
+AgentRuntimeManager& GameServer::agent_runtime_manager() {
+    return agent_runtime_manager_;
 }
 
-const EnemyManager& GameServer::enemy_manager() const {
-    return enemy_manager_;
+const AgentRuntimeManager& GameServer::agent_runtime_manager() const {
+    return agent_runtime_manager_;
 }
 
 bool GameServer::query_weapon_template(

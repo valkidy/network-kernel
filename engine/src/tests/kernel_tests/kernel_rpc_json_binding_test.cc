@@ -41,6 +41,25 @@ void reads_create_info_by_type() {
     assert(info.actor_template_id == 9);
 }
 
+void reads_create_info_entity_template_id_when_present() {
+    const Json value = {
+        {"entity_type", 0},
+        {"actor_type", 0},
+        {"owner_peer", 0},
+        {"position", {{"x", 4.0}, {"y", 5.0}, {"z", 6.0}}},
+        {"rotation", {{"x", 0.0}, {"y", 0.0}, {"z", 0.0}, {"w", 1.0}}},
+        {"animation_state", 0},
+        {"visual_flags", 0},
+        {"actor_template_id", 0},
+        {"entity_template_id", 100},
+    };
+
+    KernelServerEntityCreateInfo info{};
+    assert(network_example::rpc_json::read_json(value, &info));
+    assert(info.struct_size == sizeof(info));
+    assert(info.entity_template_id == 100);
+}
+
 void rejects_shape_and_range_errors() {
     KernelServerEntityCreateInfo info{};
 
@@ -70,6 +89,7 @@ void rejects_shape_and_range_errors() {
 
 int main() {
     reads_create_info_by_type();
+    reads_create_info_entity_template_id_when_present();
     rejects_shape_and_range_errors();
     return 0;
 }

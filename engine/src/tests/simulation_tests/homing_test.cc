@@ -59,24 +59,34 @@ network_example::WeaponMechanicsDefinition homing_weapon_definition() {
     definition.damage = 20;
     definition.cooldown_ticks = 1;
     definition.reload_ticks = 30;
-    definition.projectile_speed = 5.0f;
-    definition.projectile_lifetime_seconds = 3.0f;
-    definition.projectile_motion_model = network_example::ProjectileMotionModel::kHoming;
-    definition.projectile_hit_response = network_example::ProjectileHitResponse::kDestroy;
-    definition.projectile_damage_shape = network_example::ProjectileDamageShape::kDirectHit;
-    definition.projectile_collision_mask = network_example::kCollisionLayerHostileSide;
-    definition.projectile_max_hit_count = 1;
-    definition.homing_mode = network_example::HomingMode::kFireAndForget;
-    definition.homing_sync_mode =
-        network_example::ProjectileSyncMode::kHybridDeterministicThenSnapshot;
-    definition.homing_boost_ticks = 1;
-    definition.homing_lock_on_range = 20.0f;
-    definition.homing_lose_target_range = 25.0f;
-    definition.homing_lock_cone_degrees = 75.0f;
-    definition.homing_max_turn_rate_degrees_per_second = 720.0f;
-    definition.homing_acceleration = 30.0f;
-    definition.homing_max_speed = 10.0f;
+    definition.projectile_template_id = 66;
     return definition;
+}
+
+network_example::RuntimeProjectileTemplate homing_projectile_template() {
+    network_example::RuntimeProjectileTemplate projectile_template{};
+    projectile_template.projectile_template_id = 66;
+    projectile_template.weapon_id = network_example::kWeaponSlot6;
+    projectile_template.projectile_type = network_example::ProjectileType::kStandard;
+    projectile_template.motion_model = network_example::ProjectileMotionModel::kHoming;
+    projectile_template.sync_mode =
+        network_example::ProjectileSyncMode::kHybridDeterministicThenSnapshot;
+    projectile_template.hit_response = network_example::ProjectileHitResponse::kDestroy;
+    projectile_template.damage_shape = network_example::ProjectileDamageShape::kDirectHit;
+    projectile_template.damage = 20;
+    projectile_template.speed = 5.0f;
+    projectile_template.lifetime_ticks = 90;
+    projectile_template.collision_mask = network_example::kCollisionLayerHostileSide;
+    projectile_template.max_hit_count = 1;
+    projectile_template.homing_mode = network_example::HomingMode::kFireAndForget;
+    projectile_template.homing_boost_ticks = 1;
+    projectile_template.homing_lock_on_range = 20.0f;
+    projectile_template.homing_lose_target_range = 25.0f;
+    projectile_template.homing_lock_cone_degrees = 75.0f;
+    projectile_template.homing_max_turn_degrees_per_tick = 24.0f;
+    projectile_template.homing_acceleration = 30.0f;
+    projectile_template.homing_max_speed = 10.0f;
+    return projectile_template;
 }
 
 void configure_homing_weapon(
@@ -93,6 +103,8 @@ void configure_homing_weapon(
         world.registry().get_or_emplace<network_example::WeaponState>(*entity);
     weapon.ammo[network_example::kWeaponSlot6] = 4;
     weapon.reserve_ammo[network_example::kWeaponSlot6] = 4;
+
+    world.set_projectile_templates({homing_projectile_template()});
 }
 
 network_example::NetId spawn_player(

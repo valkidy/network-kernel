@@ -4,6 +4,9 @@
 #include <array>
 #include <cmath>
 
+#include "ai_intent.h"
+#include "game_server/actor_intent_executor.h"
+#include "game_server/ai_perception_adapter.h"
 #include "kernel/src/kernel_api_internal.h"
 
 namespace network_example::game_server {
@@ -21,10 +24,6 @@ KernelVec3 subtract(const KernelVec3& lhs, const KernelVec3& rhs) {
 
 float length_squared(const KernelVec3& value) {
     return value.x * value.x + value.y * value.y + value.z * value.z;
-}
-
-KernelVec3 scale(const KernelVec3& value, float scalar) {
-    return KernelVec3{value.x * scalar, value.y * scalar, value.z * scalar};
 }
 
 KernelQuat normalized(KernelQuat value) {
@@ -101,98 +100,36 @@ bool facing_rotation_from_vision_toward(
     return true;
 }
 
-KernelVec3 normalized_direction(const KernelVec3& from, const KernelVec3& to) {
-    const KernelVec3 delta = subtract(to, from);
-    const float distance_squared = length_squared(delta);
-    if (distance_squared <= 0.0001f * 0.0001f) {
-        return KernelVec3{1.0f, 0.0f, 0.0f};
-    }
-    return scale(delta, 1.0f / std::sqrt(distance_squared));
-}
-
-bool query_vision_state(
-    KernelHandle* kernel,
-    std::uint32_t agent_net_id,
-    KernelVisionStateView* out_state) {
-    if (kernel == nullptr || out_state == nullptr) {
-        return false;
-    }
-    KernelVisionStateQuery query{};
-    query.struct_size = sizeof(query);
-    query.agent_net_id = agent_net_id;
-    out_state->struct_size = sizeof(*out_state);
-    return Kernel_QueryVisionState(kernel, &query, out_state, 1) == 1 &&
-           out_state->valid != 0u;
-}
-
-bool get_entity_position(
-    KernelHandle* kernel,
-    std::uint32_t net_id,
-    KernelVec3* out_position) {
-    if (kernel == nullptr || out_position == nullptr || net_id == 0) {
-        return false;
-    }
-    KernelServerEntityState state{};
-    state.struct_size = sizeof(state);
-    if (!Kernel_ServerGetEntityState(kernel, net_id, &state) || state.valid == 0u) {
-        return false;
-    }
-    *out_position = state.position;
-    return true;
-}
-
-void submit_weapon_input(
-    KernelHandle* kernel,
-    const AgentSentryConfig& config,
-    Enemy* enemy,
-    const KernelVec3& target_position,
-    std::uint32_t buttons) {
-    if (buttons == 0u) {
+void transition_to(AgentRuntimeState* agent, AgentSentryState state) {
+    if (agent->sentry.state == state) {
         return;
     }
-
-    PlayerInput input{};
-    input.input_seq = enemy->next_input_seq++;
-    input.buttons = buttons;
-    input.selected_weapon = config.weapon_id;
-    input.aim_dir = normalized_direction(enemy->position, target_position);
-    Kernel_ServerEnqueueEntityInput(
-        kernel,
-        KernelCommandSource_AI,
-        enemy->net_id,
-        &input);
-}
-
-void transition_to(Enemy* enemy, AgentSentryState state) {
-    if (enemy->sentry.state == state) {
-        return;
-    }
-    enemy->sentry.state = state;
-    enemy->sentry.state_ticks = 0;
-    enemy->sentry.lost_target_ticks = 0;
-    enemy->sentry.patrol_rotation_tick = 0;
-    enemy->sentry.patrol_rotation_step = 0;
+    agent->sentry.state = state;
+    agent->sentry.state_ticks = 0;
+    agent->sentry.lost_target_ticks = 0;
+    agent->sentry.patrol_rotation_tick = 0;
+    agent->sentry.patrol_rotation_step = 0;
 }
 
 bool update_patrol_facing(
     const AgentSentryConfig& config,
-    Enemy* enemy,
+    AgentRuntimeState* agent,
     const KernelQuat& current_rotation,
     KernelQuat* out_rotation) {
-    if (enemy == nullptr || out_rotation == nullptr ||
+    if (agent == nullptr || out_rotation == nullptr ||
         config.patrol_rotation_interval_ticks == 0 ||
         config.patrol_rotation_min_degrees <= 0.0f ||
         config.patrol_rotation_max_degrees < config.patrol_rotation_min_degrees) {
         return false;
     }
-    ++enemy->sentry.patrol_rotation_tick;
-    if (enemy->sentry.patrol_rotation_tick < config.patrol_rotation_interval_ticks) {
+    ++agent->sentry.patrol_rotation_tick;
+    if (agent->sentry.patrol_rotation_tick < config.patrol_rotation_interval_ticks) {
         return false;
     }
-    enemy->sentry.patrol_rotation_tick = 0;
-    ++enemy->sentry.patrol_rotation_step;
+    agent->sentry.patrol_rotation_tick = 0;
+    ++agent->sentry.patrol_rotation_step;
     std::uint32_t random_bits =
-        enemy->net_id * 747796405u + enemy->sentry.patrol_rotation_step * 2891336453u;
+        agent->net_id * 747796405u + agent->sentry.patrol_rotation_step * 2891336453u;
     random_bits ^= random_bits >> 16u;
     random_bits *= 2246822519u;
     random_bits ^= random_bits >> 13u;
@@ -208,34 +145,6 @@ bool update_patrol_facing(
     return true;
 }
 
-bool target_position(
-    KernelHandle* kernel,
-    std::uint32_t target,
-    const KernelVisionStateView& vision_state,
-    KernelVec3* out_position) {
-    if (out_position == nullptr) {
-        return false;
-    }
-    *out_position = vision_state.last_known_target_position;
-    get_entity_position(kernel, target, out_position);
-    return target != 0;
-}
-
-std::uint32_t attack_buttons(
-    const AgentSentryConfig& config,
-    const KernelServerEntityState& entity_state) {
-    if (config.weapon_id >= KERNEL_MAX_WEAPONS || entity_state.is_reloading != 0u) {
-        return 0u;
-    }
-    if (entity_state.ammo[config.weapon_id] > 0) {
-        return InputButton_Fire;
-    }
-    if (entity_state.reserve_ammo[config.weapon_id] > 0) {
-        return InputButton_Reload;
-    }
-    return 0u;
-}
-
 }  // namespace
 
 AgentSentryController::AgentSentryController(AgentSentryConfig config)
@@ -243,120 +152,116 @@ AgentSentryController::AgentSentryController(AgentSentryConfig config)
 
 void AgentSentryController::tick(
     KernelHandle* kernel,
-    std::vector<Enemy>* enemies,
-    float delta_seconds) const {
-    (void)delta_seconds;
-    if (kernel == nullptr || enemies == nullptr) {
+    std::vector<AgentRuntimeState>* agents,
+    float) const {
+    if (kernel == nullptr || agents == nullptr) {
         return;
     }
 
-    for (Enemy& enemy : *enemies) {
-        KernelServerEntityState entity_state{};
-        entity_state.struct_size = sizeof(entity_state);
-        if (!Kernel_ServerGetEntityState(kernel, enemy.net_id, &entity_state) ||
-            entity_state.valid == 0u) {
+    const ActorIntentExecutor actor_executor(
+        ActorIntentExecutorConfig{config_.weapon_id});
+
+    for (AgentRuntimeState& agent : *agents) {
+        const SentryPerceptionSnapshot perception =
+            AiPerceptionAdapter::build_sentry_snapshot(kernel, agent.net_id);
+        if (!perception.has_self_state) {
             continue;
         }
+        const KernelServerEntityState& entity_state = perception.self_state;
 
-        enemy.position = entity_state.position;
-        enemy.hp = entity_state.hp;
-        enemy.velocity = zero_vec3();
-        enemy.animation_state = config_.animation_idle;
-        enemy.sentry.self_id = enemy.net_id;
+        agent.position = entity_state.position;
+        agent.hp = entity_state.hp;
+        agent.velocity = zero_vec3();
+        agent.animation_state = config_.animation_idle;
+        agent.sentry.self_id = agent.net_id;
         KernelQuat desired_rotation = entity_state.rotation;
         bool should_update_rotation = false;
 
-        KernelVisionStateView vision_state{};
-        const bool has_vision_state =
-            query_vision_state(kernel, enemy.net_id, &vision_state);
-        const bool has_visible_target =
-            has_vision_state && vision_state.current_target_candidate != 0;
+        const bool has_visible_target = perception.has_visible_target;
 
         if (has_visible_target) {
-            enemy.sentry.target = vision_state.current_target_candidate;
-            enemy.sentry.lost_target_ticks = 0;
+            agent.sentry.target = perception.target_id;
+            agent.sentry.lost_target_ticks = 0;
         } else {
-            ++enemy.sentry.lost_target_ticks;
+            ++agent.sentry.lost_target_ticks;
         }
 
-        if (enemy.sentry.state == AgentSentryState::kIdle) {
+        if (agent.sentry.state == AgentSentryState::kIdle) {
             if (has_visible_target) {
-                transition_to(&enemy, AgentSentryState::kAlert);
+                transition_to(&agent, AgentSentryState::kAlert);
             } else {
                 should_update_rotation = update_patrol_facing(
                     config_,
-                    &enemy,
+                    &agent,
                     entity_state.rotation,
                     &desired_rotation);
             }
         }
 
-        if (enemy.sentry.state == AgentSentryState::kAlert) {
+        if (agent.sentry.state == AgentSentryState::kAlert) {
             if (has_visible_target) {
-                KernelVec3 target{};
-                target_position(kernel, enemy.sentry.target, vision_state, &target);
+                const KernelVec3 target = perception.target_position;
                 should_update_rotation =
                     facing_rotation_from_vision_toward(
-                        enemy.position,
+                        agent.position,
                         target,
-                        vision_state.vision_forward,
+                        perception.vision_forward,
                         entity_state.rotation,
                         &desired_rotation) ||
                     should_update_rotation;
-                ++enemy.sentry.state_ticks;
-                if (enemy.sentry.state_ticks >= config_.alert_ticks) {
-                    transition_to(&enemy, AgentSentryState::kAttack);
+                ++agent.sentry.state_ticks;
+                if (agent.sentry.state_ticks >= config_.alert_ticks) {
+                    transition_to(&agent, AgentSentryState::kAttack);
                 }
-            } else if (enemy.sentry.lost_target_ticks >= config_.forget_ticks) {
-                enemy.sentry.target = 0;
-                transition_to(&enemy, AgentSentryState::kIdle);
+            } else if (agent.sentry.lost_target_ticks >= config_.forget_ticks) {
+                agent.sentry.target = 0;
+                transition_to(&agent, AgentSentryState::kIdle);
             }
         }
 
-        if (enemy.sentry.state == AgentSentryState::kAttack) {
+        if (agent.sentry.state == AgentSentryState::kAttack) {
             if (has_visible_target) {
-                enemy.sentry.lost_target_ticks = 0;
-                enemy.animation_state = config_.animation_attack;
-                KernelVec3 target{};
-                target_position(kernel, enemy.sentry.target, vision_state, &target);
+                agent.sentry.lost_target_ticks = 0;
+                agent.animation_state = config_.animation_attack;
+                const KernelVec3 target = perception.target_position;
                 should_update_rotation =
                     facing_rotation_from_vision_toward(
-                        enemy.position,
+                        agent.position,
                         target,
-                        vision_state.vision_forward,
+                        perception.vision_forward,
                         entity_state.rotation,
                         &desired_rotation) ||
                     should_update_rotation;
-                submit_weapon_input(
-                    kernel,
-                    config_,
-                    &enemy,
-                    target,
-                    attack_buttons(config_, entity_state));
-            } else if (enemy.sentry.lost_target_ticks >= config_.forget_ticks) {
-                transition_to(&enemy, AgentSentryState::kAlert);
+                ai::ScopedIntent intent;
+                intent.scope = ai::IntentScope::kActor;
+                intent.type = "AttackTarget";
+                intent.subject = agent.net_id;
+                intent.params["target_id"] = agent.sentry.target;
+                actor_executor.execute(kernel, &agent, intent, perception);
+            } else if (agent.sentry.lost_target_ticks >= config_.forget_ticks) {
+                transition_to(&agent, AgentSentryState::kAlert);
             }
         }
 
-        enemy.target_player_net_id = enemy.sentry.target;
+        agent.target_player_net_id = agent.sentry.target;
         if (should_update_rotation) {
             Kernel_ServerEnqueueEntityTransform(
                 kernel,
                 KernelCommandSource_AI,
-                enemy.net_id,
+                agent.net_id,
                 &entity_state.position,
                 &desired_rotation);
         }
         Kernel_ServerEnqueueEntityVelocity(
             kernel,
             KernelCommandSource_AI,
-            enemy.net_id,
-            &enemy.velocity);
+            agent.net_id,
+            &agent.velocity);
         Kernel_ServerEnqueueEntityState(
             kernel,
             KernelCommandSource_AI,
-            enemy.net_id,
-            enemy.animation_state,
+            agent.net_id,
+            agent.animation_state,
             0);
     }
 }

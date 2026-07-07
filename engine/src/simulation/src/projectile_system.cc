@@ -53,35 +53,11 @@ bool spawn_projectile_from_template(
     const std::uint8_t weapon_id =
         projectile_template.weapon_id == 0 ? source_weapon_id
                                            : projectile_template.weapon_id;
-    if (projectile_template.kind == ProjectileKind::kAreaEffect) {
-        const NetId area_effect = world.spawn_area_effect(
-            owner_peer,
-            position,
-            projectile_template.area_radius,
-            projectile_template.damage_interval_ticks,
-            current_tick + std::max(1u, projectile_template.lifetime_ticks),
-            projectile_template.damage,
-            weapon_id,
-            projectile_template.collision_mask,
-            projectile_template.damage_falloff);
-        push_event(
-            events,
-            KernelEventType_EntitySpawned,
-            current_tick,
-            area_effect,
-            owner_peer,
-            static_cast<std::uint32_t>(EntityType::kAreaEffect),
-            tick_time_us(current_tick, fixed_delta_seconds),
-            tick_time_us(current_tick, fixed_delta_seconds));
-        if (out_entity_type != nullptr) {
-            *out_entity_type = static_cast<std::uint32_t>(EntityType::kAreaEffect);
-        }
-        return true;
-    }
-
     const glm::vec3 velocity =
-        normalized_or(direction, glm::vec3{1.0f, 0.0f, 0.0f}) *
-        projectile_template.speed;
+        projectile_template.projectile_type == ProjectileType::kAreaEffect
+            ? glm::vec3{0.0f, 0.0f, 0.0f}
+            : normalized_or(direction, glm::vec3{1.0f, 0.0f, 0.0f}) *
+                  projectile_template.speed;
     const NetId projectile_net_id = world.spawn_projectile(
         owner_peer,
         position,
@@ -101,13 +77,56 @@ bool spawn_projectile_from_template(
     projectile.motion_model = projectile_template.motion_model;
     projectile.hit_response = projectile_template.hit_response;
     projectile.damage_shape = projectile_template.damage_shape;
+    projectile.collision_query_mode = projectile_template.collision_query_mode;
+    projectile.collision_geometry = projectile_template.collision_geometry;
+    projectile.has_collision_geometry = projectile_template.has_collision_geometry;
     projectile.collision_mask = projectile_template.collision_mask;
     projectile.max_hit_count = std::max(1u, projectile_template.max_hit_count);
-    projectile.max_lifetime_seconds = projectile_template.lifetime_seconds;
+    projectile.max_lifetime_ticks = projectile_template.lifetime_ticks;
     projectile.spawn_position = position;
     projectile.initial_velocity = velocity;
     projectile.gravity = projectile_template.gravity;
     projectile.previous_position = position;
+    if (projectile_template.projectile_type == ProjectileType::kAreaEffect) {
+        world.registry().replace<Hitbox>(
+            *projectile_entity,
+            Hitbox{
+                {0.0f, 0.0f, 0.0f},
+                {projectile_template.area_radius,
+                 projectile_template.area_radius,
+                 projectile_template.area_radius},
+                projectile_template.collider_template_id});
+        world.registry().emplace<ProjectileAreaEffectRuntime>(
+            *projectile_entity,
+            ProjectileAreaEffectRuntime{
+                projectile_template.area_radius,
+                projectile_template.damage,
+                projectile_template.damage_interval_ticks == 0
+                    ? 1u
+                    : projectile_template.damage_interval_ticks,
+                current_tick + std::max(1u, projectile_template.lifetime_ticks),
+                weapon_id,
+                projectile_template.collision_mask,
+                projectile_template.damage_falloff,
+                {},
+            });
+    }
+    if (projectile_template.projectile_type == ProjectileType::kBeam) {
+        world.registry().emplace<ProjectileBeamRuntime>(
+            *projectile_entity,
+            ProjectileBeamRuntime{
+                shooter_net_id,
+                position,
+                normalized_or(direction, glm::vec3{1.0f, 0.0f, 0.0f}),
+                projectile_template.beam_length,
+                projectile_template.beam_radius,
+                projectile_template.damage,
+                current_tick + std::max(1u, projectile_template.lifetime_ticks),
+                weapon_id,
+                projectile_template.collision_mask,
+                {},
+            });
+    }
     push_event(
         events,
         KernelEventType_EntitySpawned,
@@ -263,16 +282,18 @@ void advance_homing_projectile(
     HomingState& homing,
     float fixed_delta_seconds,
     std::uint32_t current_tick) {
-    const float next_age_seconds = projectile.age_seconds + fixed_delta_seconds;
+    const std::uint32_t next_age_ticks = projectile.age_ticks + 1;
+    const float next_age_duration =
+        static_cast<float>(next_age_ticks) * fixed_delta_seconds;
     if (homing.phase == MissileGuidancePhase::kBoost) {
         transform.position = projectile_position_at(
             projectile.spawn_position,
             projectile.initial_velocity,
             ProjectileMotionModel::kLinear,
             glm::vec3{0.0f},
-            next_age_seconds);
+            next_age_duration);
         velocity.linear = projectile.initial_velocity;
-        projectile.age_seconds = next_age_seconds;
+        projectile.age_ticks = next_age_ticks;
         if (current_tick >= homing.guidance_start_tick) {
             const NetId target = acquire_homing_target(
                 world,
@@ -305,8 +326,7 @@ void advance_homing_projectile(
 
     if (homing.phase == MissileGuidancePhase::kGuided) {
         const float max_turn =
-            degrees_to_radians(homing.max_turn_rate_degrees_per_second) *
-            fixed_delta_seconds;
+            degrees_to_radians(homing.max_turn_degrees_per_tick);
         const glm::vec3 direction = steer_direction(
             velocity.linear,
             target_center - transform.position,
@@ -318,8 +338,28 @@ void advance_homing_projectile(
     }
 
     transform.position += velocity.linear * fixed_delta_seconds;
-    projectile.age_seconds = next_age_seconds;
+    projectile.age_ticks = next_age_ticks;
 }
+
+enum class ProjectileCollisionQueryType {
+    kSegment,
+    kSweptSphere,
+    kSphereOverlap,
+    kSweptBox,
+    kBoxOverlap,
+    kUnsupported,
+};
+
+struct ProjectileCollisionQuery {
+    ProjectileCollisionQueryType query_type = ProjectileCollisionQueryType::kSegment;
+    glm::vec3 previous_position{0.0f, 0.0f, 0.0f};
+    glm::vec3 current_position{0.0f, 0.0f, 0.0f};
+    glm::vec3 center{0.0f, 0.0f, 0.0f};
+    glm::vec3 half_extents{0.0f, 0.0f, 0.0f};
+    float radius = 0.0f;
+    glm::vec3 bounds_center{0.0f, 0.0f, 0.0f};
+    glm::vec3 bounds_half_extents{0.0f, 0.0f, 0.0f};
+};
 
 struct ProjectileHitRecord {
     NetId projectile_net_id = 0;
@@ -344,6 +384,146 @@ struct ProjectileInteractionMatch {
     const ProjectileInteractionRule* rule = nullptr;
     bool lhs_is_rule_lhs = true;
 };
+
+ProjectileCollisionQuery make_segment_projectile_query(
+    const glm::vec3& previous_position,
+    const glm::vec3& current_position) {
+    const glm::vec3 min_corner = glm::min(previous_position, current_position);
+    const glm::vec3 max_corner = glm::max(previous_position, current_position);
+    ProjectileCollisionQuery query;
+    query.query_type = ProjectileCollisionQueryType::kSegment;
+    query.previous_position = previous_position;
+    query.current_position = current_position;
+    query.bounds_center = (min_corner + max_corner) * 0.5f;
+    query.bounds_half_extents = (max_corner - min_corner) * 0.5f;
+    return query;
+}
+
+ProjectileCollisionQuery build_projectile_collision_query(
+    const ProjectileState& projectile,
+    const glm::vec3& previous_position,
+    const glm::vec3& current_position) {
+    if (!projectile.has_collision_geometry) {
+        return make_segment_projectile_query(previous_position, current_position);
+    }
+
+    const ProjectileCollisionGeometry& geometry = projectile.collision_geometry;
+    const glm::vec3 previous_center = previous_position + geometry.center;
+    const glm::vec3 current_center = current_position + geometry.center;
+    const glm::vec3 displacement = current_center - previous_center;
+    const bool moved = glm::length(displacement) > 0.0001f;
+
+    ProjectileCollisionQuery query;
+    query.previous_position = previous_center;
+    query.current_position = current_center;
+    query.center = current_center;
+    query.half_extents = geometry.half_extents;
+    query.radius = geometry.radius;
+
+    const ProjectileCollisionQueryMode mode = projectile.collision_query_mode;
+    const bool force_overlap = mode == ProjectileCollisionQueryMode::kOverlap;
+    const bool force_sweep = mode == ProjectileCollisionQueryMode::kSweep;
+    const bool force_ray = mode == ProjectileCollisionQueryMode::kRay;
+
+    if (force_ray || geometry.shape_type == ColliderShapeType::kSegment) {
+        if (geometry.length > 0.0f && !moved) {
+            query.current_position =
+                current_center + glm::vec3{geometry.length, 0.0f, 0.0f};
+        }
+        return make_segment_projectile_query(
+            query.previous_position,
+            query.current_position);
+    }
+
+    if (geometry.shape_type == ColliderShapeType::kSphere && geometry.radius > 0.0f) {
+        if (force_overlap || (!force_sweep && !moved)) {
+            query.query_type = ProjectileCollisionQueryType::kSphereOverlap;
+            query.bounds_center = current_center;
+            query.bounds_half_extents = glm::vec3{geometry.radius};
+            return query;
+        }
+        query.query_type = ProjectileCollisionQueryType::kSweptSphere;
+        const glm::vec3 min_corner =
+            glm::min(previous_center, current_center) - glm::vec3{geometry.radius};
+        const glm::vec3 max_corner =
+            glm::max(previous_center, current_center) + glm::vec3{geometry.radius};
+        query.bounds_center = (min_corner + max_corner) * 0.5f;
+        query.bounds_half_extents = (max_corner - min_corner) * 0.5f;
+        return query;
+    }
+
+    if ((geometry.shape_type == ColliderShapeType::kAabb ||
+         geometry.shape_type == ColliderShapeType::kOrientedBox) &&
+        geometry.half_extents.x >= 0.0f && geometry.half_extents.y >= 0.0f &&
+        geometry.half_extents.z >= 0.0f) {
+        if (force_overlap || (!force_sweep && !moved)) {
+            query.query_type = ProjectileCollisionQueryType::kBoxOverlap;
+            query.bounds_center = current_center;
+            query.bounds_half_extents = geometry.half_extents;
+            return query;
+        }
+        query.query_type = ProjectileCollisionQueryType::kSweptBox;
+        const glm::vec3 min_corner =
+            glm::min(previous_center, current_center) - geometry.half_extents;
+        const glm::vec3 max_corner =
+            glm::max(previous_center, current_center) + geometry.half_extents;
+        query.bounds_center = (min_corner + max_corner) * 0.5f;
+        query.bounds_half_extents = (max_corner - min_corner) * 0.5f;
+        return query;
+    }
+
+    query.query_type = ProjectileCollisionQueryType::kUnsupported;
+    return query;
+}
+
+std::vector<QueryHit> collect_projectile_collision_hits(
+    World& world,
+    const ProjectileState& projectile,
+    const glm::vec3& previous_position,
+    const glm::vec3& current_position,
+    const QueryFilter& filter) {
+    const ProjectileCollisionQuery query = build_projectile_collision_query(
+        projectile,
+        previous_position,
+        current_position);
+    switch (query.query_type) {
+        case ProjectileCollisionQueryType::kSweptSphere:
+            return collect_swept_sphere_hits(
+                world,
+                query.previous_position,
+                query.current_position,
+                query.radius,
+                filter);
+        case ProjectileCollisionQueryType::kSphereOverlap:
+            return collect_sphere_overlaps(
+                world,
+                query.center,
+                query.radius,
+                filter);
+        case ProjectileCollisionQueryType::kSweptBox:
+            return collect_swept_box_hits(
+                world,
+                query.previous_position,
+                query.current_position,
+                query.half_extents,
+                filter);
+        case ProjectileCollisionQueryType::kBoxOverlap:
+            return collect_box_overlaps(
+                world,
+                query.center,
+                query.half_extents,
+                filter);
+        case ProjectileCollisionQueryType::kUnsupported:
+            return {};
+        case ProjectileCollisionQueryType::kSegment:
+        default:
+            return collect_segment_hits(
+                world,
+                query.previous_position,
+                query.current_position,
+                filter);
+    }
+}
 
 std::vector<ProjectileEntityRef> sorted_projectile_entities(World& world) {
     std::vector<ProjectileEntityRef> projectiles;
@@ -402,13 +582,12 @@ bool apply_projectile_impact_response(
     const RuntimeProjectileTemplate* projectile_template =
         world.find_projectile_template(projectile.projectile_template_id);
     if (projectile_template == nullptr ||
-        projectile_template->impact_action !=
-            ProjectileImpactAction::kSpawnProjectile) {
+        projectile_template->impact_spawn_projectile_template_id == 0u) {
         return false;
     }
     const RuntimeProjectileTemplate* impact_projectile_template =
         world.find_projectile_template(
-            projectile_template->impact_projectile_template_id);
+            projectile_template->impact_spawn_projectile_template_id);
     if (impact_projectile_template == nullptr) {
         return false;
     }
@@ -573,8 +752,9 @@ void collect_projectile_interaction_matches(
         filter.ignored_owner_peer = identity.owner_peer;
         filter.collision_mask = projectile.collision_mask;
         filter.include_projectiles = true;
-        const std::vector<QueryHit> hits = collect_segment_hits(
+        const std::vector<QueryHit> hits = collect_projectile_collision_hits(
             world,
+            projectile,
             projectile.previous_position,
             transform.position,
             filter);
@@ -674,7 +854,7 @@ void process_projectile_interactions(
             push_unique_net_id(&consumed_projectiles, match.rhs_net_id);
         }
 
-        if (match.rule->area_effect.enabled) {
+        if (match.rule->spawn_projectile_template_id != 0u) {
             const NetId source_net_id =
                 match.lhs_is_rule_lhs ? match.lhs_net_id : match.rhs_net_id;
             PeerId owner_peer = 0;
@@ -684,26 +864,25 @@ void process_projectile_interactions(
                 owner_peer =
                     world.registry().get<NetworkIdentity>(*source_entity).owner_peer;
             }
-            const ProjectileInteractionAreaEffectSpawn& spawn =
-                match.rule->area_effect;
-            const NetId area_effect = world.spawn_area_effect(
+            const RuntimeProjectileTemplate* spawn_template =
+                world.find_projectile_template(
+                    match.rule->spawn_projectile_template_id);
+            if (spawn_template == nullptr) {
+                continue;
+            }
+            (void)spawn_projectile_from_template(
+                world,
+                *spawn_template,
                 owner_peer,
+                source_net_id,
+                0,
+                0,
                 match.position,
-                spawn.radius,
-                spawn.damage_interval_ticks,
-                current_tick + spawn.lifetime_ticks,
-                spawn.damage_per_interval,
-                spawn.source_code,
-                spawn.collision_mask);
-            push_event(
-                events,
-                KernelEventType_EntitySpawned,
+                glm::vec3{1.0f, 0.0f, 0.0f},
                 current_tick,
-                area_effect,
-                owner_peer,
-                static_cast<std::uint32_t>(EntityType::kAreaEffect),
-                tick_time_us(current_tick, fixed_delta_seconds),
-                tick_time_us(current_tick, fixed_delta_seconds));
+                fixed_delta_seconds,
+                events,
+                nullptr);
         }
     }
 }
@@ -779,20 +958,21 @@ void simulate_projectiles(
                 fixed_delta_seconds,
                 current_tick);
         } else {
-            const float next_age_seconds =
-                projectile.age_seconds + fixed_delta_seconds;
+            const std::uint32_t next_age_ticks = projectile.age_ticks + 1;
+            const float next_age_duration =
+                static_cast<float>(next_age_ticks) * fixed_delta_seconds;
             transform.position = projectile_position_at(
                 projectile.spawn_position,
                 projectile.initial_velocity,
                 projectile.motion_model,
                 projectile.gravity,
-                next_age_seconds);
+                next_age_duration);
             velocity.linear = projectile_velocity_at(
                 projectile.initial_velocity,
                 projectile.motion_model,
                 projectile.gravity,
-                next_age_seconds);
-            projectile.age_seconds = next_age_seconds;
+                next_age_duration);
+            projectile.age_ticks = next_age_ticks;
         }
     }
 
@@ -816,13 +996,14 @@ void simulate_projectiles(
         filter.ignored_net_id = projectile.shooter_net_id;
         filter.ignored_owner_peer = identity.owner_peer;
         filter.collision_mask = projectile.collision_mask;
-        const std::vector<QueryHit> hits = collect_segment_hits(
+        const std::vector<QueryHit> hits = collect_projectile_collision_hits(
             world,
+            projectile,
             projectile.previous_position,
             transform.position,
             filter);
-        const bool expired = projectile.max_lifetime_seconds > 0.0f &&
-                             projectile.age_seconds >= projectile.max_lifetime_seconds;
+        const bool expired = projectile.max_lifetime_ticks > 0u &&
+                             projectile.age_ticks >= projectile.max_lifetime_ticks;
         if (hits.empty() && !expired) {
             continue;
         }

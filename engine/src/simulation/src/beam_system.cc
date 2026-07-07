@@ -24,15 +24,9 @@ void push_event(
     events->push_back(KernelEvent{type, tick, net_id, peer_id, code});
 }
 
-std::uint32_t tick_damage_units(
-    const BeamState& beam,
-    float fixed_delta_seconds) {
-    if (fixed_delta_seconds <= 0.0f) {
-        return 0;
-    }
+std::uint32_t tick_damage_units(const ProjectileBeamRuntime& beam) {
     const double units =
-        static_cast<double>(beam.damage_per_second) *
-        static_cast<double>(fixed_delta_seconds) *
+        static_cast<double>(beam.damage_per_tick) *
         static_cast<double>(kDamageScale);
     return static_cast<std::uint32_t>(std::max(0.0, std::round(units)));
 }
@@ -46,6 +40,7 @@ void simulate_beams(
     std::uint64_t server_time_us,
     std::vector<KernelEvent>* events,
     DamagePipeline* damage_pipeline) {
+    (void)fixed_delta_seconds;
     DamagePipeline local_damage_pipeline;
     DamagePipeline* active_damage_pipeline = damage_pipeline;
     if (active_damage_pipeline == nullptr) {
@@ -53,18 +48,23 @@ void simulate_beams(
     }
 
     std::vector<NetId> beams_to_destroy;
-    auto view = world.registry().view<NetworkIdentity, Transform, BeamState, BeamTag>();
+    auto view = world.registry().view<
+        NetworkIdentity,
+        Transform,
+        ProjectileState,
+        ProjectileBeamRuntime,
+        ProjectileTag>();
     for (const entt::entity entity : view) {
         const NetworkIdentity& identity = view.get<NetworkIdentity>(entity);
         Transform& transform = view.get<Transform>(entity);
-        BeamState& beam = view.get<BeamState>(entity);
+        ProjectileBeamRuntime& beam = view.get<ProjectileBeamRuntime>(entity);
 
         if (beam.expire_tick != 0 && current_tick >= beam.expire_tick) {
             beams_to_destroy.push_back(identity.net_id);
             continue;
         }
         if (beam.length <= 0.0f || beam.radius <= 0.0f ||
-            beam.damage_per_second == 0) {
+            beam.damage_per_tick == 0) {
             continue;
         }
 
@@ -80,8 +80,7 @@ void simulate_beams(
             beam.radius,
             filter);
 
-        const std::uint32_t damage_units =
-            tick_damage_units(beam, fixed_delta_seconds);
+        const std::uint32_t damage_units = tick_damage_units(beam);
         std::uint32_t sequence_id = 0;
         for (const QueryHit& hit : hits) {
             std::uint32_t& remainder = beam.damage_remainder_by_target[hit.net_id];

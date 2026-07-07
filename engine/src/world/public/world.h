@@ -19,31 +19,15 @@ public:
 
     NetId spawn_player(PeerId owner_peer, const glm::vec3& position);
     NetId spawn_enemy(const glm::vec3& position);
+    NetId spawn_entity(
+        EntityType type,
+        ActorType actor_type,
+        PeerId owner_peer,
+        const glm::vec3& position);
     NetId spawn_projectile(
         PeerId owner_peer,
         const glm::vec3& position,
         const glm::vec3& velocity);
-    NetId spawn_area_effect(
-        PeerId owner_peer,
-        const glm::vec3& position,
-        float radius,
-        std::uint32_t damage_interval_ticks,
-        std::uint32_t expire_tick,
-        std::uint16_t damage_per_interval,
-        std::uint8_t source_code,
-        std::uint32_t collision_mask = kCollisionMaskDamageable,
-        ProjectileDamageFalloff damage_falloff = ProjectileDamageFalloff::kNone);
-    NetId spawn_beam(
-        PeerId owner_peer,
-        NetId shooter_net_id,
-        const glm::vec3& origin,
-        const glm::vec3& direction,
-        float length,
-        float radius,
-        std::uint16_t damage_per_second,
-        std::uint32_t expire_tick,
-        std::uint8_t source_code,
-        std::uint32_t collision_mask = kCollisionMaskDamageable);
 
     bool destroy(NetId net_id);
     bool apply_damage(NetId net_id, std::uint16_t amount);

@@ -1,6 +1,8 @@
 id: 2
-name: enemy_grunt
-entity_type: enemy
+name: sentry_grunt
+entity_type: actor
+actor_type: agent
+camp: enemy_side
 collider_template: enemy_hit
 health:
   hp: 500
@@ -19,4 +21,14 @@ animations:
 vision:
   collider_template: cone_vision
 ai:
+  controller: sentry
   profile: default
+  sentry:
+    alert_ticks: 90
+    forget_ticks: 150
+    patrol_rotation_interval_ticks: 30
+    patrol_rotation_min_degrees: 15.0
+    patrol_rotation_max_degrees: 30.0
+    weapon_id: 2
+    animation_idle: idle
+    animation_attack: chasing

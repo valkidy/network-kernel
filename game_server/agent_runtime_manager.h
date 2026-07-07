@@ -1,20 +1,20 @@
-#ifndef GAME_SERVER_ENEMY_MANAGER_H_
-#define GAME_SERVER_ENEMY_MANAGER_H_
+#ifndef GAME_SERVER_AGENT_RUNTIME_MANAGER_H_
+#define GAME_SERVER_AGENT_RUNTIME_MANAGER_H_
 
 #include <cstddef>
 #include <cstdint>
 #include <vector>
 
 #include "game_server/agent_sentry_controller.h"
-#include "game_server/enemy.h"
+#include "game_server/agent_runtime.h"
 #include "game_server/gameplay_config.h"
 #include "kernel/public/kernel_api.h"
 
 namespace network_example::game_server {
 
-class EnemyManager {
+class AgentRuntimeManager {
 public:
-    explicit EnemyManager(
+    explicit AgentRuntimeManager(
         KernelHandle* kernel,
         GameServerGameplayConfig config = default_game_server_gameplay_config());
 
@@ -22,23 +22,26 @@ public:
     void tick(float delta_seconds);
     void despawn_all(std::uint32_t reason);
 
-    std::size_t enemy_count() const;
-    const std::vector<Enemy>& enemies() const;
+    std::size_t agent_count() const;
+    const std::vector<AgentRuntimeState>& agents() const;
 
 private:
-    void spawn_initial_enemies();
-    bool spawn_enemy_at(const KernelVec3& position);
-    void prune_missing_enemies();
+    void bootstrap_directors();
+    bool spawn_director(const EntityTemplateConfig& director_template);
+    void sync_agents_from_kernel();
     bool apply_weapon_mechanics(std::uint32_t net_id) const;
+    bool has_live_agent_or_director() const;
 
     KernelHandle* kernel_ = nullptr;
     GameServerGameplayConfig config_;
     AgentSentryController sentry_;
-    std::vector<Enemy> enemies_;
+    std::vector<AgentRuntimeState> agents_;
+    std::uint32_t director_net_id_ = 0;
     bool has_seen_player_ = false;
-    bool has_spawned_initial_enemy_ = false;
+    bool has_bootstrapped_director_ = false;
+    bool despawn_pending_ = false;
 };
 
 }  // namespace network_example::game_server
 
-#endif  // GAME_SERVER_ENEMY_MANAGER_H_
+#endif  // GAME_SERVER_AGENT_RUNTIME_MANAGER_H_

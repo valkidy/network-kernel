@@ -1,4 +1,4 @@
-#include "ai/node_factory.h"
+#include "node_factory.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -72,11 +72,11 @@ public:
     explicit SelectorNode(std::vector<NodePtr> children)
         : children_(std::move(children)) {}
 
-    NodeStatus tick(const AIContext& context, AICommandBuffer* commands) override {
+    NodeStatus tick(const AIContext& context, IntentBuffer* intents) override {
         std::optional<std::size_t> selected;
         NodeStatus selected_status = NodeStatus::kFailure;
         for (std::size_t index = 0; index < children_.size(); ++index) {
-            const NodeStatus status = children_[index]->tick(context, commands);
+            const NodeStatus status = children_[index]->tick(context, intents);
             if (status == NodeStatus::kSuccess || status == NodeStatus::kRunning) {
                 selected = index;
                 selected_status = status;
@@ -86,7 +86,7 @@ public:
 
         if (running_child_.has_value() &&
             (!selected.has_value() || *running_child_ != *selected)) {
-            children_[*running_child_]->halt(context, commands);
+            children_[*running_child_]->halt(context, intents);
         }
 
         if (selected_status == NodeStatus::kRunning && selected.has_value()) {
@@ -97,9 +97,9 @@ public:
         return selected_status;
     }
 
-    void halt(const AIContext& context, AICommandBuffer* commands) override {
+    void halt(const AIContext& context, IntentBuffer* intents) override {
         if (running_child_.has_value()) {
-            children_[*running_child_]->halt(context, commands);
+            children_[*running_child_]->halt(context, intents);
             running_child_.reset();
         }
     }
@@ -114,10 +114,10 @@ public:
     explicit SequenceNode(std::vector<NodePtr> children)
         : children_(std::move(children)) {}
 
-    NodeStatus tick(const AIContext& context, AICommandBuffer* commands) override {
+    NodeStatus tick(const AIContext& context, IntentBuffer* intents) override {
         std::size_t index = running_child_.value_or(0);
         while (index < children_.size()) {
-            const NodeStatus status = children_[index]->tick(context, commands);
+            const NodeStatus status = children_[index]->tick(context, intents);
             if (status == NodeStatus::kRunning) {
                 running_child_ = index;
                 return NodeStatus::kRunning;
@@ -132,9 +132,9 @@ public:
         return NodeStatus::kSuccess;
     }
 
-    void halt(const AIContext& context, AICommandBuffer* commands) override {
+    void halt(const AIContext& context, IntentBuffer* intents) override {
         if (running_child_.has_value()) {
-            children_[*running_child_]->halt(context, commands);
+            children_[*running_child_]->halt(context, intents);
             running_child_.reset();
         }
     }
@@ -149,7 +149,7 @@ public:
     explicit UtilitySelectorNode(std::vector<UtilityCandidate> candidates)
         : candidates_(std::move(candidates)) {}
 
-    NodeStatus tick(const AIContext& context, AICommandBuffer* commands) override {
+    NodeStatus tick(const AIContext& context, IntentBuffer* intents) override {
         std::optional<std::size_t> selected;
         float best_score = 0.0f;
         for (std::size_t index = 0; index < candidates_.size(); ++index) {
@@ -164,12 +164,12 @@ public:
         }
 
         if (!selected.has_value()) {
-            halt_previous(context, commands, std::nullopt);
+            halt_previous(context, intents, std::nullopt);
             return NodeStatus::kFailure;
         }
 
-        halt_previous(context, commands, selected);
-        const NodeStatus status = candidates_[*selected].node->tick(context, commands);
+        halt_previous(context, intents, selected);
+        const NodeStatus status = candidates_[*selected].node->tick(context, intents);
         if (status == NodeStatus::kRunning) {
             running_child_ = selected;
         } else {
@@ -178,17 +178,17 @@ public:
         return status;
     }
 
-    void halt(const AIContext& context, AICommandBuffer* commands) override {
-        halt_previous(context, commands, std::nullopt);
+    void halt(const AIContext& context, IntentBuffer* intents) override {
+        halt_previous(context, intents, std::nullopt);
     }
 
 private:
     void halt_previous(const AIContext& context,
-                       AICommandBuffer* commands,
+                       IntentBuffer* intents,
                        std::optional<std::size_t> selected) {
         if (running_child_.has_value() &&
             (!selected.has_value() || *running_child_ != *selected)) {
-            candidates_[*running_child_].node->halt(context, commands);
+            candidates_[*running_child_].node->halt(context, intents);
             running_child_.reset();
         }
     }
@@ -201,12 +201,12 @@ class BoolConditionNode final : public AINode {
 public:
     explicit BoolConditionNode(std::string feature) : feature_(std::move(feature)) {}
 
-    NodeStatus tick(const AIContext& context, AICommandBuffer*) override {
+    NodeStatus tick(const AIContext& context, IntentBuffer*) override {
         return context.get_bool(feature_).value_or(false) ? NodeStatus::kSuccess
                                                           : NodeStatus::kFailure;
     }
 
-    void halt(const AIContext&, AICommandBuffer*) override {}
+    void halt(const AIContext&, IntentBuffer*) override {}
 
 private:
     std::string feature_;
@@ -217,7 +217,7 @@ public:
     FloatThresholdConditionNode(std::string feature, float threshold, bool above)
         : feature_(std::move(feature)), threshold_(threshold), above_(above) {}
 
-    NodeStatus tick(const AIContext& context, AICommandBuffer*) override {
+    NodeStatus tick(const AIContext& context, IntentBuffer*) override {
         const std::optional<float> value = context.get_float(feature_);
         if (!value.has_value()) {
             return NodeStatus::kFailure;
@@ -226,7 +226,7 @@ public:
         return passed ? NodeStatus::kSuccess : NodeStatus::kFailure;
     }
 
-    void halt(const AIContext&, AICommandBuffer*) override {}
+    void halt(const AIContext&, IntentBuffer*) override {}
 
 private:
     std::string feature_;
@@ -245,37 +245,41 @@ public:
           long_running_(long_running),
           completion_feature_(std::move(completion_feature)) {}
 
-    NodeStatus tick(const AIContext& context, AICommandBuffer* commands) override {
+    NodeStatus tick(const AIContext& context, IntentBuffer* intents) override {
         if (long_running_ && !completion_feature_.empty() &&
             context.get_bool(completion_feature_).value_or(false)) {
             running_ = false;
             return NodeStatus::kSuccess;
         }
 
-        AICommand command;
-        command.type = command_type_;
+        ScopedIntent intent;
+        intent.scope = IntentScope::kActor;
+        intent.type = command_type_;
         if (!target_feature_.empty()) {
             const std::optional<std::uint32_t> target =
                 context.get_uint32(target_feature_);
             if (!target.has_value()) {
                 return NodeStatus::kFailure;
             }
-            command.params["target"] = *target;
+            intent.params["target"] = *target;
         }
-        if (commands != nullptr) {
-            commands->push(std::move(command));
+        if (intents != nullptr) {
+            intents->push(std::move(intent));
         }
         running_ = long_running_;
         return long_running_ ? NodeStatus::kRunning : NodeStatus::kSuccess;
     }
 
-    void halt(const AIContext&, AICommandBuffer* commands) override {
+    void halt(const AIContext&, IntentBuffer* intents) override {
         if (!running_) {
             return;
         }
         running_ = false;
-        if (commands != nullptr) {
-            commands->push(AICommand{"StopMovement", {}});
+        if (intents != nullptr) {
+            ScopedIntent stop;
+            stop.scope = IntentScope::kActor;
+            stop.type = "StopMovement";
+            intents->push(std::move(stop));
         }
     }
 
@@ -426,8 +430,8 @@ NodeBuildResult NodeFactory::create_node(const NodeConfig& config) const {
         return result;
     }
 
-    if (config.type == "Condition.HasVisibleEnemy") {
-        add_unique(&result.report.required_features, "hasVisibleEnemy");
+    if (config.type == "Condition.HasVisibleHostile") {
+        add_unique(&result.report.required_features, "hasVisibleHostile");
     } else if (config.type == "Condition.HpAbove" ||
                config.type == "Condition.HpBelow") {
         add_unique(&result.report.required_features, "hp01");
@@ -441,7 +445,7 @@ NodeBuildResult NodeFactory::create_node(const NodeConfig& config) const {
                config.type == "Action.RequestHelp") {
         add_unique(
             &result.report.required_features,
-            param_or_default(config, "target", "nearestEnemyId"));
+            param_or_default(config, "target", "nearestHostileId"));
     }
 
     if (!iter->second) {
@@ -473,9 +477,9 @@ NodeFactory make_default_node_factory() {
     factory.register_node_type("Composite.Selector");
     factory.register_node_type("Composite.Sequence");
     factory.register_node_type("Composite.UtilitySelector");
-    factory.register_node_type("Condition.HasVisibleEnemy", [](
+    factory.register_node_type("Condition.HasVisibleHostile", [](
         const NodeConfig&, const NodeFactory&) {
-        return make_condition_has_visible_enemy();
+        return make_condition_has_visible_hostile();
     });
     factory.register_node_type("Condition.HpAbove", [](
         const NodeConfig& config, const NodeFactory&) {
@@ -504,22 +508,22 @@ NodeFactory make_default_node_factory() {
     factory.register_node_type("Action.MoveTo", [](
         const NodeConfig& config, const NodeFactory&) {
         return make_action_move_to(
-            param_or_default(config, "target", "nearestEnemyId"));
+            param_or_default(config, "target", "nearestHostileId"));
     });
     factory.register_node_type("Action.AttackTarget", [](
         const NodeConfig& config, const NodeFactory&) {
         return make_action_attack_target(
-            param_or_default(config, "target", "nearestEnemyId"));
+            param_or_default(config, "target", "nearestHostileId"));
     });
     factory.register_node_type("Action.FleeFromTarget", [](
         const NodeConfig& config, const NodeFactory&) {
         return make_action_flee_from_target(
-            param_or_default(config, "target", "nearestEnemyId"));
+            param_or_default(config, "target", "nearestHostileId"));
     });
     factory.register_node_type("Action.RequestHelp", [](
         const NodeConfig& config, const NodeFactory&) {
         return make_action_request_help(
-            param_or_default(config, "target", "nearestEnemyId"));
+            param_or_default(config, "target", "nearestHostileId"));
     });
     factory.register_node_type("Action.Reload", [](
         const NodeConfig&, const NodeFactory&) {
@@ -553,8 +557,8 @@ NodePtr make_utility_selector(std::vector<UtilityCandidate> candidates) {
     return std::make_unique<UtilitySelectorNode>(std::move(candidates));
 }
 
-NodePtr make_condition_has_visible_enemy() {
-    return std::make_unique<BoolConditionNode>("hasVisibleEnemy");
+NodePtr make_condition_has_visible_hostile() {
+    return std::make_unique<BoolConditionNode>("hasVisibleHostile");
 }
 
 NodePtr make_condition_hp_above(float value) {

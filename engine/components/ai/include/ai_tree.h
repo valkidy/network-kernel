@@ -3,7 +3,7 @@
 
 #include <memory>
 
-#include "ai/ai_node.h"
+#include "ai_node.h"
 
 namespace network_example::ai {
 
@@ -13,8 +13,8 @@ class AITreeInstance {
 public:
     explicit AITreeInstance(NodePtr root);
 
-    NodeStatus tick(const AIContext& context, AICommandBuffer* commands);
-    void halt(const AIContext& context, AICommandBuffer* commands);
+    NodeStatus tick(const AIContext& context, IntentBuffer* intents);
+    void halt(const AIContext& context, IntentBuffer* intents);
 
     bool has_root() const;
 

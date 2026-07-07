@@ -16,6 +16,7 @@
 #include "kernel/src/tick_loop.h"
 #include "simulation/public/command.h"
 #include "simulation/public/simulation.h"
+#include "simulation/src/systems.h"
 #include "sync/public/history_buffer.h"
 #include "sync/public/snapshot.h"
 #include "transport/public/itransport.h"
@@ -25,6 +26,7 @@ namespace network_example {
 
 class EntityLifecycleSystem;
 class EntityStateSystem;
+class DirectorIntentExecutor;
 class ListenServerTransport;
 class MovementSystem;
 struct EntityDespawnPacket;
@@ -165,12 +167,6 @@ public:
         NetId net_id,
         std::uint8_t weapon_id,
         KernelWeaponMechanicsDefinition* out_weapon_mechanics) const;
-    bool server_get_area_effect_state(
-        NetId net_id,
-        KernelAreaEffectState* out_state) const;
-    bool server_get_beam_state(
-        NetId net_id,
-        KernelBeamState* out_state) const;
     bool server_get_homing_state(
         NetId net_id,
         KernelHomingState* out_state) const;
@@ -185,6 +181,8 @@ public:
 private:
     friend class EntityLifecycleSystem;
     friend class EntityStateSystem;
+    friend class DirectorAISystem;
+    friend class DirectorIntentExecutor;
     friend class MovementSystem;
     friend class KernelRpcDispatcher;
     friend class KernelRpcWorldHandlers;
@@ -235,7 +233,7 @@ private:
         std::uint32_t input_seq = 0;
         std::uint32_t client_action_id = 0;
         std::uint32_t spawn_tick = 0;
-        float age_seconds = 0.0f;
+        std::uint32_t age_ticks = 0;
         glm::vec3 position{0.0f, 0.0f, 0.0f};
         glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
         glm::vec3 velocity{0.0f, 0.0f, 0.0f};
@@ -243,7 +241,7 @@ private:
         glm::vec3 initial_velocity{0.0f, 0.0f, 0.0f};
         glm::vec3 gravity{0.0f, 0.0f, 0.0f};
         ProjectileMotionModel motion_model = ProjectileMotionModel::kLinear;
-        float max_lifetime_seconds = 0.0f;
+        std::uint32_t max_lifetime_ticks = 0;
         std::uint32_t projectile_template_id = 0;
         std::uint32_t collider_template_id = 0;
         std::uint8_t weapon_id = 0;
@@ -434,12 +432,14 @@ private:
     std::unordered_map<NetId, ClientEntityTombstone> client_despawned_entities_;
     std::vector<PlayerInput> pending_prediction_inputs_;
     std::vector<PredictedProjectile> predicted_projectiles_;
+    std::vector<KernelEntityTemplateDefinition> entity_templates_;
     std::vector<KernelActorTemplateDefinition> actor_templates_;
     std::vector<KernelProjectileTemplateDefinition> projectile_templates_;
     std::vector<KernelColliderTemplateDefinition> collider_templates_;
     std::vector<KernelDebugInfo> debug_records_;
     std::unordered_map<NetId, KernelAgentVisionConfig> vision_configs_;
     std::unordered_map<NetId, VisionRuntimeState> vision_states_;
+    std::vector<ai::ScopedIntent> pending_director_intents_;
     simulation::CommandQueue command_queue_;
     KernelRpcMethodRegistry rpc_method_registry_;
     KernelRpcResponseStore rpc_response_store_;
@@ -450,6 +450,10 @@ private:
     std::uint32_t last_command_queue_capacity_warning_tick_ = 0;
     std::size_t last_simulation_command_queue_depth_ = 0;
     std::size_t last_simulation_command_processed_count_ = 0;
+    std::size_t last_director_intent_processed_count_ = 0;
+    std::uint32_t last_director_intent_created_count_ = 0;
+    std::uint32_t last_director_intent_failed_count_ = 0;
+    std::uint32_t last_director_intent_unsupported_count_ = 0;
     std::array<std::uint64_t, 120> simulation_tick_cost_samples_us_{};
     std::size_t simulation_tick_cost_sample_index_ = 0;
     std::uint32_t simulation_tick_cost_sample_count_ = 0;

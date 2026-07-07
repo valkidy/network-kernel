@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 30u
+#define KERNEL_ABI_VERSION 34u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -78,9 +78,7 @@
 #define KERNEL_CAPABILITY_RENDER_STATES_AT_TIME UINT64_C(0x0000000000080000)
 #define KERNEL_CAPABILITY_SERVER_MECHANICS_CONFIG UINT64_C(0x0000000000100000)
 #define KERNEL_CAPABILITY_WEAPON_METADATA_QUERY UINT64_C(0x0000000000200000)
-#define KERNEL_CAPABILITY_AREA_EFFECT_WEAPONS UINT64_C(0x0000000000400000)
 #define KERNEL_CAPABILITY_PROJECTILE_RESPONSE_MASKS UINT64_C(0x0000000000800000)
-#define KERNEL_CAPABILITY_BEAM_WEAPONS UINT64_C(0x0000000001000000)
 #define KERNEL_CAPABILITY_HOMING_PROJECTILES UINT64_C(0x0000000002000000)
 #define KERNEL_CAPABILITY_LAN_DISCOVERY UINT64_C(0x0000000004000000)
 #define KERNEL_CAPABILITY_GAMEPLAY_CATALOG UINT64_C(0x0000000008000000)
@@ -97,7 +95,6 @@
 #define KERNEL_COLLISION_LAYER_PLAYER_SIDE UINT32_C(0x00000001)
 #define KERNEL_COLLISION_LAYER_HOSTILE_SIDE UINT32_C(0x00000002)
 #define KERNEL_COLLISION_LAYER_PROJECTILE UINT32_C(0x00000004)
-#define KERNEL_COLLISION_LAYER_AREA_EFFECT UINT32_C(0x00000008)
 #define KERNEL_COLLISION_LAYER_AGENT_VISION UINT32_C(0x00000010)
 #define KERNEL_COLLISION_LAYER_NEUTRAL UINT32_C(0x00000020)
 #define KERNEL_COLLISION_MASK_NONE UINT32_C(0x00000000)
@@ -112,6 +109,17 @@
 
 #define KERNEL_MAX_VISIBLE_HOSTILES 16u
 #define KERNEL_MAX_VISIBLE_ALLIES 16u
+#define KERNEL_MAX_VISIBLE_NEUTRALS 16u
+
+#define KERNEL_ENTITY_COMPONENT_TRANSFORM UINT32_C(0x00000001)
+#define KERNEL_ENTITY_COMPONENT_VELOCITY UINT32_C(0x00000002)
+#define KERNEL_ENTITY_COMPONENT_HEALTH UINT32_C(0x00000004)
+#define KERNEL_ENTITY_COMPONENT_WEAPON_STATE UINT32_C(0x00000008)
+#define KERNEL_ENTITY_COMPONENT_HITBOX UINT32_C(0x00000010)
+#define KERNEL_ENTITY_COMPONENT_AGENT_RUNTIME UINT32_C(0x00000020)
+#define KERNEL_ENTITY_COMPONENT_SENTRY_RUNTIME UINT32_C(0x00000040)
+#define KERNEL_ENTITY_COMPONENT_DIRECTOR_RUNTIME UINT32_C(0x00000080)
+#define KERNEL_ENTITY_COMPONENT_SERVER_ONLY UINT32_C(0x00000100)
 
 #ifdef __cplusplus
 extern "C" {
@@ -129,11 +137,9 @@ typedef struct KernelAbiInfo {
     uint32_t server_entity_state_size;
     uint32_t weapon_mechanics_definition_size;
     uint32_t projectile_mechanics_definition_size;
-    uint32_t combat_state_definition_size;
     uint32_t area_effect_mechanics_definition_size;
-    uint32_t area_effect_state_size;
     uint32_t beam_mechanics_definition_size;
-    uint32_t beam_state_size;
+    uint32_t combat_state_definition_size;
     uint32_t homing_mechanics_definition_size;
     uint32_t homing_state_size;
     uint32_t lan_discovery_server_config_size;
@@ -157,6 +163,8 @@ typedef struct KernelAbiInfo {
     uint32_t vision_state_view_size;
     uint32_t gameplay_catalog_manifest_size;
     uint32_t gameplay_catalog_sync_status_size;
+    uint32_t entity_template_definition_size;
+    uint32_t entity_ai_definition_size;
 } KernelAbiInfo;
 
 typedef struct KernelBuildInfo {
@@ -246,6 +254,19 @@ typedef enum KernelActorType {
     KernelActorType_Agent = 2,
 } KernelActorType;
 
+typedef enum KernelEntityType {
+    KernelEntityType_Unknown = 0,
+    KernelEntityType_Actor = 1,
+    KernelEntityType_Projectile = 3,
+    KernelEntityType_Director = 5,
+} KernelEntityType;
+
+typedef enum KernelAiControllerType {
+    KernelAiControllerType_None = 0,
+    KernelAiControllerType_Sentry = 1,
+    KernelAiControllerType_Director = 2,
+} KernelAiControllerType;
+
 typedef enum KernelEntityLifecycleEventType {
     KernelEntityLifecycleEventType_OutOfRange = 0,
     KernelEntityLifecycleEventType_Despawned = 1,
@@ -267,8 +288,6 @@ typedef enum KernelWeaponFireMode {
     KernelWeaponFireMode_Hitscan = 0,
     KernelWeaponFireMode_Shotgun = 1,
     KernelWeaponFireMode_Projectile = 2,
-    KernelWeaponFireMode_AreaEffect = 3,
-    KernelWeaponFireMode_Beam = 4,
 } KernelWeaponFireMode;
 
 typedef enum KernelProjectileMotionModel {
@@ -306,20 +325,27 @@ typedef enum KernelProjectileDamageShape {
     KernelProjectileDamageShape_PiercingSegment = 2,
 } KernelProjectileDamageShape;
 
-typedef enum KernelProjectileKind {
-    KernelProjectileKind_Projectile = 0,
-    KernelProjectileKind_AreaEffect = 1,
-} KernelProjectileKind;
-
-typedef enum KernelProjectileImpactAction {
-    KernelProjectileImpactAction_None = 0,
-    KernelProjectileImpactAction_SpawnProjectile = 1,
-} KernelProjectileImpactAction;
+typedef enum KernelProjectileType {
+    KernelProjectileType_Standard = 0,
+    KernelProjectileType_AreaEffect = 1,
+    KernelProjectileType_Beam = 2,
+} KernelProjectileType;
 
 typedef enum KernelProjectileDamageFalloff {
     KernelProjectileDamageFalloff_None = 0,
     KernelProjectileDamageFalloff_Linear = 1,
 } KernelProjectileDamageFalloff;
+
+typedef enum KernelProjectileCollisionQueryMode {
+    /* Select overlap, sweep, or ray from collider geometry and projectile motion. */
+    KernelProjectileCollisionQueryMode_Auto = 0,
+    /* Test the projectile volume only at its current transform. */
+    KernelProjectileCollisionQueryMode_Overlap = 1,
+    /* Test the projectile volume swept from its previous to current transform. */
+    KernelProjectileCollisionQueryMode_Sweep = 2,
+    /* Test a thin segment/ray and ignore projectile volume extents. */
+    KernelProjectileCollisionQueryMode_Ray = 3,
+} KernelProjectileCollisionQueryMode;
 
 typedef enum KernelAgentCamp {
     KernelAgentCamp_Unknown = 0,
@@ -420,6 +446,7 @@ typedef struct KernelServerEntityCreateInfo {
     uint16_t animation_state;
     uint32_t visual_flags;
     uint32_t actor_template_id;
+    uint32_t entity_template_id;
 } KernelServerEntityCreateInfo;
 
 typedef struct KernelServerEntityState {
@@ -498,33 +525,79 @@ typedef struct KernelAgentVisionConfig {
     uint32_t vision_collider_template_id;
     uint32_t max_visible_hostiles;
     uint32_t max_visible_allies;
+    uint32_t max_visible_neutrals;
     KernelVec3 local_origin;
     KernelVec3 local_forward;
 } KernelAgentVisionConfig;
+
+typedef struct KernelHomingMechanicsDefinition {
+    uint32_t struct_size;
+    uint8_t homing_mode;
+    uint8_t sync_mode;
+    uint16_t reserved0;
+    uint32_t boost_ticks;
+    float lock_on_range;
+    float lose_target_range;
+    float lock_cone_degrees;
+    float max_turn_degrees_per_tick;
+    float acceleration;
+    float max_speed;
+} KernelHomingMechanicsDefinition;
+
+typedef struct KernelAreaEffectMechanicsDefinition {
+    uint32_t struct_size;
+    float radius;
+    uint16_t damage_per_interval;
+    uint16_t reserved0;
+    uint32_t damage_interval_ticks;
+    uint32_t lifetime_ticks;
+    float spawn_distance;
+    uint32_t collision_mask;
+} KernelAreaEffectMechanicsDefinition;
+
+typedef struct KernelBeamMechanicsDefinition {
+    uint32_t struct_size;
+    float length;
+    float radius;
+    uint16_t damage_per_tick;
+    uint16_t reserved0;
+    uint32_t lifetime_ticks;
+    uint32_t collision_mask;
+} KernelBeamMechanicsDefinition;
+
+typedef struct KernelProjectileMechanicsDefinition {
+    uint32_t struct_size;
+    uint8_t projectile_type;
+    uint8_t motion_model;
+    uint8_t hit_response;
+    uint8_t damage_shape;
+    uint8_t sync_mode;
+    uint8_t damage_falloff;
+    uint16_t damage;
+    float speed;
+    uint32_t lifetime_ticks;
+    KernelVec3 gravity;
+    uint32_t collider_template_id;
+    uint32_t collision_mask;
+    uint32_t max_hit_count;
+    uint32_t flags;
+    KernelHomingMechanicsDefinition homing;
+    KernelAreaEffectMechanicsDefinition area_effect;
+    KernelBeamMechanicsDefinition beam;
+    uint32_t impact_spawn_projectile_template_id;
+    uint32_t expire_spawn_projectile_template_id;
+    uint8_t collision_query_mode;
+    uint8_t reserved0;
+    uint16_t reserved1;
+} KernelProjectileMechanicsDefinition;
 
 typedef struct KernelProjectileTemplateDefinition {
     uint32_t struct_size;
     uint32_t projectile_template_id;
     uint8_t weapon_id;
-    uint8_t motion_model;
-    uint8_t sync_mode;
-    uint8_t hit_response;
-    uint8_t damage_shape;
-    uint8_t projectile_kind;
-    uint8_t impact_action;
-    uint32_t impact_destroy_self;
-    uint8_t damage_falloff;
     uint8_t reserved0;
-    uint16_t damage;
-    float speed;
-    float lifetime_seconds;
-    KernelVec3 gravity;
-    uint32_t collider_template_id;
-    uint32_t collision_mask;
-    uint32_t max_hit_count;
-    uint32_t impact_projectile_template_id;
-    uint32_t lifetime_ticks;
-    uint32_t damage_interval_ticks;
+    uint16_t reserved1;
+    KernelProjectileMechanicsDefinition mechanics;
 } KernelProjectileTemplateDefinition;
 
 typedef struct KernelActorTemplateDefinition {
@@ -535,6 +608,9 @@ typedef struct KernelActorTemplateDefinition {
     uint32_t collider_template_id;
     KernelAgentVisionConfig vision;
 } KernelActorTemplateDefinition;
+
+typedef struct KernelEntityAiDefinition KernelEntityAiDefinition;
+typedef struct KernelEntityTemplateDefinition KernelEntityTemplateDefinition;
 
 typedef struct KernelGameplayCatalogDefinition {
     uint32_t struct_size;
@@ -548,6 +624,8 @@ typedef struct KernelGameplayCatalogDefinition {
     uint32_t collider_template_count;
     const KernelColliderBindingDefinition* collider_bindings;
     uint32_t collider_binding_count;
+    const KernelEntityTemplateDefinition* entity_templates;
+    uint32_t entity_template_count;
 } KernelGameplayCatalogDefinition;
 
 typedef struct KernelGameplayCatalogLoadResult {
@@ -763,6 +841,8 @@ typedef struct KernelVisionStateView {
     uint32_t visible_hostile_count;
     uint32_t visible_allies[KERNEL_MAX_VISIBLE_ALLIES];
     uint32_t visible_ally_count;
+    uint32_t visible_neutrals[KERNEL_MAX_VISIBLE_NEUTRALS];
+    uint32_t visible_neutral_count;
     uint32_t current_target_candidate;
     uint8_t relation_to_current_target;
     uint8_t reserved1;
@@ -772,54 +852,6 @@ typedef struct KernelVisionStateView {
     float time_since_last_seen_target;
     uint32_t valid;
 } KernelVisionStateView;
-
-typedef struct KernelHomingMechanicsDefinition {
-    uint32_t struct_size;
-    uint8_t homing_mode;
-    uint8_t sync_mode;
-    uint16_t reserved0;
-    uint32_t boost_ticks;
-    float lock_on_range;
-    float lose_target_range;
-    float lock_cone_degrees;
-    float max_turn_rate_degrees_per_second;
-    float acceleration;
-    float max_speed;
-} KernelHomingMechanicsDefinition;
-
-typedef struct KernelProjectileMechanicsDefinition {
-    uint32_t struct_size;
-    uint8_t motion_model;
-    uint8_t hit_response;
-    uint8_t damage_shape;
-    uint8_t reserved0;
-    float speed;
-    float lifetime_seconds;
-    KernelVec3 gravity;
-    uint32_t collision_mask;
-    uint32_t max_hit_count;
-    KernelHomingMechanicsDefinition homing;
-    uint32_t projectile_template_id;
-} KernelProjectileMechanicsDefinition;
-
-typedef struct KernelAreaEffectMechanicsDefinition {
-    uint32_t struct_size;
-    float radius;
-    uint16_t damage_per_interval;
-    uint32_t damage_interval_ticks;
-    uint32_t lifetime_ticks;
-    float spawn_distance;
-    uint32_t collision_mask;
-} KernelAreaEffectMechanicsDefinition;
-
-typedef struct KernelBeamMechanicsDefinition {
-    uint32_t struct_size;
-    float length;
-    float radius;
-    uint16_t damage_per_second;
-    uint32_t lifetime_ticks;
-    uint32_t collision_mask;
-} KernelBeamMechanicsDefinition;
 
 typedef struct KernelWeaponMechanicsDefinition {
     uint32_t struct_size;
@@ -832,40 +864,9 @@ typedef struct KernelWeaponMechanicsDefinition {
     float max_range;
     uint8_t pellet_count;
     float pellet_spread;
-    KernelProjectileMechanicsDefinition projectile;
-    KernelAreaEffectMechanicsDefinition area_effect;
-    KernelBeamMechanicsDefinition beam;
+    uint32_t projectile_template_id;
     uint32_t segment_collider_template_id;
 } KernelWeaponMechanicsDefinition;
-
-typedef struct KernelBeamState {
-    uint32_t struct_size;
-    uint32_t net_id;
-    uint32_t owner_peer;
-    uint32_t shooter_net_id;
-    KernelVec3 origin;
-    KernelVec3 direction;
-    float length;
-    float radius;
-    uint16_t damage_per_second;
-    uint32_t expire_tick;
-    uint8_t source_code;
-    uint32_t collision_mask;
-    uint32_t valid;
-} KernelBeamState;
-
-typedef struct KernelAreaEffectState {
-    uint32_t struct_size;
-    uint32_t net_id;
-    uint32_t owner_peer;
-    float radius;
-    uint16_t damage_per_interval;
-    uint32_t damage_interval_ticks;
-    uint32_t expire_tick;
-    uint8_t source_code;
-    uint32_t collision_mask;
-    uint32_t valid;
-} KernelAreaEffectState;
 
 typedef struct KernelHomingState {
     uint32_t struct_size;
@@ -882,7 +883,7 @@ typedef struct KernelHomingState {
     float lock_on_range;
     float lose_target_range;
     float lock_cone_degrees;
-    float max_turn_rate_degrees_per_second;
+    float max_turn_degrees_per_tick;
     float acceleration;
     float max_speed;
     uint32_t valid;
@@ -900,6 +901,36 @@ typedef struct KernelCombatStateDefinition {
     uint16_t ammo[KERNEL_MAX_WEAPONS];
     uint16_t reserve_ammo[KERNEL_MAX_WEAPONS];
 } KernelCombatStateDefinition;
+
+struct KernelEntityAiDefinition {
+    uint32_t struct_size;
+    uint32_t controller_type;
+    uint32_t ai_profile_id;
+    uint32_t tick_interval;
+    uint32_t blackboard_id;
+    uint32_t spawn_target_count;
+    uint32_t spawn_entity_template_id;
+    uint32_t spawn_actor_template_id;
+    KernelVec3 spawn_position;
+    float spawn_radius;
+    uint32_t spawn_seed;
+};
+
+struct KernelEntityTemplateDefinition {
+    uint32_t struct_size;
+    uint32_t entity_template_id;
+    uint16_t entity_type;
+    uint16_t actor_type;
+    uint32_t actor_template_id;
+    uint32_t component_flags;
+    uint32_t collider_template_id;
+    uint16_t animation_state;
+    uint16_t reserved0;
+    uint32_t visual_flags;
+    KernelCombatStateDefinition combat;
+    KernelAgentVisionConfig vision;
+    KernelEntityAiDefinition ai;
+};
 
 typedef struct KernelEvent {
     KernelEventType type;

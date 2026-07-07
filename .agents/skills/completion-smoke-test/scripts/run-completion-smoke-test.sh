@@ -73,8 +73,8 @@ echo "==> Running GameServer focused tests"
   --config=macos \
   --copt=-Wunused-function \
   -c opt \
-  //game_server:enemy_ai_controller_test \
-  //game_server:enemy_manager_test
+  //game_server:agent_sentry_controller_test \
+  //game_server:agent_runtime_manager_test
 
 if [[ ! -x "$APP_BIN" ]]; then
   echo "ERROR: expected app binary not found or not executable: $APP_BIN" >&2
@@ -82,24 +82,24 @@ if [[ ! -x "$APP_BIN" ]]; then
 fi
 
 echo "==> Running host_server mode"
-"$APP_BIN" --mode=host_server --port="$PORT" >"$HOST_LOG" 2>&1
-if ! grep -Eq "render_state net_id=[0-9]+ type=2 " "$HOST_LOG"; then
-  echo "ERROR: host_server did not render the GameServer enemy" >&2
+"$APP_BIN" --mode=host_server --port="$PORT" --host-frames=120 >"$HOST_LOG" 2>&1
+if ! grep -Eq "host_server observed_agent_render=1" "$HOST_LOG"; then
+  echo "ERROR: host_server did not render the GameServer agent" >&2
   print_failure_context
   exit 1
 fi
 if ! grep -Eq "event type=6 .* net_id=[0-9]+ peer=0 code=2" "$HOST_LOG"; then
-  echo "ERROR: host_server did not report an enemy fire event" >&2
+  echo "ERROR: host_server did not report an agent fire event" >&2
   print_failure_context
   exit 1
 fi
 if ! grep -Eq "event type=4 .* peer=0 code=3" "$HOST_LOG"; then
-  echo "ERROR: host_server did not report an enemy projectile spawn" >&2
+  echo "ERROR: host_server did not report an agent projectile spawn" >&2
   print_failure_context
   exit 1
 fi
 if grep -Eq "event type=8 .* peer=0 code=1" "$HOST_LOG"; then
-  echo "ERROR: host_server reported enemy projectile damage despite spammer collision_mask=none" >&2
+  echo "ERROR: host_server reported agent projectile damage despite spammer collision_mask=none" >&2
   print_failure_context
   exit 1
 fi
@@ -134,7 +134,7 @@ echo "==> Running client mode against $ADDRESS"
 "$APP_BIN" --mode=client --address="$ADDRESS" >"$CLIENT_LOG" 2>&1
 sleep 0.2
 if ! grep -Eq "event type=4 .* peer=0 " "$SERVER_LOG"; then
-  echo "ERROR: dedicated_server did not report a GameServer enemy spawn" >&2
+  echo "ERROR: dedicated_server did not report a GameServer agent spawn" >&2
   print_failure_context
   exit 1
 fi

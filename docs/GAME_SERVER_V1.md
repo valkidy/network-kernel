@@ -53,18 +53,19 @@ thread as the kernel owner:
 2. `Kernel_PollEvents()` drains kernel events.
 3. `GameServer::handle_event()` receives events such as `PlayerJoined` and
    `EntityDestroyed`.
-4. `GameServer::tick(dt)` runs `EnemyManager` and `AgentSentryController`.
+4. `GameServer::tick(dt)` runs `AgentRuntimeManager` and
+   `AgentSentryController`.
 5. Agent sentry behavior reads kernel vision state and writes stationary
    velocity, animation state, and fire input requests back through the kernel
    API.
 
-Enemy velocity written in step 5 is integrated by the kernel on the next
+Agent velocity written in step 5 is integrated by the kernel on the next
 `Kernel_Update()`. This keeps all world mutation on the server simulation
 thread.
 
 ## Agent Vision And Sentry
 
-Game Server v1 no longer uses the old hardcoded Enemy behavior tree. The stable
+Game Server v1 no longer uses the old hardcoded actor behavior tree. The stable
 perception core lives behind the kernel `Kernel_QueryVisionState` ABI, while
 the temporary game-server behavior is an Agent-named stationary sentry.
 
@@ -75,12 +76,15 @@ code can read the cone dimensions from `Kernel_GetColliderTemplates` using the
 vision collider template id. It does not contain sentry behavior state or final
 attack decisions.
 
-## Enemy v1 Behavior
+## Agent v1 Behavior
 
-`EnemyManager` spawns exactly one enemy after the first `PlayerJoined` event.
-The initial enemy state is deterministic:
+`AgentRuntimeManager` bootstraps configured server-only Director entities after
+the first `PlayerJoined` event. Director AI owns initial and replacement spawn
+work. The default sentry agent state is deterministic:
 
-- entity type: enemy
+- entity type: actor
+- actor type: agent
+- camp: enemy side
 - position: `{6, 0, 0}`
 - rotation: identity
 - animation: idle
@@ -121,10 +125,10 @@ Run the focused game server tests:
 
 ```bash
 bazel test --config=macos -c opt //game_server:agent_sentry_controller_test
-bazel test --config=macos -c opt //game_server:enemy_manager_test
+bazel test --config=macos -c opt //game_server:agent_runtime_manager_test
 ```
 
-`enemy_manager_test` covers both listen/host server mode and dedicated server
+`agent_runtime_manager_test` covers both listen/host server mode and dedicated server
 mode.
 
 Run the kernel regressions that cover the server entity API and replication:

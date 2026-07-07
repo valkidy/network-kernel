@@ -5,6 +5,20 @@
 
 #include "kernel/public/kernel_api.h"
 
+_Static_assert(KERNEL_ABI_VERSION == 34u, "neutral vision bump ABI");
+_Static_assert(
+    offsetof(KernelWeaponMechanicsDefinition, projectile_template_id) >
+        offsetof(KernelWeaponMechanicsDefinition, pellet_spread),
+    "weapon mechanics reference projectile templates instead of duplicating mechanics");
+_Static_assert(
+    offsetof(KernelProjectileTemplateDefinition, mechanics) >
+        offsetof(KernelProjectileTemplateDefinition, weapon_id),
+    "projectile templates own projectile mechanics");
+_Static_assert(
+    offsetof(KernelProjectileMechanicsDefinition, projectile_type) >
+        offsetof(KernelProjectileMechanicsDefinition, struct_size),
+    "projectile mechanics use projectile_type naming");
+
 int main(void) {
     KernelAbiInfo abi_info;
     KernelBuildInfo build_info;
@@ -21,15 +35,13 @@ int main(void) {
     KernelCombatStateDefinition combat_state;
     KernelWeaponMechanicsDefinition weapon_mechanics;
     KernelProjectileMechanicsDefinition projectile_mechanics;
-    KernelAreaEffectMechanicsDefinition area_effect_mechanics;
-    KernelBeamMechanicsDefinition beam_mechanics;
     KernelHomingMechanicsDefinition homing_mechanics;
-    KernelAreaEffectState area_effect_state;
-    KernelBeamState beam_state;
     KernelHomingState homing_state;
     KernelGameplayCatalogDefinition gameplay_catalog;
     KernelGameplayCatalogLoadResult gameplay_catalog_load_result;
     KernelActorTemplateDefinition actor_template;
+    KernelEntityAiDefinition entity_ai;
+    KernelEntityTemplateDefinition entity_template;
     KernelProjectileTemplateDefinition projectile_template;
     KernelColliderTemplateDefinition collider_template;
     KernelColliderBindingDefinition collider_binding;
@@ -58,15 +70,13 @@ int main(void) {
     (void)combat_state;
     (void)weapon_mechanics;
     (void)projectile_mechanics;
-    (void)area_effect_mechanics;
-    (void)beam_mechanics;
     (void)homing_mechanics;
-    (void)area_effect_state;
-    (void)beam_state;
     (void)homing_state;
     (void)gameplay_catalog;
     (void)gameplay_catalog_load_result;
     (void)actor_template;
+    (void)entity_ai;
+    (void)entity_template;
     (void)projectile_template;
     (void)collider_template;
     (void)collider_binding;
@@ -81,7 +91,7 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 30u);
+    assert(KERNEL_ABI_VERSION == 34u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD == 4u);
@@ -104,15 +114,15 @@ int main(void) {
     assert(sizeof(KernelCombatStateDefinition) > 0u);
     assert(sizeof(KernelWeaponMechanicsDefinition) > 0u);
     assert(sizeof(KernelProjectileMechanicsDefinition) > 0u);
-    assert(sizeof(KernelAreaEffectMechanicsDefinition) > 0u);
-    assert(sizeof(KernelBeamMechanicsDefinition) > 0u);
     assert(sizeof(KernelHomingMechanicsDefinition) > 0u);
-    assert(sizeof(KernelAreaEffectState) > 0u);
-    assert(sizeof(KernelBeamState) > 0u);
     assert(sizeof(KernelHomingState) > 0u);
     assert(sizeof(KernelGameplayCatalogDefinition) > 0u);
     assert(sizeof(KernelGameplayCatalogLoadResult) > 0u);
     assert(sizeof(KernelActorTemplateDefinition) > 0u);
+    assert(sizeof(KernelEntityAiDefinition) > 0u);
+    assert(sizeof(KernelEntityTemplateDefinition) > 0u);
+    assert(sizeof(KernelAreaEffectMechanicsDefinition) > 0u);
+    assert(sizeof(KernelBeamMechanicsDefinition) > 0u);
     assert(sizeof(KernelProjectileTemplateDefinition) > 0u);
     assert(sizeof(KernelColliderTemplateDefinition) > 0u);
     assert(sizeof(KernelColliderBindingDefinition) > 0u);
@@ -126,8 +136,33 @@ int main(void) {
     assert(sizeof(KernelAgentVisionConfig) > 0u);
     assert(sizeof(KernelVisionStateQuery) > 0u);
     assert(sizeof(KernelVisionStateView) > 0u);
+    assert(KERNEL_MAX_VISIBLE_NEUTRALS == 16u);
     assert(KernelActorType_Player == 1);
     assert(KernelActorType_Agent == 2);
+    assert(KernelEntityType_Actor == 1);
+    assert(KernelEntityType_Projectile == 3);
+    assert(KernelEntityType_Director == 5);
+    assert(KernelAiControllerType_Sentry == 1);
+    assert(KernelAiControllerType_Director == 2);
+    assert((KERNEL_ENTITY_COMPONENT_SERVER_ONLY &
+            KERNEL_ENTITY_COMPONENT_DIRECTOR_RUNTIME) == 0u);
+    assert(KernelProjectileCollisionQueryMode_Auto == 0);
+    assert(KernelProjectileCollisionQueryMode_Overlap == 1);
+    assert(KernelProjectileCollisionQueryMode_Sweep == 2);
+    assert(KernelProjectileCollisionQueryMode_Ray == 3);
+    assert(offsetof(KernelProjectileMechanicsDefinition, collision_query_mode) >
+           offsetof(KernelProjectileMechanicsDefinition,
+                    expire_spawn_projectile_template_id));
+    assert(offsetof(KernelProjectileMechanicsDefinition, lifetime_ticks) >
+           offsetof(KernelProjectileMechanicsDefinition, speed));
+    assert(offsetof(KernelHomingMechanicsDefinition, max_turn_degrees_per_tick) >
+           offsetof(KernelHomingMechanicsDefinition, lock_cone_degrees));
+    assert(offsetof(KernelBeamMechanicsDefinition, damage_per_tick) >
+           offsetof(KernelBeamMechanicsDefinition, radius));
+    assert(offsetof(KernelAgentVisionConfig, max_visible_neutrals) >
+           offsetof(KernelAgentVisionConfig, max_visible_allies));
+    assert(offsetof(KernelVisionStateView, visible_neutrals) >
+           offsetof(KernelVisionStateView, visible_ally_count));
     assert(sizeof(&Kernel_ServerSetEntityHealth) > 0u);
     assert(KernelAgentCamp_PlayerSide == 1);
     assert(KernelAgentRelation_Hostile == 2);
@@ -144,16 +179,11 @@ int main(void) {
             KERNEL_CAPABILITY_SERVER_MECHANICS_CONFIG) == 0u);
     assert((KERNEL_CAPABILITY_VISION_STATE_QUERY &
             KERNEL_CAPABILITY_COLLIDER_SHAPE_QUERY) == 0u);
-    assert((KERNEL_CAPABILITY_AREA_EFFECT_WEAPONS &
-            KERNEL_CAPABILITY_PROJECTILE_RESPONSE_MASKS) == 0u);
-    assert((KERNEL_CAPABILITY_BEAM_WEAPONS &
-            KERNEL_CAPABILITY_AREA_EFFECT_WEAPONS) == 0u);
-    assert((KERNEL_CAPABILITY_HOMING_PROJECTILES &
-            KERNEL_CAPABILITY_BEAM_WEAPONS) == 0u);
+    assert((KERNEL_CAPABILITY_PROJECTILE_RESPONSE_MASKS &
+            KERNEL_CAPABILITY_HOMING_PROJECTILES) == 0u);
     assert((KERNEL_CAPABILITY_LAN_DISCOVERY &
             KERNEL_CAPABILITY_HOMING_PROJECTILES) == 0u);
     assert((KERNEL_COLLISION_LAYER_PLAYER_SIDE & KERNEL_COLLISION_LAYER_HOSTILE_SIDE) == 0u);
-    assert((KERNEL_COLLISION_LAYER_PROJECTILE & KERNEL_COLLISION_LAYER_AREA_EFFECT) == 0u);
     assert((KERNEL_COLLISION_MASK_DAMAGEABLE & KERNEL_COLLISION_LAYER_PLAYER_SIDE) != 0u);
     assert((KERNEL_COLLISION_MASK_DAMAGEABLE & KERNEL_COLLISION_LAYER_HOSTILE_SIDE) != 0u);
     assert((KERNEL_COLLISION_MASK_DAMAGEABLE & KERNEL_COLLISION_LAYER_NEUTRAL) != 0u);
@@ -174,15 +204,15 @@ int main(void) {
            offsetof(RenderEntityState, projectile_template_id));
     assert(offsetof(KernelCombatStateDefinition, collider_template_id) >
            offsetof(KernelCombatStateDefinition, active_weapon_id));
+    assert(offsetof(KernelServerEntityCreateInfo, entity_template_id) >
+           offsetof(KernelServerEntityCreateInfo, actor_template_id));
+    assert(offsetof(KernelEntityTemplateDefinition, ai) >
+           offsetof(KernelEntityTemplateDefinition, vision));
     assert(RenderEntityStatus_Active == 0u);
     assert((KERNEL_VISUAL_FLAG_HP_UNKNOWN & KERNEL_VISUAL_FLAG_DEAD) == 0u);
     assert(sizeof(KernelEntityLifecycleEvent) > 0u);
     assert(offsetof(KernelEvent, event_time_us) > offsetof(KernelEvent, code));
     assert(offsetof(KernelEvent, presentation_time_us) > offsetof(KernelEvent, event_time_us));
-    assert(offsetof(KernelWeaponMechanicsDefinition, area_effect) >
-           offsetof(KernelWeaponMechanicsDefinition, projectile));
-    assert(offsetof(KernelWeaponMechanicsDefinition, beam) >
-           offsetof(KernelWeaponMechanicsDefinition, area_effect));
     assert(sizeof(state.entity_id) == sizeof(uint64_t));
     assert(sizeof(build_info.module_name) == KERNEL_BUILD_INFO_TEXT_SIZE);
     assert(sizeof(build_info.module_file_name) == KERNEL_BUILD_INFO_TEXT_SIZE);

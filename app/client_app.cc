@@ -400,9 +400,10 @@ int RunClient(
     for (std::uint32_t index = 0; index < state_count; ++index) {
         const RenderEntityState& state = states[index];
         spdlog::info(
-            "render_state net_id={} type={} pos=({}, {}, {})",
+            "render_state net_id={} type={} actor={} pos=({}, {}, {})",
             state.net_id,
             state.entity_type,
+            state.actor_type,
             state.position.x,
             state.position.y,
             state.position.z);

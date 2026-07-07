@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <vector>
 
-#include "game_server/enemy.h"
+#include "game_server/agent_runtime.h"
 #include "kernel/public/kernel_api.h"
 
 namespace network_example::game_server {
@@ -15,10 +15,9 @@ struct AgentSentryConfig {
     std::uint32_t patrol_rotation_interval_ticks = 30;
     float patrol_rotation_min_degrees = 15.0f;
     float patrol_rotation_max_degrees = 30.0f;
-    std::uint8_t weapon_id = kAgentSpammerWeaponId;
-    std::uint16_t magazine_size = kAgentSpammerMagazine;
-    std::uint16_t animation_idle = kEnemyAnimationIdle;
-    std::uint16_t animation_attack = kEnemyAnimationChasing;
+    std::uint8_t weapon_id = static_cast<std::uint8_t>(KERNEL_MAX_WEAPONS);
+    std::uint16_t animation_idle = kAgentAnimationIdle;
+    std::uint16_t animation_attack = kAgentAnimationChasing;
 };
 
 class AgentSentryController {
@@ -27,7 +26,7 @@ public:
 
     void tick(
         KernelHandle* kernel,
-        std::vector<Enemy>* enemies,
+        std::vector<AgentRuntimeState>* agents,
         float delta_seconds) const;
 
 private:

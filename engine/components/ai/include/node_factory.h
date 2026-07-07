@@ -8,7 +8,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "ai/ai_tree.h"
+#include "ai_tree.h"
 
 namespace network_example::ai {
 
@@ -100,7 +100,7 @@ NodePtr make_selector(std::vector<NodePtr> children);
 NodePtr make_sequence(std::vector<NodePtr> children);
 NodePtr make_utility_selector(std::vector<UtilityCandidate> candidates);
 
-NodePtr make_condition_has_visible_enemy();
+NodePtr make_condition_has_visible_hostile();
 NodePtr make_condition_hp_above(float value);
 NodePtr make_condition_hp_below(float value);
 NodePtr make_condition_has_ammo();

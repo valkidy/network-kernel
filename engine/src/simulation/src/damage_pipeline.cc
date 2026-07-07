@@ -68,14 +68,13 @@ void DamagePipeline::ingest_defensive_input(
 }
 
 bool DamagePipeline::submit_hit(
-    const World& world,
+    const World&,
     NetId target_net_id,
     NetId source_net_id,
     PeerId source_peer,
     std::uint8_t source_code,
     std::uint16_t damage,
     std::uint64_t hit_time_us) {
-    (void)world;
     return submit_damage_request(DamageRequest{
         0,
         0,

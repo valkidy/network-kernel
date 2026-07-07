@@ -1,4 +1,4 @@
-#include "ai/node_factory.h"
+#include "node_factory.h"
 
 #include <cassert>
 #include <cstdint>
@@ -36,14 +36,14 @@ int main() {
         "Score.AttackWhenHealthy",
         network_example::ai::NodeConfig{"Action.AttackTarget",
                                         "",
-                                        {{"target", "nearestEnemyId"}}},
+                                        {{"target", "nearestHostileId"}}},
     });
     combat.utility_children.push_back(network_example::ai::UtilityChildConfig{
         "Flee",
         "Score.FleeWhenCriticalHp",
         network_example::ai::NodeConfig{"Action.FleeFromTarget",
                                         "",
-                                        {{"target", "nearestEnemyId"}}},
+                                        {{"target", "nearestHostileId"}}},
     });
 
     network_example::ai::NodeBuildResult built = defaults.create_node(combat);
@@ -54,13 +54,13 @@ int main() {
     assert(built.report.required_features.size() == 2);
 
     network_example::ai::AIContext context;
-    network_example::ai::AICommandBuffer commands;
+    network_example::ai::IntentBuffer commands;
     context.set_feature("hp01", 0.05f);
-    context.set_feature("nearestEnemyId", static_cast<std::uint32_t>(7));
+    context.set_feature("nearestHostileId", static_cast<std::uint32_t>(7));
     assert(built.node->tick(context, &commands) ==
            network_example::ai::NodeStatus::kRunning);
     assert(commands.size() == 1);
-    assert(commands.commands()[0].type == "FleeFromTarget");
+    assert(commands.intents()[0].type == "FleeFromTarget");
 
     return 0;
 }

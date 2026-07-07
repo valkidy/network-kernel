@@ -116,14 +116,12 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             sizeof(KernelWeaponMechanicsDefinition);
         out_info->projectile_mechanics_definition_size =
             sizeof(KernelProjectileMechanicsDefinition);
-        out_info->combat_state_definition_size =
-            sizeof(KernelCombatStateDefinition);
         out_info->area_effect_mechanics_definition_size =
             sizeof(KernelAreaEffectMechanicsDefinition);
-        out_info->area_effect_state_size = sizeof(KernelAreaEffectState);
         out_info->beam_mechanics_definition_size =
             sizeof(KernelBeamMechanicsDefinition);
-        out_info->beam_state_size = sizeof(KernelBeamState);
+        out_info->combat_state_definition_size =
+            sizeof(KernelCombatStateDefinition);
         out_info->homing_mechanics_definition_size =
             sizeof(KernelHomingMechanicsDefinition);
         out_info->homing_state_size = sizeof(KernelHomingState);
@@ -157,6 +155,10 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             sizeof(KernelGameplayCatalogManifest);
         out_info->gameplay_catalog_sync_status_size =
             sizeof(KernelGameplayCatalogSyncStatus);
+        out_info->entity_template_definition_size =
+            sizeof(KernelEntityTemplateDefinition);
+        out_info->entity_ai_definition_size =
+            sizeof(KernelEntityAiDefinition);
         out_info->capability_flags =
             KERNEL_CAPABILITY_CLIENT_MODE |
             KERNEL_CAPABILITY_LISTEN_SERVER_MODE |
@@ -180,9 +182,7 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_RENDER_STATES_AT_TIME |
             KERNEL_CAPABILITY_SERVER_MECHANICS_CONFIG |
             KERNEL_CAPABILITY_WEAPON_METADATA_QUERY |
-            KERNEL_CAPABILITY_AREA_EFFECT_WEAPONS |
             KERNEL_CAPABILITY_PROJECTILE_RESPONSE_MASKS |
-            KERNEL_CAPABILITY_BEAM_WEAPONS |
             KERNEL_CAPABILITY_HOMING_PROJECTILES |
             KERNEL_CAPABILITY_LAN_DISCOVERY |
             KERNEL_CAPABILITY_GAMEPLAY_CATALOG |
@@ -789,26 +789,6 @@ bool Kernel_ServerGetEntityWeaponMechanics(
     });
 }
 
-bool Kernel_ServerGetAreaEffectState(
-    KernelHandle* kernel,
-    uint32_t net_id,
-    KernelAreaEffectState* out_state) {
-    return abi_call("Kernel_ServerGetAreaEffectState", false, [&]() {
-        return kernel != nullptr &&
-               kernel->engine->server_get_area_effect_state(net_id, out_state);
-    });
-}
-
-bool Kernel_ServerGetBeamState(
-    KernelHandle* kernel,
-    uint32_t net_id,
-    KernelBeamState* out_state) {
-    return abi_call("Kernel_ServerGetBeamState", false, [&]() {
-        return kernel != nullptr &&
-               kernel->engine->server_get_beam_state(net_id, out_state);
-    });
-}
-
 bool Kernel_ServerGetHomingState(
     KernelHandle* kernel,
     uint32_t net_id,
@@ -829,63 +809,13 @@ bool Kernel_ServerValidateMechanicsConfig(
             weapon_mechanics->damage == 0 ||
             weapon_mechanics->cooldown_ticks == 0 ||
             weapon_mechanics->reload_ticks == 0 ||
-            weapon_mechanics->fire_mode > KernelWeaponFireMode_Beam) {
+            weapon_mechanics->fire_mode > KernelWeaponFireMode_Projectile) {
             return false;
         }
         if (weapon_mechanics->fire_mode == KernelWeaponFireMode_Projectile) {
-            return weapon_mechanics->projectile.struct_size >=
-                       sizeof(KernelProjectileMechanicsDefinition) &&
-                    weapon_mechanics->projectile.motion_model <=
-                       KernelProjectileMotionModel_Homing &&
-                   weapon_mechanics->projectile.hit_response <=
-                       KernelProjectileHitResponse_Attach &&
-                   weapon_mechanics->projectile.damage_shape <=
-                       KernelProjectileDamageShape_PiercingSegment &&
-                   weapon_mechanics->projectile.hit_response !=
-                       KernelProjectileHitResponse_Bounce &&
-                   weapon_mechanics->projectile.hit_response !=
-                       KernelProjectileHitResponse_Attach &&
-                   weapon_mechanics->projectile.max_hit_count > 0 &&
-                   weapon_mechanics->projectile.speed > 0.0f &&
-                   weapon_mechanics->projectile.lifetime_seconds > 0.0f &&
-                   (weapon_mechanics->projectile.motion_model !=
-                            KernelProjectileMotionModel_Homing
-                        ? weapon_mechanics->projectile.homing.struct_size == 0
-                        : weapon_mechanics->projectile.homing.struct_size >=
-                                  sizeof(KernelHomingMechanicsDefinition) &&
-                              weapon_mechanics->projectile.homing.homing_mode ==
-                                  KernelHomingMode_FireAndForget &&
-                              weapon_mechanics->projectile.homing.sync_mode ==
-                                  KernelProjectileSyncMode_HybridDeterministicThenSnapshot &&
-                              weapon_mechanics->projectile.homing.lock_on_range > 0.0f &&
-                              weapon_mechanics->projectile.homing.lose_target_range >=
-                                  weapon_mechanics->projectile.homing.lock_on_range &&
-                              weapon_mechanics->projectile.homing.lock_cone_degrees > 0.0f &&
-                              weapon_mechanics->projectile.homing.lock_cone_degrees <= 180.0f &&
-                              weapon_mechanics->projectile.homing
-                                      .max_turn_rate_degrees_per_second > 0.0f &&
-                              weapon_mechanics->projectile.homing.acceleration > 0.0f &&
-                              weapon_mechanics->projectile.homing.max_speed > 0.0f);
+            return weapon_mechanics->projectile_template_id != 0;
         }
-        if (weapon_mechanics->fire_mode == KernelWeaponFireMode_AreaEffect) {
-            return weapon_mechanics->area_effect.struct_size >=
-                       sizeof(KernelAreaEffectMechanicsDefinition) &&
-                   weapon_mechanics->area_effect.radius > 0.0f &&
-                   weapon_mechanics->area_effect.damage_per_interval > 0 &&
-                   weapon_mechanics->area_effect.damage_interval_ticks > 0 &&
-                   weapon_mechanics->area_effect.lifetime_ticks > 0 &&
-                   weapon_mechanics->area_effect.spawn_distance >= 0.0f;
-        }
-        if (weapon_mechanics->fire_mode == KernelWeaponFireMode_Beam) {
-            return weapon_mechanics->beam.struct_size >=
-                       sizeof(KernelBeamMechanicsDefinition) &&
-                   weapon_mechanics->beam.length > 0.0f &&
-                   weapon_mechanics->beam.radius > 0.0f &&
-                   weapon_mechanics->beam.damage_per_second > 0 &&
-                   weapon_mechanics->beam.lifetime_ticks > 0;
-        }
-        if (weapon_mechanics->fire_mode != KernelWeaponFireMode_Beam &&
-            weapon_mechanics->max_range <= 0.0f) {
+        if (weapon_mechanics->max_range <= 0.0f) {
             return false;
         }
         return weapon_mechanics->fire_mode != KernelWeaponFireMode_Shotgun ||

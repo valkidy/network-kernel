@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 28u`.
+`KERNEL_ABI_VERSION == 34u`.
 
 ## Ownership
 
@@ -38,6 +38,30 @@ the existing memory API, and explicitly continue the normal handshake. Bundle
 bytes remain native-owned until copied into a caller-owned buffer with
 `Kernel_CopyGameplayCatalogBundle`; the kernel never retains caller output
 buffer pointers.
+
+ABI version 31 adds `KernelProjectileCollisionQueryMode` and
+`KernelProjectileMechanicsDefinition::collision_query_mode`. Projectile
+gameplay hit detection now derives collision geometry from the resolved
+`KernelColliderTemplateDefinition` where supported, while `damage_shape`
+continues to describe how confirmed hits apply damage.
+
+ABI version 32 changes projectile time-related mechanics parameters to tick
+units: standard projectile lifetime uses `lifetime_ticks`, beam damage uses
+`damage_per_tick`, and homing turn rate uses `max_turn_degrees_per_tick`.
+
+ABI version 33 adds entity template catalog data for component-driven server
+materialization. `KernelEntityTemplateDefinition` describes actor and
+server-only director entities, `KernelEntityAiDefinition` carries AI controller
+and director spawn policy fields, and `KernelServerEntityCreateInfo` gains
+`entity_template_id` while keeping `actor_template_id` as the legacy actor
+metadata path. Director entities use `KernelEntityType_Director`, receive a
+normal `NetId` for lifecycle/query ownership, and are excluded from snapshot and
+render-state output when materialized with the server-only component flag.
+
+ABI version 34 adds neutral visibility reporting. `KernelAgentVisionConfig`
+now includes `max_visible_neutrals`, and `KernelVisionStateView` reports
+`visible_neutrals` separately from allies and hostiles. Neutral actors are
+observable by AI but are not selected as default attack targets.
 
 Packet schema version 11 adds the pre-handshake gameplay catalog manifest,
 bundle request/chunk, and synchronization error messages. Existing handshake,

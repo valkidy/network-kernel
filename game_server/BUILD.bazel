@@ -5,8 +5,8 @@ package(default_visibility = ["//visibility:public"])
 filegroup(
     name = "gameplay_catalog_bundle_sources",
     srcs = glob([
-        "actor_templates/*.yaml",
         "collider_templates/*.yaml",
+        "entity_templates/*.yaml",
         "projectile_templates/*.yaml",
         "weapon_templates/*.yaml",
     ]) + [
@@ -17,20 +17,25 @@ filegroup(
 cc_library(
     name = "game_server",
     srcs = [
+        "actor_intent_executor.cc",
+        "ai_perception_adapter.cc",
         "agent_sentry_controller.cc",
-        "enemy_manager.cc",
+        "agent_runtime_manager.cc",
         "gameplay_config.cc",
         "game_server.cc",
     ],
     hdrs = [
+        "actor_intent_executor.h",
+        "ai_perception_adapter.h",
+        "agent_runtime.h",
+        "agent_runtime_manager.h",
         "agent_sentry_controller.h",
-        "enemy.h",
-        "enemy_manager.h",
         "gameplay_config.h",
         "game_server.h",
         "public/game_server_types.h",
     ],
     deps = [
+        "//engine/components/ai:ai",
         "//engine/src/kernel:kernel_api",
         "//engine/src/kernel:kernel_api_internal",
         "@zip_archive//:zip",
@@ -42,8 +47,8 @@ cc_test(
     name = "gameplay_config_test",
     srcs = ["gameplay_config_test.cc"],
     data = glob([
-        "actor_templates/*.yaml",
         "collider_templates/*.yaml",
+        "entity_templates/*.yaml",
         "projectile_templates/*.yaml",
         "weapon_templates/*.yaml",
     ]) + [
@@ -60,8 +65,8 @@ cc_test(
     name = "weapon_template_loader_test",
     srcs = ["weapon_template_loader_test.cc"],
     data = glob([
-        "actor_templates/*.yaml",
         "collider_templates/*.yaml",
+        "entity_templates/*.yaml",
         "projectile_templates/*.yaml",
         "weapon_templates/*.yaml",
     ]) + [
@@ -101,11 +106,21 @@ cc_test(
 )
 
 cc_test(
-    name = "enemy_manager_test",
-    srcs = ["enemy_manager_test.cc"],
+    name = "actor_intent_executor_test",
+    srcs = ["actor_intent_executor_test.cc"],
+    deps = [
+        ":game_server",
+        "//engine/components/ai:ai",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "agent_runtime_manager_test",
+    srcs = ["agent_runtime_manager_test.cc"],
     data = glob([
-        "actor_templates/*.yaml",
         "collider_templates/*.yaml",
+        "entity_templates/*.yaml",
         "projectile_templates/*.yaml",
         "weapon_templates/*.yaml",
     ]) + [
@@ -121,8 +136,8 @@ cc_test(
     name = "game_server_api_test",
     srcs = ["game_server_api_test.cc"],
     data = glob([
-        "actor_templates/*.yaml",
         "collider_templates/*.yaml",
+        "entity_templates/*.yaml",
         "projectile_templates/*.yaml",
         "weapon_templates/*.yaml",
     ]) + [

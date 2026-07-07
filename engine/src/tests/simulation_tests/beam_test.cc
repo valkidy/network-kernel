@@ -8,11 +8,13 @@
 
 namespace {
 
-void require(bool condition) {
+void require_impl(bool condition, int line) {
     if (!condition) {
         std::abort();
     }
 }
+
+#define require(condition) require_impl((condition), __LINE__)
 
 network_example::Health& health(
     network_example::World& world,
@@ -30,6 +32,63 @@ network_example::NetId spawn_enemy(
     return enemy;
 }
 
+network_example::NetId spawn_projectile_beam(
+    network_example::World& world,
+    network_example::PeerId owner_peer,
+    network_example::NetId shooter_net_id,
+    const glm::vec3& origin,
+    const glm::vec3& direction,
+    float length,
+    float radius,
+    std::uint16_t damage_per_tick,
+    std::uint32_t expire_tick,
+    std::uint8_t source_code,
+    std::uint32_t collision_mask) {
+    const network_example::NetId net_id =
+        world.spawn_projectile(owner_peer, origin, glm::vec3{0.0f, 0.0f, 0.0f});
+    const auto entity = world.find_entity(net_id);
+    assert(entity.has_value());
+    network_example::ProjectileState& projectile =
+        world.registry().get<network_example::ProjectileState>(*entity);
+    projectile.weapon_id = source_code;
+    projectile.damage = damage_per_tick;
+    projectile.shooter_net_id = shooter_net_id;
+    projectile.collision_mask = collision_mask;
+    projectile.max_lifetime_ticks = 0;
+    world.registry().emplace<network_example::ProjectileBeamRuntime>(
+        *entity,
+        network_example::ProjectileBeamRuntime{
+            shooter_net_id,
+            origin,
+            direction,
+            length,
+            radius,
+            damage_per_tick,
+            expire_tick,
+            source_code,
+            collision_mask,
+            {},
+        });
+    return net_id;
+}
+
+network_example::RuntimeProjectileTemplate beam_template(
+    std::uint32_t template_id,
+    std::uint8_t weapon_id) {
+    network_example::RuntimeProjectileTemplate projectile_template;
+    projectile_template.projectile_template_id = template_id;
+    projectile_template.weapon_id = weapon_id;
+    projectile_template.projectile_type = network_example::ProjectileType::kBeam;
+    projectile_template.motion_model = network_example::ProjectileMotionModel::kLinear;
+    projectile_template.speed = 0.0f;
+    projectile_template.damage = 1;
+    projectile_template.lifetime_ticks = 2;
+    projectile_template.beam_length = 6.0f;
+    projectile_template.beam_radius = 0.25f;
+    projectile_template.collision_mask = network_example::kCollisionLayerHostileSide;
+    return projectile_template;
+}
+
 void beam_damages_targets_with_dps_accumulator() {
     network_example::World world;
     const network_example::NetId shooter =
@@ -37,18 +96,19 @@ void beam_damages_targets_with_dps_accumulator() {
     const network_example::NetId enemy =
         spawn_enemy(world, glm::vec3{2.0f, 0.0f, 0.0f});
     const network_example::NetId beam =
-        world.spawn_beam(
+        spawn_projectile_beam(
+            world,
             1,
             shooter,
             glm::vec3{0.0f, 0.5f, 0.0f},
             glm::vec3{1.0f, 0.0f, 0.0f},
             5.0f,
             0.25f,
-            30,
+            1,
             10,
             5,
             network_example::kCollisionLayerHostileSide);
-    (void)beam;
+    assert(beam != 0);
 
     network_example::DamagePipeline pipeline;
     std::vector<KernelEvent> events;
@@ -75,14 +135,15 @@ void beam_respects_range_radius_and_collision_mask() {
     const network_example::NetId friendly =
         world.spawn_player(2, glm::vec3{2.5f, 0.0f, 0.0f});
     health(world, friendly) = network_example::Health{100, 100};
-    world.spawn_beam(
+    spawn_projectile_beam(
+        world,
         1,
         shooter,
         glm::vec3{0.0f, 0.5f, 0.0f},
         glm::vec3{1.0f, 0.0f, 0.0f},
         4.0f,
         0.25f,
-        30,
+        1,
         10,
         5,
         network_example::kCollisionLayerHostileSide);
@@ -106,14 +167,15 @@ void beam_expires_when_not_refreshed() {
     const network_example::NetId shooter =
         world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
     const network_example::NetId beam =
-        world.spawn_beam(
+        spawn_projectile_beam(
+            world,
             1,
             shooter,
             glm::vec3{0.0f, 0.5f, 0.0f},
             glm::vec3{1.0f, 0.0f, 0.0f},
             5.0f,
             0.25f,
-            30,
+            1,
             3,
             5,
             network_example::kCollisionLayerHostileSide);
@@ -138,18 +200,14 @@ void beam_fire_spawns_or_refreshes_server_beam() {
     tuning.definitions[network_example::kWeaponSlot5] =
         network_example::WeaponMechanicsDefinition{
             network_example::kWeaponSlot5,
-            network_example::WeaponFireMode::kBeam,
+            network_example::WeaponFireMode::kProjectile,
             2,
             20,
             1,
             10,
         };
-    tuning.definitions[network_example::kWeaponSlot5].beam_length = 6.0f;
-    tuning.definitions[network_example::kWeaponSlot5].beam_radius = 0.25f;
-    tuning.definitions[network_example::kWeaponSlot5].beam_damage_per_second = 30;
-    tuning.definitions[network_example::kWeaponSlot5].beam_lifetime_ticks = 2;
-    tuning.definitions[network_example::kWeaponSlot5].beam_collision_mask =
-        network_example::kCollisionLayerHostileSide;
+    tuning.definitions[network_example::kWeaponSlot5].projectile_template_id = 55;
+    world.set_projectile_templates({beam_template(55, network_example::kWeaponSlot5)});
 
     PlayerInput input{};
     input.buttons = InputButton_Fire;
@@ -163,18 +221,19 @@ void beam_fire_spawns_or_refreshes_server_beam() {
     network_example::NetId beam = 0;
     for (const KernelEvent& event : events) {
         if (event.type == KernelEventType_EntitySpawned &&
-            event.code == static_cast<std::uint32_t>(network_example::EntityType::kBeam)) {
+            event.code ==
+                static_cast<std::uint32_t>(network_example::EntityType::kProjectile)) {
             beam = event.net_id;
         }
     }
     require(beam != 0);
     const auto beam_entity = world.find_entity(beam);
     require(beam_entity.has_value());
-    const network_example::BeamState& state =
-        world.registry().get<network_example::BeamState>(*beam_entity);
+    const network_example::ProjectileBeamRuntime& state =
+        world.registry().get<network_example::ProjectileBeamRuntime>(*beam_entity);
     require(state.shooter_net_id == player);
     require(state.length == 6.0f);
-    require(state.damage_per_second == 30);
+    require(state.damage_per_tick == 1);
     require(state.expire_tick == 3);
 }
 
