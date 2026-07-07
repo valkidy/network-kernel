@@ -4,20 +4,20 @@
 
 int main() {
     network_example::ai::CapabilityRegistry registry;
-    registry.add_feature("hasVisibleEnemy");
+    registry.add_feature("hasVisibleHostile");
     registry.add_node_type("Action.AttackTarget");
     registry.add_score_function("Score.AttackWhenHealthy");
-    registry.add_query("Query.NearestEnemy");
+    registry.add_query("Query.NearestHostile");
     registry.add_gameplay_system("System.Weapon");
     registry.add_executor("Executor.ActorIntent");
     registry.add_data("Data.WeaponStatus");
     registry.add_action("Action.Reload");
 
     network_example::ai::ScenarioRequirements supported;
-    supported.required_features = {"hasVisibleEnemy"};
+    supported.required_features = {"hasVisibleHostile"};
     supported.required_nodes = {"Action.AttackTarget"};
     supported.required_scores = {"Score.AttackWhenHealthy"};
-    supported.required_queries = {"Query.NearestEnemy"};
+    supported.required_queries = {"Query.NearestHostile"};
     supported.required_gameplay_systems = {"System.Weapon"};
     supported.required_executors = {"Executor.ActorIntent"};
     supported.required_data = {"Data.WeaponStatus"};
@@ -31,10 +31,10 @@ int main() {
     assert(supported_report.missing_actions.empty());
 
     network_example::ai::ScenarioRequirements unsupported;
-    unsupported.required_features = {"visibleEnemies", "enemyHp"};
+    unsupported.required_features = {"visibleHostiles", "hostileHp"};
     unsupported.required_nodes = {
-        "Query.VisibleEnemies",
-        "Selector.LowestHpEnemy",
+        "Query.VisibleHostiles",
+        "Selector.LowestHpHostile",
         "Blackboard.SetTarget",
     };
     unsupported.required_scores = {"Score.LowestHpTarget"};

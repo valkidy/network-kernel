@@ -430,8 +430,8 @@ NodeBuildResult NodeFactory::create_node(const NodeConfig& config) const {
         return result;
     }
 
-    if (config.type == "Condition.HasVisibleEnemy") {
-        add_unique(&result.report.required_features, "hasVisibleEnemy");
+    if (config.type == "Condition.HasVisibleHostile") {
+        add_unique(&result.report.required_features, "hasVisibleHostile");
     } else if (config.type == "Condition.HpAbove" ||
                config.type == "Condition.HpBelow") {
         add_unique(&result.report.required_features, "hp01");
@@ -445,7 +445,7 @@ NodeBuildResult NodeFactory::create_node(const NodeConfig& config) const {
                config.type == "Action.RequestHelp") {
         add_unique(
             &result.report.required_features,
-            param_or_default(config, "target", "nearestEnemyId"));
+            param_or_default(config, "target", "nearestHostileId"));
     }
 
     if (!iter->second) {
@@ -477,9 +477,9 @@ NodeFactory make_default_node_factory() {
     factory.register_node_type("Composite.Selector");
     factory.register_node_type("Composite.Sequence");
     factory.register_node_type("Composite.UtilitySelector");
-    factory.register_node_type("Condition.HasVisibleEnemy", [](
+    factory.register_node_type("Condition.HasVisibleHostile", [](
         const NodeConfig&, const NodeFactory&) {
-        return make_condition_has_visible_enemy();
+        return make_condition_has_visible_hostile();
     });
     factory.register_node_type("Condition.HpAbove", [](
         const NodeConfig& config, const NodeFactory&) {
@@ -508,22 +508,22 @@ NodeFactory make_default_node_factory() {
     factory.register_node_type("Action.MoveTo", [](
         const NodeConfig& config, const NodeFactory&) {
         return make_action_move_to(
-            param_or_default(config, "target", "nearestEnemyId"));
+            param_or_default(config, "target", "nearestHostileId"));
     });
     factory.register_node_type("Action.AttackTarget", [](
         const NodeConfig& config, const NodeFactory&) {
         return make_action_attack_target(
-            param_or_default(config, "target", "nearestEnemyId"));
+            param_or_default(config, "target", "nearestHostileId"));
     });
     factory.register_node_type("Action.FleeFromTarget", [](
         const NodeConfig& config, const NodeFactory&) {
         return make_action_flee_from_target(
-            param_or_default(config, "target", "nearestEnemyId"));
+            param_or_default(config, "target", "nearestHostileId"));
     });
     factory.register_node_type("Action.RequestHelp", [](
         const NodeConfig& config, const NodeFactory&) {
         return make_action_request_help(
-            param_or_default(config, "target", "nearestEnemyId"));
+            param_or_default(config, "target", "nearestHostileId"));
     });
     factory.register_node_type("Action.Reload", [](
         const NodeConfig&, const NodeFactory&) {
@@ -557,8 +557,8 @@ NodePtr make_utility_selector(std::vector<UtilityCandidate> candidates) {
     return std::make_unique<UtilitySelectorNode>(std::move(candidates));
 }
 
-NodePtr make_condition_has_visible_enemy() {
-    return std::make_unique<BoolConditionNode>("hasVisibleEnemy");
+NodePtr make_condition_has_visible_hostile() {
+    return std::make_unique<BoolConditionNode>("hasVisibleHostile");
 }
 
 NodePtr make_condition_hp_above(float value) {

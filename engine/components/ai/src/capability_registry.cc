@@ -159,11 +159,11 @@ CapabilityReport CapabilityRegistry::validate(
 CapabilityRegistry make_default_capability_registry() {
     CapabilityRegistry registry;
     registry.add_feature("hp01");
-    registry.add_feature("hasVisibleEnemy");
+    registry.add_feature("hasVisibleHostile");
     registry.add_feature("hasAmmo");
     registry.add_feature("isAtTarget");
-    registry.add_feature("nearestEnemyId");
-    registry.add_feature("enemyDistance");
+    registry.add_feature("nearestHostileId");
+    registry.add_feature("hostileDistance");
     registry.add_feature("allyNearbyCount");
     registry.add_feature("coverScore");
     registry.add_feature("dangerScore");
@@ -171,7 +171,7 @@ CapabilityRegistry make_default_capability_registry() {
     registry.add_node_type("Composite.Selector");
     registry.add_node_type("Composite.Sequence");
     registry.add_node_type("Composite.UtilitySelector");
-    registry.add_node_type("Condition.HasVisibleEnemy");
+    registry.add_node_type("Condition.HasVisibleHostile");
     registry.add_node_type("Condition.HpAbove");
     registry.add_node_type("Condition.HpBelow");
     registry.add_node_type("Condition.HasAmmo");
@@ -188,7 +188,7 @@ CapabilityRegistry make_default_capability_registry() {
     registry.add_score_function("Score.FleeWhenCriticalHp");
     registry.add_score_function("Score.RequestHelpWhenInjured");
 
-    registry.add_query("Query.NearestEnemy");
+    registry.add_query("Query.NearestHostile");
     registry.add_query("Query.VisibleHostiles");
 
     registry.add_gameplay_system("System.Vision");
