@@ -7,7 +7,7 @@ transform:
 ai:
   controller: director
   profile: earth_mother
-  tick_interval: 10
+  tick_interval: 30
 director:
   kind: world_rule
   spawn:
