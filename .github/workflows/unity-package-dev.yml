@@ -3,7 +3,7 @@ name: Unity Package Dev Build
 on:
   push:
     branches:
-      - dev-latest
+      - dev-*
   workflow_dispatch:
 
 permissions:
@@ -28,8 +28,8 @@ jobs:
       - name: Verify checked out source
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_REF_TYPE" != "branch" || "$GITHUB_REF_NAME" != "dev-latest" ]]; then
-            echo "::error::Unity dev package builds must run from dev-latest; got ${GITHUB_REF_TYPE}:${GITHUB_REF_NAME}"
+          if [[ "$GITHUB_REF_TYPE" != "branch" || "$GITHUB_REF_NAME" != dev-* ]]; then
+            echo "::error::Unity dev package builds must run from dev-* branches; got ${GITHUB_REF_TYPE}:${GITHUB_REF_NAME}"
             exit 1
           fi
 

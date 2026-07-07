@@ -57,14 +57,30 @@ API with kernel ABI <version>` for visible ABI/API changes. Only omit
 `--release-note` when the user explicitly asks for verify-only, no commit, or
 `--auto-commit off`.
 
+## Usage Help
+
+To query usage, run:
+
+```bash
+.agents/skills/unity-plugin-package-builder/scripts/run-unity-plugin-package-builder.sh --help
+```
+
+The help output must include an `Examples:` section with sample dev branches,
+release tags, verify-only invocation, and build/package invocation. Dev branches
+use `dev-*`, such as `dev-latest`; release tags use `v*`, such as `v0.6.6`.
+Branch/ref failure messages should tell users to rerun with `--help` for
+allowed names and examples.
+
 ## Unity API Alignment Preflight
 
 For `/unity-package` and normal build/pack requests, before invoking the
 package builder script:
 
-1. Check the current git branch. It must be exactly `feat-unity-plugin`. If it
-   is not, stop immediately and report the failure reason; do not switch
-   branches, edit files, run builds, stage assets, or package.
+1. Check the current git ref. Local branches may be `feat-unity-plugin` or
+   `dev-*`; GitHub Actions branch refs may be `feat-unity-plugin` or `dev-*`;
+   GitHub Actions release tag refs may be `v*`. If the current ref is outside
+   those patterns, stop immediately and report the failure reason; do not
+   switch branches, edit files, run builds, stage assets, or package.
 2. Reference the C++ kernel public API and update the Unity plugin API before
    building the package. Keep the pass targeted:
    - Compare `engine/src/kernel/public/kernel_api.h` and
@@ -83,9 +99,10 @@ package builder script:
 
 ## Branch And Safety
 
-- The script and `/unity-package` workflow must run only on `feat-unity-plugin`.
-  If the current branch is anything else, stop immediately and report the
-  current branch as the failure reason.
+- The script and `/unity-package` workflow may run only from local branches
+  named `feat-unity-plugin` or `dev-*`, from matching GitHub Actions branch
+  refs, or from GitHub Actions release tag refs named `v*`. If the current ref
+  is outside those patterns, stop immediately and report the failure reason.
 - Stop and ask before switching branches.
 - Stop and ask before overwriting unrelated dirty files under
   `plugins/com.network-example.kernel/`, `engine/src/kernel/`, or this skill.
@@ -115,7 +132,8 @@ verify that signature with `codesign --verify`. Windows DLLs are not codesigned.
 
 Default behavior:
 
-1. Require the current git branch to be exactly `feat-unity-plugin`.
+1. Require the current git ref to be an allowed package ref:
+   `feat-unity-plugin`, `dev-*`, or CI `v*` release tag.
 2. Build `//engine/src/kernel:network_kernel_shared` for macOS and
    Windows x86_64. The macOS target returns the Bazel ad-hoc signed dylib.
 3. Stage `bazel-bin/engine/src/kernel/signed/libnetwork_kernel.dylib` into

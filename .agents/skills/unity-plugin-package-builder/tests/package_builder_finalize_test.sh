@@ -415,7 +415,7 @@ run_builder() {
   ) >"$output_file" 2>&1
 }
 
-test_requires_feat_unity_plugin_branch() {
+test_rejects_disallowed_package_ref() {
   local sandbox_dir repo_dir output_file status
   sandbox_dir="$(mktemp -d "${TMPDIR:-/tmp}/package-builder-branch.XXXXXX")"
   repo_dir="$sandbox_dir/repo"
@@ -427,8 +427,70 @@ test_requires_feat_unity_plugin_branch() {
   status="$?"
   set -e
 
-  [[ "$status" -ne 0 ]] || fail "expected branch guard to fail outside feat-unity-plugin"
+  [[ "$status" -ne 0 ]] || fail "expected branch guard to fail outside allowed refs"
   assert_contains "$(cat "$output_file")" "feat-unity-plugin"
+  assert_contains "$(cat "$output_file")" "dev-*"
+  assert_contains "$(cat "$output_file")" "--help"
+}
+
+test_help_includes_examples() {
+  local output
+  output="$("$SCRIPT_UNDER_TEST" --help)"
+  assert_contains "$output" "Allowed refs:"
+  assert_contains "$output" "Examples:"
+  assert_contains "$output" "dev-latest"
+  assert_contains "$output" "v0.6.6"
+  assert_contains "$output" "--mode verify --unity off --auto-commit off"
+}
+
+test_allows_dev_branch() {
+  local sandbox_dir repo_dir output_file
+  sandbox_dir="$(mktemp -d "${TMPDIR:-/tmp}/package-builder-dev-branch.XXXXXX")"
+  repo_dir="$sandbox_dir/repo"
+  output_file="$sandbox_dir/output.txt"
+  make_fake_repo "$repo_dir" "dev-latest"
+
+  run_builder "$repo_dir" "$output_file" --mode verify --unity off
+
+  assert_contains "$(cat "$output_file")" "Verification passed"
+}
+
+test_allows_ci_detached_dev_branch_ref() {
+  local sandbox_dir repo_dir output_file
+  sandbox_dir="$(mktemp -d "${TMPDIR:-/tmp}/package-builder-ci-dev.XXXXXX")"
+  repo_dir="$sandbox_dir/repo"
+  output_file="$sandbox_dir/output.txt"
+  make_fake_repo "$repo_dir" "source-branch"
+  git -C "$repo_dir" checkout -q --detach HEAD
+
+  (
+    export GITHUB_ACTIONS=true
+    export GITHUB_REF_TYPE=branch
+    export GITHUB_REF_NAME=dev-next
+    run_builder "$repo_dir" "$output_file" --mode verify --unity off
+  )
+
+  assert_contains "$(cat "$output_file")" "CI branch ref allowed: dev-next"
+  assert_contains "$(cat "$output_file")" "Verification passed"
+}
+
+test_allows_ci_detached_release_tag_ref() {
+  local sandbox_dir repo_dir output_file
+  sandbox_dir="$(mktemp -d "${TMPDIR:-/tmp}/package-builder-ci-tag.XXXXXX")"
+  repo_dir="$sandbox_dir/repo"
+  output_file="$sandbox_dir/output.txt"
+  make_fake_repo "$repo_dir" "source-branch"
+  git -C "$repo_dir" checkout -q --detach HEAD
+
+  (
+    export GITHUB_ACTIONS=true
+    export GITHUB_REF_TYPE=tag
+    export GITHUB_REF_NAME=v0.6.4
+    run_builder "$repo_dir" "$output_file" --mode verify --unity off
+  )
+
+  assert_contains "$(cat "$output_file")" "CI release tag ref allowed: v0.6.4"
+  assert_contains "$(cat "$output_file")" "Verification passed"
 }
 
 test_release_notes_are_prepended_and_auto_committed_for_allowed_files() {
@@ -802,7 +864,11 @@ test_verify_fails_when_gameplay_catalog_bundle_meta_is_missing() {
   assert_contains "$(cat "$output_file")" "Runtime/Resources/gameplay_catalog_bundle/bundle.bytes.meta"
 }
 
-test_requires_feat_unity_plugin_branch
+test_rejects_disallowed_package_ref
+test_help_includes_examples
+test_allows_dev_branch
+test_allows_ci_detached_dev_branch_ref
+test_allows_ci_detached_release_tag_ref
 test_release_notes_are_prepended_and_auto_committed_for_allowed_files
 test_auto_commit_skips_when_disallowed_files_are_dirty
 test_auto_commit_skips_without_release_note_bullets

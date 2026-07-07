@@ -78,6 +78,17 @@ Options:
   --auto-commit on|off            Commit eligible package changes after success.
   -h, --help
 
+Allowed refs:
+  Local branches: feat-unity-plugin or dev-*
+  GitHub Actions branch refs: feat-unity-plugin or dev-*
+  GitHub Actions tag refs: v*
+
+Examples:
+  Dev branches: dev-latest, dev-preview, dev-2026-07-08
+  Release tags: v0.6.6, v1.0.0, v0.7.0-rc1
+  Verify only: run-unity-plugin-package-builder.sh --mode verify --unity off --auto-commit off
+  Build/package: run-unity-plugin-package-builder.sh --unity off --release-note "updates native plugins"
+
 Default:
   Build the macOS and Windows x86_64 native plugins, stage them into the Unity
   package, verify ABI and exports, create a clean UPM .tgz under
@@ -179,10 +190,22 @@ cd "$repo_root"
 require_branch() {
   local current_branch
   current_branch="$(git branch --show-current 2>/dev/null || true)"
-  if [[ "$current_branch" == "feat-unity-plugin" ]]; then
+  if [[ "$current_branch" == "feat-unity-plugin" || "$current_branch" == dev-* ]]; then
     return 0
   fi
-  die "unity package builder must run on branch feat-unity-plugin; current branch is '${current_branch:-detached or unknown}'"
+  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+    if [[ "${GITHUB_REF_TYPE:-}" == "branch" &&
+          ( "${GITHUB_REF_NAME:-}" == "feat-unity-plugin" ||
+            "${GITHUB_REF_NAME:-}" == dev-* ) ]]; then
+      note "CI branch ref allowed: ${GITHUB_REF_NAME}"
+      return 0
+    fi
+    if [[ "${GITHUB_REF_TYPE:-}" == "tag" && "${GITHUB_REF_NAME:-}" == v* ]]; then
+      note "CI release tag ref allowed: ${GITHUB_REF_NAME}"
+      return 0
+    fi
+  fi
+  die "unity package builder must run on branch feat-unity-plugin or dev-* (or CI v* tag); current branch is '${current_branch:-detached or unknown}', github ref is '${GITHUB_REF_TYPE:-unset}:${GITHUB_REF_NAME:-unset}'. Run with --help for allowed ref names and examples."
 }
 
 require_branch
