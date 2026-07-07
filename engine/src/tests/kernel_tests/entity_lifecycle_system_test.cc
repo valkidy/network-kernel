@@ -225,6 +225,60 @@ void director_ai_emits_spawn_intent_without_enqueueing_create_command() {
                intent.params.at("spawn_actor_template_id")) == 2);
     assert(std::get<float>(intent.params.at("spawn_position_x")) == 6.0f);
     assert(std::get<float>(intent.params.at("spawn_radius")) == 1.0f);
+    assert(std::get<std::uint32_t>(intent.params.at("base_spawn_cursor")) == 0);
+
+    const std::optional<entt::entity> director_entity =
+        engine.world_.find_entity(director);
+    assert(director_entity.has_value());
+    const network_example::DirectorRuntime& director_runtime =
+        engine.world_.registry().get<network_example::DirectorRuntime>(
+            *director_entity);
+    assert(director_runtime.spawn_cursor == 0);
+    assert(director_runtime.next_tick == 0);
+}
+
+void director_ai_ignores_non_director_entity_sources() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+    load_director_catalog(&engine);
+
+    KernelServerEntityCreateInfo create_info{};
+    create_info.struct_size = sizeof(create_info);
+    create_info.entity_template_id = 200;
+    create_info.position = KernelVec3{0.0f, 0.0f, 0.0f};
+    create_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+
+    std::uint32_t agent = 0;
+    assert(engine.server_create_entity(create_info, &agent));
+    const std::optional<entt::entity> agent_entity =
+        engine.world_.find_entity(agent);
+    assert(agent_entity.has_value());
+    auto& registry = engine.world_.registry();
+    network_example::AgentRuntime& runtime =
+        registry.get<network_example::AgentRuntime>(*agent_entity);
+    runtime.controller_type = network_example::AiControllerType::kDirector;
+    registry.emplace_or_replace<network_example::DirectorRuntime>(
+        *agent_entity,
+        network_example::DirectorRuntime{
+            1u,
+            0u,
+            3u,
+            200u,
+            2u,
+            glm::vec3{6.0f, 0.0f, 0.0f},
+            1.0f,
+            99u,
+            0u,
+        });
+    registry.emplace_or_replace<network_example::ServerOnly>(*agent_entity);
+
+    network_example::DirectorAISystem{}.update(engine);
+
+    assert(engine.pending_director_intents_.empty());
 }
 
 void director_intent_executor_reports_unsupported_intent() {
@@ -270,7 +324,7 @@ void director_intent_executor_rejects_invalid_source_director() {
     intent.params["spawn_position_y"] = 0.0f;
     intent.params["spawn_position_z"] = 0.0f;
     intent.params["spawn_radius"] = 1.0f;
-    intent.params["spawn_cursor"] = std::uint32_t{0};
+    intent.params["base_spawn_cursor"] = std::uint32_t{0};
 
     const network_example::DirectorIntentExecutionResult result =
         network_example::DirectorIntentExecutor{}.execute(engine, intent);
@@ -279,6 +333,51 @@ void director_intent_executor_rejects_invalid_source_director() {
     assert(!result.unsupported);
     assert(result.created_count == 0);
     assert(engine.command_queue_.size() == 0);
+}
+
+void director_intent_executor_does_not_commit_when_enqueue_fails() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+    load_director_catalog(&engine);
+
+    KernelServerEntityCreateInfo create_info{};
+    create_info.struct_size = sizeof(create_info);
+    create_info.entity_template_id = 100;
+    create_info.position = KernelVec3{0.0f, 0.0f, 0.0f};
+    create_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+
+    std::uint32_t director = 0;
+    assert(engine.server_create_entity(create_info, &director));
+    network_example::DirectorAISystem{}.update(engine);
+    assert(engine.pending_director_intents_.size() == 1);
+
+    network_example::simulation::Command filler{};
+    filler.id = network_example::simulation::CommandId::kUnknown;
+    for (std::size_t index = 0;
+         index < network_example::simulation::CommandQueue::kDefaultCapacity;
+         ++index) {
+        assert(engine.command_queue_.enqueue(filler));
+    }
+
+    const network_example::DirectorIntentExecutionResult result =
+        network_example::DirectorIntentExecutor{}.execute(
+            engine,
+            engine.pending_director_intents_[0]);
+
+    assert(result.status == network_example::ai::IntentStatus::kFailed);
+    assert(result.created_count == 0);
+    const std::optional<entt::entity> director_entity =
+        engine.world_.find_entity(director);
+    assert(director_entity.has_value());
+    const network_example::DirectorRuntime& director_runtime =
+        engine.world_.registry().get<network_example::DirectorRuntime>(
+            *director_entity);
+    assert(director_runtime.spawn_cursor == 0);
+    assert(director_runtime.next_tick == 0);
 }
 
 void director_runtime_spawns_agents_until_target_count() {
@@ -306,6 +405,14 @@ void director_runtime_spawns_agents_until_target_count() {
     assert(engine.last_director_intent_created_count_ == 3);
     assert(engine.last_director_intent_failed_count_ == 0);
     assert(engine.last_director_intent_unsupported_count_ == 0);
+    const std::optional<entt::entity> director_entity =
+        engine.world_.find_entity(director);
+    assert(director_entity.has_value());
+    const network_example::DirectorRuntime& director_runtime =
+        engine.world_.registry().get<network_example::DirectorRuntime>(
+            *director_entity);
+    assert(director_runtime.spawn_cursor == 3);
+    assert(director_runtime.next_tick == 2);
     engine.update(1.0f / 30.0f);
     assert(engine.last_simulation_command_processed_count_ == 3);
     assert(engine.failed_simulation_command_count_ == 0);
@@ -377,8 +484,10 @@ int main() {
     lifecycle_system_create_matches_legacy_path();
     lifecycle_system_materializes_server_only_director_template();
     director_ai_emits_spawn_intent_without_enqueueing_create_command();
+    director_ai_ignores_non_director_entity_sources();
     director_intent_executor_reports_unsupported_intent();
     director_intent_executor_rejects_invalid_source_director();
+    director_intent_executor_does_not_commit_when_enqueue_fails();
     director_runtime_spawns_agents_until_target_count();
     lifecycle_system_destroy_matches_legacy_side_effects();
     return 0;

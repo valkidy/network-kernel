@@ -527,13 +527,13 @@ DirectorIntentExecutionResult DirectorIntentExecutor::execute(
         float_param(intent, "spawn_position_z");
     const std::optional<float> spawn_radius =
         float_param(intent, "spawn_radius");
-    const std::optional<std::uint32_t> spawn_cursor =
-        uint32_param(intent, "spawn_cursor");
+    const std::optional<std::uint32_t> base_spawn_cursor =
+        uint32_param(intent, "base_spawn_cursor");
     if (!spawn_count.has_value() || !spawn_target_count.has_value() ||
         !spawn_entity_template_id.has_value() ||
         !spawn_actor_template_id.has_value() || !spawn_position_x.has_value() ||
         !spawn_position_y.has_value() || !spawn_position_z.has_value() ||
-        !spawn_radius.has_value() || !spawn_cursor.has_value()) {
+        !spawn_radius.has_value() || !base_spawn_cursor.has_value()) {
         return result;
     }
     const KernelVec3 spawn_position{
@@ -561,7 +561,7 @@ DirectorIntentExecutionResult DirectorIntentExecutor::execute(
     auto& registry = engine.world_.registry();
     const EntityKind& kind = registry.get<EntityKind>(*entity);
     const AgentRuntime& agent = registry.get<AgentRuntime>(*entity);
-    const DirectorRuntime& director = registry.get<DirectorRuntime>(*entity);
+    DirectorRuntime& director = registry.get<DirectorRuntime>(*entity);
     if (kind.type != EntityType::kDirector ||
         agent.controller_type != AiControllerType::kDirector ||
         *spawn_target_count != director.spawn_target_count ||
@@ -569,7 +569,7 @@ DirectorIntentExecutionResult DirectorIntentExecutor::execute(
         *spawn_actor_template_id != director.spawn_actor_template_id ||
         !same_vec3(spawn_position, to_kernel_vec3(director.spawn_position)) ||
         *spawn_radius != director.spawn_radius ||
-        *spawn_cursor + *spawn_count != director.spawn_cursor) {
+        *base_spawn_cursor != director.spawn_cursor) {
         return result;
     }
 
@@ -603,7 +603,7 @@ DirectorIntentExecutionResult DirectorIntentExecutor::execute(
         std::min(*spawn_count, *spawn_target_count - live_count);
     for (std::uint32_t index = 0; index < allowed_count; ++index) {
         const float angle =
-            static_cast<float>(*spawn_cursor + index) * 2.39996323f;
+            static_cast<float>(*base_spawn_cursor + index) * 2.39996323f;
         const float radius = *spawn_radius;
         KernelServerEntityCreateInfo create_info{};
         create_info.struct_size = sizeof(create_info);
@@ -627,11 +627,21 @@ DirectorIntentExecutionResult DirectorIntentExecutor::execute(
         command.source = simulation::CommandSource::kAi;
         command.create_entity.create_info = create_info;
         if (!engine.enqueue_simulation_command(command)) {
+            if (result.created_count > 0) {
+                director.spawn_cursor += result.created_count;
+                director.next_tick =
+                    engine.tick_loop_.current_tick() +
+                    std::max<std::uint32_t>(1u, director.tick_interval);
+            }
             result.status = ai::IntentStatus::kFailed;
             return result;
         }
         ++result.created_count;
     }
+    director.spawn_cursor += result.created_count;
+    director.next_tick =
+        engine.tick_loop_.current_tick() +
+        std::max<std::uint32_t>(1u, director.tick_interval);
     result.status = ai::IntentStatus::kSucceeded;
     return result;
 }
@@ -663,12 +673,22 @@ void DirectorAISystem::update(KernelEngine& engine) const {
 
     std::uint32_t live_count = live_agent_count(engine.world_);
 
-    auto director_view = engine.world_.registry()
-                             .view<AgentRuntime, DirectorRuntime, Transform, ServerOnly>();
+    auto director_view =
+        engine.world_.registry()
+            .view<
+                EntityKind,
+                NetworkIdentity,
+                AgentRuntime,
+                DirectorRuntime,
+                Transform,
+                ServerOnly>();
     for (const entt::entity entity : director_view) {
+        const EntityKind& kind = director_view.get<EntityKind>(entity);
+        const NetworkIdentity& identity = director_view.get<NetworkIdentity>(entity);
         AgentRuntime& agent = director_view.get<AgentRuntime>(entity);
         DirectorRuntime& director = director_view.get<DirectorRuntime>(entity);
-        if (agent.controller_type != AiControllerType::kDirector ||
+        if (kind.type != EntityType::kDirector ||
+            agent.controller_type != AiControllerType::kDirector ||
             director.spawn_target_count <= live_count ||
             engine.tick_loop_.current_tick() < director.next_tick) {
             continue;
@@ -676,8 +696,6 @@ void DirectorAISystem::update(KernelEngine& engine) const {
 
         const std::uint32_t missing_count =
             director.spawn_target_count - live_count;
-        const NetworkIdentity& identity =
-            engine.world_.registry().get<NetworkIdentity>(entity);
         ai::ScopedIntent intent;
         intent.scope = ai::IntentScope::kDirector;
         intent.type = "SpawnAgent";
@@ -692,13 +710,9 @@ void DirectorAISystem::update(KernelEngine& engine) const {
         intent.params["spawn_position_y"] = director.spawn_position.y;
         intent.params["spawn_position_z"] = director.spawn_position.z;
         intent.params["spawn_radius"] = director.spawn_radius;
-        intent.params["spawn_cursor"] = director.spawn_cursor;
+        intent.params["base_spawn_cursor"] = director.spawn_cursor;
         engine.pending_director_intents_.push_back(std::move(intent));
         live_count += missing_count;
-        director.spawn_cursor += missing_count;
-        director.next_tick =
-            engine.tick_loop_.current_tick() +
-            std::max<std::uint32_t>(1u, director.tick_interval);
     }
 }
 
