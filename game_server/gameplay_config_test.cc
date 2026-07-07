@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -14,6 +15,20 @@
 #include "kernel/public/kernel_types.h"
 
 namespace {
+
+template <typename T, typename = void>
+struct HasSentryMagazineSize : std::false_type {};
+
+template <typename T>
+struct HasSentryMagazineSize<
+    T,
+    std::void_t<decltype(std::declval<T&>().magazine_size)>>
+    : std::true_type {};
+
+static_assert(
+    !HasSentryMagazineSize<
+        network_example::game_server::AgentSentryConfig>::value,
+    "AgentSentryConfig must not duplicate weapon template magazine_size.");
 
 void require(bool condition) {
     if (!condition) {
@@ -311,6 +326,8 @@ std::string sentry_grunt_entity_template_yaml(std::string entity_type) {
 int main() {
     const network_example::game_server::GameServerGameplayConfig config =
         network_example::game_server::default_game_server_gameplay_config();
+    assert(network_example::game_server::AgentSentryConfig{}.weapon_id ==
+           KERNEL_MAX_WEAPONS);
     const std::vector<std::string> errors =
         network_example::game_server::validate_gameplay_config(config);
     assert(errors.empty());
@@ -344,6 +361,39 @@ int main() {
     assert(entity_catalog.entity_templates[2].ai.tick_interval == 10);
     assert(entity_catalog.entity_templates[2].ai.spawn_target_count == 10);
     assert(entity_catalog.entity_templates[2].ai.spawn_entity_template_id == 2);
+
+    const std::string data_driven_sentry_yaml =
+        sentry_grunt_entity_template_yaml("actor") +
+        "  sentry:\n"
+        "    alert_ticks: 4\n"
+        "    forget_ticks: 6\n"
+        "    patrol_rotation_interval_ticks: 2\n"
+        "    patrol_rotation_min_degrees: 10.5\n"
+        "    patrol_rotation_max_degrees: 22.5\n"
+        "    weapon_id: 2\n"
+        "    animation_idle: idle\n"
+        "    animation_attack: chasing\n";
+    const std::vector<std::uint8_t> data_driven_sentry_bundle =
+        make_entity_template_bundle_zip(data_driven_sentry_yaml);
+    const network_example::game_server::GameServerGameplayConfig
+        data_driven_sentry_config =
+            network_example::game_server::load_gameplay_config_from_bundle_memory(
+                data_driven_sentry_bundle.data(),
+                static_cast<std::uint32_t>(data_driven_sentry_bundle.size()),
+                "gameplay_catalog.yaml");
+    const network_example::game_server::ActorTemplateConfig&
+        data_driven_sentry =
+            data_driven_sentry_config.entity_templates[1];
+    assert(data_driven_sentry.sentry.alert_ticks == 4);
+    assert(data_driven_sentry.sentry.forget_ticks == 6);
+    assert(data_driven_sentry.sentry.patrol_rotation_interval_ticks == 2);
+    assert(data_driven_sentry.sentry.patrol_rotation_min_degrees == 10.5f);
+    assert(data_driven_sentry.sentry.patrol_rotation_max_degrees == 22.5f);
+    assert(data_driven_sentry.sentry.weapon_id == 2);
+    assert(data_driven_sentry.sentry.animation_idle ==
+           data_driven_sentry.animation_idle);
+    assert(data_driven_sentry.sentry.animation_attack ==
+           data_driven_sentry.animation_chasing);
 
     const std::vector<std::uint8_t> invalid_enemy_entity_bundle =
         make_entity_template_bundle_zip(
@@ -456,7 +506,6 @@ int main() {
     assert(config_enemy_template->sentry.patrol_rotation_interval_ticks == 30);
     assert(config_enemy_template->sentry.patrol_rotation_min_degrees == 15.0f);
     assert(config_enemy_template->sentry.patrol_rotation_max_degrees == 30.0f);
-    assert(config_enemy_template->sentry.magazine_size == 120);
     assert(
         config.weapons
             .projectile_sync_modes[network_example::game_server::kWeaponRocket] ==
@@ -774,6 +823,10 @@ int main() {
         network_example::game_server::compute_gameplay_catalog_hash(
             actor_hash_changed));
 
+    invalid = config;
+    invalid.actor_templates[1].sentry.weapon_id =
+        network_example::game_server::kWeaponRocket;
+    assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
     invalid = config;
     invalid.actor_templates[1].sentry.alert_ticks = 0;
     assert(!network_example::game_server::validate_gameplay_config(invalid).empty());

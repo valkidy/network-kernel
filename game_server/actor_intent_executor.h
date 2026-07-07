@@ -12,7 +12,7 @@
 namespace network_example::game_server {
 
 struct ActorIntentExecutorConfig {
-    std::uint8_t weapon_id = kAgentSpammerWeaponId;
+    std::uint8_t weapon_id = static_cast<std::uint8_t>(KERNEL_MAX_WEAPONS);
 };
 
 struct ActorIntentExecutionResult {

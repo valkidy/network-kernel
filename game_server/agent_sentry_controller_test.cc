@@ -221,6 +221,7 @@ int main() {
     sentry_config.patrol_rotation_interval_ticks = 2;
     sentry_config.patrol_rotation_min_degrees = 15.0f;
     sentry_config.patrol_rotation_max_degrees = 30.0f;
+    sentry_config.weapon_id = network_example::game_server::kAgentSpammerWeaponId;
     network_example::game_server::AgentSentryController controller(sentry_config);
 
     run_frame(kernel, controller, &enemies);

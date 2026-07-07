@@ -157,7 +157,9 @@ int main() {
 
     network_example::game_server::AgentRuntimeState enemy;
     enemy.net_id = actor;
-    network_example::game_server::ActorIntentExecutor executor;
+    network_example::game_server::ActorIntentExecutor executor(
+        network_example::game_server::ActorIntentExecutorConfig{
+            network_example::game_server::kAgentSpammerWeaponId});
 
     set_combat(kernel, actor, 2, 4);
     auto attack = actor_intent("AttackTarget", actor);

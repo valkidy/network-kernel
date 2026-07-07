@@ -193,7 +193,6 @@ void hash_actor_template(
     hash_float(hash, actor_template.sentry.patrol_rotation_min_degrees);
     hash_float(hash, actor_template.sentry.patrol_rotation_max_degrees);
     hash_scalar(hash, actor_template.sentry.weapon_id);
-    hash_scalar(hash, actor_template.sentry.magazine_size);
     hash_scalar(hash, actor_template.vision.camp);
     hash_scalar(hash, actor_template.vision.vision_collider_template_id);
     hash_scalar(hash, actor_template.vision.max_visible_hostiles);
@@ -1300,8 +1299,7 @@ ActorTemplateConfig default_sentry_actor_template() {
     actor_template.active_weapon_slot = 0;
     actor_template.animation_idle = kAgentAnimationIdle;
     actor_template.animation_chasing = kAgentAnimationChasing;
-    actor_template.sentry.weapon_id = kAgentSpammerWeaponId;
-    actor_template.sentry.magazine_size = kAgentSpammerMagazine;
+    actor_template.sentry.weapon_id = active_weapon_id(actor_template);
     actor_template.sentry.animation_idle = actor_template.animation_idle;
     actor_template.sentry.animation_attack = actor_template.animation_chasing;
     actor_template.vision.struct_size = sizeof(KernelAgentVisionConfig);
@@ -1325,14 +1323,107 @@ void apply_default_actor_templates(GameServerGameplayConfig* config) {
     config->agent.actor_template_id = 2;
 }
 
-AgentSentryConfig sentry_config_from_yaml(
-    const YAML::Node&,
+std::uint16_t sentry_animation_from_yaml(
+    const YAML::Node& node,
     const ActorTemplateConfig& actor_template,
-    const WeaponCatalogConfig& weapons) {
+    const std::string& field) {
+    const std::string animation_ref = node.as<std::string>();
+    if (animation_ref == "idle") {
+        return actor_template.animation_idle;
+    }
+    if (animation_ref == "chasing") {
+        return actor_template.animation_chasing;
+    }
+    try {
+        return node.as<std::uint16_t>();
+    } catch (const std::exception&) {
+        throw std::runtime_error("unsupported sentry " + field + ": " + animation_ref);
+    }
+}
+
+bool actor_template_has_weapon(
+    const ActorTemplateConfig& actor_template,
+    std::uint8_t weapon_id) {
+    for (std::uint8_t slot = 0; slot < actor_template.weapon_slot_count; ++slot) {
+        if (actor_template.weapon_slots[slot] == weapon_id) {
+            return true;
+        }
+    }
+    return false;
+}
+
+AgentSentryConfig sentry_config_from_yaml(
+    const YAML::Node& node,
+    const ActorTemplateConfig& actor_template,
+    const WeaponCatalogConfig& weapons,
+    const std::string& path,
+    std::uint32_t source_kind) {
     AgentSentryConfig sentry = actor_template.sentry;
-    const std::uint8_t weapon_id = active_weapon_id(actor_template);
-    sentry.weapon_id = weapon_id;
-    sentry.magazine_size = weapons.definitions[weapon_id].magazine_size;
+    sentry.weapon_id = active_weapon_id(actor_template);
+    sentry.animation_idle = actor_template.animation_idle;
+    sentry.animation_attack = actor_template.animation_chasing;
+
+    const YAML::Node sentry_node = node ? node["sentry"] : YAML::Node{};
+    if (sentry_node) {
+        reject_unknown_keys(
+            sentry_node,
+            {
+                "alert_ticks",
+                "forget_ticks",
+                "patrol_rotation_interval_ticks",
+                "patrol_rotation_min_degrees",
+                "patrol_rotation_max_degrees",
+                "weapon_id",
+                "animation_idle",
+                "animation_attack",
+            },
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+            actor_template.actor_template_id);
+        if (sentry_node["alert_ticks"]) {
+            sentry.alert_ticks = sentry_node["alert_ticks"].as<std::uint32_t>();
+        }
+        if (sentry_node["forget_ticks"]) {
+            sentry.forget_ticks = sentry_node["forget_ticks"].as<std::uint32_t>();
+        }
+        if (sentry_node["patrol_rotation_interval_ticks"]) {
+            sentry.patrol_rotation_interval_ticks =
+                sentry_node["patrol_rotation_interval_ticks"].as<std::uint32_t>();
+        }
+        if (sentry_node["patrol_rotation_min_degrees"]) {
+            sentry.patrol_rotation_min_degrees =
+                sentry_node["patrol_rotation_min_degrees"].as<float>();
+        }
+        if (sentry_node["patrol_rotation_max_degrees"]) {
+            sentry.patrol_rotation_max_degrees =
+                sentry_node["patrol_rotation_max_degrees"].as<float>();
+        }
+        if (sentry_node["weapon_id"]) {
+            const auto weapon_id =
+                static_cast<std::uint8_t>(sentry_node["weapon_id"].as<int>());
+            if (weapon_id >= kWeaponCount ||
+                weapons.definitions[weapon_id].weapon_id != weapon_id ||
+                !actor_template_has_weapon(actor_template, weapon_id)) {
+                throw std::runtime_error(
+                    "actor template sentry references unknown weapon id: " +
+                    actor_template.name);
+            }
+            sentry.weapon_id = weapon_id;
+        }
+        if (sentry_node["animation_idle"]) {
+            sentry.animation_idle = sentry_animation_from_yaml(
+                sentry_node["animation_idle"],
+                actor_template,
+                "animation_idle");
+        }
+        if (sentry_node["animation_attack"]) {
+            sentry.animation_attack = sentry_animation_from_yaml(
+                sentry_node["animation_attack"],
+                actor_template,
+                "animation_attack");
+        }
+    }
     return sentry;
 }
 
@@ -1561,6 +1652,7 @@ ActorTemplateConfig actor_template_from_yaml(
                 "controller",
                 "profile",
                 "tick_interval",
+                "sentry",
             },
             path,
             source_kind,
@@ -1583,9 +1675,7 @@ ActorTemplateConfig actor_template_from_yaml(
         }
     }
     actor_template.sentry =
-        sentry_config_from_yaml(node["ai"], actor_template, weapons);
-    actor_template.sentry.animation_idle = actor_template.animation_idle;
-    actor_template.sentry.animation_attack = actor_template.animation_chasing;
+        sentry_config_from_yaml(node["ai"], actor_template, weapons, path, source_kind);
     actor_template.vision = vision_config_from_yaml(
         node["vision"],
         actor_template,
@@ -2782,7 +2872,9 @@ std::vector<std::string> validate_gameplay_config(
         }
         if (actor_template.actor_type == kActorTypeAgent &&
             (actor_template.sentry.weapon_id >= kWeaponCount ||
-             actor_template.sentry.magazine_size == 0 ||
+             !actor_template_has_weapon(
+                 actor_template,
+                 actor_template.sentry.weapon_id) ||
              actor_template.sentry.alert_ticks == 0 ||
              actor_template.sentry.forget_ticks == 0 ||
              actor_template.sentry.patrol_rotation_interval_ticks == 0 ||
