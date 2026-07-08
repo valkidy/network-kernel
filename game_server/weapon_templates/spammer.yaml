@@ -2,6 +2,7 @@ id: 2
 name: Projectile Spammer
 weapon_type: projectile
 magazine_size: 120
+reserve_magazines: 65535
 cooldown_ticks: 1
 reload_ticks: 30
 burst_count: 3

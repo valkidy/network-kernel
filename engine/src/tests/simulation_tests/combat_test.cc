@@ -203,8 +203,7 @@ void configure_test_weapons(
         world.registry().get_or_emplace<network_example::WeaponState>(*entity);
     for (std::size_t index = 0; index < network_example::kWeaponCount; ++index) {
         weapon.ammo[index] = tuning.definitions[index].magazine_size;
-        weapon.reserve_ammo[index] =
-            static_cast<std::uint16_t>(tuning.definitions[index].magazine_size * 3u);
+        weapon.reserve_magazines[index] = 3;
     }
 }
 
@@ -415,8 +414,8 @@ void rejects_fire_during_cooldown_and_reload() {
         spawn_enemy(reload_world, glm::vec3{5.0f, 0.0f, 0.0f});
     network_example::WeaponState& reload_weapon =
         weapon_state(reload_world, reload_player);
-    reload_weapon.ammo[network_example::kWeaponSlot0] = 0;
-    reload_weapon.reserve_ammo[network_example::kWeaponSlot0] = 30;
+    reload_weapon.ammo[network_example::kWeaponSlot0] = 15;
+    reload_weapon.reserve_magazines[network_example::kWeaponSlot0] = 1;
 
     PlayerInput reload_input{};
     reload_input.buttons = InputButton_Reload;
@@ -438,6 +437,7 @@ void rejects_fire_during_cooldown_and_reload() {
     network_example::simulate_weapons(reload_world, {}, 35, &events);
     assert(!reload_weapon.is_reloading);
     assert(reload_weapon.ammo[network_example::kWeaponSlot0] == 30);
+    assert(reload_weapon.reserve_magazines[network_example::kWeaponSlot0] == 0);
 
     events.clear();
     network_example::simulate_weapons(

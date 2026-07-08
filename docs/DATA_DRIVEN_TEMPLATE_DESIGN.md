@@ -182,6 +182,7 @@ id: 0
 name: Rifle
 weapon_type: hitscan
 magazine_size: 30
+reserve_magazines: 6
 damage: 25
 cooldown_ticks: 3
 reload_ticks: 30
@@ -199,6 +200,11 @@ Type-specific fields stay with their weapon mode:
 
 Weapon templates must not own actor loadouts, spawn policy, actor HP/movement,
 enemy counts, or player/enemy selection.
+
+`reserve_magazines` counts spare full magazines for reloads. If omitted, the
+loader defaults it to `6`; templates may author larger practical maximums such
+as `65535` for weapons intended not to exhaust reserves during normal match
+lengths.
 
 ### Collision Mask Policy
 

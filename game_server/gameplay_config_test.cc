@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <type_traits>
 #include <unordered_map>
@@ -15,6 +16,9 @@
 #include "kernel/public/kernel_types.h"
 
 namespace {
+
+constexpr std::uint16_t kMaxReserveMagazines =
+    std::numeric_limits<std::uint16_t>::max();
 
 template <typename T, typename = void>
 struct HasSentryMagazineSize : std::false_type {};
@@ -471,6 +475,7 @@ int main() {
     assert(rifle.fire_mode == KernelWeaponFireMode_Hitscan);
     assert(rifle.damage == 25);
     assert(rifle.magazine_size == 30);
+    assert(rifle.reserve_magazines == 6);
     assert(rifle.max_range == 100.0f);
     assert(rifle.segment_collider_template_id == 5);
 
@@ -488,6 +493,7 @@ int main() {
     assert(projectile_spammer.fire_mode == KernelWeaponFireMode_Projectile);
     assert(projectile_spammer.damage == 1);
     assert(projectile_spammer.magazine_size == 120);
+    assert(projectile_spammer.reserve_magazines == kMaxReserveMagazines);
     assert(projectile_spammer.cooldown_ticks == 1);
     assert(projectile_spammer.projectile_template_id == 2);
     assert(projectile_spammer.pellet_count == 3);

@@ -102,7 +102,7 @@ void set_combat(
     KernelHandle* kernel,
     std::uint32_t net_id,
     std::uint16_t ammo,
-    std::uint16_t reserve_ammo) {
+    std::uint16_t reserve_magazines) {
     KernelCombatStateDefinition combat{};
     combat.struct_size = sizeof(combat);
     combat.hp = 100;
@@ -113,8 +113,8 @@ void set_combat(
     combat.hitbox_half_extents = KernelVec3{0.4f, 0.8f, 0.4f};
     combat.ammo[network_example::game_server::kAgentSpammerWeaponId] =
         ammo;
-    combat.reserve_ammo[network_example::game_server::kAgentSpammerWeaponId] =
-        reserve_ammo;
+    combat.reserve_magazines[network_example::game_server::kAgentSpammerWeaponId] =
+        reserve_magazines;
     assert(Kernel_ServerSetEntityCombatState(kernel, net_id, &combat));
 }
 
@@ -270,7 +270,7 @@ int main() {
     state = query_state(kernel, enemy_net_id);
     assert(state.is_reloading == 0u);
     assert(state.ammo[network_example::game_server::kAgentSpammerWeaponId] == 2);
-    assert(state.reserve_ammo[network_example::game_server::kAgentSpammerWeaponId] == 2);
+    assert(state.reserve_magazines[network_example::game_server::kAgentSpammerWeaponId] == 3);
 
     assert(Kernel_ServerSetEntityTransform(kernel, player_net_id, &out_of_range, &identity));
     Kernel_Update(kernel, 1.0f / 30.0f);

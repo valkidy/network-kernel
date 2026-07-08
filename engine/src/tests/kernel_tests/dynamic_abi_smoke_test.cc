@@ -579,13 +579,14 @@ int main() {
     combat_state.hitbox_center = KernelVec3{0.0f, 0.8f, 0.0f};
     combat_state.hitbox_half_extents = KernelVec3{0.4f, 0.8f, 0.4f};
     combat_state.ammo[3] = 3;
-    combat_state.reserve_ammo[3] = 6;
+    combat_state.reserve_magazines[3] = 6;
     assert(kernel_server_set_entity_combat_state(kernel, enemy, &combat_state));
     KernelWeaponMechanicsDefinition rocket{};
     rocket.struct_size = sizeof(rocket);
     rocket.weapon_id = 3;
     rocket.fire_mode = KernelWeaponFireMode_Projectile;
     rocket.magazine_size = 3;
+    rocket.reserve_magazines = 6;
     rocket.damage = 5;
     rocket.cooldown_ticks = 30;
     rocket.reload_ticks = 30;
@@ -595,6 +596,7 @@ int main() {
     KernelWeaponMechanicsDefinition queried_weapon{};
     queried_weapon.struct_size = sizeof(queried_weapon);
     assert(kernel_server_get_entity_weapon_mechanics(kernel, enemy, 3, &queried_weapon));
+    assert(queried_weapon.reserve_magazines == 6);
     assert(queried_weapon.projectile_template_id == 3);
     assert(kernel_server_set_entity_state(kernel, enemy, 4, 8));
     KernelServerEntityState server_state{};

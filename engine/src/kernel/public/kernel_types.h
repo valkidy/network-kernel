@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 34u
+#define KERNEL_ABI_VERSION 35u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -468,7 +468,11 @@ typedef struct KernelServerEntityState {
     uint8_t reserved0;
     uint16_t reserved1;
     uint16_t ammo[KERNEL_MAX_WEAPONS];
-    uint16_t reserve_ammo[KERNEL_MAX_WEAPONS];
+    // reserve_magazines counts spare full magazines, not spare bullets.
+    // UINT16_MAX is allowed as an authored practical maximum for match lengths
+    // that should not exhaust reserves in normal play. It is not a sentinel:
+    // reload logic decrements it like any other count and must not special-case 65535.
+    uint16_t reserve_magazines[KERNEL_MAX_WEAPONS];
     uint32_t is_reloading;
     uint32_t reload_remaining_ticks;
 } KernelServerEntityState;
@@ -858,6 +862,7 @@ typedef struct KernelWeaponMechanicsDefinition {
     uint8_t weapon_id;
     uint8_t fire_mode;
     uint16_t magazine_size;
+    uint16_t reserve_magazines;
     uint16_t damage;
     uint32_t cooldown_ticks;
     uint32_t reload_ticks;
@@ -899,7 +904,11 @@ typedef struct KernelCombatStateDefinition {
     KernelVec3 hitbox_center;
     KernelVec3 hitbox_half_extents;
     uint16_t ammo[KERNEL_MAX_WEAPONS];
-    uint16_t reserve_ammo[KERNEL_MAX_WEAPONS];
+    // reserve_magazines counts spare full magazines, not spare bullets.
+    // UINT16_MAX is allowed as an authored practical maximum for match lengths
+    // that should not exhaust reserves in normal play. It is not a sentinel:
+    // reload logic decrements it like any other count and must not special-case 65535.
+    uint16_t reserve_magazines[KERNEL_MAX_WEAPONS];
 } KernelCombatStateDefinition;
 
 struct KernelEntityAiDefinition {

@@ -102,7 +102,7 @@ void configure_homing_weapon(
     network_example::WeaponState& weapon =
         world.registry().get_or_emplace<network_example::WeaponState>(*entity);
     weapon.ammo[network_example::kWeaponSlot6] = 4;
-    weapon.reserve_ammo[network_example::kWeaponSlot6] = 4;
+    weapon.reserve_magazines[network_example::kWeaponSlot6] = 4;
 
     world.set_projectile_templates({homing_projectile_template()});
 }

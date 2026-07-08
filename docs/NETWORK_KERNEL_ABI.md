@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 34u`.
+`KERNEL_ABI_VERSION == 35u`.
 
 ## Ownership
 
@@ -62,6 +62,12 @@ ABI version 34 adds neutral visibility reporting. `KernelAgentVisionConfig`
 now includes `max_visible_neutrals`, and `KernelVisionStateView` reports
 `visible_neutrals` separately from allies and hostiles. Neutral actors are
 observable by AI but are not selected as default attack targets.
+
+ABI version 35 replaces reserve ammo counters with reserve magazine counters.
+`KernelServerEntityState` and `KernelCombatStateDefinition` expose
+`reserve_magazines`, and `KernelWeaponMechanicsDefinition` includes authored
+`reserve_magazines` policy from weapon templates. Reloading consumes one spare
+full magazine and refills ammo to `magazine_size`, including partial reloads.
 
 Packet schema version 11 adds the pre-handshake gameplay catalog manifest,
 bundle request/chunk, and synchronization error messages. Existing handshake,

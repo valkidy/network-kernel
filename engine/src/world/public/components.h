@@ -217,7 +217,11 @@ inline constexpr std::uint32_t kCollisionMaskDamageable =
 struct WeaponState {
     std::uint8_t weapon_id = 0;
     std::array<std::uint16_t, kWeaponCount> ammo{0, 0, 0, 0, 0, 0, 0};
-    std::array<std::uint16_t, kWeaponCount> reserve_ammo{0, 0, 0, 0, 0, 0, 0};
+    // reserve_magazines counts spare full magazines, not spare bullets.
+    // UINT16_MAX is allowed as an authored practical maximum for match lengths
+    // that should not exhaust reserves in normal play. It is not a sentinel:
+    // reload logic decrements it like any other count and must not special-case 65535.
+    std::array<std::uint16_t, kWeaponCount> reserve_magazines{0, 0, 0, 0, 0, 0, 0};
     std::array<std::uint32_t, kWeaponCount> next_fire_tick{0, 0, 0, 0, 0, 0, 0};
     std::uint32_t reload_end_tick = 0;
     bool is_reloading = false;
@@ -227,6 +231,7 @@ struct WeaponMechanicsDefinition {
     std::uint8_t id = 0;
     WeaponFireMode mode = WeaponFireMode::kHitscan;
     std::uint16_t magazine_size = 0;
+    std::uint16_t reserve_magazines = 0;
     std::uint16_t damage = 0;
     std::uint32_t cooldown_ticks = 0;
     std::uint32_t reload_ticks = 0;

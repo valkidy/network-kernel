@@ -219,7 +219,7 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 34u);
+    assert(KERNEL_ABI_VERSION == 35u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CONTROL_PLANE_RPC) != 0);
     assert(sizeof(KernelVec4) == 16u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS) != 0);
@@ -259,12 +259,16 @@ int main() {
            offsetof(KernelServerEntityState, actor_template_id));
     assert(offsetof(KernelServerEntityState, ammo) >
            offsetof(KernelServerEntityState, active_weapon_id));
-    assert(offsetof(KernelServerEntityState, reserve_ammo) >
+    assert(offsetof(KernelServerEntityState, reserve_magazines) >
            offsetof(KernelServerEntityState, ammo));
     assert(offsetof(KernelServerEntityState, is_reloading) >
-           offsetof(KernelServerEntityState, reserve_ammo));
+           offsetof(KernelServerEntityState, reserve_magazines));
     assert(offsetof(KernelServerEntityState, reload_remaining_ticks) >
            offsetof(KernelServerEntityState, is_reloading));
+    assert(offsetof(KernelWeaponMechanicsDefinition, reserve_magazines) >
+           offsetof(KernelWeaponMechanicsDefinition, magazine_size));
+    assert(offsetof(KernelWeaponMechanicsDefinition, damage) >
+           offsetof(KernelWeaponMechanicsDefinition, reserve_magazines));
     assert(offsetof(KernelColliderTemplateDefinition, shape_params) >
            offsetof(KernelColliderTemplateDefinition, center));
     assert(offsetof(KernelAgentVisionConfig, vision_collider_template_id) >
@@ -650,13 +654,13 @@ int main() {
     combat_state.hitbox_center = KernelVec3{0.0f, 0.8f, 0.0f};
     combat_state.hitbox_half_extents = KernelVec3{0.4f, 0.8f, 0.4f};
     combat_state.ammo[3] = 3;
-    combat_state.reserve_ammo[3] = 6;
+    combat_state.reserve_magazines[3] = 6;
     combat_state.ammo[4] = 1;
-    combat_state.reserve_ammo[4] = 1;
+    combat_state.reserve_magazines[4] = 1;
     combat_state.ammo[5] = 2;
-    combat_state.reserve_ammo[5] = 2;
+    combat_state.reserve_magazines[5] = 2;
     combat_state.ammo[6] = 2;
-    combat_state.reserve_ammo[6] = 2;
+    combat_state.reserve_magazines[6] = 2;
     assert(!Kernel_ServerSetEntityCombatState(kernel, created_net_id, nullptr));
     assert(Kernel_ServerSetEntityCombatState(kernel, created_net_id, &combat_state));
     vision_config = KernelAgentVisionConfig{};
@@ -833,6 +837,7 @@ int main() {
     weapon_mechanics.weapon_id = 3;
     weapon_mechanics.fire_mode = KernelWeaponFireMode_Projectile;
     weapon_mechanics.magazine_size = 3;
+    weapon_mechanics.reserve_magazines = 6;
     weapon_mechanics.damage = 5;
     weapon_mechanics.cooldown_ticks = 30;
     weapon_mechanics.reload_ticks = 30;
@@ -851,6 +856,7 @@ int main() {
         3,
         &queried_weapon));
     assert(queried_weapon.weapon_id == 3);
+    assert(queried_weapon.reserve_magazines == 6);
     assert(queried_weapon.projectile_template_id == 3);
     KernelWeaponMechanicsDefinition missing_projectile_template = weapon_mechanics;
     missing_projectile_template.projectile_template_id = 0;
@@ -954,7 +960,7 @@ int main() {
     assert(server_state.max_hp == 240);
     assert(server_state.active_weapon_id == 3);
     assert(server_state.ammo[3] == 3);
-    assert(server_state.reserve_ammo[3] == 6);
+    assert(server_state.reserve_magazines[3] == 6);
     assert(server_state.is_reloading == 0u);
     assert(server_state.reload_remaining_ticks == 0u);
     std::array<KernelServerEntityState, 4> queried_states{};
@@ -972,7 +978,7 @@ int main() {
     assert(queried_states[0].max_hp == 240);
     assert(queried_states[0].active_weapon_id == 3);
     assert(queried_states[0].ammo[3] == 3);
-    assert(queried_states[0].reserve_ammo[3] == 6);
+    assert(queried_states[0].reserve_magazines[3] == 6);
     assert(Kernel_ServerQueryEntities(
                kernel,
                0,
@@ -993,7 +999,7 @@ int main() {
     assert(Kernel_ServerGetEntityState(kernel, created_net_id, &server_state));
     assert(server_state.active_weapon_id == 3);
     assert(server_state.ammo[3] == 2);
-    assert(server_state.reserve_ammo[3] == 6);
+    assert(server_state.reserve_magazines[3] == 6);
 
     server_entity_input.input_seq = 3;
     server_entity_input.buttons = InputButton_Reload;
@@ -1018,7 +1024,7 @@ int main() {
     assert(server_state.is_reloading == 0u);
     assert(server_state.reload_remaining_ticks == 0u);
     assert(server_state.ammo[3] == 3);
-    assert(server_state.reserve_ammo[3] == 5);
+    assert(server_state.reserve_magazines[3] == 5);
 
     PlayerInput input{};
     input.input_seq = 1;

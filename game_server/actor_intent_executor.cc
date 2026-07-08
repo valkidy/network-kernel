@@ -54,7 +54,7 @@ std::uint32_t attack_buttons(
     if (entity_state.ammo[config.weapon_id] > 0) {
         return InputButton_Fire;
     }
-    if (entity_state.reserve_ammo[config.weapon_id] > 0) {
+    if (entity_state.reserve_magazines[config.weapon_id] > 0) {
         return InputButton_Reload;
     }
     return 0u;
@@ -106,7 +106,7 @@ ActorIntentExecutionResult ActorIntentExecutor::execute(
         }
     } else {
         if (config_.weapon_id >= KERNEL_MAX_WEAPONS ||
-            perception.self_state.reserve_ammo[config_.weapon_id] == 0) {
+            perception.self_state.reserve_magazines[config_.weapon_id] == 0) {
             add_missing(&result.report, "action", "Action.Reload");
             return result;
         }

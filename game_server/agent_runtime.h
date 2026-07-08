@@ -15,7 +15,6 @@ inline constexpr std::uint16_t kAgentAnimationIdle = 0;
 inline constexpr std::uint16_t kAgentAnimationChasing = 1;
 inline constexpr std::uint16_t kAgentInitialHp = 240;
 inline constexpr std::uint8_t kAgentSpammerWeaponId = 2;
-inline constexpr std::uint16_t kAgentSpammerReserveAmmo = 240;
 
 enum class AgentSentryState : std::uint8_t {
     kIdle = 0,

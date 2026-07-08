@@ -91,7 +91,7 @@ work. The default sentry agent state is deterministic:
 - server gameplay HP: `240`
 - enemy rocket damage: `5`
 - enemy rocket magazine: `3`
-- enemy rocket reserve ammo: `6`
+- enemy rocket reserve magazines: `6`
 - enemy rocket reload duration: about `1s`
 
 Repeated ticks do not create additional enemies while the managed enemy exists.

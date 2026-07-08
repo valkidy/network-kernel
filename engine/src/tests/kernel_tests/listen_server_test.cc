@@ -196,11 +196,11 @@ void configure_local_player(KernelHandle* kernel, std::uint32_t player_net_id) {
     combat.hitbox_center = KernelVec3{0.0f, 0.9f, 0.0f};
     combat.hitbox_half_extents = KernelVec3{0.35f, 0.9f, 0.35f};
     combat.ammo[0] = 30;
-    combat.reserve_ammo[0] = 90;
+    combat.reserve_magazines[0] = 3;
     combat.ammo[2] = 30;
-    combat.reserve_ammo[2] = 90;
+    combat.reserve_magazines[2] = 3;
     combat.ammo[3] = 6;
-    combat.reserve_ammo[3] = 18;
+    combat.reserve_magazines[3] = 3;
     assert(Kernel_ServerSetEntityCombatState(kernel, player_net_id, &combat));
 
     KernelWeaponMechanicsDefinition rifle{};

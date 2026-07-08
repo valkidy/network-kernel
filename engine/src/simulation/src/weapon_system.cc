@@ -88,12 +88,10 @@ void complete_ready_reload(
         return;
     }
     const std::size_t index = weapon_index(definition->id);
-    const std::uint16_t missing_ammo =
-        static_cast<std::uint16_t>(definition->magazine_size - weapon.ammo[index]);
-    const std::uint16_t loaded_ammo = std::min(missing_ammo, weapon.reserve_ammo[index]);
-    weapon.ammo[index] = static_cast<std::uint16_t>(weapon.ammo[index] + loaded_ammo);
-    weapon.reserve_ammo[index] =
-        static_cast<std::uint16_t>(weapon.reserve_ammo[index] - loaded_ammo);
+    if (weapon.reserve_magazines[index] > 0) {
+        weapon.ammo[index] = definition->magazine_size;
+        --weapon.reserve_magazines[index];
+    }
     weapon.is_reloading = false;
     weapon.reload_end_tick = 0;
 }
@@ -104,7 +102,7 @@ void begin_reload(
     std::uint32_t current_tick) {
     const std::size_t index = weapon_index(definition.id);
     if (weapon.is_reloading || weapon.ammo[index] >= definition.magazine_size ||
-        weapon.reserve_ammo[index] == 0) {
+        weapon.reserve_magazines[index] == 0) {
         return;
     }
     weapon.is_reloading = true;
