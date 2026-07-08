@@ -759,16 +759,19 @@ namespace NetworkExample.Kernel
             {
                 projectileMechanics.struct_size = KernelProjectileMechanicsDefinition.StructSize;
             }
-            if (projectileMechanics.homing.struct_size == 0)
+            if (projectileMechanics.motion_model == (byte)KernelProjectileMotionModel.Homing &&
+                projectileMechanics.homing.struct_size == 0)
             {
                 projectileMechanics.homing.struct_size = KernelHomingMechanicsDefinition.StructSize;
             }
-            if (projectileMechanics.area_effect.struct_size == 0)
+            if (projectileMechanics.projectile_type == (byte)KernelProjectileType.AreaEffect &&
+                projectileMechanics.area_effect.struct_size == 0)
             {
                 projectileMechanics.area_effect.struct_size =
                     KernelAreaEffectMechanicsDefinition.StructSize;
             }
-            if (projectileMechanics.beam.struct_size == 0)
+            if (projectileMechanics.projectile_type == (byte)KernelProjectileType.Beam &&
+                projectileMechanics.beam.struct_size == 0)
             {
                 projectileMechanics.beam.struct_size = KernelBeamMechanicsDefinition.StructSize;
             }

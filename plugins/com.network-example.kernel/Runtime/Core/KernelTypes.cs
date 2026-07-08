@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 34;
+        public const uint AbiVersion = 35;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int GameplayCatalogEntryPathSize = 128;
@@ -1131,6 +1131,7 @@ namespace NetworkExample.Kernel
         public byte weapon_id;
         public byte fire_mode;
         public ushort magazine_size;
+        public ushort reserve_magazines;
         public ushort damage;
         public uint cooldown_ticks;
         public uint reload_ticks;

@@ -4,7 +4,7 @@ namespace NetworkExample.Kernel
 {
     public static class GameServerConstants
     {
-        public const uint AbiVersion = 4;
+        public const uint AbiVersion = 5;
 
         public const ulong CapabilityEnemyManager = 0x0000000000000001UL;
         public const ulong CapabilityEventHandling = 0x0000000000000002UL;

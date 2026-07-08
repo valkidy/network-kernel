@@ -1,5 +1,10 @@
 0.6.6 release notes:
 
+- aligns Unity plugin API with kernel ABI 35 and game server ABI 5
+
+
+0.6.6 release notes:
+
 - aligns Unity plugin API with kernel ABI 34
 
 
