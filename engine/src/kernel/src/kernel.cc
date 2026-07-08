@@ -673,7 +673,7 @@ KernelServerEntityState to_server_entity_state(
         state.active_weapon_id = weapon.weapon_id;
         for (std::size_t index = 0; index < kWeaponCount; ++index) {
             state.ammo[index] = weapon.ammo[index];
-            state.reserve_ammo[index] = weapon.reserve_ammo[index];
+            state.reserve_magazines[index] = weapon.reserve_magazines[index];
         }
         state.is_reloading = weapon.is_reloading ? 1u : 0u;
         state.reload_remaining_ticks =
@@ -1000,6 +1000,7 @@ WeaponMechanicsDefinition to_weapon_mechanics(
     mechanics.id = definition.weapon_id;
     mechanics.mode = to_weapon_fire_mode(definition.fire_mode);
     mechanics.magazine_size = definition.magazine_size;
+    mechanics.reserve_magazines = definition.reserve_magazines;
     mechanics.damage = definition.damage;
     mechanics.cooldown_ticks = definition.cooldown_ticks;
     mechanics.reload_ticks = definition.reload_ticks;
@@ -1019,6 +1020,7 @@ KernelWeaponMechanicsDefinition to_kernel_weapon_mechanics(
     definition.weapon_id = mechanics.id;
     definition.fire_mode = static_cast<std::uint8_t>(mechanics.mode);
     definition.magazine_size = mechanics.magazine_size;
+    definition.reserve_magazines = mechanics.reserve_magazines;
     definition.damage = mechanics.damage;
     definition.cooldown_ticks = mechanics.cooldown_ticks;
     definition.reload_ticks = mechanics.reload_ticks;
@@ -2425,7 +2427,7 @@ bool KernelEngine::server_set_entity_combat_state(
     weapon.weapon_id = combat_state.active_weapon_id;
     for (std::size_t index = 0; index < kWeaponCount; ++index) {
         weapon.ammo[index] = combat_state.ammo[index];
-        weapon.reserve_ammo[index] = combat_state.reserve_ammo[index];
+        weapon.reserve_magazines[index] = combat_state.reserve_magazines[index];
     }
     if (net_id == local_player_net_id_) {
         local_player_move_speed_meters_per_second_ =

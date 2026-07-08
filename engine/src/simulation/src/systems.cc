@@ -253,8 +253,8 @@ bool EntityLifecycleSystem::create_entity(
                 static_cast<std::uint8_t>(entity_template->combat.active_weapon_id);
             for (std::size_t index = 0; index < kWeaponCount; ++index) {
                 weapon.ammo[index] = entity_template->combat.ammo[index];
-                weapon.reserve_ammo[index] =
-                    entity_template->combat.reserve_ammo[index];
+                weapon.reserve_magazines[index] =
+                    entity_template->combat.reserve_magazines[index];
             }
             registry.get_or_emplace<WeaponTuning>(*entity);
         }

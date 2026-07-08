@@ -7,11 +7,15 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
 
 namespace {
+
+constexpr std::uint16_t kMaxReserveMagazines =
+    std::numeric_limits<std::uint16_t>::max();
 
 KernelConfig listen_server_config() {
     KernelConfig config{};
@@ -225,7 +229,7 @@ int main() {
     assert(GameServer_GetAbiInfo(&info, sizeof(info)));
     assert(info.struct_size == sizeof(GameServerAbiInfo));
     assert(info.abi_version == GAME_SERVER_ABI_VERSION);
-    assert(info.abi_version == 4u);
+    assert(info.abi_version == 5u);
     assert((info.capability_flags & GAME_SERVER_CAPABILITY_ENEMY_MANAGER) != 0);
     assert((info.capability_flags & GAME_SERVER_CAPABILITY_EVENT_HANDLING) != 0);
     assert((info.capability_flags & GAME_SERVER_CAPABILITY_DESPAWN_ALL) != 0);
@@ -297,6 +301,7 @@ int main() {
     assert(template_info.fire_mode == KernelWeaponFireMode_Projectile);
     assert(template_info.mechanics.damage == 1);
     assert(template_info.mechanics.magazine_size == 120);
+    assert(template_info.mechanics.reserve_magazines == kMaxReserveMagazines);
     assert(template_info.mechanics.cooldown_ticks == 1);
     assert(template_info.name[0] == 'P');
     template_info = GameServerWeaponTemplateInfo{};
@@ -342,6 +347,7 @@ int main() {
     assert(GameServer_QueryWeaponTemplate(yaml_game_server, 2, &template_info));
     assert(template_info.mechanics.damage == 1);
     assert(template_info.mechanics.magazine_size == 120);
+    assert(template_info.mechanics.reserve_magazines == kMaxReserveMagazines);
     assert(template_info.mechanics.cooldown_ticks == 1);
     assert(template_info.mechanics.projectile_template_id == 2);
     template_info = GameServerWeaponTemplateInfo{};

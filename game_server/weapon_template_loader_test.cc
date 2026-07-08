@@ -1,12 +1,17 @@
 #include "game_server/gameplay_config.h"
 
 #include <cassert>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <string>
 
 namespace {
+
+constexpr std::uint16_t kMaxReserveMagazines =
+    std::numeric_limits<std::uint16_t>::max();
 
 std::filesystem::path runfiles_root() {
     const char* test_srcdir = std::getenv("TEST_SRCDIR");
@@ -266,6 +271,8 @@ void valid_repo_templates_load_all_slots() {
     assert(config.weapons.definitions[network_example::game_server::kWeaponRifle].fire_mode ==
            KernelWeaponFireMode_Hitscan);
     assert(config.weapons.definitions[network_example::game_server::kWeaponRifle]
+               .reserve_magazines == 6);
+    assert(config.weapons.definitions[network_example::game_server::kWeaponRifle]
                .segment_collider_template_id == 5);
     assert(config.weapons.definitions[network_example::game_server::kWeaponShotgun]
                .segment_collider_template_id == 6);
@@ -306,6 +313,8 @@ void valid_repo_templates_load_all_slots() {
                .cooldown_ticks == 1);
     assert(config.weapons.definitions[network_example::game_server::kWeaponGrenade]
                .magazine_size == 120);
+    assert(config.weapons.definitions[network_example::game_server::kWeaponGrenade]
+               .reserve_magazines == kMaxReserveMagazines);
     assert(config.weapons.definitions[network_example::game_server::kWeaponGrenade]
                .projectile_template_id == 2);
     assert(config.weapons.definitions[network_example::game_server::kWeaponFireFloor]

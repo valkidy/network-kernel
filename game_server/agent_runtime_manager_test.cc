@@ -5,10 +5,14 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstdio>
+#include <limits>
 
 #include "kernel/public/kernel_api.h"
 
 namespace {
+
+constexpr std::uint16_t kMaxReserveMagazines =
+    std::numeric_limits<std::uint16_t>::max();
 
 KernelConfig listen_server_config() {
     KernelConfig config{};
@@ -205,8 +209,8 @@ int main() {
     const std::uint32_t enemy_net_id = enemy_states[0].net_id;
     require(enemy_states[0].ammo[network_example::game_server::kWeaponGrenade] == 120);
     require(
-        enemy_states[0].reserve_ammo[network_example::game_server::kWeaponGrenade] ==
-        240);
+        enemy_states[0].reserve_magazines[network_example::game_server::kWeaponGrenade] ==
+        kMaxReserveMagazines);
     KernelWeaponMechanicsDefinition enemy_weapon{};
     enemy_weapon.struct_size = sizeof(enemy_weapon);
     require(Kernel_ServerGetEntityWeaponMechanics(
@@ -298,8 +302,8 @@ int main() {
         require(agent_count == 1);
         const KernelServerEntityState& enemy_state = enemy_states[0];
         if (enemy_state.ammo[network_example::game_server::kWeaponGrenade] == 0 &&
-            enemy_state.reserve_ammo[network_example::game_server::kWeaponGrenade] ==
-                240) {
+            enemy_state.reserve_magazines[network_example::game_server::kWeaponGrenade] ==
+                kMaxReserveMagazines) {
             saw_spammer_empty_magazine = true;
         }
         if (saw_spammer_empty_magazine && enemy_state.is_reloading != 0u) {
@@ -307,8 +311,8 @@ int main() {
         }
         if (saw_spammer_reload && enemy_state.is_reloading == 0u &&
             enemy_state.ammo[network_example::game_server::kWeaponGrenade] == 120 &&
-            enemy_state.reserve_ammo[network_example::game_server::kWeaponGrenade] ==
-                120) {
+            enemy_state.reserve_magazines[network_example::game_server::kWeaponGrenade] ==
+                kMaxReserveMagazines - 1u) {
             saw_spammer_reloaded = true;
         }
     }

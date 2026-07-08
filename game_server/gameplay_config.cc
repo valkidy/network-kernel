@@ -51,6 +51,7 @@ constexpr const char* kDefaultGameplayCatalogPath =
     "game_server/gameplay_catalog.yaml";
 constexpr std::uint64_t kMaxYamlEntryBytes = 1024ull * 1024ull;
 constexpr std::uint64_t kMaxTotalYamlBytes = 8ull * 1024ull * 1024ull;
+constexpr std::uint16_t kDefaultReserveMagazines = 6;
 void hash_bytes(std::uint64_t* hash, const void* data, std::size_t size) {
     const auto* bytes = static_cast<const std::uint8_t*>(data);
     for (std::size_t index = 0; index < size; ++index) {
@@ -93,6 +94,7 @@ void hash_weapon(std::uint64_t* hash, const KernelWeaponMechanicsDefinition& wea
     hash_scalar(hash, weapon.weapon_id);
     hash_scalar(hash, weapon.fire_mode);
     hash_scalar(hash, weapon.magazine_size);
+    hash_scalar(hash, weapon.reserve_magazines);
     hash_scalar(hash, weapon.damage);
     hash_scalar(hash, weapon.cooldown_ticks);
     hash_scalar(hash, weapon.reload_ticks);
@@ -223,6 +225,7 @@ KernelWeaponMechanicsDefinition hitscan_weapon(
     weapon.weapon_id = weapon_id;
     weapon.fire_mode = KernelWeaponFireMode_Hitscan;
     weapon.magazine_size = magazine_size;
+    weapon.reserve_magazines = kDefaultReserveMagazines;
     weapon.damage = damage;
     weapon.cooldown_ticks = cooldown_ticks;
     weapon.reload_ticks = reload_ticks;
@@ -265,6 +268,7 @@ KernelWeaponMechanicsDefinition area_effect_weapon(
     weapon.weapon_id = weapon_id;
     weapon.fire_mode = KernelWeaponFireMode_Projectile;
     weapon.magazine_size = magazine_size;
+    weapon.reserve_magazines = kDefaultReserveMagazines;
     weapon.damage = damage;
     weapon.cooldown_ticks = cooldown_ticks;
     weapon.reload_ticks = reload_ticks;
@@ -284,6 +288,7 @@ KernelWeaponMechanicsDefinition beam_weapon(
     weapon.weapon_id = weapon_id;
     weapon.fire_mode = KernelWeaponFireMode_Projectile;
     weapon.magazine_size = magazine_size;
+    weapon.reserve_magazines = kDefaultReserveMagazines;
     weapon.damage = damage;
     weapon.cooldown_ticks = cooldown_ticks;
     weapon.reload_ticks = reload_ticks;
@@ -298,8 +303,7 @@ void fill_default_ammo(
     for (std::size_t index = 0; index < weapons.definitions.size(); ++index) {
         const KernelWeaponMechanicsDefinition& weapon = weapons.definitions[index];
         combat_state->ammo[index] = weapon.magazine_size;
-        combat_state->reserve_ammo[index] =
-            static_cast<std::uint16_t>(weapon.magazine_size * 3u);
+        combat_state->reserve_magazines[index] = weapon.reserve_magazines;
     }
 }
 
@@ -926,6 +930,7 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
             "name",
             "weapon_type",
             "magazine_size",
+            "reserve_magazines",
             "damage",
             "cooldown_ticks",
             "reload_ticks",
@@ -944,6 +949,10 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
         KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_WEAPON);
     const auto id = static_cast<std::uint8_t>(node["id"].as<int>());
     const std::uint16_t magazine_size = node["magazine_size"].as<std::uint16_t>();
+    const std::uint16_t reserve_magazines =
+        node["reserve_magazines"]
+            ? node["reserve_magazines"].as<std::uint16_t>()
+            : kDefaultReserveMagazines;
     const std::uint32_t cooldown_ticks = node["cooldown_ticks"].as<std::uint32_t>();
     const std::uint32_t reload_ticks = node["reload_ticks"].as<std::uint32_t>();
     const std::string type = node["weapon_type"].as<std::string>();
@@ -955,7 +964,7 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
                 "instant weapons must not define projectile, area_effect, or beam");
         }
         if (type == "shotgun") {
-            return shotgun_weapon(
+            KernelWeaponMechanicsDefinition weapon = shotgun_weapon(
                 id,
                 magazine_size,
                 damage,
@@ -964,14 +973,18 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
                 node["max_range"].as<float>(),
                 static_cast<std::uint8_t>(node["pellet_count"].as<int>()),
                 node["pellet_spread"].as<float>());
+            weapon.reserve_magazines = reserve_magazines;
+            return weapon;
         }
-        return hitscan_weapon(
+        KernelWeaponMechanicsDefinition weapon = hitscan_weapon(
             id,
             magazine_size,
             damage,
             cooldown_ticks,
             reload_ticks,
             node["max_range"].as<float>());
+        weapon.reserve_magazines = reserve_magazines;
+        return weapon;
     }
     if (type == "projectile") {
         if (node["area_effect"] || node["beam"]) {
@@ -991,6 +1004,7 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
         weapon.weapon_id = id;
         weapon.fire_mode = KernelWeaponFireMode_Projectile;
         weapon.magazine_size = magazine_size;
+        weapon.reserve_magazines = reserve_magazines;
         weapon.cooldown_ticks = cooldown_ticks;
         weapon.reload_ticks = reload_ticks;
         weapon.pellet_count = 1;
@@ -1011,12 +1025,14 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
             throw std::runtime_error(
                 "area_effect weapon requires projectile_template");
         }
-        return area_effect_weapon(
+        KernelWeaponMechanicsDefinition weapon = area_effect_weapon(
             id,
             magazine_size,
             damage,
             cooldown_ticks,
             reload_ticks);
+        weapon.reserve_magazines = reserve_magazines;
+        return weapon;
     }
     if (type == "beam") {
         if (node["projectile"] || node["area_effect"] || node["beam"]) {
@@ -1026,12 +1042,14 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
         if (!node["projectile_template"]) {
             throw std::runtime_error("beam weapon requires projectile_template");
         }
-        return beam_weapon(
+        KernelWeaponMechanicsDefinition weapon = beam_weapon(
             id,
             magazine_size,
             damage,
             cooldown_ticks,
             reload_ticks);
+        weapon.reserve_magazines = reserve_magazines;
+        return weapon;
     }
     throw std::runtime_error("unsupported weapon_type: " + type);
 }
@@ -3250,8 +3268,7 @@ KernelCombatStateDefinition make_combat_state_from_actor_template(
         const KernelWeaponMechanicsDefinition& weapon =
             config.weapons.definitions[weapon_id];
         combat_state.ammo[weapon_id] = weapon.magazine_size;
-        combat_state.reserve_ammo[weapon_id] =
-            static_cast<std::uint16_t>(weapon.magazine_size * 2u);
+        combat_state.reserve_magazines[weapon_id] = weapon.reserve_magazines;
     }
     return combat_state;
 }
