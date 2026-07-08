@@ -824,7 +824,9 @@ namespace NetworkExample.Kernel
                 FreeIfAllocated(projectileTemplatesHandle);
                 FreeIfAllocated(colliderTemplatesHandle);
                 FreeIfAllocated(colliderBindingsHandle);
-                FreeMarshaledArray(entityTemplatesPtr, entityTemplates.Length);
+                FreeMarshaledArray<KernelEntityTemplateDefinition>(
+                    entityTemplatesPtr,
+                    entityTemplates.Length);
             }
         }
 
