@@ -289,6 +289,33 @@ int main() {
     require(enemy_states[0].velocity.y == 0.0f);
     require(enemy_states[0].velocity.z == 0.0f);
 
+    bool saw_spammer_empty_magazine = false;
+    bool saw_spammer_reload = false;
+    bool saw_spammer_reloaded = false;
+    for (int frame = 0; frame < 180 && !saw_spammer_reloaded; ++frame) {
+        run_server_frame(kernel, &game_server);
+        agent_count = query_enemies(kernel, &enemy_states);
+        require(agent_count == 1);
+        const KernelServerEntityState& enemy_state = enemy_states[0];
+        if (enemy_state.ammo[network_example::game_server::kWeaponGrenade] == 0 &&
+            enemy_state.reserve_ammo[network_example::game_server::kWeaponGrenade] ==
+                240) {
+            saw_spammer_empty_magazine = true;
+        }
+        if (saw_spammer_empty_magazine && enemy_state.is_reloading != 0u) {
+            saw_spammer_reload = true;
+        }
+        if (saw_spammer_reload && enemy_state.is_reloading == 0u &&
+            enemy_state.ammo[network_example::game_server::kWeaponGrenade] == 120 &&
+            enemy_state.reserve_ammo[network_example::game_server::kWeaponGrenade] ==
+                120) {
+            saw_spammer_reloaded = true;
+        }
+    }
+    require(saw_spammer_empty_magazine);
+    require(saw_spammer_reload);
+    require(saw_spammer_reloaded);
+
     run_server_frame(kernel, &game_server);
     player_count = query_players(kernel, &player_states);
     require(player_count == 1);
