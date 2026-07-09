@@ -9,6 +9,16 @@ network kernel. The dedicated server starts through:
 bazel run --config=macos //app:app -- --mode=dedicated_server --port=7777
 ```
 
+By default, dedicated server mode loads the Bazel-generated
+`game_server/gameplay_catalog_bundle/bundle.zip` and registers it for gameplay
+catalog sync. This is the preferred gameplay-data iteration flow for Unity and
+native clients: update gameplay data, rebuild the bundle/app, restart the
+dedicated server, and let clients sync the server bundle before handshake.
+
+To run the legacy YAML-only flow, pass `--gameplay-catalog=path/to/catalog.yaml`
+without `--gameplay-catalog-bundle`. That mode keeps catalog sync disabled and
+is not the recommended dedicated gameplay test path.
+
 The host/listen server path uses the same gameplay layer:
 
 ```bash
@@ -18,6 +28,34 @@ bazel run --config=macos //app:app -- --mode=host_server --port=7777
 The `game_server` library owns enemy gameplay decisions. The kernel continues
 to own entity storage, ticking, transport, snapshots, relevance filtering, and
 client render state output.
+
+## Gameplay Catalog Bundle
+
+Build the default bundle through Bazel:
+
+```bash
+bazel build --config=macos //game_server/gameplay_catalog_bundle:bundle.zip
+```
+
+Dedicated server mode automatically searches these bundle locations when no
+explicit `--gameplay-catalog-bundle` or legacy `--gameplay-catalog` is passed:
+
+```text
+game_server/gameplay_catalog_bundle/bundle.zip
+bazel-bin/game_server/gameplay_catalog_bundle/bundle.zip
+$RUNFILES_DIR/network-example/game_server/gameplay_catalog_bundle/bundle.zip
+$RUNFILES_DIR/_main/game_server/gameplay_catalog_bundle/bundle.zip
+<argv0>.runfiles/network-example/game_server/gameplay_catalog_bundle/bundle.zip
+<argv0>.runfiles/_main/game_server/gameplay_catalog_bundle/bundle.zip
+```
+
+If none of those files exists, the dedicated server fails fast and asks for a
+built bundle or an explicit `--gameplay-catalog-bundle` path. This avoids
+starting a server that can run gameplay locally but cannot provide the bundle
+remote clients need for catalog sync.
+
+See `docs/GAMEPLAY_DATA_SYNC_POLICY.md` for the current split between
+server-synced tuning data and long-lived static data.
 
 ## Architecture Boundaries
 
@@ -116,7 +154,7 @@ This version does not include:
 - pathfinding or obstacle avoidance
 - spawn waves or respawn policy
 - random spawn tables
-- config files or CLI tuning for AI constants
+- runtime sync for long-lived static data such as collider bindings
 - Unity managed bindings for server-owned entity input or enemy ammo/debug state
 
 ## Verification

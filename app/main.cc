@@ -1,7 +1,10 @@
 #include <charconv>
+#include <cstdlib>
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <spdlog/spdlog.h>
 
@@ -27,6 +30,7 @@ struct Options {
     std::string gameplay_catalog_cache_directory;
     std::uint16_t port = kDefaultPort;
     std::uint32_t host_frames = 12;
+    bool gameplay_catalog_explicit = false;
 };
 
 void print_usage() {
@@ -87,6 +91,51 @@ bool read_value(
     return false;
 }
 
+bool path_is_regular_file(const std::filesystem::path& path) {
+    std::error_code error;
+    return std::filesystem::is_regular_file(path, error);
+}
+
+void append_runfiles_bundle_candidates(
+    const std::filesystem::path& runfiles_root,
+    std::vector<std::filesystem::path>* candidates) {
+    if (runfiles_root.empty() || candidates == nullptr) {
+        return;
+    }
+    candidates->push_back(
+        runfiles_root / "network-example" / "game_server" /
+        "gameplay_catalog_bundle" / "bundle.zip");
+    candidates->push_back(
+        runfiles_root / "_main" / "game_server" /
+        "gameplay_catalog_bundle" / "bundle.zip");
+}
+
+std::string find_default_gameplay_catalog_bundle(const char* argv0) {
+    std::vector<std::filesystem::path> candidates;
+    candidates.push_back(
+        "game_server/gameplay_catalog_bundle/bundle.zip");
+    candidates.push_back(
+        "bazel-bin/game_server/gameplay_catalog_bundle/bundle.zip");
+
+    const char* runfiles_dir = std::getenv("RUNFILES_DIR");
+    if (runfiles_dir != nullptr && runfiles_dir[0] != '\0') {
+        append_runfiles_bundle_candidates(runfiles_dir, &candidates);
+    }
+
+    if (argv0 != nullptr && argv0[0] != '\0') {
+        append_runfiles_bundle_candidates(
+            std::filesystem::path(std::string(argv0) + ".runfiles"),
+            &candidates);
+    }
+
+    for (const std::filesystem::path& candidate : candidates) {
+        if (path_is_regular_file(candidate)) {
+            return candidate.string();
+        }
+    }
+    return {};
+}
+
 bool parse_args(int argc, char** argv, Options* options) {
     for (int index = 1; index < argc; ++index) {
         const std::string_view arg(argv[index]);
@@ -111,6 +160,7 @@ bool parse_args(int argc, char** argv, Options* options) {
         }
         if (read_value(arg, "--gameplay-catalog", &index, argc, argv, &value)) {
             options->gameplay_catalog = value;
+            options->gameplay_catalog_explicit = true;
             continue;
         }
         if (read_value(arg, "--gameplay-catalog-bundle", &index, argc, argv, &value)) {
@@ -160,10 +210,29 @@ int main(int argc, char** argv) {
     }
 
     if (options.mode == "dedicated_server") {
+        std::string gameplay_catalog_bundle = options.gameplay_catalog_bundle;
+        if (gameplay_catalog_bundle.empty() && !options.gameplay_catalog_explicit) {
+            gameplay_catalog_bundle = find_default_gameplay_catalog_bundle(
+                argc > 0 ? argv[0] : nullptr);
+            if (gameplay_catalog_bundle.empty()) {
+                spdlog::error(
+                    "default gameplay catalog bundle not found; build "
+                    "//game_server/gameplay_catalog_bundle:bundle.zip or pass "
+                    "--gameplay-catalog-bundle=path/to/bundle.zip");
+                return 1;
+            }
+            spdlog::info(
+                "using default gameplay catalog bundle={}",
+                gameplay_catalog_bundle);
+        } else if (gameplay_catalog_bundle.empty()) {
+            spdlog::warn(
+                "dedicated server using legacy gameplay catalog file; "
+                "gameplay catalog sync is disabled");
+        }
         return RunDedicatedServer(
             options.port,
             options.gameplay_catalog.c_str(),
-            options.gameplay_catalog_bundle.c_str(),
+            gameplay_catalog_bundle.c_str(),
             options.gameplay_catalog_entry.c_str(),
             options.gameplay_catalog_content_namespace.c_str());
     }

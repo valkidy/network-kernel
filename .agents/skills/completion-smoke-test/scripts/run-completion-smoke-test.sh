@@ -12,6 +12,7 @@ LOG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/network-example-smoke.XXXXXX")"
 SERVER_LOG="$LOG_DIR/dedicated_server.log"
 CLIENT_LOG="$LOG_DIR/example_client.log"
 HOST_LOG="$LOG_DIR/host_server.log"
+CATALOG_CACHE_DIR="$LOG_DIR/catalog-cache"
 SERVER_PID=""
 
 cleanup() {
@@ -131,7 +132,10 @@ if ! grep -q "dedicated server listening on 127.0.0.1:$PORT" "$SERVER_LOG"; then
 fi
 
 echo "==> Running client mode against $ADDRESS"
-"$APP_BIN" --mode=client --address="$ADDRESS" >"$CLIENT_LOG" 2>&1
+"$APP_BIN" \
+  --mode=client \
+  --address="$ADDRESS" \
+  --catalog-cache-dir="$CATALOG_CACHE_DIR" >"$CLIENT_LOG" 2>&1
 sleep 0.2
 if ! grep -Eq "event type=4 .* peer=0 " "$SERVER_LOG"; then
   echo "ERROR: dedicated_server did not report a GameServer agent spawn" >&2
