@@ -9,8 +9,12 @@ The sample intentionally does not instantiate prefabs or apply render states to
 GameObjects. A Unity demo project owns presentation-specific mapping such as
 prefabs, scene object registries, animation, camera, pooling, and UI.
 
-To exercise config bundle loading, build
-`//game_server/gameplay_catalog_bundle:bundle.zip`, copy the output into the
-Unity project as `gameplay_catalog_bundle.bytes`, and assign that `TextAsset` to
-the gameplay catalog bundle field. The default entry path is
+The sample loads the package default
+`Runtime/Resources/gameplay_catalog_bundle/bundle.bytes` when the gameplay
+catalog bundle field is empty. It starts `NetworkHost` with
+`EnableClientSync = true`, so remote clients can receive the same gameplay
+catalog bundle from the host.
+
+Assign a `gameplay_catalog_bundle.bytes` TextAsset only when intentionally
+overriding the package default bundle. The default entry path is
 `gameplay_catalog.yaml`.

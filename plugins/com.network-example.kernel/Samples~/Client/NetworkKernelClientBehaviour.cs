@@ -6,8 +6,18 @@ using UnityEngine;
 
 public sealed class NetworkKernelClientBehaviour : MonoBehaviour
 {
+    private enum CatalogStartupMode
+    {
+        DedicatedServerSync,
+        LocalBundleOverride,
+    }
+
     [SerializeField]
     private string address = "127.0.0.1:7777";
+
+    [SerializeField]
+    private CatalogStartupMode catalogStartupMode =
+        CatalogStartupMode.DedicatedServerSync;
 
     [SerializeField]
     private TextAsset gameplayCatalogBundle;
@@ -31,14 +41,24 @@ public sealed class NetworkKernelClientBehaviour : MonoBehaviour
 
         client = new NetworkClient();
         bool started;
-        if (gameplayCatalogBundle != null)
+        if (catalogStartupMode == CatalogStartupMode.LocalBundleOverride)
         {
+            if (gameplayCatalogBundle == null)
+            {
+                Debug.LogError(
+                    "Local gameplay catalog override mode requires a bundle TextAsset.");
+                enabled = false;
+                return;
+            }
             if (!LoadGameplayCatalogBundle(client))
             {
                 enabled = false;
                 return;
             }
             started = client.Start(address);
+            Debug.LogWarning(
+                "Network client using local gameplay catalog override; " +
+                "server catalog sync is skipped.");
         }
         else
         {

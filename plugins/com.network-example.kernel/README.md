@@ -72,11 +72,14 @@ repo root:
 bazel build //game_server/gameplay_catalog_bundle:bundle.zip
 ```
 
-Unity imports binary sample data as a `TextAsset` when the file uses a `.bytes`
-extension. Copy or rename the Bazel output `bundle.zip` to a project asset such
-as `gameplay_catalog_bundle.bytes`, then assign it to the sample behaviour's
-gameplay catalog bundle field. Keep the entry path at the default
-`gameplay_catalog.yaml` unless the bundle layout changes.
+The package builder stages the default Unity host bundle at
+`Runtime/Resources/gameplay_catalog_bundle/bundle.bytes`. The Host sample loads
+that resource when its gameplay catalog bundle field is empty and registers it
+for remote client sync. The Client sample defaults to syncing the dedicated
+server bundle before handshake. Assign a bundle `TextAsset` only for an
+intentional host override or for the Client sample's `LocalBundleOverride`
+mode; keep the entry path at the default `gameplay_catalog.yaml` unless the
+bundle layout changes.
 
 ## Smoke Checks
 
@@ -150,15 +153,21 @@ bazel-bin/app/signed/network_kernel_dedicated_server --mode=dedicated_server
 
 In Unity, import the `Client` sample and add `NetworkKernelClientBehaviour` to
 an empty GameObject. The behaviour connects to `127.0.0.1:7777` by default,
-waits for `PlayerJoined`, reads the assigned local player through
-`NetworkClient`, and stops submitting input after `Disconnected`.
+syncs the server gameplay catalog bundle before handshake, waits for
+`PlayerJoined`, reads the assigned local player through `NetworkClient`, and
+stops submitting input after `Disconnected`. Leave the sample in
+`DedicatedServerSync` mode for dedicated-server gameplay tests; use
+`LocalBundleOverride` only when intentionally skipping server catalog sync.
 
 ## Unity Host Sample
 
 Import the `Host` sample and add `NetworkKernelHostBehaviour` to an empty
 GameObject. The behaviour starts listen-server mode, creates the native Game
 Server bridge through `NetworkHost`, submits local input, ticks the native game
-server, and logs render-state data and enemy count.
+server, and logs render-state data and enemy count. When the gameplay catalog
+bundle field is empty, it uses the package default
+`Runtime/Resources/gameplay_catalog_bundle/bundle.bytes` and registers that
+bundle for remote client sync.
 
 The sample intentionally does not instantiate prefabs or apply render states to
 GameObjects. A Unity demo project owns presentation-specific mapping such as

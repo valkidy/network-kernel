@@ -5,6 +5,9 @@ using UnityEngine;
 
 public sealed class NetworkKernelHostBehaviour : MonoBehaviour
 {
+    private const string DefaultGameplayCatalogBundleResourcePath =
+        "gameplay_catalog_bundle/bundle";
+
     [SerializeField]
     private ushort port = 7777;
 
@@ -33,19 +36,29 @@ public sealed class NetworkKernelHostBehaviour : MonoBehaviour
         KernelGameplayCatalogLoadResult result = default;
         try
         {
-            started = gameplayCatalogBundle == null
-                ? host.Start(port)
-                : host.Start(
-                    port,
-                    new GameplayCatalogServerOptions
-                    {
-                        BundleBytes = gameplayCatalogBundle.bytes,
-                        EntryPath = gameplayCatalogEntryPath,
-                        ContentNamespace = gameplayCatalogContentNamespace,
-                        EnableClientSync = true,
-                    },
-                    out result);
-            if (gameplayCatalogBundle != null && started)
+            TextAsset resolvedBundle = gameplayCatalogBundle != null
+                ? gameplayCatalogBundle
+                : Resources.Load<TextAsset>(DefaultGameplayCatalogBundleResourcePath);
+            if (resolvedBundle == null)
+            {
+                Debug.LogError(
+                    "NetworkHost failed to load gameplay catalog bundle resource '" +
+                    DefaultGameplayCatalogBundleResourcePath + "'.");
+                enabled = false;
+                return;
+            }
+
+            started = host.Start(
+                port,
+                new GameplayCatalogServerOptions
+                {
+                    BundleBytes = resolvedBundle.bytes,
+                    EntryPath = gameplayCatalogEntryPath,
+                    ContentNamespace = gameplayCatalogContentNamespace,
+                    EnableClientSync = true,
+                },
+                out result);
+            if (started)
             {
                 Debug.Log(
                     $"Loaded gameplay catalog bundle version={result.catalog_version} " +

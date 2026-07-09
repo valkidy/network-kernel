@@ -16,11 +16,16 @@ Before entering Play Mode on macOS:
    bazel run //app:app --config=macos -- --mode=dedicated_server
    ```
 
-3. Optional: build `//game_server/gameplay_catalog_bundle:bundle.zip`, copy the
-   output to a Unity asset named `gameplay_catalog_bundle.bytes`, and assign it
-   to the behaviour's gameplay catalog bundle field.
+3. Keep the behaviour's catalog startup mode at `DedicatedServerSync` for
+   dedicated-server gameplay testing. The client requests the server manifest,
+   downloads or reuses the cached `bundle.zip`, loads that catalog, and then
+   completes the normal connection handshake.
 
 4. Enter Play Mode. The sample connects to `127.0.0.1:7777` by default.
+
+Use `LocalBundleOverride` only for explicit compatibility or offline debugging.
+That mode requires assigning a `gameplay_catalog_bundle.bytes` TextAsset and
+skips server catalog sync.
 
 The sample waits for `PlayerJoined`, reads the local player id through
 `TryGetLocalPlayerInfo`, submits input only while connected, passes a
