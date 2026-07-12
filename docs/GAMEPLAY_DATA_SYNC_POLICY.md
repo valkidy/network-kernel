@@ -24,6 +24,7 @@ Examples:
 
 - weapon damage, cooldown, reload time, magazine size, and reserve magazines
 - projectile speed, lifetime, damage, gravity, sync mode, and hit response
+- collider dimensions, centers, purpose, layer, and transient lifetime
 - actor and entity HP, move speed, weapon slots, and active weapon
 - AI alert/forget timing, patrol timing, sentry weapon choice, and spawn tuning
 - director spawn count, radius, seed, position, and target templates
@@ -33,13 +34,13 @@ normal gameplay handshake until they have loaded the server manifest's catalog.
 
 ## Long-Lived Static Data
 
-Long-lived static data is structural, geometric, ABI-shaped, or presentation
-specific. It should not be pulled into the fast dedicated-server sync path until
-there is a concrete need.
+Long-lived static data is structural, ABI-shaped, or presentation specific. It
+should not be pulled into the fast dedicated-server sync path until there is a
+concrete need.
 
 Examples:
 
-- collider templates and collider bindings
+- legacy entity-type collider bindings
 - entity component layout
 - new enum values, projectile motion models, damage shapes, or protocol schema
 - kernel ABI and Game Server bridge ABI structs
@@ -52,22 +53,30 @@ weapon and AI tuning.
 
 ## Reference Rule
 
-Server-synced tuning data may reference long-lived static ids only when those
-ids are already present in the client/native build. For example, a tuning
-bundle may change a weapon to use an existing projectile or collider template,
-but it must not reference a collider id that the receiving client build does
-not know how to validate or present.
+Server-synced tuning data may reference templates contained in the same bundle.
+Weapon, projectile, and entity templates bind collider templates by authored
+name; the loader resolves those references to stable ids before runtime use.
 
-If a gameplay experiment needs new static ids, update the static data and
-client/native build first. After that, follow-up tuning changes can stay in the
-smaller server-synced bundle.
+New enum values, component layouts, ABI fields, and presentation mappings still
+require the corresponding native or client build update.
 
 ## Current Collider Binding Position
 
-Collider bindings are intentionally not part of the fast sync surface today.
-The current gameplay config validates that collider catalogs contain templates
-and no bindings, and the kernel rejects non-zero collider binding counts.
+Collider templates are part of the fast sync surface and are loaded one file
+per template from `collider_template_dir`. They participate in the catalog hash
+and are downloaded before client handshake when the cache is stale.
+
+Legacy entity-type collider bindings remain outside the sync surface. The
+current gameplay config validates that collider catalogs contain templates and
+no bindings, and the kernel rejects non-zero collider binding counts.
 
 If gameplay later needs multiple authoritative server-side colliders per entity,
 add a focused design for minimal authoritative bindings instead of making the
 entire collider/presentation model dynamically synced by default.
+
+## Current Bundle Limitation
+
+The compressed `bundle.zip` has a hard sync limit of 1 MiB on both server and
+client. Clients may choose a smaller limit but cannot raise the version-level
+cap. Sync remains a whole-bundle, pre-handshake operation with local caching;
+hot reload, delta sync, and Unity presentation assets are not supported.

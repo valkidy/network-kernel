@@ -37,87 +37,20 @@ void write_file(const std::filesystem::path& path, const std::string& text) {
 }
 
 void write_valid_collider_catalog(const std::filesystem::path& weapon_dir) {
-    write_file(
-        weapon_dir.parent_path() / "collider_templates" / "default.yaml",
-        "templates:\n"
-        "  - id: 1\n"
-        "    name: player_hit\n"
-        "    shape: aabb\n"
-        "    center: {x: 0.0, y: 0.0, z: 0.0}\n"
-        "    half_extents: {x: 0.35, y: 0.9, z: 0.35}\n"
-        "    radius: 0.0\n"
-        "    purpose: hit\n"
-        "    layer: player_side\n"
-        "  - id: 2\n"
-        "    name: enemy_hit\n"
-        "    shape: aabb\n"
-        "    center: {x: 0.0, y: 0.0, z: 0.0}\n"
-        "    half_extents: {x: 0.4, y: 0.8, z: 0.4}\n"
-        "    radius: 0.0\n"
-        "    purpose: hit\n"
-        "    layer: hostile_side\n"
-        "  - id: 3\n"
-        "    name: projectile_damage\n"
-        "    shape: aabb\n"
-        "    center: {x: 0.0, y: 0.0, z: 0.0}\n"
-        "    half_extents: {x: 0.1, y: 0.1, z: 0.1}\n"
-        "    radius: 0.0\n"
-        "    purpose: damage\n"
-        "    layer: projectile\n"
-        "  - id: 4\n"
-        "    name: explosion_damage\n"
-        "    shape: sphere\n"
-        "    center: {x: 0.0, y: 0.0, z: 0.0}\n"
-        "    half_extents: {x: 1.0, y: 1.0, z: 1.0}\n"
-        "    radius: 1.0\n"
-        "    purpose: damage\n"
-        "    layer: area_effect\n"
-        "  - id: 5\n"
-        "    name: rifle_segment_damage\n"
-        "    shape: segment\n"
-        "    center: {x: 0.0, y: 0.0, z: 0.0}\n"
-        "    half_extents: {x: 0.0, y: 0.0, z: 0.0}\n"
-        "    radius: 0.0\n"
-        "    length: 100.0\n"
-        "    scatter_degrees: 0.0\n"
-        "    lifetime_ticks: 3\n"
-        "    purpose: damage\n"
-        "    layer: projectile\n"
-        "  - id: 6\n"
-        "    name: shotgun_segment_damage\n"
-        "    shape: segment\n"
-        "    center: {x: 0.0, y: 0.0, z: 0.0}\n"
-        "    half_extents: {x: 0.0, y: 0.0, z: 0.0}\n"
-        "    radius: 0.0\n"
-        "    length: 40.0\n"
-        "    scatter_degrees: 6.0\n"
-        "    lifetime_ticks: 3\n"
-        "    purpose: damage\n"
-        "    layer: projectile\n"
-        "  - id: 7\n"
-        "    name: sphere_damage\n"
-        "    shape: sphere\n"
-        "    center: {x: 0.0, y: 0.0, z: 0.0}\n"
-        "    half_extents: {x: 0.2, y: 0.2, z: 0.2}\n"
-        "    radius: 0.2\n"
-        "    purpose: damage\n"
-        "    layer: projectile\n"
-        "  - id: 8\n"
-        "    name: beam_damage\n"
-        "    shape: oriented_box\n"
-        "    center: {x: 0.0, y: 0.0, z: 0.0}\n"
-        "    half_extents: {x: 0.25, y: 0.25, z: 4.0}\n"
-        "    radius: 0.0\n"
-        "    purpose: damage\n"
-        "    layer: projectile\n"
-        "  - id: 9\n"
-        "    name: cone_vision\n"
-        "    shape: cone\n"
-        "    center: {x: 0.0, y: 0.0, z: 0.0}\n"
-        "    range: 12.0\n"
-        "    fov_degrees: 90.0\n"
-        "    purpose: vision\n"
-        "    layer: agent_vision\n");
+    const std::filesystem::path source_dir =
+        runfiles_root() / "game_server" / "collider_templates";
+    const std::filesystem::path destination_dir =
+        weapon_dir.parent_path() / "collider_templates";
+    std::filesystem::create_directories(destination_dir);
+    for (const std::filesystem::directory_entry& entry :
+         std::filesystem::directory_iterator(source_dir)) {
+        if (entry.is_regular_file() && entry.path().extension() == ".yaml") {
+            std::filesystem::copy_file(
+                entry.path(),
+                destination_dir / entry.path().filename(),
+                std::filesystem::copy_options::overwrite_existing);
+        }
+    }
 }
 
 void write_valid_templates(const std::filesystem::path& dir) {

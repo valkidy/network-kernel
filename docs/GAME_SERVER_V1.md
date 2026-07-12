@@ -54,6 +54,12 @@ built bundle or an explicit `--gameplay-catalog-bundle` path. This avoids
 starting a server that can run gameplay locally but cannot provide the bundle
 remote clients need for catalog sync.
 
+The compressed sync bundle has a 1 MiB hard limit. Server startup logs the
+registered bundle size, estimated 32 KiB chunk count, and cache-miss protocol
+bytes. Clients log whether the catalog came from cache or download and the
+actual received bundle bytes. Transport framing, encryption, and retransmits
+are not included in the protocol-byte estimate.
+
 See `docs/GAMEPLAY_DATA_SYNC_POLICY.md` for the current split between
 server-synced tuning data and long-lived static data.
 
@@ -154,7 +160,6 @@ This version does not include:
 - pathfinding or obstacle avoidance
 - spawn waves or respawn policy
 - random spawn tables
-- runtime sync for long-lived static data such as collider bindings
 - Unity managed bindings for server-owned entity input or enemy ammo/debug state
 
 ## Verification

@@ -1,0 +1,11 @@
+id: 5
+name: rifle_segment_damage
+shape: segment
+center: {x: 0.0, y: 0.0, z: 0.0}
+half_extents: {x: 0.0, y: 0.0, z: 0.0}
+radius: 0.0
+length: 100.0
+scatter_degrees: 0.0
+lifetime_ticks: 3
+purpose: damage
+layer: projectile

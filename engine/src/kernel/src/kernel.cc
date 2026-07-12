@@ -1206,6 +1206,10 @@ bool KernelEngine::start_client(const char* address) {
 bool KernelEngine::start_client_catalog_sync(
     const char* address,
     const KernelGameplayCatalogSyncClientConfig& config) {
+    if (config.max_bundle_size >
+        KERNEL_GAMEPLAY_CATALOG_SYNC_MAX_BUNDLE_SIZE) {
+        return false;
+    }
     if (!start_client(address)) {
         return false;
     }
@@ -1290,7 +1294,9 @@ bool KernelEngine::set_gameplay_catalog_sync_bundle(
     KernelGameplayCatalogManifest* out_manifest) {
     if (running_ || !is_server_mode(config_.mode) || catalog_hash_ == 0 ||
         config.bundle_bytes == nullptr ||
-        config.bundle_size == 0 || config.entry_path == nullptr ||
+        config.bundle_size == 0 ||
+        config.bundle_size > KERNEL_GAMEPLAY_CATALOG_SYNC_MAX_BUNDLE_SIZE ||
+        config.entry_path == nullptr ||
         config.entry_path[0] == '\0' || out_manifest == nullptr ||
         std::strlen(config.entry_path) >= KERNEL_GAMEPLAY_CATALOG_ENTRY_PATH_SIZE ||
         !is_valid_bundle_entry_path(config.entry_path)) {

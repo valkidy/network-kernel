@@ -17,6 +17,20 @@
 
 namespace {
 
+constexpr std::uint64_t kCatalogBundleChunkBytes = 32u * 1024u;
+constexpr std::uint64_t kCatalogSyncFixedProtocolBytes = 362u;
+constexpr std::uint64_t kCatalogChunkProtocolBytes = 72u;
+
+std::uint64_t catalog_bundle_chunk_count(std::uint64_t bundle_size) {
+    return (bundle_size + kCatalogBundleChunkBytes - 1u) /
+           kCatalogBundleChunkBytes;
+}
+
+std::uint64_t estimated_catalog_sync_protocol_bytes(std::uint64_t bundle_size) {
+    return bundle_size + kCatalogSyncFixedProtocolBytes +
+           catalog_bundle_chunk_count(bundle_size) * kCatalogChunkProtocolBytes;
+}
+
 KernelConfig default_config() {
     KernelConfig config{};
     config.mode = KernelMode_ListenServer;
@@ -128,10 +142,21 @@ int RunHostServer(
                 kernel,
                 &sync_config,
                 &manifest)) {
-            spdlog::error("failed to register gameplay catalog sync bundle");
+            spdlog::error(
+                "failed to register gameplay catalog sync bundle "
+                "bundle_bytes={} limit_bytes={}",
+                bundle_bytes.size(),
+                KERNEL_GAMEPLAY_CATALOG_SYNC_MAX_BUNDLE_SIZE);
             Kernel_Destroy(kernel);
             return 1;
         }
+        spdlog::info(
+            "registered gameplay catalog sync bundle bundle_bytes={} "
+            "limit_bytes={} chunks={} estimated_cache_miss_protocol_bytes={}",
+            bundle_bytes.size(),
+            KERNEL_GAMEPLAY_CATALOG_SYNC_MAX_BUNDLE_SIZE,
+            catalog_bundle_chunk_count(bundle_bytes.size()),
+            estimated_catalog_sync_protocol_bytes(bundle_bytes.size()));
     }
     if (!Kernel_StartListenServer(kernel, port)) {
         spdlog::error("failed to start listen server");

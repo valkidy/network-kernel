@@ -1334,6 +1334,44 @@ void server_validates_catalog_hash_before_welcome() {
     require(network_stats.packet_deserialization_cost_us > 0);
 }
 
+void gameplay_catalog_sync_enforces_bundle_limit() {
+    KernelConfig server_config{};
+    server_config.mode = KernelMode_DedicatedServer;
+    server_config.tick.server_tick_rate = 30;
+    server_config.tick.snapshot_rate = 15;
+    network_example::KernelEngine server(server_config);
+    KernelGameplayCatalogDefinition catalog{};
+    catalog.struct_size = sizeof(catalog);
+    catalog.catalog_version = 5;
+    catalog.catalog_hash = 0xaabbccddeeff0011ull;
+    require(server.load_gameplay_catalog(catalog));
+
+    std::vector<std::uint8_t> limit_bundle(
+        KERNEL_GAMEPLAY_CATALOG_SYNC_MAX_BUNDLE_SIZE,
+        0x5au);
+    KernelGameplayCatalogSyncServerConfig limit_config{};
+    limit_config.struct_size = sizeof(limit_config);
+    limit_config.bundle_bytes = limit_bundle.data();
+    limit_config.bundle_size = static_cast<std::uint32_t>(limit_bundle.size());
+    limit_config.entry_path = "gameplay_catalog.yaml";
+    KernelGameplayCatalogManifest limit_manifest{};
+    limit_manifest.struct_size = sizeof(limit_manifest);
+    require(server.set_gameplay_catalog_sync_bundle(limit_config, &limit_manifest));
+    limit_bundle.push_back(0x5au);
+    limit_config.bundle_bytes = limit_bundle.data();
+    limit_config.bundle_size = static_cast<std::uint32_t>(limit_bundle.size());
+    require(!server.set_gameplay_catalog_sync_bundle(limit_config, &limit_manifest));
+
+    KernelGameplayCatalogSyncClientConfig oversized_client_config{};
+    oversized_client_config.struct_size = sizeof(oversized_client_config);
+    oversized_client_config.max_bundle_size =
+        KERNEL_GAMEPLAY_CATALOG_SYNC_MAX_BUNDLE_SIZE + 1u;
+    network_example::KernelEngine oversized_client(server_config);
+    require(!oversized_client.start_client_catalog_sync(
+        "127.0.0.1:1",
+        oversized_client_config));
+}
+
 void gameplay_catalog_sync_supports_cache_hit_and_download() {
     KernelConfig server_config{};
     server_config.mode = KernelMode_DedicatedServer;
@@ -1384,6 +1422,28 @@ void gameplay_catalog_sync_supports_cache_hit_and_download() {
     require(wire_manifest.catalog_version == 5);
     require(wire_manifest.catalog_hash == 0xaabbccddeeff0011ull);
     require(wire_manifest.bundle_size == bundle.size());
+
+    network_example::GameplayCatalogManifestPacket oversized_manifest =
+        wire_manifest;
+    oversized_manifest.bundle_size = 1025;
+    network_example::TransportEvent oversized_manifest_event = manifest_event;
+    oversized_manifest_event.payload =
+        network_example::encode_gameplay_catalog_manifest_packet(
+            oversized_manifest);
+    KernelConfig limited_client_config = server_config;
+    limited_client_config.mode = KernelMode_Client;
+    network_example::KernelEngine limited_client(limited_client_config);
+    limited_client.reset_runtime_state(KernelMode_Client);
+    limited_client.gameplay_catalog_sync_state_ =
+        KernelGameplayCatalogSyncState_FetchingManifest;
+    limited_client.gameplay_catalog_sync_max_bundle_size_ = 1024;
+    limited_client.handle_client_session_message(oversized_manifest_event);
+    require(
+        limited_client.gameplay_catalog_sync_state_ ==
+        KernelGameplayCatalogSyncState_Failed);
+    require(
+        limited_client.gameplay_catalog_sync_error_ ==
+        KernelGameplayCatalogSyncError_BundleTooLarge);
 
     KernelConfig client_config = server_config;
     client_config.mode = KernelMode_Client;
@@ -2488,6 +2548,7 @@ int main() {
     server_accepts_matching_handshake_versions();
     server_rejects_mismatched_snapshot_schema_before_welcome();
     server_validates_catalog_hash_before_welcome();
+    gameplay_catalog_sync_enforces_bundle_limit();
     gameplay_catalog_sync_supports_cache_hit_and_download();
     listen_server_accepts_remote_handshake();
     projectile_spawn_batch_renders_and_binds_to_snapshot();

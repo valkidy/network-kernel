@@ -2,6 +2,6 @@ catalog_version: 1
 weapon_template_dir: weapon_templates
 projectile_template_dir: projectile_templates
 entity_template_dir: entity_templates
-collider_template_file: collider_templates/default.yaml
+collider_template_dir: collider_templates
 player:
   entity_template: player

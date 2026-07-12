@@ -14,7 +14,7 @@ game_server/gameplay_catalog.yaml
   -> weapon_template_dir: game_server/weapon_templates/*.yaml
   -> projectile_template_dir: game_server/projectile_templates/*.yaml
   -> entity_template_dir: game_server/entity_templates/*.yaml
-  -> collider_template_file: game_server/collider_templates/default.yaml
+  -> collider_template_dir: game_server/collider_templates/*.yaml
   -> player.entity_template
   -> director entity template spawn policy
 ```
@@ -142,7 +142,7 @@ catalog_version: 1
 weapon_template_dir: weapon_templates
 projectile_template_dir: projectile_templates
 entity_template_dir: entity_templates
-collider_template_file: collider_templates/default.yaml
+collider_template_dir: collider_templates
 player:
   entity_template: player
 ```
@@ -159,7 +159,7 @@ Ownership boundary:
 | Entity composition | `entity_templates/*.yaml` | Reusable actor/director definition by stable entity ID/name. |
 | Player actor choice | `gameplay_catalog.yaml` | References an entity template. |
 | Agent spawn policy | director entity template | World-rule Director AI owns initial and replacement spawn policy. |
-| Collider geometry | `collider_templates/default.yaml` | Kernel-packed collider shapes; actor/projectile templates reference these shapes. |
+| Collider geometry | `collider_templates/*.yaml` | One Kernel-packed collider shape per file; actor/projectile templates reference these shapes. |
 
 ## Gameplay Catalog Policy
 
@@ -169,7 +169,7 @@ mechanics, actor stats, collider geometry, friendly-fire rules, or ABI layout
 changes.
 
 `weapon_template_dir`, `projectile_template_dir`, `entity_template_dir`, and
-`collider_template_file` are required for new catalog data. `actor_template_dir`
+`collider_template_dir` are required for new catalog data. `actor_template_dir`
 and `actor_template` references remain compatibility paths, but new authoring
 should use `entity_template_dir` and `entity_template` references.
 
@@ -323,7 +323,8 @@ Loading order:
 
 1. Load the gameplay catalog root.
 2. Load weapon templates from `weapon_template_dir`.
-3. Load collider templates from `collider_template_file`.
+3. Load collider templates from `collider_template_dir` in deterministic path
+   order, then sort the registry by stable template id.
 4. Load projectile templates from `projectile_template_dir` and resolve weapon
    projectile references.
 5. Load entity templates from `entity_template_dir` and validate actor loadouts
@@ -395,7 +396,7 @@ template source needed to reconstruct the same config from memory:
 - `weapon_templates/*.yaml`
 - `projectile_templates/*.yaml`
 - `entity_templates/*.yaml`
-- `collider_templates/default.yaml`
+- `collider_templates/*.yaml`
 
 Filesystem loading and bundle-memory loading should produce equivalent gameplay
 configuration and catalog hash values.

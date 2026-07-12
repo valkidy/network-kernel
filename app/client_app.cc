@@ -21,6 +21,13 @@
 
 namespace {
 
+constexpr std::uint64_t kCatalogBundleChunkBytes = 32u * 1024u;
+
+std::uint64_t catalog_bundle_chunk_count(std::uint64_t bundle_size) {
+    return (bundle_size + kCatalogBundleChunkBytes - 1u) /
+           kCatalogBundleChunkBytes;
+}
+
 KernelConfig default_config() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
@@ -187,6 +194,7 @@ bool start_client_with_catalog_sync(
         "bundle.zip";
 
     std::vector<std::uint8_t> bundle = read_binary_file(bundle_path);
+    bool downloaded_bundle = false;
     if (!bundle_matches_manifest(bundle, status.manifest)) {
         bundle.clear();
         if (!Kernel_RequestGameplayCatalogBundle(kernel) ||
@@ -213,6 +221,7 @@ bool start_client_with_catalog_sync(
             spdlog::error("downloaded catalog bundle verification failed");
             return false;
         }
+        downloaded_bundle = true;
 
         std::error_code filesystem_error;
         std::filesystem::create_directories(
@@ -261,6 +270,15 @@ bool start_client_with_catalog_sync(
             load_result.diagnostic);
         return false;
     }
+    spdlog::info(
+        "gameplay catalog sync complete source={} bundle_bytes={} "
+        "received_bytes={} chunks={}",
+        downloaded_bundle ? "download" : "cache",
+        status.manifest.bundle_size,
+        downloaded_bundle ? status.received_bundle_size : 0u,
+        downloaded_bundle
+            ? catalog_bundle_chunk_count(status.received_bundle_size)
+            : 0u);
     return Kernel_ContinueClientHandshake(kernel);
 }
 

@@ -179,9 +179,22 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip() {
     files.push_back({
         "gameplay_catalog.yaml",
         read_text_file(root / "game_server" / "gameplay_catalog.yaml")});
-    files.push_back({
-        "collider_templates/default.yaml",
-        read_text_file(root / "game_server" / "collider_templates" / "default.yaml")});
+    const std::vector<std::string> collider_files = {
+        "beam_damage.yaml",
+        "cone_vision.yaml",
+        "enemy_hit.yaml",
+        "explosion_damage.yaml",
+        "player_hit.yaml",
+        "projectile_damage.yaml",
+        "rifle_segment_damage.yaml",
+        "shotgun_segment_damage.yaml",
+        "sphere_damage.yaml",
+    };
+    for (const std::string& file : collider_files) {
+        files.push_back({
+            "collider_templates/" + file,
+            read_text_file(root / "game_server" / "collider_templates" / file)});
+    }
     const std::vector<std::string> entity_files = {
         "earth_mother.yaml",
         "player.yaml",

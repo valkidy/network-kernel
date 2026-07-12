@@ -544,7 +544,7 @@ public:
     virtual std::string resolve_path(
         const std::string& base_path,
         const YAML::Node& node) const = 0;
-    virtual std::string default_collider_path_for_weapon_dir(
+    virtual std::string default_collider_template_dir_for_weapon_dir(
         const std::string& directory) const = 0;
     virtual std::string default_projectile_template_dir_for_weapon_dir(
         const std::string& directory) const = 0;
@@ -598,11 +598,10 @@ public:
         return path.lexically_normal().string();
     }
 
-    std::string default_collider_path_for_weapon_dir(
+    std::string default_collider_template_dir_for_weapon_dir(
         const std::string& directory) const override {
         return (std::filesystem::path(directory).parent_path() /
-                "collider_templates" /
-                "default.yaml")
+                "collider_templates")
             .lexically_normal()
             .string();
     }
@@ -839,11 +838,11 @@ public:
         return archive_join_path(base_path, node.as<std::string>());
     }
 
-    std::string default_collider_path_for_weapon_dir(
+    std::string default_collider_template_dir_for_weapon_dir(
         const std::string& directory) const override {
         return archive_join_path(
             archive_parent_path(directory),
-            "collider_templates/default.yaml");
+            "collider_templates");
     }
 
     std::string default_projectile_template_dir_for_weapon_dir(
@@ -1206,23 +1205,13 @@ std::uint32_t collider_template_id_from_ref(
 
 ColliderCatalogConfig load_collider_catalog_from_source(
     const GameplayConfigSource& source,
-    const std::string& path) {
-    const YAML::Node document = source.load_yaml(path);
-    reject_unknown_keys(
-        document,
-        {"templates"},
-        path,
-        source.source_kind(),
-        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_COLLIDER);
-    if (!document["templates"]) {
-        throw std::runtime_error(
-            "collider catalog requires templates: " + path);
-    }
-
+    const std::string& directory) {
     ColliderCatalogConfig colliders;
     std::unordered_map<std::string, std::uint32_t> template_ids;
     std::unordered_map<std::uint32_t, std::string> template_names_by_id;
-    for (const YAML::Node& node : document["templates"]) {
+    const std::vector<std::string> files = source.list_yaml_files(directory);
+    for (const std::string& file : files) {
+        const YAML::Node node = source.load_yaml(file);
         reject_unknown_keys(
             node,
             {
@@ -1240,7 +1229,7 @@ ColliderCatalogConfig load_collider_catalog_from_source(
                 "purpose",
                 "layer",
             },
-            path,
+            file,
             source.source_kind(),
             KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_COLLIDER);
         ColliderTemplateConfig collider_template;
@@ -1267,7 +1256,7 @@ ColliderCatalogConfig load_collider_catalog_from_source(
                 KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_DUPLICATE_TEMPLATE_ID,
                 "duplicate collider template id: " +
                     std::to_string(definition.template_id),
-                path,
+                file,
                 "id",
                 source.source_kind(),
                 KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_COLLIDER,
@@ -1277,6 +1266,17 @@ ColliderCatalogConfig load_collider_catalog_from_source(
         template_names_by_id[definition.template_id] = collider_template.name;
         colliders.templates.push_back(collider_template);
     }
+    if (colliders.templates.empty()) {
+        throw std::runtime_error(
+            "collider template directory is empty: " + directory);
+    }
+    std::sort(
+        colliders.templates.begin(),
+        colliders.templates.end(),
+        [](const ColliderTemplateConfig& lhs,
+           const ColliderTemplateConfig& rhs) {
+            return lhs.definition.template_id < rhs.definition.template_id;
+        });
     return colliders;
 }
 
@@ -2519,7 +2519,7 @@ GameServerGameplayConfig load_gameplay_config_from_weapon_template_source(
     apply_default_non_weapon_config(&config);
     config.colliders = load_collider_catalog_from_source(
         source,
-        source.default_collider_path_for_weapon_dir(directory));
+        source.default_collider_template_dir_for_weapon_dir(directory));
     config.projectile_templates = load_projectile_templates_from_source(
         source,
         source.default_projectile_template_dir_for_weapon_dir(directory),
@@ -2551,7 +2551,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             "projectile_template_dir",
             "actor_template_dir",
             "entity_template_dir",
-            "collider_template_file",
+            "collider_template_dir",
             "player",
             "enemy",
         },
@@ -2597,10 +2597,10 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             yaml_column(document["catalog_version"]));
     }
     if (!document["weapon_template_dir"] || !document["projectile_template_dir"] ||
-        !document["collider_template_file"]) {
+        !document["collider_template_dir"]) {
         throw std::runtime_error(
             "gameplay catalog requires weapon_template_dir and "
-            "projectile_template_dir and collider_template_file: " +
+            "projectile_template_dir and collider_template_dir: " +
             path);
     }
 
@@ -2612,10 +2612,10 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     apply_default_non_weapon_config(&config);
     config.weapons.catalog_version = catalog_version;
 
-    const std::string collider_template_file =
-        source.resolve_path(base_path, document["collider_template_file"]);
+    const std::string collider_template_dir =
+        source.resolve_path(base_path, document["collider_template_dir"]);
     config.colliders =
-        load_collider_catalog_from_source(source, collider_template_file);
+        load_collider_catalog_from_source(source, collider_template_dir);
     const std::string projectile_template_dir =
         source.resolve_path(base_path, document["projectile_template_dir"]);
     config.projectile_templates = load_projectile_templates_from_source(
