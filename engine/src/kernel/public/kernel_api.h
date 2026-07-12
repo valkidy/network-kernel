@@ -170,6 +170,11 @@ uint32_t Kernel_GetProjectileTemplates(
     KernelProjectileTemplateDefinition* out_templates,
     uint32_t max_templates);
 
+bool Kernel_GetActionTemplate(
+    KernelHandle* kernel,
+    uint32_t action_template_id,
+    KernelActionTemplateDefinition* out_definition);
+
 uint32_t Kernel_GetActorTemplates(
     KernelHandle* kernel,
     KernelActorTemplateDefinition* out_templates,

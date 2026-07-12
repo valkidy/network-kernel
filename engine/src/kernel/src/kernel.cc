@@ -1010,6 +1010,7 @@ WeaponMechanicsDefinition to_weapon_mechanics(
     mechanics.segment_collider_template_id =
         definition.segment_collider_template_id;
     mechanics.projectile_template_id = definition.projectile_template_id;
+    mechanics.fire_action_template_id = definition.fire_action_template_id;
     return mechanics;
 }
 
@@ -1030,7 +1031,42 @@ KernelWeaponMechanicsDefinition to_kernel_weapon_mechanics(
     definition.segment_collider_template_id =
         mechanics.segment_collider_template_id;
     definition.projectile_template_id = mechanics.projectile_template_id;
+    definition.fire_action_template_id = mechanics.fire_action_template_id;
     return definition;
+}
+
+bool validate_action_template(
+    const KernelActionTemplateDefinition& definition) {
+    constexpr std::uint8_t kKnownFlags =
+        KernelActionTemplateFlag_CancelOnRelease |
+        KernelActionTemplateFlag_CancelOnDeath |
+        KernelActionTemplateFlag_CancelOnWeaponChange |
+        KernelActionTemplateFlag_CancelBeforeFirstCommit;
+    if (definition.struct_size < sizeof(KernelActionTemplateDefinition) ||
+        definition.action_template_id == 0u ||
+        definition.trigger_mode > KernelActionTriggerMode_Hold ||
+        (definition.flags & ~kKnownFlags) != 0u ||
+        definition.ammo_cost_per_commit == 0u ||
+        definition.commit_interval_ticks == 0u) {
+        return false;
+    }
+    if (definition.trigger_mode == KernelActionTriggerMode_Press) {
+        return definition.max_commit_count == 1u &&
+               definition.hold_input_timeout_ticks == 0u;
+    }
+    return definition.hold_input_timeout_ticks > 0u;
+}
+
+const KernelActionTemplateDefinition* find_action_template(
+    const std::vector<KernelActionTemplateDefinition>& templates,
+    std::uint32_t action_template_id) {
+    const auto found = std::find_if(
+        templates.begin(),
+        templates.end(),
+        [action_template_id](const KernelActionTemplateDefinition& definition) {
+            return definition.action_template_id == action_template_id;
+        });
+    return found == templates.end() ? nullptr : &*found;
 }
 
 bool validate_homing_mechanics(const KernelHomingMechanicsDefinition& homing) {
@@ -1546,16 +1582,51 @@ bool KernelEngine::load_gameplay_catalog(
          catalog.projectile_templates == nullptr) ||
         (catalog.collider_template_count != 0 &&
          catalog.collider_templates == nullptr) ||
+        (catalog.action_template_count != 0 &&
+         catalog.action_templates == nullptr) ||
         (catalog.entity_template_count != 0 &&
          catalog.entity_templates == nullptr) ||
         catalog.collider_binding_count != 0) {
         return false;
     }
 
+    std::vector<KernelActionTemplateDefinition> validated_action_templates;
+    validated_action_templates.reserve(catalog.action_template_count);
+    for (std::uint32_t index = 0; index < catalog.action_template_count; ++index) {
+        const KernelActionTemplateDefinition& action_template =
+            catalog.action_templates[index];
+        if (!validate_action_template(action_template) ||
+            find_action_template(
+                validated_action_templates,
+                action_template.action_template_id) != nullptr) {
+            return false;
+        }
+        validated_action_templates.push_back(action_template);
+    }
+    const auto incoming_has_action =
+        [&validated_action_templates](std::uint32_t action_template_id) {
+            return find_action_template(
+                       validated_action_templates,
+                       action_template_id) != nullptr;
+        };
+    const auto weapon_tuning_view = world_.registry().view<WeaponTuning>();
+    for (const auto entity : weapon_tuning_view) {
+        const WeaponTuning& tuning = weapon_tuning_view.get<WeaponTuning>(entity);
+        for (std::size_t index = 0; index < tuning.configured.size(); ++index) {
+            if (tuning.configured[index] &&
+                tuning.definitions[index].fire_action_template_id != 0u &&
+                !incoming_has_action(
+                    tuning.definitions[index].fire_action_template_id)) {
+                return false;
+            }
+        }
+    }
+
     entity_templates_.clear();
     actor_templates_.clear();
     projectile_templates_.clear();
     collider_templates_.clear();
+    action_templates_ = validated_action_templates;
     entity_templates_.reserve(catalog.entity_template_count);
     actor_templates_.reserve(catalog.actor_template_count);
     projectile_templates_.reserve(catalog.projectile_template_count);
@@ -1986,6 +2057,23 @@ std::uint32_t KernelEngine::get_projectile_templates(
         projectile_templates_.data(),
         sizeof(KernelProjectileTemplateDefinition) * copied);
     return copied;
+}
+
+bool KernelEngine::get_action_template(
+    std::uint32_t action_template_id,
+    KernelActionTemplateDefinition* out_definition) const {
+    if (action_template_id == 0u || out_definition == nullptr ||
+        out_definition->struct_size < sizeof(KernelActionTemplateDefinition)) {
+        return false;
+    }
+    const KernelActionTemplateDefinition* definition =
+        find_action_template(action_templates_, action_template_id);
+    if (definition == nullptr) {
+        return false;
+    }
+    *out_definition = *definition;
+    out_definition->struct_size = sizeof(KernelActionTemplateDefinition);
+    return true;
 }
 
 std::uint32_t KernelEngine::get_collider_templates(
@@ -2498,7 +2586,11 @@ bool KernelEngine::server_set_entity_weapon_mechanics(
     NetId net_id,
     const KernelWeaponMechanicsDefinition& weapon_mechanics) {
     if (!running_ || !is_server_mode(config_.mode) ||
-        !validate_weapon_mechanics(weapon_mechanics)) {
+        !validate_weapon_mechanics(weapon_mechanics) ||
+        (weapon_mechanics.fire_action_template_id != 0u &&
+         find_action_template(
+             action_templates_,
+             weapon_mechanics.fire_action_template_id) == nullptr)) {
         return false;
     }
     const std::optional<entt::entity> entity = world_.find_entity(net_id);

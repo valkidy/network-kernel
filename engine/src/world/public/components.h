@@ -240,6 +240,7 @@ struct WeaponMechanicsDefinition {
     float pellet_spread = 0.0f;
     std::uint32_t segment_collider_template_id = 0;
     std::uint32_t projectile_template_id = 0;
+    std::uint32_t fire_action_template_id = 0;
 };
 
 struct WeaponTuning {
@@ -370,10 +371,14 @@ struct MovementState {
     float speed_meters_per_second = 0.0f;
 };
 
+// Composable presentation hints only; gameplay systems must not treat them as
+// authority. Zero means no active flags, and published bits never change meaning.
 inline constexpr std::uint32_t kVisualFlagMoving = 0x00000001u;
 inline constexpr std::uint32_t kVisualFlagReloading = 0x00000002u;
 inline constexpr std::uint32_t kVisualFlagDead = 0x00000004u;
 inline constexpr std::uint32_t kVisualFlagHpUnknown = 0x00000008u;
+inline constexpr std::uint32_t kVisualFlagAiming = 0x00000100u;
+inline constexpr std::uint32_t kVisualFlagFiring = 0x00000200u;
 
 struct ReplicationState {
     std::uint16_t animation_state = 0;

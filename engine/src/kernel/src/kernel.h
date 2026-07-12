@@ -101,6 +101,9 @@ public:
     std::uint32_t get_projectile_templates(
         KernelProjectileTemplateDefinition* out_templates,
         std::uint32_t max_templates) const;
+    bool get_action_template(
+        std::uint32_t action_template_id,
+        KernelActionTemplateDefinition* out_definition) const;
     std::uint32_t get_actor_templates(
         KernelActorTemplateDefinition* out_templates,
         std::uint32_t max_templates) const;
@@ -436,6 +439,7 @@ private:
     std::vector<KernelActorTemplateDefinition> actor_templates_;
     std::vector<KernelProjectileTemplateDefinition> projectile_templates_;
     std::vector<KernelColliderTemplateDefinition> collider_templates_;
+    std::vector<KernelActionTemplateDefinition> action_templates_;
     std::vector<KernelDebugInfo> debug_records_;
     std::unordered_map<NetId, KernelAgentVisionConfig> vision_configs_;
     std::unordered_map<NetId, VisionRuntimeState> vision_states_;

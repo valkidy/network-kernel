@@ -159,6 +159,8 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             sizeof(KernelEntityTemplateDefinition);
         out_info->entity_ai_definition_size =
             sizeof(KernelEntityAiDefinition);
+        out_info->action_template_definition_size =
+            sizeof(KernelActionTemplateDefinition);
         out_info->capability_flags =
             KERNEL_CAPABILITY_CLIENT_MODE |
             KERNEL_CAPABILITY_LISTEN_SERVER_MODE |
@@ -515,6 +517,18 @@ uint32_t Kernel_GetProjectileTemplates(
         return kernel->engine->get_projectile_templates(
             out_templates,
             max_templates);
+    });
+}
+
+bool Kernel_GetActionTemplate(
+    KernelHandle* kernel,
+    uint32_t action_template_id,
+    KernelActionTemplateDefinition* out_definition) {
+    return abi_call("Kernel_GetActionTemplate", false, [&]() {
+        return kernel != nullptr &&
+               kernel->engine->get_action_template(
+                   action_template_id,
+                   out_definition);
     });
 }
 

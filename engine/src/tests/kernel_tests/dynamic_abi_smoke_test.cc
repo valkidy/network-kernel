@@ -219,6 +219,11 @@ int main() {
             KernelHandle*,
             KernelProjectileTemplateDefinition*,
             std::uint32_t)>(library, "Kernel_GetProjectileTemplates");
+    [[maybe_unused]] auto* kernel_get_action_template =
+        load_symbol<bool(
+            KernelHandle*,
+            std::uint32_t,
+            KernelActionTemplateDefinition*)>(library, "Kernel_GetActionTemplate");
     [[maybe_unused]] auto* kernel_get_actor_templates =
         load_symbol<std::uint32_t(
             KernelHandle*,
@@ -420,6 +425,8 @@ int main() {
            sizeof(KernelEntityTemplateDefinition));
     assert(abi_info.entity_ai_definition_size ==
            sizeof(KernelEntityAiDefinition));
+    assert(abi_info.action_template_definition_size ==
+           sizeof(KernelActionTemplateDefinition));
     assert(abi_info.projectile_mechanics_definition_size ==
            sizeof(KernelProjectileMechanicsDefinition));
     assert(abi_info.area_effect_mechanics_definition_size ==

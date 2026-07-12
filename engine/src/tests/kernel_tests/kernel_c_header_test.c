@@ -5,7 +5,7 @@
 
 #include "kernel/public/kernel_api.h"
 
-_Static_assert(KERNEL_ABI_VERSION == 35u, "reserve magazines ABI");
+_Static_assert(KERNEL_ABI_VERSION == 36u, "action template ABI");
 _Static_assert(
     offsetof(KernelWeaponMechanicsDefinition, reserve_magazines) >
         offsetof(KernelWeaponMechanicsDefinition, magazine_size),

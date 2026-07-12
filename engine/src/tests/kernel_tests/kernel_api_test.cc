@@ -179,6 +179,8 @@ int main() {
     assert(
         abi_info.gameplay_catalog_sync_status_size ==
         sizeof(KernelGameplayCatalogSyncStatus));
+    assert(abi_info.action_template_definition_size ==
+           sizeof(KernelActionTemplateDefinition));
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CLIENT_MODE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LISTEN_SERVER_MODE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_DEDICATED_SERVER_MODE) != 0);
@@ -219,7 +221,7 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 35u);
+    assert(KERNEL_ABI_VERSION == 36u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CONTROL_PLANE_RPC) != 0);
     assert(sizeof(KernelVec4) == 16u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS) != 0);
@@ -269,6 +271,8 @@ int main() {
            offsetof(KernelWeaponMechanicsDefinition, magazine_size));
     assert(offsetof(KernelWeaponMechanicsDefinition, damage) >
            offsetof(KernelWeaponMechanicsDefinition, reserve_magazines));
+    assert(offsetof(KernelWeaponMechanicsDefinition, fire_action_template_id) >
+           offsetof(KernelWeaponMechanicsDefinition, segment_collider_template_id));
     assert(offsetof(KernelColliderTemplateDefinition, shape_params) >
            offsetof(KernelColliderTemplateDefinition, center));
     assert(offsetof(KernelAgentVisionConfig, vision_collider_template_id) >
@@ -279,6 +283,9 @@ int main() {
     assert(RenderEntityStatus_Predicted == 1u);
     assert(RenderEntityStatus_Stale == 2u);
     assert((KERNEL_VISUAL_FLAG_HP_UNKNOWN & KERNEL_VISUAL_FLAG_DEAD) == 0u);
+    assert(KERNEL_VISUAL_FLAG_AIMING == 0x00000100u);
+    assert(KERNEL_VISUAL_FLAG_FIRING == 0x00000200u);
+    assert(InputButton_Aim == (1u << 8));
     assert(sizeof(KernelEntityLifecycleEvent) > 0u);
     assert(!Kernel_GetAbiInfo(nullptr, sizeof(abi_info)));
     assert(!Kernel_GetAbiInfo(&abi_info, sizeof(abi_info) - 1));
@@ -377,6 +384,9 @@ int main() {
                vision_states.data(),
                static_cast<std::uint32_t>(vision_states.size())) == 0);
     assert(Kernel_GetProjectileTemplates(nullptr, nullptr, 0) == 0);
+    KernelActionTemplateDefinition null_action_template{};
+    null_action_template.struct_size = sizeof(null_action_template);
+    assert(!Kernel_GetActionTemplate(nullptr, 1, &null_action_template));
     assert(Kernel_GetColliderTemplates(nullptr, nullptr, 0) == 0);
     assert(Kernel_GetColliderBindings(nullptr, nullptr, 0) == 0);
     KernelLocalPlayerInfo local_info{};
@@ -506,6 +516,41 @@ int main() {
     actor_template.vision.vision_collider_template_id = 12;
     actor_template.vision.local_origin = KernelVec3{0.0f, 1.5f, 0.0f};
     actor_template.vision.local_forward = KernelVec3{-1.0f, 0.0f, 0.0f};
+    KernelActionTemplateDefinition rocket_action{};
+    rocket_action.struct_size = sizeof(rocket_action);
+    rocket_action.action_template_id = 1001;
+    rocket_action.trigger_mode = KernelActionTriggerMode_Press;
+    rocket_action.flags = KernelActionTemplateFlag_CancelOnDeath |
+                          KernelActionTemplateFlag_CancelOnWeaponChange |
+                          KernelActionTemplateFlag_CancelBeforeFirstCommit;
+    rocket_action.ammo_cost_per_commit = 1;
+    rocket_action.commit_offset_ticks = 3;
+    rocket_action.commit_interval_ticks = 30;
+    rocket_action.max_commit_count = 1;
+    rocket_action.recovery_ticks = 8;
+
+    KernelActionTemplateDefinition rifle_action{};
+    rifle_action.struct_size = sizeof(rifle_action);
+    rifle_action.action_template_id = 1002;
+    rifle_action.trigger_mode = KernelActionTriggerMode_Hold;
+    rifle_action.flags = KernelActionTemplateFlag_CancelOnRelease |
+                         KernelActionTemplateFlag_CancelOnDeath |
+                         KernelActionTemplateFlag_CancelOnWeaponChange;
+    rifle_action.ammo_cost_per_commit = 1;
+    rifle_action.commit_interval_ticks = 3;
+    rifle_action.recovery_ticks = 4;
+    rifle_action.hold_input_timeout_ticks = 6;
+
+    KernelActionTemplateDefinition beam_action = rifle_action;
+    beam_action.action_template_id = 1003;
+    beam_action.commit_offset_ticks = 5;
+    beam_action.commit_interval_ticks = 1;
+    beam_action.recovery_ticks = 8;
+    std::array<KernelActionTemplateDefinition, 3> action_templates = {
+        rocket_action,
+        rifle_action,
+        beam_action,
+    };
     KernelGameplayCatalogDefinition catalog{};
     catalog.struct_size = sizeof(catalog);
     catalog.catalog_version = 3;
@@ -518,7 +563,73 @@ int main() {
     catalog.collider_templates = initial_collider_templates.data();
     catalog.collider_template_count =
         static_cast<std::uint32_t>(initial_collider_templates.size());
+    catalog.action_templates = action_templates.data();
+    catalog.action_template_count =
+        static_cast<std::uint32_t>(action_templates.size());
     assert(Kernel_LoadGameplayCatalog(kernel, &catalog));
+    KernelActionTemplateDefinition queried_action{};
+    queried_action.struct_size = sizeof(queried_action);
+    assert(Kernel_GetActionTemplate(kernel, 1001, &queried_action));
+    assert(queried_action.trigger_mode == KernelActionTriggerMode_Press);
+    assert(queried_action.commit_offset_ticks == 3);
+    assert(queried_action.commit_interval_ticks == 30);
+    queried_action = KernelActionTemplateDefinition{};
+    queried_action.struct_size = sizeof(queried_action);
+    assert(Kernel_GetActionTemplate(kernel, 1002, &queried_action));
+    assert(queried_action.trigger_mode == KernelActionTriggerMode_Hold);
+    assert(queried_action.commit_interval_ticks == 3);
+    assert(queried_action.hold_input_timeout_ticks == 6);
+    queried_action = KernelActionTemplateDefinition{};
+    queried_action.struct_size = sizeof(queried_action);
+    assert(Kernel_GetActionTemplate(kernel, 1003, &queried_action));
+    assert(queried_action.commit_offset_ticks == 5);
+    assert(queried_action.commit_interval_ticks == 1);
+    assert(queried_action.recovery_ticks == 8);
+    assert(!Kernel_GetActionTemplate(kernel, 0, &queried_action));
+    assert(!Kernel_GetActionTemplate(kernel, 9999, &queried_action));
+    assert(!Kernel_GetActionTemplate(kernel, 1001, nullptr));
+    queried_action.struct_size = sizeof(queried_action) - 1;
+    assert(!Kernel_GetActionTemplate(kernel, 1001, &queried_action));
+
+    KernelGameplayCatalogDefinition null_action_catalog = catalog;
+    null_action_catalog.action_templates = nullptr;
+    assert(!Kernel_LoadGameplayCatalog(kernel, &null_action_catalog));
+    const auto rejects_action_templates =
+        [&](std::array<KernelActionTemplateDefinition, 3> definitions) {
+            KernelGameplayCatalogDefinition rejected_catalog = catalog;
+            rejected_catalog.action_templates = definitions.data();
+            return !Kernel_LoadGameplayCatalog(kernel, &rejected_catalog);
+        };
+    auto invalid_actions = action_templates;
+    invalid_actions[0].struct_size = sizeof(KernelActionTemplateDefinition) - 1;
+    assert(rejects_action_templates(invalid_actions));
+    invalid_actions = action_templates;
+    invalid_actions[0].action_template_id = 0;
+    assert(rejects_action_templates(invalid_actions));
+    invalid_actions = action_templates;
+    invalid_actions[1].action_template_id = invalid_actions[0].action_template_id;
+    assert(rejects_action_templates(invalid_actions));
+    invalid_actions = action_templates;
+    invalid_actions[0].trigger_mode = 2;
+    assert(rejects_action_templates(invalid_actions));
+    invalid_actions = action_templates;
+    invalid_actions[0].flags = 0x80;
+    assert(rejects_action_templates(invalid_actions));
+    invalid_actions = action_templates;
+    invalid_actions[0].ammo_cost_per_commit = 0;
+    assert(rejects_action_templates(invalid_actions));
+    invalid_actions = action_templates;
+    invalid_actions[0].commit_interval_ticks = 0;
+    assert(rejects_action_templates(invalid_actions));
+    invalid_actions = action_templates;
+    invalid_actions[0].max_commit_count = 0;
+    assert(rejects_action_templates(invalid_actions));
+    invalid_actions = action_templates;
+    invalid_actions[0].hold_input_timeout_ticks = 1;
+    assert(rejects_action_templates(invalid_actions));
+    invalid_actions = action_templates;
+    invalid_actions[1].hold_input_timeout_ticks = 0;
+    assert(rejects_action_templates(invalid_actions));
     assert(Kernel_GetActorTemplates(kernel, nullptr, 0) == 1);
     assert(Kernel_GetProjectileTemplates(kernel, nullptr, 0) == 4);
     assert(Kernel_GetColliderTemplates(kernel, nullptr, 0) == 2);
@@ -820,6 +931,9 @@ int main() {
     changed_catalog.collider_templates = changed_collider_templates.data();
     changed_catalog.collider_template_count =
         static_cast<std::uint32_t>(changed_collider_templates.size());
+    changed_catalog.action_templates = action_templates.data();
+    changed_catalog.action_template_count =
+        static_cast<std::uint32_t>(action_templates.size());
     assert(Kernel_LoadGameplayCatalog(kernel, &changed_catalog));
     for (KernelColliderShapeView& shape : collider_shapes) {
         shape = KernelColliderShapeView{};
@@ -842,6 +956,7 @@ int main() {
     weapon_mechanics.cooldown_ticks = 30;
     weapon_mechanics.reload_ticks = 30;
     weapon_mechanics.projectile_template_id = 3;
+    weapon_mechanics.fire_action_template_id = 1001;
     assert(Kernel_ServerValidateMechanicsConfig(&weapon_mechanics));
     assert(!Kernel_ServerSetEntityWeaponMechanics(kernel, created_net_id, nullptr));
     assert(Kernel_ServerSetEntityWeaponMechanics(
@@ -858,6 +973,18 @@ int main() {
     assert(queried_weapon.weapon_id == 3);
     assert(queried_weapon.reserve_magazines == 6);
     assert(queried_weapon.projectile_template_id == 3);
+    assert(queried_weapon.fire_action_template_id == 1001);
+    KernelWeaponMechanicsDefinition missing_action_template = weapon_mechanics;
+    missing_action_template.fire_action_template_id = 9999;
+    assert(Kernel_ServerValidateMechanicsConfig(&missing_action_template));
+    assert(!Kernel_ServerSetEntityWeaponMechanics(
+        kernel,
+        created_net_id,
+        &missing_action_template));
+    KernelGameplayCatalogDefinition dangling_action_catalog = changed_catalog;
+    dangling_action_catalog.action_templates = nullptr;
+    dangling_action_catalog.action_template_count = 0;
+    assert(!Kernel_LoadGameplayCatalog(kernel, &dangling_action_catalog));
     KernelWeaponMechanicsDefinition missing_projectile_template = weapon_mechanics;
     missing_projectile_template.projectile_template_id = 0;
     assert(!Kernel_ServerValidateMechanicsConfig(&missing_projectile_template));

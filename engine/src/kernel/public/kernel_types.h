@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 35u
+#define KERNEL_ABI_VERSION 36u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -103,10 +103,18 @@
     (KERNEL_COLLISION_LAYER_PLAYER_SIDE | KERNEL_COLLISION_LAYER_HOSTILE_SIDE | \
      KERNEL_COLLISION_LAYER_NEUTRAL)
 
+/*
+ * Visual flags are composable presentation hints, never gameplay authority.
+ * Zero means that no flags are active, not that presentation state is unknown.
+ * Published bits retain their meaning for the lifetime of the ABI.
+ * Bits 0-7 are kernel core state/validity; bits 8-15 are action presentation.
+ */
 #define KERNEL_VISUAL_FLAG_MOVING UINT32_C(0x00000001)
 #define KERNEL_VISUAL_FLAG_RELOADING UINT32_C(0x00000002)
 #define KERNEL_VISUAL_FLAG_DEAD UINT32_C(0x00000004)
 #define KERNEL_VISUAL_FLAG_HP_UNKNOWN UINT32_C(0x00000008)
+#define KERNEL_VISUAL_FLAG_AIMING UINT32_C(0x00000100)
+#define KERNEL_VISUAL_FLAG_FIRING UINT32_C(0x00000200)
 
 #define KERNEL_MAX_VISIBLE_HOSTILES 16u
 #define KERNEL_MAX_VISIBLE_ALLIES 16u
@@ -166,6 +174,7 @@ typedef struct KernelAbiInfo {
     uint32_t gameplay_catalog_sync_status_size;
     uint32_t entity_template_definition_size;
     uint32_t entity_ai_definition_size;
+    uint32_t action_template_definition_size;
 } KernelAbiInfo;
 
 typedef struct KernelBuildInfo {
@@ -283,7 +292,27 @@ typedef enum InputButton {
     InputButton_Ability1 = 1u << 5,
     InputButton_Dodge = 1u << 6,
     InputButton_Parry = 1u << 7,
+    InputButton_Aim = 1u << 8,
 } InputButton;
+
+typedef enum KernelActionTriggerMode {
+    KernelActionTriggerMode_Press = 0,
+    KernelActionTriggerMode_Hold = 1,
+} KernelActionTriggerMode;
+
+typedef enum KernelActionPhase {
+    KernelActionPhase_None = 0,
+    KernelActionPhase_Windup = 1,
+    KernelActionPhase_Active = 2,
+    KernelActionPhase_Recovery = 3,
+} KernelActionPhase;
+
+typedef enum KernelActionTemplateFlag {
+    KernelActionTemplateFlag_CancelOnRelease = 1u << 0,
+    KernelActionTemplateFlag_CancelOnDeath = 1u << 1,
+    KernelActionTemplateFlag_CancelOnWeaponChange = 1u << 2,
+    KernelActionTemplateFlag_CancelBeforeFirstCommit = 1u << 3,
+} KernelActionTemplateFlag;
 
 typedef enum KernelWeaponFireMode {
     KernelWeaponFireMode_Hitscan = 0,
@@ -614,6 +643,19 @@ typedef struct KernelActorTemplateDefinition {
     KernelAgentVisionConfig vision;
 } KernelActorTemplateDefinition;
 
+typedef struct KernelActionTemplateDefinition {
+    uint32_t struct_size;
+    uint32_t action_template_id;
+    uint8_t trigger_mode;
+    uint8_t flags;
+    uint16_t ammo_cost_per_commit;
+    uint32_t commit_offset_ticks;
+    uint32_t commit_interval_ticks;
+    uint32_t max_commit_count;
+    uint32_t recovery_ticks;
+    uint32_t hold_input_timeout_ticks;
+} KernelActionTemplateDefinition;
+
 typedef struct KernelEntityAiDefinition KernelEntityAiDefinition;
 typedef struct KernelEntityTemplateDefinition KernelEntityTemplateDefinition;
 
@@ -631,6 +673,8 @@ typedef struct KernelGameplayCatalogDefinition {
     uint32_t collider_binding_count;
     const KernelEntityTemplateDefinition* entity_templates;
     uint32_t entity_template_count;
+    const KernelActionTemplateDefinition* action_templates;
+    uint32_t action_template_count;
 } KernelGameplayCatalogDefinition;
 
 typedef struct KernelGameplayCatalogLoadResult {
@@ -872,6 +916,7 @@ typedef struct KernelWeaponMechanicsDefinition {
     float pellet_spread;
     uint32_t projectile_template_id;
     uint32_t segment_collider_template_id;
+    uint32_t fire_action_template_id;
 } KernelWeaponMechanicsDefinition;
 
 typedef struct KernelHomingState {
