@@ -23,6 +23,7 @@ int main() {
         sizeof(handshake.git_commit) - 1);
     const std::vector<std::uint8_t> handshake_packet =
         network_example::encode_handshake_packet(handshake, 1);
+    assert(handshake_packet.size() == 178);
     network_example::HandshakePacket decoded_handshake;
     assert(network_example::decode_handshake_packet(
         handshake_packet.data(),
@@ -47,6 +48,7 @@ int main() {
         network_example::encode_gameplay_catalog_manifest_request_packet(
             manifest_request,
             2);
+    assert(manifest_request_packet.size() == 34);
     network_example::GameplayCatalogManifestRequestPacket decoded_manifest_request;
     assert(network_example::decode_gameplay_catalog_manifest_request_packet(
         manifest_request_packet.data(),
@@ -77,6 +79,7 @@ int main() {
     }
     const std::vector<std::uint8_t> manifest_packet =
         network_example::encode_gameplay_catalog_manifest_packet(manifest, 3);
+    assert(manifest_packet.size() == 268);
     network_example::GameplayCatalogManifestPacket decoded_manifest;
     assert(network_example::decode_gameplay_catalog_manifest_packet(
         manifest_packet.data(),
@@ -95,6 +98,7 @@ int main() {
         network_example::encode_gameplay_catalog_bundle_request_packet(
             bundle_request,
             4);
+    assert(bundle_request_packet.size() == 60);
     network_example::GameplayCatalogBundleRequestPacket decoded_bundle_request;
     assert(network_example::decode_gameplay_catalog_bundle_request_packet(
         bundle_request_packet.data(),
@@ -109,6 +113,13 @@ int main() {
     chunk.bytes = {1, 2, 3};
     const std::vector<std::uint8_t> chunk_packet =
         network_example::encode_gameplay_catalog_bundle_chunk_packet(chunk, 5);
+    assert(chunk_packet.size() == 75);
+    network_example::GameplayCatalogBundleChunkPacket maximum_chunk = chunk;
+    maximum_chunk.bytes.resize(network_example::kGameplayCatalogBundleChunkBytes);
+    assert(network_example::encode_gameplay_catalog_bundle_chunk_packet(
+               maximum_chunk,
+               5)
+               .size() == 32840);
     network_example::GameplayCatalogBundleChunkPacket decoded_chunk;
     assert(network_example::decode_gameplay_catalog_bundle_chunk_packet(
         chunk_packet.data(),
@@ -124,6 +135,7 @@ int main() {
         network_example::GameplayCatalogSyncErrorCode::kBundleUnavailable;
     const std::vector<std::uint8_t> sync_error_packet =
         network_example::encode_gameplay_catalog_sync_error_packet(sync_error, 6);
+    assert(sync_error_packet.size() == 32);
     network_example::GameplayCatalogSyncErrorPacket decoded_sync_error;
     assert(network_example::decode_gameplay_catalog_sync_error_packet(
         sync_error_packet.data(),
@@ -143,6 +155,7 @@ int main() {
     welcome.catalog_hash = 0x1122334455667788ull;
     const std::vector<std::uint8_t> welcome_packet =
         network_example::encode_welcome_packet(welcome, 2);
+    assert(welcome_packet.size() == 60);
     network_example::WelcomePacket decoded_welcome;
     assert(network_example::decode_welcome_packet(
         welcome_packet.data(),

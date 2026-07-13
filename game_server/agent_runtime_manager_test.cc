@@ -220,7 +220,7 @@ int main() {
         &enemy_weapon));
     require(enemy_weapon.weapon_id == network_example::game_server::kWeaponGrenade);
     require(enemy_weapon.damage == 1);
-    require(enemy_weapon.cooldown_ticks == 1);
+    require(enemy_weapon.cooldown_ticks == 0);
     require(enemy_weapon.magazine_size == 120);
     KernelWeaponMechanicsDefinition unavailable_enemy_weapon{};
     unavailable_enemy_weapon.struct_size = sizeof(unavailable_enemy_weapon);

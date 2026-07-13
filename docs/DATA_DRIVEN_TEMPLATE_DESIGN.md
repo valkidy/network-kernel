@@ -367,6 +367,13 @@ Authoring-only YAML names, file paths, and editor metadata still remain in
 `game_server`. ABI-facing templates use stable numeric ids and fixed-width
 plain C structs only.
 
+Action templates are authored independently under `action_templates/*.yaml`.
+Weapon templates reference them through `fire_action_template` by stable name
+or decimal id. Action-backed weapons may omit `cooldown_ticks`; weapons without
+an action reference retain the legacy non-zero cooldown fallback. Action
+templates contain gameplay policy only and must not contain Animator states,
+AnimationClip ids, Unity fields, or presentation assets.
+
 ABI-facing structs must avoid `std::string`, `std::vector`, virtual methods,
 non-trivial constructors/destructors, implicit array ownership, and unstable
 layout. Use fixed-width integers, explicit counts, and struct versioning.
@@ -393,6 +400,7 @@ Gameplay catalog bundles must include the catalog root and every referenced
 template source needed to reconstruct the same config from memory:
 
 - `gameplay_catalog.yaml`
+- `action_templates/*.yaml`
 - `weapon_templates/*.yaml`
 - `projectile_templates/*.yaml`
 - `entity_templates/*.yaml`

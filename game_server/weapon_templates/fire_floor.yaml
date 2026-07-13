@@ -3,6 +3,6 @@ name: Fire Floor
 weapon_type: area_effect
 magazine_size: 3
 damage: 12
-cooldown_ticks: 10
+fire_action_template: fire_floor_cast
 reload_ticks: 30
 projectile_template: fire_floor_area

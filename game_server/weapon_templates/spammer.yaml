@@ -3,7 +3,7 @@ name: Projectile Spammer
 weapon_type: projectile
 magazine_size: 120
 reserve_magazines: 65535
-cooldown_ticks: 1
+fire_action_template: spammer_fire
 reload_ticks: 30
 burst_count: 3
 burst_spread_degrees: 15.0

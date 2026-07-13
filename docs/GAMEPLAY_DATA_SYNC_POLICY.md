@@ -22,6 +22,7 @@ client handshake.
 
 Examples:
 
+- action trigger, commit cadence, ammo cost, recovery, timeout, and cancel policy
 - weapon damage, cooldown, reload time, magazine size, and reserve magazines
 - projectile speed, lifetime, damage, gravity, sync mode, and hit response
 - collider dimensions, centers, purpose, layer, and transient lifetime
@@ -59,6 +60,19 @@ name; the loader resolves those references to stable ids before runtime use.
 
 New enum values, component layouts, ABI fields, and presentation mappings still
 require the corresponding native or client build update.
+
+## Traffic Assessment Rule
+
+Whenever an implementation governed by this data-driven policy adds or
+changes a server data-sync packet, completion must include an updated server
+data-sync traffic assessment report.
+
+The report must include before/after encoded application packet sizes,
+direction, frequency or trigger conditions, typical and upper-bound per-client
+traffic, the boundary between application and transport overhead, whether
+fragmentation or application-level packet splitting is required, and the
+commands or tests used to obtain the measurements. C/C++ `sizeof` values alone
+are not packet-size measurements.
 
 ## Current Collider Binding Position
 

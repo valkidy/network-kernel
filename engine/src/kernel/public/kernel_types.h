@@ -56,6 +56,7 @@
 #define KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_PROJECTILE UINT32_C(3)
 #define KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR UINT32_C(4)
 #define KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_COLLIDER UINT32_C(5)
+#define KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTION UINT32_C(6)
 
 #define KERNEL_CAPABILITY_CLIENT_MODE UINT64_C(0x0000000000000001)
 #define KERNEL_CAPABILITY_LISTEN_SERVER_MODE UINT64_C(0x0000000000000002)
@@ -677,6 +678,13 @@ typedef struct KernelActorTemplateDefinition {
 } KernelActorTemplateDefinition;
 
 typedef struct KernelActionTemplateDefinition {
+    /*
+     * Action templates contain gameplay policy only.
+     * If server-selectable presentation is needed in the future, prefer an
+     * abstract presentation_profile_id that clients map to local assets.
+     * The native kernel must not bind action templates to Animator state IDs,
+     * AnimationClip IDs, Unity-specific fields, or Unity Engine dependencies.
+     */
     uint32_t struct_size;
     uint32_t action_template_id;
     uint8_t trigger_mode;

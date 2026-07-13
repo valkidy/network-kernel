@@ -1,0 +1,10 @@
+id: 4096
+name: rifle_fire
+trigger_mode: hold
+flags: [cancel_on_release, cancel_on_death, cancel_on_weapon_change, cancel_before_first_commit]
+ammo_cost_per_commit: 1
+commit_offset_ticks: 0
+commit_interval_ticks: 3
+max_commit_count: 0
+recovery_ticks: 4
+hold_input_timeout_ticks: 6

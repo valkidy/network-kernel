@@ -2,6 +2,6 @@ id: 6
 name: Homing Missile
 weapon_type: projectile
 magazine_size: 4
-cooldown_ticks: 15
+fire_action_template: homing_missile_fire
 reload_ticks: 60
 projectile_template: homing_missile_projectile

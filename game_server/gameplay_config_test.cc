@@ -202,6 +202,20 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
             "weapon_templates/" + file,
             read_text_file("game_server/weapon_templates/" + file)});
     }
+    const std::vector<std::string> action_files = {
+        "beam_rifle_fire.yaml",
+        "fire_floor_cast.yaml",
+        "homing_missile_fire.yaml",
+        "rifle_fire.yaml",
+        "rocket_fire.yaml",
+        "shotgun_fire.yaml",
+        "spammer_fire.yaml",
+    };
+    for (const std::string& file : action_files) {
+        files.push_back({
+            "action_templates/" + file,
+            read_text_file("game_server/action_templates/" + file)});
+    }
     const std::vector<std::string> projectile_files = {
         "beam_rifle_beam.yaml",
         "fire_floor_area.yaml",
@@ -229,6 +243,7 @@ std::vector<std::uint8_t> make_entity_template_bundle_zip(
     files.push_back({
         "gameplay_catalog.yaml",
         "catalog_version: 1\n"
+        "action_template_dir: action_templates\n"
         "weapon_template_dir: weapon_templates\n"
         "projectile_template_dir: projectile_templates\n"
         "entity_template_dir: entity_templates\n"
@@ -295,6 +310,20 @@ std::vector<std::uint8_t> make_entity_template_bundle_zip(
         files.push_back({
             "weapon_templates/" + file,
             read_text_file("game_server/weapon_templates/" + file)});
+    }
+    const std::vector<std::string> action_files = {
+        "beam_rifle_fire.yaml",
+        "fire_floor_cast.yaml",
+        "homing_missile_fire.yaml",
+        "rifle_fire.yaml",
+        "rocket_fire.yaml",
+        "shotgun_fire.yaml",
+        "spammer_fire.yaml",
+    };
+    for (const std::string& file : action_files) {
+        files.push_back({
+            "action_templates/" + file,
+            read_text_file("game_server/action_templates/" + file)});
     }
     const std::vector<std::string> projectile_files = {
         "beam_rifle_beam.yaml",
@@ -510,7 +539,7 @@ int main() {
     assert(projectile_spammer.damage == 1);
     assert(projectile_spammer.magazine_size == 120);
     assert(projectile_spammer.reserve_magazines == kMaxReserveMagazines);
-    assert(projectile_spammer.cooldown_ticks == 1);
+    assert(projectile_spammer.cooldown_ticks == 0);
     assert(projectile_spammer.projectile_template_id == 2);
     assert(projectile_spammer.pellet_count == 3);
     assert(projectile_spammer.pellet_spread == 15.0f);

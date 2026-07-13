@@ -3,6 +3,6 @@ name: Beam Rifle
 weapon_type: beam
 magazine_size: 12
 damage: 30
-cooldown_ticks: 1
+fire_action_template: beam_rifle_fire
 reload_ticks: 45
 projectile_template: beam_rifle_beam

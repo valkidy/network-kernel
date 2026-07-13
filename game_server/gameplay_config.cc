@@ -348,36 +348,6 @@ bool validate_weapon_mechanics(
            weapon.pellet_count != 0;
 }
 
-KernelActionTemplateDefinition action_template_for_weapon(
-    const KernelWeaponMechanicsDefinition& weapon) {
-    KernelActionTemplateDefinition action{};
-    action.struct_size = sizeof(action);
-    action.action_template_id = 0x1000u + weapon.weapon_id;
-    action.ammo_cost_per_commit = 1;
-    action.commit_interval_ticks = std::max(1u, weapon.cooldown_ticks);
-    action.max_commit_count = 1;
-    action.flags = KernelActionTemplateFlag_CancelOnDeath |
-                   KernelActionTemplateFlag_CancelOnWeaponChange |
-                   KernelActionTemplateFlag_CancelBeforeFirstCommit;
-    if (weapon.weapon_id == 0u || weapon.weapon_id == 2u ||
-        weapon.weapon_id == 5u) {
-        action.trigger_mode = KernelActionTriggerMode_Hold;
-        action.flags |= KernelActionTemplateFlag_CancelOnRelease;
-        action.max_commit_count = 0;
-        action.recovery_ticks = 4;
-        action.hold_input_timeout_ticks = 6;
-    }
-    if (weapon.weapon_id == 3u) {
-        action.commit_offset_ticks = 3;
-        action.recovery_ticks = 8;
-    } else if (weapon.weapon_id == 5u) {
-        action.commit_offset_ticks = 5;
-        action.commit_interval_ticks = 1;
-        action.recovery_ticks = 8;
-    }
-    return action;
-}
-
 std::string trim_ascii(const std::string& value) {
     const auto first = std::find_if_not(
         value.begin(),
@@ -619,6 +589,9 @@ public:
     std::vector<std::string> list_yaml_files(
         const std::string& directory) const override {
         std::vector<std::string> files;
+        if (!std::filesystem::exists(directory)) {
+            return files;
+        }
         for (const std::filesystem::directory_entry& entry :
              std::filesystem::directory_iterator(directory)) {
             if (entry.is_regular_file() && entry.path().extension() == ".yaml") {
@@ -963,6 +936,192 @@ void reject_unknown_keys(
     }
 }
 
+bool valid_action_template_definition(
+    const KernelActionTemplateDefinition& definition) {
+    constexpr std::uint8_t kKnownFlags =
+        KernelActionTemplateFlag_CancelOnRelease |
+        KernelActionTemplateFlag_CancelOnDeath |
+        KernelActionTemplateFlag_CancelOnWeaponChange |
+        KernelActionTemplateFlag_CancelBeforeFirstCommit;
+    if (definition.struct_size < sizeof(KernelActionTemplateDefinition) ||
+        definition.action_template_id == 0u ||
+        definition.trigger_mode > KernelActionTriggerMode_Hold ||
+        (definition.flags & ~kKnownFlags) != 0u ||
+        definition.ammo_cost_per_commit == 0u ||
+        definition.commit_interval_ticks == 0u) {
+        return false;
+    }
+    if (definition.trigger_mode == KernelActionTriggerMode_Press) {
+        return definition.max_commit_count == 1u &&
+               definition.hold_input_timeout_ticks == 0u;
+    }
+    return definition.hold_input_timeout_ticks > 0u;
+}
+
+std::uint8_t action_flag_from_name(const std::string& name) {
+    if (name == "cancel_on_release") {
+        return KernelActionTemplateFlag_CancelOnRelease;
+    }
+    if (name == "cancel_on_death") {
+        return KernelActionTemplateFlag_CancelOnDeath;
+    }
+    if (name == "cancel_on_weapon_change") {
+        return KernelActionTemplateFlag_CancelOnWeaponChange;
+    }
+    if (name == "cancel_before_first_commit") {
+        return KernelActionTemplateFlag_CancelBeforeFirstCommit;
+    }
+    throw std::runtime_error("unknown action flag: " + name);
+}
+
+ActionTemplateConfig action_template_from_yaml(
+    const YAML::Node& node,
+    const std::string& path,
+    std::uint32_t source_kind) {
+    reject_unknown_keys(
+        node,
+        {
+            "id",
+            "name",
+            "trigger_mode",
+            "flags",
+            "ammo_cost_per_commit",
+            "commit_offset_ticks",
+            "commit_interval_ticks",
+            "max_commit_count",
+            "recovery_ticks",
+            "hold_input_timeout_ticks",
+        },
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTION);
+    ActionTemplateConfig action;
+    action.name = node["name"].as<std::string>();
+    KernelActionTemplateDefinition& definition = action.definition;
+    definition.struct_size = sizeof(definition);
+    definition.action_template_id = node["id"].as<std::uint32_t>();
+    const std::string trigger_mode = node["trigger_mode"].as<std::string>();
+    if (trigger_mode == "press") {
+        definition.trigger_mode = KernelActionTriggerMode_Press;
+    } else if (trigger_mode == "hold") {
+        definition.trigger_mode = KernelActionTriggerMode_Hold;
+    } else {
+        throw DataLoadError(
+            KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_ENUM_VALUE,
+            "unknown action trigger_mode: " + trigger_mode,
+            path,
+            "trigger_mode",
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTION,
+            definition.action_template_id);
+    }
+    const YAML::Node flags = node["flags"];
+    if (!flags || !flags.IsSequence()) {
+        throw DataLoadError(
+            KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_FIELD_TYPE,
+            "action flags must be a sequence",
+            path,
+            "flags",
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTION,
+            definition.action_template_id);
+    }
+    for (const YAML::Node& flag : flags) {
+        definition.flags |= action_flag_from_name(flag.as<std::string>());
+    }
+    definition.ammo_cost_per_commit =
+        node["ammo_cost_per_commit"].as<std::uint16_t>();
+    definition.commit_offset_ticks =
+        node["commit_offset_ticks"].as<std::uint32_t>();
+    definition.commit_interval_ticks =
+        node["commit_interval_ticks"].as<std::uint32_t>();
+    definition.max_commit_count =
+        node["max_commit_count"].as<std::uint32_t>();
+    definition.recovery_ticks = node["recovery_ticks"].as<std::uint32_t>();
+    definition.hold_input_timeout_ticks =
+        node["hold_input_timeout_ticks"].as<std::uint32_t>();
+    if (action.name.empty() || !valid_action_template_definition(definition)) {
+        throw DataLoadError(
+            KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_NUMERIC_RANGE,
+            "action template must satisfy the Kernel action contract",
+            path,
+            {},
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTION,
+            definition.action_template_id);
+    }
+    return action;
+}
+
+std::vector<ActionTemplateConfig> load_action_templates_from_source(
+    const GameplayConfigSource& source,
+    const std::string& directory) {
+    std::vector<ActionTemplateConfig> actions;
+    for (const std::string& file : source.list_yaml_files(directory)) {
+        ActionTemplateConfig action = action_template_from_yaml(
+            source.load_yaml(file), file, source.source_kind());
+        for (const ActionTemplateConfig& existing : actions) {
+            if (existing.definition.action_template_id ==
+                action.definition.action_template_id) {
+                throw DataLoadError(
+                    KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_DUPLICATE_TEMPLATE_ID,
+                    "duplicate action template id",
+                    file,
+                    "id",
+                    source.source_kind(),
+                    KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTION,
+                    action.definition.action_template_id);
+            }
+            if (existing.name == action.name) {
+                throw DataLoadError(
+                    KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_DUPLICATE_TEMPLATE_NAME,
+                    "duplicate action template name: " + action.name,
+                    file,
+                    "name",
+                    source.source_kind(),
+                    KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTION,
+                    action.definition.action_template_id);
+            }
+        }
+        actions.push_back(std::move(action));
+    }
+    std::sort(
+        actions.begin(),
+        actions.end(),
+        [](const ActionTemplateConfig& lhs, const ActionTemplateConfig& rhs) {
+            return lhs.definition.action_template_id <
+                   rhs.definition.action_template_id;
+        });
+    return actions;
+}
+
+const ActionTemplateConfig* action_template_from_ref(
+    const YAML::Node& node,
+    const std::vector<ActionTemplateConfig>& actions) {
+    if (!node || !node.IsScalar()) {
+        throw std::runtime_error("fire_action_template reference must be a scalar");
+    }
+    const std::string value = node.as<std::string>();
+    const bool numeric = !value.empty() &&
+        std::all_of(value.begin(), value.end(), [](unsigned char ch) {
+            return std::isdigit(ch);
+        });
+    for (const ActionTemplateConfig& action : actions) {
+        if ((numeric && action.definition.action_template_id ==
+                            static_cast<std::uint32_t>(std::stoul(value))) ||
+            (!numeric && action.name == value)) {
+            return &action;
+        }
+    }
+    throw DataLoadError(
+        KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_MISSING_TEMPLATE_REFERENCE,
+        "unknown fire_action_template reference: " + value,
+        {},
+        "fire_action_template",
+        KERNEL_GAMEPLAY_CATALOG_LOAD_SOURCE_UNKNOWN,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTION);
+}
+
 KernelWeaponMechanicsDefinition weapon_from_yaml(
     const YAML::Node& node,
     const std::string& path,
@@ -987,6 +1146,7 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
             "burst_spread_degrees",
             "area_effect",
             "beam",
+            "fire_action_template",
         },
         path,
         source_kind,
@@ -997,7 +1157,8 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
         node["reserve_magazines"]
             ? node["reserve_magazines"].as<std::uint16_t>()
             : kDefaultReserveMagazines;
-    const std::uint32_t cooldown_ticks = node["cooldown_ticks"].as<std::uint32_t>();
+    const std::uint32_t cooldown_ticks =
+        node["cooldown_ticks"] ? node["cooldown_ticks"].as<std::uint32_t>() : 0u;
     const std::uint32_t reload_ticks = node["reload_ticks"].as<std::uint32_t>();
     const std::string type = node["weapon_type"].as<std::string>();
     const std::uint16_t damage =
@@ -2448,12 +2609,19 @@ void apply_weapon_template_references(
     const std::string& directory,
     const ColliderCatalogConfig& colliders,
     std::vector<ProjectileTemplateConfig>* projectile_templates,
+    const std::vector<ActionTemplateConfig>& action_templates,
     WeaponCatalogConfig* weapons) {
     const std::vector<std::string> files = source.list_yaml_files(directory);
     for (const std::string& file : files) {
         const YAML::Node document = source.load_yaml(file);
         const auto weapon_id =
             static_cast<std::uint8_t>(document["id"].as<int>());
+        if (document["fire_action_template"]) {
+            weapons->definitions[weapon_id].fire_action_template_id =
+                action_template_from_ref(
+                    document["fire_action_template"], action_templates)
+                    ->definition.action_template_id;
+        }
         const std::string type = document["weapon_type"].as<std::string>();
         if (type == "hitscan" || type == "shotgun") {
             if (!document["segment_collider"]) {
@@ -2543,11 +2711,7 @@ WeaponCatalogConfig load_weapon_catalog_from_source(
             }
         }
         seen[weapon.weapon_id] = true;
-        const KernelActionTemplateDefinition action =
-            action_template_for_weapon(weapon);
-        weapon.fire_action_template_id = action.action_template_id;
         weapons.definitions[weapon.weapon_id] = weapon;
-        weapons.action_templates[weapon.weapon_id] = action;
         weapons.projectile_sync_modes[weapon.weapon_id] =
             projectile_sync_mode_from_weapon_yaml(document);
         weapons.names[weapon.weapon_id] = name;
@@ -2564,6 +2728,10 @@ GameServerGameplayConfig load_gameplay_config_from_weapon_template_source(
     const GameplayConfigSource& source,
     const std::string& directory) {
     GameServerGameplayConfig config;
+    const std::string action_template_dir = source.resolve_path(
+        source.parent_path(directory), YAML::Node("action_templates"));
+    config.action_templates =
+        load_action_templates_from_source(source, action_template_dir);
     config.weapons = load_weapon_catalog_from_source(source, directory);
     apply_default_non_weapon_config(&config);
     config.colliders = load_collider_catalog_from_source(
@@ -2578,6 +2746,7 @@ GameServerGameplayConfig load_gameplay_config_from_weapon_template_source(
         directory,
         config.colliders,
         &config.projectile_templates,
+        config.action_templates,
         &config.weapons);
     apply_default_actor_templates(&config);
     config.weapons.catalog_hash = compute_gameplay_catalog_hash(config);
@@ -2596,6 +2765,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
         document,
         {
             "catalog_version",
+            "action_template_dir",
             "weapon_template_dir",
             "projectile_template_dir",
             "actor_template_dir",
@@ -2657,6 +2827,12 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     const std::string weapon_template_dir =
         source.resolve_path(base_path, document["weapon_template_dir"]);
     GameServerGameplayConfig config;
+    if (document["action_template_dir"]) {
+        const std::string action_template_dir =
+            source.resolve_path(base_path, document["action_template_dir"]);
+        config.action_templates =
+            load_action_templates_from_source(source, action_template_dir);
+    }
     config.weapons = load_weapon_catalog_from_source(source, weapon_template_dir);
     apply_default_non_weapon_config(&config);
     config.weapons.catalog_version = catalog_version;
@@ -2676,6 +2852,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
         weapon_template_dir,
         config.colliders,
         &config.projectile_templates,
+        config.action_templates,
         &config.weapons);
 
     if (document["entity_template_dir"]) {
@@ -2787,7 +2964,6 @@ std::uint64_t compute_gameplay_catalog_hash(const WeaponCatalogConfig& weapons) 
         hash_scalar(&hash, weapons.projectile_sync_modes[index]);
         hash_scalar(&hash, weapons.collider_template_ids[index]);
         hash_weapon(&hash, weapons.definitions[index]);
-        hash_action_template(&hash, weapons.action_templates[index]);
     }
     return hash == 0 ? kFnvOffsetBasis : hash;
 }
@@ -2795,6 +2971,18 @@ std::uint64_t compute_gameplay_catalog_hash(const WeaponCatalogConfig& weapons) 
 std::uint64_t compute_gameplay_catalog_hash(
     const GameServerGameplayConfig& config) {
     std::uint64_t hash = compute_gameplay_catalog_hash(config.weapons);
+    std::vector<ActionTemplateConfig> action_templates = config.action_templates;
+    std::sort(
+        action_templates.begin(),
+        action_templates.end(),
+        [](const ActionTemplateConfig& lhs, const ActionTemplateConfig& rhs) {
+            return lhs.definition.action_template_id <
+                   rhs.definition.action_template_id;
+        });
+    for (const ActionTemplateConfig& action_template : action_templates) {
+        hash_string(&hash, action_template.name);
+        hash_action_template(&hash, action_template.definition);
+    }
     hash_scalar(&hash, config.player.actor_template_id);
     hash_scalar(&hash, config.agent.actor_template_id);
     hash_vec3(&hash, config.agent.spawn_position);
@@ -2893,6 +3081,29 @@ std::uint8_t active_weapon_id(const ActorTemplateConfig& actor_template) {
 std::vector<std::string> validate_gameplay_config(
     const GameServerGameplayConfig& config) {
     std::vector<std::string> errors;
+    std::vector<std::uint32_t> action_template_ids;
+    std::vector<std::string> action_template_names;
+    for (const ActionTemplateConfig& action_template : config.action_templates) {
+        if (action_template.name.empty() ||
+            !valid_action_template_definition(action_template.definition)) {
+            errors.push_back("action template must be valid");
+        }
+        if (std::find(
+                action_template_ids.begin(),
+                action_template_ids.end(),
+                action_template.definition.action_template_id) !=
+            action_template_ids.end()) {
+            errors.push_back("action template id must be unique");
+        }
+        if (std::find(
+                action_template_names.begin(),
+                action_template_names.end(),
+                action_template.name) != action_template_names.end()) {
+            errors.push_back("action template name must be unique");
+        }
+        action_template_ids.push_back(action_template.definition.action_template_id);
+        action_template_names.push_back(action_template.name);
+    }
     for (std::size_t index = 0; index < config.weapons.definitions.size(); ++index) {
         const KernelWeaponMechanicsDefinition& weapon =
             config.weapons.definitions[index];
@@ -2901,6 +3112,13 @@ std::vector<std::string> validate_gameplay_config(
         }
         if (!validate_weapon_mechanics(weapon)) {
             errors.push_back("weapon mechanics must be valid");
+        }
+        if (weapon.fire_action_template_id != 0u &&
+            std::find(
+                action_template_ids.begin(),
+                action_template_ids.end(),
+                weapon.fire_action_template_id) == action_template_ids.end()) {
+            errors.push_back("weapon action template reference must be valid");
         }
         if (config.weapons.projectile_sync_modes[index] >
             KernelProjectileSyncMode_ServerSnapshotOnly) {
@@ -3271,9 +3489,8 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
          config.colliders.templates) {
         storage.collider_templates.push_back(collider_template.definition);
     }
-    for (const KernelActionTemplateDefinition& action_template :
-         config.weapons.action_templates) {
-        storage.action_templates.push_back(action_template);
+    for (const ActionTemplateConfig& action_template : config.action_templates) {
+        storage.action_templates.push_back(action_template.definition);
     }
     storage.definition.struct_size = sizeof(storage.definition);
     storage.definition.catalog_version = config.weapons.catalog_version;
