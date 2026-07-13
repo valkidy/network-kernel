@@ -374,6 +374,43 @@ an action reference retain the legacy non-zero cooldown fallback. Action
 templates contain gameplay policy only and must not contain Animator states,
 AnimationClip ids, Unity fields, or presentation assets.
 
+### Action cancellation flags
+
+Use `flags` as a YAML sequence. Flags are composable and their order does not
+matter:
+
+```yaml
+flags:
+  - cancel_on_release
+  - cancel_on_death
+  - cancel_on_weapon_change
+  - cancel_before_first_commit
+```
+
+The compact inline form is equivalent:
+
+```yaml
+flags: [cancel_on_release, cancel_on_death, cancel_on_weapon_change, cancel_before_first_commit]
+```
+
+| Flag | Behavior |
+|---|---|
+| `cancel_on_release` | Stops a Hold action after the fire input is released. |
+| `cancel_on_death` | Stops the action when the source entity dies. |
+| `cancel_on_weapon_change` | Stops the action when the selected weapon differs from the action's source weapon. |
+| `cancel_before_first_commit` | Allows a flagged cancellation during Windup to enter Recovery before spending ammo or producing the first effect. Without it, the first commit completes before the action stops. |
+
+`cancel_before_first_commit` modifies the other flagged cancellation reasons;
+it does not initiate cancellation by itself. Timeout, insufficient ammo, and
+explicit server cancellation may still stop an action before its first commit.
+Unknown flag names are rejected during catalog loading.
+
+A typical Press action uses death, weapon-change, and before-first-commit
+cancellation, requires `max_commit_count: 1`, and uses
+`hold_input_timeout_ticks: 0`. A typical Hold action uses all four flags,
+allows `max_commit_count: 0` for unlimited commits, and requires a non-zero
+`hold_input_timeout_ticks`.
+
 ABI-facing structs must avoid `std::string`, `std::vector`, virtual methods,
 non-trivial constructors/destructors, implicit array ownership, and unstable
 layout. Use fixed-width integers, explicit counts, and struct versioning.
