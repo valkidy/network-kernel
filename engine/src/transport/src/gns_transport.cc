@@ -29,7 +29,7 @@ void clear_callback_owner(GnsTransport* transport) {
 }
 
 bool is_valid_channel(std::uint8_t value) {
-    return value <= static_cast<std::uint8_t>(ChannelId::kSession);
+    return value <= static_cast<std::uint8_t>(ChannelId::kPresentation);
 }
 
 bool is_valid_mode(std::uint8_t value) {

@@ -182,6 +182,10 @@ int main() {
     assert(abi_info.action_template_definition_size ==
            sizeof(KernelActionTemplateDefinition));
     assert(abi_info.action_runtime_view_size == sizeof(KernelActionRuntimeView));
+    assert(abi_info.local_action_result_size == sizeof(KernelLocalActionResult));
+    assert(
+        abi_info.remote_action_presentation_event_size ==
+        sizeof(KernelRemoteActionPresentationEvent));
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CLIENT_MODE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LISTEN_SERVER_MODE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_DEDICATED_SERVER_MODE) != 0);
@@ -222,9 +226,15 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 38u);
+    assert(KERNEL_ABI_VERSION == 39u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CONTROL_PLANE_RPC) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ACTION_TIMELINE) != 0);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_LOCAL_ACTION_RESULTS) != 0);
+    assert(
+        (abi_info.capability_flags &
+         KERNEL_CAPABILITY_REMOTE_ACTION_PRESENTATION) != 0);
+    assert(sizeof(KernelLocalActionResult) == 12u);
+    assert(sizeof(KernelRemoteActionPresentationEvent) == 20u);
     assert(sizeof(KernelVec4) == 16u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS) != 0);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
@@ -295,6 +305,8 @@ int main() {
     assert(sizeof(KernelEntityLifecycleEvent) > 0u);
     assert(!Kernel_GetAbiInfo(nullptr, sizeof(abi_info)));
     assert(!Kernel_GetAbiInfo(&abi_info, sizeof(abi_info) - 1));
+    assert(Kernel_PollLocalActionResults(nullptr, nullptr, 0) == 0u);
+    assert(Kernel_PollRemoteActionPresentationEvents(nullptr, nullptr, 0) == 0u);
 
     KernelBuildInfo build_info{};
     require(Kernel_GetBuildInfo(&build_info, sizeof(build_info)));

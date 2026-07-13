@@ -49,6 +49,21 @@ int main() {
     assert(mode == network_example::SendMode::kReliable);
     assert(payload.empty());
 
+    const std::vector<std::uint8_t> presentation_payload =
+        network_example::encode_gns_payload(
+            network_example::ChannelId::kPresentation,
+            network_example::SendMode::kUnreliable,
+            input.data(),
+            static_cast<std::uint32_t>(input.size()));
+    assert(network_example::decode_gns_payload(
+        presentation_payload.data(),
+        presentation_payload.size(),
+        &channel,
+        &mode,
+        &payload));
+    assert(channel == network_example::ChannelId::kPresentation);
+    assert(mode == network_example::SendMode::kUnreliable);
+
     std::vector<std::uint8_t> bad_channel = encoded;
     bad_channel[0] = 255;
     assert(!network_example::decode_gns_payload(

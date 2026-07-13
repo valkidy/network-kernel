@@ -32,7 +32,9 @@ class MovementSystem;
 struct EntityDespawnPacket;
 struct EntitySpawnPacket;
 struct EntityTemplateUpdatePacket;
+struct LocalActionResultBatchPacket;
 struct ProjectileSpawnBatchPacket;
+struct RemoteActionPresentationBatchPacket;
 struct WelcomePacket;
 
 namespace simulation {
@@ -83,6 +85,12 @@ public:
     std::uint32_t poll_events(KernelEvent* out_events, std::uint32_t max_events);
     std::uint32_t poll_entity_lifecycle_events(
         KernelEntityLifecycleEvent* out_events,
+        std::uint32_t max_events);
+    std::uint32_t poll_local_action_results(
+        KernelLocalActionResult* out_results,
+        std::uint32_t max_results);
+    std::uint32_t poll_remote_action_presentation_events(
+        KernelRemoteActionPresentationEvent* out_events,
         std::uint32_t max_events);
     bool get_benchmark_stats(KernelBenchmarkStats* out_stats) const;
     bool get_network_stats(KernelNetworkStats* out_stats) const;
@@ -197,6 +205,14 @@ private:
         std::uint32_t last_processed_input_seq = 0;
         bool welcomed = false;
         std::unordered_set<NetId> relevant_entities;
+        std::uint32_t fire_action_high_water = 0;
+        std::uint32_t active_fire_action_id = 0;
+        std::uint32_t active_fire_template_id = 0;
+        std::uint16_t active_fire_commit_count = 0;
+        std::unordered_map<std::uint32_t, KernelLocalActionResult>
+            recent_fire_results;
+        std::vector<std::uint32_t> recent_fire_result_order;
+        std::vector<KernelLocalActionResult> pending_fire_results;
         std::size_t actor_snapshot_cursor = 0;
         std::size_t projectile_snapshot_cursor = 0;
         std::uint32_t pending_clock_sync_nonce = 0;
@@ -267,6 +283,25 @@ private:
         std::size_t offset = 0;
     };
 
+    struct OutstandingPredictedFire {
+        std::uint32_t action_instance_id = 0;
+        std::uint64_t last_activity_us = 0;
+        std::uint16_t confirmed_commit_count = 0;
+    };
+
+    struct PendingRemotePresentation {
+        std::uint32_t batch_server_tick = 0;
+        KernelRemoteActionPresentationEvent event{};
+    };
+
+    struct RemotePresentationDedup {
+        std::uint32_t actor_net_id = 0;
+        std::uint32_t action_instance_id = 0;
+        std::uint16_t commit_index = 0;
+        std::uint8_t event_type = 0;
+        std::uint32_t expire_tick = 0;
+    };
+
     void push_event(
         KernelEventType type,
         NetId net_id = 0,
@@ -291,6 +326,10 @@ private:
     void handle_server_disconnect(const TransportEvent& transport_event);
     void handle_client_disconnect(PeerId peer);
     void handle_client_reliable_event(const TransportEvent& transport_event);
+    void handle_client_local_action_results(
+        const LocalActionResultBatchPacket& packet);
+    void handle_client_remote_action_presentation(
+        const TransportEvent& transport_event);
     void handle_client_projectile_spawn_batch(
         const ProjectileSpawnBatchPacket& packet);
     void handle_client_template_update(const EntityTemplateUpdatePacket& packet);
@@ -309,6 +348,7 @@ private:
         std::size_t queue_depth,
         std::size_t processed_command_count);
     void release_presentable_events();
+    void release_remote_action_presentation_events();
     void broadcast_combat_events(std::size_t first_event, std::size_t last_event);
     void rebuild_render_states();
     void rebuild_render_states_at_time(
@@ -389,6 +429,23 @@ private:
     void send_due_clock_sync_pings(std::uint64_t server_time_us);
     void send_reliable_event(PeerId peer, const KernelEvent& event);
     void broadcast_reliable_event(const KernelEvent& event);
+    bool prepare_server_fire_input(PeerSession* session, const PlayerInput& input);
+    void finalize_server_fire_outcomes(
+        std::size_t first_event,
+        std::size_t last_event);
+    void queue_local_action_result(
+        PeerSession* session,
+        const KernelLocalActionResult& result);
+    void flush_local_action_results(PeerSession* session);
+    void queue_remote_presentation_from_events(
+        std::size_t first_event,
+        std::size_t last_event,
+        const std::unordered_set<NetId>& actors_before_tick,
+        const std::unordered_set<NetId>& reloading_before_tick);
+    void flush_remote_action_presentation(
+        PeerSession* session,
+        const std::vector<KernelRemoteActionPresentationEvent>& events);
+    PeerSession* result_session_for_peer(PeerId peer);
     void record_received_packet_sequence(const TransportEvent& transport_event);
     void record_sent_packet(
         std::uint32_t packet_size,
@@ -425,6 +482,14 @@ private:
     std::vector<KernelEvent> events_;
     std::vector<KernelEntityLifecycleEvent> lifecycle_events_;
     std::vector<KernelEvent> pending_presentation_events_;
+    std::vector<KernelLocalActionResult> local_action_results_;
+    std::vector<KernelRemoteActionPresentationEvent>
+        remote_action_presentation_events_;
+    std::vector<KernelRemoteActionPresentationEvent>
+        pending_server_remote_presentations_;
+    std::vector<PendingRemotePresentation>
+        pending_remote_action_presentation_events_;
+    std::vector<RemotePresentationDedup> remote_presentation_dedup_;
     std::vector<RenderEntityState> render_states_;
     WorldSnapshot latest_snapshot_;
     WorldSnapshot latest_client_snapshot_;
@@ -436,6 +501,10 @@ private:
     std::unordered_map<NetId, ClientEntityTombstone> client_despawned_entities_;
     std::vector<PlayerInput> pending_prediction_inputs_;
     std::vector<PredictedProjectile> predicted_projectiles_;
+    std::unordered_map<std::uint32_t, OutstandingPredictedFire>
+        outstanding_predicted_fires_;
+    std::unordered_map<std::uint32_t, KernelLocalActionResult>
+        applied_local_action_results_;
     std::vector<KernelEntityTemplateDefinition> entity_templates_;
     std::vector<KernelActorTemplateDefinition> actor_templates_;
     std::vector<KernelProjectileTemplateDefinition> projectile_templates_;
@@ -497,6 +566,8 @@ private:
     NetId local_player_net_id_ = 0;
     std::uint32_t local_last_processed_input_seq_ = 0;
     std::uint32_t next_packet_sequence_ = 1;
+    std::uint32_t next_server_presentation_instance_id_ = 1;
+    std::uint32_t last_remote_presentation_sequence_ = 0;
     std::uint32_t next_clock_sync_nonce_ = 1;
     std::unordered_map<PeerId, ReceiveSequenceState> received_sequences_by_peer_;
     std::uint64_t received_packet_count_ = 0;
@@ -512,6 +583,7 @@ private:
     bool has_predicted_local_entity_ = false;
     bool has_client_clock_sync_ = false;
     bool has_client_render_time_ = false;
+    bool has_remote_presentation_sequence_ = false;
     bool running_ = false;
 };
 

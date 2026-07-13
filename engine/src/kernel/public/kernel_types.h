@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 38u
+#define KERNEL_ABI_VERSION 39u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -94,6 +94,8 @@
 #define KERNEL_CAPABILITY_GAMEPLAY_CATALOG_SYNC UINT64_C(0x0000000800000000)
 #define KERNEL_CAPABILITY_CONTROL_PLANE_RPC UINT64_C(0x0000001000000000)
 #define KERNEL_CAPABILITY_ACTION_TIMELINE UINT64_C(0x0000002000000000)
+#define KERNEL_CAPABILITY_LOCAL_ACTION_RESULTS UINT64_C(0x0000004000000000)
+#define KERNEL_CAPABILITY_REMOTE_ACTION_PRESENTATION UINT64_C(0x0000008000000000)
 
 #define KERNEL_COLLISION_LAYER_PLAYER_SIDE UINT32_C(0x00000001)
 #define KERNEL_COLLISION_LAYER_HOSTILE_SIDE UINT32_C(0x00000002)
@@ -194,6 +196,8 @@ typedef struct KernelAbiInfo {
     uint32_t entity_ai_definition_size;
     uint32_t action_template_definition_size;
     uint32_t action_runtime_view_size;
+    uint32_t local_action_result_size;
+    uint32_t remote_action_presentation_event_size;
 } KernelAbiInfo;
 
 typedef struct KernelBuildInfo {
@@ -325,6 +329,35 @@ typedef enum KernelActionPhase {
     KernelActionPhase_Active = 2,
     KernelActionPhase_Recovery = 3,
 } KernelActionPhase;
+
+typedef enum KernelLocalActionResultType {
+    KernelLocalActionResultType_Accepted = 0,
+    KernelLocalActionResultType_Corrected = 1,
+    KernelLocalActionResultType_Rejected = 2,
+} KernelLocalActionResultType;
+
+typedef enum KernelLocalActionResultReason {
+    KernelLocalActionResultReason_None = 0,
+    KernelLocalActionResultReason_InvalidActionId = 1,
+    KernelLocalActionResultReason_MissingActor = 2,
+    KernelLocalActionResultReason_MissingTemplate = 3,
+    KernelLocalActionResultReason_Busy = 4,
+    KernelLocalActionResultReason_Reloading = 5,
+    KernelLocalActionResultReason_NoAmmo = 6,
+    KernelLocalActionResultReason_Cancelled = 7,
+    KernelLocalActionResultReason_TimedOut = 8,
+    KernelLocalActionResultReason_Dead = 9,
+    KernelLocalActionResultReason_WeaponChanged = 10,
+    KernelLocalActionResultReason_EffectFailed = 11,
+} KernelLocalActionResultReason;
+
+typedef enum KernelRemoteActionPresentationEventType {
+    KernelRemoteActionPresentationEventType_FireCommit = 0,
+    KernelRemoteActionPresentationEventType_AbilityCommit = 1,
+    KernelRemoteActionPresentationEventType_ReloadCommit = 2,
+    KernelRemoteActionPresentationEventType_HitReaction = 3,
+    KernelRemoteActionPresentationEventType_DeathTrigger = 4,
+} KernelRemoteActionPresentationEventType;
 
 typedef enum KernelActionTemplateFlag {
     KernelActionTemplateFlag_CancelOnRelease = 1u << 0,
@@ -462,6 +495,25 @@ typedef struct PlayerInput {
     uint32_t buttons;
     uint8_t selected_weapon;
 } PlayerInput;
+
+typedef struct KernelLocalActionResult {
+    uint32_t action_instance_id;
+    uint16_t confirmed_commit_count;
+    uint8_t result;
+    uint8_t reason;
+    uint32_t authoritative_tick;
+} KernelLocalActionResult;
+
+typedef struct KernelRemoteActionPresentationEvent {
+    uint32_t actor_net_id;
+    uint32_t action_template_id;
+    uint32_t action_instance_id;
+    uint16_t first_commit_index;
+    uint16_t commit_count;
+    uint8_t event_type;
+    uint8_t flags;
+    uint16_t server_tick_delta;
+} KernelRemoteActionPresentationEvent;
 
 typedef struct KernelActionRuntimeView {
     uint32_t struct_size;

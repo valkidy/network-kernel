@@ -56,6 +56,16 @@ struct ProjectileSpawnBatchPacket {
     std::vector<ProjectileSpawnGroup> groups;
 };
 
+struct LocalActionResultBatchPacket {
+    std::uint32_t server_tick = 0;
+    std::vector<KernelLocalActionResult> records;
+};
+
+struct RemoteActionPresentationBatchPacket {
+    std::uint32_t server_tick = 0;
+    std::vector<KernelRemoteActionPresentationEvent> records;
+};
+
 std::vector<std::uint8_t> encode_input_packet(
     PeerId player_id,
     const PlayerInput& input,
@@ -125,6 +135,24 @@ bool decode_projectile_spawn_batch_packet(
     const std::uint8_t* data,
     std::size_t size,
     ProjectileSpawnBatchPacket* out_packet);
+
+std::vector<std::uint8_t> encode_local_action_result_batch_packet(
+    const LocalActionResultBatchPacket& packet,
+    std::uint32_t sequence = 0);
+
+bool decode_local_action_result_batch_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    LocalActionResultBatchPacket* out_packet);
+
+std::vector<std::uint8_t> encode_remote_action_presentation_batch_packet(
+    const RemoteActionPresentationBatchPacket& packet,
+    std::uint32_t sequence = 0);
+
+bool decode_remote_action_presentation_batch_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    RemoteActionPresentationBatchPacket* out_packet);
 
 }  // namespace network_example
 

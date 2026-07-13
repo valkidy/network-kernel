@@ -2621,6 +2621,332 @@ void hit_debug_records_filter_and_drain() {
                 static_cast<std::uint32_t>(debug_records.size())) == 0);
 }
 
+void action_result_and_remote_presentation_queues_are_isolated() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+
+    PlayerInput invalid_fire{};
+    invalid_fire.buttons = InputButton_Fire;
+    const PlayerInput prepared = client.prepare_client_input(invalid_fire);
+    require((prepared.buttons & InputButton_Fire) == 0u);
+
+    client.outstanding_predicted_fires_.emplace(
+        7001u,
+        network_example::KernelEngine::OutstandingPredictedFire{
+            7001u,
+            10u,
+            0u,
+        });
+    network_example::LocalActionResultBatchPacket local_batch{};
+    local_batch.server_tick = 12;
+    local_batch.records.push_back(KernelLocalActionResult{
+        7001,
+        1,
+        KernelLocalActionResultType_Accepted,
+        KernelLocalActionResultReason_None,
+        12,
+    });
+    client.handle_client_local_action_results(local_batch);
+    std::array<KernelLocalActionResult, 2> local_results{};
+    require(client.poll_local_action_results(
+                local_results.data(),
+                static_cast<std::uint32_t>(local_results.size())) == 1u);
+    require(local_results[0].action_instance_id == 7001u);
+    client.handle_client_local_action_results(local_batch);
+    require(client.poll_local_action_results(
+                local_results.data(),
+                static_cast<std::uint32_t>(local_results.size())) == 0u);
+
+    network_example::RemoteActionPresentationBatchPacket remote_batch{};
+    remote_batch.server_tick = 15;
+    remote_batch.records.push_back(KernelRemoteActionPresentationEvent{
+        42,
+        9,
+        8001,
+        1,
+        1,
+        KernelRemoteActionPresentationEventType_FireCommit,
+        0,
+        0,
+    });
+    const std::vector<std::uint8_t> encoded =
+        network_example::encode_remote_action_presentation_batch_packet(
+            remote_batch,
+            5);
+    network_example::TransportEvent event{};
+    event.peer = 0;
+    event.channel = network_example::ChannelId::kPresentation;
+    event.mode = network_example::SendMode::kUnreliable;
+    event.payload = encoded;
+    client.handle_client_remote_action_presentation(event);
+    std::array<KernelRemoteActionPresentationEvent, 2> remote_events{};
+    require(client.poll_remote_action_presentation_events(
+                remote_events.data(),
+                static_cast<std::uint32_t>(remote_events.size())) == 1u);
+    require(remote_events[0].actor_net_id == 42u);
+    require(client.poll_local_action_results(
+                local_results.data(),
+                static_cast<std::uint32_t>(local_results.size())) == 0u);
+
+    client.handle_client_remote_action_presentation(event);
+    require(client.poll_remote_action_presentation_events(
+                remote_events.data(),
+                static_cast<std::uint32_t>(remote_events.size())) == 0u);
+}
+
+void server_routes_fire_result_to_owner_and_presentation_to_observer() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine server(config);
+    server.reset_runtime_state(KernelMode_DedicatedServer);
+
+    auto loopback = std::make_unique<network_example::LoopbackTransport>();
+    require(loopback->StartServer(7781));
+    auto* loopback_transport = loopback.get();
+    server.transport_ = std::move(loopback);
+
+    const network_example::NetId owner_actor =
+        server.world_.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+    const network_example::NetId observer_actor =
+        server.world_.spawn_player(2, glm::vec3{5.0f, 0.0f, 0.0f});
+    const auto owner_entity = server.world_.find_entity(owner_actor);
+    require(owner_entity.has_value());
+    network_example::WeaponTuning& tuning =
+        server.world_.registry()
+            .get<network_example::WeaponTuning>(*owner_entity);
+    tuning.configured[0] = true;
+    tuning.definitions[0] = network_example::WeaponMechanicsDefinition{};
+    tuning.definitions[0].id = 0;
+    tuning.definitions[0].mode = network_example::WeaponFireMode::kHitscan;
+    tuning.definitions[0].magazine_size = 30;
+    tuning.definitions[0].damage = 1;
+    tuning.definitions[0].cooldown_ticks = 3;
+    tuning.definitions[0].reload_ticks = 30;
+    tuning.definitions[0].max_range = 20.0f;
+    server.world_.registry()
+        .get<network_example::WeaponState>(*owner_entity)
+        .ammo[0] = 30;
+    network_example::Health& owner_health =
+        server.world_.registry().get<network_example::Health>(*owner_entity);
+    owner_health.hp = 100;
+    owner_health.max_hp = 100;
+    network_example::KernelEngine::PeerSession owner{};
+    owner.peer = 1;
+    owner.player = owner_actor;
+    owner.welcomed = true;
+    owner.relevant_entities.insert(owner_actor);
+    network_example::KernelEngine::PeerSession observer{};
+    observer.peer = 2;
+    observer.player = observer_actor;
+    observer.welcomed = true;
+    observer.relevant_entities.insert(owner_actor);
+    observer.relevant_entities.insert(observer_actor);
+    server.peer_sessions_.push_back(owner);
+    server.peer_sessions_.push_back(observer);
+
+    PlayerInput input{};
+    input.input_seq = 1;
+    input.client_action_id = 7001;
+    input.buttons = InputButton_Fire;
+    input.selected_weapon = 0;
+    input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
+    auto* owner_session = server.find_session(1);
+    require(server.prepare_server_fire_input(owner_session, input));
+    server.pending_inputs_.push_back(network_example::QueuedInput{
+        1,
+        input,
+        0,
+        0,
+        false,
+        0,
+    });
+    const std::uint16_t ammo_before =
+        server.world_.registry()
+            .get<network_example::WeaponState>(*owner_entity)
+            .ammo[0];
+    server.simulate_tick();
+    const std::uint16_t ammo_after =
+        server.world_.registry()
+            .get<network_example::WeaponState>(*owner_entity)
+            .ammo[0];
+    require(ammo_after + 1u == ammo_before);
+
+    bool owner_result = false;
+    bool observer_result = false;
+    bool owner_presentation = false;
+    bool observer_presentation = false;
+    network_example::TransportEvent event{};
+    while (loopback_transport->PollClientEvent(event)) {
+        network_example::LocalActionResultBatchPacket results{};
+        if (network_example::decode_local_action_result_batch_packet(
+                event.payload.data(),
+                event.payload.size(),
+                &results)) {
+            owner_result = owner_result || event.peer == 1;
+            observer_result = observer_result || event.peer == 2;
+            require(results.records.size() == 1u);
+            require(results.records[0].action_instance_id == 7001u);
+            require(results.records[0].result ==
+                    KernelLocalActionResultType_Accepted);
+        }
+        network_example::RemoteActionPresentationBatchPacket presentation{};
+        if (network_example::decode_remote_action_presentation_batch_packet(
+                event.payload.data(),
+                event.payload.size(),
+                &presentation)) {
+            owner_presentation = owner_presentation || event.peer == 1;
+            observer_presentation = observer_presentation || event.peer == 2;
+            require(presentation.records.size() == 1u);
+            require(presentation.records[0].actor_net_id == owner_actor);
+            require(presentation.records[0].action_instance_id == 7001u);
+        }
+    }
+    require(owner_result);
+    require(!observer_result);
+    require(!owner_presentation);
+    require(observer_presentation);
+
+    owner_session = server.find_session(1);
+    require(!server.prepare_server_fire_input(owner_session, input));
+    server.simulate_tick();
+    require(
+        server.world_.registry()
+            .get<network_example::WeaponState>(*owner_entity)
+            .ammo[0] == ammo_after);
+
+    PlayerInput release_input{};
+    release_input.input_seq = 2;
+    release_input.selected_weapon = 0;
+    server.pending_inputs_.push_back(network_example::QueuedInput{
+        1,
+        release_input,
+        server.tick_loop_.current_tick(),
+        0,
+        false,
+        0,
+    });
+    server.simulate_tick();
+
+    tuning.definitions[0].fire_action_template_id = 1001;
+    server.world_.set_action_templates({network_example::RuntimeActionTemplate{
+        1001,
+        KernelActionTriggerMode_Press,
+        0,
+        1,
+        0,
+        1,
+        1,
+        0,
+        0,
+    }});
+    input.input_seq = 3;
+    input.client_action_id = 7002;
+    owner_session = server.find_session(1);
+    require(server.prepare_server_fire_input(owner_session, input));
+    server.pending_inputs_.push_back(network_example::QueuedInput{
+        1,
+        input,
+        server.tick_loop_.current_tick(),
+        0,
+        false,
+        0,
+    });
+    server.simulate_tick();
+    bool zero_recovery_result = false;
+    while (loopback_transport->PollClientEvent(event)) {
+        network_example::LocalActionResultBatchPacket results{};
+        if (!network_example::decode_local_action_result_batch_packet(
+                event.payload.data(),
+                event.payload.size(),
+                &results) ||
+            event.peer != 1) {
+            continue;
+        }
+        for (const KernelLocalActionResult& result : results.records) {
+            zero_recovery_result = zero_recovery_result ||
+                (result.action_instance_id == 7002u &&
+                 result.result == KernelLocalActionResultType_Accepted &&
+                 result.confirmed_commit_count == 1u);
+        }
+    }
+    require(zero_recovery_result);
+    const network_example::ActionRuntimeState& action =
+        server.world_.registry()
+            .get<network_example::ActionRuntimeState>(*owner_entity);
+    require(action.phase == KernelActionPhase_None);
+
+    release_input.input_seq = 4;
+    server.pending_inputs_.push_back(network_example::QueuedInput{
+        1,
+        release_input,
+        server.tick_loop_.current_tick(),
+        0,
+        false,
+        0,
+    });
+    server.simulate_tick();
+    tuning.definitions[0].fire_action_template_id = 1002;
+    server.world_.set_action_templates({network_example::RuntimeActionTemplate{
+        1002,
+        KernelActionTriggerMode_Hold,
+        0,
+        1,
+        0,
+        1,
+        2,
+        0,
+        3,
+    }});
+    input.input_seq = 5;
+    input.client_action_id = 7003;
+    const std::uint16_t hold_ammo_before =
+        server.world_.registry()
+            .get<network_example::WeaponState>(*owner_entity)
+            .ammo[0];
+    for (int commit = 0; commit < 2; ++commit) {
+        owner_session = server.find_session(1);
+        require(server.prepare_server_fire_input(owner_session, input));
+        server.pending_inputs_.push_back(network_example::QueuedInput{
+            1,
+            input,
+            server.tick_loop_.current_tick(),
+            0,
+            false,
+            0,
+        });
+        server.simulate_tick();
+        ++input.input_seq;
+    }
+    require(
+        server.world_.registry()
+            .get<network_example::WeaponState>(*owner_entity)
+            .ammo[0] + 2u == hold_ammo_before);
+    bool saw_second_commit = false;
+    while (loopback_transport->PollClientEvent(event)) {
+        network_example::LocalActionResultBatchPacket results{};
+        if (!network_example::decode_local_action_result_batch_packet(
+                event.payload.data(),
+                event.payload.size(),
+                &results) ||
+            event.peer != 1) {
+            continue;
+        }
+        for (const KernelLocalActionResult& result : results.records) {
+            saw_second_commit = saw_second_commit ||
+                (result.action_instance_id == 7003u &&
+                 result.confirmed_commit_count == 2u &&
+                 result.result == KernelLocalActionResultType_Accepted);
+        }
+    }
+    require(saw_second_commit);
+}
+
 }  // namespace
 
 int main() {
@@ -2664,6 +2990,8 @@ int main() {
     default_kernel_config_uses_larger_render_state_cap();
     render_state_overflow_reports_error_event();
     hit_debug_records_filter_and_drain();
+    action_result_and_remote_presentation_queues_are_isolated();
+    server_routes_fire_result_to_owner_and_presentation_to_observer();
     owner_action_prediction_and_discrete_interpolation();
 
     KernelConfig config{};

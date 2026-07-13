@@ -31,6 +31,9 @@ constexpr std::size_t kEntityTemplateUpdatePayloadSize = 12;
 constexpr std::size_t kProjectileSpawnBatchHeaderPayloadSize = 24;
 constexpr std::size_t kProjectileSpawnGroupHeaderPayloadSize = 8;
 constexpr std::size_t kProjectileSpawnRecordPayloadSize = 40;
+constexpr std::size_t kActionBatchHeaderPayloadSize = 8;
+constexpr std::size_t kLocalActionResultPayloadSize = 12;
+constexpr std::size_t kRemoteActionPresentationPayloadSize = 20;
 
 enum class SnapshotSectionType : std::uint16_t {
     kActor = 1,
@@ -767,6 +770,167 @@ bool decode_projectile_spawn_batch_packet(
         return false;
     }
 
+    *out_packet = std::move(packet);
+    return true;
+}
+
+std::vector<std::uint8_t> encode_local_action_result_batch_packet(
+    const LocalActionResultBatchPacket& packet,
+    std::uint32_t sequence) {
+    if (packet.records.size() > UINT16_MAX) {
+        return {};
+    }
+    protocol_internal::PacketWriter payload;
+    payload.reserve(
+        kActionBatchHeaderPayloadSize +
+        packet.records.size() * kLocalActionResultPayloadSize);
+    payload.write_u32(packet.server_tick);
+    payload.write_u16(static_cast<std::uint16_t>(packet.records.size()));
+    payload.write_u16(0u);
+    for (const KernelLocalActionResult& record : packet.records) {
+        payload.write_u32(record.action_instance_id);
+        payload.write_u16(record.confirmed_commit_count);
+        payload.write_u8(record.result);
+        payload.write_u8(record.reason);
+        payload.write_u32(record.authoritative_tick);
+    }
+    return protocol_internal::wrap_packet(
+        MessageType::kLocalActionResultBatch,
+        payload.bytes(),
+        sequence);
+}
+
+bool decode_local_action_result_batch_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    LocalActionResultBatchPacket* out_packet) {
+    const std::uint8_t* payload = nullptr;
+    std::size_t payload_size = 0;
+    if (out_packet == nullptr ||
+        !protocol_internal::unwrap_packet(
+            data,
+            size,
+            MessageType::kLocalActionResultBatch,
+            &payload,
+            &payload_size) ||
+        payload_size < kActionBatchHeaderPayloadSize) {
+        return false;
+    }
+    LocalActionResultBatchPacket packet;
+    std::uint16_t record_count = 0;
+    std::uint16_t reserved = 0;
+    protocol_internal::PacketReader reader(payload, payload_size);
+    if (!reader.read_u32(&packet.server_tick) ||
+        !reader.read_u16(&record_count) ||
+        !reader.read_u16(&reserved) || reserved != 0u ||
+        payload_size != kActionBatchHeaderPayloadSize +
+                            static_cast<std::size_t>(record_count) *
+                                kLocalActionResultPayloadSize) {
+        return false;
+    }
+    packet.records.reserve(record_count);
+    for (std::uint16_t index = 0; index < record_count; ++index) {
+        KernelLocalActionResult record{};
+        if (!reader.read_u32(&record.action_instance_id) ||
+            !reader.read_u16(&record.confirmed_commit_count) ||
+            !reader.read_u8(&record.result) ||
+            !reader.read_u8(&record.reason) ||
+            !reader.read_u32(&record.authoritative_tick) ||
+            record.action_instance_id == 0u ||
+            record.result > KernelLocalActionResultType_Rejected) {
+            return false;
+        }
+        packet.records.push_back(record);
+    }
+    if (!reader.done()) {
+        return false;
+    }
+    *out_packet = std::move(packet);
+    return true;
+}
+
+std::vector<std::uint8_t> encode_remote_action_presentation_batch_packet(
+    const RemoteActionPresentationBatchPacket& packet,
+    std::uint32_t sequence) {
+    if (packet.records.size() > UINT16_MAX) {
+        return {};
+    }
+    protocol_internal::PacketWriter payload;
+    payload.reserve(
+        kActionBatchHeaderPayloadSize +
+        packet.records.size() * kRemoteActionPresentationPayloadSize);
+    payload.write_u32(packet.server_tick);
+    payload.write_u16(static_cast<std::uint16_t>(packet.records.size()));
+    payload.write_u16(0u);
+    for (const KernelRemoteActionPresentationEvent& record : packet.records) {
+        payload.write_u32(record.actor_net_id);
+        payload.write_u32(record.action_template_id);
+        payload.write_u32(record.action_instance_id);
+        payload.write_u16(record.first_commit_index);
+        payload.write_u16(record.commit_count);
+        payload.write_u8(record.event_type);
+        payload.write_u8(record.flags);
+        payload.write_u16(record.server_tick_delta);
+    }
+    return protocol_internal::wrap_packet(
+        MessageType::kRemoteActionPresentationBatch,
+        payload.bytes(),
+        sequence);
+}
+
+bool decode_remote_action_presentation_batch_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    RemoteActionPresentationBatchPacket* out_packet) {
+    const std::uint8_t* payload = nullptr;
+    std::size_t payload_size = 0;
+    if (out_packet == nullptr ||
+        !protocol_internal::unwrap_packet(
+            data,
+            size,
+            MessageType::kRemoteActionPresentationBatch,
+            &payload,
+            &payload_size) ||
+        payload_size < kActionBatchHeaderPayloadSize) {
+        return false;
+    }
+    RemoteActionPresentationBatchPacket packet;
+    std::uint16_t record_count = 0;
+    std::uint16_t reserved = 0;
+    protocol_internal::PacketReader reader(payload, payload_size);
+    if (!reader.read_u32(&packet.server_tick) ||
+        !reader.read_u16(&record_count) ||
+        !reader.read_u16(&reserved) || reserved != 0u ||
+        payload_size != kActionBatchHeaderPayloadSize +
+                            static_cast<std::size_t>(record_count) *
+                                kRemoteActionPresentationPayloadSize) {
+        return false;
+    }
+    packet.records.reserve(record_count);
+    for (std::uint16_t index = 0; index < record_count; ++index) {
+        KernelRemoteActionPresentationEvent record{};
+        if (!reader.read_u32(&record.actor_net_id) ||
+            !reader.read_u32(&record.action_template_id) ||
+            !reader.read_u32(&record.action_instance_id) ||
+            !reader.read_u16(&record.first_commit_index) ||
+            !reader.read_u16(&record.commit_count) ||
+            !reader.read_u8(&record.event_type) ||
+            !reader.read_u8(&record.flags) ||
+            !reader.read_u16(&record.server_tick_delta) ||
+            record.actor_net_id == 0u || record.action_instance_id == 0u ||
+            record.first_commit_index == 0u || record.commit_count == 0u ||
+            static_cast<std::uint32_t>(record.first_commit_index) +
+                    static_cast<std::uint32_t>(record.commit_count) - 1u >
+                UINT16_MAX ||
+            record.event_type >
+                KernelRemoteActionPresentationEventType_DeathTrigger) {
+            return false;
+        }
+        packet.records.push_back(record);
+    }
+    if (!reader.done()) {
+        return false;
+    }
     *out_packet = std::move(packet);
     return true;
 }

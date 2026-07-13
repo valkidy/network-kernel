@@ -289,6 +289,66 @@ int main() {
         bad_batch_crc.size(),
         &decoded_batch));
 
+    network_example::LocalActionResultBatchPacket local_results{};
+    local_results.server_tick = 44;
+    local_results.records.push_back(KernelLocalActionResult{
+        7001,
+        2,
+        KernelLocalActionResultType_Corrected,
+        KernelLocalActionResultReason_Cancelled,
+        43,
+    });
+    const std::vector<std::uint8_t> local_result_packet =
+        network_example::encode_local_action_result_batch_packet(
+            local_results,
+            21);
+    assert(local_result_packet.size() == 28u + 8u + 12u);
+    network_example::LocalActionResultBatchPacket decoded_local_results{};
+    assert(network_example::decode_local_action_result_batch_packet(
+        local_result_packet.data(),
+        local_result_packet.size(),
+        &decoded_local_results));
+    assert(decoded_local_results.server_tick == 44);
+    assert(decoded_local_results.records.size() == 1);
+    assert(decoded_local_results.records[0].action_instance_id == 7001);
+    assert(decoded_local_results.records[0].confirmed_commit_count == 2);
+    assert(decoded_local_results.records[0].result ==
+           KernelLocalActionResultType_Corrected);
+
+    network_example::RemoteActionPresentationBatchPacket presentation{};
+    presentation.server_tick = 50;
+    presentation.records.push_back(KernelRemoteActionPresentationEvent{
+        101,
+        9,
+        7001,
+        1,
+        3,
+        KernelRemoteActionPresentationEventType_FireCommit,
+        0,
+        2,
+    });
+    const std::vector<std::uint8_t> presentation_packet =
+        network_example::encode_remote_action_presentation_batch_packet(
+            presentation,
+            22);
+    assert(presentation_packet.size() == 28u + 8u + 20u);
+    network_example::RemoteActionPresentationBatchPacket decoded_presentation{};
+    assert(network_example::decode_remote_action_presentation_batch_packet(
+        presentation_packet.data(),
+        presentation_packet.size(),
+        &decoded_presentation));
+    assert(decoded_presentation.records.size() == 1);
+    assert(decoded_presentation.records[0].actor_net_id == 101);
+    assert(decoded_presentation.records[0].commit_count == 3);
+    assert(decoded_presentation.records[0].server_tick_delta == 2);
+
+    std::vector<std::uint8_t> bad_presentation_count = presentation_packet;
+    bad_presentation_count[32] = 2u;
+    assert(!network_example::decode_remote_action_presentation_batch_packet(
+        bad_presentation_count.data(),
+        bad_presentation_count.size(),
+        &decoded_presentation));
+
     std::vector<std::uint8_t> bad_header = input_packet;
     bad_header[0] = 0;
     assert(!network_example::decode_input_packet(

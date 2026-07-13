@@ -254,6 +254,16 @@ int main() {
             KernelHandle*,
             KernelEntityLifecycleEvent*,
             std::uint32_t)>(library, "Kernel_PollEntityLifecycleEvents");
+    auto* kernel_poll_local_action_results =
+        load_symbol<std::uint32_t(
+            KernelHandle*,
+            KernelLocalActionResult*,
+            std::uint32_t)>(library, "Kernel_PollLocalActionResults");
+    auto* kernel_poll_remote_action_presentation_events =
+        load_symbol<std::uint32_t(
+            KernelHandle*,
+            KernelRemoteActionPresentationEvent*,
+            std::uint32_t)>(library, "Kernel_PollRemoteActionPresentationEvents");
     auto* kernel_get_local_player_info =
         load_symbol<bool(KernelHandle*, KernelLocalPlayerInfo*)>(
             library,
@@ -413,6 +423,8 @@ int main() {
     assert(abi_info.kernel_event_size == sizeof(KernelEvent));
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS) != 0);
     assert(kernel_poll_entity_lifecycle_events(nullptr, nullptr, 0) == 0);
+    assert(kernel_poll_local_action_results(nullptr, nullptr, 0) == 0);
+    assert(kernel_poll_remote_action_presentation_events(nullptr, nullptr, 0) == 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
     assert(abi_info.server_entity_create_info_size ==
            sizeof(KernelServerEntityCreateInfo));
@@ -429,6 +441,14 @@ int main() {
            sizeof(KernelActionTemplateDefinition));
     assert(abi_info.action_runtime_view_size == sizeof(KernelActionRuntimeView));
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ACTION_TIMELINE) != 0);
+    assert(abi_info.local_action_result_size == sizeof(KernelLocalActionResult));
+    assert(
+        abi_info.remote_action_presentation_event_size ==
+        sizeof(KernelRemoteActionPresentationEvent));
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_LOCAL_ACTION_RESULTS) != 0);
+    assert(
+        (abi_info.capability_flags &
+         KERNEL_CAPABILITY_REMOTE_ACTION_PRESENTATION) != 0);
     assert(abi_info.projectile_mechanics_definition_size ==
            sizeof(KernelProjectileMechanicsDefinition));
     assert(abi_info.area_effect_mechanics_definition_size ==

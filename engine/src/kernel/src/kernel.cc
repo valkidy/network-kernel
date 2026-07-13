@@ -34,6 +34,11 @@ namespace {
 
 constexpr std::uint32_t kClientSnapshotMetadataGraceTicks = 2;
 constexpr bool kDropStaleClientSnapshotsMissingMetadata = true;
+constexpr std::uint64_t kLocalActionResultTimeoutUs = UINT64_C(1000000);
+constexpr std::uint32_t kRemotePresentationExpiryMs = 250;
+constexpr std::size_t kRemotePresentationMaxRecords = 58;
+constexpr std::size_t kRemotePresentationDedupCapacity = 256;
+constexpr std::size_t kRecentFireResultCapacity = 256;
 
 KernelConfig with_kernel_defaults(KernelConfig config) {
     config.tick = with_tick_defaults(config.tick);
@@ -1499,6 +1504,31 @@ void KernelEngine::update(float delta_seconds) {
         client_local_time_us_ += static_cast<std::uint64_t>(
             static_cast<double>(delta_seconds) * 1000000.0);
     }
+    for (auto outstanding = outstanding_predicted_fires_.begin();
+         outstanding != outstanding_predicted_fires_.end();) {
+        if (client_local_time_us_ <= outstanding->second.last_activity_us +
+                                         kLocalActionResultTimeoutUs) {
+            ++outstanding;
+            continue;
+        }
+        const std::uint32_t expired_action_id = outstanding->first;
+        predicted_projectiles_.erase(
+            std::remove_if(
+                predicted_projectiles_.begin(),
+                predicted_projectiles_.end(),
+                [expired_action_id](const PredictedProjectile& projectile) {
+                    return !projectile.bound &&
+                           projectile.client_action_id == expired_action_id;
+                }),
+            predicted_projectiles_.end());
+        if (predicted_local_entity_.action_instance_id == expired_action_id) {
+            predicted_local_entity_.action_phase = KernelActionPhase_None;
+            predicted_local_entity_.action_template_id = 0u;
+            predicted_local_entity_.action_instance_id = 0u;
+            predicted_action_next_commit_tick_ = 0u;
+        }
+        outstanding = outstanding_predicted_fires_.erase(outstanding);
+    }
     if (delta_seconds > 0.0f &&
         gameplay_catalog_sync_state_ >=
             KernelGameplayCatalogSyncState_Connecting &&
@@ -1528,7 +1558,19 @@ void KernelEngine::submit_input(PeerId local_player_id, const PlayerInput& input
         listen_server_transport_ != nullptr) {
         const PlayerInput input_to_send = prepare_client_input(input);
         predict_local_input(input_to_send);
-        if (predict_local_action(input_to_send)) {
+        const bool predicted_commit = predict_local_action(input_to_send);
+        if ((input_to_send.buttons & InputButton_Fire) != 0u &&
+            input_to_send.client_action_id != 0u) {
+            auto outstanding = outstanding_predicted_fires_.try_emplace(
+                input_to_send.client_action_id,
+                OutstandingPredictedFire{
+                    input_to_send.client_action_id,
+                    client_local_time_us_,
+                    0u,
+                }).first;
+            outstanding->second.last_activity_us = client_local_time_us_;
+        }
+        if (predicted_commit) {
             predict_local_projectile(input_to_send);
         }
         rebuild_render_states();
@@ -1558,7 +1600,19 @@ void KernelEngine::submit_input(PeerId local_player_id, const PlayerInput& input
 
         const PlayerInput input_to_send = prepare_client_input(input);
         predict_local_input(input_to_send);
-        if (predict_local_action(input_to_send)) {
+        const bool predicted_commit = predict_local_action(input_to_send);
+        if ((input_to_send.buttons & InputButton_Fire) != 0u &&
+            input_to_send.client_action_id != 0u) {
+            auto outstanding = outstanding_predicted_fires_.try_emplace(
+                input_to_send.client_action_id,
+                OutstandingPredictedFire{
+                    input_to_send.client_action_id,
+                    client_local_time_us_,
+                    0u,
+                }).first;
+            outstanding->second.last_activity_us = client_local_time_us_;
+        }
+        if (predicted_commit) {
             predict_local_projectile(input_to_send);
         }
         rebuild_render_states();
@@ -1878,6 +1932,45 @@ std::uint32_t KernelEngine::poll_entity_lifecycle_events(
         lifecycle_events_.data(),
         sizeof(KernelEntityLifecycleEvent) * count);
     lifecycle_events_.erase(lifecycle_events_.begin(), lifecycle_events_.begin() + count);
+    return count;
+}
+
+std::uint32_t KernelEngine::poll_local_action_results(
+    KernelLocalActionResult* out_results,
+    std::uint32_t max_results) {
+    if (out_results == nullptr || max_results == 0) {
+        return 0;
+    }
+    const std::uint32_t count = std::min(
+        max_results,
+        static_cast<std::uint32_t>(local_action_results_.size()));
+    std::memcpy(
+        out_results,
+        local_action_results_.data(),
+        sizeof(KernelLocalActionResult) * count);
+    local_action_results_.erase(
+        local_action_results_.begin(),
+        local_action_results_.begin() + count);
+    return count;
+}
+
+std::uint32_t KernelEngine::poll_remote_action_presentation_events(
+    KernelRemoteActionPresentationEvent* out_events,
+    std::uint32_t max_events) {
+    if (out_events == nullptr || max_events == 0) {
+        return 0;
+    }
+    release_remote_action_presentation_events();
+    const std::uint32_t count = std::min(
+        max_events,
+        static_cast<std::uint32_t>(remote_action_presentation_events_.size()));
+    std::memcpy(
+        out_events,
+        remote_action_presentation_events_.data(),
+        sizeof(KernelRemoteActionPresentationEvent) * count);
+    remote_action_presentation_events_.erase(
+        remote_action_presentation_events_.begin(),
+        remote_action_presentation_events_.begin() + count);
     return count;
 }
 
@@ -2792,6 +2885,11 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     events_.clear();
     lifecycle_events_.clear();
     pending_presentation_events_.clear();
+    local_action_results_.clear();
+    remote_action_presentation_events_.clear();
+    pending_server_remote_presentations_.clear();
+    pending_remote_action_presentation_events_.clear();
+    remote_presentation_dedup_.clear();
     render_states_.clear();
     latest_snapshot_ = WorldSnapshot{};
     latest_client_snapshot_ = WorldSnapshot{};
@@ -2803,6 +2901,8 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     client_despawned_entities_.clear();
     pending_prediction_inputs_.clear();
     predicted_projectiles_.clear();
+    outstanding_predicted_fires_.clear();
+    applied_local_action_results_.clear();
     debug_records_.clear();
     vision_configs_.clear();
     vision_states_.clear();
@@ -2839,6 +2939,8 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     local_player_net_id_ = 0;
     local_last_processed_input_seq_ = 0;
     next_packet_sequence_ = 1;
+    next_server_presentation_instance_id_ = 1;
+    last_remote_presentation_sequence_ = 0;
     next_clock_sync_nonce_ = 1;
     received_sequences_by_peer_.clear();
     received_packet_count_ = 0;
@@ -2859,6 +2961,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     has_predicted_local_entity_ = false;
     has_client_clock_sync_ = false;
     has_client_render_time_ = false;
+    has_remote_presentation_sequence_ = false;
     running_ = true;
 }
 
@@ -2915,6 +3018,12 @@ void KernelEngine::poll_transport() {
             handle_client_reliable_event(transport_event);
         } else if (
             transport_event.type == TransportEventType::kMessage &&
+            transport_event.channel == ChannelId::kPresentation &&
+            config_.mode == KernelMode_Client) {
+            record_received_packet_sequence(transport_event);
+            handle_client_remote_action_presentation(transport_event);
+        } else if (
+            transport_event.type == TransportEventType::kMessage &&
             transport_event.channel == ChannelId::kSnapshot &&
             config_.mode == KernelMode_Client) {
             record_received_packet_sequence(transport_event);
@@ -2965,6 +3074,12 @@ void KernelEngine::poll_transport() {
                 push_event(KernelEventType_Error, 0, transport_event.peer, 11);
                 continue;
             }
+            PeerSession* mutable_session = result_session_for_peer(
+                transport_event.peer);
+            if ((input.buttons & InputButton_Fire) != 0u &&
+                !prepare_server_fire_input(mutable_session, input)) {
+                continue;
+            }
             const std::uint64_t received_server_time_us = current_server_time_us();
             const std::uint64_t action_server_time_us =
                 convert_client_action_time_to_server_time(
@@ -2978,7 +3093,6 @@ void KernelEngine::poll_transport() {
                 action_server_time_us,
                 true,
             });
-            PeerSession* mutable_session = find_session(transport_event.peer);
             if (mutable_session != nullptr) {
                 mutable_session->last_processed_input_seq =
                     std::max(mutable_session->last_processed_input_seq, input.input_seq);
@@ -3025,8 +3139,19 @@ void KernelEngine::handle_client_disconnect(PeerId peer) {
 }
 
 void KernelEngine::handle_client_reliable_event(const TransportEvent& transport_event) {
-    KernelEvent event{};
+    LocalActionResultBatchPacket local_action_results{};
     auto decode_start = std::chrono::steady_clock::now();
+    if (decode_local_action_result_batch_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &local_action_results)) {
+        record_packet_deserialization_cost(elapsed_cost_us(decode_start));
+        handle_client_local_action_results(local_action_results);
+        return;
+    }
+
+    KernelEvent event{};
+    decode_start = std::chrono::steady_clock::now();
     if (decode_reliable_event_packet(
             transport_event.payload.data(),
             transport_event.payload.size(),
@@ -3086,6 +3211,180 @@ void KernelEngine::handle_client_reliable_event(const TransportEvent& transport_
 
     record_packet_deserialization_cost(elapsed_cost_us(decode_start));
     push_event(KernelEventType_Error, 0, transport_event.peer, 14);
+}
+
+void KernelEngine::handle_client_local_action_results(
+    const LocalActionResultBatchPacket& packet) {
+    for (const KernelLocalActionResult& result : packet.records) {
+        const auto applied = applied_local_action_results_.find(
+            result.action_instance_id);
+        if (applied != applied_local_action_results_.end() &&
+            (result.confirmed_commit_count <
+                 applied->second.confirmed_commit_count ||
+             (result.confirmed_commit_count ==
+                  applied->second.confirmed_commit_count &&
+              result.authoritative_tick <=
+                  applied->second.authoritative_tick))) {
+            continue;
+        }
+        auto outstanding = outstanding_predicted_fires_.find(result.action_instance_id);
+        if (outstanding != outstanding_predicted_fires_.end()) {
+            if (result.confirmed_commit_count <
+                    outstanding->second.confirmed_commit_count ||
+                (result.confirmed_commit_count ==
+                     outstanding->second.confirmed_commit_count &&
+                 result.authoritative_tick == 0u)) {
+                continue;
+            }
+            outstanding->second.confirmed_commit_count =
+                result.confirmed_commit_count;
+            outstanding->second.last_activity_us = client_local_time_us_;
+        }
+
+        const auto duplicate = std::find_if(
+            local_action_results_.begin(),
+            local_action_results_.end(),
+            [&result](const KernelLocalActionResult& existing) {
+                return existing.action_instance_id == result.action_instance_id &&
+                       existing.confirmed_commit_count ==
+                           result.confirmed_commit_count &&
+                       existing.result == result.result &&
+                       existing.authoritative_tick == result.authoritative_tick;
+            });
+        if (duplicate != local_action_results_.end()) {
+            continue;
+        }
+
+        if (result.result == KernelLocalActionResultType_Rejected ||
+            result.result == KernelLocalActionResultType_Corrected) {
+            predicted_projectiles_.erase(
+                std::remove_if(
+                    predicted_projectiles_.begin(),
+                    predicted_projectiles_.end(),
+                    [&result](const PredictedProjectile& projectile) {
+                        return !projectile.bound &&
+                               projectile.client_action_id ==
+                                   result.action_instance_id;
+                    }),
+                predicted_projectiles_.end());
+            if (predicted_local_entity_.action_instance_id ==
+                result.action_instance_id) {
+                predicted_local_entity_.action_commit_count =
+                    result.confirmed_commit_count;
+                if (result.result == KernelLocalActionResultType_Rejected) {
+                    predicted_local_entity_.action_template_id = 0u;
+                    predicted_local_entity_.action_instance_id = 0u;
+                    predicted_local_entity_.action_start_tick = 0u;
+                    predicted_local_entity_.action_commit_count = 0u;
+                    predicted_local_entity_.action_phase = KernelActionPhase_None;
+                    predicted_action_next_commit_tick_ = 0u;
+                    predicted_action_recovery_end_tick_ = 0u;
+                }
+            }
+        }
+        local_action_results_.push_back(result);
+        applied_local_action_results_[result.action_instance_id] = result;
+    }
+}
+
+void KernelEngine::handle_client_remote_action_presentation(
+    const TransportEvent& transport_event) {
+    PacketHeader header{};
+    if (!decode_packet_header(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &header)) {
+        return;
+    }
+    if (has_remote_presentation_sequence_ &&
+        static_cast<std::int32_t>(
+            header.sequence - last_remote_presentation_sequence_) <= 0) {
+        return;
+    }
+    RemoteActionPresentationBatchPacket packet{};
+    const auto decode_start = std::chrono::steady_clock::now();
+    if (!decode_remote_action_presentation_batch_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &packet)) {
+        record_packet_deserialization_cost(elapsed_cost_us(decode_start));
+        push_event(KernelEventType_Error, 0, transport_event.peer, 28);
+        return;
+    }
+    record_packet_deserialization_cost(elapsed_cost_us(decode_start));
+    has_remote_presentation_sequence_ = true;
+    last_remote_presentation_sequence_ = header.sequence;
+
+    const std::uint32_t expiry_ticks = std::max(
+        1u,
+        (config_.tick.server_tick_rate * kRemotePresentationExpiryMs + 999u) /
+            1000u);
+    remote_presentation_dedup_.erase(
+        std::remove_if(
+            remote_presentation_dedup_.begin(),
+            remote_presentation_dedup_.end(),
+            [packet](const RemotePresentationDedup& entry) {
+                return entry.expire_tick < packet.server_tick;
+            }),
+        remote_presentation_dedup_.end());
+
+    for (const KernelRemoteActionPresentationEvent& event : packet.records) {
+        const std::uint32_t event_tick =
+            packet.server_tick >= event.server_tick_delta
+                ? packet.server_tick - event.server_tick_delta
+                : 0u;
+        if (has_client_snapshot_ &&
+            latest_client_snapshot_.header.server_tick > event_tick + expiry_ticks) {
+            continue;
+        }
+        KernelRemoteActionPresentationEvent unseen_range = event;
+        unseen_range.commit_count = 0u;
+        auto flush_unseen_range = [this, &packet](
+            const KernelRemoteActionPresentationEvent& range) {
+            if (range.commit_count != 0u) {
+                pending_remote_action_presentation_events_.push_back(
+                    PendingRemotePresentation{packet.server_tick, range});
+            }
+        };
+        for (std::uint32_t offset = 0; offset < event.commit_count; ++offset) {
+            const std::uint16_t commit_index = static_cast<std::uint16_t>(
+                event.first_commit_index + offset);
+            const auto found = std::find_if(
+                remote_presentation_dedup_.begin(),
+                remote_presentation_dedup_.end(),
+                [&event, commit_index](const RemotePresentationDedup& entry) {
+                    return entry.actor_net_id == event.actor_net_id &&
+                           entry.action_instance_id == event.action_instance_id &&
+                           entry.commit_index == commit_index &&
+                           entry.event_type == event.event_type;
+                });
+            if (found != remote_presentation_dedup_.end()) {
+                flush_unseen_range(unseen_range);
+                unseen_range.first_commit_index =
+                    static_cast<std::uint16_t>(commit_index + 1u);
+                unseen_range.commit_count = 0u;
+                continue;
+            }
+            if (unseen_range.commit_count == 0u) {
+                unseen_range.first_commit_index = commit_index;
+            }
+            ++unseen_range.commit_count;
+            if (remote_presentation_dedup_.size() >=
+                kRemotePresentationDedupCapacity) {
+                remote_presentation_dedup_.erase(
+                    remote_presentation_dedup_.begin());
+            }
+            remote_presentation_dedup_.push_back(RemotePresentationDedup{
+                event.actor_net_id,
+                event.action_instance_id,
+                commit_index,
+                event.event_type,
+                event_tick + expiry_ticks,
+            });
+        }
+        flush_unseen_range(unseen_range);
+    }
+    release_remote_action_presentation_events();
 }
 
 void KernelEngine::handle_client_projectile_spawn_batch(
@@ -3476,7 +3775,13 @@ void KernelEngine::clear_client_session() {
     local_last_processed_input_seq_ = 0;
     pending_prediction_inputs_.clear();
     predicted_projectiles_.clear();
+    outstanding_predicted_fires_.clear();
+    applied_local_action_results_.clear();
     pending_presentation_events_.clear();
+    local_action_results_.clear();
+    remote_action_presentation_events_.clear();
+    pending_remote_action_presentation_events_.clear();
+    remote_presentation_dedup_.clear();
     lifecycle_events_.clear();
     client_snapshot_buffer_.clear();
     client_replicated_entities_.clear();
@@ -3492,6 +3797,8 @@ void KernelEngine::clear_client_session() {
     has_client_clock_sync_ = false;
     has_client_render_time_ = false;
     current_render_time_us_ = 0;
+    last_remote_presentation_sequence_ = 0;
+    has_remote_presentation_sequence_ = false;
     render_states_.clear();
 }
 
@@ -3512,6 +3819,38 @@ void KernelEngine::release_presentable_events() {
     pending_presentation_events_ = std::move(still_pending);
 }
 
+void KernelEngine::release_remote_action_presentation_events() {
+    if (pending_remote_action_presentation_events_.empty()) {
+        return;
+    }
+    std::vector<PendingRemotePresentation> still_pending;
+    still_pending.reserve(pending_remote_action_presentation_events_.size());
+    const std::uint64_t render_server_time_us =
+        client_clock_offset_us_ >= 0
+            ? current_render_time_us_ +
+                  static_cast<std::uint64_t>(client_clock_offset_us_)
+            : current_render_time_us_ >
+                      static_cast<std::uint64_t>(-client_clock_offset_us_)
+                  ? current_render_time_us_ -
+                        static_cast<std::uint64_t>(-client_clock_offset_us_)
+                  : 0u;
+    for (const PendingRemotePresentation& pending :
+         pending_remote_action_presentation_events_) {
+        const std::uint32_t event_tick =
+            pending.batch_server_tick >= pending.event.server_tick_delta
+                ? pending.batch_server_tick - pending.event.server_tick_delta
+                : 0u;
+        const std::uint64_t event_time_us =
+            tick_time_us(event_tick, tick_loop_.fixed_delta_seconds());
+        if (!has_client_render_time_ || event_time_us <= render_server_time_us) {
+            remote_action_presentation_events_.push_back(pending.event);
+        } else {
+            still_pending.push_back(pending);
+        }
+    }
+    pending_remote_action_presentation_events_ = std::move(still_pending);
+}
+
 void KernelEngine::poll_client_transport() {
     if (listen_server_transport_ == nullptr) {
         return;
@@ -3525,6 +3864,10 @@ void KernelEngine::poll_client_transport() {
         record_received_packet_sequence(transport_event);
         if (transport_event.channel == ChannelId::kReliableEvent) {
             handle_client_reliable_event(transport_event);
+            continue;
+        }
+        if (transport_event.channel == ChannelId::kPresentation) {
+            handle_client_remote_action_presentation(transport_event);
             continue;
         }
         if (transport_event.channel != ChannelId::kSnapshot) {
@@ -3843,16 +4186,6 @@ void KernelEngine::reconcile_predicted_projectiles(const WorldSnapshot& snapshot
         corrected_projectile = true;
     }
 
-    predicted_projectiles_.erase(
-        std::remove_if(
-            predicted_projectiles_.begin(),
-            predicted_projectiles_.end(),
-            [&snapshot](const PredictedProjectile& projectile) {
-                return !projectile.bound &&
-                       projectile.input_seq != 0 &&
-                       projectile.input_seq <= snapshot.header.last_processed_input_seq;
-            }),
-        predicted_projectiles_.end());
     if (corrected_projectile) {
         benchmark_stats_.hybrid_correction_cost_us +=
             std::max<std::uint64_t>(1, elapsed_cost_us(cost_start));
@@ -4044,6 +4377,11 @@ PlayerInput KernelEngine::prepare_client_input(const PlayerInput& input) {
     PlayerInput input_to_send = input;
     if (input_to_send.client_action_time_us == 0) {
         input_to_send.client_action_time_us = client_local_action_time_us();
+    }
+    if ((input_to_send.buttons & InputButton_Fire) != 0u &&
+        input_to_send.client_action_id == 0u) {
+        input_to_send.buttons &= ~static_cast<std::uint32_t>(InputButton_Fire);
+        push_event(KernelEventType_Error, local_player_net_id_, local_client_peer_id_, 27);
     }
     return input_to_send;
 }
@@ -4503,6 +4841,21 @@ void KernelEngine::simulate_tick() {
     const std::uint64_t server_time_us =
         tick_time_us(tick_loop_.current_tick(), fixed_delta);
     const std::size_t first_tick_event = events_.size();
+    std::unordered_set<NetId> actors_before_tick;
+    std::unordered_set<NetId> reloading_before_tick;
+    const auto actor_view = world_.registry().view<NetworkIdentity, EntityKind>();
+    for (const entt::entity entity : actor_view) {
+        const EntityKind& kind = actor_view.get<EntityKind>(entity);
+        if (kind.type != EntityType::kActor) {
+            continue;
+        }
+        const NetId net_id = actor_view.get<NetworkIdentity>(entity).net_id;
+        actors_before_tick.insert(net_id);
+        if (world_.registry().all_of<WeaponState>(entity) &&
+            world_.registry().get<WeaponState>(entity).is_reloading) {
+            reloading_before_tick.insert(net_id);
+        }
+    }
     world_.collider_registry().expire_tick_lifetimes();
     const std::size_t queue_depth = command_queue_.size();
     const std::size_t processed_command_count = drain_simulation_commands();
@@ -4579,6 +4932,29 @@ void KernelEngine::simulate_tick() {
     DirectorAISystem{}.update(*this);
     DirectorIntentExecutor{}.update(*this);
     const std::size_t last_tick_event = events_.size();
+    finalize_server_fire_outcomes(first_tick_event, last_tick_event);
+    queue_remote_presentation_from_events(
+        first_tick_event,
+        last_tick_event,
+        actors_before_tick,
+        reloading_before_tick);
+    if (config_.mode == KernelMode_ListenServer &&
+        local_listen_session_.welcomed) {
+        flush_local_action_results(&local_listen_session_);
+        flush_remote_action_presentation(
+            &local_listen_session_,
+            pending_server_remote_presentations_);
+    }
+    for (PeerSession& session : peer_sessions_) {
+        if (!session.welcomed) {
+            continue;
+        }
+        flush_local_action_results(&session);
+        flush_remote_action_presentation(
+            &session,
+            pending_server_remote_presentations_);
+    }
+    pending_server_remote_presentations_.clear();
     broadcast_combat_events(first_tick_event, last_tick_event);
     send_due_clock_sync_pings(server_time_us);
     history_buffer_.write_frame(world_, tick_loop_.current_tick());
@@ -5663,6 +6039,568 @@ void KernelEngine::queue_hit_debug_records(
         debug_info.data.hit.position = to_kernel_vec3(damage.hit_position);
         debug_records_.push_back(debug_info);
     }
+}
+
+KernelEngine::PeerSession* KernelEngine::result_session_for_peer(PeerId peer) {
+    if (config_.mode == KernelMode_ListenServer &&
+        local_listen_session_.welcomed && local_listen_session_.peer == peer) {
+        return &local_listen_session_;
+    }
+    return find_session(peer);
+}
+
+void KernelEngine::queue_local_action_result(
+    PeerSession* session,
+    const KernelLocalActionResult& result) {
+    if (session == nullptr || result.action_instance_id == 0u) {
+        return;
+    }
+    const bool is_new = session->recent_fire_results.find(
+        result.action_instance_id) == session->recent_fire_results.end();
+    session->recent_fire_results[result.action_instance_id] = result;
+    if (is_new) {
+        session->recent_fire_result_order.push_back(result.action_instance_id);
+        if (session->recent_fire_result_order.size() >
+            kRecentFireResultCapacity) {
+            const std::uint32_t expired =
+                session->recent_fire_result_order.front();
+            session->recent_fire_result_order.erase(
+                session->recent_fire_result_order.begin());
+            session->recent_fire_results.erase(expired);
+        }
+    }
+    const auto duplicate = std::find_if(
+        session->pending_fire_results.begin(),
+        session->pending_fire_results.end(),
+        [&result](const KernelLocalActionResult& pending) {
+            return pending.action_instance_id == result.action_instance_id &&
+                   pending.confirmed_commit_count ==
+                       result.confirmed_commit_count &&
+                   pending.result == result.result &&
+                   pending.authoritative_tick == result.authoritative_tick;
+        });
+    if (duplicate == session->pending_fire_results.end()) {
+        session->pending_fire_results.push_back(result);
+    }
+}
+
+bool KernelEngine::prepare_server_fire_input(
+    PeerSession* session,
+    const PlayerInput& input) {
+    if (session == nullptr || input.client_action_id == 0u) {
+        return false;
+    }
+    if (session->active_fire_action_id != 0u) {
+        if (session->active_fire_action_id == input.client_action_id) {
+            return true;
+        }
+        const KernelLocalActionResult rejected{
+            input.client_action_id,
+            0u,
+            KernelLocalActionResultType_Rejected,
+            KernelLocalActionResultReason_Busy,
+            tick_loop_.current_tick(),
+        };
+        session->fire_action_high_water = std::max(
+            session->fire_action_high_water,
+            input.client_action_id);
+        queue_local_action_result(session, rejected);
+        return false;
+    }
+    const auto cached = session->recent_fire_results.find(input.client_action_id);
+    if (cached != session->recent_fire_results.end()) {
+        queue_local_action_result(session, cached->second);
+        return false;
+    }
+    if (session->fire_action_high_water != 0u &&
+        static_cast<std::int32_t>(
+            input.client_action_id - session->fire_action_high_water) <= 0) {
+        queue_local_action_result(
+            session,
+            KernelLocalActionResult{
+                input.client_action_id,
+                0u,
+                KernelLocalActionResultType_Rejected,
+                KernelLocalActionResultReason_InvalidActionId,
+                tick_loop_.current_tick(),
+            });
+        return false;
+    }
+    session->fire_action_high_water = input.client_action_id;
+
+    const auto actor = world_.find_entity(session->player);
+    if (!actor.has_value() ||
+        !world_.registry().all_of<WeaponState, WeaponTuning>(*actor)) {
+        queue_local_action_result(
+            session,
+            KernelLocalActionResult{
+                input.client_action_id,
+                0u,
+                KernelLocalActionResultType_Rejected,
+                KernelLocalActionResultReason_MissingActor,
+                tick_loop_.current_tick(),
+            });
+        return false;
+    }
+    if (world_.registry().all_of<Health>(*actor) &&
+        world_.registry().get<Health>(*actor).hp == 0u) {
+        queue_local_action_result(
+            session,
+            KernelLocalActionResult{
+                input.client_action_id,
+                0u,
+                KernelLocalActionResultType_Rejected,
+                KernelLocalActionResultReason_Dead,
+                tick_loop_.current_tick(),
+            });
+        return false;
+    }
+    const std::size_t weapon_index = input.selected_weapon;
+    WeaponState& weapon = world_.registry().get<WeaponState>(*actor);
+    const WeaponTuning& tuning = world_.registry().get<WeaponTuning>(*actor);
+    if (weapon_index >= tuning.definitions.size() ||
+        !tuning.configured[weapon_index]) {
+        queue_local_action_result(
+            session,
+            KernelLocalActionResult{
+                input.client_action_id,
+                0u,
+                KernelLocalActionResultType_Rejected,
+                KernelLocalActionResultReason_MissingTemplate,
+                tick_loop_.current_tick(),
+            });
+        return false;
+    }
+    const WeaponMechanicsDefinition& definition =
+        tuning.definitions[weapon_index];
+    if (weapon.is_reloading) {
+        queue_local_action_result(
+            session,
+            KernelLocalActionResult{
+                input.client_action_id,
+                0u,
+                KernelLocalActionResultType_Rejected,
+                KernelLocalActionResultReason_Reloading,
+                tick_loop_.current_tick(),
+            });
+        return false;
+    }
+    std::uint16_t ammo_cost = 1u;
+    if (definition.fire_action_template_id != 0u) {
+        const RuntimeActionTemplate* action_template =
+            world_.find_action_template(definition.fire_action_template_id);
+        if (action_template == nullptr) {
+            queue_local_action_result(
+                session,
+                KernelLocalActionResult{
+                    input.client_action_id,
+                    0u,
+                    KernelLocalActionResultType_Rejected,
+                    KernelLocalActionResultReason_MissingTemplate,
+                    tick_loop_.current_tick(),
+                });
+            return false;
+        }
+        ammo_cost = action_template->ammo_cost_per_commit;
+    }
+    if (weapon_index >= weapon.ammo.size() ||
+        weapon.ammo[weapon_index] < ammo_cost) {
+        queue_local_action_result(
+            session,
+            KernelLocalActionResult{
+                input.client_action_id,
+                0u,
+                KernelLocalActionResultType_Rejected,
+                KernelLocalActionResultReason_NoAmmo,
+                tick_loop_.current_tick(),
+            });
+        return false;
+    }
+    if (definition.fire_action_template_id == 0u &&
+        weapon_index < weapon.next_fire_tick.size() &&
+        tick_loop_.current_tick() < weapon.next_fire_tick[weapon_index]) {
+        queue_local_action_result(
+            session,
+            KernelLocalActionResult{
+                input.client_action_id,
+                0u,
+                KernelLocalActionResultType_Rejected,
+                KernelLocalActionResultReason_Busy,
+                tick_loop_.current_tick(),
+            });
+        return false;
+    }
+    session->active_fire_action_id = input.client_action_id;
+    session->active_fire_template_id = definition.fire_action_template_id;
+    session->active_fire_commit_count = 0u;
+    return true;
+}
+
+void KernelEngine::flush_local_action_results(PeerSession* session) {
+    if (session == nullptr || session->pending_fire_results.empty()) {
+        return;
+    }
+    constexpr std::size_t kMaxResultsPerPacket = 97;
+    std::size_t offset = 0;
+    while (offset < session->pending_fire_results.size()) {
+        const std::size_t end = std::min(
+            session->pending_fire_results.size(),
+            offset + kMaxResultsPerPacket);
+        LocalActionResultBatchPacket batch{};
+        batch.server_tick = tick_loop_.current_tick();
+        batch.records.assign(
+            session->pending_fire_results.begin() + offset,
+            session->pending_fire_results.begin() + end);
+        const std::vector<std::uint8_t> packet =
+            encode_local_action_result_batch_packet(
+                batch,
+                next_packet_sequence_++);
+        const bool local_listen =
+            config_.mode == KernelMode_ListenServer &&
+            session == &local_listen_session_ &&
+            listen_server_transport_ != nullptr;
+        const bool sent = local_listen
+            ? listen_server_transport_->Send(
+                  session->peer,
+                  packet.data(),
+                  static_cast<std::uint32_t>(packet.size()),
+                  SendMode::kReliable,
+                  ChannelId::kReliableEvent)
+            : transport_->Send(
+                  session->peer,
+                  packet.data(),
+                  static_cast<std::uint32_t>(packet.size()),
+                  SendMode::kReliable,
+                  ChannelId::kReliableEvent);
+        if (!sent) {
+            push_event(KernelEventType_Error, session->player, session->peer, 29);
+            return;
+        }
+        record_sent_packet(
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kReliableEvent);
+        offset = end;
+    }
+    session->pending_fire_results.clear();
+}
+
+void KernelEngine::finalize_server_fire_outcomes(
+    std::size_t first_event,
+    std::size_t last_event) {
+    if (!is_server_mode(config_.mode)) {
+        return;
+    }
+    const std::size_t capped_last = std::min(last_event, events_.size());
+    for (std::size_t index = first_event; index < capped_last; ++index) {
+        const KernelEvent& event = events_[index];
+        if (event.type != KernelEventType_FireConfirmed) {
+            continue;
+        }
+        PeerSession* session = result_session_for_peer(event.peer_id);
+        std::uint32_t action_instance_id = 0u;
+        std::uint32_t action_template_id = 0u;
+        std::uint16_t commit_index = 1u;
+        if (session != nullptr && session->active_fire_action_id != 0u) {
+            action_instance_id = session->active_fire_action_id;
+            action_template_id = session->active_fire_template_id;
+            commit_index = static_cast<std::uint16_t>(
+                std::min<std::uint32_t>(
+                    UINT16_MAX,
+                    static_cast<std::uint32_t>(
+                        session->active_fire_commit_count) + 1u));
+            session->active_fire_commit_count = commit_index;
+            queue_local_action_result(
+                session,
+                KernelLocalActionResult{
+                    action_instance_id,
+                    commit_index,
+                    KernelLocalActionResultType_Accepted,
+                    KernelLocalActionResultReason_None,
+                    tick_loop_.current_tick(),
+                });
+        } else {
+            action_instance_id = next_server_presentation_instance_id_++;
+            if (next_server_presentation_instance_id_ == 0u) {
+                next_server_presentation_instance_id_ = 1u;
+            }
+        }
+
+        KernelRemoteActionPresentationEvent presentation{
+            event.net_id,
+            action_template_id,
+            action_instance_id,
+            commit_index,
+            1u,
+            KernelRemoteActionPresentationEventType_FireCommit,
+            0u,
+            0u,
+        };
+        if (!pending_server_remote_presentations_.empty()) {
+            KernelRemoteActionPresentationEvent& previous =
+                pending_server_remote_presentations_.back();
+            if (previous.actor_net_id == presentation.actor_net_id &&
+                previous.action_template_id == presentation.action_template_id &&
+                previous.action_instance_id == presentation.action_instance_id &&
+                previous.event_type == presentation.event_type &&
+                previous.first_commit_index + previous.commit_count ==
+                    presentation.first_commit_index &&
+                previous.commit_count < UINT16_MAX) {
+                ++previous.commit_count;
+                continue;
+            }
+        }
+        pending_server_remote_presentations_.push_back(presentation);
+    }
+
+    for (const QueuedInput& queued_input : pending_inputs_) {
+        if ((queued_input.input.buttons & InputButton_Fire) == 0u ||
+            queued_input.input.client_action_id == 0u) {
+            continue;
+        }
+        PeerSession* session = result_session_for_peer(queued_input.owner_peer);
+        if (session == nullptr ||
+            session->active_fire_action_id !=
+                queued_input.input.client_action_id) {
+            continue;
+        }
+        const auto cached = session->recent_fire_results.find(
+            queued_input.input.client_action_id);
+        if (cached != session->recent_fire_results.end() &&
+            cached->second.authoritative_tick == tick_loop_.current_tick()) {
+            if (session->active_fire_template_id == 0u) {
+                session->active_fire_action_id = 0u;
+            }
+            continue;
+        }
+        const auto actor = world_.find_entity(session->player);
+        const ActionRuntimeState* action =
+            actor.has_value() &&
+                    world_.registry().all_of<ActionRuntimeState>(*actor)
+                ? &world_.registry().get<ActionRuntimeState>(*actor)
+                : nullptr;
+        if (session->active_fire_template_id != 0u && action != nullptr &&
+            action->action_instance_id == session->active_fire_action_id &&
+            action->phase != KernelActionPhase_None) {
+            continue;
+        }
+        std::uint8_t reason = KernelLocalActionResultReason_EffectFailed;
+        if (actor.has_value() &&
+            world_.registry().all_of<WeaponState>(*actor)) {
+            const WeaponState& weapon = world_.registry().get<WeaponState>(*actor);
+            if (weapon.is_reloading) {
+                reason = KernelLocalActionResultReason_Reloading;
+            } else if (queued_input.input.selected_weapon < weapon.ammo.size() &&
+                       weapon.ammo[queued_input.input.selected_weapon] == 0u) {
+                reason = KernelLocalActionResultReason_NoAmmo;
+            } else {
+                reason = KernelLocalActionResultReason_Busy;
+            }
+        }
+        queue_local_action_result(
+            session,
+            KernelLocalActionResult{
+                session->active_fire_action_id,
+                session->active_fire_commit_count,
+                KernelLocalActionResultType_Rejected,
+                reason,
+                tick_loop_.current_tick(),
+            });
+        session->active_fire_action_id = 0u;
+        session->active_fire_template_id = 0u;
+        session->active_fire_commit_count = 0u;
+    }
+
+    auto settle_session = [this](PeerSession* session) {
+        if (session == nullptr || session->active_fire_action_id == 0u ||
+            session->active_fire_template_id == 0u) {
+            return;
+        }
+        const auto actor = world_.find_entity(session->player);
+        const ActionRuntimeState* action =
+            actor.has_value() &&
+                    world_.registry().all_of<ActionRuntimeState>(*actor)
+                ? &world_.registry().get<ActionRuntimeState>(*actor)
+                : nullptr;
+        if (action != nullptr &&
+            action->action_instance_id == session->active_fire_action_id) {
+            if (action->phase == KernelActionPhase_Recovery &&
+                action->commit_count == 0u) {
+                queue_local_action_result(
+                    session,
+                    KernelLocalActionResult{
+                        session->active_fire_action_id,
+                        0u,
+                        KernelLocalActionResultType_Corrected,
+                        KernelLocalActionResultReason_Cancelled,
+                        tick_loop_.current_tick(),
+                    });
+                session->active_fire_action_id = 0u;
+                session->active_fire_template_id = 0u;
+            }
+            return;
+        }
+        if (session->active_fire_commit_count == 0u) {
+            queue_local_action_result(
+                session,
+                KernelLocalActionResult{
+                    session->active_fire_action_id,
+                    0u,
+                    KernelLocalActionResultType_Corrected,
+                    KernelLocalActionResultReason_Cancelled,
+                    tick_loop_.current_tick(),
+                });
+        }
+        session->active_fire_action_id = 0u;
+        session->active_fire_template_id = 0u;
+        session->active_fire_commit_count = 0u;
+    };
+    if (config_.mode == KernelMode_ListenServer) {
+        settle_session(&local_listen_session_);
+    }
+    for (PeerSession& session : peer_sessions_) {
+        settle_session(&session);
+    }
+}
+
+void KernelEngine::queue_remote_presentation_from_events(
+    std::size_t first_event,
+    std::size_t last_event,
+    const std::unordered_set<NetId>& actors_before_tick,
+    const std::unordered_set<NetId>& reloading_before_tick) {
+    if (!is_server_mode(config_.mode)) {
+        return;
+    }
+    auto allocate_id = [this]() {
+        const std::uint32_t id = next_server_presentation_instance_id_++;
+        if (next_server_presentation_instance_id_ == 0u) {
+            next_server_presentation_instance_id_ = 1u;
+        }
+        return id == 0u ? 1u : id;
+    };
+    const std::size_t capped_last = std::min(last_event, events_.size());
+    for (std::size_t index = first_event; index < capped_last; ++index) {
+        const KernelEvent& event = events_[index];
+        std::uint8_t event_type = UINT8_MAX;
+        if (event.type == KernelEventType_DamageApplied &&
+            actors_before_tick.find(event.net_id) != actors_before_tick.end()) {
+            event_type = KernelRemoteActionPresentationEventType_HitReaction;
+        } else if (
+            event.type == KernelEventType_EntityDestroyed &&
+            actors_before_tick.find(event.net_id) != actors_before_tick.end()) {
+            event_type = KernelRemoteActionPresentationEventType_DeathTrigger;
+        }
+        if (event_type == UINT8_MAX) {
+            continue;
+        }
+        pending_server_remote_presentations_.push_back(
+            KernelRemoteActionPresentationEvent{
+                event.net_id,
+                0u,
+                allocate_id(),
+                1u,
+                1u,
+                event_type,
+                0u,
+                0u,
+            });
+    }
+    for (NetId net_id : reloading_before_tick) {
+        const auto entity = world_.find_entity(net_id);
+        if (!entity.has_value() ||
+            !world_.registry().all_of<WeaponState>(*entity) ||
+            world_.registry().get<WeaponState>(*entity).is_reloading) {
+            continue;
+        }
+        pending_server_remote_presentations_.push_back(
+            KernelRemoteActionPresentationEvent{
+                net_id,
+                0u,
+                allocate_id(),
+                1u,
+                1u,
+                KernelRemoteActionPresentationEventType_ReloadCommit,
+                0u,
+                0u,
+            });
+    }
+}
+
+void KernelEngine::flush_remote_action_presentation(
+    PeerSession* session,
+    const std::vector<KernelRemoteActionPresentationEvent>& events) {
+    if (session == nullptr || events.empty()) {
+        return;
+    }
+    std::vector<KernelRemoteActionPresentationEvent> relevant;
+    relevant.reserve(events.size());
+    for (const KernelRemoteActionPresentationEvent& event : events) {
+        if (event.actor_net_id == session->player ||
+            session->relevant_entities.find(event.actor_net_id) ==
+                session->relevant_entities.end()) {
+            continue;
+        }
+        relevant.push_back(event);
+    }
+    auto priority = [](std::uint8_t event_type) {
+        switch (event_type) {
+            case KernelRemoteActionPresentationEventType_DeathTrigger:
+                return 3;
+            case KernelRemoteActionPresentationEventType_HitReaction:
+                return 2;
+            case KernelRemoteActionPresentationEventType_ReloadCommit:
+            case KernelRemoteActionPresentationEventType_AbilityCommit:
+                return 1;
+            default:
+                return 0;
+        }
+    };
+    std::stable_sort(
+        relevant.begin(),
+        relevant.end(),
+        [&priority](
+            const KernelRemoteActionPresentationEvent& lhs,
+            const KernelRemoteActionPresentationEvent& rhs) {
+            return priority(lhs.event_type) > priority(rhs.event_type);
+        });
+    if (relevant.size() > kRemotePresentationMaxRecords) {
+        relevant.resize(kRemotePresentationMaxRecords);
+    }
+    if (relevant.empty()) {
+        return;
+    }
+    RemoteActionPresentationBatchPacket batch{};
+    batch.server_tick = tick_loop_.current_tick();
+    batch.records = std::move(relevant);
+    const std::vector<std::uint8_t> packet =
+        encode_remote_action_presentation_batch_packet(
+            batch,
+            next_packet_sequence_++);
+    const bool local_listen =
+        config_.mode == KernelMode_ListenServer &&
+        session == &local_listen_session_ &&
+        listen_server_transport_ != nullptr;
+    const bool sent = local_listen
+        ? listen_server_transport_->Send(
+              session->peer,
+              packet.data(),
+              static_cast<std::uint32_t>(packet.size()),
+              SendMode::kUnreliable,
+              ChannelId::kPresentation)
+        : transport_->Send(
+              session->peer,
+              packet.data(),
+              static_cast<std::uint32_t>(packet.size()),
+              SendMode::kUnreliable,
+              ChannelId::kPresentation);
+    if (!sent) {
+        push_event(KernelEventType_Error, session->player, session->peer, 30);
+        return;
+    }
+    record_sent_packet(
+        static_cast<std::uint32_t>(packet.size()),
+        SendMode::kUnreliable,
+        ChannelId::kPresentation);
 }
 
 void KernelEngine::broadcast_combat_events(

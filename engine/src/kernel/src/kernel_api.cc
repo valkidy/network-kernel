@@ -162,6 +162,9 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
         out_info->action_template_definition_size =
             sizeof(KernelActionTemplateDefinition);
         out_info->action_runtime_view_size = sizeof(KernelActionRuntimeView);
+        out_info->local_action_result_size = sizeof(KernelLocalActionResult);
+        out_info->remote_action_presentation_event_size =
+            sizeof(KernelRemoteActionPresentationEvent);
         out_info->capability_flags =
             KERNEL_CAPABILITY_CLIENT_MODE |
             KERNEL_CAPABILITY_LISTEN_SERVER_MODE |
@@ -198,7 +201,9 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_VISION_STATE_QUERY |
             KERNEL_CAPABILITY_GAMEPLAY_CATALOG_SYNC |
             KERNEL_CAPABILITY_CONTROL_PLANE_RPC |
-            KERNEL_CAPABILITY_ACTION_TIMELINE;
+            KERNEL_CAPABILITY_ACTION_TIMELINE |
+            KERNEL_CAPABILITY_LOCAL_ACTION_RESULTS |
+            KERNEL_CAPABILITY_REMOTE_ACTION_PRESENTATION;
         return true;
     });
 }
@@ -450,6 +455,35 @@ uint32_t Kernel_PollEntityLifecycleEvents(
         }
         return kernel->engine->poll_entity_lifecycle_events(out_events, max_events);
     });
+}
+
+uint32_t Kernel_PollLocalActionResults(
+    KernelHandle* kernel,
+    KernelLocalActionResult* out_results,
+    uint32_t max_results) {
+    return abi_call("Kernel_PollLocalActionResults", 0u, [&]() -> std::uint32_t {
+        if (kernel == nullptr) {
+            return 0u;
+        }
+        return kernel->engine->poll_local_action_results(out_results, max_results);
+    });
+}
+
+uint32_t Kernel_PollRemoteActionPresentationEvents(
+    KernelHandle* kernel,
+    KernelRemoteActionPresentationEvent* out_events,
+    uint32_t max_events) {
+    return abi_call(
+        "Kernel_PollRemoteActionPresentationEvents",
+        0u,
+        [&]() -> std::uint32_t {
+            if (kernel == nullptr) {
+                return 0u;
+            }
+            return kernel->engine->poll_remote_action_presentation_events(
+                out_events,
+                max_events);
+        });
 }
 
 bool Kernel_GetBenchmarkStats(

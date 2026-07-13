@@ -99,7 +99,8 @@ int main() {
     KernelProjectileTemplateDefinition predicted_template{};
     predicted_template.struct_size = sizeof(predicted_template);
     predicted_template.projectile_template_id = 77;
-    predicted_template.sync_mode = KernelProjectileSyncMode_LocalPredictedDeterministic;
+    predicted_template.mechanics.sync_mode =
+        KernelProjectileSyncMode_LocalPredictedDeterministic;
     engine.projectile_templates_.push_back(predicted_template);
 
     network_example::KernelEngine::PeerSession session_one{

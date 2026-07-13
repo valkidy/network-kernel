@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 35u`.
+`KERNEL_ABI_VERSION == 39u`.
 
 ## Ownership
 
@@ -30,6 +30,12 @@ failures return `NULL`, `false`, or `0`.
 Additive changes must prefer new `Kernel_*` functions or new capability flags.
 Breaking changes to public struct layout, enum semantics, buffer ownership, or
 function signatures require a `KERNEL_ABI_VERSION` bump.
+
+ABI version 39 adds separate owner-correction and remote-presentation polling
+surfaces: `Kernel_PollLocalActionResults` returns reliable authoritative Fire
+results, while `Kernel_PollRemoteActionPresentationEvents` returns best-effort
+cosmetic events. Packet schema version 15 adds their independent batch message
+types and leaves snapshot schema version 14 unchanged.
 
 ABI version 28 adds gameplay catalog bundle synchronization. Servers register
 an immutable bundle and manifest before listening. Clients may fetch that
