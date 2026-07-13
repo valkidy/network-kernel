@@ -74,6 +74,22 @@ const RuntimeProjectileTemplate* World::find_projectile_template(
     return found == projectile_templates_.end() ? nullptr : &*found;
 }
 
+void World::set_action_templates(
+    const std::vector<RuntimeActionTemplate>& action_templates) {
+    action_templates_ = action_templates;
+}
+
+const RuntimeActionTemplate* World::find_action_template(
+    std::uint32_t action_template_id) const {
+    const auto found = std::find_if(
+        action_templates_.begin(),
+        action_templates_.end(),
+        [action_template_id](const RuntimeActionTemplate& action_template) {
+            return action_template.action_template_id == action_template_id;
+        });
+    return found == action_templates_.end() ? nullptr : &*found;
+}
+
 entt::registry& World::registry() {
     return registry_;
 }

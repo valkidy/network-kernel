@@ -181,6 +181,7 @@ int main() {
         sizeof(KernelGameplayCatalogSyncStatus));
     assert(abi_info.action_template_definition_size ==
            sizeof(KernelActionTemplateDefinition));
+    assert(abi_info.action_runtime_view_size == sizeof(KernelActionRuntimeView));
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CLIENT_MODE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LISTEN_SERVER_MODE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_DEDICATED_SERVER_MODE) != 0);
@@ -221,8 +222,9 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 36u);
+    assert(KERNEL_ABI_VERSION == 38u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CONTROL_PLANE_RPC) != 0);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_ACTION_TIMELINE) != 0);
     assert(sizeof(KernelVec4) == 16u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS) != 0);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
@@ -267,6 +269,10 @@ int main() {
            offsetof(KernelServerEntityState, reserve_magazines));
     assert(offsetof(KernelServerEntityState, reload_remaining_ticks) >
            offsetof(KernelServerEntityState, is_reloading));
+    assert(offsetof(KernelServerEntityState, action) >
+           offsetof(KernelServerEntityState, reload_remaining_ticks));
+    assert(offsetof(RenderEntityState, action) >
+           offsetof(RenderEntityState, actor_template_id));
     assert(offsetof(KernelWeaponMechanicsDefinition, reserve_magazines) >
            offsetof(KernelWeaponMechanicsDefinition, magazine_size));
     assert(offsetof(KernelWeaponMechanicsDefinition, damage) >

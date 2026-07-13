@@ -12,6 +12,7 @@ exports_files([
 cc_library(
     name = "simulation",
     srcs = [
+        "src/action_system.cc",
         "src/area_effect_system.cc",
         "src/beam_system.cc",
         "src/collision_query.cc",

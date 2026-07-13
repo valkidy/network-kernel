@@ -161,6 +161,7 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             sizeof(KernelEntityAiDefinition);
         out_info->action_template_definition_size =
             sizeof(KernelActionTemplateDefinition);
+        out_info->action_runtime_view_size = sizeof(KernelActionRuntimeView);
         out_info->capability_flags =
             KERNEL_CAPABILITY_CLIENT_MODE |
             KERNEL_CAPABILITY_LISTEN_SERVER_MODE |
@@ -196,7 +197,8 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS |
             KERNEL_CAPABILITY_VISION_STATE_QUERY |
             KERNEL_CAPABILITY_GAMEPLAY_CATALOG_SYNC |
-            KERNEL_CAPABILITY_CONTROL_PLANE_RPC;
+            KERNEL_CAPABILITY_CONTROL_PLANE_RPC |
+            KERNEL_CAPABILITY_ACTION_TIMELINE;
         return true;
     });
 }
@@ -821,7 +823,8 @@ bool Kernel_ServerValidateMechanicsConfig(
             weapon_mechanics->weapon_id >= KERNEL_MAX_WEAPONS ||
             weapon_mechanics->magazine_size == 0 ||
             weapon_mechanics->damage == 0 ||
-            weapon_mechanics->cooldown_ticks == 0 ||
+            (weapon_mechanics->fire_action_template_id == 0u &&
+             weapon_mechanics->cooldown_ticks == 0u) ||
             weapon_mechanics->reload_ticks == 0 ||
             weapon_mechanics->fire_mode > KernelWeaponFireMode_Projectile) {
             return false;

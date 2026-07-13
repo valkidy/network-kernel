@@ -668,6 +668,7 @@ KernelServerEntityState to_server_entity_state(
         state.animation_state = replication.animation_state;
         state.visual_flags |= replication.visual_flags;
     }
+    state.visual_flags &= ~kVisualFlagFiring;
     if (world.registry().all_of<WeaponState>(entity)) {
         const WeaponState& weapon = world.registry().get<WeaponState>(entity);
         state.active_weapon_id = weapon.weapon_id;
@@ -680,6 +681,24 @@ KernelServerEntityState to_server_entity_state(
             weapon.is_reloading && weapon.reload_end_tick > current_tick
                 ? weapon.reload_end_tick - current_tick
                 : 0u;
+    }
+    state.action.struct_size = sizeof(KernelActionRuntimeView);
+    if (world.registry().all_of<ActionRuntimeState>(entity)) {
+        const ActionRuntimeState& action =
+            world.registry().get<ActionRuntimeState>(entity);
+        state.action.action_template_id = action.action_template_id;
+        state.action.action_instance_id = action.action_instance_id;
+        state.action.phase = action.phase;
+        state.action.start_tick = action.start_tick;
+        state.action.commit_count = action.commit_count;
+        if (action.phase == KernelActionPhase_Active) {
+            state.visual_flags |= kVisualFlagFiring;
+        }
+    }
+    state.aim_direction = KernelVec3{1.0f, 0.0f, 0.0f};
+    if (world.registry().all_of<ActionInputState>(entity)) {
+        state.aim_direction = to_kernel_vec3(
+            world.registry().get<ActionInputState>(entity).aim_direction);
     }
     return state;
 }
@@ -1150,7 +1169,8 @@ bool validate_weapon_mechanics(const KernelWeaponMechanicsDefinition& definition
         !valid_weapon_id(definition.weapon_id) ||
         definition.magazine_size == 0 ||
         definition.damage == 0 ||
-        definition.cooldown_ticks == 0 ||
+        (definition.fire_action_template_id == 0u &&
+         definition.cooldown_ticks == 0u) ||
         definition.reload_ticks == 0) {
         return false;
     }
@@ -1508,7 +1528,9 @@ void KernelEngine::submit_input(PeerId local_player_id, const PlayerInput& input
         listen_server_transport_ != nullptr) {
         const PlayerInput input_to_send = prepare_client_input(input);
         predict_local_input(input_to_send);
-        predict_local_projectile(input_to_send);
+        if (predict_local_action(input_to_send)) {
+            predict_local_projectile(input_to_send);
+        }
         rebuild_render_states();
         const std::vector<std::uint8_t> packet =
             encode_input_packet(local_player_id, input_to_send, next_packet_sequence_++);
@@ -1536,7 +1558,9 @@ void KernelEngine::submit_input(PeerId local_player_id, const PlayerInput& input
 
         const PlayerInput input_to_send = prepare_client_input(input);
         predict_local_input(input_to_send);
-        predict_local_projectile(input_to_send);
+        if (predict_local_action(input_to_send)) {
+            predict_local_projectile(input_to_send);
+        }
         rebuild_render_states();
         const std::vector<std::uint8_t> packet =
             encode_input_packet(local_client_peer_id_, input_to_send, next_packet_sequence_++);
@@ -1788,6 +1812,22 @@ bool KernelEngine::load_gameplay_catalog(
                 projectile_template.mechanics.collider_template_id)));
     }
     world_.set_projectile_templates(runtime_projectile_templates);
+    std::vector<RuntimeActionTemplate> runtime_action_templates;
+    runtime_action_templates.reserve(action_templates_.size());
+    for (const KernelActionTemplateDefinition& action_template : action_templates_) {
+        runtime_action_templates.push_back(RuntimeActionTemplate{
+            action_template.action_template_id,
+            action_template.trigger_mode,
+            action_template.flags,
+            action_template.ammo_cost_per_commit,
+            action_template.commit_offset_ticks,
+            action_template.commit_interval_ticks,
+            action_template.max_commit_count,
+            action_template.recovery_ticks,
+            action_template.hold_input_timeout_ticks,
+        });
+    }
+    world_.set_action_templates(runtime_action_templates);
     catalog_version_ = catalog.catalog_version;
     catalog_hash_ = catalog.catalog_hash;
     return true;
@@ -2790,6 +2830,9 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     last_simulation_tick_cost_warning_tick_ = 0;
     entity_ids_by_net_id_.clear();
     predicted_local_entity_ = EntitySnapshot{};
+    predicted_action_buttons_ = 0u;
+    predicted_action_next_commit_tick_ = 0u;
+    predicted_action_recovery_end_tick_ = 0u;
     local_correction_offset_ = glm::vec3{0.0f, 0.0f, 0.0f};
     next_entity_id_ = 1;
     next_predicted_entity_id_ = UINT64_C(0x8000000000000000);
@@ -3695,17 +3738,27 @@ void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {
             ? predicted_local_entity_.position + local_correction_offset_
             : authoritative->position;
 
-    EntitySnapshot replayed = *authoritative;
+    predicted_local_entity_ = *authoritative;
+    has_predicted_local_entity_ = true;
+    predicted_action_buttons_ = 0u;
+    predicted_action_next_commit_tick_ = 0u;
+    if (const KernelActionTemplateDefinition* action_template =
+            find_action_template(
+                action_templates_, authoritative->action_template_id)) {
+        predicted_action_next_commit_tick_ =
+            authoritative->action_start_tick +
+            action_template->commit_offset_ticks +
+            authoritative->action_commit_count *
+                action_template->commit_interval_ticks;
+    }
     for (const PlayerInput& input : pending_prediction_inputs_) {
         movement_solver::apply_player_input(
-            replayed,
+            predicted_local_entity_,
             input,
             tick_loop_.fixed_delta_seconds(),
             local_player_move_speed_meters_per_second_);
+        predict_local_action(input);
     }
-
-    predicted_local_entity_ = replayed;
-    has_predicted_local_entity_ = true;
 
     const glm::vec3 correction = previous_render_position - predicted_local_entity_.position;
     local_correction_offset_ =
@@ -3829,6 +3882,98 @@ void KernelEngine::predict_local_input(const PlayerInput& input) {
         tick_loop_.fixed_delta_seconds(),
         local_player_move_speed_meters_per_second_);
     pending_prediction_inputs_.push_back(input);
+}
+
+bool KernelEngine::predict_local_action(const PlayerInput& input) {
+    if (!has_predicted_local_entity_) {
+        return false;
+    }
+    predicted_local_entity_.aim_direction = input_aim_to_world(input);
+    predicted_local_entity_.flags &= ~(kVisualFlagAiming | kVisualFlagFiring);
+    if ((input.buttons & InputButton_Aim) != 0u) {
+        predicted_local_entity_.flags |= kVisualFlagAiming;
+    }
+
+    const WeaponMechanicsDefinition* weapon =
+        entity_weapon_mechanics(world_, local_player_net_id_, input.selected_weapon);
+    if (weapon == nullptr || weapon->fire_action_template_id == 0u) {
+        predicted_action_buttons_ = input.buttons;
+        return (input.buttons & InputButton_Fire) != 0u;
+    }
+    const KernelActionTemplateDefinition* action_template =
+        find_action_template(action_templates_, weapon->fire_action_template_id);
+    if (action_template == nullptr) {
+        predicted_action_buttons_ = input.buttons;
+        return false;
+    }
+
+    const std::uint32_t current_tick = tick_loop_.current_tick();
+    if (predicted_local_entity_.action_phase == KernelActionPhase_Recovery &&
+        current_tick >= predicted_action_recovery_end_tick_) {
+        predicted_local_entity_.action_template_id = 0u;
+        predicted_local_entity_.action_instance_id = 0u;
+        predicted_local_entity_.action_phase = KernelActionPhase_None;
+        predicted_local_entity_.action_start_tick = 0u;
+        predicted_local_entity_.action_commit_count = 0u;
+        predicted_action_next_commit_tick_ = 0u;
+    }
+
+    const bool fire_held = (input.buttons & InputButton_Fire) != 0u;
+    const bool fire_pressed = fire_held &&
+        (predicted_action_buttons_ & InputButton_Fire) == 0u;
+    if (predicted_local_entity_.action_phase == KernelActionPhase_None &&
+        ((action_template->trigger_mode == KernelActionTriggerMode_Press &&
+          fire_pressed) ||
+         (action_template->trigger_mode == KernelActionTriggerMode_Hold &&
+          fire_held))) {
+        predicted_local_entity_.action_template_id =
+            action_template->action_template_id;
+        predicted_local_entity_.action_instance_id = input.client_action_id;
+        predicted_local_entity_.action_phase =
+            action_template->commit_offset_ticks == 0u
+                ? KernelActionPhase_Active
+                : KernelActionPhase_Windup;
+        predicted_local_entity_.action_start_tick = current_tick;
+        predicted_action_next_commit_tick_ =
+            current_tick + action_template->commit_offset_ticks;
+        predicted_local_entity_.action_commit_count = 0u;
+    }
+
+    bool committed = false;
+    const bool cancel_on_release =
+        !fire_held &&
+        (action_template->flags &
+         KernelActionTemplateFlag_CancelOnRelease) != 0u;
+    if (cancel_on_release &&
+        predicted_local_entity_.action_commit_count == 0u &&
+        (action_template->flags &
+         KernelActionTemplateFlag_CancelBeforeFirstCommit) != 0u) {
+        predicted_local_entity_.action_phase = KernelActionPhase_Recovery;
+        predicted_action_recovery_end_tick_ =
+            current_tick + action_template->recovery_ticks;
+    } else if (
+        predicted_local_entity_.action_phase != KernelActionPhase_None &&
+        predicted_local_entity_.action_phase != KernelActionPhase_Recovery &&
+        current_tick >= predicted_action_next_commit_tick_) {
+        predicted_local_entity_.action_phase = KernelActionPhase_Active;
+        ++predicted_local_entity_.action_commit_count;
+        predicted_action_next_commit_tick_ =
+            current_tick + action_template->commit_interval_ticks;
+        committed = true;
+        if ((action_template->max_commit_count != 0u &&
+             predicted_local_entity_.action_commit_count >=
+                 action_template->max_commit_count) ||
+            cancel_on_release) {
+            predicted_local_entity_.action_phase = KernelActionPhase_Recovery;
+            predicted_action_recovery_end_tick_ =
+                current_tick + action_template->recovery_ticks;
+        }
+    }
+    if (predicted_local_entity_.action_phase == KernelActionPhase_Active) {
+        predicted_local_entity_.flags |= kVisualFlagFiring;
+    }
+    predicted_action_buttons_ = input.buttons;
+    return committed;
 }
 
 void KernelEngine::predict_local_projectile(const PlayerInput& input) {
@@ -4143,6 +4288,8 @@ void KernelEngine::append_predicted_projectile_render_states(bool consume_correc
             projectile.projectile_template_id,
             projectile.collider_template_id,
             0,
+            KernelActionRuntimeView{sizeof(KernelActionRuntimeView)},
+            KernelVec3{1.0f, 0.0f, 0.0f},
         });
         if (consume_correction) {
             projectile.correction_offset *= 0.5f;
@@ -4373,7 +4520,6 @@ void KernelEngine::simulate_tick() {
     }
     simulate_player_movement(world_, pending_inputs_, fixed_delta);
     simulate_velocity_movement(world_, fixed_delta);
-    simulate_weapons(world_, {}, tick_loop_.current_tick(), &events_);
     for (const QueuedInput& pending_input : pending_inputs_) {
         const HistoryFrame* rewind_frame = nullptr;
         std::uint32_t rewind_tick = tick_loop_.current_tick();
@@ -4399,6 +4545,7 @@ void KernelEngine::simulate_tick() {
                 compensated_action_time_us(pending_input)},
             &events_);
     }
+    simulate_weapons(world_, {}, tick_loop_.current_tick(), &events_);
     simulate_projectiles(
         world_,
         fixed_delta,
@@ -5159,6 +5306,8 @@ void KernelEngine::rebuild_render_states_from_snapshot(
             entity.projectile_template_id,
             collider_template_id,
             entity.actor_template_id,
+            KernelActionRuntimeView{sizeof(KernelActionRuntimeView)},
+            KernelVec3{1.0f, 0.0f, 0.0f},
         });
     }
 }

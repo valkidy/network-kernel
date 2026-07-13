@@ -55,6 +55,12 @@ table EntitySnapshot {
   flags:uint;
   spawn_tick:uint;
   client_action_id:uint;
+  aim_direction:Vec3;
+  action_template_id:uint;
+  action_instance_id:uint;
+  action_phase:ubyte;
+  action_start_tick:uint;
+  action_commit_count:uint;
 }
 
 table WelcomePacket {

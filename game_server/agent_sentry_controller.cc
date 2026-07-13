@@ -172,7 +172,7 @@ void AgentSentryController::tick(
         agent.position = entity_state.position;
         agent.hp = entity_state.hp;
         agent.velocity = zero_vec3();
-        agent.animation_state = config_.animation_idle;
+        agent.animation_state = 0;
         agent.sentry.self_id = agent.net_id;
         KernelQuat desired_rotation = entity_state.rotation;
         bool should_update_rotation = false;
@@ -222,7 +222,6 @@ void AgentSentryController::tick(
         if (agent.sentry.state == AgentSentryState::kAttack) {
             if (has_visible_target) {
                 agent.sentry.lost_target_ticks = 0;
-                agent.animation_state = config_.animation_attack;
                 const KernelVec3 target = perception.target_position;
                 should_update_rotation =
                     facing_rotation_from_vision_toward(

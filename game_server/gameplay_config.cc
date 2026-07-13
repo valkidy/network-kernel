@@ -103,6 +103,21 @@ void hash_weapon(std::uint64_t* hash, const KernelWeaponMechanicsDefinition& wea
     hash_float(hash, weapon.pellet_spread);
     hash_scalar(hash, weapon.segment_collider_template_id);
     hash_scalar(hash, weapon.projectile_template_id);
+    hash_scalar(hash, weapon.fire_action_template_id);
+}
+
+void hash_action_template(
+    std::uint64_t* hash,
+    const KernelActionTemplateDefinition& action) {
+    hash_scalar(hash, action.action_template_id);
+    hash_scalar(hash, action.trigger_mode);
+    hash_scalar(hash, action.flags);
+    hash_scalar(hash, action.ammo_cost_per_commit);
+    hash_scalar(hash, action.commit_offset_ticks);
+    hash_scalar(hash, action.commit_interval_ticks);
+    hash_scalar(hash, action.max_commit_count);
+    hash_scalar(hash, action.recovery_ticks);
+    hash_scalar(hash, action.hold_input_timeout_ticks);
 }
 
 void hash_collider_template(
@@ -313,7 +328,7 @@ bool validate_weapon_mechanics(
         weapon.weapon_id >= kWeaponCount ||
         weapon.magazine_size == 0 ||
         weapon.damage == 0 ||
-        weapon.cooldown_ticks == 0 ||
+        (weapon.fire_action_template_id == 0u && weapon.cooldown_ticks == 0u) ||
         weapon.reload_ticks == 0 ||
         weapon.fire_mode > KernelWeaponFireMode_Projectile) {
         return false;
@@ -331,6 +346,36 @@ bool validate_weapon_mechanics(
     }
     return weapon.fire_mode != KernelWeaponFireMode_Shotgun ||
            weapon.pellet_count != 0;
+}
+
+KernelActionTemplateDefinition action_template_for_weapon(
+    const KernelWeaponMechanicsDefinition& weapon) {
+    KernelActionTemplateDefinition action{};
+    action.struct_size = sizeof(action);
+    action.action_template_id = 0x1000u + weapon.weapon_id;
+    action.ammo_cost_per_commit = 1;
+    action.commit_interval_ticks = std::max(1u, weapon.cooldown_ticks);
+    action.max_commit_count = 1;
+    action.flags = KernelActionTemplateFlag_CancelOnDeath |
+                   KernelActionTemplateFlag_CancelOnWeaponChange |
+                   KernelActionTemplateFlag_CancelBeforeFirstCommit;
+    if (weapon.weapon_id == 0u || weapon.weapon_id == 2u ||
+        weapon.weapon_id == 5u) {
+        action.trigger_mode = KernelActionTriggerMode_Hold;
+        action.flags |= KernelActionTemplateFlag_CancelOnRelease;
+        action.max_commit_count = 0;
+        action.recovery_ticks = 4;
+        action.hold_input_timeout_ticks = 6;
+    }
+    if (weapon.weapon_id == 3u) {
+        action.commit_offset_ticks = 3;
+        action.recovery_ticks = 8;
+    } else if (weapon.weapon_id == 5u) {
+        action.commit_offset_ticks = 5;
+        action.commit_interval_ticks = 1;
+        action.recovery_ticks = 8;
+    }
+    return action;
 }
 
 std::string trim_ascii(const std::string& value) {
@@ -1315,8 +1360,8 @@ ActorTemplateConfig default_sentry_actor_template() {
     actor_template.weapon_slots[0] = kAgentSpammerWeaponId;
     actor_template.weapon_slot_count = 1;
     actor_template.active_weapon_slot = 0;
-    actor_template.animation_idle = kAgentAnimationIdle;
-    actor_template.animation_chasing = kAgentAnimationChasing;
+    actor_template.animation_idle = 0;
+    actor_template.animation_chasing = 0;
     actor_template.sentry.weapon_id = active_weapon_id(actor_template);
     actor_template.sentry.animation_idle = actor_template.animation_idle;
     actor_template.sentry.animation_attack = actor_template.animation_chasing;
@@ -2474,7 +2519,7 @@ WeaponCatalogConfig load_weapon_catalog_from_source(
     const std::vector<std::string> files = source.list_yaml_files(directory);
     for (const std::string& file : files) {
         const YAML::Node document = source.load_yaml(file);
-        const KernelWeaponMechanicsDefinition weapon =
+        KernelWeaponMechanicsDefinition weapon =
             weapon_from_yaml(document, file, source.source_kind());
         if (weapon.weapon_id >= kWeaponCount) {
             throw std::runtime_error("weapon id out of range: " + file);
@@ -2498,7 +2543,11 @@ WeaponCatalogConfig load_weapon_catalog_from_source(
             }
         }
         seen[weapon.weapon_id] = true;
+        const KernelActionTemplateDefinition action =
+            action_template_for_weapon(weapon);
+        weapon.fire_action_template_id = action.action_template_id;
         weapons.definitions[weapon.weapon_id] = weapon;
+        weapons.action_templates[weapon.weapon_id] = action;
         weapons.projectile_sync_modes[weapon.weapon_id] =
             projectile_sync_mode_from_weapon_yaml(document);
         weapons.names[weapon.weapon_id] = name;
@@ -2738,6 +2787,7 @@ std::uint64_t compute_gameplay_catalog_hash(const WeaponCatalogConfig& weapons) 
         hash_scalar(&hash, weapons.projectile_sync_modes[index]);
         hash_scalar(&hash, weapons.collider_template_ids[index]);
         hash_weapon(&hash, weapons.definitions[index]);
+        hash_action_template(&hash, weapons.action_templates[index]);
     }
     return hash == 0 ? kFnvOffsetBasis : hash;
 }
@@ -3146,7 +3196,7 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
                 KERNEL_ENTITY_COMPONENT_HEALTH |
                 KERNEL_ENTITY_COMPONENT_HITBOX |
                 KERNEL_ENTITY_COMPONENT_WEAPON_STATE;
-            entity_template.animation_state = authored_template.animation_idle;
+            entity_template.animation_state = 0;
             entity_template.combat =
                 make_combat_state_from_actor_template(config, authored_template);
             entity_template.vision = authored_template.vision;
@@ -3221,6 +3271,10 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
          config.colliders.templates) {
         storage.collider_templates.push_back(collider_template.definition);
     }
+    for (const KernelActionTemplateDefinition& action_template :
+         config.weapons.action_templates) {
+        storage.action_templates.push_back(action_template);
+    }
     storage.definition.struct_size = sizeof(storage.definition);
     storage.definition.catalog_version = config.weapons.catalog_version;
     storage.definition.catalog_hash = config.weapons.catalog_hash;
@@ -3237,6 +3291,9 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
     storage.definition.collider_templates = storage.collider_templates.data();
     storage.definition.collider_template_count =
         static_cast<std::uint32_t>(storage.collider_templates.size());
+    storage.definition.action_templates = storage.action_templates.data();
+    storage.definition.action_template_count =
+        static_cast<std::uint32_t>(storage.action_templates.size());
     return storage;
 }
 

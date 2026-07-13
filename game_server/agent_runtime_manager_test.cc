@@ -231,7 +231,7 @@ int main() {
         &unavailable_enemy_weapon));
     require(enemy_states[0].position.x == 6.0f);
     require(enemy_states[0].animation_state ==
-            network_example::game_server::kAgentAnimationIdle);
+            0);
     require(enemy_states[0].velocity.x == 0.0f);
     require(enemy_states[0].velocity.y == 0.0f);
     require(enemy_states[0].velocity.z == 0.0f);
@@ -368,7 +368,7 @@ int main() {
     require(game_server.agent_runtime_manager().agents()[0].sentry.state ==
             network_example::game_server::AgentSentryState::kIdle);
     require(enemy_states[0].animation_state ==
-            network_example::game_server::kAgentAnimationIdle);
+            0);
     require(enemy_states[0].velocity.x == 0.0f);
     require(enemy_states[0].velocity.y == 0.0f);
     require(enemy_states[0].velocity.z == 0.0f);
@@ -448,7 +448,7 @@ int main() {
     agent_count = query_enemies(dedicated_kernel, &enemy_states);
     require(agent_count == 1);
     require(enemy_states[0].animation_state ==
-            network_example::game_server::kAgentAnimationIdle);
+            0);
     require(enemy_states[0].velocity.x == 0.0f);
     require(enemy_states[0].velocity.y == 0.0f);
     require(enemy_states[0].velocity.z == 0.0f);

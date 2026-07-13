@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 36u
+#define KERNEL_ABI_VERSION 38u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -92,6 +92,7 @@
 #define KERNEL_CAPABILITY_VISION_STATE_QUERY UINT64_C(0x0000000400000000)
 #define KERNEL_CAPABILITY_GAMEPLAY_CATALOG_SYNC UINT64_C(0x0000000800000000)
 #define KERNEL_CAPABILITY_CONTROL_PLANE_RPC UINT64_C(0x0000001000000000)
+#define KERNEL_CAPABILITY_ACTION_TIMELINE UINT64_C(0x0000002000000000)
 
 #define KERNEL_COLLISION_LAYER_PLAYER_SIDE UINT32_C(0x00000001)
 #define KERNEL_COLLISION_LAYER_HOSTILE_SIDE UINT32_C(0x00000002)
@@ -108,6 +109,22 @@
  * Zero means that no flags are active, not that presentation state is unknown.
  * Published bits retain their meaning for the lifetime of the ABI.
  * Bits 0-7 are kernel core state/validity; bits 8-15 are action presentation.
+ *
+ * Animation state       Kernel API condition
+ * --------------------  ----------------------------------------------------
+ * Moving                visual_flags & KERNEL_VISUAL_FLAG_MOVING
+ * Reloading             visual_flags & KERNEL_VISUAL_FLAG_RELOADING
+ * Dead                  visual_flags & KERNEL_VISUAL_FLAG_DEAD
+ * Aiming                visual_flags & KERNEL_VISUAL_FLAG_AIMING
+ * Firing                visual_flags & KERNEL_VISUAL_FLAG_FIRING, or
+ *                       action.phase == KernelActionPhase_Active
+ * Windup                action.phase == KernelActionPhase_Windup
+ * Recovery              action.phase == KernelActionPhase_Recovery
+ * Idle                  No Moving, Reloading, Dead, or Firing flag, and
+ *                       action.phase == KernelActionPhase_None
+ *
+ * animation_state remains available for ABI compatibility, but should not be
+ * used to derive Idle, Moving, or Firing presentation.
  */
 #define KERNEL_VISUAL_FLAG_MOVING UINT32_C(0x00000001)
 #define KERNEL_VISUAL_FLAG_RELOADING UINT32_C(0x00000002)
@@ -175,6 +192,7 @@ typedef struct KernelAbiInfo {
     uint32_t entity_template_definition_size;
     uint32_t entity_ai_definition_size;
     uint32_t action_template_definition_size;
+    uint32_t action_runtime_view_size;
 } KernelAbiInfo;
 
 typedef struct KernelBuildInfo {
@@ -444,6 +462,17 @@ typedef struct PlayerInput {
     uint8_t selected_weapon;
 } PlayerInput;
 
+typedef struct KernelActionRuntimeView {
+    uint32_t struct_size;
+    uint32_t action_template_id;
+    uint32_t action_instance_id;
+    uint8_t phase;
+    uint8_t reserved0;
+    uint16_t reserved1;
+    uint32_t start_tick;
+    uint32_t commit_count;
+} KernelActionRuntimeView;
+
 typedef struct RenderEntityState {
     uint64_t entity_id;
     uint32_t net_id;
@@ -463,6 +492,8 @@ typedef struct RenderEntityState {
     uint32_t projectile_template_id;
     uint32_t collider_template_id;
     uint32_t actor_template_id;
+    KernelActionRuntimeView action;
+    KernelVec3 aim_direction;
 } RenderEntityState;
 
 KERNEL_RPC_STRUCT(R"json({"type":"KernelServerEntityCreateInfo"})json")
@@ -505,6 +536,8 @@ typedef struct KernelServerEntityState {
     uint16_t reserve_magazines[KERNEL_MAX_WEAPONS];
     uint32_t is_reloading;
     uint32_t reload_remaining_ticks;
+    KernelActionRuntimeView action;
+    KernelVec3 aim_direction;
 } KernelServerEntityState;
 
 typedef enum KernelColliderShapeType {
@@ -909,6 +942,7 @@ typedef struct KernelWeaponMechanicsDefinition {
     uint16_t magazine_size;
     uint16_t reserve_magazines;
     uint16_t damage;
+    /* Deprecated fallback used only when fire_action_template_id is zero. */
     uint32_t cooldown_ticks;
     uint32_t reload_ticks;
     float max_range;

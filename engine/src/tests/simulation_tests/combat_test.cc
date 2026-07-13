@@ -273,6 +273,158 @@ std::uint32_t projectile_count(const network_example::World& world) {
             .size_hint());
 }
 
+void action_timeline_drives_rocket_rifle_and_beam() {
+    const network_example::RuntimeActionTemplate rocket_action{
+        1001,
+        KernelActionTriggerMode_Press,
+        KernelActionTemplateFlag_CancelOnDeath |
+            KernelActionTemplateFlag_CancelOnWeaponChange |
+            KernelActionTemplateFlag_CancelBeforeFirstCommit,
+        1,
+        2,
+        30,
+        1,
+        2,
+        0,
+    };
+    const network_example::RuntimeActionTemplate rifle_action{
+        1002,
+        KernelActionTriggerMode_Hold,
+        KernelActionTemplateFlag_CancelOnRelease |
+            KernelActionTemplateFlag_CancelOnDeath |
+            KernelActionTemplateFlag_CancelOnWeaponChange,
+        1,
+        0,
+        3,
+        0,
+        2,
+        6,
+    };
+    const network_example::RuntimeActionTemplate beam_action{
+        1003,
+        KernelActionTriggerMode_Hold,
+        KernelActionTemplateFlag_CancelOnRelease |
+            KernelActionTemplateFlag_CancelOnDeath |
+            KernelActionTemplateFlag_CancelOnWeaponChange |
+            KernelActionTemplateFlag_CancelBeforeFirstCommit,
+        1,
+        5,
+        1,
+        0,
+        2,
+        6,
+    };
+
+    network_example::World rocket_world;
+    rocket_world.set_action_templates({rocket_action, rifle_action, beam_action});
+    const network_example::NetId rocket_player =
+        spawn_player(rocket_world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
+    const auto rocket_entity = rocket_world.find_entity(rocket_player);
+    require(rocket_entity.has_value());
+    network_example::WeaponTuning& rocket_tuning =
+        rocket_world.registry().get<network_example::WeaponTuning>(*rocket_entity);
+    rocket_tuning.definitions[network_example::kWeaponSlot3]
+        .fire_action_template_id = rocket_action.action_template_id;
+    std::vector<KernelEvent> events;
+    PlayerInput rocket_input = fire_input(network_example::kWeaponSlot3);
+    rocket_input.client_action_id = 7001;
+    network_example::simulate_weapons(rocket_world, queue(rocket_input), 0, &events);
+    require(count_events(events, KernelEventType_FireConfirmed) == 0);
+    network_example::simulate_weapons(rocket_world, {}, 1, &events);
+    require(count_events(events, KernelEventType_FireConfirmed) == 0);
+    network_example::simulate_weapons(rocket_world, {}, 2, &events);
+    require(count_events(events, KernelEventType_FireConfirmed) == 1);
+    require(
+        rocket_world.registry().get<network_example::ActionRuntimeState>(*rocket_entity)
+            .action_instance_id == 7001);
+    events.clear();
+    network_example::simulate_weapons(rocket_world, queue(rocket_input), 3, &events);
+    require(events.empty());
+    PlayerInput release = rocket_input;
+    release.buttons = 0;
+    network_example::simulate_weapons(rocket_world, queue(release), 4, &events);
+    rocket_input.input_seq = 2;
+    network_example::simulate_weapons(rocket_world, queue(rocket_input), 5, &events);
+    network_example::simulate_weapons(rocket_world, {}, 7, &events);
+    require(count_events(events, KernelEventType_FireConfirmed) == 1);
+
+    network_example::World rifle_world;
+    rifle_world.set_action_templates({rocket_action, rifle_action, beam_action});
+    const network_example::NetId rifle_player =
+        spawn_player(rifle_world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
+    const auto rifle_entity = rifle_world.find_entity(rifle_player);
+    require(rifle_entity.has_value());
+    network_example::WeaponTuning& rifle_tuning =
+        rifle_world.registry().get<network_example::WeaponTuning>(*rifle_entity);
+    rifle_tuning.definitions[network_example::kWeaponSlot0]
+        .fire_action_template_id = rifle_action.action_template_id;
+    PlayerInput rifle_input = fire_input(network_example::kWeaponSlot0);
+    rifle_input.client_action_id = 0;
+    events.clear();
+    network_example::simulate_weapons(rifle_world, queue(rifle_input), 0, &events);
+    require(count_events(events, KernelEventType_FireConfirmed) == 1);
+    const network_example::ActionRuntimeState& rifle_runtime =
+        rifle_world.registry().get<network_example::ActionRuntimeState>(*rifle_entity);
+    require(rifle_runtime.action_instance_id != 0);
+    network_example::simulate_weapons(rifle_world, {}, 1, &events);
+    network_example::simulate_weapons(rifle_world, {}, 2, &events);
+    network_example::simulate_weapons(rifle_world, {}, 3, &events);
+    require(count_events(events, KernelEventType_FireConfirmed) == 2);
+    release = rifle_input;
+    release.buttons = 0;
+    network_example::simulate_weapons(rifle_world, queue(release), 4, &events);
+    require(count_events(events, KernelEventType_FireConfirmed) == 2);
+
+    network_example::World beam_world;
+    beam_world.set_action_templates({rocket_action, rifle_action, beam_action});
+    const network_example::NetId beam_player =
+        spawn_player(beam_world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
+    const auto beam_entity = beam_world.find_entity(beam_player);
+    require(beam_entity.has_value());
+    network_example::WeaponTuning& beam_tuning =
+        beam_world.registry().get<network_example::WeaponTuning>(*beam_entity);
+    beam_tuning.configured[network_example::kWeaponSlot5] = true;
+    beam_tuning.definitions[network_example::kWeaponSlot5] = weapon_definition(
+        network_example::kWeaponSlot5,
+        network_example::WeaponFireMode::kProjectile,
+        10,
+        1,
+        1,
+        30);
+    beam_tuning.definitions[network_example::kWeaponSlot5].projectile_template_id = 5;
+    beam_tuning.definitions[network_example::kWeaponSlot5]
+        .fire_action_template_id = beam_action.action_template_id;
+    network_example::WeaponState& beam_weapon =
+        beam_world.registry().get<network_example::WeaponState>(*beam_entity);
+    beam_weapon.ammo[network_example::kWeaponSlot5] = 10;
+    network_example::RuntimeProjectileTemplate beam_template;
+    beam_template.projectile_template_id = 5;
+    beam_template.weapon_id = network_example::kWeaponSlot5;
+    beam_template.projectile_type = network_example::ProjectileType::kBeam;
+    beam_template.damage = 1;
+    beam_template.lifetime_ticks = 30;
+    beam_template.beam_length = 10.0f;
+    beam_template.beam_radius = 0.25f;
+    beam_world.set_projectile_templates({beam_template});
+    PlayerInput beam_input = fire_input(network_example::kWeaponSlot5);
+    beam_input.client_action_id = 8001;
+    events.clear();
+    network_example::simulate_weapons(beam_world, queue(beam_input), 0, &events);
+    release = beam_input;
+    release.buttons = 0;
+    network_example::simulate_weapons(beam_world, queue(release), 2, &events);
+    require(projectile_count(beam_world) == 0);
+    beam_input.input_seq = 2;
+    network_example::simulate_weapons(beam_world, queue(beam_input), 4, &events);
+    network_example::simulate_weapons(beam_world, queue(beam_input), 9, &events);
+    require(projectile_count(beam_world) == 1);
+    network_example::simulate_weapons(beam_world, queue(beam_input), 10, &events);
+    require(projectile_count(beam_world) == 1);
+    release.input_seq = 3;
+    network_example::simulate_weapons(beam_world, queue(release), 11, &events);
+    require(projectile_count(beam_world) == 0);
+}
+
 void deterministic_projectile_paths_match_motion_models() {
     const glm::vec3 origin{0.0f, 1.0f, 0.0f};
     const glm::vec3 velocity{10.0f, 5.0f, 0.0f};
@@ -1132,6 +1284,7 @@ void projectile_collision_mask_excludes_players() {
 }  // namespace
 
 int main() {
+    action_timeline_drives_rocket_rifle_and_beam();
     deterministic_projectile_paths_match_motion_models();
     rocket_moves_linearly_and_grenade_arcs();
     projectile_damage_values_leave_enemy_flee_window();

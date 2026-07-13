@@ -17,6 +17,7 @@
 #include "protocol/public/network_packets.h"
 #include "protocol/public/session_packets.h"
 #include "transport/public/loopback_transport.h"
+#include "kernel/src/render_state_builder.h"
 
 #define private public
 #include "kernel/src/kernel.h"
@@ -1111,6 +1112,100 @@ void render_query_does_not_consume_local_correction() {
     assert(first_states[0].position.x == 5.0f);
     assert(second_states[0].position.x == first_states[0].position.x);
     assert(engine.local_correction_offset_.x == 4.0f);
+}
+
+void owner_action_prediction_and_discrete_interpolation() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_Client);
+    engine.local_client_peer_id_ = 7;
+    engine.local_player_net_id_ =
+        engine.world_.spawn_player(7, glm::vec3{0.0f, 0.0f, 0.0f});
+    const auto player_entity =
+        engine.world_.find_entity(engine.local_player_net_id_);
+    require(player_entity.has_value());
+    network_example::WeaponTuning& tuning =
+        engine.world_.registry().get_or_emplace<network_example::WeaponTuning>(
+            *player_entity);
+    tuning.configured[network_example::kWeaponSlot3] = true;
+    tuning.definitions[network_example::kWeaponSlot3].id =
+        network_example::kWeaponSlot3;
+    tuning.definitions[network_example::kWeaponSlot3].mode =
+        network_example::WeaponFireMode::kProjectile;
+    tuning.definitions[network_example::kWeaponSlot3].fire_action_template_id = 1001;
+    KernelActionTemplateDefinition action_template{};
+    action_template.struct_size = sizeof(action_template);
+    action_template.action_template_id = 1001;
+    action_template.trigger_mode = KernelActionTriggerMode_Press;
+    action_template.flags = KernelActionTemplateFlag_CancelBeforeFirstCommit;
+    action_template.ammo_cost_per_commit = 1;
+    action_template.commit_offset_ticks = 2;
+    action_template.commit_interval_ticks = 30;
+    action_template.max_commit_count = 1;
+    action_template.recovery_ticks = 2;
+    engine.action_templates_.push_back(action_template);
+    engine.world_.set_action_templates({network_example::RuntimeActionTemplate{
+        1001,
+        KernelActionTriggerMode_Press,
+        KernelActionTemplateFlag_CancelBeforeFirstCommit,
+        1,
+        2,
+        30,
+        1,
+        2,
+        0,
+    }});
+
+    PlayerInput input{};
+    input.input_seq = 1;
+    input.client_action_id = 7001;
+    input.buttons = InputButton_Fire | InputButton_Aim;
+    input.selected_weapon = network_example::kWeaponSlot3;
+    input.aim_dir = KernelVec3{0.0f, 0.0f, 1.0f};
+    engine.predict_local_input(input);
+    require(!engine.predict_local_action(input));
+    require(engine.predicted_local_entity_.action_phase ==
+            KernelActionPhase_Windup);
+    require(engine.predicted_local_entity_.action_instance_id == 7001);
+    require(engine.predicted_local_entity_.aim_direction.z == 1.0f);
+    engine.tick_loop_.advance_tick();
+    require(!engine.predict_local_action(input));
+    engine.tick_loop_.advance_tick();
+    require(engine.predict_local_action(input));
+    require(engine.predicted_local_entity_.action_commit_count == 1);
+    require(engine.predicted_action_next_commit_tick_ == 32);
+    require(engine.predicted_local_entity_.action_phase ==
+            KernelActionPhase_Recovery);
+
+    network_example::EntitySnapshot from;
+    from.position = glm::vec3{0.0f, 0.0f, 0.0f};
+    from.action_instance_id = 1;
+    from.action_phase = KernelActionPhase_Active;
+    from.aim_direction = glm::vec3{1.0f, 0.0f, 0.0f};
+    network_example::EntitySnapshot to = from;
+    to.position = glm::vec3{10.0f, 0.0f, 0.0f};
+    to.action_instance_id = 2;
+    to.action_phase = KernelActionPhase_Recovery;
+    to.aim_direction = glm::vec3{0.0f, 0.0f, 1.0f};
+    const network_example::EntitySnapshot interpolated =
+        network_example::interpolate_snapshot_entity(from, to, 0.5f);
+    require(interpolated.position.x == 5.0f);
+    require(interpolated.action_instance_id == 2);
+    require(interpolated.action_phase == KernelActionPhase_Recovery);
+    require(interpolated.aim_direction.z == 1.0f);
+
+    from.flags = network_example::kVisualFlagFiring;
+    const RenderEntityState active_render =
+        network_example::render_state_from_snapshot_entity(from, 1);
+    require((active_render.visual_flags & network_example::kVisualFlagFiring) != 0u);
+    to.flags = network_example::kVisualFlagFiring;
+    const RenderEntityState recovery_render =
+        network_example::render_state_from_snapshot_entity(to, 2);
+    require((recovery_render.visual_flags & network_example::kVisualFlagFiring) == 0u);
 }
 
 void late_snapshot_is_stored_but_not_used_for_reconciliation() {
@@ -2328,7 +2423,7 @@ void predicted_projectile_lifetime_cleanup_removes_batch_projectile() {
             3,
             3,
             KernelProjectileSyncMode_HybridDeterministicThenSnapshot,
-            0.5f);
+            1);
     KernelColliderTemplateDefinition collider_template = projectile_collider_template();
     KernelGameplayCatalogDefinition catalog{};
     catalog.struct_size = sizeof(catalog);
@@ -2569,6 +2664,7 @@ int main() {
     default_kernel_config_uses_larger_render_state_cap();
     render_state_overflow_reports_error_event();
     hit_debug_records_filter_and_drain();
+    owner_action_prediction_and_discrete_interpolation();
 
     KernelConfig config{};
     config.mode = KernelMode_Client;

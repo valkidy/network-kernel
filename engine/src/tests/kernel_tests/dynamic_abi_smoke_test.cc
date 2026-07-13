@@ -427,6 +427,8 @@ int main() {
            sizeof(KernelEntityAiDefinition));
     assert(abi_info.action_template_definition_size ==
            sizeof(KernelActionTemplateDefinition));
+    assert(abi_info.action_runtime_view_size == sizeof(KernelActionRuntimeView));
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_ACTION_TIMELINE) != 0);
     assert(abi_info.projectile_mechanics_definition_size ==
            sizeof(KernelProjectileMechanicsDefinition));
     assert(abi_info.area_effect_mechanics_definition_size ==

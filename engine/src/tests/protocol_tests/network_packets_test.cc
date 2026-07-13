@@ -61,6 +61,12 @@ int main() {
     player.max_hp = 120;
     player.state = 512;
     player.flags = 0x00000004u;
+    player.aim_direction = glm::vec3{0.0f, 0.0f, 1.0f};
+    player.action_template_id = 1001;
+    player.action_instance_id = 7001;
+    player.action_phase = KernelActionPhase_Windup;
+    player.action_start_tick = 8;
+    player.action_commit_count = 0;
     snapshot.entities.push_back(player);
     network_example::EntitySnapshot enemy;
     enemy.net_id = 6;
@@ -94,8 +100,12 @@ int main() {
         network_example::encode_snapshot_packet(snapshot, 43);
     assert(network_example::estimate_snapshot_packet_size(snapshot) ==
            snapshot_packet.size());
-    assert(network_example::estimate_snapshot_entity_size(player) == 64u);
-    assert(network_example::estimate_snapshot_entity_size(enemy) == 56u);
+    assert(network_example::estimate_snapshot_entity_size(player) == 96u);
+    assert(network_example::estimate_snapshot_entity_size(enemy) == 68u);
+    network_example::EntitySnapshot active_enemy = enemy;
+    active_enemy.action_template_id = 1002;
+    active_enemy.action_phase = KernelActionPhase_Active;
+    assert(network_example::estimate_snapshot_entity_size(active_enemy) == 88u);
     assert(network_example::estimate_snapshot_entity_size(compact_projectile) == 34u);
     assert(network_example::estimate_snapshot_entity_size(hybrid_projectile) == 46u);
     network_example::WorldSnapshot decoded_snapshot;
@@ -115,6 +125,11 @@ int main() {
     assert(nearly_equal(decoded_snapshot.entities[0].rotation.w, 1.0f));
     assert(decoded_snapshot.entities[0].hp == 88);
     assert(decoded_snapshot.entities[0].max_hp == 120);
+    assert(nearly_equal(decoded_snapshot.entities[0].aim_direction.z, 1.0f));
+    assert(decoded_snapshot.entities[0].action_template_id == 1001);
+    assert(decoded_snapshot.entities[0].action_instance_id == 7001);
+    assert(decoded_snapshot.entities[0].action_phase == KernelActionPhase_Windup);
+    assert(decoded_snapshot.entities[0].action_start_tick == 8);
     assert((decoded_snapshot.entities[0].state_flags &
             network_example::kSnapshotStateFlagHpUnknown) == 0u);
     assert(decoded_snapshot.entities[1].net_id == 6);

@@ -326,6 +326,7 @@ private:
     void reconcile_local_prediction(const WorldSnapshot& snapshot);
     void reconcile_predicted_projectiles(const WorldSnapshot& snapshot);
     void predict_local_input(const PlayerInput& input);
+    bool predict_local_action(const PlayerInput& input);
     void predict_local_projectile(const PlayerInput& input);
     PlayerInput prepare_client_input(const PlayerInput& input);
     std::uint64_t client_local_action_time_us() const;
@@ -487,6 +488,9 @@ private:
     std::uint64_t gameplay_catalog_sync_elapsed_us_ = 0;
     std::unordered_map<NetId, std::uint64_t> entity_ids_by_net_id_;
     EntitySnapshot predicted_local_entity_;
+    std::uint32_t predicted_action_buttons_ = 0;
+    std::uint32_t predicted_action_next_commit_tick_ = 0;
+    std::uint32_t predicted_action_recovery_end_tick_ = 0;
     glm::vec3 local_correction_offset_{0.0f, 0.0f, 0.0f};
     std::uint64_t next_entity_id_ = 1;
     std::uint64_t next_predicted_entity_id_ = UINT64_C(0x8000000000000000);

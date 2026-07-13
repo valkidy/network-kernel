@@ -222,9 +222,47 @@ struct WeaponState {
     // that should not exhaust reserves in normal play. It is not a sentinel:
     // reload logic decrements it like any other count and must not special-case 65535.
     std::array<std::uint16_t, kWeaponCount> reserve_magazines{0, 0, 0, 0, 0, 0, 0};
+    // Legacy cooldown fallback only. Action-backed weapons use ActionRuntimeState.
     std::array<std::uint32_t, kWeaponCount> next_fire_tick{0, 0, 0, 0, 0, 0, 0};
     std::uint32_t reload_end_tick = 0;
+    NetId active_effect_net_id = 0;
     bool is_reloading = false;
+};
+
+struct RuntimeActionTemplate {
+    std::uint32_t action_template_id = 0;
+    std::uint8_t trigger_mode = 0;
+    std::uint8_t flags = 0;
+    std::uint16_t ammo_cost_per_commit = 0;
+    std::uint32_t commit_offset_ticks = 0;
+    std::uint32_t commit_interval_ticks = 0;
+    std::uint32_t max_commit_count = 0;
+    std::uint32_t recovery_ticks = 0;
+    std::uint32_t hold_input_timeout_ticks = 0;
+};
+
+struct ActionInputState {
+    std::uint32_t buttons = 0;
+    std::uint32_t previous_buttons = 0;
+    std::uint32_t last_input_tick = 0;
+    std::uint32_t client_action_id = 0;
+    std::uint8_t selected_weapon = 0;
+    glm::vec3 aim_direction{1.0f, 0.0f, 0.0f};
+};
+
+struct ActionRuntimeState {
+    std::uint32_t action_template_id = 0;
+    std::uint32_t action_instance_id = 0;
+    std::uint32_t next_generated_instance_id = 1;
+    std::uint32_t start_tick = 0;
+    std::uint32_t next_commit_tick = 0;
+    std::uint32_t last_commit_tick = 0;
+    std::uint32_t recovery_end_tick = 0;
+    std::uint32_t commit_count = 0;
+    std::uint32_t last_advanced_tick = UINT32_MAX;
+    std::uint8_t source_weapon_id = 0;
+    std::uint8_t phase = 0;
+    bool cancel_after_first_commit = false;
 };
 
 struct WeaponMechanicsDefinition {
@@ -233,6 +271,7 @@ struct WeaponMechanicsDefinition {
     std::uint16_t magazine_size = 0;
     std::uint16_t reserve_magazines = 0;
     std::uint16_t damage = 0;
+    // Deprecated cadence source used only when fire_action_template_id is zero.
     std::uint32_t cooldown_ticks = 0;
     std::uint32_t reload_ticks = 0;
     float max_range = 0.0f;

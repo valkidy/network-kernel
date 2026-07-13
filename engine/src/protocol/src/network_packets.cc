@@ -16,7 +16,8 @@ namespace {
 constexpr std::size_t kInputPayloadSize = 45;
 constexpr std::size_t kSnapshotHeaderPayloadSize = 16;
 constexpr std::size_t kSnapshotSectionHeaderPayloadSize = 4;
-constexpr std::size_t kActorSnapshotBasePayloadSize = 40;
+constexpr std::size_t kActorSnapshotBasePayloadSize = 52;
+constexpr std::size_t kActorActionTimelinePayloadSize = 20;
 constexpr std::size_t kActorOwnerPeerPayloadSize = 4;
 constexpr std::size_t kActorRotationPayloadSize = 16;
 constexpr std::size_t kActorHealthPayloadSize = 4;
@@ -42,6 +43,7 @@ enum ActorSnapshotRecordFlag : std::uint16_t {
     kActorSnapshotHasOwnerPeer = 1u << 0,
     kActorSnapshotHasRotation = 1u << 1,
     kActorSnapshotHasHealth = 1u << 2,
+    kActorSnapshotHasActionTimeline = 1u << 3,
 };
 
 bool is_actor_entity_type(EntityType type) {
@@ -55,6 +57,10 @@ std::uint16_t actor_record_flags(const EntitySnapshot& entity) {
         if ((entity.state_flags & kSnapshotStateFlagHpUnknown) == 0u) {
             flags |= kActorSnapshotHasHealth;
         }
+    }
+    if (entity.action_template_id != 0u ||
+        entity.action_phase != KernelActionPhase_None) {
+        flags |= kActorSnapshotHasActionTimeline;
     }
     return flags;
 }
@@ -213,6 +219,7 @@ std::vector<std::uint8_t> encode_snapshot_packet(
                     payload.write_vec3(entity->velocity);
                     payload.write_u16(entity->state);
                     payload.write_u32(entity->flags);
+                    payload.write_vec3(entity->aim_direction);
                     if ((record_flags & kActorSnapshotHasOwnerPeer) != 0u) {
                         payload.write_u32(entity->owner_peer);
                     }
@@ -222,6 +229,14 @@ std::vector<std::uint8_t> encode_snapshot_packet(
                     if ((record_flags & kActorSnapshotHasHealth) != 0u) {
                         payload.write_u16(entity->hp);
                         payload.write_u16(entity->max_hp);
+                    }
+                    if ((record_flags & kActorSnapshotHasActionTimeline) != 0u) {
+                        payload.write_u32(entity->action_template_id);
+                        payload.write_u32(entity->action_instance_id);
+                        payload.write_u32(entity->action_start_tick);
+                        payload.write_u32(entity->action_commit_count);
+                        payload.write_u16(entity->action_phase);
+                        payload.write_u16(0u);
                     }
                     break;
                 }
@@ -317,7 +332,8 @@ bool decode_snapshot_packet(
                         !reader.read_vec3(&entity.position) ||
                         !reader.read_vec3(&entity.velocity) ||
                         !reader.read_u16(&entity.state) ||
-                        !reader.read_u32(&entity.flags)) {
+                        !reader.read_u32(&entity.flags) ||
+                        !reader.read_vec3(&entity.aim_direction)) {
                         return false;
                     }
                     entity.type = static_cast<EntityType>(entity_type);
@@ -337,6 +353,22 @@ bool decode_snapshot_packet(
                         }
                     } else {
                         entity.state_flags |= kSnapshotStateFlagHpUnknown;
+                    }
+                    if ((record_flags & kActorSnapshotHasActionTimeline) != 0u) {
+                        std::uint16_t action_phase = 0;
+                        std::uint16_t action_reserved = 0;
+                        if (!reader.read_u32(&entity.action_template_id) ||
+                            !reader.read_u32(&entity.action_instance_id) ||
+                            !reader.read_u32(&entity.action_start_tick) ||
+                            !reader.read_u32(&entity.action_commit_count) ||
+                            !reader.read_u16(&action_phase) ||
+                            !reader.read_u16(&action_reserved) ||
+                            action_phase > KernelActionPhase_Recovery ||
+                            action_reserved != 0u) {
+                            return false;
+                        }
+                        entity.action_phase =
+                            static_cast<std::uint8_t>(action_phase);
                     }
                     break;
                 }
@@ -424,6 +456,10 @@ std::size_t estimate_snapshot_entity_size(const EntitySnapshot& entity) {
                         : 0u) +
                    ((actor_record_flags(entity) & kActorSnapshotHasHealth) != 0u
                         ? kActorHealthPayloadSize
+                        : 0u) +
+                   ((actor_record_flags(entity) &
+                     kActorSnapshotHasActionTimeline) != 0u
+                        ? kActorActionTimelinePayloadSize
                         : 0u);
         case SnapshotSectionType::kProjectileCompact:
             return kProjectileCompactSnapshotPayloadSize;

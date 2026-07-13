@@ -25,6 +25,25 @@ int main() {
         true;
     world.registry().get<network_example::Health>(*player_entity).hp = 75;
     world.registry().get<network_example::Health>(*player_entity).max_hp = 100;
+    world.registry().emplace<network_example::ActionInputState>(
+        *player_entity,
+        network_example::ActionInputState{
+            (1u << 1) | (1u << 8),
+            0,
+            7,
+            7001,
+            network_example::kWeaponSlot3,
+            glm::vec3{0.0f, 0.0f, 1.0f},
+        });
+    network_example::ActionRuntimeState action_runtime;
+    action_runtime.action_template_id = 1001;
+    action_runtime.action_instance_id = 7001;
+    action_runtime.start_tick = 7;
+    action_runtime.next_commit_tick = 10;
+    action_runtime.phase = 1;
+    world.registry().emplace<network_example::ActionRuntimeState>(
+        *player_entity,
+        action_runtime);
     world.registry().get<network_example::Hitbox>(*player_entity) =
         network_example::Hitbox{{0.0f, 0.9f, 0.0f}, {0.35f, 0.9f, 0.35f}, 0};
     const auto enemy_entity = world.find_entity(enemy);
@@ -73,6 +92,10 @@ int main() {
                 entity.owner_peer == 1 &&
                 entity.hp == 75 &&
                 entity.max_hp == 100 &&
+                entity.action_template_id == 1001 &&
+                entity.action_instance_id == 7001 &&
+                entity.action_phase == 1 &&
+                entity.aim_direction.z == 1.0f &&
                 (entity.flags & network_example::kVisualFlagMoving) != 0 &&
                 (entity.flags & network_example::kVisualFlagReloading) != 0;
         }
@@ -81,7 +104,7 @@ int main() {
                 entity.owner_peer == 0 && entity.state == 9 &&
                 entity.hp == 25 &&
                 entity.max_hp == 50 &&
-                entity.flags == 0x01020300u;
+                entity.flags == 0x01020100u;
         }
         if (entity.net_id == projectile) {
             saw_projectile_metadata =

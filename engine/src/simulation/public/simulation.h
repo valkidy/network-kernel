@@ -198,6 +198,20 @@ void simulate_hitscan_weapons(
     std::uint32_t current_tick,
     std::vector<KernelEvent>* events,
     DamagePipeline* damage_pipeline);
+
+struct ActionCommit {
+    NetId controlled_net_id = 0;
+    PeerId owner_peer = 0;
+    std::uint8_t weapon_id = 0;
+    std::uint32_t action_instance_id = 0;
+    glm::vec3 aim_direction{1.0f, 0.0f, 0.0f};
+};
+
+std::vector<ActionCommit> simulate_actions(
+    World& world,
+    const std::vector<QueuedInput>& inputs,
+    std::uint32_t current_tick);
+
 void simulate_weapons(
     World& world,
     const std::vector<QueuedInput>& inputs,

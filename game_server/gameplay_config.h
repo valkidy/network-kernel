@@ -77,6 +77,7 @@ struct WeaponCatalogConfig {
     std::uint32_t catalog_version = 1;
     std::uint64_t catalog_hash = 0;
     std::array<KernelWeaponMechanicsDefinition, kWeaponCount> definitions{};
+    std::array<KernelActionTemplateDefinition, kWeaponCount> action_templates{};
     std::array<std::string, kWeaponCount> names{};
     std::array<std::uint8_t, kWeaponCount> projectile_sync_modes{};
     std::array<std::uint32_t, kWeaponCount> collider_template_ids{};
@@ -118,6 +119,7 @@ struct KernelGameplayCatalogStorage {
     std::vector<KernelProjectileTemplateDefinition> projectile_templates;
     std::vector<KernelColliderTemplateDefinition> collider_templates;
     std::vector<KernelColliderBindingDefinition> collider_bindings;
+    std::vector<KernelActionTemplateDefinition> action_templates;
     KernelGameplayCatalogDefinition definition{};
 };
 

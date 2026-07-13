@@ -41,6 +41,10 @@ public:
         const std::vector<RuntimeProjectileTemplate>& projectile_templates);
     const RuntimeProjectileTemplate* find_projectile_template(
         std::uint32_t projectile_template_id) const;
+    void set_action_templates(
+        const std::vector<RuntimeActionTemplate>& action_templates);
+    const RuntimeActionTemplate* find_action_template(
+        std::uint32_t action_template_id) const;
 
     entt::registry& registry();
     const entt::registry& registry() const;
@@ -81,6 +85,7 @@ private:
     std::unordered_set<NetId> tombstoned_net_ids_;
     std::vector<ProjectileInteractionRule> projectile_interaction_rules_;
     std::vector<RuntimeProjectileTemplate> projectile_templates_;
+    std::vector<RuntimeActionTemplate> action_templates_;
     ColliderRegistry collider_registry_;
     NetId next_net_id_ = 1;
 };

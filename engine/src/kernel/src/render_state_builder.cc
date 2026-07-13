@@ -49,6 +49,9 @@ RenderEntityState render_state_from_world_entity(
     std::uint32_t projectile_template_id = 0;
     std::uint16_t hp = 0;
     std::uint16_t max_hp = 0;
+    KernelActionRuntimeView action{};
+    action.struct_size = sizeof(action);
+    KernelVec3 aim_direction{1.0f, 0.0f, 0.0f};
     if (world.registry().all_of<Velocity>(entity)) {
         velocity = to_kernel_vec3(world.registry().get<Velocity>(entity).linear);
     }
@@ -65,6 +68,7 @@ RenderEntityState render_state_from_world_entity(
         animation_state = replication.animation_state;
         visual_flags |= replication.visual_flags;
     }
+    visual_flags &= ~kVisualFlagFiring;
     if (world.registry().all_of<ProjectileState>(entity)) {
         const ProjectileState& projectile =
             world.registry().get<ProjectileState>(entity);
@@ -75,6 +79,22 @@ RenderEntityState render_state_from_world_entity(
     if (world.registry().all_of<ActorTemplateRef>(entity)) {
         actor_template_id =
             world.registry().get<ActorTemplateRef>(entity).actor_template_id;
+    }
+    if (world.registry().all_of<ActionInputState>(entity)) {
+        aim_direction = to_kernel_vec3(
+            world.registry().get<ActionInputState>(entity).aim_direction);
+    }
+    if (world.registry().all_of<ActionRuntimeState>(entity)) {
+        const ActionRuntimeState& runtime =
+            world.registry().get<ActionRuntimeState>(entity);
+        action.action_template_id = runtime.action_template_id;
+        action.action_instance_id = runtime.action_instance_id;
+        action.phase = runtime.phase;
+        action.start_tick = runtime.start_tick;
+        action.commit_count = runtime.commit_count;
+        if (runtime.phase == KernelActionPhase_Active) {
+            visual_flags |= kVisualFlagFiring;
+        }
     }
     if (world.registry().all_of<HomingState>(entity)) {
         animation_state = static_cast<std::uint16_t>(
@@ -99,6 +119,8 @@ RenderEntityState render_state_from_world_entity(
         projectile_template_id,
         0,
         actor_template_id,
+        action,
+        aim_direction,
     };
 }
 
@@ -117,7 +139,10 @@ RenderEntityState render_state_from_snapshot_entity(
         entity.hp,
         entity.max_hp,
         entity.state,
-        entity.flags |
+        (entity.flags & ~kVisualFlagFiring) |
+            (entity.action_phase == KernelActionPhase_Active
+                 ? kVisualFlagFiring
+                 : 0u) |
             ((entity.state_flags & kSnapshotStateFlagHpUnknown) != 0u
                  ? kVisualFlagHpUnknown
                  : 0u),
@@ -127,6 +152,17 @@ RenderEntityState render_state_from_snapshot_entity(
         0,
         0,
         0,
+        KernelActionRuntimeView{
+            sizeof(KernelActionRuntimeView),
+            entity.action_template_id,
+            entity.action_instance_id,
+            entity.action_phase,
+            0,
+            0,
+            entity.action_start_tick,
+            entity.action_commit_count,
+        },
+        to_kernel_vec3(entity.aim_direction),
     };
 }
 

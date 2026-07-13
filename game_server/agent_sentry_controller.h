@@ -16,8 +16,8 @@ struct AgentSentryConfig {
     float patrol_rotation_min_degrees = 15.0f;
     float patrol_rotation_max_degrees = 30.0f;
     std::uint8_t weapon_id = static_cast<std::uint8_t>(KERNEL_MAX_WEAPONS);
-    std::uint16_t animation_idle = kAgentAnimationIdle;
-    std::uint16_t animation_attack = kAgentAnimationChasing;
+    std::uint16_t animation_idle = 0;
+    std::uint16_t animation_attack = 0;
 };
 
 class AgentSentryController {
