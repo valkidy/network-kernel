@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 40u`.
+`KERNEL_ABI_VERSION == 41u`.
 
 ## Ownership
 
@@ -30,6 +30,17 @@ failures return `NULL`, `false`, or `0`.
 Additive changes must prefer new `Kernel_*` functions or new capability flags.
 Breaking changes to public struct layout, enum semantics, buffer ownership, or
 function signatures require a `KERNEL_ABI_VERSION` bump.
+
+ABI version 41 adds `KernelNetworkStatsConfig` to `KernelConfig` and extends
+`KernelNetworkStats` with per-channel bytes, owner-result reconciliation,
+remote-presentation filtering/budget, batch, timeout, duplicate, latency,
+zero-id, and collision counters. `KernelNetworkStatsMode_Default` resolves to
+Basic; Off disables all network counters/timing; Detailed adds serialization,
+deserialization, and owner-result latency timing. Zero-valued limits resolve to
+1,200 B action packets, 250 ms remote expiry, 8 KiB/s per client, and
+256 KiB/s server aggregate. `KernelAbiInfo::network_stats_config_size` reports
+the new configuration layout. Packet schema remains 16, snapshot schema remains
+14, and the owner-result and remote-presentation records remain 12 B and 20 B.
 
 ABI version 40 replaces discrete Fire/Reload button input with the 8-byte
 `ActionIntent` start contract and 8-byte `ActionInput` hold/release contract.

@@ -189,6 +189,14 @@ void load_minimal_gameplay_catalog(KernelHandle* kernel) {
         fire_action,
         reload_action,
     };
+    KernelActorTemplateDefinition actor_template{};
+    actor_template.struct_size = sizeof(actor_template);
+    actor_template.actor_template_id = 1u;
+    actor_template.entity_type = KernelEntityType_Actor;
+    actor_template.actor_type = KernelActorType_Agent;
+    actor_template.collider_template_id = 1u;
+    actor_template.vision.struct_size = sizeof(KernelAgentVisionConfig);
+    actor_template.vision.camp = KernelAgentCamp_EnemySide;
     KernelGameplayCatalogDefinition catalog{};
     catalog.struct_size = sizeof(catalog);
     catalog.catalog_version = 1;
@@ -201,6 +209,8 @@ void load_minimal_gameplay_catalog(KernelHandle* kernel) {
     catalog.action_templates = action_templates.data();
     catalog.action_template_count =
         static_cast<std::uint32_t>(action_templates.size());
+    catalog.actor_templates = &actor_template;
+    catalog.actor_template_count = 1u;
     assert(Kernel_LoadGameplayCatalog(kernel, &catalog));
 }
 
@@ -505,7 +515,7 @@ int main() {
         kernel,
         rejected_after_states.data(),
         static_cast<std::uint32_t>(rejected_after_states.size()));
-    assert(!has_projectile_action(
+    assert(has_projectile_action(
         rejected_after_states,
         rejected_after_count,
         rejected_projectile_input.action_intent.action_instance_id));
@@ -514,6 +524,7 @@ int main() {
     enemy_create.struct_size = sizeof(enemy_create);
     enemy_create.entity_type = 1;
     enemy_create.actor_type = KernelActorType_Agent;
+    enemy_create.actor_template_id = 1u;
     enemy_create.position = KernelVec3{6.0f, 0.0f, 0.0f};
     enemy_create.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
     enemy_create.animation_state = 4;

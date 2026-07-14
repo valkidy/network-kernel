@@ -67,6 +67,25 @@ void add_snapshot_entity(
     snapshot->entities.push_back(entity);
 }
 
+void add_client_render_metadata(
+    network_example::KernelEngine* engine,
+    network_example::NetId net_id,
+    network_example::EntityType type,
+    network_example::ActorType actor_type =
+        network_example::ActorType::kUnknown) {
+    engine->client_replicated_entities_.push_back({});
+    auto& metadata = engine->client_replicated_entities_.back();
+    metadata.net_id = net_id;
+    metadata.type = type;
+    metadata.actor_type = actor_type;
+    metadata.actor_template_id =
+        type == network_example::EntityType::kActor ? 1u : 0u;
+    metadata.projectile_template_id =
+        type == network_example::EntityType::kProjectile ? 1u : 0u;
+    metadata.collider_template_id = 1u;
+    metadata.active = true;
+}
+
 KernelColliderTemplateDefinition projectile_collider_template() {
     KernelColliderTemplateDefinition collider_template{};
     collider_template.struct_size = sizeof(collider_template);
@@ -694,7 +713,7 @@ void projectile_spawn_packet_uses_original_muzzle_position() {
     require(network_stats.event_bytes_sent > 0);
     require(network_stats.average_packet_size > 0);
     require(network_stats.max_packet_size > 0);
-    require(network_stats.packet_serialization_cost_us > 0);
+    require(network_stats.packet_serialization_cost_us == 0u);
 }
 
 void snapshot_only_projectile_spawn_sends_metadata_batch() {
@@ -859,6 +878,16 @@ void render_states_at_time_interpolates_and_clamps() {
     engine.reset_runtime_state(KernelMode_Client);
     engine.has_client_clock_sync_ = true;
     engine.client_clock_offset_us_ = 0;
+    engine.handle_client_spawn(network_example::EntitySpawnPacket{
+        42,
+        network_example::EntityType::kActor,
+        network_example::ActorType::kAgent,
+        0,
+        0,
+        1,
+        glm::vec3{0.0f, 0.0f, 0.0f},
+        glm::quat{1.0f, 0.0f, 0.0f, 0.0f},
+    });
     engine.handle_client_snapshot(snapshot_with_entity(
         10,
         42,
@@ -898,6 +927,17 @@ void render_states_at_time_interpolates_and_clamps() {
     network_example::KernelEngine single_snapshot_engine(config);
     single_snapshot_engine.reset_runtime_state(KernelMode_Client);
     single_snapshot_engine.has_client_clock_sync_ = true;
+    single_snapshot_engine.handle_client_spawn(
+        network_example::EntitySpawnPacket{
+            77,
+            network_example::EntityType::kActor,
+            network_example::ActorType::kAgent,
+            0,
+            0,
+            1,
+            glm::vec3{7.0f, 0.0f, 0.0f},
+            glm::quat{1.0f, 0.0f, 0.0f, 0.0f},
+        });
     single_snapshot_engine.handle_client_snapshot(snapshot_with_entity(
         10,
         77,
@@ -923,6 +963,15 @@ void remote_projectile_uses_interpolated_past_timeline() {
     engine.reset_runtime_state(KernelMode_Client);
     engine.has_client_clock_sync_ = true;
     engine.client_clock_offset_us_ = 0;
+    add_client_render_metadata(
+        &engine,
+        42,
+        network_example::EntityType::kActor,
+        network_example::ActorType::kAgent);
+    add_client_render_metadata(
+        &engine,
+        43,
+        network_example::EntityType::kProjectile);
 
     network_example::WorldSnapshot from = snapshot_with_entity(
         10,
@@ -1427,8 +1476,8 @@ void server_validates_catalog_hash_before_welcome() {
     KernelNetworkStats network_stats{};
     network_stats.struct_size = sizeof(network_stats);
     require(server.get_network_stats(&network_stats));
-    require(network_stats.packet_serialization_cost_us > 0);
-    require(network_stats.packet_deserialization_cost_us > 0);
+    require(network_stats.packet_serialization_cost_us == 0u);
+    require(network_stats.packet_deserialization_cost_us == 0u);
 }
 
 void gameplay_catalog_sync_enforces_bundle_limit() {
@@ -2701,6 +2750,86 @@ void action_result_and_remote_presentation_queues_are_isolated() {
                 static_cast<std::uint32_t>(remote_events.size())) == 0u);
 }
 
+void owner_action_correction_timeout_and_reset_converge() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30u;
+    config.tick.snapshot_rate = 15u;
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+    client.running_ = true;
+    client.local_player_net_id_ = 1u;
+    client.has_predicted_local_entity_ = true;
+
+    auto& timed_out = client.outstanding_predicted_actions_[77u];
+    timed_out.action_instance_id = 77u;
+    timed_out.last_activity_us = 0u;
+    client.predicted_local_entity_.action_instance_id = 77u;
+    client.predicted_local_entity_.action_template_id = 1001u;
+    client.predicted_local_entity_.action_phase = KernelActionPhase_Active;
+    client.update(6.0f);
+    require(client.outstanding_predicted_actions_.empty());
+    require(client.predicted_local_entity_.action_instance_id == 0u);
+    require(client.local_action_results_.empty());
+    require(client.network_stats_.local_action_results_timed_out == 1u);
+
+    client.has_client_snapshot_ = true;
+    client.latest_client_snapshot_.header.server_tick = 100u;
+    client.predicted_local_entity_.action_instance_id = 99u;
+    client.predicted_local_entity_.action_template_id = 1001u;
+    client.predicted_local_entity_.action_phase = KernelActionPhase_Active;
+    client.outstanding_predicted_actions_[99u].action_instance_id = 99u;
+    network_example::LocalActionResultBatchPacket older{};
+    older.records.push_back(KernelLocalActionResult{
+        99u,
+        1u,
+        KernelLocalActionResultType_Corrected,
+        KernelLocalActionResultReason_Cancelled,
+        90u,
+    });
+    client.handle_client_local_action_results(older);
+    require(client.predicted_local_entity_.action_instance_id == 99u);
+    require(client.outstanding_predicted_actions_.find(99u) ==
+            client.outstanding_predicted_actions_.end());
+
+    client.predicted_local_entity_.action_instance_id = 100u;
+    client.predicted_local_entity_.action_template_id = 1001u;
+    client.predicted_local_entity_.action_phase = KernelActionPhase_Active;
+    client.outstanding_predicted_actions_[100u].action_instance_id = 100u;
+    network_example::LocalActionResultBatchPacket newer{};
+    newer.records.push_back(KernelLocalActionResult{
+        100u,
+        1u,
+        KernelLocalActionResultType_Rejected,
+        KernelLocalActionResultReason_Busy,
+        110u,
+    });
+    client.handle_client_local_action_results(newer);
+    require(client.predicted_local_entity_.action_instance_id == 0u);
+    require(client.outstanding_predicted_actions_.find(100u) !=
+            client.outstanding_predicted_actions_.end());
+
+    network_example::WorldSnapshot authoritative{};
+    authoritative.header.server_tick = 110u;
+    network_example::EntitySnapshot local{};
+    local.net_id = 1u;
+    local.type = network_example::EntityType::kActor;
+    local.action_phase = KernelActionPhase_None;
+    authoritative.entities.push_back(local);
+    client.reconcile_local_prediction(authoritative);
+    require(client.outstanding_predicted_actions_.find(100u) ==
+            client.outstanding_predicted_actions_.end());
+
+    client.pending_remote_action_presentation_events_.push_back(
+        network_example::KernelEngine::PendingRemotePresentation{});
+    client.remote_presentation_dedup_.push_back(
+        network_example::KernelEngine::RemotePresentationDedup{});
+    client.clear_client_action_sync_state();
+    require(client.outstanding_predicted_actions_.empty());
+    require(client.pending_remote_action_presentation_events_.empty());
+    require(client.remote_presentation_dedup_.empty());
+}
+
 void server_routes_fire_result_to_owner_and_presentation_to_observer() {
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;
@@ -3027,6 +3156,7 @@ int main() {
     render_state_overflow_reports_error_event();
     hit_debug_records_filter_and_drain();
     action_result_and_remote_presentation_queues_are_isolated();
+    owner_action_correction_timeout_and_reset_converge();
     server_routes_fire_result_to_owner_and_presentation_to_observer();
     owner_action_prediction_and_discrete_interpolation();
 

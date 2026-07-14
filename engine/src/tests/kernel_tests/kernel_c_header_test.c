@@ -5,7 +5,7 @@
 
 #include "kernel/public/kernel_api.h"
 
-_Static_assert(KERNEL_ABI_VERSION == 40u, "generalized action input ABI");
+_Static_assert(KERNEL_ABI_VERSION == 41u, "action correction/stats ABI");
 _Static_assert(sizeof(ActionIntent) == 8u, "ActionIntent ABI size");
 _Static_assert(sizeof(ActionInput) == 8u, "ActionInput ABI size");
 _Static_assert(
@@ -32,6 +32,7 @@ int main(void) {
     KernelLANDiscoveryQueryConfig lan_discovery_query_config;
     KernelLANDiscoveryResult lan_discovery_result;
     KernelConfig config;
+    KernelNetworkStatsConfig network_stats_config;
     KernelLocalPlayerInfo local_player_info;
     PlayerInput input;
     RenderEntityState state;
@@ -63,6 +64,7 @@ int main(void) {
     KernelVisionStateView vision_state;
 
     (void)config;
+    (void)network_stats_config;
     (void)build_info;
     (void)lan_discovery_server_config;
     (void)lan_discovery_query_config;
@@ -97,7 +99,7 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 40u);
+    assert(KERNEL_ABI_VERSION == 41u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD == 4u);
@@ -203,7 +205,8 @@ int main(void) {
     assert(offsetof(RenderEntityState, entity_id) == 0u);
     assert(offsetof(RenderEntityState, hp) > offsetof(RenderEntityState, velocity));
     assert(offsetof(RenderEntityState, max_hp) > offsetof(RenderEntityState, hp));
-    assert(offsetof(RenderEntityState, status) > offsetof(RenderEntityState, client_action_id));
+    assert(offsetof(RenderEntityState, status) >
+           offsetof(RenderEntityState, action_instance_id));
     assert(offsetof(RenderEntityState, projectile_template_id) >
            offsetof(RenderEntityState, status));
     assert(offsetof(RenderEntityState, collider_template_id) >

@@ -143,6 +143,7 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
         out_info->collider_binding_definition_size =
             sizeof(KernelColliderBindingDefinition);
         out_info->benchmark_stats_size = sizeof(KernelBenchmarkStats);
+        out_info->network_stats_config_size = sizeof(KernelNetworkStatsConfig);
         out_info->network_stats_size = sizeof(KernelNetworkStats);
         out_info->debug_record_filter_size = sizeof(KernelDebugRecordFilter);
         out_info->debug_info_size = sizeof(KernelDebugInfo);

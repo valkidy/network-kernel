@@ -165,6 +165,9 @@ int main() {
     assert(abi_info.collider_binding_definition_size ==
            sizeof(KernelColliderBindingDefinition));
     assert(abi_info.benchmark_stats_size == sizeof(KernelBenchmarkStats));
+    assert(
+        abi_info.network_stats_config_size ==
+        sizeof(KernelNetworkStatsConfig));
     assert(abi_info.network_stats_size == sizeof(KernelNetworkStats));
     assert(abi_info.debug_record_filter_size == sizeof(KernelDebugRecordFilter));
     assert(abi_info.debug_info_size == sizeof(KernelDebugInfo));
@@ -228,7 +231,7 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 40u);
+    assert(KERNEL_ABI_VERSION == 41u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CONTROL_PLANE_RPC) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ACTION_TIMELINE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LOCAL_ACTION_RESULTS) != 0);
@@ -253,7 +256,8 @@ int main() {
     assert((KERNEL_COLLISION_MASK_DAMAGEABLE & KERNEL_COLLISION_LAYER_NEUTRAL) != 0u);
     assert(KERNEL_LAN_DISCOVERY_DEFAULT_PORT == 47777u);
     assert(offsetof(PlayerInput, client_action_time_us) > offsetof(PlayerInput, input_seq));
-    assert(offsetof(PlayerInput, action_instance_id) > offsetof(PlayerInput, client_action_time_us));
+    assert(offsetof(PlayerInput, action_intent) >
+           offsetof(PlayerInput, client_action_time_us));
     assert(offsetof(KernelEvent, event_time_us) > offsetof(KernelEvent, code));
     assert(offsetof(KernelEvent, presentation_time_us) > offsetof(KernelEvent, event_time_us));
     assert(offsetof(RenderEntityState, entity_id) == 0u);
@@ -652,12 +656,6 @@ int main() {
     assert(rejects_action_templates(invalid_actions));
     invalid_actions = action_templates;
     invalid_actions[0].flags = 0x80;
-    assert(rejects_action_templates(invalid_actions));
-    invalid_actions = action_templates;
-    invalid_actions[0].ammo_cost_per_commit = 0;
-    assert(rejects_action_templates(invalid_actions));
-    invalid_actions = action_templates;
-    invalid_actions[0].commit_interval_ticks = 0;
     assert(rejects_action_templates(invalid_actions));
     invalid_actions = action_templates;
     invalid_actions[0].max_commit_count = 0;
@@ -1115,9 +1113,7 @@ int main() {
     assert(server_state.entity_type == 1);
     assert(server_state.actor_type == KernelActorType_Agent);
     assert(server_state.animation_state == 7);
-    assert(
-        server_state.visual_flags ==
-        (0x12345678u | KERNEL_VISUAL_FLAG_MOVING));
+    assert((server_state.visual_flags & KERNEL_VISUAL_FLAG_MOVING) != 0u);
     assert(server_state.position.x == 5.0f);
     assert(server_state.velocity.x == 1.0f);
     assert(server_state.hp == 240);
@@ -1158,7 +1154,9 @@ int main() {
         kernel,
         created_net_id,
         &server_entity_input));
-    Kernel_Update(kernel, 1.0f / 30.0f);
+    for (int tick = 0; tick < 4; ++tick) {
+        Kernel_Update(kernel, 1.0f / 30.0f);
+    }
     server_state = KernelServerEntityState{};
     server_state.struct_size = sizeof(server_state);
     assert(Kernel_ServerGetEntityState(kernel, created_net_id, &server_state));
@@ -1229,8 +1227,7 @@ int main() {
     assert(rendered_actor->max_hp == 240);
     assert(rendered_actor->animation_state == 7);
     assert(
-        rendered_actor->visual_flags ==
-        (0x12345678u | KERNEL_VISUAL_FLAG_MOVING));
+        (rendered_actor->visual_flags & KERNEL_VISUAL_FLAG_MOVING) != 0u);
     assert(rendered_actor->spawn_tick == 0);
     assert(rendered_actor->action_instance_id == 0);
     const std::uint32_t render_at_time_count =

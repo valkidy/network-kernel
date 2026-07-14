@@ -12,6 +12,7 @@
 #include <spdlog/spdlog.h>
 
 #include "game_server/game_server.h"
+#include "client_app.h"
 #include "kernel/public/kernel_api.h"
 #include "kernel/src/tick_loop.h"
 
@@ -40,6 +41,7 @@ KernelConfig default_config() {
     config.tick.snapshot_rate = config.tick.server_tick_rate;
     config.max_render_states = 2048;
     config.max_events = 2048;
+    config.network_stats.mode = GetAppNetworkStatsMode();
     return config;
 }
 

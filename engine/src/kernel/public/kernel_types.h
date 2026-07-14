@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 40u
+#define KERNEL_ABI_VERSION 41u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -183,6 +183,7 @@ typedef struct KernelAbiInfo {
     uint32_t collider_template_definition_size;
     uint32_t collider_binding_definition_size;
     uint32_t benchmark_stats_size;
+    uint32_t network_stats_config_size;
     uint32_t network_stats_size;
     uint32_t debug_record_filter_size;
     uint32_t debug_info_size;
@@ -482,11 +483,29 @@ typedef struct TickConfig {
     uint32_t max_ticks_per_update;
 } TickConfig;
 
+typedef enum KernelNetworkStatsMode {
+    KernelNetworkStatsMode_Default = 0,
+    KernelNetworkStatsMode_Off = 1,
+    KernelNetworkStatsMode_Basic = 2,
+    KernelNetworkStatsMode_Detailed = 3,
+} KernelNetworkStatsMode;
+
+typedef struct KernelNetworkStatsConfig {
+    uint8_t mode;
+    uint8_t reserved0;
+    uint16_t reserved1;
+    uint32_t action_packet_budget_bytes;
+    uint32_t remote_presentation_expiry_ms;
+    uint32_t remote_presentation_client_budget_bytes_per_second;
+    uint32_t remote_presentation_server_budget_bytes_per_second;
+} KernelNetworkStatsConfig;
+
 typedef struct KernelConfig {
     KernelMode mode;
     TickConfig tick;
     uint32_t max_render_states;
     uint32_t max_events;
+    KernelNetworkStatsConfig network_stats;
 } KernelConfig;
 
 typedef struct ActionIntent {
@@ -901,6 +920,40 @@ typedef struct KernelNetworkStats {
     float loss_ratio;
     uint32_t replication_metadata_timeout_count;
     uint32_t replication_stale_snapshot_drop_count;
+    uint32_t collection_mode;
+    uint32_t reserved0;
+    uint64_t input_bytes_sent;
+    uint64_t presentation_bytes_sent;
+    uint64_t session_bytes_sent;
+    uint64_t local_action_result_bytes_sent;
+    uint64_t remote_action_presentation_bytes_sent;
+    uint64_t local_action_results_generated;
+    uint64_t local_action_results_sent;
+    uint64_t local_action_results_accepted;
+    uint64_t local_action_results_corrected;
+    uint64_t local_action_results_rejected;
+    uint64_t local_action_result_server_duplicates_suppressed;
+    uint64_t local_action_result_client_duplicates_dropped;
+    uint64_t local_action_results_timed_out;
+    uint64_t local_action_result_latency_sample_count;
+    uint64_t local_action_result_latency_us_total;
+    uint64_t local_action_result_latency_us_max;
+    uint64_t local_action_result_batch_count;
+    uint64_t local_action_result_batch_record_count;
+    uint32_t average_local_action_result_batch_size;
+    uint32_t max_local_action_result_batch_size;
+    uint64_t remote_presentation_records_generated;
+    uint64_t remote_presentation_records_sent;
+    uint64_t remote_presentation_batch_count;
+    uint64_t remote_presentation_batch_record_count;
+    uint64_t remote_presentation_relevance_filtered;
+    uint64_t remote_presentation_budget_dropped;
+    uint64_t remote_presentation_stale_dropped;
+    uint64_t remote_presentation_duplicate_dropped;
+    uint32_t average_remote_presentation_batch_size;
+    uint32_t max_remote_presentation_batch_size;
+    uint64_t zero_action_instance_attempts;
+    uint64_t action_instance_collisions;
 } KernelNetworkStats;
 
 typedef struct KernelHitDebugInfo {

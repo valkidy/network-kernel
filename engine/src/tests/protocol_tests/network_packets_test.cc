@@ -29,6 +29,7 @@ int main() {
 
     const std::vector<std::uint8_t> input_packet =
         network_example::encode_input_packet(3, input, 42);
+    assert(input_packet.size() == 85u);
     network_example::PeerId decoded_player = 0;
     PlayerInput decoded_input{};
     assert(network_example::decode_input_packet(
@@ -321,6 +322,12 @@ int main() {
     assert(decoded_local_results.records[0].confirmed_commit_count == 2);
     assert(decoded_local_results.records[0].result ==
            KernelLocalActionResultType_Corrected);
+    local_results.records.resize(97u);
+    assert(network_example::encode_local_action_result_batch_packet(
+               local_results, 22).size() == 1200u);
+    local_results.records.resize(98u);
+    assert(network_example::encode_local_action_result_batch_packet(
+               local_results, 23).size() == 1212u);
 
     network_example::RemoteActionPresentationBatchPacket presentation{};
     presentation.server_tick = 50;
@@ -348,6 +355,12 @@ int main() {
     assert(decoded_presentation.records[0].actor_net_id == 101);
     assert(decoded_presentation.records[0].commit_count == 3);
     assert(decoded_presentation.records[0].server_tick_delta == 2);
+    presentation.records.resize(58u);
+    assert(network_example::encode_remote_action_presentation_batch_packet(
+               presentation, 24).size() == 1196u);
+    presentation.records.resize(59u);
+    assert(network_example::encode_remote_action_presentation_batch_packet(
+               presentation, 25).size() == 1216u);
 
     std::vector<std::uint8_t> bad_presentation_count = presentation_packet;
     bad_presentation_count[32] = 2u;

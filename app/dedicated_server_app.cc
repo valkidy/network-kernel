@@ -12,6 +12,7 @@
 #include <spdlog/spdlog.h>
 
 #include "game_server/game_server.h"
+#include "client_app.h"
 #include "kernel/public/kernel_api.h"
 #include "kernel/src/tick_loop.h"
 
@@ -37,6 +38,7 @@ KernelConfig default_config() {
     config.tick = network_example::current_netcode_preset();
     config.max_render_states = 2048;
     config.max_events = 2048;
+    config.network_stats.mode = GetAppNetworkStatsMode();
     return config;
 }
 

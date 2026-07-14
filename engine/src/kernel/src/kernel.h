@@ -199,6 +199,13 @@ private:
     friend class KernelRpcWorldHandlers;
     friend class simulation::Dispatcher;
 
+    struct ByteTokenBucket {
+        std::uint64_t tokens = 0;
+        std::uint64_t refill_remainder = 0;
+        std::uint64_t last_refill_time_us = 0;
+        bool initialized = false;
+    };
+
     struct PeerSession {
         PeerId peer = 0;
         NetId player = 0;
@@ -223,6 +230,7 @@ private:
         std::uint64_t last_clock_sync_jitter_us = 0;
         std::int64_t clock_offset_us = 0;
         bool has_clock_sync = false;
+        ByteTokenBucket remote_presentation_budget;
     };
 
     struct ClientReplicatedEntity {
@@ -292,10 +300,13 @@ private:
         std::uint8_t weapon_id = 0;
         std::uint16_t ammo_before = 0;
         NetId active_effect_before = 0;
+        std::uint32_t pending_authoritative_tick = 0;
+        bool terminal_correction = false;
     };
 
     struct PendingRemotePresentation {
         std::uint32_t batch_server_tick = 0;
+        std::uint32_t expire_tick = 0;
         KernelRemoteActionPresentationEvent event{};
     };
 
@@ -313,6 +324,7 @@ private:
         PeerId peer_id = 0,
         std::uint32_t code = 0);
     void reset_runtime_state(KernelMode mode);
+    void clear_client_action_sync_state();
     void poll_transport();
     void poll_client_transport();
     void send_gameplay_catalog_manifest_request();
@@ -457,6 +469,12 @@ private:
         SendMode mode,
         ChannelId channel);
     void record_packet_deserialization_cost(std::uint64_t cost_us);
+    bool network_stats_enabled() const;
+    bool detailed_network_stats_enabled() const;
+    void refill_byte_token_bucket(
+        ByteTokenBucket* bucket,
+        std::uint64_t bytes_per_second,
+        std::uint64_t now_us) const;
     void queue_hit_debug_records(
         const std::vector<ConfirmedDamage>& ready_damage);
     void handle_server_handshake(const TransportEvent& transport_event);
@@ -543,6 +561,7 @@ private:
     std::uint32_t simulation_tick_cost_warning_count_ = 0;
     std::uint32_t last_simulation_tick_cost_warning_tick_ = 0;
     KernelNetworkStats network_stats_{};
+    ByteTokenBucket server_remote_presentation_budget_;
     KernelBenchmarkStats benchmark_stats_{};
     std::uint32_t catalog_version_ = 0;
     std::uint64_t catalog_hash_ = 0;

@@ -624,12 +624,11 @@ int main() {
     rocket.reload_action_template_id = 2001u;
     rocket.projectile_template_id = 3;
     assert(kernel_server_validate_mechanics_config(&rocket));
-    assert(kernel_server_set_entity_weapon_mechanics(kernel, enemy, &rocket));
+    assert(!kernel_server_set_entity_weapon_mechanics(kernel, enemy, &rocket));
     KernelWeaponMechanicsDefinition queried_weapon{};
     queried_weapon.struct_size = sizeof(queried_weapon);
-    assert(kernel_server_get_entity_weapon_mechanics(kernel, enemy, 3, &queried_weapon));
-    assert(queried_weapon.reserve_magazines == 6);
-    assert(queried_weapon.projectile_template_id == 3);
+    assert(!kernel_server_get_entity_weapon_mechanics(
+        kernel, enemy, 3, &queried_weapon));
     assert(kernel_server_set_entity_state(kernel, enemy, 4, 8));
     KernelServerEntityState server_state{};
     server_state.struct_size = sizeof(server_state);

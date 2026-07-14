@@ -34,6 +34,7 @@ KernelConfig default_config() {
     config.tick = network_example::current_netcode_preset();
     config.max_render_states = 2048;
     config.max_events = 2048;
+    config.network_stats.mode = GetAppNetworkStatsMode();
     return config;
 }
 
