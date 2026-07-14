@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 41;
+        public const uint AbiVersion = 42;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int GameplayCatalogEntryPathSize = 128;
@@ -260,6 +260,7 @@ namespace NetworkExample.Kernel
         Dead = 9,
         WeaponChanged = 10,
         EffectFailed = 11,
+        Cooldown = 12,
     }
 
     public enum KernelRemoteActionPresentationEventType : byte
