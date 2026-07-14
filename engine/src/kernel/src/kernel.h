@@ -298,6 +298,9 @@ private:
         std::uint16_t confirmed_commit_count = 0;
         std::uint16_t binding_id = 0;
         std::uint8_t weapon_id = 0;
+        std::uint32_t action_template_id = 0;
+        std::uint32_t primary_gate_before = 0;
+        std::uint32_t last_authoritative_commit_tick = 0;
         std::uint16_t ammo_before = 0;
         NetId active_effect_before = 0;
         std::uint32_t pending_authoritative_tick = 0;
@@ -583,8 +586,11 @@ private:
     EntitySnapshot predicted_local_entity_;
     std::uint32_t predicted_action_buttons_ = 0;
     std::uint16_t predicted_action_binding_id_ = 0;
+    std::uint8_t predicted_action_weapon_id_ = 0;
     std::uint32_t predicted_action_next_commit_tick_ = 0;
     std::uint32_t predicted_action_recovery_end_tick_ = 0;
+    std::array<std::uint32_t, kWeaponCount>
+        predicted_next_primary_commit_tick_{};
     glm::vec3 local_correction_offset_{0.0f, 0.0f, 0.0f};
     std::uint64_t next_entity_id_ = 1;
     std::uint64_t next_predicted_entity_id_ = UINT64_C(0x8000000000000000);

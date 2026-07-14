@@ -231,7 +231,6 @@ KernelWeaponMechanicsDefinition hitscan_weapon(
     std::uint8_t weapon_id,
     std::uint16_t magazine_size,
     std::uint16_t damage,
-    std::uint32_t cooldown_ticks,
     std::uint32_t reload_ticks,
     float max_range) {
     KernelWeaponMechanicsDefinition weapon{};
@@ -241,7 +240,6 @@ KernelWeaponMechanicsDefinition hitscan_weapon(
     weapon.magazine_size = magazine_size;
     weapon.reserve_magazines = kDefaultReserveMagazines;
     weapon.damage = damage;
-    (void)cooldown_ticks;
     (void)reload_ticks;
     weapon.max_range = max_range;
     weapon.pellet_count = 1;
@@ -252,7 +250,6 @@ KernelWeaponMechanicsDefinition shotgun_weapon(
     std::uint8_t weapon_id,
     std::uint16_t magazine_size,
     std::uint16_t damage,
-    std::uint32_t cooldown_ticks,
     std::uint32_t reload_ticks,
     float max_range,
     std::uint8_t pellet_count,
@@ -262,7 +259,6 @@ KernelWeaponMechanicsDefinition shotgun_weapon(
             weapon_id,
             magazine_size,
             damage,
-            cooldown_ticks,
             reload_ticks,
             max_range);
     weapon.fire_mode = KernelWeaponFireMode_Shotgun;
@@ -275,7 +271,6 @@ KernelWeaponMechanicsDefinition area_effect_weapon(
     std::uint8_t weapon_id,
     std::uint16_t magazine_size,
     std::uint16_t damage,
-    std::uint32_t cooldown_ticks,
     std::uint32_t reload_ticks) {
     KernelWeaponMechanicsDefinition weapon{};
     weapon.struct_size = sizeof(KernelWeaponMechanicsDefinition);
@@ -284,7 +279,6 @@ KernelWeaponMechanicsDefinition area_effect_weapon(
     weapon.magazine_size = magazine_size;
     weapon.reserve_magazines = kDefaultReserveMagazines;
     weapon.damage = damage;
-    (void)cooldown_ticks;
     (void)reload_ticks;
     weapon.pellet_count = 1;
     weapon.projectile_template_id = weapon_id;
@@ -295,7 +289,6 @@ KernelWeaponMechanicsDefinition beam_weapon(
     std::uint8_t weapon_id,
     std::uint16_t magazine_size,
     std::uint16_t damage,
-    std::uint32_t cooldown_ticks,
     std::uint32_t reload_ticks) {
     KernelWeaponMechanicsDefinition weapon{};
     weapon.struct_size = sizeof(KernelWeaponMechanicsDefinition);
@@ -304,7 +297,6 @@ KernelWeaponMechanicsDefinition beam_weapon(
     weapon.magazine_size = magazine_size;
     weapon.reserve_magazines = kDefaultReserveMagazines;
     weapon.damage = damage;
-    (void)cooldown_ticks;
     (void)reload_ticks;
     weapon.pellet_count = 1;
     weapon.projectile_template_id = weapon_id;
@@ -951,7 +943,7 @@ bool valid_action_template_definition(
         return false;
     }
     if (definition.trigger_mode == KernelActionTriggerMode_Press) {
-        return definition.max_commit_count == 1u &&
+        return definition.max_commit_count >= 1u &&
                definition.hold_input_timeout_ticks == 0u;
     }
     return definition.hold_input_timeout_ticks > 0u;
@@ -996,6 +988,10 @@ ActionTemplateConfig action_template_from_yaml(
         KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTION);
     ActionTemplateConfig action;
     action.name = node["name"].as<std::string>();
+    action.source_path = path;
+    action.source_kind = source_kind;
+    action.commit_interval_line = yaml_line(node["commit_interval_ticks"]);
+    action.commit_interval_column = yaml_column(node["commit_interval_ticks"]);
     KernelActionTemplateDefinition& definition = action.definition;
     definition.struct_size = sizeof(definition);
     definition.action_template_id = node["id"].as<std::uint32_t>();
@@ -1039,6 +1035,47 @@ ActionTemplateConfig action_template_from_yaml(
     definition.recovery_ticks = node["recovery_ticks"].as<std::uint32_t>();
     definition.hold_input_timeout_ticks =
         node["hold_input_timeout_ticks"].as<std::uint32_t>();
+    const auto reject_numeric = [&](const char* field, const char* diagnostic) {
+        throw DataLoadError(
+            KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_NUMERIC_RANGE,
+            diagnostic,
+            path,
+            field,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTION,
+            definition.action_template_id,
+            0,
+            yaml_line(node[field]),
+            yaml_column(node[field]));
+    };
+    if (definition.action_template_id == 0u) {
+        reject_numeric("id", "action template id must be greater than 0");
+    }
+    if (definition.trigger_mode == KernelActionTriggerMode_Press &&
+        definition.max_commit_count == 0u) {
+        reject_numeric(
+            "max_commit_count",
+            "Press action max_commit_count must be at least 1");
+    }
+    if (definition.trigger_mode == KernelActionTriggerMode_Press &&
+        definition.hold_input_timeout_ticks != 0u) {
+        reject_numeric(
+            "hold_input_timeout_ticks",
+            "Press action hold_input_timeout_ticks must be 0");
+    }
+    if (definition.trigger_mode == KernelActionTriggerMode_Hold &&
+        definition.hold_input_timeout_ticks == 0u) {
+        reject_numeric(
+            "hold_input_timeout_ticks",
+            "Hold action hold_input_timeout_ticks must be greater than 0");
+    }
+    if ((definition.max_commit_count == 0u ||
+         definition.max_commit_count > 1u) &&
+        definition.commit_interval_ticks == 0u) {
+        reject_numeric(
+            "commit_interval_ticks",
+            "multi-commit action commit_interval_ticks must be greater than 0");
+    }
     if (action.name.empty() || !valid_action_template_definition(definition)) {
         throw DataLoadError(
             KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_NUMERIC_RANGE,
@@ -1125,6 +1162,7 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
     const YAML::Node& node,
     const std::string& path,
     std::uint32_t source_kind) {
+    const auto id = static_cast<std::uint8_t>(node["id"].as<int>());
     reject_unknown_keys(
         node,
         {
@@ -1134,7 +1172,6 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
             "magazine_size",
             "reserve_magazines",
             "damage",
-            "cooldown_ticks",
             "reload_ticks",
             "max_range",
             "pellet_count",
@@ -1149,15 +1186,13 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
         },
         path,
         source_kind,
-        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_WEAPON);
-    const auto id = static_cast<std::uint8_t>(node["id"].as<int>());
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_WEAPON,
+        id);
     const std::uint16_t magazine_size = node["magazine_size"].as<std::uint16_t>();
     const std::uint16_t reserve_magazines =
         node["reserve_magazines"]
             ? node["reserve_magazines"].as<std::uint16_t>()
             : kDefaultReserveMagazines;
-    const std::uint32_t cooldown_ticks =
-        node["cooldown_ticks"] ? node["cooldown_ticks"].as<std::uint32_t>() : 0u;
     const std::uint32_t reload_ticks = node["reload_ticks"].as<std::uint32_t>();
     const std::string type = node["weapon_type"].as<std::string>();
     const std::uint16_t damage =
@@ -1172,7 +1207,6 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
                 id,
                 magazine_size,
                 damage,
-                cooldown_ticks,
                 reload_ticks,
                 node["max_range"].as<float>(),
                 static_cast<std::uint8_t>(node["pellet_count"].as<int>()),
@@ -1184,7 +1218,6 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
             id,
             magazine_size,
             damage,
-            cooldown_ticks,
             reload_ticks,
             node["max_range"].as<float>());
         weapon.reserve_magazines = reserve_magazines;
@@ -1209,7 +1242,6 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
         weapon.fire_mode = KernelWeaponFireMode_Projectile;
         weapon.magazine_size = magazine_size;
         weapon.reserve_magazines = reserve_magazines;
-        (void)cooldown_ticks;
         (void)reload_ticks;
         weapon.pellet_count = 1;
         weapon.pellet_count =
@@ -1233,7 +1265,6 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
             id,
             magazine_size,
             damage,
-            cooldown_ticks,
             reload_ticks);
         weapon.reserve_magazines = reserve_magazines;
         return weapon;
@@ -1250,7 +1281,6 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
             id,
             magazine_size,
             damage,
-            cooldown_ticks,
             reload_ticks);
         weapon.reserve_magazines = reserve_magazines;
         return weapon;
@@ -2616,10 +2646,25 @@ void apply_weapon_template_references(
         const auto weapon_id =
             static_cast<std::uint8_t>(document["id"].as<int>());
         if (document["fire_action_template"]) {
-            weapons->definitions[weapon_id].fire_action_template_id =
+            const ActionTemplateConfig* fire_action =
                 action_template_from_ref(
-                    document["fire_action_template"], action_templates)
-                    ->definition.action_template_id;
+                    document["fire_action_template"], action_templates);
+            if (fire_action->definition.commit_interval_ticks == 0u) {
+                throw DataLoadError(
+                    KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_NUMERIC_RANGE,
+                    "weapon fire_action_template requires "
+                    "commit_interval_ticks greater than 0",
+                    fire_action->source_path,
+                    "commit_interval_ticks",
+                    fire_action->source_kind,
+                    KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTION,
+                    fire_action->definition.action_template_id,
+                    0,
+                    fire_action->commit_interval_line,
+                    fire_action->commit_interval_column);
+            }
+            weapons->definitions[weapon_id].fire_action_template_id =
+                fire_action->definition.action_template_id;
         }
         const std::string type = document["weapon_type"].as<std::string>();
         if (type == "hitscan" || type == "shotgun") {
@@ -2731,6 +2776,19 @@ GameServerGameplayConfig load_gameplay_config_from_weapon_template_source(
         source.parent_path(directory), YAML::Node("action_templates"));
     config.action_templates =
         load_action_templates_from_source(source, action_template_dir);
+    ActionTemplateConfig reload_action;
+    reload_action.name = "shared_reload";
+    reload_action.definition.struct_size =
+        sizeof(KernelActionTemplateDefinition);
+    reload_action.definition.action_template_id = 4199u;
+    reload_action.definition.trigger_mode = KernelActionTriggerMode_Press;
+    reload_action.definition.flags =
+        KernelActionTemplateFlag_CancelOnDeath |
+        KernelActionTemplateFlag_CancelOnWeaponChange |
+        KernelActionTemplateFlag_CancelBeforeFirstCommit;
+    reload_action.definition.commit_offset_ticks = 30u;
+    reload_action.definition.max_commit_count = 1u;
+    config.action_templates.push_back(reload_action);
     config.weapons = load_weapon_catalog_from_source(source, directory);
     apply_default_non_weapon_config(&config);
     config.colliders = load_collider_catalog_from_source(
@@ -2747,6 +2805,10 @@ GameServerGameplayConfig load_gameplay_config_from_weapon_template_source(
         &config.projectile_templates,
         config.action_templates,
         &config.weapons);
+    for (KernelWeaponMechanicsDefinition& weapon : config.weapons.definitions) {
+        weapon.reload_action_template_id =
+            reload_action.definition.action_template_id;
+    }
     apply_default_actor_templates(&config);
     config.weapons.catalog_hash = compute_gameplay_catalog_hash(config);
     const std::vector<std::string> errors = validate_gameplay_config(config);
@@ -2802,7 +2864,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     const std::uint32_t catalog_version =
         document["catalog_version"] ? document["catalog_version"].as<std::uint32_t>()
                                     : 1u;
-    if (catalog_version != 1u) {
+    if (catalog_version != 2u) {
         throw DataLoadError(
             KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNSUPPORTED_CATALOG_VERSION,
             "unsupported catalog_version: " + std::to_string(catalog_version),
@@ -2894,11 +2956,11 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     apply_catalog_player_config(document, &config);
     apply_catalog_agent_config(document, &config);
 
-    config.weapons.catalog_hash = compute_gameplay_catalog_hash(config);
     const std::vector<std::string> errors = validate_gameplay_config(config);
     if (!errors.empty()) {
         throw std::runtime_error(errors.front());
     }
+    config.weapons.catalog_hash = compute_gameplay_catalog_hash(config);
     return config;
 }
 

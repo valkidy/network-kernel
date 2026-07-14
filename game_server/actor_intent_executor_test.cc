@@ -105,8 +105,6 @@ void set_weapon(KernelHandle* kernel, std::uint32_t net_id) {
     weapon.fire_mode = KernelWeaponFireMode_Projectile;
     weapon.magazine_size = 2;
     weapon.damage = 1;
-    weapon.cooldown_ticks = 1;
-    weapon.reload_ticks = 3;
     weapon.projectile_template_id = 3;
     assert(Kernel_ServerSetEntityWeaponMechanics(kernel, net_id, &weapon));
 }

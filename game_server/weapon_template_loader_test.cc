@@ -263,8 +263,6 @@ void valid_repo_templates_load_all_slots() {
     assert(config.weapons.definitions[network_example::game_server::kWeaponGrenade]
                .damage == 1);
     assert(config.weapons.definitions[network_example::game_server::kWeaponGrenade]
-               .cooldown_ticks == 0);
-    assert(config.weapons.definitions[network_example::game_server::kWeaponGrenade]
                .magazine_size == 120);
     assert(config.weapons.definitions[network_example::game_server::kWeaponGrenade]
                .reserve_magazines == kMaxReserveMagazines);
@@ -301,14 +299,14 @@ void valid_repo_templates_load_all_slots() {
            "Beam Rifle");
     assert(config.weapons.names[network_example::game_server::kWeaponHomingMissile] ==
            "Homing Missile");
-    assert(config.action_templates.size() == 7);
+    assert(config.action_templates.size() == 8);
     assert(config.weapons.definitions[network_example::game_server::kWeaponRifle]
                .fire_action_template_id == 4096);
     assert(config.weapons.definitions[network_example::game_server::kWeaponRocket]
                .fire_action_template_id == 4099);
     assert(config.weapons.definitions[network_example::game_server::kWeaponBeamRifle]
                .fire_action_template_id == 4101);
-    assert(storage.definition.action_template_count == 7);
+    assert(storage.definition.action_template_count == 8);
     assert(config.action_templates[3].definition.commit_offset_ticks == 3);
     assert(config.action_templates[3].definition.commit_interval_ticks == 30);
     assert(config.action_templates[5].definition.trigger_mode ==
@@ -380,7 +378,77 @@ void invalid_templates_are_rejected() {
         "id: 0\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
         "damage: 25\ncooldown_ticks: 3\nreload_ticks: 30\nmax_range: 100.0\n"
         "segment_collider: rifle_segment_damage\n");
-    assert(!load_fails(legacy_dir));
+    try {
+        (void)network_example::game_server::
+            load_gameplay_config_from_weapon_template_directory(
+                legacy_dir.string());
+        assert(false);
+    } catch (const network_example::game_server::DataLoadError& error) {
+        assert(
+            error.error_code ==
+            KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD);
+        assert(error.field == "cooldown_ticks");
+        assert(error.template_kind ==
+               KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_WEAPON);
+        assert(error.template_id == 0);
+        assert(error.line > 0);
+        assert(error.column > 0);
+    }
+
+    const std::filesystem::path finite_press_dir = tmp_dir("finite_press");
+    write_valid_templates(finite_press_dir);
+    write_file(
+        finite_press_dir.parent_path() /
+            "action_templates" / "rifle_fire.yaml",
+        "id: 4096\nname: rifle_fire\ntrigger_mode: press\n"
+        "flags: [cancel_on_death]\nammo_cost_per_commit: 1\n"
+        "commit_offset_ticks: 0\ncommit_interval_ticks: 2\n"
+        "max_commit_count: 3\nrecovery_ticks: 0\n"
+        "hold_input_timeout_ticks: 0\n");
+    assert(!load_fails(finite_press_dir));
+
+    const std::filesystem::path zero_fire_interval_dir =
+        tmp_dir("zero_fire_interval");
+    write_valid_templates(zero_fire_interval_dir);
+    const std::filesystem::path zero_fire_action =
+        zero_fire_interval_dir.parent_path() /
+        "action_templates" / "rifle_fire.yaml";
+    write_file(
+        zero_fire_action,
+        "id: 4096\nname: rifle_fire\ntrigger_mode: press\n"
+        "flags: [cancel_on_death]\nammo_cost_per_commit: 1\n"
+        "commit_offset_ticks: 0\ncommit_interval_ticks: 0\n"
+        "max_commit_count: 1\nrecovery_ticks: 0\n"
+        "hold_input_timeout_ticks: 0\n");
+    try {
+        (void)network_example::game_server::
+            load_gameplay_config_from_weapon_template_directory(
+                zero_fire_interval_dir.string());
+        assert(false);
+    } catch (const network_example::game_server::DataLoadError& error) {
+        assert(
+            error.error_code ==
+            KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_NUMERIC_RANGE);
+        assert(error.path == zero_fire_action.string());
+        assert(error.field == "commit_interval_ticks");
+        assert(error.template_kind ==
+               KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTION);
+        assert(error.template_id == 4096);
+        assert(error.line > 0);
+        assert(error.column > 0);
+    }
+
+    const std::filesystem::path invalid_press_dir = tmp_dir("invalid_press");
+    write_valid_templates(invalid_press_dir);
+    write_file(
+        invalid_press_dir.parent_path() /
+            "action_templates" / "rifle_fire.yaml",
+        "id: 4096\nname: rifle_fire\ntrigger_mode: press\n"
+        "flags: []\nammo_cost_per_commit: 1\n"
+        "commit_offset_ticks: 0\ncommit_interval_ticks: 2\n"
+        "max_commit_count: 0\nrecovery_ticks: 0\n"
+        "hold_input_timeout_ticks: 1\n");
+    assert(load_fails(invalid_press_dir));
 
     const std::filesystem::path missing_policy_dir = tmp_dir("missing_policy");
     write_valid_templates(missing_policy_dir);
@@ -425,7 +493,7 @@ void invalid_templates_are_rejected() {
     write_file(
         duplicate_dir / "duplicate.yaml",
         "id: 4\nname: Duplicate\nweapon_type: hitscan\nmagazine_size: 1\n"
-        "damage: 1\ncooldown_ticks: 1\nreload_ticks: 1\nmax_range: 1.0\n");
+        "damage: 1\nreload_ticks: 1\nmax_range: 1.0\n");
     assert(load_fails(duplicate_dir));
 
     const std::filesystem::path duplicate_name_dir = tmp_dir("duplicate_name");
@@ -433,7 +501,7 @@ void invalid_templates_are_rejected() {
     write_file(
         duplicate_name_dir / "duplicate_name.yaml",
         "id: 4\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 1\n"
-        "damage: 1\ncooldown_ticks: 1\nreload_ticks: 1\nmax_range: 1.0\n"
+        "damage: 1\nreload_ticks: 1\nmax_range: 1.0\n"
         "segment_collider: rifle_segment_damage\n");
     assert(load_fails(duplicate_name_dir));
 
@@ -443,7 +511,7 @@ void invalid_templates_are_rejected() {
     write_file(
         unknown_weapon_field_dir / "rifle.yaml",
         "id: 0\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
-        "damage: 25\ncooldown_ticks: 3\nreload_ticks: 30\nmax_range: 100.0\n"
+        "damage: 25\nreload_ticks: 30\nmax_range: 100.0\n"
         "segment_collider: rifle_segment_damage\nruntime_instance_id: 9\n");
     assert(load_fails(unknown_weapon_field_dir));
 
@@ -453,7 +521,7 @@ void invalid_templates_are_rejected() {
     write_file(
         unknown_area_field_dir / "fire_floor.yaml",
         "id: 4\nname: Fire Floor\nweapon_type: area_effect\nmagazine_size: 3\n"
-        "damage: 12\ncooldown_ticks: 10\nreload_ticks: 30\narea_effect:\n"
+        "damage: 12\nreload_ticks: 30\narea_effect:\n"
         "  collider_template: explosion_damage\n"
         "  radius: 2.0\n  damage_per_interval: 12\n  damage_interval_ticks: 2\n"
         "  lifetime_ticks: 6\n  spawn_distance: 1.0\n  collision_mask: hostile_side\n"
@@ -466,7 +534,7 @@ void invalid_templates_are_rejected() {
     write_file(
         unknown_beam_field_dir / "beam_rifle.yaml",
         "id: 5\nname: Beam Rifle\nweapon_type: beam\nmagazine_size: 12\n"
-        "damage: 30\ncooldown_ticks: 1\nreload_ticks: 45\nbeam:\n"
+        "damage: 30\nreload_ticks: 45\nbeam:\n"
         "  collider_template: beam_damage\n"
         "  length: 8.0\n  radius: 0.25\n  damage_per_tick: 1\n"
         "  lifetime_ticks: 2\n  collision_mask: hostile_side\n  owner: player\n");
@@ -503,7 +571,7 @@ void invalid_templates_are_rejected() {
     write_file(
         hitscan_projectile_dir / "rifle.yaml",
         "id: 0\nname: Bad Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
-        "damage: 25\ncooldown_ticks: 3\nreload_ticks: 30\nmax_range: 100.0\n"
+        "damage: 25\nreload_ticks: 30\nmax_range: 100.0\n"
         "projectile: {speed: 10.0}\n");
     assert(load_fails(hitscan_projectile_dir));
 
@@ -512,7 +580,7 @@ void invalid_templates_are_rejected() {
     write_file(
         missing_beam_dir / "beam_rifle.yaml",
         "id: 5\nname: Beam\nweapon_type: beam\nmagazine_size: 1\n"
-        "damage: 1\ncooldown_ticks: 1\nreload_ticks: 1\n");
+        "damage: 1\nreload_ticks: 1\n");
     assert(load_fails(missing_beam_dir));
 
     const std::filesystem::path invalid_beam_dir = tmp_dir("invalid_beam");
@@ -520,7 +588,7 @@ void invalid_templates_are_rejected() {
     write_file(
         invalid_beam_dir / "beam_rifle.yaml",
         "id: 5\nname: Beam\nweapon_type: beam\nmagazine_size: 1\n"
-        "damage: 1\ncooldown_ticks: 1\nreload_ticks: 1\nbeam:\n"
+        "damage: 1\nreload_ticks: 1\nbeam:\n"
         "  length: 0.0\n  radius: 0.25\n  damage_per_tick: 1\n"
         "  lifetime_ticks: 2\n  collision_mask: hostile_side\n");
     assert(load_fails(invalid_beam_dir));
@@ -530,7 +598,7 @@ void invalid_templates_are_rejected() {
     write_file(
         beam_on_hitscan_dir / "rifle.yaml",
         "id: 0\nname: Bad Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
-        "damage: 25\ncooldown_ticks: 3\nreload_ticks: 30\nmax_range: 100.0\n"
+        "damage: 25\nreload_ticks: 30\nmax_range: 100.0\n"
         "beam: {length: 8.0}\n");
     assert(load_fails(beam_on_hitscan_dir));
 
@@ -636,7 +704,7 @@ void invalid_templates_are_rejected() {
     write_file(
         unknown_projectile_dir / "rocket.yaml",
         "id: 3\nname: Rocket\nweapon_type: projectile\nmagazine_size: 6\n"
-        "cooldown_ticks: 45\nreload_ticks: 75\n"
+        "reload_ticks: 75\n"
         "projectile_template: missing_projectile\n");
     assert(load_fails(unknown_projectile_dir));
 
@@ -743,7 +811,7 @@ void catalog_file_loads_colliders() {
     const network_example::game_server::GameServerGameplayConfig config =
         network_example::game_server::load_gameplay_config_from_catalog_file(
             catalog_file.string());
-    assert(config.weapons.catalog_version == 1);
+    assert(config.weapons.catalog_version == 2);
     assert(config.weapons.catalog_hash != 0);
     assert(config.colliders.templates.size() == 9);
     assert(config.colliders.bindings.empty());

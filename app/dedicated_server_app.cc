@@ -119,6 +119,20 @@ int RunDedicatedServer(
                 gameplay_config.weapons.catalog_version,
                 gameplay_config.weapons.catalog_hash);
         }
+    } catch (const network_example::game_server::DataLoadError& error) {
+        spdlog::error(
+            "failed to load gameplay catalog error_code={} diagnostic={} "
+            "path={} field={} line={} column={} template_kind={} "
+            "template_id={}",
+            error.error_code,
+            error.what(),
+            error.path,
+            error.field,
+            error.line,
+            error.column,
+            error.template_kind,
+            error.template_id);
+        return 1;
     } catch (const std::exception& error) {
         spdlog::error("failed to load gameplay catalog: {}", error.what());
         return 1;

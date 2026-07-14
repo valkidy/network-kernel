@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 41u
+#define KERNEL_ABI_VERSION 42u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -354,6 +354,7 @@ typedef enum KernelLocalActionResultReason {
     KernelLocalActionResultReason_Dead = 9,
     KernelLocalActionResultReason_WeaponChanged = 10,
     KernelLocalActionResultReason_EffectFailed = 11,
+    KernelLocalActionResultReason_Cooldown = 12,
 } KernelLocalActionResultReason;
 
 typedef enum KernelRemoteActionPresentationEventType {

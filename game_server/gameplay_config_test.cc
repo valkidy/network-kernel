@@ -242,8 +242,19 @@ std::vector<std::uint8_t> make_entity_template_bundle_zip(
     std::vector<std::pair<std::string, std::string>> files;
     files.push_back({
         "gameplay_catalog.yaml",
-        "catalog_version: 1\n"
+        "catalog_version: 2\n"
         "action_template_dir: action_templates\n"
+        "reload_action_template:\n"
+        "  id: 4199\n"
+        "  name: shared_reload\n"
+        "  trigger_mode: press\n"
+        "  flags: [cancel_on_death, cancel_on_weapon_change, cancel_before_first_commit]\n"
+        "  ammo_cost_per_commit: 0\n"
+        "  commit_offset_ticks: 30\n"
+        "  commit_interval_ticks: 0\n"
+        "  max_commit_count: 1\n"
+        "  recovery_ticks: 0\n"
+        "  hold_input_timeout_ticks: 0\n"
         "weapon_template_dir: weapon_templates\n"
         "projectile_template_dir: projectile_templates\n"
         "entity_template_dir: entity_templates\n"
@@ -461,7 +472,7 @@ int main() {
     assert(enemy_entity_type_rejected);
 
     assert(config.player.actor_template_id == 1);
-    require(config.weapons.catalog_version == 1);
+    require(config.weapons.catalog_version == 2);
     require(config.weapons.catalog_hash != 0);
     require(
         config.weapons.catalog_hash ==
@@ -539,7 +550,6 @@ int main() {
     assert(projectile_spammer.damage == 1);
     assert(projectile_spammer.magazine_size == 120);
     assert(projectile_spammer.reserve_magazines == kMaxReserveMagazines);
-    assert(projectile_spammer.cooldown_ticks == 0);
     assert(projectile_spammer.projectile_template_id == 2);
     assert(projectile_spammer.pellet_count == 3);
     assert(projectile_spammer.pellet_spread == 15.0f);
@@ -710,7 +720,7 @@ int main() {
         config.projectile_templates.size());
 
     const std::vector<std::uint8_t> unsupported_version_bundle = make_store_zip({
-        {"gameplay_catalog.yaml", "catalog_version: 2\n"},
+        {"gameplay_catalog.yaml", "catalog_version: 1\n"},
     });
     bool unsupported_version_rejected = false;
     try {
@@ -726,7 +736,7 @@ int main() {
     assert(unsupported_version_rejected);
 
     const std::vector<std::uint8_t> unknown_catalog_field_bundle = make_store_zip({
-        {"gameplay_catalog.yaml", "catalog_version: 1\nsurprise: true\n"},
+        {"gameplay_catalog.yaml", "catalog_version: 2\nsurprise: true\n"},
     });
     bool unknown_catalog_field_rejected = false;
     try {
@@ -742,7 +752,7 @@ int main() {
 
     const std::vector<std::uint8_t> unknown_nested_catalog_field_bundle = make_store_zip({
         {"gameplay_catalog.yaml",
-         "catalog_version: 1\n"
+         "catalog_version: 2\n"
          "weapon_template_dir: weapon_templates\n"
          "projectile_template_dir: projectile_templates\n"
          "collider_template_dir: collider_templates\n"
@@ -764,7 +774,7 @@ int main() {
 
     const std::vector<std::uint8_t> legacy_collider_field_bundle = make_store_zip({
         {"gameplay_catalog.yaml",
-         "catalog_version: 1\n"
+         "catalog_version: 2\n"
          "weapon_template_dir: weapon_templates\n"
          "projectile_template_dir: projectile_templates\n"
          "collider_template_file: collider_templates/default.yaml\n"},
@@ -784,7 +794,18 @@ int main() {
     std::vector<std::pair<std::string, std::string>> duplicate_collider_files;
     duplicate_collider_files.push_back({
         "gameplay_catalog.yaml",
-        "catalog_version: 1\n"
+        "catalog_version: 2\n"
+        "reload_action_template:\n"
+        "  id: 4199\n"
+        "  name: shared_reload\n"
+        "  trigger_mode: press\n"
+        "  flags: []\n"
+        "  ammo_cost_per_commit: 0\n"
+        "  commit_offset_ticks: 1\n"
+        "  commit_interval_ticks: 0\n"
+        "  max_commit_count: 1\n"
+        "  recovery_ticks: 0\n"
+        "  hold_input_timeout_ticks: 0\n"
         "weapon_template_dir: weapon_templates\n"
         "projectile_template_dir: projectile_templates\n"
         "collider_template_dir: collider_templates\n"});

@@ -57,8 +57,6 @@ network_example::WeaponMechanicsDefinition homing_weapon_definition() {
     definition.mode = network_example::WeaponFireMode::kProjectile;
     definition.magazine_size = 4;
     definition.damage = 20;
-    definition.cooldown_ticks = 1;
-    definition.reload_ticks = 30;
     definition.projectile_template_id = 66;
     return definition;
 }
@@ -136,10 +134,15 @@ network_example::NetId spawn_enemy(
 PlayerInput homing_fire_input(std::uint32_t action_instance_id) {
     PlayerInput input{};
     input.input_seq = 1;
-    input.action_instance_id = action_instance_id;
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
-    input.buttons = InputButton_Fire;
     input.selected_weapon = network_example::kWeaponSlot6;
+    input.action_intent = ActionIntent{
+        action_instance_id,
+        KernelActionBinding_PrimaryFire,
+        0u,
+        0u,
+    };
+    input.action_input = ActionInput{action_instance_id, 1u, 0u, 0u};
     return input;
 }
 

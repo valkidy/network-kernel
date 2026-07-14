@@ -509,8 +509,20 @@ void simulate_weapons(
                     KernelLocalActionResultReason_EffectFailed);
                 break;
             }
+            if (definition->mode == WeaponFireMode::kProjectile &&
+                world.find_projectile_template(
+                    definition->projectile_template_id) == nullptr) {
+                push_action_outcome(
+                    commit,
+                    ActionOutcomeType::Corrected,
+                    KernelLocalActionResultReason_EffectFailed);
+                break;
+            }
             weapon.ammo[index] = static_cast<std::uint16_t>(
                 weapon.ammo[index] - action_template->ammo_cost_per_commit);
+            weapon.next_primary_commit_tick[index] =
+                commit.authoritative_tick +
+                action_template->commit_interval_ticks;
             push_action_outcome(
                 commit,
                 ActionOutcomeType::Committed,

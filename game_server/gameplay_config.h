@@ -74,7 +74,7 @@ struct ActorTemplateConfig {
 using EntityTemplateConfig = ActorTemplateConfig;
 
 struct WeaponCatalogConfig {
-    std::uint32_t catalog_version = 1;
+    std::uint32_t catalog_version = 2;
     std::uint64_t catalog_hash = 0;
     std::array<KernelWeaponMechanicsDefinition, kWeaponCount> definitions{};
     std::array<std::string, kWeaponCount> names{};
@@ -85,6 +85,10 @@ struct WeaponCatalogConfig {
 struct ActionTemplateConfig {
     std::string name;
     KernelActionTemplateDefinition definition{};
+    std::string source_path;
+    std::uint32_t source_kind = KERNEL_GAMEPLAY_CATALOG_LOAD_SOURCE_UNKNOWN;
+    std::uint32_t commit_interval_line = 0;
+    std::uint32_t commit_interval_column = 0;
 };
 
 struct ColliderTemplateConfig {

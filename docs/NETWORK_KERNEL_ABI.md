@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 41u`.
+`KERNEL_ABI_VERSION == 42u`.
 
 ## Ownership
 
@@ -30,6 +30,10 @@ failures return `NULL`, `false`, or `0`.
 Additive changes must prefer new `Kernel_*` functions or new capability flags.
 Breaking changes to public struct layout, enum semantics, buffer ownership, or
 function signatures require a `KERNEL_ABI_VERSION` bump.
+
+ABI version 42 adds `KernelLocalActionResultReason_Cooldown = 12` for projected
+Primary Fire admission. Action result records and public struct sizes remain
+unchanged; packet schema remains 16 and snapshot schema remains 14.
 
 ABI version 41 adds `KernelNetworkStatsConfig` to `KernelConfig` and extends
 `KernelNetworkStats` with per-channel bytes, owner-result reconciliation,
