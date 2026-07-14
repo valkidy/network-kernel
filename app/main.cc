@@ -30,6 +30,7 @@ struct Options {
     std::string gameplay_catalog_cache_directory;
     std::uint16_t port = kDefaultPort;
     std::uint32_t host_frames = 12;
+    std::uint8_t network_stats_mode = 0u;
     bool gameplay_catalog_explicit = false;
 };
 
@@ -41,7 +42,8 @@ void print_usage() {
         "[--gameplay-catalog-bundle=path/to/bundle.zip] "
         "[--gameplay-catalog-entry=gameplay_catalog.yaml] "
         "[--catalog-content-namespace=default] "
-        "[--catalog-cache-dir=path] [--host-frames=12]");
+        "[--catalog-cache-dir=path] [--host-frames=12] "
+        "[--network-stats=off|basic|detailed]");
 }
 
 bool parse_port(std::string_view text, std::uint16_t* out_port) {
@@ -186,6 +188,19 @@ bool parse_args(int argc, char** argv, Options* options) {
             }
             continue;
         }
+        if (read_value(arg, "--network-stats", &index, argc, argv, &value)) {
+            if (value == "off") {
+                options->network_stats_mode = 1u;
+            } else if (value == "basic") {
+                options->network_stats_mode = 2u;
+            } else if (value == "detailed") {
+                options->network_stats_mode = 3u;
+            } else {
+                spdlog::error("invalid network stats mode: {}", value);
+                return false;
+            }
+            continue;
+        }
 
         spdlog::error("unknown argument: {}", arg);
         return false;
@@ -208,6 +223,7 @@ int main(int argc, char** argv) {
         print_usage();
         return 2;
     }
+    SetAppNetworkStatsMode(options.network_stats_mode);
 
     if (options.mode == "dedicated_server") {
         std::string gameplay_catalog_bundle = options.gameplay_catalog_bundle;

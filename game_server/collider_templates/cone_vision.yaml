@@ -1,0 +1,8 @@
+id: 9
+name: cone_vision
+shape: cone
+center: {x: 0.0, y: 0.0, z: 0.0}
+range: 12.0
+fov_degrees: 90.0
+purpose: vision
+layer: agent_vision

@@ -12,10 +12,25 @@
 #include <spdlog/spdlog.h>
 
 #include "game_server/game_server.h"
+#include "client_app.h"
 #include "kernel/public/kernel_api.h"
 #include "kernel/src/tick_loop.h"
 
 namespace {
+
+constexpr std::uint64_t kCatalogBundleChunkBytes = 32u * 1024u;
+constexpr std::uint64_t kCatalogSyncFixedProtocolBytes = 362u;
+constexpr std::uint64_t kCatalogChunkProtocolBytes = 72u;
+
+std::uint64_t catalog_bundle_chunk_count(std::uint64_t bundle_size) {
+    return (bundle_size + kCatalogBundleChunkBytes - 1u) /
+           kCatalogBundleChunkBytes;
+}
+
+std::uint64_t estimated_catalog_sync_protocol_bytes(std::uint64_t bundle_size) {
+    return bundle_size + kCatalogSyncFixedProtocolBytes +
+           catalog_bundle_chunk_count(bundle_size) * kCatalogChunkProtocolBytes;
+}
 
 KernelConfig default_config() {
     KernelConfig config{};
@@ -26,6 +41,7 @@ KernelConfig default_config() {
     config.tick.snapshot_rate = config.tick.server_tick_rate;
     config.max_render_states = 2048;
     config.max_events = 2048;
+    config.network_stats.mode = GetAppNetworkStatsMode();
     return config;
 }
 
@@ -35,7 +51,10 @@ PlayerInput scripted_input(std::uint32_t sequence) {
     input.client_action_time_us = static_cast<std::uint64_t>(sequence) * 33333u;
     input.move = KernelVec2{0.0f, 0.0f};
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
-    input.buttons = sequence == 2 ? InputButton_Fire : 0;
+    if (sequence == 2) {
+        input.action_intent = ActionIntent{
+            sequence, KernelActionBinding_PrimaryFire, 0u, 0u};
+    }
     return input;
 }
 
@@ -128,10 +147,21 @@ int RunHostServer(
                 kernel,
                 &sync_config,
                 &manifest)) {
-            spdlog::error("failed to register gameplay catalog sync bundle");
+            spdlog::error(
+                "failed to register gameplay catalog sync bundle "
+                "bundle_bytes={} limit_bytes={}",
+                bundle_bytes.size(),
+                KERNEL_GAMEPLAY_CATALOG_SYNC_MAX_BUNDLE_SIZE);
             Kernel_Destroy(kernel);
             return 1;
         }
+        spdlog::info(
+            "registered gameplay catalog sync bundle bundle_bytes={} "
+            "limit_bytes={} chunks={} estimated_cache_miss_protocol_bytes={}",
+            bundle_bytes.size(),
+            KERNEL_GAMEPLAY_CATALOG_SYNC_MAX_BUNDLE_SIZE,
+            catalog_bundle_chunk_count(bundle_bytes.size()),
+            estimated_catalog_sync_protocol_bytes(bundle_bytes.size()));
     }
     if (!Kernel_StartListenServer(kernel, port)) {
         spdlog::error("failed to start listen server");

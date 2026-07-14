@@ -29,6 +29,7 @@ struct WeaponSimulationContext {
     std::uint32_t current_tick = 0;
     float fixed_delta_seconds = 0.0f;
     std::uint64_t action_time_us = 0;
+    std::vector<struct ActionOutcome>* action_outcomes = nullptr;
 };
 
 struct DamageRequest {
@@ -198,6 +199,46 @@ void simulate_hitscan_weapons(
     std::uint32_t current_tick,
     std::vector<KernelEvent>* events,
     DamagePipeline* damage_pipeline);
+
+struct ActionCommit {
+    NetId controlled_net_id = 0;
+    PeerId owner_peer = 0;
+    std::uint8_t weapon_id = 0;
+    std::uint16_t binding_id = 0;
+    std::uint32_t action_template_id = 0;
+    std::uint32_t action_instance_id = 0;
+    std::uint16_t commit_count = 0;
+    std::uint32_t authoritative_tick = 0;
+    bool completes_action = false;
+    glm::vec3 aim_direction{1.0f, 0.0f, 0.0f};
+};
+
+enum class ActionOutcomeType {
+    Admitted,
+    Committed,
+    Completed,
+    Corrected,
+    Rejected,
+};
+
+struct ActionOutcome {
+    NetId actor_net_id = 0;
+    PeerId owner_peer = 0;
+    std::uint32_t action_template_id = 0;
+    std::uint32_t action_instance_id = 0;
+    std::uint16_t binding_id = 0;
+    std::uint16_t confirmed_commit_count = 0;
+    std::uint32_t authoritative_tick = 0;
+    ActionOutcomeType type = ActionOutcomeType::Admitted;
+    KernelLocalActionResultReason reason = KernelLocalActionResultReason_None;
+};
+
+std::vector<ActionCommit> simulate_actions(
+    World& world,
+    const std::vector<QueuedInput>& inputs,
+    std::uint32_t current_tick,
+    std::vector<ActionOutcome>* outcomes = nullptr);
+
 void simulate_weapons(
     World& world,
     const std::vector<QueuedInput>& inputs,

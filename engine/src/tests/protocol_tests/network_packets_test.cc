@@ -19,15 +19,17 @@ int main() {
     PlayerInput input{};
     input.input_seq = 7;
     input.client_action_time_us = 11000;
-    input.client_action_id = 1234;
     input.move = KernelVec2{0.5f, -0.25f};
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
-    input.buttons = InputButton_Fire | InputButton_Sprint | InputButton_Dodge |
-                    InputButton_Parry;
+    input.buttons = InputButton_Sprint | InputButton_Dodge | InputButton_Parry;
     input.selected_weapon = 2;
+    input.action_intent = ActionIntent{
+        1234u, KernelActionBinding_PrimaryFire, 0u, 0u};
+    input.action_input = ActionInput{1234u, 1u, 0u, 0u};
 
     const std::vector<std::uint8_t> input_packet =
         network_example::encode_input_packet(3, input, 42);
+    assert(input_packet.size() == 85u);
     network_example::PeerId decoded_player = 0;
     PlayerInput decoded_input{};
     assert(network_example::decode_input_packet(
@@ -38,7 +40,13 @@ int main() {
     assert(decoded_player == 3);
     assert(decoded_input.input_seq == input.input_seq);
     assert(decoded_input.client_action_time_us == input.client_action_time_us);
-    assert(decoded_input.client_action_id == input.client_action_id);
+    assert(decoded_input.action_intent.action_instance_id ==
+           input.action_intent.action_instance_id);
+    assert(decoded_input.action_intent.binding_id ==
+           input.action_intent.binding_id);
+    assert(decoded_input.action_input.action_instance_id ==
+           input.action_input.action_instance_id);
+    assert(decoded_input.action_input.held == input.action_input.held);
     assert(nearly_equal(decoded_input.move.x, input.move.x));
     assert(nearly_equal(decoded_input.move.y, input.move.y));
     assert(nearly_equal(decoded_input.aim_dir.x, input.aim_dir.x));
@@ -61,6 +69,12 @@ int main() {
     player.max_hp = 120;
     player.state = 512;
     player.flags = 0x00000004u;
+    player.aim_direction = glm::vec3{0.0f, 0.0f, 1.0f};
+    player.action_template_id = 1001;
+    player.action_instance_id = 7001;
+    player.action_phase = KernelActionPhase_Windup;
+    player.action_start_tick = 8;
+    player.action_commit_count = 0;
     snapshot.entities.push_back(player);
     network_example::EntitySnapshot enemy;
     enemy.net_id = 6;
@@ -85,7 +99,7 @@ int main() {
     hybrid_projectile.net_id = 7;
     hybrid_projectile.owner_peer = 3;
     hybrid_projectile.spawn_tick = 12;
-    hybrid_projectile.client_action_id = 1234;
+    hybrid_projectile.action_instance_id = 1234;
     hybrid_projectile.state_flags |=
         network_example::kSnapshotStateFlagProjectileHybridCorrection;
     snapshot.entities.push_back(hybrid_projectile);
@@ -94,8 +108,12 @@ int main() {
         network_example::encode_snapshot_packet(snapshot, 43);
     assert(network_example::estimate_snapshot_packet_size(snapshot) ==
            snapshot_packet.size());
-    assert(network_example::estimate_snapshot_entity_size(player) == 64u);
-    assert(network_example::estimate_snapshot_entity_size(enemy) == 56u);
+    assert(network_example::estimate_snapshot_entity_size(player) == 96u);
+    assert(network_example::estimate_snapshot_entity_size(enemy) == 68u);
+    network_example::EntitySnapshot active_enemy = enemy;
+    active_enemy.action_template_id = 1002;
+    active_enemy.action_phase = KernelActionPhase_Active;
+    assert(network_example::estimate_snapshot_entity_size(active_enemy) == 88u);
     assert(network_example::estimate_snapshot_entity_size(compact_projectile) == 34u);
     assert(network_example::estimate_snapshot_entity_size(hybrid_projectile) == 46u);
     network_example::WorldSnapshot decoded_snapshot;
@@ -115,6 +133,11 @@ int main() {
     assert(nearly_equal(decoded_snapshot.entities[0].rotation.w, 1.0f));
     assert(decoded_snapshot.entities[0].hp == 88);
     assert(decoded_snapshot.entities[0].max_hp == 120);
+    assert(nearly_equal(decoded_snapshot.entities[0].aim_direction.z, 1.0f));
+    assert(decoded_snapshot.entities[0].action_template_id == 1001);
+    assert(decoded_snapshot.entities[0].action_instance_id == 7001);
+    assert(decoded_snapshot.entities[0].action_phase == KernelActionPhase_Windup);
+    assert(decoded_snapshot.entities[0].action_start_tick == 8);
     assert((decoded_snapshot.entities[0].state_flags &
             network_example::kSnapshotStateFlagHpUnknown) == 0u);
     assert(decoded_snapshot.entities[1].net_id == 6);
@@ -133,12 +156,12 @@ int main() {
     assert(!nearly_equal(decoded_snapshot.entities[2].rotation.w, 0.5f));
     assert(nearly_equal(decoded_snapshot.entities[2].velocity.z, 6.0f));
     assert(decoded_snapshot.entities[2].spawn_tick == 0);
-    assert(decoded_snapshot.entities[2].client_action_id == 0);
+    assert(decoded_snapshot.entities[2].action_instance_id == 0);
     assert(decoded_snapshot.entities[3].net_id == 7);
     assert(decoded_snapshot.entities[3].type == network_example::EntityType::kProjectile);
     assert(decoded_snapshot.entities[3].owner_peer == 3);
     assert(decoded_snapshot.entities[3].spawn_tick == 12);
-    assert(decoded_snapshot.entities[3].client_action_id == 1234);
+    assert(decoded_snapshot.entities[3].action_instance_id == 1234);
     assert((decoded_snapshot.entities[3].state_flags &
             network_example::kSnapshotStateFlagProjectileHybridCorrection) != 0u);
 
@@ -263,7 +286,7 @@ int main() {
     assert(decoded_batch.groups[0].records[0].projectile_net_id == 101);
     assert(decoded_batch.groups[0].records[0].owner_net_id == 11);
     assert(decoded_batch.groups[0].records[0].owner_peer == 7);
-    assert(decoded_batch.groups[0].records[0].client_action_id == 1234);
+    assert(decoded_batch.groups[0].records[0].action_instance_id == 1234);
     assert(nearly_equal(decoded_batch.groups[0].records[0].spawn_position.y, 2.0f));
     assert(nearly_equal(decoded_batch.groups[0].records[0].initial_velocity.z, 6.0f));
 
@@ -273,6 +296,78 @@ int main() {
         bad_batch_crc.data(),
         bad_batch_crc.size(),
         &decoded_batch));
+
+    network_example::LocalActionResultBatchPacket local_results{};
+    local_results.server_tick = 44;
+    local_results.records.push_back(KernelLocalActionResult{
+        7001,
+        2,
+        KernelLocalActionResultType_Corrected,
+        KernelLocalActionResultReason_Cancelled,
+        43,
+    });
+    const std::vector<std::uint8_t> local_result_packet =
+        network_example::encode_local_action_result_batch_packet(
+            local_results,
+            21);
+    assert(local_result_packet.size() == 28u + 8u + 12u);
+    network_example::LocalActionResultBatchPacket decoded_local_results{};
+    assert(network_example::decode_local_action_result_batch_packet(
+        local_result_packet.data(),
+        local_result_packet.size(),
+        &decoded_local_results));
+    assert(decoded_local_results.server_tick == 44);
+    assert(decoded_local_results.records.size() == 1);
+    assert(decoded_local_results.records[0].action_instance_id == 7001);
+    assert(decoded_local_results.records[0].confirmed_commit_count == 2);
+    assert(decoded_local_results.records[0].result ==
+           KernelLocalActionResultType_Corrected);
+    local_results.records.resize(97u);
+    assert(network_example::encode_local_action_result_batch_packet(
+               local_results, 22).size() == 1200u);
+    local_results.records.resize(98u);
+    assert(network_example::encode_local_action_result_batch_packet(
+               local_results, 23).size() == 1212u);
+
+    network_example::RemoteActionPresentationBatchPacket presentation{};
+    presentation.server_tick = 50;
+    presentation.records.push_back(KernelRemoteActionPresentationEvent{
+        101,
+        9,
+        7001,
+        1,
+        3,
+        KernelRemoteActionPresentationEventType_FireCommit,
+        0,
+        2,
+    });
+    const std::vector<std::uint8_t> presentation_packet =
+        network_example::encode_remote_action_presentation_batch_packet(
+            presentation,
+            22);
+    assert(presentation_packet.size() == 28u + 8u + 20u);
+    network_example::RemoteActionPresentationBatchPacket decoded_presentation{};
+    assert(network_example::decode_remote_action_presentation_batch_packet(
+        presentation_packet.data(),
+        presentation_packet.size(),
+        &decoded_presentation));
+    assert(decoded_presentation.records.size() == 1);
+    assert(decoded_presentation.records[0].actor_net_id == 101);
+    assert(decoded_presentation.records[0].commit_count == 3);
+    assert(decoded_presentation.records[0].server_tick_delta == 2);
+    presentation.records.resize(58u);
+    assert(network_example::encode_remote_action_presentation_batch_packet(
+               presentation, 24).size() == 1196u);
+    presentation.records.resize(59u);
+    assert(network_example::encode_remote_action_presentation_batch_packet(
+               presentation, 25).size() == 1216u);
+
+    std::vector<std::uint8_t> bad_presentation_count = presentation_packet;
+    bad_presentation_count[32] = 2u;
+    assert(!network_example::decode_remote_action_presentation_batch_packet(
+        bad_presentation_count.data(),
+        bad_presentation_count.size(),
+        &decoded_presentation));
 
     std::vector<std::uint8_t> bad_header = input_packet;
     bad_header[0] = 0;

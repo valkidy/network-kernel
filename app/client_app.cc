@@ -21,12 +21,20 @@
 
 namespace {
 
+constexpr std::uint64_t kCatalogBundleChunkBytes = 32u * 1024u;
+
+std::uint64_t catalog_bundle_chunk_count(std::uint64_t bundle_size) {
+    return (bundle_size + kCatalogBundleChunkBytes - 1u) /
+           kCatalogBundleChunkBytes;
+}
+
 KernelConfig default_config() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
     config.tick = network_example::current_netcode_preset();
     config.max_render_states = 2048;
     config.max_events = 2048;
+    config.network_stats.mode = GetAppNetworkStatsMode();
     return config;
 }
 
@@ -36,20 +44,30 @@ PlayerInput scripted_input(std::uint32_t sequence) {
     input.client_action_time_us = static_cast<std::uint64_t>(sequence) * 33333u;
     input.move = KernelVec2{1.0f, 0.0f};
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
-    input.buttons = 0;
     input.selected_weapon = 0;
 
     if (sequence == 2) {
-        input.buttons = InputButton_Fire;
+        input.action_intent = ActionIntent{
+            sequence, KernelActionBinding_PrimaryFire, 0u, 0u};
         input.selected_weapon = 0;
     } else if (sequence == 12) {
-        input.buttons = InputButton_Reload;
+        input.action_intent = ActionIntent{
+            sequence, KernelActionBinding_Reload, 0u, 0u};
         input.selected_weapon = 0;
     } else if (sequence == 36) {
-        input.buttons = InputButton_Fire;
+        input.action_intent = ActionIntent{
+            sequence, KernelActionBinding_PrimaryFire, 0u, 0u};
         input.selected_weapon = 1;
-    } else if (sequence >= 72 && sequence < 96) {
-        input.buttons = InputButton_Fire;
+    } else if (sequence == 72) {
+        input.action_intent = ActionIntent{
+            sequence, KernelActionBinding_PrimaryFire, 0u, 0u};
+        input.action_input = ActionInput{sequence, 1u, 0u, 0u};
+        input.selected_weapon = 2;
+    } else if (sequence > 72 && sequence < 96) {
+        input.action_input = ActionInput{72u, 1u, 0u, 0u};
+        input.selected_weapon = 2;
+    } else if (sequence == 96) {
+        input.action_input = ActionInput{72u, 0u, 0u, 0u};
         input.selected_weapon = 2;
     }
 
@@ -187,6 +205,7 @@ bool start_client_with_catalog_sync(
         "bundle.zip";
 
     std::vector<std::uint8_t> bundle = read_binary_file(bundle_path);
+    bool downloaded_bundle = false;
     if (!bundle_matches_manifest(bundle, status.manifest)) {
         bundle.clear();
         if (!Kernel_RequestGameplayCatalogBundle(kernel) ||
@@ -213,6 +232,7 @@ bool start_client_with_catalog_sync(
             spdlog::error("downloaded catalog bundle verification failed");
             return false;
         }
+        downloaded_bundle = true;
 
         std::error_code filesystem_error;
         std::filesystem::create_directories(
@@ -261,6 +281,15 @@ bool start_client_with_catalog_sync(
             load_result.diagnostic);
         return false;
     }
+    spdlog::info(
+        "gameplay catalog sync complete source={} bundle_bytes={} "
+        "received_bytes={} chunks={}",
+        downloaded_bundle ? "download" : "cache",
+        status.manifest.bundle_size,
+        downloaded_bundle ? status.received_bundle_size : 0u,
+        downloaded_bundle
+            ? catalog_bundle_chunk_count(status.received_bundle_size)
+            : 0u);
     return Kernel_ContinueClientHandshake(kernel);
 }
 
@@ -353,12 +382,16 @@ int RunClient(
 
         if (ready_for_input) {
             const PlayerInput input = scripted_input(sequence++);
-            if ((input.buttons & (InputButton_Fire | InputButton_Reload)) != 0) {
+            if (input.action_intent.action_instance_id != 0u ||
+                input.action_input.action_instance_id != 0u) {
                 ++combat_input_count;
                 spdlog::info(
-                    "client submitting combat input seq={} buttons={} weapon={}",
+                    "client submitting action input seq={} instance={} binding={} weapon={}",
                     input.input_seq,
-                    input.buttons,
+                    input.action_intent.action_instance_id != 0u
+                        ? input.action_intent.action_instance_id
+                        : input.action_input.action_instance_id,
+                    input.action_intent.binding_id,
                     static_cast<int>(input.selected_weapon));
             }
             Kernel_SubmitInput(kernel, 0, &input);

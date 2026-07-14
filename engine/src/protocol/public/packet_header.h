@@ -9,8 +9,8 @@ namespace network_example {
 
 constexpr std::uint32_t kPacketMagic = 0x4e584b31u;
 constexpr std::uint16_t kProtocolVersion = 1;
-constexpr std::uint16_t kPacketSchemaVersion = 12;
-constexpr std::uint16_t kSnapshotSchemaVersion = 12;
+constexpr std::uint16_t kPacketSchemaVersion = 16;
+constexpr std::uint16_t kSnapshotSchemaVersion = 14;
 constexpr std::uint16_t kSchemaVersion = kPacketSchemaVersion;
 constexpr std::size_t kPacketHeaderSize = 28;
 
@@ -34,6 +34,8 @@ enum class MessageType : std::uint16_t {
     kGameplayCatalogBundleRequest = 17,
     kGameplayCatalogBundleChunk = 18,
     kGameplayCatalogSyncError = 19,
+    kLocalActionResultBatch = 20,
+    kRemoteActionPresentationBatch = 21,
 };
 
 struct PacketHeader {

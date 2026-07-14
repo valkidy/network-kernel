@@ -82,6 +82,11 @@ struct WeaponCatalogConfig {
     std::array<std::uint32_t, kWeaponCount> collider_template_ids{};
 };
 
+struct ActionTemplateConfig {
+    std::string name;
+    KernelActionTemplateDefinition definition{};
+};
+
 struct ColliderTemplateConfig {
     std::string name;
     KernelColliderTemplateDefinition definition{};
@@ -104,6 +109,7 @@ struct ProjectileTemplateConfig {
 
 struct GameServerGameplayConfig {
     WeaponCatalogConfig weapons;
+    std::vector<ActionTemplateConfig> action_templates;
     PlayerGameplayDefinition player;
     AgentSpawnDefinition agent;
     std::vector<EntityTemplateConfig> entity_templates;
@@ -118,6 +124,7 @@ struct KernelGameplayCatalogStorage {
     std::vector<KernelProjectileTemplateDefinition> projectile_templates;
     std::vector<KernelColliderTemplateDefinition> collider_templates;
     std::vector<KernelColliderBindingDefinition> collider_bindings;
+    std::vector<KernelActionTemplateDefinition> action_templates;
     KernelGameplayCatalogDefinition definition{};
 };
 

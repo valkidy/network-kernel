@@ -219,6 +219,11 @@ int main() {
             KernelHandle*,
             KernelProjectileTemplateDefinition*,
             std::uint32_t)>(library, "Kernel_GetProjectileTemplates");
+    [[maybe_unused]] auto* kernel_get_action_template =
+        load_symbol<bool(
+            KernelHandle*,
+            std::uint32_t,
+            KernelActionTemplateDefinition*)>(library, "Kernel_GetActionTemplate");
     [[maybe_unused]] auto* kernel_get_actor_templates =
         load_symbol<std::uint32_t(
             KernelHandle*,
@@ -249,6 +254,16 @@ int main() {
             KernelHandle*,
             KernelEntityLifecycleEvent*,
             std::uint32_t)>(library, "Kernel_PollEntityLifecycleEvents");
+    auto* kernel_poll_local_action_results =
+        load_symbol<std::uint32_t(
+            KernelHandle*,
+            KernelLocalActionResult*,
+            std::uint32_t)>(library, "Kernel_PollLocalActionResults");
+    auto* kernel_poll_remote_action_presentation_events =
+        load_symbol<std::uint32_t(
+            KernelHandle*,
+            KernelRemoteActionPresentationEvent*,
+            std::uint32_t)>(library, "Kernel_PollRemoteActionPresentationEvents");
     auto* kernel_get_local_player_info =
         load_symbol<bool(KernelHandle*, KernelLocalPlayerInfo*)>(
             library,
@@ -408,6 +423,8 @@ int main() {
     assert(abi_info.kernel_event_size == sizeof(KernelEvent));
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS) != 0);
     assert(kernel_poll_entity_lifecycle_events(nullptr, nullptr, 0) == 0);
+    assert(kernel_poll_local_action_results(nullptr, nullptr, 0) == 0);
+    assert(kernel_poll_remote_action_presentation_events(nullptr, nullptr, 0) == 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
     assert(abi_info.server_entity_create_info_size ==
            sizeof(KernelServerEntityCreateInfo));
@@ -420,6 +437,21 @@ int main() {
            sizeof(KernelEntityTemplateDefinition));
     assert(abi_info.entity_ai_definition_size ==
            sizeof(KernelEntityAiDefinition));
+    assert(abi_info.action_template_definition_size ==
+           sizeof(KernelActionTemplateDefinition));
+    assert(abi_info.action_runtime_view_size == sizeof(KernelActionRuntimeView));
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_ACTION_TIMELINE) != 0);
+    assert(abi_info.local_action_result_size == sizeof(KernelLocalActionResult));
+    assert(
+        abi_info.remote_action_presentation_event_size ==
+        sizeof(KernelRemoteActionPresentationEvent));
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_LOCAL_ACTION_RESULTS) != 0);
+    assert(
+        (abi_info.capability_flags &
+         KERNEL_CAPABILITY_REMOTE_ACTION_PRESENTATION) != 0);
+    assert(abi_info.action_intent_size == sizeof(ActionIntent));
+    assert(abi_info.action_input_size == sizeof(ActionInput));
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_ACTION_INTENTS) != 0);
     assert(abi_info.projectile_mechanics_definition_size ==
            sizeof(KernelProjectileMechanicsDefinition));
     assert(abi_info.area_effect_mechanics_definition_size ==
@@ -588,16 +620,15 @@ int main() {
     rocket.magazine_size = 3;
     rocket.reserve_magazines = 6;
     rocket.damage = 5;
-    rocket.cooldown_ticks = 30;
-    rocket.reload_ticks = 30;
+    rocket.fire_action_template_id = 1001u;
+    rocket.reload_action_template_id = 2001u;
     rocket.projectile_template_id = 3;
     assert(kernel_server_validate_mechanics_config(&rocket));
-    assert(kernel_server_set_entity_weapon_mechanics(kernel, enemy, &rocket));
+    assert(!kernel_server_set_entity_weapon_mechanics(kernel, enemy, &rocket));
     KernelWeaponMechanicsDefinition queried_weapon{};
     queried_weapon.struct_size = sizeof(queried_weapon);
-    assert(kernel_server_get_entity_weapon_mechanics(kernel, enemy, 3, &queried_weapon));
-    assert(queried_weapon.reserve_magazines == 6);
-    assert(queried_weapon.projectile_template_id == 3);
+    assert(!kernel_server_get_entity_weapon_mechanics(
+        kernel, enemy, 3, &queried_weapon));
     assert(kernel_server_set_entity_state(kernel, enemy, 4, 8));
     KernelServerEntityState server_state{};
     server_state.struct_size = sizeof(server_state);
@@ -623,7 +654,8 @@ int main() {
     input.client_action_time_us = 33333;
     input.move = KernelVec2{1.0f, 0.0f};
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
-    input.buttons = InputButton_Fire;
+    input.action_intent = ActionIntent{
+        1u, KernelActionBinding_PrimaryFire, 0u, 0u};
     kernel_submit_input(kernel, 1, &input);
     kernel_update(kernel, 1.0f / 30.0f);
 

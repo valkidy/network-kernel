@@ -43,7 +43,7 @@ bool spawn_projectile_from_template(
     PeerId owner_peer,
     NetId shooter_net_id,
     std::uint8_t source_weapon_id,
-    std::uint32_t client_action_id,
+    std::uint32_t action_instance_id,
     const glm::vec3& position,
     const glm::vec3& direction,
     std::uint32_t current_tick,
@@ -72,7 +72,7 @@ bool spawn_projectile_from_template(
     projectile.projectile_template_id = projectile_template.projectile_template_id;
     projectile.damage = projectile_template.damage;
     projectile.spawn_tick = current_tick;
-    projectile.client_action_id = client_action_id;
+    projectile.action_instance_id = action_instance_id;
     projectile.shooter_net_id = shooter_net_id;
     projectile.motion_model = projectile_template.motion_model;
     projectile.hit_response = projectile_template.hit_response;
@@ -597,7 +597,7 @@ bool apply_projectile_impact_response(
         identity.owner_peer,
         projectile.shooter_net_id,
         projectile.weapon_id,
-        projectile.client_action_id,
+        projectile.action_instance_id,
         impact_position,
         impact_direction,
         current_tick,

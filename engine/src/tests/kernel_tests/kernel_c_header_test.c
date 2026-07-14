@@ -5,7 +5,9 @@
 
 #include "kernel/public/kernel_api.h"
 
-_Static_assert(KERNEL_ABI_VERSION == 35u, "reserve magazines ABI");
+_Static_assert(KERNEL_ABI_VERSION == 41u, "action correction/stats ABI");
+_Static_assert(sizeof(ActionIntent) == 8u, "ActionIntent ABI size");
+_Static_assert(sizeof(ActionInput) == 8u, "ActionInput ABI size");
 _Static_assert(
     offsetof(KernelWeaponMechanicsDefinition, reserve_magazines) >
         offsetof(KernelWeaponMechanicsDefinition, magazine_size),
@@ -30,6 +32,7 @@ int main(void) {
     KernelLANDiscoveryQueryConfig lan_discovery_query_config;
     KernelLANDiscoveryResult lan_discovery_result;
     KernelConfig config;
+    KernelNetworkStatsConfig network_stats_config;
     KernelLocalPlayerInfo local_player_info;
     PlayerInput input;
     RenderEntityState state;
@@ -61,6 +64,7 @@ int main(void) {
     KernelVisionStateView vision_state;
 
     (void)config;
+    (void)network_stats_config;
     (void)build_info;
     (void)lan_discovery_server_config;
     (void)lan_discovery_query_config;
@@ -95,7 +99,7 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 35u);
+    assert(KERNEL_ABI_VERSION == 41u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD == 4u);
@@ -194,14 +198,15 @@ int main(void) {
     assert((KERNEL_VISUAL_FLAG_MOVING & KERNEL_VISUAL_FLAG_RELOADING) == 0u);
     assert((KERNEL_VISUAL_FLAG_MOVING & KERNEL_VISUAL_FLAG_DEAD) == 0u);
     assert((InputButton_Dodge & InputButton_Parry) == 0u);
-    assert((InputButton_Dodge & InputButton_Reload) == 0u);
     assert(sizeof(abi_info.abi_version) == sizeof(uint32_t));
     assert(offsetof(PlayerInput, client_action_time_us) > offsetof(PlayerInput, input_seq));
-    assert(offsetof(PlayerInput, client_action_id) > offsetof(PlayerInput, client_action_time_us));
+    assert(offsetof(PlayerInput, action_intent) > offsetof(PlayerInput, selected_weapon));
+    assert(offsetof(PlayerInput, action_input) > offsetof(PlayerInput, action_intent));
     assert(offsetof(RenderEntityState, entity_id) == 0u);
     assert(offsetof(RenderEntityState, hp) > offsetof(RenderEntityState, velocity));
     assert(offsetof(RenderEntityState, max_hp) > offsetof(RenderEntityState, hp));
-    assert(offsetof(RenderEntityState, status) > offsetof(RenderEntityState, client_action_id));
+    assert(offsetof(RenderEntityState, status) >
+           offsetof(RenderEntityState, action_instance_id));
     assert(offsetof(RenderEntityState, projectile_template_id) >
            offsetof(RenderEntityState, status));
     assert(offsetof(RenderEntityState, collider_template_id) >

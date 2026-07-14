@@ -1,0 +1,8 @@
+id: 4
+name: explosion_damage
+shape: sphere
+center: {x: 0.0, y: 0.0, z: 0.0}
+half_extents: {x: 1.0, y: 1.0, z: 1.0}
+radius: 1.0
+purpose: damage
+layer: area_effect

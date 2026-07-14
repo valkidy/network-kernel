@@ -13,10 +13,11 @@
 namespace network_example {
 namespace {
 
-constexpr std::size_t kInputPayloadSize = 45;
+constexpr std::size_t kInputPayloadSize = 57;
 constexpr std::size_t kSnapshotHeaderPayloadSize = 16;
 constexpr std::size_t kSnapshotSectionHeaderPayloadSize = 4;
-constexpr std::size_t kActorSnapshotBasePayloadSize = 40;
+constexpr std::size_t kActorSnapshotBasePayloadSize = 52;
+constexpr std::size_t kActorActionTimelinePayloadSize = 20;
 constexpr std::size_t kActorOwnerPeerPayloadSize = 4;
 constexpr std::size_t kActorRotationPayloadSize = 16;
 constexpr std::size_t kActorHealthPayloadSize = 4;
@@ -30,6 +31,9 @@ constexpr std::size_t kEntityTemplateUpdatePayloadSize = 12;
 constexpr std::size_t kProjectileSpawnBatchHeaderPayloadSize = 24;
 constexpr std::size_t kProjectileSpawnGroupHeaderPayloadSize = 8;
 constexpr std::size_t kProjectileSpawnRecordPayloadSize = 40;
+constexpr std::size_t kActionBatchHeaderPayloadSize = 8;
+constexpr std::size_t kLocalActionResultPayloadSize = 12;
+constexpr std::size_t kRemoteActionPresentationPayloadSize = 20;
 
 enum class SnapshotSectionType : std::uint16_t {
     kActor = 1,
@@ -42,6 +46,7 @@ enum ActorSnapshotRecordFlag : std::uint16_t {
     kActorSnapshotHasOwnerPeer = 1u << 0,
     kActorSnapshotHasRotation = 1u << 1,
     kActorSnapshotHasHealth = 1u << 2,
+    kActorSnapshotHasActionTimeline = 1u << 3,
 };
 
 bool is_actor_entity_type(EntityType type) {
@@ -55,6 +60,10 @@ std::uint16_t actor_record_flags(const EntitySnapshot& entity) {
         if ((entity.state_flags & kSnapshotStateFlagHpUnknown) == 0u) {
             flags |= kActorSnapshotHasHealth;
         }
+    }
+    if (entity.action_template_id != 0u ||
+        entity.action_phase != KernelActionPhase_None) {
+        flags |= kActorSnapshotHasActionTimeline;
     }
     return flags;
 }
@@ -128,7 +137,6 @@ std::vector<std::uint8_t> encode_input_packet(
     payload.write_u32(player_id);
     payload.write_u32(input.input_seq);
     payload.write_u64(input.client_action_time_us);
-    payload.write_u32(input.client_action_id);
     payload.write_float(input.move.x);
     payload.write_float(input.move.y);
     payload.write_float(input.aim_dir.x);
@@ -136,6 +144,14 @@ std::vector<std::uint8_t> encode_input_packet(
     payload.write_float(input.aim_dir.z);
     payload.write_u32(input.buttons);
     payload.write_u8(input.selected_weapon);
+    payload.write_u32(input.action_intent.action_instance_id);
+    payload.write_u16(input.action_intent.binding_id);
+    payload.write_u8(input.action_intent.flags);
+    payload.write_u8(input.action_intent.reserved);
+    payload.write_u32(input.action_input.action_instance_id);
+    payload.write_u8(input.action_input.held);
+    payload.write_u8(input.action_input.flags);
+    payload.write_u16(input.action_input.reserved);
     return protocol_internal::wrap_packet(
         MessageType::kInputPacket,
         payload.bytes(),
@@ -165,7 +181,6 @@ bool decode_input_packet(
     if (!reader.read_u32(out_player_id) ||
         !reader.read_u32(&input.input_seq) ||
         !reader.read_u64(&input.client_action_time_us) ||
-        !reader.read_u32(&input.client_action_id) ||
         !reader.read_float(&input.move.x) ||
         !reader.read_float(&input.move.y) ||
         !reader.read_float(&input.aim_dir.x) ||
@@ -173,6 +188,14 @@ bool decode_input_packet(
         !reader.read_float(&input.aim_dir.z) ||
         !reader.read_u32(&input.buttons) ||
         !reader.read_u8(&input.selected_weapon) ||
+        !reader.read_u32(&input.action_intent.action_instance_id) ||
+        !reader.read_u16(&input.action_intent.binding_id) ||
+        !reader.read_u8(&input.action_intent.flags) ||
+        !reader.read_u8(&input.action_intent.reserved) ||
+        !reader.read_u32(&input.action_input.action_instance_id) ||
+        !reader.read_u8(&input.action_input.held) ||
+        !reader.read_u8(&input.action_input.flags) ||
+        !reader.read_u16(&input.action_input.reserved) ||
         !reader.done()) {
         return false;
     }
@@ -213,6 +236,7 @@ std::vector<std::uint8_t> encode_snapshot_packet(
                     payload.write_vec3(entity->velocity);
                     payload.write_u16(entity->state);
                     payload.write_u32(entity->flags);
+                    payload.write_vec3(entity->aim_direction);
                     if ((record_flags & kActorSnapshotHasOwnerPeer) != 0u) {
                         payload.write_u32(entity->owner_peer);
                     }
@@ -222,6 +246,14 @@ std::vector<std::uint8_t> encode_snapshot_packet(
                     if ((record_flags & kActorSnapshotHasHealth) != 0u) {
                         payload.write_u16(entity->hp);
                         payload.write_u16(entity->max_hp);
+                    }
+                    if ((record_flags & kActorSnapshotHasActionTimeline) != 0u) {
+                        payload.write_u32(entity->action_template_id);
+                        payload.write_u32(entity->action_instance_id);
+                        payload.write_u32(entity->action_start_tick);
+                        payload.write_u32(entity->action_commit_count);
+                        payload.write_u16(entity->action_phase);
+                        payload.write_u16(0u);
                     }
                     break;
                 }
@@ -238,7 +270,7 @@ std::vector<std::uint8_t> encode_snapshot_packet(
                     payload.write_u16(entity->state);
                     payload.write_u32(entity->flags);
                     payload.write_u32(entity->spawn_tick);
-                    payload.write_u32(entity->client_action_id);
+                    payload.write_u32(entity->action_instance_id);
                     break;
                 case SnapshotSectionType::kGeneric:
                     payload.write_u16(static_cast<std::uint16_t>(entity->type));
@@ -317,7 +349,8 @@ bool decode_snapshot_packet(
                         !reader.read_vec3(&entity.position) ||
                         !reader.read_vec3(&entity.velocity) ||
                         !reader.read_u16(&entity.state) ||
-                        !reader.read_u32(&entity.flags)) {
+                        !reader.read_u32(&entity.flags) ||
+                        !reader.read_vec3(&entity.aim_direction)) {
                         return false;
                     }
                     entity.type = static_cast<EntityType>(entity_type);
@@ -337,6 +370,22 @@ bool decode_snapshot_packet(
                         }
                     } else {
                         entity.state_flags |= kSnapshotStateFlagHpUnknown;
+                    }
+                    if ((record_flags & kActorSnapshotHasActionTimeline) != 0u) {
+                        std::uint16_t action_phase = 0;
+                        std::uint16_t action_reserved = 0;
+                        if (!reader.read_u32(&entity.action_template_id) ||
+                            !reader.read_u32(&entity.action_instance_id) ||
+                            !reader.read_u32(&entity.action_start_tick) ||
+                            !reader.read_u32(&entity.action_commit_count) ||
+                            !reader.read_u16(&action_phase) ||
+                            !reader.read_u16(&action_reserved) ||
+                            action_phase > KernelActionPhase_Recovery ||
+                            action_reserved != 0u) {
+                            return false;
+                        }
+                        entity.action_phase =
+                            static_cast<std::uint8_t>(action_phase);
                     }
                     break;
                 }
@@ -361,7 +410,7 @@ bool decode_snapshot_packet(
                         !reader.read_u16(&entity.state) ||
                         !reader.read_u32(&entity.flags) ||
                         !reader.read_u32(&entity.spawn_tick) ||
-                        !reader.read_u32(&entity.client_action_id)) {
+                        !reader.read_u32(&entity.action_instance_id)) {
                         return false;
                     }
                     entity.rotation = projectile_rotation_from_velocity(entity.velocity);
@@ -424,6 +473,10 @@ std::size_t estimate_snapshot_entity_size(const EntitySnapshot& entity) {
                         : 0u) +
                    ((actor_record_flags(entity) & kActorSnapshotHasHealth) != 0u
                         ? kActorHealthPayloadSize
+                        : 0u) +
+                   ((actor_record_flags(entity) &
+                     kActorSnapshotHasActionTimeline) != 0u
+                        ? kActorActionTimelinePayloadSize
                         : 0u);
         case SnapshotSectionType::kProjectileCompact:
             return kProjectileCompactSnapshotPayloadSize;
@@ -665,7 +718,7 @@ std::vector<std::uint8_t> encode_projectile_spawn_batch_packet(
             payload.write_u32(record.projectile_net_id);
             payload.write_u32(record.owner_net_id);
             payload.write_u32(record.owner_peer);
-            payload.write_u32(record.client_action_id);
+            payload.write_u32(record.action_instance_id);
             payload.write_vec3(record.spawn_position);
             payload.write_vec3(record.initial_velocity);
         }
@@ -718,7 +771,7 @@ bool decode_projectile_spawn_batch_packet(
             if (!reader.read_u32(&record.projectile_net_id) ||
                 !reader.read_u32(&record.owner_net_id) ||
                 !reader.read_u32(&record.owner_peer) ||
-                !reader.read_u32(&record.client_action_id) ||
+                !reader.read_u32(&record.action_instance_id) ||
                 !reader.read_vec3(&record.spawn_position) ||
                 !reader.read_vec3(&record.initial_velocity)) {
                 return false;
@@ -731,6 +784,167 @@ bool decode_projectile_spawn_batch_packet(
         return false;
     }
 
+    *out_packet = std::move(packet);
+    return true;
+}
+
+std::vector<std::uint8_t> encode_local_action_result_batch_packet(
+    const LocalActionResultBatchPacket& packet,
+    std::uint32_t sequence) {
+    if (packet.records.size() > UINT16_MAX) {
+        return {};
+    }
+    protocol_internal::PacketWriter payload;
+    payload.reserve(
+        kActionBatchHeaderPayloadSize +
+        packet.records.size() * kLocalActionResultPayloadSize);
+    payload.write_u32(packet.server_tick);
+    payload.write_u16(static_cast<std::uint16_t>(packet.records.size()));
+    payload.write_u16(0u);
+    for (const KernelLocalActionResult& record : packet.records) {
+        payload.write_u32(record.action_instance_id);
+        payload.write_u16(record.confirmed_commit_count);
+        payload.write_u8(record.result);
+        payload.write_u8(record.reason);
+        payload.write_u32(record.authoritative_tick);
+    }
+    return protocol_internal::wrap_packet(
+        MessageType::kLocalActionResultBatch,
+        payload.bytes(),
+        sequence);
+}
+
+bool decode_local_action_result_batch_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    LocalActionResultBatchPacket* out_packet) {
+    const std::uint8_t* payload = nullptr;
+    std::size_t payload_size = 0;
+    if (out_packet == nullptr ||
+        !protocol_internal::unwrap_packet(
+            data,
+            size,
+            MessageType::kLocalActionResultBatch,
+            &payload,
+            &payload_size) ||
+        payload_size < kActionBatchHeaderPayloadSize) {
+        return false;
+    }
+    LocalActionResultBatchPacket packet;
+    std::uint16_t record_count = 0;
+    std::uint16_t reserved = 0;
+    protocol_internal::PacketReader reader(payload, payload_size);
+    if (!reader.read_u32(&packet.server_tick) ||
+        !reader.read_u16(&record_count) ||
+        !reader.read_u16(&reserved) || reserved != 0u ||
+        payload_size != kActionBatchHeaderPayloadSize +
+                            static_cast<std::size_t>(record_count) *
+                                kLocalActionResultPayloadSize) {
+        return false;
+    }
+    packet.records.reserve(record_count);
+    for (std::uint16_t index = 0; index < record_count; ++index) {
+        KernelLocalActionResult record{};
+        if (!reader.read_u32(&record.action_instance_id) ||
+            !reader.read_u16(&record.confirmed_commit_count) ||
+            !reader.read_u8(&record.result) ||
+            !reader.read_u8(&record.reason) ||
+            !reader.read_u32(&record.authoritative_tick) ||
+            record.action_instance_id == 0u ||
+            record.result > KernelLocalActionResultType_Rejected) {
+            return false;
+        }
+        packet.records.push_back(record);
+    }
+    if (!reader.done()) {
+        return false;
+    }
+    *out_packet = std::move(packet);
+    return true;
+}
+
+std::vector<std::uint8_t> encode_remote_action_presentation_batch_packet(
+    const RemoteActionPresentationBatchPacket& packet,
+    std::uint32_t sequence) {
+    if (packet.records.size() > UINT16_MAX) {
+        return {};
+    }
+    protocol_internal::PacketWriter payload;
+    payload.reserve(
+        kActionBatchHeaderPayloadSize +
+        packet.records.size() * kRemoteActionPresentationPayloadSize);
+    payload.write_u32(packet.server_tick);
+    payload.write_u16(static_cast<std::uint16_t>(packet.records.size()));
+    payload.write_u16(0u);
+    for (const KernelRemoteActionPresentationEvent& record : packet.records) {
+        payload.write_u32(record.actor_net_id);
+        payload.write_u32(record.action_template_id);
+        payload.write_u32(record.action_instance_id);
+        payload.write_u16(record.first_commit_index);
+        payload.write_u16(record.commit_count);
+        payload.write_u8(record.event_type);
+        payload.write_u8(record.flags);
+        payload.write_u16(record.server_tick_delta);
+    }
+    return protocol_internal::wrap_packet(
+        MessageType::kRemoteActionPresentationBatch,
+        payload.bytes(),
+        sequence);
+}
+
+bool decode_remote_action_presentation_batch_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    RemoteActionPresentationBatchPacket* out_packet) {
+    const std::uint8_t* payload = nullptr;
+    std::size_t payload_size = 0;
+    if (out_packet == nullptr ||
+        !protocol_internal::unwrap_packet(
+            data,
+            size,
+            MessageType::kRemoteActionPresentationBatch,
+            &payload,
+            &payload_size) ||
+        payload_size < kActionBatchHeaderPayloadSize) {
+        return false;
+    }
+    RemoteActionPresentationBatchPacket packet;
+    std::uint16_t record_count = 0;
+    std::uint16_t reserved = 0;
+    protocol_internal::PacketReader reader(payload, payload_size);
+    if (!reader.read_u32(&packet.server_tick) ||
+        !reader.read_u16(&record_count) ||
+        !reader.read_u16(&reserved) || reserved != 0u ||
+        payload_size != kActionBatchHeaderPayloadSize +
+                            static_cast<std::size_t>(record_count) *
+                                kRemoteActionPresentationPayloadSize) {
+        return false;
+    }
+    packet.records.reserve(record_count);
+    for (std::uint16_t index = 0; index < record_count; ++index) {
+        KernelRemoteActionPresentationEvent record{};
+        if (!reader.read_u32(&record.actor_net_id) ||
+            !reader.read_u32(&record.action_template_id) ||
+            !reader.read_u32(&record.action_instance_id) ||
+            !reader.read_u16(&record.first_commit_index) ||
+            !reader.read_u16(&record.commit_count) ||
+            !reader.read_u8(&record.event_type) ||
+            !reader.read_u8(&record.flags) ||
+            !reader.read_u16(&record.server_tick_delta) ||
+            record.actor_net_id == 0u || record.action_instance_id == 0u ||
+            record.first_commit_index == 0u || record.commit_count == 0u ||
+            static_cast<std::uint32_t>(record.first_commit_index) +
+                    static_cast<std::uint32_t>(record.commit_count) - 1u >
+                UINT16_MAX ||
+            record.event_type >
+                KernelRemoteActionPresentationEventType_DeathTrigger) {
+            return false;
+        }
+        packet.records.push_back(record);
+    }
+    if (!reader.done()) {
+        return false;
+    }
     *out_packet = std::move(packet);
     return true;
 }

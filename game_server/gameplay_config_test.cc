@@ -151,15 +151,33 @@ std::vector<std::uint8_t> make_store_zip(
     return zip;
 }
 
+void append_collider_template_files(
+    std::vector<std::pair<std::string, std::string>>* files) {
+    const std::vector<std::string> collider_files = {
+        "beam_damage.yaml",
+        "cone_vision.yaml",
+        "enemy_hit.yaml",
+        "explosion_damage.yaml",
+        "player_hit.yaml",
+        "projectile_damage.yaml",
+        "rifle_segment_damage.yaml",
+        "shotgun_segment_damage.yaml",
+        "sphere_damage.yaml",
+    };
+    for (const std::string& file : collider_files) {
+        files->push_back({
+            "collider_templates/" + file,
+            read_text_file("game_server/collider_templates/" + file)});
+    }
+}
+
 std::vector<std::uint8_t> make_gameplay_bundle_zip(
     const std::string& sentry_actor_yaml) {
     std::vector<std::pair<std::string, std::string>> files;
     files.push_back({
         "gameplay_catalog.yaml",
         read_text_file("game_server/gameplay_catalog.yaml")});
-    files.push_back({
-        "collider_templates/default.yaml",
-        read_text_file("game_server/collider_templates/default.yaml")});
+    append_collider_template_files(&files);
     files.push_back({
         "entity_templates/player.yaml",
         read_text_file("game_server/entity_templates/player.yaml")});
@@ -183,6 +201,20 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
         files.push_back({
             "weapon_templates/" + file,
             read_text_file("game_server/weapon_templates/" + file)});
+    }
+    const std::vector<std::string> action_files = {
+        "beam_rifle_fire.yaml",
+        "fire_floor_cast.yaml",
+        "homing_missile_fire.yaml",
+        "rifle_fire.yaml",
+        "rocket_fire.yaml",
+        "shotgun_fire.yaml",
+        "spammer_fire.yaml",
+    };
+    for (const std::string& file : action_files) {
+        files.push_back({
+            "action_templates/" + file,
+            read_text_file("game_server/action_templates/" + file)});
     }
     const std::vector<std::string> projectile_files = {
         "beam_rifle_beam.yaml",
@@ -211,15 +243,14 @@ std::vector<std::uint8_t> make_entity_template_bundle_zip(
     files.push_back({
         "gameplay_catalog.yaml",
         "catalog_version: 1\n"
+        "action_template_dir: action_templates\n"
         "weapon_template_dir: weapon_templates\n"
         "projectile_template_dir: projectile_templates\n"
         "entity_template_dir: entity_templates\n"
-        "collider_template_file: collider_templates/default.yaml\n"
+        "collider_template_dir: collider_templates\n"
         "player:\n"
         "  entity_template: player\n"});
-    files.push_back({
-        "collider_templates/default.yaml",
-        read_text_file("game_server/collider_templates/default.yaml")});
+    append_collider_template_files(&files);
     files.push_back({
         "entity_templates/player.yaml",
         "id: 1\n"
@@ -279,6 +310,20 @@ std::vector<std::uint8_t> make_entity_template_bundle_zip(
         files.push_back({
             "weapon_templates/" + file,
             read_text_file("game_server/weapon_templates/" + file)});
+    }
+    const std::vector<std::string> action_files = {
+        "beam_rifle_fire.yaml",
+        "fire_floor_cast.yaml",
+        "homing_missile_fire.yaml",
+        "rifle_fire.yaml",
+        "rocket_fire.yaml",
+        "shotgun_fire.yaml",
+        "spammer_fire.yaml",
+    };
+    for (const std::string& file : action_files) {
+        files.push_back({
+            "action_templates/" + file,
+            read_text_file("game_server/action_templates/" + file)});
     }
     const std::vector<std::string> projectile_files = {
         "beam_rifle_beam.yaml",
@@ -494,7 +539,7 @@ int main() {
     assert(projectile_spammer.damage == 1);
     assert(projectile_spammer.magazine_size == 120);
     assert(projectile_spammer.reserve_magazines == kMaxReserveMagazines);
-    assert(projectile_spammer.cooldown_ticks == 1);
+    assert(projectile_spammer.cooldown_ticks == 0);
     assert(projectile_spammer.projectile_template_id == 2);
     assert(projectile_spammer.pellet_count == 3);
     assert(projectile_spammer.pellet_spread == 15.0f);
@@ -700,7 +745,7 @@ int main() {
          "catalog_version: 1\n"
          "weapon_template_dir: weapon_templates\n"
          "projectile_template_dir: projectile_templates\n"
-         "collider_template_file: collider_templates/default.yaml\n"
+         "collider_template_dir: collider_templates\n"
          "player:\n"
          "  actor_template: player\n"
          "  current_hp: 12\n"},
@@ -717,13 +762,32 @@ int main() {
     }
     assert(unknown_nested_catalog_field_rejected);
 
+    const std::vector<std::uint8_t> legacy_collider_field_bundle = make_store_zip({
+        {"gameplay_catalog.yaml",
+         "catalog_version: 1\n"
+         "weapon_template_dir: weapon_templates\n"
+         "projectile_template_dir: projectile_templates\n"
+         "collider_template_file: collider_templates/default.yaml\n"},
+    });
+    bool legacy_collider_field_rejected = false;
+    try {
+        (void)network_example::game_server::load_gameplay_config_from_bundle_memory(
+            legacy_collider_field_bundle.data(),
+            static_cast<std::uint32_t>(legacy_collider_field_bundle.size()),
+            "gameplay_catalog.yaml");
+    } catch (const std::exception& error) {
+        legacy_collider_field_rejected =
+            std::string(error.what()).find("unknown field") != std::string::npos;
+    }
+    assert(legacy_collider_field_rejected);
+
     std::vector<std::pair<std::string, std::string>> duplicate_collider_files;
     duplicate_collider_files.push_back({
         "gameplay_catalog.yaml",
         "catalog_version: 1\n"
         "weapon_template_dir: weapon_templates\n"
         "projectile_template_dir: projectile_templates\n"
-        "collider_template_file: collider_templates/default.yaml\n"});
+        "collider_template_dir: collider_templates\n"});
     const std::vector<std::string> duplicate_collider_weapon_files = {
         "beam_rifle.yaml",
         "fire_floor.yaml",
@@ -739,24 +803,25 @@ int main() {
             read_text_file("game_server/weapon_templates/" + file)});
     }
     duplicate_collider_files.push_back({
-        "collider_templates/default.yaml",
-        "templates:\n"
-        "  - id: 1\n"
-        "    name: a\n"
-        "    shape: aabb\n"
-        "    center: {x: 0.0, y: 0.0, z: 0.0}\n"
-        "    half_extents: {x: 1.0, y: 1.0, z: 1.0}\n"
-        "    radius: 0.0\n"
-        "    purpose: hit\n"
-        "    layer: player_side\n"
-        "  - id: 1\n"
-        "    name: b\n"
-        "    shape: sphere\n"
-        "    center: {x: 0.0, y: 0.0, z: 0.0}\n"
-        "    half_extents: {x: 1.0, y: 1.0, z: 1.0}\n"
-        "    radius: 1.0\n"
-        "    purpose: damage\n"
-        "    layer: hostile_side\n"});
+        "collider_templates/a.yaml",
+        "id: 1\n"
+        "name: a\n"
+        "shape: aabb\n"
+        "center: {x: 0.0, y: 0.0, z: 0.0}\n"
+        "half_extents: {x: 1.0, y: 1.0, z: 1.0}\n"
+        "radius: 0.0\n"
+        "purpose: hit\n"
+        "layer: player_side\n"});
+    duplicate_collider_files.push_back({
+        "collider_templates/b.yaml",
+        "id: 1\n"
+        "name: b\n"
+        "shape: sphere\n"
+        "center: {x: 0.0, y: 0.0, z: 0.0}\n"
+        "half_extents: {x: 1.0, y: 1.0, z: 1.0}\n"
+        "radius: 1.0\n"
+        "purpose: damage\n"
+        "layer: hostile_side\n"});
     const std::vector<std::uint8_t> duplicate_collider_id_bundle =
         make_store_zip(duplicate_collider_files);
     bool duplicate_collider_id_rejected = false;

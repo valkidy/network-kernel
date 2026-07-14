@@ -18,6 +18,7 @@ enum class ChannelId : std::uint8_t {
     kSnapshot = 1,
     kReliableEvent = 2,
     kSession = 3,
+    kPresentation = 4,
 };
 
 enum class TransportEventType {

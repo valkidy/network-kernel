@@ -134,6 +134,16 @@ uint32_t Kernel_PollEntityLifecycleEvents(
     KernelEntityLifecycleEvent* out_events,
     uint32_t max_events);
 
+uint32_t Kernel_PollLocalActionResults(
+    KernelHandle* kernel,
+    KernelLocalActionResult* out_results,
+    uint32_t max_results);
+
+uint32_t Kernel_PollRemoteActionPresentationEvents(
+    KernelHandle* kernel,
+    KernelRemoteActionPresentationEvent* out_events,
+    uint32_t max_events);
+
 bool Kernel_GetBenchmarkStats(
     KernelHandle* kernel,
     KernelBenchmarkStats* out_stats);
@@ -169,6 +179,11 @@ uint32_t Kernel_GetProjectileTemplates(
     KernelHandle* kernel,
     KernelProjectileTemplateDefinition* out_templates,
     uint32_t max_templates);
+
+bool Kernel_GetActionTemplate(
+    KernelHandle* kernel,
+    uint32_t action_template_id,
+    KernelActionTemplateDefinition* out_definition);
 
 uint32_t Kernel_GetActorTemplates(
     KernelHandle* kernel,

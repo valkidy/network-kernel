@@ -14,7 +14,7 @@ game_server/gameplay_catalog.yaml
   -> weapon_template_dir: game_server/weapon_templates/*.yaml
   -> projectile_template_dir: game_server/projectile_templates/*.yaml
   -> entity_template_dir: game_server/entity_templates/*.yaml
-  -> collider_template_file: game_server/collider_templates/default.yaml
+  -> collider_template_dir: game_server/collider_templates/*.yaml
   -> player.entity_template
   -> director entity template spawn policy
 ```
@@ -142,7 +142,7 @@ catalog_version: 1
 weapon_template_dir: weapon_templates
 projectile_template_dir: projectile_templates
 entity_template_dir: entity_templates
-collider_template_file: collider_templates/default.yaml
+collider_template_dir: collider_templates
 player:
   entity_template: player
 ```
@@ -159,7 +159,7 @@ Ownership boundary:
 | Entity composition | `entity_templates/*.yaml` | Reusable actor/director definition by stable entity ID/name. |
 | Player actor choice | `gameplay_catalog.yaml` | References an entity template. |
 | Agent spawn policy | director entity template | World-rule Director AI owns initial and replacement spawn policy. |
-| Collider geometry | `collider_templates/default.yaml` | Kernel-packed collider shapes; actor/projectile templates reference these shapes. |
+| Collider geometry | `collider_templates/*.yaml` | One Kernel-packed collider shape per file; actor/projectile templates reference these shapes. |
 
 ## Gameplay Catalog Policy
 
@@ -169,7 +169,7 @@ mechanics, actor stats, collider geometry, friendly-fire rules, or ABI layout
 changes.
 
 `weapon_template_dir`, `projectile_template_dir`, `entity_template_dir`, and
-`collider_template_file` are required for new catalog data. `actor_template_dir`
+`collider_template_dir` are required for new catalog data. `actor_template_dir`
 and `actor_template` references remain compatibility paths, but new authoring
 should use `entity_template_dir` and `entity_template` references.
 
@@ -323,7 +323,8 @@ Loading order:
 
 1. Load the gameplay catalog root.
 2. Load weapon templates from `weapon_template_dir`.
-3. Load collider templates from `collider_template_file`.
+3. Load collider templates from `collider_template_dir` in deterministic path
+   order, then sort the registry by stable template id.
 4. Load projectile templates from `projectile_template_dir` and resolve weapon
    projectile references.
 5. Load entity templates from `entity_template_dir` and validate actor loadouts
@@ -366,6 +367,50 @@ Authoring-only YAML names, file paths, and editor metadata still remain in
 `game_server`. ABI-facing templates use stable numeric ids and fixed-width
 plain C structs only.
 
+Action templates are authored independently under `action_templates/*.yaml`.
+Weapon templates reference them through `fire_action_template` by stable name
+or decimal id. Action-backed weapons may omit `cooldown_ticks`; weapons without
+an action reference retain the legacy non-zero cooldown fallback. Action
+templates contain gameplay policy only and must not contain Animator states,
+AnimationClip ids, Unity fields, or presentation assets.
+
+### Action cancellation flags
+
+Use `flags` as a YAML sequence. Flags are composable and their order does not
+matter:
+
+```yaml
+flags:
+  - cancel_on_release
+  - cancel_on_death
+  - cancel_on_weapon_change
+  - cancel_before_first_commit
+```
+
+The compact inline form is equivalent:
+
+```yaml
+flags: [cancel_on_release, cancel_on_death, cancel_on_weapon_change, cancel_before_first_commit]
+```
+
+| Flag | Behavior |
+|---|---|
+| `cancel_on_release` | Stops a Hold action after the fire input is released. |
+| `cancel_on_death` | Stops the action when the source entity dies. |
+| `cancel_on_weapon_change` | Stops the action when the selected weapon differs from the action's source weapon. |
+| `cancel_before_first_commit` | Allows a flagged cancellation during Windup to enter Recovery before spending ammo or producing the first effect. Without it, the first commit completes before the action stops. |
+
+`cancel_before_first_commit` modifies the other flagged cancellation reasons;
+it does not initiate cancellation by itself. Timeout, insufficient ammo, and
+explicit server cancellation may still stop an action before its first commit.
+Unknown flag names are rejected during catalog loading.
+
+A typical Press action uses death, weapon-change, and before-first-commit
+cancellation, requires `max_commit_count: 1`, and uses
+`hold_input_timeout_ticks: 0`. A typical Hold action uses all four flags,
+allows `max_commit_count: 0` for unlimited commits, and requires a non-zero
+`hold_input_timeout_ticks`.
+
 ABI-facing structs must avoid `std::string`, `std::vector`, virtual methods,
 non-trivial constructors/destructors, implicit array ownership, and unstable
 layout. Use fixed-width integers, explicit counts, and struct versioning.
@@ -392,10 +437,11 @@ Gameplay catalog bundles must include the catalog root and every referenced
 template source needed to reconstruct the same config from memory:
 
 - `gameplay_catalog.yaml`
+- `action_templates/*.yaml`
 - `weapon_templates/*.yaml`
 - `projectile_templates/*.yaml`
 - `entity_templates/*.yaml`
-- `collider_templates/default.yaml`
+- `collider_templates/*.yaml`
 
 Filesystem loading and bundle-memory loading should produce equivalent gameplay
 configuration and catalog hash values.

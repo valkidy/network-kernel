@@ -66,11 +66,25 @@ WorldSnapshot build_world_snapshot(
             entity_snapshot.state = replication.animation_state;
             entity_snapshot.flags |= replication.visual_flags;
         }
+        entity_snapshot.flags &= ~kVisualFlagFiring;
         if (world.registry().all_of<ProjectileState>(entity)) {
             const ProjectileState& projectile =
                 world.registry().get<ProjectileState>(entity);
             entity_snapshot.spawn_tick = projectile.spawn_tick;
-            entity_snapshot.client_action_id = projectile.client_action_id;
+            entity_snapshot.action_instance_id = projectile.action_instance_id;
+        }
+        if (world.registry().all_of<ActionInputState>(entity)) {
+            entity_snapshot.aim_direction =
+                world.registry().get<ActionInputState>(entity).aim_direction;
+        }
+        if (world.registry().all_of<ActionRuntimeState>(entity)) {
+            const ActionRuntimeState& action =
+                world.registry().get<ActionRuntimeState>(entity);
+            entity_snapshot.action_template_id = action.action_template_id;
+            entity_snapshot.action_instance_id = action.action_instance_id;
+            entity_snapshot.action_start_tick = action.start_tick;
+            entity_snapshot.action_commit_count = action.commit_count;
+            entity_snapshot.action_phase = action.phase;
         }
         if (world.registry().all_of<HomingState>(entity)) {
             entity_snapshot.state = static_cast<std::uint16_t>(

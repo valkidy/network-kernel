@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 35u`.
+`KERNEL_ABI_VERSION == 41u`.
 
 ## Ownership
 
@@ -30,6 +30,32 @@ failures return `NULL`, `false`, or `0`.
 Additive changes must prefer new `Kernel_*` functions or new capability flags.
 Breaking changes to public struct layout, enum semantics, buffer ownership, or
 function signatures require a `KERNEL_ABI_VERSION` bump.
+
+ABI version 41 adds `KernelNetworkStatsConfig` to `KernelConfig` and extends
+`KernelNetworkStats` with per-channel bytes, owner-result reconciliation,
+remote-presentation filtering/budget, batch, timeout, duplicate, latency,
+zero-id, and collision counters. `KernelNetworkStatsMode_Default` resolves to
+Basic; Off disables all network counters/timing; Detailed adds serialization,
+deserialization, and owner-result latency timing. Zero-valued limits resolve to
+1,200 B action packets, 250 ms remote expiry, 8 KiB/s per client, and
+256 KiB/s server aggregate. `KernelAbiInfo::network_stats_config_size` reports
+the new configuration layout. Packet schema remains 16, snapshot schema remains
+14, and the owner-result and remote-presentation records remain 12 B and 20 B.
+
+ABI version 40 replaces discrete Fire/Reload button input with the 8-byte
+`ActionIntent` start contract and 8-byte `ActionInput` hold/release contract.
+`PlayerInput::action_intent` and `PlayerInput::action_input` are the only native
+Fire/Reload entry points. `KernelAbiInfo` reports both struct sizes and
+`KERNEL_CAPABILITY_ACTION_INTENTS`; `KernelWeaponMechanicsDefinition` requires
+explicit Fire and Reload action template ids. Packet schema version 16 carries
+the new input fields, while snapshot schema remains 14. ABI 40 provides no ABI
+39 or packet 15 adapter.
+
+ABI version 39 adds separate owner-correction and remote-presentation polling
+surfaces: `Kernel_PollLocalActionResults` returns reliable authoritative Fire
+results, while `Kernel_PollRemoteActionPresentationEvents` returns best-effort
+cosmetic events. Packet schema version 15 adds their independent batch message
+types and leaves snapshot schema version 14 unchanged.
 
 ABI version 28 adds gameplay catalog bundle synchronization. Servers register
 an immutable bundle and manifest before listening. Clients may fetch that
@@ -85,7 +111,7 @@ ABI version 5 replaces the coarse `client_tick` fire marker with
 `client_action_time_us`, a client-local monotonic action time. The server uses
 session clock sync to convert this timestamp into the server timeline before
 lag compensation.
-`client_action_id` is the client-originated prediction correlation token for
+`action_instance_id` is the client-originated prediction correlation token for
 projectiles and future predicted actions. `RenderEntityState` now exposes a
 client-local `uint64_t entity_id` that presentation layers can use as their
 stable object key across predicted-to-authoritative binding; `net_id` remains

@@ -25,6 +25,25 @@ int main() {
         true;
     world.registry().get<network_example::Health>(*player_entity).hp = 75;
     world.registry().get<network_example::Health>(*player_entity).max_hp = 100;
+    world.registry().emplace<network_example::ActionInputState>(
+        *player_entity,
+        network_example::ActionInputState{
+            (1u << 8),
+            7,
+            {7001u, 0u, 0u, 0u},
+            {7001u, 1u, 0u, 0u},
+            network_example::kWeaponSlot3,
+            glm::vec3{0.0f, 0.0f, 1.0f},
+        });
+    network_example::ActionRuntimeState action_runtime;
+    action_runtime.action_template_id = 1001;
+    action_runtime.action_instance_id = 7001;
+    action_runtime.start_tick = 7;
+    action_runtime.next_commit_tick = 10;
+    action_runtime.phase = 1;
+    world.registry().emplace<network_example::ActionRuntimeState>(
+        *player_entity,
+        action_runtime);
     world.registry().get<network_example::Hitbox>(*player_entity) =
         network_example::Hitbox{{0.0f, 0.9f, 0.0f}, {0.35f, 0.9f, 0.35f}, 0};
     const auto enemy_entity = world.find_entity(enemy);
@@ -41,7 +60,7 @@ int main() {
     network_example::ProjectileState& projectile_state =
         world.registry().get<network_example::ProjectileState>(*projectile_entity);
     projectile_state.spawn_tick = 7;
-    projectile_state.client_action_id = 3456;
+    projectile_state.action_instance_id = 3456;
     world.registry().emplace<network_example::HomingState>(
         *projectile_entity,
         network_example::HomingState{
@@ -73,6 +92,10 @@ int main() {
                 entity.owner_peer == 1 &&
                 entity.hp == 75 &&
                 entity.max_hp == 100 &&
+                entity.action_template_id == 1001 &&
+                entity.action_instance_id == 7001 &&
+                entity.action_phase == 1 &&
+                entity.aim_direction.z == 1.0f &&
                 (entity.flags & network_example::kVisualFlagMoving) != 0 &&
                 (entity.flags & network_example::kVisualFlagReloading) != 0;
         }
@@ -81,13 +104,13 @@ int main() {
                 entity.owner_peer == 0 && entity.state == 9 &&
                 entity.hp == 25 &&
                 entity.max_hp == 50 &&
-                entity.flags == 0x01020300u;
+                entity.flags == 0x01020100u;
         }
         if (entity.net_id == projectile) {
             saw_projectile_metadata =
                 entity.owner_peer == 1 &&
                 entity.spawn_tick == 7 &&
-                entity.client_action_id == 3456 &&
+                entity.action_instance_id == 3456 &&
                 entity.velocity.x == 10.0f &&
                 entity.state == static_cast<std::uint16_t>(
                     network_example::MissileGuidancePhase::kGuided);

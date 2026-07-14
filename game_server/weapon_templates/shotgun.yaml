@@ -3,7 +3,7 @@ name: Shotgun
 weapon_type: shotgun
 magazine_size: 8
 damage: 10
-cooldown_ticks: 20
+fire_action_template: shotgun_fire
 reload_ticks: 45
 max_range: 40.0
 pellet_count: 5

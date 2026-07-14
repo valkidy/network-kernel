@@ -17,6 +17,7 @@
 #include "protocol/public/network_packets.h"
 #include "protocol/public/session_packets.h"
 #include "transport/public/loopback_transport.h"
+#include "kernel/src/render_state_builder.h"
 
 #define private public
 #include "kernel/src/kernel.h"
@@ -64,6 +65,25 @@ void add_snapshot_entity(
     entity.actor_type = actor_type;
     entity.position = glm::vec3{position_x, 0.0f, 0.0f};
     snapshot->entities.push_back(entity);
+}
+
+void add_client_render_metadata(
+    network_example::KernelEngine* engine,
+    network_example::NetId net_id,
+    network_example::EntityType type,
+    network_example::ActorType actor_type =
+        network_example::ActorType::kUnknown) {
+    engine->client_replicated_entities_.push_back({});
+    auto& metadata = engine->client_replicated_entities_.back();
+    metadata.net_id = net_id;
+    metadata.type = type;
+    metadata.actor_type = actor_type;
+    metadata.actor_template_id =
+        type == network_example::EntityType::kActor ? 1u : 0u;
+    metadata.projectile_template_id =
+        type == network_example::EntityType::kProjectile ? 1u : 0u;
+    metadata.collider_template_id = 1u;
+    metadata.active = true;
 }
 
 KernelColliderTemplateDefinition projectile_collider_template() {
@@ -147,7 +167,7 @@ network_example::WorldSnapshot projectile_snapshot(
     std::uint32_t server_tick,
     network_example::NetId net_id,
     network_example::PeerId owner_peer,
-    std::uint32_t client_action_id,
+    std::uint32_t action_instance_id,
     const glm::vec3& position,
     const glm::vec3& velocity) {
     network_example::WorldSnapshot snapshot;
@@ -159,7 +179,7 @@ network_example::WorldSnapshot projectile_snapshot(
     entity.position = position;
     entity.velocity = velocity;
     entity.spawn_tick = server_tick;
-    entity.client_action_id = client_action_id;
+    entity.action_instance_id = action_instance_id;
     snapshot.entities.push_back(entity);
     return snapshot;
 }
@@ -240,7 +260,7 @@ void client_query_collider_shapes_reports_render_colliders() {
     projectile.position = glm::vec3{1.0f, 0.0f, 0.0f};
     projectile.velocity = glm::vec3{10.0f, 0.0f, 0.0f};
     projectile.spawn_tick = 3;
-    projectile.client_action_id = 1234;
+    projectile.action_instance_id = 1234;
     snapshot.entities.push_back(projectile);
     client.handle_client_snapshot(snapshot);
 
@@ -323,10 +343,11 @@ void local_deterministic_prediction_query_uses_projectile_template_collider() {
     client.local_player_net_id_ = player_net_id;
     PlayerInput input{};
     input.input_seq = 1;
-    input.client_action_id = 1234;
-    input.buttons = InputButton_Fire;
+    input.action_intent = ActionIntent{
+        1234u, KernelActionBinding_PrimaryFire, 0u, 0u};
     input.selected_weapon = 2;
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
+    client.predicted_local_entity_.action_instance_id = 1234u;
     client.predict_local_projectile(input);
     require(client.predicted_projectiles_.size() == 1);
     require(client.predicted_projectiles_[0].projectile_template_id == 3);
@@ -692,7 +713,7 @@ void projectile_spawn_packet_uses_original_muzzle_position() {
     require(network_stats.event_bytes_sent > 0);
     require(network_stats.average_packet_size > 0);
     require(network_stats.max_packet_size > 0);
-    require(network_stats.packet_serialization_cost_us > 0);
+    require(network_stats.packet_serialization_cost_us == 0u);
 }
 
 void snapshot_only_projectile_spawn_sends_metadata_batch() {
@@ -857,6 +878,16 @@ void render_states_at_time_interpolates_and_clamps() {
     engine.reset_runtime_state(KernelMode_Client);
     engine.has_client_clock_sync_ = true;
     engine.client_clock_offset_us_ = 0;
+    engine.handle_client_spawn(network_example::EntitySpawnPacket{
+        42,
+        network_example::EntityType::kActor,
+        network_example::ActorType::kAgent,
+        0,
+        0,
+        1,
+        glm::vec3{0.0f, 0.0f, 0.0f},
+        glm::quat{1.0f, 0.0f, 0.0f, 0.0f},
+    });
     engine.handle_client_snapshot(snapshot_with_entity(
         10,
         42,
@@ -896,6 +927,17 @@ void render_states_at_time_interpolates_and_clamps() {
     network_example::KernelEngine single_snapshot_engine(config);
     single_snapshot_engine.reset_runtime_state(KernelMode_Client);
     single_snapshot_engine.has_client_clock_sync_ = true;
+    single_snapshot_engine.handle_client_spawn(
+        network_example::EntitySpawnPacket{
+            77,
+            network_example::EntityType::kActor,
+            network_example::ActorType::kAgent,
+            0,
+            0,
+            1,
+            glm::vec3{7.0f, 0.0f, 0.0f},
+            glm::quat{1.0f, 0.0f, 0.0f, 0.0f},
+        });
     single_snapshot_engine.handle_client_snapshot(snapshot_with_entity(
         10,
         77,
@@ -921,6 +963,15 @@ void remote_projectile_uses_interpolated_past_timeline() {
     engine.reset_runtime_state(KernelMode_Client);
     engine.has_client_clock_sync_ = true;
     engine.client_clock_offset_us_ = 0;
+    add_client_render_metadata(
+        &engine,
+        42,
+        network_example::EntityType::kActor,
+        network_example::ActorType::kAgent);
+    add_client_render_metadata(
+        &engine,
+        43,
+        network_example::EntityType::kProjectile);
 
     network_example::WorldSnapshot from = snapshot_with_entity(
         10,
@@ -982,7 +1033,7 @@ void local_projectile_snapshot_fast_forwards_and_smooths() {
     predicted.entity_id = 9000;
     predicted.owner_peer = 7;
     predicted.input_seq = 3;
-    predicted.client_action_id = 4444;
+    predicted.action_instance_id = 4444;
     predicted.spawn_tick = 20;
     predicted.position = glm::vec3{6.2f, 0.0f, 0.0f};
     predicted.velocity = glm::vec3{100.0f, 0.0f, 0.0f};
@@ -1044,7 +1095,7 @@ void homing_projectile_snapshot_extrapolation_is_bounded() {
     predicted.entity_id = 9000;
     predicted.owner_peer = 7;
     predicted.input_seq = 3;
-    predicted.client_action_id = 4444;
+    predicted.action_instance_id = 4444;
     predicted.spawn_tick = 500;
     predicted.position = glm::vec3{6.2f, 0.0f, 0.0f};
     predicted.velocity = glm::vec3{100.0f, 0.0f, 0.0f};
@@ -1113,6 +1164,101 @@ void render_query_does_not_consume_local_correction() {
     assert(engine.local_correction_offset_.x == 4.0f);
 }
 
+void owner_action_prediction_and_discrete_interpolation() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_Client);
+    engine.local_client_peer_id_ = 7;
+    engine.local_player_net_id_ =
+        engine.world_.spawn_player(7, glm::vec3{0.0f, 0.0f, 0.0f});
+    const auto player_entity =
+        engine.world_.find_entity(engine.local_player_net_id_);
+    require(player_entity.has_value());
+    network_example::WeaponTuning& tuning =
+        engine.world_.registry().get_or_emplace<network_example::WeaponTuning>(
+            *player_entity);
+    tuning.configured[network_example::kWeaponSlot3] = true;
+    tuning.definitions[network_example::kWeaponSlot3].id =
+        network_example::kWeaponSlot3;
+    tuning.definitions[network_example::kWeaponSlot3].mode =
+        network_example::WeaponFireMode::kProjectile;
+    tuning.definitions[network_example::kWeaponSlot3].fire_action_template_id = 1001;
+    KernelActionTemplateDefinition action_template{};
+    action_template.struct_size = sizeof(action_template);
+    action_template.action_template_id = 1001;
+    action_template.trigger_mode = KernelActionTriggerMode_Press;
+    action_template.flags = KernelActionTemplateFlag_CancelBeforeFirstCommit;
+    action_template.ammo_cost_per_commit = 1;
+    action_template.commit_offset_ticks = 2;
+    action_template.commit_interval_ticks = 30;
+    action_template.max_commit_count = 1;
+    action_template.recovery_ticks = 2;
+    engine.action_templates_.push_back(action_template);
+    engine.world_.set_action_templates({network_example::RuntimeActionTemplate{
+        1001,
+        KernelActionTriggerMode_Press,
+        KernelActionTemplateFlag_CancelBeforeFirstCommit,
+        1,
+        2,
+        30,
+        1,
+        2,
+        0,
+    }});
+
+    PlayerInput input{};
+    input.input_seq = 1;
+    input.action_intent = ActionIntent{
+        7001u, KernelActionBinding_PrimaryFire, 0u, 0u};
+    input.buttons = InputButton_Aim;
+    input.selected_weapon = network_example::kWeaponSlot3;
+    input.aim_dir = KernelVec3{0.0f, 0.0f, 1.0f};
+    engine.predict_local_input(input);
+    require(!engine.predict_local_action(input));
+    require(engine.predicted_local_entity_.action_phase ==
+            KernelActionPhase_Windup);
+    require(engine.predicted_local_entity_.action_instance_id == 7001);
+    require(engine.predicted_local_entity_.aim_direction.z == 1.0f);
+    engine.tick_loop_.advance_tick();
+    require(!engine.predict_local_action(input));
+    engine.tick_loop_.advance_tick();
+    require(engine.predict_local_action(input));
+    require(engine.predicted_local_entity_.action_commit_count == 1);
+    require(engine.predicted_action_next_commit_tick_ == 32);
+    require(engine.predicted_local_entity_.action_phase ==
+            KernelActionPhase_Recovery);
+
+    network_example::EntitySnapshot from;
+    from.position = glm::vec3{0.0f, 0.0f, 0.0f};
+    from.action_instance_id = 1;
+    from.action_phase = KernelActionPhase_Active;
+    from.aim_direction = glm::vec3{1.0f, 0.0f, 0.0f};
+    network_example::EntitySnapshot to = from;
+    to.position = glm::vec3{10.0f, 0.0f, 0.0f};
+    to.action_instance_id = 2;
+    to.action_phase = KernelActionPhase_Recovery;
+    to.aim_direction = glm::vec3{0.0f, 0.0f, 1.0f};
+    const network_example::EntitySnapshot interpolated =
+        network_example::interpolate_snapshot_entity(from, to, 0.5f);
+    require(interpolated.position.x == 5.0f);
+    require(interpolated.action_instance_id == 2);
+    require(interpolated.action_phase == KernelActionPhase_Recovery);
+    require(interpolated.aim_direction.z == 1.0f);
+
+    from.flags = network_example::kVisualFlagFiring;
+    const RenderEntityState active_render =
+        network_example::render_state_from_snapshot_entity(from, 1);
+    require((active_render.visual_flags & network_example::kVisualFlagFiring) != 0u);
+    to.flags = network_example::kVisualFlagFiring;
+    const RenderEntityState recovery_render =
+        network_example::render_state_from_snapshot_entity(to, 2);
+    require((recovery_render.visual_flags & network_example::kVisualFlagFiring) == 0u);
+}
+
 void late_snapshot_is_stored_but_not_used_for_reconciliation() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
@@ -1131,7 +1277,7 @@ void late_snapshot_is_stored_but_not_used_for_reconciliation() {
     predicted.entity_id = 9000;
     predicted.owner_peer = 7;
     predicted.input_seq = 3;
-    predicted.client_action_id = 4444;
+    predicted.action_instance_id = 4444;
     predicted.spawn_tick = 20;
     predicted.position = glm::vec3{6.2f, 0.0f, 0.0f};
     predicted.velocity = glm::vec3{100.0f, 0.0f, 0.0f};
@@ -1153,7 +1299,7 @@ void late_snapshot_is_stored_but_not_used_for_reconciliation() {
         5.0f);
     newer.entities.back().owner_peer = 7;
     newer.entities.back().velocity = glm::vec3{100.0f, 0.0f, 0.0f};
-    newer.entities.back().client_action_id = 4444;
+    newer.entities.back().action_instance_id = 4444;
     engine.handle_client_snapshot(newer);
     require(engine.latest_client_snapshot_.header.server_tick == 10);
     require(engine.predicted_local_entity_.position.x == 10.0f);
@@ -1330,8 +1476,46 @@ void server_validates_catalog_hash_before_welcome() {
     KernelNetworkStats network_stats{};
     network_stats.struct_size = sizeof(network_stats);
     require(server.get_network_stats(&network_stats));
-    require(network_stats.packet_serialization_cost_us > 0);
-    require(network_stats.packet_deserialization_cost_us > 0);
+    require(network_stats.packet_serialization_cost_us == 0u);
+    require(network_stats.packet_deserialization_cost_us == 0u);
+}
+
+void gameplay_catalog_sync_enforces_bundle_limit() {
+    KernelConfig server_config{};
+    server_config.mode = KernelMode_DedicatedServer;
+    server_config.tick.server_tick_rate = 30;
+    server_config.tick.snapshot_rate = 15;
+    network_example::KernelEngine server(server_config);
+    KernelGameplayCatalogDefinition catalog{};
+    catalog.struct_size = sizeof(catalog);
+    catalog.catalog_version = 5;
+    catalog.catalog_hash = 0xaabbccddeeff0011ull;
+    require(server.load_gameplay_catalog(catalog));
+
+    std::vector<std::uint8_t> limit_bundle(
+        KERNEL_GAMEPLAY_CATALOG_SYNC_MAX_BUNDLE_SIZE,
+        0x5au);
+    KernelGameplayCatalogSyncServerConfig limit_config{};
+    limit_config.struct_size = sizeof(limit_config);
+    limit_config.bundle_bytes = limit_bundle.data();
+    limit_config.bundle_size = static_cast<std::uint32_t>(limit_bundle.size());
+    limit_config.entry_path = "gameplay_catalog.yaml";
+    KernelGameplayCatalogManifest limit_manifest{};
+    limit_manifest.struct_size = sizeof(limit_manifest);
+    require(server.set_gameplay_catalog_sync_bundle(limit_config, &limit_manifest));
+    limit_bundle.push_back(0x5au);
+    limit_config.bundle_bytes = limit_bundle.data();
+    limit_config.bundle_size = static_cast<std::uint32_t>(limit_bundle.size());
+    require(!server.set_gameplay_catalog_sync_bundle(limit_config, &limit_manifest));
+
+    KernelGameplayCatalogSyncClientConfig oversized_client_config{};
+    oversized_client_config.struct_size = sizeof(oversized_client_config);
+    oversized_client_config.max_bundle_size =
+        KERNEL_GAMEPLAY_CATALOG_SYNC_MAX_BUNDLE_SIZE + 1u;
+    network_example::KernelEngine oversized_client(server_config);
+    require(!oversized_client.start_client_catalog_sync(
+        "127.0.0.1:1",
+        oversized_client_config));
 }
 
 void gameplay_catalog_sync_supports_cache_hit_and_download() {
@@ -1384,6 +1568,28 @@ void gameplay_catalog_sync_supports_cache_hit_and_download() {
     require(wire_manifest.catalog_version == 5);
     require(wire_manifest.catalog_hash == 0xaabbccddeeff0011ull);
     require(wire_manifest.bundle_size == bundle.size());
+
+    network_example::GameplayCatalogManifestPacket oversized_manifest =
+        wire_manifest;
+    oversized_manifest.bundle_size = 1025;
+    network_example::TransportEvent oversized_manifest_event = manifest_event;
+    oversized_manifest_event.payload =
+        network_example::encode_gameplay_catalog_manifest_packet(
+            oversized_manifest);
+    KernelConfig limited_client_config = server_config;
+    limited_client_config.mode = KernelMode_Client;
+    network_example::KernelEngine limited_client(limited_client_config);
+    limited_client.reset_runtime_state(KernelMode_Client);
+    limited_client.gameplay_catalog_sync_state_ =
+        KernelGameplayCatalogSyncState_FetchingManifest;
+    limited_client.gameplay_catalog_sync_max_bundle_size_ = 1024;
+    limited_client.handle_client_session_message(oversized_manifest_event);
+    require(
+        limited_client.gameplay_catalog_sync_state_ ==
+        KernelGameplayCatalogSyncState_Failed);
+    require(
+        limited_client.gameplay_catalog_sync_error_ ==
+        KernelGameplayCatalogSyncError_BundleTooLarge);
 
     KernelConfig client_config = server_config;
     client_config.mode = KernelMode_Client;
@@ -1589,7 +1795,7 @@ void projectile_spawn_batch_renders_and_binds_to_snapshot() {
     require(states[0].net_id == 101);
     require(states[0].entity_type == static_cast<std::uint16_t>(
         network_example::EntityType::kProjectile));
-    require(states[0].client_action_id == 1234);
+    require(states[0].action_instance_id == 1234);
 
     std::array<KernelDebugInfo, 2> debug_records{};
     for (KernelDebugInfo& debug_record : debug_records) {
@@ -2268,7 +2474,7 @@ void predicted_projectile_lifetime_cleanup_removes_batch_projectile() {
             3,
             3,
             KernelProjectileSyncMode_HybridDeterministicThenSnapshot,
-            0.5f);
+            1);
     KernelColliderTemplateDefinition collider_template = projectile_collider_template();
     KernelGameplayCatalogDefinition catalog{};
     catalog.struct_size = sizeof(catalog);
@@ -2316,7 +2522,7 @@ void client_update_advances_local_predicted_deterministic_projectile() {
     projectile.entity_id = 9000;
     projectile.net_id = 101;
     projectile.owner_peer = 7;
-    projectile.client_action_id = 1234;
+    projectile.action_instance_id = 1234;
     projectile.position = glm::vec3{1.0f, 0.0f, 0.0f};
     projectile.velocity = glm::vec3{30.0f, 0.0f, 0.0f};
     projectile.spawn_position = projectile.position;
@@ -2466,6 +2672,446 @@ void hit_debug_records_filter_and_drain() {
                 static_cast<std::uint32_t>(debug_records.size())) == 0);
 }
 
+void action_result_and_remote_presentation_queues_are_isolated() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+
+    PlayerInput invalid_fire{};
+    invalid_fire.action_intent = ActionIntent{
+        1u, KernelActionBinding_PrimaryFire, 1u, 0u};
+    const PlayerInput prepared = client.prepare_client_input(invalid_fire);
+    require(prepared.action_intent.action_instance_id == 0u);
+
+    client.outstanding_predicted_actions_.emplace(
+        7001u,
+        network_example::KernelEngine::OutstandingPredictedAction{
+            7001u,
+            10u,
+            0u,
+        });
+    network_example::LocalActionResultBatchPacket local_batch{};
+    local_batch.server_tick = 12;
+    local_batch.records.push_back(KernelLocalActionResult{
+        7001,
+        1,
+        KernelLocalActionResultType_Accepted,
+        KernelLocalActionResultReason_None,
+        12,
+    });
+    client.handle_client_local_action_results(local_batch);
+    std::array<KernelLocalActionResult, 2> local_results{};
+    require(client.poll_local_action_results(
+                local_results.data(),
+                static_cast<std::uint32_t>(local_results.size())) == 1u);
+    require(local_results[0].action_instance_id == 7001u);
+    client.handle_client_local_action_results(local_batch);
+    require(client.poll_local_action_results(
+                local_results.data(),
+                static_cast<std::uint32_t>(local_results.size())) == 0u);
+
+    network_example::RemoteActionPresentationBatchPacket remote_batch{};
+    remote_batch.server_tick = 15;
+    remote_batch.records.push_back(KernelRemoteActionPresentationEvent{
+        42,
+        9,
+        8001,
+        1,
+        1,
+        KernelRemoteActionPresentationEventType_FireCommit,
+        0,
+        0,
+    });
+    const std::vector<std::uint8_t> encoded =
+        network_example::encode_remote_action_presentation_batch_packet(
+            remote_batch,
+            5);
+    network_example::TransportEvent event{};
+    event.peer = 0;
+    event.channel = network_example::ChannelId::kPresentation;
+    event.mode = network_example::SendMode::kUnreliable;
+    event.payload = encoded;
+    client.handle_client_remote_action_presentation(event);
+    std::array<KernelRemoteActionPresentationEvent, 2> remote_events{};
+    require(client.poll_remote_action_presentation_events(
+                remote_events.data(),
+                static_cast<std::uint32_t>(remote_events.size())) == 1u);
+    require(remote_events[0].actor_net_id == 42u);
+    require(client.poll_local_action_results(
+                local_results.data(),
+                static_cast<std::uint32_t>(local_results.size())) == 0u);
+
+    client.handle_client_remote_action_presentation(event);
+    require(client.poll_remote_action_presentation_events(
+                remote_events.data(),
+                static_cast<std::uint32_t>(remote_events.size())) == 0u);
+}
+
+void owner_action_correction_timeout_and_reset_converge() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30u;
+    config.tick.snapshot_rate = 15u;
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+    client.running_ = true;
+    client.local_player_net_id_ = 1u;
+    client.has_predicted_local_entity_ = true;
+
+    auto& timed_out = client.outstanding_predicted_actions_[77u];
+    timed_out.action_instance_id = 77u;
+    timed_out.last_activity_us = 0u;
+    client.predicted_local_entity_.action_instance_id = 77u;
+    client.predicted_local_entity_.action_template_id = 1001u;
+    client.predicted_local_entity_.action_phase = KernelActionPhase_Active;
+    client.update(6.0f);
+    require(client.outstanding_predicted_actions_.empty());
+    require(client.predicted_local_entity_.action_instance_id == 0u);
+    require(client.local_action_results_.empty());
+    require(client.network_stats_.local_action_results_timed_out == 1u);
+
+    client.has_client_snapshot_ = true;
+    client.latest_client_snapshot_.header.server_tick = 100u;
+    client.predicted_local_entity_.action_instance_id = 99u;
+    client.predicted_local_entity_.action_template_id = 1001u;
+    client.predicted_local_entity_.action_phase = KernelActionPhase_Active;
+    client.outstanding_predicted_actions_[99u].action_instance_id = 99u;
+    network_example::LocalActionResultBatchPacket older{};
+    older.records.push_back(KernelLocalActionResult{
+        99u,
+        1u,
+        KernelLocalActionResultType_Corrected,
+        KernelLocalActionResultReason_Cancelled,
+        90u,
+    });
+    client.handle_client_local_action_results(older);
+    require(client.predicted_local_entity_.action_instance_id == 99u);
+    require(client.outstanding_predicted_actions_.find(99u) ==
+            client.outstanding_predicted_actions_.end());
+
+    client.predicted_local_entity_.action_instance_id = 100u;
+    client.predicted_local_entity_.action_template_id = 1001u;
+    client.predicted_local_entity_.action_phase = KernelActionPhase_Active;
+    client.outstanding_predicted_actions_[100u].action_instance_id = 100u;
+    network_example::LocalActionResultBatchPacket newer{};
+    newer.records.push_back(KernelLocalActionResult{
+        100u,
+        1u,
+        KernelLocalActionResultType_Rejected,
+        KernelLocalActionResultReason_Busy,
+        110u,
+    });
+    client.handle_client_local_action_results(newer);
+    require(client.predicted_local_entity_.action_instance_id == 0u);
+    require(client.outstanding_predicted_actions_.find(100u) !=
+            client.outstanding_predicted_actions_.end());
+
+    network_example::WorldSnapshot authoritative{};
+    authoritative.header.server_tick = 110u;
+    network_example::EntitySnapshot local{};
+    local.net_id = 1u;
+    local.type = network_example::EntityType::kActor;
+    local.action_phase = KernelActionPhase_None;
+    authoritative.entities.push_back(local);
+    client.reconcile_local_prediction(authoritative);
+    require(client.outstanding_predicted_actions_.find(100u) ==
+            client.outstanding_predicted_actions_.end());
+
+    client.pending_remote_action_presentation_events_.push_back(
+        network_example::KernelEngine::PendingRemotePresentation{});
+    client.remote_presentation_dedup_.push_back(
+        network_example::KernelEngine::RemotePresentationDedup{});
+    client.clear_client_action_sync_state();
+    require(client.outstanding_predicted_actions_.empty());
+    require(client.pending_remote_action_presentation_events_.empty());
+    require(client.remote_presentation_dedup_.empty());
+}
+
+void server_routes_fire_result_to_owner_and_presentation_to_observer() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine server(config);
+    server.reset_runtime_state(KernelMode_DedicatedServer);
+
+    auto loopback = std::make_unique<network_example::LoopbackTransport>();
+    require(loopback->StartServer(7781));
+    auto* loopback_transport = loopback.get();
+    server.transport_ = std::move(loopback);
+
+    const network_example::NetId owner_actor =
+        server.world_.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+    const network_example::NetId observer_actor =
+        server.world_.spawn_player(2, glm::vec3{5.0f, 0.0f, 0.0f});
+    const auto owner_entity = server.world_.find_entity(owner_actor);
+    require(owner_entity.has_value());
+    network_example::WeaponTuning& tuning =
+        server.world_.registry()
+            .get<network_example::WeaponTuning>(*owner_entity);
+    tuning.configured[0] = true;
+    tuning.definitions[0] = network_example::WeaponMechanicsDefinition{};
+    tuning.definitions[0].id = 0;
+    tuning.definitions[0].mode = network_example::WeaponFireMode::kHitscan;
+    tuning.definitions[0].magazine_size = 30;
+    tuning.definitions[0].damage = 1;
+    tuning.definitions[0].max_range = 20.0f;
+    tuning.definitions[0].fire_action_template_id = 1001u;
+    tuning.definitions[0].reload_action_template_id = 1000u;
+    server.world_.set_action_templates({
+        network_example::RuntimeActionTemplate{
+            1000u,
+            KernelActionTriggerMode_Press,
+            0u,
+            0u,
+            30u,
+            0u,
+            1u,
+            0u,
+            0u,
+        },
+        network_example::RuntimeActionTemplate{
+            1001u,
+            KernelActionTriggerMode_Press,
+            0u,
+            1u,
+            0u,
+            1u,
+            1u,
+            0u,
+            0u,
+        },
+    });
+    server.world_.registry()
+        .get<network_example::WeaponState>(*owner_entity)
+        .ammo[0] = 30;
+    network_example::Health& owner_health =
+        server.world_.registry().get<network_example::Health>(*owner_entity);
+    owner_health.hp = 100;
+    owner_health.max_hp = 100;
+    network_example::KernelEngine::PeerSession owner{};
+    owner.peer = 1;
+    owner.player = owner_actor;
+    owner.welcomed = true;
+    owner.relevant_entities.insert(owner_actor);
+    network_example::KernelEngine::PeerSession observer{};
+    observer.peer = 2;
+    observer.player = observer_actor;
+    observer.welcomed = true;
+    observer.relevant_entities.insert(owner_actor);
+    observer.relevant_entities.insert(observer_actor);
+    server.peer_sessions_.push_back(owner);
+    server.peer_sessions_.push_back(observer);
+
+    PlayerInput input{};
+    input.input_seq = 1;
+    input.action_intent = ActionIntent{
+        7001u, KernelActionBinding_PrimaryFire, 0u, 0u};
+    input.action_input = ActionInput{7001u, 1u, 0u, 0u};
+    input.selected_weapon = 0;
+    input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
+    auto* owner_session = server.find_session(1);
+    server.prepare_server_action_intent(owner_session, &input);
+    require(input.action_intent.action_instance_id == 7001u);
+    server.pending_inputs_.push_back(network_example::QueuedInput{
+        1,
+        input,
+        0,
+        0,
+        false,
+        0,
+    });
+    const std::uint16_t ammo_before =
+        server.world_.registry()
+            .get<network_example::WeaponState>(*owner_entity)
+            .ammo[0];
+    server.simulate_tick();
+    const std::uint16_t ammo_after =
+        server.world_.registry()
+            .get<network_example::WeaponState>(*owner_entity)
+            .ammo[0];
+    require(ammo_after + 1u == ammo_before);
+
+    bool owner_result = false;
+    bool observer_result = false;
+    bool owner_presentation = false;
+    bool observer_presentation = false;
+    network_example::TransportEvent event{};
+    while (loopback_transport->PollClientEvent(event)) {
+        network_example::LocalActionResultBatchPacket results{};
+        if (network_example::decode_local_action_result_batch_packet(
+                event.payload.data(),
+                event.payload.size(),
+                &results)) {
+            owner_result = owner_result || event.peer == 1;
+            observer_result = observer_result || event.peer == 2;
+            require(results.records.size() == 1u);
+            require(results.records[0].action_instance_id == 7001u);
+            require(results.records[0].result ==
+                    KernelLocalActionResultType_Accepted);
+        }
+        network_example::RemoteActionPresentationBatchPacket presentation{};
+        if (network_example::decode_remote_action_presentation_batch_packet(
+                event.payload.data(),
+                event.payload.size(),
+                &presentation)) {
+            owner_presentation = owner_presentation || event.peer == 1;
+            observer_presentation = observer_presentation || event.peer == 2;
+            require(presentation.records.size() == 1u);
+            require(presentation.records[0].actor_net_id == owner_actor);
+            require(presentation.records[0].action_instance_id == 7001u);
+        }
+    }
+    require(owner_result);
+    require(!observer_result);
+    require(!owner_presentation);
+    require(observer_presentation);
+
+    owner_session = server.find_session(1);
+    PlayerInput duplicate_input = input;
+    server.prepare_server_action_intent(owner_session, &duplicate_input);
+    require(duplicate_input.action_intent.action_instance_id == 0u);
+    server.simulate_tick();
+    require(
+        server.world_.registry()
+            .get<network_example::WeaponState>(*owner_entity)
+            .ammo[0] == ammo_after);
+
+    PlayerInput release_input{};
+    release_input.input_seq = 2;
+    release_input.selected_weapon = 0;
+    server.pending_inputs_.push_back(network_example::QueuedInput{
+        1,
+        release_input,
+        server.tick_loop_.current_tick(),
+        0,
+        false,
+        0,
+    });
+    server.simulate_tick();
+
+    tuning.definitions[0].fire_action_template_id = 1001;
+    server.world_.set_action_templates({network_example::RuntimeActionTemplate{
+        1001,
+        KernelActionTriggerMode_Press,
+        0,
+        1,
+        0,
+        1,
+        1,
+        0,
+        0,
+    }});
+    input.input_seq = 3;
+    input.action_intent = ActionIntent{
+        7002u, KernelActionBinding_PrimaryFire, 0u, 0u};
+    input.action_input = ActionInput{7002u, 1u, 0u, 0u};
+    owner_session = server.find_session(1);
+    server.prepare_server_action_intent(owner_session, &input);
+    require(input.action_intent.action_instance_id == 7002u);
+    server.pending_inputs_.push_back(network_example::QueuedInput{
+        1,
+        input,
+        server.tick_loop_.current_tick(),
+        0,
+        false,
+        0,
+    });
+    server.simulate_tick();
+    bool zero_recovery_result = false;
+    while (loopback_transport->PollClientEvent(event)) {
+        network_example::LocalActionResultBatchPacket results{};
+        if (!network_example::decode_local_action_result_batch_packet(
+                event.payload.data(),
+                event.payload.size(),
+                &results) ||
+            event.peer != 1) {
+            continue;
+        }
+        for (const KernelLocalActionResult& result : results.records) {
+            zero_recovery_result = zero_recovery_result ||
+                (result.action_instance_id == 7002u &&
+                 result.result == KernelLocalActionResultType_Accepted &&
+                 result.confirmed_commit_count == 1u);
+        }
+    }
+    require(zero_recovery_result);
+    const network_example::ActionRuntimeState& action =
+        server.world_.registry()
+            .get<network_example::ActionRuntimeState>(*owner_entity);
+    require(action.phase == KernelActionPhase_None);
+
+    release_input.input_seq = 4;
+    server.pending_inputs_.push_back(network_example::QueuedInput{
+        1,
+        release_input,
+        server.tick_loop_.current_tick(),
+        0,
+        false,
+        0,
+    });
+    server.simulate_tick();
+    tuning.definitions[0].fire_action_template_id = 1002;
+    server.world_.set_action_templates({network_example::RuntimeActionTemplate{
+        1002,
+        KernelActionTriggerMode_Hold,
+        0,
+        1,
+        0,
+        1,
+        2,
+        0,
+        3,
+    }});
+    input.input_seq = 5;
+    input.action_intent = ActionIntent{
+        7003u, KernelActionBinding_PrimaryFire, 0u, 0u};
+    input.action_input = ActionInput{7003u, 1u, 0u, 0u};
+    const std::uint16_t hold_ammo_before =
+        server.world_.registry()
+            .get<network_example::WeaponState>(*owner_entity)
+            .ammo[0];
+    for (int commit = 0; commit < 2; ++commit) {
+        owner_session = server.find_session(1);
+        server.prepare_server_action_intent(owner_session, &input);
+        server.pending_inputs_.push_back(network_example::QueuedInput{
+            1,
+            input,
+            server.tick_loop_.current_tick(),
+            0,
+            false,
+            0,
+        });
+        server.simulate_tick();
+        ++input.input_seq;
+    }
+    require(
+        server.world_.registry()
+            .get<network_example::WeaponState>(*owner_entity)
+            .ammo[0] + 2u == hold_ammo_before);
+    bool saw_second_commit = false;
+    while (loopback_transport->PollClientEvent(event)) {
+        network_example::LocalActionResultBatchPacket results{};
+        if (!network_example::decode_local_action_result_batch_packet(
+                event.payload.data(),
+                event.payload.size(),
+                &results) ||
+            event.peer != 1) {
+            continue;
+        }
+        for (const KernelLocalActionResult& result : results.records) {
+            saw_second_commit = saw_second_commit ||
+                (result.action_instance_id == 7003u &&
+                 result.confirmed_commit_count == 2u &&
+                 result.result == KernelLocalActionResultType_Accepted);
+        }
+    }
+    require(saw_second_commit);
+}
+
 }  // namespace
 
 int main() {
@@ -2488,6 +3134,7 @@ int main() {
     server_accepts_matching_handshake_versions();
     server_rejects_mismatched_snapshot_schema_before_welcome();
     server_validates_catalog_hash_before_welcome();
+    gameplay_catalog_sync_enforces_bundle_limit();
     gameplay_catalog_sync_supports_cache_hit_and_download();
     listen_server_accepts_remote_handshake();
     projectile_spawn_batch_renders_and_binds_to_snapshot();
@@ -2508,6 +3155,10 @@ int main() {
     default_kernel_config_uses_larger_render_state_cap();
     render_state_overflow_reports_error_event();
     hit_debug_records_filter_and_drain();
+    action_result_and_remote_presentation_queues_are_isolated();
+    owner_action_correction_timeout_and_reset_converge();
+    server_routes_fire_result_to_owner_and_presentation_to_observer();
+    owner_action_prediction_and_discrete_interpolation();
 
     KernelConfig config{};
     config.mode = KernelMode_Client;

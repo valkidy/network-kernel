@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 35u
+#define KERNEL_ABI_VERSION 41u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -18,8 +18,9 @@
 #define KERNEL_GAMEPLAY_CATALOG_ENTRY_PATH_SIZE 128u
 #define KERNEL_GAMEPLAY_CATALOG_CONTENT_NAMESPACE_SIZE 64u
 #define KERNEL_GAMEPLAY_CATALOG_SHA256_SIZE 32u
+#define KERNEL_GAMEPLAY_CATALOG_SYNC_MAX_BUNDLE_SIZE UINT32_C(1048576)
 #define KERNEL_GAMEPLAY_CATALOG_SYNC_DEFAULT_MAX_BUNDLE_SIZE \
-    UINT32_C(67108864)
+    KERNEL_GAMEPLAY_CATALOG_SYNC_MAX_BUNDLE_SIZE
 #define KERNEL_GAMEPLAY_CATALOG_SYNC_DEFAULT_TIMEOUT_MS UINT32_C(30000)
 
 #define KERNEL_MAX_WEAPONS 7u
@@ -55,6 +56,7 @@
 #define KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_PROJECTILE UINT32_C(3)
 #define KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR UINT32_C(4)
 #define KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_COLLIDER UINT32_C(5)
+#define KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTION UINT32_C(6)
 
 #define KERNEL_CAPABILITY_CLIENT_MODE UINT64_C(0x0000000000000001)
 #define KERNEL_CAPABILITY_LISTEN_SERVER_MODE UINT64_C(0x0000000000000002)
@@ -91,6 +93,10 @@
 #define KERNEL_CAPABILITY_VISION_STATE_QUERY UINT64_C(0x0000000400000000)
 #define KERNEL_CAPABILITY_GAMEPLAY_CATALOG_SYNC UINT64_C(0x0000000800000000)
 #define KERNEL_CAPABILITY_CONTROL_PLANE_RPC UINT64_C(0x0000001000000000)
+#define KERNEL_CAPABILITY_ACTION_TIMELINE UINT64_C(0x0000002000000000)
+#define KERNEL_CAPABILITY_LOCAL_ACTION_RESULTS UINT64_C(0x0000004000000000)
+#define KERNEL_CAPABILITY_REMOTE_ACTION_PRESENTATION UINT64_C(0x0000008000000000)
+#define KERNEL_CAPABILITY_ACTION_INTENTS UINT64_C(0x0000010000000000)
 
 #define KERNEL_COLLISION_LAYER_PLAYER_SIDE UINT32_C(0x00000001)
 #define KERNEL_COLLISION_LAYER_HOSTILE_SIDE UINT32_C(0x00000002)
@@ -102,10 +108,34 @@
     (KERNEL_COLLISION_LAYER_PLAYER_SIDE | KERNEL_COLLISION_LAYER_HOSTILE_SIDE | \
      KERNEL_COLLISION_LAYER_NEUTRAL)
 
+/*
+ * Visual flags are composable presentation hints, never gameplay authority.
+ * Zero means that no flags are active, not that presentation state is unknown.
+ * Published bits retain their meaning for the lifetime of the ABI.
+ * Bits 0-7 are kernel core state/validity; bits 8-15 are action presentation.
+ *
+ * Animation state       Kernel API condition
+ * --------------------  ----------------------------------------------------
+ * Moving                visual_flags & KERNEL_VISUAL_FLAG_MOVING
+ * Reloading             visual_flags & KERNEL_VISUAL_FLAG_RELOADING
+ * Dead                  visual_flags & KERNEL_VISUAL_FLAG_DEAD
+ * Aiming                visual_flags & KERNEL_VISUAL_FLAG_AIMING
+ * Firing                visual_flags & KERNEL_VISUAL_FLAG_FIRING, or
+ *                       action.phase == KernelActionPhase_Active
+ * Windup                action.phase == KernelActionPhase_Windup
+ * Recovery              action.phase == KernelActionPhase_Recovery
+ * Idle                  No Moving, Reloading, Dead, or Firing flag, and
+ *                       action.phase == KernelActionPhase_None
+ *
+ * animation_state remains available for ABI compatibility, but should not be
+ * used to derive Idle, Moving, or Firing presentation.
+ */
 #define KERNEL_VISUAL_FLAG_MOVING UINT32_C(0x00000001)
 #define KERNEL_VISUAL_FLAG_RELOADING UINT32_C(0x00000002)
 #define KERNEL_VISUAL_FLAG_DEAD UINT32_C(0x00000004)
 #define KERNEL_VISUAL_FLAG_HP_UNKNOWN UINT32_C(0x00000008)
+#define KERNEL_VISUAL_FLAG_AIMING UINT32_C(0x00000100)
+#define KERNEL_VISUAL_FLAG_FIRING UINT32_C(0x00000200)
 
 #define KERNEL_MAX_VISIBLE_HOSTILES 16u
 #define KERNEL_MAX_VISIBLE_ALLIES 16u
@@ -153,6 +183,7 @@ typedef struct KernelAbiInfo {
     uint32_t collider_template_definition_size;
     uint32_t collider_binding_definition_size;
     uint32_t benchmark_stats_size;
+    uint32_t network_stats_config_size;
     uint32_t network_stats_size;
     uint32_t debug_record_filter_size;
     uint32_t debug_info_size;
@@ -165,6 +196,12 @@ typedef struct KernelAbiInfo {
     uint32_t gameplay_catalog_sync_status_size;
     uint32_t entity_template_definition_size;
     uint32_t entity_ai_definition_size;
+    uint32_t action_template_definition_size;
+    uint32_t action_runtime_view_size;
+    uint32_t local_action_result_size;
+    uint32_t remote_action_presentation_event_size;
+    uint32_t action_intent_size;
+    uint32_t action_input_size;
 } KernelAbiInfo;
 
 typedef struct KernelBuildInfo {
@@ -275,14 +312,64 @@ typedef enum KernelEntityLifecycleEventType {
 
 typedef enum InputButton {
     InputButton_MoveJump = 1u << 0,
-    InputButton_Fire = 1u << 1,
-    InputButton_Reload = 1u << 2,
     InputButton_Sprint = 1u << 3,
-    InputButton_Interact = 1u << 4,
-    InputButton_Ability1 = 1u << 5,
     InputButton_Dodge = 1u << 6,
     InputButton_Parry = 1u << 7,
+    InputButton_Aim = 1u << 8,
 } InputButton;
+
+typedef enum KernelActionBinding {
+    KernelActionBinding_PrimaryFire = 0,
+    KernelActionBinding_Reload = 1,
+} KernelActionBinding;
+
+typedef enum KernelActionTriggerMode {
+    KernelActionTriggerMode_Press = 0,
+    KernelActionTriggerMode_Hold = 1,
+} KernelActionTriggerMode;
+
+typedef enum KernelActionPhase {
+    KernelActionPhase_None = 0,
+    KernelActionPhase_Windup = 1,
+    KernelActionPhase_Active = 2,
+    KernelActionPhase_Recovery = 3,
+} KernelActionPhase;
+
+typedef enum KernelLocalActionResultType {
+    KernelLocalActionResultType_Accepted = 0,
+    KernelLocalActionResultType_Corrected = 1,
+    KernelLocalActionResultType_Rejected = 2,
+} KernelLocalActionResultType;
+
+typedef enum KernelLocalActionResultReason {
+    KernelLocalActionResultReason_None = 0,
+    KernelLocalActionResultReason_InvalidActionId = 1,
+    KernelLocalActionResultReason_MissingActor = 2,
+    KernelLocalActionResultReason_MissingTemplate = 3,
+    KernelLocalActionResultReason_Busy = 4,
+    KernelLocalActionResultReason_Reloading = 5,
+    KernelLocalActionResultReason_NoAmmo = 6,
+    KernelLocalActionResultReason_Cancelled = 7,
+    KernelLocalActionResultReason_TimedOut = 8,
+    KernelLocalActionResultReason_Dead = 9,
+    KernelLocalActionResultReason_WeaponChanged = 10,
+    KernelLocalActionResultReason_EffectFailed = 11,
+} KernelLocalActionResultReason;
+
+typedef enum KernelRemoteActionPresentationEventType {
+    KernelRemoteActionPresentationEventType_FireCommit = 0,
+    KernelRemoteActionPresentationEventType_CastingCommit = 1,
+    KernelRemoteActionPresentationEventType_ReloadCommit = 2,
+    KernelRemoteActionPresentationEventType_HitReaction = 3,
+    KernelRemoteActionPresentationEventType_DeathTrigger = 4,
+} KernelRemoteActionPresentationEventType;
+
+typedef enum KernelActionTemplateFlag {
+    KernelActionTemplateFlag_CancelOnRelease = 1u << 0,
+    KernelActionTemplateFlag_CancelOnDeath = 1u << 1,
+    KernelActionTemplateFlag_CancelOnWeaponChange = 1u << 2,
+    KernelActionTemplateFlag_CancelBeforeFirstCommit = 1u << 3,
+} KernelActionTemplateFlag;
 
 typedef enum KernelWeaponFireMode {
     KernelWeaponFireMode_Hitscan = 0,
@@ -396,23 +483,86 @@ typedef struct TickConfig {
     uint32_t max_ticks_per_update;
 } TickConfig;
 
+typedef enum KernelNetworkStatsMode {
+    KernelNetworkStatsMode_Default = 0,
+    KernelNetworkStatsMode_Off = 1,
+    KernelNetworkStatsMode_Basic = 2,
+    KernelNetworkStatsMode_Detailed = 3,
+} KernelNetworkStatsMode;
+
+typedef struct KernelNetworkStatsConfig {
+    uint8_t mode;
+    uint8_t reserved0;
+    uint16_t reserved1;
+    uint32_t action_packet_budget_bytes;
+    uint32_t remote_presentation_expiry_ms;
+    uint32_t remote_presentation_client_budget_bytes_per_second;
+    uint32_t remote_presentation_server_budget_bytes_per_second;
+} KernelNetworkStatsConfig;
+
 typedef struct KernelConfig {
     KernelMode mode;
     TickConfig tick;
     uint32_t max_render_states;
     uint32_t max_events;
+    KernelNetworkStatsConfig network_stats;
 } KernelConfig;
+
+typedef struct ActionIntent {
+    uint32_t action_instance_id;
+    uint16_t binding_id;
+    uint8_t flags;
+    uint8_t reserved;
+} ActionIntent;
+
+typedef struct ActionInput {
+    uint32_t action_instance_id;
+    uint8_t held;
+    uint8_t flags;
+    uint16_t reserved;
+} ActionInput;
 
 typedef struct PlayerInput {
     uint32_t input_seq;
     uint64_t client_action_time_us;
-    uint32_t client_action_id;
     KernelVec2 move;
     KernelVec2 look_delta;
     KernelVec3 aim_dir;
     uint32_t buttons;
     uint8_t selected_weapon;
+    ActionIntent action_intent;
+    ActionInput action_input;
 } PlayerInput;
+
+typedef struct KernelLocalActionResult {
+    uint32_t action_instance_id;
+    uint16_t confirmed_commit_count;
+    uint8_t result;
+    uint8_t reason;
+    uint32_t authoritative_tick;
+} KernelLocalActionResult;
+
+typedef struct KernelRemoteActionPresentationEvent {
+    uint32_t actor_net_id;
+    uint32_t action_template_id;
+    uint32_t action_instance_id;
+    uint16_t first_commit_index;
+    uint16_t commit_count;
+    uint8_t event_type;
+    uint8_t flags;
+    uint16_t server_tick_delta;
+} KernelRemoteActionPresentationEvent;
+
+typedef struct KernelActionRuntimeView {
+    uint32_t struct_size;
+    uint32_t action_template_id;
+    uint32_t action_instance_id;
+    uint8_t phase;
+    uint8_t reserved0;
+    uint16_t reserved1;
+    uint32_t start_tick;
+    uint32_t commit_count;
+} KernelActionRuntimeView;
 
 typedef struct RenderEntityState {
     uint64_t entity_id;
@@ -428,11 +578,13 @@ typedef struct RenderEntityState {
     uint16_t animation_state;
     uint32_t visual_flags;
     uint32_t spawn_tick;
-    uint32_t client_action_id;
+    uint32_t action_instance_id;
     uint32_t status;
     uint32_t projectile_template_id;
     uint32_t collider_template_id;
     uint32_t actor_template_id;
+    KernelActionRuntimeView action;
+    KernelVec3 aim_direction;
 } RenderEntityState;
 
 KERNEL_RPC_STRUCT(R"json({"type":"KernelServerEntityCreateInfo"})json")
@@ -475,6 +627,8 @@ typedef struct KernelServerEntityState {
     uint16_t reserve_magazines[KERNEL_MAX_WEAPONS];
     uint32_t is_reloading;
     uint32_t reload_remaining_ticks;
+    KernelActionRuntimeView action;
+    KernelVec3 aim_direction;
 } KernelServerEntityState;
 
 typedef enum KernelColliderShapeType {
@@ -613,6 +767,26 @@ typedef struct KernelActorTemplateDefinition {
     KernelAgentVisionConfig vision;
 } KernelActorTemplateDefinition;
 
+typedef struct KernelActionTemplateDefinition {
+    /*
+     * Action templates contain gameplay policy only.
+     * If server-selectable presentation is needed in the future, prefer an
+     * abstract presentation_profile_id that clients map to local assets.
+     * The native kernel must not bind action templates to Animator state IDs,
+     * AnimationClip IDs, Unity-specific fields, or Unity Engine dependencies.
+     */
+    uint32_t struct_size;
+    uint32_t action_template_id;
+    uint8_t trigger_mode;
+    uint8_t flags;
+    uint16_t ammo_cost_per_commit;
+    uint32_t commit_offset_ticks;
+    uint32_t commit_interval_ticks;
+    uint32_t max_commit_count;
+    uint32_t recovery_ticks;
+    uint32_t hold_input_timeout_ticks;
+} KernelActionTemplateDefinition;
+
 typedef struct KernelEntityAiDefinition KernelEntityAiDefinition;
 typedef struct KernelEntityTemplateDefinition KernelEntityTemplateDefinition;
 
@@ -630,6 +804,8 @@ typedef struct KernelGameplayCatalogDefinition {
     uint32_t collider_binding_count;
     const KernelEntityTemplateDefinition* entity_templates;
     uint32_t entity_template_count;
+    const KernelActionTemplateDefinition* action_templates;
+    uint32_t action_template_count;
 } KernelGameplayCatalogDefinition;
 
 typedef struct KernelGameplayCatalogLoadResult {
@@ -744,6 +920,40 @@ typedef struct KernelNetworkStats {
     float loss_ratio;
     uint32_t replication_metadata_timeout_count;
     uint32_t replication_stale_snapshot_drop_count;
+    uint32_t collection_mode;
+    uint32_t reserved0;
+    uint64_t input_bytes_sent;
+    uint64_t presentation_bytes_sent;
+    uint64_t session_bytes_sent;
+    uint64_t local_action_result_bytes_sent;
+    uint64_t remote_action_presentation_bytes_sent;
+    uint64_t local_action_results_generated;
+    uint64_t local_action_results_sent;
+    uint64_t local_action_results_accepted;
+    uint64_t local_action_results_corrected;
+    uint64_t local_action_results_rejected;
+    uint64_t local_action_result_server_duplicates_suppressed;
+    uint64_t local_action_result_client_duplicates_dropped;
+    uint64_t local_action_results_timed_out;
+    uint64_t local_action_result_latency_sample_count;
+    uint64_t local_action_result_latency_us_total;
+    uint64_t local_action_result_latency_us_max;
+    uint64_t local_action_result_batch_count;
+    uint64_t local_action_result_batch_record_count;
+    uint32_t average_local_action_result_batch_size;
+    uint32_t max_local_action_result_batch_size;
+    uint64_t remote_presentation_records_generated;
+    uint64_t remote_presentation_records_sent;
+    uint64_t remote_presentation_batch_count;
+    uint64_t remote_presentation_batch_record_count;
+    uint64_t remote_presentation_relevance_filtered;
+    uint64_t remote_presentation_budget_dropped;
+    uint64_t remote_presentation_stale_dropped;
+    uint64_t remote_presentation_duplicate_dropped;
+    uint32_t average_remote_presentation_batch_size;
+    uint32_t max_remote_presentation_batch_size;
+    uint64_t zero_action_instance_attempts;
+    uint64_t action_instance_collisions;
 } KernelNetworkStats;
 
 typedef struct KernelHitDebugInfo {
@@ -864,13 +1074,13 @@ typedef struct KernelWeaponMechanicsDefinition {
     uint16_t magazine_size;
     uint16_t reserve_magazines;
     uint16_t damage;
-    uint32_t cooldown_ticks;
-    uint32_t reload_ticks;
     float max_range;
     uint8_t pellet_count;
     float pellet_spread;
     uint32_t projectile_template_id;
     uint32_t segment_collider_template_id;
+    uint32_t fire_action_template_id;
+    uint32_t reload_action_template_id;
 } KernelWeaponMechanicsDefinition;
 
 typedef struct KernelHomingState {
@@ -963,6 +1173,9 @@ typedef struct KernelEntityLifecycleEvent {
 
 #ifdef __cplusplus
 }
+
+static_assert(sizeof(ActionIntent) == 8, "ActionIntent ABI must stay 8 bytes");
+static_assert(sizeof(ActionInput) == 8, "ActionInput ABI must stay 8 bytes");
 #endif
 
 #endif  // KERNEL_PUBLIC_KERNEL_TYPES_H_

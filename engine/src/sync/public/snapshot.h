@@ -34,7 +34,12 @@ struct EntitySnapshot {
     std::uint32_t flags = 0;
     std::uint32_t state_flags = 0;
     std::uint32_t spawn_tick = 0;
-    std::uint32_t client_action_id = 0;
+    std::uint32_t action_instance_id = 0;
+    glm::vec3 aim_direction{1.0f, 0.0f, 0.0f};
+    std::uint32_t action_template_id = 0;
+    std::uint32_t action_start_tick = 0;
+    std::uint32_t action_commit_count = 0;
+    std::uint8_t action_phase = 0;
 };
 
 struct WorldSnapshot {

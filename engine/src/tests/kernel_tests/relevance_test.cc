@@ -99,7 +99,8 @@ int main() {
     KernelProjectileTemplateDefinition predicted_template{};
     predicted_template.struct_size = sizeof(predicted_template);
     predicted_template.projectile_template_id = 77;
-    predicted_template.sync_mode = KernelProjectileSyncMode_LocalPredictedDeterministic;
+    predicted_template.mechanics.sync_mode =
+        KernelProjectileSyncMode_LocalPredictedDeterministic;
     engine.projectile_templates_.push_back(predicted_template);
 
     network_example::KernelEngine::PeerSession session_one{
@@ -228,7 +229,7 @@ int main() {
     hybrid_projectile.net_id = 302;
     hybrid_projectile.owner_peer = 1;
     hybrid_projectile.spawn_tick = 3;
-    hybrid_projectile.client_action_id = 99;
+    hybrid_projectile.action_instance_id = 99;
     hybrid_projectile.state_flags |=
         network_example::kSnapshotStateFlagProjectileHybridCorrection;
     network_example::WorldSnapshot projectile_budget_relevant;

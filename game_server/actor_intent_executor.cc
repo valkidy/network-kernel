@@ -45,19 +45,19 @@ void add_missing(
     }
 }
 
-std::uint32_t attack_buttons(
+std::uint16_t attack_binding(
     const ActorIntentExecutorConfig& config,
     const KernelServerEntityState& entity_state) {
     if (config.weapon_id >= KERNEL_MAX_WEAPONS || entity_state.is_reloading != 0u) {
-        return 0u;
+        return UINT16_MAX;
     }
     if (entity_state.ammo[config.weapon_id] > 0) {
-        return InputButton_Fire;
+        return KernelActionBinding_PrimaryFire;
     }
     if (entity_state.reserve_magazines[config.weapon_id] > 0) {
-        return InputButton_Reload;
+        return KernelActionBinding_Reload;
     }
-    return 0u;
+    return UINT16_MAX;
 }
 
 }  // namespace
@@ -88,15 +88,15 @@ ActorIntentExecutionResult ActorIntentExecutor::execute(
         return result;
     }
 
-    std::uint32_t buttons = 0;
+    std::uint16_t binding_id = UINT16_MAX;
     KernelVec3 target_position = perception.target_position;
     if (intent.type == "AttackTarget") {
         if (!perception.has_visible_target || !perception.has_target_position) {
             add_missing(&result.report, "data", "Data.TargetPosition");
             return result;
         }
-        buttons = attack_buttons(config_, perception.self_state);
-        if (buttons == 0u) {
+        binding_id = attack_binding(config_, perception.self_state);
+        if (binding_id == UINT16_MAX) {
             if (perception.self_state.is_reloading != 0u) {
                 result.status = ai::IntentStatus::kRunning;
                 return result;
@@ -114,13 +114,29 @@ ActorIntentExecutionResult ActorIntentExecutor::execute(
             result.status = ai::IntentStatus::kRunning;
             return result;
         }
-        buttons = InputButton_Reload;
+        binding_id = KernelActionBinding_Reload;
     }
 
     PlayerInput input{};
     input.input_seq = actor->next_input_seq++;
-    input.buttons = buttons;
     input.selected_weapon = config_.weapon_id;
+    if (perception.self_state.action.phase != KernelActionPhase_None) {
+        if (intent.type != "AttackTarget" ||
+            binding_id != KernelActionBinding_PrimaryFire) {
+            result.status = ai::IntentStatus::kRunning;
+            return result;
+        }
+        input.action_input = ActionInput{
+            perception.self_state.action.action_instance_id, 1u, 0u, 0u};
+    } else {
+        const std::uint32_t action_instance_id = actor->next_action_instance_id++;
+        if (actor->next_action_instance_id == 0u) {
+            actor->next_action_instance_id = 1u;
+        }
+        input.action_intent = ActionIntent{
+            action_instance_id, binding_id, 0u, 0u};
+        input.action_input = ActionInput{action_instance_id, 1u, 0u, 0u};
+    }
     input.aim_dir = normalized_direction(perception.self_state.position, target_position);
     result.submitted_input =
         Kernel_ServerEnqueueEntityInput(

@@ -24,7 +24,9 @@ std::filesystem::path runfiles_root() {
 std::filesystem::path tmp_dir(const std::string& name) {
     const char* test_tmpdir = std::getenv("TEST_TMPDIR");
     assert(test_tmpdir != nullptr);
-    const std::filesystem::path path = std::filesystem::path(test_tmpdir) / name;
+    const std::filesystem::path root = std::filesystem::path(test_tmpdir) / name;
+    std::filesystem::remove_all(root);
+    const std::filesystem::path path = root / "weapon_templates";
     std::filesystem::create_directories(path);
     return path;
 }
@@ -37,91 +39,42 @@ void write_file(const std::filesystem::path& path, const std::string& text) {
 }
 
 void write_valid_collider_catalog(const std::filesystem::path& weapon_dir) {
-    write_file(
-        weapon_dir.parent_path() / "collider_templates" / "default.yaml",
-        "templates:\n"
-        "  - id: 1\n"
-        "    name: player_hit\n"
-        "    shape: aabb\n"
-        "    center: {x: 0.0, y: 0.0, z: 0.0}\n"
-        "    half_extents: {x: 0.35, y: 0.9, z: 0.35}\n"
-        "    radius: 0.0\n"
-        "    purpose: hit\n"
-        "    layer: player_side\n"
-        "  - id: 2\n"
-        "    name: enemy_hit\n"
-        "    shape: aabb\n"
-        "    center: {x: 0.0, y: 0.0, z: 0.0}\n"
-        "    half_extents: {x: 0.4, y: 0.8, z: 0.4}\n"
-        "    radius: 0.0\n"
-        "    purpose: hit\n"
-        "    layer: hostile_side\n"
-        "  - id: 3\n"
-        "    name: projectile_damage\n"
-        "    shape: aabb\n"
-        "    center: {x: 0.0, y: 0.0, z: 0.0}\n"
-        "    half_extents: {x: 0.1, y: 0.1, z: 0.1}\n"
-        "    radius: 0.0\n"
-        "    purpose: damage\n"
-        "    layer: projectile\n"
-        "  - id: 4\n"
-        "    name: explosion_damage\n"
-        "    shape: sphere\n"
-        "    center: {x: 0.0, y: 0.0, z: 0.0}\n"
-        "    half_extents: {x: 1.0, y: 1.0, z: 1.0}\n"
-        "    radius: 1.0\n"
-        "    purpose: damage\n"
-        "    layer: area_effect\n"
-        "  - id: 5\n"
-        "    name: rifle_segment_damage\n"
-        "    shape: segment\n"
-        "    center: {x: 0.0, y: 0.0, z: 0.0}\n"
-        "    half_extents: {x: 0.0, y: 0.0, z: 0.0}\n"
-        "    radius: 0.0\n"
-        "    length: 100.0\n"
-        "    scatter_degrees: 0.0\n"
-        "    lifetime_ticks: 3\n"
-        "    purpose: damage\n"
-        "    layer: projectile\n"
-        "  - id: 6\n"
-        "    name: shotgun_segment_damage\n"
-        "    shape: segment\n"
-        "    center: {x: 0.0, y: 0.0, z: 0.0}\n"
-        "    half_extents: {x: 0.0, y: 0.0, z: 0.0}\n"
-        "    radius: 0.0\n"
-        "    length: 40.0\n"
-        "    scatter_degrees: 6.0\n"
-        "    lifetime_ticks: 3\n"
-        "    purpose: damage\n"
-        "    layer: projectile\n"
-        "  - id: 7\n"
-        "    name: sphere_damage\n"
-        "    shape: sphere\n"
-        "    center: {x: 0.0, y: 0.0, z: 0.0}\n"
-        "    half_extents: {x: 0.2, y: 0.2, z: 0.2}\n"
-        "    radius: 0.2\n"
-        "    purpose: damage\n"
-        "    layer: projectile\n"
-        "  - id: 8\n"
-        "    name: beam_damage\n"
-        "    shape: oriented_box\n"
-        "    center: {x: 0.0, y: 0.0, z: 0.0}\n"
-        "    half_extents: {x: 0.25, y: 0.25, z: 4.0}\n"
-        "    radius: 0.0\n"
-        "    purpose: damage\n"
-        "    layer: projectile\n"
-        "  - id: 9\n"
-        "    name: cone_vision\n"
-        "    shape: cone\n"
-        "    center: {x: 0.0, y: 0.0, z: 0.0}\n"
-        "    range: 12.0\n"
-        "    fov_degrees: 90.0\n"
-        "    purpose: vision\n"
-        "    layer: agent_vision\n");
+    const std::filesystem::path source_dir =
+        runfiles_root() / "game_server" / "collider_templates";
+    const std::filesystem::path destination_dir =
+        weapon_dir.parent_path() / "collider_templates";
+    std::filesystem::create_directories(destination_dir);
+    for (const std::filesystem::directory_entry& entry :
+         std::filesystem::directory_iterator(source_dir)) {
+        if (entry.is_regular_file() && entry.path().extension() == ".yaml") {
+            std::filesystem::copy_file(
+                entry.path(),
+                destination_dir / entry.path().filename(),
+                std::filesystem::copy_options::overwrite_existing);
+        }
+    }
+}
+
+void write_valid_action_catalog(const std::filesystem::path& weapon_dir) {
+    const std::filesystem::path source_dir =
+        runfiles_root() / "game_server" / "action_templates";
+    const std::filesystem::path destination_dir =
+        weapon_dir.parent_path() / "action_templates";
+    std::filesystem::create_directories(destination_dir);
+    for (const std::filesystem::directory_entry& entry :
+         std::filesystem::directory_iterator(source_dir)) {
+        if (entry.is_regular_file() && entry.path().extension() == ".yaml") {
+            std::filesystem::copy_file(
+                entry.path(),
+                destination_dir / entry.path().filename(),
+                std::filesystem::copy_options::overwrite_existing);
+        }
+    }
 }
 
 void write_valid_templates(const std::filesystem::path& dir) {
     write_valid_collider_catalog(dir);
+    write_valid_action_catalog(dir);
     write_file(
         dir.parent_path() / "projectile_templates" / "spammer.yaml",
         "id: 2\nname: spammer_projectile\ndamage: 1\n"
@@ -203,39 +156,39 @@ void write_valid_templates(const std::filesystem::path& dir) {
     write_file(
         dir / "rifle.yaml",
         "id: 0\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
-        "damage: 25\ncooldown_ticks: 3\nreload_ticks: 30\nmax_range: 100.0\n"
+        "damage: 25\nfire_action_template: rifle_fire\nreload_ticks: 30\nmax_range: 100.0\n"
         "segment_collider: rifle_segment_damage\n");
     write_file(
         dir / "shotgun.yaml",
         "id: 1\nname: Shotgun\nweapon_type: shotgun\nmagazine_size: 8\n"
-        "damage: 10\ncooldown_ticks: 20\nreload_ticks: 45\nmax_range: 40.0\n"
+        "damage: 10\nfire_action_template: shotgun_fire\nreload_ticks: 45\nmax_range: 40.0\n"
         "pellet_count: 5\npellet_spread: 0.035\n"
         "segment_collider: shotgun_segment_damage\n");
     write_file(
         dir / "spammer.yaml",
         "id: 2\nname: Projectile Spammer\nweapon_type: projectile\n"
         "magazine_size: 120\n"
-        "cooldown_ticks: 1\nreload_ticks: 30\n"
+        "fire_action_template: spammer_fire\nreload_ticks: 30\n"
         "projectile_template: spammer_projectile\n");
     write_file(
         dir / "rocket.yaml",
         "id: 3\nname: Rocket\nweapon_type: projectile\nmagazine_size: 6\n"
-        "cooldown_ticks: 45\nreload_ticks: 75\n"
+        "fire_action_template: rocket_fire\nreload_ticks: 75\n"
         "projectile_template: rocket_projectile\n");
     write_file(
         dir / "fire_floor.yaml",
         "id: 4\nname: Fire Floor\nweapon_type: area_effect\nmagazine_size: 3\n"
-        "damage: 12\ncooldown_ticks: 10\nreload_ticks: 30\n"
+        "damage: 12\nfire_action_template: fire_floor_cast\nreload_ticks: 30\n"
         "projectile_template: fire_floor_area\n");
     write_file(
         dir / "beam_rifle.yaml",
         "id: 5\nname: Beam Rifle\nweapon_type: beam\nmagazine_size: 12\n"
-        "damage: 30\ncooldown_ticks: 1\nreload_ticks: 45\n"
+        "damage: 30\nfire_action_template: beam_rifle_fire\nreload_ticks: 45\n"
         "projectile_template: beam_rifle_beam\n");
     write_file(
         dir / "homing_missile.yaml",
         "id: 6\nname: Homing Missile\nweapon_type: projectile\nmagazine_size: 4\n"
-        "cooldown_ticks: 15\nreload_ticks: 60\n"
+        "fire_action_template: homing_missile_fire\nreload_ticks: 60\n"
         "projectile_template: homing_missile_projectile\n");
 }
 
@@ -310,7 +263,7 @@ void valid_repo_templates_load_all_slots() {
     assert(config.weapons.definitions[network_example::game_server::kWeaponGrenade]
                .damage == 1);
     assert(config.weapons.definitions[network_example::game_server::kWeaponGrenade]
-               .cooldown_ticks == 1);
+               .cooldown_ticks == 0);
     assert(config.weapons.definitions[network_example::game_server::kWeaponGrenade]
                .magazine_size == 120);
     assert(config.weapons.definitions[network_example::game_server::kWeaponGrenade]
@@ -348,6 +301,23 @@ void valid_repo_templates_load_all_slots() {
            "Beam Rifle");
     assert(config.weapons.names[network_example::game_server::kWeaponHomingMissile] ==
            "Homing Missile");
+    assert(config.action_templates.size() == 7);
+    assert(config.weapons.definitions[network_example::game_server::kWeaponRifle]
+               .fire_action_template_id == 4096);
+    assert(config.weapons.definitions[network_example::game_server::kWeaponRocket]
+               .fire_action_template_id == 4099);
+    assert(config.weapons.definitions[network_example::game_server::kWeaponBeamRifle]
+               .fire_action_template_id == 4101);
+    assert(storage.definition.action_template_count == 7);
+    assert(config.action_templates[3].definition.commit_offset_ticks == 3);
+    assert(config.action_templates[3].definition.commit_interval_ticks == 30);
+    assert(config.action_templates[5].definition.trigger_mode ==
+           KernelActionTriggerMode_Hold);
+    assert(config.action_templates[5].definition.hold_input_timeout_ticks == 6);
+    network_example::game_server::GameServerGameplayConfig changed_action = config;
+    ++changed_action.action_templates[0].definition.commit_interval_ticks;
+    assert(network_example::game_server::compute_gameplay_catalog_hash(changed_action) !=
+           config.weapons.catalog_hash);
     bool found_segment = false;
     bool found_sphere = false;
     bool found_beam = false;
@@ -403,6 +373,53 @@ void projectile_collision_query_modes_are_loaded() {
 }
 
 void invalid_templates_are_rejected() {
+    const std::filesystem::path legacy_dir = tmp_dir("legacy_cooldown");
+    write_valid_templates(legacy_dir);
+    write_file(
+        legacy_dir / "rifle.yaml",
+        "id: 0\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
+        "damage: 25\ncooldown_ticks: 3\nreload_ticks: 30\nmax_range: 100.0\n"
+        "segment_collider: rifle_segment_damage\n");
+    assert(!load_fails(legacy_dir));
+
+    const std::filesystem::path missing_policy_dir = tmp_dir("missing_policy");
+    write_valid_templates(missing_policy_dir);
+    write_file(
+        missing_policy_dir / "rifle.yaml",
+        "id: 0\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
+        "damage: 25\nreload_ticks: 30\nmax_range: 100.0\n"
+        "segment_collider: rifle_segment_damage\n");
+    assert(load_fails(missing_policy_dir));
+
+    const std::filesystem::path dangling_action_dir = tmp_dir("dangling_action");
+    write_valid_templates(dangling_action_dir);
+    write_file(
+        dangling_action_dir / "rifle.yaml",
+        "id: 0\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
+        "damage: 25\nfire_action_template: missing_action\nreload_ticks: 30\n"
+        "max_range: 100.0\nsegment_collider: rifle_segment_damage\n");
+    assert(load_fails(dangling_action_dir));
+
+    const std::filesystem::path duplicate_action_dir = tmp_dir("duplicate_action");
+    write_valid_templates(duplicate_action_dir);
+    write_file(
+        duplicate_action_dir.parent_path() / "action_templates" / "duplicate.yaml",
+        "id: 4096\nname: duplicate\ntrigger_mode: press\n"
+        "flags: [cancel_on_death]\nammo_cost_per_commit: 1\n"
+        "commit_offset_ticks: 0\ncommit_interval_ticks: 1\nmax_commit_count: 1\n"
+        "recovery_ticks: 0\nhold_input_timeout_ticks: 0\n");
+    assert(load_fails(duplicate_action_dir));
+
+    const std::filesystem::path invalid_action_dir = tmp_dir("invalid_action");
+    write_valid_templates(invalid_action_dir);
+    write_file(
+        invalid_action_dir.parent_path() / "action_templates" / "rifle_fire.yaml",
+        "id: 4096\nname: rifle_fire\ntrigger_mode: hold\n"
+        "flags: [cancel_on_release]\nammo_cost_per_commit: 1\n"
+        "commit_offset_ticks: 0\ncommit_interval_ticks: 0\nmax_commit_count: 0\n"
+        "recovery_ticks: 4\nhold_input_timeout_ticks: 6\n");
+    assert(load_fails(invalid_action_dir));
+
     const std::filesystem::path duplicate_dir = tmp_dir("duplicate");
     write_valid_templates(duplicate_dir);
     write_file(

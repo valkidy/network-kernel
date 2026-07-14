@@ -11,8 +11,6 @@ inline constexpr std::uint16_t kEntityTypeActor = 1;
 inline constexpr std::uint16_t kActorTypePlayer = KernelActorType_Player;
 inline constexpr std::uint16_t kActorTypeAgent = KernelActorType_Agent;
 
-inline constexpr std::uint16_t kAgentAnimationIdle = 0;
-inline constexpr std::uint16_t kAgentAnimationChasing = 1;
 inline constexpr std::uint16_t kAgentInitialHp = 240;
 inline constexpr std::uint8_t kAgentSpammerWeaponId = 2;
 
@@ -39,9 +37,11 @@ struct AgentRuntimeState {
     KernelVec3 velocity{0.0f, 0.0f, 0.0f};
     std::uint16_t hp = kAgentInitialHp;
     std::uint16_t max_hp = kAgentInitialHp;
-    std::uint16_t animation_state = kAgentAnimationIdle;
+    // Legacy ABI mirror only; AI intent and presentation do not depend on it.
+    std::uint16_t animation_state = 0;
     std::uint32_t target_player_net_id = 0;
     std::uint32_t next_input_seq = 1;
+    std::uint32_t next_action_instance_id = 1;
     AgentSentryRuntimeState sentry{};
     int patrol_direction = 1;
 };

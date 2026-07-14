@@ -220,7 +220,8 @@ int main() {
         &enemy_weapon));
     require(enemy_weapon.weapon_id == network_example::game_server::kWeaponGrenade);
     require(enemy_weapon.damage == 1);
-    require(enemy_weapon.cooldown_ticks == 1);
+    require(enemy_weapon.fire_action_template_id != 0);
+    require(enemy_weapon.reload_action_template_id != 0);
     require(enemy_weapon.magazine_size == 120);
     KernelWeaponMechanicsDefinition unavailable_enemy_weapon{};
     unavailable_enemy_weapon.struct_size = sizeof(unavailable_enemy_weapon);
@@ -231,7 +232,7 @@ int main() {
         &unavailable_enemy_weapon));
     require(enemy_states[0].position.x == 6.0f);
     require(enemy_states[0].animation_state ==
-            network_example::game_server::kAgentAnimationIdle);
+            0);
     require(enemy_states[0].velocity.x == 0.0f);
     require(enemy_states[0].velocity.y == 0.0f);
     require(enemy_states[0].velocity.z == 0.0f);
@@ -368,7 +369,7 @@ int main() {
     require(game_server.agent_runtime_manager().agents()[0].sentry.state ==
             network_example::game_server::AgentSentryState::kIdle);
     require(enemy_states[0].animation_state ==
-            network_example::game_server::kAgentAnimationIdle);
+            0);
     require(enemy_states[0].velocity.x == 0.0f);
     require(enemy_states[0].velocity.y == 0.0f);
     require(enemy_states[0].velocity.z == 0.0f);
@@ -448,7 +449,7 @@ int main() {
     agent_count = query_enemies(dedicated_kernel, &enemy_states);
     require(agent_count == 1);
     require(enemy_states[0].animation_state ==
-            network_example::game_server::kAgentAnimationIdle);
+            0);
     require(enemy_states[0].velocity.x == 0.0f);
     require(enemy_states[0].velocity.y == 0.0f);
     require(enemy_states[0].velocity.z == 0.0f);

@@ -143,6 +143,7 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
         out_info->collider_binding_definition_size =
             sizeof(KernelColliderBindingDefinition);
         out_info->benchmark_stats_size = sizeof(KernelBenchmarkStats);
+        out_info->network_stats_config_size = sizeof(KernelNetworkStatsConfig);
         out_info->network_stats_size = sizeof(KernelNetworkStats);
         out_info->debug_record_filter_size = sizeof(KernelDebugRecordFilter);
         out_info->debug_info_size = sizeof(KernelDebugInfo);
@@ -159,6 +160,14 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             sizeof(KernelEntityTemplateDefinition);
         out_info->entity_ai_definition_size =
             sizeof(KernelEntityAiDefinition);
+        out_info->action_template_definition_size =
+            sizeof(KernelActionTemplateDefinition);
+        out_info->action_runtime_view_size = sizeof(KernelActionRuntimeView);
+        out_info->local_action_result_size = sizeof(KernelLocalActionResult);
+        out_info->remote_action_presentation_event_size =
+            sizeof(KernelRemoteActionPresentationEvent);
+        out_info->action_intent_size = sizeof(ActionIntent);
+        out_info->action_input_size = sizeof(ActionInput);
         out_info->capability_flags =
             KERNEL_CAPABILITY_CLIENT_MODE |
             KERNEL_CAPABILITY_LISTEN_SERVER_MODE |
@@ -194,7 +203,11 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS |
             KERNEL_CAPABILITY_VISION_STATE_QUERY |
             KERNEL_CAPABILITY_GAMEPLAY_CATALOG_SYNC |
-            KERNEL_CAPABILITY_CONTROL_PLANE_RPC;
+            KERNEL_CAPABILITY_CONTROL_PLANE_RPC |
+            KERNEL_CAPABILITY_ACTION_TIMELINE |
+            KERNEL_CAPABILITY_LOCAL_ACTION_RESULTS |
+            KERNEL_CAPABILITY_REMOTE_ACTION_PRESENTATION |
+            KERNEL_CAPABILITY_ACTION_INTENTS;
         return true;
     });
 }
@@ -448,6 +461,35 @@ uint32_t Kernel_PollEntityLifecycleEvents(
     });
 }
 
+uint32_t Kernel_PollLocalActionResults(
+    KernelHandle* kernel,
+    KernelLocalActionResult* out_results,
+    uint32_t max_results) {
+    return abi_call("Kernel_PollLocalActionResults", 0u, [&]() -> std::uint32_t {
+        if (kernel == nullptr) {
+            return 0u;
+        }
+        return kernel->engine->poll_local_action_results(out_results, max_results);
+    });
+}
+
+uint32_t Kernel_PollRemoteActionPresentationEvents(
+    KernelHandle* kernel,
+    KernelRemoteActionPresentationEvent* out_events,
+    uint32_t max_events) {
+    return abi_call(
+        "Kernel_PollRemoteActionPresentationEvents",
+        0u,
+        [&]() -> std::uint32_t {
+            if (kernel == nullptr) {
+                return 0u;
+            }
+            return kernel->engine->poll_remote_action_presentation_events(
+                out_events,
+                max_events);
+        });
+}
+
 bool Kernel_GetBenchmarkStats(
     KernelHandle* kernel,
     KernelBenchmarkStats* out_stats) {
@@ -515,6 +557,18 @@ uint32_t Kernel_GetProjectileTemplates(
         return kernel->engine->get_projectile_templates(
             out_templates,
             max_templates);
+    });
+}
+
+bool Kernel_GetActionTemplate(
+    KernelHandle* kernel,
+    uint32_t action_template_id,
+    KernelActionTemplateDefinition* out_definition) {
+    return abi_call("Kernel_GetActionTemplate", false, [&]() {
+        return kernel != nullptr &&
+               kernel->engine->get_action_template(
+                   action_template_id,
+                   out_definition);
     });
 }
 
@@ -807,8 +861,8 @@ bool Kernel_ServerValidateMechanicsConfig(
             weapon_mechanics->weapon_id >= KERNEL_MAX_WEAPONS ||
             weapon_mechanics->magazine_size == 0 ||
             weapon_mechanics->damage == 0 ||
-            weapon_mechanics->cooldown_ticks == 0 ||
-            weapon_mechanics->reload_ticks == 0 ||
+            weapon_mechanics->fire_action_template_id == 0u ||
+            weapon_mechanics->reload_action_template_id == 0u ||
             weapon_mechanics->fire_mode > KernelWeaponFireMode_Projectile) {
             return false;
         }

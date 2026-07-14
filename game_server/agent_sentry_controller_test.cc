@@ -11,6 +11,9 @@
 
 namespace {
 
+constexpr std::uint32_t kTestFireActionTemplateId = 100;
+constexpr std::uint32_t kTestReloadActionTemplateId = 101;
+
 KernelConfig server_config() {
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;
@@ -65,12 +68,36 @@ KernelProjectileTemplateDefinition projectile_template() {
     return projectile;
 }
 
+KernelActionTemplateDefinition fire_action_template() {
+    KernelActionTemplateDefinition action{};
+    action.struct_size = sizeof(action);
+    action.action_template_id = kTestFireActionTemplateId;
+    action.trigger_mode = KernelActionTriggerMode_Press;
+    action.ammo_cost_per_commit = 1;
+    action.max_commit_count = 1;
+    return action;
+}
+
+KernelActionTemplateDefinition reload_action_template(std::uint32_t reload_ticks) {
+    KernelActionTemplateDefinition action{};
+    action.struct_size = sizeof(action);
+    action.action_template_id = kTestReloadActionTemplateId;
+    action.trigger_mode = KernelActionTriggerMode_Press;
+    action.commit_offset_ticks = reload_ticks;
+    action.max_commit_count = 1;
+    return action;
+}
+
 void load_catalog(KernelHandle* kernel) {
     const std::array<KernelColliderTemplateDefinition, 2> colliders = {
         collider_template(),
         vision_collider_template(),
     };
     const KernelProjectileTemplateDefinition projectile = projectile_template();
+    const std::array<KernelActionTemplateDefinition, 2> actions = {
+        fire_action_template(),
+        reload_action_template(3),
+    };
     KernelGameplayCatalogDefinition catalog{};
     catalog.struct_size = sizeof(catalog);
     catalog.catalog_version = 1;
@@ -79,6 +106,8 @@ void load_catalog(KernelHandle* kernel) {
     catalog.collider_template_count = static_cast<std::uint32_t>(colliders.size());
     catalog.projectile_templates = &projectile;
     catalog.projectile_template_count = 1;
+    catalog.action_templates = actions.data();
+    catalog.action_template_count = static_cast<std::uint32_t>(actions.size());
     assert(Kernel_LoadGameplayCatalog(kernel, &catalog));
 }
 
@@ -121,16 +150,15 @@ void set_combat(
 void set_spammer_weapon_mechanics(
     KernelHandle* kernel,
     std::uint32_t net_id,
-    std::uint16_t magazine_size,
-    std::uint32_t reload_ticks) {
+    std::uint16_t magazine_size) {
     KernelWeaponMechanicsDefinition weapon{};
     weapon.struct_size = sizeof(weapon);
     weapon.weapon_id = network_example::game_server::kAgentSpammerWeaponId;
     weapon.fire_mode = KernelWeaponFireMode_Projectile;
     weapon.magazine_size = magazine_size;
     weapon.damage = 1;
-    weapon.cooldown_ticks = 1;
-    weapon.reload_ticks = reload_ticks;
+    weapon.fire_action_template_id = kTestFireActionTemplateId;
+    weapon.reload_action_template_id = kTestReloadActionTemplateId;
     weapon.projectile_template_id = 3;
     assert(Kernel_ServerSetEntityWeaponMechanics(kernel, net_id, &weapon));
 }
@@ -201,7 +229,7 @@ int main() {
     const std::uint32_t player_net_id =
         create_entity(kernel, network_example::game_server::kActorTypePlayer, {5.0f, 0.0f, 0.0f});
     set_combat(kernel, enemy_net_id, 2, 4);
-    set_spammer_weapon_mechanics(kernel, enemy_net_id, 2, 3);
+    set_spammer_weapon_mechanics(kernel, enemy_net_id, 2);
     set_vision(kernel, enemy_net_id, KernelAgentCamp_EnemySide, 2);
     set_vision(kernel, player_net_id, KernelAgentCamp_PlayerSide, 0);
     KernelQuat identity{0.0f, 0.0f, 0.0f, 1.0f};

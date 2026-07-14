@@ -133,10 +133,10 @@ network_example::NetId spawn_enemy(
     return enemy;
 }
 
-PlayerInput homing_fire_input(std::uint32_t client_action_id) {
+PlayerInput homing_fire_input(std::uint32_t action_instance_id) {
     PlayerInput input{};
     input.input_seq = 1;
-    input.client_action_id = client_action_id;
+    input.action_instance_id = action_instance_id;
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     input.buttons = InputButton_Fire;
     input.selected_weapon = network_example::kWeaponSlot6;
@@ -157,7 +157,7 @@ void homing_projectile_spawns_and_boosts_deterministically() {
 
     const network_example::NetId projectile = spawned_projectile(events);
     assert(projectile != 0);
-    assert(projectile_state(world, projectile).client_action_id == 7001);
+    assert(projectile_state(world, projectile).action_instance_id == 7001);
     assert(projectile_state(world, projectile).motion_model ==
            network_example::ProjectileMotionModel::kHoming);
     assert(homing_state(world, projectile).phase ==
