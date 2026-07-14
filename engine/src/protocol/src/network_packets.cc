@@ -13,7 +13,7 @@
 namespace network_example {
 namespace {
 
-constexpr std::size_t kInputPayloadSize = 45;
+constexpr std::size_t kInputPayloadSize = 57;
 constexpr std::size_t kSnapshotHeaderPayloadSize = 16;
 constexpr std::size_t kSnapshotSectionHeaderPayloadSize = 4;
 constexpr std::size_t kActorSnapshotBasePayloadSize = 52;
@@ -137,7 +137,6 @@ std::vector<std::uint8_t> encode_input_packet(
     payload.write_u32(player_id);
     payload.write_u32(input.input_seq);
     payload.write_u64(input.client_action_time_us);
-    payload.write_u32(input.client_action_id);
     payload.write_float(input.move.x);
     payload.write_float(input.move.y);
     payload.write_float(input.aim_dir.x);
@@ -145,6 +144,14 @@ std::vector<std::uint8_t> encode_input_packet(
     payload.write_float(input.aim_dir.z);
     payload.write_u32(input.buttons);
     payload.write_u8(input.selected_weapon);
+    payload.write_u32(input.action_intent.action_instance_id);
+    payload.write_u16(input.action_intent.binding_id);
+    payload.write_u8(input.action_intent.flags);
+    payload.write_u8(input.action_intent.reserved);
+    payload.write_u32(input.action_input.action_instance_id);
+    payload.write_u8(input.action_input.held);
+    payload.write_u8(input.action_input.flags);
+    payload.write_u16(input.action_input.reserved);
     return protocol_internal::wrap_packet(
         MessageType::kInputPacket,
         payload.bytes(),
@@ -174,7 +181,6 @@ bool decode_input_packet(
     if (!reader.read_u32(out_player_id) ||
         !reader.read_u32(&input.input_seq) ||
         !reader.read_u64(&input.client_action_time_us) ||
-        !reader.read_u32(&input.client_action_id) ||
         !reader.read_float(&input.move.x) ||
         !reader.read_float(&input.move.y) ||
         !reader.read_float(&input.aim_dir.x) ||
@@ -182,6 +188,14 @@ bool decode_input_packet(
         !reader.read_float(&input.aim_dir.z) ||
         !reader.read_u32(&input.buttons) ||
         !reader.read_u8(&input.selected_weapon) ||
+        !reader.read_u32(&input.action_intent.action_instance_id) ||
+        !reader.read_u16(&input.action_intent.binding_id) ||
+        !reader.read_u8(&input.action_intent.flags) ||
+        !reader.read_u8(&input.action_intent.reserved) ||
+        !reader.read_u32(&input.action_input.action_instance_id) ||
+        !reader.read_u8(&input.action_input.held) ||
+        !reader.read_u8(&input.action_input.flags) ||
+        !reader.read_u16(&input.action_input.reserved) ||
         !reader.done()) {
         return false;
     }
@@ -256,7 +270,7 @@ std::vector<std::uint8_t> encode_snapshot_packet(
                     payload.write_u16(entity->state);
                     payload.write_u32(entity->flags);
                     payload.write_u32(entity->spawn_tick);
-                    payload.write_u32(entity->client_action_id);
+                    payload.write_u32(entity->action_instance_id);
                     break;
                 case SnapshotSectionType::kGeneric:
                     payload.write_u16(static_cast<std::uint16_t>(entity->type));
@@ -396,7 +410,7 @@ bool decode_snapshot_packet(
                         !reader.read_u16(&entity.state) ||
                         !reader.read_u32(&entity.flags) ||
                         !reader.read_u32(&entity.spawn_tick) ||
-                        !reader.read_u32(&entity.client_action_id)) {
+                        !reader.read_u32(&entity.action_instance_id)) {
                         return false;
                     }
                     entity.rotation = projectile_rotation_from_velocity(entity.velocity);
@@ -704,7 +718,7 @@ std::vector<std::uint8_t> encode_projectile_spawn_batch_packet(
             payload.write_u32(record.projectile_net_id);
             payload.write_u32(record.owner_net_id);
             payload.write_u32(record.owner_peer);
-            payload.write_u32(record.client_action_id);
+            payload.write_u32(record.action_instance_id);
             payload.write_vec3(record.spawn_position);
             payload.write_vec3(record.initial_velocity);
         }
@@ -757,7 +771,7 @@ bool decode_projectile_spawn_batch_packet(
             if (!reader.read_u32(&record.projectile_net_id) ||
                 !reader.read_u32(&record.owner_net_id) ||
                 !reader.read_u32(&record.owner_peer) ||
-                !reader.read_u32(&record.client_action_id) ||
+                !reader.read_u32(&record.action_instance_id) ||
                 !reader.read_vec3(&record.spawn_position) ||
                 !reader.read_vec3(&record.initial_velocity)) {
                 return false;

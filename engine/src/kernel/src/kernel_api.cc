@@ -165,6 +165,8 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
         out_info->local_action_result_size = sizeof(KernelLocalActionResult);
         out_info->remote_action_presentation_event_size =
             sizeof(KernelRemoteActionPresentationEvent);
+        out_info->action_intent_size = sizeof(ActionIntent);
+        out_info->action_input_size = sizeof(ActionInput);
         out_info->capability_flags =
             KERNEL_CAPABILITY_CLIENT_MODE |
             KERNEL_CAPABILITY_LISTEN_SERVER_MODE |
@@ -203,7 +205,8 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_CONTROL_PLANE_RPC |
             KERNEL_CAPABILITY_ACTION_TIMELINE |
             KERNEL_CAPABILITY_LOCAL_ACTION_RESULTS |
-            KERNEL_CAPABILITY_REMOTE_ACTION_PRESENTATION;
+            KERNEL_CAPABILITY_REMOTE_ACTION_PRESENTATION |
+            KERNEL_CAPABILITY_ACTION_INTENTS;
         return true;
     });
 }
@@ -857,9 +860,8 @@ bool Kernel_ServerValidateMechanicsConfig(
             weapon_mechanics->weapon_id >= KERNEL_MAX_WEAPONS ||
             weapon_mechanics->magazine_size == 0 ||
             weapon_mechanics->damage == 0 ||
-            (weapon_mechanics->fire_action_template_id == 0u &&
-             weapon_mechanics->cooldown_ticks == 0u) ||
-            weapon_mechanics->reload_ticks == 0 ||
+            weapon_mechanics->fire_action_template_id == 0u ||
+            weapon_mechanics->reload_action_template_id == 0u ||
             weapon_mechanics->fire_mode > KernelWeaponFireMode_Projectile) {
             return false;
         }

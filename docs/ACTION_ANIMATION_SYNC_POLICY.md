@@ -53,6 +53,36 @@ This specification does not:
 Normative terms `MUST`, `MUST NOT`, `SHOULD`, and `MAY` describe implementation
 requirements.
 
+### 3.1 Discrete events and continuous state
+
+Synchronization is classified by whether it describes what happened or what is
+currently true:
+
+| Class | Contract |
+|---|---|
+| Discrete action intent | `ActionIntent` requests one action start. |
+| Discrete owner result | `LocalActionResult` is reliable and owner-only. |
+| Discrete lifecycle | Spawn, Death, and Despawn are reliable authoritative transitions. |
+| Discrete presentation | FireCommit, CastingCommit, ReloadCommit, HitReaction, and DeathTrigger are unreliable cosmetic hints. |
+| Continuous snapshot state | Movement, transform, velocity, action phase, Reloading, Climbing, Dead, aim, and visual flags. |
+
+For example, Reload begins with a discrete `ActionIntent`, remains recoverable as
+Reloading/action phase in snapshots, and produces a ReloadCommit presentation at
+commit. Death remains a lifecycle transition, is continuously represented by
+Dead snapshot state, and may additionally produce a DeathTrigger presentation.
+
+### 3.2 Action boundary and Casting terminology
+
+The generalized action executor handles actor-initiated behavior that may be
+rejected and has an instance, zero or more commits, and cancellation/completion.
+Fire and Reload are actions. Casting is the runtime lifecycle of an already
+selected skill; a future Skill system owns definitions, unlocks, progression,
+loadout, binding, and casting permission. Movement and Damage are domain state or
+events, while Death and Spawn/Despawn are lifecycle transitions. Climb may use an
+optional ClimbStart admission action, but locomotion remains continuous state.
+
+`CastingCommit` has wire value `1`; there is no `AbilityCommit` alias.
+
 ## 4. Authority Boundary
 
 The server remains authoritative for:
@@ -154,7 +184,7 @@ The logical encoded size is 20 bytes before batch and packet framing.
 The minimum event types are:
 
 - FireCommit;
-- AbilityCommit;
+- CastingCommit;
 - ReloadCommit;
 - HitReaction;
 - DeathTrigger.
@@ -167,13 +197,20 @@ from snapshot or lifecycle state.
 
 ### 6.1 Input identity
 
-Every predicted action attempt MUST use a non-zero `client_action_id`. The owner
+Every predicted action attempt MUST use a non-zero `action_instance_id`. The owner
 MUST generate ids monotonically within a session, allowing unsigned wrap only
 after outstanding instances can no longer collide. The server uses this value as
 the authoritative `action_instance_id` correlation token.
 
 Preparing client input MUST NOT silently replace a non-zero id. A zero id is not
 valid for a predicted action that requires correction.
+
+Each `PlayerInput` frame contains at most one 8-byte `ActionIntent` and one
+8-byte `ActionInput`. `ActionIntent` starts an action and carries the non-zero
+instance id plus binding (`PrimaryFire = 0`, `Reload = 1`). `ActionInput` carries
+continuous hold/release control for the matching instance. An instance id of
+zero means that the corresponding frame field is absent; v1 flags and reserved
+fields are zero.
 
 ### 6.2 Prediction flow
 
@@ -465,8 +502,9 @@ The test suite MUST verify:
 
 ### Phase 3: generalized actions
 
-- Move Fire, Reload, Death, and Climb commit effects behind generic action
-  executors.
+- Move Fire and Reload commit effects behind the generic action executor.
+- Keep Death as lifecycle authority; keep Climb locomotion as continuous state,
+  with only optional ClimbStart admission modeled as an action.
 - Add presentation profiles and action-layer policy without Unity asset ids in
   native data.
 - Preserve snapshots as the source of continuous action state.
@@ -477,6 +515,19 @@ The test suite MUST verify:
   and batch occupancy.
 - Tune batch cadence, relevance radius, expiry, and remote event priority from
   measured data.
+
+## 16.1 Implementation status
+
+| Capability | Status |
+|---|---|
+| Generalized Fire/Reload executor and canonical outcomes | Implemented |
+| Owner result and remote presentation separation | Implemented |
+| ActionIntent/ActionInput public contract | Implemented in ABI 40 / packet 16 |
+| CastingCommit codec/poll surface | Implemented; production Skill/Casting producer deferred |
+| Presentation profiles | Deferred |
+| Public metrics and traffic tuning API | Deferred |
+| Unity consumer and Animator/VFX mapping | Deferred |
+| Climbing snapshot state | Deferred |
 
 ## 17. Acceptance Criteria
 

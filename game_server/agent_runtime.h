@@ -41,6 +41,7 @@ struct AgentRuntimeState {
     std::uint16_t animation_state = 0;
     std::uint32_t target_player_net_id = 0;
     std::uint32_t next_input_seq = 1;
+    std::uint32_t next_action_instance_id = 1;
     AgentSentryRuntimeState sentry{};
     int patrol_direction = 1;
 };

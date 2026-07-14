@@ -186,6 +186,8 @@ int main() {
     assert(
         abi_info.remote_action_presentation_event_size ==
         sizeof(KernelRemoteActionPresentationEvent));
+    assert(abi_info.action_intent_size == sizeof(ActionIntent));
+    assert(abi_info.action_input_size == sizeof(ActionInput));
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CLIENT_MODE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LISTEN_SERVER_MODE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_DEDICATED_SERVER_MODE) != 0);
@@ -226,13 +228,16 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 39u);
+    assert(KERNEL_ABI_VERSION == 40u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CONTROL_PLANE_RPC) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ACTION_TIMELINE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LOCAL_ACTION_RESULTS) != 0);
     assert(
         (abi_info.capability_flags &
          KERNEL_CAPABILITY_REMOTE_ACTION_PRESENTATION) != 0);
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_ACTION_INTENTS) != 0);
+    assert(sizeof(ActionIntent) == 8u);
+    assert(sizeof(ActionInput) == 8u);
     assert(sizeof(KernelLocalActionResult) == 12u);
     assert(sizeof(KernelRemoteActionPresentationEvent) == 20u);
     assert(sizeof(KernelVec4) == 16u);
@@ -248,7 +253,7 @@ int main() {
     assert((KERNEL_COLLISION_MASK_DAMAGEABLE & KERNEL_COLLISION_LAYER_NEUTRAL) != 0u);
     assert(KERNEL_LAN_DISCOVERY_DEFAULT_PORT == 47777u);
     assert(offsetof(PlayerInput, client_action_time_us) > offsetof(PlayerInput, input_seq));
-    assert(offsetof(PlayerInput, client_action_id) > offsetof(PlayerInput, client_action_time_us));
+    assert(offsetof(PlayerInput, action_instance_id) > offsetof(PlayerInput, client_action_time_us));
     assert(offsetof(KernelEvent, event_time_us) > offsetof(KernelEvent, code));
     assert(offsetof(KernelEvent, presentation_time_us) > offsetof(KernelEvent, event_time_us));
     assert(offsetof(RenderEntityState, entity_id) == 0u);
@@ -256,7 +261,7 @@ int main() {
     assert(offsetof(RenderEntityState, actor_type) > offsetof(RenderEntityState, entity_type));
     assert(offsetof(RenderEntityState, hp) > offsetof(RenderEntityState, velocity));
     assert(offsetof(RenderEntityState, max_hp) > offsetof(RenderEntityState, hp));
-    assert(offsetof(RenderEntityState, status) > offsetof(RenderEntityState, client_action_id));
+    assert(offsetof(RenderEntityState, status) > offsetof(RenderEntityState, action_instance_id));
     assert(offsetof(RenderEntityState, projectile_template_id) >
            offsetof(RenderEntityState, status));
     assert(offsetof(RenderEntityState, collider_template_id) >
@@ -564,10 +569,25 @@ int main() {
     beam_action.commit_offset_ticks = 5;
     beam_action.commit_interval_ticks = 1;
     beam_action.recovery_ticks = 8;
-    std::array<KernelActionTemplateDefinition, 3> action_templates = {
+    KernelActionTemplateDefinition reload_action{};
+    reload_action.struct_size = sizeof(reload_action);
+    reload_action.action_template_id = 1004;
+    reload_action.trigger_mode = KernelActionTriggerMode_Press;
+    reload_action.flags = KernelActionTemplateFlag_CancelOnDeath |
+                          KernelActionTemplateFlag_CancelOnWeaponChange |
+                          KernelActionTemplateFlag_CancelBeforeFirstCommit;
+    reload_action.commit_offset_ticks = 30;
+    reload_action.max_commit_count = 1;
+    KernelActionTemplateDefinition instant_fire_action = rocket_action;
+    instant_fire_action.action_template_id = 1005;
+    instant_fire_action.commit_offset_ticks = 0;
+    instant_fire_action.recovery_ticks = 0;
+    std::array<KernelActionTemplateDefinition, 5> action_templates = {
         rocket_action,
         rifle_action,
         beam_action,
+        reload_action,
+        instant_fire_action,
     };
     KernelGameplayCatalogDefinition catalog{};
     catalog.struct_size = sizeof(catalog);
@@ -613,7 +633,7 @@ int main() {
     null_action_catalog.action_templates = nullptr;
     assert(!Kernel_LoadGameplayCatalog(kernel, &null_action_catalog));
     const auto rejects_action_templates =
-        [&](std::array<KernelActionTemplateDefinition, 3> definitions) {
+        [&](std::array<KernelActionTemplateDefinition, 5> definitions) {
             KernelGameplayCatalogDefinition rejected_catalog = catalog;
             rejected_catalog.action_templates = definitions.data();
             return !Kernel_LoadGameplayCatalog(kernel, &rejected_catalog);
@@ -971,10 +991,9 @@ int main() {
     weapon_mechanics.magazine_size = 3;
     weapon_mechanics.reserve_magazines = 6;
     weapon_mechanics.damage = 5;
-    weapon_mechanics.cooldown_ticks = 30;
-    weapon_mechanics.reload_ticks = 30;
     weapon_mechanics.projectile_template_id = 3;
-    weapon_mechanics.fire_action_template_id = 1001;
+    weapon_mechanics.fire_action_template_id = 1005;
+    weapon_mechanics.reload_action_template_id = 1004;
     assert(Kernel_ServerValidateMechanicsConfig(&weapon_mechanics));
     assert(!Kernel_ServerSetEntityWeaponMechanics(kernel, created_net_id, nullptr));
     assert(Kernel_ServerSetEntityWeaponMechanics(
@@ -991,7 +1010,7 @@ int main() {
     assert(queried_weapon.weapon_id == 3);
     assert(queried_weapon.reserve_magazines == 6);
     assert(queried_weapon.projectile_template_id == 3);
-    assert(queried_weapon.fire_action_template_id == 1001);
+    assert(queried_weapon.fire_action_template_id == 1005);
     KernelWeaponMechanicsDefinition missing_action_template = weapon_mechanics;
     missing_action_template.fire_action_template_id = 9999;
     assert(Kernel_ServerValidateMechanicsConfig(&missing_action_template));
@@ -1035,9 +1054,9 @@ int main() {
     area_weapon.fire_mode = KernelWeaponFireMode_Projectile;
     area_weapon.magazine_size = 2;
     area_weapon.damage = 7;
-    area_weapon.cooldown_ticks = 10;
-    area_weapon.reload_ticks = 30;
     area_weapon.projectile_template_id = 4;
+    area_weapon.fire_action_template_id = 1005;
+    area_weapon.reload_action_template_id = 1004;
     assert(Kernel_ServerValidateMechanicsConfig(&area_weapon));
     assert(Kernel_ServerSetEntityWeaponMechanics(kernel, created_net_id, &area_weapon));
     queried_weapon = KernelWeaponMechanicsDefinition{};
@@ -1056,9 +1075,9 @@ int main() {
     beam_weapon.fire_mode = KernelWeaponFireMode_Projectile;
     beam_weapon.magazine_size = 2;
     beam_weapon.damage = 30;
-    beam_weapon.cooldown_ticks = 1;
-    beam_weapon.reload_ticks = 30;
     beam_weapon.projectile_template_id = 5;
+    beam_weapon.fire_action_template_id = 1005;
+    beam_weapon.reload_action_template_id = 1004;
     assert(Kernel_ServerValidateMechanicsConfig(&beam_weapon));
     assert(Kernel_ServerSetEntityWeaponMechanics(kernel, created_net_id, &beam_weapon));
     queried_weapon = KernelWeaponMechanicsDefinition{};
@@ -1131,7 +1150,8 @@ int main() {
                static_cast<std::uint32_t>(queried_states.size())) == 1);
 
     server_entity_input.input_seq = 2;
-    server_entity_input.buttons = InputButton_Fire;
+    server_entity_input.action_intent = ActionIntent{
+        1u, KernelActionBinding_PrimaryFire, 0u, 0u};
     server_entity_input.selected_weapon = 3;
     server_entity_input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     assert(Kernel_ServerSubmitEntityInput(
@@ -1147,7 +1167,8 @@ int main() {
     assert(server_state.reserve_magazines[3] == 6);
 
     server_entity_input.input_seq = 3;
-    server_entity_input.buttons = InputButton_Reload;
+    server_entity_input.action_intent = ActionIntent{
+        2u, KernelActionBinding_Reload, 0u, 0u};
     server_entity_input.selected_weapon = 3;
     assert(Kernel_ServerSubmitEntityInput(
         kernel,
@@ -1211,7 +1232,7 @@ int main() {
         rendered_actor->visual_flags ==
         (0x12345678u | KERNEL_VISUAL_FLAG_MOVING));
     assert(rendered_actor->spawn_tick == 0);
-    assert(rendered_actor->client_action_id == 0);
+    assert(rendered_actor->action_instance_id == 0);
     const std::uint32_t render_at_time_count =
         Kernel_GetRenderStatesAtTime(kernel, 33333, states.data(), states.size());
     assert(render_at_time_count >= 1);
@@ -1226,7 +1247,8 @@ int main() {
     assert(rendered_actor->hp == 240);
     assert(rendered_actor->max_hp == 240);
 
-    server_entity_input.buttons = InputButton_Fire;
+    server_entity_input.action_intent = ActionIntent{
+        3u, KernelActionBinding_PrimaryFire, 0u, 0u};
     server_entity_input.selected_weapon = 4;
     server_entity_input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     assert(Kernel_ServerSubmitEntityInput(
@@ -1246,7 +1268,8 @@ int main() {
     }
     assert(area_net_id != 0);
 
-    server_entity_input.buttons = InputButton_Fire;
+    server_entity_input.action_intent = ActionIntent{
+        4u, KernelActionBinding_PrimaryFire, 0u, 0u};
     server_entity_input.selected_weapon = 5;
     server_entity_input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     assert(Kernel_ServerSubmitEntityInput(
@@ -1266,7 +1289,8 @@ int main() {
     }
     assert(beam_net_id != 0);
 
-    server_entity_input.buttons = InputButton_Fire;
+    server_entity_input.action_intent = ActionIntent{
+        5u, KernelActionBinding_PrimaryFire, 0u, 0u};
     server_entity_input.selected_weapon = 6;
     server_entity_input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     assert(Kernel_ServerSubmitEntityInput(

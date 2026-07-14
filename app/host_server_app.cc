@@ -49,7 +49,10 @@ PlayerInput scripted_input(std::uint32_t sequence) {
     input.client_action_time_us = static_cast<std::uint64_t>(sequence) * 33333u;
     input.move = KernelVec2{0.0f, 0.0f};
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
-    input.buttons = sequence == 2 ? InputButton_Fire : 0;
+    if (sequence == 2) {
+        input.action_intent = ActionIntent{
+            sequence, KernelActionBinding_PrimaryFire, 0u, 0u};
+    }
     return input;
 }
 

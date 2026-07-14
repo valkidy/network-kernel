@@ -205,14 +205,15 @@ private:
         std::uint32_t last_processed_input_seq = 0;
         bool welcomed = false;
         std::unordered_set<NetId> relevant_entities;
-        std::uint32_t fire_action_high_water = 0;
-        std::uint32_t active_fire_action_id = 0;
-        std::uint32_t active_fire_template_id = 0;
-        std::uint16_t active_fire_commit_count = 0;
+        std::uint32_t action_instance_high_water = 0;
+        std::uint32_t active_action_instance_id = 0;
+        std::uint32_t active_action_template_id = 0;
+        std::uint16_t active_action_binding_id = 0;
+        std::uint16_t active_action_commit_count = 0;
         std::unordered_map<std::uint32_t, KernelLocalActionResult>
-            recent_fire_results;
-        std::vector<std::uint32_t> recent_fire_result_order;
-        std::vector<KernelLocalActionResult> pending_fire_results;
+            recent_action_results;
+        std::vector<std::uint32_t> recent_action_result_order;
+        std::vector<KernelLocalActionResult> pending_action_results;
         std::size_t actor_snapshot_cursor = 0;
         std::size_t projectile_snapshot_cursor = 0;
         std::uint32_t pending_clock_sync_nonce = 0;
@@ -250,7 +251,7 @@ private:
         NetId net_id = 0;
         PeerId owner_peer = 0;
         std::uint32_t input_seq = 0;
-        std::uint32_t client_action_id = 0;
+        std::uint32_t action_instance_id = 0;
         std::uint32_t spawn_tick = 0;
         std::uint32_t age_ticks = 0;
         glm::vec3 position{0.0f, 0.0f, 0.0f};
@@ -283,10 +284,14 @@ private:
         std::size_t offset = 0;
     };
 
-    struct OutstandingPredictedFire {
+    struct OutstandingPredictedAction {
         std::uint32_t action_instance_id = 0;
         std::uint64_t last_activity_us = 0;
         std::uint16_t confirmed_commit_count = 0;
+        std::uint16_t binding_id = 0;
+        std::uint8_t weapon_id = 0;
+        std::uint16_t ammo_before = 0;
+        NetId active_effect_before = 0;
     };
 
     struct PendingRemotePresentation {
@@ -396,7 +401,7 @@ private:
     bool has_predicted_projectile_net_id(NetId net_id) const;
     PredictedProjectile* find_predicted_projectile(
         PeerId owner_peer,
-        std::uint32_t client_action_id);
+        std::uint32_t action_instance_id);
     void publish_snapshot();
     WorldSnapshot build_relevant_snapshot(
         const PeerSession& session,
@@ -429,10 +434,9 @@ private:
     void send_due_clock_sync_pings(std::uint64_t server_time_us);
     void send_reliable_event(PeerId peer, const KernelEvent& event);
     void broadcast_reliable_event(const KernelEvent& event);
-    bool prepare_server_fire_input(PeerSession* session, const PlayerInput& input);
-    void finalize_server_fire_outcomes(
-        std::size_t first_event,
-        std::size_t last_event);
+    void prepare_server_action_intent(PeerSession* session, PlayerInput* input);
+    void finalize_server_action_outcomes(
+        const std::vector<ActionOutcome>& outcomes);
     void queue_local_action_result(
         PeerSession* session,
         const KernelLocalActionResult& result);
@@ -440,8 +444,9 @@ private:
     void queue_remote_presentation_from_events(
         std::size_t first_event,
         std::size_t last_event,
-        const std::unordered_set<NetId>& actors_before_tick,
-        const std::unordered_set<NetId>& reloading_before_tick);
+        const std::unordered_set<NetId>& actors_before_tick);
+    void queue_server_remote_presentation(
+        const KernelRemoteActionPresentationEvent& event);
     void flush_remote_action_presentation(
         PeerSession* session,
         const std::vector<KernelRemoteActionPresentationEvent>& events);
@@ -501,8 +506,8 @@ private:
     std::unordered_map<NetId, ClientEntityTombstone> client_despawned_entities_;
     std::vector<PlayerInput> pending_prediction_inputs_;
     std::vector<PredictedProjectile> predicted_projectiles_;
-    std::unordered_map<std::uint32_t, OutstandingPredictedFire>
-        outstanding_predicted_fires_;
+    std::unordered_map<std::uint32_t, OutstandingPredictedAction>
+        outstanding_predicted_actions_;
     std::unordered_map<std::uint32_t, KernelLocalActionResult>
         applied_local_action_results_;
     std::vector<KernelEntityTemplateDefinition> entity_templates_;
@@ -558,6 +563,7 @@ private:
     std::unordered_map<NetId, std::uint64_t> entity_ids_by_net_id_;
     EntitySnapshot predicted_local_entity_;
     std::uint32_t predicted_action_buttons_ = 0;
+    std::uint16_t predicted_action_binding_id_ = 0;
     std::uint32_t predicted_action_next_commit_tick_ = 0;
     std::uint32_t predicted_action_recovery_end_tick_ = 0;
     glm::vec3 local_correction_offset_{0.0f, 0.0f, 0.0f};

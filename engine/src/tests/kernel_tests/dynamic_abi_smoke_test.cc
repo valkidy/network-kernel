@@ -449,6 +449,9 @@ int main() {
     assert(
         (abi_info.capability_flags &
          KERNEL_CAPABILITY_REMOTE_ACTION_PRESENTATION) != 0);
+    assert(abi_info.action_intent_size == sizeof(ActionIntent));
+    assert(abi_info.action_input_size == sizeof(ActionInput));
+    assert((abi_info.capability_flags & KERNEL_CAPABILITY_ACTION_INTENTS) != 0);
     assert(abi_info.projectile_mechanics_definition_size ==
            sizeof(KernelProjectileMechanicsDefinition));
     assert(abi_info.area_effect_mechanics_definition_size ==
@@ -617,8 +620,8 @@ int main() {
     rocket.magazine_size = 3;
     rocket.reserve_magazines = 6;
     rocket.damage = 5;
-    rocket.cooldown_ticks = 30;
-    rocket.reload_ticks = 30;
+    rocket.fire_action_template_id = 1001u;
+    rocket.reload_action_template_id = 2001u;
     rocket.projectile_template_id = 3;
     assert(kernel_server_validate_mechanics_config(&rocket));
     assert(kernel_server_set_entity_weapon_mechanics(kernel, enemy, &rocket));
@@ -652,7 +655,8 @@ int main() {
     input.client_action_time_us = 33333;
     input.move = KernelVec2{1.0f, 0.0f};
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
-    input.buttons = InputButton_Fire;
+    input.action_intent = ActionIntent{
+        1u, KernelActionBinding_PrimaryFire, 0u, 0u};
     kernel_submit_input(kernel, 1, &input);
     kernel_update(kernel, 1.0f / 30.0f);
 

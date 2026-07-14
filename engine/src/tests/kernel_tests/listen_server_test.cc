@@ -57,10 +57,10 @@ RenderEntityState find_entity(
 RenderEntityState find_projectile_action(
     const std::array<RenderEntityState, 16>& states,
     std::uint32_t count,
-    std::uint32_t client_action_id) {
+    std::uint32_t action_instance_id) {
     for (std::uint32_t index = 0; index < count; ++index) {
         if (states[index].entity_type == 3 &&
-            states[index].client_action_id == client_action_id) {
+            states[index].action_instance_id == action_instance_id) {
             return states[index];
         }
     }
@@ -71,10 +71,10 @@ RenderEntityState find_projectile_action(
 bool has_projectile_action(
     const std::array<RenderEntityState, 16>& states,
     std::uint32_t count,
-    std::uint32_t client_action_id) {
+    std::uint32_t action_instance_id) {
     for (std::uint32_t index = 0; index < count; ++index) {
         if (states[index].entity_type == 3 &&
-            states[index].client_action_id == client_action_id) {
+            states[index].action_instance_id == action_instance_id) {
             return true;
         }
     }
@@ -101,9 +101,9 @@ KernelWeaponMechanicsDefinition projectile_weapon(std::uint8_t weapon_id) {
     weapon.fire_mode = KernelWeaponFireMode_Projectile;
     weapon.magazine_size = 30;
     weapon.damage = 40;
-    weapon.cooldown_ticks = 30;
-    weapon.reload_ticks = 60;
     weapon.projectile_template_id = weapon_id;
+    weapon.fire_action_template_id = 4001u;
+    weapon.reload_action_template_id = 4002u;
     return weapon;
 }
 
@@ -173,6 +173,22 @@ void load_minimal_gameplay_catalog(KernelHandle* kernel) {
         projectile_template(2, 2, 15.0f, 90, KernelProjectileMotionModel_Parabolic),
         projectile_template(3, 3, 35.0f, 75, KernelProjectileMotionModel_Linear),
     };
+    KernelActionTemplateDefinition fire_action{};
+    fire_action.struct_size = sizeof(fire_action);
+    fire_action.action_template_id = 4001u;
+    fire_action.trigger_mode = KernelActionTriggerMode_Press;
+    fire_action.ammo_cost_per_commit = 1u;
+    fire_action.max_commit_count = 1u;
+    KernelActionTemplateDefinition reload_action{};
+    reload_action.struct_size = sizeof(reload_action);
+    reload_action.action_template_id = 4002u;
+    reload_action.trigger_mode = KernelActionTriggerMode_Press;
+    reload_action.commit_offset_ticks = 30u;
+    reload_action.max_commit_count = 1u;
+    const std::array<KernelActionTemplateDefinition, 2> action_templates = {
+        fire_action,
+        reload_action,
+    };
     KernelGameplayCatalogDefinition catalog{};
     catalog.struct_size = sizeof(catalog);
     catalog.catalog_version = 1;
@@ -182,6 +198,9 @@ void load_minimal_gameplay_catalog(KernelHandle* kernel) {
     catalog.projectile_templates = projectile_templates.data();
     catalog.projectile_template_count =
         static_cast<std::uint32_t>(projectile_templates.size());
+    catalog.action_templates = action_templates.data();
+    catalog.action_template_count =
+        static_cast<std::uint32_t>(action_templates.size());
     assert(Kernel_LoadGameplayCatalog(kernel, &catalog));
 }
 
@@ -209,11 +228,11 @@ void configure_local_player(KernelHandle* kernel, std::uint32_t player_net_id) {
     rifle.fire_mode = KernelWeaponFireMode_Hitscan;
     rifle.magazine_size = 30;
     rifle.damage = 25;
-    rifle.cooldown_ticks = 3;
-    rifle.reload_ticks = 30;
     rifle.max_range = 100.0f;
     rifle.pellet_count = 1;
     rifle.segment_collider_template_id = 5;
+    rifle.fire_action_template_id = 4001u;
+    rifle.reload_action_template_id = 4002u;
     assert(Kernel_ServerSetEntityWeaponMechanics(kernel, player_net_id, &rifle));
 
     KernelWeaponMechanicsDefinition grenade = projectile_weapon(2);
@@ -221,7 +240,6 @@ void configure_local_player(KernelHandle* kernel, std::uint32_t player_net_id) {
     KernelWeaponMechanicsDefinition rocket = projectile_weapon(3);
     rocket.magazine_size = 6;
     rocket.damage = 45;
-    rocket.reload_ticks = 75;
     assert(Kernel_ServerSetEntityWeaponMechanics(kernel, player_net_id, &rocket));
 }
 
@@ -329,7 +347,8 @@ int main() {
     fire_input.input_seq = 2;
     fire_input.client_action_time_us = 66666;
     fire_input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
-    fire_input.buttons = InputButton_Fire;
+    fire_input.action_intent = ActionIntent{
+        3000u, KernelActionBinding_PrimaryFire, 0u, 0u};
     fire_input.selected_weapon = 0;
     Kernel_SubmitInput(kernel, 1, &fire_input);
     Kernel_Update(kernel, 1.0f / 30.0f);
@@ -351,9 +370,9 @@ int main() {
     PlayerInput projectile_input{};
     projectile_input.input_seq = 3;
     projectile_input.client_action_time_us = 100000;
-    projectile_input.client_action_id = 3001;
+    projectile_input.action_intent = ActionIntent{
+        3001u, KernelActionBinding_PrimaryFire, 0u, 0u};
     projectile_input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
-    projectile_input.buttons = InputButton_Fire;
     projectile_input.selected_weapon = 2;
     Kernel_SubmitInput(kernel, 1, &projectile_input);
 
@@ -365,7 +384,7 @@ int main() {
     const RenderEntityState predicted_projectile = find_projectile_action(
         predicted_projectile_states,
         predicted_projectile_count,
-        projectile_input.client_action_id);
+        projectile_input.action_intent.action_instance_id);
     assert(predicted_projectile.entity_id != 0);
     assert(predicted_projectile.net_id == 0);
 
@@ -400,7 +419,8 @@ int main() {
         find_entity(projectile_states, projectile_count, projectile_net_id);
     assert(projectile_state.entity_type == 3);
     assert(projectile_state.entity_id == predicted_projectile.entity_id);
-    assert(projectile_state.client_action_id == projectile_input.client_action_id);
+    assert(projectile_state.action_instance_id ==
+           projectile_input.action_intent.action_instance_id);
 
     Kernel_Update(kernel, 1.0f / 30.0f);
     std::array<RenderEntityState, 16> moved_projectile_states{};
@@ -416,9 +436,9 @@ int main() {
     PlayerInput rocket_input{};
     rocket_input.input_seq = 4;
     rocket_input.client_action_time_us = 133333;
-    rocket_input.client_action_id = 3002;
+    rocket_input.action_intent = ActionIntent{
+        3002u, KernelActionBinding_PrimaryFire, 0u, 0u};
     rocket_input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
-    rocket_input.buttons = InputButton_Fire;
     rocket_input.selected_weapon = network_example::kWeaponSlot3;
     Kernel_SubmitInput(kernel, 1, &rocket_input);
 
@@ -430,7 +450,7 @@ int main() {
     const RenderEntityState predicted_rocket = find_projectile_action(
         predicted_rocket_states,
         predicted_rocket_count,
-        rocket_input.client_action_id);
+        rocket_input.action_intent.action_instance_id);
     assert(predicted_rocket.entity_id != 0);
     assert(predicted_rocket.net_id == 0);
 
@@ -459,14 +479,15 @@ int main() {
         find_entity(rocket_states, rocket_count, rocket_net_id);
     assert(rocket_state.entity_type == 3);
     assert(rocket_state.entity_id == predicted_rocket.entity_id);
-    assert(rocket_state.client_action_id == rocket_input.client_action_id);
+    assert(rocket_state.action_instance_id ==
+           rocket_input.action_intent.action_instance_id);
 
     PlayerInput rejected_projectile_input{};
     rejected_projectile_input.input_seq = 5;
     rejected_projectile_input.client_action_time_us = 166666;
-    rejected_projectile_input.client_action_id = 3003;
+    rejected_projectile_input.action_intent = ActionIntent{
+        3003u, KernelActionBinding_PrimaryFire, 0u, 0u};
     rejected_projectile_input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
-    rejected_projectile_input.buttons = InputButton_Fire;
     rejected_projectile_input.selected_weapon = 2;
     Kernel_SubmitInput(kernel, 1, &rejected_projectile_input);
     std::array<RenderEntityState, 16> rejected_predicted_states{};
@@ -477,7 +498,7 @@ int main() {
     assert(has_projectile_action(
         rejected_predicted_states,
         rejected_predicted_count,
-        rejected_projectile_input.client_action_id));
+        rejected_projectile_input.action_intent.action_instance_id));
     Kernel_Update(kernel, 1.0f / 30.0f);
     std::array<RenderEntityState, 16> rejected_after_states{};
     const std::uint32_t rejected_after_count = Kernel_GetRenderStates(
@@ -487,7 +508,7 @@ int main() {
     assert(!has_projectile_action(
         rejected_after_states,
         rejected_after_count,
-        rejected_projectile_input.client_action_id));
+        rejected_projectile_input.action_intent.action_instance_id));
 
     KernelServerEntityCreateInfo enemy_create{};
     enemy_create.struct_size = sizeof(enemy_create);

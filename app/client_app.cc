@@ -43,20 +43,30 @@ PlayerInput scripted_input(std::uint32_t sequence) {
     input.client_action_time_us = static_cast<std::uint64_t>(sequence) * 33333u;
     input.move = KernelVec2{1.0f, 0.0f};
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
-    input.buttons = 0;
     input.selected_weapon = 0;
 
     if (sequence == 2) {
-        input.buttons = InputButton_Fire;
+        input.action_intent = ActionIntent{
+            sequence, KernelActionBinding_PrimaryFire, 0u, 0u};
         input.selected_weapon = 0;
     } else if (sequence == 12) {
-        input.buttons = InputButton_Reload;
+        input.action_intent = ActionIntent{
+            sequence, KernelActionBinding_Reload, 0u, 0u};
         input.selected_weapon = 0;
     } else if (sequence == 36) {
-        input.buttons = InputButton_Fire;
+        input.action_intent = ActionIntent{
+            sequence, KernelActionBinding_PrimaryFire, 0u, 0u};
         input.selected_weapon = 1;
-    } else if (sequence >= 72 && sequence < 96) {
-        input.buttons = InputButton_Fire;
+    } else if (sequence == 72) {
+        input.action_intent = ActionIntent{
+            sequence, KernelActionBinding_PrimaryFire, 0u, 0u};
+        input.action_input = ActionInput{sequence, 1u, 0u, 0u};
+        input.selected_weapon = 2;
+    } else if (sequence > 72 && sequence < 96) {
+        input.action_input = ActionInput{72u, 1u, 0u, 0u};
+        input.selected_weapon = 2;
+    } else if (sequence == 96) {
+        input.action_input = ActionInput{72u, 0u, 0u, 0u};
         input.selected_weapon = 2;
     }
 
@@ -371,12 +381,16 @@ int RunClient(
 
         if (ready_for_input) {
             const PlayerInput input = scripted_input(sequence++);
-            if ((input.buttons & (InputButton_Fire | InputButton_Reload)) != 0) {
+            if (input.action_intent.action_instance_id != 0u ||
+                input.action_input.action_instance_id != 0u) {
                 ++combat_input_count;
                 spdlog::info(
-                    "client submitting combat input seq={} buttons={} weapon={}",
+                    "client submitting action input seq={} instance={} binding={} weapon={}",
                     input.input_seq,
-                    input.buttons,
+                    input.action_intent.action_instance_id != 0u
+                        ? input.action_intent.action_instance_id
+                        : input.action_input.action_instance_id,
+                    input.action_intent.binding_id,
                     static_cast<int>(input.selected_weapon));
             }
             Kernel_SubmitInput(kernel, 0, &input);

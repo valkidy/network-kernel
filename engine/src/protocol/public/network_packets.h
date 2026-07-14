@@ -39,7 +39,7 @@ struct ProjectileSpawnRecord {
     NetId projectile_net_id = 0;
     NetId owner_net_id = 0;
     PeerId owner_peer = 0;
-    std::uint32_t client_action_id = 0;
+    std::uint32_t action_instance_id = 0;
     glm::vec3 spawn_position{0.0f, 0.0f, 0.0f};
     glm::vec3 initial_velocity{0.0f, 0.0f, 0.0f};
 };

@@ -28,10 +28,10 @@ int main() {
     world.registry().emplace<network_example::ActionInputState>(
         *player_entity,
         network_example::ActionInputState{
-            (1u << 1) | (1u << 8),
-            0,
+            (1u << 8),
             7,
-            7001,
+            {7001u, 0u, 0u, 0u},
+            {7001u, 1u, 0u, 0u},
             network_example::kWeaponSlot3,
             glm::vec3{0.0f, 0.0f, 1.0f},
         });
@@ -60,7 +60,7 @@ int main() {
     network_example::ProjectileState& projectile_state =
         world.registry().get<network_example::ProjectileState>(*projectile_entity);
     projectile_state.spawn_tick = 7;
-    projectile_state.client_action_id = 3456;
+    projectile_state.action_instance_id = 3456;
     world.registry().emplace<network_example::HomingState>(
         *projectile_entity,
         network_example::HomingState{
@@ -110,7 +110,7 @@ int main() {
             saw_projectile_metadata =
                 entity.owner_peer == 1 &&
                 entity.spawn_tick == 7 &&
-                entity.client_action_id == 3456 &&
+                entity.action_instance_id == 3456 &&
                 entity.velocity.x == 10.0f &&
                 entity.state == static_cast<std::uint16_t>(
                     network_example::MissileGuidancePhase::kGuided);

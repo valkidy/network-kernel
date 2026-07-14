@@ -44,7 +44,7 @@ RenderEntityState render_state_from_world_entity(
     std::uint16_t animation_state = 0;
     std::uint32_t visual_flags = derived_visual_flags(world, entity);
     std::uint32_t spawn_tick = 0;
-    std::uint32_t client_action_id = 0;
+    std::uint32_t action_instance_id = 0;
     std::uint32_t actor_template_id = 0;
     std::uint32_t projectile_template_id = 0;
     std::uint16_t hp = 0;
@@ -73,7 +73,7 @@ RenderEntityState render_state_from_world_entity(
         const ProjectileState& projectile =
             world.registry().get<ProjectileState>(entity);
         spawn_tick = projectile.spawn_tick;
-        client_action_id = projectile.client_action_id;
+        action_instance_id = projectile.action_instance_id;
         projectile_template_id = projectile.projectile_template_id;
     }
     if (world.registry().all_of<ActorTemplateRef>(entity)) {
@@ -114,7 +114,7 @@ RenderEntityState render_state_from_world_entity(
         animation_state,
         visual_flags,
         spawn_tick,
-        client_action_id,
+        action_instance_id,
         RenderEntityStatus_Active,
         projectile_template_id,
         0,
@@ -147,7 +147,7 @@ RenderEntityState render_state_from_snapshot_entity(
                  ? kVisualFlagHpUnknown
                  : 0u),
         entity.spawn_tick,
-        entity.client_action_id,
+        entity.action_instance_id,
         RenderEntityStatus_Active,
         0,
         0,

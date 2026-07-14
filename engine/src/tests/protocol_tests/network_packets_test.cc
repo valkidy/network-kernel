@@ -19,12 +19,13 @@ int main() {
     PlayerInput input{};
     input.input_seq = 7;
     input.client_action_time_us = 11000;
-    input.client_action_id = 1234;
     input.move = KernelVec2{0.5f, -0.25f};
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
-    input.buttons = InputButton_Fire | InputButton_Sprint | InputButton_Dodge |
-                    InputButton_Parry;
+    input.buttons = InputButton_Sprint | InputButton_Dodge | InputButton_Parry;
     input.selected_weapon = 2;
+    input.action_intent = ActionIntent{
+        1234u, KernelActionBinding_PrimaryFire, 0u, 0u};
+    input.action_input = ActionInput{1234u, 1u, 0u, 0u};
 
     const std::vector<std::uint8_t> input_packet =
         network_example::encode_input_packet(3, input, 42);
@@ -38,7 +39,13 @@ int main() {
     assert(decoded_player == 3);
     assert(decoded_input.input_seq == input.input_seq);
     assert(decoded_input.client_action_time_us == input.client_action_time_us);
-    assert(decoded_input.client_action_id == input.client_action_id);
+    assert(decoded_input.action_intent.action_instance_id ==
+           input.action_intent.action_instance_id);
+    assert(decoded_input.action_intent.binding_id ==
+           input.action_intent.binding_id);
+    assert(decoded_input.action_input.action_instance_id ==
+           input.action_input.action_instance_id);
+    assert(decoded_input.action_input.held == input.action_input.held);
     assert(nearly_equal(decoded_input.move.x, input.move.x));
     assert(nearly_equal(decoded_input.move.y, input.move.y));
     assert(nearly_equal(decoded_input.aim_dir.x, input.aim_dir.x));
@@ -91,7 +98,7 @@ int main() {
     hybrid_projectile.net_id = 7;
     hybrid_projectile.owner_peer = 3;
     hybrid_projectile.spawn_tick = 12;
-    hybrid_projectile.client_action_id = 1234;
+    hybrid_projectile.action_instance_id = 1234;
     hybrid_projectile.state_flags |=
         network_example::kSnapshotStateFlagProjectileHybridCorrection;
     snapshot.entities.push_back(hybrid_projectile);
@@ -148,12 +155,12 @@ int main() {
     assert(!nearly_equal(decoded_snapshot.entities[2].rotation.w, 0.5f));
     assert(nearly_equal(decoded_snapshot.entities[2].velocity.z, 6.0f));
     assert(decoded_snapshot.entities[2].spawn_tick == 0);
-    assert(decoded_snapshot.entities[2].client_action_id == 0);
+    assert(decoded_snapshot.entities[2].action_instance_id == 0);
     assert(decoded_snapshot.entities[3].net_id == 7);
     assert(decoded_snapshot.entities[3].type == network_example::EntityType::kProjectile);
     assert(decoded_snapshot.entities[3].owner_peer == 3);
     assert(decoded_snapshot.entities[3].spawn_tick == 12);
-    assert(decoded_snapshot.entities[3].client_action_id == 1234);
+    assert(decoded_snapshot.entities[3].action_instance_id == 1234);
     assert((decoded_snapshot.entities[3].state_flags &
             network_example::kSnapshotStateFlagProjectileHybridCorrection) != 0u);
 
@@ -278,7 +285,7 @@ int main() {
     assert(decoded_batch.groups[0].records[0].projectile_net_id == 101);
     assert(decoded_batch.groups[0].records[0].owner_net_id == 11);
     assert(decoded_batch.groups[0].records[0].owner_peer == 7);
-    assert(decoded_batch.groups[0].records[0].client_action_id == 1234);
+    assert(decoded_batch.groups[0].records[0].action_instance_id == 1234);
     assert(nearly_equal(decoded_batch.groups[0].records[0].spawn_position.y, 2.0f));
     assert(nearly_equal(decoded_batch.groups[0].records[0].initial_velocity.z, 6.0f));
 

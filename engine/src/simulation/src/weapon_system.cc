@@ -73,60 +73,6 @@ void push_event(
         presentation_time_us});
 }
 
-void complete_ready_reload(
-    const World& world,
-    entt::entity entity,
-    WeaponState& weapon,
-    std::uint32_t current_tick) {
-    if (!weapon.is_reloading || current_tick < weapon.reload_end_tick) {
-        return;
-    }
-
-    const WeaponMechanicsDefinition* definition =
-        current_weapon_definition_for_entity(world, entity, weapon);
-    if (definition == nullptr) {
-        return;
-    }
-    const std::size_t index = weapon_index(definition->id);
-    if (weapon.reserve_magazines[index] > 0) {
-        weapon.ammo[index] = definition->magazine_size;
-        --weapon.reserve_magazines[index];
-    }
-    weapon.is_reloading = false;
-    weapon.reload_end_tick = 0;
-}
-
-void begin_reload(
-    WeaponState& weapon,
-    const WeaponMechanicsDefinition& definition,
-    std::uint32_t current_tick) {
-    const std::size_t index = weapon_index(definition.id);
-    if (weapon.is_reloading || weapon.ammo[index] >= definition.magazine_size ||
-        weapon.reserve_magazines[index] == 0) {
-        return;
-    }
-    weapon.is_reloading = true;
-    weapon.reload_end_tick = current_tick + definition.reload_ticks;
-}
-
-bool can_fire(
-    const WeaponState& weapon,
-    const WeaponMechanicsDefinition& definition,
-    std::uint32_t current_tick) {
-    const std::size_t index = weapon_index(definition.id);
-    return !weapon.is_reloading && current_tick >= weapon.next_fire_tick[index] &&
-           weapon.ammo[index] > 0;
-}
-
-void consume_ammo(
-    WeaponState& weapon,
-    const WeaponMechanicsDefinition& definition,
-    std::uint32_t current_tick) {
-    const std::size_t index = weapon_index(definition.id);
-    --weapon.ammo[index];
-    weapon.next_fire_tick[index] = current_tick + definition.cooldown_ticks;
-}
-
 std::vector<glm::vec3> pellet_directions(
     const glm::vec3& direction,
     const WeaponMechanicsDefinition& definition) {
@@ -330,7 +276,7 @@ NetId fire_projectile(
     std::uint32_t spawn_tick,
     NetId shooter_net_id,
     PeerId shooter_peer_id,
-    std::uint32_t client_action_id,
+    std::uint32_t action_instance_id,
     const glm::vec3& origin,
     const glm::vec3& velocity,
     float fixed_delta_seconds,
@@ -362,7 +308,7 @@ NetId fire_projectile(
             projectile_template.projectile_template_id;
         projectile_state.damage = projectile_template.damage;
         projectile_state.spawn_tick = spawn_tick;
-        projectile_state.client_action_id = client_action_id;
+        projectile_state.action_instance_id = action_instance_id;
         projectile_state.shooter_net_id = shooter_net_id;
         projectile_state.motion_model = projectile_template.motion_model;
         projectile_state.hit_response = projectile_template.hit_response;
@@ -445,17 +391,6 @@ NetId fire_projectile(
     return projectile;
 }
 
-void complete_all_reloads(World& world, std::uint32_t current_tick) {
-    auto view = world.registry().view<WeaponState>();
-    for (const entt::entity entity : view) {
-        complete_ready_reload(
-            world,
-            entity,
-            view.get<WeaponState>(entity),
-            current_tick);
-    }
-}
-
 }  // namespace
 
 void simulate_weapons(
@@ -469,37 +404,41 @@ void simulate_weapons(
     if (damage_pipeline == nullptr) {
         damage_pipeline = &local_damage_pipeline;
     }
-    complete_all_reloads(world, current_tick);
-
-    struct EffectInput {
-        QueuedInput queued_input;
-        bool action_commit = false;
-    };
-    std::vector<EffectInput> effect_inputs;
-    effect_inputs.reserve(inputs.size());
-    for (const QueuedInput& queued_input : inputs) {
-        effect_inputs.push_back(EffectInput{queued_input, false});
-    }
     const std::vector<ActionCommit> action_commits =
-        simulate_actions(world, inputs, current_tick);
-    effect_inputs.reserve(effect_inputs.size() + action_commits.size());
+        simulate_actions(world, inputs, current_tick, context.action_outcomes);
+
+    auto push_action_outcome = [&context](
+                                   const ActionCommit& commit,
+                                   ActionOutcomeType type,
+                                   KernelLocalActionResultReason reason) {
+        if (context.action_outcomes == nullptr) {
+            return;
+        }
+        context.action_outcomes->push_back(ActionOutcome{
+            commit.controlled_net_id,
+            commit.owner_peer,
+            commit.action_template_id,
+            commit.action_instance_id,
+            commit.binding_id,
+            commit.commit_count,
+            commit.authoritative_tick,
+            type,
+            reason,
+        });
+    };
+
     for (const ActionCommit& commit : action_commits) {
         QueuedInput queued_input{};
         queued_input.owner_peer = commit.owner_peer;
         queued_input.controlled_net_id = commit.controlled_net_id;
-        queued_input.input.client_action_id = commit.action_instance_id;
+        queued_input.input.action_intent.action_instance_id =
+            commit.action_instance_id;
         queued_input.input.aim_dir = KernelVec3{
             commit.aim_direction.x,
             commit.aim_direction.y,
             commit.aim_direction.z,
         };
-        queued_input.input.buttons = InputButton_Fire;
         queued_input.input.selected_weapon = commit.weapon_id;
-        effect_inputs.push_back(EffectInput{queued_input, true});
-    }
-
-    for (const EffectInput& effect_input : effect_inputs) {
-        const QueuedInput& queued_input = effect_input.queued_input;
         auto player_view =
             world.registry()
                 .view<NetworkIdentity, Transform, WeaponState, Hitbox>();
@@ -527,26 +466,60 @@ void simulate_weapons(
             }
             WeaponState& weapon = player_view.get<WeaponState>(player_entity);
             weapon.weapon_id = definition->id;
-
-            if (definition->fire_action_template_id != 0u &&
-                !effect_input.action_commit) {
-                continue;
+            const std::size_t index = weapon_index(definition->id);
+            if (commit.binding_id == KernelActionBinding_Reload) {
+                if (weapon.reserve_magazines[index] == 0u ||
+                    weapon.ammo[index] >= definition->magazine_size) {
+                    weapon.is_reloading = false;
+                    push_action_outcome(
+                        commit,
+                        ActionOutcomeType::Corrected,
+                        KernelLocalActionResultReason_EffectFailed);
+                    break;
+                }
+                weapon.ammo[index] = definition->magazine_size;
+                --weapon.reserve_magazines[index];
+                weapon.is_reloading = false;
+                push_action_outcome(
+                    commit,
+                    ActionOutcomeType::Committed,
+                    KernelLocalActionResultReason_None);
+                if (commit.completes_action) {
+                    push_action_outcome(
+                        commit,
+                        ActionOutcomeType::Completed,
+                        KernelLocalActionResultReason_None);
+                }
+                break;
             }
-
-            if (!effect_input.action_commit &&
-                (queued_input.input.buttons & InputButton_Reload) != 0) {
-                begin_reload(weapon, *definition, current_tick);
+            if (commit.binding_id != KernelActionBinding_PrimaryFire) {
+                push_action_outcome(
+                    commit,
+                    ActionOutcomeType::Corrected,
+                    KernelLocalActionResultReason_MissingTemplate);
+                break;
             }
-            if ((queued_input.input.buttons & InputButton_Fire) == 0) {
-                continue;
+            const RuntimeActionTemplate* action_template =
+                world.find_action_template(commit.action_template_id);
+            if (action_template == nullptr ||
+                weapon.ammo[index] < action_template->ammo_cost_per_commit) {
+                push_action_outcome(
+                    commit,
+                    ActionOutcomeType::Corrected,
+                    KernelLocalActionResultReason_EffectFailed);
+                break;
             }
-            if (!effect_input.action_commit &&
-                !can_fire(weapon, *definition, current_tick)) {
-                continue;
-            }
-
-            if (!effect_input.action_commit) {
-                consume_ammo(weapon, *definition, current_tick);
+            weapon.ammo[index] = static_cast<std::uint16_t>(
+                weapon.ammo[index] - action_template->ammo_cost_per_commit);
+            push_action_outcome(
+                commit,
+                ActionOutcomeType::Committed,
+                KernelLocalActionResultReason_None);
+            if (commit.completes_action) {
+                push_action_outcome(
+                    commit,
+                    ActionOutcomeType::Completed,
+                    KernelLocalActionResultReason_None);
             }
             push_event(
                 events,
@@ -607,8 +580,7 @@ void simulate_weapons(
                     context.rewind_frame != nullptr ? context.rewind_tick : current_tick;
                 const std::uint32_t elapsed_ticks =
                     current_tick > spawn_tick ? current_tick - spawn_tick : 0u;
-                if (effect_input.action_commit &&
-                    projectile_template->projectile_type == ProjectileType::kBeam &&
+                if (projectile_template->projectile_type == ProjectileType::kBeam &&
                     weapon.active_effect_net_id != 0u) {
                     const std::optional<entt::entity> beam_entity =
                         world.find_entity(weapon.active_effect_net_id);
@@ -639,15 +611,14 @@ void simulate_weapons(
                         spawn_tick,
                         player_identity.net_id,
                         queued_input.owner_peer,
-                        queued_input.input.client_action_id,
+                        queued_input.input.action_intent.action_instance_id,
                         compensated_origin,
                         velocity,
                         context.fixed_delta_seconds,
                         elapsed_ticks,
                         events);
-                    if (effect_input.action_commit &&
-                        projectile_template->projectile_type ==
-                            ProjectileType::kBeam) {
+                    if (projectile_template->projectile_type ==
+                        ProjectileType::kBeam) {
                         weapon.active_effect_net_id = projectile;
                     }
                     if (context.history_buffer != nullptr &&

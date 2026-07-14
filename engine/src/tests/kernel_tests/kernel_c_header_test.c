@@ -5,7 +5,9 @@
 
 #include "kernel/public/kernel_api.h"
 
-_Static_assert(KERNEL_ABI_VERSION == 38u, "compact action timeline ABI");
+_Static_assert(KERNEL_ABI_VERSION == 40u, "generalized action input ABI");
+_Static_assert(sizeof(ActionIntent) == 8u, "ActionIntent ABI size");
+_Static_assert(sizeof(ActionInput) == 8u, "ActionInput ABI size");
 _Static_assert(
     offsetof(KernelWeaponMechanicsDefinition, reserve_magazines) >
         offsetof(KernelWeaponMechanicsDefinition, magazine_size),
@@ -95,7 +97,7 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 38u);
+    assert(KERNEL_ABI_VERSION == 40u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD == 4u);
@@ -194,10 +196,10 @@ int main(void) {
     assert((KERNEL_VISUAL_FLAG_MOVING & KERNEL_VISUAL_FLAG_RELOADING) == 0u);
     assert((KERNEL_VISUAL_FLAG_MOVING & KERNEL_VISUAL_FLAG_DEAD) == 0u);
     assert((InputButton_Dodge & InputButton_Parry) == 0u);
-    assert((InputButton_Dodge & InputButton_Reload) == 0u);
     assert(sizeof(abi_info.abi_version) == sizeof(uint32_t));
     assert(offsetof(PlayerInput, client_action_time_us) > offsetof(PlayerInput, input_seq));
-    assert(offsetof(PlayerInput, client_action_id) > offsetof(PlayerInput, client_action_time_us));
+    assert(offsetof(PlayerInput, action_intent) > offsetof(PlayerInput, selected_weapon));
+    assert(offsetof(PlayerInput, action_input) > offsetof(PlayerInput, action_intent));
     assert(offsetof(RenderEntityState, entity_id) == 0u);
     assert(offsetof(RenderEntityState, hp) > offsetof(RenderEntityState, velocity));
     assert(offsetof(RenderEntityState, max_hp) > offsetof(RenderEntityState, hp));

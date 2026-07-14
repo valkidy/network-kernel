@@ -148,7 +148,7 @@ network_example::WorldSnapshot projectile_snapshot(
     std::uint32_t server_tick,
     network_example::NetId net_id,
     network_example::PeerId owner_peer,
-    std::uint32_t client_action_id,
+    std::uint32_t action_instance_id,
     const glm::vec3& position,
     const glm::vec3& velocity) {
     network_example::WorldSnapshot snapshot;
@@ -160,7 +160,7 @@ network_example::WorldSnapshot projectile_snapshot(
     entity.position = position;
     entity.velocity = velocity;
     entity.spawn_tick = server_tick;
-    entity.client_action_id = client_action_id;
+    entity.action_instance_id = action_instance_id;
     snapshot.entities.push_back(entity);
     return snapshot;
 }
@@ -241,7 +241,7 @@ void client_query_collider_shapes_reports_render_colliders() {
     projectile.position = glm::vec3{1.0f, 0.0f, 0.0f};
     projectile.velocity = glm::vec3{10.0f, 0.0f, 0.0f};
     projectile.spawn_tick = 3;
-    projectile.client_action_id = 1234;
+    projectile.action_instance_id = 1234;
     snapshot.entities.push_back(projectile);
     client.handle_client_snapshot(snapshot);
 
@@ -324,10 +324,11 @@ void local_deterministic_prediction_query_uses_projectile_template_collider() {
     client.local_player_net_id_ = player_net_id;
     PlayerInput input{};
     input.input_seq = 1;
-    input.client_action_id = 1234;
-    input.buttons = InputButton_Fire;
+    input.action_intent = ActionIntent{
+        1234u, KernelActionBinding_PrimaryFire, 0u, 0u};
     input.selected_weapon = 2;
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
+    client.predicted_local_entity_.action_instance_id = 1234u;
     client.predict_local_projectile(input);
     require(client.predicted_projectiles_.size() == 1);
     require(client.predicted_projectiles_[0].projectile_template_id == 3);
@@ -983,7 +984,7 @@ void local_projectile_snapshot_fast_forwards_and_smooths() {
     predicted.entity_id = 9000;
     predicted.owner_peer = 7;
     predicted.input_seq = 3;
-    predicted.client_action_id = 4444;
+    predicted.action_instance_id = 4444;
     predicted.spawn_tick = 20;
     predicted.position = glm::vec3{6.2f, 0.0f, 0.0f};
     predicted.velocity = glm::vec3{100.0f, 0.0f, 0.0f};
@@ -1045,7 +1046,7 @@ void homing_projectile_snapshot_extrapolation_is_bounded() {
     predicted.entity_id = 9000;
     predicted.owner_peer = 7;
     predicted.input_seq = 3;
-    predicted.client_action_id = 4444;
+    predicted.action_instance_id = 4444;
     predicted.spawn_tick = 500;
     predicted.position = glm::vec3{6.2f, 0.0f, 0.0f};
     predicted.velocity = glm::vec3{100.0f, 0.0f, 0.0f};
@@ -1162,8 +1163,9 @@ void owner_action_prediction_and_discrete_interpolation() {
 
     PlayerInput input{};
     input.input_seq = 1;
-    input.client_action_id = 7001;
-    input.buttons = InputButton_Fire | InputButton_Aim;
+    input.action_intent = ActionIntent{
+        7001u, KernelActionBinding_PrimaryFire, 0u, 0u};
+    input.buttons = InputButton_Aim;
     input.selected_weapon = network_example::kWeaponSlot3;
     input.aim_dir = KernelVec3{0.0f, 0.0f, 1.0f};
     engine.predict_local_input(input);
@@ -1226,7 +1228,7 @@ void late_snapshot_is_stored_but_not_used_for_reconciliation() {
     predicted.entity_id = 9000;
     predicted.owner_peer = 7;
     predicted.input_seq = 3;
-    predicted.client_action_id = 4444;
+    predicted.action_instance_id = 4444;
     predicted.spawn_tick = 20;
     predicted.position = glm::vec3{6.2f, 0.0f, 0.0f};
     predicted.velocity = glm::vec3{100.0f, 0.0f, 0.0f};
@@ -1248,7 +1250,7 @@ void late_snapshot_is_stored_but_not_used_for_reconciliation() {
         5.0f);
     newer.entities.back().owner_peer = 7;
     newer.entities.back().velocity = glm::vec3{100.0f, 0.0f, 0.0f};
-    newer.entities.back().client_action_id = 4444;
+    newer.entities.back().action_instance_id = 4444;
     engine.handle_client_snapshot(newer);
     require(engine.latest_client_snapshot_.header.server_tick == 10);
     require(engine.predicted_local_entity_.position.x == 10.0f);
@@ -1744,7 +1746,7 @@ void projectile_spawn_batch_renders_and_binds_to_snapshot() {
     require(states[0].net_id == 101);
     require(states[0].entity_type == static_cast<std::uint16_t>(
         network_example::EntityType::kProjectile));
-    require(states[0].client_action_id == 1234);
+    require(states[0].action_instance_id == 1234);
 
     std::array<KernelDebugInfo, 2> debug_records{};
     for (KernelDebugInfo& debug_record : debug_records) {
@@ -2471,7 +2473,7 @@ void client_update_advances_local_predicted_deterministic_projectile() {
     projectile.entity_id = 9000;
     projectile.net_id = 101;
     projectile.owner_peer = 7;
-    projectile.client_action_id = 1234;
+    projectile.action_instance_id = 1234;
     projectile.position = glm::vec3{1.0f, 0.0f, 0.0f};
     projectile.velocity = glm::vec3{30.0f, 0.0f, 0.0f};
     projectile.spawn_position = projectile.position;
@@ -2630,13 +2632,14 @@ void action_result_and_remote_presentation_queues_are_isolated() {
     client.reset_runtime_state(KernelMode_Client);
 
     PlayerInput invalid_fire{};
-    invalid_fire.buttons = InputButton_Fire;
+    invalid_fire.action_intent = ActionIntent{
+        1u, KernelActionBinding_PrimaryFire, 1u, 0u};
     const PlayerInput prepared = client.prepare_client_input(invalid_fire);
-    require((prepared.buttons & InputButton_Fire) == 0u);
+    require(prepared.action_intent.action_instance_id == 0u);
 
-    client.outstanding_predicted_fires_.emplace(
+    client.outstanding_predicted_actions_.emplace(
         7001u,
-        network_example::KernelEngine::OutstandingPredictedFire{
+        network_example::KernelEngine::OutstandingPredictedAction{
             7001u,
             10u,
             0u,
@@ -2726,9 +2729,33 @@ void server_routes_fire_result_to_owner_and_presentation_to_observer() {
     tuning.definitions[0].mode = network_example::WeaponFireMode::kHitscan;
     tuning.definitions[0].magazine_size = 30;
     tuning.definitions[0].damage = 1;
-    tuning.definitions[0].cooldown_ticks = 3;
-    tuning.definitions[0].reload_ticks = 30;
     tuning.definitions[0].max_range = 20.0f;
+    tuning.definitions[0].fire_action_template_id = 1001u;
+    tuning.definitions[0].reload_action_template_id = 1000u;
+    server.world_.set_action_templates({
+        network_example::RuntimeActionTemplate{
+            1000u,
+            KernelActionTriggerMode_Press,
+            0u,
+            0u,
+            30u,
+            0u,
+            1u,
+            0u,
+            0u,
+        },
+        network_example::RuntimeActionTemplate{
+            1001u,
+            KernelActionTriggerMode_Press,
+            0u,
+            1u,
+            0u,
+            1u,
+            1u,
+            0u,
+            0u,
+        },
+    });
     server.world_.registry()
         .get<network_example::WeaponState>(*owner_entity)
         .ammo[0] = 30;
@@ -2752,12 +2779,14 @@ void server_routes_fire_result_to_owner_and_presentation_to_observer() {
 
     PlayerInput input{};
     input.input_seq = 1;
-    input.client_action_id = 7001;
-    input.buttons = InputButton_Fire;
+    input.action_intent = ActionIntent{
+        7001u, KernelActionBinding_PrimaryFire, 0u, 0u};
+    input.action_input = ActionInput{7001u, 1u, 0u, 0u};
     input.selected_weapon = 0;
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     auto* owner_session = server.find_session(1);
-    require(server.prepare_server_fire_input(owner_session, input));
+    server.prepare_server_action_intent(owner_session, &input);
+    require(input.action_intent.action_instance_id == 7001u);
     server.pending_inputs_.push_back(network_example::QueuedInput{
         1,
         input,
@@ -2813,7 +2842,9 @@ void server_routes_fire_result_to_owner_and_presentation_to_observer() {
     require(observer_presentation);
 
     owner_session = server.find_session(1);
-    require(!server.prepare_server_fire_input(owner_session, input));
+    PlayerInput duplicate_input = input;
+    server.prepare_server_action_intent(owner_session, &duplicate_input);
+    require(duplicate_input.action_intent.action_instance_id == 0u);
     server.simulate_tick();
     require(
         server.world_.registry()
@@ -2846,9 +2877,12 @@ void server_routes_fire_result_to_owner_and_presentation_to_observer() {
         0,
     }});
     input.input_seq = 3;
-    input.client_action_id = 7002;
+    input.action_intent = ActionIntent{
+        7002u, KernelActionBinding_PrimaryFire, 0u, 0u};
+    input.action_input = ActionInput{7002u, 1u, 0u, 0u};
     owner_session = server.find_session(1);
-    require(server.prepare_server_fire_input(owner_session, input));
+    server.prepare_server_action_intent(owner_session, &input);
+    require(input.action_intent.action_instance_id == 7002u);
     server.pending_inputs_.push_back(network_example::QueuedInput{
         1,
         input,
@@ -2904,14 +2938,16 @@ void server_routes_fire_result_to_owner_and_presentation_to_observer() {
         3,
     }});
     input.input_seq = 5;
-    input.client_action_id = 7003;
+    input.action_intent = ActionIntent{
+        7003u, KernelActionBinding_PrimaryFire, 0u, 0u};
+    input.action_input = ActionInput{7003u, 1u, 0u, 0u};
     const std::uint16_t hold_ammo_before =
         server.world_.registry()
             .get<network_example::WeaponState>(*owner_entity)
             .ammo[0];
     for (int commit = 0; commit < 2; ++commit) {
         owner_session = server.find_session(1);
-        require(server.prepare_server_fire_input(owner_session, input));
+        server.prepare_server_action_intent(owner_session, &input);
         server.pending_inputs_.push_back(network_example::QueuedInput{
             1,
             input,

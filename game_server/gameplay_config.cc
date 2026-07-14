@@ -96,14 +96,13 @@ void hash_weapon(std::uint64_t* hash, const KernelWeaponMechanicsDefinition& wea
     hash_scalar(hash, weapon.magazine_size);
     hash_scalar(hash, weapon.reserve_magazines);
     hash_scalar(hash, weapon.damage);
-    hash_scalar(hash, weapon.cooldown_ticks);
-    hash_scalar(hash, weapon.reload_ticks);
     hash_float(hash, weapon.max_range);
     hash_scalar(hash, weapon.pellet_count);
     hash_float(hash, weapon.pellet_spread);
     hash_scalar(hash, weapon.segment_collider_template_id);
     hash_scalar(hash, weapon.projectile_template_id);
     hash_scalar(hash, weapon.fire_action_template_id);
+    hash_scalar(hash, weapon.reload_action_template_id);
 }
 
 void hash_action_template(
@@ -242,8 +241,8 @@ KernelWeaponMechanicsDefinition hitscan_weapon(
     weapon.magazine_size = magazine_size;
     weapon.reserve_magazines = kDefaultReserveMagazines;
     weapon.damage = damage;
-    weapon.cooldown_ticks = cooldown_ticks;
-    weapon.reload_ticks = reload_ticks;
+    (void)cooldown_ticks;
+    (void)reload_ticks;
     weapon.max_range = max_range;
     weapon.pellet_count = 1;
     return weapon;
@@ -285,8 +284,8 @@ KernelWeaponMechanicsDefinition area_effect_weapon(
     weapon.magazine_size = magazine_size;
     weapon.reserve_magazines = kDefaultReserveMagazines;
     weapon.damage = damage;
-    weapon.cooldown_ticks = cooldown_ticks;
-    weapon.reload_ticks = reload_ticks;
+    (void)cooldown_ticks;
+    (void)reload_ticks;
     weapon.pellet_count = 1;
     weapon.projectile_template_id = weapon_id;
     return weapon;
@@ -305,8 +304,8 @@ KernelWeaponMechanicsDefinition beam_weapon(
     weapon.magazine_size = magazine_size;
     weapon.reserve_magazines = kDefaultReserveMagazines;
     weapon.damage = damage;
-    weapon.cooldown_ticks = cooldown_ticks;
-    weapon.reload_ticks = reload_ticks;
+    (void)cooldown_ticks;
+    (void)reload_ticks;
     weapon.pellet_count = 1;
     weapon.projectile_template_id = weapon_id;
     return weapon;
@@ -328,8 +327,8 @@ bool validate_weapon_mechanics(
         weapon.weapon_id >= kWeaponCount ||
         weapon.magazine_size == 0 ||
         weapon.damage == 0 ||
-        (weapon.fire_action_template_id == 0u && weapon.cooldown_ticks == 0u) ||
-        weapon.reload_ticks == 0 ||
+        weapon.fire_action_template_id == 0u ||
+        weapon.reload_action_template_id == 0u ||
         weapon.fire_mode > KernelWeaponFireMode_Projectile) {
         return false;
     }
@@ -947,8 +946,8 @@ bool valid_action_template_definition(
         definition.action_template_id == 0u ||
         definition.trigger_mode > KernelActionTriggerMode_Hold ||
         (definition.flags & ~kKnownFlags) != 0u ||
-        definition.ammo_cost_per_commit == 0u ||
-        definition.commit_interval_ticks == 0u) {
+        (definition.max_commit_count != 1u &&
+         definition.commit_interval_ticks == 0u)) {
         return false;
     }
     if (definition.trigger_mode == KernelActionTriggerMode_Press) {
@@ -1210,8 +1209,8 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
         weapon.fire_mode = KernelWeaponFireMode_Projectile;
         weapon.magazine_size = magazine_size;
         weapon.reserve_magazines = reserve_magazines;
-        weapon.cooldown_ticks = cooldown_ticks;
-        weapon.reload_ticks = reload_ticks;
+        (void)cooldown_ticks;
+        (void)reload_ticks;
         weapon.pellet_count = 1;
         weapon.pellet_count =
             node["burst_count"]
@@ -2766,6 +2765,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
         {
             "catalog_version",
             "action_template_dir",
+            "reload_action_template",
             "weapon_template_dir",
             "projectile_template_dir",
             "actor_template_dir",
@@ -2833,6 +2833,15 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
         config.action_templates =
             load_action_templates_from_source(source, action_template_dir);
     }
+    if (!document["reload_action_template"]) {
+        throw std::runtime_error(
+            "gameplay catalog requires reload_action_template: " + path);
+    }
+    ActionTemplateConfig reload_action = action_template_from_yaml(
+        document["reload_action_template"],
+        path,
+        source.source_kind());
+    config.action_templates.push_back(reload_action);
     config.weapons = load_weapon_catalog_from_source(source, weapon_template_dir);
     apply_default_non_weapon_config(&config);
     config.weapons.catalog_version = catalog_version;
@@ -2854,6 +2863,10 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
         &config.projectile_templates,
         config.action_templates,
         &config.weapons);
+    for (KernelWeaponMechanicsDefinition& weapon : config.weapons.definitions) {
+        weapon.reload_action_template_id =
+            reload_action.definition.action_template_id;
+    }
 
     if (document["entity_template_dir"]) {
         const std::string entity_template_dir =
@@ -3119,6 +3132,13 @@ std::vector<std::string> validate_gameplay_config(
                 action_template_ids.end(),
                 weapon.fire_action_template_id) == action_template_ids.end()) {
             errors.push_back("weapon action template reference must be valid");
+        }
+        if (weapon.reload_action_template_id == 0u ||
+            std::find(
+                action_template_ids.begin(),
+                action_template_ids.end(),
+                weapon.reload_action_template_id) == action_template_ids.end()) {
+            errors.push_back("weapon reload action template reference must be valid");
         }
         if (config.weapons.projectile_sync_modes[index] >
             KernelProjectileSyncMode_ServerSnapshotOnly) {

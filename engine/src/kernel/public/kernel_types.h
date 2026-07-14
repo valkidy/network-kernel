@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 39u
+#define KERNEL_ABI_VERSION 40u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -96,6 +96,7 @@
 #define KERNEL_CAPABILITY_ACTION_TIMELINE UINT64_C(0x0000002000000000)
 #define KERNEL_CAPABILITY_LOCAL_ACTION_RESULTS UINT64_C(0x0000004000000000)
 #define KERNEL_CAPABILITY_REMOTE_ACTION_PRESENTATION UINT64_C(0x0000008000000000)
+#define KERNEL_CAPABILITY_ACTION_INTENTS UINT64_C(0x0000010000000000)
 
 #define KERNEL_COLLISION_LAYER_PLAYER_SIDE UINT32_C(0x00000001)
 #define KERNEL_COLLISION_LAYER_HOSTILE_SIDE UINT32_C(0x00000002)
@@ -198,6 +199,8 @@ typedef struct KernelAbiInfo {
     uint32_t action_runtime_view_size;
     uint32_t local_action_result_size;
     uint32_t remote_action_presentation_event_size;
+    uint32_t action_intent_size;
+    uint32_t action_input_size;
 } KernelAbiInfo;
 
 typedef struct KernelBuildInfo {
@@ -308,15 +311,16 @@ typedef enum KernelEntityLifecycleEventType {
 
 typedef enum InputButton {
     InputButton_MoveJump = 1u << 0,
-    InputButton_Fire = 1u << 1,
-    InputButton_Reload = 1u << 2,
     InputButton_Sprint = 1u << 3,
-    InputButton_Interact = 1u << 4,
-    InputButton_Ability1 = 1u << 5,
     InputButton_Dodge = 1u << 6,
     InputButton_Parry = 1u << 7,
     InputButton_Aim = 1u << 8,
 } InputButton;
+
+typedef enum KernelActionBinding {
+    KernelActionBinding_PrimaryFire = 0,
+    KernelActionBinding_Reload = 1,
+} KernelActionBinding;
 
 typedef enum KernelActionTriggerMode {
     KernelActionTriggerMode_Press = 0,
@@ -353,7 +357,7 @@ typedef enum KernelLocalActionResultReason {
 
 typedef enum KernelRemoteActionPresentationEventType {
     KernelRemoteActionPresentationEventType_FireCommit = 0,
-    KernelRemoteActionPresentationEventType_AbilityCommit = 1,
+    KernelRemoteActionPresentationEventType_CastingCommit = 1,
     KernelRemoteActionPresentationEventType_ReloadCommit = 2,
     KernelRemoteActionPresentationEventType_HitReaction = 3,
     KernelRemoteActionPresentationEventType_DeathTrigger = 4,
@@ -485,15 +489,30 @@ typedef struct KernelConfig {
     uint32_t max_events;
 } KernelConfig;
 
+typedef struct ActionIntent {
+    uint32_t action_instance_id;
+    uint16_t binding_id;
+    uint8_t flags;
+    uint8_t reserved;
+} ActionIntent;
+
+typedef struct ActionInput {
+    uint32_t action_instance_id;
+    uint8_t held;
+    uint8_t flags;
+    uint16_t reserved;
+} ActionInput;
+
 typedef struct PlayerInput {
     uint32_t input_seq;
     uint64_t client_action_time_us;
-    uint32_t client_action_id;
     KernelVec2 move;
     KernelVec2 look_delta;
     KernelVec3 aim_dir;
     uint32_t buttons;
     uint8_t selected_weapon;
+    ActionIntent action_intent;
+    ActionInput action_input;
 } PlayerInput;
 
 typedef struct KernelLocalActionResult {
@@ -540,7 +559,7 @@ typedef struct RenderEntityState {
     uint16_t animation_state;
     uint32_t visual_flags;
     uint32_t spawn_tick;
-    uint32_t client_action_id;
+    uint32_t action_instance_id;
     uint32_t status;
     uint32_t projectile_template_id;
     uint32_t collider_template_id;
@@ -1002,15 +1021,13 @@ typedef struct KernelWeaponMechanicsDefinition {
     uint16_t magazine_size;
     uint16_t reserve_magazines;
     uint16_t damage;
-    /* Deprecated fallback used only when fire_action_template_id is zero. */
-    uint32_t cooldown_ticks;
-    uint32_t reload_ticks;
     float max_range;
     uint8_t pellet_count;
     float pellet_spread;
     uint32_t projectile_template_id;
     uint32_t segment_collider_template_id;
     uint32_t fire_action_template_id;
+    uint32_t reload_action_template_id;
 } KernelWeaponMechanicsDefinition;
 
 typedef struct KernelHomingState {
@@ -1103,6 +1120,9 @@ typedef struct KernelEntityLifecycleEvent {
 
 #ifdef __cplusplus
 }
+
+static_assert(sizeof(ActionIntent) == 8, "ActionIntent ABI must stay 8 bytes");
+static_assert(sizeof(ActionInput) == 8, "ActionInput ABI must stay 8 bytes");
 #endif
 
 #endif  // KERNEL_PUBLIC_KERNEL_TYPES_H_

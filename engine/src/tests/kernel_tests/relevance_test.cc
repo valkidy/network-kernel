@@ -229,7 +229,7 @@ int main() {
     hybrid_projectile.net_id = 302;
     hybrid_projectile.owner_peer = 1;
     hybrid_projectile.spawn_tick = 3;
-    hybrid_projectile.client_action_id = 99;
+    hybrid_projectile.action_instance_id = 99;
     hybrid_projectile.state_flags |=
         network_example::kSnapshotStateFlagProjectileHybridCorrection;
     network_example::WorldSnapshot projectile_budget_relevant;
