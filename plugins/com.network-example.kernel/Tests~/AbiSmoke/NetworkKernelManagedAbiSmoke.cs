@@ -9,6 +9,8 @@ using NetworkExample.Kernel.Host;
 
 public static class NetworkKernelManagedAbiSmoke
 {
+    private static uint nextActionInstanceId = 1;
+
     public static int Main()
     {
         try
@@ -30,7 +32,7 @@ public static class NetworkKernelManagedAbiSmoke
         KernelAbiInfo info = KernelAbi.GetInfo();
         KernelBuildInfo buildInfo = KernelAbi.GetBuildInfo();
         GameServerAbiInfo gameServerInfo = GameServerAbi.GetInfo();
-        Require(KernelConstants.AbiVersion == 35, "Managed kernel ABI version was not v35.");
+        Require(KernelConstants.AbiVersion == 41, "Managed kernel ABI version was not v41.");
         Require(
             (info.capability_flags & KernelConstants.CapabilityEntityLifecycleEvents) != 0,
             "Kernel lifecycle event capability was missing.");
@@ -43,6 +45,10 @@ public static class NetworkKernelManagedAbiSmoke
         Require(
             (info.capability_flags & KernelConstants.CapabilityControlPlaneRpc) != 0,
             "Kernel control-plane RPC capability was missing.");
+        Require(
+            (info.capability_flags & KernelConstants.CapabilityActionTimeline) != 0 &&
+            (info.capability_flags & KernelConstants.CapabilityActionIntents) != 0,
+            "Kernel action timeline capabilities were missing.");
         Require(
             info.gameplay_catalog_manifest_size ==
                 KernelGameplayCatalogManifest.StructSize,
@@ -198,7 +204,10 @@ public static class NetworkKernelManagedAbiSmoke
                 hostSyncStatus.manifest.content_namespace == "default",
                 "NetworkHost did not publish the loaded gameplay catalog bundle.");
             var hostEvents = new KernelEvent[16];
-            host.Update(1.0f / 30.0f, hostEvents);
+            for (int tick = 0; tick < 8 && host.EnemyCount != 10; ++tick)
+            {
+                host.Update(1.0f / 30.0f, hostEvents);
+            }
             Require(
                 host.IsLocalClientReady &&
                 host.LocalPlayerNetId != 0 &&
@@ -550,6 +559,7 @@ public static class NetworkKernelManagedAbiSmoke
             ActorTemplates = actorTemplates,
             ProjectileTemplates = projectileTemplates,
             ColliderTemplates = colliderTemplates,
+            ActionTemplates = SmokeActionTemplates(),
         };
 
         Require(kernel.LoadGameplayCatalog(catalog), "Kernel_LoadGameplayCatalog failed.");
@@ -789,30 +799,28 @@ public static class NetworkKernelManagedAbiSmoke
 
     private static KernelWeaponMechanicsDefinition RocketWeapon()
     {
-        return ProjectileWeapon(3, 202, 5, 30, 30);
+        return ProjectileWeapon(3, 202, 5);
     }
 
     private static KernelWeaponMechanicsDefinition AreaEffectWeapon()
     {
-        return ProjectileWeapon(4, 204, 7, 10, 30);
+        return ProjectileWeapon(4, 204, 7);
     }
 
     private static KernelWeaponMechanicsDefinition BeamWeapon()
     {
-        return ProjectileWeapon(5, 205, 30, 1, 30);
+        return ProjectileWeapon(5, 205, 30);
     }
 
     private static KernelWeaponMechanicsDefinition HomingWeapon()
     {
-        return ProjectileWeapon(6, 206, 5, 30, 30);
+        return ProjectileWeapon(6, 206, 5);
     }
 
     private static KernelWeaponMechanicsDefinition ProjectileWeapon(
         byte weaponId,
         uint projectileTemplateId,
-        ushort damage,
-        uint cooldownTicks,
-        uint reloadTicks)
+        ushort damage)
     {
         return new KernelWeaponMechanicsDefinition
         {
@@ -821,9 +829,37 @@ public static class NetworkKernelManagedAbiSmoke
             fire_mode = (byte)KernelWeaponFireMode.Projectile,
             magazine_size = 3,
             damage = damage,
-            cooldown_ticks = cooldownTicks,
-            reload_ticks = reloadTicks,
             projectile_template_id = projectileTemplateId,
+            fire_action_template_id = 1,
+            reload_action_template_id = 2,
+        };
+    }
+
+    private static KernelActionTemplateDefinition[] SmokeActionTemplates()
+    {
+        return new[]
+        {
+            new KernelActionTemplateDefinition
+            {
+                struct_size = KernelActionTemplateDefinition.StructSize,
+                action_template_id = 1,
+                trigger_mode = KernelActionTriggerMode.Press,
+                flags = KernelActionTemplateFlag.CancelOnDeath |
+                    KernelActionTemplateFlag.CancelOnWeaponChange,
+                ammo_cost_per_commit = 1,
+                max_commit_count = 1,
+                recovery_ticks = 1,
+            },
+            new KernelActionTemplateDefinition
+            {
+                struct_size = KernelActionTemplateDefinition.StructSize,
+                action_template_id = 2,
+                trigger_mode = KernelActionTriggerMode.Press,
+                flags = KernelActionTemplateFlag.CancelOnDeath |
+                    KernelActionTemplateFlag.CancelOnWeaponChange,
+                max_commit_count = 1,
+                recovery_ticks = 1,
+            },
         };
     }
 
@@ -854,9 +890,13 @@ public static class NetworkKernelManagedAbiSmoke
     {
         var input = new PlayerInput
         {
-            buttons = (uint)InputButton.Fire,
             selected_weapon = selectedWeapon,
             aim_dir = new KernelVec3(1.0f, 0.0f, 0.0f),
+            action_intent = new ActionIntent
+            {
+                action_instance_id = nextActionInstanceId++,
+                binding_id = KernelActionBinding.PrimaryFire,
+            },
         };
         Require(
             kernel.ServerSubmitEntityInput(enemyNetId, input),

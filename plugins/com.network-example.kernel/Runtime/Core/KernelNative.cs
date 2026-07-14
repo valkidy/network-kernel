@@ -178,6 +178,18 @@ namespace NetworkExample.Kernel
             uint maxEvents);
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint Kernel_PollLocalActionResults(
+            IntPtr kernel,
+            [Out] KernelLocalActionResult[] outResults,
+            uint maxResults);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint Kernel_PollRemoteActionPresentationEvents(
+            IntPtr kernel,
+            [Out] KernelRemoteActionPresentationEvent[] outEvents,
+            uint maxEvents);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)]
         internal static extern bool Kernel_GetBenchmarkStats(
             IntPtr kernel,
@@ -215,6 +227,13 @@ namespace NetworkExample.Kernel
             IntPtr kernel,
             [Out] KernelProjectileTemplateDefinition[] outTemplates,
             uint maxTemplates);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_GetActionTemplate(
+            IntPtr kernel,
+            uint actionTemplateId,
+            ref KernelActionTemplateDefinition outDefinition);
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern uint Kernel_GetActorTemplates(

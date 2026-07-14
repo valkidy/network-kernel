@@ -139,6 +139,22 @@ namespace NetworkExample.Kernel
                 info,
                 KernelConstants.CapabilityControlPlaneRpc,
                 "Kernel control-plane RPC capability is missing.");
+            RequireCapability(
+                info,
+                KernelConstants.CapabilityActionTimeline,
+                "Kernel action timeline capability is missing.");
+            RequireCapability(
+                info,
+                KernelConstants.CapabilityLocalActionResults,
+                "Kernel local action result capability is missing.");
+            RequireCapability(
+                info,
+                KernelConstants.CapabilityRemoteActionPresentation,
+                "Kernel remote action presentation capability is missing.");
+            RequireCapability(
+                info,
+                KernelConstants.CapabilityActionIntents,
+                "Kernel action intent capability is missing.");
 
             RequireSize(nameof(KernelAbiInfo), info.struct_size, Marshal.SizeOf<KernelAbiInfo>());
             RequireSize(nameof(KernelConfig), info.kernel_config_size, Marshal.SizeOf<KernelConfig>());
@@ -229,6 +245,10 @@ namespace NetworkExample.Kernel
                 info.benchmark_stats_size,
                 Marshal.SizeOf<KernelBenchmarkStats>());
             RequireSize(
+                nameof(KernelNetworkStatsConfig),
+                info.network_stats_config_size,
+                Marshal.SizeOf<KernelNetworkStatsConfig>());
+            RequireSize(
                 nameof(KernelNetworkStats),
                 info.network_stats_size,
                 Marshal.SizeOf<KernelNetworkStats>());
@@ -276,6 +296,30 @@ namespace NetworkExample.Kernel
                 nameof(KernelEntityAiDefinition),
                 info.entity_ai_definition_size,
                 Marshal.SizeOf<KernelEntityAiDefinition>());
+            RequireSize(
+                nameof(KernelActionTemplateDefinition),
+                info.action_template_definition_size,
+                Marshal.SizeOf<KernelActionTemplateDefinition>());
+            RequireSize(
+                nameof(KernelActionRuntimeView),
+                info.action_runtime_view_size,
+                Marshal.SizeOf<KernelActionRuntimeView>());
+            RequireSize(
+                nameof(KernelLocalActionResult),
+                info.local_action_result_size,
+                Marshal.SizeOf<KernelLocalActionResult>());
+            RequireSize(
+                nameof(KernelRemoteActionPresentationEvent),
+                info.remote_action_presentation_event_size,
+                Marshal.SizeOf<KernelRemoteActionPresentationEvent>());
+            RequireSize(
+                nameof(ActionIntent),
+                info.action_intent_size,
+                Marshal.SizeOf<ActionIntent>());
+            RequireSize(
+                nameof(ActionInput),
+                info.action_input_size,
+                Marshal.SizeOf<ActionInput>());
         }
 
         private static void RequireCapability(

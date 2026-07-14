@@ -29,15 +29,19 @@ public sealed class NetworkKernelSmokeBehaviour : MonoBehaviour
         float deltaSeconds = Time.deltaTime;
         clientRenderTimeUs += SecondsToMicroseconds(deltaSeconds);
 
-        uint buttons = Input.GetMouseButton(0) ? (uint)InputButton.Fire : 0U;
+        bool firePressed = Input.GetMouseButtonDown(0);
         var input = new PlayerInput
         {
             input_seq = sequence,
             client_action_time_us = clientRenderTimeUs,
-            client_action_id = buttons == 0U ? 0U : sequence,
             move = new KernelVec2(Input.GetAxisRaw("Horizontal"), Input.GetAxisRaw("Vertical")),
             aim_dir = new KernelVec3(1.0f, 0.0f, 0.0f),
-            buttons = buttons,
+            buttons = Input.GetMouseButton(1) ? (uint)InputButton.Aim : 0U,
+            action_intent = new ActionIntent
+            {
+                action_instance_id = firePressed ? sequence : 0U,
+                binding_id = KernelActionBinding.PrimaryFire,
+            },
         };
         sequence++;
 

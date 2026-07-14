@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 35;
+        public const uint AbiVersion = 41;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int GameplayCatalogEntryPathSize = 128;
@@ -15,7 +15,9 @@ namespace NetworkExample.Kernel
         public const int GameplayCatalogLoadFieldSize = 64;
         public const int GameplayCatalogLoadDiagnosticSize = 256;
         public const ushort LANDiscoveryDefaultPort = 47777;
-        public const uint GameplayCatalogSyncDefaultMaxBundleSize = 64U * 1024U * 1024U;
+        public const uint GameplayCatalogSyncMaxBundleSize = 1024U * 1024U;
+        public const uint GameplayCatalogSyncDefaultMaxBundleSize =
+            GameplayCatalogSyncMaxBundleSize;
         public const uint GameplayCatalogSyncDefaultTimeoutMs = 30000U;
         public const int MaxWeapons = 7;
         public const byte DebugWildcardU8 = 0xff;
@@ -48,6 +50,7 @@ namespace NetworkExample.Kernel
         public const uint GameplayCatalogTemplateKindProjectile = 3;
         public const uint GameplayCatalogTemplateKindActor = 4;
         public const uint GameplayCatalogTemplateKindCollider = 5;
+        public const uint GameplayCatalogTemplateKindAction = 6;
 
         public const ulong CapabilityClientMode = 0x0000000000000001UL;
         public const ulong CapabilityListenServerMode = 0x0000000000000002UL;
@@ -84,6 +87,10 @@ namespace NetworkExample.Kernel
         public const ulong CapabilityVisionStateQuery = 0x0000000400000000UL;
         public const ulong CapabilityGameplayCatalogSync = 0x0000000800000000UL;
         public const ulong CapabilityControlPlaneRpc = 0x0000001000000000UL;
+        public const ulong CapabilityActionTimeline = 0x0000002000000000UL;
+        public const ulong CapabilityLocalActionResults = 0x0000004000000000UL;
+        public const ulong CapabilityRemoteActionPresentation = 0x0000008000000000UL;
+        public const ulong CapabilityActionIntents = 0x0000010000000000UL;
 
         public const uint CollisionLayerPlayerSide = 0x00000001U;
         public const uint CollisionLayerHostileSide = 0x00000002U;
@@ -100,6 +107,8 @@ namespace NetworkExample.Kernel
         public const uint VisualFlagReloading = 0x00000002U;
         public const uint VisualFlagDead = 0x00000004U;
         public const uint VisualFlagHpUnknown = 0x00000008U;
+        public const uint VisualFlagAiming = 0x00000100U;
+        public const uint VisualFlagFiring = 0x00000200U;
         public const uint MaxVisibleHostiles = 16;
         public const uint MaxVisibleAllies = 16;
         public const uint MaxVisibleNeutrals = 16;
@@ -204,13 +213,79 @@ namespace NetworkExample.Kernel
     public enum InputButton : uint
     {
         MoveJump = 1U << 0,
-        Fire = 1U << 1,
-        Reload = 1U << 2,
         Sprint = 1U << 3,
-        Interact = 1U << 4,
-        Ability1 = 1U << 5,
         Dodge = 1U << 6,
         Parry = 1U << 7,
+        Aim = 1U << 8,
+    }
+
+    public enum KernelActionBinding : ushort
+    {
+        PrimaryFire = 0,
+        Reload = 1,
+    }
+
+    public enum KernelActionTriggerMode : byte
+    {
+        Press = 0,
+        Hold = 1,
+    }
+
+    public enum KernelActionPhase : byte
+    {
+        None = 0,
+        Windup = 1,
+        Active = 2,
+        Recovery = 3,
+    }
+
+    public enum KernelLocalActionResultType : byte
+    {
+        Accepted = 0,
+        Corrected = 1,
+        Rejected = 2,
+    }
+
+    public enum KernelLocalActionResultReason : byte
+    {
+        None = 0,
+        InvalidActionId = 1,
+        MissingActor = 2,
+        MissingTemplate = 3,
+        Busy = 4,
+        Reloading = 5,
+        NoAmmo = 6,
+        Cancelled = 7,
+        TimedOut = 8,
+        Dead = 9,
+        WeaponChanged = 10,
+        EffectFailed = 11,
+    }
+
+    public enum KernelRemoteActionPresentationEventType : byte
+    {
+        FireCommit = 0,
+        CastingCommit = 1,
+        ReloadCommit = 2,
+        HitReaction = 3,
+        DeathTrigger = 4,
+    }
+
+    [Flags]
+    public enum KernelActionTemplateFlag : byte
+    {
+        CancelOnRelease = 1 << 0,
+        CancelOnDeath = 1 << 1,
+        CancelOnWeaponChange = 1 << 2,
+        CancelBeforeFirstCommit = 1 << 3,
+    }
+
+    public enum KernelNetworkStatsMode : byte
+    {
+        Default = 0,
+        Off = 1,
+        Basic = 2,
+        Detailed = 3,
     }
 
     public enum KernelWeaponFireMode : byte
@@ -361,6 +436,7 @@ namespace NetworkExample.Kernel
         public uint collider_template_definition_size;
         public uint collider_binding_definition_size;
         public uint benchmark_stats_size;
+        public uint network_stats_config_size;
         public uint network_stats_size;
         public uint debug_record_filter_size;
         public uint debug_info_size;
@@ -373,6 +449,12 @@ namespace NetworkExample.Kernel
         public uint gameplay_catalog_sync_status_size;
         public uint entity_template_definition_size;
         public uint entity_ai_definition_size;
+        public uint action_template_definition_size;
+        public uint action_runtime_view_size;
+        public uint local_action_result_size;
+        public uint remote_action_presentation_event_size;
+        public uint action_intent_size;
+        public uint action_input_size;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
@@ -526,12 +608,27 @@ namespace NetworkExample.Kernel
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    public struct KernelNetworkStatsConfig
+    {
+        public KernelNetworkStatsMode mode;
+        public byte reserved0;
+        public ushort reserved1;
+        public uint action_packet_budget_bytes;
+        public uint remote_presentation_expiry_ms;
+        public uint remote_presentation_client_budget_bytes_per_second;
+        public uint remote_presentation_server_budget_bytes_per_second;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelNetworkStatsConfig>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     public struct KernelConfig
     {
         public KernelMode mode;
         public TickConfig tick;
         public uint max_render_states;
         public uint max_events;
+        public KernelNetworkStatsConfig network_stats;
 
         public static KernelConfig CreateDefault(KernelMode mode)
         {
@@ -552,16 +649,82 @@ namespace NetworkExample.Kernel
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    public struct ActionIntent
+    {
+        public uint action_instance_id;
+        public KernelActionBinding binding_id;
+        public byte flags;
+        public byte reserved;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<ActionIntent>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct ActionInput
+    {
+        public uint action_instance_id;
+        public byte held;
+        public byte flags;
+        public ushort reserved;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<ActionInput>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     public struct PlayerInput
     {
         public uint input_seq;
         public ulong client_action_time_us;
-        public uint client_action_id;
         public KernelVec2 move;
         public KernelVec2 look_delta;
         public KernelVec3 aim_dir;
         public uint buttons;
         public byte selected_weapon;
+        public ActionIntent action_intent;
+        public ActionInput action_input;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelLocalActionResult
+    {
+        public uint action_instance_id;
+        public ushort confirmed_commit_count;
+        public KernelLocalActionResultType result;
+        public KernelLocalActionResultReason reason;
+        public uint authoritative_tick;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelLocalActionResult>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelRemoteActionPresentationEvent
+    {
+        public uint actor_net_id;
+        public uint action_template_id;
+        public uint action_instance_id;
+        public ushort first_commit_index;
+        public ushort commit_count;
+        public KernelRemoteActionPresentationEventType event_type;
+        public byte flags;
+        public ushort server_tick_delta;
+
+        public static uint StructSize =>
+            (uint)Marshal.SizeOf<KernelRemoteActionPresentationEvent>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelActionRuntimeView
+    {
+        public uint struct_size;
+        public uint action_template_id;
+        public uint action_instance_id;
+        public KernelActionPhase phase;
+        public byte reserved0;
+        public ushort reserved1;
+        public uint start_tick;
+        public uint commit_count;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelActionRuntimeView>();
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -580,11 +743,13 @@ namespace NetworkExample.Kernel
         public ushort animation_state;
         public uint visual_flags;
         public uint spawn_tick;
-        public uint client_action_id;
+        public uint action_instance_id;
         public RenderEntityStatus status;
         public uint projectile_template_id;
         public uint collider_template_id;
         public uint actor_template_id;
+        public KernelActionRuntimeView action;
+        public KernelVec3 aim_direction;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -630,6 +795,8 @@ namespace NetworkExample.Kernel
         public ushort[] reserve_ammo;
         public uint is_reloading;
         public uint reload_remaining_ticks;
+        public KernelActionRuntimeView action;
+        public KernelVec3 aim_direction;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelServerEntityState>();
     }
@@ -690,6 +857,23 @@ namespace NetworkExample.Kernel
         public static uint StructSize => (uint)Marshal.SizeOf<KernelActorTemplateDefinition>();
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelActionTemplateDefinition
+    {
+        public uint struct_size;
+        public uint action_template_id;
+        public KernelActionTriggerMode trigger_mode;
+        public KernelActionTemplateFlag flags;
+        public ushort ammo_cost_per_commit;
+        public uint commit_offset_ticks;
+        public uint commit_interval_ticks;
+        public uint max_commit_count;
+        public uint recovery_ticks;
+        public uint hold_input_timeout_ticks;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelActionTemplateDefinition>();
+    }
+
     public struct KernelGameplayCatalog
     {
         public uint CatalogVersion;
@@ -699,6 +883,7 @@ namespace NetworkExample.Kernel
         public KernelColliderTemplateDefinition[] ColliderTemplates;
         public KernelColliderBindingDefinition[] ColliderBindings;
         public KernelEntityTemplateDefinition[] EntityTemplates;
+        public KernelActionTemplateDefinition[] ActionTemplates;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
@@ -824,6 +1009,8 @@ namespace NetworkExample.Kernel
         public uint collider_binding_count;
         public IntPtr entity_templates;
         public uint entity_template_count;
+        public IntPtr action_templates;
+        public uint action_template_count;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelGameplayCatalogDefinition>();
     }
@@ -867,6 +1054,40 @@ namespace NetworkExample.Kernel
         public float loss_ratio;
         public uint replication_metadata_timeout_count;
         public uint replication_stale_snapshot_drop_count;
+        public uint collection_mode;
+        public uint reserved0;
+        public ulong input_bytes_sent;
+        public ulong presentation_bytes_sent;
+        public ulong session_bytes_sent;
+        public ulong local_action_result_bytes_sent;
+        public ulong remote_action_presentation_bytes_sent;
+        public ulong local_action_results_generated;
+        public ulong local_action_results_sent;
+        public ulong local_action_results_accepted;
+        public ulong local_action_results_corrected;
+        public ulong local_action_results_rejected;
+        public ulong local_action_result_server_duplicates_suppressed;
+        public ulong local_action_result_client_duplicates_dropped;
+        public ulong local_action_results_timed_out;
+        public ulong local_action_result_latency_sample_count;
+        public ulong local_action_result_latency_us_total;
+        public ulong local_action_result_latency_us_max;
+        public ulong local_action_result_batch_count;
+        public ulong local_action_result_batch_record_count;
+        public uint average_local_action_result_batch_size;
+        public uint max_local_action_result_batch_size;
+        public ulong remote_presentation_records_generated;
+        public ulong remote_presentation_records_sent;
+        public ulong remote_presentation_batch_count;
+        public ulong remote_presentation_batch_record_count;
+        public ulong remote_presentation_relevance_filtered;
+        public ulong remote_presentation_budget_dropped;
+        public ulong remote_presentation_stale_dropped;
+        public ulong remote_presentation_duplicate_dropped;
+        public uint average_remote_presentation_batch_size;
+        public uint max_remote_presentation_batch_size;
+        public ulong zero_action_instance_attempts;
+        public ulong action_instance_collisions;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelNetworkStats>();
     }
@@ -1133,13 +1354,13 @@ namespace NetworkExample.Kernel
         public ushort magazine_size;
         public ushort reserve_magazines;
         public ushort damage;
-        public uint cooldown_ticks;
-        public uint reload_ticks;
         public float max_range;
         public byte pellet_count;
         public float pellet_spread;
         public uint projectile_template_id;
         public uint segment_collider_template_id;
+        public uint fire_action_template_id;
+        public uint reload_action_template_id;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelWeaponMechanicsDefinition>();
     }

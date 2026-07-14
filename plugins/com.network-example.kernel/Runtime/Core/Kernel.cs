@@ -355,6 +355,35 @@ namespace NetworkExample.Kernel
                 (uint)events.Length);
         }
 
+        public uint PollLocalActionResults(KernelLocalActionResult[] results)
+        {
+            ThrowIfDisposed();
+            if (results == null || results.Length == 0)
+            {
+                return 0;
+            }
+
+            return KernelNative.Kernel_PollLocalActionResults(
+                handle,
+                results,
+                (uint)results.Length);
+        }
+
+        public uint PollRemoteActionPresentationEvents(
+            KernelRemoteActionPresentationEvent[] events)
+        {
+            ThrowIfDisposed();
+            if (events == null || events.Length == 0)
+            {
+                return 0;
+            }
+
+            return KernelNative.Kernel_PollRemoteActionPresentationEvents(
+                handle,
+                events,
+                (uint)events.Length);
+        }
+
         public bool TryGetBenchmarkStats(out KernelBenchmarkStats stats)
         {
             ThrowIfDisposed();
@@ -504,6 +533,21 @@ namespace NetworkExample.Kernel
                 handle,
                 templates,
                 (uint)templates.Length);
+        }
+
+        public bool TryGetActionTemplate(
+            uint actionTemplateId,
+            out KernelActionTemplateDefinition definition)
+        {
+            ThrowIfDisposed();
+            definition = new KernelActionTemplateDefinition
+            {
+                struct_size = KernelActionTemplateDefinition.StructSize,
+            };
+            return KernelNative.Kernel_GetActionTemplate(
+                handle,
+                actionTemplateId,
+                ref definition);
         }
 
         public uint GetActorTemplates(KernelActorTemplateDefinition[] templates)
@@ -789,18 +833,22 @@ namespace NetworkExample.Kernel
                 catalog.ColliderBindings ?? new KernelColliderBindingDefinition[0];
             KernelEntityTemplateDefinition[] entityTemplates =
                 catalog.EntityTemplates ?? new KernelEntityTemplateDefinition[0];
+            KernelActionTemplateDefinition[] actionTemplates =
+                catalog.ActionTemplates ?? new KernelActionTemplateDefinition[0];
 
             PrepareActorTemplates(actorTemplates);
             PrepareProjectileTemplates(projectileTemplates);
             PrepareColliderTemplates(colliderTemplates);
             PrepareColliderBindings(colliderBindings);
             PrepareEntityTemplates(entityTemplates);
+            PrepareActionTemplates(actionTemplates);
 
             GCHandle actorTemplatesHandle = PinArray(actorTemplates, out IntPtr actorTemplatesPtr);
             GCHandle projectileTemplatesHandle = PinArray(projectileTemplates, out IntPtr projectileTemplatesPtr);
             GCHandle colliderTemplatesHandle = PinArray(colliderTemplates, out IntPtr colliderTemplatesPtr);
             GCHandle colliderBindingsHandle = PinArray(colliderBindings, out IntPtr colliderBindingsPtr);
             IntPtr entityTemplatesPtr = MarshalArray(entityTemplates);
+            GCHandle actionTemplatesHandle = PinArray(actionTemplates, out IntPtr actionTemplatesPtr);
             try
             {
                 var nativeCatalog = new KernelGameplayCatalogDefinition
@@ -818,6 +866,8 @@ namespace NetworkExample.Kernel
                     collider_binding_count = (uint)colliderBindings.Length,
                     entity_templates = entityTemplatesPtr,
                     entity_template_count = (uint)entityTemplates.Length,
+                    action_templates = actionTemplatesPtr,
+                    action_template_count = (uint)actionTemplates.Length,
                 };
                 return KernelNative.Kernel_LoadGameplayCatalog(kernel, ref nativeCatalog);
             }
@@ -830,6 +880,7 @@ namespace NetworkExample.Kernel
                 FreeMarshaledArray<KernelEntityTemplateDefinition>(
                     entityTemplatesPtr,
                     entityTemplates.Length);
+                FreeIfAllocated(actionTemplatesHandle);
             }
         }
 
@@ -890,6 +941,18 @@ namespace NetworkExample.Kernel
                 if (templates[index].struct_size == 0)
                 {
                     templates[index].struct_size = KernelColliderTemplateDefinition.StructSize;
+                }
+            }
+        }
+
+        private static void PrepareActionTemplates(
+            KernelActionTemplateDefinition[] templates)
+        {
+            for (int index = 0; index < templates.Length; ++index)
+            {
+                if (templates[index].struct_size == 0)
+                {
+                    templates[index].struct_size = KernelActionTemplateDefinition.StructSize;
                 }
             }
         }
