@@ -184,9 +184,9 @@ weapon_type: hitscan
 magazine_size: 30
 reserve_magazines: 6
 damage: 25
-cooldown_ticks: 3
 reload_ticks: 30
 max_range: 100.0
+fire_action_template: rifle_fire
 ```
 
 Type-specific fields stay with their weapon mode:
@@ -369,10 +369,12 @@ plain C structs only.
 
 Action templates are authored independently under `action_templates/*.yaml`.
 Weapon templates reference them through `fire_action_template` by stable name
-or decimal id. Action-backed weapons may omit `cooldown_ticks`; weapons without
-an action reference retain the legacy non-zero cooldown fallback. Action
-templates contain gameplay policy only and must not contain Animator states,
-AnimationClip ids, Unity fields, or presentation assets.
+or decimal id. Catalog v2 rejects the legacy `cooldown_ticks` field. A fire
+Action's `commit_interval_ticks` is the minimum commit-to-commit interval for
+the same entity and weapon, including across Action instances; switching away
+and back does not reset that weapon's gate. Action templates contain gameplay
+policy only and must not contain Animator states, AnimationClip ids, Unity
+fields, or presentation assets.
 
 ### Action cancellation flags
 

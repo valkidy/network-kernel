@@ -219,6 +219,20 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip() {
             "weapon_templates/" + file,
             read_text_file(root / "game_server" / "weapon_templates" / file)});
     }
+    const std::vector<std::string> action_files = {
+        "beam_rifle_fire.yaml",
+        "fire_floor_cast.yaml",
+        "homing_missile_fire.yaml",
+        "rifle_fire.yaml",
+        "rocket_fire.yaml",
+        "shotgun_fire.yaml",
+        "spammer_fire.yaml",
+    };
+    for (const std::string& file : action_files) {
+        files.push_back({
+            "action_templates/" + file,
+            read_text_file(root / "game_server" / "action_templates" / file)});
+    }
     const std::vector<std::string> projectile_files = {
         "beam_rifle_beam.yaml",
         "fire_floor_area.yaml",
@@ -301,7 +315,7 @@ int main() {
     assert(loaded_catalog);
     assert(load_result.status == KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS);
     assert(load_result.error_code == KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_NONE);
-    assert(load_result.catalog_version == 1);
+    assert(load_result.catalog_version == 2);
     assert(load_result.catalog_hash != 0);
     assert(load_result.projectile_template_count > 0);
     assert(load_result.collider_template_count == 9);
@@ -315,7 +329,6 @@ int main() {
     assert(template_info.mechanics.damage == 1);
     assert(template_info.mechanics.magazine_size == 120);
     assert(template_info.mechanics.reserve_magazines == kMaxReserveMagazines);
-    assert(template_info.mechanics.cooldown_ticks == 1);
     assert(template_info.name[0] == 'P');
     template_info = GameServerWeaponTemplateInfo{};
     template_info.struct_size = sizeof(template_info);
@@ -361,7 +374,6 @@ int main() {
     assert(template_info.mechanics.damage == 1);
     assert(template_info.mechanics.magazine_size == 120);
     assert(template_info.mechanics.reserve_magazines == kMaxReserveMagazines);
-    assert(template_info.mechanics.cooldown_ticks == 1);
     assert(template_info.mechanics.projectile_template_id == 2);
     template_info = GameServerWeaponTemplateInfo{};
     template_info.struct_size = sizeof(template_info);
@@ -405,7 +417,7 @@ int main() {
     assert(dedicated_kernel != nullptr);
     load_result = KernelGameplayCatalogLoadResult{};
     const std::vector<std::uint8_t> unsupported_version_bundle = make_store_zip({
-        {"gameplay_catalog.yaml", "catalog_version: 2\n"},
+        {"gameplay_catalog.yaml", "catalog_version: 1\n"},
     });
     assert(!Kernel_LoadGameplayCatalogFromMemory(
         dedicated_kernel,

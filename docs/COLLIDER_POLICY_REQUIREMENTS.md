@@ -111,9 +111,10 @@ Beam is a persistent entity. While the player keeps sending fire input and the
 weapon can fire, the beam is refreshed. It disappears when the refresh condition
 fails and its lifetime expires.
 
-Ammo consumption follows the existing cooldown model: when `can_fire` passes,
-the weapon consumes one ammo and sets `next_fire_tick = current_tick +
-cooldown_ticks`. Beam refresh then updates the persistent beam instance.
+Ammo consumption and cadence follow the referenced fire Action. After a
+successful Primary Fire gameplay commit, the weapon consumes ammo and sets its
+per-weapon next commit gate from the Action's `commit_interval_ticks`. Beam
+refresh then updates the persistent beam instance.
 
 The beam collider is an oriented box and performs query-volume damage every tick
 while active.

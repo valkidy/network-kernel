@@ -222,9 +222,23 @@ struct WeaponState {
     // that should not exhaust reserves in normal play. It is not a sentinel:
     // reload logic decrements it like any other count and must not special-case 65535.
     std::array<std::uint16_t, kWeaponCount> reserve_magazines{0, 0, 0, 0, 0, 0, 0};
+    std::array<std::uint32_t, kWeaponCount> next_primary_commit_tick{};
     NetId active_effect_net_id = 0;
     bool is_reloading = false;
 };
+
+inline bool projected_primary_commit_is_blocked(
+    std::uint32_t current_tick,
+    std::uint32_t commit_offset_ticks,
+    std::uint32_t next_primary_commit_tick) {
+    if (next_primary_commit_tick == 0u) {
+        return false;
+    }
+    const std::uint32_t projected_commit_tick =
+        current_tick + commit_offset_ticks;
+    return static_cast<std::int32_t>(
+               projected_commit_tick - next_primary_commit_tick) < 0;
+}
 
 struct RuntimeActionTemplate {
     std::uint32_t action_template_id = 0;

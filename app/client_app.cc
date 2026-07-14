@@ -276,9 +276,16 @@ bool start_client_with_catalog_sync(
         load_result.catalog_version != status.manifest.catalog_version ||
         load_result.catalog_hash != status.manifest.catalog_hash) {
         spdlog::error(
-            "catalog bundle load failed error={} diagnostic={}",
+            "catalog bundle load failed error_code={} diagnostic={} path={} "
+            "field={} line={} column={} template_kind={} template_id={}",
             load_result.error_code,
-            load_result.diagnostic);
+            load_result.diagnostic,
+            load_result.path,
+            load_result.field,
+            load_result.line,
+            load_result.column,
+            load_result.template_kind,
+            load_result.template_id);
         return false;
     }
     spdlog::info(
@@ -326,6 +333,19 @@ int RunClient(
                     kernel,
                     gameplay_config) &&
                 Kernel_StartClient(kernel, address);
+        } catch (const network_example::game_server::DataLoadError& error) {
+            spdlog::error(
+                "failed to load gameplay catalog error_code={} diagnostic={} "
+                "path={} field={} line={} column={} template_kind={} "
+                "template_id={}",
+                error.error_code,
+                error.what(),
+                error.path,
+                error.field,
+                error.line,
+                error.column,
+                error.template_kind,
+                error.template_id);
         } catch (const std::exception& error) {
             spdlog::error("failed to load gameplay catalog: {}", error.what());
         }

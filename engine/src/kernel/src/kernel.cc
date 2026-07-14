@@ -1101,7 +1101,7 @@ bool validate_action_template(
         return false;
     }
     if (definition.trigger_mode == KernelActionTriggerMode_Press) {
-        return definition.max_commit_count == 1u &&
+        return definition.max_commit_count >= 1u &&
                definition.hold_input_timeout_ticks == 0u;
     }
     return definition.hold_input_timeout_ticks > 0u;
@@ -1596,6 +1596,22 @@ void KernelEngine::submit_input(PeerId local_player_id, const PlayerInput& input
         listen_server_transport_ != nullptr) {
         const PlayerInput input_to_send = prepare_client_input(input);
         predict_local_input(input_to_send);
+        const std::uint32_t primary_gate_before =
+            input_to_send.selected_weapon <
+                    predicted_next_primary_commit_tick_.size()
+                ? predicted_next_primary_commit_tick_[
+                      input_to_send.selected_weapon]
+                : 0u;
+        const WeaponMechanicsDefinition* predicted_weapon =
+            entity_weapon_mechanics(
+                world_, local_player_net_id_, input_to_send.selected_weapon);
+        const std::uint32_t predicted_action_template_id =
+            predicted_weapon == nullptr
+                ? 0u
+                : input_to_send.action_intent.binding_id ==
+                          KernelActionBinding_PrimaryFire
+                      ? predicted_weapon->fire_action_template_id
+                      : predicted_weapon->reload_action_template_id;
         const bool predicted_commit = predict_local_action(input_to_send);
         if (input_to_send.action_intent.action_instance_id != 0u) {
             std::uint16_t ammo_before = 0u;
@@ -1617,6 +1633,9 @@ void KernelEngine::submit_input(PeerId local_player_id, const PlayerInput& input
                     0u,
                     input_to_send.action_intent.binding_id,
                     input_to_send.selected_weapon,
+                    predicted_action_template_id,
+                    primary_gate_before,
+                    0u,
                     ammo_before,
                     active_effect_before,
                 }).first;
@@ -1652,6 +1671,22 @@ void KernelEngine::submit_input(PeerId local_player_id, const PlayerInput& input
 
         const PlayerInput input_to_send = prepare_client_input(input);
         predict_local_input(input_to_send);
+        const std::uint32_t primary_gate_before =
+            input_to_send.selected_weapon <
+                    predicted_next_primary_commit_tick_.size()
+                ? predicted_next_primary_commit_tick_[
+                      input_to_send.selected_weapon]
+                : 0u;
+        const WeaponMechanicsDefinition* predicted_weapon =
+            entity_weapon_mechanics(
+                world_, local_player_net_id_, input_to_send.selected_weapon);
+        const std::uint32_t predicted_action_template_id =
+            predicted_weapon == nullptr
+                ? 0u
+                : input_to_send.action_intent.binding_id ==
+                          KernelActionBinding_PrimaryFire
+                      ? predicted_weapon->fire_action_template_id
+                      : predicted_weapon->reload_action_template_id;
         const bool predicted_commit = predict_local_action(input_to_send);
         if (input_to_send.action_intent.action_instance_id != 0u) {
             std::uint16_t ammo_before = 0u;
@@ -1673,6 +1708,9 @@ void KernelEngine::submit_input(PeerId local_player_id, const PlayerInput& input
                     0u,
                     input_to_send.action_intent.binding_id,
                     input_to_send.selected_weapon,
+                    predicted_action_template_id,
+                    primary_gate_before,
+                    0u,
                     ammo_before,
                     active_effect_before,
                 }).first;
@@ -1757,12 +1795,17 @@ bool KernelEngine::load_gameplay_catalog(
     for (const auto entity : weapon_tuning_view) {
         const WeaponTuning& tuning = weapon_tuning_view.get<WeaponTuning>(entity);
         for (std::size_t index = 0; index < tuning.configured.size(); ++index) {
-            if (tuning.configured[index] &&
-                (!incoming_has_action(
-                     tuning.definitions[index].fire_action_template_id) ||
-                 !incoming_has_action(
-                     tuning.definitions[index].reload_action_template_id))) {
-                return false;
+            if (tuning.configured[index]) {
+                const KernelActionTemplateDefinition* fire_action =
+                    find_action_template(
+                        validated_action_templates,
+                        tuning.definitions[index].fire_action_template_id);
+                if (fire_action == nullptr ||
+                    fire_action->commit_interval_ticks == 0u ||
+                    !incoming_has_action(
+                        tuning.definitions[index].reload_action_template_id)) {
+                    return false;
+                }
             }
         }
     }
@@ -3053,8 +3096,11 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     entity_ids_by_net_id_.clear();
     predicted_local_entity_ = EntitySnapshot{};
     predicted_action_buttons_ = 0u;
+    predicted_action_binding_id_ = 0u;
+    predicted_action_weapon_id_ = 0u;
     predicted_action_next_commit_tick_ = 0u;
     predicted_action_recovery_end_tick_ = 0u;
+    predicted_next_primary_commit_tick_.fill(0u);
     local_correction_offset_ = glm::vec3{0.0f, 0.0f, 0.0f};
     next_entity_id_ = 1;
     next_predicted_entity_id_ = UINT64_C(0x8000000000000000);
@@ -3374,6 +3420,40 @@ void KernelEngine::handle_client_local_action_results(
             outstanding->second.confirmed_commit_count =
                 result.confirmed_commit_count;
             outstanding->second.last_activity_us = client_local_time_us_;
+            const KernelActionTemplateDefinition* action_template =
+                find_action_template(
+                    action_templates_,
+                    outstanding->second.action_template_id);
+            if (outstanding->second.binding_id ==
+                    KernelActionBinding_PrimaryFire &&
+                outstanding->second.weapon_id <
+                    predicted_next_primary_commit_tick_.size()) {
+                if (result.result == KernelLocalActionResultType_Accepted &&
+                    action_template != nullptr) {
+                    outstanding->second.last_authoritative_commit_tick =
+                        result.authoritative_tick;
+                    predicted_next_primary_commit_tick_[
+                        outstanding->second.weapon_id] =
+                        result.authoritative_tick +
+                        action_template->commit_interval_ticks;
+                } else if (
+                    result.result == KernelLocalActionResultType_Rejected ||
+                    result.result == KernelLocalActionResultType_Corrected) {
+                    if (result.confirmed_commit_count == 0u) {
+                        predicted_next_primary_commit_tick_[
+                            outstanding->second.weapon_id] =
+                            outstanding->second.primary_gate_before;
+                    } else if (
+                        action_template != nullptr &&
+                        outstanding->second.last_authoritative_commit_tick !=
+                            0u) {
+                        predicted_next_primary_commit_tick_[
+                            outstanding->second.weapon_id] =
+                            outstanding->second.last_authoritative_commit_tick +
+                            action_template->commit_interval_ticks;
+                    }
+                }
+            }
         }
 
         const auto duplicate = std::find_if(
@@ -3464,7 +3544,7 @@ void KernelEngine::handle_client_local_action_results(
             const KernelActionTemplateDefinition* action_template =
                 find_action_template(
                     action_templates_,
-                    predicted_local_entity_.action_template_id);
+                    outstanding->second.action_template_id);
             completed_finite_action =
                 action_template != nullptr &&
                 action_template->max_commit_count != 0u &&
@@ -4000,8 +4080,10 @@ void KernelEngine::clear_client_action_sync_state() {
     predicted_local_entity_.action_phase = KernelActionPhase_None;
     predicted_action_buttons_ = 0u;
     predicted_action_binding_id_ = 0u;
+    predicted_action_weapon_id_ = 0u;
     predicted_action_next_commit_tick_ = 0u;
     predicted_action_recovery_end_tick_ = 0u;
+    predicted_next_primary_commit_tick_.fill(0u);
     last_remote_presentation_sequence_ = 0;
     has_remote_presentation_sequence_ = false;
 }
@@ -4521,11 +4603,23 @@ bool KernelEngine::predict_local_action(const PlayerInput& input) {
         if (action_template == nullptr) {
             return false;
         }
+        if (input.action_intent.binding_id ==
+                KernelActionBinding_PrimaryFire &&
+            (input.selected_weapon >=
+                 predicted_next_primary_commit_tick_.size() ||
+             projected_primary_commit_is_blocked(
+                 current_tick,
+                 action_template->commit_offset_ticks,
+                 predicted_next_primary_commit_tick_[
+                     input.selected_weapon]))) {
+            return false;
+        }
         predicted_local_entity_.action_template_id =
             action_template->action_template_id;
         predicted_local_entity_.action_instance_id =
             input.action_intent.action_instance_id;
         predicted_action_binding_id_ = input.action_intent.binding_id;
+        predicted_action_weapon_id_ = input.selected_weapon;
         predicted_local_entity_.action_phase =
             action_template->commit_offset_ticks == 0u
                 ? KernelActionPhase_Active
@@ -4567,6 +4661,12 @@ bool KernelEngine::predict_local_action(const PlayerInput& input) {
             current_tick + action_template->commit_interval_ticks;
         committed =
             predicted_action_binding_id_ == KernelActionBinding_PrimaryFire;
+        if (committed &&
+            predicted_action_weapon_id_ <
+                predicted_next_primary_commit_tick_.size()) {
+            predicted_next_primary_commit_tick_[predicted_action_weapon_id_] =
+                current_tick + action_template->commit_interval_ticks;
+        }
         if ((action_template->max_commit_count != 0u &&
              predicted_local_entity_.action_commit_count >=
                  action_template->max_commit_count) ||
@@ -6519,6 +6619,13 @@ void KernelEngine::prepare_server_action_intent(
         if (weapon_index >= weapon.ammo.size() ||
             weapon.ammo[weapon_index] < action_template->ammo_cost_per_commit) {
             reject(KernelLocalActionResultReason_NoAmmo);
+            return;
+        }
+        if (projected_primary_commit_is_blocked(
+                tick_loop_.current_tick(),
+                action_template->commit_offset_ticks,
+                weapon.next_primary_commit_tick[weapon_index])) {
+            reject(KernelLocalActionResultReason_Cooldown);
             return;
         }
     } else if (

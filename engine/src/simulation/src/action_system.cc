@@ -271,6 +271,20 @@ bool admit_action(
                 outcomes);
             return false;
         }
+        if (projected_primary_commit_is_blocked(
+                current_tick,
+                action_template->commit_offset_ticks,
+                weapon.next_primary_commit_tick[weapon_index])) {
+            push_rejection(
+                world,
+                entity,
+                intent,
+                action_template_id,
+                current_tick,
+                KernelLocalActionResultReason_Cooldown,
+                outcomes);
+            return false;
+        }
     } else if (
         weapon_index >= weapon.ammo.size() ||
         weapon.ammo[weapon_index] >= weapon_definition_value->magazine_size ||
