@@ -1,0 +1,27 @@
+licenses(["notice"])
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "geometry",
+    srcs = ["src/obj_importer.cc"],
+    hdrs = [
+        "public/canonical_triangle_mesh.h",
+        "public/obj_importer.h",
+    ],
+    includes = [".."],
+)
+
+cc_library(
+    name = "mesh_bake",
+    srcs = ["src/mesh_bake.cc"],
+    hdrs = ["public/mesh_bake.h"],
+    includes = [".."],
+    deps = [
+        ":geometry",
+        "@jolt_physics//:jolt",
+        "@recastnavigation//:detour",
+        "@recastnavigation//:recast",
+        "@yaml-cpp//:yaml-cpp",
+    ],
+)

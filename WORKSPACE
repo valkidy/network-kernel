@@ -214,3 +214,19 @@ http_archive(
     strip_prefix = "zip-0.3.9",
     urls = ["https://github.com/kuba--/zip/archive/refs/tags/v0.3.9.tar.gz"],
 )
+
+http_archive(
+    name = "jolt_physics",
+    build_file = "@//third_party:jolt_physics.BUILD",
+    sha256 = "6e069ee0172478cc78182047aac87e5310ba14a67a53348ae14cc37801fd3f8e",
+    strip_prefix = "JoltPhysics-5.6.0",
+    urls = ["https://github.com/jrouwe/JoltPhysics/archive/refs/tags/v5.6.0.tar.gz"],
+)
+
+http_archive(
+    name = "recastnavigation",
+    build_file = "@//third_party:recastnavigation.BUILD",
+    sha256 = "d48ca0121962fa0639502c0f56c4e3ae72f98e55d88727225444f500775c0074",
+    strip_prefix = "recastnavigation-1.6.0",
+    urls = ["https://github.com/recastnavigation/recastnavigation/archive/refs/tags/v1.6.0.tar.gz"],
+)

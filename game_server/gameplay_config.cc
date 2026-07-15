@@ -11,6 +11,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -740,6 +741,7 @@ public:
         }
 
         std::uint64_t total_yaml_bytes = 0;
+        std::unordered_set<std::string> seen_paths;
         for (ssize_t index = 0; index < total_entries; ++index) {
             if (zip_entry_openbyindex(archive.get(), static_cast<std::size_t>(index)) != 0) {
                 throw std::runtime_error("failed to open gameplay catalog bundle entry");
@@ -750,10 +752,22 @@ public:
                 throw std::runtime_error("gameplay catalog bundle entry has no name");
             }
             const std::string path = normalize_archive_path(entry_name);
+            if (!seen_paths.insert(path).second) {
+                throw DataLoadError(
+                    KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_DUPLICATE_ARCHIVE_ENTRY,
+                    "duplicate archive entry: " + path,
+                    path,
+                    {},
+                    KERNEL_GAMEPLAY_CATALOG_LOAD_SOURCE_BUNDLE);
+            }
             if (zip_entry_issymlink(archive.get())) {
                 throw std::runtime_error("archive symlink entries are not supported: " + path);
             }
             if (zip_entry_isdir(archive.get())) {
+                zip_entry_close(archive.get());
+                continue;
+            }
+            if (!has_yaml_extension(path)) {
                 zip_entry_close(archive.get());
                 continue;
             }
@@ -766,15 +780,6 @@ public:
             if (total_yaml_bytes > kMaxTotalYamlBytes) {
                 throw std::runtime_error("archive YAML content exceeds total size limit");
             }
-            if (files_.contains(path)) {
-                throw DataLoadError(
-                    KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_DUPLICATE_ARCHIVE_ENTRY,
-                    "duplicate archive entry: " + path,
-                    path,
-                    {},
-                    KERNEL_GAMEPLAY_CATALOG_LOAD_SOURCE_BUNDLE);
-            }
-
             std::string data(static_cast<std::size_t>(entry_size), '\0');
             if (entry_size > 0) {
                 const ssize_t read_size = zip_entry_noallocread(

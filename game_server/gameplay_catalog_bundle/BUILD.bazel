@@ -3,9 +3,9 @@ licenses(["notice"])
 package(default_visibility = ["//visibility:public"])
 
 genrule(
-    name = "bundle",
+    name = "gameplay_bundle_base",
     srcs = ["//game_server:gameplay_catalog_bundle_sources"],
-    outs = ["bundle.zip"],
+    outs = ["gameplay_bundle_base.zip"],
     cmd = """
 set -euo pipefail
 out_path="$$(pwd)/$@"
@@ -35,6 +35,37 @@ for src in $(SRCS); do
   esac
 done
 (cd "$$bundle_root" && /usr/bin/zip -qr -X "$$out_path" gameplay_catalog.yaml action_templates weapon_templates projectile_templates entity_templates collider_templates)
+rm -rf "$$bundle_root"
+""",
+)
+
+genrule(
+    name = "bundle",
+    srcs = [
+        ":gameplay_bundle_base",
+        "//game_server/mesh_assets:cooked_mesh_assets",
+    ],
+    outs = ["bundle.zip"],
+    cmd = """
+set -euo pipefail
+out_path="$$(pwd)/$@"
+bundle_root="$(@D)/merged_bundle_root"
+rm -rf "$$bundle_root"
+mkdir -p "$$bundle_root/mesh_assets/jolt" "$$bundle_root/mesh_assets/recast"
+for src in $(SRCS); do
+  case "$$src" in
+    */gameplay_bundle_base.zip)
+      /usr/bin/unzip -q "$$src" -d "$$bundle_root"
+      ;;
+    */generated/jolt/*.joltmesh)
+      cp "$$src" "$$bundle_root/mesh_assets/jolt/$$(basename "$$src")"
+      ;;
+    */generated/recast/*.navmesh)
+      cp "$$src" "$$bundle_root/mesh_assets/recast/$$(basename "$$src")"
+      ;;
+  esac
+done
+(cd "$$bundle_root" && /usr/bin/zip -qr -X "$$out_path" .)
 rm -rf "$$bundle_root"
 """,
 )

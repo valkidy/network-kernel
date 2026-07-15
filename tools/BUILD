@@ -23,3 +23,23 @@ sh_test(
     name = "check_cross_platform_boundaries",
     srcs = ["check_cross_platform_boundaries.sh"],
 )
+
+cc_binary(
+    name = "static_mesh_bake_smoke",
+    srcs = ["static_mesh_bake_smoke.cc"],
+    data = ["@recastnavigation//:dungeon_obj"],
+    deps = [
+        "//engine/src/geometry:geometry",
+        "//engine/src/geometry:mesh_bake",
+        "@bazel_tools//tools/cpp/runfiles",
+    ],
+)
+
+cc_binary(
+    name = "mesh_asset_converter",
+    srcs = ["mesh_asset_converter.cc"],
+    deps = [
+        "//engine/src/geometry:geometry",
+        "//engine/src/geometry:mesh_bake",
+    ],
+)

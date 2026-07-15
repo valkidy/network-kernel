@@ -172,7 +172,8 @@ void append_collider_template_files(
 }
 
 std::vector<std::uint8_t> make_gameplay_bundle_zip(
-    const std::string& sentry_actor_yaml) {
+    const std::string& sentry_actor_yaml,
+    const std::vector<std::pair<std::string, std::string>>& extra_files = {}) {
     std::vector<std::pair<std::string, std::string>> files;
     files.push_back({
         "gameplay_catalog.yaml",
@@ -229,6 +230,7 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
             "projectile_templates/" + file,
             read_text_file("game_server/projectile_templates/" + file)});
     }
+    files.insert(files.end(), extra_files.begin(), extra_files.end());
     return make_store_zip(files);
 }
 
@@ -705,6 +707,21 @@ int main() {
     assert(bundle_config.projectile_templates.size() == config.projectile_templates.size());
     assert(bundle_config.actor_templates.size() == config.actor_templates.size());
     assert(bundle_config.agent.actor_template_id == config.agent.actor_template_id);
+
+    const std::vector<std::uint8_t> bundle_with_large_binary =
+        make_gameplay_bundle_zip(
+            read_text_file("game_server/entity_templates/sentry_grunt.yaml"),
+            {{
+                "mesh_assets/jolt/oversized.joltmesh",
+                std::string(1024 * 1024 + 1, 'x'),
+            }});
+    const network_example::game_server::GameServerGameplayConfig
+        binary_bundle_config =
+            network_example::game_server::load_gameplay_config_from_bundle_memory(
+                bundle_with_large_binary.data(),
+                static_cast<std::uint32_t>(bundle_with_large_binary.size()),
+                "gameplay_catalog.yaml");
+    assert(binary_bundle_config.weapons.catalog_hash == config.weapons.catalog_hash);
 
     const std::vector<std::uint8_t> generated_bundle = read_binary_file(
         (runfiles_root() / "game_server" / "gameplay_catalog_bundle" / "bundle.zip")
