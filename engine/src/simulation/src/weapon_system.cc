@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
-#include "simulation/public/collision_query.h"
+#include "physics/public/physics_world.h"
 
 namespace network_example {
 namespace {
@@ -151,35 +151,25 @@ bool find_hitscan_target(
         return false;
     }
 
-    float best_distance = max_range;
-    NetId best_net_id = 0;
-    auto target_view = world.registry().view<NetworkIdentity, Transform, Health, Hitbox>();
-    for (const entt::entity target_entity : target_view) {
-        const NetworkIdentity& target_identity =
-            target_view.get<NetworkIdentity>(target_entity);
-        if (target_identity.net_id == shooter_net_id) {
-            continue;
+    const physics::PhysicsWorld* collision_world = world.collision_world();
+    physics::CollisionHit hit{};
+    physics::RayCastRequest request{};
+    request.origin = origin;
+    request.direction = direction;
+    request.max_distance = max_range;
+    request.filter.ignored_entity_net_id = shooter_net_id;
+    if (collision_world == nullptr ||
+        !collision_world->ray_cast_closest(request, &hit) ||
+        hit.identity.kind != physics::CollisionObjectKind::kActorHitbox) {
+        if (target_net_id != nullptr) {
+            *target_net_id = 0;
         }
-
-        const Transform& target_transform = target_view.get<Transform>(target_entity);
-        const Hitbox& hitbox = target_view.get<Hitbox>(target_entity);
-        float distance = 0.0f;
-        if (ray_intersects_aabb(
-                origin,
-                direction,
-                target_transform.position + hitbox.center,
-                hitbox.half_extents,
-                &distance) &&
-            distance < best_distance) {
-            best_distance = distance;
-            best_net_id = target_identity.net_id;
-        }
+        return false;
     }
-
     if (target_net_id != nullptr) {
-        *target_net_id = best_net_id;
+        *target_net_id = hit.identity.entity_net_id;
     }
-    return best_net_id != 0;
+    return true;
 }
 
 const HitVolumeSnapshot* find_historical_volume(
@@ -404,8 +394,45 @@ void simulate_weapons(
     if (damage_pipeline == nullptr) {
         damage_pipeline = &local_damage_pipeline;
     }
-    const std::vector<ActionCommit> action_commits =
+    std::vector<ActionCommit> action_commits =
         simulate_actions(world, inputs, current_tick, context.action_outcomes);
+    if (action_commits.empty()) {
+        for (const QueuedInput& input : inputs) {
+            if ((input.input.buttons & InputButton_Fire) == 0u) {
+                continue;
+            }
+            const auto player_view =
+                world.registry().view<NetworkIdentity, PlayerTag>();
+            for (const entt::entity entity : player_view) {
+                const NetworkIdentity& identity =
+                    player_view.get<NetworkIdentity>(entity);
+                if ((input.controlled_net_id != 0 &&
+                     identity.net_id != input.controlled_net_id) ||
+                    (input.controlled_net_id == 0 &&
+                     identity.owner_peer != input.owner_peer)) {
+                    continue;
+                }
+                const WeaponMechanicsDefinition* definition =
+                    weapon_definition_for_entity(
+                        world, entity, input.input.selected_weapon);
+                if (definition != nullptr) {
+                    action_commits.push_back(ActionCommit{
+                        identity.net_id,
+                        identity.owner_peer,
+                        definition->id,
+                        KernelActionBinding_PrimaryFire,
+                        0,
+                        input.input.input_seq == 0 ? 1u : input.input.input_seq,
+                        1,
+                        current_tick,
+                        true,
+                        input_aim_to_world(input.input),
+                    });
+                }
+                break;
+            }
+        }
+    }
 
     auto push_action_outcome = [&context](
                                    const ActionCommit& commit,
@@ -501,8 +528,15 @@ void simulate_weapons(
             }
             const RuntimeActionTemplate* action_template =
                 world.find_action_template(commit.action_template_id);
-            if (action_template == nullptr ||
-                weapon.ammo[index] < action_template->ammo_cost_per_commit) {
+            const bool legacy_button_commit =
+                action_template == nullptr && commit.action_template_id == 0;
+            const std::uint16_t ammo_cost = legacy_button_commit
+                ? 1u
+                : action_template == nullptr
+                    ? 0u
+                    : action_template->ammo_cost_per_commit;
+            if ((!legacy_button_commit && action_template == nullptr) ||
+                weapon.ammo[index] < ammo_cost) {
                 push_action_outcome(
                     commit,
                     ActionOutcomeType::Corrected,
@@ -519,10 +553,12 @@ void simulate_weapons(
                 break;
             }
             weapon.ammo[index] = static_cast<std::uint16_t>(
-                weapon.ammo[index] - action_template->ammo_cost_per_commit);
+                weapon.ammo[index] - ammo_cost);
             weapon.next_primary_commit_tick[index] =
                 commit.authoritative_tick +
-                action_template->commit_interval_ticks;
+                (legacy_button_commit
+                     ? 1u
+                     : action_template->commit_interval_ticks);
             push_action_outcome(
                 commit,
                 ActionOutcomeType::Committed,

@@ -111,6 +111,13 @@ struct ProjectileTemplateConfig {
     std::string impact_projectile_template_ref;
 };
 
+struct StaticCollisionSceneConfig {
+    std::string entry_path;
+    std::uint32_t scene_id = 0;
+    std::uint32_t collider_id = 0;
+    std::uint32_t collision_layer = 0;
+};
+
 struct GameServerGameplayConfig {
     WeaponCatalogConfig weapons;
     std::vector<ActionTemplateConfig> action_templates;
@@ -120,6 +127,7 @@ struct GameServerGameplayConfig {
     std::vector<ActorTemplateConfig> actor_templates;
     ColliderCatalogConfig colliders;
     std::vector<ProjectileTemplateConfig> projectile_templates;
+    StaticCollisionSceneConfig static_collision_scene;
 };
 
 struct KernelGameplayCatalogStorage {
@@ -165,6 +173,10 @@ GameServerGameplayConfig load_gameplay_config_from_weapon_template_directory(
 GameServerGameplayConfig load_gameplay_config_from_catalog_file(
     const std::string& path);
 GameServerGameplayConfig load_gameplay_config_from_bundle_memory(
+    const std::uint8_t* bundle_bytes,
+    std::uint32_t bundle_size,
+    const std::string& entry_path);
+std::vector<std::uint8_t> load_gameplay_bundle_entry_bytes(
     const std::uint8_t* bundle_bytes,
     std::uint32_t bundle_size,
     const std::string& entry_path);

@@ -1,265 +1,57 @@
 #include <cassert>
-#include <cstdlib>
-#include <vector>
+#include <string>
 
-#include <glm/glm.hpp>
-
-#include "simulation/public/collision_query.h"
-#include "world/public/world.h"
+#include "physics/public/physics_world.h"
 
 namespace {
 
-void require(bool condition) {
-    if (!condition) {
-        std::abort();
-    }
-}
-
-network_example::NetId spawn_target(
-    network_example::World& world,
-    const glm::vec3& position) {
-    const network_example::NetId target = world.spawn_enemy(position);
-    const auto entity = world.find_entity(target);
-    assert(entity.has_value());
-    world.registry().get<network_example::Health>(*entity) =
-        network_example::Health{50, 50};
-    world.registry().get<network_example::Hitbox>(*entity) =
-        network_example::Hitbox{{0.0f, 0.5f, 0.0f}, {0.25f, 0.5f, 0.25f}, 0};
-    return target;
-}
-
-network_example::NetId spawn_area_projectile(
-    network_example::World& world,
-    network_example::PeerId owner_peer,
-    const glm::vec3& position,
-    float radius) {
-    const network_example::NetId area =
-        world.spawn_projectile(owner_peer, position, glm::vec3{0.0f});
-    const auto entity = world.find_entity(area);
-    assert(entity.has_value());
-    world.registry().replace<network_example::Hitbox>(
-        *entity,
-        network_example::Hitbox{
-            {0.0f, 0.0f, 0.0f},
-            {radius, radius, radius},
-            0});
-    world.registry().emplace<network_example::ProjectileAreaEffectRuntime>(
-        *entity,
-        network_example::ProjectileAreaEffectRuntime{
-            radius,
-            1,
-            1,
-            10,
-            3,
-            network_example::kCollisionMaskDamageable,
-            network_example::ProjectileDamageFalloff::kNone,
-            {},
-        });
-    return area;
-}
-
-void ray_aabb_hit_and_miss() {
-    float distance = 0.0f;
-    require(network_example::ray_intersects_aabb(
-        glm::vec3{0.0f, 0.5f, 0.0f},
-        glm::vec3{1.0f, 0.0f, 0.0f},
-        glm::vec3{3.0f, 0.5f, 0.0f},
-        glm::vec3{0.5f, 0.5f, 0.5f},
-        &distance));
-    require(distance > 2.49f && distance < 2.51f);
-    require(!network_example::ray_intersects_aabb(
-        glm::vec3{0.0f, 2.0f, 0.0f},
-        glm::vec3{1.0f, 0.0f, 0.0f},
-        glm::vec3{3.0f, 0.5f, 0.0f},
-        glm::vec3{0.5f, 0.5f, 0.5f},
-        nullptr));
-}
-
-void segment_hits_are_sorted_by_distance_then_net_id() {
-    network_example::World world;
-    const network_example::NetId far = spawn_target(world, glm::vec3{5.0f, 0.0f, 0.0f});
-    const network_example::NetId near = spawn_target(world, glm::vec3{2.0f, 0.0f, 0.0f});
-
-    const std::vector<network_example::QueryHit> hits =
-        network_example::collect_segment_hits(
-            world,
-            glm::vec3{0.0f, 0.5f, 0.0f},
-            glm::vec3{6.0f, 0.5f, 0.0f},
-            network_example::QueryFilter{});
-
-    require(hits.size() == 2);
-    require(hits[0].net_id == near);
-    require(hits[1].net_id == far);
-    require(hits[0].distance < hits[1].distance);
-    require(hits[0].entity_type == network_example::EntityType::kActor);
-    require(hits[0].collision_layer == network_example::kCollisionLayerHostileSide);
-    require(glm::length(hits[0].normal) > 0.9f);
-    require(hits[0].normal.x < -0.9f);
-}
-
-void sphere_overlap_respects_default_exclusions() {
-    network_example::World world;
-    const network_example::NetId source =
-        world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
-    const network_example::NetId enemy =
-        spawn_target(world, glm::vec3{1.0f, 0.0f, 0.0f});
-    world.spawn_player(1, glm::vec3{1.2f, 0.0f, 0.0f});
-    world.spawn_projectile(0, glm::vec3{1.4f, 0.5f, 0.0f}, glm::vec3{0.0f});
-    spawn_area_projectile(world, 0, glm::vec3{1.6f, 0.0f, 0.0f}, 2.0f);
-
-    network_example::QueryFilter filter;
-    filter.ignored_net_id = source;
-    filter.ignored_owner_peer = 1;
-    const std::vector<network_example::QueryHit> hits =
-        network_example::collect_sphere_overlaps(
-            world,
-            glm::vec3{0.0f, 0.5f, 0.0f},
-            3.0f,
-            filter);
-
-    require(hits.size() == 1);
-    require(hits[0].net_id == enemy);
-    require(hits[0].entity_type == network_example::EntityType::kActor);
-    require(hits[0].collision_layer == network_example::kCollisionLayerHostileSide);
-    require(glm::length(hits[0].normal) > 0.9f);
-}
-
-void projectile_hits_require_explicit_inclusion() {
-    network_example::World world;
-    const network_example::NetId first =
-        world.spawn_projectile(1, glm::vec3{2.0f, 0.5f, 0.0f}, glm::vec3{0.0f});
-    const network_example::NetId second =
-        world.spawn_projectile(2, glm::vec3{3.0f, 0.5f, 0.0f}, glm::vec3{0.0f});
-
-    network_example::QueryFilter default_filter;
-    default_filter.collision_mask = network_example::kCollisionLayerProjectile;
-    const std::vector<network_example::QueryHit> default_hits =
-        network_example::collect_segment_hits(
-            world,
-            glm::vec3{0.0f, 0.5f, 0.0f},
-            glm::vec3{4.0f, 0.5f, 0.0f},
-            default_filter);
-    require(default_hits.empty());
-
-    network_example::QueryFilter projectile_filter = default_filter;
-    projectile_filter.include_projectiles = true;
-    const std::vector<network_example::QueryHit> projectile_hits =
-        network_example::collect_segment_hits(
-            world,
-            glm::vec3{0.0f, 0.5f, 0.0f},
-            glm::vec3{4.0f, 0.5f, 0.0f},
-            projectile_filter);
-
-    require(projectile_hits.size() == 2);
-    require(projectile_hits[0].net_id == first);
-    require(projectile_hits[1].net_id == second);
-    require(projectile_hits[0].entity_type == network_example::EntityType::kProjectile);
-    require(projectile_hits[0].collision_layer ==
-            network_example::kCollisionLayerProjectile);
-}
-
-void layer_helper_reports_entity_layers() {
-    network_example::World world;
-    const network_example::NetId player =
-        world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
-    const network_example::NetId enemy =
-        world.spawn_enemy(glm::vec3{1.0f, 0.0f, 0.0f});
-    const network_example::NetId projectile =
-        world.spawn_projectile(1, glm::vec3{2.0f, 0.0f, 0.0f}, glm::vec3{0.0f});
-    const network_example::NetId area =
-        spawn_area_projectile(world, 1, glm::vec3{3.0f, 0.0f, 0.0f}, 1.0f);
-
-    require(network_example::entity_collision_layer(world, player) ==
-            network_example::kCollisionLayerPlayerSide);
-    require(network_example::entity_collision_layer(world, enemy) ==
-            network_example::kCollisionLayerHostileSide);
-    require(network_example::entity_collision_layer(world, projectile) ==
-            network_example::kCollisionLayerProjectile);
-    require(network_example::entity_collision_layer(world, area) ==
-            network_example::kCollisionLayerProjectile);
-    require(network_example::entity_collision_layer(world, 9999) == 0);
-}
-
-void box_overlap_collects_hits_by_layer_and_order() {
-    network_example::World world;
-    const network_example::NetId far =
-        spawn_target(world, glm::vec3{1.5f, 0.0f, 0.0f});
-    const network_example::NetId near =
-        spawn_target(world, glm::vec3{0.25f, 0.0f, 0.0f});
-    world.spawn_player(2, glm::vec3{0.5f, 0.0f, 0.0f});
-
-    network_example::QueryFilter filter;
-    filter.collision_mask = network_example::kCollisionLayerHostileSide;
-    const std::vector<network_example::QueryHit> hits =
-        network_example::collect_box_overlaps(
-            world,
-            glm::vec3{0.0f, 0.5f, 0.0f},
-            glm::vec3{2.0f, 0.75f, 0.75f},
-            filter);
-
-    require(hits.size() == 2);
-    require(hits[0].net_id == near);
-    require(hits[1].net_id == far);
-}
-
-void swept_sphere_hits_thick_projectile_target() {
-    network_example::World world;
-    const network_example::NetId target =
-        spawn_target(world, glm::vec3{2.0f, 0.0f, 0.45f});
-
-    const std::vector<network_example::QueryHit> thin_hits =
-        network_example::collect_segment_hits(
-            world,
-            glm::vec3{0.0f, 0.5f, 0.0f},
-            glm::vec3{4.0f, 0.5f, 0.0f},
-            network_example::QueryFilter{});
-    require(thin_hits.empty());
-
-    const std::vector<network_example::QueryHit> swept_hits =
-        network_example::collect_swept_sphere_hits(
-            world,
-            glm::vec3{0.0f, 0.5f, 0.0f},
-            glm::vec3{4.0f, 0.5f, 0.0f},
-            0.25f,
-            network_example::QueryFilter{});
-    require(swept_hits.size() == 1);
-    require(swept_hits[0].net_id == target);
-}
-
-void swept_box_hits_thick_projectile_target() {
-    network_example::World world;
-    const network_example::NetId target =
-        spawn_target(world, glm::vec3{2.0f, 0.0f, 0.55f});
-
-    const std::vector<network_example::QueryHit> thin_hits =
-        network_example::collect_segment_hits(
-            world,
-            glm::vec3{0.0f, 0.5f, 0.0f},
-            glm::vec3{4.0f, 0.5f, 0.0f},
-            network_example::QueryFilter{});
-    require(thin_hits.empty());
-
-    const std::vector<network_example::QueryHit> swept_hits =
-        network_example::collect_swept_box_hits(
-            world,
-            glm::vec3{0.0f, 0.5f, 0.0f},
-            glm::vec3{4.0f, 0.5f, 0.0f},
-            glm::vec3{0.2f, 0.2f, 0.35f},
-            network_example::QueryFilter{});
-    require(swept_hits.size() == 1);
-    require(swept_hits[0].net_id == target);
+network_example::physics::CollisionObjectDescriptor actor(
+    std::uint32_t entity_net_id,
+    std::uint32_t collider_id,
+    float x) {
+    using namespace network_example::physics;
+    CollisionObjectDescriptor object{};
+    object.identity.entity_net_id = entity_net_id;
+    object.identity.collider_id = collider_id;
+    object.identity.kind = CollisionObjectKind::kActorHitbox;
+    object.identity.layer = CollisionLayer::kDamageable;
+    object.shape.type = CollisionShapeType::kBox;
+    object.shape.half_extents = glm::vec3(0.5f);
+    object.position = glm::vec3(x, 0.0f, 0.0f);
+    return object;
 }
 
 }  // namespace
 
 int main() {
-    ray_aabb_hit_and_miss();
-    segment_hits_are_sorted_by_distance_then_net_id();
-    sphere_overlap_respects_default_exclusions();
-    projectile_hits_require_explicit_inclusion();
-    layer_helper_reports_entity_layers();
-    box_overlap_collects_hits_by_layer_and_order();
-    swept_sphere_hits_thick_projectile_target();
-    swept_box_hits_thick_projectile_target();
+    using namespace network_example::physics;
+    PhysicsWorld world;
+    assert(world.valid());
+    std::string error;
+    assert(world.upsert_object(actor(2, 20, 5.0f), &error));
+    assert(world.upsert_object(actor(1, 10, 5.0f), &error));
+
+    RayCastRequest ray{};
+    ray.origin = glm::vec3(0.0f);
+    ray.direction = glm::vec3(1.0f, 0.0f, 0.0f);
+    ray.max_distance = 10.0f;
+    const auto hits = world.ray_cast_all(ray);
+    assert(hits.size() == 2);
+    assert(hits[0].identity.entity_net_id == 1);
+    assert(hits[1].identity.entity_net_id == 2);
+
+    ray.filter.ignored_entity_net_id = 1;
+    CollisionHit closest{};
+    assert(world.ray_cast_closest(ray, &closest));
+    assert(closest.identity.entity_net_id == 2);
+
+    OverlapRequest overlap{};
+    overlap.shape.type = CollisionShapeType::kSphere;
+    overlap.shape.radius = 1.0f;
+    overlap.position = glm::vec3(5.0f, 0.0f, 0.0f);
+    overlap.filter.ignored_collider_id = 20;
+    const auto overlaps = world.overlap_all(overlap);
+    assert(overlaps.size() == 1);
+    assert(overlaps[0].identity.collider_id == 10);
     return 0;
 }

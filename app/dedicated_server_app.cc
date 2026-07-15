@@ -89,11 +89,14 @@ int RunDedicatedServer(
     const char* gameplay_catalog_path,
     const char* gameplay_catalog_bundle_path,
     const char* gameplay_catalog_entry_path,
-    const char* gameplay_catalog_content_namespace) {
+    const char* gameplay_catalog_content_namespace,
+    std::uint32_t physics_simulation,
+    std::uint32_t physics_workers) {
     log_dedicated_server_build_info();
 
     network_example::game_server::GameServerGameplayConfig gameplay_config;
     std::vector<std::uint8_t> bundle_bytes;
+    std::vector<std::uint8_t> collision_scene_bytes;
     try {
         if (gameplay_catalog_bundle_path != nullptr &&
             gameplay_catalog_bundle_path[0] != '\0') {
@@ -103,6 +106,13 @@ int RunDedicatedServer(
                     bundle_bytes.data(),
                     static_cast<std::uint32_t>(bundle_bytes.size()),
                     gameplay_catalog_entry_path);
+            if (!gameplay_config.static_collision_scene.entry_path.empty()) {
+                collision_scene_bytes =
+                    network_example::game_server::load_gameplay_bundle_entry_bytes(
+                        bundle_bytes.data(),
+                        static_cast<std::uint32_t>(bundle_bytes.size()),
+                        gameplay_config.static_collision_scene.entry_path);
+            }
             spdlog::info(
                 "loaded gameplay catalog bundle={} entry={} version={} hash={}",
                 gameplay_catalog_bundle_path,
@@ -140,13 +150,34 @@ int RunDedicatedServer(
 
     KernelConfig config = default_config();
     KernelHandle* kernel = Kernel_Create(&config);
-    if (kernel == nullptr ||
+    KernelPhysicsConfig physics_config{};
+    physics_config.struct_size = sizeof(physics_config);
+    physics_config.physics_simulation = physics_simulation;
+    physics_config.physics_workers = physics_workers;
+    if (kernel == nullptr || !Kernel_SetPhysicsConfig(kernel, &physics_config) ||
         !network_example::game_server::load_kernel_gameplay_catalog(
             kernel,
             gameplay_config)) {
         spdlog::error("failed to start dedicated server");
         Kernel_Destroy(kernel);
         return 1;
+    }
+    if (!collision_scene_bytes.empty()) {
+        KernelStaticCollisionSceneConfig scene_config{};
+        scene_config.struct_size = sizeof(scene_config);
+        scene_config.artifact_bytes = collision_scene_bytes.data();
+        scene_config.artifact_size =
+            static_cast<std::uint32_t>(collision_scene_bytes.size());
+        scene_config.scene_id = gameplay_config.static_collision_scene.scene_id;
+        scene_config.collider_id =
+            gameplay_config.static_collision_scene.collider_id;
+        scene_config.collision_layer =
+            gameplay_config.static_collision_scene.collision_layer;
+        if (!Kernel_SetStaticCollisionScene(kernel, &scene_config)) {
+            spdlog::error("failed to register static collision scene");
+            Kernel_Destroy(kernel);
+            return 1;
+        }
     }
     if (!bundle_bytes.empty()) {
         KernelGameplayCatalogSyncServerConfig sync_config{};

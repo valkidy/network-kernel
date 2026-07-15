@@ -1254,6 +1254,67 @@ KernelEngine::KernelEngine(KernelConfig config)
     events_.reserve(config_.max_events);
 }
 
+bool KernelEngine::set_physics_config(const KernelPhysicsConfig& config) {
+    if (running_ || config.physics_simulation > 1) {
+        return false;
+    }
+    physics_config_ = config;
+    physics_config_.struct_size = sizeof(KernelPhysicsConfig);
+    return true;
+}
+
+bool KernelEngine::set_static_collision_scene(
+    const KernelStaticCollisionSceneConfig& config) {
+    if (running_ || !is_server_mode(config_.mode) ||
+        config.artifact_bytes == nullptr || config.artifact_size == 0 ||
+        config.artifact_size > KERNEL_STATIC_COLLISION_SCENE_MAX_BYTES ||
+        config.scene_id == 0 || config.collider_id == 0 ||
+        config.collision_layer != KERNEL_STATIC_COLLISION_LAYER_TERRAIN) {
+        return false;
+    }
+    static_collision_scene_.assign(
+        config.artifact_bytes,
+        config.artifact_bytes + config.artifact_size);
+    static_collision_scene_id_ = config.scene_id;
+    static_collision_collider_id_ = config.collider_id;
+    static_collision_layer_ = config.collision_layer;
+    return true;
+}
+
+bool KernelEngine::prepare_server_physics(
+    std::unique_ptr<physics::PhysicsWorld>* out_world) {
+    if (out_world == nullptr || running_) {
+        return false;
+    }
+    if (physics_config_.physics_simulation == 1) {
+        spdlog::error(
+            "physics_simulation=1 is reserved and not implemented; "
+            "use query-only physics_simulation=0");
+        return false;
+    }
+    auto world = std::make_unique<physics::PhysicsWorld>(
+        physics::PhysicsWorldConfig{physics_config_.physics_workers});
+    if (!world->valid()) {
+        spdlog::error("failed to initialize query-only Jolt physics world");
+        return false;
+    }
+    if (!static_collision_scene_.empty()) {
+        physics::CollisionObjectIdentity identity{};
+        identity.collider_id = static_collision_collider_id_;
+        identity.kind = physics::CollisionObjectKind::kTerrain;
+        identity.layer = physics::CollisionLayer::kTerrain;
+        identity.scene_id = static_collision_scene_id_;
+        std::string error;
+        if (!world->load_static_scene(
+                static_collision_scene_, identity, &error)) {
+            spdlog::error("failed to load static collision scene: {}", error);
+            return false;
+        }
+    }
+    *out_world = std::move(world);
+    return true;
+}
+
 bool KernelEngine::invoke_rpc(
     std::string_view request_json,
     std::uint64_t* out_request_id) {
@@ -1277,6 +1338,9 @@ bool KernelEngine::poll_rpc_response(
 }
 
 bool KernelEngine::start_client(const char* address) {
+    if (running_) {
+        return false;
+    }
     auto gns_transport = std::make_unique<GnsTransport>();
     if (!gns_transport->StartClient(address)) {
         push_event(KernelEventType_Error, 0, 0, 1);
@@ -1286,6 +1350,7 @@ bool KernelEngine::start_client(const char* address) {
     listen_server_transport_ = nullptr;
     transport_ = std::move(gns_transport);
     reset_runtime_state(KernelMode_Client);
+    physics_world_.reset();
     return true;
 }
 
@@ -1318,6 +1383,10 @@ bool KernelEngine::start_client_catalog_sync(
 }
 
 bool KernelEngine::start_listen_server(std::uint16_t port) {
+    std::unique_ptr<physics::PhysicsWorld> query_world;
+    if (!prepare_server_physics(&query_world)) {
+        return false;
+    }
     if (!gameplay_catalog_sync_bundle_.empty() &&
         (gameplay_catalog_manifest_.catalog_version != catalog_version_ ||
          gameplay_catalog_manifest_.catalog_hash != catalog_hash_)) {
@@ -1332,6 +1401,8 @@ bool KernelEngine::start_listen_server(std::uint16_t port) {
     listen_server_transport_ = listen_transport.get();
     transport_ = std::move(listen_transport);
     reset_runtime_state(KernelMode_ListenServer);
+    physics_world_ = std::move(query_world);
+    world_.set_collision_world(physics_world_.get());
 
     const NetId player =
         world_.spawn_player(kLocalListenPeerId, glm::vec3{0.0f, 0.0f, 0.0f});
@@ -1356,6 +1427,10 @@ bool KernelEngine::start_listen_server(std::uint16_t port) {
 }
 
 bool KernelEngine::start_dedicated_server(std::uint16_t port) {
+    std::unique_ptr<physics::PhysicsWorld> query_world;
+    if (!prepare_server_physics(&query_world)) {
+        return false;
+    }
     if (!gameplay_catalog_sync_bundle_.empty() &&
         (gameplay_catalog_manifest_.catalog_version != catalog_version_ ||
          gameplay_catalog_manifest_.catalog_hash != catalog_hash_)) {
@@ -1370,6 +1445,8 @@ bool KernelEngine::start_dedicated_server(std::uint16_t port) {
 
     transport_ = std::move(gns_transport);
     reset_runtime_state(KernelMode_DedicatedServer);
+    physics_world_ = std::move(query_world);
+    world_.set_collision_world(physics_world_.get());
     publish_snapshot();
     rebuild_render_states();
     return true;
@@ -2448,6 +2525,7 @@ void KernelEngine::materialize_entity_collider(NetId net_id) {
     collider.shape_type = to_collider_shape_type(collider_template->shape_type);
     collider.purpose_flags = collider_template->purpose_flags;
     collider.layer_mask = collider_template->layer_mask;
+    collider.hit_zone = hitbox.hit_zone;
     collider.local_center = from_kernel_vec3(collider_template->center);
     collider.local_rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
     collider.world_rotation = transform.rotation * collider.local_rotation;
@@ -2543,6 +2621,68 @@ void KernelEngine::sync_entity_colliders_from_world() {
             transform.position + transform.rotation * collider.local_center;
         collider.world_bounds = collider_world_bounds(collider);
     }
+
+    if (physics_world_ == nullptr) {
+        return;
+    }
+    std::unordered_set<std::uint32_t> current_collider_ids;
+    for (const ColliderInstance& collider :
+         world_.collider_registry().instances()) {
+        if (collider.lifetime_ticks != 0 || collider.entity_net_id == 0 ||
+            collider.entity_type == EntityType::kProjectile ||
+            collider.shape_type == ColliderShapeType::kSegment ||
+            collider.shape_type == ColliderShapeType::kCone) {
+            continue;
+        }
+        physics::CollisionObjectDescriptor object{};
+        object.identity.entity_net_id = collider.entity_net_id;
+        object.identity.collider_id = collider.collider_id;
+        object.identity.hit_zone = collider.hit_zone;
+        object.identity.kind = collider.entity_type == EntityType::kActor
+            ? physics::CollisionObjectKind::kActorHitbox
+            : physics::CollisionObjectKind::kStaticObstacle;
+        object.identity.layer = collider.entity_type == EntityType::kActor
+            ? physics::CollisionLayer::kDamageable
+            : physics::CollisionLayer::kStaticObstacle;
+        object.identity.gameplay_category = collider.layer_mask;
+        object.shape.type = collider.shape_type == ColliderShapeType::kSphere
+            ? physics::CollisionShapeType::kSphere
+            : physics::CollisionShapeType::kBox;
+        object.shape.half_extents = collider.half_extents;
+        object.shape.radius = collider.radius;
+        object.position = collider.world_center;
+        object.rotation = collider.world_rotation;
+        object.enabled = collider.enabled;
+        const std::optional<entt::entity> entity =
+            world_.find_entity(collider.entity_net_id);
+        if (entity.has_value() && world_.registry().all_of<Health>(*entity) &&
+            world_.registry().get<Health>(*entity).hp == 0) {
+            object.enabled = false;
+        }
+        std::string error;
+        if (physics_entity_collider_ids_.contains(collider.collider_id)) {
+            physics_world_->set_object_transform(
+                collider.collider_id,
+                object.position,
+                object.rotation);
+            physics_world_->set_object_enabled(
+                collider.collider_id,
+                object.enabled);
+        } else if (!physics_world_->upsert_object(object, &error)) {
+            spdlog::error(
+                "failed to materialize collider_id={} in physics world: {}",
+                collider.collider_id,
+                error);
+            continue;
+        }
+        current_collider_ids.insert(collider.collider_id);
+    }
+    for (std::uint32_t collider_id : physics_entity_collider_ids_) {
+        if (!current_collider_ids.contains(collider_id)) {
+            physics_world_->remove_object(collider_id);
+        }
+    }
+    physics_entity_collider_ids_ = std::move(current_collider_ids);
 }
 
 std::uint32_t KernelEngine::collider_template_id_for_projectile_template(
@@ -3038,7 +3178,8 @@ void KernelEngine::push_event(
 void KernelEngine::reset_runtime_state(KernelMode mode) {
     config_.mode = mode;
     tick_loop_ = TickLoop(config_.tick);
-    world_ = World{};
+    world_ = World{false};
+    physics_entity_collider_ids_.clear();
     history_buffer_ = HistoryBuffer(history_frame_count(config_.tick));
     damage_pipeline_.clear();
     command_queue_.clear();
@@ -5258,6 +5399,7 @@ void KernelEngine::simulate_tick() {
     }
     simulate_player_movement(world_, pending_inputs_, fixed_delta);
     simulate_velocity_movement(world_, fixed_delta);
+    sync_entity_colliders_from_world();
     for (const QueuedInput& pending_input : pending_inputs_) {
         const HistoryFrame* rewind_frame = nullptr;
         std::uint32_t rewind_tick = tick_loop_.current_tick();

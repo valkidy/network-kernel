@@ -50,6 +50,7 @@ struct ColliderInstance {
     ColliderShapeType shape_type = ColliderShapeType::kAabb;
     std::uint32_t purpose_flags = 0;
     std::uint32_t layer_mask = 0;
+    std::uint32_t hit_zone = 0;
     glm::vec3 local_center{0.0f, 0.0f, 0.0f};
     glm::quat local_rotation{1.0f, 0.0f, 0.0f, 0.0f};
     glm::vec3 world_center{0.0f, 0.0f, 0.0f};
@@ -61,6 +62,7 @@ struct ColliderInstance {
     std::uint32_t lifetime_ticks = 0;
     std::uint32_t remaining_ticks = 0;
     bool has_resolved_damage = false;
+    bool enabled = true;
     ColliderWorldBounds world_bounds{};
 };
 
@@ -292,6 +294,21 @@ struct ActionRuntimeState {
 };
 
 struct WeaponMechanicsDefinition {
+    WeaponMechanicsDefinition() = default;
+    WeaponMechanicsDefinition(
+        std::uint8_t definition_id,
+        WeaponFireMode fire_mode,
+        std::uint16_t definition_magazine_size,
+        std::uint16_t definition_damage,
+        std::uint32_t /*legacy_fire_interval_ticks*/,
+        std::uint32_t /*legacy_reload_ticks*/,
+        float definition_max_range = 0.0f)
+        : id(definition_id),
+          mode(fire_mode),
+          magazine_size(definition_magazine_size),
+          damage(definition_damage),
+          max_range(definition_max_range) {}
+
     std::uint8_t id = 0;
     WeaponFireMode mode = WeaponFireMode::kHitscan;
     std::uint16_t magazine_size = 0;

@@ -3,7 +3,16 @@
 #include <algorithm>
 #include <cstdlib>
 
+#include "physics/public/physics_world.h"
+
 namespace network_example {
+
+World::World(bool allow_standalone_collision)
+    : allow_standalone_collision_(allow_standalone_collision) {}
+
+World::~World() = default;
+World::World(World&&) noexcept = default;
+World& World::operator=(World&&) noexcept = default;
 
 bool World::destroy(NetId net_id) {
     const std::optional<entt::entity> entity = find_entity(net_id);
@@ -96,6 +105,61 @@ entt::registry& World::registry() {
 
 const entt::registry& World::registry() const {
     return registry_;
+}
+
+void World::set_collision_world(physics::PhysicsWorld* collision_world) {
+    collision_world_ = collision_world;
+}
+
+physics::PhysicsWorld* World::collision_world() {
+    if (collision_world_ == nullptr && allow_standalone_collision_) {
+        synchronize_standalone_collision_world();
+        return standalone_collision_world_.get();
+    }
+    return collision_world_;
+}
+
+const physics::PhysicsWorld* World::collision_world() const {
+    if (collision_world_ == nullptr && allow_standalone_collision_) {
+        World* mutable_world = const_cast<World*>(this);
+        mutable_world->synchronize_standalone_collision_world();
+        return mutable_world->standalone_collision_world_.get();
+    }
+    return collision_world_;
+}
+
+void World::synchronize_standalone_collision_world() {
+    if (standalone_collision_world_ == nullptr) {
+        standalone_collision_world_ =
+            std::make_unique<physics::PhysicsWorld>();
+    }
+    auto view = registry_.view<NetworkIdentity, EntityKind, Transform, Hitbox>();
+    for (const entt::entity entity : view) {
+        const NetworkIdentity& identity = view.get<NetworkIdentity>(entity);
+        const EntityKind& kind = view.get<EntityKind>(entity);
+        if (kind.type != EntityType::kActor) {
+            continue;
+        }
+        const Transform& transform = view.get<Transform>(entity);
+        const Hitbox& hitbox = view.get<Hitbox>(entity);
+        physics::CollisionObjectDescriptor object{};
+        object.identity.entity_net_id = identity.net_id;
+        object.identity.collider_id = 0x40000000u | identity.net_id;
+        object.identity.hit_zone = hitbox.hit_zone;
+        object.identity.kind = physics::CollisionObjectKind::kActorHitbox;
+        object.identity.layer = physics::CollisionLayer::kDamageable;
+        object.identity.gameplay_category = kind.actor_type == ActorType::kPlayer
+            ? kCollisionLayerPlayerSide
+            : kCollisionLayerHostileSide;
+        object.shape.type = physics::CollisionShapeType::kBox;
+        object.shape.half_extents = hitbox.half_extents;
+        object.position = transform.position + transform.rotation * hitbox.center;
+        object.rotation = transform.rotation;
+        object.enabled = !registry_.all_of<Health>(entity) ||
+            registry_.get<Health>(entity).hp != 0;
+        std::string error;
+        (void)standalone_collision_world_->upsert_object(object, &error);
+    }
 }
 
 World::ColliderRegistry& World::collider_registry() {

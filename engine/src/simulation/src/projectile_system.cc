@@ -7,7 +7,7 @@
 #include <utility>
 #include <vector>
 
-#include "simulation/public/collision_query.h"
+#include "physics/public/physics_world.h"
 
 namespace network_example {
 namespace {
@@ -163,6 +163,19 @@ glm::vec3 hitbox_center(const Transform& transform, const Hitbox& hitbox) {
     return transform.position + hitbox.center;
 }
 
+std::uint32_t entity_gameplay_collision_category(
+    const World& world,
+    NetId net_id) {
+    std::uint32_t category = 0;
+    for (const ColliderInstance& collider : world.collider_registry().instances()) {
+        if (collider.entity_net_id == net_id && collider.lifetime_ticks == 0 &&
+            collider.enabled) {
+            category |= collider.layer_mask;
+        }
+    }
+    return category;
+}
+
 bool homing_target_is_valid(
     World& world,
     NetId target_net_id,
@@ -186,7 +199,8 @@ bool homing_target_is_valid(
     if (health.hp == 0) {
         return false;
     }
-    const std::uint32_t layer = entity_collision_layer(world, target_net_id);
+    const std::uint32_t layer =
+        entity_gameplay_collision_category(world, target_net_id);
     if (layer != 0 && (layer & collision_mask) == 0) {
         return false;
     }
@@ -228,7 +242,8 @@ NetId acquire_homing_target(
         if (health.hp == 0) {
             continue;
         }
-        const std::uint32_t layer = entity_collision_layer(world, identity.net_id);
+        const std::uint32_t layer =
+            entity_gameplay_collision_category(world, identity.net_id);
         if (layer != 0 && (layer & collision_mask) == 0) {
             continue;
         }
@@ -364,7 +379,7 @@ struct ProjectileCollisionQuery {
 struct ProjectileHitRecord {
     NetId projectile_net_id = 0;
     NetId target_net_id = 0;
-    QueryHit hit{};
+    physics::CollisionHit hit{};
     std::uint32_t sequence_id = 0;
 };
 
@@ -476,52 +491,75 @@ ProjectileCollisionQuery build_projectile_collision_query(
     return query;
 }
 
-std::vector<QueryHit> collect_projectile_collision_hits(
+std::vector<physics::CollisionHit> collect_projectile_collision_hits(
     World& world,
     const ProjectileState& projectile,
     const glm::vec3& previous_position,
     const glm::vec3& current_position,
-    const QueryFilter& filter) {
+    const physics::CollisionQueryFilter& filter) {
+    const physics::PhysicsWorld* collision_world = world.collision_world();
+    if (collision_world == nullptr) {
+        return {};
+    }
     const ProjectileCollisionQuery query = build_projectile_collision_query(
         projectile,
         previous_position,
         current_position);
     switch (query.query_type) {
         case ProjectileCollisionQueryType::kSweptSphere:
-            return collect_swept_sphere_hits(
-                world,
-                query.previous_position,
-                query.current_position,
-                query.radius,
-                filter);
+        {
+            physics::ShapeCastRequest request{};
+            request.shape.type = physics::CollisionShapeType::kSphere;
+            request.shape.radius = query.radius;
+            request.start = query.previous_position;
+            request.displacement =
+                query.current_position - query.previous_position;
+            request.filter = filter;
+            return collision_world->shape_cast_all(request);
+        }
         case ProjectileCollisionQueryType::kSphereOverlap:
-            return collect_sphere_overlaps(
-                world,
-                query.center,
-                query.radius,
-                filter);
+        {
+            physics::OverlapRequest request{};
+            request.shape.type = physics::CollisionShapeType::kSphere;
+            request.shape.radius = query.radius;
+            request.position = query.center;
+            request.filter = filter;
+            return collision_world->overlap_all(request);
+        }
         case ProjectileCollisionQueryType::kSweptBox:
-            return collect_swept_box_hits(
-                world,
-                query.previous_position,
-                query.current_position,
-                query.half_extents,
-                filter);
+        {
+            physics::ShapeCastRequest request{};
+            request.shape.type = physics::CollisionShapeType::kBox;
+            request.shape.half_extents = query.half_extents;
+            request.start = query.previous_position;
+            request.displacement =
+                query.current_position - query.previous_position;
+            request.filter = filter;
+            return collision_world->shape_cast_all(request);
+        }
         case ProjectileCollisionQueryType::kBoxOverlap:
-            return collect_box_overlaps(
-                world,
-                query.center,
-                query.half_extents,
-                filter);
+        {
+            physics::OverlapRequest request{};
+            request.shape.type = physics::CollisionShapeType::kBox;
+            request.shape.half_extents = query.half_extents;
+            request.position = query.center;
+            request.filter = filter;
+            return collision_world->overlap_all(request);
+        }
         case ProjectileCollisionQueryType::kUnsupported:
             return {};
         case ProjectileCollisionQueryType::kSegment:
         default:
-            return collect_segment_hits(
-                world,
-                query.previous_position,
-                query.current_position,
-                filter);
+        {
+            const glm::vec3 displacement =
+                query.current_position - query.previous_position;
+            physics::RayCastRequest request{};
+            request.origin = query.previous_position;
+            request.direction = displacement;
+            request.max_distance = glm::length(displacement);
+            request.filter = filter;
+            return collision_world->ray_cast_all(request);
+        }
     }
 }
 
@@ -555,14 +593,14 @@ void push_unique_net_id(std::vector<NetId>* net_ids, NetId net_id) {
 
 std::vector<ProjectileHitRecord> make_projectile_hit_records(
     NetId projectile_net_id,
-    const std::vector<QueryHit>& hits) {
+    const std::vector<physics::CollisionHit>& hits) {
     std::vector<ProjectileHitRecord> records;
     records.reserve(hits.size());
     std::uint32_t sequence_id = 0;
-    for (const QueryHit& hit : hits) {
+    for (const physics::CollisionHit& hit : hits) {
         records.push_back(ProjectileHitRecord{
             projectile_net_id,
-            hit.net_id,
+            hit.identity.entity_net_id,
             hit,
             sequence_id++,
         });
@@ -630,6 +668,22 @@ ProjectileHitOutcome process_projectile_hit_records(
             if (projectile.hit_count >= projectile.max_hit_count) {
                 break;
             }
+            if (record.hit.identity.kind !=
+                physics::CollisionObjectKind::kActorHitbox) {
+                (void)apply_projectile_impact_response(
+                    world,
+                    identity,
+                    projectile,
+                    record.hit.position,
+                    normalized_or(
+                        record.hit.position - projectile.previous_position,
+                        glm::vec3{1.0f, 0.0f, 0.0f}),
+                    current_tick,
+                    fixed_delta_seconds,
+                    events);
+                outcome.destroy_projectile = true;
+                return outcome;
+            }
             damage_pipeline->submit_damage_request(DamageRequest{
                 current_tick,
                 record.sequence_id,
@@ -667,7 +721,9 @@ ProjectileHitOutcome process_projectile_hit_records(
     }
 
     if (projectile.damage_shape == ProjectileDamageShape::kDirectHit &&
-               projectile.damage > 0) {
+        projectile.damage > 0 &&
+        records.front().hit.identity.kind ==
+            physics::CollisionObjectKind::kActorHitbox) {
         damage_pipeline->submit_damage_request(DamageRequest{
             current_tick,
             0,
@@ -722,6 +778,21 @@ bool projectile_can_interact_with_projectiles(const ProjectileState& projectile)
     return (projectile.collision_mask & kCollisionLayerProjectile) != 0;
 }
 
+float projectile_interaction_radius(const ProjectileState& projectile) {
+    if (!projectile.has_collision_geometry) {
+        return 0.25f;
+    }
+    if (projectile.collision_geometry.shape_type == ColliderShapeType::kSphere) {
+        return std::max(0.0f, projectile.collision_geometry.radius);
+    }
+    if (projectile.collision_geometry.shape_type == ColliderShapeType::kAabb ||
+        projectile.collision_geometry.shape_type ==
+            ColliderShapeType::kOrientedBox) {
+        return glm::length(projectile.collision_geometry.half_extents);
+    }
+    return 0.25f;
+}
+
 void collect_projectile_interaction_matches(
     World& world,
     std::vector<ProjectileInteractionMatch>* matches) {
@@ -732,75 +803,81 @@ void collect_projectile_interaction_matches(
 
     const std::vector<ProjectileEntityRef> projectiles =
         sorted_projectile_entities(world);
-    for (const ProjectileEntityRef& ref : projectiles) {
-        if (!world.registry().valid(ref.entity) ||
+    for (std::size_t lhs_index = 0; lhs_index < projectiles.size(); ++lhs_index) {
+        const ProjectileEntityRef& lhs_ref = projectiles[lhs_index];
+        if (!world.registry().valid(lhs_ref.entity) ||
             !world.registry().all_of<NetworkIdentity, Transform, ProjectileState>(
-                ref.entity)) {
+                lhs_ref.entity)) {
             continue;
         }
-        const NetworkIdentity& identity =
-            world.registry().get<NetworkIdentity>(ref.entity);
-        const Transform& transform = world.registry().get<Transform>(ref.entity);
-        const ProjectileState& projectile =
-            world.registry().get<ProjectileState>(ref.entity);
-        if (!projectile_can_interact_with_projectiles(projectile)) {
+        const NetworkIdentity& lhs_identity =
+            world.registry().get<NetworkIdentity>(lhs_ref.entity);
+        const Transform& lhs_transform =
+            world.registry().get<Transform>(lhs_ref.entity);
+        const ProjectileState& lhs_projectile =
+            world.registry().get<ProjectileState>(lhs_ref.entity);
+        if (!projectile_can_interact_with_projectiles(lhs_projectile)) {
             continue;
         }
-
-        QueryFilter filter;
-        filter.ignored_net_id = identity.net_id;
-        filter.ignored_owner_peer = identity.owner_peer;
-        filter.collision_mask = projectile.collision_mask;
-        filter.include_projectiles = true;
-        const std::vector<QueryHit> hits = collect_projectile_collision_hits(
-            world,
-            projectile,
-            projectile.previous_position,
-            transform.position,
-            filter);
-        for (const QueryHit& hit : hits) {
-            if (hit.entity_type != EntityType::kProjectile) {
+        for (std::size_t rhs_index = lhs_index + 1;
+             rhs_index < projectiles.size();
+             ++rhs_index) {
+            const ProjectileEntityRef& rhs_ref = projectiles[rhs_index];
+            if (!world.registry().valid(rhs_ref.entity) ||
+                !world.registry().all_of<NetworkIdentity, Transform, ProjectileState>(
+                    rhs_ref.entity)) {
                 continue;
             }
-            const NetId first = std::min(identity.net_id, hit.net_id);
-            const NetId second = std::max(identity.net_id, hit.net_id);
-            const auto duplicate = std::find_if(
-                matches->begin(),
-                matches->end(),
-                [first, second](const ProjectileInteractionMatch& match) {
-                    return std::min(match.lhs_net_id, match.rhs_net_id) == first &&
-                           std::max(match.lhs_net_id, match.rhs_net_id) == second;
-                });
-            if (duplicate != matches->end()) {
+            const NetworkIdentity& rhs_identity =
+                world.registry().get<NetworkIdentity>(rhs_ref.entity);
+            const Transform& rhs_transform =
+                world.registry().get<Transform>(rhs_ref.entity);
+            const ProjectileState& rhs_projectile =
+                world.registry().get<ProjectileState>(rhs_ref.entity);
+            if (!projectile_can_interact_with_projectiles(rhs_projectile) ||
+                (lhs_identity.owner_peer != 0 &&
+                 lhs_identity.owner_peer == rhs_identity.owner_peer)) {
                 continue;
             }
 
-            const auto target_entity = world.find_entity(hit.net_id);
-            if (!target_entity.has_value() ||
-                !world.registry().all_of<NetworkIdentity, ProjectileState>(
-                    *target_entity)) {
+            const glm::vec3 relative_start =
+                lhs_projectile.previous_position -
+                rhs_projectile.previous_position;
+            const glm::vec3 relative_delta =
+                (lhs_transform.position - rhs_transform.position) -
+                relative_start;
+            const float delta_length_squared = glm::dot(
+                relative_delta, relative_delta);
+            const float fraction = delta_length_squared <= 0.000001f
+                ? 0.0f
+                : glm::clamp(
+                      -glm::dot(relative_start, relative_delta) /
+                          delta_length_squared,
+                      0.0f,
+                      1.0f);
+            const glm::vec3 separation =
+                relative_start + relative_delta * fraction;
+            const float radius = projectile_interaction_radius(lhs_projectile) +
+                                 projectile_interaction_radius(rhs_projectile);
+            if (glm::dot(separation, separation) > radius * radius) {
                 continue;
             }
-            const NetworkIdentity& target_identity =
-                world.registry().get<NetworkIdentity>(*target_entity);
-            if (identity.owner_peer != 0 &&
-                identity.owner_peer == target_identity.owner_peer) {
-                continue;
-            }
-            const ProjectileState& target_projectile =
-                world.registry().get<ProjectileState>(*target_entity);
-            if (!projectile_can_interact_with_projectiles(target_projectile)) {
-                continue;
-            }
-
+            const glm::vec3 lhs_position = glm::mix(
+                lhs_projectile.previous_position,
+                lhs_transform.position,
+                fraction);
+            const glm::vec3 rhs_position = glm::mix(
+                rhs_projectile.previous_position,
+                rhs_transform.position,
+                fraction);
             const std::optional<ProjectileInteractionMatch> match =
                 match_projectile_interaction_rule(
                     world.projectile_interaction_rules(),
-                    identity.net_id,
-                    projectile,
-                    hit.net_id,
-                    target_projectile,
-                    hit.position);
+                    lhs_identity.net_id,
+                    lhs_projectile,
+                    rhs_identity.net_id,
+                    rhs_projectile,
+                    (lhs_position + rhs_position) * 0.5f);
             if (match.has_value()) {
                 matches->push_back(*match);
             }
@@ -992,11 +1069,11 @@ void simulate_projectiles(
         const Transform& transform = hit_view.get<Transform>(entity);
         ProjectileState& projectile = hit_view.get<ProjectileState>(entity);
 
-        QueryFilter filter;
-        filter.ignored_net_id = projectile.shooter_net_id;
-        filter.ignored_owner_peer = identity.owner_peer;
-        filter.collision_mask = projectile.collision_mask;
-        const std::vector<QueryHit> hits = collect_projectile_collision_hits(
+        physics::CollisionQueryFilter filter;
+        filter.ignored_entity_net_id = projectile.shooter_net_id;
+        filter.gameplay_category_mask = projectile.collision_mask;
+        const std::vector<physics::CollisionHit> hits =
+            collect_projectile_collision_hits(
             world,
             projectile,
             projectile.previous_position,

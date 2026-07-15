@@ -22,6 +22,8 @@
 #define KERNEL_GAMEPLAY_CATALOG_SYNC_DEFAULT_MAX_BUNDLE_SIZE \
     KERNEL_GAMEPLAY_CATALOG_SYNC_MAX_BUNDLE_SIZE
 #define KERNEL_GAMEPLAY_CATALOG_SYNC_DEFAULT_TIMEOUT_MS UINT32_C(30000)
+#define KERNEL_STATIC_COLLISION_SCENE_MAX_BYTES UINT32_C(16777216)
+#define KERNEL_STATIC_COLLISION_LAYER_TERRAIN UINT32_C(1)
 
 #define KERNEL_MAX_WEAPONS 7u
 
@@ -312,6 +314,7 @@ typedef enum KernelEntityLifecycleEventType {
 
 typedef enum InputButton {
     InputButton_MoveJump = 1u << 0,
+    InputButton_Fire = 1u << 1,
     InputButton_Sprint = 1u << 3,
     InputButton_Dodge = 1u << 6,
     InputButton_Parry = 1u << 7,
@@ -508,6 +511,21 @@ typedef struct KernelConfig {
     uint32_t max_events;
     KernelNetworkStatsConfig network_stats;
 } KernelConfig;
+
+typedef struct KernelPhysicsConfig {
+    uint32_t struct_size;
+    uint32_t physics_simulation;
+    uint32_t physics_workers;
+} KernelPhysicsConfig;
+
+typedef struct KernelStaticCollisionSceneConfig {
+    uint32_t struct_size;
+    const uint8_t* artifact_bytes;
+    uint32_t artifact_size;
+    uint32_t scene_id;
+    uint32_t collider_id;
+    uint32_t collision_layer;
+} KernelStaticCollisionSceneConfig;
 
 typedef struct ActionIntent {
     uint32_t action_instance_id;

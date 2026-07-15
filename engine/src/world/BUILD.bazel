@@ -24,6 +24,7 @@ cc_library(
     includes = [".."],
     deps = [
         ":components",
+        "//engine/src/physics:physics",
         "@entt//:entt",
         "@glm//:glm",
     ],

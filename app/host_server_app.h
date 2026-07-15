@@ -9,6 +9,8 @@ int RunHostServer(
     const char* gameplay_catalog_bundle_path,
     const char* gameplay_catalog_entry_path,
     const char* gameplay_catalog_content_namespace,
+    std::uint32_t physics_simulation,
+    std::uint32_t physics_workers,
     std::uint32_t frame_count);
 
 #endif  // APP_HOST_SERVER_APP_H_

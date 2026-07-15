@@ -1,0 +1,160 @@
+#include <cassert>
+#include <cstdint>
+#include <fstream>
+#include <iterator>
+#include <string>
+#include <vector>
+
+#include "physics/public/physics_world.h"
+
+namespace {
+
+using network_example::physics::CollisionHit;
+using network_example::physics::CollisionLayer;
+using network_example::physics::CollisionObjectDescriptor;
+using network_example::physics::CollisionObjectIdentity;
+using network_example::physics::CollisionObjectKind;
+using network_example::physics::CollisionShapeDescriptor;
+using network_example::physics::CollisionShapeType;
+using network_example::physics::OverlapRequest;
+using network_example::physics::PhysicsWorld;
+using network_example::physics::PhysicsWorldConfig;
+using network_example::physics::RayCastRequest;
+using network_example::physics::ShapeCastRequest;
+
+std::vector<std::uint8_t> read_bytes(const char* path) {
+    std::ifstream input(path, std::ios::binary);
+    assert(input.good());
+    return std::vector<std::uint8_t>(
+        std::istreambuf_iterator<char>(input),
+        std::istreambuf_iterator<char>());
+}
+
+CollisionObjectDescriptor actor(
+    std::uint32_t entity_net_id,
+    std::uint32_t collider_id,
+    const glm::vec3& position) {
+    CollisionObjectDescriptor object{};
+    object.identity = CollisionObjectIdentity{
+        entity_net_id,
+        collider_id,
+        7,
+        CollisionObjectKind::kActorHitbox,
+        CollisionLayer::kDamageable,
+    };
+    object.shape.type = CollisionShapeType::kBox;
+    object.shape.half_extents = glm::vec3(0.5f);
+    object.position = position;
+    return object;
+}
+
+void populate(PhysicsWorld* world) {
+    std::string error;
+    assert(world->upsert_object(actor(2, 20, glm::vec3(5.0f, 2.0f, 0.0f)), &error));
+    assert(world->upsert_object(actor(1, 10, glm::vec3(5.0f, 2.0f, 0.0f)), &error));
+    CollisionObjectDescriptor disabled = actor(3, 30, glm::vec3(2.0f, 2.0f, 0.0f));
+    disabled.enabled = false;
+    assert(world->upsert_object(disabled, &error));
+}
+
+void require_equal(const std::vector<CollisionHit>& lhs, const std::vector<CollisionHit>& rhs) {
+    assert(lhs.size() == rhs.size());
+    for (std::size_t index = 0; index < lhs.size(); ++index) {
+        assert(lhs[index].identity.entity_net_id == rhs[index].identity.entity_net_id);
+        assert(lhs[index].identity.collider_id == rhs[index].identity.collider_id);
+        assert(lhs[index].identity.hit_zone == rhs[index].identity.hit_zone);
+        assert(lhs[index].distance == rhs[index].distance);
+        assert(lhs[index].fraction == rhs[index].fraction);
+        assert(lhs[index].position == rhs[index].position);
+        assert(lhs[index].normal == rhs[index].normal);
+        assert(lhs[index].subshape_id == rhs[index].subshape_id);
+    }
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+    assert(argc == 2);
+    const std::vector<std::uint8_t> terrain = read_bytes(argv[1]);
+
+    PhysicsWorld world0(PhysicsWorldConfig{0});
+    PhysicsWorld world2(PhysicsWorldConfig{2});
+    assert(world0.valid());
+    assert(world2.valid());
+    assert(world0.query_worker_count() == 0);
+    assert(world2.query_worker_count() == 2);
+
+    const CollisionObjectIdentity terrain_identity{
+        0,
+        1,
+        0,
+        CollisionObjectKind::kTerrain,
+        CollisionLayer::kTerrain,
+    };
+    std::string error;
+    assert(world0.load_static_scene(terrain, terrain_identity, &error));
+    assert(world2.load_static_scene(terrain, terrain_identity, &error));
+    populate(&world0);
+    populate(&world2);
+
+    RayCastRequest ray{};
+    ray.origin = glm::vec3(0.0f, 2.0f, 0.0f);
+    ray.direction = glm::vec3(1.0f, 0.0f, 0.0f);
+    ray.max_distance = 10.0f;
+    ray.filter.collision_mask =
+        network_example::physics::collision_layer_bit(CollisionLayer::kDamageable);
+    const std::vector<CollisionHit> hits0 = world0.ray_cast_all(ray);
+    const std::vector<CollisionHit> hits2 = world2.ray_cast_all(ray);
+    require_equal(hits0, hits2);
+    assert(hits0.size() == 2);
+    assert(hits0[0].identity.entity_net_id == 1);
+    assert(hits0[1].identity.entity_net_id == 2);
+
+    ray.filter.ignored_entity_net_id = 1;
+    const std::vector<CollisionHit> excluded = world0.ray_cast_all(ray);
+    assert(excluded.size() == 1);
+    assert(excluded[0].identity.entity_net_id == 2);
+
+    CollisionHit closest{};
+    assert(world0.ray_cast_closest(ray, &closest));
+    assert(closest.identity.entity_net_id == 2);
+
+    ShapeCastRequest shape_cast{};
+    shape_cast.shape.type = CollisionShapeType::kSphere;
+    shape_cast.shape.radius = 0.25f;
+    shape_cast.start = glm::vec3(0.0f, 2.0f, 0.0f);
+    shape_cast.displacement = glm::vec3(10.0f, 0.0f, 0.0f);
+    shape_cast.filter = ray.filter;
+    assert(world0.shape_cast_closest(shape_cast, &closest));
+
+    OverlapRequest overlap{};
+    overlap.shape.type = CollisionShapeType::kSphere;
+    overlap.shape.radius = 1.0f;
+    overlap.position = glm::vec3(5.0f, 2.0f, 0.0f);
+    overlap.filter = ray.filter;
+    assert(world0.overlap_all(overlap).size() == 1);
+
+    assert(world0.set_object_transform(
+        20,
+        glm::vec3(8.0f, 2.0f, 0.0f),
+        glm::quat(1.0f, 0.0f, 0.0f, 0.0f)));
+    assert(world0.remove_object(20));
+    assert(!world0.remove_object(20));
+
+    RayCastRequest terrain_ray{};
+    terrain_ray.origin = glm::vec3(0.0f, 20.0f, 0.0f);
+    terrain_ray.direction = glm::vec3(0.0f, -1.0f, 0.0f);
+    terrain_ray.max_distance = 100.0f;
+    terrain_ray.filter.collision_mask =
+        network_example::physics::collision_layer_bit(CollisionLayer::kTerrain);
+    assert(world0.ray_cast_closest(terrain_ray, &closest));
+    assert(closest.identity.kind == CollisionObjectKind::kTerrain);
+
+    std::vector<std::uint8_t> corrupt = terrain;
+    corrupt[0] ^= 0xffu;
+    assert(!world0.load_static_scene(corrupt, terrain_identity, &error));
+    corrupt = terrain;
+    corrupt.resize(corrupt.size() - 1);
+    assert(!world0.load_static_scene(corrupt, terrain_identity, &error));
+    return 0;
+}

@@ -127,6 +127,7 @@ cc_library(
         ":tick_loop",
         "//engine/components/ai:ai_intent",
         "//engine/src/protocol:protocol",
+        "//engine/src/physics:physics",
         "//engine/src/simulation:simulation",
         "//engine/src/sync:sync",
         "//engine/src/transport:transport",

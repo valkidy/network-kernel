@@ -31,6 +31,8 @@ struct Options {
     std::uint16_t port = kDefaultPort;
     std::uint32_t host_frames = 12;
     std::uint8_t network_stats_mode = 0u;
+    std::uint32_t physics_simulation = 0;
+    std::uint32_t physics_workers = 0;
     bool gameplay_catalog_explicit = false;
 };
 
@@ -43,7 +45,8 @@ void print_usage() {
         "[--gameplay-catalog-entry=gameplay_catalog.yaml] "
         "[--catalog-content-namespace=default] "
         "[--catalog-cache-dir=path] [--host-frames=12] "
-        "[--network-stats=off|basic|detailed]");
+        "[--network-stats=off|basic|detailed] "
+        "[--physics_simulation=0|1] [--physics-workers=0|N]");
 }
 
 bool parse_port(std::string_view text, std::uint16_t* out_port) {
@@ -65,6 +68,20 @@ bool parse_u32(std::string_view text, std::uint32_t* out_value) {
     const char* end = begin + text.size();
     const auto result = std::from_chars(begin, end, value);
     if (result.ec != std::errc{} || result.ptr != end || value == 0) {
+        return false;
+    }
+    *out_value = value;
+    return true;
+}
+
+bool parse_u32_allow_zero(
+    std::string_view text,
+    std::uint32_t* out_value) {
+    std::uint32_t value = 0;
+    const char* begin = text.data();
+    const char* end = begin + text.size();
+    const auto result = std::from_chars(begin, end, value);
+    if (result.ec != std::errc{} || result.ptr != end || begin == end) {
         return false;
     }
     *out_value = value;
@@ -201,6 +218,21 @@ bool parse_args(int argc, char** argv, Options* options) {
             }
             continue;
         }
+        if (read_value(arg, "--physics_simulation", &index, argc, argv, &value)) {
+            if (!parse_u32_allow_zero(value, &options->physics_simulation) ||
+                options->physics_simulation > 1) {
+                spdlog::error("invalid physics simulation mode: {}", value);
+                return false;
+            }
+            continue;
+        }
+        if (read_value(arg, "--physics-workers", &index, argc, argv, &value)) {
+            if (!parse_u32_allow_zero(value, &options->physics_workers)) {
+                spdlog::error("invalid physics worker count: {}", value);
+                return false;
+            }
+            continue;
+        }
 
         spdlog::error("unknown argument: {}", arg);
         return false;
@@ -250,7 +282,9 @@ int main(int argc, char** argv) {
             options.gameplay_catalog.c_str(),
             gameplay_catalog_bundle.c_str(),
             options.gameplay_catalog_entry.c_str(),
-            options.gameplay_catalog_content_namespace.c_str());
+            options.gameplay_catalog_content_namespace.c_str(),
+            options.physics_simulation,
+            options.physics_workers);
     }
     if (options.mode == "client") {
         return RunClient(
@@ -259,12 +293,29 @@ int main(int argc, char** argv) {
             options.gameplay_catalog_cache_directory.c_str());
     }
     if (options.mode == "host_server") {
+        std::string gameplay_catalog_bundle = options.gameplay_catalog_bundle;
+        if (gameplay_catalog_bundle.empty() && !options.gameplay_catalog_explicit) {
+            gameplay_catalog_bundle = find_default_gameplay_catalog_bundle(
+                argc > 0 ? argv[0] : nullptr);
+            if (gameplay_catalog_bundle.empty()) {
+                spdlog::error(
+                    "default gameplay catalog bundle not found; build "
+                    "//game_server/gameplay_catalog_bundle:bundle.zip or pass "
+                    "--gameplay-catalog-bundle=path/to/bundle.zip");
+                return 1;
+            }
+            spdlog::info(
+                "using default gameplay catalog bundle={}",
+                gameplay_catalog_bundle);
+        }
         return RunHostServer(
             options.port,
             options.gameplay_catalog.c_str(),
-            options.gameplay_catalog_bundle.c_str(),
+            gameplay_catalog_bundle.c_str(),
             options.gameplay_catalog_entry.c_str(),
             options.gameplay_catalog_content_namespace.c_str(),
+            options.physics_simulation,
+            options.physics_workers,
             options.host_frames);
     }
 

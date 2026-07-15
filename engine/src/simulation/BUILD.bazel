@@ -15,7 +15,6 @@ cc_library(
         "src/action_system.cc",
         "src/area_effect_system.cc",
         "src/beam_system.cc",
-        "src/collision_query.cc",
         "src/damage_pipeline.cc",
         "src/damage_system.cc",
         "src/movement_solver.cc",
@@ -25,13 +24,13 @@ cc_library(
     ],
     hdrs = [
         "public/command.h",
-        "public/collision_query.h",
         "public/movement_solver.h",
         "public/simulation.h",
     ],
     includes = [".."],
     deps = [
         "//engine/src/kernel:kernel_types",
+        "//engine/src/physics:physics",
         "//engine/src/sync:sync",
         "//engine/src/world:world",
         "@glm//:glm",

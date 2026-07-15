@@ -14,6 +14,7 @@
 #include "kernel/src/kernel_api_internal.h"
 #include "kernel/src/kernel_rpc.h"
 #include "kernel/src/tick_loop.h"
+#include "physics/public/physics_world.h"
 #include "simulation/public/command.h"
 #include "simulation/public/simulation.h"
 #include "simulation/src/systems.h"
@@ -51,6 +52,9 @@ public:
         const KernelGameplayCatalogSyncClientConfig& config);
     bool start_listen_server(std::uint16_t port);
     bool start_dedicated_server(std::uint16_t port);
+    bool set_physics_config(const KernelPhysicsConfig& config);
+    bool set_static_collision_scene(
+        const KernelStaticCollisionSceneConfig& config);
     bool set_gameplay_catalog_sync_bundle(
         const KernelGameplayCatalogSyncServerConfig& config,
         KernelGameplayCatalogManifest* out_manifest);
@@ -327,6 +331,8 @@ private:
         PeerId peer_id = 0,
         std::uint32_t code = 0);
     void reset_runtime_state(KernelMode mode);
+    bool prepare_server_physics(
+        std::unique_ptr<physics::PhysicsWorld>* out_world);
     void clear_client_action_sync_state();
     void poll_transport();
     void poll_client_transport();
@@ -571,6 +577,14 @@ private:
     KernelGameplayCatalogManifest gameplay_catalog_manifest_{};
     std::vector<std::uint8_t> gameplay_catalog_sync_bundle_;
     std::vector<std::uint8_t> downloaded_gameplay_catalog_bundle_;
+    KernelPhysicsConfig physics_config_{
+        sizeof(KernelPhysicsConfig), 0, 0};
+    std::vector<std::uint8_t> static_collision_scene_;
+    std::uint32_t static_collision_scene_id_ = 0;
+    std::uint32_t static_collision_collider_id_ = 0;
+    std::uint32_t static_collision_layer_ = 0;
+    std::unique_ptr<physics::PhysicsWorld> physics_world_;
+    std::unordered_set<std::uint32_t> physics_entity_collider_ids_;
     std::unordered_map<PeerId, GameplayCatalogTransfer>
         gameplay_catalog_transfers_;
     KernelGameplayCatalogSyncState gameplay_catalog_sync_state_ =

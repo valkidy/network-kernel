@@ -55,6 +55,14 @@ void Kernel_LANDiscovery_ClearResults(KernelLANDiscoveryHandle* discovery);
 KernelHandle* Kernel_Create(const KernelConfig* config);
 void Kernel_Destroy(KernelHandle* kernel);
 
+bool Kernel_SetPhysicsConfig(
+    KernelHandle* kernel,
+    const KernelPhysicsConfig* config);
+
+bool Kernel_SetStaticCollisionScene(
+    KernelHandle* kernel,
+    const KernelStaticCollisionSceneConfig* config);
+
 bool Kernel_InvokeRpcCommand(
     KernelHandle* kernel,
     const char* request_json,

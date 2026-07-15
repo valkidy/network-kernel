@@ -474,6 +474,14 @@ int main() {
     assert(enemy_entity_type_rejected);
 
     assert(config.player.actor_template_id == 1);
+    assert(
+        config.static_collision_scene.entry_path ==
+        "mesh_assets/jolt/undulating.joltmesh");
+    assert(config.static_collision_scene.scene_id == 1u);
+    assert(config.static_collision_scene.collider_id == 0x80000001u);
+    assert(
+        config.static_collision_scene.collision_layer ==
+        KERNEL_STATIC_COLLISION_LAYER_TERRAIN);
     require(config.weapons.catalog_version == 2);
     require(config.weapons.catalog_hash != 0);
     require(
@@ -488,6 +496,11 @@ int main() {
         network_example::game_server::compute_gameplay_catalog_hash(changed_config));
     changed_config = config;
     changed_config.projectile_templates[1].definition.mechanics.damage += 1;
+    require(
+        config.weapons.catalog_hash !=
+        network_example::game_server::compute_gameplay_catalog_hash(changed_config));
+    changed_config = config;
+    changed_config.static_collision_scene.scene_id += 1u;
     require(
         config.weapons.catalog_hash !=
         network_example::game_server::compute_gameplay_catalog_hash(changed_config));

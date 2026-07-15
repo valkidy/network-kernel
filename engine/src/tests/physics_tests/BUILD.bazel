@@ -1,0 +1,9 @@
+licenses(["notice"])
+
+cc_test(
+    name = "physics_world_test",
+    srcs = ["physics_world_test.cc"],
+    args = ["$(location //game_server/mesh_assets:generated/jolt/undulating.joltmesh)"],
+    data = ["//game_server/mesh_assets:generated/jolt/undulating.joltmesh"],
+    deps = ["//engine/src/physics:physics"],
+)

@@ -66,6 +66,28 @@ void Kernel_Destroy(KernelHandle* kernel) {
     });
 }
 
+bool Kernel_SetPhysicsConfig(
+    KernelHandle* kernel,
+    const KernelPhysicsConfig* config) {
+    return abi_call("Kernel_SetPhysicsConfig", false, [&]() {
+        return kernel != nullptr && kernel->engine != nullptr &&
+               config != nullptr &&
+               config->struct_size >= sizeof(KernelPhysicsConfig) &&
+               kernel->engine->set_physics_config(*config);
+    });
+}
+
+bool Kernel_SetStaticCollisionScene(
+    KernelHandle* kernel,
+    const KernelStaticCollisionSceneConfig* config) {
+    return abi_call("Kernel_SetStaticCollisionScene", false, [&]() {
+        return kernel != nullptr && kernel->engine != nullptr &&
+               config != nullptr &&
+               config->struct_size >= sizeof(KernelStaticCollisionSceneConfig) &&
+               kernel->engine->set_static_collision_scene(*config);
+    });
+}
+
 bool Kernel_InvokeRpcCommand(
     KernelHandle* kernel,
     const char* request_json,

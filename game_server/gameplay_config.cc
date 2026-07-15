@@ -2838,6 +2838,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             "actor_template_dir",
             "entity_template_dir",
             "collider_template_dir",
+            "static_collision_scene",
             "player",
             "enemy",
         },
@@ -2862,6 +2863,14 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
                 "spawn_seed",
                 "spawn_position",
             },
+            path,
+            source.source_kind(),
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+    }
+    if (document["static_collision_scene"]) {
+        reject_unknown_keys(
+            document["static_collision_scene"],
+            {"entry_path", "scene_id", "collider_id", "collision_layer"},
             path,
             source.source_kind(),
             KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
@@ -2894,6 +2903,24 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     const std::string weapon_template_dir =
         source.resolve_path(base_path, document["weapon_template_dir"]);
     GameServerGameplayConfig config;
+    if (document["static_collision_scene"]) {
+        const YAML::Node scene = document["static_collision_scene"];
+        if (!scene["entry_path"] || !scene["scene_id"] ||
+            !scene["collider_id"] || !scene["collision_layer"]) {
+            throw std::runtime_error(
+                "static_collision_scene requires entry_path, scene_id, "
+                "collider_id, and collision_layer: " +
+                path);
+        }
+        config.static_collision_scene.entry_path =
+            scene["entry_path"].as<std::string>();
+        config.static_collision_scene.scene_id =
+            scene["scene_id"].as<std::uint32_t>();
+        config.static_collision_scene.collider_id =
+            scene["collider_id"].as<std::uint32_t>();
+        config.static_collision_scene.collision_layer =
+            scene["collision_layer"].as<std::uint32_t>();
+    }
     if (document["action_template_dir"]) {
         const std::string action_template_dir =
             source.resolve_path(base_path, document["action_template_dir"]);
@@ -3069,6 +3096,10 @@ std::uint64_t compute_gameplay_catalog_hash(
     hash_scalar(&hash, config.agent.spawn_count);
     hash_float(&hash, config.agent.spawn_radius);
     hash_scalar(&hash, config.agent.spawn_seed);
+    hash_string(&hash, config.static_collision_scene.entry_path);
+    hash_scalar(&hash, config.static_collision_scene.scene_id);
+    hash_scalar(&hash, config.static_collision_scene.collider_id);
+    hash_scalar(&hash, config.static_collision_scene.collision_layer);
     std::vector<ActorTemplateConfig> actor_templates = config.actor_templates;
     std::sort(
         actor_templates.begin(),
@@ -3139,6 +3170,69 @@ GameServerGameplayConfig load_gameplay_config_from_bundle_memory(
     return load_gameplay_config_from_catalog_source(source, entry_path);
 }
 
+std::vector<std::uint8_t> load_gameplay_bundle_entry_bytes(
+    const std::uint8_t* bundle_bytes,
+    std::uint32_t bundle_size,
+    const std::string& entry_path) {
+    if (bundle_bytes == nullptr || bundle_size == 0 || entry_path.empty()) {
+        throw std::runtime_error("gameplay bundle entry request is empty");
+    }
+    const std::string normalized_entry = normalize_archive_path(entry_path);
+    struct ZipStreamCloser {
+        void operator()(struct zip_t* zip) const { zip_stream_close(zip); }
+    };
+    std::unique_ptr<struct zip_t, ZipStreamCloser> archive(zip_stream_open(
+        reinterpret_cast<const char*>(bundle_bytes),
+        bundle_size,
+        0,
+        'r'));
+    if (!archive) {
+        throw std::runtime_error("failed to open gameplay catalog bundle");
+    }
+    const ssize_t total_entries = zip_entries_total(archive.get());
+    for (ssize_t index = 0; index < total_entries; ++index) {
+        if (zip_entry_openbyindex(
+                archive.get(), static_cast<std::size_t>(index)) != 0) {
+            throw std::runtime_error("failed to open gameplay bundle entry");
+        }
+        const char* entry_name = zip_entry_name(archive.get());
+        const bool matches = entry_name != nullptr &&
+            normalize_archive_path(entry_name) == normalized_entry;
+        if (!matches) {
+            zip_entry_close(archive.get());
+            continue;
+        }
+        if (zip_entry_issymlink(archive.get()) || zip_entry_isdir(archive.get())) {
+            throw std::runtime_error(
+                "gameplay bundle collision entry is not a regular file: " +
+                normalized_entry);
+        }
+        const unsigned long long entry_size = zip_entry_size(archive.get());
+        if (entry_size > KERNEL_STATIC_COLLISION_SCENE_MAX_BYTES) {
+            throw std::runtime_error(
+                "gameplay bundle collision entry exceeds size limit: " +
+                normalized_entry);
+        }
+        std::vector<std::uint8_t> bytes(static_cast<std::size_t>(entry_size));
+        if (!bytes.empty()) {
+            const ssize_t read_size = zip_entry_noallocread(
+                archive.get(), bytes.data(), bytes.size());
+            if (read_size != static_cast<ssize_t>(bytes.size())) {
+                throw std::runtime_error(
+                    "failed to read gameplay bundle entry: " + normalized_entry);
+            }
+        }
+        zip_entry_close(archive.get());
+        return bytes;
+    }
+    throw DataLoadError(
+        KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_MISSING_BUNDLE_ENTRY,
+        "missing collision asset in bundle: " + normalized_entry,
+        normalized_entry,
+        {},
+        KERNEL_GAMEPLAY_CATALOG_LOAD_SOURCE_BUNDLE);
+}
+
 const ActorTemplateConfig* find_actor_template(
     const GameServerGameplayConfig& config,
     std::uint32_t actor_template_id) {
@@ -3161,6 +3255,17 @@ std::uint8_t active_weapon_id(const ActorTemplateConfig& actor_template) {
 std::vector<std::string> validate_gameplay_config(
     const GameServerGameplayConfig& config) {
     std::vector<std::string> errors;
+    const StaticCollisionSceneConfig& static_scene =
+        config.static_collision_scene;
+    const bool has_static_scene = !static_scene.entry_path.empty() ||
+        static_scene.scene_id != 0u || static_scene.collider_id != 0u ||
+        static_scene.collision_layer != 0u;
+    if (has_static_scene &&
+        (static_scene.entry_path.empty() || static_scene.scene_id == 0u ||
+         static_scene.collider_id == 0u ||
+         static_scene.collision_layer != KERNEL_STATIC_COLLISION_LAYER_TERRAIN)) {
+        errors.push_back("static collision scene must be valid");
+    }
     std::vector<std::uint32_t> action_template_ids;
     std::vector<std::string> action_template_names;
     for (const ActionTemplateConfig& action_template : config.action_templates) {
