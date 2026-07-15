@@ -11,3 +11,17 @@ cc_library(
     ],
     includes = [".."],
 )
+
+cc_library(
+    name = "mesh_bake",
+    srcs = ["src/mesh_bake.cc"],
+    hdrs = ["public/mesh_bake.h"],
+    includes = [".."],
+    deps = [
+        ":geometry",
+        "@jolt_physics//:jolt",
+        "@recastnavigation//:detour",
+        "@recastnavigation//:recast",
+        "@yaml-cpp//:yaml-cpp",
+    ],
+)

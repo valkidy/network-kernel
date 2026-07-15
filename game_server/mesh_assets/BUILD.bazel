@@ -1,0 +1,16 @@
+licenses(["notice"])
+
+load(":mesh_bake_rules.bzl", "mesh_asset_bakes")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["mesh_bake.yaml"])
+
+mesh_asset_bakes(
+    name = "cooked_mesh_assets",
+    srcs = glob(
+        ["raw/*.obj"],
+        allow_empty = True,
+    ),
+    config = ":mesh_bake.yaml",
+)

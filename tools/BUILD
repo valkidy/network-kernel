@@ -30,9 +30,16 @@ cc_binary(
     data = ["@recastnavigation//:dungeon_obj"],
     deps = [
         "//engine/src/geometry:geometry",
+        "//engine/src/geometry:mesh_bake",
         "@bazel_tools//tools/cpp/runfiles",
-        "@jolt_physics//:jolt",
-        "@recastnavigation//:detour",
-        "@recastnavigation//:recast",
+    ],
+)
+
+cc_binary(
+    name = "mesh_asset_converter",
+    srcs = ["mesh_asset_converter.cc"],
+    deps = [
+        "//engine/src/geometry:geometry",
+        "//engine/src/geometry:mesh_bake",
     ],
 )
