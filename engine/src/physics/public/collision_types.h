@@ -24,6 +24,14 @@ inline constexpr std::uint32_t kCollisionMaskAll =
     collision_layer_bit(CollisionLayer::kStaticObstacle) |
     collision_layer_bit(CollisionLayer::kDamageable);
 
+inline constexpr std::uint32_t kGameplayCategoryPlayerSide = 0x00000001u;
+inline constexpr std::uint32_t kGameplayCategoryHostileSide = 0x00000002u;
+inline constexpr std::uint32_t kGameplayCategoryNeutral = 0x00000020u;
+inline constexpr std::uint32_t kGameplayCategoryDamageable =
+    kGameplayCategoryPlayerSide |
+    kGameplayCategoryHostileSide |
+    kGameplayCategoryNeutral;
+
 enum class CollisionObjectKind : std::uint8_t {
     kTerrain,
     kStaticObstacle,

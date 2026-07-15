@@ -37,10 +37,16 @@ constexpr std::uint32_t kArtifactSchemaVersion = 1;
 constexpr std::size_t kArtifactHeaderSize = 88;
 constexpr std::uint32_t kLittleEndian = 1;
 constexpr std::uint32_t kBigEndian = 2;
-constexpr JPH::ObjectLayer kStaticLayer = 0;
-constexpr JPH::ObjectLayer kMovingLayer = 1;
-constexpr JPH::BroadPhaseLayer kStaticBroadPhaseLayer(0);
-constexpr JPH::BroadPhaseLayer kMovingBroadPhaseLayer(1);
+constexpr JPH::ObjectLayer kTerrainObjectLayer = 0;
+constexpr JPH::ObjectLayer kStaticObstacleObjectLayer = 1;
+constexpr JPH::ObjectLayer kDamageablePlayerObjectLayer = 2;
+constexpr JPH::ObjectLayer kDamageableHostileObjectLayer = 3;
+constexpr JPH::ObjectLayer kDamageableNeutralObjectLayer = 4;
+constexpr JPH::ObjectLayer kDamageableUnclassifiedObjectLayer = 5;
+constexpr JPH::ObjectLayer kOtherMovingObjectLayer = 6;
+constexpr JPH::BroadPhaseLayer kStaticWorldBroadPhaseLayer(0);
+constexpr JPH::BroadPhaseLayer kDamageableActorBroadPhaseLayer(1);
+constexpr JPH::BroadPhaseLayer kOtherMovingBroadPhaseLayer(2);
 
 std::uint64_t jolt_version_id() {
     using JPH::uint64;
@@ -49,12 +55,18 @@ std::uint64_t jolt_version_id() {
 
 class BroadPhaseLayers final : public JPH::BroadPhaseLayerInterface {
 public:
-    std::uint32_t GetNumBroadPhaseLayers() const override { return 2; }
+    std::uint32_t GetNumBroadPhaseLayers() const override { return 3; }
 
     JPH::BroadPhaseLayer GetBroadPhaseLayer(JPH::ObjectLayer layer) const override {
-        return layer == kStaticLayer
-            ? kStaticBroadPhaseLayer
-            : kMovingBroadPhaseLayer;
+        if (layer == kTerrainObjectLayer) {
+            return kStaticWorldBroadPhaseLayer;
+        }
+        if (layer == kDamageablePlayerObjectLayer ||
+            layer == kDamageableHostileObjectLayer ||
+            layer == kDamageableNeutralObjectLayer) {
+            return kDamageableActorBroadPhaseLayer;
+        }
+        return kOtherMovingBroadPhaseLayer;
     }
 };
 
@@ -75,6 +87,152 @@ public:
         return true;
     }
 };
+
+bool kind_enabled(
+    const CollisionQueryFilter& filter,
+    CollisionObjectKind kind) {
+    const std::uint32_t bit = 1u << static_cast<std::uint32_t>(kind);
+    return (filter.object_kind_mask & bit) != 0;
+}
+
+class QueryBroadPhaseLayerFilter final : public JPH::BroadPhaseLayerFilter {
+public:
+    QueryBroadPhaseLayerFilter(
+        const CollisionQueryFilter& filter,
+        bool has_unclassified_damageable,
+        CollisionQueryStats* stats)
+        : filter_(filter),
+          has_unclassified_damageable_(has_unclassified_damageable),
+          stats_(stats) {}
+
+    bool ShouldCollide(JPH::BroadPhaseLayer layer) const override {
+        if (stats_ != nullptr) {
+            ++stats_->broadphase_layer_filter_checks;
+        }
+        bool accepted = false;
+        if (layer == kStaticWorldBroadPhaseLayer) {
+            accepted =
+                (filter_.collision_mask &
+                 collision_layer_bit(CollisionLayer::kTerrain)) != 0 &&
+                kind_enabled(filter_, CollisionObjectKind::kTerrain);
+        } else if (layer == kDamageableActorBroadPhaseLayer) {
+            accepted =
+                (filter_.collision_mask &
+                 collision_layer_bit(CollisionLayer::kDamageable)) != 0 &&
+                (filter_.gameplay_category_mask &
+                 kGameplayCategoryDamageable) != 0 &&
+                kind_enabled(filter_, CollisionObjectKind::kActorHitbox);
+        } else if (layer == kOtherMovingBroadPhaseLayer) {
+            const bool accepts_static =
+                (filter_.collision_mask &
+                 collision_layer_bit(CollisionLayer::kStaticObstacle)) != 0 &&
+                kind_enabled(filter_, CollisionObjectKind::kStaticObstacle);
+            const bool accepts_unclassified = has_unclassified_damageable_ &&
+                (filter_.collision_mask &
+                 collision_layer_bit(CollisionLayer::kDamageable)) != 0 &&
+                kind_enabled(filter_, CollisionObjectKind::kActorHitbox);
+            accepted = accepts_static || accepts_unclassified;
+        }
+        if (stats_ != nullptr && accepted) {
+            ++stats_->broadphase_layers_accepted;
+            if (layer == kDamageableActorBroadPhaseLayer) {
+                ++stats_->damageable_actor_broadphase_layers_accepted;
+            }
+        }
+        return accepted;
+    }
+
+private:
+    const CollisionQueryFilter& filter_;
+    bool has_unclassified_damageable_ = false;
+    CollisionQueryStats* stats_ = nullptr;
+};
+
+class QueryObjectLayerFilter final : public JPH::ObjectLayerFilter {
+public:
+    QueryObjectLayerFilter(
+        const CollisionQueryFilter& filter,
+        CollisionQueryStats* stats)
+        : filter_(filter), stats_(stats) {}
+
+    bool ShouldCollide(JPH::ObjectLayer layer) const override {
+        if (stats_ != nullptr) {
+            ++stats_->object_layer_filter_checks;
+        }
+        bool accepted = false;
+        if (layer == kTerrainObjectLayer) {
+            accepted = accepts_physical(
+                CollisionLayer::kTerrain, CollisionObjectKind::kTerrain);
+        } else if (layer == kStaticObstacleObjectLayer) {
+            accepted = accepts_physical(
+                CollisionLayer::kStaticObstacle,
+                CollisionObjectKind::kStaticObstacle);
+        } else if (layer == kDamageablePlayerObjectLayer) {
+            accepted = accepts_damageable(kGameplayCategoryPlayerSide);
+        } else if (layer == kDamageableHostileObjectLayer) {
+            accepted = accepts_damageable(kGameplayCategoryHostileSide);
+        } else if (layer == kDamageableNeutralObjectLayer) {
+            accepted = accepts_damageable(kGameplayCategoryNeutral);
+        } else if (layer == kDamageableUnclassifiedObjectLayer) {
+            accepted = accepts_physical(
+                CollisionLayer::kDamageable,
+                CollisionObjectKind::kActorHitbox);
+        }
+        if (stats_ != nullptr && accepted) {
+            ++stats_->object_layers_accepted;
+            if (layer == kDamageablePlayerObjectLayer) {
+                ++stats_->player_object_layers_accepted;
+            } else if (layer == kDamageableHostileObjectLayer) {
+                ++stats_->hostile_object_layers_accepted;
+            } else if (layer == kDamageableNeutralObjectLayer) {
+                ++stats_->neutral_object_layers_accepted;
+            }
+        }
+        return accepted;
+    }
+
+private:
+    bool accepts_physical(
+        CollisionLayer layer,
+        CollisionObjectKind kind) const {
+        return (filter_.collision_mask & collision_layer_bit(layer)) != 0 &&
+            kind_enabled(filter_, kind);
+    }
+
+    bool accepts_damageable(std::uint32_t gameplay_category) const {
+        return accepts_physical(
+                   CollisionLayer::kDamageable,
+                   CollisionObjectKind::kActorHitbox) &&
+            (filter_.gameplay_category_mask & gameplay_category) != 0;
+    }
+
+    const CollisionQueryFilter& filter_;
+    CollisionQueryStats* stats_ = nullptr;
+};
+
+JPH::ObjectLayer object_layer_for(const CollisionObjectIdentity& identity) {
+    if (identity.layer == CollisionLayer::kTerrain) {
+        return kTerrainObjectLayer;
+    }
+    if (identity.layer == CollisionLayer::kStaticObstacle) {
+        return kStaticObstacleObjectLayer;
+    }
+    if (identity.layer != CollisionLayer::kDamageable) {
+        return kOtherMovingObjectLayer;
+    }
+    const std::uint32_t damageable_categories =
+        identity.gameplay_category & kGameplayCategoryDamageable;
+    if (std::popcount(damageable_categories) != 1) {
+        return kDamageableUnclassifiedObjectLayer;
+    }
+    if (damageable_categories == kGameplayCategoryPlayerSide) {
+        return kDamageablePlayerObjectLayer;
+    }
+    if (damageable_categories == kGameplayCategoryHostileSide) {
+        return kDamageableHostileObjectLayer;
+    }
+    return kDamageableNeutralObjectLayer;
+}
 
 class ProcessRuntime final {
 public:
@@ -278,7 +436,9 @@ bool filter_accepts(
 class PhysicsWorld::Impl final {
 public:
     explicit Impl(const PhysicsWorldConfig& config)
-        : runtime_(), worker_count_(config.query_worker_count) {
+        : runtime_(),
+          worker_count_(config.query_worker_count),
+          query_stats_enabled_(config.enable_query_stats) {
         if (!runtime_.acquired()) {
             return;
         }
@@ -315,6 +475,7 @@ public:
 
     struct StoredObject {
         CollisionObjectIdentity identity{};
+        JPH::ObjectLayer object_layer = kOtherMovingObjectLayer;
     };
 
     bool valid() const { return system_ != nullptr; }
@@ -346,7 +507,11 @@ public:
             return false;
         }
         bodies_by_collider_.emplace(identity.collider_id, body_id);
-        objects_by_body_.emplace(body_key(body_id), StoredObject{identity});
+        objects_by_body_.emplace(
+            body_key(body_id), StoredObject{identity, object_layer});
+        if (object_layer == kDamageableUnclassifiedObjectLayer) {
+            ++unclassified_damageable_count_;
+        }
         return true;
     }
 
@@ -356,7 +521,14 @@ public:
             return false;
         }
         JPH::BodyInterface& bodies = system_->GetBodyInterface();
-        objects_by_body_.erase(body_key(found->second));
+        const auto stored = objects_by_body_.find(body_key(found->second));
+        if (stored != objects_by_body_.end()) {
+            if (stored->second.object_layer ==
+                kDamageableUnclassifiedObjectLayer) {
+                --unclassified_damageable_count_;
+            }
+            objects_by_body_.erase(stored);
+        }
         bodies.RemoveBody(found->second);
         bodies.DestroyBody(found->second);
         bodies_by_collider_.erase(found);
@@ -372,8 +544,53 @@ public:
         std::stable_sort(hits->begin(), hits->end(), hit_less);
     }
 
+    CollisionQueryStats* local_stats(CollisionQueryStats* stats) const {
+        return query_stats_enabled_ ? stats : nullptr;
+    }
+
+    void record_stats(const CollisionQueryStats& delta) const {
+        if (!query_stats_enabled_) {
+            return;
+        }
+        std::scoped_lock lock(query_stats_mutex_);
+        query_stats_.ray_query_count += delta.ray_query_count;
+        query_stats_.shape_cast_query_count += delta.shape_cast_query_count;
+        query_stats_.overlap_query_count += delta.overlap_query_count;
+        query_stats_.broadphase_layer_filter_checks +=
+            delta.broadphase_layer_filter_checks;
+        query_stats_.broadphase_layers_accepted +=
+            delta.broadphase_layers_accepted;
+        query_stats_.damageable_actor_broadphase_layers_accepted +=
+            delta.damageable_actor_broadphase_layers_accepted;
+        query_stats_.object_layer_filter_checks +=
+            delta.object_layer_filter_checks;
+        query_stats_.object_layers_accepted += delta.object_layers_accepted;
+        query_stats_.player_object_layers_accepted +=
+            delta.player_object_layers_accepted;
+        query_stats_.hostile_object_layers_accepted +=
+            delta.hostile_object_layers_accepted;
+        query_stats_.neutral_object_layers_accepted +=
+            delta.neutral_object_layers_accepted;
+        query_stats_.raw_jolt_hits_collected +=
+            delta.raw_jolt_hits_collected;
+        query_stats_.final_hits_accepted += delta.final_hits_accepted;
+        query_stats_.defensive_post_filter_rejections +=
+            delta.defensive_post_filter_rejections;
+    }
+
+    CollisionQueryStats query_stats() const {
+        std::scoped_lock lock(query_stats_mutex_);
+        return query_stats_;
+    }
+
+    void reset_query_stats() {
+        std::scoped_lock lock(query_stats_mutex_);
+        query_stats_ = {};
+    }
+
     ProcessRuntime runtime_;
     std::uint32_t worker_count_ = 0;
+    bool query_stats_enabled_ = false;
     std::unique_ptr<JPH::JobSystemThreadPool> workers_;
     BroadPhaseLayers broad_phase_layers_;
     ObjectVsBroadPhaseFilter object_vs_broad_phase_filter_;
@@ -381,6 +598,9 @@ public:
     std::unique_ptr<JPH::PhysicsSystem> system_;
     std::unordered_map<std::uint32_t, JPH::BodyID> bodies_by_collider_;
     std::unordered_map<std::uint32_t, StoredObject> objects_by_body_;
+    std::size_t unclassified_damageable_count_ = 0;
+    mutable std::mutex query_stats_mutex_;
+    mutable CollisionQueryStats query_stats_{};
     mutable std::shared_mutex mutex_;
 };
 
@@ -397,6 +617,16 @@ bool PhysicsWorld::valid() const {
 
 std::uint32_t PhysicsWorld::query_worker_count() const {
     return impl_ == nullptr ? 0 : impl_->worker_count_;
+}
+
+CollisionQueryStats PhysicsWorld::query_stats() const {
+    return impl_ == nullptr ? CollisionQueryStats{} : impl_->query_stats();
+}
+
+void PhysicsWorld::reset_query_stats() {
+    if (impl_ != nullptr) {
+        impl_->reset_query_stats();
+    }
 }
 
 bool PhysicsWorld::load_static_scene(
@@ -431,7 +661,7 @@ bool PhysicsWorld::load_static_scene(
         glm::vec3(0.0f),
         glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
         JPH::EMotionType::Static,
-        kStaticLayer,
+        kTerrainObjectLayer,
         error);
 }
 
@@ -454,7 +684,7 @@ bool PhysicsWorld::upsert_object(
             world_position,
             object.rotation,
             JPH::EMotionType::Kinematic,
-            kMovingLayer,
+            object_layer_for(object.identity),
             error)) {
         return false;
     }
@@ -508,23 +738,39 @@ bool PhysicsWorld::set_object_transform(
 std::vector<CollisionHit> PhysicsWorld::ray_cast_all(
     const RayCastRequest& request) const {
     std::shared_lock lock(impl_->mutex_);
+    CollisionQueryStats stats{};
+    stats.ray_query_count = 1;
     const float direction_length = glm::length(request.direction);
     if (!valid() || request.max_distance <= 0.0f || direction_length <= 0.000001f) {
+        impl_->record_stats(stats);
         return {};
     }
     const glm::vec3 displacement =
         request.direction / direction_length * request.max_distance;
+    QueryBroadPhaseLayerFilter broadphase_filter(
+        request.filter,
+        impl_->unclassified_damageable_count_ != 0,
+        impl_->local_stats(&stats));
+    QueryObjectLayerFilter object_layer_filter(
+        request.filter, impl_->local_stats(&stats));
     JPH::AllHitCollisionCollector<JPH::CastRayCollector> collector;
     impl_->system_->GetNarrowPhaseQuery().CastRay(
         JPH::RRayCast(to_jolt_r(request.origin), to_jolt(displacement)),
         JPH::RayCastSettings{},
-        collector);
+        collector,
+        broadphase_filter,
+        object_layer_filter);
+    stats.raw_jolt_hits_collected = collector.mHits.size();
 
     std::vector<CollisionHit> hits;
     hits.reserve(collector.mHits.size());
     for (const JPH::RayCastResult& result : collector.mHits) {
         const Impl::StoredObject* object = impl_->find(result.mBodyID);
-        if (object == nullptr || !filter_accepts(object->identity, request.filter)) {
+        if (object == nullptr) {
+            continue;
+        }
+        if (!filter_accepts(object->identity, request.filter)) {
+            ++stats.defensive_post_filter_rejections;
             continue;
         }
         hits.push_back(CollisionHit{
@@ -537,17 +783,23 @@ std::vector<CollisionHit> PhysicsWorld::ray_cast_all(
         });
     }
     impl_->normalize(&hits);
+    stats.final_hits_accepted = hits.size();
+    impl_->record_stats(stats);
     return hits;
 }
 
 std::vector<CollisionHit> PhysicsWorld::shape_cast_all(
     const ShapeCastRequest& request) const {
     std::shared_lock lock(impl_->mutex_);
+    CollisionQueryStats stats{};
+    stats.shape_cast_query_count = 1;
     if (!valid()) {
+        impl_->record_stats(stats);
         return {};
     }
     JPH::RefConst<JPH::Shape> shape = make_shape(request.shape);
     if (shape == nullptr) {
+        impl_->record_stats(stats);
         return {};
     }
     const glm::vec3 start = request.start + request.rotation * request.shape.local_center;
@@ -557,19 +809,32 @@ std::vector<CollisionHit> PhysicsWorld::shape_cast_all(
         JPH::RMat44::sRotationTranslation(
             to_jolt(request.rotation), to_jolt_r(start)),
         to_jolt(request.displacement));
+    QueryBroadPhaseLayerFilter broadphase_filter(
+        request.filter,
+        impl_->unclassified_damageable_count_ != 0,
+        impl_->local_stats(&stats));
+    QueryObjectLayerFilter object_layer_filter(
+        request.filter, impl_->local_stats(&stats));
     JPH::AllHitCollisionCollector<JPH::CastShapeCollector> collector;
     impl_->system_->GetNarrowPhaseQuery().CastShape(
         cast,
         JPH::ShapeCastSettings{},
         JPH::RVec3::sZero(),
-        collector);
+        collector,
+        broadphase_filter,
+        object_layer_filter);
+    stats.raw_jolt_hits_collected = collector.mHits.size();
 
     const float cast_length = glm::length(request.displacement);
     std::vector<CollisionHit> hits;
     hits.reserve(collector.mHits.size());
     for (const JPH::ShapeCastResult& result : collector.mHits) {
         const Impl::StoredObject* object = impl_->find(result.mBodyID2);
-        if (object == nullptr || !filter_accepts(object->identity, request.filter)) {
+        if (object == nullptr) {
+            continue;
+        }
+        if (!filter_accepts(object->identity, request.filter)) {
+            ++stats.defensive_post_filter_rejections;
             continue;
         }
         hits.push_back(CollisionHit{
@@ -582,21 +847,33 @@ std::vector<CollisionHit> PhysicsWorld::shape_cast_all(
         });
     }
     impl_->normalize(&hits);
+    stats.final_hits_accepted = hits.size();
+    impl_->record_stats(stats);
     return hits;
 }
 
 std::vector<CollisionHit> PhysicsWorld::overlap_all(
     const OverlapRequest& request) const {
     std::shared_lock lock(impl_->mutex_);
+    CollisionQueryStats stats{};
+    stats.overlap_query_count = 1;
     if (!valid()) {
+        impl_->record_stats(stats);
         return {};
     }
     JPH::RefConst<JPH::Shape> shape = make_shape(request.shape);
     if (shape == nullptr) {
+        impl_->record_stats(stats);
         return {};
     }
     const glm::vec3 position =
         request.position + request.rotation * request.shape.local_center;
+    QueryBroadPhaseLayerFilter broadphase_filter(
+        request.filter,
+        impl_->unclassified_damageable_count_ != 0,
+        impl_->local_stats(&stats));
+    QueryObjectLayerFilter object_layer_filter(
+        request.filter, impl_->local_stats(&stats));
     JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> collector;
     impl_->system_->GetNarrowPhaseQuery().CollideShape(
         shape,
@@ -605,13 +882,20 @@ std::vector<CollisionHit> PhysicsWorld::overlap_all(
             to_jolt(request.rotation), to_jolt_r(position)),
         JPH::CollideShapeSettings{},
         JPH::RVec3::sZero(),
-        collector);
+        collector,
+        broadphase_filter,
+        object_layer_filter);
+    stats.raw_jolt_hits_collected = collector.mHits.size();
 
     std::vector<CollisionHit> hits;
     hits.reserve(collector.mHits.size());
     for (const JPH::CollideShapeResult& result : collector.mHits) {
         const Impl::StoredObject* object = impl_->find(result.mBodyID2);
-        if (object == nullptr || !filter_accepts(object->identity, request.filter)) {
+        if (object == nullptr) {
+            continue;
+        }
+        if (!filter_accepts(object->identity, request.filter)) {
+            ++stats.defensive_post_filter_rejections;
             continue;
         }
         const glm::vec3 point = from_jolt(result.mContactPointOn2);
@@ -625,6 +909,8 @@ std::vector<CollisionHit> PhysicsWorld::overlap_all(
         });
     }
     impl_->normalize(&hits);
+    stats.final_hits_accepted = hits.size();
+    impl_->record_stats(stats);
     return hits;
 }
 

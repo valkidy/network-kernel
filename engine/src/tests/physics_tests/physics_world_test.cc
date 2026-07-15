@@ -14,6 +14,7 @@ using network_example::physics::CollisionLayer;
 using network_example::physics::CollisionObjectDescriptor;
 using network_example::physics::CollisionObjectIdentity;
 using network_example::physics::CollisionObjectKind;
+using network_example::physics::CollisionQueryStats;
 using network_example::physics::CollisionShapeDescriptor;
 using network_example::physics::CollisionShapeType;
 using network_example::physics::OverlapRequest;
@@ -33,7 +34,8 @@ std::vector<std::uint8_t> read_bytes(const char* path) {
 CollisionObjectDescriptor actor(
     std::uint32_t entity_net_id,
     std::uint32_t collider_id,
-    const glm::vec3& position) {
+    const glm::vec3& position,
+    std::uint32_t gameplay_category) {
     CollisionObjectDescriptor object{};
     object.identity = CollisionObjectIdentity{
         entity_net_id,
@@ -41,6 +43,8 @@ CollisionObjectDescriptor actor(
         7,
         CollisionObjectKind::kActorHitbox,
         CollisionLayer::kDamageable,
+        0,
+        gameplay_category,
     };
     object.shape.type = CollisionShapeType::kBox;
     object.shape.half_extents = glm::vec3(0.5f);
@@ -50,11 +54,68 @@ CollisionObjectDescriptor actor(
 
 void populate(PhysicsWorld* world) {
     std::string error;
-    assert(world->upsert_object(actor(2, 20, glm::vec3(5.0f, 2.0f, 0.0f)), &error));
-    assert(world->upsert_object(actor(1, 10, glm::vec3(5.0f, 2.0f, 0.0f)), &error));
-    CollisionObjectDescriptor disabled = actor(3, 30, glm::vec3(2.0f, 2.0f, 0.0f));
+    assert(world->upsert_object(actor(
+        2,
+        20,
+        glm::vec3(5.0f, 2.0f, 0.0f),
+        network_example::physics::kGameplayCategoryHostileSide), &error));
+    assert(world->upsert_object(actor(
+        1,
+        10,
+        glm::vec3(5.0f, 2.0f, 0.0f),
+        network_example::physics::kGameplayCategoryPlayerSide), &error));
+    assert(world->upsert_object(actor(
+        4,
+        40,
+        glm::vec3(5.0f, 2.0f, 0.0f),
+        network_example::physics::kGameplayCategoryNeutral), &error));
+    CollisionObjectDescriptor disabled = actor(
+        3,
+        30,
+        glm::vec3(2.0f, 2.0f, 0.0f),
+        network_example::physics::kGameplayCategoryHostileSide);
     disabled.enabled = false;
     assert(world->upsert_object(disabled, &error));
+}
+
+void populate_query_fixture(
+    PhysicsWorld* world,
+    std::uint32_t player_count,
+    std::uint32_t hostile_count,
+    float y) {
+    std::string error;
+    const std::uint32_t actor_count = player_count + hostile_count;
+    for (std::uint32_t index = 0; index < actor_count; ++index) {
+        const std::uint32_t gameplay_category = index < player_count
+            ? network_example::physics::kGameplayCategoryPlayerSide
+            : network_example::physics::kGameplayCategoryHostileSide;
+        assert(world->upsert_object(actor(
+            index + 1,
+            index + 1,
+            glm::vec3(2.0f + static_cast<float>(index), y, 0.0f),
+            gameplay_category), &error));
+    }
+}
+
+CollisionQueryStats run_shape_query_fixture(
+    PhysicsWorld* world,
+    float y,
+    std::uint32_t gameplay_category_mask,
+    std::size_t expected_hits) {
+    ShapeCastRequest request{};
+    request.shape.type = CollisionShapeType::kSphere;
+    request.shape.radius = 0.25f;
+    request.start = glm::vec3(0.0f, y, 0.0f);
+    request.displacement = glm::vec3(30.0f, 0.0f, 0.0f);
+    request.filter.collision_mask =
+        network_example::physics::collision_layer_bit(
+            CollisionLayer::kDamageable);
+    request.filter.gameplay_category_mask = gameplay_category_mask;
+    world->reset_query_stats();
+    for (std::uint32_t query = 0; query < 200; ++query) {
+        assert(world->shape_cast_all(request).size() == expected_hits);
+    }
+    return world->query_stats();
 }
 
 void require_equal(const std::vector<CollisionHit>& lhs, const std::vector<CollisionHit>& rhs) {
@@ -106,13 +167,14 @@ int main(int argc, char** argv) {
     const std::vector<CollisionHit> hits0 = world0.ray_cast_all(ray);
     const std::vector<CollisionHit> hits2 = world2.ray_cast_all(ray);
     require_equal(hits0, hits2);
-    assert(hits0.size() == 2);
+    assert(hits0.size() == 3);
     assert(hits0[0].identity.entity_net_id == 1);
     assert(hits0[1].identity.entity_net_id == 2);
+    assert(hits0[2].identity.entity_net_id == 4);
 
     ray.filter.ignored_entity_net_id = 1;
     const std::vector<CollisionHit> excluded = world0.ray_cast_all(ray);
-    assert(excluded.size() == 1);
+    assert(excluded.size() == 2);
     assert(excluded[0].identity.entity_net_id == 2);
 
     CollisionHit closest{};
@@ -132,7 +194,31 @@ int main(int argc, char** argv) {
     overlap.shape.radius = 1.0f;
     overlap.position = glm::vec3(5.0f, 2.0f, 0.0f);
     overlap.filter = ray.filter;
+    assert(world0.overlap_all(overlap).size() == 2);
+
+    ray.filter.ignored_entity_net_id = 0;
+    ray.filter.gameplay_category_mask =
+        network_example::physics::kGameplayCategoryHostileSide;
+    shape_cast.filter = ray.filter;
+    overlap.filter = ray.filter;
+    assert(world0.ray_cast_all(ray).size() == 1);
+    assert(world0.shape_cast_all(shape_cast).size() == 1);
     assert(world0.overlap_all(overlap).size() == 1);
+
+    ray.filter.gameplay_category_mask =
+        network_example::physics::kGameplayCategoryDamageable;
+    shape_cast.filter = ray.filter;
+    overlap.filter = ray.filter;
+    assert(world0.ray_cast_all(ray).size() == 3);
+    assert(world0.shape_cast_all(shape_cast).size() == 3);
+    assert(world0.overlap_all(overlap).size() == 3);
+
+    ray.filter.gameplay_category_mask = 0;
+    shape_cast.filter = ray.filter;
+    overlap.filter = ray.filter;
+    assert(world0.ray_cast_all(ray).empty());
+    assert(world0.shape_cast_all(shape_cast).empty());
+    assert(world0.overlap_all(overlap).empty());
 
     assert(world0.set_object_transform(
         20,
@@ -147,6 +233,7 @@ int main(int argc, char** argv) {
     terrain_ray.max_distance = 100.0f;
     terrain_ray.filter.collision_mask =
         network_example::physics::collision_layer_bit(CollisionLayer::kTerrain);
+    terrain_ray.filter.gameplay_category_mask = 0;
     assert(world0.ray_cast_closest(terrain_ray, &closest));
     assert(closest.identity.kind == CollisionObjectKind::kTerrain);
 
@@ -156,5 +243,54 @@ int main(int argc, char** argv) {
     corrupt = terrain;
     corrupt.resize(corrupt.size() - 1);
     assert(!world0.load_static_scene(corrupt, terrain_identity, &error));
+
+    PhysicsWorld balanced_fixture(PhysicsWorldConfig{0, true});
+    assert(balanced_fixture.valid());
+    populate_query_fixture(&balanced_fixture, 12, 12, 50.0f);
+    const CollisionQueryStats balanced_none = run_shape_query_fixture(
+        &balanced_fixture, 50.0f, 0, 0);
+    const CollisionQueryStats balanced_hostile = run_shape_query_fixture(
+        &balanced_fixture,
+        50.0f,
+        network_example::physics::kGameplayCategoryHostileSide,
+        12);
+    const CollisionQueryStats balanced_damageable = run_shape_query_fixture(
+        &balanced_fixture,
+        50.0f,
+        network_example::physics::kGameplayCategoryDamageable,
+        24);
+    assert(balanced_none.shape_cast_query_count == 200);
+    assert(balanced_hostile.shape_cast_query_count == 200);
+    assert(balanced_damageable.shape_cast_query_count == 200);
+    assert(balanced_none.damageable_actor_broadphase_layers_accepted == 0);
+    assert(balanced_hostile.damageable_actor_broadphase_layers_accepted > 0);
+    assert(balanced_damageable.damageable_actor_broadphase_layers_accepted > 0);
+    assert(balanced_none.raw_jolt_hits_collected == 0);
+    assert(balanced_hostile.raw_jolt_hits_collected * 2 ==
+           balanced_damageable.raw_jolt_hits_collected);
+    assert(balanced_hostile.final_hits_accepted * 2 ==
+           balanced_damageable.final_hits_accepted);
+    assert(balanced_hostile.player_object_layers_accepted == 0);
+    assert(balanced_hostile.hostile_object_layers_accepted > 0);
+    assert(balanced_damageable.player_object_layers_accepted > 0);
+    assert(balanced_damageable.hostile_object_layers_accepted > 0);
+
+    PhysicsWorld production_fixture(PhysicsWorldConfig{0, true});
+    assert(production_fixture.valid());
+    populate_query_fixture(&production_fixture, 1, 23, 100.0f);
+    const CollisionQueryStats production_hostile = run_shape_query_fixture(
+        &production_fixture,
+        100.0f,
+        network_example::physics::kGameplayCategoryHostileSide,
+        23);
+    const CollisionQueryStats production_damageable = run_shape_query_fixture(
+        &production_fixture,
+        100.0f,
+        network_example::physics::kGameplayCategoryDamageable,
+        24);
+    assert(production_hostile.raw_jolt_hits_collected <
+           production_damageable.raw_jolt_hits_collected);
+    assert(production_damageable.raw_jolt_hits_collected -
+           production_hostile.raw_jolt_hits_collected == 200);
     return 0;
 }
