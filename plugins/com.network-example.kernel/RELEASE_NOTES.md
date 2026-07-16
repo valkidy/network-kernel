@@ -1,5 +1,11 @@
 0.6.6 release notes:
 
+- aligns Unity benchmark and movement bindings with kernel ABI 42
+- initializes movement layouts for managed gameplay catalogs
+
+
+0.6.6 release notes:
+
 - aligns Unity plugin API with kernel ABI 42
 
 

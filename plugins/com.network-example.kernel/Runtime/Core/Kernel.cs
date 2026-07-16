@@ -988,6 +988,10 @@ namespace NetworkExample.Kernel
                 {
                     templates[index].ai.struct_size = KernelEntityAiDefinition.StructSize;
                 }
+                if (templates[index].movement.struct_size == 0)
+                {
+                    templates[index].movement.struct_size = KernelMovementDefinition.StructSize;
+                }
             }
         }
 

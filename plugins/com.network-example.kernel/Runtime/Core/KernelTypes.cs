@@ -408,6 +408,14 @@ namespace NetworkExample.Kernel
         Director = 2,
     }
 
+    public enum KernelMovementControllerType : byte
+    {
+        None = 0,
+        Grounded = 1,
+        Kinematic = 2,
+        Character = 3,
+    }
+
     [Flags]
     public enum KernelDebugRecordType : uint
     {
@@ -1074,6 +1082,12 @@ namespace NetworkExample.Kernel
         public ulong render_solver_cost_us;
         public ulong projectile_solver_cost_us;
         public ulong hybrid_correction_cost_us;
+        public ulong grounded_query_count;
+        public ulong grounded_query_cost_us;
+        public ulong kinematic_move_count;
+        public ulong kinematic_move_cost_us;
+        public ulong character_move_count;
+        public ulong character_move_cost_us;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelBenchmarkStats>();
     }
@@ -1462,6 +1476,23 @@ namespace NetworkExample.Kernel
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    public struct KernelMovementDefinition
+    {
+        public uint struct_size;
+        public KernelMovementControllerType controller_type;
+        public byte reserved0;
+        public ushort reserved1;
+        public uint movement_collider_template_id;
+        public KernelVec3 gravity;
+        public float max_slope_degrees;
+        public float step_height;
+        public float ground_probe_distance;
+        public float ground_snap_distance;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelMovementDefinition>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     public struct KernelEntityAiDefinition
     {
         public uint struct_size;
@@ -1495,6 +1526,7 @@ namespace NetworkExample.Kernel
         public KernelCombatStateDefinition combat;
         public KernelAgentVisionConfig vision;
         public KernelEntityAiDefinition ai;
+        public KernelMovementDefinition movement;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelEntityTemplateDefinition>();
     }

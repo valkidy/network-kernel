@@ -74,6 +74,9 @@ public static class NetworkKernelManagedAbiSmoke
             KernelSessionRulesConfig.StructSize == 8,
             "Kernel configuration layout size mismatch.");
         Require(
+            KernelMovementDefinition.StructSize == 40,
+            "Kernel movement definition layout size mismatch.");
+        Require(
             (KernelConstants.VisualFlagHpUnknown & KernelConstants.VisualFlagDead) == 0,
             "Kernel HpUnknown visual flag overlapped Dead.");
         Require(buildInfo.struct_size != 0, "Kernel_GetBuildInfo returned empty struct size.");

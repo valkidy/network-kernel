@@ -62,6 +62,9 @@ namespace NetworkExample.Kernel.Editor
                 KernelSessionRulesConfig.StructSize == 8,
                 "Kernel configuration layout size mismatch.");
             Require(
+                KernelMovementDefinition.StructSize == 40,
+                "Kernel movement definition layout size mismatch.");
+            Require(
                 (KernelConstants.VisualFlagHpUnknown & KernelConstants.VisualFlagDead) == 0,
                 "Kernel HpUnknown visual flag overlapped Dead.");
             RequireLANDiscovery();
@@ -217,7 +220,7 @@ namespace NetworkExample.Kernel.Editor
 
             RequireExternalGameplayCatalogSyncIfConfigured();
 
-            Debug.Log("Network kernel ABI 34 smoke passed.");
+            Debug.Log("Network kernel ABI 42 smoke passed.");
         }
 
         private static void RequireControlPlaneRpc(Kernel kernel, uint enemyNetId)
