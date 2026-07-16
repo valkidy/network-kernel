@@ -61,6 +61,64 @@ namespace NetworkExample.Kernel
             return KernelNative.Kernel_StartClient(handle, address);
         }
 
+        public bool SetPhysicsConfig(KernelPhysicsConfig config)
+        {
+            ThrowIfDisposed();
+            config.struct_size = KernelPhysicsConfig.StructSize;
+            return KernelNative.Kernel_SetPhysicsConfig(handle, ref config);
+        }
+
+        public bool SetSessionRules(KernelSessionRulesConfig config)
+        {
+            ThrowIfDisposed();
+            config.struct_size = KernelSessionRulesConfig.StructSize;
+            return KernelNative.Kernel_SetSessionRules(handle, ref config);
+        }
+
+        public bool SetStaticCollisionScene(
+            byte[] artifactBytes,
+            uint sceneId,
+            uint colliderId,
+            uint collisionLayer = KernelConstants.StaticCollisionLayerTerrain)
+        {
+            ThrowIfDisposed();
+            if (artifactBytes == null)
+            {
+                throw new ArgumentNullException(nameof(artifactBytes));
+            }
+            if (artifactBytes.Length == 0)
+            {
+                throw new ArgumentException(
+                    "Static collision artifact must not be empty.",
+                    nameof(artifactBytes));
+            }
+            if ((uint)artifactBytes.Length > KernelConstants.StaticCollisionSceneMaxBytes)
+            {
+                throw new ArgumentException(
+                    $"Static collision artifact exceeds {KernelConstants.StaticCollisionSceneMaxBytes} bytes.",
+                    nameof(artifactBytes));
+            }
+
+            GCHandle artifactHandle = GCHandle.Alloc(artifactBytes, GCHandleType.Pinned);
+            try
+            {
+                var config = new KernelStaticCollisionSceneConfig
+                {
+                    struct_size = KernelStaticCollisionSceneConfig.StructSize,
+                    artifact_bytes = artifactHandle.AddrOfPinnedObject(),
+                    artifact_size = (uint)artifactBytes.Length,
+                    scene_id = sceneId,
+                    collider_id = colliderId,
+                    collision_layer = collisionLayer,
+                };
+                return KernelNative.Kernel_SetStaticCollisionScene(handle, ref config);
+            }
+            finally
+            {
+                artifactHandle.Free();
+            }
+        }
+
         public bool StartClientCatalogSync(
             string address,
             uint maxBundleSize,

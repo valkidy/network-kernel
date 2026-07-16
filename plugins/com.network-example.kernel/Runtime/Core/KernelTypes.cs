@@ -19,6 +19,8 @@ namespace NetworkExample.Kernel
         public const uint GameplayCatalogSyncDefaultMaxBundleSize =
             GameplayCatalogSyncMaxBundleSize;
         public const uint GameplayCatalogSyncDefaultTimeoutMs = 30000U;
+        public const uint StaticCollisionSceneMaxBytes = 16U * 1024U * 1024U;
+        public const uint StaticCollisionLayerTerrain = 1U;
         public const int MaxWeapons = 7;
         public const byte DebugWildcardU8 = 0xff;
 
@@ -125,6 +127,12 @@ namespace NetworkExample.Kernel
         Client = 0,
         ListenServer = 1,
         DedicatedServer = 2,
+    }
+
+    public enum KernelActorBlockingMode : uint
+    {
+        Disabled = 0,
+        Predicted = 1,
     }
 
     public enum KernelEventType
@@ -647,6 +655,39 @@ namespace NetworkExample.Kernel
                 max_events = 256,
             };
         }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelPhysicsConfig
+    {
+        public uint struct_size;
+        public uint physics_simulation;
+        public uint physics_workers;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelPhysicsConfig>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelSessionRulesConfig
+    {
+        public uint struct_size;
+        public KernelActorBlockingMode actor_blocking_mode;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelSessionRulesConfig>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct KernelStaticCollisionSceneConfig
+    {
+        public uint struct_size;
+        public IntPtr artifact_bytes;
+        public uint artifact_size;
+        public uint scene_id;
+        public uint collider_id;
+        public uint collision_layer;
+
+        public static uint StructSize =>
+            (uint)Marshal.SizeOf<KernelStaticCollisionSceneConfig>();
     }
 
     [StructLayout(LayoutKind.Sequential)]

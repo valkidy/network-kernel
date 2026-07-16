@@ -58,6 +58,10 @@ namespace NetworkExample.Kernel.Editor
                 KernelVec4.StructSize == 16,
                 "KernelVec4 layout size mismatch.");
             Require(
+                KernelPhysicsConfig.StructSize == 12 &&
+                KernelSessionRulesConfig.StructSize == 8,
+                "Kernel configuration layout size mismatch.");
+            Require(
                 (KernelConstants.VisualFlagHpUnknown & KernelConstants.VisualFlagDead) == 0,
                 "Kernel HpUnknown visual flag overlapped Dead.");
             RequireLANDiscovery();
@@ -65,6 +69,15 @@ namespace NetworkExample.Kernel.Editor
 
             using (var kernel = new Kernel(KernelConfig.CreateDefault(KernelMode.ListenServer)))
             {
+                Require(
+                    kernel.SetPhysicsConfig(new KernelPhysicsConfig()),
+                    "Kernel_SetPhysicsConfig failed.");
+                Require(
+                    kernel.SetSessionRules(new KernelSessionRulesConfig
+                    {
+                        actor_blocking_mode = KernelActorBlockingMode.Disabled,
+                    }),
+                    "Kernel_SetSessionRules failed.");
                 Require(kernel.StartListenServer(7777), "Kernel_StartListenServer failed.");
 
                 using (var gameServer = new GameServer(

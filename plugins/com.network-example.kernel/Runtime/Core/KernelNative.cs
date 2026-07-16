@@ -63,6 +63,24 @@ namespace NetworkExample.Kernel
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_SetPhysicsConfig(
+            IntPtr kernel,
+            ref KernelPhysicsConfig config);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_SetSessionRules(
+            IntPtr kernel,
+            ref KernelSessionRulesConfig config);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_SetStaticCollisionScene(
+            IntPtr kernel,
+            ref KernelStaticCollisionSceneConfig config);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
         internal static extern bool Kernel_InvokeRpcCommand(
             IntPtr kernel,
             [In] byte[] requestJson,
