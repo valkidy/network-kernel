@@ -142,17 +142,9 @@ bool load_gameplay_catalog_bundle(
                 static_scene.entry_path);
     }
 
-    if (!network_example::game_server::load_kernel_gameplay_catalog(
-            kernel,
-            config)) {
-        set_load_error(
-            out_result,
-            KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_KERNEL_REJECTED_CATALOG,
-            "kernel rejected gameplay catalog");
-        return false;
-    }
-
     if (!static_scene.entry_path.empty()) {
+        const network_example::game_server::KernelGameplayCatalogStorage storage =
+            network_example::game_server::build_kernel_gameplay_catalog(config);
         KernelStaticCollisionSceneConfig scene_config{};
         scene_config.struct_size = sizeof(scene_config);
         scene_config.artifact_bytes = collision_scene_bytes.data();
@@ -161,17 +153,35 @@ bool load_gameplay_catalog_bundle(
         scene_config.scene_id = static_scene.scene_id;
         scene_config.collider_id = static_scene.collider_id;
         scene_config.collision_layer = static_scene.collision_layer;
-        if (!Kernel_SetStaticCollisionScene(kernel, &scene_config)) {
+        std::uint32_t static_scene_rejected = 0u;
+        KernelGameplayCatalogLoadOptions options{};
+        options.struct_size = sizeof(options);
+        options.static_collision_scene = &scene_config;
+        options.out_static_scene_rejected = &static_scene_rejected;
+        if (!Kernel_LoadGameplayCatalog(
+                kernel,
+                &storage.definition,
+                &options)) {
             set_load_error(
                 out_result,
                 KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_KERNEL_REJECTED_CATALOG,
-                "kernel rejected static collision scene registration",
-                static_scene.entry_path,
-                "static_collision_scene",
+                static_scene_rejected != 0u
+                    ? "kernel rejected static collision scene registration"
+                    : "kernel rejected gameplay catalog",
+                static_scene_rejected != 0u ? static_scene.entry_path : "",
+                static_scene_rejected != 0u ? "static_collision_scene" : "",
                 KERNEL_GAMEPLAY_CATALOG_LOAD_SOURCE_BUNDLE,
                 KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
             return false;
         }
+    } else if (!network_example::game_server::load_kernel_gameplay_catalog(
+                   kernel,
+                   config)) {
+        set_load_error(
+            out_result,
+            KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_KERNEL_REJECTED_CATALOG,
+            "kernel rejected gameplay catalog");
+        return false;
     }
 
     fill_load_result(out_result, config);

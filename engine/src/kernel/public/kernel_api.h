@@ -116,7 +116,8 @@ void Kernel_SubmitInput(
 
 bool Kernel_LoadGameplayCatalog(
     KernelHandle* kernel,
-    const KernelGameplayCatalogDefinition* catalog);
+    const KernelGameplayCatalogDefinition* catalog,
+    const KernelGameplayCatalogLoadOptions* options);
 
 bool Kernel_LoadGameplayCatalogFromMemory(
     KernelHandle* kernel,

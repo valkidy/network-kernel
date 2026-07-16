@@ -63,7 +63,7 @@ void load_catalog(KernelHandle* kernel) {
     catalog.collider_template_count = 1;
     catalog.projectile_templates = &projectile;
     catalog.projectile_template_count = 1;
-    assert(Kernel_LoadGameplayCatalog(kernel, &catalog));
+    assert(Kernel_LoadGameplayCatalog(kernel, &catalog, nullptr));
 }
 
 std::uint32_t create_actor(KernelHandle* kernel, const KernelVec3& position) {

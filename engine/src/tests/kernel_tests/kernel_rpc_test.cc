@@ -57,7 +57,7 @@ void load_health_catalog(KernelHandle* kernel) {
     catalog.collider_templates = collider_templates.data();
     catalog.collider_template_count =
         static_cast<std::uint32_t>(collider_templates.size());
-    assert(Kernel_LoadGameplayCatalog(kernel, &catalog));
+    assert(Kernel_LoadGameplayCatalog(kernel, &catalog, nullptr));
 }
 
 KernelRpcRequestId invoke(KernelHandle* kernel, const std::string& request) {

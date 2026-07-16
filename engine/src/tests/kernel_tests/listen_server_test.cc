@@ -211,7 +211,7 @@ void load_minimal_gameplay_catalog(KernelHandle* kernel) {
         static_cast<std::uint32_t>(action_templates.size());
     catalog.actor_templates = &actor_template;
     catalog.actor_template_count = 1u;
-    assert(Kernel_LoadGameplayCatalog(kernel, &catalog));
+    assert(Kernel_LoadGameplayCatalog(kernel, &catalog, nullptr));
 }
 
 void configure_local_player(KernelHandle* kernel, std::uint32_t player_net_id) {

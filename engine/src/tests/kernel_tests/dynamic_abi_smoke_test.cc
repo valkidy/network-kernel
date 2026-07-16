@@ -35,7 +35,7 @@ bool all_digits(const char* value) {
 
 bool has_version_revision_suffix(const char* value) {
     const std::string text = value == nullptr ? "" : value;
-    constexpr const char* kPrefix = "0.6.6+r";
+    constexpr const char* kPrefix = "0.7.0+r";
     if (text.rfind(kPrefix, 0) != 0 || text.size() == std::strlen(kPrefix)) {
         return false;
     }
@@ -190,6 +190,13 @@ int main() {
         load_symbol<bool(KernelHandle*)>(
             library,
             "Kernel_ContinueClientHandshake");
+    [[maybe_unused]] auto* kernel_load_gameplay_catalog =
+        load_symbol<bool(
+            KernelHandle*,
+            const KernelGameplayCatalogDefinition*,
+            const KernelGameplayCatalogLoadOptions*)>(
+            library,
+            "Kernel_LoadGameplayCatalog");
     [[maybe_unused]] auto* kernel_start_dedicated_server =
         load_symbol<bool(KernelHandle*, std::uint16_t)>(
             library,
@@ -471,6 +478,8 @@ int main() {
            sizeof(KernelCombatStateDefinition));
     assert(abi_info.gameplay_catalog_load_result_size ==
            sizeof(KernelGameplayCatalogLoadResult));
+    assert(abi_info.gameplay_catalog_load_options_size ==
+           sizeof(KernelGameplayCatalogLoadOptions));
     assert(abi_info.agent_vision_config_size == sizeof(KernelAgentVisionConfig));
     assert(abi_info.vision_state_query_size == sizeof(KernelVisionStateQuery));
     assert(abi_info.vision_state_view_size == sizeof(KernelVisionStateView));

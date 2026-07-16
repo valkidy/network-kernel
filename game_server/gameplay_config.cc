@@ -3837,7 +3837,7 @@ bool load_kernel_gameplay_catalog(
         return false;
     }
     KernelGameplayCatalogStorage storage = build_kernel_gameplay_catalog(config);
-    return Kernel_LoadGameplayCatalog(kernel, &storage.definition);
+    return Kernel_LoadGameplayCatalog(kernel, &storage.definition, nullptr);
 }
 
 KernelCombatStateDefinition make_combat_state_from_actor_template(

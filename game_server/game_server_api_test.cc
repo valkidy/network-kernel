@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cassert>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -9,6 +10,7 @@
 #include <fstream>
 #include <limits>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -69,6 +71,28 @@ std::uint32_t query_enemy_count(KernelHandle* kernel) {
         }
     }
     return enemy_count;
+}
+
+bool pump_until_catalog_sync_state(
+    KernelHandle* server,
+    KernelHandle* client,
+    KernelGameplayCatalogSyncState expected_state) {
+    for (int iteration = 0; iteration < 2000; ++iteration) {
+        Kernel_Update(server, 1.0f / 60.0f);
+        Kernel_Update(client, 1.0f / 60.0f);
+        KernelGameplayCatalogSyncStatus status{};
+        status.struct_size = sizeof(status);
+        if (!Kernel_GetGameplayCatalogSyncStatus(client, &status) ||
+            status.state == KernelGameplayCatalogSyncState_Failed ||
+            status.state == KernelGameplayCatalogSyncState_Disconnected) {
+            return false;
+        }
+        if (status.state == expected_state) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return false;
 }
 
 std::filesystem::path runfiles_root() {
@@ -350,7 +374,61 @@ int main() {
     assert(load_result.projectile_template_count > 0);
     assert(load_result.collider_template_count == 11);
     assert(load_result.collider_binding_count == 0);
+    KernelSessionRulesConfig session_rules{};
+    session_rules.struct_size = sizeof(session_rules);
+    session_rules.actor_blocking_mode = KernelActorBlockingMode_Predicted;
+    assert(Kernel_SetSessionRules(kernel, &session_rules));
+    KernelGameplayCatalogSyncServerConfig sync_server_config{};
+    sync_server_config.struct_size = sizeof(sync_server_config);
+    sync_server_config.bundle_bytes = gameplay_bundle.data();
+    sync_server_config.bundle_size =
+        static_cast<std::uint32_t>(gameplay_bundle.size());
+    sync_server_config.entry_path = "gameplay_catalog.yaml";
+    sync_server_config.content_namespace = "regression";
+    KernelGameplayCatalogManifest sync_manifest{};
+    sync_manifest.struct_size = sizeof(sync_manifest);
+    assert(Kernel_SetGameplayCatalogSyncBundle(
+        kernel,
+        &sync_server_config,
+        &sync_manifest));
     assert(Kernel_StartListenServer(kernel, 7777));
+
+    KernelConfig client_config = config;
+    client_config.mode = KernelMode_Client;
+    KernelHandle* catalog_client = Kernel_Create(&client_config);
+    assert(catalog_client != nullptr);
+    KernelGameplayCatalogSyncClientConfig sync_client_config{};
+    sync_client_config.struct_size = sizeof(sync_client_config);
+    sync_client_config.max_bundle_size =
+        static_cast<std::uint32_t>(gameplay_bundle.size());
+    sync_client_config.timeout_ms = 5000u;
+    assert(Kernel_StartClientCatalogSync(
+        catalog_client,
+        "127.0.0.1:7777",
+        &sync_client_config));
+    assert(pump_until_catalog_sync_state(
+        kernel,
+        catalog_client,
+        KernelGameplayCatalogSyncState_ManifestReady));
+    load_result = KernelGameplayCatalogLoadResult{};
+    assert(Kernel_LoadGameplayCatalogFromMemory(
+        catalog_client,
+        gameplay_bundle.data(),
+        static_cast<std::uint32_t>(gameplay_bundle.size()),
+        "gameplay_catalog.yaml",
+        &load_result));
+    assert(Kernel_ContinueClientHandshake(catalog_client));
+    assert(pump_until_catalog_sync_state(
+        kernel,
+        catalog_client,
+        KernelGameplayCatalogSyncState_Ready));
+    KernelLocalPlayerInfo local_player_info{};
+    assert(Kernel_GetLocalPlayerInfo(catalog_client, &local_player_info));
+    assert(local_player_info.connected != 0u);
+    assert(local_player_info.has_welcome != 0u);
+    assert(local_player_info.peer_id != 0u);
+    assert(local_player_info.player_net_id != 0u);
+    Kernel_Destroy(catalog_client);
 
     GameServerHandle* game_server = GameServer_Create(kernel);
     assert(game_server != nullptr);

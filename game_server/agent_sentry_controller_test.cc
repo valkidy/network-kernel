@@ -108,7 +108,7 @@ void load_catalog(KernelHandle* kernel) {
     catalog.projectile_template_count = 1;
     catalog.action_templates = actions.data();
     catalog.action_template_count = static_cast<std::uint32_t>(actions.size());
-    assert(Kernel_LoadGameplayCatalog(kernel, &catalog));
+    assert(Kernel_LoadGameplayCatalog(kernel, &catalog, nullptr));
 }
 
 std::uint32_t create_entity(
