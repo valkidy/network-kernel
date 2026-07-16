@@ -1,7 +1,7 @@
 id: 8
 name: rocket_explosion
 kind: area_effect
-collider_template: explosion_damage
+collider_template: area_effect_sphere
 lifetime_ticks: 45
 damage_behavior:
   type: area_interval

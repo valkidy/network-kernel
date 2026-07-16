@@ -133,9 +133,10 @@ network_example::NetId spawn_enemy(
 
 PlayerInput homing_fire_input(std::uint32_t action_instance_id) {
     PlayerInput input{};
-    input.input_seq = 1;
+    input.input_seq = action_instance_id;
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     input.selected_weapon = network_example::kWeaponSlot6;
+    input.buttons = InputButton_Fire;
     input.action_intent = ActionIntent{
         action_instance_id,
         KernelActionBinding_PrimaryFire,

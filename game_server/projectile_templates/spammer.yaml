@@ -2,7 +2,7 @@ id: 2
 name: spammer_projectile
 damage: 1
 sync_mode: local_predicted_deterministic
-collider_template: sphere_damage
+collider_template: projectile_sphere
 movement_model: linear
 hit_response: destroy
 damage_shape: direct_hit

@@ -1,5 +1,5 @@
 id: 9
-name: cone_vision
+name: sentry_grunt_vision_cone
 shape: cone
 center: {x: 0.0, y: 0.0, z: 0.0}
 range: 12.0

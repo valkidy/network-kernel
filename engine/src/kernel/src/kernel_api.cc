@@ -66,6 +66,54 @@ void Kernel_Destroy(KernelHandle* kernel) {
     });
 }
 
+bool Kernel_SetPhysicsConfig(
+    KernelHandle* kernel,
+    const KernelPhysicsConfig* config) {
+    return abi_call("Kernel_SetPhysicsConfig", false, [&]() {
+        return kernel != nullptr && kernel->engine != nullptr &&
+               config != nullptr &&
+               config->struct_size >= sizeof(KernelPhysicsConfig) &&
+               kernel->engine->set_physics_config(*config);
+    });
+}
+
+bool Kernel_SetSessionRules(
+    KernelHandle* kernel,
+    const KernelSessionRulesConfig* config) {
+    return abi_call("Kernel_SetSessionRules", false, [&]() {
+        return kernel != nullptr && kernel->engine != nullptr &&
+               config != nullptr &&
+               config->struct_size >= sizeof(KernelSessionRulesConfig) &&
+               kernel->engine->set_session_rules(*config);
+    });
+}
+
+bool Kernel_SetStaticCollisionScene(
+    KernelHandle* kernel,
+    const KernelStaticCollisionSceneConfig* config) {
+    return abi_call("Kernel_SetStaticCollisionScene", false, [&]() {
+        if (kernel == nullptr || kernel->engine == nullptr) {
+            spdlog::error(
+                "Kernel_SetStaticCollisionScene rejected: invalid kernel handle");
+            return false;
+        }
+        if (config == nullptr) {
+            spdlog::error(
+                "Kernel_SetStaticCollisionScene rejected: config is null");
+            return false;
+        }
+        if (config->struct_size < sizeof(KernelStaticCollisionSceneConfig)) {
+            spdlog::error(
+                "Kernel_SetStaticCollisionScene rejected: struct_size={} "
+                "required={}",
+                config->struct_size,
+                sizeof(KernelStaticCollisionSceneConfig));
+            return false;
+        }
+        return kernel->engine->set_static_collision_scene(*config);
+    });
+}
+
 bool Kernel_InvokeRpcCommand(
     KernelHandle* kernel,
     const char* request_json,

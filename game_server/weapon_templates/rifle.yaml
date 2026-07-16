@@ -6,4 +6,4 @@ damage: 25
 fire_action_template: rifle_fire
 reload_ticks: 30
 max_range: 100.0
-segment_collider: rifle_segment_damage
+segment_collider: rifle_segment

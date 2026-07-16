@@ -154,15 +154,17 @@ std::vector<std::uint8_t> make_store_zip(
 void append_collider_template_files(
     std::vector<std::pair<std::string, std::string>>* files) {
     const std::vector<std::string> collider_files = {
-        "beam_damage.yaml",
-        "cone_vision.yaml",
-        "enemy_hit.yaml",
-        "explosion_damage.yaml",
-        "player_hit.yaml",
-        "projectile_damage.yaml",
-        "rifle_segment_damage.yaml",
-        "shotgun_segment_damage.yaml",
-        "sphere_damage.yaml",
+        "beam_oriented_box.yaml",
+        "sentry_grunt_vision_cone.yaml",
+        "sentry_grunt_hit_aabb.yaml",
+        "area_effect_sphere.yaml",
+        "player_hit_aabb.yaml",
+        "player_movement_capsule.yaml",
+        "rocket_aabb.yaml",
+        "rifle_segment.yaml",
+        "shotgun_segment.yaml",
+        "projectile_sphere.yaml",
+        "sentry_grunt_movement_capsule.yaml",
     };
     for (const std::string& file : collider_files) {
         files->push_back({
@@ -271,12 +273,14 @@ std::vector<std::uint8_t> make_entity_template_bundle_zip(
         "entity_type: actor\n"
         "actor_type: player\n"
         "camp: player_side\n"
-        "collider_template: player_hit\n"
+        "collider_template: player_hit_aabb\n"
         "health:\n"
         "  hp: 1000\n"
         "  max_hp: 1000\n"
         "movement:\n"
+        "  controller: character\n"
         "  move_speed_meters_per_second: 5.0\n"
+        "  collider_template: player_movement_capsule\n"
         "hitbox:\n"
         "  center: {x: 0.0, y: 0.9, z: 0.0}\n"
         "  half_extents: {x: 0.35, y: 0.9, z: 0.35}\n"
@@ -361,12 +365,14 @@ std::string sentry_grunt_entity_template_yaml(std::string entity_type) {
         "entity_type: " + entity_type + "\n"
         "actor_type: agent\n"
         "camp: enemy_side\n"
-        "collider_template: enemy_hit\n"
+        "collider_template: sentry_grunt_hit_aabb\n"
         "health:\n"
         "  hp: 500\n"
         "  max_hp: 500\n"
         "movement:\n"
+        "  controller: grounded\n"
         "  move_speed_meters_per_second: 2.5\n"
+        "  collider_template: sentry_grunt_movement_capsule\n"
         "hitbox:\n"
         "  center: {x: 0.0, y: 0.8, z: 0.0}\n"
         "  half_extents: {x: 0.4, y: 0.8, z: 0.4}\n"
@@ -377,7 +383,7 @@ std::string sentry_grunt_entity_template_yaml(std::string entity_type) {
         "  idle: 0\n"
         "  chasing: 1\n"
         "vision:\n"
-        "  collider_template: cone_vision\n"
+        "  collider_template: sentry_grunt_vision_cone\n"
         "ai:\n"
         "  controller: sentry\n"
         "  profile: default\n";
@@ -474,6 +480,14 @@ int main() {
     assert(enemy_entity_type_rejected);
 
     assert(config.player.actor_template_id == 1);
+    assert(
+        config.static_collision_scene.entry_path ==
+        "mesh_assets/jolt/undulating.joltmesh");
+    assert(config.static_collision_scene.scene_id == 1u);
+    assert(config.static_collision_scene.collider_id == 0x80000001u);
+    assert(
+        config.static_collision_scene.collision_layer ==
+        KERNEL_STATIC_COLLISION_LAYER_TERRAIN);
     require(config.weapons.catalog_version == 2);
     require(config.weapons.catalog_hash != 0);
     require(
@@ -488,6 +502,11 @@ int main() {
         network_example::game_server::compute_gameplay_catalog_hash(changed_config));
     changed_config = config;
     changed_config.projectile_templates[1].definition.mechanics.damage += 1;
+    require(
+        config.weapons.catalog_hash !=
+        network_example::game_server::compute_gameplay_catalog_hash(changed_config));
+    changed_config = config;
+    changed_config.static_collision_scene.scene_id += 1u;
     require(
         config.weapons.catalog_hash !=
         network_example::game_server::compute_gameplay_catalog_hash(changed_config));
@@ -573,7 +592,7 @@ int main() {
         config.weapons
             .projectile_sync_modes[network_example::game_server::kWeaponRocket] ==
         KernelProjectileSyncMode_ServerSnapshotOnly);
-    assert(config.colliders.templates.size() == 9);
+    assert(config.colliders.templates.size() == 11);
     assert(config.colliders.bindings.empty());
     assert(config.actor_templates.size() == 2);
     const network_example::game_server::ActorTemplateConfig& player_template =
@@ -589,6 +608,9 @@ int main() {
     assert(player_template.active_weapon_slot == 0);
     assert(player_template.vision.camp == KernelAgentCamp_PlayerSide);
     assert(player_template.vision.vision_collider_template_id == 0);
+    assert(player_template.movement_controller_type ==
+           KernelMovementControllerType_Character);
+    assert(player_template.movement_collider_template_id == 10);
     const network_example::game_server::ActorTemplateConfig& enemy_template =
         config.actor_templates[1];
     assert(enemy_template.actor_template_id == 2);
@@ -598,6 +620,9 @@ int main() {
     assert(enemy_template.collider_template_id == 2);
     assert(enemy_template.weapon_slot_count == 1);
     assert(enemy_template.weapon_slots[0] == network_example::game_server::kWeaponGrenade);
+    assert(enemy_template.movement_controller_type ==
+           KernelMovementControllerType_Grounded);
+    assert(enemy_template.movement_collider_template_id == 11);
 
     const KernelWeaponMechanicsDefinition& fire_floor =
         config.weapons.definitions[network_example::game_server::kWeaponFireFloor];
@@ -618,19 +643,37 @@ int main() {
            "Beam Rifle");
 
     bool found_vision_collider = false;
+    bool found_player_movement_capsule = false;
+    bool found_sentry_grunt_movement_capsule = false;
     for (const network_example::game_server::ColliderTemplateConfig& collider :
          config.colliders.templates) {
         if (collider.definition.template_id == 9) {
             found_vision_collider = true;
-            assert(collider.name == "cone_vision");
+            assert(collider.name == "sentry_grunt_vision_cone");
             assert(collider.definition.shape_type == KernelColliderShapeType_Cone);
             assert(collider.definition.purpose_flags == KernelColliderPurpose_Vision);
             assert(collider.definition.layer_mask == KERNEL_COLLISION_LAYER_AGENT_VISION);
             assert(collider.definition.shape_params.x == 12.0f);
             assert(collider.definition.shape_params.y == 90.0f);
+        } else if (collider.definition.template_id == 10) {
+            found_player_movement_capsule = true;
+            assert(collider.definition.shape_type ==
+                   KernelColliderShapeType_Capsule);
+            assert(collider.definition.purpose_flags ==
+                   KernelColliderPurpose_Movement);
+            assert(collider.definition.shape_params.x == 0.55f);
+            assert(collider.definition.shape_params.y == 0.35f);
+        } else if (collider.definition.template_id == 11) {
+            found_sentry_grunt_movement_capsule = true;
+            assert(collider.definition.shape_type ==
+                   KernelColliderShapeType_Capsule);
+            assert(collider.definition.purpose_flags ==
+                   KernelColliderPurpose_Movement);
         }
     }
     assert(found_vision_collider);
+    assert(found_player_movement_capsule);
+    assert(found_sentry_grunt_movement_capsule);
 
     const KernelWeaponMechanicsDefinition& homing_missile =
         config.weapons.definitions[network_example::game_server::kWeaponHomingMissile];

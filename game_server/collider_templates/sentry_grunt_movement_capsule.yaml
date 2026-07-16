@@ -1,0 +1,8 @@
+id: 11
+name: sentry_grunt_movement_capsule
+shape: capsule
+center: {x: 0.0, y: 0.8, z: 0.0}
+half_height: 0.4
+radius: 0.4
+purpose: movement
+layer: hostile_side

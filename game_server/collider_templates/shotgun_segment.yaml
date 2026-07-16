@@ -1,5 +1,5 @@
 id: 6
-name: shotgun_segment_damage
+name: shotgun_segment
 shape: segment
 center: {x: 0.0, y: 0.0, z: 0.0}
 half_extents: {x: 0.0, y: 0.0, z: 0.0}

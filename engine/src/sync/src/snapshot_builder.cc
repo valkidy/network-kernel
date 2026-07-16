@@ -54,6 +54,18 @@ WorldSnapshot build_world_snapshot(
         if (world.registry().all_of<Velocity>(entity)) {
             entity_snapshot.velocity = world.registry().get<Velocity>(entity).linear;
         }
+        if (world.registry().all_of<MovementState>(entity)) {
+            const MovementState& movement =
+                world.registry().get<MovementState>(entity);
+            entity_snapshot.has_authoritative_movement_state = true;
+            entity_snapshot.ground_state =
+                static_cast<std::uint16_t>(movement.ground_state);
+            entity_snapshot.ground_normal = movement.ground_normal;
+            entity_snapshot.supporting_entity_net_id =
+                movement.supporting_entity_net_id;
+            entity_snapshot.supporting_collider_id =
+                movement.supporting_collider_id;
+        }
         if (world.registry().all_of<Health>(entity)) {
             const Health& health = world.registry().get<Health>(entity);
             entity_snapshot.hp = health.hp;

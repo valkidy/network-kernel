@@ -180,15 +180,17 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip() {
         "gameplay_catalog.yaml",
         read_text_file(root / "game_server" / "gameplay_catalog.yaml")});
     const std::vector<std::string> collider_files = {
-        "beam_damage.yaml",
-        "cone_vision.yaml",
-        "enemy_hit.yaml",
-        "explosion_damage.yaml",
-        "player_hit.yaml",
-        "projectile_damage.yaml",
-        "rifle_segment_damage.yaml",
-        "shotgun_segment_damage.yaml",
-        "sphere_damage.yaml",
+        "beam_oriented_box.yaml",
+        "sentry_grunt_vision_cone.yaml",
+        "sentry_grunt_hit_aabb.yaml",
+        "area_effect_sphere.yaml",
+        "player_hit_aabb.yaml",
+        "player_movement_capsule.yaml",
+        "rocket_aabb.yaml",
+        "rifle_segment.yaml",
+        "sentry_grunt_movement_capsule.yaml",
+        "shotgun_segment.yaml",
+        "projectile_sphere.yaml",
     };
     for (const std::string& file : collider_files) {
         files.push_back({
@@ -318,7 +320,7 @@ int main() {
     assert(load_result.catalog_version == 2);
     assert(load_result.catalog_hash != 0);
     assert(load_result.projectile_template_count > 0);
-    assert(load_result.collider_template_count == 9);
+    assert(load_result.collider_template_count == 11);
     assert(load_result.collider_binding_count == 0);
 
     GameServerHandle* game_server = GameServer_Create(kernel);

@@ -10,7 +10,7 @@ namespace {
 constexpr std::size_t kHandshakePayloadSize = 4 + 2 + 2 + 2 + 4 + 8 +
                                               kHandshakeTextSize +
                                               kHandshakeTextSize;
-constexpr std::size_t kWelcomePayloadSize = 32;
+constexpr std::size_t kWelcomePayloadSize = 36;
 constexpr std::size_t kPingPongPayloadSize = 44;
 constexpr std::size_t kDisconnectPayloadSize = 4;
 constexpr std::size_t kManifestRequestPayloadSize = 6;
@@ -90,6 +90,7 @@ std::vector<std::uint8_t> encode_welcome_packet(
     payload.write_u32(packet.snapshot_rate);
     payload.write_u32(packet.catalog_version);
     payload.write_u64(packet.catalog_hash);
+    payload.write_u32(packet.actor_blocking_mode);
     return protocol_internal::wrap_packet(
         MessageType::kWelcome,
         payload.bytes(),
@@ -122,6 +123,8 @@ bool decode_welcome_packet(
         !reader.read_u32(&packet.snapshot_rate) ||
         !reader.read_u32(&packet.catalog_version) ||
         !reader.read_u64(&packet.catalog_hash) ||
+        !reader.read_u32(&packet.actor_blocking_mode) ||
+        packet.actor_blocking_mode > KernelActorBlockingMode_Predicted ||
         !reader.done()) {
         return false;
     }

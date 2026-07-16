@@ -337,6 +337,38 @@ int main() {
     require(!Kernel_GetBuildInfo(&build_info, sizeof(build_info) - 1));
 
     assert(Kernel_Create(nullptr) == nullptr);
+    KernelPhysicsConfig physics_config{};
+    physics_config.struct_size = sizeof(physics_config);
+    assert(!Kernel_SetPhysicsConfig(nullptr, &physics_config));
+    assert(!Kernel_SetStaticCollisionScene(nullptr, nullptr));
+
+    KernelConfig physics_kernel_config{};
+    physics_kernel_config.mode = KernelMode_DedicatedServer;
+    physics_kernel_config.tick.server_tick_rate = 30;
+    physics_kernel_config.tick.snapshot_rate = 15;
+    KernelHandle* physics_kernel = Kernel_Create(&physics_kernel_config);
+    assert(physics_kernel != nullptr);
+    KernelPhysicsConfig invalid_physics_config = physics_config;
+    invalid_physics_config.struct_size = sizeof(invalid_physics_config) - 1;
+    assert(!Kernel_SetPhysicsConfig(physics_kernel, &invalid_physics_config));
+    invalid_physics_config = physics_config;
+    invalid_physics_config.physics_simulation = 2;
+    assert(!Kernel_SetPhysicsConfig(physics_kernel, &invalid_physics_config));
+    physics_config.physics_workers = 2;
+    assert(Kernel_SetPhysicsConfig(physics_kernel, &physics_config));
+    KernelStaticCollisionSceneConfig invalid_scene{};
+    invalid_scene.struct_size = sizeof(invalid_scene);
+    assert(!Kernel_SetStaticCollisionScene(physics_kernel, &invalid_scene));
+    Kernel_Destroy(physics_kernel);
+
+    physics_kernel = Kernel_Create(&physics_kernel_config);
+    assert(physics_kernel != nullptr);
+    physics_config.physics_simulation = 1;
+    physics_config.physics_workers = 0;
+    assert(Kernel_SetPhysicsConfig(physics_kernel, &physics_config));
+    assert(!Kernel_StartDedicatedServer(physics_kernel, 7899));
+    Kernel_Destroy(physics_kernel);
+    physics_config.physics_simulation = 0;
     KernelRpcRequestId rpc_request_id = 0;
     const char rpc_request[] =
         R"({"jsonrpc":"2.0","id":1,"method":"dev.ping","params":{}})";
@@ -1199,7 +1231,9 @@ int main() {
     server_state = KernelServerEntityState{};
     server_state.struct_size = sizeof(server_state);
     assert(Kernel_ServerGetEntityState(kernel, created_net_id, &server_state));
-    assert(server_state.position.x > 5.0f);
+    // Template-less actors use the explicit kNone movement policy and do not
+    // integrate authored velocity automatically.
+    assert(server_state.position.x == 5.0f);
     assert(server_state.hp == 240);
     assert(server_state.max_hp == 240);
 
@@ -1221,7 +1255,7 @@ int main() {
     assert(rendered_actor != nullptr);
     assert(rendered_actor->entity_id != 0);
     assert(rendered_actor->owner_peer == 0);
-    assert(rendered_actor->position.x > 5.0f);
+    assert(rendered_actor->position.x == 5.0f);
     assert(rendered_actor->velocity.x == 1.0f);
     assert(rendered_actor->hp == 240);
     assert(rendered_actor->max_hp == 240);

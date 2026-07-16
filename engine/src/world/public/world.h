@@ -2,6 +2,7 @@
 #define WORLD_PUBLIC_WORLD_H_
 
 #include <optional>
+#include <memory>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -13,9 +14,18 @@
 
 namespace network_example {
 
+namespace physics {
+class PhysicsWorld;
+}
+
 class World {
 public:
-    World() = default;
+    explicit World(bool allow_standalone_collision = true);
+    ~World();
+    World(World&&) noexcept;
+    World& operator=(World&&) noexcept;
+    World(const World&) = delete;
+    World& operator=(const World&) = delete;
 
     NetId spawn_player(PeerId owner_peer, const glm::vec3& position);
     NetId spawn_enemy(const glm::vec3& position);
@@ -48,6 +58,9 @@ public:
 
     entt::registry& registry();
     const entt::registry& registry() const;
+    void set_collision_world(physics::PhysicsWorld* collision_world);
+    physics::PhysicsWorld* collision_world();
+    const physics::PhysicsWorld* collision_world() const;
 
     class ColliderRegistry {
     public:
@@ -73,6 +86,7 @@ public:
     const ColliderRegistry& collider_registry() const;
 
 private:
+    void synchronize_standalone_collision_world();
     NetId allocate_net_id();
     entt::entity create_networked_entity(
         EntityType type,
@@ -87,6 +101,9 @@ private:
     std::vector<RuntimeProjectileTemplate> projectile_templates_;
     std::vector<RuntimeActionTemplate> action_templates_;
     ColliderRegistry collider_registry_;
+    physics::PhysicsWorld* collision_world_ = nullptr;
+    bool allow_standalone_collision_ = true;
+    std::unique_ptr<physics::PhysicsWorld> standalone_collision_world_;
     NetId next_net_id_ = 1;
 };
 

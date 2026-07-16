@@ -1,5 +1,5 @@
 id: 3
-name: projectile_damage
+name: rocket_aabb
 shape: aabb
 center: {x: 0.0, y: 0.0, z: 0.0}
 half_extents: {x: 0.1, y: 0.1, z: 0.1}

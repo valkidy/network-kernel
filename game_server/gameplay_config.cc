@@ -197,6 +197,13 @@ void hash_actor_template(
     hash_vec3(hash, actor_template.hitbox_center);
     hash_vec3(hash, actor_template.hitbox_half_extents);
     hash_float(hash, actor_template.move_speed_meters_per_second);
+    hash_scalar(hash, actor_template.movement_controller_type);
+    hash_scalar(hash, actor_template.movement_collider_template_id);
+    hash_vec3(hash, actor_template.movement_gravity);
+    hash_float(hash, actor_template.movement_max_slope_degrees);
+    hash_float(hash, actor_template.movement_step_height);
+    hash_float(hash, actor_template.movement_ground_probe_distance);
+    hash_float(hash, actor_template.movement_ground_snap_distance);
     hash_scalar(hash, actor_template.weapon_slot_count);
     for (std::uint8_t index = 0; index < actor_template.weapon_slot_count; ++index) {
         hash_scalar(hash, actor_template.weapon_slots[index]);
@@ -1327,6 +1334,23 @@ std::uint16_t actor_type_from_yaml(const YAML::Node& node) {
     return KernelActorType_Unknown;
 }
 
+std::uint8_t movement_controller_type_from_yaml(const YAML::Node& node) {
+    const std::string value = node.as<std::string>();
+    if (value == "none") {
+        return KernelMovementControllerType_None;
+    }
+    if (value == "grounded") {
+        return KernelMovementControllerType_Grounded;
+    }
+    if (value == "kinematic") {
+        return KernelMovementControllerType_Kinematic;
+    }
+    if (value == "character") {
+        return KernelMovementControllerType_Character;
+    }
+    throw std::runtime_error("unsupported movement controller: " + value);
+}
+
 std::uint16_t authored_entity_type_from_yaml(const YAML::Node& node) {
     const std::string value = node.as<std::string>();
     if (value == "actor") {
@@ -1372,6 +1396,9 @@ std::uint8_t collider_shape_type_from_yaml(const YAML::Node& node) {
     if (value == "cone") {
         return KernelColliderShapeType_Cone;
     }
+    if (value == "capsule") {
+        return KernelColliderShapeType_Capsule;
+    }
     throw std::runtime_error("unsupported collider shape: " + value);
 }
 
@@ -1385,6 +1412,9 @@ std::uint32_t collider_purpose_from_yaml(const YAML::Node& node) {
     }
     if (value == "vision") {
         return KernelColliderPurpose_Vision;
+    }
+    if (value == "movement") {
+        return KernelColliderPurpose_Movement;
     }
     throw std::runtime_error("unsupported collider purpose: " + value);
 }
@@ -1429,6 +1459,14 @@ KernelVec4 collider_shape_params_from_yaml(
             0.0f,
         };
     }
+    if (shape_type == KernelColliderShapeType_Capsule) {
+        return KernelVec4{
+            node["half_height"].as<float>(),
+            node["radius"].as<float>(),
+            0.0f,
+            0.0f,
+        };
+    }
     return KernelVec4{};
 }
 
@@ -1460,6 +1498,7 @@ ColliderCatalogConfig load_collider_catalog_from_source(
                 "shape",
                 "center",
                 "half_extents",
+                "half_height",
                 "radius",
                 "length",
                 "scatter_degrees",
@@ -1531,6 +1570,8 @@ ActorTemplateConfig default_player_actor_template() {
     actor_template.hitbox_center = KernelVec3{0.0f, 0.9f, 0.0f};
     actor_template.hitbox_half_extents = KernelVec3{0.35f, 0.9f, 0.35f};
     actor_template.move_speed_meters_per_second = 5.0f;
+    actor_template.movement_controller_type = KernelMovementControllerType_Character;
+    actor_template.movement_collider_template_id = 10;
     actor_template.weapon_slots[0] = kWeaponRifle;
     actor_template.weapon_slots[1] = kWeaponShotgun;
     actor_template.weapon_slot_count = 2;
@@ -1552,6 +1593,8 @@ ActorTemplateConfig default_sentry_actor_template() {
     actor_template.hitbox_center = KernelVec3{0.0f, 0.8f, 0.0f};
     actor_template.hitbox_half_extents = KernelVec3{0.4f, 0.8f, 0.4f};
     actor_template.move_speed_meters_per_second = 2.5f;
+    actor_template.movement_controller_type = KernelMovementControllerType_Grounded;
+    actor_template.movement_collider_template_id = 11;
     actor_template.weapon_slots[0] = kAgentSpammerWeaponId;
     actor_template.weapon_slot_count = 1;
     actor_template.active_weapon_slot = 0;
@@ -1821,20 +1864,54 @@ ActorTemplateConfig actor_template_from_yaml(
     actor_template.health.max_hp = health["max_hp"].as<std::uint16_t>();
 
     const YAML::Node movement = node["movement"];
-    if (!movement || !movement["move_speed_meters_per_second"]) {
+    if (!movement || !movement["controller"] ||
+        !movement["move_speed_meters_per_second"] ||
+        !movement["collider_template"]) {
         throw std::runtime_error(
-            "actor template requires movement.move_speed_meters_per_second: " +
+            "actor template requires movement controller, speed, and collider: " +
             actor_template.name);
     }
     reject_unknown_keys(
         movement,
-        {"move_speed_meters_per_second"},
+        {
+            "controller",
+            "move_speed_meters_per_second",
+            "collider_template",
+            "gravity",
+            "max_slope_degrees",
+            "step_height",
+            "ground_probe_distance",
+            "ground_snap_distance",
+        },
         path,
         source_kind,
         KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
         actor_template.actor_template_id);
     actor_template.move_speed_meters_per_second =
         movement["move_speed_meters_per_second"].as<float>();
+    actor_template.movement_controller_type =
+        movement_controller_type_from_yaml(movement["controller"]);
+    actor_template.movement_collider_template_id =
+        actor_collider_template_id_from_yaml(
+            movement["collider_template"], colliders);
+    if (movement["gravity"]) {
+        actor_template.movement_gravity = vec3_from_yaml(movement["gravity"]);
+    }
+    if (movement["max_slope_degrees"]) {
+        actor_template.movement_max_slope_degrees =
+            movement["max_slope_degrees"].as<float>();
+    }
+    if (movement["step_height"]) {
+        actor_template.movement_step_height = movement["step_height"].as<float>();
+    }
+    if (movement["ground_probe_distance"]) {
+        actor_template.movement_ground_probe_distance =
+            movement["ground_probe_distance"].as<float>();
+    }
+    if (movement["ground_snap_distance"]) {
+        actor_template.movement_ground_snap_distance =
+            movement["ground_snap_distance"].as<float>();
+    }
 
     const YAML::Node hitbox = node["hitbox"];
     if (!hitbox || !hitbox["center"] || !hitbox["half_extents"]) {
@@ -2838,6 +2915,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             "actor_template_dir",
             "entity_template_dir",
             "collider_template_dir",
+            "static_collision_scene",
             "player",
             "enemy",
         },
@@ -2862,6 +2940,14 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
                 "spawn_seed",
                 "spawn_position",
             },
+            path,
+            source.source_kind(),
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+    }
+    if (document["static_collision_scene"]) {
+        reject_unknown_keys(
+            document["static_collision_scene"],
+            {"entry_path", "scene_id", "collider_id", "collision_layer"},
             path,
             source.source_kind(),
             KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
@@ -2894,6 +2980,24 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     const std::string weapon_template_dir =
         source.resolve_path(base_path, document["weapon_template_dir"]);
     GameServerGameplayConfig config;
+    if (document["static_collision_scene"]) {
+        const YAML::Node scene = document["static_collision_scene"];
+        if (!scene["entry_path"] || !scene["scene_id"] ||
+            !scene["collider_id"] || !scene["collision_layer"]) {
+            throw std::runtime_error(
+                "static_collision_scene requires entry_path, scene_id, "
+                "collider_id, and collision_layer: " +
+                path);
+        }
+        config.static_collision_scene.entry_path =
+            scene["entry_path"].as<std::string>();
+        config.static_collision_scene.scene_id =
+            scene["scene_id"].as<std::uint32_t>();
+        config.static_collision_scene.collider_id =
+            scene["collider_id"].as<std::uint32_t>();
+        config.static_collision_scene.collision_layer =
+            scene["collision_layer"].as<std::uint32_t>();
+    }
     if (document["action_template_dir"]) {
         const std::string action_template_dir =
             source.resolve_path(base_path, document["action_template_dir"]);
@@ -3069,6 +3173,10 @@ std::uint64_t compute_gameplay_catalog_hash(
     hash_scalar(&hash, config.agent.spawn_count);
     hash_float(&hash, config.agent.spawn_radius);
     hash_scalar(&hash, config.agent.spawn_seed);
+    hash_string(&hash, config.static_collision_scene.entry_path);
+    hash_scalar(&hash, config.static_collision_scene.scene_id);
+    hash_scalar(&hash, config.static_collision_scene.collider_id);
+    hash_scalar(&hash, config.static_collision_scene.collision_layer);
     std::vector<ActorTemplateConfig> actor_templates = config.actor_templates;
     std::sort(
         actor_templates.begin(),
@@ -3139,6 +3247,69 @@ GameServerGameplayConfig load_gameplay_config_from_bundle_memory(
     return load_gameplay_config_from_catalog_source(source, entry_path);
 }
 
+std::vector<std::uint8_t> load_gameplay_bundle_entry_bytes(
+    const std::uint8_t* bundle_bytes,
+    std::uint32_t bundle_size,
+    const std::string& entry_path) {
+    if (bundle_bytes == nullptr || bundle_size == 0 || entry_path.empty()) {
+        throw std::runtime_error("gameplay bundle entry request is empty");
+    }
+    const std::string normalized_entry = normalize_archive_path(entry_path);
+    struct ZipStreamCloser {
+        void operator()(struct zip_t* zip) const { zip_stream_close(zip); }
+    };
+    std::unique_ptr<struct zip_t, ZipStreamCloser> archive(zip_stream_open(
+        reinterpret_cast<const char*>(bundle_bytes),
+        bundle_size,
+        0,
+        'r'));
+    if (!archive) {
+        throw std::runtime_error("failed to open gameplay catalog bundle");
+    }
+    const ssize_t total_entries = zip_entries_total(archive.get());
+    for (ssize_t index = 0; index < total_entries; ++index) {
+        if (zip_entry_openbyindex(
+                archive.get(), static_cast<std::size_t>(index)) != 0) {
+            throw std::runtime_error("failed to open gameplay bundle entry");
+        }
+        const char* entry_name = zip_entry_name(archive.get());
+        const bool matches = entry_name != nullptr &&
+            normalize_archive_path(entry_name) == normalized_entry;
+        if (!matches) {
+            zip_entry_close(archive.get());
+            continue;
+        }
+        if (zip_entry_issymlink(archive.get()) || zip_entry_isdir(archive.get())) {
+            throw std::runtime_error(
+                "gameplay bundle collision entry is not a regular file: " +
+                normalized_entry);
+        }
+        const unsigned long long entry_size = zip_entry_size(archive.get());
+        if (entry_size > KERNEL_STATIC_COLLISION_SCENE_MAX_BYTES) {
+            throw std::runtime_error(
+                "gameplay bundle collision entry exceeds size limit: " +
+                normalized_entry);
+        }
+        std::vector<std::uint8_t> bytes(static_cast<std::size_t>(entry_size));
+        if (!bytes.empty()) {
+            const ssize_t read_size = zip_entry_noallocread(
+                archive.get(), bytes.data(), bytes.size());
+            if (read_size != static_cast<ssize_t>(bytes.size())) {
+                throw std::runtime_error(
+                    "failed to read gameplay bundle entry: " + normalized_entry);
+            }
+        }
+        zip_entry_close(archive.get());
+        return bytes;
+    }
+    throw DataLoadError(
+        KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_MISSING_BUNDLE_ENTRY,
+        "missing collision asset in bundle: " + normalized_entry,
+        normalized_entry,
+        {},
+        KERNEL_GAMEPLAY_CATALOG_LOAD_SOURCE_BUNDLE);
+}
+
 const ActorTemplateConfig* find_actor_template(
     const GameServerGameplayConfig& config,
     std::uint32_t actor_template_id) {
@@ -3161,6 +3332,17 @@ std::uint8_t active_weapon_id(const ActorTemplateConfig& actor_template) {
 std::vector<std::string> validate_gameplay_config(
     const GameServerGameplayConfig& config) {
     std::vector<std::string> errors;
+    const StaticCollisionSceneConfig& static_scene =
+        config.static_collision_scene;
+    const bool has_static_scene = !static_scene.entry_path.empty() ||
+        static_scene.scene_id != 0u || static_scene.collider_id != 0u ||
+        static_scene.collision_layer != 0u;
+    if (has_static_scene &&
+        (static_scene.entry_path.empty() || static_scene.scene_id == 0u ||
+         static_scene.collider_id == 0u ||
+         static_scene.collision_layer != KERNEL_STATIC_COLLISION_LAYER_TERRAIN)) {
+        errors.push_back("static collision scene must be valid");
+    }
     std::vector<std::uint32_t> action_template_ids;
     std::vector<std::string> action_template_names;
     for (const ActionTemplateConfig& action_template : config.action_templates) {
@@ -3230,6 +3412,16 @@ std::vector<std::string> validate_gameplay_config(
             actor_template.health.max_hp == 0 ||
             actor_template.health.hp > actor_template.health.max_hp ||
             actor_template.move_speed_meters_per_second <= 0.0f ||
+            actor_template.movement_controller_type >
+                KernelMovementControllerType_Character ||
+            actor_template.movement_controller_type ==
+                KernelMovementControllerType_None ||
+            actor_template.movement_collider_template_id == 0u ||
+            actor_template.movement_max_slope_degrees <= 0.0f ||
+            actor_template.movement_max_slope_degrees >= 90.0f ||
+            actor_template.movement_step_height < 0.0f ||
+            actor_template.movement_ground_probe_distance <= 0.0f ||
+            actor_template.movement_ground_snap_distance < 0.0f ||
             actor_template.hitbox_half_extents.x <= 0.0f ||
             actor_template.hitbox_half_extents.y <= 0.0f ||
             actor_template.hitbox_half_extents.z <= 0.0f ||
@@ -3298,7 +3490,7 @@ std::vector<std::string> validate_gameplay_config(
             collider_template.definition;
         if (definition.struct_size < sizeof(KernelColliderTemplateDefinition) ||
             definition.template_id == 0 ||
-            definition.shape_type > KernelColliderShapeType_Cone ||
+            definition.shape_type > KernelColliderShapeType_Capsule ||
             definition.purpose_flags == 0 ||
             definition.layer_mask == 0 ||
             (definition.shape_type == KernelColliderShapeType_Aabb &&
@@ -3322,6 +3514,13 @@ std::vector<std::string> validate_gameplay_config(
               definition.shape_params.y <= 0.0f ||
               definition.shape_params.y > 360.0f))) {
             errors.push_back("collider template must be valid");
+        } else if (definition.shape_type == KernelColliderShapeType_Capsule &&
+                   (definition.shape_params.x <= 0.0f ||
+                    definition.shape_params.y <= 0.0f ||
+                    definition.lifetime_ticks != 0u ||
+                    (definition.purpose_flags &
+                     KernelColliderPurpose_Movement) == 0u)) {
+            errors.push_back("collider template must be valid");
         }
         collider_template_ids.push_back(definition.template_id);
     }
@@ -3331,6 +3530,22 @@ std::vector<std::string> validate_gameplay_config(
                 collider_template_ids.end(),
                 actor_template.collider_template_id) == collider_template_ids.end()) {
             errors.push_back("actor template collider must reference a valid template");
+        }
+        const auto movement_collider = std::find_if(
+            config.colliders.templates.begin(),
+            config.colliders.templates.end(),
+            [&](const ColliderTemplateConfig& collider_template) {
+                return collider_template.definition.template_id ==
+                    actor_template.movement_collider_template_id;
+            });
+        if (movement_collider == config.colliders.templates.end() ||
+            movement_collider->definition.shape_type !=
+                KernelColliderShapeType_Capsule ||
+            (movement_collider->definition.purpose_flags &
+             KernelColliderPurpose_Movement) == 0u ||
+            movement_collider->definition.lifetime_ticks != 0u) {
+            errors.push_back(
+                "actor movement must reference a persistent capsule movement collider");
         }
         if (actor_template.vision.vision_collider_template_id == 0u) {
             continue;
@@ -3493,6 +3708,20 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
                 : 0u;
         entity_template.collider_template_id = authored_template.collider_template_id;
         entity_template.ai.struct_size = sizeof(KernelEntityAiDefinition);
+        entity_template.movement.struct_size = sizeof(KernelMovementDefinition);
+        entity_template.movement.controller_type =
+            authored_template.movement_controller_type;
+        entity_template.movement.movement_collider_template_id =
+            authored_template.movement_collider_template_id;
+        entity_template.movement.gravity = authored_template.movement_gravity;
+        entity_template.movement.max_slope_degrees =
+            authored_template.movement_max_slope_degrees;
+        entity_template.movement.step_height =
+            authored_template.movement_step_height;
+        entity_template.movement.ground_probe_distance =
+            authored_template.movement_ground_probe_distance;
+        entity_template.movement.ground_snap_distance =
+            authored_template.movement_ground_snap_distance;
 
         if (authored_template.entity_type == kEntityTypeActor) {
             entity_template.component_flags =

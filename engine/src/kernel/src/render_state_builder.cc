@@ -28,6 +28,16 @@ std::uint32_t derived_visual_flags(const World& world, entt::entity entity) {
         world.registry().get<Health>(entity).hp == 0) {
         flags |= kVisualFlagDead;
     }
+    if (world.registry().all_of<MovementState>(entity)) {
+        const MovementState& movement =
+            world.registry().get<MovementState>(entity);
+        flags |= movement.ground_state == MovementState::GroundState::kGrounded
+            ? kVisualFlagGrounded
+            : kVisualFlagFalling;
+        if (movement.landed_this_tick) {
+            flags |= kVisualFlagLanded;
+        }
+    }
     return flags;
 }
 

@@ -53,6 +53,13 @@ struct ActorTemplateConfig {
     KernelVec3 hitbox_center{};
     KernelVec3 hitbox_half_extents{};
     float move_speed_meters_per_second = 0.0f;
+    std::uint8_t movement_controller_type = KernelMovementControllerType_None;
+    std::uint32_t movement_collider_template_id = 0;
+    KernelVec3 movement_gravity{0.0f, -9.81f, 0.0f};
+    float movement_max_slope_degrees = 50.0f;
+    float movement_step_height = 0.4f;
+    float movement_ground_probe_distance = 0.25f;
+    float movement_ground_snap_distance = 0.5f;
     std::array<std::uint8_t, 4> weapon_slots{};
     std::uint8_t weapon_slot_count = 0;
     std::uint8_t active_weapon_slot = 0;
@@ -111,6 +118,13 @@ struct ProjectileTemplateConfig {
     std::string impact_projectile_template_ref;
 };
 
+struct StaticCollisionSceneConfig {
+    std::string entry_path;
+    std::uint32_t scene_id = 0;
+    std::uint32_t collider_id = 0;
+    std::uint32_t collision_layer = 0;
+};
+
 struct GameServerGameplayConfig {
     WeaponCatalogConfig weapons;
     std::vector<ActionTemplateConfig> action_templates;
@@ -120,6 +134,7 @@ struct GameServerGameplayConfig {
     std::vector<ActorTemplateConfig> actor_templates;
     ColliderCatalogConfig colliders;
     std::vector<ProjectileTemplateConfig> projectile_templates;
+    StaticCollisionSceneConfig static_collision_scene;
 };
 
 struct KernelGameplayCatalogStorage {
@@ -165,6 +180,10 @@ GameServerGameplayConfig load_gameplay_config_from_weapon_template_directory(
 GameServerGameplayConfig load_gameplay_config_from_catalog_file(
     const std::string& path);
 GameServerGameplayConfig load_gameplay_config_from_bundle_memory(
+    const std::uint8_t* bundle_bytes,
+    std::uint32_t bundle_size,
+    const std::string& entry_path);
+std::vector<std::uint8_t> load_gameplay_bundle_entry_bytes(
     const std::uint8_t* bundle_bytes,
     std::uint32_t bundle_size,
     const std::string& entry_path);

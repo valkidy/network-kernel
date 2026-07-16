@@ -2,7 +2,7 @@ id: 3
 name: rocket_projectile
 damage: 45
 sync_mode: server_snapshot_only
-collider_template: projectile_damage
+collider_template: rocket_aabb
 movement_model: linear
 hit_response: destroy
 damage_shape: direct_hit

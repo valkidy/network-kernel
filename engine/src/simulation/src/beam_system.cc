@@ -4,7 +4,7 @@
 #include <cmath>
 #include <vector>
 
-#include "simulation/public/collision_query.h"
+#include "physics/public/physics_world.h"
 
 namespace network_example {
 namespace {
@@ -69,21 +69,29 @@ void simulate_beams(
         }
 
         transform.position = beam.origin;
-        QueryFilter filter;
-        filter.ignored_net_id = beam.shooter_net_id;
-        filter.ignored_owner_peer = identity.owner_peer;
-        filter.collision_mask = beam.collision_mask;
-        const std::vector<QueryHit> hits = collect_swept_sphere_hits(
-            world,
-            beam.origin,
-            beam.origin + beam.direction * beam.length,
-            beam.radius,
-            filter);
+        physics::PhysicsWorld* collision_world = world.collision_world();
+        if (collision_world == nullptr) {
+            continue;
+        }
+        physics::ShapeCastRequest request{};
+        request.shape.type = physics::CollisionShapeType::kSphere;
+        request.shape.radius = beam.radius;
+        request.start = beam.origin;
+        request.displacement = beam.direction * beam.length;
+        request.filter.gameplay_category_mask = beam.collision_mask;
+        request.filter.ignored_entity_net_id = beam.shooter_net_id;
+        const std::vector<physics::CollisionHit> hits =
+            collision_world->shape_cast_all(request);
 
         const std::uint32_t damage_units = tick_damage_units(beam);
         std::uint32_t sequence_id = 0;
-        for (const QueryHit& hit : hits) {
-            std::uint32_t& remainder = beam.damage_remainder_by_target[hit.net_id];
+        for (const physics::CollisionHit& hit : hits) {
+            if (hit.identity.kind != physics::CollisionObjectKind::kActorHitbox) {
+                break;
+            }
+            const NetId target_net_id = hit.identity.entity_net_id;
+            std::uint32_t& remainder =
+                beam.damage_remainder_by_target[target_net_id];
             const std::uint64_t accumulated =
                 static_cast<std::uint64_t>(remainder) + damage_units;
             const auto damage =
@@ -96,7 +104,7 @@ void simulate_beams(
                 current_tick,
                 sequence_id++,
                 identity.net_id,
-                hit.net_id,
+                target_net_id,
                 identity.owner_peer,
                 beam.source_code,
                 damage,
