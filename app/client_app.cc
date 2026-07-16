@@ -288,47 +288,6 @@ bool start_client_with_catalog_sync(
             load_result.template_id);
         return false;
     }
-    try {
-        const auto gameplay_config =
-            network_example::game_server::load_gameplay_config_from_bundle_memory(
-                bundle.data(),
-                static_cast<std::uint32_t>(bundle.size()),
-                status.manifest.entry_path);
-        if (!gameplay_config.static_collision_scene.entry_path.empty()) {
-            const std::vector<std::uint8_t> collision_scene_bytes =
-                network_example::game_server::load_gameplay_bundle_entry_bytes(
-                    bundle.data(),
-                    static_cast<std::uint32_t>(bundle.size()),
-                    gameplay_config.static_collision_scene.entry_path);
-            KernelStaticCollisionSceneConfig scene_config{};
-            scene_config.struct_size = sizeof(scene_config);
-            scene_config.artifact_bytes = collision_scene_bytes.data();
-            scene_config.artifact_size = static_cast<std::uint32_t>(
-                collision_scene_bytes.size());
-            scene_config.scene_id =
-                gameplay_config.static_collision_scene.scene_id;
-            scene_config.collider_id =
-                gameplay_config.static_collision_scene.collider_id;
-            scene_config.collision_layer =
-                gameplay_config.static_collision_scene.collision_layer;
-            if (!Kernel_SetStaticCollisionScene(kernel, &scene_config)) {
-                spdlog::error(
-                    "client static collision scene registration failed");
-                return false;
-            }
-        }
-    } catch (const network_example::game_server::DataLoadError& error) {
-        spdlog::error(
-            "client collision artifact load failed error_code={} diagnostic={} "
-            "path={} field={} line={} column={}",
-            error.error_code,
-            error.what(),
-            error.path,
-            error.field,
-            error.line,
-            error.column);
-        return false;
-    }
     spdlog::info(
         "gameplay catalog sync complete source={} bundle_bytes={} "
         "received_bytes={} chunks={}",

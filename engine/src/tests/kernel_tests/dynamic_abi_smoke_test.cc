@@ -35,7 +35,7 @@ bool all_digits(const char* value) {
 
 bool has_version_revision_suffix(const char* value) {
     const std::string text = value == nullptr ? "" : value;
-    constexpr const char* kPrefix = "0.6.4+r";
+    constexpr const char* kPrefix = "0.6.6+r";
     if (text.rfind(kPrefix, 0) != 0 || text.size() == std::strlen(kPrefix)) {
         return false;
     }

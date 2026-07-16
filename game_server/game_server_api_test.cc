@@ -87,6 +87,15 @@ std::string read_text_file(const std::filesystem::path& path) {
         std::istreambuf_iterator<char>());
 }
 
+std::vector<std::uint8_t> read_binary_file(
+    const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    assert(file.good());
+    return std::vector<std::uint8_t>(
+        std::istreambuf_iterator<char>(file),
+        std::istreambuf_iterator<char>());
+}
+
 void append_u16(std::vector<std::uint8_t>* out, std::uint16_t value) {
     out->push_back(static_cast<std::uint8_t>(value & 0xffu));
     out->push_back(static_cast<std::uint8_t>((value >> 8u) & 0xffu));
@@ -296,9 +305,28 @@ int main() {
     KernelConfig config = listen_server_config();
     KernelHandle* kernel = Kernel_Create(&config);
     assert(kernel != nullptr);
-    assert(Kernel_StartListenServer(kernel, 7777));
 
-    const std::vector<std::uint8_t> gameplay_bundle = make_gameplay_bundle_zip();
+    const std::vector<std::uint8_t> missing_collision_bundle =
+        make_gameplay_bundle_zip();
+    load_result = KernelGameplayCatalogLoadResult{};
+    assert(!Kernel_LoadGameplayCatalogFromMemory(
+        kernel,
+        missing_collision_bundle.data(),
+        static_cast<std::uint32_t>(missing_collision_bundle.size()),
+        "gameplay_catalog.yaml",
+        &load_result));
+    assert(load_result.status == KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED);
+    assert(
+        load_result.error_code ==
+        KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_MISSING_BUNDLE_ENTRY);
+    assert(
+        std::string(load_result.path) ==
+        "mesh_assets/jolt/undulating.joltmesh");
+    assert(load_result.diagnostic[0] != '\0');
+
+    const std::vector<std::uint8_t> gameplay_bundle = read_binary_file(
+        runfiles_root() / "game_server" / "gameplay_catalog_bundle" /
+        "bundle.zip");
     load_result = KernelGameplayCatalogLoadResult{};
     const bool loaded_catalog = Kernel_LoadGameplayCatalogFromMemory(
         kernel,
@@ -322,6 +350,7 @@ int main() {
     assert(load_result.projectile_template_count > 0);
     assert(load_result.collider_template_count == 11);
     assert(load_result.collider_binding_count == 0);
+    assert(Kernel_StartListenServer(kernel, 7777));
 
     GameServerHandle* game_server = GameServer_Create(kernel);
     assert(game_server != nullptr);
@@ -394,10 +423,12 @@ int main() {
     assert(template_info.mechanics.projectile_template_id == 6);
     GameServer_Destroy(yaml_game_server);
 
+    KernelHandle* bundle_kernel = Kernel_Create(&config);
+    assert(bundle_kernel != nullptr);
     load_result = KernelGameplayCatalogLoadResult{};
     GameServerHandle* bundle_game_server =
         GameServer_CreateWithGameplayCatalogFromMemory(
-            kernel,
+            bundle_kernel,
             gameplay_bundle.data(),
             static_cast<std::uint32_t>(gameplay_bundle.size()),
             "gameplay_catalog.yaml",
@@ -411,6 +442,7 @@ int main() {
     assert(template_info.mechanics.pellet_count == 3);
     assert(template_info.mechanics.pellet_spread == 15.0f);
     GameServer_Destroy(bundle_game_server);
+    Kernel_Destroy(bundle_kernel);
     Kernel_Destroy(kernel);
 
     KernelConfig dedicated_config = listen_server_config();

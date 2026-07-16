@@ -6,6 +6,7 @@
 #include <new>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "game_server/gameplay_config.h"
 #include "game_server/game_server.h"
@@ -117,6 +118,69 @@ void fill_load_result(
         storage.definition.collider_binding_count;
 }
 
+bool load_gameplay_catalog_bundle(
+    KernelHandle* kernel,
+    const std::uint8_t* bundle_bytes,
+    std::uint32_t bundle_size,
+    const char* entry_path,
+    KernelGameplayCatalogLoadResult* out_result,
+    network_example::game_server::GameServerGameplayConfig* out_config) {
+    network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::load_gameplay_config_from_bundle_memory(
+            bundle_bytes,
+            bundle_size,
+            entry_path);
+
+    std::vector<std::uint8_t> collision_scene_bytes;
+    const network_example::game_server::StaticCollisionSceneConfig&
+        static_scene = config.static_collision_scene;
+    if (!static_scene.entry_path.empty()) {
+        collision_scene_bytes =
+            network_example::game_server::load_gameplay_bundle_entry_bytes(
+                bundle_bytes,
+                bundle_size,
+                static_scene.entry_path);
+    }
+
+    if (!network_example::game_server::load_kernel_gameplay_catalog(
+            kernel,
+            config)) {
+        set_load_error(
+            out_result,
+            KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_KERNEL_REJECTED_CATALOG,
+            "kernel rejected gameplay catalog");
+        return false;
+    }
+
+    if (!static_scene.entry_path.empty()) {
+        KernelStaticCollisionSceneConfig scene_config{};
+        scene_config.struct_size = sizeof(scene_config);
+        scene_config.artifact_bytes = collision_scene_bytes.data();
+        scene_config.artifact_size =
+            static_cast<std::uint32_t>(collision_scene_bytes.size());
+        scene_config.scene_id = static_scene.scene_id;
+        scene_config.collider_id = static_scene.collider_id;
+        scene_config.collision_layer = static_scene.collision_layer;
+        if (!Kernel_SetStaticCollisionScene(kernel, &scene_config)) {
+            set_load_error(
+                out_result,
+                KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_KERNEL_REJECTED_CATALOG,
+                "kernel rejected static collision scene registration",
+                static_scene.entry_path,
+                "static_collision_scene",
+                KERNEL_GAMEPLAY_CATALOG_LOAD_SOURCE_BUNDLE,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+            return false;
+        }
+    }
+
+    fill_load_result(out_result, config);
+    if (out_config != nullptr) {
+        *out_config = std::move(config);
+    }
+    return true;
+}
+
 }  // namespace
 
 extern "C" {
@@ -183,22 +247,13 @@ bool Kernel_LoadGameplayCatalogFromMemory(
     }
 
     try {
-        network_example::game_server::GameServerGameplayConfig config =
-            network_example::game_server::load_gameplay_config_from_bundle_memory(
-                bundle_bytes,
-                bundle_size,
-                entry_path);
-        if (!network_example::game_server::load_kernel_gameplay_catalog(
-                kernel,
-                config)) {
-            set_load_error(
-                out_result,
-                KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_KERNEL_REJECTED_CATALOG,
-                "kernel rejected gameplay catalog");
-            return false;
-        }
-        fill_load_result(out_result, config);
-        return true;
+        return load_gameplay_catalog_bundle(
+            kernel,
+            bundle_bytes,
+            bundle_size,
+            entry_path,
+            out_result,
+            nullptr);
     } catch (const network_example::game_server::DataLoadError& error) {
         set_load_error(out_result, error);
         return false;
@@ -234,21 +289,16 @@ GameServerHandle* GameServer_CreateWithGameplayCatalogFromMemory(
     }
 
     try {
-        network_example::game_server::GameServerGameplayConfig config =
-            network_example::game_server::load_gameplay_config_from_bundle_memory(
+        network_example::game_server::GameServerGameplayConfig config;
+        if (!load_gameplay_catalog_bundle(
+                kernel,
                 bundle_bytes,
                 bundle_size,
-                entry_path);
-        if (!network_example::game_server::load_kernel_gameplay_catalog(
-                kernel,
-                config)) {
-            set_load_error(
+                entry_path,
                 out_result,
-                KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_KERNEL_REJECTED_CATALOG,
-                "kernel rejected gameplay catalog");
+                &config)) {
             return nullptr;
         }
-        fill_load_result(out_result, config);
         return new GameServerHandle(kernel, std::move(config));
     } catch (const network_example::game_server::DataLoadError& error) {
         set_load_error(out_result, error);
