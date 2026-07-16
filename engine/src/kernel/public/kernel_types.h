@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 42u
+#define KERNEL_ABI_VERSION 43u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -183,6 +183,7 @@ typedef struct KernelAbiInfo {
     uint64_t capability_flags;
     uint32_t gameplay_catalog_definition_size;
     uint32_t gameplay_catalog_load_result_size;
+    uint32_t gameplay_catalog_load_options_size;
     uint32_t actor_template_definition_size;
     uint32_t projectile_template_definition_size;
     uint32_t collider_template_definition_size;
@@ -540,6 +541,12 @@ typedef struct KernelStaticCollisionSceneConfig {
     uint32_t collider_id;
     uint32_t collision_layer;
 } KernelStaticCollisionSceneConfig;
+
+typedef struct KernelGameplayCatalogLoadOptions {
+    uint32_t struct_size;
+    const KernelStaticCollisionSceneConfig* static_collision_scene;
+    uint32_t* out_static_scene_rejected;
+} KernelGameplayCatalogLoadOptions;
 
 typedef struct ActionIntent {
     uint32_t action_instance_id;

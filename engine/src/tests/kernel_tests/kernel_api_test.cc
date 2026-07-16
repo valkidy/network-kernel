@@ -30,7 +30,7 @@ bool all_digits(const char* value) {
 
 bool has_version_revision_suffix(const char* value) {
     const std::string text = value == nullptr ? "" : value;
-    constexpr const char* kPrefix = "0.6.6+r";
+    constexpr const char* kPrefix = "0.7.0+r";
     if (text.rfind(kPrefix, 0) != 0 || text.size() == std::strlen(kPrefix)) {
         return false;
     }
@@ -91,7 +91,15 @@ void server_set_entity_health_updates_hp_only() {
     catalog.collider_templates = collider_templates.data();
     catalog.collider_template_count =
         static_cast<std::uint32_t>(collider_templates.size());
-    assert(Kernel_LoadGameplayCatalog(kernel, &catalog));
+    assert(Kernel_LoadGameplayCatalog(kernel, &catalog, nullptr));
+    KernelGameplayCatalogLoadOptions invalid_options{};
+    assert(!Kernel_LoadGameplayCatalog(kernel, &catalog, &invalid_options));
+    std::uint32_t static_scene_rejected = 1u;
+    KernelGameplayCatalogLoadOptions options{};
+    options.struct_size = sizeof(options);
+    options.out_static_scene_rejected = &static_scene_rejected;
+    assert(Kernel_LoadGameplayCatalog(kernel, &catalog, &options));
+    assert(static_scene_rejected == 0u);
     assert(Kernel_StartDedicatedServer(kernel, 7812));
 
     KernelServerEntityCreateInfo create_info{};
@@ -156,6 +164,8 @@ int main() {
            sizeof(KernelGameplayCatalogDefinition));
     assert(abi_info.gameplay_catalog_load_result_size ==
            sizeof(KernelGameplayCatalogLoadResult));
+    assert(abi_info.gameplay_catalog_load_options_size ==
+           sizeof(KernelGameplayCatalogLoadOptions));
     assert(abi_info.actor_template_definition_size ==
            sizeof(KernelActorTemplateDefinition));
     assert(abi_info.projectile_template_definition_size ==
@@ -231,7 +241,7 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 42u);
+    assert(KERNEL_ABI_VERSION == 43u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CONTROL_PLANE_RPC) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ACTION_TIMELINE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LOCAL_ACTION_RESULTS) != 0);
@@ -398,7 +408,7 @@ int main() {
     Kernel_LANDiscovery_ClearResults(nullptr);
     Kernel_Update(nullptr, 1.0f / 30.0f);
     Kernel_SubmitInput(nullptr, 1, nullptr);
-    assert(!Kernel_LoadGameplayCatalog(nullptr, nullptr));
+    assert(!Kernel_LoadGameplayCatalog(nullptr, nullptr, nullptr));
     assert(Kernel_GetRenderStates(nullptr, nullptr, 0) == 0);
     assert(Kernel_GetRenderStatesAtTime(nullptr, 0, nullptr, 0) == 0);
     assert(Kernel_PollEvents(nullptr, nullptr, 0) == 0);
@@ -640,7 +650,7 @@ int main() {
     catalog.action_templates = action_templates.data();
     catalog.action_template_count =
         static_cast<std::uint32_t>(action_templates.size());
-    assert(Kernel_LoadGameplayCatalog(kernel, &catalog));
+    assert(Kernel_LoadGameplayCatalog(kernel, &catalog, nullptr));
     KernelActionTemplateDefinition queried_action{};
     queried_action.struct_size = sizeof(queried_action);
     assert(Kernel_GetActionTemplate(kernel, 1001, &queried_action));
@@ -667,12 +677,15 @@ int main() {
 
     KernelGameplayCatalogDefinition null_action_catalog = catalog;
     null_action_catalog.action_templates = nullptr;
-    assert(!Kernel_LoadGameplayCatalog(kernel, &null_action_catalog));
+    assert(!Kernel_LoadGameplayCatalog(kernel, &null_action_catalog, nullptr));
     const auto rejects_action_templates =
         [&](std::array<KernelActionTemplateDefinition, 5> definitions) {
             KernelGameplayCatalogDefinition rejected_catalog = catalog;
             rejected_catalog.action_templates = definitions.data();
-            return !Kernel_LoadGameplayCatalog(kernel, &rejected_catalog);
+            return !Kernel_LoadGameplayCatalog(
+                kernel,
+                &rejected_catalog,
+                nullptr);
         };
     auto invalid_actions = action_templates;
     invalid_actions[0].struct_size = sizeof(KernelActionTemplateDefinition) - 1;
@@ -747,7 +760,10 @@ int main() {
     KernelGameplayCatalogDefinition rejected_binding_catalog = catalog;
     rejected_binding_catalog.collider_bindings = &rejected_binding;
     rejected_binding_catalog.collider_binding_count = 1;
-    assert(!Kernel_LoadGameplayCatalog(kernel, &rejected_binding_catalog));
+    assert(!Kernel_LoadGameplayCatalog(
+        kernel,
+        &rejected_binding_catalog,
+        nullptr));
     benchmark_stats = KernelBenchmarkStats{};
     benchmark_stats.struct_size = sizeof(benchmark_stats);
     assert(Kernel_GetBenchmarkStats(kernel, &benchmark_stats));
@@ -1002,7 +1018,7 @@ int main() {
     changed_catalog.action_templates = action_templates.data();
     changed_catalog.action_template_count =
         static_cast<std::uint32_t>(action_templates.size());
-    assert(Kernel_LoadGameplayCatalog(kernel, &changed_catalog));
+    assert(Kernel_LoadGameplayCatalog(kernel, &changed_catalog, nullptr));
     for (KernelColliderShapeView& shape : collider_shapes) {
         shape = KernelColliderShapeView{};
         shape.struct_size = sizeof(KernelColliderShapeView);
@@ -1051,7 +1067,10 @@ int main() {
     KernelGameplayCatalogDefinition dangling_action_catalog = changed_catalog;
     dangling_action_catalog.action_templates = nullptr;
     dangling_action_catalog.action_template_count = 0;
-    assert(!Kernel_LoadGameplayCatalog(kernel, &dangling_action_catalog));
+    assert(!Kernel_LoadGameplayCatalog(
+        kernel,
+        &dangling_action_catalog,
+        nullptr));
     KernelWeaponMechanicsDefinition missing_projectile_template = weapon_mechanics;
     missing_projectile_template.projectile_template_id = 0;
     assert(!Kernel_ServerValidateMechanicsConfig(&missing_projectile_template));

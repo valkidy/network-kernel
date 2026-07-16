@@ -13,5 +13,6 @@ director:
   spawn:
     target_count: 10
     entity_template: sentry_grunt
+    position: {x: 6.0, y: 10.0, z: 0.0}
     radius: 5.0
     seed: 4242

@@ -182,6 +182,8 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             sizeof(KernelGameplayCatalogDefinition);
         out_info->gameplay_catalog_load_result_size =
             sizeof(KernelGameplayCatalogLoadResult);
+        out_info->gameplay_catalog_load_options_size =
+            sizeof(KernelGameplayCatalogLoadOptions);
         out_info->actor_template_definition_size =
             sizeof(KernelActorTemplateDefinition);
         out_info->projectile_template_definition_size =
@@ -450,10 +452,43 @@ void Kernel_SubmitInput(
 
 bool Kernel_LoadGameplayCatalog(
     KernelHandle* kernel,
-    const KernelGameplayCatalogDefinition* catalog) {
+    const KernelGameplayCatalogDefinition* catalog,
+    const KernelGameplayCatalogLoadOptions* options) {
     return abi_call("Kernel_LoadGameplayCatalog", false, [&]() {
-        return kernel != nullptr && catalog != nullptr &&
-               kernel->engine->load_gameplay_catalog(*catalog);
+        if (kernel == nullptr || kernel->engine == nullptr ||
+            catalog == nullptr) {
+            return false;
+        }
+        if (options == nullptr) {
+            return kernel->engine->load_gameplay_catalog(*catalog);
+        }
+        if (options->struct_size < sizeof(KernelGameplayCatalogLoadOptions)) {
+            return false;
+        }
+        if (options->static_collision_scene == nullptr) {
+            if (options->out_static_scene_rejected != nullptr) {
+                *options->out_static_scene_rejected = 0u;
+            }
+            return kernel->engine->load_gameplay_catalog(*catalog);
+        }
+        if (options->static_collision_scene->struct_size <
+            sizeof(KernelStaticCollisionSceneConfig)) {
+            if (options->out_static_scene_rejected != nullptr) {
+                *options->out_static_scene_rejected = 1u;
+            }
+            return false;
+        }
+        bool static_scene_rejected = false;
+        const bool loaded = kernel->engine
+            ->load_gameplay_catalog_with_static_collision_scene(
+                *catalog,
+                *options->static_collision_scene,
+                &static_scene_rejected);
+        if (options->out_static_scene_rejected != nullptr) {
+            *options->out_static_scene_rejected =
+                static_scene_rejected ? 1u : 0u;
+        }
+        return loaded;
     });
 }
 

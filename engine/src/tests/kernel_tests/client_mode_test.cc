@@ -1713,6 +1713,74 @@ void gameplay_catalog_sync_supports_cache_hit_and_download() {
         KernelGameplayCatalogSyncError_Timeout);
 }
 
+void gameplay_catalog_and_static_collision_registration_is_atomic() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+
+    KernelGameplayCatalogDefinition baseline_catalog{};
+    baseline_catalog.struct_size = sizeof(baseline_catalog);
+    baseline_catalog.catalog_version = 1;
+    baseline_catalog.catalog_hash = 0x1111u;
+    const std::array<std::uint8_t, 3> baseline_scene = {1u, 2u, 3u};
+    KernelStaticCollisionSceneConfig baseline_scene_config{};
+    baseline_scene_config.struct_size = sizeof(baseline_scene_config);
+    baseline_scene_config.artifact_bytes = baseline_scene.data();
+    baseline_scene_config.artifact_size =
+        static_cast<std::uint32_t>(baseline_scene.size());
+    baseline_scene_config.scene_id = 11u;
+    baseline_scene_config.collider_id = 12u;
+    baseline_scene_config.collision_layer =
+        KERNEL_STATIC_COLLISION_LAYER_TERRAIN;
+    bool static_scene_rejected = false;
+    require(engine.load_gameplay_catalog_with_static_collision_scene(
+        baseline_catalog,
+        baseline_scene_config,
+        &static_scene_rejected));
+    require(!static_scene_rejected);
+
+    KernelGameplayCatalogDefinition replacement_catalog = baseline_catalog;
+    replacement_catalog.catalog_version = 2;
+    replacement_catalog.catalog_hash = 0x2222u;
+    KernelStaticCollisionSceneConfig invalid_scene_config =
+        baseline_scene_config;
+    invalid_scene_config.artifact_size = 0u;
+    require(!engine.load_gameplay_catalog_with_static_collision_scene(
+        replacement_catalog,
+        invalid_scene_config,
+        &static_scene_rejected));
+    require(static_scene_rejected);
+    require(engine.catalog_version_ == baseline_catalog.catalog_version);
+    require(engine.catalog_hash_ == baseline_catalog.catalog_hash);
+    require(engine.static_collision_scene_ ==
+            std::vector<std::uint8_t>(
+                baseline_scene.begin(),
+                baseline_scene.end()));
+
+    const std::array<std::uint8_t, 2> replacement_scene = {8u, 9u};
+    KernelStaticCollisionSceneConfig replacement_scene_config =
+        baseline_scene_config;
+    replacement_scene_config.artifact_bytes = replacement_scene.data();
+    replacement_scene_config.artifact_size =
+        static_cast<std::uint32_t>(replacement_scene.size());
+    KernelGameplayCatalogDefinition invalid_catalog = replacement_catalog;
+    invalid_catalog.actor_template_count = 1u;
+    invalid_catalog.actor_templates = nullptr;
+    require(!engine.load_gameplay_catalog_with_static_collision_scene(
+        invalid_catalog,
+        replacement_scene_config,
+        &static_scene_rejected));
+    require(!static_scene_rejected);
+    require(engine.catalog_version_ == baseline_catalog.catalog_version);
+    require(engine.catalog_hash_ == baseline_catalog.catalog_hash);
+    require(engine.static_collision_scene_ ==
+            std::vector<std::uint8_t>(
+                baseline_scene.begin(),
+                baseline_scene.end()));
+}
+
 void listen_server_accepts_remote_handshake() {
     KernelConfig config{};
     config.mode = KernelMode_ListenServer;
@@ -3136,6 +3204,7 @@ int main() {
     server_validates_catalog_hash_before_welcome();
     gameplay_catalog_sync_enforces_bundle_limit();
     gameplay_catalog_sync_supports_cache_hit_and_download();
+    gameplay_catalog_and_static_collision_registration_is_atomic();
     listen_server_accepts_remote_handshake();
     projectile_spawn_batch_renders_and_binds_to_snapshot();
     projectile_snapshot_waits_for_reliable_metadata_before_render();

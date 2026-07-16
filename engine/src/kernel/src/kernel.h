@@ -80,6 +80,10 @@ public:
     void update(float delta_seconds);
     void submit_input(PeerId local_player_id, const PlayerInput& input);
     bool load_gameplay_catalog(const KernelGameplayCatalogDefinition& catalog);
+    bool load_gameplay_catalog_with_static_collision_scene(
+        const KernelGameplayCatalogDefinition& catalog,
+        const KernelStaticCollisionSceneConfig& scene_config,
+        bool* out_static_scene_rejected);
 
     std::uint32_t get_render_states(
         RenderEntityState* out_states,
@@ -397,6 +401,12 @@ private:
     void handle_client_snapshot(WorldSnapshot snapshot);
     void store_client_snapshot(WorldSnapshot snapshot);
     bool snapshot_entity_has_required_metadata(const EntitySnapshot& entity) const;
+    bool prepare_static_collision_scene(
+        const KernelStaticCollisionSceneConfig& config,
+        std::vector<std::uint8_t>* out_scene) const;
+    void commit_static_collision_scene(
+        std::vector<std::uint8_t> scene,
+        const KernelStaticCollisionSceneConfig& config);
     void diagnose_client_snapshot_metadata_waits();
     void reconcile_local_prediction(const WorldSnapshot& snapshot);
     void reconcile_predicted_projectiles(const WorldSnapshot& snapshot);
