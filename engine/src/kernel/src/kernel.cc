@@ -373,6 +373,16 @@ std::uint32_t derived_visual_flags(const World& world, entt::entity entity) {
         world.registry().get<Health>(entity).hp == 0) {
         flags |= kVisualFlagDead;
     }
+    if (world.registry().all_of<MovementState>(entity)) {
+        const MovementState& movement =
+            world.registry().get<MovementState>(entity);
+        flags |= movement.ground_state == MovementState::GroundState::kGrounded
+            ? kVisualFlagGrounded
+            : kVisualFlagFalling;
+        if (movement.landed_this_tick) {
+            flags |= kVisualFlagLanded;
+        }
+    }
     return flags;
 }
 
@@ -537,7 +547,9 @@ glm::vec3 collider_template_half_extents(
 
 float collider_template_radius(
     const KernelColliderTemplateDefinition& collider_template) {
-    return collider_template.shape_params.x;
+    return collider_template.shape_type == KernelColliderShapeType_Capsule
+        ? collider_template.shape_params.y
+        : collider_template.shape_params.x;
 }
 
 float collider_template_cone_range(
@@ -558,6 +570,13 @@ KernelVec4 collider_instance_shape_params(const ColliderInstance& collider) {
         const float length =
             glm::length(collider.segment_end - collider.segment_start);
         return KernelVec4{length, collider.radius, 0.0f, 0.0f};
+    }
+    if (collider.shape_type == ColliderShapeType::kCapsule) {
+        return KernelVec4{
+            collider.capsule_half_height,
+            collider.radius,
+            0.0f,
+            0.0f};
     }
     return KernelVec4{
         collider.half_extents.x,
@@ -600,6 +619,9 @@ ColliderShapeType to_collider_shape_type(std::uint8_t shape_type) {
     if (shape_type == KernelColliderShapeType_Cone) {
         return ColliderShapeType::kCone;
     }
+    if (shape_type == KernelColliderShapeType_Capsule) {
+        return ColliderShapeType::kCapsule;
+    }
     return ColliderShapeType::kAabb;
 }
 
@@ -613,6 +635,8 @@ std::uint8_t to_kernel_collider_shape_type(ColliderShapeType shape_type) {
             return KernelColliderShapeType_Segment;
         case ColliderShapeType::kCone:
             return KernelColliderShapeType_Cone;
+        case ColliderShapeType::kCapsule:
+            return KernelColliderShapeType_Capsule;
         case ColliderShapeType::kAabb:
         default:
             return KernelColliderShapeType_Aabb;
@@ -634,6 +658,15 @@ ColliderWorldBounds collider_world_bounds(const ColliderInstance& collider) {
         return ColliderWorldBounds{
             collider.world_center,
             glm::vec3{std::max(0.0f, collider.radius)},
+        };
+    }
+    if (collider.shape_type == ColliderShapeType::kCapsule) {
+        return ColliderWorldBounds{
+            collider.world_center,
+            glm::vec3{
+                collider.radius,
+                collider.capsule_half_height + collider.radius,
+                collider.radius},
         };
     }
     return ColliderWorldBounds{
@@ -1952,7 +1985,7 @@ bool KernelEngine::load_gameplay_catalog(
         if (collider_template.struct_size <
                 sizeof(KernelColliderTemplateDefinition) ||
             collider_template.template_id == 0 ||
-            collider_template.shape_type > KernelColliderShapeType_Cone ||
+            collider_template.shape_type > KernelColliderShapeType_Capsule ||
             (collider_template.shape_type == KernelColliderShapeType_Aabb &&
              (collider_template.shape_params.x <= 0.0f ||
               collider_template.shape_params.y <= 0.0f ||
@@ -1971,7 +2004,13 @@ bool KernelEngine::load_gameplay_catalog(
              ((collider_template.purpose_flags & KernelColliderPurpose_Vision) == 0u ||
               collider_template.shape_params.x <= 0.0f ||
               collider_template.shape_params.y <= 0.0f ||
-              collider_template.shape_params.y > 360.0f))) {
+              collider_template.shape_params.y > 360.0f)) ||
+            (collider_template.shape_type == KernelColliderShapeType_Capsule &&
+             (collider_template.shape_params.x <= 0.0f ||
+              collider_template.shape_params.y <= 0.0f ||
+              collider_template.lifetime_ticks != 0u ||
+              (collider_template.purpose_flags &
+               KernelColliderPurpose_Movement) == 0u))) {
             return false;
         }
         collider_templates_.push_back(collider_template);
@@ -2018,6 +2057,29 @@ bool KernelEngine::load_gameplay_catalog(
         }
     }
     for (const KernelEntityTemplateDefinition& entity_template : entity_templates_) {
+        if (entity_template.movement.struct_size <
+                sizeof(KernelMovementDefinition) ||
+            entity_template.movement.controller_type >
+                KernelMovementControllerType_Character ||
+            (entity_template.entity_type == KernelEntityType_Actor &&
+             entity_template.movement.controller_type ==
+                 KernelMovementControllerType_None)) {
+            return false;
+        }
+        if (entity_template.movement.controller_type !=
+            KernelMovementControllerType_None) {
+            const KernelColliderTemplateDefinition* movement_collider =
+                find_collider_template(
+                    collider_templates_,
+                    entity_template.movement.movement_collider_template_id);
+            if (movement_collider == nullptr ||
+                movement_collider->shape_type != KernelColliderShapeType_Capsule ||
+                movement_collider->lifetime_ticks != 0u ||
+                (movement_collider->purpose_flags &
+                 KernelColliderPurpose_Movement) == 0u) {
+                return false;
+            }
+        }
         if (entity_template.actor_template_id != 0u &&
             find_actor_template(actor_templates_, entity_template.actor_template_id) ==
                 nullptr) {
@@ -2538,6 +2600,59 @@ void KernelEngine::materialize_entity_collider(NetId net_id) {
         identity.net_id,
         collider_template->template_id,
         collider);
+    materialize_entity_movement_collider(net_id);
+}
+
+void KernelEngine::materialize_entity_movement_collider(NetId net_id) {
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value() ||
+        !world_.registry().all_of<
+            NetworkIdentity,
+            EntityKind,
+            Transform,
+            MovementState>(*entity)) {
+        return;
+    }
+    MovementState& movement =
+        world_.registry().get<MovementState>(*entity);
+    if (movement.controller_type == MovementState::ControllerType::kNone ||
+        movement.movement_collider_template_id == 0u) {
+        return;
+    }
+    const KernelColliderTemplateDefinition* collider_template =
+        find_collider_template(
+            collider_templates_, movement.movement_collider_template_id);
+    if (collider_template == nullptr ||
+        collider_template->shape_type != KernelColliderShapeType_Capsule ||
+        (collider_template->purpose_flags & KernelColliderPurpose_Movement) == 0u) {
+        return;
+    }
+
+    const NetworkIdentity& identity =
+        world_.registry().get<NetworkIdentity>(*entity);
+    const EntityKind& kind = world_.registry().get<EntityKind>(*entity);
+    const Transform& transform = world_.registry().get<Transform>(*entity);
+    ColliderInstance collider{};
+    collider.collider_template_id = collider_template->template_id;
+    collider.owner_net_id = identity.net_id;
+    collider.entity_net_id = identity.net_id;
+    collider.entity_type = kind.type;
+    collider.actor_type = kind.actor_type;
+    collider.shape_type = ColliderShapeType::kCapsule;
+    collider.purpose_flags = collider_template->purpose_flags;
+    collider.layer_mask = collider_template->layer_mask;
+    collider.local_center = from_kernel_vec3(collider_template->center);
+    collider.world_rotation = transform.rotation;
+    collider.world_center =
+        transform.position + transform.rotation * collider.local_center;
+    collider.capsule_half_height = collider_template->shape_params.x;
+    collider.radius = collider_template->shape_params.y;
+    collider.world_bounds = collider_world_bounds(collider);
+    ColliderInstance& stored = world_.collider_registry().upsert_entity_collider(
+        identity.net_id,
+        collider_template->template_id,
+        collider);
+    movement.movement_collider_id = stored.collider_id;
 }
 
 void KernelEngine::materialize_projectile_collider(NetId net_id) {
@@ -2638,18 +2753,27 @@ void KernelEngine::sync_entity_colliders_from_world() {
         object.identity.entity_net_id = collider.entity_net_id;
         object.identity.collider_id = collider.collider_id;
         object.identity.hit_zone = collider.hit_zone;
-        object.identity.kind = collider.entity_type == EntityType::kActor
-            ? physics::CollisionObjectKind::kActorHitbox
-            : physics::CollisionObjectKind::kStaticObstacle;
-        object.identity.layer = collider.entity_type == EntityType::kActor
-            ? physics::CollisionLayer::kDamageable
-            : physics::CollisionLayer::kStaticObstacle;
+        const bool movement_collider =
+            (collider.purpose_flags & KernelColliderPurpose_Movement) != 0u;
+        object.identity.kind = movement_collider
+            ? physics::CollisionObjectKind::kActorMovement
+            : collider.entity_type == EntityType::kActor
+                ? physics::CollisionObjectKind::kActorHitbox
+                : physics::CollisionObjectKind::kStaticObstacle;
+        object.identity.layer = movement_collider
+            ? physics::CollisionLayer::kActorMovement
+            : collider.entity_type == EntityType::kActor
+                ? physics::CollisionLayer::kDamageable
+                : physics::CollisionLayer::kStaticObstacle;
         object.identity.gameplay_category = collider.layer_mask;
         object.shape.type = collider.shape_type == ColliderShapeType::kSphere
             ? physics::CollisionShapeType::kSphere
-            : physics::CollisionShapeType::kBox;
+            : collider.shape_type == ColliderShapeType::kCapsule
+                ? physics::CollisionShapeType::kCapsule
+                : physics::CollisionShapeType::kBox;
         object.shape.half_extents = collider.half_extents;
         object.shape.radius = collider.radius;
+        object.shape.capsule_half_height = collider.capsule_half_height;
         object.position = collider.world_center;
         object.rotation = collider.world_rotation;
         object.enabled = collider.enabled;
@@ -5397,7 +5521,27 @@ void KernelEngine::simulate_tick() {
             compensated_action_time_us(pending_input),
             true);
     }
-    simulate_player_movement(world_, pending_inputs_, fixed_delta);
+    sync_entity_colliders_from_world();
+    MovementSimulationStats movement_stats{};
+    simulate_actor_movement(
+        world_,
+        pending_inputs_,
+        fixed_delta,
+        tick_loop_.current_tick(),
+        &events_,
+        &movement_stats);
+    benchmark_stats_.grounded_query_count +=
+        movement_stats.grounded_query_count;
+    benchmark_stats_.grounded_query_cost_us +=
+        movement_stats.grounded_query_cost_us;
+    benchmark_stats_.kinematic_move_count +=
+        movement_stats.kinematic_move_count;
+    benchmark_stats_.kinematic_move_cost_us +=
+        movement_stats.kinematic_move_cost_us;
+    benchmark_stats_.character_move_count +=
+        movement_stats.character_move_count;
+    benchmark_stats_.character_move_cost_us +=
+        movement_stats.character_move_cost_us;
     simulate_velocity_movement(world_, fixed_delta);
     sync_entity_colliders_from_world();
     for (const QueuedInput& pending_input : pending_inputs_) {

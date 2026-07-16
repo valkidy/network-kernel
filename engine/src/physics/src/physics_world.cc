@@ -4,16 +4,21 @@
 
 #include <Jolt/Core/Factory.h>
 #include <Jolt/Core/JobSystemThreadPool.h>
+#include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Core/StreamWrapper.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/Body/Body.h>
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/CollideShape.h>
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
 #include <Jolt/Physics/Collision/NarrowPhaseQuery.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/ShapeCast.h>
+#include <Jolt/Physics/Collision/ShapeFilter.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
+#include <Jolt/Physics/Character/CharacterVirtual.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/RegisterTypes.h>
 
@@ -131,7 +136,11 @@ public:
                 (filter_.collision_mask &
                  collision_layer_bit(CollisionLayer::kDamageable)) != 0 &&
                 kind_enabled(filter_, CollisionObjectKind::kActorHitbox);
-            accepted = accepts_static || accepts_unclassified;
+            const bool accepts_movement =
+                (filter_.collision_mask &
+                 collision_layer_bit(CollisionLayer::kActorMovement)) != 0 &&
+                kind_enabled(filter_, CollisionObjectKind::kActorMovement);
+            accepted = accepts_static || accepts_unclassified || accepts_movement;
         }
         if (stats_ != nullptr && accepted) {
             ++stats_->broadphase_layers_accepted;
@@ -177,6 +186,10 @@ public:
             accepted = accepts_physical(
                 CollisionLayer::kDamageable,
                 CollisionObjectKind::kActorHitbox);
+        } else if (layer == kOtherMovingObjectLayer) {
+            accepted = accepts_physical(
+                CollisionLayer::kActorMovement,
+                CollisionObjectKind::kActorMovement);
         }
         if (stats_ != nullptr && accepted) {
             ++stats_->object_layers_accepted;
@@ -381,6 +394,11 @@ bool valid_shape(const CollisionShapeDescriptor& shape) {
     if (shape.type == CollisionShapeType::kSphere) {
         return std::isfinite(shape.radius) && shape.radius > 0.0f;
     }
+    if (shape.type == CollisionShapeType::kCapsule) {
+        return std::isfinite(shape.radius) && shape.radius > 0.0f &&
+            std::isfinite(shape.capsule_half_height) &&
+            shape.capsule_half_height > 0.0f;
+    }
     return std::isfinite(shape.half_extents.x) &&
            std::isfinite(shape.half_extents.y) &&
            std::isfinite(shape.half_extents.z) &&
@@ -395,6 +413,11 @@ JPH::RefConst<JPH::Shape> make_shape(const CollisionShapeDescriptor& shape) {
     }
     if (shape.type == CollisionShapeType::kSphere) {
         return new JPH::SphereShape(shape.radius);
+    }
+    if (shape.type == CollisionShapeType::kCapsule) {
+        return new JPH::CapsuleShape(
+            shape.capsule_half_height,
+            shape.radius);
     }
     return new JPH::BoxShape(to_jolt(shape.half_extents));
 }
@@ -463,6 +486,7 @@ public:
         if (system_ == nullptr) {
             return;
         }
+        characters_.clear();
         JPH::BodyInterface& bodies = system_->GetBodyInterface();
         for (const auto& [collider_id, body_id] : bodies_by_collider_) {
             (void)collider_id;
@@ -476,6 +500,32 @@ public:
     struct StoredObject {
         CollisionObjectIdentity identity{};
         JPH::ObjectLayer object_layer = kOtherMovingObjectLayer;
+    };
+
+    struct StoredCharacter {
+        CharacterDescriptor descriptor{};
+        JPH::Ref<JPH::CharacterVirtual> character;
+    };
+
+    class CharacterBodyFilter final : public JPH::BodyFilter {
+    public:
+        CharacterBodyFilter(
+            const Impl& impl,
+            const CollisionQueryFilter& filter)
+            : impl_(impl), filter_(filter) {}
+
+        bool ShouldCollide(const JPH::BodyID& body_id) const override {
+            const StoredObject* object = impl_.find(body_id);
+            return object != nullptr && filter_accepts(object->identity, filter_);
+        }
+
+        bool ShouldCollideLocked(const JPH::Body& body) const override {
+            return ShouldCollide(body.GetID());
+        }
+
+    private:
+        const Impl& impl_;
+        const CollisionQueryFilter& filter_;
     };
 
     bool valid() const { return system_ != nullptr; }
@@ -596,6 +646,8 @@ public:
     ObjectVsBroadPhaseFilter object_vs_broad_phase_filter_;
     ObjectLayerPairFilter object_layer_pair_filter_;
     std::unique_ptr<JPH::PhysicsSystem> system_;
+    std::unordered_map<std::uint32_t, StoredCharacter> characters_;
+    JPH::TempAllocatorImpl character_allocator_{4 * 1024 * 1024};
     std::unordered_map<std::uint32_t, JPH::BodyID> bodies_by_collider_;
     std::unordered_map<std::uint32_t, StoredObject> objects_by_body_;
     std::size_t unclassified_damageable_count_ = 0;
@@ -732,6 +784,135 @@ bool PhysicsWorld::set_object_transform(
         to_jolt_r(position),
         to_jolt(rotation),
         JPH::EActivation::DontActivate);
+    return true;
+}
+
+bool PhysicsWorld::upsert_character(
+    const CharacterDescriptor& descriptor,
+    std::string* error) {
+    std::string local_error;
+    error = error == nullptr ? &local_error : error;
+    std::unique_lock lock(impl_->mutex_);
+    if (!valid() || descriptor.character_id == 0 ||
+        descriptor.shape.type != CollisionShapeType::kCapsule ||
+        !valid_shape(descriptor.shape) ||
+        !std::isfinite(descriptor.max_slope_degrees) ||
+        descriptor.max_slope_degrees <= 0.0f ||
+        descriptor.max_slope_degrees >= 90.0f) {
+        *error = "invalid CharacterVirtual descriptor";
+        return false;
+    }
+
+    const auto found = impl_->characters_.find(descriptor.character_id);
+    if (found != impl_->characters_.end()) {
+        const CharacterDescriptor& current = found->second.descriptor;
+        if (current.shape.local_center == descriptor.shape.local_center &&
+            current.shape.radius == descriptor.shape.radius &&
+            current.shape.capsule_half_height ==
+                descriptor.shape.capsule_half_height &&
+            current.max_slope_degrees == descriptor.max_slope_degrees) {
+            return true;
+        }
+        impl_->characters_.erase(found);
+    }
+
+    JPH::RefConst<JPH::Shape> shape = make_shape(descriptor.shape);
+    if (shape == nullptr) {
+        *error = "CharacterVirtual capsule creation failed";
+        return false;
+    }
+    JPH::CharacterVirtualSettings settings;
+    settings.mID = JPH::CharacterID(descriptor.character_id);
+    settings.mShape = shape;
+    settings.mShapeOffset = to_jolt(descriptor.shape.local_center);
+    settings.mMaxSlopeAngle = JPH::DegreesToRadians(
+        descriptor.max_slope_degrees);
+    settings.mInnerBodyShape = nullptr;
+
+    Impl::StoredCharacter stored;
+    stored.descriptor = descriptor;
+    stored.character = new JPH::CharacterVirtual(
+        &settings,
+        JPH::RVec3::sZero(),
+        JPH::Quat::sIdentity(),
+        impl_->system_.get());
+    impl_->characters_.emplace(descriptor.character_id, std::move(stored));
+    return true;
+}
+
+bool PhysicsWorld::remove_character(std::uint32_t character_id) {
+    std::unique_lock lock(impl_->mutex_);
+    return impl_->characters_.erase(character_id) != 0;
+}
+
+bool PhysicsWorld::move_character(
+    const CharacterMoveRequest& request,
+    CharacterMoveResult* result,
+    std::string* error) {
+    std::string local_error;
+    error = error == nullptr ? &local_error : error;
+    std::unique_lock lock(impl_->mutex_);
+    if (!valid() || result == nullptr || request.character_id == 0 ||
+        !std::isfinite(request.delta_seconds) || request.delta_seconds <= 0.0f ||
+        !std::isfinite(request.step_height) || request.step_height < 0.0f ||
+        !std::isfinite(request.ground_snap_distance) ||
+        request.ground_snap_distance < 0.0f) {
+        *error = "invalid CharacterVirtual move request";
+        return false;
+    }
+    const auto found = impl_->characters_.find(request.character_id);
+    if (found == impl_->characters_.end()) {
+        *error = "CharacterVirtual was not created";
+        return false;
+    }
+
+    JPH::CharacterVirtual& character = *found->second.character;
+    character.SetPosition(to_jolt_r(request.current_position));
+    character.SetRotation(to_jolt(request.current_rotation));
+    character.SetLinearVelocity(to_jolt(request.linear_velocity));
+
+    QueryBroadPhaseLayerFilter broadphase_filter(
+        request.filter,
+        impl_->unclassified_damageable_count_ != 0,
+        nullptr);
+    QueryObjectLayerFilter object_layer_filter(request.filter, nullptr);
+    Impl::CharacterBodyFilter body_filter(*impl_, request.filter);
+    JPH::ShapeFilter shape_filter;
+    JPH::CharacterVirtual::ExtendedUpdateSettings settings;
+    settings.mStickToFloorStepDown =
+        JPH::Vec3(0.0f, -request.ground_snap_distance, 0.0f);
+    settings.mWalkStairsStepUp = JPH::Vec3(0.0f, request.step_height, 0.0f);
+    character.ExtendedUpdate(
+        request.delta_seconds,
+        to_jolt(request.gravity),
+        settings,
+        broadphase_filter,
+        object_layer_filter,
+        body_filter,
+        shape_filter,
+        impl_->character_allocator_);
+
+    result->position = from_jolt(character.GetPosition());
+    result->linear_velocity = from_jolt(character.GetLinearVelocity());
+    result->ground_normal = from_jolt(character.GetGroundNormal());
+    result->supporting_identity = {};
+    const Impl::StoredObject* support =
+        impl_->find(character.GetGroundBodyID());
+    if (support != nullptr) {
+        result->supporting_identity = support->identity;
+    }
+    switch (character.GetGroundState()) {
+        case JPH::CharacterBase::EGroundState::OnGround:
+            result->ground_state = CharacterGroundState::kGrounded;
+            break;
+        case JPH::CharacterBase::EGroundState::OnSteepGround:
+            result->ground_state = CharacterGroundState::kSteepGround;
+            break;
+        case JPH::CharacterBase::EGroundState::NotSupported:
+        case JPH::CharacterBase::EGroundState::InAir:
+            result->ground_state = CharacterGroundState::kAirborne;
+            break;
+    }
     return true;
 }
 

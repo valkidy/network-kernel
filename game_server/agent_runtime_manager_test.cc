@@ -234,7 +234,7 @@ int main() {
     require(enemy_states[0].animation_state ==
             0);
     require(enemy_states[0].velocity.x == 0.0f);
-    require(enemy_states[0].velocity.y == 0.0f);
+    require(enemy_states[0].velocity.y < 0.0f);
     require(enemy_states[0].velocity.z == 0.0f);
 
     std::array<KernelServerEntityState, 8> player_states{};
@@ -291,7 +291,7 @@ int main() {
     require(agent_count == 1);
     require(enemy_states[0].position.x == 6.0f);
     require(enemy_states[0].velocity.x == 0.0f);
-    require(enemy_states[0].velocity.y == 0.0f);
+    require(enemy_states[0].velocity.y < 0.0f);
     require(enemy_states[0].velocity.z == 0.0f);
 
     bool saw_spammer_empty_magazine = false;
@@ -371,7 +371,7 @@ int main() {
     require(enemy_states[0].animation_state ==
             0);
     require(enemy_states[0].velocity.x == 0.0f);
-    require(enemy_states[0].velocity.y == 0.0f);
+    require(enemy_states[0].velocity.y < 0.0f);
     require(enemy_states[0].velocity.z == 0.0f);
 
     game_server.agent_runtime_manager().despawn_all(KernelDespawnReason_Destroyed);
@@ -451,7 +451,7 @@ int main() {
     require(enemy_states[0].animation_state ==
             0);
     require(enemy_states[0].velocity.x == 0.0f);
-    require(enemy_states[0].velocity.y == 0.0f);
+    require(enemy_states[0].velocity.y < 0.0f);
     require(enemy_states[0].velocity.z == 0.0f);
 
     Kernel_Destroy(dedicated_kernel);

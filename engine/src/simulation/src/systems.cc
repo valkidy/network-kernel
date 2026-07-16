@@ -245,6 +245,18 @@ bool EntityLifecycleSystem::create_entity(
             MovementState& movement = registry.get_or_emplace<MovementState>(*entity);
             movement.speed_meters_per_second =
                 entity_template->combat.move_speed_meters_per_second;
+            movement.controller_type = static_cast<MovementState::ControllerType>(
+                entity_template->movement.controller_type);
+            movement.movement_collider_template_id =
+                entity_template->movement.movement_collider_template_id;
+            movement.gravity = from_kernel_vec3(entity_template->movement.gravity);
+            movement.max_slope_degrees =
+                entity_template->movement.max_slope_degrees;
+            movement.step_height = entity_template->movement.step_height;
+            movement.ground_probe_distance =
+                entity_template->movement.ground_probe_distance;
+            movement.ground_snap_distance =
+                entity_template->movement.ground_snap_distance;
         }
         if ((entity_template->component_flags &
              KERNEL_ENTITY_COMPONENT_WEAPON_STATE) != 0u) {
@@ -348,6 +360,9 @@ bool EntityLifecycleSystem::destroy_entity(
         entity_type = static_cast<std::uint16_t>(kind.type);
         actor_type = static_cast<std::uint16_t>(kind.actor_type);
     }
+    if (engine.physics_world_ != nullptr) {
+        engine.physics_world_->remove_character(net_id);
+    }
     if (!engine.world_.destroy(net_id)) {
         return false;
     }
@@ -394,6 +409,38 @@ bool EntityStateSystem::set_actor_template(
     engine.world_.registry().emplace_or_replace<ActorTemplateRef>(
         *entity,
         actor_template_id);
+    const KernelEntityTemplateDefinition* authored_entity_template = nullptr;
+    for (const KernelEntityTemplateDefinition& candidate :
+         engine.entity_templates_) {
+        if (candidate.entity_type == KernelEntityType_Actor &&
+            candidate.actor_template_id == actor_template_id) {
+            authored_entity_template = &candidate;
+            break;
+        }
+    }
+    if (authored_entity_template != nullptr) {
+        MovementState& movement =
+            engine.world_.registry().get_or_emplace<MovementState>(*entity);
+        movement.controller_type = static_cast<MovementState::ControllerType>(
+            authored_entity_template->movement.controller_type);
+        movement.movement_collider_template_id =
+            authored_entity_template->movement.movement_collider_template_id;
+        movement.gravity =
+            from_kernel_vec3(authored_entity_template->movement.gravity);
+        movement.max_slope_degrees =
+            authored_entity_template->movement.max_slope_degrees;
+        movement.step_height = authored_entity_template->movement.step_height;
+        movement.ground_probe_distance =
+            authored_entity_template->movement.ground_probe_distance;
+        movement.ground_snap_distance =
+            authored_entity_template->movement.ground_snap_distance;
+        movement.ground_state = MovementState::GroundState::kAirborne;
+        movement.has_last_queried_position = false;
+        movement.landed_this_tick = false;
+        if (engine.physics_world_ != nullptr) {
+            engine.physics_world_->remove_character(net_id);
+        }
+    }
     engine.materialize_entity_collider(net_id);
     if (engine.config_.mode == KernelMode_ListenServer &&
         engine.listen_server_transport_ != nullptr &&

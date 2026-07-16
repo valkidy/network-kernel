@@ -67,6 +67,15 @@ public:
     bool ray_cast_closest(const RayCastRequest& request, CollisionHit* hit) const;
     bool shape_cast_closest(const ShapeCastRequest& request, CollisionHit* hit) const;
 
+    bool upsert_character(
+        const CharacterDescriptor& character,
+        std::string* error);
+    bool remove_character(std::uint32_t character_id);
+    bool move_character(
+        const CharacterMoveRequest& request,
+        CharacterMoveResult* result,
+        std::string* error);
+
 private:
     class Impl;
     std::unique_ptr<Impl> impl_;

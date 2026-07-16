@@ -1231,7 +1231,9 @@ int main() {
     server_state = KernelServerEntityState{};
     server_state.struct_size = sizeof(server_state);
     assert(Kernel_ServerGetEntityState(kernel, created_net_id, &server_state));
-    assert(server_state.position.x > 5.0f);
+    // Template-less actors use the explicit kNone movement policy and do not
+    // integrate authored velocity automatically.
+    assert(server_state.position.x == 5.0f);
     assert(server_state.hp == 240);
     assert(server_state.max_hp == 240);
 
@@ -1253,7 +1255,7 @@ int main() {
     assert(rendered_actor != nullptr);
     assert(rendered_actor->entity_id != 0);
     assert(rendered_actor->owner_peer == 0);
-    assert(rendered_actor->position.x > 5.0f);
+    assert(rendered_actor->position.x == 5.0f);
     assert(rendered_actor->velocity.x == 1.0f);
     assert(rendered_actor->hp == 240);
     assert(rendered_actor->max_hp == 240);

@@ -33,6 +33,7 @@ enum class ColliderShapeType : std::uint8_t {
     kOrientedBox = 2,
     kSegment = 3,
     kCone = 4,
+    kCapsule = 5,
 };
 
 struct ColliderWorldBounds {
@@ -57,6 +58,7 @@ struct ColliderInstance {
     glm::quat world_rotation{1.0f, 0.0f, 0.0f, 0.0f};
     glm::vec3 half_extents{0.0f, 0.0f, 0.0f};
     float radius = 0.0f;
+    float capsule_half_height = 0.0f;
     glm::vec3 segment_start{0.0f, 0.0f, 0.0f};
     glm::vec3 segment_end{0.0f, 0.0f, 0.0f};
     std::uint32_t lifetime_ticks = 0;
@@ -449,6 +451,30 @@ struct ProjectileBeamRuntime {
 
 struct MovementState {
     float speed_meters_per_second = 0.0f;
+    enum class ControllerType : std::uint8_t {
+        kNone = 0,
+        kGrounded = 1,
+        kKinematic = 2,
+        kCharacter = 3,
+    } controller_type = ControllerType::kNone;
+    enum class GroundState : std::uint8_t {
+        kAirborne = 0,
+        kGrounded = 1,
+        kSteepGround = 2,
+    } ground_state = GroundState::kAirborne;
+    std::uint32_t movement_collider_template_id = 0;
+    std::uint32_t movement_collider_id = 0;
+    glm::vec3 gravity{0.0f, -9.81f, 0.0f};
+    glm::vec3 ground_normal{0.0f, 1.0f, 0.0f};
+    NetId supporting_entity_net_id = 0;
+    std::uint32_t supporting_collider_id = 0;
+    float max_slope_degrees = 50.0f;
+    float step_height = 0.4f;
+    float ground_probe_distance = 0.25f;
+    float ground_snap_distance = 0.5f;
+    glm::vec3 last_queried_position{0.0f};
+    bool has_last_queried_position = false;
+    bool landed_this_tick = false;
 };
 
 // Composable presentation hints only; gameplay systems must not treat them as
@@ -457,6 +483,9 @@ inline constexpr std::uint32_t kVisualFlagMoving = 0x00000001u;
 inline constexpr std::uint32_t kVisualFlagReloading = 0x00000002u;
 inline constexpr std::uint32_t kVisualFlagDead = 0x00000004u;
 inline constexpr std::uint32_t kVisualFlagHpUnknown = 0x00000008u;
+inline constexpr std::uint32_t kVisualFlagGrounded = 0x00000010u;
+inline constexpr std::uint32_t kVisualFlagFalling = 0x00000020u;
+inline constexpr std::uint32_t kVisualFlagLanded = 0x00000040u;
 inline constexpr std::uint32_t kVisualFlagAiming = 0x00000100u;
 inline constexpr std::uint32_t kVisualFlagFiring = 0x00000200u;
 

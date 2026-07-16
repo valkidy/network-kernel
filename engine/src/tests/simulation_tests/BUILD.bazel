@@ -7,6 +7,18 @@ cc_test(
 )
 
 cc_test(
+    name = "movement_controller_test",
+    srcs = ["movement_controller_test.cc"],
+    deps = ["//engine/src/simulation:simulation"],
+)
+
+cc_binary(
+    name = "movement_benchmark",
+    srcs = ["movement_benchmark.cc"],
+    deps = ["//engine/src/simulation:simulation"],
+)
+
+cc_test(
     name = "hitscan_test",
     srcs = ["hitscan_test.cc"],
     deps = ["//engine/src/simulation:simulation"],

@@ -141,6 +141,23 @@ void simulate_player_movement(
     const std::vector<QueuedInput>& inputs,
     float fixed_delta_seconds);
 
+struct MovementSimulationStats {
+    std::uint64_t grounded_query_count = 0;
+    std::uint64_t grounded_query_cost_us = 0;
+    std::uint64_t kinematic_move_count = 0;
+    std::uint64_t kinematic_move_cost_us = 0;
+    std::uint64_t character_move_count = 0;
+    std::uint64_t character_move_cost_us = 0;
+};
+
+void simulate_actor_movement(
+    World& world,
+    const std::vector<QueuedInput>& inputs,
+    float fixed_delta_seconds,
+    std::uint32_t current_tick,
+    std::vector<KernelEvent>* events,
+    MovementSimulationStats* stats = nullptr);
+
 void simulate_velocity_movement(World& world, float fixed_delta_seconds);
 
 void simulate_projectiles(World& world, float fixed_delta_seconds);

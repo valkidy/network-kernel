@@ -17,6 +17,10 @@ using network_example::physics::CollisionObjectKind;
 using network_example::physics::CollisionQueryStats;
 using network_example::physics::CollisionShapeDescriptor;
 using network_example::physics::CollisionShapeType;
+using network_example::physics::CharacterDescriptor;
+using network_example::physics::CharacterGroundState;
+using network_example::physics::CharacterMoveRequest;
+using network_example::physics::CharacterMoveResult;
 using network_example::physics::OverlapRequest;
 using network_example::physics::PhysicsWorld;
 using network_example::physics::PhysicsWorldConfig;
@@ -292,5 +296,82 @@ int main(int argc, char** argv) {
            production_damageable.raw_jolt_hits_collected);
     assert(production_damageable.raw_jolt_hits_collected -
            production_hostile.raw_jolt_hits_collected == 200);
+
+    PhysicsWorld movement_world(PhysicsWorldConfig{0});
+    assert(movement_world.valid());
+    CollisionObjectDescriptor floor{};
+    floor.identity = CollisionObjectIdentity{
+        0,
+        100,
+        0,
+        CollisionObjectKind::kStaticObstacle,
+        CollisionLayer::kStaticObstacle,
+    };
+    floor.shape.type = CollisionShapeType::kBox;
+    floor.shape.half_extents = glm::vec3{10.0f, 0.5f, 10.0f};
+    floor.position = glm::vec3{0.0f, -0.5f, 0.0f};
+    assert(movement_world.upsert_object(floor, &error));
+
+    CollisionObjectDescriptor movement_body{};
+    movement_body.identity = CollisionObjectIdentity{
+        77,
+        101,
+        0,
+        CollisionObjectKind::kActorMovement,
+        CollisionLayer::kActorMovement,
+    };
+    movement_body.shape.type = CollisionShapeType::kCapsule;
+    movement_body.shape.radius = 0.35f;
+    movement_body.shape.capsule_half_height = 0.55f;
+    movement_body.position = glm::vec3{3.0f, 0.9f, 0.0f};
+    assert(movement_world.upsert_object(movement_body, &error));
+    CollisionObjectDescriptor invalid_capsule = movement_body;
+    invalid_capsule.identity.collider_id = 102;
+    invalid_capsule.shape.radius = 0.0f;
+    assert(!movement_world.upsert_object(invalid_capsule, &error));
+
+    RayCastRequest movement_ray{};
+    movement_ray.origin = glm::vec3{0.0f, 0.9f, 0.0f};
+    movement_ray.direction = glm::vec3{1.0f, 0.0f, 0.0f};
+    movement_ray.max_distance = 10.0f;
+    movement_ray.filter.collision_mask =
+        network_example::physics::kMovementCollisionMask;
+    assert(movement_world.ray_cast_closest(movement_ray, &closest));
+    assert(closest.identity.collider_id == 101);
+    movement_ray.filter.collision_mask =
+        network_example::physics::kCollisionMaskAll;
+    assert(!movement_world.ray_cast_closest(movement_ray, &closest));
+
+    CharacterDescriptor character{};
+    character.character_id = 7;
+    character.shape.type = CollisionShapeType::kCapsule;
+    character.shape.local_center = glm::vec3{0.0f, 0.9f, 0.0f};
+    character.shape.radius = 0.35f;
+    character.shape.capsule_half_height = 0.55f;
+    character.max_slope_degrees = 50.0f;
+    assert(movement_world.upsert_character(character, &error));
+    CharacterMoveRequest move{};
+    move.character_id = 7;
+    move.current_position = glm::vec3{0.0f, 2.0f, 0.0f};
+    move.delta_seconds = 1.0f / 30.0f;
+    move.step_height = 0.4f;
+    move.ground_snap_distance = 0.5f;
+    move.filter.collision_mask =
+        network_example::physics::kMovementCollisionMask;
+    move.filter.ignored_entity_net_id = 7;
+    CharacterMoveResult move_result{};
+    for (int tick = 0; tick < 120; ++tick) {
+        move.linear_velocity.y += -9.81f * move.delta_seconds;
+        assert(movement_world.move_character(move, &move_result, &error));
+        move.current_position = move_result.position;
+        move.linear_velocity = move_result.linear_velocity;
+        if (move_result.ground_state == CharacterGroundState::kGrounded) {
+            break;
+        }
+    }
+    assert(move_result.ground_state == CharacterGroundState::kGrounded);
+    assert(move_result.position.y > -0.01f);
+    assert(movement_world.remove_character(7));
+    assert(!movement_world.move_character(move, &move_result, &error));
     return 0;
 }

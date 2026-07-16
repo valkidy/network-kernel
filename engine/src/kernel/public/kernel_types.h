@@ -136,6 +136,9 @@
 #define KERNEL_VISUAL_FLAG_RELOADING UINT32_C(0x00000002)
 #define KERNEL_VISUAL_FLAG_DEAD UINT32_C(0x00000004)
 #define KERNEL_VISUAL_FLAG_HP_UNKNOWN UINT32_C(0x00000008)
+#define KERNEL_VISUAL_FLAG_GROUNDED UINT32_C(0x00000010)
+#define KERNEL_VISUAL_FLAG_FALLING UINT32_C(0x00000020)
+#define KERNEL_VISUAL_FLAG_LANDED UINT32_C(0x00000040)
 #define KERNEL_VISUAL_FLAG_AIMING UINT32_C(0x00000100)
 #define KERNEL_VISUAL_FLAG_FIRING UINT32_C(0x00000200)
 
@@ -273,6 +276,7 @@ typedef enum KernelEventType {
     KernelEventType_Explosion = 9,
     KernelEventType_MissionStateChanged = 10,
     KernelEventType_Error = 11,
+    KernelEventType_ActorLanded = 12,
 } KernelEventType;
 
 typedef enum KernelDespawnReason {
@@ -656,6 +660,7 @@ typedef enum KernelColliderShapeType {
     KernelColliderShapeType_OrientedBox = 2,
     KernelColliderShapeType_Segment = 3,
     KernelColliderShapeType_Cone = 4,
+    KernelColliderShapeType_Capsule = 5,
 } KernelColliderShapeType;
 
 typedef enum KernelColliderPurpose {
@@ -663,6 +668,7 @@ typedef enum KernelColliderPurpose {
     KernelColliderPurpose_Damage = 1u << 1,
     KernelColliderPurpose_Trigger = 1u << 2,
     KernelColliderPurpose_Vision = 1u << 3,
+    KernelColliderPurpose_Movement = 1u << 4,
 } KernelColliderPurpose;
 
 typedef enum KernelDebugRecordType {
@@ -921,6 +927,12 @@ typedef struct KernelBenchmarkStats {
     uint64_t render_solver_cost_us;
     uint64_t projectile_solver_cost_us;
     uint64_t hybrid_correction_cost_us;
+    uint64_t grounded_query_count;
+    uint64_t grounded_query_cost_us;
+    uint64_t kinematic_move_count;
+    uint64_t kinematic_move_cost_us;
+    uint64_t character_move_count;
+    uint64_t character_move_cost_us;
 } KernelBenchmarkStats;
 
 typedef struct KernelNetworkStats {
@@ -1140,6 +1152,26 @@ typedef struct KernelCombatStateDefinition {
     uint16_t reserve_magazines[KERNEL_MAX_WEAPONS];
 } KernelCombatStateDefinition;
 
+typedef enum KernelMovementControllerType {
+    KernelMovementControllerType_None = 0,
+    KernelMovementControllerType_Grounded = 1,
+    KernelMovementControllerType_Kinematic = 2,
+    KernelMovementControllerType_Character = 3,
+} KernelMovementControllerType;
+
+typedef struct KernelMovementDefinition {
+    uint32_t struct_size;
+    uint8_t controller_type;
+    uint8_t reserved0;
+    uint16_t reserved1;
+    uint32_t movement_collider_template_id;
+    KernelVec3 gravity;
+    float max_slope_degrees;
+    float step_height;
+    float ground_probe_distance;
+    float ground_snap_distance;
+} KernelMovementDefinition;
+
 struct KernelEntityAiDefinition {
     uint32_t struct_size;
     uint32_t controller_type;
@@ -1168,6 +1200,7 @@ struct KernelEntityTemplateDefinition {
     KernelCombatStateDefinition combat;
     KernelAgentVisionConfig vision;
     KernelEntityAiDefinition ai;
+    KernelMovementDefinition movement;
 };
 
 typedef struct KernelEvent {

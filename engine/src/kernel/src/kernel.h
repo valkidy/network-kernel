@@ -493,6 +493,7 @@ private:
     const PeerSession* find_session(PeerId peer) const;
     void remove_session(PeerId peer);
     void materialize_entity_collider(NetId net_id);
+    void materialize_entity_movement_collider(NetId net_id);
     void materialize_projectile_collider(NetId net_id);
     void sync_entity_colliders_from_world();
     std::uint32_t collider_template_id_for_projectile_template(

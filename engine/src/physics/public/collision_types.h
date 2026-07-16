@@ -13,6 +13,7 @@ enum class CollisionLayer : std::uint32_t {
     kTerrain = 1u << 0u,
     kStaticObstacle = 1u << 1u,
     kDamageable = 1u << 2u,
+    kActorMovement = 1u << 3u,
 };
 
 constexpr std::uint32_t collision_layer_bit(CollisionLayer layer) {
@@ -23,6 +24,10 @@ inline constexpr std::uint32_t kCollisionMaskAll =
     collision_layer_bit(CollisionLayer::kTerrain) |
     collision_layer_bit(CollisionLayer::kStaticObstacle) |
     collision_layer_bit(CollisionLayer::kDamageable);
+inline constexpr std::uint32_t kMovementCollisionMask =
+    collision_layer_bit(CollisionLayer::kTerrain) |
+    collision_layer_bit(CollisionLayer::kStaticObstacle) |
+    collision_layer_bit(CollisionLayer::kActorMovement);
 
 inline constexpr std::uint32_t kGameplayCategoryPlayerSide = 0x00000001u;
 inline constexpr std::uint32_t kGameplayCategoryHostileSide = 0x00000002u;
@@ -36,11 +41,13 @@ enum class CollisionObjectKind : std::uint8_t {
     kTerrain,
     kStaticObstacle,
     kActorHitbox,
+    kActorMovement,
 };
 
 enum class CollisionShapeType : std::uint8_t {
     kBox,
     kSphere,
+    kCapsule,
 };
 
 struct CollisionShapeDescriptor {
@@ -48,6 +55,7 @@ struct CollisionShapeDescriptor {
     glm::vec3 local_center{0.0f};
     glm::vec3 half_extents{0.5f};
     float radius = 0.5f;
+    float capsule_half_height = 0.5f;
 };
 
 struct CollisionObjectIdentity {
@@ -105,6 +113,38 @@ struct OverlapRequest {
     glm::vec3 position{0.0f};
     glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
     CollisionQueryFilter filter{};
+};
+
+enum class CharacterGroundState : std::uint8_t {
+    kAirborne,
+    kGrounded,
+    kSteepGround,
+};
+
+struct CharacterDescriptor {
+    std::uint32_t character_id = 0;
+    CollisionShapeDescriptor shape{};
+    float max_slope_degrees = 50.0f;
+};
+
+struct CharacterMoveRequest {
+    std::uint32_t character_id = 0;
+    glm::vec3 current_position{0.0f};
+    glm::quat current_rotation{1.0f, 0.0f, 0.0f, 0.0f};
+    glm::vec3 linear_velocity{0.0f};
+    glm::vec3 gravity{0.0f, -9.81f, 0.0f};
+    float delta_seconds = 0.0f;
+    float step_height = 0.4f;
+    float ground_snap_distance = 0.5f;
+    CollisionQueryFilter filter{};
+};
+
+struct CharacterMoveResult {
+    glm::vec3 position{0.0f};
+    glm::vec3 linear_velocity{0.0f};
+    CharacterGroundState ground_state = CharacterGroundState::kAirborne;
+    glm::vec3 ground_normal{0.0f, 1.0f, 0.0f};
+    CollisionObjectIdentity supporting_identity{};
 };
 
 }  // namespace network_example::physics
