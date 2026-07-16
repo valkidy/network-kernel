@@ -159,7 +159,8 @@ namespace NetworkExample.Kernel
         [return: MarshalAs(UnmanagedType.I1)]
         internal static extern bool Kernel_LoadGameplayCatalog(
             IntPtr kernel,
-            ref KernelGameplayCatalogDefinition catalog);
+            ref KernelGameplayCatalogDefinition catalog,
+            IntPtr options);
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)]

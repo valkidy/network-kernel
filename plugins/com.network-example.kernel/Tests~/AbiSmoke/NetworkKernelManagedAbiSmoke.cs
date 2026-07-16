@@ -32,7 +32,7 @@ public static class NetworkKernelManagedAbiSmoke
         KernelAbiInfo info = KernelAbi.GetInfo();
         KernelBuildInfo buildInfo = KernelAbi.GetBuildInfo();
         GameServerAbiInfo gameServerInfo = GameServerAbi.GetInfo();
-        Require(KernelConstants.AbiVersion == 42, "Managed kernel ABI version was not v42.");
+        Require(KernelConstants.AbiVersion == 43, "Managed kernel ABI version was not v43.");
         Require(
             (info.capability_flags & KernelConstants.CapabilityEntityLifecycleEvents) != 0,
             "Kernel lifecycle event capability was missing.");
@@ -79,6 +79,12 @@ public static class NetworkKernelManagedAbiSmoke
         Require(
             (KernelConstants.VisualFlagHpUnknown & KernelConstants.VisualFlagDead) == 0,
             "Kernel HpUnknown visual flag overlapped Dead.");
+        Require(
+            KernelConstants.VisualFlagGrounded == 0x00000010U &&
+            KernelConstants.VisualFlagFalling == 0x00000020U &&
+            KernelConstants.VisualFlagLanded == 0x00000040U &&
+            KernelEventType.ActorLanded == (KernelEventType)12,
+            "Kernel grounding presentation ABI mismatch.");
         Require(buildInfo.struct_size != 0, "Kernel_GetBuildInfo returned empty struct size.");
         Require(!string.IsNullOrEmpty(buildInfo.module_version), "Kernel_GetBuildInfo module version was empty.");
         Require(!string.IsNullOrEmpty(buildInfo.git_commit), "Kernel_GetBuildInfo git commit was empty.");
@@ -112,8 +118,6 @@ public static class NetworkKernelManagedAbiSmoke
             Require(
                 !kernel.ContinueClientHandshake(),
                 "Gameplay catalog handshake unexpectedly continued while idle.");
-            Require(kernel.StartListenServer(7777), "Kernel_StartListenServer failed.");
-
             using (var gameServer = new GameServer(
                 kernel,
                 catalogBundleBytes,
@@ -123,6 +127,9 @@ public static class NetworkKernelManagedAbiSmoke
                 Require(
                     loadResult.status == KernelConstants.GameplayCatalogLoadStatusSuccess,
                     "GameServer bundle load did not report success.");
+                Require(
+                    kernel.StartListenServer(7777),
+                    "Kernel_StartListenServer failed.");
                 Require(
                     gameServer.QueryWeaponTemplate(4, out GameServerWeaponTemplateInfo templateInfo),
                     "GameServer_QueryWeaponTemplate failed.");

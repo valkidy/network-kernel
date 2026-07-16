@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 42;
+        public const uint AbiVersion = 43;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int GameplayCatalogEntryPathSize = 128;
@@ -109,6 +109,9 @@ namespace NetworkExample.Kernel
         public const uint VisualFlagReloading = 0x00000002U;
         public const uint VisualFlagDead = 0x00000004U;
         public const uint VisualFlagHpUnknown = 0x00000008U;
+        public const uint VisualFlagGrounded = 0x00000010U;
+        public const uint VisualFlagFalling = 0x00000020U;
+        public const uint VisualFlagLanded = 0x00000040U;
         public const uint VisualFlagAiming = 0x00000100U;
         public const uint VisualFlagFiring = 0x00000200U;
         public const uint MaxVisibleHostiles = 16;
@@ -149,6 +152,7 @@ namespace NetworkExample.Kernel
         Explosion = 9,
         MissionStateChanged = 10,
         Error = 11,
+        ActorLanded = 12,
     }
 
     public enum KernelDespawnReason : uint
@@ -448,6 +452,7 @@ namespace NetworkExample.Kernel
         public ulong capability_flags;
         public uint gameplay_catalog_definition_size;
         public uint gameplay_catalog_load_result_size;
+        public uint gameplay_catalog_load_options_size;
         public uint actor_template_definition_size;
         public uint projectile_template_definition_size;
         public uint collider_template_definition_size;
@@ -696,6 +701,17 @@ namespace NetworkExample.Kernel
 
         public static uint StructSize =>
             (uint)Marshal.SizeOf<KernelStaticCollisionSceneConfig>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct KernelGameplayCatalogLoadOptions
+    {
+        public uint struct_size;
+        public IntPtr static_collision_scene;
+        public IntPtr out_static_scene_rejected;
+
+        public static uint StructSize =>
+            (uint)Marshal.SizeOf<KernelGameplayCatalogLoadOptions>();
     }
 
     [StructLayout(LayoutKind.Sequential)]

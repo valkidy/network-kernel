@@ -225,6 +225,10 @@ namespace NetworkExample.Kernel
                 info.gameplay_catalog_load_result_size,
                 Marshal.SizeOf<KernelGameplayCatalogLoadResult>());
             RequireSize(
+                nameof(KernelGameplayCatalogLoadOptions),
+                info.gameplay_catalog_load_options_size,
+                Marshal.SizeOf<KernelGameplayCatalogLoadOptions>());
+            RequireSize(
                 nameof(KernelActorTemplateDefinition),
                 info.actor_template_definition_size,
                 Marshal.SizeOf<KernelActorTemplateDefinition>());

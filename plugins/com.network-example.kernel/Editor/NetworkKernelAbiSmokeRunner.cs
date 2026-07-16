@@ -20,7 +20,7 @@ namespace NetworkExample.Kernel.Editor
             KernelAbi.ValidateNativeAbi();
             GameServerAbi.ValidateNativeAbi();
             KernelAbiInfo info = KernelAbi.GetInfo();
-            Require(KernelConstants.AbiVersion == 42, "Managed kernel ABI version was not v42.");
+            Require(KernelConstants.AbiVersion == 43, "Managed kernel ABI version was not v43.");
             Require(
                 (info.capability_flags & KernelConstants.CapabilityEntityLifecycleEvents) != 0,
                 "Kernel lifecycle event capability was missing.");
@@ -67,6 +67,12 @@ namespace NetworkExample.Kernel.Editor
             Require(
                 (KernelConstants.VisualFlagHpUnknown & KernelConstants.VisualFlagDead) == 0,
                 "Kernel HpUnknown visual flag overlapped Dead.");
+            Require(
+                KernelConstants.VisualFlagGrounded == 0x00000010U &&
+                KernelConstants.VisualFlagFalling == 0x00000020U &&
+                KernelConstants.VisualFlagLanded == 0x00000040U &&
+                KernelEventType.ActorLanded == (KernelEventType)12,
+                "Kernel grounding presentation ABI mismatch.");
             RequireLANDiscovery();
             byte[] catalogBundleBytes = LoadGameplayCatalogBundleBytes();
 
@@ -81,8 +87,6 @@ namespace NetworkExample.Kernel.Editor
                         actor_blocking_mode = KernelActorBlockingMode.Disabled,
                     }),
                     "Kernel_SetSessionRules failed.");
-                Require(kernel.StartListenServer(7777), "Kernel_StartListenServer failed.");
-
                 using (var gameServer = new GameServer(
                     kernel,
                     catalogBundleBytes,
@@ -92,6 +96,9 @@ namespace NetworkExample.Kernel.Editor
                     Require(
                         loadResult.status == KernelConstants.GameplayCatalogLoadStatusSuccess,
                         "GameServer bundle load did not report success.");
+                    Require(
+                        kernel.StartListenServer(7777),
+                        "Kernel_StartListenServer failed.");
                     Require(
                         gameServer.QueryWeaponTemplate(
                             4,

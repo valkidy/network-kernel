@@ -927,7 +927,10 @@ namespace NetworkExample.Kernel
                     action_templates = actionTemplatesPtr,
                     action_template_count = (uint)actionTemplates.Length,
                 };
-                return KernelNative.Kernel_LoadGameplayCatalog(kernel, ref nativeCatalog);
+                return KernelNative.Kernel_LoadGameplayCatalog(
+                    kernel,
+                    ref nativeCatalog,
+                    IntPtr.Zero);
             }
             finally
             {
