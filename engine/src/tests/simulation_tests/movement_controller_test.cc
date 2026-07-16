@@ -186,6 +186,23 @@ void grounded_falls_lands_once_and_stops_requerying() {
     assert(fixture.stats.grounded_query_count <= query_count + 1);
 }
 
+void grounded_initially_below_terrain_snaps_to_hit_position() {
+    Fixture fixture(
+        MovementState::ControllerType::kGrounded,
+        {0.0f, -5.0f, 0.0f});
+    fixture.tick();
+    const MovementState& movement =
+        fixture.world.registry().get<MovementState>(fixture.entity);
+    const Transform& transform =
+        fixture.world.registry().get<Transform>(fixture.entity);
+    const Velocity& velocity =
+        fixture.world.registry().get<Velocity>(fixture.entity);
+    assert(movement.ground_state == MovementState::GroundState::kGrounded);
+    assert(std::fabs(transform.position.y) < 0.02f);
+    assert(std::fabs(velocity.linear.y) < 0.0001f);
+    assert(landed_event_count(fixture.events) == 1);
+}
+
 void kinematic_blocks_on_wall_and_queries_ground_each_tick() {
     Fixture fixture(MovementState::ControllerType::kKinematic, {0.0f, 0.0f, 0.0f});
     fixture.add_box(
@@ -395,6 +412,7 @@ void walkable_and_steep_slopes_follow_controller_policy() {
 
 int main() {
     grounded_falls_lands_once_and_stops_requerying();
+    grounded_initially_below_terrain_snaps_to_hit_position();
     kinematic_blocks_on_wall_and_queries_ground_each_tick();
     character_is_grounded_and_slides_along_wall();
     character_recovers_from_initial_penetration();

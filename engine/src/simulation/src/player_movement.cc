@@ -16,6 +16,8 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
+constexpr float kInitialGroundingSearchDistance = 10000.0f;
+
 std::uint64_t elapsed_us(Clock::time_point start) {
     return static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - start)
@@ -54,7 +56,8 @@ GroundProbe probe_ground(
     const glm::vec3& position,
     const glm::quat& rotation,
     float distance,
-    float max_slope_degrees) {
+    float max_slope_degrees,
+    bool initial_placement = false) {
     GroundProbe result{};
     if (distance <= 0.0f) {
         return result;
@@ -66,6 +69,12 @@ GroundProbe probe_ground(
     request.displacement = glm::vec3{0.0f, -distance, 0.0f};
     request.filter = movement_filter(
         collider.entity_net_id, collider.collider_id);
+    if (initial_placement) {
+        request.filter.collision_mask =
+            physics::collision_layer_bit(physics::CollisionLayer::kTerrain) |
+            physics::collision_layer_bit(
+                physics::CollisionLayer::kStaticObstacle);
+    }
     const float walkable_normal_y =
         std::cos(glm::radians(max_slope_degrees));
     for (const physics::CollisionHit& hit :
@@ -340,6 +349,45 @@ void simulate_actor_movement(
             result.velocity.x = desired_horizontal.x;
             result.velocity.z = desired_horizontal.z;
 
+            bool placed_on_initial_ground = false;
+            if (!next_movement.has_last_queried_position && !was_grounded) {
+                glm::vec3 initial_probe_start = result.position;
+                initial_probe_start.y += kInitialGroundingSearchDistance;
+                const Clock::time_point initial_ground_start = Clock::now();
+                GroundProbe initial_ground = probe_ground(
+                    *physics_world,
+                    *collider,
+                    initial_probe_start,
+                    transform.rotation,
+                    kInitialGroundingSearchDistance * 2.0f,
+                    next_movement.max_slope_degrees,
+                    true);
+                if (stats != nullptr) {
+                    ++stats->grounded_query_count;
+                    stats->grounded_query_cost_us +=
+                        elapsed_us(initial_ground_start);
+                }
+                if (initial_ground.walkable) {
+                    result.position = initial_probe_start + glm::vec3{
+                        0.0f,
+                        -kInitialGroundingSearchDistance * 2.0f *
+                            initial_ground.collision.fraction,
+                        0.0f};
+                    result.velocity.y = 0.0f;
+                    result.movement.ground_state =
+                        MovementState::GroundState::kGrounded;
+                    result.movement.ground_normal =
+                        initial_ground.collision.normal;
+                    result.movement.supporting_entity_net_id =
+                        initial_ground.collision.identity.entity_net_id;
+                    result.movement.supporting_collider_id =
+                        initial_ground.collision.identity.collider_id;
+                    result.movement.last_queried_position = result.position;
+                    result.movement.has_last_queried_position = true;
+                    placed_on_initial_ground = true;
+                }
+            }
+
             const bool unchanged_grounded = was_grounded &&
                 glm::dot(
                     result.position - transform.position,
@@ -350,7 +398,8 @@ void simulate_actor_movement(
                     transform.position - next_movement.last_queried_position,
                     transform.position - next_movement.last_queried_position) <=
                     0.00000001f;
-            if (!unchanged_grounded || kinematic) {
+            if (!placed_on_initial_ground &&
+                (!unchanged_grounded || kinematic)) {
                 const float probe_distance = was_grounded
                     ? next_movement.ground_snap_distance
                     : next_movement.ground_probe_distance;
