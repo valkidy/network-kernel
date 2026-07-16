@@ -3,7 +3,7 @@ name: beam_rifle_beam
 type: beam
 damage: 30
 sync_mode: server_snapshot_only
-collider_template: beam_damage
+collider_template: beam_oriented_box
 movement_model: linear
 hit_response: destroy
 damage_shape: direct_hit

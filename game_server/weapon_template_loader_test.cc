@@ -79,7 +79,7 @@ void write_valid_templates(const std::filesystem::path& dir) {
         dir.parent_path() / "projectile_templates" / "spammer.yaml",
         "id: 2\nname: spammer_projectile\ndamage: 1\n"
         "sync_mode: local_predicted_deterministic\n"
-        "collider_template: sphere_damage\n"
+        "collider_template: projectile_sphere\n"
         "movement_model: linear\nhit_response: destroy\n"
         "damage_shape: direct_hit\nspeed: 30.0\nlifetime_ticks: 60\n"
         "collision_mask: player_side\nmax_hit_count: 1\n"
@@ -88,7 +88,7 @@ void write_valid_templates(const std::filesystem::path& dir) {
         dir.parent_path() / "projectile_templates" / "rocket.yaml",
         "id: 3\nname: rocket_projectile\ndamage: 45\n"
         "sync_mode: server_snapshot_only\n"
-        "collider_template: projectile_damage\n"
+        "collider_template: rocket_aabb\n"
         "movement_model: linear\nhit_response: destroy\n"
         "damage_shape: direct_hit\nspeed: 35.0\nlifetime_ticks: 75\n"
         "collision_mask: damageable\nmax_hit_count: 1\n"
@@ -100,7 +100,7 @@ void write_valid_templates(const std::filesystem::path& dir) {
     write_file(
         dir.parent_path() / "projectile_templates" / "rocket_explosion.yaml",
         "id: 8\nname: rocket_explosion\nkind: area_effect\n"
-        "collider_template: explosion_damage\n"
+        "collider_template: area_effect_sphere\n"
         "lifetime_ticks: 45\n"
         "damage_behavior:\n"
         "  type: area_interval\n"
@@ -112,7 +112,7 @@ void write_valid_templates(const std::filesystem::path& dir) {
         dir.parent_path() / "projectile_templates" / "homing_missile.yaml",
         "id: 6\nname: homing_missile_projectile\ndamage: 20\n"
         "sync_mode: hybrid_deterministic_then_snapshot\n"
-        "collider_template: sphere_damage\n"
+        "collider_template: projectile_sphere\n"
         "movement_model: homing\nhit_response: destroy\n"
         "damage_shape: direct_hit\nspeed: 20.0\nlifetime_ticks: 90\n"
         "collision_mask: hostile_side\nmax_hit_count: 1\n"
@@ -130,7 +130,7 @@ void write_valid_templates(const std::filesystem::path& dir) {
     write_file(
         dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
         "id: 4\nname: fire_floor_area\ntype: area_effect\n"
-        "collider_template: explosion_damage\n"
+        "collider_template: area_effect_sphere\n"
         "lifetime_ticks: 6\n"
         "damage_behavior:\n"
         "  type: area_interval\n"
@@ -142,7 +142,7 @@ void write_valid_templates(const std::filesystem::path& dir) {
         dir.parent_path() / "projectile_templates" / "beam_rifle_beam.yaml",
         "id: 5\nname: beam_rifle_beam\ntype: beam\ndamage: 30\n"
         "sync_mode: server_snapshot_only\n"
-        "collider_template: beam_damage\n"
+        "collider_template: beam_oriented_box\n"
         "movement_model: linear\nhit_response: destroy\n"
         "damage_shape: direct_hit\nspeed: 0.0\nlifetime_ticks: 0\n"
         "collision_mask: hostile_side\nmax_hit_count: 1\n"
@@ -157,13 +157,13 @@ void write_valid_templates(const std::filesystem::path& dir) {
         dir / "rifle.yaml",
         "id: 0\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
         "damage: 25\nfire_action_template: rifle_fire\nreload_ticks: 30\nmax_range: 100.0\n"
-        "segment_collider: rifle_segment_damage\n");
+        "segment_collider: rifle_segment\n");
     write_file(
         dir / "shotgun.yaml",
         "id: 1\nname: Shotgun\nweapon_type: shotgun\nmagazine_size: 8\n"
         "damage: 10\nfire_action_template: shotgun_fire\nreload_ticks: 45\nmax_range: 40.0\n"
         "pellet_count: 5\npellet_spread: 0.035\n"
-        "segment_collider: shotgun_segment_damage\n");
+        "segment_collider: shotgun_segment\n");
     write_file(
         dir / "spammer.yaml",
         "id: 2\nname: Projectile Spammer\nweapon_type: projectile\n"
@@ -353,7 +353,7 @@ void projectile_collision_query_modes_are_loaded() {
         dir.parent_path() / "projectile_templates" / "rocket.yaml",
         "id: 3\nname: rocket_projectile\ndamage: 45\n"
         "sync_mode: server_snapshot_only\n"
-        "collider_template: projectile_damage\n"
+        "collider_template: rocket_aabb\n"
         "movement_model: linear\nhit_response: destroy\n"
         "damage_shape: direct_hit\nspeed: 35.0\nlifetime_ticks: 75\n"
         "collision_query_mode: overlap\n"
@@ -377,7 +377,7 @@ void invalid_templates_are_rejected() {
         legacy_dir / "rifle.yaml",
         "id: 0\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
         "damage: 25\ncooldown_ticks: 3\nreload_ticks: 30\nmax_range: 100.0\n"
-        "segment_collider: rifle_segment_damage\n");
+        "segment_collider: rifle_segment\n");
     try {
         (void)network_example::game_server::
             load_gameplay_config_from_weapon_template_directory(
@@ -456,7 +456,7 @@ void invalid_templates_are_rejected() {
         missing_policy_dir / "rifle.yaml",
         "id: 0\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
         "damage: 25\nreload_ticks: 30\nmax_range: 100.0\n"
-        "segment_collider: rifle_segment_damage\n");
+        "segment_collider: rifle_segment\n");
     assert(load_fails(missing_policy_dir));
 
     const std::filesystem::path dangling_action_dir = tmp_dir("dangling_action");
@@ -465,7 +465,7 @@ void invalid_templates_are_rejected() {
         dangling_action_dir / "rifle.yaml",
         "id: 0\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
         "damage: 25\nfire_action_template: missing_action\nreload_ticks: 30\n"
-        "max_range: 100.0\nsegment_collider: rifle_segment_damage\n");
+        "max_range: 100.0\nsegment_collider: rifle_segment\n");
     assert(load_fails(dangling_action_dir));
 
     const std::filesystem::path duplicate_action_dir = tmp_dir("duplicate_action");
@@ -502,7 +502,7 @@ void invalid_templates_are_rejected() {
         duplicate_name_dir / "duplicate_name.yaml",
         "id: 4\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 1\n"
         "damage: 1\nreload_ticks: 1\nmax_range: 1.0\n"
-        "segment_collider: rifle_segment_damage\n");
+        "segment_collider: rifle_segment\n");
     assert(load_fails(duplicate_name_dir));
 
     const std::filesystem::path unknown_weapon_field_dir =
@@ -512,7 +512,7 @@ void invalid_templates_are_rejected() {
         unknown_weapon_field_dir / "rifle.yaml",
         "id: 0\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
         "damage: 25\nreload_ticks: 30\nmax_range: 100.0\n"
-        "segment_collider: rifle_segment_damage\nruntime_instance_id: 9\n");
+        "segment_collider: rifle_segment\nruntime_instance_id: 9\n");
     assert(load_fails(unknown_weapon_field_dir));
 
     const std::filesystem::path unknown_area_field_dir =
@@ -522,7 +522,7 @@ void invalid_templates_are_rejected() {
         unknown_area_field_dir / "fire_floor.yaml",
         "id: 4\nname: Fire Floor\nweapon_type: area_effect\nmagazine_size: 3\n"
         "damage: 12\nreload_ticks: 30\narea_effect:\n"
-        "  collider_template: explosion_damage\n"
+        "  collider_template: area_effect_sphere\n"
         "  radius: 2.0\n  damage_per_interval: 12\n  damage_interval_ticks: 2\n"
         "  lifetime_ticks: 6\n  spawn_distance: 1.0\n  collision_mask: hostile_side\n"
         "  current_tick: 123\n");
@@ -535,7 +535,7 @@ void invalid_templates_are_rejected() {
         unknown_beam_field_dir / "beam_rifle.yaml",
         "id: 5\nname: Beam Rifle\nweapon_type: beam\nmagazine_size: 12\n"
         "damage: 30\nreload_ticks: 45\nbeam:\n"
-        "  collider_template: beam_damage\n"
+        "  collider_template: beam_oriented_box\n"
         "  length: 8.0\n  radius: 0.25\n  damage_per_tick: 1\n"
         "  lifetime_ticks: 2\n  collision_mask: hostile_side\n  owner: player\n");
     assert(load_fails(unknown_beam_field_dir));
@@ -548,7 +548,7 @@ void invalid_templates_are_rejected() {
             "projectile_templates" / "homing_missile.yaml",
         "id: 6\nname: homing_missile_projectile\ndamage: 20\n"
         "sync_mode: hybrid_deterministic_then_snapshot\n"
-        "collider_template: sphere_damage\n"
+        "collider_template: projectile_sphere\n"
         "movement_model: homing\nhit_response: destroy\n"
         "damage_shape: direct_hit\nspeed: 20.0\nlifetime_ticks: 90\n"
         "collision_mask: hostile_side\nmax_hit_count: 1\n"
@@ -607,7 +607,7 @@ void invalid_templates_are_rejected() {
     write_file(
         homing_dir.parent_path() / "projectile_templates" / "rocket.yaml",
         "id: 3\nname: rocket_projectile\ndamage: 1\n"
-        "sync_mode: server_snapshot_only\ncollider_template: projectile_damage\n"
+        "sync_mode: server_snapshot_only\ncollider_template: rocket_aabb\n"
         "movement_model: homing\nhit_response: destroy\n"
         "damage_shape: direct_hit\nspeed: 1.0\nlifetime_ticks: 30\n"
         "collision_mask: damageable\nmax_hit_count: 1\n");
@@ -620,7 +620,7 @@ void invalid_templates_are_rejected() {
             "projectile_templates" / "homing_missile.yaml",
         "id: 6\nname: homing_missile_projectile\ndamage: 1\n"
         "sync_mode: hybrid_deterministic_then_snapshot\n"
-        "collider_template: sphere_damage\n"
+        "collider_template: projectile_sphere\n"
         "movement_model: homing\nhit_response: destroy\n"
         "damage_shape: direct_hit\nspeed: 1.0\nlifetime_ticks: 30\n"
         "collision_mask: hostile_side\nmax_hit_count: 1\n"
@@ -641,7 +641,7 @@ void invalid_templates_are_rejected() {
     write_file(
         homing_on_linear_dir.parent_path() / "projectile_templates" / "rocket.yaml",
         "id: 3\nname: rocket_projectile\ndamage: 1\n"
-        "sync_mode: server_snapshot_only\ncollider_template: projectile_damage\n"
+        "sync_mode: server_snapshot_only\ncollider_template: rocket_aabb\n"
         "movement_model: linear\nhit_response: destroy\n"
         "damage_shape: direct_hit\nspeed: 1.0\nlifetime_ticks: 30\n"
         "collision_mask: damageable\nmax_hit_count: 1\n"
@@ -653,7 +653,7 @@ void invalid_templates_are_rejected() {
     write_file(
         bounce_dir.parent_path() / "projectile_templates" / "rocket.yaml",
         "id: 3\nname: rocket_projectile\ndamage: 1\n"
-        "sync_mode: server_snapshot_only\ncollider_template: projectile_damage\n"
+        "sync_mode: server_snapshot_only\ncollider_template: rocket_aabb\n"
         "movement_model: linear\nhit_response: bounce\n"
         "damage_shape: direct_hit\nspeed: 1.0\nlifetime_ticks: 30\n"
         "collision_mask: damageable\nmax_hit_count: 1\n");
@@ -664,7 +664,7 @@ void invalid_templates_are_rejected() {
     write_file(
         invalid_sync_dir.parent_path() / "projectile_templates" / "rocket.yaml",
         "id: 3\nname: rocket_projectile\ndamage: 1\n"
-        "sync_mode: remote_magic\ncollider_template: projectile_damage\n"
+        "sync_mode: remote_magic\ncollider_template: rocket_aabb\n"
         "movement_model: linear\nhit_response: destroy\n"
         "damage_shape: direct_hit\nspeed: 1.0\nlifetime_ticks: 30\n"
         "collision_mask: damageable\nmax_hit_count: 1\n");
@@ -676,7 +676,7 @@ void invalid_templates_are_rejected() {
     write_file(
         removed_radius_dir.parent_path() / "projectile_templates" / "rocket.yaml",
         std::string("id: 3\nname: rocket_projectile\ndamage: 45\n")
-            + "sync_mode: server_snapshot_only\ncollider_template: projectile_damage\n"
+            + "sync_mode: server_snapshot_only\ncollider_template: rocket_aabb\n"
               "movement_model: linear\nhit_response: destroy\n"
               "damage_shape: direct_hit\nspeed: 35.0\nlifetime_ticks: 75\n"
             + removed_radius_key
@@ -684,19 +684,19 @@ void invalid_templates_are_rejected() {
               "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
     assert(load_fails(removed_radius_dir));
 
-    const std::filesystem::path explosion_damage_shape_dir =
-        tmp_dir("explosion_damage_shape");
-    write_valid_templates(explosion_damage_shape_dir);
+    const std::filesystem::path area_effect_sphere_shape_dir =
+        tmp_dir("area_effect_sphere_shape");
+    write_valid_templates(area_effect_sphere_shape_dir);
     write_file(
-        explosion_damage_shape_dir.parent_path() /
+        area_effect_sphere_shape_dir.parent_path() /
             "projectile_templates" / "rocket.yaml",
         "id: 3\nname: rocket_projectile\ndamage: 45\n"
-        "sync_mode: server_snapshot_only\ncollider_template: projectile_damage\n"
+        "sync_mode: server_snapshot_only\ncollider_template: rocket_aabb\n"
         "movement_model: linear\nhit_response: destroy\n"
         "damage_shape: explosion\nspeed: 35.0\nlifetime_ticks: 75\n"
         "collision_mask: damageable\nmax_hit_count: 1\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
-    assert(load_fails(explosion_damage_shape_dir));
+    assert(load_fails(area_effect_sphere_shape_dir));
 
     const std::filesystem::path unknown_projectile_dir =
         tmp_dir("unknown_projectile_template");
@@ -714,7 +714,7 @@ void invalid_templates_are_rejected() {
     write_file(
         cone_projectile_dir.parent_path() / "projectile_templates" / "rocket.yaml",
         "id: 3\nname: rocket_projectile\ndamage: 45\n"
-        "sync_mode: server_snapshot_only\ncollider_template: cone_vision\n"
+        "sync_mode: server_snapshot_only\ncollider_template: sentry_grunt_vision_cone\n"
         "movement_model: linear\nhit_response: destroy\n"
         "damage_shape: direct_hit\nspeed: 35.0\nlifetime_ticks: 75\n"
         "collision_mask: damageable\nmax_hit_count: 1\n"
@@ -728,7 +728,7 @@ void collision_mask_expressions_are_loaded() {
     write_file(
         none_dir.parent_path() / "projectile_templates" / "rocket.yaml",
         "id: 3\nname: rocket_projectile\ndamage: 45\n"
-        "sync_mode: server_snapshot_only\ncollider_template: projectile_damage\n"
+        "sync_mode: server_snapshot_only\ncollider_template: rocket_aabb\n"
         "movement_model: linear\nhit_response: destroy\n"
         "damage_shape: direct_hit\nspeed: 35.0\nlifetime_ticks: 75\n"
         "collision_mask: none\nmax_hit_count: 1\n"
@@ -744,7 +744,7 @@ void collision_mask_expressions_are_loaded() {
         zero_dir.parent_path() / "projectile_templates" / "beam_rifle_beam.yaml",
         "id: 5\nname: beam_rifle_beam\ntype: beam\ndamage: 30\n"
         "sync_mode: server_snapshot_only\n"
-        "collider_template: beam_damage\n"
+        "collider_template: beam_oriented_box\n"
         "movement_model: linear\nhit_response: destroy\n"
         "damage_shape: direct_hit\nspeed: 0.0\nlifetime_ticks: 0\n"
         "collision_mask: 0\nmax_hit_count: 1\n"
@@ -763,7 +763,7 @@ void collision_mask_expressions_are_loaded() {
     write_file(
         expression_dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
         "id: 4\nname: fire_floor_area\ntype: area_effect\n"
-        "collider_template: explosion_damage\n"
+        "collider_template: area_effect_sphere\n"
         "lifetime_ticks: 6\n"
         "damage_behavior:\n"
         "  type: area_interval\n"
@@ -784,7 +784,7 @@ void malformed_collision_masks_are_rejected() {
     write_file(
         unknown_dir.parent_path() / "projectile_templates" / "rocket.yaml",
         "id: 3\nname: rocket_projectile\ndamage: 45\n"
-        "sync_mode: server_snapshot_only\ncollider_template: projectile_damage\n"
+        "sync_mode: server_snapshot_only\ncollider_template: rocket_aabb\n"
         "movement_model: linear\nhit_response: destroy\n"
         "damage_shape: direct_hit\nspeed: 35.0\nlifetime_ticks: 75\n"
         "collision_mask: ghost\nmax_hit_count: 1\n"
@@ -796,7 +796,7 @@ void malformed_collision_masks_are_rejected() {
     write_file(
         empty_token_dir.parent_path() / "projectile_templates" / "rocket.yaml",
         "id: 3\nname: rocket_projectile\ndamage: 45\n"
-        "sync_mode: server_snapshot_only\ncollider_template: projectile_damage\n"
+        "sync_mode: server_snapshot_only\ncollider_template: rocket_aabb\n"
         "movement_model: linear\nhit_response: destroy\n"
         "damage_shape: direct_hit\nspeed: 35.0\nlifetime_ticks: 75\n"
         "collision_mask: hostile_side |\n"
@@ -813,7 +813,7 @@ void catalog_file_loads_colliders() {
             catalog_file.string());
     assert(config.weapons.catalog_version == 2);
     assert(config.weapons.catalog_hash != 0);
-    assert(config.colliders.templates.size() == 9);
+    assert(config.colliders.templates.size() == 11);
     assert(config.colliders.bindings.empty());
 }
 

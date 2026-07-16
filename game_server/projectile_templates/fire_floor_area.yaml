@@ -1,7 +1,7 @@
 id: 4
 name: fire_floor_area
 type: area_effect
-collider_template: explosion_damage
+collider_template: area_effect_sphere
 lifetime_ticks: 6
 damage_behavior:
   type: area_interval

@@ -3,14 +3,14 @@ name: player
 entity_type: actor
 actor_type: player
 camp: player_side
-collider_template: player_hit
+collider_template: player_hit_aabb
 health:
   hp: 1000
   max_hp: 1000
 movement:
   controller: character
   move_speed_meters_per_second: 5.0
-  collider_template: player_movement
+  collider_template: player_movement_capsule
   gravity: {x: 0.0, y: -9.81, z: 0.0}
   max_slope_degrees: 50.0
   step_height: 0.4

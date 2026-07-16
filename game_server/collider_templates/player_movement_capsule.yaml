@@ -1,5 +1,5 @@
 id: 10
-name: player_movement
+name: player_movement_capsule
 shape: capsule
 center: {x: 0.0, y: 0.9, z: 0.0}
 half_height: 0.55

@@ -1,5 +1,5 @@
 id: 1
-name: player_hit
+name: player_hit_aabb
 shape: aabb
 center: {x: 0.0, y: 0.9, z: 0.0}
 half_extents: {x: 0.35, y: 0.9, z: 0.35}

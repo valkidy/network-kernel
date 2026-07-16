@@ -2,7 +2,7 @@ id: 6
 name: homing_missile_projectile
 damage: 20
 sync_mode: hybrid_deterministic_then_snapshot
-collider_template: sphere_damage
+collider_template: projectile_sphere
 movement_model: homing
 hit_response: destroy
 damage_shape: direct_hit
