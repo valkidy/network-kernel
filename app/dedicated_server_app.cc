@@ -91,7 +91,8 @@ int RunDedicatedServer(
     const char* gameplay_catalog_entry_path,
     const char* gameplay_catalog_content_namespace,
     std::uint32_t physics_simulation,
-    std::uint32_t physics_workers) {
+    std::uint32_t physics_workers,
+    std::uint32_t actor_blocking) {
     log_dedicated_server_build_info();
 
     network_example::game_server::GameServerGameplayConfig gameplay_config;
@@ -154,7 +155,11 @@ int RunDedicatedServer(
     physics_config.struct_size = sizeof(physics_config);
     physics_config.physics_simulation = physics_simulation;
     physics_config.physics_workers = physics_workers;
+    KernelSessionRulesConfig session_rules{};
+    session_rules.struct_size = sizeof(session_rules);
+    session_rules.actor_blocking_mode = actor_blocking;
     if (kernel == nullptr || !Kernel_SetPhysicsConfig(kernel, &physics_config) ||
+        !Kernel_SetSessionRules(kernel, &session_rules) ||
         !network_example::game_server::load_kernel_gameplay_catalog(
             kernel,
             gameplay_config)) {

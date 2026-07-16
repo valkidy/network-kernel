@@ -156,7 +156,9 @@ void simulate_actor_movement(
     float fixed_delta_seconds,
     std::uint32_t current_tick,
     std::vector<KernelEvent>* events,
-    MovementSimulationStats* stats = nullptr);
+    MovementSimulationStats* stats = nullptr,
+    std::uint32_t actor_blocking_mode =
+        KernelActorBlockingMode_Predicted);
 
 void simulate_velocity_movement(World& world, float fixed_delta_seconds);
 

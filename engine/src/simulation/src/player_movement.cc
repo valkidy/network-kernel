@@ -168,7 +168,8 @@ void simulate_actor_movement(
     float fixed_delta_seconds,
     std::uint32_t current_tick,
     std::vector<KernelEvent>* events,
-    MovementSimulationStats* stats) {
+    MovementSimulationStats* stats,
+    std::uint32_t actor_blocking_mode) {
     physics::PhysicsWorld* physics_world = world.collision_world();
     if (physics_world == nullptr || fixed_delta_seconds <= 0.0f) {
         return;
@@ -270,44 +271,52 @@ void simulate_actor_movement(
         if (next_movement.controller_type ==
             MovementState::ControllerType::kCharacter) {
             const Clock::time_point start = Clock::now();
-            physics::CharacterDescriptor descriptor{};
-            descriptor.character_id = identity.net_id;
-            descriptor.shape = movement_shape(*collider);
-            descriptor.max_slope_degrees = next_movement.max_slope_degrees;
-            std::string error;
-            physics::CharacterMoveResult character_result{};
-            glm::vec3 velocity = desired_horizontal;
-            velocity.y = was_grounded
-                ? 0.0f
-                : current_velocity.linear.y +
-                    next_movement.gravity.y * fixed_delta_seconds;
-            physics::CharacterMoveRequest request{};
-            request.character_id = identity.net_id;
-            request.current_position = transform.position;
-            request.current_rotation = transform.rotation;
-            request.linear_velocity = velocity;
-            request.gravity = next_movement.gravity;
-            request.delta_seconds = fixed_delta_seconds;
-            request.step_height = next_movement.step_height;
-            request.ground_snap_distance =
-                next_movement.ground_snap_distance;
-            request.filter = movement_filter(
+            movement_solver::CharacterMovementConfig config{};
+            config.character_id = identity.net_id;
+            config.shape = movement_shape(*collider);
+            config.gravity = next_movement.gravity;
+            config.max_slope_degrees = next_movement.max_slope_degrees;
+            config.step_height = next_movement.step_height;
+            config.ground_snap_distance = next_movement.ground_snap_distance;
+            config.filter = movement_filter(
                 identity.net_id, collider->collider_id);
-            if (physics_world->upsert_character(descriptor, &error) &&
-                physics_world->move_character(
-                    request, &character_result, &error)) {
-                result.position = character_result.position;
-                result.velocity = character_result.linear_velocity;
-                result.movement.ground_normal = character_result.ground_normal;
+            if (actor_blocking_mode == KernelActorBlockingMode_Disabled) {
+                config.filter.collision_mask &=
+                    ~physics::collision_layer_bit(
+                        physics::CollisionLayer::kActorMovement);
+            }
+            movement_solver::CharacterMovementState state{};
+            state.position = transform.position;
+            state.rotation = transform.rotation;
+            state.velocity = current_velocity.linear;
+            state.ground_state = next_movement.ground_state ==
+                    MovementState::GroundState::kGrounded
+                ? physics::CharacterGroundState::kGrounded
+                : next_movement.ground_state ==
+                          MovementState::GroundState::kSteepGround
+                    ? physics::CharacterGroundState::kSteepGround
+                    : physics::CharacterGroundState::kAirborne;
+            state.ground_normal = next_movement.ground_normal;
+            std::string error;
+            if (movement_solver::step_character(
+                    *physics_world,
+                    config,
+                    desired_horizontal,
+                    fixed_delta_seconds,
+                    &state,
+                    &error)) {
+                result.position = state.position;
+                result.velocity = state.velocity;
+                result.movement.ground_normal = state.ground_normal;
                 result.movement.supporting_entity_net_id =
-                    character_result.supporting_identity.entity_net_id;
+                    state.supporting_identity.entity_net_id;
                 result.movement.supporting_collider_id =
-                    character_result.supporting_identity.collider_id;
+                    state.supporting_identity.collider_id;
                 result.movement.ground_state =
-                    character_result.ground_state ==
+                    state.ground_state ==
                             physics::CharacterGroundState::kGrounded
                         ? MovementState::GroundState::kGrounded
-                        : character_result.ground_state ==
+                        : state.ground_state ==
                                   physics::CharacterGroundState::kSteepGround
                             ? MovementState::GroundState::kSteepGround
                             : MovementState::GroundState::kAirborne;

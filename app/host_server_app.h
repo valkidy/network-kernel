@@ -11,6 +11,7 @@ int RunHostServer(
     const char* gameplay_catalog_content_namespace,
     std::uint32_t physics_simulation,
     std::uint32_t physics_workers,
+    std::uint32_t actor_blocking,
     std::uint32_t frame_count);
 
 #endif  // APP_HOST_SERVER_APP_H_

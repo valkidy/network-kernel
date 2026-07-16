@@ -59,6 +59,10 @@ bool Kernel_SetPhysicsConfig(
     KernelHandle* kernel,
     const KernelPhysicsConfig* config);
 
+bool Kernel_SetSessionRules(
+    KernelHandle* kernel,
+    const KernelSessionRulesConfig* config);
+
 bool Kernel_SetStaticCollisionScene(
     KernelHandle* kernel,
     const KernelStaticCollisionSceneConfig* config);

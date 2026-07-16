@@ -6,6 +6,7 @@
 #include <array>
 #include <vector>
 
+#include "kernel/public/kernel_types.h"
 #include "protocol/public/packet_header.h"
 #include "world/public/components.h"
 
@@ -45,6 +46,7 @@ struct WelcomePacket {
     std::uint32_t snapshot_rate = 0;
     std::uint32_t catalog_version = 0;
     std::uint64_t catalog_hash = 0;
+    std::uint32_t actor_blocking_mode = KernelActorBlockingMode_Disabled;
 };
 
 struct PingPongPacket {

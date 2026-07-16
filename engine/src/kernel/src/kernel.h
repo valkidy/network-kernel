@@ -16,6 +16,7 @@
 #include "kernel/src/tick_loop.h"
 #include "physics/public/physics_world.h"
 #include "simulation/public/command.h"
+#include "simulation/public/movement_solver.h"
 #include "simulation/public/simulation.h"
 #include "simulation/src/systems.h"
 #include "sync/public/history_buffer.h"
@@ -53,6 +54,7 @@ public:
     bool start_listen_server(std::uint16_t port);
     bool start_dedicated_server(std::uint16_t port);
     bool set_physics_config(const KernelPhysicsConfig& config);
+    bool set_session_rules(const KernelSessionRulesConfig& config);
     bool set_static_collision_scene(
         const KernelStaticCollisionSceneConfig& config);
     bool set_gameplay_catalog_sync_bundle(
@@ -247,10 +249,17 @@ private:
         std::uint32_t collider_template_id = 0;
         glm::vec3 position{0.0f, 0.0f, 0.0f};
         glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+        glm::vec3 velocity{0.0f, 0.0f, 0.0f};
+        std::uint32_t snapshot_tick = 0;
         std::uint16_t hp = 0;
         std::uint16_t max_hp = 0;
         bool hp_known = false;
         bool active = false;
+    };
+
+    struct PendingPredictionInput {
+        PlayerInput input{};
+        std::uint32_t prediction_tick = 0;
     };
 
     struct ClientEntityTombstone {
@@ -361,7 +370,7 @@ private:
     void handle_client_template_update(const EntityTemplateUpdatePacket& packet);
     void handle_client_ping_pong(const TransportEvent& transport_event);
     void handle_server_ping_pong(const TransportEvent& transport_event);
-    void apply_welcome(const WelcomePacket& welcome);
+    bool apply_welcome(const WelcomePacket& welcome);
     void apply_client_clock_offset_sample(std::int64_t sample_offset_us);
     void handle_client_spawn(const EntitySpawnPacket& packet);
     void handle_client_despawn(const EntityDespawnPacket& packet);
@@ -392,6 +401,16 @@ private:
     void reconcile_local_prediction(const WorldSnapshot& snapshot);
     void reconcile_predicted_projectiles(const WorldSnapshot& snapshot);
     void predict_local_input(const PlayerInput& input);
+    bool prepare_prediction_physics();
+    bool build_local_character_movement_config(
+        movement_solver::CharacterMovementConfig* out_config);
+    bool sync_prediction_actor_proxies(
+        const WorldSnapshot& snapshot,
+        std::uint32_t prediction_tick);
+    bool step_local_character_prediction(
+        const PlayerInput& input,
+        std::uint32_t prediction_tick);
+    void fail_client_prediction(std::string_view diagnostic);
     bool predict_local_action(const PlayerInput& input);
     void predict_local_projectile(const PlayerInput& input);
     PlayerInput prepare_client_input(const PlayerInput& input);
@@ -532,7 +551,7 @@ private:
     std::vector<ClientReplicatedEntity> client_replicated_entities_;
     std::unordered_set<NetId> client_metadata_timeout_reported_entities_;
     std::unordered_map<NetId, ClientEntityTombstone> client_despawned_entities_;
-    std::vector<PlayerInput> pending_prediction_inputs_;
+    std::vector<PendingPredictionInput> pending_prediction_inputs_;
     std::vector<PredictedProjectile> predicted_projectiles_;
     std::unordered_map<std::uint32_t, OutstandingPredictedAction>
         outstanding_predicted_actions_;
@@ -580,12 +599,18 @@ private:
     std::vector<std::uint8_t> downloaded_gameplay_catalog_bundle_;
     KernelPhysicsConfig physics_config_{
         sizeof(KernelPhysicsConfig), 0, 0};
+    KernelSessionRulesConfig session_rules_{
+        sizeof(KernelSessionRulesConfig),
+        KernelActorBlockingMode_Disabled};
     std::vector<std::uint8_t> static_collision_scene_;
     std::uint32_t static_collision_scene_id_ = 0;
     std::uint32_t static_collision_collider_id_ = 0;
     std::uint32_t static_collision_layer_ = 0;
     std::unique_ptr<physics::PhysicsWorld> physics_world_;
     std::unordered_set<std::uint32_t> physics_entity_collider_ids_;
+    std::unique_ptr<physics::PhysicsWorld> prediction_physics_world_;
+    std::unordered_map<NetId, std::uint32_t> prediction_proxy_collider_ids_;
+    std::uint32_t next_prediction_proxy_collider_id_ = 0xc0000000u;
     std::unordered_map<PeerId, GameplayCatalogTransfer>
         gameplay_catalog_transfers_;
     KernelGameplayCatalogSyncState gameplay_catalog_sync_state_ =
@@ -599,6 +624,8 @@ private:
     std::uint64_t gameplay_catalog_sync_elapsed_us_ = 0;
     std::unordered_map<NetId, std::uint64_t> entity_ids_by_net_id_;
     EntitySnapshot predicted_local_entity_;
+    movement_solver::CharacterMovementState predicted_character_state_{};
+    std::uint32_t predicted_character_tick_ = 0;
     std::uint32_t predicted_action_buttons_ = 0;
     std::uint16_t predicted_action_binding_id_ = 0;
     std::uint8_t predicted_action_weapon_id_ = 0;
@@ -627,6 +654,7 @@ private:
     bool has_welcome_ = false;
     bool has_client_snapshot_ = false;
     bool has_predicted_local_entity_ = false;
+    bool prediction_failed_ = false;
     bool has_client_clock_sync_ = false;
     bool has_client_render_time_ = false;
     bool has_remote_presentation_sequence_ = false;

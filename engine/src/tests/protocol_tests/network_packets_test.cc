@@ -75,6 +75,11 @@ int main() {
     player.action_phase = KernelActionPhase_Windup;
     player.action_start_tick = 8;
     player.action_commit_count = 0;
+    player.has_authoritative_movement_state = true;
+    player.ground_state = 1;
+    player.ground_normal = glm::vec3{0.0f, 1.0f, 0.0f};
+    player.supporting_entity_net_id = 99;
+    player.supporting_collider_id = 123;
     snapshot.entities.push_back(player);
     network_example::EntitySnapshot enemy;
     enemy.net_id = 6;
@@ -108,7 +113,12 @@ int main() {
         network_example::encode_snapshot_packet(snapshot, 43);
     assert(network_example::estimate_snapshot_packet_size(snapshot) ==
            snapshot_packet.size());
-    assert(network_example::estimate_snapshot_entity_size(player) == 96u);
+    assert(network_example::estimate_snapshot_entity_size(player) == 118u);
+    network_example::EntitySnapshot owner_without_action = player;
+    owner_without_action.action_template_id = 0;
+    owner_without_action.action_instance_id = 0;
+    owner_without_action.action_phase = KernelActionPhase_None;
+    assert(network_example::estimate_snapshot_entity_size(owner_without_action) == 98u);
     assert(network_example::estimate_snapshot_entity_size(enemy) == 68u);
     network_example::EntitySnapshot active_enemy = enemy;
     active_enemy.action_template_id = 1002;
@@ -138,6 +148,11 @@ int main() {
     assert(decoded_snapshot.entities[0].action_instance_id == 7001);
     assert(decoded_snapshot.entities[0].action_phase == KernelActionPhase_Windup);
     assert(decoded_snapshot.entities[0].action_start_tick == 8);
+    assert(decoded_snapshot.entities[0].has_authoritative_movement_state);
+    assert(decoded_snapshot.entities[0].ground_state == 1);
+    assert(nearly_equal(decoded_snapshot.entities[0].ground_normal.y, 1.0f));
+    assert(decoded_snapshot.entities[0].supporting_entity_net_id == 99);
+    assert(decoded_snapshot.entities[0].supporting_collider_id == 123);
     assert((decoded_snapshot.entities[0].state_flags &
             network_example::kSnapshotStateFlagHpUnknown) == 0u);
     assert(decoded_snapshot.entities[1].net_id == 6);
@@ -149,6 +164,7 @@ int main() {
             network_example::kSnapshotStateFlagHpUnknown) != 0u);
     assert(decoded_snapshot.entities[1].hp == 0);
     assert(decoded_snapshot.entities[1].max_hp == 0);
+    assert(!decoded_snapshot.entities[1].has_authoritative_movement_state);
     assert(decoded_snapshot.entities[2].net_id == 5);
     assert(decoded_snapshot.entities[2].type == network_example::EntityType::kProjectile);
     assert(decoded_snapshot.entities[2].owner_peer == 0);

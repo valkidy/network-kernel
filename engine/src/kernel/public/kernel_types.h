@@ -522,6 +522,16 @@ typedef struct KernelPhysicsConfig {
     uint32_t physics_workers;
 } KernelPhysicsConfig;
 
+typedef enum KernelActorBlockingMode {
+    KernelActorBlockingMode_Disabled = 0,
+    KernelActorBlockingMode_Predicted = 1,
+} KernelActorBlockingMode;
+
+typedef struct KernelSessionRulesConfig {
+    uint32_t struct_size;
+    uint32_t actor_blocking_mode;
+} KernelSessionRulesConfig;
+
 typedef struct KernelStaticCollisionSceneConfig {
     uint32_t struct_size;
     const uint8_t* artifact_bytes;

@@ -11,6 +11,7 @@
 #include "client_app.h"
 #include "dedicated_server_app.h"
 #include "host_server_app.h"
+#include "kernel/public/kernel_types.h"
 
 namespace {
 
@@ -33,6 +34,8 @@ struct Options {
     std::uint8_t network_stats_mode = 0u;
     std::uint32_t physics_simulation = 0;
     std::uint32_t physics_workers = 0;
+    std::uint32_t actor_blocking = KernelActorBlockingMode_Predicted;
+    bool actor_blocking_explicit = false;
     bool gameplay_catalog_explicit = false;
 };
 
@@ -46,7 +49,10 @@ void print_usage() {
         "[--catalog-content-namespace=default] "
         "[--catalog-cache-dir=path] [--host-frames=12] "
         "[--network-stats=off|basic|detailed] "
-        "[--physics_simulation=0|1] [--physics-workers=0|N]");
+        "[--physics_simulation=0|1] [--physics-workers=0|N] "
+        "[--actor-blocking=0|1] "
+        "(0=disabled, 1=predicted; server default=1; predicted clients "
+        "require --catalog-cache-dir)");
 }
 
 bool parse_port(std::string_view text, std::uint16_t* out_port) {
@@ -233,6 +239,15 @@ bool parse_args(int argc, char** argv, Options* options) {
             }
             continue;
         }
+        if (read_value(arg, "--actor-blocking", &index, argc, argv, &value)) {
+            if (!parse_u32_allow_zero(value, &options->actor_blocking) ||
+                options->actor_blocking > KernelActorBlockingMode_Predicted) {
+                spdlog::error("invalid actor blocking mode: {}", value);
+                return false;
+            }
+            options->actor_blocking_explicit = true;
+            continue;
+        }
 
         spdlog::error("unknown argument: {}", arg);
         return false;
@@ -240,6 +255,10 @@ bool parse_args(int argc, char** argv, Options* options) {
 
     if (options->mode.empty()) {
         spdlog::error("missing required --mode");
+        return false;
+    }
+    if (options->mode == "client" && options->actor_blocking_explicit) {
+        spdlog::error("--actor-blocking is server-only");
         return false;
     }
     return true;
@@ -284,7 +303,8 @@ int main(int argc, char** argv) {
             options.gameplay_catalog_entry.c_str(),
             options.gameplay_catalog_content_namespace.c_str(),
             options.physics_simulation,
-            options.physics_workers);
+            options.physics_workers,
+            options.actor_blocking);
     }
     if (options.mode == "client") {
         return RunClient(
@@ -316,6 +336,7 @@ int main(int argc, char** argv) {
             options.gameplay_catalog_content_namespace.c_str(),
             options.physics_simulation,
             options.physics_workers,
+            options.actor_blocking,
             options.host_frames);
     }
 

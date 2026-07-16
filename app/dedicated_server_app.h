@@ -10,6 +10,7 @@ int RunDedicatedServer(
     const char* gameplay_catalog_entry_path,
     const char* gameplay_catalog_content_namespace,
     std::uint32_t physics_simulation,
-    std::uint32_t physics_workers);
+    std::uint32_t physics_workers,
+    std::uint32_t actor_blocking);
 
 #endif  // APP_DEDICATED_SERVER_APP_H_

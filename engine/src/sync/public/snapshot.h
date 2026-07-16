@@ -40,6 +40,11 @@ struct EntitySnapshot {
     std::uint32_t action_start_tick = 0;
     std::uint32_t action_commit_count = 0;
     std::uint8_t action_phase = 0;
+    bool has_authoritative_movement_state = false;
+    std::uint16_t ground_state = 0;
+    glm::vec3 ground_normal{0.0f, 1.0f, 0.0f};
+    NetId supporting_entity_net_id = 0;
+    std::uint32_t supporting_collider_id = 0;
 };
 
 struct WorldSnapshot {

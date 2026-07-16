@@ -153,6 +153,7 @@ int main() {
     welcome.snapshot_rate = 15;
     welcome.catalog_version = 3;
     welcome.catalog_hash = 0x1122334455667788ull;
+    welcome.actor_blocking_mode = KernelActorBlockingMode_Predicted;
     const std::vector<std::uint8_t> welcome_packet =
         network_example::encode_welcome_packet(welcome, 2);
     assert(welcome_packet.size() == 60);
@@ -168,6 +169,18 @@ int main() {
     assert(decoded_welcome.snapshot_rate == 15);
     assert(decoded_welcome.catalog_version == 3);
     assert(decoded_welcome.catalog_hash == 0x1122334455667788ull);
+    assert(
+        decoded_welcome.actor_blocking_mode ==
+        KernelActorBlockingMode_Predicted);
+    std::vector<std::uint8_t> invalid_welcome_packet = welcome_packet;
+    invalid_welcome_packet[56] = 2u;
+    invalid_welcome_packet[57] = 0u;
+    invalid_welcome_packet[58] = 0u;
+    invalid_welcome_packet[59] = 0u;
+    assert(!network_example::decode_welcome_packet(
+        invalid_welcome_packet.data(),
+        invalid_welcome_packet.size(),
+        &decoded_welcome));
 
     network_example::PingPongPacket ping_pong;
     ping_pong.nonce = 88;

@@ -77,6 +77,17 @@ bool Kernel_SetPhysicsConfig(
     });
 }
 
+bool Kernel_SetSessionRules(
+    KernelHandle* kernel,
+    const KernelSessionRulesConfig* config) {
+    return abi_call("Kernel_SetSessionRules", false, [&]() {
+        return kernel != nullptr && kernel->engine != nullptr &&
+               config != nullptr &&
+               config->struct_size >= sizeof(KernelSessionRulesConfig) &&
+               kernel->engine->set_session_rules(*config);
+    });
+}
+
 bool Kernel_SetStaticCollisionScene(
     KernelHandle* kernel,
     const KernelStaticCollisionSceneConfig* config) {

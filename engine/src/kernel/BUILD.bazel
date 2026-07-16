@@ -182,6 +182,7 @@ cc_shared_library(
             "-Wl,-exported_symbol,_Kernel_StartClientCatalogSync",
             "-Wl,-exported_symbol,_Kernel_StartListenServer",
             "-Wl,-exported_symbol,_Kernel_StartDedicatedServer",
+            "-Wl,-exported_symbol,_Kernel_SetSessionRules",
             "-Wl,-exported_symbol,_Kernel_SetGameplayCatalogSyncBundle",
             "-Wl,-exported_symbol,_Kernel_GetGameplayCatalogSyncStatus",
             "-Wl,-exported_symbol,_Kernel_RequestGameplayCatalogBundle",

@@ -1296,9 +1296,22 @@ bool KernelEngine::set_physics_config(const KernelPhysicsConfig& config) {
     return true;
 }
 
+bool KernelEngine::set_session_rules(const KernelSessionRulesConfig& config) {
+    if (running_ || !is_server_mode(config_.mode) ||
+        config.actor_blocking_mode > KernelActorBlockingMode_Predicted) {
+        return false;
+    }
+    session_rules_ = config;
+    session_rules_.struct_size = sizeof(KernelSessionRulesConfig);
+    return true;
+}
+
 bool KernelEngine::set_static_collision_scene(
     const KernelStaticCollisionSceneConfig& config) {
-    if (running_ || !is_server_mode(config_.mode) ||
+    const bool client_catalog_registration =
+        config_.mode == KernelMode_Client && running_ && !has_welcome_;
+    if ((!client_catalog_registration &&
+         (running_ || !is_server_mode(config_.mode))) ||
         config.artifact_bytes == nullptr || config.artifact_size == 0 ||
         config.artifact_size > KERNEL_STATIC_COLLISION_SCENE_MAX_BYTES ||
         config.scene_id == 0 || config.collider_id == 0 ||
@@ -1311,6 +1324,35 @@ bool KernelEngine::set_static_collision_scene(
     static_collision_scene_id_ = config.scene_id;
     static_collision_collider_id_ = config.collider_id;
     static_collision_layer_ = config.collision_layer;
+    return true;
+}
+
+bool KernelEngine::prepare_prediction_physics() {
+    if (static_collision_scene_.empty()) {
+        spdlog::error(
+            "client prediction physics requires a verified static collision scene");
+        return false;
+    }
+    auto world = std::make_unique<physics::PhysicsWorld>(
+        physics::PhysicsWorldConfig{physics_config_.physics_workers});
+    if (!world->valid()) {
+        spdlog::error("failed to initialize client prediction physics world");
+        return false;
+    }
+    physics::CollisionObjectIdentity identity{};
+    identity.collider_id = static_collision_collider_id_;
+    identity.kind = physics::CollisionObjectKind::kTerrain;
+    identity.layer = physics::CollisionLayer::kTerrain;
+    identity.scene_id = static_collision_scene_id_;
+    std::string error;
+    if (!world->load_static_scene(static_collision_scene_, identity, &error)) {
+        spdlog::error(
+            "failed to load client prediction static collision scene: {}", error);
+        return false;
+    }
+    prediction_physics_world_ = std::move(world);
+    prediction_proxy_collider_ids_.clear();
+    next_prediction_proxy_collider_id_ = 0xc0000000u;
     return true;
 }
 
@@ -1384,6 +1426,7 @@ bool KernelEngine::start_client(const char* address) {
     transport_ = std::move(gns_transport);
     reset_runtime_state(KernelMode_Client);
     physics_world_.reset();
+    prediction_physics_world_.reset();
     return true;
 }
 
@@ -1423,6 +1466,13 @@ bool KernelEngine::start_listen_server(std::uint16_t port) {
     if (!gameplay_catalog_sync_bundle_.empty() &&
         (gameplay_catalog_manifest_.catalog_version != catalog_version_ ||
          gameplay_catalog_manifest_.catalog_hash != catalog_hash_)) {
+        return false;
+    }
+    prediction_physics_world_.reset();
+    if ((!static_collision_scene_.empty() ||
+         session_rules_.actor_blocking_mode ==
+             KernelActorBlockingMode_Predicted) &&
+        !prepare_prediction_physics()) {
         return false;
     }
     auto listen_transport = std::make_unique<ListenServerTransport>();
@@ -1478,6 +1528,7 @@ bool KernelEngine::start_dedicated_server(std::uint16_t port) {
 
     transport_ = std::move(gns_transport);
     reset_runtime_state(KernelMode_DedicatedServer);
+    prediction_physics_world_.reset();
     physics_world_ = std::move(query_world);
     world_.set_collision_world(physics_world_.get());
     publish_snapshot();
@@ -3304,6 +3355,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     tick_loop_ = TickLoop(config_.tick);
     world_ = World{false};
     physics_entity_collider_ids_.clear();
+    prediction_proxy_collider_ids_.clear();
     history_buffer_ = HistoryBuffer(history_frame_count(config_.tick));
     damage_pipeline_.clear();
     command_queue_.clear();
@@ -3360,6 +3412,8 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     last_simulation_tick_cost_warning_tick_ = 0;
     entity_ids_by_net_id_.clear();
     predicted_local_entity_ = EntitySnapshot{};
+    predicted_character_state_ = movement_solver::CharacterMovementState{};
+    predicted_character_tick_ = 0;
     predicted_action_buttons_ = 0u;
     predicted_action_binding_id_ = 0u;
     predicted_action_weapon_id_ = 0u;
@@ -3392,6 +3446,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     has_welcome_ = false;
     has_client_snapshot_ = false;
     has_predicted_local_entity_ = false;
+    prediction_failed_ = false;
     has_client_clock_sync_ = false;
     has_client_render_time_ = false;
     has_remote_presentation_sequence_ = false;
@@ -3745,7 +3800,8 @@ void KernelEngine::handle_client_local_action_results(
             has_client_snapshot_ &&
             latest_client_snapshot_.header.server_tick >= result.authoritative_tick;
         if (terminal) {
-            for (PlayerInput& input : pending_prediction_inputs_) {
+            for (PendingPredictionInput& pending : pending_prediction_inputs_) {
+                PlayerInput& input = pending.input;
                 if (input.action_intent.action_instance_id ==
                     result.action_instance_id) {
                     input.action_intent = ActionIntent{};
@@ -3974,6 +4030,8 @@ void KernelEngine::handle_client_projectile_spawn_batch(
                     projectile_template->mechanics.collider_template_id,
                     record.spawn_position,
                     glm::quat{1.0f, 0.0f, 0.0f, 0.0f},
+                    record.initial_velocity,
+                    packet.server_tick,
                     0,
                     0,
                     false,
@@ -4081,7 +4139,21 @@ void KernelEngine::handle_client_ping_pong(const TransportEvent& transport_event
     }
 }
 
-void KernelEngine::apply_welcome(const WelcomePacket& welcome) {
+bool KernelEngine::apply_welcome(const WelcomePacket& welcome) {
+    if (welcome.actor_blocking_mode == KernelActorBlockingMode_Predicted) {
+        if (!prepare_prediction_physics()) {
+            spdlog::error(
+                "rejecting predicted actor-blocking session before input: "
+                "collision catalog artifact is not ready");
+            return false;
+        }
+    } else if (!static_collision_scene_.empty() &&
+               !prepare_prediction_physics()) {
+        spdlog::error(
+            "rejecting session: configured prediction collision artifact "
+            "could not be loaded");
+        return false;
+    }
     if (has_welcome_ && local_player_net_id_ != 0u &&
         local_player_net_id_ != welcome.assigned_player_net_id) {
         clear_client_action_sync_state();
@@ -4090,6 +4162,7 @@ void KernelEngine::apply_welcome(const WelcomePacket& welcome) {
     local_player_net_id_ = welcome.assigned_player_net_id;
     catalog_version_ = welcome.catalog_version;
     catalog_hash_ = welcome.catalog_hash;
+    session_rules_.actor_blocking_mode = welcome.actor_blocking_mode;
     if (gameplay_catalog_sync_state_ ==
         KernelGameplayCatalogSyncState_Handshaking) {
         gameplay_catalog_sync_state_ = KernelGameplayCatalogSyncState_Ready;
@@ -4108,6 +4181,7 @@ void KernelEngine::apply_welcome(const WelcomePacket& welcome) {
     tick_loop_.reset(config_.tick, welcome.server_tick);
     history_buffer_ = HistoryBuffer(history_frame_count(config_.tick));
     has_welcome_ = true;
+    return true;
 }
 
 void KernelEngine::apply_client_clock_offset_sample(std::int64_t sample_offset_us) {
@@ -4200,6 +4274,8 @@ void KernelEngine::handle_client_spawn(const EntitySpawnPacket& packet) {
             0,
             packet.position,
             packet.rotation,
+            glm::vec3{0.0f, 0.0f, 0.0f},
+            packet.server_tick,
             0,
             0,
             false,
@@ -4253,6 +4329,8 @@ void KernelEngine::handle_client_template_update(
             0,
             glm::vec3{0.0f, 0.0f, 0.0f},
             glm::quat{1.0f, 0.0f, 0.0f, 0.0f},
+            glm::vec3{0.0f, 0.0f, 0.0f},
+            packet.server_tick,
             0,
             0,
             false,
@@ -4295,6 +4373,13 @@ void KernelEngine::handle_client_despawn(const EntityDespawnPacket& packet) {
                 return entity.net_id == packet.net_id;
             }),
         client_replicated_entities_.end());
+    const auto proxy = prediction_proxy_collider_ids_.find(packet.net_id);
+    if (proxy != prediction_proxy_collider_ids_.end()) {
+        if (prediction_physics_world_ != nullptr) {
+            prediction_physics_world_->remove_object(proxy->second);
+        }
+        prediction_proxy_collider_ids_.erase(proxy);
+    }
     client_metadata_timeout_reported_entities_.erase(packet.net_id);
     predicted_projectiles_.erase(
         std::remove_if(
@@ -4354,6 +4439,16 @@ void KernelEngine::clear_client_action_sync_state() {
 }
 
 void KernelEngine::clear_client_session() {
+    if (prediction_physics_world_ != nullptr && local_player_net_id_ != 0u) {
+        prediction_physics_world_->remove_character(local_player_net_id_);
+    }
+    for (const auto& [net_id, collider_id] : prediction_proxy_collider_ids_) {
+        (void)net_id;
+        if (prediction_physics_world_ != nullptr) {
+            prediction_physics_world_->remove_object(collider_id);
+        }
+    }
+    prediction_proxy_collider_ids_.clear();
     local_client_peer_id_ = 0;
     local_player_net_id_ = 0;
     local_last_processed_input_seq_ = 0;
@@ -4365,6 +4460,8 @@ void KernelEngine::clear_client_session() {
     client_despawned_entities_.clear();
     latest_client_snapshot_ = WorldSnapshot{};
     predicted_local_entity_ = EntitySnapshot{};
+    predicted_character_state_ = movement_solver::CharacterMovementState{};
+    predicted_character_tick_ = 0;
     local_correction_offset_ = glm::vec3{0.0f, 0.0f, 0.0f};
     client_clock_offset_us_ = 0;
     has_welcome_ = false;
@@ -4484,8 +4581,27 @@ void KernelEngine::handle_client_snapshot(WorldSnapshot snapshot) {
     }
     latest_client_snapshot_ = snapshot;
     has_client_snapshot_ = true;
+    for (const EntitySnapshot& entity : latest_client_snapshot_.entities) {
+        const auto replicated = std::find_if(
+            client_replicated_entities_.begin(),
+            client_replicated_entities_.end(),
+            [&entity](const ClientReplicatedEntity& candidate) {
+                return candidate.net_id == entity.net_id;
+            });
+        if (replicated == client_replicated_entities_.end()) {
+            continue;
+        }
+        replicated->position = entity.position;
+        replicated->rotation = entity.rotation;
+        replicated->velocity = entity.velocity;
+        replicated->snapshot_tick = latest_client_snapshot_.header.server_tick;
+        replicated->active = true;
+    }
     store_client_snapshot(std::move(snapshot));
     diagnose_client_snapshot_metadata_waits();
+    if (prediction_failed_) {
+        return;
+    }
     sync_client_vision_states_from_snapshot(latest_client_snapshot_);
     reconcile_local_prediction(latest_client_snapshot_);
     reconcile_predicted_projectiles(latest_client_snapshot_);
@@ -4573,7 +4689,9 @@ bool KernelEngine::snapshot_entity_has_required_metadata(
     if (entity.net_id == 0) {
         return true;
     }
-    if (has_predicted_local_entity_ && entity.net_id == local_player_net_id_) {
+    if (has_predicted_local_entity_ && entity.net_id == local_player_net_id_ &&
+        session_rules_.actor_blocking_mode !=
+            KernelActorBlockingMode_Predicted) {
         return true;
     }
     if (has_predicted_projectile_net_id(entity.net_id)) {
@@ -4586,8 +4704,35 @@ bool KernelEngine::snapshot_entity_has_required_metadata(
             return replicated_entity.net_id == entity.net_id;
         });
     if (entity.type == EntityType::kActor) {
-        return replicated != client_replicated_entities_.end() &&
-               replicated->actor_template_id != 0u;
+        if (replicated == client_replicated_entities_.end() ||
+            replicated->actor_template_id == 0u) {
+            return false;
+        }
+        if (session_rules_.actor_blocking_mode !=
+            KernelActorBlockingMode_Predicted) {
+            return true;
+        }
+        const auto entity_template = std::find_if(
+            entity_templates_.begin(),
+            entity_templates_.end(),
+            [replicated](const KernelEntityTemplateDefinition& definition) {
+                return definition.actor_template_id ==
+                    replicated->actor_template_id;
+            });
+        if (entity_template == entity_templates_.end()) {
+            return false;
+        }
+        if (entity_template->movement.controller_type !=
+            KernelMovementControllerType_Character) {
+            return true;
+        }
+        const KernelColliderTemplateDefinition* collider =
+            find_collider_template(
+                collider_templates_,
+                entity_template->movement.movement_collider_template_id);
+        return collider != nullptr &&
+               collider->shape_type == KernelColliderShapeType_Capsule &&
+               (collider->purpose_flags & KernelColliderPurpose_Movement) != 0u;
     }
     if (entity.type == EntityType::kProjectile) {
         return replicated != client_replicated_entities_.end() &&
@@ -4644,6 +4789,216 @@ void KernelEngine::diagnose_client_snapshot_metadata_waits() {
                 return false;
             }),
         client_snapshot_buffer_.end());
+    if (session_rules_.actor_blocking_mode ==
+            KernelActorBlockingMode_Predicted &&
+        !client_metadata_timeout_reported_entities_.empty()) {
+        fail_client_prediction(
+            "remote actor movement metadata timed out before prediction acceptance");
+    }
+}
+
+bool KernelEngine::build_local_character_movement_config(
+    movement_solver::CharacterMovementConfig* out_config) {
+    if (out_config == nullptr || local_player_net_id_ == 0u) {
+        return false;
+    }
+    const auto replicated = std::find_if(
+        client_replicated_entities_.begin(),
+        client_replicated_entities_.end(),
+        [this](const ClientReplicatedEntity& entity) {
+            return entity.net_id == local_player_net_id_;
+        });
+    if (replicated == client_replicated_entities_.end() ||
+        replicated->actor_template_id == 0u) {
+        return false;
+    }
+    const auto entity_template = std::find_if(
+        entity_templates_.begin(),
+        entity_templates_.end(),
+        [replicated](const KernelEntityTemplateDefinition& definition) {
+            return definition.actor_template_id == replicated->actor_template_id;
+        });
+    if (entity_template == entity_templates_.end() ||
+        entity_template->movement.controller_type !=
+            KernelMovementControllerType_Character) {
+        return false;
+    }
+    const KernelColliderTemplateDefinition* collider = find_collider_template(
+        collider_templates_,
+        entity_template->movement.movement_collider_template_id);
+    if (collider == nullptr ||
+        collider->shape_type != KernelColliderShapeType_Capsule ||
+        (collider->purpose_flags & KernelColliderPurpose_Movement) == 0u) {
+        return false;
+    }
+
+    movement_solver::CharacterMovementConfig config{};
+    config.character_id = local_player_net_id_;
+    config.shape.type = physics::CollisionShapeType::kCapsule;
+    config.shape.local_center = from_kernel_vec3(collider->center);
+    config.shape.capsule_half_height = collider->shape_params.x;
+    config.shape.radius = collider->shape_params.y;
+    config.gravity = from_kernel_vec3(entity_template->movement.gravity);
+    config.max_slope_degrees = entity_template->movement.max_slope_degrees;
+    config.step_height = entity_template->movement.step_height;
+    config.ground_snap_distance =
+        entity_template->movement.ground_snap_distance;
+    config.filter.collision_mask =
+        physics::collision_layer_bit(physics::CollisionLayer::kTerrain) |
+        physics::collision_layer_bit(physics::CollisionLayer::kStaticObstacle);
+    if (session_rules_.actor_blocking_mode ==
+        KernelActorBlockingMode_Predicted) {
+        config.filter.collision_mask |= physics::collision_layer_bit(
+            physics::CollisionLayer::kActorMovement);
+    }
+    config.filter.ignored_entity_net_id = local_player_net_id_;
+    local_player_move_speed_meters_per_second_ =
+        entity_template->combat.move_speed_meters_per_second;
+    *out_config = config;
+    return true;
+}
+
+bool KernelEngine::sync_prediction_actor_proxies(
+    const WorldSnapshot& snapshot,
+    std::uint32_t prediction_tick) {
+    if (prediction_physics_world_ == nullptr ||
+        session_rules_.actor_blocking_mode !=
+            KernelActorBlockingMode_Predicted) {
+        return true;
+    }
+
+    std::unordered_set<NetId> current_proxies;
+    for (const EntitySnapshot& entity : snapshot.entities) {
+        if (entity.net_id == local_player_net_id_ ||
+            entity.type != EntityType::kActor) {
+            continue;
+        }
+        const auto replicated = std::find_if(
+            client_replicated_entities_.begin(),
+            client_replicated_entities_.end(),
+            [&entity](const ClientReplicatedEntity& candidate) {
+                return candidate.net_id == entity.net_id;
+            });
+        if (replicated == client_replicated_entities_.end() ||
+            replicated->actor_template_id == 0u) {
+            return false;
+        }
+        const auto entity_template = std::find_if(
+            entity_templates_.begin(),
+            entity_templates_.end(),
+            [replicated](const KernelEntityTemplateDefinition& definition) {
+                return definition.actor_template_id ==
+                    replicated->actor_template_id;
+            });
+        if (entity_template == entity_templates_.end()) {
+            return false;
+        }
+        if (entity_template->movement.controller_type !=
+            KernelMovementControllerType_Character) {
+            continue;
+        }
+        const KernelColliderTemplateDefinition* collider = find_collider_template(
+            collider_templates_,
+            entity_template->movement.movement_collider_template_id);
+        if (collider == nullptr ||
+            collider->shape_type != KernelColliderShapeType_Capsule ||
+            (collider->purpose_flags & KernelColliderPurpose_Movement) == 0u) {
+            return false;
+        }
+
+        auto proxy = prediction_proxy_collider_ids_.find(entity.net_id);
+        if (proxy == prediction_proxy_collider_ids_.end()) {
+            proxy = prediction_proxy_collider_ids_
+                        .emplace(
+                            entity.net_id,
+                            next_prediction_proxy_collider_id_++)
+                        .first;
+        }
+        const std::uint32_t extrapolated_ticks =
+            prediction_tick > snapshot.header.server_tick
+                ? std::min<std::uint32_t>(
+                      3u, prediction_tick - snapshot.header.server_tick)
+                : 0u;
+        const glm::vec3 position =
+            entity.position +
+            entity.velocity *
+                (static_cast<float>(extrapolated_ticks) *
+                 tick_loop_.fixed_delta_seconds());
+        physics::CollisionObjectDescriptor object{};
+        object.identity.entity_net_id = entity.net_id;
+        object.identity.collider_id = proxy->second;
+        object.identity.kind = physics::CollisionObjectKind::kActorMovement;
+        object.identity.layer = physics::CollisionLayer::kActorMovement;
+        object.identity.gameplay_category = collider->layer_mask;
+        object.shape.type = physics::CollisionShapeType::kCapsule;
+        object.shape.capsule_half_height = collider->shape_params.x;
+        object.shape.radius = collider->shape_params.y;
+        object.position =
+            position + entity.rotation * from_kernel_vec3(collider->center);
+        object.rotation = entity.rotation;
+        std::string error;
+        if (!prediction_physics_world_->upsert_object(object, &error)) {
+            spdlog::error(
+                "failed to update prediction actor proxy net_id={}: {}",
+                entity.net_id,
+                error);
+            return false;
+        }
+        current_proxies.insert(entity.net_id);
+    }
+
+    for (auto proxy = prediction_proxy_collider_ids_.begin();
+         proxy != prediction_proxy_collider_ids_.end();) {
+        if (current_proxies.contains(proxy->first)) {
+            ++proxy;
+            continue;
+        }
+        prediction_physics_world_->remove_object(proxy->second);
+        proxy = prediction_proxy_collider_ids_.erase(proxy);
+    }
+    return true;
+}
+
+bool KernelEngine::step_local_character_prediction(
+    const PlayerInput& input,
+    std::uint32_t prediction_tick) {
+    if (prediction_physics_world_ == nullptr) {
+        return session_rules_.actor_blocking_mode ==
+            KernelActorBlockingMode_Disabled;
+    }
+    movement_solver::CharacterMovementConfig movement_config{};
+    if (!build_local_character_movement_config(&movement_config) ||
+        !sync_prediction_actor_proxies(
+            latest_client_snapshot_, prediction_tick)) {
+        return false;
+    }
+    std::string error;
+    if (!movement_solver::step_character(
+            *prediction_physics_world_,
+            movement_config,
+            movement_solver::input_move_to_world(input) *
+                local_player_move_speed_meters_per_second_,
+            tick_loop_.fixed_delta_seconds(),
+            &predicted_character_state_,
+            &error)) {
+        spdlog::error("client CharacterVirtual prediction step failed: {}", error);
+        return false;
+    }
+    predicted_character_tick_ = prediction_tick;
+    predicted_local_entity_.position = predicted_character_state_.position;
+    predicted_local_entity_.rotation = predicted_character_state_.rotation;
+    predicted_local_entity_.velocity = predicted_character_state_.velocity;
+    return true;
+}
+
+void KernelEngine::fail_client_prediction(std::string_view diagnostic) {
+    if (prediction_failed_) {
+        return;
+    }
+    spdlog::error("client prediction session failure: {}", diagnostic);
+    push_event(KernelEventType_Error, local_player_net_id_, kServerPeerId, 31);
+    clear_client_session();
+    prediction_failed_ = true;
 }
 
 void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {
@@ -4656,15 +5011,34 @@ void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {
     if (authoritative == nullptr) {
         return;
     }
+    if (session_rules_.actor_blocking_mode ==
+        KernelActorBlockingMode_Predicted) {
+        for (const EntitySnapshot& entity : snapshot.entities) {
+            if (entity.type == EntityType::kActor &&
+                !snapshot_entity_has_required_metadata(entity)) {
+                return;
+            }
+        }
+    }
 
     pending_prediction_inputs_.erase(
         std::remove_if(
             pending_prediction_inputs_.begin(),
             pending_prediction_inputs_.end(),
-            [&snapshot](const PlayerInput& input) {
-                return input.input_seq <= snapshot.header.last_processed_input_seq;
+            [&snapshot](const PendingPredictionInput& pending) {
+                return pending.input.input_seq <=
+                    snapshot.header.last_processed_input_seq;
             }),
         pending_prediction_inputs_.end());
+    std::sort(
+        pending_prediction_inputs_.begin(),
+        pending_prediction_inputs_.end(),
+        [](const PendingPredictionInput& lhs,
+           const PendingPredictionInput& rhs) {
+            return lhs.prediction_tick != rhs.prediction_tick
+                ? lhs.prediction_tick < rhs.prediction_tick
+                : lhs.input.input_seq < rhs.input.input_seq;
+        });
 
     const glm::vec3 previous_render_position =
         has_predicted_local_entity_
@@ -4673,6 +5047,41 @@ void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {
 
     predicted_local_entity_ = *authoritative;
     has_predicted_local_entity_ = true;
+    if (prediction_physics_world_ != nullptr) {
+        if (!authoritative->has_authoritative_movement_state) {
+            fail_client_prediction(
+                "owner snapshot is missing authoritative movement state");
+            return;
+        }
+        predicted_character_state_.position = authoritative->position;
+        predicted_character_state_.rotation = authoritative->rotation;
+        predicted_character_state_.velocity = authoritative->velocity;
+        predicted_character_state_.ground_state =
+            static_cast<physics::CharacterGroundState>(
+                authoritative->ground_state);
+        predicted_character_state_.ground_normal =
+            authoritative->ground_normal;
+        predicted_character_state_.supporting_identity.entity_net_id =
+            authoritative->supporting_entity_net_id;
+        predicted_character_state_.supporting_identity.collider_id =
+            authoritative->supporting_collider_id;
+        predicted_character_tick_ = snapshot.header.server_tick;
+        movement_solver::CharacterMovementConfig movement_config{};
+        std::string error;
+        if (!build_local_character_movement_config(&movement_config)) {
+            return;
+        }
+        if (!movement_solver::reset_character(
+                *prediction_physics_world_, movement_config, &error)) {
+            fail_client_prediction(
+                error.empty() ? "CharacterVirtual reset failed" : error);
+            return;
+        }
+    } else if (session_rules_.actor_blocking_mode ==
+               KernelActorBlockingMode_Predicted) {
+        fail_client_prediction("prediction PhysicsWorld is unavailable");
+        return;
+    }
     predicted_action_buttons_ = 0u;
     predicted_action_next_commit_tick_ = 0u;
     if (const KernelActionTemplateDefinition* action_template =
@@ -4684,13 +5093,14 @@ void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {
             authoritative->action_commit_count *
                 action_template->commit_interval_ticks;
     }
-    for (const PlayerInput& input : pending_prediction_inputs_) {
-        movement_solver::apply_player_input(
-            predicted_local_entity_,
-            input,
-            tick_loop_.fixed_delta_seconds(),
-            local_player_move_speed_meters_per_second_);
-        predict_local_action(input);
+    for (const PendingPredictionInput& pending : pending_prediction_inputs_) {
+        if (!step_local_character_prediction(
+                pending.input, pending.prediction_tick)) {
+            fail_client_prediction(
+                "CharacterVirtual reset/replay step failed");
+            return;
+        }
+        predict_local_action(pending.input);
     }
 
     for (auto outstanding = outstanding_predicted_actions_.begin();
@@ -4801,8 +5211,18 @@ void KernelEngine::reconcile_predicted_projectiles(const WorldSnapshot& snapshot
 }
 
 void KernelEngine::predict_local_input(const PlayerInput& input) {
-    if (local_player_net_id_ == 0) {
+    if (local_player_net_id_ == 0 || prediction_failed_) {
         return;
+    }
+    if (session_rules_.actor_blocking_mode ==
+            KernelActorBlockingMode_Predicted &&
+        has_client_snapshot_) {
+        for (const EntitySnapshot& entity : latest_client_snapshot_.entities) {
+            if (entity.type == EntityType::kActor &&
+                !snapshot_entity_has_required_metadata(entity)) {
+                return;
+            }
+        }
     }
 
     if (!has_predicted_local_entity_) {
@@ -4815,14 +5235,39 @@ void KernelEngine::predict_local_input(const PlayerInput& input) {
             predicted_local_entity_.actor_type = ActorType::kPlayer;
         }
         has_predicted_local_entity_ = true;
+        predicted_character_state_.position = predicted_local_entity_.position;
+        predicted_character_state_.rotation = predicted_local_entity_.rotation;
+        predicted_character_state_.velocity = predicted_local_entity_.velocity;
+        if (predicted_local_entity_.has_authoritative_movement_state) {
+            predicted_character_state_.ground_state =
+                static_cast<physics::CharacterGroundState>(
+                    predicted_local_entity_.ground_state);
+            predicted_character_state_.ground_normal =
+                predicted_local_entity_.ground_normal;
+        }
     }
 
-    movement_solver::apply_player_input(
-        predicted_local_entity_,
-        input,
-        tick_loop_.fixed_delta_seconds(),
-        local_player_move_speed_meters_per_second_);
-    pending_prediction_inputs_.push_back(input);
+    std::uint32_t prediction_tick = local_prediction_server_tick(
+        has_client_snapshot_ ? latest_client_snapshot_.header.server_tick : 0u);
+    if (prediction_tick <= predicted_character_tick_) {
+        prediction_tick = predicted_character_tick_ + 1u;
+    }
+    if (prediction_physics_world_ != nullptr) {
+        movement_solver::CharacterMovementConfig movement_config{};
+        if (!build_local_character_movement_config(&movement_config)) {
+            return;
+        }
+    }
+    if (!step_local_character_prediction(input, prediction_tick)) {
+        if (session_rules_.actor_blocking_mode ==
+                KernelActorBlockingMode_Predicted ||
+            prediction_physics_world_ != nullptr) {
+            fail_client_prediction("immediate CharacterVirtual step failed");
+        }
+        return;
+    }
+    pending_prediction_inputs_.push_back(
+        PendingPredictionInput{input, prediction_tick});
 }
 
 bool KernelEngine::predict_local_action(const PlayerInput& input) {
@@ -5529,7 +5974,8 @@ void KernelEngine::simulate_tick() {
         fixed_delta,
         tick_loop_.current_tick(),
         &events_,
-        &movement_stats);
+        &movement_stats,
+        session_rules_.actor_blocking_mode);
     benchmark_stats_.grounded_query_count +=
         movement_stats.grounded_query_count;
     benchmark_stats_.grounded_query_cost_us +=
@@ -5672,7 +6118,10 @@ WorldSnapshot KernelEngine::build_relevant_snapshot(
     filtered.entities.reserve(full_snapshot.entities.size());
     for (const EntitySnapshot& entity : full_snapshot.entities) {
         if (is_entity_relevant_to_session(session, entity, player_entity)) {
-            filtered.entities.push_back(entity);
+            EntitySnapshot filtered_entity = entity;
+            filtered_entity.has_authoritative_movement_state =
+                entity.net_id == session.player;
+            filtered.entities.push_back(filtered_entity);
         }
     }
     return filtered;
@@ -7396,6 +7845,7 @@ void KernelEngine::handle_server_handshake(const TransportEvent& transport_event
         config_.tick.snapshot_rate,
         catalog_version_,
         catalog_hash_,
+        session_rules_.actor_blocking_mode,
     };
     const std::vector<std::uint8_t> packet =
         encode_welcome_packet(welcome, next_packet_sequence_++);
@@ -7696,7 +8146,12 @@ void KernelEngine::handle_client_session_message(const TransportEvent& transport
             transport_event.payload.size(),
             &welcome)) {
         record_packet_deserialization_cost(elapsed_cost_us(decode_start));
-        apply_welcome(welcome);
+        if (!apply_welcome(welcome)) {
+            push_event(KernelEventType_Error, 0, kServerPeerId, 30);
+            clear_client_session();
+            prediction_failed_ = true;
+            return;
+        }
         push_event(KernelEventType_PlayerJoined, 0, local_client_peer_id_);
         return;
     }
