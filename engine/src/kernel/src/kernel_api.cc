@@ -92,10 +92,25 @@ bool Kernel_SetStaticCollisionScene(
     KernelHandle* kernel,
     const KernelStaticCollisionSceneConfig* config) {
     return abi_call("Kernel_SetStaticCollisionScene", false, [&]() {
-        return kernel != nullptr && kernel->engine != nullptr &&
-               config != nullptr &&
-               config->struct_size >= sizeof(KernelStaticCollisionSceneConfig) &&
-               kernel->engine->set_static_collision_scene(*config);
+        if (kernel == nullptr || kernel->engine == nullptr) {
+            spdlog::error(
+                "Kernel_SetStaticCollisionScene rejected: invalid kernel handle");
+            return false;
+        }
+        if (config == nullptr) {
+            spdlog::error(
+                "Kernel_SetStaticCollisionScene rejected: config is null");
+            return false;
+        }
+        if (config->struct_size < sizeof(KernelStaticCollisionSceneConfig)) {
+            spdlog::error(
+                "Kernel_SetStaticCollisionScene rejected: struct_size={} "
+                "required={}",
+                config->struct_size,
+                sizeof(KernelStaticCollisionSceneConfig));
+            return false;
+        }
+        return kernel->engine->set_static_collision_scene(*config);
     });
 }
 

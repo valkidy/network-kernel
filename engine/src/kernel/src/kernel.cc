@@ -1310,12 +1310,51 @@ bool KernelEngine::set_static_collision_scene(
     const KernelStaticCollisionSceneConfig& config) {
     const bool client_catalog_registration =
         config_.mode == KernelMode_Client && running_ && !has_welcome_;
-    if ((!client_catalog_registration &&
-         (running_ || !is_server_mode(config_.mode))) ||
-        config.artifact_bytes == nullptr || config.artifact_size == 0 ||
-        config.artifact_size > KERNEL_STATIC_COLLISION_SCENE_MAX_BYTES ||
-        config.scene_id == 0 || config.collider_id == 0 ||
-        config.collision_layer != KERNEL_STATIC_COLLISION_LAYER_TERRAIN) {
+    if (!client_catalog_registration &&
+        (running_ || !is_server_mode(config_.mode))) {
+        spdlog::error(
+            "Kernel_SetStaticCollisionScene rejected: invalid lifecycle "
+            "mode={} running={} has_welcome={}; server registration must "
+            "occur before start and client registration before Welcome",
+            static_cast<std::uint32_t>(config_.mode),
+            running_,
+            has_welcome_);
+        return false;
+    }
+    if (config.artifact_bytes == nullptr) {
+        spdlog::error(
+            "Kernel_SetStaticCollisionScene rejected: artifact_bytes is null");
+        return false;
+    }
+    if (config.artifact_size == 0) {
+        spdlog::error(
+            "Kernel_SetStaticCollisionScene rejected: artifact_size is zero");
+        return false;
+    }
+    if (config.artifact_size > KERNEL_STATIC_COLLISION_SCENE_MAX_BYTES) {
+        spdlog::error(
+            "Kernel_SetStaticCollisionScene rejected: artifact_size={} "
+            "exceeds limit={}",
+            config.artifact_size,
+            KERNEL_STATIC_COLLISION_SCENE_MAX_BYTES);
+        return false;
+    }
+    if (config.scene_id == 0) {
+        spdlog::error(
+            "Kernel_SetStaticCollisionScene rejected: scene_id must be non-zero");
+        return false;
+    }
+    if (config.collider_id == 0) {
+        spdlog::error(
+            "Kernel_SetStaticCollisionScene rejected: collider_id must be non-zero");
+        return false;
+    }
+    if (config.collision_layer != KERNEL_STATIC_COLLISION_LAYER_TERRAIN) {
+        spdlog::error(
+            "Kernel_SetStaticCollisionScene rejected: collision_layer={} "
+            "expected={}",
+            config.collision_layer,
+            KERNEL_STATIC_COLLISION_LAYER_TERRAIN);
         return false;
     }
     static_collision_scene_.assign(
