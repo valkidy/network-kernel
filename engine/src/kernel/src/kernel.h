@@ -345,11 +345,19 @@ private:
         std::uint32_t expire_tick = 0;
     };
 
+    struct PendingFirstPhysicsActor {
+        std::uint32_t spawn_tick = 0;
+        bool warning_reported = false;
+    };
+
     void push_event(
         KernelEventType type,
         NetId net_id = 0,
         PeerId peer_id = 0,
         std::uint32_t code = 0);
+    void register_actor_for_first_physics(NetId net_id);
+    bool is_actor_pending_first_physics(NetId net_id) const;
+    void filter_pending_first_physics_actors(WorldSnapshot* snapshot) const;
     void reset_runtime_state(KernelMode mode);
     bool prepare_server_physics(
         std::unique_ptr<physics::PhysicsWorld>* out_world);
@@ -599,6 +607,8 @@ private:
     std::vector<KernelDebugInfo> debug_records_;
     std::unordered_map<NetId, KernelAgentVisionConfig> vision_configs_;
     std::unordered_map<NetId, VisionRuntimeState> vision_states_;
+    std::unordered_map<NetId, PendingFirstPhysicsActor>
+        pending_first_physics_actors_;
     std::vector<ai::ScopedIntent> pending_director_intents_;
     simulation::CommandQueue command_queue_;
     KernelRpcMethodRegistry rpc_method_registry_;
@@ -659,6 +669,7 @@ private:
     std::unordered_map<NetId, std::uint64_t> entity_ids_by_net_id_;
     EntitySnapshot predicted_local_entity_;
     movement_solver::CharacterMovementState predicted_character_state_{};
+    bool has_authoritative_local_entity_ = false;
     std::uint32_t predicted_character_tick_ = 0;
     std::uint32_t predicted_action_buttons_ = 0;
     std::uint16_t predicted_action_binding_id_ = 0;

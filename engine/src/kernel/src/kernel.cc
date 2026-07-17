@@ -1541,6 +1541,7 @@ bool KernelEngine::start_listen_server(std::uint16_t port) {
 
     const NetId player =
         world_.spawn_player(kLocalListenPeerId, glm::vec3{0.0f, 0.0f, 0.0f});
+    register_actor_for_first_physics(player);
     local_client_peer_id_ = kLocalListenPeerId;
     local_player_net_id_ = player;
     local_listen_session_ = PeerSession{kLocalListenPeerId, player, 0, true, {}};
@@ -3547,6 +3548,39 @@ void KernelEngine::push_event(
     events_.push_back(KernelEvent{type, tick_loop_.current_tick(), net_id, peer_id, code});
 }
 
+void KernelEngine::register_actor_for_first_physics(NetId net_id) {
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value() ||
+        !world_.registry().all_of<EntityKind>(*entity) ||
+        world_.registry().get<EntityKind>(*entity).type != EntityType::kActor ||
+        world_.registry().all_of<ServerOnly>(*entity)) {
+        return;
+    }
+    pending_first_physics_actors_.try_emplace(
+        net_id,
+        PendingFirstPhysicsActor{tick_loop_.current_tick(), false});
+}
+
+bool KernelEngine::is_actor_pending_first_physics(NetId net_id) const {
+    return pending_first_physics_actors_.find(net_id) !=
+        pending_first_physics_actors_.end();
+}
+
+void KernelEngine::filter_pending_first_physics_actors(
+    WorldSnapshot* snapshot) const {
+    if (snapshot == nullptr || pending_first_physics_actors_.empty()) {
+        return;
+    }
+    snapshot->entities.erase(
+        std::remove_if(
+            snapshot->entities.begin(),
+            snapshot->entities.end(),
+            [this](const EntitySnapshot& entity) {
+                return is_actor_pending_first_physics(entity.net_id);
+            }),
+        snapshot->entities.end());
+}
+
 void KernelEngine::reset_runtime_state(KernelMode mode) {
     config_.mode = mode;
     tick_loop_ = TickLoop(config_.tick);
@@ -3589,6 +3623,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     debug_records_.clear();
     vision_configs_.clear();
     vision_states_.clear();
+    pending_first_physics_actors_.clear();
     pending_director_intents_.clear();
     network_stats_ = KernelNetworkStats{};
     network_stats_.struct_size = sizeof(KernelNetworkStats);
@@ -3616,6 +3651,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     last_simulation_tick_cost_warning_tick_ = 0;
     entity_ids_by_net_id_.clear();
     predicted_local_entity_ = EntitySnapshot{};
+    has_authoritative_local_entity_ = false;
     predicted_character_state_ = movement_solver::CharacterMovementState{};
     predicted_character_tick_ = 0;
     predicted_action_buttons_ = 0u;
@@ -4691,6 +4727,7 @@ void KernelEngine::clear_client_session() {
     client_despawned_entities_.clear();
     latest_client_snapshot_ = WorldSnapshot{};
     predicted_local_entity_ = EntitySnapshot{};
+    has_authoritative_local_entity_ = false;
     latest_client_input_ = PlayerInput{};
     pending_client_action_intents_.clear();
     latest_client_input_time_us_ = 0;
@@ -5278,12 +5315,13 @@ void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {
         });
 
     const glm::vec3 previous_render_position =
-        has_predicted_local_entity_
+        has_authoritative_local_entity_ && has_predicted_local_entity_
             ? predicted_local_entity_.position + local_correction_offset_
             : authoritative->position;
 
     predicted_local_entity_ = *authoritative;
     has_predicted_local_entity_ = true;
+    has_authoritative_local_entity_ = true;
     if (prediction_physics_world_ != nullptr) {
         if (!authoritative->has_authoritative_movement_state) {
             fail_client_prediction(
@@ -5463,13 +5501,14 @@ void KernelEngine::predict_local_input(const PlayerInput& input) {
     }
 
     if (!has_predicted_local_entity_) {
-        if (const EntitySnapshot* latest =
-                find_snapshot_entity(latest_client_snapshot_, local_player_net_id_)) {
-            predicted_local_entity_ = *latest;
-        } else {
+        const EntitySnapshot* latest =
+            find_snapshot_entity(latest_client_snapshot_, local_player_net_id_);
+        if (latest == nullptr) {
             predicted_local_entity_.net_id = local_player_net_id_;
             predicted_local_entity_.type = EntityType::kActor;
             predicted_local_entity_.actor_type = ActorType::kPlayer;
+        } else {
+            predicted_local_entity_ = *latest;
         }
         has_predicted_local_entity_ = true;
         predicted_character_state_.position = predicted_local_entity_.position;
@@ -5923,7 +5962,8 @@ bool KernelEngine::build_interpolated_snapshot_for_server_time(
 }
 
 void KernelEngine::append_predicted_local_render_state(bool consume_correction) {
-    if (!has_predicted_local_entity_) {
+    if (!has_predicted_local_entity_ ||
+        (has_welcome_ && !has_authoritative_local_entity_)) {
         return;
     }
 
@@ -6296,6 +6336,7 @@ void KernelEngine::simulate_tick() {
     MovementSimulationStats movement_stats{};
     std::vector<QueuedInput> movement_inputs =
         build_effective_movement_inputs(server_time_us);
+    std::vector<NetId> physics_finalized_actor_net_ids;
     simulate_actor_movement(
         world_,
         movement_inputs,
@@ -6303,7 +6344,8 @@ void KernelEngine::simulate_tick() {
         tick_loop_.current_tick(),
         &events_,
         &movement_stats,
-        session_rules_.actor_blocking_mode);
+        session_rules_.actor_blocking_mode,
+        &physics_finalized_actor_net_ids);
     acknowledge_simulated_movement_inputs(movement_inputs);
     benchmark_stats_.grounded_query_count +=
         movement_stats.grounded_query_count;
@@ -6319,6 +6361,30 @@ void KernelEngine::simulate_tick() {
         movement_stats.character_move_cost_us;
     simulate_velocity_movement(world_, fixed_delta);
     sync_entity_colliders_from_world();
+    bool released_first_physics_actor = false;
+    for (const NetId net_id : physics_finalized_actor_net_ids) {
+        released_first_physics_actor =
+            pending_first_physics_actors_.erase(net_id) > 0 ||
+            released_first_physics_actor;
+    }
+    for (auto pending = pending_first_physics_actors_.begin();
+         pending != pending_first_physics_actors_.end();) {
+        if (!world_.find_entity(pending->first).has_value()) {
+            pending = pending_first_physics_actors_.erase(pending);
+            continue;
+        }
+        if (!pending->second.warning_reported &&
+            tick_loop_.current_tick() > pending->second.spawn_tick) {
+            spdlog::warn(
+                "actor remains hidden before first physics finalization "
+                "net_id={} spawn_tick={} current_tick={}",
+                pending->first,
+                pending->second.spawn_tick,
+                tick_loop_.current_tick());
+            pending->second.warning_reported = true;
+        }
+        ++pending;
+    }
     for (const QueuedInput& pending_input : pending_inputs_) {
         const HistoryFrame* rewind_frame = nullptr;
         std::uint32_t rewind_tick = tick_loop_.current_tick();
@@ -6420,7 +6486,8 @@ void KernelEngine::simulate_tick() {
     broadcast_combat_events(first_tick_event, last_tick_event);
     send_due_clock_sync_pings(server_time_us);
     history_buffer_.write_frame(world_, tick_loop_.current_tick());
-    if (tick_loop_.should_write_snapshot()) {
+    if (released_first_physics_actor ||
+        tick_loop_.should_write_snapshot()) {
         publish_snapshot();
     }
     pending_inputs_.clear();
@@ -6446,6 +6513,9 @@ WorldSnapshot KernelEngine::build_relevant_snapshot(
     filtered.header = full_snapshot.header;
     filtered.entities.reserve(full_snapshot.entities.size());
     for (const EntitySnapshot& entity : full_snapshot.entities) {
+        if (is_actor_pending_first_physics(entity.net_id)) {
+            continue;
+        }
         if (is_entity_relevant_to_session(session, entity, player_entity)) {
             EntitySnapshot filtered_entity = entity;
             filtered_entity.has_authoritative_movement_state =
@@ -6996,6 +7066,9 @@ void KernelEngine::rebuild_render_states_from_world() {
             continue;
         }
         const NetworkIdentity& identity = view.get<const NetworkIdentity>(entity);
+        if (is_actor_pending_first_physics(identity.net_id)) {
+            continue;
+        }
         RenderEntityState state = render_state_from_world_entity(
             world_,
             entity,
@@ -7161,6 +7234,7 @@ void KernelEngine::publish_snapshot() {
         tick_loop_.current_tick(),
         server_time_ms,
         local_last_processed_input_seq_);
+    filter_pending_first_physics_actors(&latest_snapshot_);
     spdlog::debug(
         "{}",
         fmt::format(
@@ -8156,6 +8230,7 @@ void KernelEngine::handle_server_handshake(const TransportEvent& transport_event
         const NetId player = world_.spawn_player(
             transport_event.peer,
             glm::vec3{0.0f, 0.0f, 0.0f});
+        register_actor_for_first_physics(player);
         peer_sessions_.push_back(PeerSession{transport_event.peer, player, 0, false});
         session = &peer_sessions_.back();
         push_event(KernelEventType_PlayerJoined, player, transport_event.peer);

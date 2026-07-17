@@ -338,6 +338,9 @@ bool EntityLifecycleSystem::create_entity(
     replication.animation_state = create_info.animation_state;
     replication.visual_flags = create_info.visual_flags;
     engine.materialize_entity_collider(net_id);
+    if (type == EntityType::kActor) {
+        engine.register_actor_for_first_physics(net_id);
+    }
 
     *out_net_id = net_id;
     engine.push_event(
@@ -370,6 +373,7 @@ bool EntityLifecycleSystem::destroy_entity(
     if (!engine.world_.destroy(net_id)) {
         return false;
     }
+    engine.pending_first_physics_actors_.erase(net_id);
     engine.vision_configs_.erase(net_id);
     engine.vision_states_.erase(net_id);
     if (engine.config_.mode == KernelMode_ListenServer &&

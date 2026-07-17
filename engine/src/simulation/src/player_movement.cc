@@ -145,6 +145,7 @@ struct BufferedMovementResult {
     glm::vec3 position{0.0f};
     glm::vec3 velocity{0.0f};
     MovementState movement{};
+    bool physics_finalized = false;
 };
 
 }  // namespace
@@ -178,7 +179,8 @@ void simulate_actor_movement(
     std::uint32_t current_tick,
     std::vector<KernelEvent>* events,
     MovementSimulationStats* stats,
-    std::uint32_t actor_blocking_mode) {
+    std::uint32_t actor_blocking_mode,
+    std::vector<NetId>* physics_finalized_actor_net_ids) {
     physics::PhysicsWorld* physics_world = world.collision_world();
     if (physics_world == nullptr || fixed_delta_seconds <= 0.0f) {
         return;
@@ -314,6 +316,7 @@ void simulate_actor_movement(
                     fixed_delta_seconds,
                     &state,
                     &error)) {
+                result.physics_finalized = true;
                 result.position = state.position;
                 result.velocity = state.velocity;
                 result.movement.ground_normal = state.ground_normal;
@@ -335,6 +338,7 @@ void simulate_actor_movement(
                 stats->character_move_cost_us += elapsed_us(start);
             }
         } else {
+            result.physics_finalized = true;
             const bool kinematic = next_movement.controller_type ==
                 MovementState::ControllerType::kKinematic;
             const Clock::time_point start = Clock::now();
@@ -493,6 +497,10 @@ void simulate_actor_movement(
         world.registry().get<Transform>(result.entity).position = result.position;
         world.registry().get<Velocity>(result.entity).linear = result.velocity;
         world.registry().get<MovementState>(result.entity) = result.movement;
+        if (result.physics_finalized &&
+            physics_finalized_actor_net_ids != nullptr) {
+            physics_finalized_actor_net_ids->push_back(result.net_id);
+        }
         if (result.movement.landed_this_tick && events != nullptr) {
             events->push_back(KernelEvent{
                 KernelEventType_ActorLanded,

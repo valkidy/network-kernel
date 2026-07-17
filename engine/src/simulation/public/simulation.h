@@ -166,7 +166,8 @@ void simulate_actor_movement(
     std::vector<KernelEvent>* events,
     MovementSimulationStats* stats = nullptr,
     std::uint32_t actor_blocking_mode =
-        KernelActorBlockingMode_Predicted);
+        KernelActorBlockingMode_Predicted,
+    std::vector<NetId>* physics_finalized_actor_net_ids = nullptr);
 
 void simulate_velocity_movement(World& world, float fixed_delta_seconds);
 

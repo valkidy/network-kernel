@@ -164,10 +164,22 @@ void load_minimal_gameplay_catalog(KernelHandle* kernel) {
     projectile_hit.layer_mask = KERNEL_COLLISION_LAYER_PROJECTILE;
     projectile_hit.shape_params = KernelVec4{0.25f, 0.0f, 0.0f, 0.0f};
 
-    const std::array<KernelColliderTemplateDefinition, 3> collider_templates = {
+    KernelColliderTemplateDefinition actor_movement{};
+    actor_movement.struct_size = sizeof(actor_movement);
+    actor_movement.template_id = 11;
+    actor_movement.shape_type = KernelColliderShapeType_Capsule;
+    actor_movement.center = KernelVec3{0.0f, 0.9f, 0.0f};
+    actor_movement.shape_params = KernelVec4{0.55f, 0.35f, 0.0f, 0.0f};
+    actor_movement.purpose_flags = KernelColliderPurpose_Movement;
+    actor_movement.layer_mask =
+        KERNEL_COLLISION_LAYER_PLAYER_SIDE |
+        KERNEL_COLLISION_LAYER_HOSTILE_SIDE;
+
+    const std::array<KernelColliderTemplateDefinition, 4> collider_templates = {
         player_hit,
         rifle_segment,
         projectile_hit,
+        actor_movement,
     };
     const std::array<KernelProjectileTemplateDefinition, 2> projectile_templates = {
         projectile_template(2, 2, 15.0f, 90, KernelProjectileMotionModel_Parabolic),
@@ -189,14 +201,79 @@ void load_minimal_gameplay_catalog(KernelHandle* kernel) {
         fire_action,
         reload_action,
     };
-    KernelActorTemplateDefinition actor_template{};
-    actor_template.struct_size = sizeof(actor_template);
-    actor_template.actor_template_id = 1u;
-    actor_template.entity_type = KernelEntityType_Actor;
-    actor_template.actor_type = KernelActorType_Agent;
-    actor_template.collider_template_id = 1u;
-    actor_template.vision.struct_size = sizeof(KernelAgentVisionConfig);
-    actor_template.vision.camp = KernelAgentCamp_EnemySide;
+    KernelActorTemplateDefinition player_actor_template{};
+    player_actor_template.struct_size = sizeof(player_actor_template);
+    player_actor_template.actor_template_id = 1u;
+    player_actor_template.entity_type = KernelEntityType_Actor;
+    player_actor_template.actor_type = KernelActorType_Player;
+    player_actor_template.collider_template_id = 1u;
+    player_actor_template.vision.struct_size = sizeof(KernelAgentVisionConfig);
+    player_actor_template.vision.camp = KernelAgentCamp_PlayerSide;
+
+    KernelActorTemplateDefinition agent_actor_template = player_actor_template;
+    agent_actor_template.actor_template_id = 2u;
+    agent_actor_template.actor_type = KernelActorType_Agent;
+    agent_actor_template.vision.camp = KernelAgentCamp_EnemySide;
+    const std::array<KernelActorTemplateDefinition, 2> actor_templates = {
+        player_actor_template,
+        agent_actor_template,
+    };
+
+    KernelEntityTemplateDefinition player_entity_template{};
+    player_entity_template.struct_size = sizeof(player_entity_template);
+    player_entity_template.entity_template_id = 101u;
+    player_entity_template.entity_type = KernelEntityType_Actor;
+    player_entity_template.actor_type = KernelActorType_Player;
+    player_entity_template.actor_template_id = 1u;
+    player_entity_template.component_flags =
+        KERNEL_ENTITY_COMPONENT_TRANSFORM |
+        KERNEL_ENTITY_COMPONENT_VELOCITY |
+        KERNEL_ENTITY_COMPONENT_HEALTH |
+        KERNEL_ENTITY_COMPONENT_HITBOX;
+    player_entity_template.collider_template_id = 1u;
+    player_entity_template.combat.struct_size =
+        sizeof(player_entity_template.combat);
+    player_entity_template.combat.hp = 100;
+    player_entity_template.combat.max_hp = 100;
+    player_entity_template.combat.move_speed_meters_per_second = 5.0f;
+    player_entity_template.combat.hitbox_center =
+        KernelVec3{0.0f, 0.9f, 0.0f};
+    player_entity_template.combat.hitbox_half_extents =
+        KernelVec3{0.35f, 0.9f, 0.35f};
+    player_entity_template.movement.struct_size =
+        sizeof(KernelMovementDefinition);
+    player_entity_template.movement.controller_type =
+        KernelMovementControllerType_Character;
+    player_entity_template.movement.movement_collider_template_id = 11u;
+    player_entity_template.movement.gravity = KernelVec3{0.0f, -9.8f, 0.0f};
+    player_entity_template.movement.max_slope_degrees = 45.0f;
+    player_entity_template.movement.ground_probe_distance = 0.2f;
+    player_entity_template.movement.ground_snap_distance = 0.2f;
+    player_entity_template.ai.struct_size = sizeof(KernelEntityAiDefinition);
+    player_entity_template.vision.struct_size =
+        sizeof(KernelAgentVisionConfig);
+    player_entity_template.vision.camp = KernelAgentCamp_PlayerSide;
+
+    KernelEntityTemplateDefinition agent_entity_template =
+        player_entity_template;
+    agent_entity_template.entity_template_id = 102u;
+    agent_entity_template.actor_type = KernelActorType_Agent;
+    agent_entity_template.actor_template_id = 2u;
+    agent_entity_template.component_flags |=
+        KERNEL_ENTITY_COMPONENT_AGENT_RUNTIME |
+        KERNEL_ENTITY_COMPONENT_SENTRY_RUNTIME;
+    agent_entity_template.combat.move_speed_meters_per_second = 2.5f;
+    agent_entity_template.movement.controller_type =
+        KernelMovementControllerType_Grounded;
+    agent_entity_template.ai.controller_type =
+        KernelAiControllerType_Sentry;
+    agent_entity_template.ai.tick_interval = 1u;
+    agent_entity_template.vision.camp = KernelAgentCamp_EnemySide;
+    const std::array<KernelEntityTemplateDefinition, 2> entity_templates = {
+        player_entity_template,
+        agent_entity_template,
+    };
+
     KernelGameplayCatalogDefinition catalog{};
     catalog.struct_size = sizeof(catalog);
     catalog.catalog_version = 1;
@@ -209,8 +286,12 @@ void load_minimal_gameplay_catalog(KernelHandle* kernel) {
     catalog.action_templates = action_templates.data();
     catalog.action_template_count =
         static_cast<std::uint32_t>(action_templates.size());
-    catalog.actor_templates = &actor_template;
-    catalog.actor_template_count = 1u;
+    catalog.actor_templates = actor_templates.data();
+    catalog.actor_template_count =
+        static_cast<std::uint32_t>(actor_templates.size());
+    catalog.entity_templates = entity_templates.data();
+    catalog.entity_template_count =
+        static_cast<std::uint32_t>(entity_templates.size());
     assert(Kernel_LoadGameplayCatalog(kernel, &catalog, nullptr));
 }
 
@@ -235,6 +316,7 @@ void configure_local_player(KernelHandle* kernel, std::uint32_t player_net_id) {
     combat.ammo[2] = 6;
     combat.reserve_magazines[2] = 3;
     assert(Kernel_ServerSetEntityCombatState(kernel, player_net_id, &combat));
+    assert(Kernel_ServerSetEntityActorTemplate(kernel, player_net_id, 1u));
 
     KernelWeaponMechanicsDefinition rifle{};
     rifle.struct_size = sizeof(rifle);
@@ -289,9 +371,7 @@ int main() {
         kernel,
         before_states.data(),
         static_cast<std::uint32_t>(before_states.size()));
-    assert(before_count == 1);
-    assert(!has_non_player_state(before_states, before_count));
-    RenderEntityState before_player = find_player(before_states, before_count);
+    assert(before_count == 0);
     KernelLocalPlayerInfo local_info{};
     assert(Kernel_GetLocalPlayerInfo(kernel, &local_info));
     configure_local_player(kernel, local_info.player_net_id);
@@ -300,7 +380,16 @@ int main() {
         kernel,
         before_states.data(),
         static_cast<std::uint32_t>(before_states.size()));
-    before_player = find_player(before_states, before_count);
+    assert(before_count == 0);
+    Kernel_Update(kernel, 1.0f / 30.0f);
+    before_count = Kernel_GetRenderStates(
+        kernel,
+        before_states.data(),
+        static_cast<std::uint32_t>(before_states.size()));
+    assert(before_count == 1);
+    assert(!has_non_player_state(before_states, before_count));
+    const RenderEntityState before_player =
+        find_player(before_states, before_count);
     assert(local_info.player_net_id == before_player.net_id);
     assert(before_player.hp == 100);
     assert(before_player.max_hp == 100);
@@ -552,10 +641,8 @@ int main() {
 
     KernelServerEntityCreateInfo enemy_create{};
     enemy_create.struct_size = sizeof(enemy_create);
-    enemy_create.entity_type = 1;
-    enemy_create.actor_type = KernelActorType_Agent;
-    enemy_create.actor_template_id = 1u;
-    enemy_create.position = KernelVec3{6.0f, 0.0f, 0.0f};
+    enemy_create.entity_template_id = 102u;
+    enemy_create.position = KernelVec3{6.0f, 25.0f, 0.0f};
     enemy_create.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
     enemy_create.animation_state = 4;
     enemy_create.visual_flags = 8;
@@ -578,22 +665,41 @@ int main() {
     assert(queried_enemy.entity_type == 1);
     assert(queried_enemy.actor_type == KernelActorType_Agent);
     assert(queried_enemy.position.x == enemy_create.position.x);
+    assert(queried_enemy.position.y == enemy_create.position.y);
 
     Kernel_Update(kernel, 0.0f);
     std::array<RenderEntityState, 16> spawned_states{};
-    const std::uint32_t spawned_count = Kernel_GetRenderStates(
+    std::uint32_t spawned_count = Kernel_GetRenderStates(
+        kernel,
+        spawned_states.data(),
+        static_cast<std::uint32_t>(spawned_states.size()));
+    assert(!has_entity(spawned_states, spawned_count, enemy_net_id));
+
+    Kernel_Update(kernel, 1.0f / 30.0f);
+    spawned_count = Kernel_GetRenderStates(
         kernel,
         spawned_states.data(),
         static_cast<std::uint32_t>(spawned_states.size()));
     assert(spawned_count >= 2);
-    assert(has_entity(spawned_states, spawned_count, enemy_net_id));
+    const RenderEntityState first_enemy_render =
+        find_entity(spawned_states, spawned_count, enemy_net_id);
+    KernelServerEntityState finalized_enemy{};
+    finalized_enemy.struct_size = sizeof(finalized_enemy);
+    assert(Kernel_ServerGetEntityState(
+        kernel,
+        enemy_net_id,
+        &finalized_enemy));
+    assert(finalized_enemy.position.y < enemy_create.position.y);
+    assert(first_enemy_render.position.x == finalized_enemy.position.x);
+    assert(first_enemy_render.position.y == finalized_enemy.position.y);
+    assert(first_enemy_render.position.z == finalized_enemy.position.z);
 
     KernelServerEntityCreateInfo far_enemy_create = enemy_create;
-    far_enemy_create.position = KernelVec3{100.0f, 0.0f, 0.0f};
+    far_enemy_create.position = KernelVec3{100.0f, 25.0f, 0.0f};
     std::uint32_t far_enemy_net_id = 0;
     assert(Kernel_ServerCreateEntity(kernel, &far_enemy_create, &far_enemy_net_id));
     assert(far_enemy_net_id != 0);
-    Kernel_Update(kernel, 0.0f);
+    Kernel_Update(kernel, 1.0f / 30.0f);
     std::array<RenderEntityState, 16> filtered_states{};
     const std::uint32_t filtered_count = Kernel_GetRenderStates(
         kernel,
