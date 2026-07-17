@@ -3180,6 +3180,178 @@ void server_routes_fire_result_to_owner_and_presentation_to_observer() {
     require(saw_second_commit);
 }
 
+void native_fixed_tick_coalesces_client_input_and_owns_sequence() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+    client.has_welcome_ = true;
+    client.local_client_peer_id_ = 7u;
+    client.local_player_net_id_ = 1u;
+    auto transport = std::make_unique<network_example::LoopbackTransport>();
+    require(transport->StartServer(7791));
+    network_example::LoopbackTransport* loopback = transport.get();
+    client.transport_ = std::move(transport);
+
+    PlayerInput first{};
+    first.input_seq = 900u;
+    first.move = KernelVec2{0.25f, 0.0f};
+    client.submit_input(7u, first);
+    PlayerInput latest = first;
+    latest.input_seq = 3u;
+    latest.move = KernelVec2{1.0f, 0.0f};
+    client.submit_input(7u, latest);
+
+    require(client.pending_prediction_inputs_.empty());
+    require(client.next_client_input_seq_ == 1u);
+    client.update(1.0f / 30.0f);
+    require(client.pending_prediction_inputs_.size() == 1u);
+    require(client.pending_prediction_inputs_[0].input.input_seq == 1u);
+    require(client.pending_prediction_inputs_[0].input.move.x == 1.0f);
+    require(client.next_client_input_seq_ == 2u);
+    network_example::TransportEvent sent;
+    require(loopback->PollClientEvent(sent));
+    network_example::PeerId sent_player = 0u;
+    PlayerInput sent_input{};
+    require(network_example::decode_input_packet(
+        sent.payload.data(), sent.payload.size(), &sent_player, &sent_input));
+    require(sent_player == 7u);
+    require(sent_input.input_seq == 1u);
+    require(sent_input.move.x == 1.0f);
+
+    latest.input_seq = 5000u;
+    latest.move = KernelVec2{0.0f, 1.0f};
+    client.submit_input(7u, latest);
+    client.update(1.0f / 30.0f);
+    require(client.pending_prediction_inputs_.size() == 2u);
+    require(client.pending_prediction_inputs_[1].input.input_seq == 2u);
+    require(client.pending_prediction_inputs_[1].input.move.y == 1.0f);
+    require(loopback->PollClientEvent(sent));
+    require(network_example::decode_input_packet(
+        sent.payload.data(), sent.payload.size(), &sent_player, &sent_input));
+    require(sent_input.input_seq == 2u);
+    require(sent_input.move.y == 1.0f);
+}
+
+std::size_t fixed_tick_command_count_for_submit_rate(std::uint32_t updates_per_second) {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+    client.has_welcome_ = true;
+    client.local_client_peer_id_ = 7u;
+    client.local_player_net_id_ = 1u;
+
+    PlayerInput input{};
+    input.move = KernelVec2{1.0f, 0.0f};
+    const float delta_seconds = 1.0f / static_cast<float>(updates_per_second);
+    for (std::uint32_t update = 0; update < updates_per_second; ++update) {
+        input.input_seq = 1000u + update;
+        client.submit_input(7u, input);
+        client.update(delta_seconds);
+    }
+    require(client.pending_prediction_inputs_.empty() ||
+            client.pending_prediction_inputs_.front().input.input_seq == 1u);
+    if (!client.pending_prediction_inputs_.empty()) {
+        require(client.pending_prediction_inputs_.back().input.input_seq ==
+                client.pending_prediction_inputs_.size());
+    }
+    return client.pending_prediction_inputs_.size();
+}
+
+void native_fixed_tick_is_submit_rate_independent() {
+    const std::size_t at_10_hz = fixed_tick_command_count_for_submit_rate(10u);
+    const std::size_t at_30_hz = fixed_tick_command_count_for_submit_rate(30u);
+    const std::size_t at_60_hz = fixed_tick_command_count_for_submit_rate(60u);
+    const std::size_t at_144_hz = fixed_tick_command_count_for_submit_rate(144u);
+    require(at_10_hz == 30u);
+    require(at_30_hz == at_10_hz);
+    require(at_60_hz == at_10_hz);
+    require(at_144_hz == at_10_hz);
+}
+
+void native_action_intent_latch_and_server_movement_hold_are_bounded() {
+    KernelConfig client_config{};
+    client_config.mode = KernelMode_Client;
+    client_config.tick.server_tick_rate = 30;
+    client_config.tick.snapshot_rate = 15;
+    network_example::KernelEngine client(client_config);
+    client.reset_runtime_state(KernelMode_Client);
+    client.has_welcome_ = true;
+    client.local_client_peer_id_ = 7u;
+    client.local_player_net_id_ = 1u;
+
+    PlayerInput edge{};
+    edge.action_intent = ActionIntent{
+        42u, KernelActionBinding_PrimaryFire, 0u, 0u};
+    client.submit_input(7u, edge);
+    client.submit_input(7u, edge);
+    require(client.pending_client_action_intents_.size() == 1u);
+    client.update(1.0f / 30.0f);
+    require(client.pending_client_action_intents_.empty());
+    require(client.pending_prediction_inputs_.back()
+                .input.action_intent.action_instance_id == 42u);
+
+    for (std::uint32_t index = 0; index < 33u; ++index) {
+        edge.action_intent.action_instance_id = 100u + index;
+        client.submit_input(7u, edge);
+    }
+    require(client.pending_client_action_intents_.size() == 32u);
+    bool saw_overflow = false;
+    for (const KernelEvent& event : client.events_) {
+        saw_overflow = saw_overflow ||
+            (event.type == KernelEventType_Error && event.code == 27u);
+    }
+    require(saw_overflow);
+
+    KernelConfig server_config{};
+    server_config.mode = KernelMode_DedicatedServer;
+    server_config.tick.server_tick_rate = 30;
+    server_config.tick.snapshot_rate = 15;
+    network_example::KernelEngine server(server_config);
+    server.reset_runtime_state(KernelMode_DedicatedServer);
+    network_example::KernelEngine::PeerSession session{};
+    session.peer = 7u;
+    session.player = 1u;
+    session.welcomed = true;
+    server.peer_sessions_.push_back(session);
+
+    PlayerInput movement{};
+    movement.input_seq = 1u;
+    movement.move = KernelVec2{1.0f, 0.0f};
+    movement.action_intent = ActionIntent{
+        500u, KernelActionBinding_PrimaryFire, 0u, 0u};
+    movement.action_input = ActionInput{500u, 1u, 0u, 0u};
+    require(server.cache_server_movement_input(
+        &server.peer_sessions_[0], movement, UINT64_C(100000)));
+    require(!server.cache_server_movement_input(
+        &server.peer_sessions_[0], movement, UINT64_C(100001)));
+
+    std::vector<network_example::QueuedInput> effective =
+        server.build_effective_movement_inputs(UINT64_C(349999));
+    require(effective.size() == 1u);
+    require(effective[0].input.move.x == 1.0f);
+    require(effective[0].input.action_intent.action_instance_id == 0u);
+    require(effective[0].input.action_input.action_instance_id == 0u);
+    server.acknowledge_simulated_movement_inputs(effective);
+    require(server.peer_sessions_[0].last_processed_input_seq == 1u);
+
+    movement.input_seq = 2u;
+    movement.move = KernelVec2{};
+    require(server.cache_server_movement_input(
+        &server.peer_sessions_[0], movement, UINT64_C(350000)));
+    effective = server.build_effective_movement_inputs(UINT64_C(350000));
+    require(effective.size() == 1u);
+    require(effective[0].input.move.x == 0.0f);
+    effective = server.build_effective_movement_inputs(UINT64_C(600001));
+    require(effective.empty());
+    require(!server.peer_sessions_[0].has_movement_input);
+}
+
 }  // namespace
 
 int main() {
@@ -3228,6 +3400,9 @@ int main() {
     owner_action_correction_timeout_and_reset_converge();
     server_routes_fire_result_to_owner_and_presentation_to_observer();
     owner_action_prediction_and_discrete_interpolation();
+    native_fixed_tick_coalesces_client_input_and_owns_sequence();
+    native_fixed_tick_is_submit_rate_independent();
+    native_action_intent_latch_and_server_movement_hold_are_bounded();
 
     KernelConfig config{};
     config.mode = KernelMode_Client;

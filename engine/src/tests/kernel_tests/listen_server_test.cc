@@ -335,7 +335,7 @@ int main() {
     assert(!has_non_player_state(predicted_states, predicted_count));
     const RenderEntityState predicted_player =
         find_player(predicted_states, predicted_count);
-    assert(predicted_player.position.x > before_player.position.x);
+    assert(predicted_player.position.x == before_player.position.x);
     assert(predicted_player.hp == 100);
     assert(predicted_player.max_hp == 100);
 
@@ -352,6 +352,15 @@ int main() {
     assert(after_player.position.x > before_player.position.x);
     assert(after_player.hp == 100);
     assert(after_player.max_hp == 100);
+
+    Kernel_Update(kernel, 1.0f / 30.0f);
+    std::array<RenderEntityState, 16> held_states{};
+    const std::uint32_t held_count = Kernel_GetRenderStates(
+        kernel,
+        held_states.data(),
+        static_cast<std::uint32_t>(held_states.size()));
+    const RenderEntityState held_player = find_player(held_states, held_count);
+    assert(held_player.position.x > after_player.position.x);
 
     PlayerInput fire_input{};
     fire_input.input_seq = 2;
@@ -386,6 +395,18 @@ int main() {
     projectile_input.selected_weapon = 2;
     Kernel_SubmitInput(kernel, 1, &projectile_input);
 
+    std::array<RenderEntityState, 16> before_projectile_states{};
+    const std::uint32_t before_projectile_count = Kernel_GetRenderStates(
+        kernel,
+        before_projectile_states.data(),
+        static_cast<std::uint32_t>(before_projectile_states.size()));
+    assert(!has_projectile_action(
+        before_projectile_states,
+        before_projectile_count,
+        projectile_input.action_intent.action_instance_id));
+
+    Kernel_Update(kernel, 1.0f / 30.0f);
+
     std::array<RenderEntityState, 16> predicted_projectile_states{};
     const std::uint32_t predicted_projectile_count = Kernel_GetRenderStates(
         kernel,
@@ -396,9 +417,6 @@ int main() {
         predicted_projectile_count,
         projectile_input.action_intent.action_instance_id);
     assert(predicted_projectile.entity_id != 0);
-    assert(predicted_projectile.net_id == 0);
-
-    Kernel_Update(kernel, 1.0f / 30.0f);
 
     std::array<KernelEvent, 16> projectile_events{};
     const std::uint32_t projectile_event_count = Kernel_PollEvents(
@@ -452,6 +470,17 @@ int main() {
     rocket_input.selected_weapon = network_example::kWeaponSlot3;
     Kernel_SubmitInput(kernel, 1, &rocket_input);
 
+    std::array<RenderEntityState, 16> before_rocket_states{};
+    const std::uint32_t before_rocket_count = Kernel_GetRenderStates(
+        kernel,
+        before_rocket_states.data(),
+        static_cast<std::uint32_t>(before_rocket_states.size()));
+    assert(!has_projectile_action(
+        before_rocket_states,
+        before_rocket_count,
+        rocket_input.action_intent.action_instance_id));
+
+    Kernel_Update(kernel, 1.0f);
     std::array<RenderEntityState, 16> predicted_rocket_states{};
     const std::uint32_t predicted_rocket_count = Kernel_GetRenderStates(
         kernel,
@@ -462,9 +491,6 @@ int main() {
         predicted_rocket_count,
         rocket_input.action_intent.action_instance_id);
     assert(predicted_rocket.entity_id != 0);
-    assert(predicted_rocket.net_id == 0);
-
-    Kernel_Update(kernel, 1.0f);
     std::array<KernelEvent, 16> rocket_events{};
     const std::uint32_t rocket_event_count = Kernel_PollEvents(
         kernel,
@@ -505,7 +531,7 @@ int main() {
         kernel,
         rejected_predicted_states.data(),
         static_cast<std::uint32_t>(rejected_predicted_states.size()));
-    assert(has_projectile_action(
+    assert(!has_projectile_action(
         rejected_predicted_states,
         rejected_predicted_count,
         rejected_projectile_input.action_intent.action_instance_id));

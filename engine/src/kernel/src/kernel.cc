@@ -35,6 +35,7 @@ namespace {
 constexpr std::uint32_t kClientSnapshotMetadataGraceTicks = 2;
 constexpr bool kDropStaleClientSnapshotsMissingMetadata = true;
 constexpr std::uint64_t kLocalActionResultTimeoutUs = UINT64_C(1000000);
+constexpr std::uint64_t kInputIntentTimeoutUs = UINT64_C(250000);
 constexpr std::uint32_t kDefaultActionPacketBudgetBytes = 1200;
 constexpr std::uint32_t kDefaultRemotePresentationExpiryMs = 250;
 constexpr std::uint32_t kDefaultRemotePresentationClientBudgetBytesPerSecond = 8192;
@@ -44,6 +45,7 @@ constexpr std::size_t kLocalActionResultRecordBytes = 12;
 constexpr std::size_t kRemotePresentationRecordBytes = 20;
 constexpr std::size_t kRemotePresentationDedupCapacity = 256;
 constexpr std::size_t kRecentActionResultCapacity = 256;
+constexpr std::size_t kMaxPendingClientActionIntents = 32;
 
 KernelConfig with_kernel_defaults(KernelConfig config) {
     config.tick = with_tick_defaults(config.tick);
@@ -1802,6 +1804,10 @@ void KernelEngine::update(float delta_seconds) {
     pump_gameplay_catalog_transfers();
     const std::uint32_t ticks_to_run = tick_loop_.accumulate(delta_seconds);
     for (std::uint32_t tick = 0; tick < ticks_to_run; ++tick) {
+        const bool emitted_client_input = emit_client_input_for_tick();
+        if (emitted_client_input && config_.mode == KernelMode_ListenServer) {
+            poll_transport();
+        }
         simulate_tick();
     }
     poll_client_transport();
@@ -1809,149 +1815,50 @@ void KernelEngine::update(float delta_seconds) {
 }
 
 void KernelEngine::submit_input(PeerId local_player_id, const PlayerInput& input) {
-    if (config_.mode == KernelMode_ListenServer &&
-        listen_server_transport_ != nullptr) {
-        const PlayerInput input_to_send = prepare_client_input(input);
-        predict_local_input(input_to_send);
-        const std::uint32_t primary_gate_before =
-            input_to_send.selected_weapon <
-                    predicted_next_primary_commit_tick_.size()
-                ? predicted_next_primary_commit_tick_[
-                      input_to_send.selected_weapon]
-                : 0u;
-        const WeaponMechanicsDefinition* predicted_weapon =
-            entity_weapon_mechanics(
-                world_, local_player_net_id_, input_to_send.selected_weapon);
-        const std::uint32_t predicted_action_template_id =
-            predicted_weapon == nullptr
-                ? 0u
-                : input_to_send.action_intent.binding_id ==
-                          KernelActionBinding_PrimaryFire
-                      ? predicted_weapon->fire_action_template_id
-                      : predicted_weapon->reload_action_template_id;
-        const bool predicted_commit = predict_local_action(input_to_send);
-        if (input_to_send.action_intent.action_instance_id != 0u) {
-            std::uint16_t ammo_before = 0u;
-            NetId active_effect_before = 0u;
-            if (const auto actor = world_.find_entity(local_player_net_id_);
-                actor.has_value() &&
-                world_.registry().all_of<WeaponState>(*actor)) {
-                const WeaponState& weapon = world_.registry().get<WeaponState>(*actor);
-                if (input_to_send.selected_weapon < weapon.ammo.size()) {
-                    ammo_before = weapon.ammo[input_to_send.selected_weapon];
-                }
-                active_effect_before = weapon.active_effect_net_id;
-            }
-            auto outstanding = outstanding_predicted_actions_.try_emplace(
-                input_to_send.action_intent.action_instance_id,
-                OutstandingPredictedAction{
-                    input_to_send.action_intent.action_instance_id,
-                    client_local_time_us_,
-                    0u,
-                    input_to_send.action_intent.binding_id,
-                    input_to_send.selected_weapon,
-                    predicted_action_template_id,
-                    primary_gate_before,
-                    0u,
-                    ammo_before,
-                    active_effect_before,
-                }).first;
-            outstanding->second.last_activity_us = client_local_time_us_;
-        }
-        if (predicted_commit) {
-            predict_local_projectile(input_to_send);
-        }
-        rebuild_render_states();
-        const std::vector<std::uint8_t> packet =
-            encode_input_packet(local_player_id, input_to_send, next_packet_sequence_++);
-        if (!listen_server_transport_->SendLocalClient(
-                local_player_id,
-                packet.data(),
-                static_cast<std::uint32_t>(packet.size()),
-                SendMode::kUnreliable,
-                ChannelId::kInput)) {
-            push_event(KernelEventType_Error, 0, local_player_id, 4);
-        } else {
-            record_sent_packet(
-                static_cast<std::uint32_t>(packet.size()),
-                SendMode::kUnreliable,
-                ChannelId::kInput);
-        }
-        return;
-    }
-
-    if (config_.mode == KernelMode_Client) {
+    const bool local_client = config_.mode == KernelMode_Client ||
+        (config_.mode == KernelMode_ListenServer &&
+         listen_server_transport_ != nullptr);
+    if (local_client) {
         if (!has_welcome_) {
             push_event(KernelEventType_Error, 0, 0, 8);
             return;
         }
-
-        const PlayerInput input_to_send = prepare_client_input(input);
-        predict_local_input(input_to_send);
-        const std::uint32_t primary_gate_before =
-            input_to_send.selected_weapon <
-                    predicted_next_primary_commit_tick_.size()
-                ? predicted_next_primary_commit_tick_[
-                      input_to_send.selected_weapon]
-                : 0u;
-        const WeaponMechanicsDefinition* predicted_weapon =
-            entity_weapon_mechanics(
-                world_, local_player_net_id_, input_to_send.selected_weapon);
-        const std::uint32_t predicted_action_template_id =
-            predicted_weapon == nullptr
-                ? 0u
-                : input_to_send.action_intent.binding_id ==
-                          KernelActionBinding_PrimaryFire
-                      ? predicted_weapon->fire_action_template_id
-                      : predicted_weapon->reload_action_template_id;
-        const bool predicted_commit = predict_local_action(input_to_send);
-        if (input_to_send.action_intent.action_instance_id != 0u) {
-            std::uint16_t ammo_before = 0u;
-            NetId active_effect_before = 0u;
-            if (const auto actor = world_.find_entity(local_player_net_id_);
-                actor.has_value() &&
-                world_.registry().all_of<WeaponState>(*actor)) {
-                const WeaponState& weapon = world_.registry().get<WeaponState>(*actor);
-                if (input_to_send.selected_weapon < weapon.ammo.size()) {
-                    ammo_before = weapon.ammo[input_to_send.selected_weapon];
+        PlayerInput prepared = prepare_client_input(input);
+        const std::uint32_t action_instance_id =
+            prepared.action_intent.action_instance_id;
+        if (action_instance_id != 0u) {
+            const bool duplicate =
+                std::any_of(
+                    pending_client_action_intents_.begin(),
+                    pending_client_action_intents_.end(),
+                    [action_instance_id](const PlayerInput& pending) {
+                        return pending.action_intent.action_instance_id ==
+                            action_instance_id;
+                    }) ||
+                outstanding_predicted_actions_.contains(action_instance_id) ||
+                applied_local_action_results_.contains(action_instance_id);
+            if (!duplicate) {
+                if (pending_client_action_intents_.size() >=
+                    kMaxPendingClientActionIntents) {
+                    push_event(
+                        KernelEventType_Error,
+                        local_player_net_id_,
+                        local_client_peer_id_,
+                        27);
+                } else {
+                    pending_client_action_intents_.push_back(prepared);
                 }
-                active_effect_before = weapon.active_effect_net_id;
             }
-            auto outstanding = outstanding_predicted_actions_.try_emplace(
-                input_to_send.action_intent.action_instance_id,
-                OutstandingPredictedAction{
-                    input_to_send.action_intent.action_instance_id,
-                    client_local_time_us_,
-                    0u,
-                    input_to_send.action_intent.binding_id,
-                    input_to_send.selected_weapon,
-                    predicted_action_template_id,
-                    primary_gate_before,
-                    0u,
-                    ammo_before,
-                    active_effect_before,
-                }).first;
-            outstanding->second.last_activity_us = client_local_time_us_;
         }
-        if (predicted_commit) {
-            predict_local_projectile(input_to_send);
-        }
-        rebuild_render_states();
-        const std::vector<std::uint8_t> packet =
-            encode_input_packet(local_client_peer_id_, input_to_send, next_packet_sequence_++);
-        if (!transport_->Send(
-                kServerPeerId,
-                packet.data(),
-                static_cast<std::uint32_t>(packet.size()),
-                SendMode::kUnreliable,
-                ChannelId::kInput)) {
-            push_event(KernelEventType_Error, 0, local_client_peer_id_, 4);
-        } else {
-            record_sent_packet(
-                static_cast<std::uint32_t>(packet.size()),
-                SendMode::kUnreliable,
-                ChannelId::kInput);
-        }
+
+        prepared.input_seq = 0u;
+        prepared.action_intent = ActionIntent{};
+        latest_client_input_ = prepared;
+        latest_client_input_time_us_ = client_local_time_us_;
+        latest_client_input_peer_ = config_.mode == KernelMode_ListenServer
+            ? local_player_id
+            : local_client_peer_id_;
+        has_latest_client_input_ = true;
         return;
     }
 
@@ -1968,6 +1875,186 @@ void KernelEngine::submit_input(PeerId local_player_id, const PlayerInput& input
     });
     local_last_processed_input_seq_ =
         std::max(local_last_processed_input_seq_, input.input_seq);
+}
+
+bool KernelEngine::emit_client_input_for_tick() {
+    if (!has_welcome_ || !has_latest_client_input_) {
+        return false;
+    }
+
+    PlayerInput input = latest_client_input_;
+    const bool fresh = client_local_time_us_ >= latest_client_input_time_us_ &&
+        client_local_time_us_ - latest_client_input_time_us_ <=
+            kInputIntentTimeoutUs;
+    if (!fresh) {
+        input.move = KernelVec2{};
+        input.look_delta = KernelVec2{};
+        input.buttons = 0u;
+        input.action_input = ActionInput{};
+    }
+    input.action_intent = ActionIntent{};
+    if (!pending_client_action_intents_.empty()) {
+        const PlayerInput edge = pending_client_action_intents_.front();
+        pending_client_action_intents_.pop_front();
+        input.action_intent = edge.action_intent;
+        input.client_action_time_us = edge.client_action_time_us;
+        input.aim_dir = edge.aim_dir;
+        input.selected_weapon = edge.selected_weapon;
+    } else if (input.client_action_time_us == 0u) {
+        input.client_action_time_us = client_local_action_time_us();
+    }
+    input.input_seq = next_client_input_seq_++;
+    latest_client_input_.look_delta = KernelVec2{};
+    process_client_input_command(latest_client_input_peer_, input);
+    return true;
+}
+
+void KernelEngine::process_client_input_command(
+    PeerId peer,
+    const PlayerInput& input) {
+    predict_local_input(input);
+    const std::uint32_t primary_gate_before =
+        input.selected_weapon < predicted_next_primary_commit_tick_.size()
+            ? predicted_next_primary_commit_tick_[input.selected_weapon]
+            : 0u;
+    const WeaponMechanicsDefinition* predicted_weapon = entity_weapon_mechanics(
+        world_, local_player_net_id_, input.selected_weapon);
+    const std::uint32_t predicted_action_template_id =
+        predicted_weapon == nullptr
+            ? 0u
+            : input.action_intent.binding_id == KernelActionBinding_PrimaryFire
+                ? predicted_weapon->fire_action_template_id
+                : predicted_weapon->reload_action_template_id;
+    const bool predicted_commit = predict_local_action(input);
+    if (input.action_intent.action_instance_id != 0u) {
+        std::uint16_t ammo_before = 0u;
+        NetId active_effect_before = 0u;
+        if (const auto actor = world_.find_entity(local_player_net_id_);
+            actor.has_value() && world_.registry().all_of<WeaponState>(*actor)) {
+            const WeaponState& weapon = world_.registry().get<WeaponState>(*actor);
+            if (input.selected_weapon < weapon.ammo.size()) {
+                ammo_before = weapon.ammo[input.selected_weapon];
+            }
+            active_effect_before = weapon.active_effect_net_id;
+        }
+        auto outstanding = outstanding_predicted_actions_.try_emplace(
+            input.action_intent.action_instance_id,
+            OutstandingPredictedAction{
+                input.action_intent.action_instance_id,
+                client_local_time_us_,
+                0u,
+                input.action_intent.binding_id,
+                input.selected_weapon,
+                predicted_action_template_id,
+                primary_gate_before,
+                0u,
+                ammo_before,
+                active_effect_before,
+            }).first;
+        outstanding->second.last_activity_us = client_local_time_us_;
+    }
+    if (predicted_commit) {
+        predict_local_projectile(input);
+    }
+
+    const std::vector<std::uint8_t> packet =
+        encode_input_packet(peer, input, next_packet_sequence_++);
+    const bool sent = config_.mode == KernelMode_ListenServer
+        ? listen_server_transport_ != nullptr &&
+            listen_server_transport_->SendLocalClient(
+                peer,
+                packet.data(),
+                static_cast<std::uint32_t>(packet.size()),
+                SendMode::kUnreliable,
+                ChannelId::kInput)
+        : transport_ != nullptr && transport_->Send(
+            kServerPeerId,
+            packet.data(),
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kUnreliable,
+            ChannelId::kInput);
+    if (!sent) {
+        push_event(KernelEventType_Error, 0, peer, 4);
+        return;
+    }
+    record_sent_packet(
+        static_cast<std::uint32_t>(packet.size()),
+        SendMode::kUnreliable,
+        ChannelId::kInput);
+}
+
+bool KernelEngine::cache_server_movement_input(
+    PeerSession* session,
+    const PlayerInput& input,
+    std::uint64_t received_server_time_us) {
+    if (session == nullptr ||
+        (session->has_received_input &&
+         input.input_seq <= session->last_received_input_seq)) {
+        return false;
+    }
+    session->latest_movement_input = input;
+    session->latest_movement_input.action_intent = ActionIntent{};
+    session->latest_movement_input.action_input = ActionInput{};
+    session->last_received_input_seq = input.input_seq;
+    session->last_movement_input_server_time_us = received_server_time_us;
+    session->has_received_input = true;
+    session->has_movement_input = true;
+    return true;
+}
+
+std::vector<QueuedInput> KernelEngine::build_effective_movement_inputs(
+    std::uint64_t server_time_us) {
+    std::vector<QueuedInput> effective = pending_inputs_;
+    const auto append_held_input = [this, server_time_us, &effective](
+                                       PeerSession* session) {
+        if (session == nullptr || !session->welcomed ||
+            !session->has_movement_input) {
+            return;
+        }
+        if (server_time_us < session->last_movement_input_server_time_us ||
+            server_time_us - session->last_movement_input_server_time_us >
+                kInputIntentTimeoutUs) {
+            session->has_movement_input = false;
+            session->latest_movement_input = PlayerInput{};
+            return;
+        }
+        effective.push_back(QueuedInput{
+            session->peer,
+            session->latest_movement_input,
+            tick_loop_.current_tick(),
+            0u,
+            false,
+        });
+    };
+
+    if (config_.mode == KernelMode_ListenServer) {
+        append_held_input(&local_listen_session_);
+    }
+    for (PeerSession& session : peer_sessions_) {
+        append_held_input(&session);
+    }
+    return effective;
+}
+
+void KernelEngine::acknowledge_simulated_movement_inputs(
+    const std::vector<QueuedInput>& inputs) {
+    for (const QueuedInput& queued_input : inputs) {
+        if (queued_input.controlled_net_id != 0u) {
+            continue;
+        }
+        PeerSession* session = result_session_for_peer(queued_input.owner_peer);
+        if (session != nullptr) {
+            session->last_processed_input_seq = std::max(
+                session->last_processed_input_seq,
+                queued_input.input.input_seq);
+        }
+        if (config_.mode == KernelMode_ListenServer &&
+            queued_input.owner_peer == kLocalListenPeerId) {
+            local_last_processed_input_seq_ = std::max(
+                local_last_processed_input_seq_,
+                queued_input.input.input_seq);
+        }
+    }
 }
 
 bool KernelEngine::load_gameplay_catalog(
@@ -3463,6 +3550,12 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     client_metadata_timeout_reported_entities_.clear();
     client_despawned_entities_.clear();
     pending_prediction_inputs_.clear();
+    latest_client_input_ = PlayerInput{};
+    pending_client_action_intents_.clear();
+    latest_client_input_time_us_ = 0;
+    next_client_input_seq_ = 1;
+    latest_client_input_peer_ = 0;
+    has_latest_client_input_ = false;
     predicted_projectiles_.clear();
     outstanding_predicted_actions_.clear();
     applied_local_action_results_.clear();
@@ -3648,8 +3741,12 @@ void KernelEngine::poll_transport() {
             }
             PeerSession* mutable_session = result_session_for_peer(
                 transport_event.peer);
-            prepare_server_action_intent(mutable_session, &input);
             const std::uint64_t received_server_time_us = current_server_time_us();
+            if (!cache_server_movement_input(
+                    mutable_session, input, received_server_time_us)) {
+                continue;
+            }
+            prepare_server_action_intent(mutable_session, &input);
             const std::uint64_t action_server_time_us =
                 convert_client_action_time_to_server_time(
                     player_id,
@@ -3662,13 +3759,6 @@ void KernelEngine::poll_transport() {
                 action_server_time_us,
                 true,
             });
-            if (mutable_session != nullptr) {
-                mutable_session->last_processed_input_seq =
-                    std::max(mutable_session->last_processed_input_seq, input.input_seq);
-            } else if (config_.mode == KernelMode_ListenServer) {
-                local_last_processed_input_seq_ =
-                    std::max(local_last_processed_input_seq_, input.input_seq);
-            }
         }
     }
 }
@@ -4544,6 +4634,12 @@ void KernelEngine::clear_client_session() {
     client_despawned_entities_.clear();
     latest_client_snapshot_ = WorldSnapshot{};
     predicted_local_entity_ = EntitySnapshot{};
+    latest_client_input_ = PlayerInput{};
+    pending_client_action_intents_.clear();
+    latest_client_input_time_us_ = 0;
+    next_client_input_seq_ = 1;
+    latest_client_input_peer_ = 0;
+    has_latest_client_input_ = false;
     predicted_character_state_ = movement_solver::CharacterMovementState{};
     predicted_character_tick_ = 0;
     local_correction_offset_ = glm::vec3{0.0f, 0.0f, 0.0f};
@@ -6052,14 +6148,17 @@ void KernelEngine::simulate_tick() {
     }
     sync_entity_colliders_from_world();
     MovementSimulationStats movement_stats{};
+    std::vector<QueuedInput> movement_inputs =
+        build_effective_movement_inputs(server_time_us);
     simulate_actor_movement(
         world_,
-        pending_inputs_,
+        movement_inputs,
         fixed_delta,
         tick_loop_.current_tick(),
         &events_,
         &movement_stats,
         session_rules_.actor_blocking_mode);
+    acknowledge_simulated_movement_inputs(movement_inputs);
     benchmark_stats_.grounded_query_count +=
         movement_stats.grounded_query_count;
     benchmark_stats_.grounded_query_cost_us +=

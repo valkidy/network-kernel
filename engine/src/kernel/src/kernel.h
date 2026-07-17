@@ -1,9 +1,10 @@
 #ifndef KERNEL_SRC_KERNEL_H_
 #define KERNEL_SRC_KERNEL_H_
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
-#include <array>
+#include <deque>
 #include <memory>
 #include <string_view>
 #include <unordered_map>
@@ -241,6 +242,11 @@ private:
         std::int64_t clock_offset_us = 0;
         bool has_clock_sync = false;
         ByteTokenBucket remote_presentation_budget;
+        PlayerInput latest_movement_input{};
+        std::uint32_t last_received_input_seq = 0;
+        std::uint64_t last_movement_input_server_time_us = 0;
+        bool has_received_input = false;
+        bool has_movement_input = false;
     };
 
     struct ClientReplicatedEntity {
@@ -410,6 +416,16 @@ private:
     void diagnose_client_snapshot_metadata_waits();
     void reconcile_local_prediction(const WorldSnapshot& snapshot);
     void reconcile_predicted_projectiles(const WorldSnapshot& snapshot);
+    bool emit_client_input_for_tick();
+    void process_client_input_command(PeerId peer, const PlayerInput& input);
+    bool cache_server_movement_input(
+        PeerSession* session,
+        const PlayerInput& input,
+        std::uint64_t received_server_time_us);
+    std::vector<QueuedInput> build_effective_movement_inputs(
+        std::uint64_t server_time_us);
+    void acknowledge_simulated_movement_inputs(
+        const std::vector<QueuedInput>& inputs);
     void predict_local_input(const PlayerInput& input);
     bool prepare_prediction_physics();
     bool build_local_character_movement_config(
@@ -562,6 +578,12 @@ private:
     std::unordered_set<NetId> client_metadata_timeout_reported_entities_;
     std::unordered_map<NetId, ClientEntityTombstone> client_despawned_entities_;
     std::vector<PendingPredictionInput> pending_prediction_inputs_;
+    PlayerInput latest_client_input_{};
+    std::deque<PlayerInput> pending_client_action_intents_;
+    std::uint64_t latest_client_input_time_us_ = 0;
+    std::uint32_t next_client_input_seq_ = 1;
+    PeerId latest_client_input_peer_ = 0;
+    bool has_latest_client_input_ = false;
     std::vector<PredictedProjectile> predicted_projectiles_;
     std::unordered_map<std::uint32_t, OutstandingPredictedAction>
         outstanding_predicted_actions_;
