@@ -2802,14 +2802,7 @@ WeaponCatalogConfig load_weapon_catalog_from_source(
     WeaponCatalogConfig weapons;
     weapons.projectile_sync_modes.fill(
         KernelProjectileSyncMode_HybridDeterministicThenSnapshot);
-    std::array<bool, kWeaponCount> seen{
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false};
+    std::array<bool, kWeaponCount> seen{};
     const std::vector<std::string> files = source.list_yaml_files(directory);
     for (const std::string& file : files) {
         const YAML::Node document = source.load_yaml(file);

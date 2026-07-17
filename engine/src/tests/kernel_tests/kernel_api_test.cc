@@ -241,7 +241,7 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 43u);
+    assert(KERNEL_ABI_VERSION == 44u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CONTROL_PLANE_RPC) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ACTION_TIMELINE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LOCAL_ACTION_RESULTS) != 0);
@@ -258,7 +258,7 @@ int main() {
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNSUPPORTED_CATALOG_VERSION == 3u);
-    assert(KERNEL_MAX_WEAPONS == 7u);
+    assert(KERNEL_MAX_WEAPONS == 8u);
     assert(KernelColliderShapeType_Cone == 4u);
     assert(KernelColliderPurpose_Vision == (1u << 3));
     assert(KERNEL_COLLISION_LAYER_AGENT_VISION == 0x00000010u);

@@ -27,6 +27,10 @@ animations:
   chasing: 1
 vision:
   collider_template: sentry_grunt_vision_cone
+# Artillery turret design note:
+# The sentry controller currently aims directly at the target. A grenade turret
+# should instead solve a ballistic direction using projectile speed and gravity,
+# then submit that normalized direction (usually with aim_dir.y > 0).
 ai:
   controller: sentry
   profile: default

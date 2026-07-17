@@ -129,7 +129,7 @@ struct DirectorRuntime {
     std::uint32_t spawn_cursor = 0;
 };
 
-inline constexpr std::size_t kWeaponCount = 7;
+inline constexpr std::size_t kWeaponCount = 8;
 inline constexpr std::uint8_t kWeaponSlot0 = 0;
 inline constexpr std::uint8_t kWeaponSlot1 = 1;
 inline constexpr std::uint8_t kWeaponSlot2 = 2;
@@ -137,6 +137,7 @@ inline constexpr std::uint8_t kWeaponSlot3 = 3;
 inline constexpr std::uint8_t kWeaponSlot4 = 4;
 inline constexpr std::uint8_t kWeaponSlot5 = 5;
 inline constexpr std::uint8_t kWeaponSlot6 = 6;
+inline constexpr std::uint8_t kWeaponSlot7 = 7;
 
 enum class WeaponFireMode : std::uint8_t {
     kHitscan = 0,
@@ -220,12 +221,12 @@ inline constexpr std::uint32_t kCollisionMaskDamageable =
 
 struct WeaponState {
     std::uint8_t weapon_id = 0;
-    std::array<std::uint16_t, kWeaponCount> ammo{0, 0, 0, 0, 0, 0, 0};
+    std::array<std::uint16_t, kWeaponCount> ammo{};
     // reserve_magazines counts spare full magazines, not spare bullets.
     // UINT16_MAX is allowed as an authored practical maximum for match lengths
     // that should not exhaust reserves in normal play. It is not a sentinel:
     // reload logic decrements it like any other count and must not special-case 65535.
-    std::array<std::uint16_t, kWeaponCount> reserve_magazines{0, 0, 0, 0, 0, 0, 0};
+    std::array<std::uint16_t, kWeaponCount> reserve_magazines{};
     std::array<std::uint32_t, kWeaponCount> next_primary_commit_tick{};
     NetId active_effect_net_id = 0;
     bool is_reloading = false;
@@ -326,7 +327,7 @@ struct WeaponMechanicsDefinition {
 };
 
 struct WeaponTuning {
-    std::array<bool, kWeaponCount> configured{false, false, false, false, false, false, false};
+    std::array<bool, kWeaponCount> configured{};
     std::array<WeaponMechanicsDefinition, kWeaponCount> definitions{};
 };
 

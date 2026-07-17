@@ -16,11 +16,12 @@ namespace network_example::game_server {
 
 inline constexpr std::uint8_t kWeaponRifle = 0;
 inline constexpr std::uint8_t kWeaponShotgun = 1;
-inline constexpr std::uint8_t kWeaponGrenade = 2;
+inline constexpr std::uint8_t kWeaponSpammer = 2;
 inline constexpr std::uint8_t kWeaponRocket = 3;
 inline constexpr std::uint8_t kWeaponFireFloor = 4;
 inline constexpr std::uint8_t kWeaponBeamRifle = 5;
 inline constexpr std::uint8_t kWeaponHomingMissile = 6;
+inline constexpr std::uint8_t kWeaponGrenade = 7;
 inline constexpr std::size_t kWeaponCount = KERNEL_MAX_WEAPONS;
 inline constexpr std::uint32_t kDefaultDirectorEntityTemplateId = 100;
 

@@ -128,6 +128,19 @@ void write_valid_templates(const std::filesystem::path& dir) {
         "  acceleration: 20.0\n"
         "  max_speed: 30.0\n");
     write_file(
+        dir.parent_path() / "projectile_templates" / "grenade_shell.yaml",
+        "id: 7\nname: grenade_shell_projectile\ndamage: 45\n"
+        "sync_mode: local_predicted_deterministic\n"
+        "collider_template: projectile_sphere\n"
+        "movement_model: parabolic\nhit_response: destroy\n"
+        "damage_shape: direct_hit\nspeed: 24.0\nlifetime_ticks: 180\n"
+        "collision_mask: damageable\nmax_hit_count: 1\n"
+        "gravity: {x: 0.0, y: -9.81, z: 0.0}\n"
+        "impact_response:\n"
+        "  action: spawn_projectile\n"
+        "  projectile_template: rocket_explosion\n"
+        "  destroy_self: true\n");
+    write_file(
         dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
         "id: 4\nname: fire_floor_area\ntype: area_effect\n"
         "collider_template: area_effect_sphere\n"
@@ -190,6 +203,12 @@ void write_valid_templates(const std::filesystem::path& dir) {
         "id: 6\nname: Homing Missile\nweapon_type: projectile\nmagazine_size: 4\n"
         "fire_action_template: homing_missile_fire\nreload_ticks: 60\n"
         "projectile_template: homing_missile_projectile\n");
+    write_file(
+        dir / "grenade_launcher.yaml",
+        "id: 7\nname: Grenade Launcher\nweapon_type: projectile\n"
+        "magazine_size: 6\n"
+        "fire_action_template: grenade_launcher_fire\nreload_ticks: 90\n"
+        "projectile_template: grenade_shell_projectile\n");
 }
 
 bool load_fails(const std::filesystem::path& dir) {
@@ -238,7 +257,8 @@ void valid_repo_templates_load_all_slots() {
          ++index) {
         const KernelProjectileTemplateDefinition& projectile_template =
             storage.definition.projectile_templates[index];
-        if (projectile_template.weapon_id == network_example::game_server::kWeaponGrenade ||
+        if (projectile_template.weapon_id == network_example::game_server::kWeaponSpammer ||
+            projectile_template.weapon_id == network_example::game_server::kWeaponGrenade ||
             projectile_template.weapon_id ==
                 network_example::game_server::kWeaponHomingMissile) {
             assert(projectile_template.mechanics.collider_template_id == 7);
@@ -260,13 +280,13 @@ void valid_repo_templates_load_all_slots() {
         }
     }
     assert(found_rocket_explosion_template);
-    assert(config.weapons.definitions[network_example::game_server::kWeaponGrenade]
+    assert(config.weapons.definitions[network_example::game_server::kWeaponSpammer]
                .damage == 1);
-    assert(config.weapons.definitions[network_example::game_server::kWeaponGrenade]
+    assert(config.weapons.definitions[network_example::game_server::kWeaponSpammer]
                .magazine_size == 120);
-    assert(config.weapons.definitions[network_example::game_server::kWeaponGrenade]
+    assert(config.weapons.definitions[network_example::game_server::kWeaponSpammer]
                .reserve_magazines == kMaxReserveMagazines);
-    assert(config.weapons.definitions[network_example::game_server::kWeaponGrenade]
+    assert(config.weapons.definitions[network_example::game_server::kWeaponSpammer]
                .projectile_template_id == 2);
     assert(config.weapons.definitions[network_example::game_server::kWeaponFireFloor]
                .fire_mode == KernelWeaponFireMode_Projectile);
@@ -286,7 +306,7 @@ void valid_repo_templates_load_all_slots() {
                [network_example::game_server::kWeaponGrenade] ==
            KernelProjectileSyncMode_LocalPredictedDeterministic);
     assert(config.weapons.names[network_example::game_server::kWeaponGrenade] ==
-           "Projectile Spammer");
+           "Grenade Launcher");
     assert(config.weapons.projectile_sync_modes
                [network_example::game_server::kWeaponRocket] ==
            KernelProjectileSyncMode_ServerSnapshotOnly);

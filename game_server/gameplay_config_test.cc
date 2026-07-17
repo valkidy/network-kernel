@@ -198,6 +198,7 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
         "rifle.yaml",
         "rocket.yaml",
         "shotgun.yaml",
+        "grenade_launcher.yaml",
         "spammer.yaml",
     };
     for (const std::string& file : weapon_files) {
@@ -212,6 +213,7 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
         "rifle_fire.yaml",
         "rocket_fire.yaml",
         "shotgun_fire.yaml",
+        "grenade_launcher_fire.yaml",
         "spammer_fire.yaml",
     };
     for (const std::string& file : action_files) {
@@ -225,6 +227,7 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
         "homing_missile.yaml",
         "rocket.yaml",
         "rocket_explosion.yaml",
+        "grenade_shell.yaml",
         "spammer.yaml",
     };
     for (const std::string& file : projectile_files) {
@@ -321,6 +324,7 @@ std::vector<std::uint8_t> make_entity_template_bundle_zip(
         "rifle.yaml",
         "rocket.yaml",
         "shotgun.yaml",
+        "grenade_launcher.yaml",
         "spammer.yaml",
     };
     for (const std::string& file : weapon_files) {
@@ -335,6 +339,7 @@ std::vector<std::uint8_t> make_entity_template_bundle_zip(
         "rifle_fire.yaml",
         "rocket_fire.yaml",
         "shotgun_fire.yaml",
+        "grenade_launcher_fire.yaml",
         "spammer_fire.yaml",
     };
     for (const std::string& file : action_files) {
@@ -348,6 +353,7 @@ std::vector<std::uint8_t> make_entity_template_bundle_zip(
         "homing_missile.yaml",
         "rocket.yaml",
         "rocket_explosion.yaml",
+        "grenade_shell.yaml",
         "spammer.yaml",
     };
     for (const std::string& file : projectile_files) {
@@ -529,7 +535,7 @@ int main() {
     assert(enemy_combat_state.collider_template_id == 2);
     assert(
         enemy_combat_state.active_weapon_id ==
-        network_example::game_server::kWeaponGrenade);
+        network_example::game_server::kWeaponSpammer);
     const network_example::game_server::ActorTemplateConfig* config_enemy_template =
         network_example::game_server::find_actor_template(
             config,
@@ -565,24 +571,29 @@ int main() {
         config.weapons
             .projectile_sync_modes[network_example::game_server::kWeaponGrenade] ==
         KernelProjectileSyncMode_LocalPredictedDeterministic);
-    const KernelWeaponMechanicsDefinition& projectile_spammer =
+    const KernelWeaponMechanicsDefinition& grenade_launcher =
         config.weapons.definitions[network_example::game_server::kWeaponGrenade];
-    assert(projectile_spammer.fire_mode == KernelWeaponFireMode_Projectile);
+    assert(grenade_launcher.fire_mode == KernelWeaponFireMode_Projectile);
+    assert(grenade_launcher.damage == 45);
+    assert(grenade_launcher.magazine_size == 6);
+    assert(grenade_launcher.projectile_template_id == 7);
+    assert(config.weapons.collider_template_ids
+               [network_example::game_server::kWeaponGrenade] == 7);
+    assert(config.weapons.names[network_example::game_server::kWeaponGrenade] ==
+           "Grenade Launcher");
+    assert(
+        network_example::game_server::active_weapon_id(*config_enemy_template) ==
+        network_example::game_server::kWeaponSpammer);
+    assert(config_enemy_template->sentry.weapon_id ==
+           network_example::game_server::kWeaponSpammer);
+    const KernelWeaponMechanicsDefinition& projectile_spammer =
+        config.weapons.definitions[network_example::game_server::kWeaponSpammer];
     assert(projectile_spammer.damage == 1);
     assert(projectile_spammer.magazine_size == 120);
     assert(projectile_spammer.reserve_magazines == kMaxReserveMagazines);
     assert(projectile_spammer.projectile_template_id == 2);
-    assert(projectile_spammer.pellet_count == 3);
-    assert(projectile_spammer.pellet_spread == 15.0f);
-    assert(config.weapons.collider_template_ids
-               [network_example::game_server::kWeaponGrenade] == 7);
-    assert(config.weapons.names[network_example::game_server::kWeaponGrenade] ==
+    assert(config.weapons.names[network_example::game_server::kWeaponSpammer] ==
            "Projectile Spammer");
-    assert(
-        network_example::game_server::active_weapon_id(*config_enemy_template) ==
-        network_example::game_server::kWeaponGrenade);
-    assert(config_enemy_template->sentry.weapon_id ==
-           network_example::game_server::kWeaponGrenade);
     assert(config_enemy_template->sentry.alert_ticks == 90);
     assert(config_enemy_template->sentry.forget_ticks == 150);
     assert(config_enemy_template->sentry.patrol_rotation_interval_ticks == 30);
@@ -602,9 +613,10 @@ int main() {
     assert(player_template.entity_type == network_example::game_server::kEntityTypeActor);
     assert(player_template.actor_type == network_example::game_server::kActorTypePlayer);
     assert(player_template.collider_template_id == 1);
-    assert(player_template.weapon_slot_count == 2);
+    assert(player_template.weapon_slot_count == 3);
     assert(player_template.weapon_slots[0] == network_example::game_server::kWeaponRocket);
     assert(player_template.weapon_slots[1] == network_example::game_server::kWeaponShotgun);
+    assert(player_template.weapon_slots[2] == network_example::game_server::kWeaponGrenade);
     assert(player_template.active_weapon_slot == 0);
     assert(player_template.vision.camp == KernelAgentCamp_PlayerSide);
     assert(player_template.vision.vision_collider_template_id == 0);
@@ -619,7 +631,7 @@ int main() {
     assert(enemy_template.actor_type == network_example::game_server::kActorTypeAgent);
     assert(enemy_template.collider_template_id == 2);
     assert(enemy_template.weapon_slot_count == 1);
-    assert(enemy_template.weapon_slots[0] == network_example::game_server::kWeaponGrenade);
+    assert(enemy_template.weapon_slots[0] == network_example::game_server::kWeaponSpammer);
     assert(enemy_template.movement_controller_type ==
            KernelMovementControllerType_Grounded);
     assert(enemy_template.movement_collider_template_id == 11);
@@ -680,15 +692,23 @@ int main() {
     assert(homing_missile.projectile_template_id == 6);
     assert(config.weapons.collider_template_ids
                [network_example::game_server::kWeaponHomingMissile] == 7);
-    assert(config.projectile_templates.size() == 6);
+    assert(config.projectile_templates.size() == 7);
     bool found_homing_projectile = false;
     bool found_rocket_projectile = false;
     bool found_rocket_explosion = false;
+    bool found_grenade_shell = false;
     bool found_spammer_projectile = false;
     bool found_fire_floor_area = false;
     bool found_beam_rifle_beam = false;
     for (const network_example::game_server::ProjectileTemplateConfig& projectile :
          config.projectile_templates) {
+        if (projectile.name == "grenade_shell_projectile") {
+            found_grenade_shell = true;
+            assert(projectile.definition.mechanics.collider_template_id == 7);
+            assert(projectile.definition.mechanics.damage == 45);
+            assert(projectile.definition.mechanics
+                       .impact_spawn_projectile_template_id == 8);
+        }
         if (projectile.name == "spammer_projectile") {
             found_spammer_projectile = true;
             assert(projectile.definition.mechanics.collider_template_id == 7);
@@ -731,6 +751,7 @@ int main() {
             assert(projectile.definition.mechanics.beam.damage_per_tick == 1);
         }
     }
+    assert(found_grenade_shell);
     assert(found_spammer_projectile);
     assert(found_rocket_projectile);
     assert(found_rocket_explosion);
@@ -876,6 +897,7 @@ int main() {
         "rifle.yaml",
         "rocket.yaml",
         "shotgun.yaml",
+        "grenade_launcher.yaml",
         "spammer.yaml",
     };
     for (const std::string& file : duplicate_collider_weapon_files) {

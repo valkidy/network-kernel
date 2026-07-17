@@ -247,6 +247,7 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip() {
         "rifle.yaml",
         "rocket.yaml",
         "shotgun.yaml",
+        "grenade_launcher.yaml",
         "spammer.yaml",
     };
     for (const std::string& file : weapon_files) {
@@ -261,6 +262,7 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip() {
         "rifle_fire.yaml",
         "rocket_fire.yaml",
         "shotgun_fire.yaml",
+        "grenade_launcher_fire.yaml",
         "spammer_fire.yaml",
     };
     for (const std::string& file : action_files) {
@@ -274,6 +276,7 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip() {
         "homing_missile.yaml",
         "rocket.yaml",
         "rocket_explosion.yaml",
+        "grenade_shell.yaml",
         "spammer.yaml",
     };
     for (const std::string& file : projectile_files) {
