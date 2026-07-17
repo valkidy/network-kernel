@@ -665,7 +665,7 @@ private:
     std::uint8_t predicted_action_weapon_id_ = 0;
     std::uint32_t predicted_action_next_commit_tick_ = 0;
     std::uint32_t predicted_action_recovery_end_tick_ = 0;
-    std::array<std::uint32_t, kWeaponCount>
+    std::array<std::uint32_t, kWeaponSlotCount>
         predicted_next_primary_commit_tick_{};
     glm::vec3 local_correction_offset_{0.0f, 0.0f, 0.0f};
     std::uint64_t next_entity_id_ = 1;

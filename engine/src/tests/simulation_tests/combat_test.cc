@@ -143,8 +143,8 @@ void configure_projectile_response_templates(network_example::World& world) {
     rocket_template.collision_mask = network_example::kCollisionLayerHostileSide;
 
     network_example::RuntimeProjectileTemplate fire_floor_template;
-    fire_floor_template.projectile_template_id = network_example::kWeaponSlot4;
-    fire_floor_template.weapon_id = network_example::kWeaponSlot4;
+    fire_floor_template.projectile_template_id = network_example::kWeaponId4;
+    fire_floor_template.weapon_id = network_example::kWeaponId4;
     fire_floor_template.projectile_type =
         network_example::ProjectileType::kAreaEffect;
     fire_floor_template.damage = 12;
@@ -198,7 +198,7 @@ void configure_test_weapons(
             45,
             75),
         weapon_definition(
-            network_example::kWeaponSlot4,
+            network_example::kWeaponId4,
             network_example::WeaponFireMode::kProjectile,
             3,
             12,
@@ -210,8 +210,8 @@ void configure_test_weapons(
         network_example::kWeaponSlot2;
     tuning.definitions[network_example::kWeaponSlot3].projectile_template_id =
         network_example::kWeaponSlot3;
-    tuning.definitions[network_example::kWeaponSlot4].projectile_template_id =
-        network_example::kWeaponSlot4;
+    tuning.definitions[network_example::kWeaponId4].projectile_template_id =
+        network_example::kWeaponId4;
     configure_projectile_response_templates(world);
     world.set_action_templates({
         {1000u, KernelActionTriggerMode_Press, 0u, 1u, 0u, 3u, 1u, 3u, 0u},
@@ -228,9 +228,11 @@ void configure_test_weapons(
 
     network_example::WeaponState& weapon =
         world.registry().get_or_emplace<network_example::WeaponState>(*entity);
-    for (std::size_t index = 0; index < network_example::kWeaponCount; ++index) {
-        weapon.ammo[index] = tuning.definitions[index].magazine_size;
-        weapon.reserve_magazines[index] = 3;
+    weapon.weapon_slot_count = network_example::kWeaponSlotCount;
+    for (std::size_t slot = 0; slot < network_example::kWeaponSlotCount; ++slot) {
+        weapon.weapon_ids[slot] = slot;
+        weapon.ammo[slot] = tuning.definitions[slot].magazine_size;
+        weapon.reserve_magazines[slot] = 3;
     }
 }
 
@@ -424,31 +426,32 @@ void action_timeline_drives_rocket_rifle_and_beam() {
     require(beam_entity.has_value());
     network_example::WeaponTuning& beam_tuning =
         beam_world.registry().get<network_example::WeaponTuning>(*beam_entity);
-    beam_tuning.configured[network_example::kWeaponSlot5] = true;
-    beam_tuning.definitions[network_example::kWeaponSlot5] = weapon_definition(
-        network_example::kWeaponSlot5,
+    beam_tuning.configured[network_example::kWeaponId5] = true;
+    beam_tuning.definitions[network_example::kWeaponId5] = weapon_definition(
+        network_example::kWeaponId5,
         network_example::WeaponFireMode::kProjectile,
         10,
         1,
         30);
-    beam_tuning.definitions[network_example::kWeaponSlot5].projectile_template_id = 5;
-    beam_tuning.definitions[network_example::kWeaponSlot5]
+    beam_tuning.definitions[network_example::kWeaponId5].projectile_template_id = 5;
+    beam_tuning.definitions[network_example::kWeaponId5]
         .fire_action_template_id = beam_action.action_template_id;
-    beam_tuning.definitions[network_example::kWeaponSlot5]
+    beam_tuning.definitions[network_example::kWeaponId5]
         .reload_action_template_id = 2004u;
     network_example::WeaponState& beam_weapon =
         beam_world.registry().get<network_example::WeaponState>(*beam_entity);
-    beam_weapon.ammo[network_example::kWeaponSlot5] = 10;
+    beam_weapon.weapon_ids[0] = network_example::kWeaponId5;
+    beam_weapon.ammo[0] = 10;
     network_example::RuntimeProjectileTemplate beam_template;
     beam_template.projectile_template_id = 5;
-    beam_template.weapon_id = network_example::kWeaponSlot5;
+    beam_template.weapon_id = network_example::kWeaponId5;
     beam_template.projectile_type = network_example::ProjectileType::kBeam;
     beam_template.damage = 1;
     beam_template.lifetime_ticks = 30;
     beam_template.beam_length = 10.0f;
     beam_template.beam_radius = 0.25f;
     beam_world.set_projectile_templates({beam_template});
-    PlayerInput beam_input = fire_input(network_example::kWeaponSlot5);
+    PlayerInput beam_input = fire_input(network_example::kWeaponId5);
     set_action_instance(beam_input, 8001u);
     events.clear();
     network_example::simulate_weapons(beam_world, queue(beam_input), 0, &events);
@@ -1249,7 +1252,10 @@ void area_effect_weapon_spawns_and_damages_enemy() {
         spawn_enemy(world, glm::vec3{1.4f, 0.0f, 0.0f});
     std::vector<KernelEvent> events;
 
-    PlayerInput input = fire_input(network_example::kWeaponSlot4);
+    network_example::WeaponState& weapon = weapon_state(world, 1);
+    weapon.weapon_ids[0] = network_example::kWeaponId4;
+    weapon.ammo[0] = 3;
+    PlayerInput input = fire_input(network_example::kWeaponId4);
     network_example::simulate_weapons(world, queue(input), 4, &events);
 
     const network_example::NetId area = spawned_area_effect(events);

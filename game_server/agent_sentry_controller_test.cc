@@ -136,14 +136,15 @@ void set_combat(
     combat.struct_size = sizeof(combat);
     combat.hp = 100;
     combat.max_hp = 100;
-    combat.active_weapon_id = network_example::game_server::kAgentSpammerWeaponId;
+    combat.active_weapon_slot = 0;
+    combat.weapon_slot_count = 1;
+    combat.weapon_ids[0] =
+        network_example::game_server::kAgentSpammerWeaponId;
     combat.collider_template_id = 1;
     combat.hitbox_center = KernelVec3{0.0f, 0.8f, 0.0f};
     combat.hitbox_half_extents = KernelVec3{0.4f, 0.8f, 0.4f};
-    combat.ammo[network_example::game_server::kAgentSpammerWeaponId] =
-        ammo;
-    combat.reserve_magazines[network_example::game_server::kAgentSpammerWeaponId] =
-        reserve_magazines;
+    combat.ammo[0] = ammo;
+    combat.reserve_magazines[0] = reserve_magazines;
     assert(Kernel_ServerSetEntityCombatState(kernel, net_id, &combat));
 }
 
@@ -277,16 +278,16 @@ int main() {
     rotation = query_rotation(kernel, enemy_net_id);
     assert_rotation_faces(rotation, 5.0f, 2.0f);
     KernelServerEntityState state = query_state(kernel, enemy_net_id);
-    assert(state.ammo[network_example::game_server::kAgentSpammerWeaponId] == 2);
+    assert(state.ammo[0] == 2);
 
     run_frame(kernel, controller, &enemies);
     assert(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kAttack);
     state = query_state(kernel, enemy_net_id);
-    assert(state.ammo[network_example::game_server::kAgentSpammerWeaponId] == 1);
+    assert(state.ammo[0] == 1);
 
     run_frame(kernel, controller, &enemies);
     state = query_state(kernel, enemy_net_id);
-    assert(state.ammo[network_example::game_server::kAgentSpammerWeaponId] == 0);
+    assert(state.ammo[0] == 0);
 
     run_frame(kernel, controller, &enemies);
     state = query_state(kernel, enemy_net_id);
@@ -297,8 +298,8 @@ int main() {
     }
     state = query_state(kernel, enemy_net_id);
     assert(state.is_reloading == 0u);
-    assert(state.ammo[network_example::game_server::kAgentSpammerWeaponId] == 2);
-    assert(state.reserve_magazines[network_example::game_server::kAgentSpammerWeaponId] == 3);
+    assert(state.ammo[0] == 2);
+    assert(state.reserve_magazines[0] == 3);
 
     assert(Kernel_ServerSetEntityTransform(kernel, player_net_id, &out_of_range, &identity));
     Kernel_Update(kernel, 1.0f / 30.0f);

@@ -207,9 +207,9 @@ int main() {
     std::uint32_t agent_count = query_enemies(kernel, &enemy_states);
     require(agent_count == 1);
     const std::uint32_t enemy_net_id = enemy_states[0].net_id;
-    require(enemy_states[0].ammo[network_example::game_server::kWeaponSpammer] == 120);
+    require(enemy_states[0].ammo[0] == 120);
     require(
-        enemy_states[0].reserve_magazines[network_example::game_server::kWeaponSpammer] ==
+        enemy_states[0].reserve_magazines[0] ==
         kMaxReserveMagazines);
     KernelWeaponMechanicsDefinition enemy_weapon{};
     enemy_weapon.struct_size = sizeof(enemy_weapon);
@@ -302,8 +302,8 @@ int main() {
         agent_count = query_enemies(kernel, &enemy_states);
         require(agent_count == 1);
         const KernelServerEntityState& enemy_state = enemy_states[0];
-        if (enemy_state.ammo[network_example::game_server::kWeaponSpammer] == 0 &&
-            enemy_state.reserve_magazines[network_example::game_server::kWeaponSpammer] ==
+        if (enemy_state.ammo[0] == 0 &&
+            enemy_state.reserve_magazines[0] ==
                 kMaxReserveMagazines) {
             saw_spammer_empty_magazine = true;
         }
@@ -311,8 +311,8 @@ int main() {
             saw_spammer_reload = true;
         }
         if (saw_spammer_reload && enemy_state.is_reloading == 0u &&
-            enemy_state.ammo[network_example::game_server::kWeaponSpammer] == 120 &&
-            enemy_state.reserve_magazines[network_example::game_server::kWeaponSpammer] ==
+            enemy_state.ammo[0] == 120 &&
+            enemy_state.reserve_magazines[0] ==
                 kMaxReserveMagazines - 1u) {
             saw_spammer_reloaded = true;
         }

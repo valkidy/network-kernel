@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 44u
+#define KERNEL_ABI_VERSION 45u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -25,7 +25,7 @@
 #define KERNEL_STATIC_COLLISION_SCENE_MAX_BYTES UINT32_C(16777216)
 #define KERNEL_STATIC_COLLISION_LAYER_TERRAIN UINT32_C(1)
 
-#define KERNEL_MAX_WEAPONS 8u
+#define KERNEL_MAX_WEAPON_SLOTS 4u
 
 #define KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED UINT32_C(0)
 #define KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS UINT32_C(1)
@@ -656,15 +656,16 @@ typedef struct KernelServerEntityState {
     uint32_t visual_flags;
     uint32_t valid;
     uint32_t actor_template_id;
-    uint8_t active_weapon_id;
-    uint8_t reserved0;
-    uint16_t reserved1;
-    uint16_t ammo[KERNEL_MAX_WEAPONS];
+    uint8_t active_weapon_slot;
+    uint8_t weapon_slot_count;
+    uint16_t reserved0;
+    uint32_t weapon_ids[KERNEL_MAX_WEAPON_SLOTS];
+    uint16_t ammo[KERNEL_MAX_WEAPON_SLOTS];
     // reserve_magazines counts spare full magazines, not spare bullets.
     // UINT16_MAX is allowed as an authored practical maximum for match lengths
     // that should not exhaust reserves in normal play. It is not a sentinel:
     // reload logic decrements it like any other count and must not special-case 65535.
-    uint16_t reserve_magazines[KERNEL_MAX_WEAPONS];
+    uint16_t reserve_magazines[KERNEL_MAX_WEAPON_SLOTS];
     uint32_t is_reloading;
     uint32_t reload_remaining_ticks;
     KernelActionRuntimeView action;
@@ -1156,17 +1157,20 @@ typedef struct KernelCombatStateDefinition {
     uint32_t struct_size;
     uint16_t hp;
     uint16_t max_hp;
-    uint8_t active_weapon_id;
+    uint8_t active_weapon_slot;
+    uint8_t weapon_slot_count;
+    uint16_t reserved0;
     uint32_t collider_template_id;
     float move_speed_meters_per_second;
     KernelVec3 hitbox_center;
     KernelVec3 hitbox_half_extents;
-    uint16_t ammo[KERNEL_MAX_WEAPONS];
+    uint32_t weapon_ids[KERNEL_MAX_WEAPON_SLOTS];
+    uint16_t ammo[KERNEL_MAX_WEAPON_SLOTS];
     // reserve_magazines counts spare full magazines, not spare bullets.
     // UINT16_MAX is allowed as an authored practical maximum for match lengths
     // that should not exhaust reserves in normal play. It is not a sentinel:
     // reload logic decrements it like any other count and must not special-case 65535.
-    uint16_t reserve_magazines[KERNEL_MAX_WEAPONS];
+    uint16_t reserve_magazines[KERNEL_MAX_WEAPON_SLOTS];
 } KernelCombatStateDefinition;
 
 typedef enum KernelMovementControllerType {

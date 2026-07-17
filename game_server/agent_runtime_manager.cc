@@ -209,7 +209,7 @@ bool AgentRuntimeManager::apply_weapon_mechanics(std::uint32_t net_id) const {
     }
     for (std::uint8_t slot = 0; slot < actor_template->weapon_slot_count; ++slot) {
         const KernelWeaponMechanicsDefinition& weapon =
-            config_.weapons.definitions[actor_template->weapon_slots[slot]];
+            config_.weapons.definitions[actor_template->weapon_ids[slot]];
         if (!Kernel_ServerSetEntityWeaponMechanics(kernel_, net_id, &weapon)) {
             return false;
         }

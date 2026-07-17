@@ -1254,6 +1254,11 @@ void owner_action_prediction_and_discrete_interpolation() {
     tuning.definitions[network_example::kWeaponSlot3].mode =
         network_example::WeaponFireMode::kProjectile;
     tuning.definitions[network_example::kWeaponSlot3].fire_action_template_id = 1001;
+    network_example::WeaponState& weapon =
+        engine.world_.registry().get<network_example::WeaponState>(
+            *player_entity);
+    weapon.weapon_slot_count = 1;
+    weapon.weapon_ids[0] = network_example::kWeaponSlot3;
     KernelActionTemplateDefinition action_template{};
     action_template.struct_size = sizeof(action_template);
     action_template.action_template_id = 1001;
@@ -3224,9 +3229,12 @@ void server_routes_fire_result_to_owner_and_presentation_to_observer() {
             0u,
         },
     });
-    server.world_.registry()
-        .get<network_example::WeaponState>(*owner_entity)
-        .ammo[0] = 30;
+    network_example::WeaponState& owner_weapon =
+        server.world_.registry()
+            .get<network_example::WeaponState>(*owner_entity);
+    owner_weapon.weapon_slot_count = 1;
+    owner_weapon.weapon_ids[0] = 0;
+    owner_weapon.ammo[0] = 30;
     network_example::Health& owner_health =
         server.world_.registry().get<network_example::Health>(*owner_entity);
     owner_health.hp = 100;

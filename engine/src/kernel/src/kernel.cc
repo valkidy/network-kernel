@@ -693,7 +693,7 @@ const EntitySnapshot* find_snapshot_entity(
 }
 
 constexpr std::uint32_t kKernelServerEntityStateBaseSize =
-    offsetof(KernelServerEntityState, active_weapon_id);
+    offsetof(KernelServerEntityState, active_weapon_slot);
 
 KernelServerEntityState to_server_entity_state(
     const World& world,
@@ -736,10 +736,12 @@ KernelServerEntityState to_server_entity_state(
     state.visual_flags &= ~kVisualFlagFiring;
     if (world.registry().all_of<WeaponState>(entity)) {
         const WeaponState& weapon = world.registry().get<WeaponState>(entity);
-        state.active_weapon_id = weapon.weapon_id;
-        for (std::size_t index = 0; index < kWeaponCount; ++index) {
-            state.ammo[index] = weapon.ammo[index];
-            state.reserve_magazines[index] = weapon.reserve_magazines[index];
+        state.active_weapon_slot = weapon.active_weapon_slot;
+        state.weapon_slot_count = weapon.weapon_slot_count;
+        for (std::size_t slot = 0; slot < kWeaponSlotCount; ++slot) {
+            state.weapon_ids[slot] = weapon.weapon_ids[slot];
+            state.ammo[slot] = weapon.ammo[slot];
+            state.reserve_magazines[slot] = weapon.reserve_magazines[slot];
         }
         state.is_reloading = weapon.is_reloading ? 1u : 0u;
         state.reload_remaining_ticks = 0u;
@@ -793,10 +795,6 @@ bool write_server_entity_state(
 std::uint32_t history_frame_count(const TickConfig& config) {
     const TickConfig tick = with_tick_defaults(config);
     return std::max(1u, (tick.server_tick_rate * tick.history_ms) / 1000u);
-}
-
-bool valid_weapon_id(std::uint8_t weapon_id) {
-    return static_cast<std::size_t>(weapon_id) < kWeaponCount;
 }
 
 ProjectileMotionModel to_projectile_motion_model(std::uint8_t motion_model) {
@@ -1232,7 +1230,6 @@ bool validate_projectile_mechanics(
 
 bool validate_weapon_mechanics(const KernelWeaponMechanicsDefinition& definition) {
     if (definition.struct_size < sizeof(KernelWeaponMechanicsDefinition) ||
-        !valid_weapon_id(definition.weapon_id) ||
         definition.magazine_size == 0 ||
         definition.damage == 0 ||
         definition.fire_action_template_id == 0u ||
@@ -1264,9 +1261,6 @@ const WeaponMechanicsDefinition* entity_weapon_mechanics(
     const World& world,
     NetId net_id,
     std::uint8_t weapon_id) {
-    if (!valid_weapon_id(weapon_id)) {
-        return nullptr;
-    }
     const std::optional<entt::entity> entity = world.find_entity(net_id);
     if (!entity.has_value() ||
         !world.registry().all_of<WeaponTuning>(*entity)) {
@@ -1759,8 +1753,10 @@ void KernelEngine::update(float delta_seconds) {
         if (const auto actor = world_.find_entity(local_player_net_id_);
             actor.has_value() && world_.registry().all_of<WeaponState>(*actor)) {
             WeaponState& weapon = world_.registry().get<WeaponState>(*actor);
-            if (outstanding->second.weapon_id < weapon.ammo.size()) {
-                weapon.ammo[outstanding->second.weapon_id] =
+            const std::size_t slot =
+                find_weapon_slot(weapon, outstanding->second.weapon_id);
+            if (slot < weapon.weapon_slot_count) {
+                weapon.ammo[slot] =
                     outstanding->second.ammo_before;
             }
             weapon.active_effect_net_id = outstanding->second.active_effect_before;
@@ -1913,9 +1909,17 @@ void KernelEngine::process_client_input_command(
     PeerId peer,
     const PlayerInput& input) {
     predict_local_input(input);
+    std::size_t predicted_weapon_slot = kWeaponSlotCount;
+    const WeaponState* predicted_weapon_state = nullptr;
+    if (const auto actor = world_.find_entity(local_player_net_id_);
+        actor.has_value() && world_.registry().all_of<WeaponState>(*actor)) {
+        predicted_weapon_state = &world_.registry().get<WeaponState>(*actor);
+        predicted_weapon_slot =
+            find_weapon_slot(*predicted_weapon_state, input.selected_weapon);
+    }
     const std::uint32_t primary_gate_before =
-        input.selected_weapon < predicted_next_primary_commit_tick_.size()
-            ? predicted_next_primary_commit_tick_[input.selected_weapon]
+        predicted_weapon_slot < predicted_next_primary_commit_tick_.size()
+            ? predicted_next_primary_commit_tick_[predicted_weapon_slot]
             : 0u;
     const WeaponMechanicsDefinition* predicted_weapon = entity_weapon_mechanics(
         world_, local_player_net_id_, input.selected_weapon);
@@ -1929,13 +1933,14 @@ void KernelEngine::process_client_input_command(
     if (input.action_intent.action_instance_id != 0u) {
         std::uint16_t ammo_before = 0u;
         NetId active_effect_before = 0u;
-        if (const auto actor = world_.find_entity(local_player_net_id_);
-            actor.has_value() && world_.registry().all_of<WeaponState>(*actor)) {
-            const WeaponState& weapon = world_.registry().get<WeaponState>(*actor);
-            if (input.selected_weapon < weapon.ammo.size()) {
-                ammo_before = weapon.ammo[input.selected_weapon];
+        if (predicted_weapon_state != nullptr) {
+            if (predicted_weapon_slot <
+                predicted_weapon_state->weapon_slot_count) {
+                ammo_before =
+                    predicted_weapon_state->ammo[predicted_weapon_slot];
             }
-            active_effect_before = weapon.active_effect_net_id;
+            active_effect_before =
+                predicted_weapon_state->active_effect_net_id;
         }
         auto outstanding = outstanding_predicted_actions_.try_emplace(
             input.action_intent.action_instance_id,
@@ -2167,7 +2172,6 @@ bool KernelEngine::load_gameplay_catalog(
         if (projectile_template.struct_size <
                 sizeof(KernelProjectileTemplateDefinition) ||
             projectile_template.projectile_template_id == 0 ||
-            !valid_weapon_id(projectile_template.weapon_id) ||
             !validate_projectile_mechanics(projectile_template.mechanics)) {
             return false;
         }
@@ -3280,12 +3284,25 @@ bool KernelEngine::server_set_entity_combat_state(
     const KernelCombatStateDefinition& combat_state) {
     if (!running_ || !is_server_mode(config_.mode) || net_id == 0 ||
         combat_state.struct_size < sizeof(KernelCombatStateDefinition) ||
-        !valid_weapon_id(combat_state.active_weapon_id) ||
+        combat_state.weapon_slot_count == 0u ||
+        combat_state.weapon_slot_count > KERNEL_MAX_WEAPON_SLOTS ||
+        combat_state.active_weapon_slot >= combat_state.weapon_slot_count ||
         combat_state.collider_template_id == 0 ||
         find_collider_template(
             collider_templates_,
             combat_state.collider_template_id) == nullptr) {
         return false;
+    }
+    for (std::size_t slot = 0; slot < combat_state.weapon_slot_count; ++slot) {
+        if (combat_state.weapon_ids[slot] > UINT8_MAX) {
+            return false;
+        }
+        for (std::size_t previous = 0; previous < slot; ++previous) {
+            if (combat_state.weapon_ids[previous] ==
+                combat_state.weapon_ids[slot]) {
+                return false;
+            }
+        }
     }
     const std::optional<entt::entity> entity = world_.find_entity(net_id);
     if (!entity.has_value()) {
@@ -3305,10 +3322,12 @@ bool KernelEngine::server_set_entity_combat_state(
     movement.speed_meters_per_second = combat_state.move_speed_meters_per_second;
 
     WeaponState& weapon = world_.registry().get_or_emplace<WeaponState>(*entity);
-    weapon.weapon_id = combat_state.active_weapon_id;
-    for (std::size_t index = 0; index < kWeaponCount; ++index) {
-        weapon.ammo[index] = combat_state.ammo[index];
-        weapon.reserve_magazines[index] = combat_state.reserve_magazines[index];
+    weapon.active_weapon_slot = combat_state.active_weapon_slot;
+    weapon.weapon_slot_count = combat_state.weapon_slot_count;
+    for (std::size_t slot = 0; slot < kWeaponSlotCount; ++slot) {
+        weapon.weapon_ids[slot] = combat_state.weapon_ids[slot];
+        weapon.ammo[slot] = combat_state.ammo[slot];
+        weapon.reserve_magazines[slot] = combat_state.reserve_magazines[slot];
     }
     if (net_id == local_player_net_id_) {
         local_player_move_speed_meters_per_second_ =
@@ -3396,7 +3415,7 @@ bool KernelEngine::server_set_entity_weapon_mechanics(
 bool KernelEngine::server_clear_entity_weapon_mechanics(
     NetId net_id,
     std::uint8_t weapon_id) {
-    if (!running_ || !is_server_mode(config_.mode) || !valid_weapon_id(weapon_id)) {
+    if (!running_ || !is_server_mode(config_.mode)) {
         return false;
     }
     const std::optional<entt::entity> entity = world_.find_entity(net_id);
@@ -3417,8 +3436,7 @@ bool KernelEngine::server_get_entity_weapon_mechanics(
     KernelWeaponMechanicsDefinition* out_weapon_mechanics) const {
     if (!running_ || !is_server_mode(config_.mode) ||
         out_weapon_mechanics == nullptr ||
-        out_weapon_mechanics->struct_size < sizeof(KernelWeaponMechanicsDefinition) ||
-        !valid_weapon_id(weapon_id)) {
+        out_weapon_mechanics->struct_size < sizeof(KernelWeaponMechanicsDefinition)) {
         return false;
     }
     const WeaponMechanicsDefinition* mechanics =
@@ -3927,16 +3945,24 @@ void KernelEngine::handle_client_local_action_results(
                 find_action_template(
                     action_templates_,
                     outstanding->second.action_template_id);
+            std::size_t result_weapon_slot = kWeaponSlotCount;
+            if (const auto actor = world_.find_entity(local_player_net_id_);
+                actor.has_value() &&
+                world_.registry().all_of<WeaponState>(*actor)) {
+                result_weapon_slot = find_weapon_slot(
+                    world_.registry().get<WeaponState>(*actor),
+                    outstanding->second.weapon_id);
+            }
             if (outstanding->second.binding_id ==
                     KernelActionBinding_PrimaryFire &&
-                outstanding->second.weapon_id <
+                result_weapon_slot <
                     predicted_next_primary_commit_tick_.size()) {
                 if (result.result == KernelLocalActionResultType_Accepted &&
                     action_template != nullptr) {
                     outstanding->second.last_authoritative_commit_tick =
                         result.authoritative_tick;
                     predicted_next_primary_commit_tick_[
-                        outstanding->second.weapon_id] =
+                        result_weapon_slot] =
                         result.authoritative_tick +
                         action_template->commit_interval_ticks;
                 } else if (
@@ -3944,14 +3970,14 @@ void KernelEngine::handle_client_local_action_results(
                     result.result == KernelLocalActionResultType_Corrected) {
                     if (result.confirmed_commit_count == 0u) {
                         predicted_next_primary_commit_tick_[
-                            outstanding->second.weapon_id] =
+                            result_weapon_slot] =
                             outstanding->second.primary_gate_before;
                     } else if (
                         action_template != nullptr &&
                         outstanding->second.last_authoritative_commit_tick !=
                             0u) {
                         predicted_next_primary_commit_tick_[
-                            outstanding->second.weapon_id] =
+                            result_weapon_slot] =
                             outstanding->second.last_authoritative_commit_tick +
                             action_template->commit_interval_ticks;
                     }
@@ -4000,8 +4026,10 @@ void KernelEngine::handle_client_local_action_results(
                     actor.has_value() &&
                     world_.registry().all_of<WeaponState>(*actor)) {
                     WeaponState& weapon = world_.registry().get<WeaponState>(*actor);
-                    if (outstanding->second.weapon_id < weapon.ammo.size()) {
-                        weapon.ammo[outstanding->second.weapon_id] =
+                    const std::size_t slot =
+                        find_weapon_slot(weapon, outstanding->second.weapon_id);
+                    if (slot < weapon.weapon_slot_count) {
+                        weapon.ammo[slot] =
                             outstanding->second.ammo_before;
                     }
                     weapon.active_effect_net_id =
@@ -5483,6 +5511,13 @@ bool KernelEngine::predict_local_action(const PlayerInput& input) {
     if (!has_predicted_local_entity_) {
         return false;
     }
+    const auto actor = world_.find_entity(local_player_net_id_);
+    if (!actor.has_value() ||
+        !world_.registry().all_of<WeaponState>(*actor)) {
+        return false;
+    }
+    const WeaponState& weapon_state =
+        world_.registry().get<WeaponState>(*actor);
     predicted_local_entity_.aim_direction = input_aim_to_world(input);
     predicted_local_entity_.flags &=
         ~(kVisualFlagAiming | kVisualFlagFiring | kVisualFlagReloading);
@@ -5522,15 +5557,17 @@ bool KernelEngine::predict_local_action(const PlayerInput& input) {
         if (action_template == nullptr) {
             return false;
         }
+        const std::size_t selected_slot =
+            find_weapon_slot(weapon_state, input.selected_weapon);
         if (input.action_intent.binding_id ==
                 KernelActionBinding_PrimaryFire &&
-            (input.selected_weapon >=
+            (selected_slot >=
                  predicted_next_primary_commit_tick_.size() ||
              projected_primary_commit_is_blocked(
                  current_tick,
                  action_template->commit_offset_ticks,
                  predicted_next_primary_commit_tick_[
-                     input.selected_weapon]))) {
+                     selected_slot]))) {
             return false;
         }
         predicted_local_entity_.action_template_id =
@@ -5580,10 +5617,11 @@ bool KernelEngine::predict_local_action(const PlayerInput& input) {
             current_tick + action_template->commit_interval_ticks;
         committed =
             predicted_action_binding_id_ == KernelActionBinding_PrimaryFire;
+        const std::size_t committed_slot =
+            find_weapon_slot(weapon_state, predicted_action_weapon_id_);
         if (committed &&
-            predicted_action_weapon_id_ <
-                predicted_next_primary_commit_tick_.size()) {
-            predicted_next_primary_commit_tick_[predicted_action_weapon_id_] =
+            committed_slot < predicted_next_primary_commit_tick_.size()) {
+            predicted_next_primary_commit_tick_[committed_slot] =
                 current_tick + action_template->commit_interval_ticks;
         }
         if ((action_template->max_commit_count != 0u &&
@@ -7618,15 +7656,17 @@ void KernelEngine::prepare_server_action_intent(
         reject(KernelLocalActionResultReason_Dead);
         return;
     }
-    const std::size_t weapon_index = input->selected_weapon;
     WeaponState& weapon = world_.registry().get<WeaponState>(*actor);
     const WeaponTuning& tuning = world_.registry().get<WeaponTuning>(*actor);
-    if (weapon_index >= tuning.definitions.size() ||
-        !tuning.configured[weapon_index]) {
+    const std::size_t weapon_id = input->selected_weapon;
+    const std::size_t weapon_slot =
+        find_weapon_slot(weapon, input->selected_weapon);
+    if (weapon_slot >= weapon.weapon_slot_count ||
+        !tuning.configured[weapon_id]) {
         reject(KernelLocalActionResultReason_MissingTemplate);
         return;
     }
-    const WeaponMechanicsDefinition& definition = tuning.definitions[weapon_index];
+    const WeaponMechanicsDefinition& definition = tuning.definitions[weapon_id];
     const std::uint32_t action_template_id =
         intent.binding_id == KernelActionBinding_PrimaryFire
             ? definition.fire_action_template_id
@@ -7642,22 +7682,20 @@ void KernelEngine::prepare_server_action_intent(
             reject(KernelLocalActionResultReason_Reloading);
             return;
         }
-        if (weapon_index >= weapon.ammo.size() ||
-            weapon.ammo[weapon_index] < action_template->ammo_cost_per_commit) {
+        if (weapon.ammo[weapon_slot] < action_template->ammo_cost_per_commit) {
             reject(KernelLocalActionResultReason_NoAmmo);
             return;
         }
         if (projected_primary_commit_is_blocked(
                 tick_loop_.current_tick(),
                 action_template->commit_offset_ticks,
-                weapon.next_primary_commit_tick[weapon_index])) {
+                weapon.next_primary_commit_tick[weapon_slot])) {
             reject(KernelLocalActionResultReason_Cooldown);
             return;
         }
     } else if (
-        weapon_index >= weapon.ammo.size() ||
-        weapon.ammo[weapon_index] >= definition.magazine_size ||
-        weapon.reserve_magazines[weapon_index] == 0u) {
+        weapon.ammo[weapon_slot] >= definition.magazine_size ||
+        weapon.reserve_magazines[weapon_slot] == 0u) {
         reject(KernelLocalActionResultReason_EffectFailed);
         return;
     }

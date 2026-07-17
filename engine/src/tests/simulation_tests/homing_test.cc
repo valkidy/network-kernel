@@ -53,7 +53,7 @@ network_example::NetId spawned_projectile(const std::vector<KernelEvent>& events
 
 network_example::WeaponMechanicsDefinition homing_weapon_definition() {
     network_example::WeaponMechanicsDefinition definition{};
-    definition.id = network_example::kWeaponSlot6;
+    definition.id = network_example::kWeaponId6;
     definition.mode = network_example::WeaponFireMode::kProjectile;
     definition.magazine_size = 4;
     definition.damage = 20;
@@ -64,7 +64,7 @@ network_example::WeaponMechanicsDefinition homing_weapon_definition() {
 network_example::RuntimeProjectileTemplate homing_projectile_template() {
     network_example::RuntimeProjectileTemplate projectile_template{};
     projectile_template.projectile_template_id = 66;
-    projectile_template.weapon_id = network_example::kWeaponSlot6;
+    projectile_template.weapon_id = network_example::kWeaponId6;
     projectile_template.projectile_type = network_example::ProjectileType::kStandard;
     projectile_template.motion_model = network_example::ProjectileMotionModel::kHoming;
     projectile_template.sync_mode =
@@ -94,13 +94,15 @@ void configure_homing_weapon(
     assert(entity.has_value());
     network_example::WeaponTuning& tuning =
         world.registry().get_or_emplace<network_example::WeaponTuning>(*entity);
-    tuning.configured[network_example::kWeaponSlot6] = true;
-    tuning.definitions[network_example::kWeaponSlot6] = homing_weapon_definition();
+    tuning.configured[network_example::kWeaponId6] = true;
+    tuning.definitions[network_example::kWeaponId6] = homing_weapon_definition();
 
     network_example::WeaponState& weapon =
         world.registry().get_or_emplace<network_example::WeaponState>(*entity);
-    weapon.ammo[network_example::kWeaponSlot6] = 4;
-    weapon.reserve_magazines[network_example::kWeaponSlot6] = 4;
+    weapon.weapon_slot_count = 1;
+    weapon.weapon_ids[0] = network_example::kWeaponId6;
+    weapon.ammo[0] = 4;
+    weapon.reserve_magazines[0] = 4;
 
     world.set_projectile_templates({homing_projectile_template()});
 }
@@ -135,7 +137,7 @@ PlayerInput homing_fire_input(std::uint32_t action_instance_id) {
     PlayerInput input{};
     input.input_seq = action_instance_id;
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
-    input.selected_weapon = network_example::kWeaponSlot6;
+    input.selected_weapon = network_example::kWeaponId6;
     input.buttons = InputButton_Fire;
     input.action_intent = ActionIntent{
         action_instance_id,

@@ -22,7 +22,7 @@ inline constexpr std::uint8_t kWeaponFireFloor = 4;
 inline constexpr std::uint8_t kWeaponBeamRifle = 5;
 inline constexpr std::uint8_t kWeaponHomingMissile = 6;
 inline constexpr std::uint8_t kWeaponGrenade = 7;
-inline constexpr std::size_t kWeaponCount = KERNEL_MAX_WEAPONS;
+inline constexpr std::size_t kWeaponIdCount = 256;
 inline constexpr std::uint32_t kDefaultDirectorEntityTemplateId = 100;
 
 struct EntityHealthDefinition {
@@ -61,7 +61,7 @@ struct ActorTemplateConfig {
     float movement_step_height = 0.4f;
     float movement_ground_probe_distance = 0.25f;
     float movement_ground_snap_distance = 0.5f;
-    std::array<std::uint8_t, 4> weapon_slots{};
+    std::array<std::uint32_t, KERNEL_MAX_WEAPON_SLOTS> weapon_ids{};
     std::uint8_t weapon_slot_count = 0;
     std::uint8_t active_weapon_slot = 0;
     std::uint16_t animation_idle = 0;
@@ -84,10 +84,11 @@ using EntityTemplateConfig = ActorTemplateConfig;
 struct WeaponCatalogConfig {
     std::uint32_t catalog_version = 2;
     std::uint64_t catalog_hash = 0;
-    std::array<KernelWeaponMechanicsDefinition, kWeaponCount> definitions{};
-    std::array<std::string, kWeaponCount> names{};
-    std::array<std::uint8_t, kWeaponCount> projectile_sync_modes{};
-    std::array<std::uint32_t, kWeaponCount> collider_template_ids{};
+    std::array<bool, kWeaponIdCount> configured{};
+    std::array<KernelWeaponMechanicsDefinition, kWeaponIdCount> definitions{};
+    std::array<std::string, kWeaponIdCount> names{};
+    std::array<std::uint8_t, kWeaponIdCount> projectile_sync_modes{};
+    std::array<std::uint32_t, kWeaponIdCount> collider_template_ids{};
 };
 
 struct ActionTemplateConfig {

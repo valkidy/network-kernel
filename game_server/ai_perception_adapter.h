@@ -1,6 +1,7 @@
 #ifndef GAME_SERVER_AI_PERCEPTION_ADAPTER_H_
 #define GAME_SERVER_AI_PERCEPTION_ADAPTER_H_
 
+#include <cstddef>
 #include <cstdint>
 
 #include "ai_context.h"
@@ -8,6 +9,17 @@
 #include "kernel/public/kernel_api.h"
 
 namespace network_example::game_server {
+
+inline std::size_t find_weapon_slot(
+    const KernelServerEntityState& state,
+    std::uint8_t weapon_id) {
+    for (std::size_t slot = 0; slot < state.weapon_slot_count; ++slot) {
+        if (state.weapon_ids[slot] == weapon_id) {
+            return slot;
+        }
+    }
+    return KERNEL_MAX_WEAPON_SLOTS;
+}
 
 struct SentryPerceptionSnapshot {
     bool has_self_state = false;

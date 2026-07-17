@@ -259,14 +259,18 @@ bool EntityLifecycleSystem::create_entity(
                 entity_template->movement.ground_snap_distance;
         }
         if ((entity_template->component_flags &
-             KERNEL_ENTITY_COMPONENT_WEAPON_STATE) != 0u) {
+            KERNEL_ENTITY_COMPONENT_WEAPON_STATE) != 0u) {
             WeaponState& weapon = registry.get_or_emplace<WeaponState>(*entity);
-            weapon.weapon_id =
-                static_cast<std::uint8_t>(entity_template->combat.active_weapon_id);
-            for (std::size_t index = 0; index < kWeaponCount; ++index) {
-                weapon.ammo[index] = entity_template->combat.ammo[index];
-                weapon.reserve_magazines[index] =
-                    entity_template->combat.reserve_magazines[index];
+            weapon.active_weapon_slot =
+                entity_template->combat.active_weapon_slot;
+            weapon.weapon_slot_count =
+                entity_template->combat.weapon_slot_count;
+            for (std::size_t slot = 0; slot < kWeaponSlotCount; ++slot) {
+                weapon.weapon_ids[slot] =
+                    entity_template->combat.weapon_ids[slot];
+                weapon.ammo[slot] = entity_template->combat.ammo[slot];
+                weapon.reserve_magazines[slot] =
+                    entity_template->combat.reserve_magazines[slot];
             }
             registry.get_or_emplace<WeaponTuning>(*entity);
         }

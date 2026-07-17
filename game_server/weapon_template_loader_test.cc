@@ -12,6 +12,7 @@ namespace {
 
 constexpr std::uint16_t kMaxReserveMagazines =
     std::numeric_limits<std::uint16_t>::max();
+constexpr std::uint8_t kSparseWeaponId = 99;
 
 std::filesystem::path runfiles_root() {
     const char* test_srcdir = std::getenv("TEST_SRCDIR");
@@ -205,7 +206,7 @@ void write_valid_templates(const std::filesystem::path& dir) {
         "projectile_template: homing_missile_projectile\n");
     write_file(
         dir / "grenade_launcher.yaml",
-        "id: 7\nname: Grenade Launcher\nweapon_type: projectile\n"
+        "id: 99\nname: Grenade Launcher\nweapon_type: projectile\n"
         "magazine_size: 6\n"
         "fire_action_template: grenade_launcher_fire\nreload_ticks: 90\n"
         "projectile_template: grenade_shell_projectile\n");
@@ -258,7 +259,7 @@ void valid_repo_templates_load_all_slots() {
         const KernelProjectileTemplateDefinition& projectile_template =
             storage.definition.projectile_templates[index];
         if (projectile_template.weapon_id == network_example::game_server::kWeaponSpammer ||
-            projectile_template.weapon_id == network_example::game_server::kWeaponGrenade ||
+            projectile_template.weapon_id == kSparseWeaponId ||
             projectile_template.weapon_id ==
                 network_example::game_server::kWeaponHomingMissile) {
             assert(projectile_template.mechanics.collider_template_id == 7);
@@ -302,10 +303,11 @@ void valid_repo_templates_load_all_slots() {
                .projectile_template_id == 5);
     assert(config.weapons.definitions[network_example::game_server::kWeaponHomingMissile]
                .projectile_template_id == 6);
-    assert(config.weapons.projectile_sync_modes
-               [network_example::game_server::kWeaponGrenade] ==
+    assert(config.weapons.configured[kSparseWeaponId]);
+    assert(!config.weapons.configured[network_example::game_server::kWeaponGrenade]);
+    assert(config.weapons.projectile_sync_modes[kSparseWeaponId] ==
            KernelProjectileSyncMode_LocalPredictedDeterministic);
-    assert(config.weapons.names[network_example::game_server::kWeaponGrenade] ==
+    assert(config.weapons.names[kSparseWeaponId] ==
            "Grenade Launcher");
     assert(config.weapons.projectile_sync_modes
                [network_example::game_server::kWeaponRocket] ==

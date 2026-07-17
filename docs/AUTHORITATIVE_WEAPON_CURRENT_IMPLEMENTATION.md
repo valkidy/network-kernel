@@ -1,7 +1,7 @@
 # Authoritative Weapon Current Implementation
 
 This document records the current authoritative weapon implementation as of
-native kernel ABI v17. It describes what exists today, not the full future
+native kernel ABI v45. It describes what exists today, not the full future
 weapon design.
 
 ## Server Authority Model
@@ -19,12 +19,13 @@ Weapon gameplay follows `docs/NETCODE_SYNC_POLICY.md`:
 The current native public ABI is:
 
 ```text
-KERNEL_ABI_VERSION == 18u
-KERNEL_MAX_WEAPONS == 7u
+KERNEL_ABI_VERSION == 45u
+KERNEL_MAX_WEAPON_SLOTS == 4u
 ```
 
-The projectile interaction foundation did not change snapshot packet layout,
-protocol packet layout, or Kernel C ABI.
+Weapon IDs are sparse `uint8_t` catalog keys. Actor ammo and reserve state are
+indexed by runtime slot, with `weapon_ids[KERNEL_MAX_WEAPON_SLOTS]` mapping each
+slot back to its catalog ID.
 
 ## Implemented Runtime
 
@@ -78,7 +79,7 @@ Native Bazel tests are independent from Unity package validation. The weapon
 foundation is currently implemented in native C++ runtime and internal engine
 APIs.
 
-Unity package validation is stale relative to native ABI v17:
+Unity package validation is stale relative to native ABI v45:
 
 - `plugins/com.network-example.kernel` is not currently an expanded package
   source tree with `package.json`, runtime C# files, editor tests, and staged
@@ -86,7 +87,7 @@ Unity package validation is stale relative to native ABI v17:
 - The existing `plugins/output/com.network-example.kernel-0.6.4.tgz` contains
   C# bindings whose managed ABI constant remains at 8, while native
   `kernel_types.h` reports
-  `KERNEL_ABI_VERSION == 18u`.
+  `KERNEL_ABI_VERSION == 45u`.
 - Therefore Unity package builder verify/Editor smoke cannot be used as a
   passing signal for the current native weapon foundation until the Unity
   package is resynced.

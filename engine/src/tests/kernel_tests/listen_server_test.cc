@@ -219,17 +219,21 @@ void configure_local_player(KernelHandle* kernel, std::uint32_t player_net_id) {
     combat.struct_size = sizeof(combat);
     combat.hp = 100;
     combat.max_hp = 100;
-    combat.active_weapon_id = 0;
+    combat.active_weapon_slot = 0;
+    combat.weapon_slot_count = 3;
+    combat.weapon_ids[0] = 0;
+    combat.weapon_ids[1] = 2;
+    combat.weapon_ids[2] = 3;
     combat.collider_template_id = 1;
     combat.move_speed_meters_per_second = 5.0f;
     combat.hitbox_center = KernelVec3{0.0f, 0.9f, 0.0f};
     combat.hitbox_half_extents = KernelVec3{0.35f, 0.9f, 0.35f};
     combat.ammo[0] = 30;
     combat.reserve_magazines[0] = 3;
-    combat.ammo[2] = 30;
+    combat.ammo[1] = 30;
+    combat.reserve_magazines[1] = 3;
+    combat.ammo[2] = 6;
     combat.reserve_magazines[2] = 3;
-    combat.ammo[3] = 6;
-    combat.reserve_magazines[3] = 3;
     assert(Kernel_ServerSetEntityCombatState(kernel, player_net_id, &combat));
 
     KernelWeaponMechanicsDefinition rifle{};

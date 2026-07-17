@@ -401,7 +401,7 @@ int main() {
     const network_example::game_server::GameServerGameplayConfig config =
         network_example::game_server::default_game_server_gameplay_config();
     assert(network_example::game_server::AgentSentryConfig{}.weapon_id ==
-           KERNEL_MAX_WEAPONS);
+           UINT16_MAX);
     const std::vector<std::string> errors =
         network_example::game_server::validate_gameplay_config(config);
     assert(errors.empty());
@@ -534,7 +534,9 @@ int main() {
     assert(enemy_combat_state.max_hp == 500);
     assert(enemy_combat_state.collider_template_id == 2);
     assert(
-        enemy_combat_state.active_weapon_id ==
+        enemy_combat_state.active_weapon_slot == 0);
+    assert(
+        enemy_combat_state.weapon_ids[0] ==
         network_example::game_server::kWeaponSpammer);
     const network_example::game_server::ActorTemplateConfig* config_enemy_template =
         network_example::game_server::find_actor_template(
@@ -614,9 +616,9 @@ int main() {
     assert(player_template.actor_type == network_example::game_server::kActorTypePlayer);
     assert(player_template.collider_template_id == 1);
     assert(player_template.weapon_slot_count == 3);
-    assert(player_template.weapon_slots[0] == network_example::game_server::kWeaponRocket);
-    assert(player_template.weapon_slots[1] == network_example::game_server::kWeaponShotgun);
-    assert(player_template.weapon_slots[2] == network_example::game_server::kWeaponGrenade);
+    assert(player_template.weapon_ids[0] == network_example::game_server::kWeaponRocket);
+    assert(player_template.weapon_ids[1] == network_example::game_server::kWeaponShotgun);
+    assert(player_template.weapon_ids[2] == network_example::game_server::kWeaponGrenade);
     assert(player_template.active_weapon_slot == 0);
     assert(player_template.vision.camp == KernelAgentCamp_PlayerSide);
     assert(player_template.vision.vision_collider_template_id == 0);
@@ -631,7 +633,7 @@ int main() {
     assert(enemy_template.actor_type == network_example::game_server::kActorTypeAgent);
     assert(enemy_template.collider_template_id == 2);
     assert(enemy_template.weapon_slot_count == 1);
-    assert(enemy_template.weapon_slots[0] == network_example::game_server::kWeaponSpammer);
+    assert(enemy_template.weapon_ids[0] == network_example::game_server::kWeaponSpammer);
     assert(enemy_template.movement_controller_type ==
            KernelMovementControllerType_Grounded);
     assert(enemy_template.movement_collider_template_id == 11);

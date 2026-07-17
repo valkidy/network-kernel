@@ -48,13 +48,18 @@ void add_missing(
 std::uint16_t attack_binding(
     const ActorIntentExecutorConfig& config,
     const KernelServerEntityState& entity_state) {
-    if (config.weapon_id >= KERNEL_MAX_WEAPONS || entity_state.is_reloading != 0u) {
+    if (config.weapon_id > UINT8_MAX || entity_state.is_reloading != 0u) {
         return UINT16_MAX;
     }
-    if (entity_state.ammo[config.weapon_id] > 0) {
+    const std::size_t slot = find_weapon_slot(
+        entity_state, static_cast<std::uint8_t>(config.weapon_id));
+    if (slot >= entity_state.weapon_slot_count) {
+        return UINT16_MAX;
+    }
+    if (entity_state.ammo[slot] > 0) {
         return KernelActionBinding_PrimaryFire;
     }
-    if (entity_state.reserve_magazines[config.weapon_id] > 0) {
+    if (entity_state.reserve_magazines[slot] > 0) {
         return KernelActionBinding_Reload;
     }
     return UINT16_MAX;
@@ -105,8 +110,14 @@ ActorIntentExecutionResult ActorIntentExecutor::execute(
             return result;
         }
     } else {
-        if (config_.weapon_id >= KERNEL_MAX_WEAPONS ||
-            perception.self_state.reserve_magazines[config_.weapon_id] == 0) {
+        const std::size_t slot =
+            config_.weapon_id > UINT8_MAX
+                ? KERNEL_MAX_WEAPON_SLOTS
+                : find_weapon_slot(
+                      perception.self_state,
+                      static_cast<std::uint8_t>(config_.weapon_id));
+        if (slot >= perception.self_state.weapon_slot_count ||
+            perception.self_state.reserve_magazines[slot] == 0) {
             add_missing(&result.report, "action", "Action.Reload");
             return result;
         }
@@ -119,7 +130,7 @@ ActorIntentExecutionResult ActorIntentExecutor::execute(
 
     PlayerInput input{};
     input.input_seq = actor->next_input_seq++;
-    input.selected_weapon = config_.weapon_id;
+    input.selected_weapon = static_cast<std::uint8_t>(config_.weapon_id);
     if (perception.self_state.action.phase != KernelActionPhase_None) {
         if (intent.type != "AttackTarget" ||
             binding_id != KernelActionBinding_PrimaryFire) {
