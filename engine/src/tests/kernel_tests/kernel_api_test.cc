@@ -241,7 +241,7 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 43u);
+    assert(KERNEL_ABI_VERSION == 45u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CONTROL_PLANE_RPC) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ACTION_TIMELINE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LOCAL_ACTION_RESULTS) != 0);
@@ -258,7 +258,7 @@ int main() {
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNSUPPORTED_CATALOG_VERSION == 3u);
-    assert(KERNEL_MAX_WEAPONS == 7u);
+    assert(KERNEL_MAX_WEAPON_SLOTS == 4u);
     assert(KernelColliderShapeType_Cone == 4u);
     assert(KernelColliderPurpose_Vision == (1u << 3));
     assert(KERNEL_COLLISION_LAYER_AGENT_VISION == 0x00000010u);
@@ -287,11 +287,13 @@ int main() {
     assert(offsetof(KernelNetworkStats, replication_stale_snapshot_drop_count) >
            offsetof(KernelNetworkStats, replication_metadata_timeout_count));
     assert(offsetof(KernelCombatStateDefinition, collider_template_id) >
-           offsetof(KernelCombatStateDefinition, active_weapon_id));
-    assert(offsetof(KernelServerEntityState, active_weapon_id) >
+           offsetof(KernelCombatStateDefinition, active_weapon_slot));
+    assert(offsetof(KernelServerEntityState, active_weapon_slot) >
            offsetof(KernelServerEntityState, actor_template_id));
+    assert(offsetof(KernelServerEntityState, weapon_ids) >
+           offsetof(KernelServerEntityState, active_weapon_slot));
     assert(offsetof(KernelServerEntityState, ammo) >
-           offsetof(KernelServerEntityState, active_weapon_id));
+           offsetof(KernelServerEntityState, weapon_ids));
     assert(offsetof(KernelServerEntityState, reserve_magazines) >
            offsetof(KernelServerEntityState, ammo));
     assert(offsetof(KernelServerEntityState, is_reloading) >
@@ -842,20 +844,46 @@ int main() {
     assert(server_state.hp == 0);
     assert(server_state.max_hp == 0);
 
+    KernelCombatStateDefinition sparse_weapon_state{};
+    sparse_weapon_state.struct_size = sizeof(sparse_weapon_state);
+    sparse_weapon_state.hp = 240;
+    sparse_weapon_state.max_hp = 240;
+    sparse_weapon_state.active_weapon_slot = 0;
+    sparse_weapon_state.weapon_slot_count = KERNEL_MAX_WEAPON_SLOTS;
+    sparse_weapon_state.weapon_ids[0] = 99;
+    sparse_weapon_state.weapon_ids[1] = 255;
+    sparse_weapon_state.weapon_ids[2] = 1;
+    sparse_weapon_state.weapon_ids[3] = 7;
+    sparse_weapon_state.collider_template_id = 10;
+    sparse_weapon_state.hitbox_center = KernelVec3{0.0f, 0.8f, 0.0f};
+    sparse_weapon_state.hitbox_half_extents =
+        KernelVec3{0.4f, 0.8f, 0.4f};
+    assert(Kernel_ServerSetEntityCombatState(
+        kernel, created_net_id, &sparse_weapon_state));
+    sparse_weapon_state.weapon_slot_count =
+        KERNEL_MAX_WEAPON_SLOTS + 1u;
+    assert(!Kernel_ServerSetEntityCombatState(
+        kernel, created_net_id, &sparse_weapon_state));
+
     combat_state.hp = 240;
     combat_state.max_hp = 240;
-    combat_state.active_weapon_id = 3;
+    combat_state.active_weapon_slot = 0;
+    combat_state.weapon_slot_count = 4;
+    combat_state.weapon_ids[0] = 3;
+    combat_state.weapon_ids[1] = 4;
+    combat_state.weapon_ids[2] = 5;
+    combat_state.weapon_ids[3] = 6;
     combat_state.collider_template_id = 10;
     combat_state.hitbox_center = KernelVec3{0.0f, 0.8f, 0.0f};
     combat_state.hitbox_half_extents = KernelVec3{0.4f, 0.8f, 0.4f};
-    combat_state.ammo[3] = 3;
-    combat_state.reserve_magazines[3] = 6;
-    combat_state.ammo[4] = 1;
-    combat_state.reserve_magazines[4] = 1;
-    combat_state.ammo[5] = 2;
-    combat_state.reserve_magazines[5] = 2;
-    combat_state.ammo[6] = 2;
-    combat_state.reserve_magazines[6] = 2;
+    combat_state.ammo[0] = 3;
+    combat_state.reserve_magazines[0] = 6;
+    combat_state.ammo[1] = 1;
+    combat_state.reserve_magazines[1] = 1;
+    combat_state.ammo[2] = 2;
+    combat_state.reserve_magazines[2] = 2;
+    combat_state.ammo[3] = 2;
+    combat_state.reserve_magazines[3] = 2;
     assert(!Kernel_ServerSetEntityCombatState(kernel, created_net_id, nullptr));
     assert(Kernel_ServerSetEntityCombatState(kernel, created_net_id, &combat_state));
     vision_config = KernelAgentVisionConfig{};
@@ -1169,9 +1197,10 @@ int main() {
     assert(server_state.velocity.x == 1.0f);
     assert(server_state.hp == 240);
     assert(server_state.max_hp == 240);
-    assert(server_state.active_weapon_id == 3);
-    assert(server_state.ammo[3] == 3);
-    assert(server_state.reserve_magazines[3] == 6);
+    assert(server_state.active_weapon_slot == 0);
+    assert(server_state.weapon_ids[0] == 3);
+    assert(server_state.ammo[0] == 3);
+    assert(server_state.reserve_magazines[0] == 6);
     assert(server_state.is_reloading == 0u);
     assert(server_state.reload_remaining_ticks == 0u);
     std::array<KernelServerEntityState, 4> queried_states{};
@@ -1187,9 +1216,10 @@ int main() {
     assert(queried_states[0].actor_type == KernelActorType_Agent);
     assert(queried_states[0].hp == 240);
     assert(queried_states[0].max_hp == 240);
-    assert(queried_states[0].active_weapon_id == 3);
-    assert(queried_states[0].ammo[3] == 3);
-    assert(queried_states[0].reserve_magazines[3] == 6);
+    assert(queried_states[0].active_weapon_slot == 0);
+    assert(queried_states[0].weapon_ids[0] == 3);
+    assert(queried_states[0].ammo[0] == 3);
+    assert(queried_states[0].reserve_magazines[0] == 6);
     assert(Kernel_ServerQueryEntities(
                kernel,
                0,
@@ -1211,9 +1241,9 @@ int main() {
     server_state = KernelServerEntityState{};
     server_state.struct_size = sizeof(server_state);
     assert(Kernel_ServerGetEntityState(kernel, created_net_id, &server_state));
-    assert(server_state.active_weapon_id == 3);
-    assert(server_state.ammo[3] == 2);
-    assert(server_state.reserve_magazines[3] == 6);
+    assert(server_state.active_weapon_slot == 0);
+    assert(server_state.ammo[0] == 2);
+    assert(server_state.reserve_magazines[0] == 6);
 
     server_entity_input.input_seq = 3;
     server_entity_input.action_intent = ActionIntent{
@@ -1238,8 +1268,8 @@ int main() {
     assert(Kernel_ServerGetEntityState(kernel, created_net_id, &server_state));
     assert(server_state.is_reloading == 0u);
     assert(server_state.reload_remaining_ticks == 0u);
-    assert(server_state.ammo[3] == 3);
-    assert(server_state.reserve_magazines[3] == 5);
+    assert(server_state.ammo[0] == 3);
+    assert(server_state.reserve_magazines[0] == 5);
 
     PlayerInput input{};
     input.input_seq = 1;

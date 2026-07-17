@@ -206,7 +206,7 @@ void hash_actor_template(
     hash_float(hash, actor_template.movement_ground_snap_distance);
     hash_scalar(hash, actor_template.weapon_slot_count);
     for (std::uint8_t index = 0; index < actor_template.weapon_slot_count; ++index) {
-        hash_scalar(hash, actor_template.weapon_slots[index]);
+        hash_scalar(hash, actor_template.weapon_ids[index]);
     }
     hash_scalar(hash, actor_template.active_weapon_slot);
     hash_scalar(hash, actor_template.animation_idle);
@@ -311,20 +311,9 @@ KernelWeaponMechanicsDefinition beam_weapon(
     return weapon;
 }
 
-void fill_default_ammo(
-    const WeaponCatalogConfig& weapons,
-    KernelCombatStateDefinition* combat_state) {
-    for (std::size_t index = 0; index < weapons.definitions.size(); ++index) {
-        const KernelWeaponMechanicsDefinition& weapon = weapons.definitions[index];
-        combat_state->ammo[index] = weapon.magazine_size;
-        combat_state->reserve_magazines[index] = weapon.reserve_magazines;
-    }
-}
-
 bool validate_weapon_mechanics(
     const KernelWeaponMechanicsDefinition& weapon) {
     if (weapon.struct_size < sizeof(KernelWeaponMechanicsDefinition) ||
-        weapon.weapon_id >= kWeaponCount ||
         weapon.magazine_size == 0 ||
         weapon.damage == 0 ||
         weapon.fire_action_template_id == 0u ||
@@ -1174,7 +1163,17 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
     const YAML::Node& node,
     const std::string& path,
     std::uint32_t source_kind) {
-    const auto id = static_cast<std::uint8_t>(node["id"].as<int>());
+    const int authored_id = node["id"].as<int>();
+    if (authored_id < 0 || authored_id > UINT8_MAX) {
+        throw DataLoadError(
+            KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_NUMERIC_RANGE,
+            "weapon id must be in uint8 range",
+            path,
+            "id",
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_WEAPON);
+    }
+    const auto id = static_cast<std::uint8_t>(authored_id);
     reject_unknown_keys(
         node,
         {
@@ -1572,8 +1571,8 @@ ActorTemplateConfig default_player_actor_template() {
     actor_template.move_speed_meters_per_second = 5.0f;
     actor_template.movement_controller_type = KernelMovementControllerType_Character;
     actor_template.movement_collider_template_id = 10;
-    actor_template.weapon_slots[0] = kWeaponRifle;
-    actor_template.weapon_slots[1] = kWeaponShotgun;
+    actor_template.weapon_ids[0] = kWeaponRifle;
+    actor_template.weapon_ids[1] = kWeaponShotgun;
     actor_template.weapon_slot_count = 2;
     actor_template.active_weapon_slot = 0;
     actor_template.vision.struct_size = sizeof(KernelAgentVisionConfig);
@@ -1595,7 +1594,7 @@ ActorTemplateConfig default_sentry_actor_template() {
     actor_template.move_speed_meters_per_second = 2.5f;
     actor_template.movement_controller_type = KernelMovementControllerType_Grounded;
     actor_template.movement_collider_template_id = 11;
-    actor_template.weapon_slots[0] = kAgentSpammerWeaponId;
+    actor_template.weapon_ids[0] = kAgentSpammerWeaponId;
     actor_template.weapon_slot_count = 1;
     actor_template.active_weapon_slot = 0;
     actor_template.animation_idle = 0;
@@ -1646,7 +1645,7 @@ bool actor_template_has_weapon(
     const ActorTemplateConfig& actor_template,
     std::uint8_t weapon_id) {
     for (std::uint8_t slot = 0; slot < actor_template.weapon_slot_count; ++slot) {
-        if (actor_template.weapon_slots[slot] == weapon_id) {
+        if (actor_template.weapon_ids[slot] == weapon_id) {
             return true;
         }
     }
@@ -1701,10 +1700,15 @@ AgentSentryConfig sentry_config_from_yaml(
                 sentry_node["patrol_rotation_max_degrees"].as<float>();
         }
         if (sentry_node["weapon_id"]) {
+            const int authored_weapon_id = sentry_node["weapon_id"].as<int>();
+            if (authored_weapon_id < 0 || authored_weapon_id > UINT8_MAX) {
+                throw std::runtime_error(
+                    "actor template sentry weapon id is out of uint8 range: " +
+                    actor_template.name);
+            }
             const auto weapon_id =
-                static_cast<std::uint8_t>(sentry_node["weapon_id"].as<int>());
-            if (weapon_id >= kWeaponCount ||
-                weapons.definitions[weapon_id].weapon_id != weapon_id ||
+                static_cast<std::uint8_t>(authored_weapon_id);
+            if (!weapons.configured[weapon_id] ||
                 !actor_template_has_weapon(actor_template, weapon_id)) {
                 throw std::runtime_error(
                     "actor template sentry references unknown weapon id: " +
@@ -1934,7 +1938,7 @@ ActorTemplateConfig actor_template_from_yaml(
         throw std::runtime_error(
             "actor template requires weapon_slots: " + actor_template.name);
     }
-    if (weapon_slots.size() == 0 || weapon_slots.size() > actor_template.weapon_slots.size()) {
+    if (weapon_slots.size() == 0 || weapon_slots.size() > actor_template.weapon_ids.size()) {
         throw std::runtime_error(
             "actor template weapon_slots count must be 1 to 4: " +
             actor_template.name);
@@ -1942,15 +1946,20 @@ ActorTemplateConfig actor_template_from_yaml(
     actor_template.weapon_slot_count =
         static_cast<std::uint8_t>(weapon_slots.size());
     for (std::size_t index = 0; index < weapon_slots.size(); ++index) {
+        const int authored_weapon_id = weapon_slots[index].as<int>();
+        if (authored_weapon_id < 0 || authored_weapon_id > UINT8_MAX) {
+            throw std::runtime_error(
+                "actor template weapon id is out of uint8 range: " +
+                actor_template.name);
+        }
         const auto weapon_id =
-            static_cast<std::uint8_t>(weapon_slots[index].as<int>());
-        if (weapon_id >= kWeaponCount ||
-            weapons.definitions[weapon_id].weapon_id != weapon_id) {
+            static_cast<std::uint8_t>(authored_weapon_id);
+        if (!weapons.configured[weapon_id]) {
             throw std::runtime_error(
                 "actor template references unknown weapon id: " +
                 actor_template.name);
         }
-        actor_template.weapon_slots[index] = weapon_id;
+        actor_template.weapon_ids[index] = weapon_id;
     }
     actor_template.active_weapon_slot =
         node["active_weapon_slot"]
@@ -2802,22 +2811,12 @@ WeaponCatalogConfig load_weapon_catalog_from_source(
     WeaponCatalogConfig weapons;
     weapons.projectile_sync_modes.fill(
         KernelProjectileSyncMode_HybridDeterministicThenSnapshot);
-    std::array<bool, kWeaponCount> seen{
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false};
+    std::array<bool, kWeaponIdCount> seen{};
     const std::vector<std::string> files = source.list_yaml_files(directory);
     for (const std::string& file : files) {
         const YAML::Node document = source.load_yaml(file);
         KernelWeaponMechanicsDefinition weapon =
             weapon_from_yaml(document, file, source.source_kind());
-        if (weapon.weapon_id >= kWeaponCount) {
-            throw std::runtime_error("weapon id out of range: " + file);
-        }
         if (seen[weapon.weapon_id]) {
             throw std::runtime_error("duplicate weapon id: " + file);
         }
@@ -2837,15 +2836,11 @@ WeaponCatalogConfig load_weapon_catalog_from_source(
             }
         }
         seen[weapon.weapon_id] = true;
+        weapons.configured[weapon.weapon_id] = true;
         weapons.definitions[weapon.weapon_id] = weapon;
         weapons.projectile_sync_modes[weapon.weapon_id] =
             projectile_sync_mode_from_weapon_yaml(document);
         weapons.names[weapon.weapon_id] = name;
-    }
-    for (std::size_t index = 0; index < seen.size(); ++index) {
-        if (!seen[index]) {
-            throw std::runtime_error("missing weapon template id " + std::to_string(index));
-        }
     }
     return weapons;
 }
@@ -2887,9 +2882,11 @@ GameServerGameplayConfig load_gameplay_config_from_weapon_template_source(
         &config.projectile_templates,
         config.action_templates,
         &config.weapons);
-    for (KernelWeaponMechanicsDefinition& weapon : config.weapons.definitions) {
-        weapon.reload_action_template_id =
-            reload_action.definition.action_template_id;
+    for (std::size_t id = 0; id < config.weapons.definitions.size(); ++id) {
+        if (config.weapons.configured[id]) {
+            config.weapons.definitions[id].reload_action_template_id =
+                reload_action.definition.action_template_id;
+        }
     }
     apply_default_actor_templates(&config);
     config.weapons.catalog_hash = compute_gameplay_catalog_hash(config);
@@ -3034,9 +3031,11 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
         &config.projectile_templates,
         config.action_templates,
         &config.weapons);
-    for (KernelWeaponMechanicsDefinition& weapon : config.weapons.definitions) {
-        weapon.reload_action_template_id =
-            reload_action.definition.action_template_id;
+    for (std::size_t id = 0; id < config.weapons.definitions.size(); ++id) {
+        if (config.weapons.configured[id]) {
+            config.weapons.definitions[id].reload_action_template_id =
+                reload_action.definition.action_template_id;
+        }
     }
 
     if (document["entity_template_dir"]) {
@@ -3142,6 +3141,9 @@ std::uint64_t compute_gameplay_catalog_hash(const WeaponCatalogConfig& weapons) 
     std::uint64_t hash = kFnvOffsetBasis;
     hash_scalar(&hash, weapons.catalog_version);
     for (std::size_t index = 0; index < weapons.definitions.size(); ++index) {
+        if (!weapons.configured[index]) {
+            continue;
+        }
         const auto canonical_index = static_cast<std::uint32_t>(index);
         hash_scalar(&hash, canonical_index);
         hash_string(&hash, weapons.names[index]);
@@ -3326,7 +3328,8 @@ std::uint8_t active_weapon_id(const ActorTemplateConfig& actor_template) {
         actor_template.active_weapon_slot >= actor_template.weapon_slot_count) {
         return 0;
     }
-    return actor_template.weapon_slots[actor_template.active_weapon_slot];
+    return static_cast<std::uint8_t>(
+        actor_template.weapon_ids[actor_template.active_weapon_slot]);
 }
 
 std::vector<std::string> validate_gameplay_config(
@@ -3367,6 +3370,9 @@ std::vector<std::string> validate_gameplay_config(
         action_template_names.push_back(action_template.name);
     }
     for (std::size_t index = 0; index < config.weapons.definitions.size(); ++index) {
+        if (!config.weapons.configured[index]) {
+            continue;
+        }
         const KernelWeaponMechanicsDefinition& weapon =
             config.weapons.definitions[index];
         if (weapon.weapon_id != index) {
@@ -3426,20 +3432,24 @@ std::vector<std::string> validate_gameplay_config(
             actor_template.hitbox_half_extents.y <= 0.0f ||
             actor_template.hitbox_half_extents.z <= 0.0f ||
             actor_template.weapon_slot_count == 0 ||
-            actor_template.weapon_slot_count > actor_template.weapon_slots.size() ||
+            actor_template.weapon_slot_count > actor_template.weapon_ids.size() ||
             actor_template.active_weapon_slot >= actor_template.weapon_slot_count) {
             errors.push_back("actor template must be valid");
         }
         for (std::uint8_t slot = 0; slot < actor_template.weapon_slot_count; ++slot) {
-            if (actor_template.weapon_slots[slot] >= kWeaponCount) {
+            const std::uint32_t weapon_id = actor_template.weapon_ids[slot];
+            if (weapon_id > UINT8_MAX ||
+                !config.weapons.configured[weapon_id]) {
                 errors.push_back("actor template weapon slot must reference a valid weapon");
             }
         }
         if (actor_template.actor_type == kActorTypeAgent &&
-            (actor_template.sentry.weapon_id >= kWeaponCount ||
+            (actor_template.sentry.weapon_id > UINT8_MAX ||
+             !config.weapons.configured[actor_template.sentry.weapon_id] ||
              !actor_template_has_weapon(
                  actor_template,
-                 actor_template.sentry.weapon_id) ||
+                 static_cast<std::uint8_t>(
+                     actor_template.sentry.weapon_id)) ||
              actor_template.sentry.alert_ticks == 0 ||
              actor_template.sentry.forget_ticks == 0 ||
              actor_template.sentry.patrol_rotation_interval_ticks == 0 ||
@@ -3659,8 +3669,12 @@ std::vector<std::string> validate_gameplay_config(
         projectile_template_ids.push_back(definition.projectile_template_id);
         projectile_template_names.push_back(projectile_template.name);
     }
-    for (const KernelWeaponMechanicsDefinition& weapon :
-         config.weapons.definitions) {
+    for (std::size_t id = 0; id < config.weapons.definitions.size(); ++id) {
+        if (!config.weapons.configured[id]) {
+            continue;
+        }
+        const KernelWeaponMechanicsDefinition& weapon =
+            config.weapons.definitions[id];
         if (weapon.fire_mode == KernelWeaponFireMode_Projectile &&
             std::find(
                 projectile_template_ids.begin(),
@@ -3847,18 +3861,20 @@ KernelCombatStateDefinition make_combat_state_from_actor_template(
     combat_state.struct_size = sizeof(KernelCombatStateDefinition);
     combat_state.hp = actor_template.health.hp;
     combat_state.max_hp = actor_template.health.max_hp;
-    combat_state.active_weapon_id = active_weapon_id(actor_template);
+    combat_state.active_weapon_slot = actor_template.active_weapon_slot;
+    combat_state.weapon_slot_count = actor_template.weapon_slot_count;
     combat_state.collider_template_id = actor_template.collider_template_id;
     combat_state.move_speed_meters_per_second =
         actor_template.move_speed_meters_per_second;
     combat_state.hitbox_center = actor_template.hitbox_center;
     combat_state.hitbox_half_extents = actor_template.hitbox_half_extents;
     for (std::uint8_t slot = 0; slot < actor_template.weapon_slot_count; ++slot) {
-        const std::uint8_t weapon_id = actor_template.weapon_slots[slot];
+        const std::uint32_t weapon_id = actor_template.weapon_ids[slot];
         const KernelWeaponMechanicsDefinition& weapon =
             config.weapons.definitions[weapon_id];
-        combat_state.ammo[weapon_id] = weapon.magazine_size;
-        combat_state.reserve_magazines[weapon_id] = weapon.reserve_magazines;
+        combat_state.weapon_ids[slot] = weapon_id;
+        combat_state.ammo[slot] = weapon.magazine_size;
+        combat_state.reserve_magazines[slot] = weapon.reserve_magazines;
     }
     return combat_state;
 }

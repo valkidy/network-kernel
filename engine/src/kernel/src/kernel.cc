@@ -35,6 +35,7 @@ namespace {
 constexpr std::uint32_t kClientSnapshotMetadataGraceTicks = 2;
 constexpr bool kDropStaleClientSnapshotsMissingMetadata = true;
 constexpr std::uint64_t kLocalActionResultTimeoutUs = UINT64_C(1000000);
+constexpr std::uint64_t kInputIntentTimeoutUs = UINT64_C(250000);
 constexpr std::uint32_t kDefaultActionPacketBudgetBytes = 1200;
 constexpr std::uint32_t kDefaultRemotePresentationExpiryMs = 250;
 constexpr std::uint32_t kDefaultRemotePresentationClientBudgetBytesPerSecond = 8192;
@@ -44,6 +45,7 @@ constexpr std::size_t kLocalActionResultRecordBytes = 12;
 constexpr std::size_t kRemotePresentationRecordBytes = 20;
 constexpr std::size_t kRemotePresentationDedupCapacity = 256;
 constexpr std::size_t kRecentActionResultCapacity = 256;
+constexpr std::size_t kMaxPendingClientActionIntents = 32;
 
 KernelConfig with_kernel_defaults(KernelConfig config) {
     config.tick = with_tick_defaults(config.tick);
@@ -691,7 +693,7 @@ const EntitySnapshot* find_snapshot_entity(
 }
 
 constexpr std::uint32_t kKernelServerEntityStateBaseSize =
-    offsetof(KernelServerEntityState, active_weapon_id);
+    offsetof(KernelServerEntityState, active_weapon_slot);
 
 KernelServerEntityState to_server_entity_state(
     const World& world,
@@ -734,10 +736,12 @@ KernelServerEntityState to_server_entity_state(
     state.visual_flags &= ~kVisualFlagFiring;
     if (world.registry().all_of<WeaponState>(entity)) {
         const WeaponState& weapon = world.registry().get<WeaponState>(entity);
-        state.active_weapon_id = weapon.weapon_id;
-        for (std::size_t index = 0; index < kWeaponCount; ++index) {
-            state.ammo[index] = weapon.ammo[index];
-            state.reserve_magazines[index] = weapon.reserve_magazines[index];
+        state.active_weapon_slot = weapon.active_weapon_slot;
+        state.weapon_slot_count = weapon.weapon_slot_count;
+        for (std::size_t slot = 0; slot < kWeaponSlotCount; ++slot) {
+            state.weapon_ids[slot] = weapon.weapon_ids[slot];
+            state.ammo[slot] = weapon.ammo[slot];
+            state.reserve_magazines[slot] = weapon.reserve_magazines[slot];
         }
         state.is_reloading = weapon.is_reloading ? 1u : 0u;
         state.reload_remaining_ticks = 0u;
@@ -791,10 +795,6 @@ bool write_server_entity_state(
 std::uint32_t history_frame_count(const TickConfig& config) {
     const TickConfig tick = with_tick_defaults(config);
     return std::max(1u, (tick.server_tick_rate * tick.history_ms) / 1000u);
-}
-
-bool valid_weapon_id(std::uint8_t weapon_id) {
-    return static_cast<std::size_t>(weapon_id) < kWeaponCount;
 }
 
 ProjectileMotionModel to_projectile_motion_model(std::uint8_t motion_model) {
@@ -1230,7 +1230,6 @@ bool validate_projectile_mechanics(
 
 bool validate_weapon_mechanics(const KernelWeaponMechanicsDefinition& definition) {
     if (definition.struct_size < sizeof(KernelWeaponMechanicsDefinition) ||
-        !valid_weapon_id(definition.weapon_id) ||
         definition.magazine_size == 0 ||
         definition.damage == 0 ||
         definition.fire_action_template_id == 0u ||
@@ -1262,9 +1261,6 @@ const WeaponMechanicsDefinition* entity_weapon_mechanics(
     const World& world,
     NetId net_id,
     std::uint8_t weapon_id) {
-    if (!valid_weapon_id(weapon_id)) {
-        return nullptr;
-    }
     const std::optional<entt::entity> entity = world.find_entity(net_id);
     if (!entity.has_value() ||
         !world.registry().all_of<WeaponTuning>(*entity)) {
@@ -1545,6 +1541,7 @@ bool KernelEngine::start_listen_server(std::uint16_t port) {
 
     const NetId player =
         world_.spawn_player(kLocalListenPeerId, glm::vec3{0.0f, 0.0f, 0.0f});
+    register_actor_for_first_physics(player);
     local_client_peer_id_ = kLocalListenPeerId;
     local_player_net_id_ = player;
     local_listen_session_ = PeerSession{kLocalListenPeerId, player, 0, true, {}};
@@ -1757,8 +1754,10 @@ void KernelEngine::update(float delta_seconds) {
         if (const auto actor = world_.find_entity(local_player_net_id_);
             actor.has_value() && world_.registry().all_of<WeaponState>(*actor)) {
             WeaponState& weapon = world_.registry().get<WeaponState>(*actor);
-            if (outstanding->second.weapon_id < weapon.ammo.size()) {
-                weapon.ammo[outstanding->second.weapon_id] =
+            const std::size_t slot =
+                find_weapon_slot(weapon, outstanding->second.weapon_id);
+            if (slot < weapon.weapon_slot_count) {
+                weapon.ammo[slot] =
                     outstanding->second.ammo_before;
             }
             weapon.active_effect_net_id = outstanding->second.active_effect_before;
@@ -1802,6 +1801,10 @@ void KernelEngine::update(float delta_seconds) {
     pump_gameplay_catalog_transfers();
     const std::uint32_t ticks_to_run = tick_loop_.accumulate(delta_seconds);
     for (std::uint32_t tick = 0; tick < ticks_to_run; ++tick) {
+        const bool emitted_client_input = emit_client_input_for_tick();
+        if (emitted_client_input && config_.mode == KernelMode_ListenServer) {
+            poll_transport();
+        }
         simulate_tick();
     }
     poll_client_transport();
@@ -1809,149 +1812,50 @@ void KernelEngine::update(float delta_seconds) {
 }
 
 void KernelEngine::submit_input(PeerId local_player_id, const PlayerInput& input) {
-    if (config_.mode == KernelMode_ListenServer &&
-        listen_server_transport_ != nullptr) {
-        const PlayerInput input_to_send = prepare_client_input(input);
-        predict_local_input(input_to_send);
-        const std::uint32_t primary_gate_before =
-            input_to_send.selected_weapon <
-                    predicted_next_primary_commit_tick_.size()
-                ? predicted_next_primary_commit_tick_[
-                      input_to_send.selected_weapon]
-                : 0u;
-        const WeaponMechanicsDefinition* predicted_weapon =
-            entity_weapon_mechanics(
-                world_, local_player_net_id_, input_to_send.selected_weapon);
-        const std::uint32_t predicted_action_template_id =
-            predicted_weapon == nullptr
-                ? 0u
-                : input_to_send.action_intent.binding_id ==
-                          KernelActionBinding_PrimaryFire
-                      ? predicted_weapon->fire_action_template_id
-                      : predicted_weapon->reload_action_template_id;
-        const bool predicted_commit = predict_local_action(input_to_send);
-        if (input_to_send.action_intent.action_instance_id != 0u) {
-            std::uint16_t ammo_before = 0u;
-            NetId active_effect_before = 0u;
-            if (const auto actor = world_.find_entity(local_player_net_id_);
-                actor.has_value() &&
-                world_.registry().all_of<WeaponState>(*actor)) {
-                const WeaponState& weapon = world_.registry().get<WeaponState>(*actor);
-                if (input_to_send.selected_weapon < weapon.ammo.size()) {
-                    ammo_before = weapon.ammo[input_to_send.selected_weapon];
-                }
-                active_effect_before = weapon.active_effect_net_id;
-            }
-            auto outstanding = outstanding_predicted_actions_.try_emplace(
-                input_to_send.action_intent.action_instance_id,
-                OutstandingPredictedAction{
-                    input_to_send.action_intent.action_instance_id,
-                    client_local_time_us_,
-                    0u,
-                    input_to_send.action_intent.binding_id,
-                    input_to_send.selected_weapon,
-                    predicted_action_template_id,
-                    primary_gate_before,
-                    0u,
-                    ammo_before,
-                    active_effect_before,
-                }).first;
-            outstanding->second.last_activity_us = client_local_time_us_;
-        }
-        if (predicted_commit) {
-            predict_local_projectile(input_to_send);
-        }
-        rebuild_render_states();
-        const std::vector<std::uint8_t> packet =
-            encode_input_packet(local_player_id, input_to_send, next_packet_sequence_++);
-        if (!listen_server_transport_->SendLocalClient(
-                local_player_id,
-                packet.data(),
-                static_cast<std::uint32_t>(packet.size()),
-                SendMode::kUnreliable,
-                ChannelId::kInput)) {
-            push_event(KernelEventType_Error, 0, local_player_id, 4);
-        } else {
-            record_sent_packet(
-                static_cast<std::uint32_t>(packet.size()),
-                SendMode::kUnreliable,
-                ChannelId::kInput);
-        }
-        return;
-    }
-
-    if (config_.mode == KernelMode_Client) {
+    const bool local_client = config_.mode == KernelMode_Client ||
+        (config_.mode == KernelMode_ListenServer &&
+         listen_server_transport_ != nullptr);
+    if (local_client) {
         if (!has_welcome_) {
             push_event(KernelEventType_Error, 0, 0, 8);
             return;
         }
-
-        const PlayerInput input_to_send = prepare_client_input(input);
-        predict_local_input(input_to_send);
-        const std::uint32_t primary_gate_before =
-            input_to_send.selected_weapon <
-                    predicted_next_primary_commit_tick_.size()
-                ? predicted_next_primary_commit_tick_[
-                      input_to_send.selected_weapon]
-                : 0u;
-        const WeaponMechanicsDefinition* predicted_weapon =
-            entity_weapon_mechanics(
-                world_, local_player_net_id_, input_to_send.selected_weapon);
-        const std::uint32_t predicted_action_template_id =
-            predicted_weapon == nullptr
-                ? 0u
-                : input_to_send.action_intent.binding_id ==
-                          KernelActionBinding_PrimaryFire
-                      ? predicted_weapon->fire_action_template_id
-                      : predicted_weapon->reload_action_template_id;
-        const bool predicted_commit = predict_local_action(input_to_send);
-        if (input_to_send.action_intent.action_instance_id != 0u) {
-            std::uint16_t ammo_before = 0u;
-            NetId active_effect_before = 0u;
-            if (const auto actor = world_.find_entity(local_player_net_id_);
-                actor.has_value() &&
-                world_.registry().all_of<WeaponState>(*actor)) {
-                const WeaponState& weapon = world_.registry().get<WeaponState>(*actor);
-                if (input_to_send.selected_weapon < weapon.ammo.size()) {
-                    ammo_before = weapon.ammo[input_to_send.selected_weapon];
+        PlayerInput prepared = prepare_client_input(input);
+        const std::uint32_t action_instance_id =
+            prepared.action_intent.action_instance_id;
+        if (action_instance_id != 0u) {
+            const bool duplicate =
+                std::any_of(
+                    pending_client_action_intents_.begin(),
+                    pending_client_action_intents_.end(),
+                    [action_instance_id](const PlayerInput& pending) {
+                        return pending.action_intent.action_instance_id ==
+                            action_instance_id;
+                    }) ||
+                outstanding_predicted_actions_.contains(action_instance_id) ||
+                applied_local_action_results_.contains(action_instance_id);
+            if (!duplicate) {
+                if (pending_client_action_intents_.size() >=
+                    kMaxPendingClientActionIntents) {
+                    push_event(
+                        KernelEventType_Error,
+                        local_player_net_id_,
+                        local_client_peer_id_,
+                        27);
+                } else {
+                    pending_client_action_intents_.push_back(prepared);
                 }
-                active_effect_before = weapon.active_effect_net_id;
             }
-            auto outstanding = outstanding_predicted_actions_.try_emplace(
-                input_to_send.action_intent.action_instance_id,
-                OutstandingPredictedAction{
-                    input_to_send.action_intent.action_instance_id,
-                    client_local_time_us_,
-                    0u,
-                    input_to_send.action_intent.binding_id,
-                    input_to_send.selected_weapon,
-                    predicted_action_template_id,
-                    primary_gate_before,
-                    0u,
-                    ammo_before,
-                    active_effect_before,
-                }).first;
-            outstanding->second.last_activity_us = client_local_time_us_;
         }
-        if (predicted_commit) {
-            predict_local_projectile(input_to_send);
-        }
-        rebuild_render_states();
-        const std::vector<std::uint8_t> packet =
-            encode_input_packet(local_client_peer_id_, input_to_send, next_packet_sequence_++);
-        if (!transport_->Send(
-                kServerPeerId,
-                packet.data(),
-                static_cast<std::uint32_t>(packet.size()),
-                SendMode::kUnreliable,
-                ChannelId::kInput)) {
-            push_event(KernelEventType_Error, 0, local_client_peer_id_, 4);
-        } else {
-            record_sent_packet(
-                static_cast<std::uint32_t>(packet.size()),
-                SendMode::kUnreliable,
-                ChannelId::kInput);
-        }
+
+        prepared.input_seq = 0u;
+        prepared.action_intent = ActionIntent{};
+        latest_client_input_ = prepared;
+        latest_client_input_time_us_ = client_local_time_us_;
+        latest_client_input_peer_ = config_.mode == KernelMode_ListenServer
+            ? local_player_id
+            : local_client_peer_id_;
+        has_latest_client_input_ = true;
         return;
     }
 
@@ -1968,6 +1872,195 @@ void KernelEngine::submit_input(PeerId local_player_id, const PlayerInput& input
     });
     local_last_processed_input_seq_ =
         std::max(local_last_processed_input_seq_, input.input_seq);
+}
+
+bool KernelEngine::emit_client_input_for_tick() {
+    if (!has_welcome_ || !has_latest_client_input_) {
+        return false;
+    }
+
+    PlayerInput input = latest_client_input_;
+    const bool fresh = client_local_time_us_ >= latest_client_input_time_us_ &&
+        client_local_time_us_ - latest_client_input_time_us_ <=
+            kInputIntentTimeoutUs;
+    if (!fresh) {
+        input.move = KernelVec2{};
+        input.look_delta = KernelVec2{};
+        input.buttons = 0u;
+        input.action_input = ActionInput{};
+    }
+    input.action_intent = ActionIntent{};
+    if (!pending_client_action_intents_.empty()) {
+        const PlayerInput edge = pending_client_action_intents_.front();
+        pending_client_action_intents_.pop_front();
+        input.action_intent = edge.action_intent;
+        input.client_action_time_us = edge.client_action_time_us;
+        input.aim_dir = edge.aim_dir;
+        input.selected_weapon = edge.selected_weapon;
+    } else if (input.client_action_time_us == 0u) {
+        input.client_action_time_us = client_local_action_time_us();
+    }
+    input.input_seq = next_client_input_seq_++;
+    latest_client_input_.look_delta = KernelVec2{};
+    process_client_input_command(latest_client_input_peer_, input);
+    return true;
+}
+
+void KernelEngine::process_client_input_command(
+    PeerId peer,
+    const PlayerInput& input) {
+    predict_local_input(input);
+    std::size_t predicted_weapon_slot = kWeaponSlotCount;
+    const WeaponState* predicted_weapon_state = nullptr;
+    if (const auto actor = world_.find_entity(local_player_net_id_);
+        actor.has_value() && world_.registry().all_of<WeaponState>(*actor)) {
+        predicted_weapon_state = &world_.registry().get<WeaponState>(*actor);
+        predicted_weapon_slot =
+            find_weapon_slot(*predicted_weapon_state, input.selected_weapon);
+    }
+    const std::uint32_t primary_gate_before =
+        predicted_weapon_slot < predicted_next_primary_commit_tick_.size()
+            ? predicted_next_primary_commit_tick_[predicted_weapon_slot]
+            : 0u;
+    const WeaponMechanicsDefinition* predicted_weapon = entity_weapon_mechanics(
+        world_, local_player_net_id_, input.selected_weapon);
+    const std::uint32_t predicted_action_template_id =
+        predicted_weapon == nullptr
+            ? 0u
+            : input.action_intent.binding_id == KernelActionBinding_PrimaryFire
+                ? predicted_weapon->fire_action_template_id
+                : predicted_weapon->reload_action_template_id;
+    const bool predicted_commit = predict_local_action(input);
+    if (input.action_intent.action_instance_id != 0u) {
+        std::uint16_t ammo_before = 0u;
+        NetId active_effect_before = 0u;
+        if (predicted_weapon_state != nullptr) {
+            if (predicted_weapon_slot <
+                predicted_weapon_state->weapon_slot_count) {
+                ammo_before =
+                    predicted_weapon_state->ammo[predicted_weapon_slot];
+            }
+            active_effect_before =
+                predicted_weapon_state->active_effect_net_id;
+        }
+        auto outstanding = outstanding_predicted_actions_.try_emplace(
+            input.action_intent.action_instance_id,
+            OutstandingPredictedAction{
+                input.action_intent.action_instance_id,
+                client_local_time_us_,
+                0u,
+                input.action_intent.binding_id,
+                input.selected_weapon,
+                predicted_action_template_id,
+                primary_gate_before,
+                0u,
+                ammo_before,
+                active_effect_before,
+            }).first;
+        outstanding->second.last_activity_us = client_local_time_us_;
+    }
+    if (predicted_commit) {
+        predict_local_projectile(input);
+    }
+
+    const std::vector<std::uint8_t> packet =
+        encode_input_packet(peer, input, next_packet_sequence_++);
+    const bool sent = config_.mode == KernelMode_ListenServer
+        ? listen_server_transport_ != nullptr &&
+            listen_server_transport_->SendLocalClient(
+                peer,
+                packet.data(),
+                static_cast<std::uint32_t>(packet.size()),
+                SendMode::kUnreliable,
+                ChannelId::kInput)
+        : transport_ != nullptr && transport_->Send(
+            kServerPeerId,
+            packet.data(),
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kUnreliable,
+            ChannelId::kInput);
+    if (!sent) {
+        push_event(KernelEventType_Error, 0, peer, 4);
+        return;
+    }
+    record_sent_packet(
+        static_cast<std::uint32_t>(packet.size()),
+        SendMode::kUnreliable,
+        ChannelId::kInput);
+}
+
+bool KernelEngine::cache_server_movement_input(
+    PeerSession* session,
+    const PlayerInput& input,
+    std::uint64_t received_server_time_us) {
+    if (session == nullptr ||
+        (session->has_received_input &&
+         input.input_seq <= session->last_received_input_seq)) {
+        return false;
+    }
+    session->latest_movement_input = input;
+    session->latest_movement_input.action_intent = ActionIntent{};
+    session->latest_movement_input.action_input = ActionInput{};
+    session->last_received_input_seq = input.input_seq;
+    session->last_movement_input_server_time_us = received_server_time_us;
+    session->has_received_input = true;
+    session->has_movement_input = true;
+    return true;
+}
+
+std::vector<QueuedInput> KernelEngine::build_effective_movement_inputs(
+    std::uint64_t server_time_us) {
+    std::vector<QueuedInput> effective = pending_inputs_;
+    const auto append_held_input = [this, server_time_us, &effective](
+                                       PeerSession* session) {
+        if (session == nullptr || !session->welcomed ||
+            !session->has_movement_input) {
+            return;
+        }
+        if (server_time_us < session->last_movement_input_server_time_us ||
+            server_time_us - session->last_movement_input_server_time_us >
+                kInputIntentTimeoutUs) {
+            session->has_movement_input = false;
+            session->latest_movement_input = PlayerInput{};
+            return;
+        }
+        effective.push_back(QueuedInput{
+            session->peer,
+            session->latest_movement_input,
+            tick_loop_.current_tick(),
+            0u,
+            false,
+        });
+    };
+
+    if (config_.mode == KernelMode_ListenServer) {
+        append_held_input(&local_listen_session_);
+    }
+    for (PeerSession& session : peer_sessions_) {
+        append_held_input(&session);
+    }
+    return effective;
+}
+
+void KernelEngine::acknowledge_simulated_movement_inputs(
+    const std::vector<QueuedInput>& inputs) {
+    for (const QueuedInput& queued_input : inputs) {
+        if (queued_input.controlled_net_id != 0u) {
+            continue;
+        }
+        PeerSession* session = result_session_for_peer(queued_input.owner_peer);
+        if (session != nullptr) {
+            session->last_processed_input_seq = std::max(
+                session->last_processed_input_seq,
+                queued_input.input.input_seq);
+        }
+        if (config_.mode == KernelMode_ListenServer &&
+            queued_input.owner_peer == kLocalListenPeerId) {
+            local_last_processed_input_seq_ = std::max(
+                local_last_processed_input_seq_,
+                queued_input.input.input_seq);
+        }
+    }
 }
 
 bool KernelEngine::load_gameplay_catalog(
@@ -2080,7 +2173,6 @@ bool KernelEngine::load_gameplay_catalog(
         if (projectile_template.struct_size <
                 sizeof(KernelProjectileTemplateDefinition) ||
             projectile_template.projectile_template_id == 0 ||
-            !valid_weapon_id(projectile_template.weapon_id) ||
             !validate_projectile_mechanics(projectile_template.mechanics)) {
             return false;
         }
@@ -2374,7 +2466,12 @@ bool KernelEngine::get_benchmark_stats(KernelBenchmarkStats* out_stats) const {
 
     auto entity_view = world_.registry().view<NetworkIdentity, EntityKind>();
     stats.total_entity_count = static_cast<std::uint32_t>(entity_view.size_hint());
-    stats.total_entity_count += static_cast<std::uint32_t>(predicted_projectiles_.size());
+    stats.total_entity_count += static_cast<std::uint32_t>(std::count_if(
+        predicted_projectiles_.begin(),
+        predicted_projectiles_.end(),
+        [](const PredictedProjectile& projectile) {
+            return !projectile.locally_terminated;
+        }));
 
     auto add_projectile_sync_mode = [&stats](std::uint8_t sync_mode) {
         ++stats.projectile_count;
@@ -2409,6 +2506,9 @@ bool KernelEngine::get_benchmark_stats(KernelBenchmarkStats* out_stats) const {
         add_projectile_sync_mode(sync_mode);
     }
     for (const PredictedProjectile& projectile : predicted_projectiles_) {
+        if (projectile.locally_terminated) {
+            continue;
+        }
         add_projectile_sync_mode(projectile.sync_mode);
     }
     if (stats.projectile_count != 0) {
@@ -3185,12 +3285,25 @@ bool KernelEngine::server_set_entity_combat_state(
     const KernelCombatStateDefinition& combat_state) {
     if (!running_ || !is_server_mode(config_.mode) || net_id == 0 ||
         combat_state.struct_size < sizeof(KernelCombatStateDefinition) ||
-        !valid_weapon_id(combat_state.active_weapon_id) ||
+        combat_state.weapon_slot_count == 0u ||
+        combat_state.weapon_slot_count > KERNEL_MAX_WEAPON_SLOTS ||
+        combat_state.active_weapon_slot >= combat_state.weapon_slot_count ||
         combat_state.collider_template_id == 0 ||
         find_collider_template(
             collider_templates_,
             combat_state.collider_template_id) == nullptr) {
         return false;
+    }
+    for (std::size_t slot = 0; slot < combat_state.weapon_slot_count; ++slot) {
+        if (combat_state.weapon_ids[slot] > UINT8_MAX) {
+            return false;
+        }
+        for (std::size_t previous = 0; previous < slot; ++previous) {
+            if (combat_state.weapon_ids[previous] ==
+                combat_state.weapon_ids[slot]) {
+                return false;
+            }
+        }
     }
     const std::optional<entt::entity> entity = world_.find_entity(net_id);
     if (!entity.has_value()) {
@@ -3210,10 +3323,12 @@ bool KernelEngine::server_set_entity_combat_state(
     movement.speed_meters_per_second = combat_state.move_speed_meters_per_second;
 
     WeaponState& weapon = world_.registry().get_or_emplace<WeaponState>(*entity);
-    weapon.weapon_id = combat_state.active_weapon_id;
-    for (std::size_t index = 0; index < kWeaponCount; ++index) {
-        weapon.ammo[index] = combat_state.ammo[index];
-        weapon.reserve_magazines[index] = combat_state.reserve_magazines[index];
+    weapon.active_weapon_slot = combat_state.active_weapon_slot;
+    weapon.weapon_slot_count = combat_state.weapon_slot_count;
+    for (std::size_t slot = 0; slot < kWeaponSlotCount; ++slot) {
+        weapon.weapon_ids[slot] = combat_state.weapon_ids[slot];
+        weapon.ammo[slot] = combat_state.ammo[slot];
+        weapon.reserve_magazines[slot] = combat_state.reserve_magazines[slot];
     }
     if (net_id == local_player_net_id_) {
         local_player_move_speed_meters_per_second_ =
@@ -3301,7 +3416,7 @@ bool KernelEngine::server_set_entity_weapon_mechanics(
 bool KernelEngine::server_clear_entity_weapon_mechanics(
     NetId net_id,
     std::uint8_t weapon_id) {
-    if (!running_ || !is_server_mode(config_.mode) || !valid_weapon_id(weapon_id)) {
+    if (!running_ || !is_server_mode(config_.mode)) {
         return false;
     }
     const std::optional<entt::entity> entity = world_.find_entity(net_id);
@@ -3322,8 +3437,7 @@ bool KernelEngine::server_get_entity_weapon_mechanics(
     KernelWeaponMechanicsDefinition* out_weapon_mechanics) const {
     if (!running_ || !is_server_mode(config_.mode) ||
         out_weapon_mechanics == nullptr ||
-        out_weapon_mechanics->struct_size < sizeof(KernelWeaponMechanicsDefinition) ||
-        !valid_weapon_id(weapon_id)) {
+        out_weapon_mechanics->struct_size < sizeof(KernelWeaponMechanicsDefinition)) {
         return false;
     }
     const WeaponMechanicsDefinition* mechanics =
@@ -3434,6 +3548,39 @@ void KernelEngine::push_event(
     events_.push_back(KernelEvent{type, tick_loop_.current_tick(), net_id, peer_id, code});
 }
 
+void KernelEngine::register_actor_for_first_physics(NetId net_id) {
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value() ||
+        !world_.registry().all_of<EntityKind>(*entity) ||
+        world_.registry().get<EntityKind>(*entity).type != EntityType::kActor ||
+        world_.registry().all_of<ServerOnly>(*entity)) {
+        return;
+    }
+    pending_first_physics_actors_.try_emplace(
+        net_id,
+        PendingFirstPhysicsActor{tick_loop_.current_tick(), false});
+}
+
+bool KernelEngine::is_actor_pending_first_physics(NetId net_id) const {
+    return pending_first_physics_actors_.find(net_id) !=
+        pending_first_physics_actors_.end();
+}
+
+void KernelEngine::filter_pending_first_physics_actors(
+    WorldSnapshot* snapshot) const {
+    if (snapshot == nullptr || pending_first_physics_actors_.empty()) {
+        return;
+    }
+    snapshot->entities.erase(
+        std::remove_if(
+            snapshot->entities.begin(),
+            snapshot->entities.end(),
+            [this](const EntitySnapshot& entity) {
+                return is_actor_pending_first_physics(entity.net_id);
+            }),
+        snapshot->entities.end());
+}
+
 void KernelEngine::reset_runtime_state(KernelMode mode) {
     config_.mode = mode;
     tick_loop_ = TickLoop(config_.tick);
@@ -3463,12 +3610,20 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     client_metadata_timeout_reported_entities_.clear();
     client_despawned_entities_.clear();
     pending_prediction_inputs_.clear();
+    latest_client_input_ = PlayerInput{};
+    pending_client_action_intents_.clear();
+    latest_client_input_time_us_ = 0;
+    next_client_input_seq_ = 1;
+    latest_client_input_peer_ = 0;
+    has_latest_client_input_ = false;
     predicted_projectiles_.clear();
+    predicted_projectile_collision_warning_emitted_ = false;
     outstanding_predicted_actions_.clear();
     applied_local_action_results_.clear();
     debug_records_.clear();
     vision_configs_.clear();
     vision_states_.clear();
+    pending_first_physics_actors_.clear();
     pending_director_intents_.clear();
     network_stats_ = KernelNetworkStats{};
     network_stats_.struct_size = sizeof(KernelNetworkStats);
@@ -3496,6 +3651,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     last_simulation_tick_cost_warning_tick_ = 0;
     entity_ids_by_net_id_.clear();
     predicted_local_entity_ = EntitySnapshot{};
+    has_authoritative_local_entity_ = false;
     predicted_character_state_ = movement_solver::CharacterMovementState{};
     predicted_character_tick_ = 0;
     predicted_action_buttons_ = 0u;
@@ -3648,8 +3804,12 @@ void KernelEngine::poll_transport() {
             }
             PeerSession* mutable_session = result_session_for_peer(
                 transport_event.peer);
-            prepare_server_action_intent(mutable_session, &input);
             const std::uint64_t received_server_time_us = current_server_time_us();
+            if (!cache_server_movement_input(
+                    mutable_session, input, received_server_time_us)) {
+                continue;
+            }
+            prepare_server_action_intent(mutable_session, &input);
             const std::uint64_t action_server_time_us =
                 convert_client_action_time_to_server_time(
                     player_id,
@@ -3662,13 +3822,6 @@ void KernelEngine::poll_transport() {
                 action_server_time_us,
                 true,
             });
-            if (mutable_session != nullptr) {
-                mutable_session->last_processed_input_seq =
-                    std::max(mutable_session->last_processed_input_seq, input.input_seq);
-            } else if (config_.mode == KernelMode_ListenServer) {
-                local_last_processed_input_seq_ =
-                    std::max(local_last_processed_input_seq_, input.input_seq);
-            }
         }
     }
 }
@@ -3828,16 +3981,24 @@ void KernelEngine::handle_client_local_action_results(
                 find_action_template(
                     action_templates_,
                     outstanding->second.action_template_id);
+            std::size_t result_weapon_slot = kWeaponSlotCount;
+            if (const auto actor = world_.find_entity(local_player_net_id_);
+                actor.has_value() &&
+                world_.registry().all_of<WeaponState>(*actor)) {
+                result_weapon_slot = find_weapon_slot(
+                    world_.registry().get<WeaponState>(*actor),
+                    outstanding->second.weapon_id);
+            }
             if (outstanding->second.binding_id ==
                     KernelActionBinding_PrimaryFire &&
-                outstanding->second.weapon_id <
+                result_weapon_slot <
                     predicted_next_primary_commit_tick_.size()) {
                 if (result.result == KernelLocalActionResultType_Accepted &&
                     action_template != nullptr) {
                     outstanding->second.last_authoritative_commit_tick =
                         result.authoritative_tick;
                     predicted_next_primary_commit_tick_[
-                        outstanding->second.weapon_id] =
+                        result_weapon_slot] =
                         result.authoritative_tick +
                         action_template->commit_interval_ticks;
                 } else if (
@@ -3845,14 +4006,14 @@ void KernelEngine::handle_client_local_action_results(
                     result.result == KernelLocalActionResultType_Corrected) {
                     if (result.confirmed_commit_count == 0u) {
                         predicted_next_primary_commit_tick_[
-                            outstanding->second.weapon_id] =
+                            result_weapon_slot] =
                             outstanding->second.primary_gate_before;
                     } else if (
                         action_template != nullptr &&
                         outstanding->second.last_authoritative_commit_tick !=
                             0u) {
                         predicted_next_primary_commit_tick_[
-                            outstanding->second.weapon_id] =
+                            result_weapon_slot] =
                             outstanding->second.last_authoritative_commit_tick +
                             action_template->commit_interval_ticks;
                     }
@@ -3901,8 +4062,10 @@ void KernelEngine::handle_client_local_action_results(
                     actor.has_value() &&
                     world_.registry().all_of<WeaponState>(*actor)) {
                     WeaponState& weapon = world_.registry().get<WeaponState>(*actor);
-                    if (outstanding->second.weapon_id < weapon.ammo.size()) {
-                        weapon.ammo[outstanding->second.weapon_id] =
+                    const std::size_t slot =
+                        find_weapon_slot(weapon, outstanding->second.weapon_id);
+                    if (slot < weapon.weapon_slot_count) {
+                        weapon.ammo[slot] =
                             outstanding->second.ammo_before;
                     }
                     weapon.active_effect_net_id =
@@ -4137,34 +4300,53 @@ void KernelEngine::handle_client_projectile_spawn_batch(
                 KernelProjectileSyncMode_ServerSnapshotOnly) {
                 continue;
             }
-            if (has_predicted_projectile_net_id(record.projectile_net_id)) {
+            PredictedProjectile* predicted = find_predicted_projectile(
+                record.owner_peer, record.action_instance_id);
+            if (predicted != nullptr && !predicted->bound) {
+                predicted->entity_id = entity_id_for_net_id(record.projectile_net_id);
+                predicted->net_id = record.projectile_net_id;
+                predicted->spawn_tick = packet.server_tick;
+                predicted->projectile_template_id =
+                    projectile_template->projectile_template_id;
+                predicted->collider_template_id =
+                    projectile_template->mechanics.collider_template_id;
+                predicted->weapon_id = projectile_template->weapon_id;
+                predicted->sync_mode = projectile_template->mechanics.sync_mode;
+                predicted->bound = true;
+            } else if (has_predicted_projectile_net_id(record.projectile_net_id)) {
                 continue;
+            } else {
+                const glm::vec3 spawn_position = record.spawn_position;
+                const glm::vec3 initial_velocity = record.initial_velocity;
+                predicted_projectiles_.push_back(PredictedProjectile{
+                    entity_id_for_net_id(record.projectile_net_id),
+                    record.projectile_net_id,
+                    record.owner_peer,
+                    0,
+                    record.action_instance_id,
+                    packet.server_tick,
+                    0,
+                    spawn_position,
+                    glm::quat{1.0f, 0.0f, 0.0f, 0.0f},
+                    initial_velocity,
+                    spawn_position,
+                    initial_velocity,
+                    from_kernel_vec3(projectile_template->mechanics.gravity),
+                    to_projectile_motion_model(
+                        projectile_template->mechanics.motion_model),
+                    projectile_template->mechanics.lifetime_ticks,
+                    projectile_template->projectile_template_id,
+                    projectile_template->mechanics.collider_template_id,
+                    projectile_template->weapon_id,
+                    projectile_template->mechanics.sync_mode,
+                    glm::vec3{0.0f, 0.0f, 0.0f},
+                    false,
+                    false,
+                });
             }
+
             const glm::vec3 spawn_position = record.spawn_position;
             const glm::vec3 initial_velocity = record.initial_velocity;
-            predicted_projectiles_.push_back(PredictedProjectile{
-                entity_id_for_net_id(record.projectile_net_id),
-                record.projectile_net_id,
-                record.owner_peer,
-                0,
-                record.action_instance_id,
-                packet.server_tick,
-                0,
-                spawn_position,
-                glm::quat{1.0f, 0.0f, 0.0f, 0.0f},
-                initial_velocity,
-                spawn_position,
-                initial_velocity,
-                from_kernel_vec3(projectile_template->mechanics.gravity),
-                to_projectile_motion_model(projectile_template->mechanics.motion_model),
-                projectile_template->mechanics.lifetime_ticks,
-                projectile_template->projectile_template_id,
-                projectile_template->mechanics.collider_template_id,
-                projectile_template->weapon_id,
-                projectile_template->mechanics.sync_mode,
-                glm::vec3{0.0f, 0.0f, 0.0f},
-                false,
-            });
 
             KernelDebugInfo debug_info{};
             debug_info.struct_size = sizeof(KernelDebugInfo);
@@ -4537,6 +4719,7 @@ void KernelEngine::clear_client_session() {
     local_player_net_id_ = 0;
     local_last_processed_input_seq_ = 0;
     clear_client_action_sync_state();
+    predicted_projectile_collision_warning_emitted_ = false;
     lifecycle_events_.clear();
     client_snapshot_buffer_.clear();
     client_replicated_entities_.clear();
@@ -4544,6 +4727,13 @@ void KernelEngine::clear_client_session() {
     client_despawned_entities_.clear();
     latest_client_snapshot_ = WorldSnapshot{};
     predicted_local_entity_ = EntitySnapshot{};
+    has_authoritative_local_entity_ = false;
+    latest_client_input_ = PlayerInput{};
+    pending_client_action_intents_.clear();
+    latest_client_input_time_us_ = 0;
+    next_client_input_seq_ = 1;
+    latest_client_input_peer_ = 0;
+    has_latest_client_input_ = false;
     predicted_character_state_ = movement_solver::CharacterMovementState{};
     predicted_character_tick_ = 0;
     local_correction_offset_ = glm::vec3{0.0f, 0.0f, 0.0f};
@@ -5125,12 +5315,13 @@ void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {
         });
 
     const glm::vec3 previous_render_position =
-        has_predicted_local_entity_
+        has_authoritative_local_entity_ && has_predicted_local_entity_
             ? predicted_local_entity_.position + local_correction_offset_
             : authoritative->position;
 
     predicted_local_entity_ = *authoritative;
     has_predicted_local_entity_ = true;
+    has_authoritative_local_entity_ = true;
     if (prediction_physics_world_ != nullptr) {
         if (!authoritative->has_authoritative_movement_state) {
             fail_client_prediction(
@@ -5310,13 +5501,14 @@ void KernelEngine::predict_local_input(const PlayerInput& input) {
     }
 
     if (!has_predicted_local_entity_) {
-        if (const EntitySnapshot* latest =
-                find_snapshot_entity(latest_client_snapshot_, local_player_net_id_)) {
-            predicted_local_entity_ = *latest;
-        } else {
+        const EntitySnapshot* latest =
+            find_snapshot_entity(latest_client_snapshot_, local_player_net_id_);
+        if (latest == nullptr) {
             predicted_local_entity_.net_id = local_player_net_id_;
             predicted_local_entity_.type = EntityType::kActor;
             predicted_local_entity_.actor_type = ActorType::kPlayer;
+        } else {
+            predicted_local_entity_ = *latest;
         }
         has_predicted_local_entity_ = true;
         predicted_character_state_.position = predicted_local_entity_.position;
@@ -5358,6 +5550,13 @@ bool KernelEngine::predict_local_action(const PlayerInput& input) {
     if (!has_predicted_local_entity_) {
         return false;
     }
+    const auto actor = world_.find_entity(local_player_net_id_);
+    if (!actor.has_value() ||
+        !world_.registry().all_of<WeaponState>(*actor)) {
+        return false;
+    }
+    const WeaponState& weapon_state =
+        world_.registry().get<WeaponState>(*actor);
     predicted_local_entity_.aim_direction = input_aim_to_world(input);
     predicted_local_entity_.flags &=
         ~(kVisualFlagAiming | kVisualFlagFiring | kVisualFlagReloading);
@@ -5397,15 +5596,17 @@ bool KernelEngine::predict_local_action(const PlayerInput& input) {
         if (action_template == nullptr) {
             return false;
         }
+        const std::size_t selected_slot =
+            find_weapon_slot(weapon_state, input.selected_weapon);
         if (input.action_intent.binding_id ==
                 KernelActionBinding_PrimaryFire &&
-            (input.selected_weapon >=
+            (selected_slot >=
                  predicted_next_primary_commit_tick_.size() ||
              projected_primary_commit_is_blocked(
                  current_tick,
                  action_template->commit_offset_ticks,
                  predicted_next_primary_commit_tick_[
-                     input.selected_weapon]))) {
+                     selected_slot]))) {
             return false;
         }
         predicted_local_entity_.action_template_id =
@@ -5455,10 +5656,11 @@ bool KernelEngine::predict_local_action(const PlayerInput& input) {
             current_tick + action_template->commit_interval_ticks;
         committed =
             predicted_action_binding_id_ == KernelActionBinding_PrimaryFire;
+        const std::size_t committed_slot =
+            find_weapon_slot(weapon_state, predicted_action_weapon_id_);
         if (committed &&
-            predicted_action_weapon_id_ <
-                predicted_next_primary_commit_tick_.size()) {
-            predicted_next_primary_commit_tick_[predicted_action_weapon_id_] =
+            committed_slot < predicted_next_primary_commit_tick_.size()) {
+            predicted_next_primary_commit_tick_[committed_slot] =
                 current_tick + action_template->commit_interval_ticks;
         }
         if ((action_template->max_commit_count != 0u &&
@@ -5542,6 +5744,7 @@ void KernelEngine::predict_local_projectile(const PlayerInput& input) {
         weapon->id,
         sync_mode,
         glm::vec3{0.0f, 0.0f, 0.0f},
+        false,
         false,
     });
 }
@@ -5759,7 +5962,8 @@ bool KernelEngine::build_interpolated_snapshot_for_server_time(
 }
 
 void KernelEngine::append_predicted_local_render_state(bool consume_correction) {
-    if (!has_predicted_local_entity_) {
+    if (!has_predicted_local_entity_ ||
+        (has_welcome_ && !has_authoritative_local_entity_)) {
         return;
     }
 
@@ -5786,8 +5990,16 @@ void KernelEngine::append_predicted_local_render_state(bool consume_correction) 
 
 void KernelEngine::append_predicted_projectile_render_states(bool consume_correction) {
     const auto cost_start = std::chrono::steady_clock::now();
-    const bool had_projectiles = !predicted_projectiles_.empty();
+    const bool had_projectiles = std::any_of(
+        predicted_projectiles_.begin(),
+        predicted_projectiles_.end(),
+        [](const PredictedProjectile& projectile) {
+            return !projectile.locally_terminated;
+        });
     for (PredictedProjectile& projectile : predicted_projectiles_) {
+        if (projectile.locally_terminated) {
+            continue;
+        }
         const glm::vec3 render_position =
             projectile.position + projectile.correction_offset;
         render_states_.push_back(RenderEntityState{
@@ -5827,29 +6039,99 @@ void KernelEngine::append_predicted_projectile_render_states(bool consume_correc
 
 void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
     const auto cost_start = std::chrono::steady_clock::now();
-    const bool had_projectiles = !predicted_projectiles_.empty();
+    const bool had_projectiles = std::any_of(
+        predicted_projectiles_.begin(),
+        predicted_projectiles_.end(),
+        [](const PredictedProjectile& projectile) {
+            return !projectile.locally_terminated;
+        });
     for (PredictedProjectile& projectile : predicted_projectiles_) {
+        if (projectile.locally_terminated) {
+            continue;
+        }
         projectile.age_ticks += 1;
         const float projectile_age_duration =
             static_cast<float>(projectile.age_ticks) * fixed_delta_seconds;
-        projectile.position = projectile_position_at(
+        const glm::vec3 next_position = projectile_position_at(
             projectile.spawn_position,
             projectile.initial_velocity,
             projectile.motion_model,
             projectile.gravity,
             projectile_age_duration);
-        projectile.velocity = projectile_velocity_at(
+        const glm::vec3 next_velocity = projectile_velocity_at(
             projectile.initial_velocity,
             projectile.motion_model,
             projectile.gravity,
             projectile_age_duration);
+
+        if (projectile.sync_mode ==
+            KernelProjectileSyncMode_LocalPredictedDeterministic) {
+            if (prediction_physics_world_ == nullptr) {
+                if (!predicted_projectile_collision_warning_emitted_) {
+                    spdlog::warn(
+                        "local deterministic projectile collision prediction "
+                        "is unavailable without a prediction physics world");
+                    predicted_projectile_collision_warning_emitted_ = true;
+                }
+            } else {
+                const KernelProjectileTemplateDefinition* projectile_template =
+                    find_projectile_template(
+                        projectile_templates_, projectile.projectile_template_id);
+                const KernelColliderTemplateDefinition* collider_template =
+                    projectile_template == nullptr
+                        ? nullptr
+                        : find_collider_template(
+                              collider_templates_,
+                              projectile_template->mechanics.collider_template_id);
+                if (projectile_template != nullptr &&
+                    collider_template != nullptr) {
+                    ProjectileState collision_spec{};
+                    collision_spec.collision_query_mode =
+                        to_projectile_collision_query_mode(
+                            projectile_template->mechanics.collision_query_mode);
+                    collision_spec.collision_geometry =
+                        projectile_collision_geometry_from_template(
+                            *collider_template);
+                    collision_spec.has_collision_geometry = true;
+
+                    physics::CollisionQueryFilter filter{};
+                    filter.collision_mask =
+                        physics::collision_layer_bit(
+                            physics::CollisionLayer::kTerrain) |
+                        physics::collision_layer_bit(
+                            physics::CollisionLayer::kStaticObstacle);
+                    filter.object_kind_mask =
+                        (1u << static_cast<std::uint32_t>(
+                             physics::CollisionObjectKind::kTerrain)) |
+                        (1u << static_cast<std::uint32_t>(
+                             physics::CollisionObjectKind::kStaticObstacle));
+                    const std::vector<physics::CollisionHit> hits =
+                        query_projectile_collision_hits(
+                            *prediction_physics_world_,
+                            collision_spec,
+                            projectile.position,
+                            next_position,
+                            filter);
+                    if (!hits.empty()) {
+                        projectile.position = hits.front().position;
+                        projectile.velocity = glm::vec3{0.0f, 0.0f, 0.0f};
+                        projectile.locally_terminated = true;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        projectile.position = next_position;
+        projectile.velocity = next_velocity;
     }
     predicted_projectiles_.erase(
         std::remove_if(
             predicted_projectiles_.begin(),
             predicted_projectiles_.end(),
             [](const PredictedProjectile& projectile) {
-                return projectile.max_lifetime_ticks > 0u &&
+                return !projectile.locally_terminated &&
+                       projectile.max_lifetime_ticks > 0u &&
                        projectile.age_ticks >= projectile.max_lifetime_ticks;
             }),
         predicted_projectiles_.end());
@@ -6052,14 +6334,19 @@ void KernelEngine::simulate_tick() {
     }
     sync_entity_colliders_from_world();
     MovementSimulationStats movement_stats{};
+    std::vector<QueuedInput> movement_inputs =
+        build_effective_movement_inputs(server_time_us);
+    std::vector<NetId> physics_finalized_actor_net_ids;
     simulate_actor_movement(
         world_,
-        pending_inputs_,
+        movement_inputs,
         fixed_delta,
         tick_loop_.current_tick(),
         &events_,
         &movement_stats,
-        session_rules_.actor_blocking_mode);
+        session_rules_.actor_blocking_mode,
+        &physics_finalized_actor_net_ids);
+    acknowledge_simulated_movement_inputs(movement_inputs);
     benchmark_stats_.grounded_query_count +=
         movement_stats.grounded_query_count;
     benchmark_stats_.grounded_query_cost_us +=
@@ -6074,6 +6361,30 @@ void KernelEngine::simulate_tick() {
         movement_stats.character_move_cost_us;
     simulate_velocity_movement(world_, fixed_delta);
     sync_entity_colliders_from_world();
+    bool released_first_physics_actor = false;
+    for (const NetId net_id : physics_finalized_actor_net_ids) {
+        released_first_physics_actor =
+            pending_first_physics_actors_.erase(net_id) > 0 ||
+            released_first_physics_actor;
+    }
+    for (auto pending = pending_first_physics_actors_.begin();
+         pending != pending_first_physics_actors_.end();) {
+        if (!world_.find_entity(pending->first).has_value()) {
+            pending = pending_first_physics_actors_.erase(pending);
+            continue;
+        }
+        if (!pending->second.warning_reported &&
+            tick_loop_.current_tick() > pending->second.spawn_tick) {
+            spdlog::warn(
+                "actor remains hidden before first physics finalization "
+                "net_id={} spawn_tick={} current_tick={}",
+                pending->first,
+                pending->second.spawn_tick,
+                tick_loop_.current_tick());
+            pending->second.warning_reported = true;
+        }
+        ++pending;
+    }
     for (const QueuedInput& pending_input : pending_inputs_) {
         const HistoryFrame* rewind_frame = nullptr;
         std::uint32_t rewind_tick = tick_loop_.current_tick();
@@ -6175,7 +6486,8 @@ void KernelEngine::simulate_tick() {
     broadcast_combat_events(first_tick_event, last_tick_event);
     send_due_clock_sync_pings(server_time_us);
     history_buffer_.write_frame(world_, tick_loop_.current_tick());
-    if (tick_loop_.should_write_snapshot()) {
+    if (released_first_physics_actor ||
+        tick_loop_.should_write_snapshot()) {
         publish_snapshot();
     }
     pending_inputs_.clear();
@@ -6201,6 +6513,9 @@ WorldSnapshot KernelEngine::build_relevant_snapshot(
     filtered.header = full_snapshot.header;
     filtered.entities.reserve(full_snapshot.entities.size());
     for (const EntitySnapshot& entity : full_snapshot.entities) {
+        if (is_actor_pending_first_physics(entity.net_id)) {
+            continue;
+        }
         if (is_entity_relevant_to_session(session, entity, player_entity)) {
             EntitySnapshot filtered_entity = entity;
             filtered_entity.has_authoritative_movement_state =
@@ -6751,6 +7066,9 @@ void KernelEngine::rebuild_render_states_from_world() {
             continue;
         }
         const NetworkIdentity& identity = view.get<const NetworkIdentity>(entity);
+        if (is_actor_pending_first_physics(identity.net_id)) {
+            continue;
+        }
         RenderEntityState state = render_state_from_world_entity(
             world_,
             entity,
@@ -6916,6 +7234,7 @@ void KernelEngine::publish_snapshot() {
         tick_loop_.current_tick(),
         server_time_ms,
         local_last_processed_input_seq_);
+    filter_pending_first_physics_actors(&latest_snapshot_);
     spdlog::debug(
         "{}",
         fmt::format(
@@ -7411,15 +7730,17 @@ void KernelEngine::prepare_server_action_intent(
         reject(KernelLocalActionResultReason_Dead);
         return;
     }
-    const std::size_t weapon_index = input->selected_weapon;
     WeaponState& weapon = world_.registry().get<WeaponState>(*actor);
     const WeaponTuning& tuning = world_.registry().get<WeaponTuning>(*actor);
-    if (weapon_index >= tuning.definitions.size() ||
-        !tuning.configured[weapon_index]) {
+    const std::size_t weapon_id = input->selected_weapon;
+    const std::size_t weapon_slot =
+        find_weapon_slot(weapon, input->selected_weapon);
+    if (weapon_slot >= weapon.weapon_slot_count ||
+        !tuning.configured[weapon_id]) {
         reject(KernelLocalActionResultReason_MissingTemplate);
         return;
     }
-    const WeaponMechanicsDefinition& definition = tuning.definitions[weapon_index];
+    const WeaponMechanicsDefinition& definition = tuning.definitions[weapon_id];
     const std::uint32_t action_template_id =
         intent.binding_id == KernelActionBinding_PrimaryFire
             ? definition.fire_action_template_id
@@ -7435,22 +7756,20 @@ void KernelEngine::prepare_server_action_intent(
             reject(KernelLocalActionResultReason_Reloading);
             return;
         }
-        if (weapon_index >= weapon.ammo.size() ||
-            weapon.ammo[weapon_index] < action_template->ammo_cost_per_commit) {
+        if (weapon.ammo[weapon_slot] < action_template->ammo_cost_per_commit) {
             reject(KernelLocalActionResultReason_NoAmmo);
             return;
         }
         if (projected_primary_commit_is_blocked(
                 tick_loop_.current_tick(),
                 action_template->commit_offset_ticks,
-                weapon.next_primary_commit_tick[weapon_index])) {
+                weapon.next_primary_commit_tick[weapon_slot])) {
             reject(KernelLocalActionResultReason_Cooldown);
             return;
         }
     } else if (
-        weapon_index >= weapon.ammo.size() ||
-        weapon.ammo[weapon_index] >= definition.magazine_size ||
-        weapon.reserve_magazines[weapon_index] == 0u) {
+        weapon.ammo[weapon_slot] >= definition.magazine_size ||
+        weapon.reserve_magazines[weapon_slot] == 0u) {
         reject(KernelLocalActionResultReason_EffectFailed);
         return;
     }
@@ -7911,6 +8230,7 @@ void KernelEngine::handle_server_handshake(const TransportEvent& transport_event
         const NetId player = world_.spawn_player(
             transport_event.peer,
             glm::vec3{0.0f, 0.0f, 0.0f});
+        register_actor_for_first_physics(player);
         peer_sessions_.push_back(PeerSession{transport_event.peer, player, 0, false});
         session = &peer_sessions_.back();
         push_event(KernelEventType_PlayerJoined, player, transport_event.peer);

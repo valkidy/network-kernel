@@ -36,7 +36,7 @@ bool GameServer::query_weapon_template(
     GameServerWeaponTemplateInfo* out_info) const {
     if (out_info == nullptr ||
         out_info->struct_size < sizeof(GameServerWeaponTemplateInfo) ||
-        weapon_id >= kWeaponCount) {
+        !config_.weapons.configured[weapon_id]) {
         return false;
     }
     const KernelWeaponMechanicsDefinition& mechanics =
@@ -77,7 +77,7 @@ void GameServer::configure_player(std::uint32_t net_id) const {
     Kernel_ServerSetEntityVisionConfig(kernel_, net_id, &actor_template->vision);
     for (std::uint8_t slot = 0; slot < actor_template->weapon_slot_count; ++slot) {
         const KernelWeaponMechanicsDefinition& weapon =
-            config_.weapons.definitions[actor_template->weapon_slots[slot]];
+            config_.weapons.definitions[actor_template->weapon_ids[slot]];
         Kernel_ServerSetEntityWeaponMechanics(kernel_, net_id, &weapon);
     }
 }

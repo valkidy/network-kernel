@@ -13,8 +13,7 @@ const WeaponMechanicsDefinition* weapon_definition_for_entity(
     entt::entity entity,
     std::uint8_t weapon_id) {
     const std::size_t index = static_cast<std::size_t>(weapon_id);
-    if (index >= kWeaponCount ||
-        !world.registry().all_of<WeaponTuning>(entity)) {
+    if (!world.registry().all_of<WeaponTuning>(entity)) {
         return nullptr;
     }
 
@@ -29,11 +28,8 @@ const WeaponMechanicsDefinition* current_weapon_definition_for_entity(
     const World& world,
     entt::entity entity,
     const WeaponState& weapon) {
-    return weapon_definition_for_entity(world, entity, weapon.weapon_id);
-}
-
-std::size_t weapon_index(std::uint8_t weapon_id) {
-    return static_cast<std::size_t>(weapon_id);
+    return weapon_definition_for_entity(
+        world, entity, active_weapon_id(weapon));
 }
 
 glm::vec3 input_aim_to_world(const PlayerInput& input) {
@@ -492,11 +488,18 @@ void simulate_weapons(
                 continue;
             }
             WeaponState& weapon = player_view.get<WeaponState>(player_entity);
-            weapon.weapon_id = definition->id;
-            const std::size_t index = weapon_index(definition->id);
+            const std::size_t slot = find_weapon_slot(weapon, definition->id);
+            if (slot >= weapon.weapon_slot_count) {
+                push_action_outcome(
+                    commit,
+                    ActionOutcomeType::Corrected,
+                    KernelLocalActionResultReason_MissingTemplate);
+                break;
+            }
+            weapon.active_weapon_slot = static_cast<std::uint8_t>(slot);
             if (commit.binding_id == KernelActionBinding_Reload) {
-                if (weapon.reserve_magazines[index] == 0u ||
-                    weapon.ammo[index] >= definition->magazine_size) {
+                if (weapon.reserve_magazines[slot] == 0u ||
+                    weapon.ammo[slot] >= definition->magazine_size) {
                     weapon.is_reloading = false;
                     push_action_outcome(
                         commit,
@@ -504,8 +507,8 @@ void simulate_weapons(
                         KernelLocalActionResultReason_EffectFailed);
                     break;
                 }
-                weapon.ammo[index] = definition->magazine_size;
-                --weapon.reserve_magazines[index];
+                weapon.ammo[slot] = definition->magazine_size;
+                --weapon.reserve_magazines[slot];
                 weapon.is_reloading = false;
                 push_action_outcome(
                     commit,
@@ -536,7 +539,7 @@ void simulate_weapons(
                     ? 0u
                     : action_template->ammo_cost_per_commit;
             if ((!legacy_button_commit && action_template == nullptr) ||
-                weapon.ammo[index] < ammo_cost) {
+                weapon.ammo[slot] < ammo_cost) {
                 push_action_outcome(
                     commit,
                     ActionOutcomeType::Corrected,
@@ -552,9 +555,9 @@ void simulate_weapons(
                     KernelLocalActionResultReason_EffectFailed);
                 break;
             }
-            weapon.ammo[index] = static_cast<std::uint16_t>(
-                weapon.ammo[index] - ammo_cost);
-            weapon.next_primary_commit_tick[index] =
+            weapon.ammo[slot] = static_cast<std::uint16_t>(
+                weapon.ammo[slot] - ammo_cost);
+            weapon.next_primary_commit_tick[slot] =
                 commit.authoritative_tick +
                 (legacy_button_commit
                      ? 1u

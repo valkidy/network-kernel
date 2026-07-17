@@ -129,14 +129,15 @@ struct DirectorRuntime {
     std::uint32_t spawn_cursor = 0;
 };
 
-inline constexpr std::size_t kWeaponCount = 7;
+inline constexpr std::size_t kWeaponSlotCount = 4;
+inline constexpr std::size_t kWeaponIdCount = 256;
 inline constexpr std::uint8_t kWeaponSlot0 = 0;
 inline constexpr std::uint8_t kWeaponSlot1 = 1;
 inline constexpr std::uint8_t kWeaponSlot2 = 2;
 inline constexpr std::uint8_t kWeaponSlot3 = 3;
-inline constexpr std::uint8_t kWeaponSlot4 = 4;
-inline constexpr std::uint8_t kWeaponSlot5 = 5;
-inline constexpr std::uint8_t kWeaponSlot6 = 6;
+inline constexpr std::uint8_t kWeaponId4 = 4;
+inline constexpr std::uint8_t kWeaponId5 = 5;
+inline constexpr std::uint8_t kWeaponId6 = 6;
 
 enum class WeaponFireMode : std::uint8_t {
     kHitscan = 0,
@@ -219,17 +220,38 @@ inline constexpr std::uint32_t kCollisionMaskDamageable =
     kCollisionLayerPlayerSide | kCollisionLayerHostileSide | kCollisionLayerNeutral;
 
 struct WeaponState {
-    std::uint8_t weapon_id = 0;
-    std::array<std::uint16_t, kWeaponCount> ammo{0, 0, 0, 0, 0, 0, 0};
+    std::uint8_t active_weapon_slot = 0;
+    std::uint8_t weapon_slot_count = 0;
+    std::array<std::uint32_t, kWeaponSlotCount> weapon_ids{};
+    std::array<std::uint16_t, kWeaponSlotCount> ammo{};
     // reserve_magazines counts spare full magazines, not spare bullets.
     // UINT16_MAX is allowed as an authored practical maximum for match lengths
     // that should not exhaust reserves in normal play. It is not a sentinel:
     // reload logic decrements it like any other count and must not special-case 65535.
-    std::array<std::uint16_t, kWeaponCount> reserve_magazines{0, 0, 0, 0, 0, 0, 0};
-    std::array<std::uint32_t, kWeaponCount> next_primary_commit_tick{};
+    std::array<std::uint16_t, kWeaponSlotCount> reserve_magazines{};
+    std::array<std::uint32_t, kWeaponSlotCount> next_primary_commit_tick{};
     NetId active_effect_net_id = 0;
     bool is_reloading = false;
 };
+
+inline std::size_t find_weapon_slot(
+    const WeaponState& weapon,
+    std::uint8_t weapon_id) {
+    for (std::size_t slot = 0; slot < weapon.weapon_slot_count; ++slot) {
+        if (weapon.weapon_ids[slot] == weapon_id) {
+            return slot;
+        }
+    }
+    return kWeaponSlotCount;
+}
+
+inline std::uint8_t active_weapon_id(const WeaponState& weapon) {
+    if (weapon.active_weapon_slot >= weapon.weapon_slot_count) {
+        return 0;
+    }
+    return static_cast<std::uint8_t>(
+        weapon.weapon_ids[weapon.active_weapon_slot]);
+}
 
 inline bool projected_primary_commit_is_blocked(
     std::uint32_t current_tick,
@@ -326,8 +348,8 @@ struct WeaponMechanicsDefinition {
 };
 
 struct WeaponTuning {
-    std::array<bool, kWeaponCount> configured{false, false, false, false, false, false, false};
-    std::array<WeaponMechanicsDefinition, kWeaponCount> definitions{};
+    std::array<bool, kWeaponIdCount> configured{};
+    std::array<WeaponMechanicsDefinition, kWeaponIdCount> definitions{};
 };
 
 struct Hitbox {

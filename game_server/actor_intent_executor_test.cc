@@ -88,13 +88,15 @@ void set_combat(
     combat.struct_size = sizeof(combat);
     combat.hp = 100;
     combat.max_hp = 100;
-    combat.active_weapon_id = network_example::game_server::kAgentSpammerWeaponId;
+    combat.active_weapon_slot = 0;
+    combat.weapon_slot_count = 1;
+    combat.weapon_ids[0] =
+        network_example::game_server::kAgentSpammerWeaponId;
     combat.collider_template_id = 1;
     combat.hitbox_center = KernelVec3{0.0f, 0.8f, 0.0f};
     combat.hitbox_half_extents = KernelVec3{0.4f, 0.8f, 0.4f};
-    combat.ammo[network_example::game_server::kAgentSpammerWeaponId] = ammo;
-    combat.reserve_magazines[network_example::game_server::kAgentSpammerWeaponId] =
-        reserve_magazines;
+    combat.ammo[0] = ammo;
+    combat.reserve_magazines[0] = reserve_magazines;
     assert(Kernel_ServerSetEntityCombatState(kernel, net_id, &combat));
 }
 
@@ -170,7 +172,7 @@ int main() {
     assert(result.submitted_input);
     Kernel_Update(kernel, 1.0f / 30.0f);
     KernelServerEntityState state = query_state(kernel, actor);
-    assert(state.ammo[network_example::game_server::kAgentSpammerWeaponId] == 1);
+    assert(state.ammo[0] == 1);
 
     set_combat(kernel, actor, 0, 2);
     auto reload = actor_intent("Reload", actor);
@@ -197,7 +199,7 @@ int main() {
     assert(result.report.missing_data.size() == 1);
     Kernel_Update(kernel, 1.0f / 30.0f);
     state = query_state(kernel, actor);
-    assert(state.ammo[network_example::game_server::kAgentSpammerWeaponId] == 2);
+    assert(state.ammo[0] == 2);
 
     auto unsupported = actor_intent("FindCover", actor);
     result = executor.execute(
@@ -225,8 +227,8 @@ int main() {
     assert(result.report.missing_actions.size() == 1);
     Kernel_Update(kernel, 1.0f / 30.0f);
     state = query_state(kernel, empty_actor);
-    assert(state.ammo[network_example::game_server::kAgentSpammerWeaponId] == 0);
-    assert(state.reserve_magazines[network_example::game_server::kAgentSpammerWeaponId] == 0);
+    assert(state.ammo[0] == 0);
+    assert(state.reserve_magazines[0] == 0);
 
     Kernel_Destroy(kernel);
     return 0;

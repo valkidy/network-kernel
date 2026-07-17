@@ -15,6 +15,8 @@ int main() {
     assert(player_entity.has_value());
     network_example::WeaponState& weapon =
         world.registry().get<network_example::WeaponState>(*player_entity);
+    weapon.weapon_slot_count = 1;
+    weapon.weapon_ids[0] = 0;
     weapon.ammo[network_example::kWeaponSlot0] = 30;
     network_example::WeaponTuning& tuning =
         world.registry().get<network_example::WeaponTuning>(*player_entity);

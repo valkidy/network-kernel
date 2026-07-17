@@ -55,6 +55,14 @@ explicit Fire and Reload action template ids. Packet schema version 16 carries
 the new input fields, while snapshot schema remains 14. ABI 40 provides no ABI
 39 or packet 15 adapter.
 
+The client-side `Kernel_SubmitInput` contract is intent sampling rather than an
+immediate simulation or transport step. Client and listen-local input sequence
+ids are native-owned; the kernel coalesces repeated submits and emits at most
+one prediction/input packet per fixed tick. Callers should submit intent before
+`Kernel_Update` to minimize latency. Reversing that order delays a change by one
+frame without changing movement speed. Servers retain the last movement intent
+for up to 250 ms so a missing input packet does not change authoritative speed.
+
 ABI version 39 adds separate owner-correction and remote-presentation polling
 surfaces: `Kernel_PollLocalActionResults` returns reliable authoritative Fire
 results, while `Kernel_PollRemoteActionPresentationEvents` returns best-effort

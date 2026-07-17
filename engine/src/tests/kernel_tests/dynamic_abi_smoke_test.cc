@@ -592,7 +592,9 @@ int main() {
     local_combat.struct_size = sizeof(local_combat);
     local_combat.hp = 100;
     local_combat.max_hp = 100;
-    local_combat.active_weapon_id = 0;
+    local_combat.active_weapon_slot = 0;
+    local_combat.weapon_slot_count = 1;
+    local_combat.weapon_ids[0] = 0;
     local_combat.collider_template_id = 1;
     local_combat.move_speed_meters_per_second = 5.0f;
     local_combat.hitbox_center = KernelVec3{0.0f, 0.9f, 0.0f};
@@ -615,12 +617,14 @@ int main() {
     combat_state.struct_size = sizeof(combat_state);
     combat_state.hp = 240;
     combat_state.max_hp = 240;
-    combat_state.active_weapon_id = 3;
+    combat_state.active_weapon_slot = 0;
+    combat_state.weapon_slot_count = 1;
+    combat_state.weapon_ids[0] = 3;
     combat_state.collider_template_id = 2;
     combat_state.hitbox_center = KernelVec3{0.0f, 0.8f, 0.0f};
     combat_state.hitbox_half_extents = KernelVec3{0.4f, 0.8f, 0.4f};
-    combat_state.ammo[3] = 3;
-    combat_state.reserve_magazines[3] = 6;
+    combat_state.ammo[0] = 3;
+    combat_state.reserve_magazines[0] = 6;
     assert(kernel_server_set_entity_combat_state(kernel, enemy, &combat_state));
     KernelWeaponMechanicsDefinition rocket{};
     rocket.struct_size = sizeof(rocket);

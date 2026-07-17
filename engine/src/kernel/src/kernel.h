@@ -1,9 +1,10 @@
 #ifndef KERNEL_SRC_KERNEL_H_
 #define KERNEL_SRC_KERNEL_H_
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
-#include <array>
+#include <deque>
 #include <memory>
 #include <string_view>
 #include <unordered_map>
@@ -241,6 +242,11 @@ private:
         std::int64_t clock_offset_us = 0;
         bool has_clock_sync = false;
         ByteTokenBucket remote_presentation_budget;
+        PlayerInput latest_movement_input{};
+        std::uint32_t last_received_input_seq = 0;
+        std::uint64_t last_movement_input_server_time_us = 0;
+        bool has_received_input = false;
+        bool has_movement_input = false;
     };
 
     struct ClientReplicatedEntity {
@@ -293,6 +299,7 @@ private:
         std::uint8_t sync_mode = KernelProjectileSyncMode_HybridDeterministicThenSnapshot;
         glm::vec3 correction_offset{0.0f, 0.0f, 0.0f};
         bool bound = false;
+        bool locally_terminated = false;
     };
 
     struct VisionRuntimeState {
@@ -338,11 +345,19 @@ private:
         std::uint32_t expire_tick = 0;
     };
 
+    struct PendingFirstPhysicsActor {
+        std::uint32_t spawn_tick = 0;
+        bool warning_reported = false;
+    };
+
     void push_event(
         KernelEventType type,
         NetId net_id = 0,
         PeerId peer_id = 0,
         std::uint32_t code = 0);
+    void register_actor_for_first_physics(NetId net_id);
+    bool is_actor_pending_first_physics(NetId net_id) const;
+    void filter_pending_first_physics_actors(WorldSnapshot* snapshot) const;
     void reset_runtime_state(KernelMode mode);
     bool prepare_server_physics(
         std::unique_ptr<physics::PhysicsWorld>* out_world);
@@ -410,6 +425,16 @@ private:
     void diagnose_client_snapshot_metadata_waits();
     void reconcile_local_prediction(const WorldSnapshot& snapshot);
     void reconcile_predicted_projectiles(const WorldSnapshot& snapshot);
+    bool emit_client_input_for_tick();
+    void process_client_input_command(PeerId peer, const PlayerInput& input);
+    bool cache_server_movement_input(
+        PeerSession* session,
+        const PlayerInput& input,
+        std::uint64_t received_server_time_us);
+    std::vector<QueuedInput> build_effective_movement_inputs(
+        std::uint64_t server_time_us);
+    void acknowledge_simulated_movement_inputs(
+        const std::vector<QueuedInput>& inputs);
     void predict_local_input(const PlayerInput& input);
     bool prepare_prediction_physics();
     bool build_local_character_movement_config(
@@ -562,7 +587,14 @@ private:
     std::unordered_set<NetId> client_metadata_timeout_reported_entities_;
     std::unordered_map<NetId, ClientEntityTombstone> client_despawned_entities_;
     std::vector<PendingPredictionInput> pending_prediction_inputs_;
+    PlayerInput latest_client_input_{};
+    std::deque<PlayerInput> pending_client_action_intents_;
+    std::uint64_t latest_client_input_time_us_ = 0;
+    std::uint32_t next_client_input_seq_ = 1;
+    PeerId latest_client_input_peer_ = 0;
+    bool has_latest_client_input_ = false;
     std::vector<PredictedProjectile> predicted_projectiles_;
+    bool predicted_projectile_collision_warning_emitted_ = false;
     std::unordered_map<std::uint32_t, OutstandingPredictedAction>
         outstanding_predicted_actions_;
     std::unordered_map<std::uint32_t, KernelLocalActionResult>
@@ -575,6 +607,8 @@ private:
     std::vector<KernelDebugInfo> debug_records_;
     std::unordered_map<NetId, KernelAgentVisionConfig> vision_configs_;
     std::unordered_map<NetId, VisionRuntimeState> vision_states_;
+    std::unordered_map<NetId, PendingFirstPhysicsActor>
+        pending_first_physics_actors_;
     std::vector<ai::ScopedIntent> pending_director_intents_;
     simulation::CommandQueue command_queue_;
     KernelRpcMethodRegistry rpc_method_registry_;
@@ -635,13 +669,14 @@ private:
     std::unordered_map<NetId, std::uint64_t> entity_ids_by_net_id_;
     EntitySnapshot predicted_local_entity_;
     movement_solver::CharacterMovementState predicted_character_state_{};
+    bool has_authoritative_local_entity_ = false;
     std::uint32_t predicted_character_tick_ = 0;
     std::uint32_t predicted_action_buttons_ = 0;
     std::uint16_t predicted_action_binding_id_ = 0;
     std::uint8_t predicted_action_weapon_id_ = 0;
     std::uint32_t predicted_action_next_commit_tick_ = 0;
     std::uint32_t predicted_action_recovery_end_tick_ = 0;
-    std::array<std::uint32_t, kWeaponCount>
+    std::array<std::uint32_t, kWeaponSlotCount>
         predicted_next_primary_commit_tick_{};
     glm::vec3 local_correction_offset_{0.0f, 0.0f, 0.0f};
     std::uint64_t next_entity_id_ = 1;

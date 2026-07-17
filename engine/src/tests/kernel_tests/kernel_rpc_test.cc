@@ -275,7 +275,9 @@ void query_and_mutation_phase_behavior() {
     combat_state.struct_size = sizeof(combat_state);
     combat_state.hp = 240;
     combat_state.max_hp = 240;
-    combat_state.active_weapon_id = 0;
+    combat_state.active_weapon_slot = 0;
+    combat_state.weapon_slot_count = 1;
+    combat_state.weapon_ids[0] = 0;
     combat_state.collider_template_id = 10;
     combat_state.hitbox_center = KernelVec3{0.0f, 0.8f, 0.0f};
     combat_state.hitbox_half_extents = KernelVec3{0.4f, 0.8f, 0.4f};

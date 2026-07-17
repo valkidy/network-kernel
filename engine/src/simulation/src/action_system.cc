@@ -32,8 +32,7 @@ const WeaponMechanicsDefinition* weapon_definition(
     const World& world,
     entt::entity entity,
     std::uint8_t weapon_id) {
-    if (!world.registry().all_of<WeaponTuning>(entity) ||
-        static_cast<std::size_t>(weapon_id) >= kWeaponCount) {
+    if (!world.registry().all_of<WeaponTuning>(entity)) {
         return nullptr;
     }
     const WeaponTuning& tuning = world.registry().get<WeaponTuning>(entity);
@@ -246,7 +245,19 @@ bool admit_action(
         return false;
     }
     WeaponState& weapon = world.registry().get<WeaponState>(entity);
-    const std::size_t weapon_index = input.selected_weapon;
+    const std::size_t weapon_slot =
+        find_weapon_slot(weapon, input.selected_weapon);
+    if (weapon_slot >= weapon.weapon_slot_count) {
+        push_rejection(
+            world,
+            entity,
+            intent,
+            action_template_id,
+            current_tick,
+            KernelLocalActionResultReason_MissingTemplate,
+            outcomes);
+        return false;
+    }
     if (intent.binding_id == KernelActionBinding_PrimaryFire) {
         if (weapon.is_reloading) {
             push_rejection(
@@ -259,8 +270,7 @@ bool admit_action(
                 outcomes);
             return false;
         }
-        if (weapon_index >= weapon.ammo.size() ||
-            weapon.ammo[weapon_index] < action_template->ammo_cost_per_commit) {
+        if (weapon.ammo[weapon_slot] < action_template->ammo_cost_per_commit) {
             push_rejection(
                 world,
                 entity,
@@ -274,7 +284,7 @@ bool admit_action(
         if (projected_primary_commit_is_blocked(
                 current_tick,
                 action_template->commit_offset_ticks,
-                weapon.next_primary_commit_tick[weapon_index])) {
+                weapon.next_primary_commit_tick[weapon_slot])) {
             push_rejection(
                 world,
                 entity,
@@ -286,9 +296,8 @@ bool admit_action(
             return false;
         }
     } else if (
-        weapon_index >= weapon.ammo.size() ||
-        weapon.ammo[weapon_index] >= weapon_definition_value->magazine_size ||
-        weapon.reserve_magazines[weapon_index] == 0u) {
+        weapon.ammo[weapon_slot] >= weapon_definition_value->magazine_size ||
+        weapon.reserve_magazines[weapon_slot] == 0u) {
         push_rejection(
             world,
             entity,
@@ -426,10 +435,11 @@ void advance_action(
         return;
     }
 
-    const std::size_t weapon_index = action.source_weapon_id;
-    if (weapon_index >= weapon.ammo.size() ||
+    const std::size_t weapon_slot =
+        find_weapon_slot(weapon, action.source_weapon_id);
+    if (weapon_slot >= weapon.weapon_slot_count ||
         (action.binding_id == KernelActionBinding_PrimaryFire &&
-         weapon.ammo[weapon_index] < action_template->ammo_cost_per_commit)) {
+         weapon.ammo[weapon_slot] < action_template->ammo_cost_per_commit)) {
         push_outcome(
             world,
             entity,

@@ -193,25 +193,27 @@ void beam_fire_spawns_or_refreshes_server_beam() {
     player_health = network_example::Health{100, 100};
     network_example::WeaponState& weapon =
         world.registry().get<network_example::WeaponState>(*world.find_entity(player));
-    weapon.ammo[network_example::kWeaponSlot5] = 2;
+    weapon.weapon_slot_count = 1;
+    weapon.weapon_ids[0] = network_example::kWeaponId5;
+    weapon.ammo[0] = 2;
     network_example::WeaponTuning& tuning =
         world.registry().get<network_example::WeaponTuning>(*world.find_entity(player));
-    tuning.configured[network_example::kWeaponSlot5] = true;
-    tuning.definitions[network_example::kWeaponSlot5] =
+    tuning.configured[network_example::kWeaponId5] = true;
+    tuning.definitions[network_example::kWeaponId5] =
         network_example::WeaponMechanicsDefinition{
-            network_example::kWeaponSlot5,
+            network_example::kWeaponId5,
             network_example::WeaponFireMode::kProjectile,
             2,
             20,
             1,
             10,
         };
-    tuning.definitions[network_example::kWeaponSlot5].projectile_template_id = 55;
-    world.set_projectile_templates({beam_template(55, network_example::kWeaponSlot5)});
+    tuning.definitions[network_example::kWeaponId5].projectile_template_id = 55;
+    world.set_projectile_templates({beam_template(55, network_example::kWeaponId5)});
 
     PlayerInput input{};
     input.buttons = InputButton_Fire;
-    input.selected_weapon = network_example::kWeaponSlot5;
+    input.selected_weapon = network_example::kWeaponId5;
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     std::vector<network_example::QueuedInput> inputs{
         network_example::QueuedInput{1, input, 0, 0, false, 0}};

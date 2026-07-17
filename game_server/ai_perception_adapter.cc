@@ -94,10 +94,12 @@ ai::AIContext AiPerceptionAdapter::build_sentry_context(
         context.set_feature(
             "is_reloading",
             static_cast<bool>(snapshot.self_state.is_reloading != 0u));
-        if (weapon_id < KERNEL_MAX_WEAPONS) {
+        const std::size_t slot =
+            find_weapon_slot(snapshot.self_state, weapon_id);
+        if (slot < snapshot.self_state.weapon_slot_count) {
             context.set_feature(
                 "has_ammo",
-                static_cast<bool>(snapshot.self_state.ammo[weapon_id] > 0));
+                static_cast<bool>(snapshot.self_state.ammo[slot] > 0));
         }
     }
     if (snapshot.has_self_state && snapshot.has_target_position) {

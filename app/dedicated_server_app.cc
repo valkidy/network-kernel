@@ -42,7 +42,10 @@ KernelConfig default_config() {
     return config;
 }
 
-void log_dedicated_server_build_info() {
+void log_dedicated_server_build_info(
+    std::uint32_t physics_simulation,
+    std::uint32_t physics_workers,
+    std::uint32_t actor_blocking) {
     KernelBuildInfo info{};
     if (!Kernel_GetBuildInfo(&info, sizeof(info))) {
         spdlog::error("[NetworkExample] Dedicated Server: Kernel_GetBuildInfo failed");
@@ -59,7 +62,11 @@ void log_dedicated_server_build_info() {
         "git_commit              = {}\n "
         "build_platform          = {}\n "
         "build_config            = {}\n "
-        "compiler_info           = {}",
+        "compiler_info           = {}\n "
+        "network-stats           = {}\n "
+        "physics_simulation      = {}\n "
+        "physics-workers         = {}\n "
+        "actor-blocking          = {}\n ",
         info.module_name,
         info.module_file_name,
         info.module_version,
@@ -69,7 +76,11 @@ void log_dedicated_server_build_info() {
         info.git_commit,
         info.build_platform,
         info.build_config,
-        info.compiler_info);
+        info.compiler_info,
+        static_cast<unsigned int>(GetAppNetworkStatsMode()),
+        physics_simulation,
+        physics_workers,
+        actor_blocking);
 }
 
 std::vector<std::uint8_t> read_binary_file(const char* path) {
@@ -93,7 +104,10 @@ int RunDedicatedServer(
     std::uint32_t physics_simulation,
     std::uint32_t physics_workers,
     std::uint32_t actor_blocking) {
-    log_dedicated_server_build_info();
+    log_dedicated_server_build_info(
+        physics_simulation,
+        physics_workers,
+        actor_blocking);
 
     network_example::game_server::GameServerGameplayConfig gameplay_config;
     std::vector<std::uint8_t> bundle_bytes;

@@ -5,7 +5,7 @@
 
 #include "kernel/public/kernel_api.h"
 
-_Static_assert(KERNEL_ABI_VERSION == 41u, "action correction/stats ABI");
+_Static_assert(KERNEL_ABI_VERSION == 45u, "sparse weapon IDs and fixed weapon slots ABI");
 _Static_assert(sizeof(ActionIntent) == 8u, "ActionIntent ABI size");
 _Static_assert(sizeof(ActionInput) == 8u, "ActionInput ABI size");
 _Static_assert(
@@ -99,11 +99,11 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 41u);
+    assert(KERNEL_ABI_VERSION == 45u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD == 4u);
-    assert(KERNEL_MAX_WEAPONS == 7u);
+    assert(KERNEL_MAX_WEAPON_SLOTS == 4u);
     assert(KERNEL_MAX_VISIBLE_HOSTILES == 16u);
     assert(KERNEL_MAX_VISIBLE_ALLIES == 16u);
     assert(KERNEL_LAN_DISCOVERY_DEFAULT_PORT == 47777u);

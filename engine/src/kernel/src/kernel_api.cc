@@ -941,7 +941,6 @@ bool Kernel_ServerValidateMechanicsConfig(
     return abi_call("Kernel_ServerValidateMechanicsConfig", false, [&]() {
         if (weapon_mechanics == nullptr ||
             weapon_mechanics->struct_size < sizeof(KernelWeaponMechanicsDefinition) ||
-            weapon_mechanics->weapon_id >= KERNEL_MAX_WEAPONS ||
             weapon_mechanics->magazine_size == 0 ||
             weapon_mechanics->damage == 0 ||
             weapon_mechanics->fire_action_template_id == 0u ||
