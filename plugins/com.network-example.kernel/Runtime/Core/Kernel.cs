@@ -836,15 +836,20 @@ namespace NetworkExample.Kernel
         private static void PrepareCombatState(ref KernelCombatStateDefinition combatState)
         {
             combatState.struct_size = KernelCombatStateDefinition.StructSize;
-            if (combatState.ammo == null ||
-                combatState.ammo.Length != KernelConstants.MaxWeapons)
+            if (combatState.weapon_ids == null ||
+                combatState.weapon_ids.Length != KernelConstants.MaxWeaponSlots)
             {
-                combatState.ammo = new ushort[KernelConstants.MaxWeapons];
+                combatState.weapon_ids = new uint[KernelConstants.MaxWeaponSlots];
             }
-            if (combatState.reserve_ammo == null ||
-                combatState.reserve_ammo.Length != KernelConstants.MaxWeapons)
+            if (combatState.ammo == null ||
+                combatState.ammo.Length != KernelConstants.MaxWeaponSlots)
             {
-                combatState.reserve_ammo = new ushort[KernelConstants.MaxWeapons];
+                combatState.ammo = new ushort[KernelConstants.MaxWeaponSlots];
+            }
+            if (combatState.reserve_magazines == null ||
+                combatState.reserve_magazines.Length != KernelConstants.MaxWeaponSlots)
+            {
+                combatState.reserve_magazines = new ushort[KernelConstants.MaxWeaponSlots];
             }
         }
 

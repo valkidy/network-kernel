@@ -420,18 +420,23 @@ namespace NetworkExample.Kernel.Editor
             KernelCombatStateDefinition combat = KernelCombatStateDefinition.Create();
             combat.hp = 240;
             combat.max_hp = 240;
-            combat.active_weapon_id = 3;
+            combat.active_weapon_slot = 0;
+            combat.weapon_slot_count = 4;
             combat.collider_template_id = 101;
             combat.hitbox_center = new KernelVec3(0.0f, 0.8f, 0.0f);
             combat.hitbox_half_extents = new KernelVec3(0.4f, 0.8f, 0.4f);
-            combat.ammo[3] = 3;
-            combat.reserve_ammo[3] = 6;
-            combat.ammo[4] = 1;
-            combat.reserve_ammo[4] = 1;
-            combat.ammo[5] = 2;
-            combat.reserve_ammo[5] = 2;
-            combat.ammo[6] = 2;
-            combat.reserve_ammo[6] = 2;
+            combat.weapon_ids[0] = 3;
+            combat.ammo[0] = 3;
+            combat.reserve_magazines[0] = 6;
+            combat.weapon_ids[1] = 4;
+            combat.ammo[1] = 1;
+            combat.reserve_magazines[1] = 1;
+            combat.weapon_ids[2] = 5;
+            combat.ammo[2] = 2;
+            combat.reserve_magazines[2] = 2;
+            combat.weapon_ids[3] = 6;
+            combat.ammo[3] = 2;
+            combat.reserve_magazines[3] = 2;
             Require(
                 kernel.ServerSetEntityCombatState(enemyNetId, combat),
                 "Kernel_ServerSetEntityCombatState failed.");

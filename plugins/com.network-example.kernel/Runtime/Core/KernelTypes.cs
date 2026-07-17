@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 43;
+        public const uint AbiVersion = 45;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int GameplayCatalogEntryPathSize = 128;
@@ -21,7 +21,7 @@ namespace NetworkExample.Kernel
         public const uint GameplayCatalogSyncDefaultTimeoutMs = 30000U;
         public const uint StaticCollisionSceneMaxBytes = 16U * 1024U * 1024U;
         public const uint StaticCollisionLayerTerrain = 1U;
-        public const int MaxWeapons = 7;
+        public const int MaxWeaponSlots = 4;
         public const byte DebugWildcardU8 = 0xff;
 
         public const uint GameplayCatalogLoadStatusFailed = 0;
@@ -852,13 +852,15 @@ namespace NetworkExample.Kernel
         public uint visual_flags;
         public uint valid;
         public uint actor_template_id;
-        public byte active_weapon_id;
-        public byte reserved0;
-        public ushort reserved1;
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = KernelConstants.MaxWeapons)]
+        public byte active_weapon_slot;
+        public byte weapon_slot_count;
+        public ushort reserved0;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = KernelConstants.MaxWeaponSlots)]
+        public uint[] weapon_ids;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = KernelConstants.MaxWeaponSlots)]
         public ushort[] ammo;
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = KernelConstants.MaxWeapons)]
-        public ushort[] reserve_ammo;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = KernelConstants.MaxWeaponSlots)]
+        public ushort[] reserve_magazines;
         public uint is_reloading;
         public uint reload_remaining_ticks;
         public KernelActionRuntimeView action;
@@ -1468,15 +1470,19 @@ namespace NetworkExample.Kernel
         public uint struct_size;
         public ushort hp;
         public ushort max_hp;
-        public byte active_weapon_id;
+        public byte active_weapon_slot;
+        public byte weapon_slot_count;
+        public ushort reserved0;
         public uint collider_template_id;
         public float move_speed_meters_per_second;
         public KernelVec3 hitbox_center;
         public KernelVec3 hitbox_half_extents;
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = KernelConstants.MaxWeapons)]
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = KernelConstants.MaxWeaponSlots)]
+        public uint[] weapon_ids;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = KernelConstants.MaxWeaponSlots)]
         public ushort[] ammo;
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = KernelConstants.MaxWeapons)]
-        public ushort[] reserve_ammo;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = KernelConstants.MaxWeaponSlots)]
+        public ushort[] reserve_magazines;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelCombatStateDefinition>();
 
@@ -1485,8 +1491,9 @@ namespace NetworkExample.Kernel
             return new KernelCombatStateDefinition
             {
                 struct_size = StructSize,
-                ammo = new ushort[KernelConstants.MaxWeapons],
-                reserve_ammo = new ushort[KernelConstants.MaxWeapons],
+                weapon_ids = new uint[KernelConstants.MaxWeaponSlots],
+                ammo = new ushort[KernelConstants.MaxWeaponSlots],
+                reserve_magazines = new ushort[KernelConstants.MaxWeaponSlots],
             };
         }
     }
