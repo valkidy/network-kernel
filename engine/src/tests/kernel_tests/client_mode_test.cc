@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -145,6 +146,72 @@ KernelProjectileTemplateDefinition projectile_template(
     projectile_template.mechanics.max_hit_count = 1;
     projectile_template.mechanics.flags = 1u;
     return projectile_template;
+}
+
+constexpr std::uint64_t kProjectileCollisionCatalogHash = 0xa11ceull;
+
+void load_projectile_collision_catalog(
+    network_example::KernelEngine* client,
+    std::uint8_t sync_mode,
+    std::uint8_t shape_type = KernelColliderShapeType_Sphere,
+    KernelVec4 shape_params = KernelVec4{0.25f, 0.0f, 0.0f, 0.0f}) {
+    KernelProjectileTemplateDefinition definition =
+        projectile_template(3, 3, sync_mode);
+    KernelColliderTemplateDefinition collider = projectile_collider_template();
+    collider.shape_type = shape_type;
+    collider.shape_params = shape_params;
+    KernelGameplayCatalogDefinition catalog{};
+    catalog.struct_size = sizeof(catalog);
+    catalog.catalog_version = 1;
+    catalog.catalog_hash = kProjectileCollisionCatalogHash;
+    catalog.projectile_templates = &definition;
+    catalog.projectile_template_count = 1;
+    catalog.collider_templates = &collider;
+    catalog.collider_template_count = 1;
+    require(client->load_gameplay_catalog(catalog));
+}
+
+void install_prediction_terrain_box(
+    network_example::KernelEngine* client,
+    const glm::vec3& position,
+    const glm::vec3& half_extents) {
+    client->prediction_physics_world_ =
+        std::make_unique<network_example::physics::PhysicsWorld>(
+            network_example::physics::PhysicsWorldConfig{});
+    require(client->prediction_physics_world_->valid());
+    network_example::physics::CollisionObjectDescriptor object{};
+    object.identity.collider_id = 900;
+    object.identity.kind =
+        network_example::physics::CollisionObjectKind::kTerrain;
+    object.identity.layer =
+        network_example::physics::CollisionLayer::kTerrain;
+    object.shape.type =
+        network_example::physics::CollisionShapeType::kBox;
+    object.shape.half_extents = half_extents;
+    object.position = position;
+    std::string error;
+    require(client->prediction_physics_world_->upsert_object(object, &error));
+}
+
+network_example::KernelEngine::PredictedProjectile predicted_projectile(
+    std::uint8_t sync_mode,
+    const glm::vec3& position = glm::vec3{0.0f, 0.0f, 0.0f},
+    const glm::vec3& velocity = glm::vec3{100.0f, 0.0f, 0.0f}) {
+    network_example::KernelEngine::PredictedProjectile projectile;
+    projectile.entity_id = 9000;
+    projectile.owner_peer = 7;
+    projectile.action_instance_id = 1234;
+    projectile.position = position;
+    projectile.velocity = velocity;
+    projectile.spawn_position = position;
+    projectile.initial_velocity = velocity;
+    projectile.motion_model = network_example::ProjectileMotionModel::kLinear;
+    projectile.max_lifetime_ticks = 60;
+    projectile.projectile_template_id = 3;
+    projectile.collider_template_id = 10;
+    projectile.weapon_id = 3;
+    projectile.sync_mode = sync_mode;
+    return projectile;
 }
 
 KernelActorTemplateDefinition agent_actor_template() {
@@ -2577,6 +2644,210 @@ void predicted_projectile_lifetime_cleanup_removes_batch_projectile() {
     require(client.predicted_projectiles_.empty());
 }
 
+void local_deterministic_sphere_projectile_hits_prediction_terrain() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+    load_projectile_collision_catalog(
+        &client, KernelProjectileSyncMode_LocalPredictedDeterministic);
+    install_prediction_terrain_box(
+        &client,
+        glm::vec3{2.0f, 0.3f, 0.0f},
+        glm::vec3{0.1f, 0.1f, 0.1f});
+    auto projectile = predicted_projectile(
+        KernelProjectileSyncMode_LocalPredictedDeterministic);
+    projectile.net_id = 101;
+    projectile.bound = true;
+    client.predicted_projectiles_.push_back(projectile);
+
+    client.advance_predicted_projectiles(1.0f / 30.0f);
+
+    require(client.predicted_projectiles_.size() == 1);
+    const auto& terminated = client.predicted_projectiles_.front();
+    require(terminated.locally_terminated);
+    require(terminated.position.x > 1.7f);
+    require(terminated.position.x < 2.1f);
+    require(glm::length(terminated.velocity) < 0.0001f);
+    client.rebuild_render_states();
+    std::array<RenderEntityState, 2> states{};
+    require(client.get_render_states_at_time(
+                33333, states.data(), states.size()) == 0);
+    KernelBenchmarkStats stats{};
+    stats.struct_size = sizeof(stats);
+    require(client.get_benchmark_stats(&stats));
+    require(stats.projectile_count == 0);
+    require(stats.total_entity_count == 0);
+}
+
+void local_deterministic_box_projectile_hits_prediction_terrain() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+    load_projectile_collision_catalog(
+        &client,
+        KernelProjectileSyncMode_LocalPredictedDeterministic,
+        KernelColliderShapeType_Aabb,
+        KernelVec4{0.3f, 0.3f, 0.3f, 0.0f});
+    install_prediction_terrain_box(
+        &client,
+        glm::vec3{2.0f, 0.35f, 0.0f},
+        glm::vec3{0.1f, 0.1f, 0.1f});
+    client.predicted_projectiles_.push_back(predicted_projectile(
+        KernelProjectileSyncMode_LocalPredictedDeterministic));
+
+    client.advance_predicted_projectiles(1.0f / 30.0f);
+
+    require(client.predicted_projectiles_.size() == 1);
+    require(client.predicted_projectiles_[0].locally_terminated);
+    require(client.predicted_projectiles_[0].position.x > 1.5f);
+    require(client.predicted_projectiles_[0].position.x < 2.1f);
+}
+
+void local_projectile_miss_and_hybrid_remain_kinematic() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+    load_projectile_collision_catalog(
+        &client, KernelProjectileSyncMode_LocalPredictedDeterministic);
+    install_prediction_terrain_box(
+        &client,
+        glm::vec3{2.0f, 0.0f, 0.0f},
+        glm::vec3{0.1f, 0.1f, 0.1f});
+    auto local_miss = predicted_projectile(
+        KernelProjectileSyncMode_LocalPredictedDeterministic,
+        glm::vec3{0.0f, 5.0f, 0.0f});
+    auto hybrid = predicted_projectile(
+        KernelProjectileSyncMode_HybridDeterministicThenSnapshot);
+    hybrid.entity_id = 9001;
+    hybrid.action_instance_id = 1235;
+    client.predicted_projectiles_.push_back(local_miss);
+    client.predicted_projectiles_.push_back(hybrid);
+
+    client.advance_predicted_projectiles(1.0f / 30.0f);
+
+    require(!client.predicted_projectiles_[0].locally_terminated);
+    require(client.predicted_projectiles_[0].position.x > 3.32f);
+    require(client.predicted_projectiles_[0].position.x < 3.34f);
+    require(!client.predicted_projectiles_[1].locally_terminated);
+    require(client.predicted_projectiles_[1].position.x > 3.32f);
+    require(client.predicted_projectiles_[1].position.x < 3.34f);
+}
+
+void local_projectile_missing_physics_falls_back_once() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+    client.predicted_projectiles_.push_back(predicted_projectile(
+        KernelProjectileSyncMode_LocalPredictedDeterministic));
+
+    client.advance_predicted_projectiles(1.0f / 30.0f);
+    require(client.predicted_projectile_collision_warning_emitted_);
+    require(client.predicted_projectiles_[0].position.x > 3.32f);
+    require(client.predicted_projectiles_[0].position.x < 3.34f);
+
+    client.advance_predicted_projectiles(1.0f / 30.0f);
+    require(client.predicted_projectile_collision_warning_emitted_);
+    require(client.predicted_projectiles_[0].position.x > 6.65f);
+    require(client.predicted_projectiles_[0].position.x < 6.68f);
+}
+
+void local_terminated_projectile_binds_without_reviving() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+    load_projectile_collision_catalog(
+        &client, KernelProjectileSyncMode_LocalPredictedDeterministic);
+    auto projectile = predicted_projectile(
+        KernelProjectileSyncMode_LocalPredictedDeterministic);
+    projectile.position = glm::vec3{1.8f, 0.0f, 0.0f};
+    projectile.velocity = glm::vec3{0.0f};
+    projectile.locally_terminated = true;
+    client.predicted_projectiles_.push_back(projectile);
+
+    network_example::ProjectileSpawnBatchPacket batch{};
+    batch.server_tick = 3;
+    batch.server_time_us = 100000;
+    batch.catalog_hash = kProjectileCollisionCatalogHash;
+    network_example::ProjectileSpawnGroup group{};
+    group.projectile_template_id = 3;
+    group.records.push_back(network_example::ProjectileSpawnRecord{
+        101,
+        11,
+        7,
+        1234,
+        glm::vec3{0.0f, 0.0f, 0.0f},
+        glm::vec3{100.0f, 0.0f, 0.0f},
+    });
+    group.records.push_back(network_example::ProjectileSpawnRecord{
+        102,
+        11,
+        7,
+        1234,
+        glm::vec3{0.0f, 0.0f, 0.0f},
+        glm::vec3{100.0f, 0.0f, 0.0f},
+    });
+    batch.groups.push_back(group);
+
+    client.handle_client_projectile_spawn_batch(batch);
+
+    require(client.predicted_projectiles_.size() == 2);
+    require(client.predicted_projectiles_[0].bound);
+    require(client.predicted_projectiles_[0].net_id == 101);
+    require(client.predicted_projectiles_[0].locally_terminated);
+    require(client.predicted_projectiles_[0].position.x > 1.79f);
+    require(client.predicted_projectiles_[0].position.x < 1.81f);
+    require(!client.predicted_projectiles_[1].bound);
+    require(client.predicted_projectiles_[1].net_id == 102);
+    require(!client.predicted_projectiles_[1].locally_terminated);
+    std::array<RenderEntityState, 2> states{};
+    require(client.get_render_states_at_time(
+                100000, states.data(), states.size()) == 1);
+    require(states[0].net_id == 102);
+
+    client.handle_client_despawn(network_example::EntityDespawnPacket{
+        101,
+        4,
+        KernelDespawnReason_Destroyed,
+    });
+    require(client.predicted_projectiles_.size() == 1);
+    require(client.predicted_projectiles_[0].net_id == 102);
+}
+
+void terminal_action_result_clears_local_terminated_projectile() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+    auto projectile = predicted_projectile(
+        KernelProjectileSyncMode_LocalPredictedDeterministic);
+    projectile.locally_terminated = true;
+    client.predicted_projectiles_.push_back(projectile);
+
+    KernelLocalActionResult result{};
+    result.action_instance_id = 1234;
+    result.result = KernelLocalActionResultType_Rejected;
+    result.authoritative_tick = 3;
+    network_example::LocalActionResultBatchPacket packet{};
+    packet.records.push_back(result);
+
+    client.handle_client_local_action_results(packet);
+
+    require(client.predicted_projectiles_.empty());
+}
+
 void client_update_advances_local_predicted_deterministic_projectile() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
@@ -3392,6 +3663,12 @@ int main() {
     client_query_vision_state_uses_actor_template_debug_replication();
     server_snapshot_send_set_carries_vision_debug_to_client();
     predicted_projectile_lifetime_cleanup_removes_batch_projectile();
+    local_deterministic_sphere_projectile_hits_prediction_terrain();
+    local_deterministic_box_projectile_hits_prediction_terrain();
+    local_projectile_miss_and_hybrid_remain_kinematic();
+    local_projectile_missing_physics_falls_back_once();
+    local_terminated_projectile_binds_without_reviving();
+    terminal_action_result_clears_local_terminated_projectile();
     client_update_advances_local_predicted_deterministic_projectile();
     default_kernel_config_uses_larger_render_state_cap();
     render_state_overflow_reports_error_event();

@@ -2461,7 +2461,12 @@ bool KernelEngine::get_benchmark_stats(KernelBenchmarkStats* out_stats) const {
 
     auto entity_view = world_.registry().view<NetworkIdentity, EntityKind>();
     stats.total_entity_count = static_cast<std::uint32_t>(entity_view.size_hint());
-    stats.total_entity_count += static_cast<std::uint32_t>(predicted_projectiles_.size());
+    stats.total_entity_count += static_cast<std::uint32_t>(std::count_if(
+        predicted_projectiles_.begin(),
+        predicted_projectiles_.end(),
+        [](const PredictedProjectile& projectile) {
+            return !projectile.locally_terminated;
+        }));
 
     auto add_projectile_sync_mode = [&stats](std::uint8_t sync_mode) {
         ++stats.projectile_count;
@@ -2496,6 +2501,9 @@ bool KernelEngine::get_benchmark_stats(KernelBenchmarkStats* out_stats) const {
         add_projectile_sync_mode(sync_mode);
     }
     for (const PredictedProjectile& projectile : predicted_projectiles_) {
+        if (projectile.locally_terminated) {
+            continue;
+        }
         add_projectile_sync_mode(projectile.sync_mode);
     }
     if (stats.projectile_count != 0) {
@@ -3557,6 +3565,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     latest_client_input_peer_ = 0;
     has_latest_client_input_ = false;
     predicted_projectiles_.clear();
+    predicted_projectile_collision_warning_emitted_ = false;
     outstanding_predicted_actions_.clear();
     applied_local_action_results_.clear();
     debug_records_.clear();
@@ -4227,34 +4236,53 @@ void KernelEngine::handle_client_projectile_spawn_batch(
                 KernelProjectileSyncMode_ServerSnapshotOnly) {
                 continue;
             }
-            if (has_predicted_projectile_net_id(record.projectile_net_id)) {
+            PredictedProjectile* predicted = find_predicted_projectile(
+                record.owner_peer, record.action_instance_id);
+            if (predicted != nullptr && !predicted->bound) {
+                predicted->entity_id = entity_id_for_net_id(record.projectile_net_id);
+                predicted->net_id = record.projectile_net_id;
+                predicted->spawn_tick = packet.server_tick;
+                predicted->projectile_template_id =
+                    projectile_template->projectile_template_id;
+                predicted->collider_template_id =
+                    projectile_template->mechanics.collider_template_id;
+                predicted->weapon_id = projectile_template->weapon_id;
+                predicted->sync_mode = projectile_template->mechanics.sync_mode;
+                predicted->bound = true;
+            } else if (has_predicted_projectile_net_id(record.projectile_net_id)) {
                 continue;
+            } else {
+                const glm::vec3 spawn_position = record.spawn_position;
+                const glm::vec3 initial_velocity = record.initial_velocity;
+                predicted_projectiles_.push_back(PredictedProjectile{
+                    entity_id_for_net_id(record.projectile_net_id),
+                    record.projectile_net_id,
+                    record.owner_peer,
+                    0,
+                    record.action_instance_id,
+                    packet.server_tick,
+                    0,
+                    spawn_position,
+                    glm::quat{1.0f, 0.0f, 0.0f, 0.0f},
+                    initial_velocity,
+                    spawn_position,
+                    initial_velocity,
+                    from_kernel_vec3(projectile_template->mechanics.gravity),
+                    to_projectile_motion_model(
+                        projectile_template->mechanics.motion_model),
+                    projectile_template->mechanics.lifetime_ticks,
+                    projectile_template->projectile_template_id,
+                    projectile_template->mechanics.collider_template_id,
+                    projectile_template->weapon_id,
+                    projectile_template->mechanics.sync_mode,
+                    glm::vec3{0.0f, 0.0f, 0.0f},
+                    false,
+                    false,
+                });
             }
+
             const glm::vec3 spawn_position = record.spawn_position;
             const glm::vec3 initial_velocity = record.initial_velocity;
-            predicted_projectiles_.push_back(PredictedProjectile{
-                entity_id_for_net_id(record.projectile_net_id),
-                record.projectile_net_id,
-                record.owner_peer,
-                0,
-                record.action_instance_id,
-                packet.server_tick,
-                0,
-                spawn_position,
-                glm::quat{1.0f, 0.0f, 0.0f, 0.0f},
-                initial_velocity,
-                spawn_position,
-                initial_velocity,
-                from_kernel_vec3(projectile_template->mechanics.gravity),
-                to_projectile_motion_model(projectile_template->mechanics.motion_model),
-                projectile_template->mechanics.lifetime_ticks,
-                projectile_template->projectile_template_id,
-                projectile_template->mechanics.collider_template_id,
-                projectile_template->weapon_id,
-                projectile_template->mechanics.sync_mode,
-                glm::vec3{0.0f, 0.0f, 0.0f},
-                false,
-            });
 
             KernelDebugInfo debug_info{};
             debug_info.struct_size = sizeof(KernelDebugInfo);
@@ -4627,6 +4655,7 @@ void KernelEngine::clear_client_session() {
     local_player_net_id_ = 0;
     local_last_processed_input_seq_ = 0;
     clear_client_action_sync_state();
+    predicted_projectile_collision_warning_emitted_ = false;
     lifecycle_events_.clear();
     client_snapshot_buffer_.clear();
     client_replicated_entities_.clear();
@@ -5639,6 +5668,7 @@ void KernelEngine::predict_local_projectile(const PlayerInput& input) {
         sync_mode,
         glm::vec3{0.0f, 0.0f, 0.0f},
         false,
+        false,
     });
 }
 
@@ -5882,8 +5912,16 @@ void KernelEngine::append_predicted_local_render_state(bool consume_correction) 
 
 void KernelEngine::append_predicted_projectile_render_states(bool consume_correction) {
     const auto cost_start = std::chrono::steady_clock::now();
-    const bool had_projectiles = !predicted_projectiles_.empty();
+    const bool had_projectiles = std::any_of(
+        predicted_projectiles_.begin(),
+        predicted_projectiles_.end(),
+        [](const PredictedProjectile& projectile) {
+            return !projectile.locally_terminated;
+        });
     for (PredictedProjectile& projectile : predicted_projectiles_) {
+        if (projectile.locally_terminated) {
+            continue;
+        }
         const glm::vec3 render_position =
             projectile.position + projectile.correction_offset;
         render_states_.push_back(RenderEntityState{
@@ -5923,29 +5961,99 @@ void KernelEngine::append_predicted_projectile_render_states(bool consume_correc
 
 void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
     const auto cost_start = std::chrono::steady_clock::now();
-    const bool had_projectiles = !predicted_projectiles_.empty();
+    const bool had_projectiles = std::any_of(
+        predicted_projectiles_.begin(),
+        predicted_projectiles_.end(),
+        [](const PredictedProjectile& projectile) {
+            return !projectile.locally_terminated;
+        });
     for (PredictedProjectile& projectile : predicted_projectiles_) {
+        if (projectile.locally_terminated) {
+            continue;
+        }
         projectile.age_ticks += 1;
         const float projectile_age_duration =
             static_cast<float>(projectile.age_ticks) * fixed_delta_seconds;
-        projectile.position = projectile_position_at(
+        const glm::vec3 next_position = projectile_position_at(
             projectile.spawn_position,
             projectile.initial_velocity,
             projectile.motion_model,
             projectile.gravity,
             projectile_age_duration);
-        projectile.velocity = projectile_velocity_at(
+        const glm::vec3 next_velocity = projectile_velocity_at(
             projectile.initial_velocity,
             projectile.motion_model,
             projectile.gravity,
             projectile_age_duration);
+
+        if (projectile.sync_mode ==
+            KernelProjectileSyncMode_LocalPredictedDeterministic) {
+            if (prediction_physics_world_ == nullptr) {
+                if (!predicted_projectile_collision_warning_emitted_) {
+                    spdlog::warn(
+                        "local deterministic projectile collision prediction "
+                        "is unavailable without a prediction physics world");
+                    predicted_projectile_collision_warning_emitted_ = true;
+                }
+            } else {
+                const KernelProjectileTemplateDefinition* projectile_template =
+                    find_projectile_template(
+                        projectile_templates_, projectile.projectile_template_id);
+                const KernelColliderTemplateDefinition* collider_template =
+                    projectile_template == nullptr
+                        ? nullptr
+                        : find_collider_template(
+                              collider_templates_,
+                              projectile_template->mechanics.collider_template_id);
+                if (projectile_template != nullptr &&
+                    collider_template != nullptr) {
+                    ProjectileState collision_spec{};
+                    collision_spec.collision_query_mode =
+                        to_projectile_collision_query_mode(
+                            projectile_template->mechanics.collision_query_mode);
+                    collision_spec.collision_geometry =
+                        projectile_collision_geometry_from_template(
+                            *collider_template);
+                    collision_spec.has_collision_geometry = true;
+
+                    physics::CollisionQueryFilter filter{};
+                    filter.collision_mask =
+                        physics::collision_layer_bit(
+                            physics::CollisionLayer::kTerrain) |
+                        physics::collision_layer_bit(
+                            physics::CollisionLayer::kStaticObstacle);
+                    filter.object_kind_mask =
+                        (1u << static_cast<std::uint32_t>(
+                             physics::CollisionObjectKind::kTerrain)) |
+                        (1u << static_cast<std::uint32_t>(
+                             physics::CollisionObjectKind::kStaticObstacle));
+                    const std::vector<physics::CollisionHit> hits =
+                        query_projectile_collision_hits(
+                            *prediction_physics_world_,
+                            collision_spec,
+                            projectile.position,
+                            next_position,
+                            filter);
+                    if (!hits.empty()) {
+                        projectile.position = hits.front().position;
+                        projectile.velocity = glm::vec3{0.0f, 0.0f, 0.0f};
+                        projectile.locally_terminated = true;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        projectile.position = next_position;
+        projectile.velocity = next_velocity;
     }
     predicted_projectiles_.erase(
         std::remove_if(
             predicted_projectiles_.begin(),
             predicted_projectiles_.end(),
             [](const PredictedProjectile& projectile) {
-                return projectile.max_lifetime_ticks > 0u &&
+                return !projectile.locally_terminated &&
+                       projectile.max_lifetime_ticks > 0u &&
                        projectile.age_ticks >= projectile.max_lifetime_ticks;
             }),
         predicted_projectiles_.end());

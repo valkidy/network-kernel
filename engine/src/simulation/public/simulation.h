@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "kernel/public/kernel_types.h"
+#include "physics/public/physics_world.h"
 #include "sync/public/history_buffer.h"
 #include "world/public/world.h"
 
@@ -68,6 +69,13 @@ glm::vec3 projectile_velocity_at(
     ProjectileMotionModel motion_model,
     const glm::vec3& gravity,
     float elapsed_seconds);
+
+std::vector<physics::CollisionHit> query_projectile_collision_hits(
+    const physics::PhysicsWorld& collision_world,
+    const ProjectileState& projectile,
+    const glm::vec3& previous_position,
+    const glm::vec3& current_position,
+    const physics::CollisionQueryFilter& filter);
 
 class DamagePipeline {
 public:

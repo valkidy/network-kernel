@@ -491,16 +491,12 @@ ProjectileCollisionQuery build_projectile_collision_query(
     return query;
 }
 
-std::vector<physics::CollisionHit> collect_projectile_collision_hits(
-    World& world,
+std::vector<physics::CollisionHit> query_projectile_collision_hits_impl(
+    const physics::PhysicsWorld& collision_world,
     const ProjectileState& projectile,
     const glm::vec3& previous_position,
     const glm::vec3& current_position,
     const physics::CollisionQueryFilter& filter) {
-    const physics::PhysicsWorld* collision_world = world.collision_world();
-    if (collision_world == nullptr) {
-        return {};
-    }
     const ProjectileCollisionQuery query = build_projectile_collision_query(
         projectile,
         previous_position,
@@ -515,7 +511,7 @@ std::vector<physics::CollisionHit> collect_projectile_collision_hits(
             request.displacement =
                 query.current_position - query.previous_position;
             request.filter = filter;
-            return collision_world->shape_cast_all(request);
+            return collision_world.shape_cast_all(request);
         }
         case ProjectileCollisionQueryType::kSphereOverlap:
         {
@@ -524,7 +520,7 @@ std::vector<physics::CollisionHit> collect_projectile_collision_hits(
             request.shape.radius = query.radius;
             request.position = query.center;
             request.filter = filter;
-            return collision_world->overlap_all(request);
+            return collision_world.overlap_all(request);
         }
         case ProjectileCollisionQueryType::kSweptBox:
         {
@@ -535,7 +531,7 @@ std::vector<physics::CollisionHit> collect_projectile_collision_hits(
             request.displacement =
                 query.current_position - query.previous_position;
             request.filter = filter;
-            return collision_world->shape_cast_all(request);
+            return collision_world.shape_cast_all(request);
         }
         case ProjectileCollisionQueryType::kBoxOverlap:
         {
@@ -544,7 +540,7 @@ std::vector<physics::CollisionHit> collect_projectile_collision_hits(
             request.shape.half_extents = query.half_extents;
             request.position = query.center;
             request.filter = filter;
-            return collision_world->overlap_all(request);
+            return collision_world.overlap_all(request);
         }
         case ProjectileCollisionQueryType::kUnsupported:
             return {};
@@ -558,7 +554,7 @@ std::vector<physics::CollisionHit> collect_projectile_collision_hits(
             request.direction = displacement;
             request.max_distance = glm::length(displacement);
             request.filter = filter;
-            return collision_world->ray_cast_all(request);
+            return collision_world.ray_cast_all(request);
         }
     }
 }
@@ -990,6 +986,20 @@ glm::vec3 projectile_velocity_at(
     return initial_velocity;
 }
 
+std::vector<physics::CollisionHit> query_projectile_collision_hits(
+    const physics::PhysicsWorld& collision_world,
+    const ProjectileState& projectile,
+    const glm::vec3& previous_position,
+    const glm::vec3& current_position,
+    const physics::CollisionQueryFilter& filter) {
+    return query_projectile_collision_hits_impl(
+        collision_world,
+        projectile,
+        previous_position,
+        current_position,
+        filter);
+}
+
 void simulate_projectiles(World& world, float fixed_delta_seconds) {
     simulate_projectiles(world, fixed_delta_seconds, 0, nullptr);
 }
@@ -1072,13 +1082,16 @@ void simulate_projectiles(
         physics::CollisionQueryFilter filter;
         filter.ignored_entity_net_id = projectile.shooter_net_id;
         filter.gameplay_category_mask = projectile.collision_mask;
+        const physics::PhysicsWorld* collision_world = world.collision_world();
         const std::vector<physics::CollisionHit> hits =
-            collect_projectile_collision_hits(
-            world,
-            projectile,
-            projectile.previous_position,
-            transform.position,
-            filter);
+            collision_world == nullptr
+                ? std::vector<physics::CollisionHit>{}
+                : query_projectile_collision_hits(
+                      *collision_world,
+                      projectile,
+                      projectile.previous_position,
+                      transform.position,
+                      filter);
         const bool expired = projectile.max_lifetime_ticks > 0u &&
                              projectile.age_ticks >= projectile.max_lifetime_ticks;
         if (hits.empty() && !expired) {

@@ -299,6 +299,7 @@ private:
         std::uint8_t sync_mode = KernelProjectileSyncMode_HybridDeterministicThenSnapshot;
         glm::vec3 correction_offset{0.0f, 0.0f, 0.0f};
         bool bound = false;
+        bool locally_terminated = false;
     };
 
     struct VisionRuntimeState {
@@ -585,6 +586,7 @@ private:
     PeerId latest_client_input_peer_ = 0;
     bool has_latest_client_input_ = false;
     std::vector<PredictedProjectile> predicted_projectiles_;
+    bool predicted_projectile_collision_warning_emitted_ = false;
     std::unordered_map<std::uint32_t, OutstandingPredictedAction>
         outstanding_predicted_actions_;
     std::unordered_map<std::uint32_t, KernelLocalActionResult>
