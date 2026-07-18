@@ -1,3 +1,9 @@
+0.6.7 release notes:
+
+- preserves client sessions across out-of-range actor tombstones
+- marks fatal client prediction failures as failed and stops managed input
+
+
 0.6.6 release notes:
 
 - aligns Unity plugin API with kernel ABI 45

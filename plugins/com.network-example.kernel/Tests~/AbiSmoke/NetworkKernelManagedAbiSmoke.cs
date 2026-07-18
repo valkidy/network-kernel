@@ -32,7 +32,7 @@ public static class NetworkKernelManagedAbiSmoke
         KernelAbiInfo info = KernelAbi.GetInfo();
         KernelBuildInfo buildInfo = KernelAbi.GetBuildInfo();
         GameServerAbiInfo gameServerInfo = GameServerAbi.GetInfo();
-        Require(KernelConstants.AbiVersion == 43, "Managed kernel ABI version was not v43.");
+        Require(KernelConstants.AbiVersion == 45, "Managed kernel ABI version was not v45.");
         Require(
             (info.capability_flags & KernelConstants.CapabilityEntityLifecycleEvents) != 0,
             "Kernel lifecycle event capability was missing.");

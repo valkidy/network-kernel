@@ -4,6 +4,8 @@ namespace NetworkExample.Kernel.Client
 {
     public sealed class NetworkClient : IDisposable
     {
+        private const uint ClientPredictionSessionFailureCode = 31;
+
         private readonly Kernel kernel;
         private bool disconnected;
         private uint localPeerId;
@@ -37,7 +39,7 @@ namespace NetworkExample.Kernel.Client
 
         public bool Start(string address)
         {
-            catalogSyncActive = false;
+            ResetManagedSessionState();
             connectionState = NetworkClientConnectionState.Idle;
             return kernel.StartClient(address);
         }
@@ -67,10 +69,8 @@ namespace NetworkExample.Kernel.Client
             catalogSyncAddress = address;
             catalogSyncOptions = syncOptions;
             catalogSyncResult = new GameplayCatalogSyncResult();
+            ResetManagedSessionState();
             connectionState = NetworkClientConnectionState.FetchingManifest;
-            disconnected = false;
-            localPeerId = 0;
-            localPlayerNetId = 0;
             catalogSyncActive = kernel.StartClientCatalogSync(
                 address,
                 (uint)syncOptions.MaxBundleBytes,
@@ -145,6 +145,16 @@ namespace NetworkExample.Kernel.Client
                 {
                     RefreshLocalPlayerInfo();
                 }
+                else if (
+                    kernelEvent.type == KernelEventType.Error &&
+                    kernelEvent.code == ClientPredictionSessionFailureCode)
+                {
+                    catalogSyncActive = false;
+                    disconnected = false;
+                    localPeerId = 0;
+                    localPlayerNetId = 0;
+                    connectionState = NetworkClientConnectionState.Failed;
+                }
                 else if (kernelEvent.type == KernelEventType.Disconnected)
                 {
                     disconnected = true;
@@ -160,6 +170,14 @@ namespace NetworkExample.Kernel.Client
                     }
                 }
             }
+        }
+
+        private void ResetManagedSessionState()
+        {
+            catalogSyncActive = false;
+            disconnected = false;
+            localPeerId = 0;
+            localPlayerNetId = 0;
         }
 
         private void AdvanceCatalogSync()

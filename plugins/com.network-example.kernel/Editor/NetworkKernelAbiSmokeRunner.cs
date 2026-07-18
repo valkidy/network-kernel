@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Threading;
 using UnityEditor;
 using UnityEngine;
@@ -20,7 +21,8 @@ namespace NetworkExample.Kernel.Editor
             KernelAbi.ValidateNativeAbi();
             GameServerAbi.ValidateNativeAbi();
             KernelAbiInfo info = KernelAbi.GetInfo();
-            Require(KernelConstants.AbiVersion == 43, "Managed kernel ABI version was not v43.");
+            Require(KernelConstants.AbiVersion == 45, "Managed kernel ABI version was not v45.");
+            RequireClientPredictionFailureStateTransition();
             Require(
                 (info.capability_flags & KernelConstants.CapabilityEntityLifecycleEvents) != 0,
                 "Kernel lifecycle event capability was missing.");
@@ -227,7 +229,7 @@ namespace NetworkExample.Kernel.Editor
 
             RequireExternalGameplayCatalogSyncIfConfigured();
 
-            Debug.Log("Network kernel ABI 42 smoke passed.");
+            Debug.Log("Network kernel ABI 45 smoke passed.");
         }
 
         private static void RequireControlPlaneRpc(Kernel kernel, uint enemyNetId)
@@ -832,6 +834,54 @@ namespace NetworkExample.Kernel.Editor
                     recovery_ticks = 1,
                 },
             };
+        }
+
+        private static void RequireClientPredictionFailureStateTransition()
+        {
+            Type clientType = typeof(NetworkClient);
+            FieldInfo localPeerId = clientType.GetField(
+                "localPeerId",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo localPlayerNetId = clientType.GetField(
+                "localPlayerNetId",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            MethodInfo applyEvents = clientType.GetMethod(
+                "ApplyEvents",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            Require(
+                localPeerId != null &&
+                localPlayerNetId != null &&
+                applyEvents != null,
+                "NetworkClient prediction failure smoke could not access managed state.");
+
+            using (var client = new NetworkClient())
+            {
+                localPeerId.SetValue(client, 7U);
+                localPlayerNetId.SetValue(client, 100U);
+                var events = new[]
+                {
+                    new KernelEvent
+                    {
+                        type = KernelEventType.Error,
+                        code = 31,
+                    },
+                };
+                applyEvents.Invoke(client, new object[] { events, 1U });
+
+                Require(
+                    client.ConnectionState == NetworkClientConnectionState.Failed,
+                    "Prediction failure did not mark NetworkClient failed.");
+                Require(!client.IsReady, "Prediction failure left NetworkClient ready.");
+                Require(
+                    !client.IsDisconnected,
+                    "Prediction failure was misreported as a transport disconnect.");
+                Require(
+                    client.LocalPeerId == 0 && client.LocalPlayerNetId == 0,
+                    "Prediction failure did not clear managed local-player identifiers.");
+                Require(
+                    !client.TrySubmitInput(new PlayerInput()),
+                    "Prediction failure did not stop managed input submission.");
+            }
         }
 
         private static void RequireProjectileTemplateFire(
