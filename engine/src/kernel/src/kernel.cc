@@ -6323,6 +6323,58 @@ void KernelEngine::record_simulation_tick_cost(
     }
 }
 
+void KernelEngine::finalize_simulated_projectile_destructions(
+    std::size_t first_event,
+    std::size_t last_event,
+    const std::unordered_set<NetId>& actors_before_tick) {
+    const std::size_t capped_last = std::min(last_event, events_.size());
+    std::unordered_set<NetId> finalized_projectiles;
+    for (std::size_t index = first_event; index < capped_last; ++index) {
+        const KernelEvent& event = events_[index];
+        if (event.type != KernelEventType_EntityDestroyed ||
+            event.code != KernelDespawnReason_Destroyed ||
+            actors_before_tick.find(event.net_id) != actors_before_tick.end() ||
+            !finalized_projectiles.insert(event.net_id).second) {
+            continue;
+        }
+
+        if (config_.mode == KernelMode_ListenServer) {
+            const bool was_relevant =
+                local_listen_session_.relevant_entities.erase(event.net_id) > 0;
+            const bool was_out_of_range =
+                local_listen_session_.out_of_range_projectiles.erase(event.net_id) > 0;
+            if ((was_relevant || was_out_of_range) &&
+                listen_server_transport_ != nullptr) {
+                send_entity_despawn(
+                    kLocalListenPeerId,
+                    event.net_id,
+                    KernelDespawnReason_Destroyed);
+            }
+        }
+        for (PeerSession& session : peer_sessions_) {
+            const bool was_relevant =
+                session.relevant_entities.erase(event.net_id) > 0;
+            const bool was_out_of_range =
+                session.out_of_range_projectiles.erase(event.net_id) > 0;
+            if (was_relevant || was_out_of_range) {
+                send_entity_despawn(
+                    session.peer,
+                    event.net_id,
+                    KernelDespawnReason_Destroyed);
+            }
+        }
+        lifecycle_events_.push_back(KernelEntityLifecycleEvent{
+            KernelEntityLifecycleEventType_Destroyed,
+            tick_loop_.current_tick(),
+            event.net_id,
+            KernelDespawnReason_Destroyed,
+            static_cast<std::uint16_t>(EntityType::kProjectile),
+            static_cast<std::uint16_t>(ActorType::kUnknown),
+            0,
+        });
+    }
+}
+
 void KernelEngine::simulate_tick() {
     const auto tick_cost_start = std::chrono::steady_clock::now();
     const float fixed_delta = tick_loop_.fixed_delta_seconds();
@@ -6451,6 +6503,7 @@ void KernelEngine::simulate_tick() {
             server_time_us,
             &action_outcomes},
         &events_);
+    const std::size_t first_projectile_simulation_event = events_.size();
     simulate_projectiles(
         world_,
         fixed_delta,
@@ -6470,6 +6523,10 @@ void KernelEngine::simulate_tick() {
         server_time_us,
         &events_,
         &damage_pipeline_);
+    finalize_simulated_projectile_destructions(
+        first_projectile_simulation_event,
+        events_.size(),
+        actors_before_tick);
     sync_entity_colliders_from_world();
     const std::vector<ConfirmedDamage> ready_damage =
         damage_pipeline_.drain_ready_damage(world_, server_time_us);
@@ -6876,6 +6933,9 @@ void KernelEngine::sync_session_relevance(
     std::unordered_set<NetId> next_relevant;
     for (const EntitySnapshot& entity : snapshot.entities) {
         next_relevant.insert(entity.net_id);
+        if (entity.type == EntityType::kProjectile) {
+            session->out_of_range_projectiles.erase(entity.net_id);
+        }
         if (session->relevant_entities.find(entity.net_id) ==
             session->relevant_entities.end()) {
             send_entity_spawn(session->peer, entity);
@@ -6884,6 +6944,12 @@ void KernelEngine::sync_session_relevance(
 
     for (NetId net_id : session->relevant_entities) {
         if (next_relevant.find(net_id) == next_relevant.end()) {
+            const std::optional<entt::entity> world_entity =
+                world_.find_entity(net_id);
+            if (world_entity.has_value() &&
+                world_.registry().all_of<ProjectileState>(*world_entity)) {
+                session->out_of_range_projectiles.insert(net_id);
+            }
             send_entity_despawn(
                 session->peer,
                 net_id,

@@ -13,6 +13,8 @@
 #undef private
 
 #include "protocol/public/network_packets.h"
+#include "transport/public/listen_server_transport.h"
+#include "transport/public/loopback_transport.h"
 
 namespace {
 
@@ -57,6 +59,291 @@ bool poll_despawn(
         }
     }
     return false;
+}
+
+std::vector<network_example::EntityDespawnPacket> poll_client_despawns(
+    network_example::LoopbackTransport* transport) {
+    std::vector<network_example::EntityDespawnPacket> despawns;
+    if (transport == nullptr) {
+        return despawns;
+    }
+    network_example::TransportEvent event;
+    while (transport->PollClientEvent(event)) {
+        network_example::EntityDespawnPacket despawn{};
+        if (event.channel == network_example::ChannelId::kReliableEvent &&
+            network_example::decode_entity_despawn_packet(
+                event.payload.data(),
+                event.payload.size(),
+                &despawn)) {
+            despawns.push_back(despawn);
+        }
+    }
+    return despawns;
+}
+
+std::vector<network_example::EntityDespawnPacket> poll_local_client_despawns(
+    network_example::ListenServerTransport* transport) {
+    std::vector<network_example::EntityDespawnPacket> despawns;
+    if (transport == nullptr) {
+        return despawns;
+    }
+    network_example::TransportEvent event;
+    while (transport->PollLocalClientEvent(event)) {
+        network_example::EntityDespawnPacket despawn{};
+        if (event.channel == network_example::ChannelId::kReliableEvent &&
+            network_example::decode_entity_despawn_packet(
+                event.payload.data(),
+                event.payload.size(),
+                &despawn)) {
+            despawns.push_back(despawn);
+        }
+    }
+    return despawns;
+}
+
+std::size_t count_despawn(
+    const std::vector<network_example::EntityDespawnPacket>& despawns,
+    network_example::NetId net_id,
+    std::uint32_t reason) {
+    return static_cast<std::size_t>(std::count_if(
+        despawns.begin(),
+        despawns.end(),
+        [net_id, reason](const network_example::EntityDespawnPacket& despawn) {
+            return despawn.net_id == net_id && despawn.reason == reason;
+        }));
+}
+
+void configure_expiring_projectiles(
+    network_example::KernelEngine* engine,
+    network_example::PeerId owner_peer,
+    std::vector<network_example::NetId>* out_projectiles) {
+    assert(engine != nullptr);
+    assert(out_projectiles != nullptr);
+
+    const network_example::NetId projectile = engine->world_.spawn_projectile(
+        owner_peer,
+        glm::vec3{1.0f, 0.0f, 0.0f},
+        glm::vec3{0.0f, 0.0f, 0.0f});
+    const network_example::NetId area_effect = engine->world_.spawn_projectile(
+        owner_peer,
+        glm::vec3{2.0f, 0.0f, 0.0f},
+        glm::vec3{0.0f, 0.0f, 0.0f});
+    const network_example::NetId beam = engine->world_.spawn_projectile(
+        owner_peer,
+        glm::vec3{3.0f, 0.0f, 0.0f},
+        glm::vec3{0.0f, 0.0f, 0.0f});
+
+    const std::optional<entt::entity> projectile_entity =
+        engine->world_.find_entity(projectile);
+    const std::optional<entt::entity> area_effect_entity =
+        engine->world_.find_entity(area_effect);
+    const std::optional<entt::entity> beam_entity =
+        engine->world_.find_entity(beam);
+    assert(projectile_entity.has_value());
+    assert(area_effect_entity.has_value());
+    assert(beam_entity.has_value());
+
+    engine->world_.registry()
+        .get<network_example::ProjectileState>(*projectile_entity)
+        .max_lifetime_ticks = 1;
+    engine->world_.registry()
+        .emplace<network_example::ProjectileAreaEffectRuntime>(*area_effect_entity)
+        .expire_tick = 1;
+    engine->world_.registry()
+        .emplace<network_example::ProjectileBeamRuntime>(*beam_entity)
+        .expire_tick = 1;
+    *out_projectiles = {projectile, area_effect, beam};
+}
+
+void dedicated_server_projectile_destruction_uses_destroyed_reason() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+
+    auto transport = std::make_unique<network_example::LoopbackTransport>();
+    assert(transport->StartServer(7781));
+    network_example::LoopbackTransport* loopback = transport.get();
+    engine.transport_ = std::move(transport);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+
+    const network_example::NetId player =
+        engine.world_.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+    std::vector<network_example::NetId> projectiles;
+    configure_expiring_projectiles(&engine, 1, &projectiles);
+    network_example::KernelEngine::PeerSession session{
+        1,
+        player,
+        0,
+        true,
+        {},
+    };
+    session.relevant_entities.insert(projectiles.begin(), projectiles.end());
+    engine.peer_sessions_.push_back(std::move(session));
+
+    engine.simulate_tick();
+    engine.simulate_tick();
+
+    const std::vector<network_example::EntityDespawnPacket> despawns =
+        poll_client_despawns(loopback);
+    for (const network_example::NetId projectile : projectiles) {
+        assert(!engine.world_.find_entity(projectile).has_value());
+        assert(
+            engine.peer_sessions_[0].relevant_entities.find(projectile) ==
+            engine.peer_sessions_[0].relevant_entities.end());
+        assert(count_despawn(
+                   despawns,
+                   projectile,
+                   KernelDespawnReason_Destroyed) == 1);
+        assert(count_despawn(
+                   despawns,
+                   projectile,
+                   KernelDespawnReason_OutOfRange) == 0);
+    }
+    assert(engine.lifecycle_events_.size() == projectiles.size());
+    for (const KernelEntityLifecycleEvent& event : engine.lifecycle_events_) {
+        assert(event.type == KernelEntityLifecycleEventType_Destroyed);
+        assert(event.reason == KernelDespawnReason_Destroyed);
+        assert(event.entity_type == KernelEntityType_Projectile);
+    }
+
+    engine.publish_snapshot();
+    const std::vector<network_example::EntityDespawnPacket> repeated_despawns =
+        poll_client_despawns(loopback);
+    for (const network_example::NetId projectile : projectiles) {
+        assert(count_despawn(
+                   repeated_despawns,
+                   projectile,
+                   KernelDespawnReason_OutOfRange) == 0);
+    }
+
+    const network_example::NetId departed_projectile =
+        engine.world_.spawn_projectile(
+            2,
+            glm::vec3{100.0f, 0.0f, 0.0f},
+            glm::vec3{0.0f, 0.0f, 0.0f});
+    const std::optional<entt::entity> departed_entity =
+        engine.world_.find_entity(departed_projectile);
+    assert(departed_entity.has_value());
+    engine.world_.registry()
+        .get<network_example::ProjectileState>(*departed_entity)
+        .max_lifetime_ticks = 1;
+    engine.peer_sessions_[0].relevant_entities.insert(departed_projectile);
+
+    engine.publish_snapshot();
+    const std::vector<network_example::EntityDespawnPacket> range_despawns =
+        poll_client_despawns(loopback);
+    assert(count_despawn(
+               range_despawns,
+               departed_projectile,
+               KernelDespawnReason_OutOfRange) == 1);
+    assert(
+        engine.peer_sessions_[0].out_of_range_projectiles.find(
+            departed_projectile) !=
+        engine.peer_sessions_[0].out_of_range_projectiles.end());
+
+    engine.simulate_tick();
+    const std::vector<network_example::EntityDespawnPacket> final_despawns =
+        poll_client_despawns(loopback);
+    assert(count_despawn(
+               final_despawns,
+               departed_projectile,
+               KernelDespawnReason_Destroyed) == 1);
+    assert(
+        engine.peer_sessions_[0].out_of_range_projectiles.find(
+            departed_projectile) ==
+        engine.peer_sessions_[0].out_of_range_projectiles.end());
+}
+
+void listen_server_projectile_destruction_uses_destroyed_reason() {
+    KernelConfig config{};
+    config.mode = KernelMode_ListenServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+
+    auto transport = std::make_unique<network_example::ListenServerTransport>(
+        std::make_unique<network_example::LoopbackTransport>());
+    assert(transport->StartServer(7782));
+    network_example::ListenServerTransport* listen_transport = transport.get();
+    engine.listen_server_transport_ = listen_transport;
+    engine.transport_ = std::move(transport);
+    engine.reset_runtime_state(KernelMode_ListenServer);
+
+    const network_example::NetId player =
+        engine.world_.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+    engine.local_player_net_id_ = player;
+    const network_example::NetId projectile = engine.world_.spawn_projectile(
+        1,
+        glm::vec3{1.0f, 0.0f, 0.0f},
+        glm::vec3{0.0f, 0.0f, 0.0f});
+    const std::optional<entt::entity> projectile_entity =
+        engine.world_.find_entity(projectile);
+    assert(projectile_entity.has_value());
+    engine.world_.registry()
+        .get<network_example::ProjectileState>(*projectile_entity)
+        .max_lifetime_ticks = 1;
+    engine.local_listen_session_ =
+        network_example::KernelEngine::PeerSession{1, player, 0, true, {}};
+    engine.local_listen_session_.relevant_entities.insert(projectile);
+
+    engine.simulate_tick();
+
+    const std::vector<network_example::EntityDespawnPacket> despawns =
+        poll_local_client_despawns(listen_transport);
+    assert(count_despawn(
+               despawns,
+               projectile,
+               KernelDespawnReason_Destroyed) == 1);
+    assert(count_despawn(
+               despawns,
+               projectile,
+               KernelDespawnReason_OutOfRange) == 0);
+    assert(
+        engine.local_listen_session_.relevant_entities.find(projectile) ==
+        engine.local_listen_session_.relevant_entities.end());
+
+    engine.publish_snapshot();
+    const std::vector<network_example::EntityDespawnPacket> repeated_despawns =
+        poll_local_client_despawns(listen_transport);
+    assert(count_despawn(
+               repeated_despawns,
+               projectile,
+               KernelDespawnReason_OutOfRange) == 0);
+
+    const network_example::NetId departed_projectile =
+        engine.world_.spawn_projectile(
+            2,
+            glm::vec3{100.0f, 0.0f, 0.0f},
+            glm::vec3{0.0f, 0.0f, 0.0f});
+    const std::optional<entt::entity> departed_entity =
+        engine.world_.find_entity(departed_projectile);
+    assert(departed_entity.has_value());
+    engine.world_.registry()
+        .get<network_example::ProjectileState>(*departed_entity)
+        .max_lifetime_ticks = 1;
+    engine.local_listen_session_.relevant_entities.insert(departed_projectile);
+
+    engine.publish_snapshot();
+    const std::vector<network_example::EntityDespawnPacket> range_despawns =
+        poll_local_client_despawns(listen_transport);
+    assert(count_despawn(
+               range_despawns,
+               departed_projectile,
+               KernelDespawnReason_OutOfRange) == 1);
+
+    engine.simulate_tick();
+    const std::vector<network_example::EntityDespawnPacket> final_despawns =
+        poll_local_client_despawns(listen_transport);
+    assert(count_despawn(
+               final_despawns,
+               departed_projectile,
+               KernelDespawnReason_Destroyed) == 1);
+    assert(
+        engine.local_listen_session_.out_of_range_projectiles.find(
+            departed_projectile) ==
+        engine.local_listen_session_.out_of_range_projectiles.end());
 }
 
 }  // namespace
@@ -158,7 +445,16 @@ int main() {
         engine,
         near_enemy,
         KernelDespawnReason_OutOfRange));
-    set_position(engine.world_, near_enemy, glm::vec3{90.0f, 0.0f, 0.0f});
+    set_position(engine.world_, near_enemy, glm::vec3{40.0f, 0.0f, 0.0f});
+    const network_example::WorldSnapshot at_relevance_boundary =
+        engine.build_relevant_snapshot(session_one, 175);
+    assert(contains_entity(at_relevance_boundary, near_enemy));
+    engine.sync_session_relevance(&session_one, at_relevance_boundary);
+    assert(!poll_despawn(
+        engine,
+        near_enemy,
+        KernelDespawnReason_OutOfRange));
+    set_position(engine.world_, near_enemy, glm::vec3{40.01f, 0.0f, 0.0f});
     const network_example::WorldSnapshot after_range_change =
         engine.build_relevant_snapshot(session_one, 200);
     assert(!contains_entity(after_range_change, near_enemy));
@@ -249,5 +545,7 @@ int main() {
     assert(network_example::estimate_snapshot_packet_size(projectile_budgeted) <=
            compact_only_budget);
 
+    dedicated_server_projectile_destruction_uses_destroyed_reason();
+    listen_server_projectile_destruction_uses_destroyed_reason();
     return 0;
 }

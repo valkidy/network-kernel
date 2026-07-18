@@ -247,6 +247,7 @@ private:
         std::uint64_t last_movement_input_server_time_us = 0;
         bool has_received_input = false;
         bool has_movement_input = false;
+        std::unordered_set<NetId> out_of_range_projectiles;
     };
 
     struct ClientReplicatedEntity {
@@ -395,6 +396,10 @@ private:
     void handle_client_despawn(const EntityDespawnPacket& packet);
     void clear_client_session();
     void simulate_tick();
+    void finalize_simulated_projectile_destructions(
+        std::size_t first_event,
+        std::size_t last_event,
+        const std::unordered_set<NetId>& actors_before_tick);
     bool enqueue_simulation_command(const simulation::Command& command);
     std::size_t drain_simulation_commands();
     void record_simulation_tick_cost(
