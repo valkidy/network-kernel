@@ -415,6 +415,9 @@ private:
     void report_render_state_overflow_if_needed();
     void handle_client_snapshot(WorldSnapshot snapshot);
     void store_client_snapshot(WorldSnapshot snapshot);
+    bool client_snapshot_entity_is_tombstoned(
+        NetId net_id,
+        std::uint32_t snapshot_tick) const;
     bool snapshot_entity_has_required_metadata(const EntitySnapshot& entity) const;
     bool prepare_static_collision_scene(
         const KernelStaticCollisionSceneConfig& config,

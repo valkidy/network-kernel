@@ -2306,6 +2306,102 @@ void destroyed_tombstone_blocks_older_snapshot_render() {
     }
 }
 
+void out_of_range_tombstone_does_not_fail_client_prediction() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+    client.session_rules_.actor_blocking_mode =
+        KernelActorBlockingMode_Predicted;
+    client.has_welcome_ = true;
+    client.local_client_peer_id_ = 7;
+    client.local_player_net_id_ = 100;
+    add_client_render_metadata(
+        &client,
+        21,
+        network_example::EntityType::kActor,
+        network_example::ActorType::kAgent);
+
+    network_example::WorldSnapshot stale;
+    stale.header.server_tick = 10;
+    add_snapshot_entity(
+        &stale,
+        21,
+        network_example::EntityType::kActor,
+        1.0f,
+        network_example::ActorType::kAgent);
+    client.client_snapshot_buffer_.push_back(stale);
+
+    client.handle_client_despawn(network_example::EntityDespawnPacket{
+        21,
+        12,
+        KernelDespawnReason_OutOfRange,
+    });
+    client.has_client_snapshot_ = true;
+    client.latest_client_snapshot_.header.server_tick = 15;
+    client.diagnose_client_snapshot_metadata_waits();
+
+    require(!client.prediction_failed_);
+    require(client.has_welcome_);
+    require(client.local_client_peer_id_ == 7);
+    require(client.local_player_net_id_ == 100);
+    require(client.client_metadata_timeout_reported_entities_.empty());
+
+    client.prediction_physics_world_ =
+        std::make_unique<network_example::physics::PhysicsWorld>(
+            network_example::physics::PhysicsWorldConfig{});
+    require(client.prediction_physics_world_->valid());
+    require(client.sync_prediction_actor_proxies(stale, 15));
+    require(client.prediction_proxy_collider_ids_.empty());
+}
+
+void out_of_range_reentry_without_metadata_still_fails_prediction() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+    client.session_rules_.actor_blocking_mode =
+        KernelActorBlockingMode_Predicted;
+    client.has_welcome_ = true;
+    client.local_client_peer_id_ = 7;
+    client.local_player_net_id_ = 100;
+    client.handle_client_despawn(network_example::EntityDespawnPacket{
+        21,
+        12,
+        KernelDespawnReason_OutOfRange,
+    });
+
+    network_example::WorldSnapshot reentered;
+    reentered.header.server_tick = 13;
+    add_snapshot_entity(
+        &reentered,
+        21,
+        network_example::EntityType::kActor,
+        1.0f,
+        network_example::ActorType::kAgent);
+    client.client_snapshot_buffer_.push_back(reentered);
+    client.has_client_snapshot_ = true;
+    client.latest_client_snapshot_.header.server_tick = 16;
+    client.diagnose_client_snapshot_metadata_waits();
+
+    require(client.prediction_failed_);
+    require(!client.has_welcome_);
+    require(client.local_client_peer_id_ == 0);
+    require(client.local_player_net_id_ == 0);
+    require(std::any_of(
+        client.events_.begin(),
+        client.events_.end(),
+        [](const KernelEvent& event) {
+            return event.type == KernelEventType_Error && event.code == 31u;
+        }));
+}
+
 void stale_render_state_marks_status_and_hp_unknown() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
@@ -3666,6 +3762,8 @@ int main() {
     out_of_range_despawn_keeps_local_deterministic_predicted_projectile();
     budget_omitted_projectile_snapshot_does_not_delete_bound_prediction();
     destroyed_tombstone_blocks_older_snapshot_render();
+    out_of_range_tombstone_does_not_fail_client_prediction();
+    out_of_range_reentry_without_metadata_still_fails_prediction();
     stale_render_state_marks_status_and_hp_unknown();
     actor_template_update_rebinds_cached_snapshot_debug_metadata();
     client_query_vision_state_uses_actor_template_debug_replication();
