@@ -4958,6 +4958,17 @@ void KernelEngine::store_client_snapshot(WorldSnapshot snapshot) {
     }
 }
 
+bool KernelEngine::client_snapshot_entity_is_tombstoned(
+    NetId net_id,
+    std::uint32_t snapshot_tick) const {
+    const auto tombstone = client_despawned_entities_.find(net_id);
+    if (tombstone == client_despawned_entities_.end()) {
+        return false;
+    }
+    return tombstone->second.reason != KernelDespawnReason_OutOfRange ||
+        snapshot_tick <= tombstone->second.tick;
+}
+
 bool KernelEngine::snapshot_entity_has_required_metadata(
     const EntitySnapshot& entity) const {
     if (entity.net_id == 0) {
@@ -5034,7 +5045,10 @@ void KernelEngine::diagnose_client_snapshot_metadata_waits() {
 
                 bool missing_metadata = false;
                 for (const EntitySnapshot& entity : snapshot.entities) {
-                    if (snapshot_entity_has_required_metadata(entity)) {
+                    if (client_snapshot_entity_is_tombstoned(
+                            entity.net_id,
+                            snapshot.header.server_tick) ||
+                        snapshot_entity_has_required_metadata(entity)) {
                         continue;
                     }
                     missing_metadata = true;
@@ -5144,7 +5158,10 @@ bool KernelEngine::sync_prediction_actor_proxies(
     std::unordered_set<NetId> current_proxies;
     for (const EntitySnapshot& entity : snapshot.entities) {
         if (entity.net_id == local_player_net_id_ ||
-            entity.type != EntityType::kActor) {
+            entity.type != EntityType::kActor ||
+            client_snapshot_entity_is_tombstoned(
+                entity.net_id,
+                snapshot.header.server_tick)) {
             continue;
         }
         const auto replicated = std::find_if(
@@ -5289,6 +5306,9 @@ void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {
         KernelActorBlockingMode_Predicted) {
         for (const EntitySnapshot& entity : snapshot.entities) {
             if (entity.type == EntityType::kActor &&
+                !client_snapshot_entity_is_tombstoned(
+                    entity.net_id,
+                    snapshot.header.server_tick) &&
                 !snapshot_entity_has_required_metadata(entity)) {
                 return;
             }
@@ -5494,6 +5514,9 @@ void KernelEngine::predict_local_input(const PlayerInput& input) {
         has_client_snapshot_) {
         for (const EntitySnapshot& entity : latest_client_snapshot_.entities) {
             if (entity.type == EntityType::kActor &&
+                !client_snapshot_entity_is_tombstoned(
+                    entity.net_id,
+                    latest_client_snapshot_.header.server_tick) &&
                 !snapshot_entity_has_required_metadata(entity)) {
                 return;
             }
@@ -7119,12 +7142,10 @@ void KernelEngine::rebuild_render_states_from_snapshot(
         if (has_predicted_local_entity_ && entity.net_id == local_player_net_id_) {
             continue;
         }
-        const auto tombstone = client_despawned_entities_.find(entity.net_id);
-        if (tombstone != client_despawned_entities_.end()) {
-            if (tombstone->second.reason != KernelDespawnReason_OutOfRange ||
-                snapshot.header.server_tick <= tombstone->second.tick) {
-                continue;
-            }
+        if (client_snapshot_entity_is_tombstoned(
+                entity.net_id,
+                snapshot.header.server_tick)) {
+            continue;
         }
         if (has_predicted_projectile_net_id(entity.net_id)) {
             rendered_entities.insert(entity.net_id);
