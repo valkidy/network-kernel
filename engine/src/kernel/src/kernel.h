@@ -247,6 +247,7 @@ private:
         std::uint64_t last_movement_input_server_time_us = 0;
         bool has_received_input = false;
         bool has_movement_input = false;
+        std::unordered_set<NetId> out_of_range_projectiles;
     };
 
     struct ClientReplicatedEntity {
@@ -395,6 +396,10 @@ private:
     void handle_client_despawn(const EntityDespawnPacket& packet);
     void clear_client_session();
     void simulate_tick();
+    void finalize_simulated_projectile_destructions(
+        std::size_t first_event,
+        std::size_t last_event,
+        const std::unordered_set<NetId>& actors_before_tick);
     bool enqueue_simulation_command(const simulation::Command& command);
     std::size_t drain_simulation_commands();
     void record_simulation_tick_cost(
@@ -404,14 +409,13 @@ private:
     void release_presentable_events();
     void release_remote_action_presentation_events();
     void broadcast_combat_events(std::size_t first_event, std::size_t last_event);
+    void advance_predicted_corrections(float delta_seconds);
+    glm::vec3 predicted_local_render_position(
+        std::uint64_t client_render_time_us) const;
     void rebuild_render_states();
-    void rebuild_render_states_at_time(
-        std::uint64_t client_render_time_us,
-        bool consume_correction);
+    void rebuild_render_states_at_time(std::uint64_t client_render_time_us);
     void rebuild_render_states_from_world();
-    void rebuild_render_states_from_snapshot(
-        std::uint64_t client_render_time_us,
-        bool consume_correction);
+    void rebuild_render_states_from_snapshot(std::uint64_t client_render_time_us);
     void report_render_state_overflow_if_needed();
     void handle_client_snapshot(WorldSnapshot snapshot);
     void store_client_snapshot(WorldSnapshot snapshot);
@@ -469,8 +473,8 @@ private:
     bool build_interpolated_snapshot_for_server_time(
         std::uint64_t target_server_time_us,
         WorldSnapshot* out_snapshot) const;
-    void append_predicted_local_render_state(bool consume_correction);
-    void append_predicted_projectile_render_states(bool consume_correction);
+    void append_predicted_local_render_state(std::uint64_t client_render_time_us);
+    void append_predicted_projectile_render_states();
     void advance_predicted_projectiles(float fixed_delta_seconds);
     std::uint32_t local_prediction_server_tick(std::uint32_t snapshot_tick) const;
     std::uint32_t rewind_tick_for_input(const QueuedInput& queued_input) const;
@@ -682,6 +686,7 @@ private:
     std::array<std::uint32_t, kWeaponSlotCount>
         predicted_next_primary_commit_tick_{};
     glm::vec3 local_correction_offset_{0.0f, 0.0f, 0.0f};
+    std::uint64_t predicted_local_state_time_us_ = 0;
     std::uint64_t next_entity_id_ = 1;
     std::uint64_t next_predicted_entity_id_ = UINT64_C(0x8000000000000000);
     NetId local_player_net_id_ = 0;

@@ -1139,7 +1139,15 @@ void simulate_projectiles(
         std::unique(projectiles_to_destroy.begin(), projectiles_to_destroy.end()),
         projectiles_to_destroy.end());
     for (NetId projectile : projectiles_to_destroy) {
-        world.destroy(projectile);
+        if (world.destroy(projectile)) {
+            push_event(
+                events,
+                KernelEventType_EntityDestroyed,
+                current_tick,
+                projectile,
+                0,
+                KernelDespawnReason_Destroyed);
+        }
     }
     if (damage_pipeline == nullptr) {
         active_damage_pipeline->confirm_ready(

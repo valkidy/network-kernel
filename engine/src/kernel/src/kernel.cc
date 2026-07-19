@@ -46,6 +46,9 @@ constexpr std::size_t kRemotePresentationRecordBytes = 20;
 constexpr std::size_t kRemotePresentationDedupCapacity = 256;
 constexpr std::size_t kRecentActionResultCapacity = 256;
 constexpr std::size_t kMaxPendingClientActionIntents = 32;
+constexpr float kPredictionCorrectionHalfLifeSeconds = 0.05f;
+constexpr float kPredictionCorrectionEpsilonMeters = 0.001f;
+constexpr float kPredictionCorrectionSnapDistanceMeters = 2.0f;
 
 KernelConfig with_kernel_defaults(KernelConfig config) {
     config.tick = with_tick_defaults(config.tick);
@@ -1742,6 +1745,7 @@ void KernelEngine::update(float delta_seconds) {
         (config_.mode == KernelMode_Client || config_.mode == KernelMode_ListenServer)) {
         client_local_time_us_ += static_cast<std::uint64_t>(
             static_cast<double>(delta_seconds) * 1000000.0);
+        advance_predicted_corrections(delta_seconds);
     }
     for (auto outstanding = outstanding_predicted_actions_.begin();
          outstanding != outstanding_predicted_actions_.end();) {
@@ -2381,7 +2385,7 @@ std::uint32_t KernelEngine::get_render_states_at_time(
     if (out_states == nullptr || max_states == 0) {
         return 0;
     }
-    rebuild_render_states_at_time(client_render_time_us, false);
+    rebuild_render_states_at_time(client_render_time_us);
     const std::uint32_t count =
         std::min(max_states, static_cast<std::uint32_t>(render_states_.size()));
     std::memcpy(out_states, render_states_.data(), sizeof(RenderEntityState) * count);
@@ -3661,6 +3665,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     predicted_action_recovery_end_tick_ = 0u;
     predicted_next_primary_commit_tick_.fill(0u);
     local_correction_offset_ = glm::vec3{0.0f, 0.0f, 0.0f};
+    predicted_local_state_time_us_ = 0;
     next_entity_id_ = 1;
     next_predicted_entity_id_ = UINT64_C(0x8000000000000000);
     local_player_net_id_ = 0;
@@ -4737,6 +4742,7 @@ void KernelEngine::clear_client_session() {
     predicted_character_state_ = movement_solver::CharacterMovementState{};
     predicted_character_tick_ = 0;
     local_correction_offset_ = glm::vec3{0.0f, 0.0f, 0.0f};
+    predicted_local_state_time_us_ = 0;
     client_clock_offset_us_ = 0;
     has_welcome_ = false;
     has_client_snapshot_ = false;
@@ -5279,6 +5285,7 @@ bool KernelEngine::step_local_character_prediction(
     predicted_local_entity_.position = predicted_character_state_.position;
     predicted_local_entity_.rotation = predicted_character_state_.rotation;
     predicted_local_entity_.velocity = predicted_character_state_.velocity;
+    predicted_local_state_time_us_ = client_local_time_us_;
     return true;
 }
 
@@ -5336,10 +5343,11 @@ void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {
 
     const glm::vec3 previous_render_position =
         has_authoritative_local_entity_ && has_predicted_local_entity_
-            ? predicted_local_entity_.position + local_correction_offset_
+            ? predicted_local_render_position(client_local_time_us_)
             : authoritative->position;
 
     predicted_local_entity_ = *authoritative;
+    predicted_local_state_time_us_ = client_local_time_us_;
     has_predicted_local_entity_ = true;
     has_authoritative_local_entity_ = true;
     if (prediction_physics_world_ != nullptr) {
@@ -5416,9 +5424,13 @@ void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {
         }
     }
 
-    const glm::vec3 correction = previous_render_position - predicted_local_entity_.position;
+    predicted_local_state_time_us_ = client_local_time_us_;
+    const glm::vec3 correction =
+        previous_render_position - predicted_local_entity_.position;
     local_correction_offset_ =
-        glm::length(correction) > 2.0f ? glm::vec3{0.0f, 0.0f, 0.0f} : correction;
+        glm::length(correction) > kPredictionCorrectionSnapDistanceMeters
+            ? glm::vec3{0.0f, 0.0f, 0.0f}
+            : correction;
 }
 
 void KernelEngine::reconcile_predicted_projectiles(const WorldSnapshot& snapshot) {
@@ -5493,8 +5505,9 @@ void KernelEngine::reconcile_predicted_projectiles(const WorldSnapshot& snapshot
         predicted->bound = true;
         const glm::vec3 correction = previous_render_position - authoritative_now;
         predicted->correction_offset =
-            glm::length(correction) > 2.0f ? glm::vec3{0.0f, 0.0f, 0.0f}
-                                           : correction;
+            glm::length(correction) > kPredictionCorrectionSnapDistanceMeters
+                ? glm::vec3{0.0f, 0.0f, 0.0f}
+                : correction;
         entity_ids_by_net_id_[entity.net_id] = predicted->entity_id;
         corrected_projectile = true;
     }
@@ -5534,6 +5547,7 @@ void KernelEngine::predict_local_input(const PlayerInput& input) {
             predicted_local_entity_ = *latest;
         }
         has_predicted_local_entity_ = true;
+        predicted_local_state_time_us_ = client_local_time_us_;
         predicted_character_state_.position = predicted_local_entity_.position;
         predicted_character_state_.rotation = predicted_local_entity_.rotation;
         predicted_character_state_.velocity = predicted_local_entity_.velocity;
@@ -5984,14 +5998,50 @@ bool KernelEngine::build_interpolated_snapshot_for_server_time(
     return true;
 }
 
-void KernelEngine::append_predicted_local_render_state(bool consume_correction) {
+void KernelEngine::advance_predicted_corrections(float delta_seconds) {
+    if (delta_seconds <= 0.0f) {
+        return;
+    }
+
+    const float decay = std::pow(
+        0.5f,
+        delta_seconds / kPredictionCorrectionHalfLifeSeconds);
+    const auto decay_offset = [decay](glm::vec3* offset) {
+        *offset *= decay;
+        if (glm::length(*offset) < kPredictionCorrectionEpsilonMeters) {
+            *offset = glm::vec3{0.0f, 0.0f, 0.0f};
+        }
+    };
+    decay_offset(&local_correction_offset_);
+    for (PredictedProjectile& projectile : predicted_projectiles_) {
+        decay_offset(&projectile.correction_offset);
+    }
+}
+
+glm::vec3 KernelEngine::predicted_local_render_position(
+    std::uint64_t client_render_time_us) const {
+    float extrapolation_seconds = 0.0f;
+    if (client_render_time_us > predicted_local_state_time_us_) {
+        extrapolation_seconds = std::min(
+            static_cast<float>(
+                client_render_time_us - predicted_local_state_time_us_) /
+                1000000.0f,
+            tick_loop_.fixed_delta_seconds());
+    }
+    return predicted_local_entity_.position +
+        predicted_local_entity_.velocity * extrapolation_seconds +
+        local_correction_offset_;
+}
+
+void KernelEngine::append_predicted_local_render_state(
+    std::uint64_t client_render_time_us) {
     if (!has_predicted_local_entity_ ||
         (has_welcome_ && !has_authoritative_local_entity_)) {
         return;
     }
 
     EntitySnapshot local = predicted_local_entity_;
-    local.position += local_correction_offset_;
+    local.position = predicted_local_render_position(client_render_time_us);
     RenderEntityState state = render_state_from_snapshot_entity(
         local,
         entity_id_for_net_id(local.net_id));
@@ -6002,16 +6052,9 @@ void KernelEngine::append_predicted_local_render_state(bool consume_correction) 
     }
     state.status = RenderEntityStatus_Predicted;
     render_states_.push_back(state);
-
-    if (consume_correction) {
-        local_correction_offset_ *= 0.5f;
-        if (glm::length(local_correction_offset_) < 0.001f) {
-            local_correction_offset_ = glm::vec3{0.0f, 0.0f, 0.0f};
-        }
-    }
 }
 
-void KernelEngine::append_predicted_projectile_render_states(bool consume_correction) {
+void KernelEngine::append_predicted_projectile_render_states() {
     const auto cost_start = std::chrono::steady_clock::now();
     const bool had_projectiles = std::any_of(
         predicted_projectiles_.begin(),
@@ -6019,7 +6062,7 @@ void KernelEngine::append_predicted_projectile_render_states(bool consume_correc
         [](const PredictedProjectile& projectile) {
             return !projectile.locally_terminated;
         });
-    for (PredictedProjectile& projectile : predicted_projectiles_) {
+    for (const PredictedProjectile& projectile : predicted_projectiles_) {
         if (projectile.locally_terminated) {
             continue;
         }
@@ -6047,12 +6090,6 @@ void KernelEngine::append_predicted_projectile_render_states(bool consume_correc
             KernelActionRuntimeView{sizeof(KernelActionRuntimeView)},
             KernelVec3{1.0f, 0.0f, 0.0f},
         });
-        if (consume_correction) {
-            projectile.correction_offset *= 0.5f;
-            if (glm::length(projectile.correction_offset) < 0.001f) {
-                projectile.correction_offset = glm::vec3{0.0f, 0.0f, 0.0f};
-            }
-        }
     }
     if (had_projectiles) {
         benchmark_stats_.render_solver_cost_us +=
@@ -6323,6 +6360,58 @@ void KernelEngine::record_simulation_tick_cost(
     }
 }
 
+void KernelEngine::finalize_simulated_projectile_destructions(
+    std::size_t first_event,
+    std::size_t last_event,
+    const std::unordered_set<NetId>& actors_before_tick) {
+    const std::size_t capped_last = std::min(last_event, events_.size());
+    std::unordered_set<NetId> finalized_projectiles;
+    for (std::size_t index = first_event; index < capped_last; ++index) {
+        const KernelEvent& event = events_[index];
+        if (event.type != KernelEventType_EntityDestroyed ||
+            event.code != KernelDespawnReason_Destroyed ||
+            actors_before_tick.find(event.net_id) != actors_before_tick.end() ||
+            !finalized_projectiles.insert(event.net_id).second) {
+            continue;
+        }
+
+        if (config_.mode == KernelMode_ListenServer) {
+            const bool was_relevant =
+                local_listen_session_.relevant_entities.erase(event.net_id) > 0;
+            const bool was_out_of_range =
+                local_listen_session_.out_of_range_projectiles.erase(event.net_id) > 0;
+            if ((was_relevant || was_out_of_range) &&
+                listen_server_transport_ != nullptr) {
+                send_entity_despawn(
+                    kLocalListenPeerId,
+                    event.net_id,
+                    KernelDespawnReason_Destroyed);
+            }
+        }
+        for (PeerSession& session : peer_sessions_) {
+            const bool was_relevant =
+                session.relevant_entities.erase(event.net_id) > 0;
+            const bool was_out_of_range =
+                session.out_of_range_projectiles.erase(event.net_id) > 0;
+            if (was_relevant || was_out_of_range) {
+                send_entity_despawn(
+                    session.peer,
+                    event.net_id,
+                    KernelDespawnReason_Destroyed);
+            }
+        }
+        lifecycle_events_.push_back(KernelEntityLifecycleEvent{
+            KernelEntityLifecycleEventType_Destroyed,
+            tick_loop_.current_tick(),
+            event.net_id,
+            KernelDespawnReason_Destroyed,
+            static_cast<std::uint16_t>(EntityType::kProjectile),
+            static_cast<std::uint16_t>(ActorType::kUnknown),
+            0,
+        });
+    }
+}
+
 void KernelEngine::simulate_tick() {
     const auto tick_cost_start = std::chrono::steady_clock::now();
     const float fixed_delta = tick_loop_.fixed_delta_seconds();
@@ -6451,6 +6540,7 @@ void KernelEngine::simulate_tick() {
             server_time_us,
             &action_outcomes},
         &events_);
+    const std::size_t first_projectile_simulation_event = events_.size();
     simulate_projectiles(
         world_,
         fixed_delta,
@@ -6470,6 +6560,10 @@ void KernelEngine::simulate_tick() {
         server_time_us,
         &events_,
         &damage_pipeline_);
+    finalize_simulated_projectile_destructions(
+        first_projectile_simulation_event,
+        events_.size(),
+        actors_before_tick);
     sync_entity_colliders_from_world();
     const std::vector<ConfirmedDamage> ready_damage =
         damage_pipeline_.drain_ready_damage(world_, server_time_us);
@@ -6876,6 +6970,9 @@ void KernelEngine::sync_session_relevance(
     std::unordered_set<NetId> next_relevant;
     for (const EntitySnapshot& entity : snapshot.entities) {
         next_relevant.insert(entity.net_id);
+        if (entity.type == EntityType::kProjectile) {
+            session->out_of_range_projectiles.erase(entity.net_id);
+        }
         if (session->relevant_entities.find(entity.net_id) ==
             session->relevant_entities.end()) {
             send_entity_spawn(session->peer, entity);
@@ -6884,6 +6981,12 @@ void KernelEngine::sync_session_relevance(
 
     for (NetId net_id : session->relevant_entities) {
         if (next_relevant.find(net_id) == next_relevant.end()) {
+            const std::optional<entt::entity> world_entity =
+                world_.find_entity(net_id);
+            if (world_entity.has_value() &&
+                world_.registry().all_of<ProjectileState>(*world_entity)) {
+                session->out_of_range_projectiles.insert(net_id);
+            }
             send_entity_despawn(
                 session->peer,
                 net_id,
@@ -7044,16 +7147,15 @@ void KernelEngine::send_entity_template_update(
 }
 
 void KernelEngine::rebuild_render_states() {
-    rebuild_render_states_at_time(client_local_time_us_, true);
+    rebuild_render_states_at_time(client_local_time_us_);
 }
 
 void KernelEngine::rebuild_render_states_at_time(
-    std::uint64_t client_render_time_us,
-    bool consume_correction) {
+    std::uint64_t client_render_time_us) {
     const auto cost_start = std::chrono::steady_clock::now();
     if (config_.mode == KernelMode_Client ||
         (config_.mode == KernelMode_ListenServer && has_client_snapshot_)) {
-        rebuild_render_states_from_snapshot(client_render_time_us, consume_correction);
+        rebuild_render_states_from_snapshot(client_render_time_us);
         sync_client_render_colliders();
         report_render_state_overflow_if_needed();
         benchmark_stats_.render_solver_cost_us +=
@@ -7080,8 +7182,8 @@ void KernelEngine::report_render_state_overflow_if_needed() {
 void KernelEngine::rebuild_render_states_from_world() {
     render_states_.clear();
     if (config_.mode == KernelMode_Client) {
-        append_predicted_local_render_state(true);
-        append_predicted_projectile_render_states(true);
+        append_predicted_local_render_state(client_local_time_us_);
+        append_predicted_projectile_render_states();
     }
     auto view = world_.registry().view<const NetworkIdentity, const EntityKind, const Transform>();
     for (const entt::entity entity : view) {
@@ -7118,11 +7220,10 @@ void KernelEngine::rebuild_render_states_from_world() {
 }
 
 void KernelEngine::rebuild_render_states_from_snapshot(
-    std::uint64_t client_render_time_us,
-    bool consume_correction) {
+    std::uint64_t client_render_time_us) {
     render_states_.clear();
-    append_predicted_local_render_state(consume_correction);
-    append_predicted_projectile_render_states(consume_correction);
+    append_predicted_local_render_state(client_render_time_us);
+    append_predicted_projectile_render_states();
 
     WorldSnapshot render_snapshot;
     const WorldSnapshot& snapshot =
