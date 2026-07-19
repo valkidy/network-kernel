@@ -122,7 +122,7 @@ namespace NetworkExample.Kernel
     public static class NetworkKernelPackageInfo
     {
         public const string Name = "com.network-example.kernel";
-        public const string Version = "0.6.6";
+        public const string Version = "0.6.9";
     }
 
     public enum KernelMode

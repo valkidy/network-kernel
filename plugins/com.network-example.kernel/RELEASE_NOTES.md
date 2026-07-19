@@ -1,3 +1,10 @@
+0.6.9 release notes:
+
+- keeps local predicted actor presentation independent from simulation ticks and external render query time
+- smooths prediction, reconciliation, ground correction, and velocity changes without reversing active movement
+- preserves C and managed ABI 45 with no public API changes
+
+
 0.6.8 release notes:
 
 - refreshes macOS and Windows native plugins for kernel ABI 45
