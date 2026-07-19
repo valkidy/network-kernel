@@ -1,5 +1,10 @@
 0.6.8 release notes:
 
+- refreshes macOS and Windows native plugins for kernel ABI 45
+
+
+0.6.8 release notes:
+
 - makes macOS local predicted actor rendering frame-rate independent
 - makes predicted projectile correction decay frame-rate independent
 - preserves C and managed ABI 45 with no public API changes
