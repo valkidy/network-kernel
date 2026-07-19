@@ -1,3 +1,9 @@
+0.6.8 release notes:
+
+- makes macOS local predicted actor rendering frame-rate independent
+- makes predicted projectile correction decay frame-rate independent
+- preserves C and managed ABI 45 with no public API changes
+
 0.6.7 release notes:
 
 - preserves client sessions across out-of-range actor tombstones

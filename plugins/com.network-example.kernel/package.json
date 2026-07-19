@@ -1,6 +1,6 @@
 {
   "name": "com.network-example.kernel",
-  "version": "0.6.7",
+  "version": "0.6.8",
   "displayName": "Network Example Kernel",
   "description": "Thin Unity P/Invoke wrapper for the network-example native kernel C ABI.",
   "unity": "6000.0",

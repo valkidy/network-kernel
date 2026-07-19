@@ -163,9 +163,29 @@ namespace NetworkExample.Kernel.Editor
                     "Kernel_ServerSetEntityHealth did not update hp only.");
                 RequireControlPlaneRpc(kernel, enemyNetId);
 
+                Require(
+                    kernel.ServerSetEntityActorTemplate(
+                        localInfo.player_net_id,
+                        404),
+                    "Kernel_ServerSetEntityActorTemplate failed for local player.");
+
                 var states = new RenderEntityState[16];
-                kernel.Update(0.0f);
-                Require(kernel.GetRenderStates(states) > 0, "Kernel_GetRenderStates returned no states.");
+                uint renderCount = 0;
+                for (int physicsTick = 0; physicsTick < 8; ++physicsTick)
+                {
+                    kernel.Update(1.0f / 30.0f);
+                    Array.Clear(states, 0, states.Length);
+                    renderCount = kernel.GetRenderStates(states);
+                    if (renderCount > 0 &&
+                        HasActiveRenderEntity(states, enemyNetId))
+                    {
+                        break;
+                    }
+                }
+                Require(
+                    renderCount > 0,
+                    "Kernel_GetRenderStates returned no states after waiting " +
+                    "for first-physics finalization.");
                 Require(
                     HasActiveRenderEntity(states, enemyNetId),
                     $"Kernel_GetRenderStates missed active enemy. {DescribeRenderStates(states)}");
@@ -451,6 +471,8 @@ namespace NetworkExample.Kernel.Editor
 
         private static void RequireAbi26CatalogDiagnostics(Kernel kernel)
         {
+            const byte capsuleShapeType = 5;
+            const uint movementPurpose = 1U << 4;
             var colliderTemplates = new[]
             {
                 new KernelColliderTemplateDefinition
@@ -461,6 +483,16 @@ namespace NetworkExample.Kernel.Editor
                     center = new KernelVec3(0.0f, 0.5f, 0.0f),
                     shape_params = new KernelVec4(0.75f, 0.0f, 0.0f, 0.0f),
                     purpose_flags = (uint)KernelColliderPurpose.Hit,
+                    layer_mask = KernelConstants.CollisionLayerHostile,
+                },
+                new KernelColliderTemplateDefinition
+                {
+                    struct_size = KernelColliderTemplateDefinition.StructSize,
+                    template_id = 102,
+                    shape_type = capsuleShapeType,
+                    center = new KernelVec3(0.0f, 0.9f, 0.0f),
+                    shape_params = new KernelVec4(0.9f, 0.4f, 0.0f, 0.0f),
+                    purpose_flags = movementPurpose,
                     layer_mask = KernelConstants.CollisionLayerHostile,
                 },
                 new KernelColliderTemplateDefinition
@@ -524,11 +556,35 @@ namespace NetworkExample.Kernel.Editor
                     },
                 },
             };
+            var entityTemplates = new[]
+            {
+                new KernelEntityTemplateDefinition
+                {
+                    struct_size = KernelEntityTemplateDefinition.StructSize,
+                    entity_template_id = 505,
+                    entity_type = KernelEntityType.Actor,
+                    actor_type = KernelActorType.Agent,
+                    actor_template_id = 404,
+                    collider_template_id = 101,
+                    movement = new KernelMovementDefinition
+                    {
+                        struct_size = KernelMovementDefinition.StructSize,
+                        controller_type = KernelMovementControllerType.Character,
+                        movement_collider_template_id = 102,
+                        gravity = new KernelVec3(0.0f, -9.81f, 0.0f),
+                        max_slope_degrees = 45.0f,
+                        step_height = 0.3f,
+                        ground_probe_distance = 0.1f,
+                        ground_snap_distance = 0.1f,
+                    },
+                },
+            };
             var catalog = new KernelGameplayCatalog
             {
                 CatalogVersion = 26,
                 CatalogHash = 0x2600UL,
                 ActorTemplates = actorTemplates,
+                EntityTemplates = entityTemplates,
                 ProjectileTemplates = projectileTemplates,
                 ColliderTemplates = colliderTemplates,
                 ActionTemplates = SmokeActionTemplates(),
@@ -537,18 +593,23 @@ namespace NetworkExample.Kernel.Editor
             Require(kernel.LoadGameplayCatalog(catalog), "Kernel_LoadGameplayCatalog failed.");
             RequireInvalidGameplayCatalogBundleFails(kernel);
             Require(
-                kernel.GetColliderTemplates(null) == 2,
+                kernel.GetColliderTemplates(null) == 3,
                 "Kernel_GetColliderTemplates count failed.");
-            var readColliders = new KernelColliderTemplateDefinition[2];
+            var readColliders = new KernelColliderTemplateDefinition[3];
             Require(
-                kernel.GetColliderTemplates(readColliders) == 2 &&
+                kernel.GetColliderTemplates(readColliders) == 3 &&
                 readColliders[0].template_id == 101 &&
                 readColliders[0].shape_type == (byte)KernelColliderShapeType.Sphere &&
                 readColliders[0].shape_params.x == 0.75f &&
-                readColliders[1].template_id == 303 &&
-                readColliders[1].shape_type == (byte)KernelColliderShapeType.Cone &&
-                readColliders[1].shape_params.x == 12.0f &&
-                readColliders[1].shape_params.y == 90.0f,
+                readColliders[1].template_id == 102 &&
+                readColliders[1].shape_type == capsuleShapeType &&
+                readColliders[1].shape_params.x == 0.9f &&
+                readColliders[1].shape_params.y == 0.4f &&
+                readColliders[1].purpose_flags == movementPurpose &&
+                readColliders[2].template_id == 303 &&
+                readColliders[2].shape_type == (byte)KernelColliderShapeType.Cone &&
+                readColliders[2].shape_params.x == 12.0f &&
+                readColliders[2].shape_params.y == 90.0f,
                 "Kernel_GetColliderTemplates read-back failed.");
             Require(
                 kernel.GetProjectileTemplates(null) == 4,
