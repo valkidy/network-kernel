@@ -49,6 +49,7 @@ constexpr std::size_t kMaxPendingClientActionIntents = 32;
 constexpr float kPredictionCorrectionHalfLifeSeconds = 0.05f;
 constexpr float kPredictionCorrectionEpsilonMeters = 0.001f;
 constexpr float kPredictionCorrectionSnapDistanceMeters = 2.0f;
+constexpr float kPredictionPresentationMinSpeedMetersPerSecond = 0.001f;
 
 KernelConfig with_kernel_defaults(KernelConfig config) {
     config.tick = with_tick_defaults(config.tick);
@@ -1745,7 +1746,7 @@ void KernelEngine::update(float delta_seconds) {
         (config_.mode == KernelMode_Client || config_.mode == KernelMode_ListenServer)) {
         client_local_time_us_ += static_cast<std::uint64_t>(
             static_cast<double>(delta_seconds) * 1000000.0);
-        advance_predicted_corrections(delta_seconds);
+        advance_predicted_projectile_corrections(delta_seconds);
     }
     for (auto outstanding = outstanding_predicted_actions_.begin();
          outstanding != outstanding_predicted_actions_.end();) {
@@ -1812,6 +1813,7 @@ void KernelEngine::update(float delta_seconds) {
         simulate_tick();
     }
     poll_client_transport();
+    advance_local_presentation(delta_seconds);
     rebuild_render_states();
 }
 
@@ -3664,7 +3666,9 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     predicted_action_next_commit_tick_ = 0u;
     predicted_action_recovery_end_tick_ = 0u;
     predicted_next_primary_commit_tick_.fill(0u);
-    local_correction_offset_ = glm::vec3{0.0f, 0.0f, 0.0f};
+    local_presentation_position_ = glm::vec3{0.0f, 0.0f, 0.0f};
+    local_presentation_velocity_ = glm::vec3{0.0f, 0.0f, 0.0f};
+    has_local_presentation_position_ = false;
     predicted_local_state_time_us_ = 0;
     next_entity_id_ = 1;
     next_predicted_entity_id_ = UINT64_C(0x8000000000000000);
@@ -4741,7 +4745,9 @@ void KernelEngine::clear_client_session() {
     has_latest_client_input_ = false;
     predicted_character_state_ = movement_solver::CharacterMovementState{};
     predicted_character_tick_ = 0;
-    local_correction_offset_ = glm::vec3{0.0f, 0.0f, 0.0f};
+    local_presentation_position_ = glm::vec3{0.0f, 0.0f, 0.0f};
+    local_presentation_velocity_ = glm::vec3{0.0f, 0.0f, 0.0f};
+    has_local_presentation_position_ = false;
     predicted_local_state_time_us_ = 0;
     client_clock_offset_us_ = 0;
     has_welcome_ = false;
@@ -5263,6 +5269,12 @@ bool KernelEngine::step_local_character_prediction(
         return session_rules_.actor_blocking_mode ==
             KernelActorBlockingMode_Disabled;
     }
+    if (!has_local_presentation_position_ && has_predicted_local_entity_) {
+        local_presentation_position_ =
+            predicted_local_simulation_position(client_local_time_us_);
+        local_presentation_velocity_ = predicted_local_entity_.velocity;
+        has_local_presentation_position_ = true;
+    }
     movement_solver::CharacterMovementConfig movement_config{};
     if (!build_local_character_movement_config(&movement_config) ||
         !sync_prediction_actor_proxies(
@@ -5341,11 +5353,12 @@ void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {
                 : lhs.input.input_seq < rhs.input.input_seq;
         });
 
-    const glm::vec3 previous_render_position =
-        has_authoritative_local_entity_ && has_predicted_local_entity_
-            ? predicted_local_render_position(client_local_time_us_)
-            : authoritative->position;
-
+    if (!has_local_presentation_position_ && has_predicted_local_entity_) {
+        local_presentation_position_ =
+            predicted_local_simulation_position(client_local_time_us_);
+        local_presentation_velocity_ = predicted_local_entity_.velocity;
+        has_local_presentation_position_ = true;
+    }
     predicted_local_entity_ = *authoritative;
     predicted_local_state_time_us_ = client_local_time_us_;
     has_predicted_local_entity_ = true;
@@ -5425,12 +5438,6 @@ void KernelEngine::reconcile_local_prediction(const WorldSnapshot& snapshot) {
     }
 
     predicted_local_state_time_us_ = client_local_time_us_;
-    const glm::vec3 correction =
-        previous_render_position - predicted_local_entity_.position;
-    local_correction_offset_ =
-        glm::length(correction) > kPredictionCorrectionSnapDistanceMeters
-            ? glm::vec3{0.0f, 0.0f, 0.0f}
-            : correction;
 }
 
 void KernelEngine::reconcile_predicted_projectiles(const WorldSnapshot& snapshot) {
@@ -5998,7 +6005,8 @@ bool KernelEngine::build_interpolated_snapshot_for_server_time(
     return true;
 }
 
-void KernelEngine::advance_predicted_corrections(float delta_seconds) {
+void KernelEngine::advance_predicted_projectile_corrections(
+    float delta_seconds) {
     if (delta_seconds <= 0.0f) {
         return;
     }
@@ -6012,36 +6020,92 @@ void KernelEngine::advance_predicted_corrections(float delta_seconds) {
             *offset = glm::vec3{0.0f, 0.0f, 0.0f};
         }
     };
-    decay_offset(&local_correction_offset_);
     for (PredictedProjectile& projectile : predicted_projectiles_) {
         decay_offset(&projectile.correction_offset);
     }
 }
 
-glm::vec3 KernelEngine::predicted_local_render_position(
-    std::uint64_t client_render_time_us) const {
+glm::vec3 KernelEngine::predicted_local_simulation_position(
+    std::uint64_t client_time_us) const {
     float extrapolation_seconds = 0.0f;
-    if (client_render_time_us > predicted_local_state_time_us_) {
+    if (client_time_us > predicted_local_state_time_us_) {
         extrapolation_seconds = std::min(
             static_cast<float>(
-                client_render_time_us - predicted_local_state_time_us_) /
+                client_time_us - predicted_local_state_time_us_) /
                 1000000.0f,
             tick_loop_.fixed_delta_seconds());
     }
     return predicted_local_entity_.position +
-        predicted_local_entity_.velocity * extrapolation_seconds +
-        local_correction_offset_;
+        predicted_local_entity_.velocity * extrapolation_seconds;
 }
 
-void KernelEngine::append_predicted_local_render_state(
-    std::uint64_t client_render_time_us) {
+void KernelEngine::advance_local_presentation(float delta_seconds) {
+    if (!has_predicted_local_entity_ ||
+        (has_welcome_ && !has_authoritative_local_entity_)) {
+        local_presentation_position_ = glm::vec3{0.0f, 0.0f, 0.0f};
+        local_presentation_velocity_ = glm::vec3{0.0f, 0.0f, 0.0f};
+        has_local_presentation_position_ = false;
+        return;
+    }
+
+    const glm::vec3 target =
+        predicted_local_simulation_position(client_local_time_us_);
+    if (!has_local_presentation_position_) {
+        local_presentation_position_ = target;
+        local_presentation_velocity_ = predicted_local_entity_.velocity;
+        has_local_presentation_position_ = true;
+        return;
+    }
+    if (delta_seconds <= 0.0f) {
+        return;
+    }
+    if (glm::length(target - local_presentation_position_) >
+        kPredictionCorrectionSnapDistanceMeters) {
+        local_presentation_position_ = target;
+        local_presentation_velocity_ = predicted_local_entity_.velocity;
+        return;
+    }
+
+    const glm::vec3 velocity_displacement =
+        local_presentation_velocity_ * delta_seconds;
+    const glm::vec3 extrapolated_position =
+        local_presentation_position_ + velocity_displacement;
+    const float correction_fraction = 1.0f - std::pow(
+        0.5f,
+        delta_seconds / kPredictionCorrectionHalfLifeSeconds);
+    glm::vec3 correction =
+        (target - extrapolated_position) * correction_fraction;
+
+    const float presentation_speed = glm::length(local_presentation_velocity_);
+    if (presentation_speed >
+        kPredictionPresentationMinSpeedMetersPerSecond) {
+        const glm::vec3 movement_direction =
+            local_presentation_velocity_ / presentation_speed;
+        const float forward_displacement =
+            glm::dot(velocity_displacement + correction, movement_direction);
+        if (forward_displacement < 0.0f) {
+            correction -= movement_direction * forward_displacement;
+        }
+    }
+
+    local_presentation_position_ += velocity_displacement + correction;
+    local_presentation_velocity_ = predicted_local_entity_.velocity;
+}
+
+glm::vec3 KernelEngine::predicted_local_render_position() const {
+    return has_local_presentation_position_
+        ? local_presentation_position_
+        : predicted_local_simulation_position(client_local_time_us_);
+}
+
+void KernelEngine::append_predicted_local_render_state() {
     if (!has_predicted_local_entity_ ||
         (has_welcome_ && !has_authoritative_local_entity_)) {
         return;
     }
 
     EntitySnapshot local = predicted_local_entity_;
-    local.position = predicted_local_render_position(client_render_time_us);
+    local.position = predicted_local_render_position();
     RenderEntityState state = render_state_from_snapshot_entity(
         local,
         entity_id_for_net_id(local.net_id));
@@ -7182,7 +7246,7 @@ void KernelEngine::report_render_state_overflow_if_needed() {
 void KernelEngine::rebuild_render_states_from_world() {
     render_states_.clear();
     if (config_.mode == KernelMode_Client) {
-        append_predicted_local_render_state(client_local_time_us_);
+        append_predicted_local_render_state();
         append_predicted_projectile_render_states();
     }
     auto view = world_.registry().view<const NetworkIdentity, const EntityKind, const Transform>();
@@ -7222,7 +7286,7 @@ void KernelEngine::rebuild_render_states_from_world() {
 void KernelEngine::rebuild_render_states_from_snapshot(
     std::uint64_t client_render_time_us) {
     render_states_.clear();
-    append_predicted_local_render_state(client_render_time_us);
+    append_predicted_local_render_state();
     append_predicted_projectile_render_states();
 
     WorldSnapshot render_snapshot;
