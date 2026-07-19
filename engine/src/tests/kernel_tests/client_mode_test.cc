@@ -1083,7 +1083,7 @@ void remote_projectile_uses_interpolated_past_timeline() {
     assert(saw_projectile);
 }
 
-void local_projectile_snapshot_fast_forwards_and_smooths() {
+void local_projectile_snapshot_fast_forwards_and_preserves_correction() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
     config.tick.server_tick_rate = 1000;
@@ -1141,8 +1141,10 @@ void local_projectile_snapshot_fast_forwards_and_smooths() {
 
     engine.rebuild_render_states();
     assert(engine.render_states_.size() == 1);
-    assert(engine.render_states_[0].position.x > 6.09f);
-    assert(engine.render_states_[0].position.x < 6.11f);
+    assert(engine.render_states_[0].position.x > 6.19f);
+    assert(engine.render_states_[0].position.x < 6.21f);
+    assert(bound.correction_offset.x > 0.19f);
+    assert(bound.correction_offset.x < 0.21f);
 }
 
 void homing_projectile_snapshot_extrapolation_is_bounded() {
@@ -1229,6 +1231,169 @@ void render_query_does_not_consume_local_correction() {
     assert(first_states[0].position.x == 5.0f);
     assert(second_states[0].position.x == first_states[0].position.x);
     assert(engine.local_correction_offset_.x == 4.0f);
+}
+
+void update_zero_does_not_advance_prediction_corrections() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_Client);
+    engine.local_correction_offset_ = glm::vec3{0.4f, 0.0f, 0.0f};
+    network_example::KernelEngine::PredictedProjectile projectile;
+    projectile.correction_offset = glm::vec3{0.6f, 0.0f, 0.0f};
+    engine.predicted_projectiles_.push_back(projectile);
+
+    engine.update(0.0f);
+
+    assert(engine.local_correction_offset_.x == 0.4f);
+    assert(engine.predicted_projectiles_[0].correction_offset.x == 0.6f);
+}
+
+void prediction_correction_decay_is_frame_rate_independent() {
+    const auto correction_after = [](
+                                      std::uint32_t frame_count,
+                                      float delta_seconds) {
+        KernelConfig config{};
+        config.mode = KernelMode_Client;
+        network_example::KernelEngine engine(config);
+        engine.reset_runtime_state(KernelMode_Client);
+        engine.local_correction_offset_ = glm::vec3{1.0f, 0.0f, 0.0f};
+        network_example::KernelEngine::PredictedProjectile projectile;
+        projectile.correction_offset = glm::vec3{1.0f, 0.0f, 0.0f};
+        engine.predicted_projectiles_.push_back(projectile);
+        for (std::uint32_t frame = 0; frame < frame_count; ++frame) {
+            engine.advance_predicted_corrections(delta_seconds);
+        }
+        return std::array<float, 2>{
+            engine.local_correction_offset_.x,
+            engine.predicted_projectiles_[0].correction_offset.x,
+        };
+    };
+
+    const std::array<float, 2> at_60_fps =
+        correction_after(6, 1.0f / 60.0f);
+    const std::array<float, 2> at_120_fps =
+        correction_after(12, 1.0f / 120.0f);
+    const std::array<float, 2> at_720_fps =
+        correction_after(72, 1.0f / 720.0f);
+    for (std::size_t index = 0; index < at_60_fps.size(); ++index) {
+        assert(at_60_fps[index] > 0.2499f);
+        assert(at_60_fps[index] < 0.2501f);
+        assert(at_120_fps[index] > at_60_fps[index] - 0.0001f);
+        assert(at_120_fps[index] < at_60_fps[index] + 0.0001f);
+        assert(at_720_fps[index] > at_60_fps[index] - 0.0001f);
+        assert(at_720_fps[index] < at_60_fps[index] + 0.0001f);
+    }
+}
+
+void predicted_local_render_extrapolates_without_mutating_prediction() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_Client);
+    engine.local_player_net_id_ = 1;
+    engine.predicted_local_entity_.net_id = 1;
+    engine.predicted_local_entity_.type = network_example::EntityType::kActor;
+    engine.predicted_local_entity_.actor_type =
+        network_example::ActorType::kPlayer;
+    engine.predicted_local_entity_.position = glm::vec3{1.0f, 0.0f, 0.0f};
+    engine.predicted_local_entity_.velocity = glm::vec3{5.0f, 0.0f, 0.0f};
+    engine.predicted_local_state_time_us_ = 100000;
+    engine.predicted_character_tick_ = 7;
+    engine.pending_prediction_inputs_.push_back({PlayerInput{}, 7u});
+    engine.has_predicted_local_entity_ = true;
+
+    const auto render_x = [&engine](std::uint64_t render_time_us) {
+        std::array<RenderEntityState, 2> states{};
+        const std::uint32_t count = engine.get_render_states_at_time(
+            render_time_us,
+            states.data(),
+            static_cast<std::uint32_t>(states.size()));
+        assert(count == 1);
+        return states[0].position.x;
+    };
+
+    assert(render_x(90000) == 1.0f);
+    const float half_tick = render_x(116667);
+    assert(half_tick > 1.0832f);
+    assert(half_tick < 1.0834f);
+    const float full_tick = render_x(133333);
+    assert(full_tick > 1.1665f);
+    assert(full_tick < 1.1668f);
+    const float clamped = render_x(150000);
+    assert(clamped > 1.1665f);
+    assert(clamped < 1.1668f);
+    assert(render_x(150000) == clamped);
+    assert(engine.predicted_local_entity_.position.x == 1.0f);
+    assert(engine.predicted_character_tick_ == 7);
+    assert(engine.pending_prediction_inputs_.size() == 1);
+}
+
+void reconciliation_presentation_is_monotonic_and_large_corrections_snap() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_Client);
+    engine.local_player_net_id_ = 1;
+    engine.predicted_local_entity_.net_id = 1;
+    engine.predicted_local_entity_.type = network_example::EntityType::kActor;
+    engine.predicted_local_entity_.actor_type =
+        network_example::ActorType::kPlayer;
+    engine.predicted_local_entity_.position =
+        glm::vec3{1.0f / 6.0f, 0.0f, 0.0f};
+    engine.predicted_local_entity_.velocity = glm::vec3{5.0f, 0.0f, 0.0f};
+    engine.has_predicted_local_entity_ = true;
+    engine.has_authoritative_local_entity_ = true;
+
+    network_example::WorldSnapshot snapshot = snapshot_with_entity(
+        1,
+        1,
+        network_example::EntityType::kActor,
+        0.0f,
+        network_example::ActorType::kPlayer);
+    snapshot.entities[0].velocity = glm::vec3{5.0f, 0.0f, 0.0f};
+    engine.reconcile_local_prediction(snapshot);
+    assert(engine.local_correction_offset_.x > 0.1665f);
+    assert(engine.local_correction_offset_.x < 0.1668f);
+
+    float previous_position =
+        engine.predicted_local_render_position(engine.client_local_time_us_).x;
+    constexpr float kRenderDeltaSeconds = 1.0f / 720.0f;
+    for (std::uint32_t frame = 1; frame <= 72; ++frame) {
+        engine.client_local_time_us_ += static_cast<std::uint64_t>(
+            static_cast<double>(kRenderDeltaSeconds) * 1000000.0);
+        engine.advance_predicted_corrections(kRenderDeltaSeconds);
+        if (frame % 24u == 0u) {
+            engine.predicted_local_entity_.position +=
+                engine.predicted_local_entity_.velocity * (1.0f / 30.0f);
+            engine.predicted_local_state_time_us_ = engine.client_local_time_us_;
+        }
+        const float position =
+            engine.predicted_local_render_position(engine.client_local_time_us_).x;
+        assert(position >= previous_position - 0.00001f);
+        previous_position = position;
+    }
+
+    engine.advance_predicted_corrections(1.0f);
+    assert(engine.local_correction_offset_.x == 0.0f);
+
+    engine.predicted_local_entity_.position = glm::vec3{3.0f, 0.0f, 0.0f};
+    engine.predicted_local_entity_.velocity = glm::vec3{0.0f, 0.0f, 0.0f};
+    engine.predicted_local_state_time_us_ = engine.client_local_time_us_;
+    engine.local_correction_offset_ = glm::vec3{0.0f, 0.0f, 0.0f};
+    snapshot.entities[0].position = glm::vec3{0.0f, 0.0f, 0.0f};
+    snapshot.entities[0].velocity = glm::vec3{0.0f, 0.0f, 0.0f};
+    engine.reconcile_local_prediction(snapshot);
+    assert(engine.local_correction_offset_.x == 0.0f);
 }
 
 void owner_action_prediction_and_discrete_interpolation() {
@@ -3742,9 +3907,13 @@ int main() {
     server_actor_template_update_sends_reliable_metadata();
     render_states_at_time_interpolates_and_clamps();
     remote_projectile_uses_interpolated_past_timeline();
-    local_projectile_snapshot_fast_forwards_and_smooths();
+    local_projectile_snapshot_fast_forwards_and_preserves_correction();
     homing_projectile_snapshot_extrapolation_is_bounded();
     render_query_does_not_consume_local_correction();
+    update_zero_does_not_advance_prediction_corrections();
+    prediction_correction_decay_is_frame_rate_independent();
+    predicted_local_render_extrapolates_without_mutating_prediction();
+    reconciliation_presentation_is_monotonic_and_large_corrections_snap();
     late_snapshot_is_stored_but_not_used_for_reconciliation();
     server_accepts_matching_handshake_versions();
     server_rejects_mismatched_snapshot_schema_before_welcome();
