@@ -1,5 +1,7 @@
 # Data Driven Template Design Reference
 
+Status: Current policy for gameplay catalog version 2
+
 ## Purpose
 
 This document is the compact policy reference for data-driven gameplay templates
@@ -11,10 +13,12 @@ The current file layout is:
 
 ```text
 game_server/gameplay_catalog.yaml
+  -> action_template_dir: game_server/action_templates/*.yaml
   -> weapon_template_dir: game_server/weapon_templates/*.yaml
   -> projectile_template_dir: game_server/projectile_templates/*.yaml
   -> entity_template_dir: game_server/entity_templates/*.yaml
   -> collider_template_dir: game_server/collider_templates/*.yaml
+  -> static_collision_scene: mesh_assets/jolt/*.joltmesh
   -> player.entity_template
   -> director entity template spawn policy
 ```
@@ -138,11 +142,21 @@ invalidation policy.
 `gameplay_catalog.yaml` is the composition root:
 
 ```yaml
-catalog_version: 1
+catalog_version: 2
+action_template_dir: action_templates
+reload_action_template:
+  id: 4199
+  name: shared_reload
+  trigger_mode: press
 weapon_template_dir: weapon_templates
 projectile_template_dir: projectile_templates
 entity_template_dir: entity_templates
 collider_template_dir: collider_templates
+static_collision_scene:
+  entry_path: mesh_assets/jolt/undulating.joltmesh
+  scene_id: 1
+  collider_id: 2147483649
+  collision_layer: 1
 player:
   entity_template: player
 ```
@@ -168,10 +182,13 @@ which default actor templates/spawn policy are used. It should not own weapon
 mechanics, actor stats, collider geometry, friendly-fire rules, or ABI layout
 changes.
 
-`weapon_template_dir`, `projectile_template_dir`, `entity_template_dir`, and
-`collider_template_dir` are required for new catalog data. `actor_template_dir`
-and `actor_template` references remain compatibility paths, but new authoring
-should use `entity_template_dir` and `entity_template` references.
+`action_template_dir`, `weapon_template_dir`, `projectile_template_dir`,
+`entity_template_dir`, and `collider_template_dir` are the current catalog
+surfaces. `actor_template_dir` and `actor_template` references remain
+compatibility paths, but new authoring should use `entity_template_dir` and
+`entity_template` references. `static_collision_scene` selects the cooked Jolt
+artifact installed with the catalog; Recast navigation artifacts may travel in
+the same bundle without becoming kernel catalog structs.
 
 ## Weapon Template Policy
 
@@ -189,14 +206,17 @@ max_range: 100.0
 fire_action_template: rifle_fire
 ```
 
-Type-specific fields stay with their weapon mode:
+Weapon-mode fields stay with the weapon template:
 
 - `hitscan`: range and direct-hit mechanics.
 - `shotgun`: range, pellet count, and pellet spread.
-- `projectile`: projectile movement, lifetime, sync mode, hit response, damage
-  shape, explosion radius, gravity, and projectile collision mask.
-- `area_effect`: area lifetime, radius, and area collision mask.
-- `beam`: beam lifetime and beam collision mask.
+- `projectile`, `area_effect`, `beam`, and homing modes: references to the
+  corresponding projectile template plus action/cadence policy.
+
+Projectile templates own movement, lifetime, sync mode, hit response, damage
+shape, gravity, collision query mode, collider reference, and impact-spawn
+behavior. This keeps projectile mechanics reusable and prevents parallel
+definitions in weapon and projectile files.
 
 Weapon templates must not own actor loadouts, spawn policy, actor HP/movement,
 enemy counts, or player/enemy selection.
@@ -236,10 +256,10 @@ Use the term `actor template`. It covers players, enemies, NPCs, bosses,
 turrets, and other controllable or damageable gameplay actors without
 confusing the concept with ECS internals.
 
-The first actor-template implementation is game-server-local. It configures
-runtime player and enemy combat state, but is not packed into
-`KernelGameplayCatalogDefinition` and does not change the kernel or Unity
-managed ABI.
+Actor/entity templates are loaded by `game_server` and packed into the kernel
+catalog. `KernelActorTemplateDefinition` remains the actor-focused compatibility
+and presentation surface; `KernelEntityTemplateDefinition` is the current
+component-driven materialization surface for actors and server-only Directors.
 
 Actor entity templates own reusable actor facts. Hostility is determined by
 camp/relation and AI policy; `enemy` is not an entity type:
@@ -423,14 +443,16 @@ The gameplay catalog hash must change when gameplay-affecting template data
 changes. It should cover:
 
 - catalog version
+- action templates and the shared reload action
 - weapon IDs, names, mechanics, mode-specific data, collision masks, projectile
   sync modes, and derived projectile data
-- player and enemy actor template references
-- enemy spawn position, count, radius, and seed
+- player entity-template references
+- director spawn position, count, target entity template, radius, and seed
 - actor IDs, names, entity types, health, movement, hitboxes, weapon slots,
   active slots, animation states, AI tunables, collider template references,
   and vision collider template references
 - collider template definitions
+- static collision scene entry path, scene/collider IDs, and collision layer
 
 Hashing must sort unordered template collections by stable IDs so filesystem
 enumeration order does not affect compatibility checks.
@@ -444,6 +466,9 @@ template source needed to reconstruct the same config from memory:
 - `projectile_templates/*.yaml`
 - `entity_templates/*.yaml`
 - `collider_templates/*.yaml`
+- referenced `mesh_assets/jolt/*.joltmesh`
+- packaged `mesh_assets/recast/*.navmesh` when navigation data is part of the
+  selected gameplay bundle
 
 Filesystem loading and bundle-memory loading should produce equivalent gameplay
 configuration and catalog hash values.

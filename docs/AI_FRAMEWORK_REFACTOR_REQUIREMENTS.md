@@ -1,5 +1,13 @@
 # AI Framework Refactor Requirements
 
+Status: **MVP implemented; retained as architecture requirements**
+
+The completed implementation is summarized in
+`docs/HYBRID_AI_TREE_FRAMEWORK_IMPLEMENTATION.md`. Normative ownership and
+dependency rules in this file remain current. Sections that describe the
+"first refactor" record the implemented migration sequence rather than pending
+work.
+
 ## 1. Goal
 
 Build a generic AI framework that can support both actor-level AI and
@@ -571,25 +579,28 @@ Relationship naming should use:
 - `faction`
 - `relationship`
 
-## 11. MVP Implementation Direction
+## 11. MVP Implementation Status
 
-The first implementation should stay narrow.
+| Requirement | Status |
+|---|---|
+| Generic intent, intent scope, and intent status types | Implemented |
+| `AIContext` read-only fact container | Implemented |
+| Capability registry and structured unsupported reports | Implemented |
+| Registry-backed nodes, scores, YAML loading, and validation | Implemented |
+| Selector, sequence, utility, running, and halt semantics | Implemented |
+| `game_server` perception adapter | Implemented |
+| Actor intent executor for Attack/Reload | Implemented |
+| Sentry `Intent -> Executor -> PlayerInput` path | Implemented |
+| Agent runtime naming and Director entity bootstrap | Implemented |
+| Entity-template-driven Director spawn policy | Implemented |
+| Public rename from `PlayerInput` to `ActorInput` | Deferred; ABI remains `PlayerInput` |
+| Generic mission/encounter Director executor | Deferred |
+| Designer graph tooling and advanced AI semantics | Deferred |
 
-Recommended order:
-
-1. Define generic intent and intent status types in `engine/components/ai`.
-2. Add scoped intent concepts without referencing kernel/game server types.
-3. Keep `AIContext` as the initial blackboard/fact container.
-4. Add capability reporting for missing queries/actions/executors.
-5. Add `game_server` perception adapter for sentry/combat facts.
-6. Add `game_server` actor intent executor that maps `AttackTarget` and
-   `Reload` to current `PlayerInput`.
-7. Treat current `PlayerInput` as the temporary concrete `ActorInput`.
-8. Refactor sentry behavior to use `Intent -> Executor -> PlayerInput`.
-9. Split current enemy/sentry ownership toward agent/spawn runtime naming.
-10. Add director/world intent executor only after actor flow is stable.
-11. Rename internal APIs toward `ActorInput` where ABI-safe.
-12. Consider data-driven graph loading after hardcoded runtime flow passes.
+The current implementation keeps `PlayerInput` as the concrete ABI envelope
+while generic framework types remain independent of kernel/game-server types.
+New semantics still require perception data, a validated executor, and an
+authoritative gameplay system.
 
 ## 12. Minimal Validation Scenario
 
