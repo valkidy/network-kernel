@@ -1,74 +1,63 @@
-# Native Projectile Prediction ABI v5
+# Projectile Prediction ABI v5–v7 — Historical Record
 
-## Summary
+Status: **Implemented and superseded**
 
-- Native kernel ABI v5 exposes stable render identity and generic client action
-  correlation for projectile prediction.
-- This document covers native C++ kernel/protocol/snapshot behavior only. Unity
-  C# package mirrors are intentionally deferred to a follow-up task.
-- Presentation consumers should use `RenderEntityState::entity_id` as the stable
-  object key and treat `net_id` as the optional server-authoritative identity.
+This file records the ABI v5–v7 projectile prediction milestone. It is not a
+current implementation plan and must not be used to determine present ABI,
+packet, snapshot, or Unity package versions.
 
-## Native ABI v5/v6 Changes
+Current references:
 
-- `KERNEL_ABI_VERSION` is `7`.
-- `PlayerInput` carries `input_seq`, `client_action_time_us`, and
-  `client_action_id`; `client_tick` is no longer part of the public ABI.
-- `RenderEntityState` includes `uint64_t entity_id` before `net_id`.
-- `EntitySnapshot` and projectile state use `client_action_id` for
-  predicted-action reconciliation metadata.
-- Input packets encode `client_action_time_us` and `client_action_id`.
-- Snapshot packets encode projectile `client_action_id` but never encode
-  `entity_id`, which is client-local.
-- `InputButton_Dodge` and `InputButton_Parry` are additive ABI v5 button bits
-  for rollback-eligible defensive input.
-- PingPong session packets provide clock-sync samples for converting
-  client-local action timestamps to the server timeline.
-- `Kernel_GetRenderStatesAtTime` lets callers request render states for a
-  client-local timestamp; the kernel maps it onto the server snapshot timeline
-  and clamps outside the buffered snapshot range.
+- `docs/NETCODE_SYNC_POLICY.md` — active synchronization and authority policy.
+- `docs/NETWORK_KERNEL_ABI.md` — current ABI and compatibility history.
+- `docs/AUTHORITATIVE_WEAPON_CURRENT_IMPLEMENTATION.md` — current weapon and
+  projectile runtime.
 
-## Runtime Behavior
+## Delivered In ABI v5–v7
 
-- `client_action_time_us == 0` means the client kernel fills a client-local
-  monotonic action time before sending input.
-- Server hit rewind converts `client_action_time_us` to server time through the
-  latest clock-sync offset, then clamps compensation to 100ms.
-- Local client projectile prediction creates a provisional projectile render
-  state immediately for grenade fire when `client_action_id != 0`.
-- Authoritative projectile snapshots bind back to local predicted projectiles by
-  `owner_peer + client_action_id`; the render-facing `entity_id` stays stable
-  while `net_id` becomes the server id. Owner clients fast-forward the
-  authoritative projectile snapshot to the local prediction timeline and use it
-  as a correction target, not as direct raw render state.
-- If the server acknowledges an input sequence without producing a matching
-  authoritative projectile, the provisional projectile render state is removed.
-- Clients maintain two presentation timelines: local-owned player/projectile
-  state is predicted and reconciled on the current local timeline, while remote
-  entities render from the delayed snapshot interpolation timeline.
-- Server-originated projectile/explosion damage against players enters an
-  internal pending damage queue instead of applying immediately.
-- Pending damage uses a 100ms grace window; Dodge overlapping the hit time
-  cancels damage, and Parry overlapping the hit time reduces final damage by
-  50%. Existing `DamageApplied` events are emitted only when damage confirms.
+The milestone established:
 
-## Test Coverage
+- `client_action_time_us` for client-local action timing;
+- non-zero action correlation IDs for predicted projectile binding;
+- client-local stable `RenderEntityState::entity_id`;
+- authoritative `net_id` assignment after prediction binding;
+- owner prediction matched by owner identity and action correlation ID;
+- PingPong-based clock conversion and a bounded compensation window;
+- `Kernel_GetRenderStatesAtTime` for render-timeline interpolation;
+- local predicted projectile correction separated from remote interpolation;
+- server-authoritative pending projectile damage with Dodge/Parry timing.
 
-- Native ABI smoke tests verify ABI version 5 and public struct sizes/layout.
-- Protocol tests verify input packet roundtrip for `client_action_time_us` and
-  `client_action_id`, plus projectile snapshot `client_action_id`.
-- Kernel listen-server tests verify immediate predicted projectile render
-  states, predicted-to-authoritative `entity_id` stability, duplicate
-  suppression, and rejected prediction cleanup.
-- Damage pipeline tests cover grace-window confirmation, Dodge cancel, Parry
-  reduction, non-eligible input rejection, and server-owned projectile pending
-  damage.
+These changes are now part of the broader netcode and generalized action
+systems. Later revisions added deterministic projectile collision, action
+intent/result streams, data-driven projectile and collider templates, Jolt
+static collision, and time-based presentation smoothing.
 
-## Assumptions
+## Historical Runtime Contract
 
-- `entity_id` is client-local and stable only within one kernel instance.
-- `net_id` remains the server-authoritative entity id.
-- `client_action_id == 0` means no predicted/correlatable action.
-- Full time-sync sampling, projectile historical replay, sticky projectile
-  authority, client damage presentation timing, public defensive feedback
-  events, and Unity C# mirror updates remain separate follow-up work.
+The original owner flow was:
+
+```text
+local fire prediction
+  -> submit action time and correlation id
+  -> server validates and spawns the authoritative projectile
+  -> snapshot binds owner + correlation id to authoritative net_id
+  -> owner fast-forwards authoritative past state
+  -> correction converges without replacing the stable local entity_id
+```
+
+Remote entities remained on the delayed interpolation timeline. Gameplay
+damage and hit decisions remained server authoritative.
+
+## Current Version Boundary
+
+As of 2026-07-23:
+
+```text
+KERNEL_ABI_VERSION = 45
+protocol version = 1
+packet schema version = 17
+snapshot schema version = 15
+```
+
+Historical test expectations and follow-up items from ABI v5–v7 should be read
+from Git history, not treated as current TODOs.
