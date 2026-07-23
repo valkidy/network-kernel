@@ -2787,6 +2787,123 @@ void actor_template_update_rebinds_cached_snapshot_debug_metadata() {
     require(shapes[0].collider_template_id == 21);
 }
 
+void predicted_local_render_state_uses_reliable_actor_template_metadata() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+    KernelColliderTemplateDefinition alternate_actor_collider =
+        actor_collider_template();
+    alternate_actor_collider.template_id = 21;
+    const std::array<KernelColliderTemplateDefinition, 3> colliders = {
+        actor_collider_template(),
+        alternate_actor_collider,
+        vision_collider_template(),
+    };
+    KernelActorTemplateDefinition initial_actor = agent_actor_template();
+    initial_actor.actor_template_id = 1;
+    KernelActorTemplateDefinition updated_actor = initial_actor;
+    updated_actor.actor_template_id = 4;
+    updated_actor.collider_template_id = 21;
+    const std::array<KernelActorTemplateDefinition, 2> actor_templates = {
+        initial_actor,
+        updated_actor,
+    };
+    KernelGameplayCatalogDefinition catalog{};
+    catalog.struct_size = sizeof(catalog);
+    catalog.catalog_version = 1;
+    catalog.catalog_hash = 1;
+    catalog.collider_templates = colliders.data();
+    catalog.collider_template_count =
+        static_cast<std::uint32_t>(colliders.size());
+    catalog.actor_templates = actor_templates.data();
+    catalog.actor_template_count =
+        static_cast<std::uint32_t>(actor_templates.size());
+    require(client.load_gameplay_catalog(catalog));
+
+    client.has_welcome_ = true;
+    client.local_client_peer_id_ = 7;
+    client.local_player_net_id_ = 10;
+    client.handle_client_spawn(network_example::EntitySpawnPacket{
+        10,
+        network_example::EntityType::kActor,
+        network_example::ActorType::kAgent,
+        7,
+        1,
+        1,
+        glm::vec3{1.0f, 0.0f, 0.0f},
+        glm::quat{1.0f, 0.0f, 0.0f, 0.0f},
+    });
+    client.handle_client_spawn(network_example::EntitySpawnPacket{
+        20,
+        network_example::EntityType::kActor,
+        network_example::ActorType::kAgent,
+        8,
+        1,
+        1,
+        glm::vec3{2.0f, 0.0f, 0.0f},
+        glm::quat{1.0f, 0.0f, 0.0f, 0.0f},
+    });
+
+    network_example::WorldSnapshot snapshot;
+    snapshot.header.server_tick = 1;
+    add_snapshot_entity(
+        &snapshot,
+        10,
+        network_example::EntityType::kActor,
+        1.0f,
+        network_example::ActorType::kAgent);
+    add_snapshot_entity(
+        &snapshot,
+        20,
+        network_example::EntityType::kActor,
+        2.0f,
+        network_example::ActorType::kAgent);
+    client.handle_client_snapshot(snapshot);
+
+    std::array<RenderEntityState, 2> states{};
+    require(client.get_render_states_at_time(
+                33333, states.data(), states.size()) == 2);
+    const auto find_state = [&states](network_example::NetId net_id) {
+        return std::find_if(
+            states.begin(),
+            states.end(),
+            [net_id](const RenderEntityState& state) {
+                return state.net_id == net_id;
+            });
+    };
+    auto local = find_state(10);
+    auto remote = find_state(20);
+    require(local != states.end());
+    require(local->status == RenderEntityStatus_Predicted);
+    require(local->actor_template_id == 1);
+    require(local->collider_template_id == 20);
+    require(remote != states.end());
+    require(remote->actor_template_id == 1);
+    require(remote->collider_template_id == 20);
+
+    client.handle_client_template_update(network_example::EntityTemplateUpdatePacket{
+        10,
+        2,
+        4,
+    });
+
+    require(client.get_render_states_at_time(
+                33333, states.data(), states.size()) == 2);
+    local = find_state(10);
+    remote = find_state(20);
+    require(local != states.end());
+    require(local->status == RenderEntityStatus_Predicted);
+    require(local->actor_template_id == 4);
+    require(local->collider_template_id == 21);
+    require(remote != states.end());
+    require(remote->actor_template_id == 1);
+    require(remote->collider_template_id == 20);
+}
+
 void client_query_vision_state_uses_actor_template_debug_replication() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
@@ -4047,6 +4164,7 @@ int main() {
     out_of_range_reentry_without_metadata_still_fails_prediction();
     stale_render_state_marks_status_and_hp_unknown();
     actor_template_update_rebinds_cached_snapshot_debug_metadata();
+    predicted_local_render_state_uses_reliable_actor_template_metadata();
     client_query_vision_state_uses_actor_template_debug_replication();
     server_snapshot_send_set_carries_vision_debug_to_client();
     predicted_projectile_lifetime_cleanup_removes_batch_projectile();

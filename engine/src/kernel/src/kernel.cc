@@ -6109,8 +6109,16 @@ void KernelEngine::append_predicted_local_render_state() {
     RenderEntityState state = render_state_from_snapshot_entity(
         local,
         entity_id_for_net_id(local.net_id));
+    const auto replicated = std::find_if(
+        client_replicated_entities_.begin(),
+        client_replicated_entities_.end(),
+        [this](const ClientReplicatedEntity& replicated_entity) {
+            return replicated_entity.net_id == local_player_net_id_;
+        });
     if (state.entity_type == static_cast<std::uint16_t>(EntityType::kActor) &&
-        state.actor_template_id != 0u) {
+        replicated != client_replicated_entities_.end() &&
+        replicated->actor_template_id != 0u) {
+        state.actor_template_id = replicated->actor_template_id;
         state.collider_template_id =
             collider_template_id_for_actor_template(state.actor_template_id);
     }
