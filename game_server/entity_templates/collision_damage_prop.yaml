@@ -1,0 +1,11 @@
+id: 201
+name: collision_damage_prop
+entity_type: prop
+physics:
+  collider_template: collision_damage_prop_hitbox
+triggers:
+  on_collision:
+    action_graph: action_apply_damage_at_collision
+    parameters:
+      target: event.target
+      amount: 25

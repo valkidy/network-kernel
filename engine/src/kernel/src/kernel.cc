@@ -2184,15 +2184,18 @@ bool KernelEngine::load_gameplay_catalog(
             entity_template.ai.controller_type > KernelAiControllerType_Director) {
             return false;
         }
-        if (entity_template.activated_trigger.struct_size != 0u &&
-            (entity_template.activated_trigger.struct_size <
-                 sizeof(KernelActivatedTriggerDefinition) ||
-             entity_template.activated_trigger.action_type !=
-                 KernelEntityTriggerActionType_ApplyDamage ||
-             entity_template.activated_trigger.target_source >
-                 KernelEntityRefSource_EventInstigator ||
-             entity_template.activated_trigger.damage_amount == 0u)) {
-            return false;
+        for (const KernelActionTriggerDefinition* trigger : {
+                 &entity_template.activated_trigger,
+                 &entity_template.collision_trigger,
+             }) {
+            if (trigger->struct_size != 0u &&
+                (trigger->struct_size < sizeof(KernelActionTriggerDefinition) ||
+                 trigger->action_type !=
+                     KernelEntityTriggerActionType_ApplyDamage ||
+                 trigger->target_source > KernelEntityRefSource_EventInstigator ||
+                 trigger->damage_amount == 0u)) {
+                return false;
+            }
         }
         if (entity_template.entity_type == KernelEntityType_Director &&
             ((entity_template.component_flags &
@@ -3633,6 +3636,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     history_buffer_ = HistoryBuffer(history_frame_count(config_.tick));
     damage_pipeline_.clear();
     processed_activation_requests_.clear();
+    active_prop_collision_pairs_.clear();
     command_queue_.clear();
     rpc_response_store_.clear();
     pending_inputs_.clear();
@@ -6583,6 +6587,7 @@ void KernelEngine::simulate_tick() {
         movement_stats.character_move_cost_us;
     simulate_velocity_movement(world_, fixed_delta);
     sync_entity_colliders_from_world();
+    CollisionTriggerSystem{}.update(*this, server_time_us);
     bool released_first_physics_actor = false;
     for (const NetId net_id : physics_finalized_actor_net_ids) {
         released_first_physics_actor =

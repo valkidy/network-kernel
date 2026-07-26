@@ -175,7 +175,9 @@ CompiledActionGraphBinding compile_apply_damage_binding(
     return CompiledActionGraphBinding{
         event_type,
         ActionGraphTemplate{
-            "action_apply_damage_at_activated",
+            event_type == TriggerEventType::kCollision
+                ? "action_apply_damage_at_collision"
+                : "action_apply_damage_at_activated",
             {
                 {"target", std::monostate{}},
                 {"amount", static_cast<float>(amount)},
@@ -340,6 +342,7 @@ bool evaluate_action_graph(
             return fail(error, "apply_damage target must not be null");
         }
         commands->push_back(ActionApplyDamageCommand{
+            self,
             target,
             static_cast<std::uint16_t>(amount),
             provenance,

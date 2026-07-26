@@ -518,7 +518,11 @@ struct CompiledActionGraphBinding {
     std::vector<ActionGraphParameterBinding> parameters;
 };
 
-struct ActivatedActionGraphBinding {
+struct ActionGraphActivatedBinding {
+    CompiledActionGraphBinding binding;
+};
+
+struct ActionGraphCollisionBinding {
     CompiledActionGraphBinding binding;
 };
 

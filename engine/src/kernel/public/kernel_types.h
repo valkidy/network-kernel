@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 46u
+#define KERNEL_ABI_VERSION 47u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -1231,12 +1231,12 @@ struct KernelEntityAiDefinition {
     uint32_t spawn_seed;
 };
 
-typedef struct KernelActivatedTriggerDefinition {
+typedef struct KernelActionTriggerDefinition {
     uint32_t struct_size;
     uint8_t action_type;
     uint8_t target_source;
     uint16_t damage_amount;
-} KernelActivatedTriggerDefinition;
+} KernelActionTriggerDefinition;
 
 struct KernelEntityTemplateDefinition {
     uint32_t struct_size;
@@ -1253,7 +1253,8 @@ struct KernelEntityTemplateDefinition {
     KernelAgentVisionConfig vision;
     KernelEntityAiDefinition ai;
     KernelMovementDefinition movement;
-    KernelActivatedTriggerDefinition activated_trigger;
+    KernelActionTriggerDefinition activated_trigger;
+    KernelActionTriggerDefinition collision_trigger;
 };
 
 typedef struct KernelEvent {

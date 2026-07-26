@@ -84,6 +84,7 @@ struct ActorTemplateConfig {
     float director_spawn_radius = 0.0f;
     std::uint32_t director_spawn_seed = 1;
     TriggerBindingConfig activated_trigger;
+    TriggerBindingConfig collision_trigger;
 };
 
 using EntityTemplateConfig = ActorTemplateConfig;

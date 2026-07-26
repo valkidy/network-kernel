@@ -30,6 +30,7 @@ namespace network_example {
 class EntityLifecycleSystem;
 class EntityStateSystem;
 class ActivationSystem;
+class CollisionTriggerSystem;
 class DirectorIntentExecutor;
 class ListenServerTransport;
 class MovementSystem;
@@ -207,6 +208,7 @@ private:
     friend class EntityLifecycleSystem;
     friend class EntityStateSystem;
     friend class ActivationSystem;
+    friend class CollisionTriggerSystem;
     friend class DirectorAISystem;
     friend class DirectorIntentExecutor;
     friend class MovementSystem;
@@ -577,6 +579,7 @@ private:
     HistoryBuffer history_buffer_;
     DamagePipeline damage_pipeline_;
     std::unordered_set<std::uint64_t> processed_activation_requests_;
+    std::unordered_set<std::uint64_t> active_prop_collision_pairs_;
     std::unique_ptr<ITransport> transport_;
     ListenServerTransport* listen_server_transport_ = nullptr;
     std::vector<QueuedInput> pending_inputs_;

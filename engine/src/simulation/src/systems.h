@@ -31,6 +31,11 @@ public:
         const KernelServerEntityActivateInfo& activate_info) const;
 };
 
+class CollisionTriggerSystem {
+public:
+    void update(KernelEngine& engine, std::uint64_t server_time_us) const;
+};
+
 class EntityStateSystem {
 public:
     bool set_actor_template(

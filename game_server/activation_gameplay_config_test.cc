@@ -36,6 +36,31 @@ int main() {
         KernelEntityRefSource_EventTarget);
     assert(compiled->activated_trigger.damage_amount == 25);
 
+    const auto collision_prop = std::find_if(
+        config.entity_templates.begin(),
+        config.entity_templates.end(),
+        [](const network_example::game_server::EntityTemplateConfig& value) {
+            return value.actor_template_id == 201;
+        });
+    assert(collision_prop != config.entity_templates.end());
+    assert(
+        collision_prop->collision_trigger.action_graph_ref ==
+        "action_apply_damage_at_collision");
+    const auto compiled_collision = std::find_if(
+        catalog.entity_templates.begin(),
+        catalog.entity_templates.end(),
+        [](const KernelEntityTemplateDefinition& value) {
+            return value.entity_template_id == 201;
+        });
+    assert(compiled_collision != catalog.entity_templates.end());
+    assert(
+        compiled_collision->collision_trigger.action_type ==
+        KernelEntityTriggerActionType_ApplyDamage);
+    assert(
+        compiled_collision->collision_trigger.target_source ==
+        KernelEntityRefSource_EventTarget);
+    assert(compiled_collision->collision_trigger.damage_amount == 25);
+
     KernelConfig kernel_config{};
     kernel_config.mode = KernelMode_DedicatedServer;
     kernel_config.tick.server_tick_rate = 30;

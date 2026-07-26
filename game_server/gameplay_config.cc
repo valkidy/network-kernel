@@ -241,6 +241,11 @@ void hash_actor_template(
         hash_string(hash, parameter.first);
         hash_string(hash, parameter.second);
     }
+    hash_string(hash, actor_template.collision_trigger.action_graph_ref);
+    for (const auto& parameter : actor_template.collision_trigger.parameters) {
+        hash_string(hash, parameter.first);
+        hash_string(hash, parameter.second);
+    }
 }
 
 KernelWeaponMechanicsDefinition hitscan_weapon(
@@ -2300,7 +2305,7 @@ EntityTemplateConfig entity_template_from_yaml(
         if (node["triggers"]) {
             reject_unknown_keys(
                 node["triggers"],
-                {"on_activated"},
+                {"on_activated", "on_collision"},
                 path,
                 source_kind,
                 KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
@@ -2308,6 +2313,14 @@ EntityTemplateConfig entity_template_from_yaml(
             if (node["triggers"]["on_activated"]) {
                 entity_template.activated_trigger = trigger_binding_from_yaml(
                     node["triggers"]["on_activated"],
+                    path,
+                    source_kind,
+                    KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                    entity_template.actor_template_id);
+            }
+            if (node["triggers"]["on_collision"]) {
+                entity_template.collision_trigger = trigger_binding_from_yaml(
+                    node["triggers"]["on_collision"],
                     path,
                     source_kind,
                     KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
@@ -3057,10 +3070,11 @@ void compile_projectile_trigger_binding(
         spawned_projectile->definition.projectile_template_id;
 }
 
-KernelActivatedTriggerDefinition compile_activated_trigger_binding(
+KernelActionTriggerDefinition compile_action_trigger_binding(
     const TriggerBindingConfig& binding,
+    std::string_view trigger_name,
     const std::vector<ActionGraphTemplateConfig>& action_graph_templates) {
-    KernelActivatedTriggerDefinition compiled{};
+    KernelActionTriggerDefinition compiled{};
     if (binding.action_graph_ref.empty()) {
         return compiled;
     }
@@ -3068,7 +3082,7 @@ KernelActivatedTriggerDefinition compile_activated_trigger_binding(
         binding.action_graph_ref, action_graph_templates);
     if (graph->action_type != "apply_damage") {
         throw std::runtime_error(
-            "on_activated requires apply_damage action graph: " +
+            std::string(trigger_name) + " requires apply_damage action graph: " +
             binding.action_graph_ref);
     }
     std::unordered_set<std::string> seen_parameters;
@@ -3129,7 +3143,7 @@ KernelActivatedTriggerDefinition compile_activated_trigger_binding(
         throw std::runtime_error(
             "apply_damage amount must be a positive uint16");
     }
-    compiled.struct_size = sizeof(KernelActivatedTriggerDefinition);
+    compiled.struct_size = sizeof(KernelActionTriggerDefinition);
     compiled.action_type = KernelEntityTriggerActionType_ApplyDamage;
     compiled.target_source = target_source;
     compiled.damage_amount = static_cast<std::uint16_t>(parsed_amount);
@@ -4314,8 +4328,13 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             authored_template.movement_ground_probe_distance;
         entity_template.movement.ground_snap_distance =
             authored_template.movement_ground_snap_distance;
-        entity_template.activated_trigger = compile_activated_trigger_binding(
+        entity_template.activated_trigger = compile_action_trigger_binding(
             authored_template.activated_trigger,
+            "on_activated",
+            config.action_graph_templates);
+        entity_template.collision_trigger = compile_action_trigger_binding(
+            authored_template.collision_trigger,
+            "on_collision",
             config.action_graph_templates);
 
         if (authored_template.entity_type == kEntityTypeActor) {

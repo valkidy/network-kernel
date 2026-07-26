@@ -18,6 +18,7 @@ struct ActionSpawnProjectileCommand {
 };
 
 struct ActionApplyDamageCommand {
+    NetId source = 0;
     NetId target = 0;
     std::uint16_t amount = 0;
     ActionExecutionProvenance provenance;
