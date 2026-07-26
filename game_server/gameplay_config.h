@@ -130,9 +130,7 @@ struct ActionGraphParameterConfig {
     std::string default_value;
 };
 
-struct ActionGraphTemplateConfig {
-    std::string id;
-    std::vector<ActionGraphParameterConfig> parameters;
+struct ActionGraphActionConfig {
     std::string action_type;
     std::string projectile_template_parameter;
     std::string entity_template_parameter;
@@ -141,6 +139,12 @@ struct ActionGraphTemplateConfig {
     std::string owner_parameter;
     std::string target_parameter;
     std::string amount_parameter;
+};
+
+struct ActionGraphTemplateConfig {
+    std::string id;
+    std::vector<ActionGraphParameterConfig> parameters;
+    std::vector<ActionGraphActionConfig> actions;
 };
 
 using ProjectileTriggerBindingConfig = TriggerBindingConfig;

@@ -56,6 +56,32 @@ ParameterType expression_type(const ActionGraphParameterExpression& expression) 
     return ParameterType::kVec3;
 }
 
+bool expression_available_for_event(
+    const ActionGraphParameterExpression& expression,
+    TriggerEventType event_type) {
+    if (const auto* entity_ref =
+            std::get_if<EntityRefExpression>(&expression)) {
+        if (entity_ref->source == EntityRefSource::kEventTarget) {
+            return event_type == TriggerEventType::kActivated ||
+                event_type == TriggerEventType::kCollision ||
+                event_type == TriggerEventType::kProjectileImpact;
+        }
+        if (entity_ref->source == EntityRefSource::kEventInstigator) {
+            return event_type != TriggerEventType::kCollision;
+        }
+        return true;
+    }
+    const auto* event_vec3 = std::get_if<EventVec3Expression>(&expression);
+    if (event_vec3 == nullptr ||
+        event_vec3->source == EventVec3Source::kPosition) {
+        return true;
+    }
+    return event_type == TriggerEventType::kActivated ||
+        event_type == TriggerEventType::kCollision ||
+        event_type == TriggerEventType::kProjectileImpact ||
+        event_type == TriggerEventType::kExpired;
+}
+
 const ActionGraphParameterDefinition* find_parameter_definition(
     const ActionGraphTemplate& graph,
     std::string_view name) {
@@ -142,6 +168,124 @@ bool validate_action_parameter(
 }
 
 }  // namespace
+
+std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
+    TriggerEventType event_type,
+    const KernelActionTriggerDefinition& trigger) {
+    if (trigger.struct_size < sizeof(KernelActionTriggerDefinition)) {
+        return std::nullopt;
+    }
+    const std::uint32_t action_count = trigger.action_count == 0u
+        ? (trigger.action_type == KernelEntityTriggerActionType_None ? 0u : 1u)
+        : trigger.action_count;
+    if (action_count == 0u ||
+        action_count > KERNEL_MAX_ACTION_GRAPH_ACTIONS) {
+        return std::nullopt;
+    }
+    CompiledActionGraphBinding binding;
+    binding.event_type = event_type;
+    binding.graph.id = "compiled_action_trigger";
+    for (std::uint32_t index = 0; index < action_count; ++index) {
+        KernelActionDefinition action{};
+        if (trigger.action_count == 0u) {
+            action.action_type = trigger.action_type;
+            action.target_source = trigger.target_source;
+            action.damage_amount = trigger.damage_amount;
+            action.spawn_entity_template_id =
+                trigger.spawn_entity_template_id;
+            action.spawn_projectile_template_id =
+                trigger.spawn_projectile_template_id;
+            action.position_source = trigger.position_source;
+            action.direction_source = trigger.direction_source;
+            action.owner_source = trigger.owner_source;
+        } else {
+            action = trigger.actions[index];
+        }
+        const std::string suffix = "_" + std::to_string(index);
+        if (action.action_type ==
+            KernelEntityTriggerActionType_SpawnProjectile) {
+            const std::string template_name = "projectile_template" + suffix;
+            const std::string position_name = "position" + suffix;
+            const std::string direction_name = "direction" + suffix;
+            binding.graph.parameters.push_back({template_name, std::monostate{}});
+            binding.graph.parameters.push_back({position_name, std::monostate{}});
+            binding.graph.parameters.push_back({direction_name, std::monostate{}});
+            binding.graph.actions.push_back(ActionSpawnProjectileDefinition{
+                template_name,
+                position_name,
+                direction_name,
+            });
+            binding.parameters.push_back({
+                template_name,
+                ActionGraphParameterValue{ProjectileTemplateIdValue{
+                    action.spawn_projectile_template_id}},
+            });
+            binding.parameters.push_back({
+                position_name,
+                EventVec3Expression{static_cast<EventVec3Source>(
+                    action.position_source)},
+            });
+            binding.parameters.push_back({
+                direction_name,
+                EventVec3Expression{static_cast<EventVec3Source>(
+                    action.direction_source)},
+            });
+            continue;
+        }
+        if (action.action_type == KernelEntityTriggerActionType_SpawnEntity) {
+            const std::string template_name = "entity_template" + suffix;
+            const std::string position_name = "position" + suffix;
+            const std::string owner_name = "owner" + suffix;
+            binding.graph.parameters.push_back({template_name, std::monostate{}});
+            binding.graph.parameters.push_back({position_name, std::monostate{}});
+            binding.graph.parameters.push_back({owner_name, std::monostate{}});
+            binding.graph.actions.push_back(ActionSpawnEntityDefinition{
+                template_name,
+                position_name,
+                owner_name,
+            });
+            binding.parameters.push_back({
+                template_name,
+                ActionGraphParameterValue{EntityTemplateIdValue{
+                    action.spawn_entity_template_id}},
+            });
+            binding.parameters.push_back({
+                position_name,
+                EventVec3Expression{static_cast<EventVec3Source>(
+                    action.position_source)},
+            });
+            binding.parameters.push_back({
+                owner_name,
+                EntityRefExpression{static_cast<EntityRefSource>(
+                    action.owner_source)},
+            });
+            continue;
+        }
+        if (action.action_type != KernelEntityTriggerActionType_ApplyDamage) {
+            return std::nullopt;
+        }
+        const std::string target_name = "target" + suffix;
+        const std::string amount_name = "amount" + suffix;
+        binding.graph.parameters.push_back({target_name, std::monostate{}});
+        binding.graph.parameters.push_back({
+            amount_name,
+            static_cast<float>(action.damage_amount),
+        });
+        binding.graph.actions.push_back(ActionApplyDamageDefinition{
+            target_name,
+            amount_name,
+        });
+        binding.parameters.push_back({
+            target_name,
+            EntityRefExpression{static_cast<EntityRefSource>(
+                action.target_source)},
+        });
+    }
+    if (!validate_action_graph_binding(binding, nullptr)) {
+        return std::nullopt;
+    }
+    return binding;
+}
 
 CompiledActionGraphBinding compile_spawn_projectile_binding(
     TriggerEventType event_type,
@@ -267,6 +411,13 @@ bool validate_action_graph_binding(
         if (default_type != ParameterType::kUnknown &&
             default_type != binding_type) {
             return fail(error, "binding parameter has incompatible type: " + parameter.name);
+        }
+        if (!expression_available_for_event(
+                parameter.expression, binding.event_type)) {
+            return fail(
+                error,
+                "binding expression is unavailable for trigger event: " +
+                    parameter.name);
         }
     }
     for (const ActionGraphParameterDefinition& parameter :

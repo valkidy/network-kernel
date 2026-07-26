@@ -722,18 +722,33 @@ void execute_queued_trigger_events(
         return;
     }
     for (const ActionGraphCommandBatch& batch : command_batches) {
+        if (batch.provenance.request_id == 0u ||
+            world.action_graph_batch_processed(
+                batch.provenance.request_id,
+                batch.event.type,
+                batch.sequence)) {
+            continue;
+        }
+        const bool valid = std::all_of(
+            batch.commands.begin(),
+            batch.commands.end(),
+            [&](const ActionGraphCommand& graph_command) {
+                const auto* command =
+                    std::get_if<ActionSpawnProjectileCommand>(&graph_command);
+                return command != nullptr &&
+                    world.find_projectile_template(
+                        command->projectile_template_id) != nullptr;
+            });
+        if (!valid) {
+            continue;
+        }
+        bool committed = true;
         for (const ActionGraphCommand& graph_command : batch.commands) {
             const auto* command =
                 std::get_if<ActionSpawnProjectileCommand>(&graph_command);
-            if (command == nullptr) {
-                continue;
-            }
             const RuntimeProjectileTemplate* projectile_template =
                 world.find_projectile_template(command->projectile_template_id);
-            if (projectile_template == nullptr) {
-                continue;
-            }
-            (void)spawn_projectile_from_template(
+            if (!spawn_projectile_from_template(
                 world,
                 *projectile_template,
                 command->provenance.owner_peer,
@@ -745,7 +760,16 @@ void execute_queued_trigger_events(
                 command->provenance.server_tick,
                 fixed_delta_seconds,
                 events,
-                nullptr);
+                nullptr)) {
+                committed = false;
+                break;
+            }
+        }
+        if (committed) {
+            world.mark_action_graph_batch_processed(
+                batch.provenance.request_id,
+                batch.event.type,
+                batch.sequence);
         }
     }
 }

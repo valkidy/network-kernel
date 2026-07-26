@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 51u
+#define KERNEL_ABI_VERSION 52u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -325,8 +325,9 @@ typedef enum KernelEventVec3Source {
     KernelEventVec3Source_Direction = 1,
 } KernelEventVec3Source;
 
-typedef struct KernelActionTriggerDefinition {
-    uint32_t struct_size;
+#define KERNEL_MAX_ACTION_GRAPH_ACTIONS 8
+
+typedef struct KernelActionDefinition {
     uint8_t action_type;
     uint8_t target_source;
     uint16_t damage_amount;
@@ -336,6 +337,23 @@ typedef struct KernelActionTriggerDefinition {
     uint8_t direction_source;
     uint8_t owner_source;
     uint8_t reserved;
+} KernelActionDefinition;
+
+typedef struct KernelActionTriggerDefinition {
+    uint32_t struct_size;
+    /* Legacy first-action mirror. action_count/actions are authoritative when
+     * action_count is non-zero. */
+    uint8_t action_type;
+    uint8_t target_source;
+    uint16_t damage_amount;
+    uint32_t spawn_entity_template_id;
+    uint32_t spawn_projectile_template_id;
+    uint8_t position_source;
+    uint8_t direction_source;
+    uint8_t owner_source;
+    uint8_t reserved;
+    uint32_t action_count;
+    KernelActionDefinition actions[KERNEL_MAX_ACTION_GRAPH_ACTIONS];
 } KernelActionTriggerDefinition;
 
 typedef enum KernelAiControllerType {

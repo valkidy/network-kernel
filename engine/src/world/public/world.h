@@ -3,6 +3,8 @@
 
 #include <optional>
 #include <memory>
+#include <set>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -55,6 +57,20 @@ public:
         const std::vector<RuntimeActionTemplate>& action_templates);
     const RuntimeActionTemplate* find_action_template(
         std::uint32_t action_template_id) const;
+    bool action_graph_batch_processed(
+        std::uint64_t request_id,
+        TriggerEventType event_type,
+        std::uint32_t sequence) const {
+        return processed_action_graph_batches_.contains(
+            {request_id, event_type, sequence});
+    }
+    void mark_action_graph_batch_processed(
+        std::uint64_t request_id,
+        TriggerEventType event_type,
+        std::uint32_t sequence) {
+        processed_action_graph_batches_.insert(
+            {request_id, event_type, sequence});
+    }
 
     entt::registry& registry();
     const entt::registry& registry() const;
@@ -100,6 +116,8 @@ private:
     std::vector<ProjectileInteractionRule> projectile_interaction_rules_;
     std::vector<RuntimeProjectileTemplate> projectile_templates_;
     std::vector<RuntimeActionTemplate> action_templates_;
+    std::set<std::tuple<std::uint64_t, TriggerEventType, std::uint32_t>>
+        processed_action_graph_batches_;
     ColliderRegistry collider_registry_;
     physics::PhysicsWorld* collision_world_ = nullptr;
     bool allow_standalone_collision_ = true;

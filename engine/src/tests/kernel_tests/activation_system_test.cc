@@ -1,6 +1,6 @@
 #include <algorithm>
-#include <cassert>
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
 #include <memory>
 #include <vector>
@@ -13,6 +13,12 @@
 #undef private
 
 namespace {
+
+void require(bool condition) {
+    if (!condition) {
+        std::abort();
+    }
+}
 
 KernelServerEntityCreateInfo create_info(
     std::uint32_t entity_template_id,
@@ -51,7 +57,10 @@ void activated_prop_applies_damage_exactly_once() {
     prop_template.struct_size = sizeof(prop_template);
     prop_template.entity_template_id = 200;
     prop_template.entity_type = KernelEntityType_Prop;
-    prop_template.component_flags = KERNEL_ENTITY_COMPONENT_TRANSFORM;
+    prop_template.component_flags =
+        KERNEL_ENTITY_COMPONENT_TRANSFORM | KERNEL_ENTITY_COMPONENT_HEALTH;
+    prop_template.combat.hp = 100;
+    prop_template.combat.max_hp = 100;
     prop_template.ai.struct_size = sizeof(prop_template.ai);
     prop_template.movement.struct_size = sizeof(prop_template.movement);
     prop_template.activated_trigger.struct_size =
@@ -61,6 +70,17 @@ void activated_prop_applies_damage_exactly_once() {
     prop_template.activated_trigger.target_source =
         KernelEntityRefSource_EventTarget;
     prop_template.activated_trigger.damage_amount = 25;
+    prop_template.activated_trigger.action_count = 2;
+    prop_template.activated_trigger.actions[0].action_type =
+        KernelEntityTriggerActionType_ApplyDamage;
+    prop_template.activated_trigger.actions[0].target_source =
+        KernelEntityRefSource_Self;
+    prop_template.activated_trigger.actions[0].damage_amount = 1;
+    prop_template.activated_trigger.actions[1].action_type =
+        KernelEntityTriggerActionType_ApplyDamage;
+    prop_template.activated_trigger.actions[1].target_source =
+        KernelEntityRefSource_EventTarget;
+    prop_template.activated_trigger.actions[1].damage_amount = 25;
     engine.entity_templates_.push_back(prop_template);
 
     KernelServerEntityCreateInfo actor_info{};
@@ -71,21 +91,21 @@ void activated_prop_applies_damage_exactly_once() {
     actor_info.position = KernelVec3{0.0f, 0.0f, 0.0f};
     actor_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
     std::uint32_t instigator = 0;
-    assert(engine.server_create_entity(actor_info, &instigator));
+    require(engine.server_create_entity(actor_info, &instigator));
 
     std::uint32_t prop = 0;
-    assert(engine.server_create_entity(
+    require(engine.server_create_entity(
         create_info(200, KernelVec3{1.0f, 0.0f, 0.0f}), &prop));
     const auto prop_entity = engine.world_.find_entity(prop);
-    assert(prop_entity.has_value());
-    assert((engine.world_.registry().all_of<
+    require(prop_entity.has_value());
+    require((engine.world_.registry().all_of<
         network_example::OnActivatedTriggerTag,
         network_example::ActionGraphActivatedBinding>(*prop_entity)));
 
     const network_example::NetId target =
         engine.world_.spawn_enemy(glm::vec3{2.0f, 0.0f, 0.0f});
     const auto target_entity = engine.world_.find_entity(target);
-    assert(target_entity.has_value());
+    require(target_entity.has_value());
     engine.world_.registry().replace<network_example::Health>(
         *target_entity,
         network_example::Health{100, 100});
@@ -99,22 +119,41 @@ void activated_prop_applies_damage_exactly_once() {
     activation.target_net_id = target;
     activation.action_instance_id = 9;
     activation.request_id = 1234;
-    assert(engine.server_activate_entity(activation));
-    assert(engine.damage_pipeline_.pending_count() == 1);
-    assert(engine.server_activate_entity(activation));
-    assert(engine.damage_pipeline_.pending_count() == 1);
+    require(engine.server_activate_entity(activation));
+    require(engine.damage_pipeline_.pending_count() == 2);
+    require(engine.world_.action_graph_batch_processed(
+        activation.request_id,
+        network_example::TriggerEventType::kActivated,
+        0));
+    require(!engine.world_.action_graph_batch_processed(
+        activation.request_id,
+        network_example::TriggerEventType::kCollision,
+        0));
+    require(!engine.world_.action_graph_batch_processed(
+        activation.request_id,
+        network_example::TriggerEventType::kActivated,
+        1));
+    require(engine.server_activate_entity(activation));
+    require(engine.damage_pipeline_.pending_count() == 2);
 
     const auto ready = engine.damage_pipeline_.drain_ready_damage(
         engine.world_, std::numeric_limits<std::uint64_t>::max());
-    assert(ready.size() == 1);
-    assert(ready[0].source_net_id == prop);
-    assert(ready[0].target_net_id == target);
-    assert(ready[0].source_peer == 0);
+    require(ready.size() == 2);
+    require(ready[0].source_net_id == prop);
+    require(ready[0].target_net_id == prop);
+    require(ready[0].damage == 1);
+    require(ready[1].source_net_id == prop);
+    require(ready[1].target_net_id == target);
+    require(ready[1].damage == 25);
+    require(ready[1].source_peer == 0);
     network_example::apply_damage_applications(
         engine.world_, ready, 1, nullptr);
-    assert(engine.world_.registry()
+    require(engine.world_.registry()
                .get<network_example::Health>(*target_entity)
                .hp == hp_before - 25);
+    require(engine.world_.registry()
+               .get<network_example::Health>(*prop_entity)
+               .hp == 99);
 }
 
 void collision_prop_applies_damage_on_contact_enter() {
@@ -153,11 +192,11 @@ void collision_prop_applies_damage_on_contact_enter() {
     engine.entity_templates_.push_back(prop_template);
 
     std::uint32_t prop = 0;
-    assert(engine.server_create_entity(
+    require(engine.server_create_entity(
         create_info(201, KernelVec3{0.0f, 0.0f, 0.0f}), &prop));
     const auto prop_entity = engine.world_.find_entity(prop);
-    assert(prop_entity.has_value());
-    assert((engine.world_.registry().all_of<
+    require(prop_entity.has_value());
+    require((engine.world_.registry().all_of<
         network_example::OnCollisionTriggerTag,
         network_example::ActionGraphCollisionBinding>(*prop_entity)));
 
@@ -168,9 +207,9 @@ void collision_prop_applies_damage_on_contact_enter() {
     actor_info.position = KernelVec3{0.0f, 0.0f, 0.0f};
     actor_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
     std::uint32_t target = 0;
-    assert(engine.server_create_entity(actor_info, &target));
+    require(engine.server_create_entity(actor_info, &target));
     const auto target_entity = engine.world_.find_entity(target);
-    assert(target_entity.has_value());
+    require(target_entity.has_value());
     engine.world_.registry().replace<network_example::Health>(
         *target_entity,
         network_example::Health{100, 100});
@@ -184,32 +223,32 @@ void collision_prop_applies_damage_on_contact_enter() {
     engine.sync_entity_colliders_from_world();
 
     network_example::CollisionTriggerSystem{}.update(engine, 1000);
-    assert(engine.damage_pipeline_.pending_count() == 1);
+    require(engine.damage_pipeline_.pending_count() == 1);
     network_example::CollisionTriggerSystem{}.update(engine, 2000);
-    assert(engine.damage_pipeline_.pending_count() == 1);
+    require(engine.damage_pipeline_.pending_count() == 1);
 
-    assert(engine.server_set_entity_transform(
+    require(engine.server_set_entity_transform(
         target,
         KernelVec3{10.0f, 0.0f, 0.0f},
         KernelQuat{0.0f, 0.0f, 0.0f, 1.0f}));
     engine.sync_entity_colliders_from_world();
     network_example::CollisionTriggerSystem{}.update(engine, 3000);
-    assert(engine.server_set_entity_transform(
+    require(engine.server_set_entity_transform(
         target,
         KernelVec3{0.0f, 0.0f, 0.0f},
         KernelQuat{0.0f, 0.0f, 0.0f, 1.0f}));
     engine.sync_entity_colliders_from_world();
     network_example::CollisionTriggerSystem{}.update(engine, 4000);
-    assert(engine.damage_pipeline_.pending_count() == 2);
+    require(engine.damage_pipeline_.pending_count() == 2);
 
     const auto ready = engine.damage_pipeline_.drain_ready_damage(
         engine.world_, std::numeric_limits<std::uint64_t>::max());
-    assert(ready.size() == 2);
-    assert(ready[0].source_net_id == prop);
-    assert(ready[0].target_net_id == target);
+    require(ready.size() == 2);
+    require(ready[0].source_net_id == prop);
+    require(ready[0].target_net_id == target);
     network_example::apply_damage_applications(
         engine.world_, ready, 1, nullptr);
-    assert(engine.world_.registry()
+    require(engine.world_.registry()
                .get<network_example::Health>(*target_entity)
                .hp == 50);
 }
@@ -267,19 +306,19 @@ void lifecycle_triggers_capture_context_before_prop_destruction() {
     actor_info.position = KernelVec3{0.0f, 0.0f, 0.0f};
     actor_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
     std::uint32_t instigator = 0;
-    assert(engine.server_create_entity(actor_info, &instigator));
+    require(engine.server_create_entity(actor_info, &instigator));
     const auto instigator_entity = engine.world_.find_entity(instigator);
-    assert(instigator_entity.has_value());
+    require(instigator_entity.has_value());
     engine.world_.registry().replace<network_example::Health>(
         *instigator_entity,
         network_example::Health{100, 100});
 
     std::uint32_t prop = 0;
-    assert(engine.server_create_entity(
+    require(engine.server_create_entity(
         create_info(202, KernelVec3{1.0f, 0.0f, 0.0f}), &prop));
     const auto prop_entity = engine.world_.find_entity(prop);
-    assert(prop_entity.has_value());
-    assert((engine.world_.registry().all_of<
+    require(prop_entity.has_value());
+    require((engine.world_.registry().all_of<
         network_example::OnHealthDepletedTriggerTag,
         network_example::ActionGraphHealthDepletedBinding,
         network_example::OnDestroyEntityTriggerTag,
@@ -296,14 +335,14 @@ void lifecycle_triggers_capture_context_before_prop_destruction() {
     const std::vector<network_example::ConfirmedDamage> health_depleted =
         network_example::apply_damage_applications(
             engine.world_, {lethal_damage}, 1, nullptr);
-    assert(health_depleted.size() == 1);
+    require(health_depleted.size() == 1);
 
     network_example::EntityLifecycleSystem lifecycle;
     lifecycle.process_health_depleted(engine, health_depleted, 1000);
-    assert(engine.damage_pipeline_.pending_count() == 1);
+    require(engine.damage_pipeline_.pending_count() == 1);
     lifecycle.destroy_dead_entities(engine, health_depleted);
-    assert(!engine.world_.find_entity(prop).has_value());
-    assert(engine.damage_pipeline_.pending_count() == 1);
+    require(!engine.world_.find_entity(prop).has_value());
+    require(engine.damage_pipeline_.pending_count() == 1);
 
     network_example::NetId spawned = 0;
     auto spawned_view = engine.world_.registry().view<
@@ -317,21 +356,21 @@ void lifecycle_triggers_capture_context_before_prop_destruction() {
             spawned_view.get<const network_example::EntityKind>(entity);
         if (kind.type == network_example::EntityType::kProp) {
             spawned = identity.net_id;
-            assert(identity.owner_peer == 7);
+            require(identity.owner_peer == 7);
             const glm::vec3 position =
                 spawned_view.get<const network_example::Transform>(entity)
                     .position;
-            assert(position == lethal_damage.hit_position);
+            require(position == lethal_damage.hit_position);
         }
     }
-    assert(spawned != 0u);
+    require(spawned != 0u);
 
     const auto ready = engine.damage_pipeline_.drain_ready_damage(
         engine.world_, std::numeric_limits<std::uint64_t>::max());
-    assert(ready.size() == 1);
-    assert(ready.front().source_net_id == prop);
-    assert(ready.front().target_net_id == instigator);
-    assert(ready.front().damage == 7);
+    require(ready.size() == 1);
+    require(ready.front().source_net_id == prop);
+    require(ready.front().target_net_id == instigator);
+    require(ready.front().damage == 7);
 }
 
 }  // namespace

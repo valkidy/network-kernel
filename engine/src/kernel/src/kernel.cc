@@ -593,6 +593,56 @@ KernelVec4 collider_instance_shape_params(const ColliderInstance& collider) {
     };
 }
 
+std::vector<std::uint32_t> spawned_projectile_ids(
+    const KernelActionTriggerDefinition& trigger) {
+    std::vector<std::uint32_t> ids;
+    if (trigger.action_count == 0u) {
+        if (trigger.action_type ==
+            KernelEntityTriggerActionType_SpawnProjectile) {
+            ids.push_back(trigger.spawn_projectile_template_id);
+        }
+        return ids;
+    }
+    ids.reserve(trigger.action_count);
+    for (std::uint32_t index = 0;
+         index < trigger.action_count &&
+         index < KERNEL_MAX_ACTION_GRAPH_ACTIONS;
+         ++index) {
+        if (trigger.actions[index].action_type ==
+            KernelEntityTriggerActionType_SpawnProjectile) {
+            ids.push_back(
+                trigger.actions[index].spawn_projectile_template_id);
+        }
+    }
+    return ids;
+}
+
+bool projectile_trigger_is_valid(
+    const KernelActionTriggerDefinition& trigger,
+    const std::vector<KernelProjectileTemplateDefinition>& templates) {
+    if (trigger.struct_size == 0u) {
+        return true;
+    }
+    if (trigger.struct_size < sizeof(KernelActionTriggerDefinition) ||
+        trigger.action_count > KERNEL_MAX_ACTION_GRAPH_ACTIONS) {
+        return false;
+    }
+    const std::vector<std::uint32_t> spawned_ids =
+        spawned_projectile_ids(trigger);
+    const std::uint32_t expected_count = trigger.action_count == 0u
+        ? (trigger.action_type == KernelEntityTriggerActionType_None ? 0u : 1u)
+        : trigger.action_count;
+    if (spawned_ids.size() != expected_count) {
+        return false;
+    }
+    return std::all_of(
+        spawned_ids.begin(),
+        spawned_ids.end(),
+        [&](std::uint32_t id) {
+            return id != 0u && find_projectile_template(templates, id) != nullptr;
+        });
+}
+
 bool projectile_template_has_trigger_cycle(
     const std::vector<KernelProjectileTemplateDefinition>& templates,
     std::uint32_t projectile_template_id,
@@ -608,14 +658,16 @@ bool projectile_template_has_trigger_cycle(
     if (projectile_template != nullptr) {
         const KernelProjectileMechanicsDefinition& mechanics =
             projectile_template->mechanics;
-        for (const std::uint32_t next_id : {
-                 mechanics.projectile_impact_trigger
-                     .spawn_projectile_template_id,
-                 mechanics.expired_trigger.spawn_projectile_template_id,
+        for (const KernelActionTriggerDefinition* trigger : {
+                 &mechanics.projectile_impact_trigger,
+                 &mechanics.expired_trigger,
              }) {
-            if (projectile_template_has_trigger_cycle(
-                    templates, next_id, path)) {
-                return true;
+            for (const std::uint32_t next_id :
+                 spawned_projectile_ids(*trigger)) {
+                if (projectile_template_has_trigger_cycle(
+                        templates, next_id, path)) {
+                    return true;
+                }
             }
         }
     }
@@ -1043,23 +1095,15 @@ RuntimeProjectileTemplate to_runtime_projectile_template(
     }
     projectile_template.collision_mask = mechanics.collision_mask;
     projectile_template.max_hit_count = mechanics.max_hit_count;
-    if (mechanics.projectile_impact_trigger.struct_size >=
-            sizeof(KernelActionTriggerDefinition) &&
-        mechanics.projectile_impact_trigger.action_type ==
-            KernelEntityTriggerActionType_SpawnProjectile) {
-        projectile_template.projectile_impact_binding =
-            compile_spawn_projectile_binding(
-                TriggerEventType::kProjectileImpact,
-                mechanics.projectile_impact_trigger
-                    .spawn_projectile_template_id);
+    if (const auto binding = compile_action_trigger_definition(
+            TriggerEventType::kProjectileImpact,
+            mechanics.projectile_impact_trigger)) {
+        projectile_template.projectile_impact_binding = std::move(*binding);
     }
-    if (mechanics.expired_trigger.struct_size >=
-            sizeof(KernelActionTriggerDefinition) &&
-        mechanics.expired_trigger.action_type ==
-            KernelEntityTriggerActionType_SpawnProjectile) {
-        projectile_template.expired_binding = compile_spawn_projectile_binding(
+    if (const auto binding = compile_action_trigger_definition(
             TriggerEventType::kExpired,
-            mechanics.expired_trigger.spawn_projectile_template_id);
+            mechanics.expired_trigger)) {
+        projectile_template.expired_binding = std::move(*binding);
     }
     if (mechanics.area_effect.lifetime_ticks > 0u) {
         projectile_template.lifetime_ticks = mechanics.area_effect.lifetime_ticks;
@@ -2321,16 +2365,12 @@ bool KernelEngine::load_gameplay_catalog(
              projectile_template_has_trigger_cycle(
                  validated_projectile_templates,
                  projectile_template.projectile_template_id)) ||
-            (mechanics.projectile_impact_trigger.struct_size != 0u &&
-             find_projectile_template(
-                 validated_projectile_templates,
-                 mechanics.projectile_impact_trigger
-                     .spawn_projectile_template_id) == nullptr) ||
-            (mechanics.expired_trigger.struct_size != 0u &&
-             find_projectile_template(
-                 validated_projectile_templates,
-                 mechanics.expired_trigger.spawn_projectile_template_id) ==
-                 nullptr)) {
+            !projectile_trigger_is_valid(
+                mechanics.projectile_impact_trigger,
+                validated_projectile_templates) ||
+            !projectile_trigger_is_valid(
+                mechanics.expired_trigger,
+                validated_projectile_templates)) {
             return false;
         }
     }
@@ -3704,7 +3744,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     prediction_proxy_collider_ids_.clear();
     history_buffer_ = HistoryBuffer(history_frame_count(config_.tick));
     damage_pipeline_.clear();
-    processed_activation_requests_.clear();
+    next_action_graph_sequence_ = 1;
     active_prop_collision_pairs_.clear();
     command_queue_.clear();
     rpc_response_store_.clear();

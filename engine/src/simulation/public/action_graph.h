@@ -2,10 +2,12 @@
 #define SIMULATION_PUBLIC_ACTION_GRAPH_H_
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
 
+#include "kernel/public/kernel_types.h"
 #include "world/public/components.h"
 
 namespace network_example {
@@ -50,6 +52,10 @@ struct ActionGraphCommandBatch {
     std::uint32_t sequence = 0;
     std::vector<ActionGraphCommand> commands;
 };
+
+std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
+    TriggerEventType event_type,
+    const KernelActionTriggerDefinition& trigger);
 
 CompiledActionGraphBinding compile_spawn_projectile_binding(
     TriggerEventType event_type,

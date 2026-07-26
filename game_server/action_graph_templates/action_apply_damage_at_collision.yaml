@@ -1,8 +1,13 @@
 id: action_apply_damage_at_collision
 parameters:
+  source: null
   target: null
-  amount: 1
+  self_damage: 1
+  target_damage: 1
 actions:
   - type: apply_damage
+    target: params.source
+    amount: params.self_damage
+  - type: apply_damage
     target: params.target
-    amount: params.amount
+    amount: params.target_damage

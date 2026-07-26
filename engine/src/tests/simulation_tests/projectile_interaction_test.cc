@@ -390,6 +390,14 @@ void action_graph_binding_validation_is_typed_and_authoritative() {
             network_example::EntityIdValue{8}};
     require(!network_example::validate_action_graph_binding(wrong_type, &error));
 
+    const network_example::CompiledActionGraphBinding unavailable_event_field =
+        network_example::compile_apply_damage_binding(
+            network_example::TriggerEventType::kHealthDepleted,
+            network_example::EntityRefSource::kEventTarget,
+            1);
+    require(!network_example::validate_action_graph_binding(
+        unavailable_event_field, &error));
+
     const network_example::TriggerEvent event{
         network_example::TriggerEventType::kProjectileImpact,
         10,

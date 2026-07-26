@@ -578,7 +578,7 @@ private:
     World world_;
     HistoryBuffer history_buffer_;
     DamagePipeline damage_pipeline_;
-    std::unordered_set<std::uint64_t> processed_activation_requests_;
+    std::uint32_t next_action_graph_sequence_ = 1;
     std::unordered_set<std::uint64_t> active_prop_collision_pairs_;
     std::unique_ptr<ITransport> transport_;
     ListenServerTransport* listen_server_transport_ = nullptr;

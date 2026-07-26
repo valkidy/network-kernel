@@ -184,10 +184,14 @@ void hash_projectile_template(
              &mechanics.projectile_impact_trigger,
              &mechanics.expired_trigger,
          }) {
-        hash_scalar(hash, trigger->action_type);
-        hash_scalar(hash, trigger->spawn_projectile_template_id);
-        hash_scalar(hash, trigger->position_source);
-        hash_scalar(hash, trigger->direction_source);
+        hash_scalar(hash, trigger->action_count);
+        for (std::uint32_t index = 0; index < trigger->action_count; ++index) {
+            const KernelActionDefinition& action = trigger->actions[index];
+            hash_scalar(hash, action.action_type);
+            hash_scalar(hash, action.spawn_projectile_template_id);
+            hash_scalar(hash, action.position_source);
+            hash_scalar(hash, action.direction_source);
+        }
     }
 }
 
@@ -1201,107 +1205,118 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 "action graph parameter name must be unique: " + path);
         }
         const bool has_default = !entry.second.IsNull();
-        if (has_default && !entry.second.IsScalar()) {
-            throw std::runtime_error(
-                "first action graph phase only supports scalar defaults: " +
-                path);
-        }
         graph.parameters.push_back(ActionGraphParameterConfig{
             name,
             has_default,
-            has_default ? entry.second.as<std::string>() : std::string{},
+            has_default
+                ? (entry.second.IsScalar()
+                       ? entry.second.as<std::string>()
+                       : YAML::Dump(entry.second))
+                : std::string{},
         });
     }
     const YAML::Node actions = node["actions"];
-    if (!actions || !actions.IsSequence() || actions.size() != 1u) {
+    if (!actions || !actions.IsSequence() || actions.size() == 0u ||
+        actions.size() > KERNEL_MAX_ACTION_GRAPH_ACTIONS) {
         throw std::runtime_error(
-            "first action graph phase requires exactly one action: " + path);
+            "action graph requires between one and " +
+            std::to_string(KERNEL_MAX_ACTION_GRAPH_ACTIONS) +
+            " actions: " + path);
     }
-    const YAML::Node action = actions[0];
-    reject_unknown_keys(
-        action,
-        {
-            "type",
-            "projectile_template",
-            "entity_template",
-            "position",
-            "direction",
-            "owner",
-            "target",
-            "amount",
-        },
-        path,
-        source_kind,
-        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_UNKNOWN);
-    if (!action["type"]) {
-        throw std::runtime_error("action graph action requires type: " + path);
-    }
-    graph.action_type = action["type"].as<std::string>();
-    std::vector<const std::string*> action_parameters;
-    if (graph.action_type == "spawn_projectile") {
-        if (action["entity_template"] || action["owner"] ||
-            action["target"] || action["amount"]) {
+    for (std::size_t action_index = 0; action_index < actions.size();
+         ++action_index) {
+        const YAML::Node action = actions[action_index];
+        reject_unknown_keys(
+            action,
+            {
+                "type",
+                "projectile_template",
+                "entity_template",
+                "position",
+                "direction",
+                "owner",
+                "target",
+                "amount",
+            },
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_UNKNOWN);
+        if (!action["type"]) {
             throw std::runtime_error(
-                "spawn_projectile action has unsupported fields: " + path);
+                "action graph action requires type: " + path);
         }
-        graph.projectile_template_parameter = parameter_reference_from_yaml(
-            action["projectile_template"], "projectile_template");
-        graph.position_parameter =
-            parameter_reference_from_yaml(action["position"], "position");
-        graph.direction_parameter =
-            parameter_reference_from_yaml(action["direction"], "direction");
-        action_parameters = {
-            &graph.projectile_template_parameter,
-            &graph.position_parameter,
-            &graph.direction_parameter,
-        };
-    } else if (graph.action_type == "spawn_entity") {
-        if (action["projectile_template"] || action["direction"] ||
-            action["target"] || action["amount"]) {
+        ActionGraphActionConfig compiled_action;
+        compiled_action.action_type = action["type"].as<std::string>();
+        std::vector<const std::string*> action_parameters;
+        if (compiled_action.action_type == "spawn_projectile") {
+            if (action["entity_template"] || action["owner"] ||
+                action["target"] || action["amount"]) {
+                throw std::runtime_error(
+                    "spawn_projectile action has unsupported fields: " + path);
+            }
+            compiled_action.projectile_template_parameter =
+                parameter_reference_from_yaml(
+                    action["projectile_template"], "projectile_template");
+            compiled_action.position_parameter =
+                parameter_reference_from_yaml(action["position"], "position");
+            compiled_action.direction_parameter =
+                parameter_reference_from_yaml(action["direction"], "direction");
+            action_parameters = {
+                &compiled_action.projectile_template_parameter,
+                &compiled_action.position_parameter,
+                &compiled_action.direction_parameter,
+            };
+        } else if (compiled_action.action_type == "spawn_entity") {
+            if (action["projectile_template"] || action["direction"] ||
+                action["target"] || action["amount"]) {
+                throw std::runtime_error(
+                    "spawn_entity action has unsupported fields: " + path);
+            }
+            compiled_action.entity_template_parameter =
+                parameter_reference_from_yaml(
+                    action["entity_template"], "entity_template");
+            compiled_action.position_parameter =
+                parameter_reference_from_yaml(action["position"], "position");
+            compiled_action.owner_parameter =
+                parameter_reference_from_yaml(action["owner"], "owner");
+            action_parameters = {
+                &compiled_action.entity_template_parameter,
+                &compiled_action.position_parameter,
+                &compiled_action.owner_parameter,
+            };
+        } else if (compiled_action.action_type == "apply_damage") {
+            if (action["projectile_template"] || action["position"] ||
+                action["direction"] || action["entity_template"] ||
+                action["owner"]) {
+                throw std::runtime_error(
+                    "apply_damage action has unsupported fields: " + path);
+            }
+            compiled_action.target_parameter =
+                parameter_reference_from_yaml(action["target"], "target");
+            compiled_action.amount_parameter =
+                parameter_reference_from_yaml(action["amount"], "amount");
+            action_parameters = {
+                &compiled_action.target_parameter,
+                &compiled_action.amount_parameter,
+            };
+        } else {
             throw std::runtime_error(
-                "spawn_entity action has unsupported fields: " + path);
+                "unsupported action graph action type: " +
+                compiled_action.action_type);
         }
-        graph.entity_template_parameter = parameter_reference_from_yaml(
-            action["entity_template"], "entity_template");
-        graph.position_parameter =
-            parameter_reference_from_yaml(action["position"], "position");
-        graph.owner_parameter =
-            parameter_reference_from_yaml(action["owner"], "owner");
-        action_parameters = {
-            &graph.entity_template_parameter,
-            &graph.position_parameter,
-            &graph.owner_parameter,
-        };
-    } else if (graph.action_type == "apply_damage") {
-        if (action["projectile_template"] || action["position"] ||
-            action["direction"] || action["entity_template"] ||
-            action["owner"]) {
-            throw std::runtime_error(
-                "apply_damage action has unsupported fields: " + path);
+        for (const std::string* action_parameter : action_parameters) {
+            if (std::none_of(
+                    graph.parameters.begin(),
+                    graph.parameters.end(),
+                    [&](const ActionGraphParameterConfig& parameter) {
+                        return parameter.name == *action_parameter;
+                    })) {
+                throw std::runtime_error(
+                    "action references undeclared graph parameter: " +
+                    *action_parameter);
+            }
         }
-        graph.target_parameter =
-            parameter_reference_from_yaml(action["target"], "target");
-        graph.amount_parameter =
-            parameter_reference_from_yaml(action["amount"], "amount");
-        action_parameters = {
-            &graph.target_parameter,
-            &graph.amount_parameter,
-        };
-    } else {
-        throw std::runtime_error(
-            "unsupported action graph action type: " + graph.action_type);
-    }
-    for (const std::string* action_parameter : action_parameters) {
-        if (std::none_of(
-                graph.parameters.begin(),
-                graph.parameters.end(),
-                [&](const ActionGraphParameterConfig& parameter) {
-                    return parameter.name == *action_parameter;
-                })) {
-            throw std::runtime_error(
-                "action references undeclared graph parameter: " +
-                *action_parameter);
-        }
+        graph.actions.push_back(std::move(compiled_action));
     }
     return graph;
 }
@@ -3010,6 +3025,83 @@ std::string trigger_parameter_value(
         "required action graph parameter is missing: " + parameter.name);
 }
 
+bool event_expression_available(
+    std::string_view trigger_name,
+    std::string_view expression) {
+    if (!expression.starts_with("event.")) {
+        return true;
+    }
+    if (expression == "event.subject" || expression == "event.position") {
+        return true;
+    }
+    if (expression == "event.target") {
+        return trigger_name == "on_activated" ||
+            trigger_name == "on_collision" ||
+            trigger_name == "on_projectile_impact";
+    }
+    if (expression == "event.instigator") {
+        return trigger_name == "on_activated" ||
+            trigger_name == "on_health_depleted" ||
+            trigger_name == "on_destroy_entity" ||
+            trigger_name == "on_projectile_impact" ||
+            trigger_name == "on_expired";
+    }
+    if (expression == "event.direction") {
+        return trigger_name == "on_activated" ||
+            trigger_name == "on_collision" ||
+            trigger_name == "on_projectile_impact" ||
+            trigger_name == "on_expired";
+    }
+    return false;
+}
+
+void validate_trigger_parameters(
+    const TriggerBindingConfig& binding,
+    std::string_view trigger_name,
+    const ActionGraphTemplateConfig& graph) {
+    std::unordered_set<std::string> seen_parameters;
+    for (const auto& parameter : binding.parameters) {
+        if (!seen_parameters.insert(parameter.first).second ||
+            std::none_of(
+                graph.parameters.begin(),
+                graph.parameters.end(),
+                [&](const ActionGraphParameterConfig& declaration) {
+                    return declaration.name == parameter.first;
+                })) {
+            throw std::runtime_error(
+                "trigger binding passes undeclared or duplicate parameter: " +
+                parameter.first);
+        }
+        if (!event_expression_available(trigger_name, parameter.second)) {
+            throw std::runtime_error(
+                std::string(trigger_name) + " does not provide " +
+                parameter.second);
+        }
+    }
+    for (const ActionGraphParameterConfig& parameter : graph.parameters) {
+        const std::string value = trigger_parameter_value(binding, parameter);
+        if (!event_expression_available(trigger_name, value)) {
+            throw std::runtime_error(
+                std::string(trigger_name) + " does not provide " + value);
+        }
+    }
+}
+
+void mirror_first_action(KernelActionTriggerDefinition* trigger) {
+    if (trigger == nullptr || trigger->action_count == 0u) {
+        return;
+    }
+    const KernelActionDefinition& action = trigger->actions[0];
+    trigger->action_type = action.action_type;
+    trigger->target_source = action.target_source;
+    trigger->damage_amount = action.damage_amount;
+    trigger->spawn_entity_template_id = action.spawn_entity_template_id;
+    trigger->spawn_projectile_template_id = action.spawn_projectile_template_id;
+    trigger->position_source = action.position_source;
+    trigger->direction_source = action.direction_source;
+    trigger->owner_source = action.owner_source;
+}
+
 void compile_projectile_trigger_binding(
     const ProjectileTriggerBindingConfig& binding,
     bool expired,
@@ -3021,25 +3113,9 @@ void compile_projectile_trigger_binding(
     }
     const ActionGraphTemplateConfig* graph = action_graph_template_from_ref(
         binding.action_graph_ref, action_graph_templates);
-    if (graph->action_type != "spawn_projectile") {
-        throw std::runtime_error(
-            "projectile trigger requires spawn_projectile action graph: " +
-            binding.action_graph_ref);
-    }
-    std::unordered_set<std::string> seen_parameters;
-    for (const auto& parameter : binding.parameters) {
-        if (!seen_parameters.insert(parameter.first).second ||
-            std::none_of(
-                graph->parameters.begin(),
-                graph->parameters.end(),
-                [&](const ActionGraphParameterConfig& declaration) {
-                    return declaration.name == parameter.first;
-                })) {
-            throw std::runtime_error(
-                "trigger binding passes undeclared or duplicate parameter: " +
-                parameter.first);
-        }
-    }
+    const std::string_view trigger_name =
+        expired ? "on_expired" : "on_projectile_impact";
+    validate_trigger_parameters(binding, trigger_name, *graph);
     const auto graph_parameter = [&](const std::string& name)
         -> const ActionGraphParameterConfig& {
         const auto found = std::find_if(
@@ -3054,23 +3130,6 @@ void compile_projectile_trigger_binding(
         }
         return *found;
     };
-    for (const ActionGraphParameterConfig& parameter : graph->parameters) {
-        (void)trigger_parameter_value(binding, parameter);
-    }
-
-    const std::string projectile_ref = trigger_parameter_value(
-        binding, graph_parameter(graph->projectile_template_parameter));
-    const std::string position = trigger_parameter_value(
-        binding, graph_parameter(graph->position_parameter));
-    const std::string direction = trigger_parameter_value(
-        binding, graph_parameter(graph->direction_parameter));
-    if (position != "event.position" || direction != "event.direction") {
-        throw std::runtime_error(
-            "spawn_projectile trigger must bind position and direction to "
-            "event.position and event.direction");
-    }
-    ProjectileTemplateConfig* spawned_projectile = projectile_template_from_ref(
-        YAML::Node(projectile_ref), projectile_templates);
     KernelActionTriggerDefinition& compiled =
         expired
         ? projectile_template->definition.mechanics
@@ -3078,11 +3137,38 @@ void compile_projectile_trigger_binding(
         : projectile_template->definition.mechanics
               .projectile_impact_trigger;
     compiled.struct_size = sizeof(KernelActionTriggerDefinition);
-    compiled.action_type = KernelEntityTriggerActionType_SpawnProjectile;
-    compiled.spawn_projectile_template_id =
-        spawned_projectile->definition.projectile_template_id;
-    compiled.position_source = KernelEventVec3Source_Position;
-    compiled.direction_source = KernelEventVec3Source_Direction;
+    compiled.action_count = static_cast<std::uint32_t>(graph->actions.size());
+    for (std::size_t index = 0; index < graph->actions.size(); ++index) {
+        const ActionGraphActionConfig& action = graph->actions[index];
+        if (action.action_type != "spawn_projectile") {
+            throw std::runtime_error(
+                "projectile trigger requires spawn_projectile actions: " +
+                binding.action_graph_ref);
+        }
+        const std::string projectile_ref = trigger_parameter_value(
+            binding,
+            graph_parameter(action.projectile_template_parameter));
+        const std::string position = trigger_parameter_value(
+            binding, graph_parameter(action.position_parameter));
+        const std::string direction = trigger_parameter_value(
+            binding, graph_parameter(action.direction_parameter));
+        if (position != "event.position" || direction != "event.direction") {
+            throw std::runtime_error(
+                "spawn_projectile trigger must bind position and direction to "
+                "event.position and event.direction");
+        }
+        ProjectileTemplateConfig* spawned_projectile =
+            projectile_template_from_ref(
+                YAML::Node(projectile_ref), projectile_templates);
+        KernelActionDefinition& compiled_action = compiled.actions[index];
+        compiled_action.action_type =
+            KernelEntityTriggerActionType_SpawnProjectile;
+        compiled_action.spawn_projectile_template_id =
+            spawned_projectile->definition.projectile_template_id;
+        compiled_action.position_source = KernelEventVec3Source_Position;
+        compiled_action.direction_source = KernelEventVec3Source_Direction;
+    }
+    mirror_first_action(&compiled);
 }
 
 KernelActionTriggerDefinition compile_action_trigger_binding(
@@ -3096,27 +3182,7 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
     }
     const ActionGraphTemplateConfig* graph = action_graph_template_from_ref(
         binding.action_graph_ref, action_graph_templates);
-    if (graph->action_type != "apply_damage" &&
-        graph->action_type != "spawn_entity") {
-        throw std::runtime_error(
-            std::string(trigger_name) +
-            " requires apply_damage or spawn_entity action graph: " +
-            binding.action_graph_ref);
-    }
-    std::unordered_set<std::string> seen_parameters;
-    for (const auto& parameter : binding.parameters) {
-        if (!seen_parameters.insert(parameter.first).second ||
-            std::none_of(
-                graph->parameters.begin(),
-                graph->parameters.end(),
-                [&](const ActionGraphParameterConfig& declaration) {
-                    return declaration.name == parameter.first;
-                })) {
-            throw std::runtime_error(
-                "trigger binding passes undeclared or duplicate parameter: " +
-                parameter.first);
-        }
-    }
+    validate_trigger_parameters(binding, trigger_name, *graph);
     const auto graph_parameter = [&](const std::string& name)
         -> const ActionGraphParameterConfig& {
         const auto found = std::find_if(
@@ -3131,9 +3197,6 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
         }
         return *found;
     };
-    for (const ActionGraphParameterConfig& parameter : graph->parameters) {
-        (void)trigger_parameter_value(binding, parameter);
-    }
     const auto entity_ref_source = [](const std::string& expression)
         -> std::uint8_t {
         if (expression == "self") {
@@ -3152,40 +3215,54 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
             "action parameter must be an entity reference expression");
     };
     compiled.struct_size = sizeof(KernelActionTriggerDefinition);
-    if (graph->action_type == "spawn_entity") {
-        const std::string entity_template = trigger_parameter_value(
-            binding, graph_parameter(graph->entity_template_parameter));
-        const std::string position = trigger_parameter_value(
-            binding, graph_parameter(graph->position_parameter));
-        const std::string owner = trigger_parameter_value(
-            binding, graph_parameter(graph->owner_parameter));
-        if (position != "event.position") {
-            throw std::runtime_error(
-                "spawn_entity position must bind to event.position");
+    compiled.action_count = static_cast<std::uint32_t>(graph->actions.size());
+    for (std::size_t index = 0; index < graph->actions.size(); ++index) {
+        const ActionGraphActionConfig& action = graph->actions[index];
+        KernelActionDefinition& compiled_action = compiled.actions[index];
+        if (action.action_type == "spawn_entity") {
+            const std::string entity_template = trigger_parameter_value(
+                binding, graph_parameter(action.entity_template_parameter));
+            const std::string position = trigger_parameter_value(
+                binding, graph_parameter(action.position_parameter));
+            const std::string owner = trigger_parameter_value(
+                binding, graph_parameter(action.owner_parameter));
+            if (position != "event.position") {
+                throw std::runtime_error(
+                    "spawn_entity position must bind to event.position");
+            }
+            compiled_action.action_type =
+                KernelEntityTriggerActionType_SpawnEntity;
+            compiled_action.spawn_entity_template_id =
+                entity_template_ref_from_yaml(
+                    YAML::Node(entity_template), entity_templates);
+            compiled_action.position_source = KernelEventVec3Source_Position;
+            compiled_action.owner_source = entity_ref_source(owner);
+            continue;
         }
-        compiled.action_type = KernelEntityTriggerActionType_SpawnEntity;
-        compiled.spawn_entity_template_id = entity_template_ref_from_yaml(
-            YAML::Node(entity_template), entity_templates);
-        compiled.position_source = KernelEventVec3Source_Position;
-        compiled.owner_source = entity_ref_source(owner);
-        return compiled;
+        if (action.action_type != "apply_damage") {
+            throw std::runtime_error(
+                std::string(trigger_name) +
+                " requires apply_damage or spawn_entity actions: " +
+                binding.action_graph_ref);
+        }
+        const std::string target = trigger_parameter_value(
+            binding, graph_parameter(action.target_parameter));
+        const std::string amount = trigger_parameter_value(
+            binding, graph_parameter(action.amount_parameter));
+        std::size_t parsed = 0;
+        const unsigned long parsed_amount = std::stoul(amount, &parsed);
+        if (parsed != amount.size() || parsed_amount == 0u ||
+            parsed_amount > std::numeric_limits<std::uint16_t>::max()) {
+            throw std::runtime_error(
+                "apply_damage amount must be a positive uint16");
+        }
+        compiled_action.action_type =
+            KernelEntityTriggerActionType_ApplyDamage;
+        compiled_action.target_source = entity_ref_source(target);
+        compiled_action.damage_amount =
+            static_cast<std::uint16_t>(parsed_amount);
     }
-
-    const std::string target = trigger_parameter_value(
-        binding, graph_parameter(graph->target_parameter));
-    const std::string amount = trigger_parameter_value(
-        binding, graph_parameter(graph->amount_parameter));
-    const std::uint8_t target_source = entity_ref_source(target);
-    std::size_t parsed = 0;
-    const unsigned long parsed_amount = std::stoul(amount, &parsed);
-    if (parsed != amount.size() || parsed_amount == 0u ||
-        parsed_amount > std::numeric_limits<std::uint16_t>::max()) {
-        throw std::runtime_error(
-            "apply_damage amount must be a positive uint16");
-    }
-    compiled.action_type = KernelEntityTriggerActionType_ApplyDamage;
-    compiled.target_source = target_source;
-    compiled.damage_amount = static_cast<std::uint16_t>(parsed_amount);
+    mirror_first_action(&compiled);
     return compiled;
 }
 
@@ -3768,12 +3845,16 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_scalar(&hash, parameter.has_default);
             hash_string(&hash, parameter.default_value);
         }
-        hash_string(&hash, graph.action_type);
-        hash_string(&hash, graph.projectile_template_parameter);
-        hash_string(&hash, graph.position_parameter);
-        hash_string(&hash, graph.direction_parameter);
-        hash_string(&hash, graph.target_parameter);
-        hash_string(&hash, graph.amount_parameter);
+        for (const ActionGraphActionConfig& action : graph.actions) {
+            hash_string(&hash, action.action_type);
+            hash_string(&hash, action.projectile_template_parameter);
+            hash_string(&hash, action.entity_template_parameter);
+            hash_string(&hash, action.position_parameter);
+            hash_string(&hash, action.direction_parameter);
+            hash_string(&hash, action.owner_parameter);
+            hash_string(&hash, action.target_parameter);
+            hash_string(&hash, action.amount_parameter);
+        }
     }
     std::vector<ActionTemplateConfig> action_templates = config.action_templates;
     std::sort(

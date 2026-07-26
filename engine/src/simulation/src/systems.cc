@@ -89,23 +89,7 @@ const KernelEntityTemplateDefinition* find_entity_template(
 std::optional<CompiledActionGraphBinding> compile_entity_trigger_binding(
     const KernelActionTriggerDefinition& trigger,
     TriggerEventType event_type) {
-    if (trigger.struct_size < sizeof(KernelActionTriggerDefinition)) {
-        return std::nullopt;
-    }
-    if (trigger.action_type == KernelEntityTriggerActionType_ApplyDamage) {
-        return compile_apply_damage_binding(
-            event_type,
-            static_cast<EntityRefSource>(trigger.target_source),
-            trigger.damage_amount);
-    }
-    if (trigger.action_type == KernelEntityTriggerActionType_SpawnEntity) {
-        return compile_spawn_entity_binding(
-            event_type,
-            trigger.spawn_entity_template_id,
-            static_cast<EventVec3Source>(trigger.position_source),
-            static_cast<EntityRefSource>(trigger.owner_source));
-    }
-    return std::nullopt;
+    return compile_action_trigger_definition(event_type, trigger);
 }
 
 bool execute_action_graph_commands(
@@ -113,12 +97,18 @@ bool execute_action_graph_commands(
     World& world,
     DamagePipeline* damage_pipeline,
     const std::vector<KernelEntityTemplateDefinition>& entity_templates,
-    const std::vector<ActionGraphCommand>& commands,
-    std::uint64_t server_time_us,
-    const glm::vec3& event_position) {
-    if (damage_pipeline == nullptr) {
+    const ActionGraphCommandBatch& batch,
+    std::uint64_t server_time_us) {
+    if (damage_pipeline == nullptr || batch.provenance.request_id == 0u) {
         return false;
     }
+    if (world.action_graph_batch_processed(
+            batch.provenance.request_id,
+            batch.event.type,
+            batch.sequence)) {
+        return true;
+    }
+    const std::vector<ActionGraphCommand>& commands = batch.commands;
     for (const ActionGraphCommand& command : commands) {
         if (const auto* damage =
                 std::get_if<ActionApplyDamageCommand>(&command)) {
@@ -158,7 +148,7 @@ bool execute_action_graph_commands(
                     0u,
                     damage->amount,
                     server_time_us,
-                    event_position,
+                    batch.event.position,
                 })) {
                 return false;
             }
@@ -180,6 +170,10 @@ bool execute_action_graph_commands(
             return false;
         }
     }
+    world.mark_action_graph_batch_processed(
+        batch.provenance.request_id,
+        batch.event.type,
+        batch.sequence);
     return true;
 }
 
@@ -519,7 +513,10 @@ bool ActivationSystem::activate_entity(
         activate_info.instigator_net_id == 0u) {
         return false;
     }
-    if (engine.processed_activation_requests_.contains(activate_info.request_id)) {
+    if (engine.world_.action_graph_batch_processed(
+            activate_info.request_id,
+            TriggerEventType::kActivated,
+            0u)) {
         return true;
     }
 
@@ -598,12 +595,10 @@ bool ActivationSystem::activate_entity(
             engine.world_,
             &engine.damage_pipeline_,
             engine.entity_templates_,
-            command_batches.front().commands,
-            engine.current_server_time_us(),
-            command_batches.front().event.position)) {
+            command_batches.front(),
+            engine.current_server_time_us())) {
         return false;
     }
-    engine.processed_activation_requests_.insert(activate_info.request_id);
     return true;
 }
 
@@ -700,6 +695,10 @@ void CollisionTriggerSystem::update(
     std::vector<ActionGraphQueuedTrigger> queued_triggers;
     queued_triggers.reserve(entered_collisions.size());
     for (const CollisionFact& collision : entered_collisions) {
+        if (engine.next_action_graph_sequence_ == 0u) {
+            engine.next_action_graph_sequence_ = 1u;
+        }
+        const std::uint32_t sequence = engine.next_action_graph_sequence_++;
         const TriggerEvent event{
             TriggerEventType::kCollision,
             collision.subject,
@@ -715,7 +714,7 @@ void CollisionTriggerSystem::update(
                 TriggerEventType::kCollision,
                 collision.subject,
                 collision.target,
-                0u),
+                sequence),
             0u,
             engine.tick_loop_.current_tick(),
             0u,
@@ -728,7 +727,7 @@ void CollisionTriggerSystem::update(
             collision.subject,
             event,
             provenance,
-            0u,
+            sequence,
         });
     }
 
@@ -743,9 +742,8 @@ void CollisionTriggerSystem::update(
             engine.world_,
             &engine.damage_pipeline_,
             engine.entity_templates_,
-            batch.commands,
-            server_time_us,
-            batch.event.position);
+            batch,
+            server_time_us);
     }
 }
 
@@ -820,9 +818,8 @@ void EntityLifecycleSystem::process_health_depleted(
             engine.world_,
             &engine.damage_pipeline_,
             engine.entity_templates_,
-            batch.commands,
-            server_time_us,
-            batch.event.position);
+            batch,
+            server_time_us);
     }
 }
 
@@ -984,9 +981,8 @@ bool EntityLifecycleSystem::destroy_entity_with_context(
                 engine.world_,
                 &engine.damage_pipeline_,
                 engine.entity_templates_,
-                batch.commands,
-                engine.current_server_time_us(),
-                batch.event.position);
+                batch,
+                engine.current_server_time_us());
         }
     }
     engine.publish_snapshot();
