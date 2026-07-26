@@ -284,12 +284,7 @@ void simulate_weapons(
     const WeaponSimulationContext& context,
     std::vector<KernelEvent>* events);
 
-void destroy_dead_entities(
-    World& world,
-    std::uint32_t current_tick,
-    std::vector<KernelEvent>* events);
-
-void apply_damage_applications(
+std::vector<ConfirmedDamage> apply_damage_applications(
     World& world,
     const std::vector<ConfirmedDamage>& damage_applications,
     std::uint32_t current_tick,

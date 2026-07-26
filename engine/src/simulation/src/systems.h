@@ -2,6 +2,7 @@
 #define SIMULATION_SRC_SYSTEMS_H_
 
 #include <cstdint>
+#include <vector>
 
 #include "ai_intent.h"
 #include "kernel/public/kernel_types.h"
@@ -10,6 +11,7 @@
 namespace network_example {
 
 class KernelEngine;
+struct ConfirmedDamage;
 
 class EntityLifecycleSystem {
 public:
@@ -22,6 +24,24 @@ public:
         KernelEngine& engine,
         NetId net_id,
         std::uint32_t reason) const;
+
+    void process_health_depleted(
+        KernelEngine& engine,
+        const std::vector<ConfirmedDamage>& health_depleted,
+        std::uint64_t server_time_us) const;
+
+    void destroy_dead_entities(
+        KernelEngine& engine,
+        const std::vector<ConfirmedDamage>& health_depleted) const;
+
+private:
+    bool destroy_entity_with_context(
+        KernelEngine& engine,
+        NetId net_id,
+        std::uint32_t reason,
+        NetId instigator,
+        std::uint8_t source_code,
+        const glm::vec3* event_position) const;
 };
 
 class ActivationSystem {

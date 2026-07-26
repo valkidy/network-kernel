@@ -1,7 +1,9 @@
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <vector>
 
 #include <entt/entt.hpp>
 #include <glm/glm.hpp>
@@ -212,10 +214,103 @@ void collision_prop_applies_damage_on_contact_enter() {
                .hp == 50);
 }
 
+void lifecycle_triggers_capture_context_before_prop_destruction() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+
+    KernelEntityTemplateDefinition prop_template{};
+    prop_template.struct_size = sizeof(prop_template);
+    prop_template.entity_template_id = 202;
+    prop_template.entity_type = KernelEntityType_Prop;
+    prop_template.component_flags =
+        KERNEL_ENTITY_COMPONENT_TRANSFORM | KERNEL_ENTITY_COMPONENT_HEALTH;
+    prop_template.combat.hp = 10;
+    prop_template.combat.max_hp = 10;
+    prop_template.ai.struct_size = sizeof(prop_template.ai);
+    prop_template.movement.struct_size = sizeof(prop_template.movement);
+    prop_template.health_depleted_trigger.struct_size =
+        sizeof(prop_template.health_depleted_trigger);
+    prop_template.health_depleted_trigger.action_type =
+        KernelEntityTriggerActionType_ApplyDamage;
+    prop_template.health_depleted_trigger.target_source =
+        KernelEntityRefSource_EventInstigator;
+    prop_template.health_depleted_trigger.damage_amount = 7;
+    prop_template.destroy_entity_trigger.struct_size =
+        sizeof(prop_template.destroy_entity_trigger);
+    prop_template.destroy_entity_trigger.action_type =
+        KernelEntityTriggerActionType_ApplyDamage;
+    prop_template.destroy_entity_trigger.target_source =
+        KernelEntityRefSource_EventInstigator;
+    prop_template.destroy_entity_trigger.damage_amount = 3;
+    engine.entity_templates_.push_back(prop_template);
+
+    KernelServerEntityCreateInfo actor_info{};
+    actor_info.struct_size = sizeof(actor_info);
+    actor_info.entity_type = KernelEntityType_Actor;
+    actor_info.actor_type = KernelActorType_Player;
+    actor_info.position = KernelVec3{0.0f, 0.0f, 0.0f};
+    actor_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+    std::uint32_t instigator = 0;
+    assert(engine.server_create_entity(actor_info, &instigator));
+    const auto instigator_entity = engine.world_.find_entity(instigator);
+    assert(instigator_entity.has_value());
+    engine.world_.registry().replace<network_example::Health>(
+        *instigator_entity,
+        network_example::Health{100, 100});
+
+    std::uint32_t prop = 0;
+    assert(engine.server_create_entity(
+        create_info(202, KernelVec3{1.0f, 0.0f, 0.0f}), &prop));
+    const auto prop_entity = engine.world_.find_entity(prop);
+    assert(prop_entity.has_value());
+    assert((engine.world_.registry().all_of<
+        network_example::OnHealthDepletedTriggerTag,
+        network_example::ActionGraphHealthDepletedBinding,
+        network_example::OnDestroyEntityTriggerTag,
+        network_example::ActionGraphDestroyEntityBinding>(*prop_entity)));
+
+    network_example::ConfirmedDamage lethal_damage{};
+    lethal_damage.server_tick = 1;
+    lethal_damage.sequence_id = 4;
+    lethal_damage.source_net_id = instigator;
+    lethal_damage.target_net_id = prop;
+    lethal_damage.damage = 10;
+    lethal_damage.hit_time_us = 1000;
+    lethal_damage.hit_position = glm::vec3{1.0f, 0.5f, 0.0f};
+    const std::vector<network_example::ConfirmedDamage> health_depleted =
+        network_example::apply_damage_applications(
+            engine.world_, {lethal_damage}, 1, nullptr);
+    assert(health_depleted.size() == 1);
+
+    network_example::EntityLifecycleSystem lifecycle;
+    lifecycle.process_health_depleted(engine, health_depleted, 1000);
+    assert(engine.damage_pipeline_.pending_count() == 1);
+    lifecycle.destroy_dead_entities(engine, health_depleted);
+    assert(!engine.world_.find_entity(prop).has_value());
+    assert(engine.damage_pipeline_.pending_count() == 2);
+
+    const auto ready = engine.damage_pipeline_.drain_ready_damage(
+        engine.world_, std::numeric_limits<std::uint64_t>::max());
+    assert(ready.size() == 2);
+    std::vector<std::uint16_t> damage_amounts;
+    for (const network_example::ConfirmedDamage& damage : ready) {
+        assert(damage.source_net_id == prop);
+        assert(damage.target_net_id == instigator);
+        damage_amounts.push_back(damage.damage);
+    }
+    std::sort(damage_amounts.begin(), damage_amounts.end());
+    assert((damage_amounts == std::vector<std::uint16_t>{3, 7}));
+}
+
 }  // namespace
 
 int main() {
     activated_prop_applies_damage_exactly_once();
     collision_prop_applies_damage_on_contact_enter();
+    lifecycle_triggers_capture_context_before_prop_destruction();
     return 0;
 }

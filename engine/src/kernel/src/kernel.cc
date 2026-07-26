@@ -2187,6 +2187,8 @@ bool KernelEngine::load_gameplay_catalog(
         for (const KernelActionTriggerDefinition* trigger : {
                  &entity_template.activated_trigger,
                  &entity_template.collision_trigger,
+                 &entity_template.health_depleted_trigger,
+                 &entity_template.destroy_entity_trigger,
              }) {
             if (trigger->struct_size != 0u &&
                 (trigger->struct_size < sizeof(KernelActionTriggerDefinition) ||
@@ -6683,12 +6685,15 @@ void KernelEngine::simulate_tick() {
     const std::vector<ConfirmedDamage> ready_damage =
         damage_pipeline_.drain_ready_damage(world_, server_time_us);
     queue_hit_debug_records(ready_damage);
-    apply_damage_applications(
+    const std::vector<ConfirmedDamage> health_depleted = apply_damage_applications(
         world_,
         ready_damage,
         tick_loop_.current_tick(),
         &events_);
-    destroy_dead_entities(world_, tick_loop_.current_tick(), &events_);
+    EntityLifecycleSystem lifecycle_system;
+    lifecycle_system.process_health_depleted(
+        *this, health_depleted, server_time_us);
+    lifecycle_system.destroy_dead_entities(*this, health_depleted);
     update_vision_states(fixed_delta);
     DirectorAISystem{}.update(*this);
     DirectorIntentExecutor{}.update(*this);

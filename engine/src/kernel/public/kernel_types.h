@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 47u
+#define KERNEL_ABI_VERSION 48u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -1255,6 +1255,8 @@ struct KernelEntityTemplateDefinition {
     KernelMovementDefinition movement;
     KernelActionTriggerDefinition activated_trigger;
     KernelActionTriggerDefinition collision_trigger;
+    KernelActionTriggerDefinition health_depleted_trigger;
+    KernelActionTriggerDefinition destroy_entity_trigger;
 };
 
 typedef struct KernelEvent {

@@ -27,10 +27,12 @@ std::uint64_t collision_pair_key(NetId subject, NetId target) {
         static_cast<std::uint64_t>(target);
 }
 
-std::uint64_t collision_request_id(
+std::uint64_t action_trigger_request_id(
     std::uint32_t server_tick,
+    TriggerEventType event_type,
     NetId subject,
-    NetId target) {
+    NetId related_entity,
+    std::uint32_t sequence) {
     std::uint64_t hash = 1469598103934665603ull;
     const auto mix = [&hash](std::uint32_t value) {
         hash ^= value;
@@ -38,8 +40,9 @@ std::uint64_t collision_request_id(
     };
     mix(server_tick);
     mix(subject);
-    mix(target);
-    mix(static_cast<std::uint32_t>(TriggerEventType::kCollision));
+    mix(related_entity);
+    mix(sequence);
+    mix(static_cast<std::uint32_t>(event_type));
     return hash;
 }
 
@@ -385,6 +388,32 @@ bool EntityLifecycleSystem::create_entity(
                         entity_template->collision_trigger.target_source),
                     entity_template->collision_trigger.damage_amount)});
         }
+        if (entity_template->health_depleted_trigger.struct_size >=
+                sizeof(KernelActionTriggerDefinition) &&
+            entity_template->health_depleted_trigger.action_type ==
+                KernelEntityTriggerActionType_ApplyDamage) {
+            registry.emplace_or_replace<OnHealthDepletedTriggerTag>(*entity);
+            registry.emplace_or_replace<ActionGraphHealthDepletedBinding>(
+                *entity,
+                ActionGraphHealthDepletedBinding{compile_apply_damage_binding(
+                    TriggerEventType::kHealthDepleted,
+                    static_cast<EntityRefSource>(
+                        entity_template->health_depleted_trigger.target_source),
+                    entity_template->health_depleted_trigger.damage_amount)});
+        }
+        if (entity_template->destroy_entity_trigger.struct_size >=
+                sizeof(KernelActionTriggerDefinition) &&
+            entity_template->destroy_entity_trigger.action_type ==
+                KernelEntityTriggerActionType_ApplyDamage) {
+            registry.emplace_or_replace<OnDestroyEntityTriggerTag>(*entity);
+            registry.emplace_or_replace<ActionGraphDestroyEntityBinding>(
+                *entity,
+                ActionGraphDestroyEntityBinding{compile_apply_damage_binding(
+                    TriggerEventType::kDestroyEntity,
+                    static_cast<EntityRefSource>(
+                        entity_template->destroy_entity_trigger.target_source),
+                    entity_template->destroy_entity_trigger.damage_amount)});
+        }
         if (entity_template->actor_template_id != 0u) {
             registry.emplace_or_replace<ActorTemplateRef>(
                 *entity,
@@ -639,10 +668,12 @@ void CollisionTriggerSystem::update(
             std::nullopt,
         };
         const ActionExecutionProvenance provenance{
-            collision_request_id(
+            action_trigger_request_id(
                 engine.tick_loop_.current_tick(),
+                TriggerEventType::kCollision,
                 collision.subject,
-                collision.target),
+                collision.target,
+                0u),
             0u,
             engine.tick_loop_.current_tick(),
             0u,
@@ -678,16 +709,197 @@ bool EntityLifecycleSystem::destroy_entity(
     KernelEngine& engine,
     NetId net_id,
     std::uint32_t reason) const {
+    return destroy_entity_with_context(
+        engine, net_id, reason, 0u, 0u, nullptr);
+}
+
+void EntityLifecycleSystem::process_health_depleted(
+    KernelEngine& engine,
+    const std::vector<ConfirmedDamage>& health_depleted,
+    std::uint64_t server_time_us) const {
+    std::vector<ActionGraphQueuedTrigger> queued_triggers;
+    queued_triggers.reserve(health_depleted.size());
+    for (const ConfirmedDamage& damage : health_depleted) {
+        const std::optional<entt::entity> subject =
+            engine.world_.find_entity(damage.target_net_id);
+        if (!subject.has_value() ||
+            !engine.world_.registry().all_of<
+                NetworkIdentity,
+                OnHealthDepletedTriggerTag,
+                ActionGraphHealthDepletedBinding>(*subject)) {
+            continue;
+        }
+        const NetworkIdentity& identity =
+            engine.world_.registry().get<NetworkIdentity>(*subject);
+        const ActionGraphHealthDepletedBinding& binding =
+            engine.world_.registry().get<ActionGraphHealthDepletedBinding>(*subject);
+        const TriggerEvent event{
+            TriggerEventType::kHealthDepleted,
+            damage.target_net_id,
+            damage.source_net_id,
+            0u,
+            damage.hit_position,
+            glm::vec3{0.0f},
+            std::nullopt,
+        };
+        const ActionExecutionProvenance provenance{
+            action_trigger_request_id(
+                engine.tick_loop_.current_tick(),
+                TriggerEventType::kHealthDepleted,
+                damage.target_net_id,
+                damage.source_net_id,
+                damage.sequence_id),
+            0u,
+            engine.tick_loop_.current_tick(),
+            damage.source_net_id,
+            identity.owner_peer,
+            damage.source_code,
+            ActionAuthoritySource::kAuthoritativeSimulation,
+        };
+        queued_triggers.push_back(ActionGraphQueuedTrigger{
+            binding.binding,
+            damage.target_net_id,
+            event,
+            provenance,
+            damage.sequence_id,
+        });
+    }
+
+    std::vector<ActionGraphCommandBatch> command_batches;
+    if (!dispatch_action_graph_triggers(
+            &queued_triggers, &command_batches, nullptr)) {
+        return;
+    }
+    for (const ActionGraphCommandBatch& batch : command_batches) {
+        (void)submit_action_damage_commands(
+            engine.world_,
+            &engine.damage_pipeline_,
+            batch.commands,
+            server_time_us,
+            batch.event.position);
+    }
+}
+
+void EntityLifecycleSystem::destroy_dead_entities(
+    KernelEngine& engine,
+    const std::vector<ConfirmedDamage>& health_depleted) const {
+    std::vector<NetId> dead_entities;
+    auto view = engine.world_.registry().view<NetworkIdentity, Health>();
+    for (const entt::entity entity : view) {
+        const Health& health = view.get<Health>(entity);
+        if (health.max_hp > 0u && health.hp == 0u &&
+            !engine.world_.registry().all_of<PlayerTag>(entity)) {
+            dead_entities.push_back(view.get<NetworkIdentity>(entity).net_id);
+        }
+    }
+    std::sort(dead_entities.begin(), dead_entities.end());
+    for (const NetId net_id : dead_entities) {
+        const auto cause = std::find_if(
+            health_depleted.begin(),
+            health_depleted.end(),
+            [net_id](const ConfirmedDamage& damage) {
+                return damage.target_net_id == net_id;
+            });
+        const NetId instigator = cause == health_depleted.end()
+            ? 0u
+            : cause->source_net_id;
+        const std::uint8_t source_code = cause == health_depleted.end()
+            ? 0u
+            : cause->source_code;
+        const glm::vec3* position = cause == health_depleted.end()
+            ? nullptr
+            : &cause->hit_position;
+        (void)destroy_entity_with_context(
+            engine,
+            net_id,
+            KernelDespawnReason_Destroyed,
+            instigator,
+            source_code,
+            position);
+    }
+}
+
+bool EntityLifecycleSystem::destroy_entity_with_context(
+    KernelEngine& engine,
+    NetId net_id,
+    std::uint32_t reason,
+    NetId instigator,
+    std::uint8_t source_code,
+    const glm::vec3* event_position) const {
     if (!engine.running_ || !is_server_mode(engine.config_.mode) || net_id == 0) {
         return false;
     }
     std::uint16_t entity_type = 0;
     std::uint16_t actor_type = 0;
-    if (const std::optional<entt::entity> entity = engine.world_.find_entity(net_id);
-        entity.has_value() && engine.world_.registry().all_of<EntityKind>(*entity)) {
+    const std::optional<entt::entity> entity = engine.world_.find_entity(net_id);
+    if (!entity.has_value()) {
+        return false;
+    }
+    glm::vec3 position = event_position == nullptr
+        ? glm::vec3{0.0f}
+        : *event_position;
+    if (engine.world_.registry().all_of<Transform>(*entity) &&
+        event_position == nullptr) {
+        position = engine.world_.registry().get<Transform>(*entity).position;
+    }
+    glm::vec3 direction{0.0f};
+    if (instigator != 0u && engine.world_.registry().all_of<Transform>(*entity)) {
+        const std::optional<entt::entity> instigator_entity =
+            engine.world_.find_entity(instigator);
+        if (instigator_entity.has_value() &&
+            engine.world_.registry().all_of<Transform>(*instigator_entity)) {
+            const glm::vec3 offset =
+                engine.world_.registry().get<Transform>(*entity).position -
+                engine.world_.registry().get<Transform>(*instigator_entity).position;
+            if (glm::length(offset) > 0.0001f) {
+                direction = glm::normalize(offset);
+            }
+        }
+    }
+    PeerId owner_peer = 0u;
+    if (engine.world_.registry().all_of<NetworkIdentity>(*entity)) {
+        owner_peer =
+            engine.world_.registry().get<NetworkIdentity>(*entity).owner_peer;
+    }
+    if (engine.world_.registry().all_of<EntityKind>(*entity)) {
         const EntityKind& kind = engine.world_.registry().get<EntityKind>(*entity);
         entity_type = static_cast<std::uint16_t>(kind.type);
         actor_type = static_cast<std::uint16_t>(kind.actor_type);
+    }
+    std::vector<ActionGraphQueuedTrigger> queued_triggers;
+    if (engine.world_.registry().all_of<
+            OnDestroyEntityTriggerTag,
+            ActionGraphDestroyEntityBinding>(*entity)) {
+        const ActionGraphDestroyEntityBinding& binding =
+            engine.world_.registry().get<ActionGraphDestroyEntityBinding>(*entity);
+        queued_triggers.push_back(ActionGraphQueuedTrigger{
+            binding.binding,
+            net_id,
+            TriggerEvent{
+                TriggerEventType::kDestroyEntity,
+                net_id,
+                instigator,
+                0u,
+                position,
+                direction,
+                std::nullopt,
+            },
+            ActionExecutionProvenance{
+                action_trigger_request_id(
+                    engine.tick_loop_.current_tick(),
+                    TriggerEventType::kDestroyEntity,
+                    net_id,
+                    instigator,
+                    reason),
+                0u,
+                engine.tick_loop_.current_tick(),
+                instigator,
+                owner_peer,
+                source_code,
+                ActionAuthoritySource::kAuthoritativeSimulation,
+            },
+            reason,
+        });
     }
     if (engine.physics_world_ != nullptr) {
         engine.physics_world_->remove_character(net_id);
@@ -717,6 +929,18 @@ bool EntityLifecycleSystem::destroy_entity(
         actor_type,
         0,
     });
+    std::vector<ActionGraphCommandBatch> command_batches;
+    if (dispatch_action_graph_triggers(
+            &queued_triggers, &command_batches, nullptr)) {
+        for (const ActionGraphCommandBatch& batch : command_batches) {
+            (void)submit_action_damage_commands(
+                engine.world_,
+                &engine.damage_pipeline_,
+                batch.commands,
+                engine.current_server_time_us(),
+                batch.event.position);
+        }
+    }
     engine.publish_snapshot();
     return true;
 }

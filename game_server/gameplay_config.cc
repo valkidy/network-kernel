@@ -246,6 +246,17 @@ void hash_actor_template(
         hash_string(hash, parameter.first);
         hash_string(hash, parameter.second);
     }
+    hash_string(hash, actor_template.health_depleted_trigger.action_graph_ref);
+    for (const auto& parameter :
+         actor_template.health_depleted_trigger.parameters) {
+        hash_string(hash, parameter.first);
+        hash_string(hash, parameter.second);
+    }
+    hash_string(hash, actor_template.destroy_entity_trigger.action_graph_ref);
+    for (const auto& parameter : actor_template.destroy_entity_trigger.parameters) {
+        hash_string(hash, parameter.first);
+        hash_string(hash, parameter.second);
+    }
 }
 
 KernelWeaponMechanicsDefinition hitscan_weapon(
@@ -2305,7 +2316,12 @@ EntityTemplateConfig entity_template_from_yaml(
         if (node["triggers"]) {
             reject_unknown_keys(
                 node["triggers"],
-                {"on_activated", "on_collision"},
+                {
+                    "on_activated",
+                    "on_collision",
+                    "on_health_depleted",
+                    "on_destroy_entity",
+                },
                 path,
                 source_kind,
                 KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
@@ -2325,6 +2341,24 @@ EntityTemplateConfig entity_template_from_yaml(
                     source_kind,
                     KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
                     entity_template.actor_template_id);
+            }
+            if (node["triggers"]["on_health_depleted"]) {
+                entity_template.health_depleted_trigger =
+                    trigger_binding_from_yaml(
+                        node["triggers"]["on_health_depleted"],
+                        path,
+                        source_kind,
+                        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                        entity_template.actor_template_id);
+            }
+            if (node["triggers"]["on_destroy_entity"]) {
+                entity_template.destroy_entity_trigger =
+                    trigger_binding_from_yaml(
+                        node["triggers"]["on_destroy_entity"],
+                        path,
+                        source_kind,
+                        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                        entity_template.actor_template_id);
             }
         }
         return entity_template;
@@ -4335,6 +4369,14 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
         entity_template.collision_trigger = compile_action_trigger_binding(
             authored_template.collision_trigger,
             "on_collision",
+            config.action_graph_templates);
+        entity_template.health_depleted_trigger = compile_action_trigger_binding(
+            authored_template.health_depleted_trigger,
+            "on_health_depleted",
+            config.action_graph_templates);
+        entity_template.destroy_entity_trigger = compile_action_trigger_binding(
+            authored_template.destroy_entity_trigger,
+            "on_destroy_entity",
             config.action_graph_templates);
 
         if (authored_template.entity_type == kEntityTypeActor) {

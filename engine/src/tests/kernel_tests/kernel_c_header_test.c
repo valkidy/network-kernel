@@ -6,8 +6,8 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 47u,
-    "prop collision action graph ABI");
+    KERNEL_ABI_VERSION == 48u,
+    "prop lifecycle action graph ABI");
 _Static_assert(sizeof(ActionIntent) == 8u, "ActionIntent ABI size");
 _Static_assert(sizeof(ActionInput) == 8u, "ActionInput ABI size");
 _Static_assert(
@@ -101,7 +101,7 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 47u);
+    assert(KERNEL_ABI_VERSION == 48u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD == 4u);
@@ -223,6 +223,10 @@ int main(void) {
            offsetof(KernelEntityTemplateDefinition, movement));
     assert(offsetof(KernelEntityTemplateDefinition, collision_trigger) >
            offsetof(KernelEntityTemplateDefinition, activated_trigger));
+    assert(offsetof(KernelEntityTemplateDefinition, health_depleted_trigger) >
+           offsetof(KernelEntityTemplateDefinition, collision_trigger));
+    assert(offsetof(KernelEntityTemplateDefinition, destroy_entity_trigger) >
+           offsetof(KernelEntityTemplateDefinition, health_depleted_trigger));
     assert(RenderEntityStatus_Active == 0u);
     assert((KERNEL_VISUAL_FLAG_HP_UNKNOWN & KERNEL_VISUAL_FLAG_DEAD) == 0u);
     assert(sizeof(KernelEntityLifecycleEvent) > 0u);

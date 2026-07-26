@@ -405,6 +405,7 @@ enum class TriggerEventType : std::uint8_t {
 struct OnCollisionTriggerTag {};
 struct OnProjectileImpactTriggerTag {};
 struct OnActivatedTriggerTag {};
+struct OnHealthDepletedTriggerTag {};
 struct OnDestroyEntityTriggerTag {};
 struct OnExpiredTriggerTag {};
 
@@ -523,6 +524,14 @@ struct ActionGraphActivatedBinding {
 };
 
 struct ActionGraphCollisionBinding {
+    CompiledActionGraphBinding binding;
+};
+
+struct ActionGraphHealthDepletedBinding {
+    CompiledActionGraphBinding binding;
+};
+
+struct ActionGraphDestroyEntityBinding {
     CompiledActionGraphBinding binding;
 };
 
