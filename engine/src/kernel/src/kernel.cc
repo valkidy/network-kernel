@@ -593,24 +593,44 @@ KernelVec4 collider_instance_shape_params(const ColliderInstance& collider) {
     };
 }
 
-bool projectile_template_has_impact_cycle(
+bool projectile_template_has_trigger_cycle(
+    const std::vector<KernelProjectileTemplateDefinition>& templates,
+    std::uint32_t projectile_template_id,
+    std::unordered_set<std::uint32_t>* path) {
+    if (projectile_template_id == 0u || path == nullptr) {
+        return false;
+    }
+    if (!path->insert(projectile_template_id).second) {
+        return true;
+    }
+    const KernelProjectileTemplateDefinition* projectile_template =
+        find_projectile_template(templates, projectile_template_id);
+    if (projectile_template != nullptr) {
+        const KernelProjectileMechanicsDefinition& mechanics =
+            projectile_template->mechanics;
+        for (const std::uint32_t next_id : {
+                 mechanics.impact_spawn_projectile_template_id,
+                 mechanics.expire_spawn_projectile_template_id,
+                 mechanics.projectile_impact_trigger
+                     .spawn_projectile_template_id,
+                 mechanics.expired_trigger.spawn_projectile_template_id,
+             }) {
+            if (projectile_template_has_trigger_cycle(
+                    templates, next_id, path)) {
+                return true;
+            }
+        }
+    }
+    path->erase(projectile_template_id);
+    return false;
+}
+
+bool projectile_template_has_trigger_cycle(
     const std::vector<KernelProjectileTemplateDefinition>& templates,
     std::uint32_t projectile_template_id) {
-    std::unordered_set<std::uint32_t> visited;
-    std::uint32_t current = projectile_template_id;
-    while (current != 0) {
-        if (!visited.insert(current).second) {
-            return true;
-        }
-        const KernelProjectileTemplateDefinition* projectile_template =
-            find_projectile_template(templates, current);
-        if (projectile_template == nullptr ||
-            projectile_template->mechanics.impact_spawn_projectile_template_id == 0u) {
-            return false;
-        }
-        current = projectile_template->mechanics.impact_spawn_projectile_template_id;
-    }
-    return false;
+    std::unordered_set<std::uint32_t> path;
+    return projectile_template_has_trigger_cycle(
+        templates, projectile_template_id, &path);
 }
 
 ColliderShapeType to_collider_shape_type(std::uint8_t shape_type) {
@@ -1030,13 +1050,29 @@ RuntimeProjectileTemplate to_runtime_projectile_template(
         mechanics.impact_spawn_projectile_template_id;
     projectile_template.expire_spawn_projectile_template_id =
         mechanics.expire_spawn_projectile_template_id;
-    if (mechanics.impact_spawn_projectile_template_id != 0u) {
+    if (mechanics.projectile_impact_trigger.struct_size >=
+            sizeof(KernelActionTriggerDefinition) &&
+        mechanics.projectile_impact_trigger.action_type ==
+            KernelEntityTriggerActionType_SpawnProjectile) {
+        projectile_template.projectile_impact_binding =
+            compile_spawn_projectile_binding(
+                TriggerEventType::kProjectileImpact,
+                mechanics.projectile_impact_trigger
+                    .spawn_projectile_template_id);
+    } else if (mechanics.impact_spawn_projectile_template_id != 0u) {
         projectile_template.projectile_impact_binding =
             compile_spawn_projectile_binding(
                 TriggerEventType::kProjectileImpact,
                 mechanics.impact_spawn_projectile_template_id);
     }
-    if (mechanics.expire_spawn_projectile_template_id != 0u) {
+    if (mechanics.expired_trigger.struct_size >=
+            sizeof(KernelActionTriggerDefinition) &&
+        mechanics.expired_trigger.action_type ==
+            KernelEntityTriggerActionType_SpawnProjectile) {
+        projectile_template.expired_binding = compile_spawn_projectile_binding(
+            TriggerEventType::kExpired,
+            mechanics.expired_trigger.spawn_projectile_template_id);
+    } else if (mechanics.expire_spawn_projectile_template_id != 0u) {
         projectile_template.expired_binding =
             compile_spawn_projectile_binding(
                 TriggerEventType::kExpired,
@@ -1206,6 +1242,15 @@ bool validate_beam_mechanics(const KernelBeamMechanicsDefinition& beam) {
 
 bool validate_projectile_mechanics(
     const KernelProjectileMechanicsDefinition& mechanics) {
+    const auto valid_trigger = [](const KernelActionTriggerDefinition& trigger) {
+        return trigger.struct_size == 0u ||
+            (trigger.struct_size >= sizeof(KernelActionTriggerDefinition) &&
+             trigger.action_type ==
+                 KernelEntityTriggerActionType_SpawnProjectile &&
+             trigger.spawn_projectile_template_id != 0u &&
+             trigger.position_source == KernelEventVec3Source_Position &&
+             trigger.direction_source == KernelEventVec3Source_Direction);
+    };
     if (mechanics.struct_size < sizeof(KernelProjectileMechanicsDefinition) ||
         mechanics.projectile_type > KernelProjectileType_Beam ||
         mechanics.motion_model > KernelProjectileMotionModel_Homing ||
@@ -1220,7 +1265,13 @@ bool validate_projectile_mechanics(
              ? mechanics.damage != 0
              : mechanics.damage == 0) ||
         mechanics.collider_template_id == 0 ||
-        mechanics.max_hit_count == 0) {
+        mechanics.max_hit_count == 0 ||
+        !valid_trigger(mechanics.projectile_impact_trigger) ||
+        !valid_trigger(mechanics.expired_trigger) ||
+        (mechanics.projectile_impact_trigger.struct_size != 0u &&
+         mechanics.impact_spawn_projectile_template_id != 0u) ||
+        (mechanics.expired_trigger.struct_size != 0u &&
+         mechanics.expire_spawn_projectile_template_id != 0u)) {
         return false;
     }
     if (mechanics.projectile_type == KernelProjectileType_Standard &&
@@ -2287,12 +2338,26 @@ bool KernelEngine::load_gameplay_catalog(
         if (projectile_collider == nullptr ||
             projectile_collider->shape_type == KernelColliderShapeType_Cone ||
             (mechanics.impact_spawn_projectile_template_id != 0u &&
-             (find_projectile_template(
-                  validated_projectile_templates,
-                  mechanics.impact_spawn_projectile_template_id) == nullptr ||
-              projectile_template_has_impact_cycle(
-                  validated_projectile_templates,
-                  projectile_template.projectile_template_id))) ||
+             find_projectile_template(
+                 validated_projectile_templates,
+                 mechanics.impact_spawn_projectile_template_id) == nullptr) ||
+            ((mechanics.impact_spawn_projectile_template_id != 0u ||
+              mechanics.expire_spawn_projectile_template_id != 0u ||
+              mechanics.projectile_impact_trigger.struct_size != 0u ||
+              mechanics.expired_trigger.struct_size != 0u) &&
+             projectile_template_has_trigger_cycle(
+                 validated_projectile_templates,
+                 projectile_template.projectile_template_id)) ||
+            (mechanics.projectile_impact_trigger.struct_size != 0u &&
+             find_projectile_template(
+                 validated_projectile_templates,
+                 mechanics.projectile_impact_trigger
+                     .spawn_projectile_template_id) == nullptr) ||
+            (mechanics.expired_trigger.struct_size != 0u &&
+             find_projectile_template(
+                 validated_projectile_templates,
+                 mechanics.expired_trigger.spawn_projectile_template_id) ==
+                 nullptr) ||
             (mechanics.expire_spawn_projectile_template_id != 0u &&
              find_projectile_template(
                  validated_projectile_templates,

@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 49u
+#define KERNEL_ABI_VERSION 50u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -310,6 +310,7 @@ typedef enum KernelEntityTriggerActionType {
     KernelEntityTriggerActionType_None = 0,
     KernelEntityTriggerActionType_ApplyDamage = 1,
     KernelEntityTriggerActionType_SpawnEntity = 2,
+    KernelEntityTriggerActionType_SpawnProjectile = 3,
 } KernelEntityTriggerActionType;
 
 typedef enum KernelEntityRefSource {
@@ -323,6 +324,19 @@ typedef enum KernelEventVec3Source {
     KernelEventVec3Source_Position = 0,
     KernelEventVec3Source_Direction = 1,
 } KernelEventVec3Source;
+
+typedef struct KernelActionTriggerDefinition {
+    uint32_t struct_size;
+    uint8_t action_type;
+    uint8_t target_source;
+    uint16_t damage_amount;
+    uint32_t spawn_entity_template_id;
+    uint32_t spawn_projectile_template_id;
+    uint8_t position_source;
+    uint8_t direction_source;
+    uint8_t owner_source;
+    uint8_t reserved;
+} KernelActionTriggerDefinition;
 
 typedef enum KernelAiControllerType {
     KernelAiControllerType_None = 0,
@@ -815,6 +829,8 @@ typedef struct KernelProjectileMechanicsDefinition {
     KernelHomingMechanicsDefinition homing;
     KernelAreaEffectMechanicsDefinition area_effect;
     KernelBeamMechanicsDefinition beam;
+    KernelActionTriggerDefinition projectile_impact_trigger;
+    KernelActionTriggerDefinition expired_trigger;
     uint32_t impact_spawn_projectile_template_id;
     uint32_t expire_spawn_projectile_template_id;
     uint8_t collision_query_mode;
@@ -1236,17 +1252,6 @@ struct KernelEntityAiDefinition {
     float spawn_radius;
     uint32_t spawn_seed;
 };
-
-typedef struct KernelActionTriggerDefinition {
-    uint32_t struct_size;
-    uint8_t action_type;
-    uint8_t target_source;
-    uint16_t damage_amount;
-    uint32_t spawn_entity_template_id;
-    uint8_t position_source;
-    uint8_t owner_source;
-    uint16_t reserved;
-} KernelActionTriggerDefinition;
 
 struct KernelEntityTemplateDefinition {
     uint32_t struct_size;

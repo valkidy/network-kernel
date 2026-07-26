@@ -181,6 +181,15 @@ void hash_projectile_template(
     hash_scalar(hash, mechanics.beam.damage_per_tick);
     hash_scalar(hash, mechanics.beam.lifetime_ticks);
     hash_scalar(hash, mechanics.beam.collision_mask);
+    for (const KernelActionTriggerDefinition* trigger : {
+             &mechanics.projectile_impact_trigger,
+             &mechanics.expired_trigger,
+         }) {
+        hash_scalar(hash, trigger->action_type);
+        hash_scalar(hash, trigger->spawn_projectile_template_id);
+        hash_scalar(hash, trigger->position_source);
+        hash_scalar(hash, trigger->direction_source);
+    }
     hash_scalar(hash, mechanics.impact_spawn_projectile_template_id);
     hash_scalar(hash, mechanics.expire_spawn_projectile_template_id);
 }
@@ -3115,14 +3124,18 @@ void compile_projectile_trigger_binding(
     }
     ProjectileTemplateConfig* spawned_projectile = projectile_template_from_ref(
         YAML::Node(projectile_ref), projectile_templates);
-    std::uint32_t& compiled_template_id =
+    KernelActionTriggerDefinition& compiled =
         expired
         ? projectile_template->definition.mechanics
-              .expire_spawn_projectile_template_id
+              .expired_trigger
         : projectile_template->definition.mechanics
-              .impact_spawn_projectile_template_id;
-    compiled_template_id =
+              .projectile_impact_trigger;
+    compiled.struct_size = sizeof(KernelActionTriggerDefinition);
+    compiled.action_type = KernelEntityTriggerActionType_SpawnProjectile;
+    compiled.spawn_projectile_template_id =
         spawned_projectile->definition.projectile_template_id;
+    compiled.position_source = KernelEventVec3Source_Position;
+    compiled.direction_source = KernelEventVec3Source_Direction;
 }
 
 KernelActionTriggerDefinition compile_action_trigger_binding(
@@ -3312,6 +3325,10 @@ std::vector<ProjectileTemplateConfig> load_projectile_templates_from_source(
                          .impact_spawn_projectile_template_id,
                      current->definition.mechanics
                          .expire_spawn_projectile_template_id,
+                     current->definition.mechanics.projectile_impact_trigger
+                         .spawn_projectile_template_id,
+                     current->definition.mechanics.expired_trigger
+                         .spawn_projectile_template_id,
                  }) {
                 if (next_id == 0u) {
                     continue;
@@ -4293,6 +4310,8 @@ std::vector<std::string> validate_gameplay_config(
               mechanics.beam.damage_per_tick == 0 ||
               mechanics.beam.lifetime_ticks == 0)) ||
             (mechanics.impact_spawn_projectile_template_id == 0 &&
+             mechanics.projectile_impact_trigger
+                     .spawn_projectile_template_id == 0 &&
              !projectile_template.impact_projectile_template_ref.empty()) ||
             (mechanics.motion_model != KernelProjectileMotionModel_Homing
                  ? mechanics.homing.struct_size != 0

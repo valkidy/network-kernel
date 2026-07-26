@@ -74,6 +74,21 @@ int main() {
         KernelEntityRefSource_EventTarget);
     assert(compiled_collision->collision_trigger.damage_amount == 25);
 
+    const auto rocket = std::find_if(
+        catalog.projectile_templates.begin(),
+        catalog.projectile_templates.end(),
+        [](const KernelProjectileTemplateDefinition& value) {
+            return value.projectile_template_id == 3;
+        });
+    assert(rocket != catalog.projectile_templates.end());
+    assert(
+        rocket->mechanics.projectile_impact_trigger.action_type ==
+        KernelEntityTriggerActionType_SpawnProjectile);
+    assert(
+        rocket->mechanics.projectile_impact_trigger
+            .spawn_projectile_template_id == 8);
+    assert(rocket->mechanics.impact_spawn_projectile_template_id == 0u);
+
     KernelConfig kernel_config{};
     kernel_config.mode = KernelMode_DedicatedServer;
     kernel_config.tick.server_tick_rate = 30;

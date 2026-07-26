@@ -6,10 +6,10 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 49u,
-    "prop lifecycle action graph ABI");
+    KERNEL_ABI_VERSION == 50u,
+    "action trigger ABI");
 _Static_assert(
-    sizeof(KernelActionTriggerDefinition) == 16u,
+    sizeof(KernelActionTriggerDefinition) == 20u,
     "KernelActionTriggerDefinition ABI size");
 _Static_assert(sizeof(ActionIntent) == 8u, "ActionIntent ABI size");
 _Static_assert(sizeof(ActionInput) == 8u, "ActionInput ABI size");
@@ -104,7 +104,7 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 49u);
+    assert(KERNEL_ABI_VERSION == 50u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD == 4u);

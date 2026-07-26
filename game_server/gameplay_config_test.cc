@@ -722,7 +722,10 @@ int main() {
             assert(projectile.definition.mechanics.damage_shape ==
                    KernelProjectileDamageShape_None);
             assert(projectile.definition.mechanics
-                       .impact_spawn_projectile_template_id == 8);
+                       .projectile_impact_trigger.action_type ==
+                   KernelEntityTriggerActionType_SpawnProjectile);
+            assert(projectile.definition.mechanics.projectile_impact_trigger
+                       .spawn_projectile_template_id == 8);
         }
         if (projectile.name == "spammer_projectile") {
             found_spammer_projectile = true;
@@ -736,7 +739,10 @@ int main() {
                    KernelProjectileDamageShape_DirectHit);
             assert(projectile.definition.mechanics.damage == 45);
             assert(projectile.definition.mechanics
-                       .impact_spawn_projectile_template_id == 8);
+                       .projectile_impact_trigger.action_type ==
+                   KernelEntityTriggerActionType_SpawnProjectile);
+            assert(projectile.definition.mechanics.projectile_impact_trigger
+                       .spawn_projectile_template_id == 8);
         }
         if (projectile.name == "rocket_explosion") {
             found_rocket_explosion = true;
