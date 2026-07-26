@@ -11,6 +11,7 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include "kernel/src/kernel.h"
+#include "simulation/public/action_graph.h"
 
 namespace network_example {
 namespace {
@@ -296,6 +297,19 @@ bool EntityLifecycleSystem::create_entity(
              KERNEL_ENTITY_COMPONENT_DIRECTOR_RUNTIME) != 0u) {
             materialize_director_runtime(registry, *entity, entity_template->ai);
         }
+        if (entity_template->activated_trigger.struct_size >=
+                sizeof(KernelActivatedTriggerDefinition) &&
+            entity_template->activated_trigger.action_type ==
+                KernelEntityTriggerActionType_ApplyDamage) {
+            registry.emplace_or_replace<OnActivatedTriggerTag>(*entity);
+            registry.emplace_or_replace<ActivatedActionGraphBinding>(
+                *entity,
+                ActivatedActionGraphBinding{compile_apply_damage_binding(
+                    TriggerEventType::kActivated,
+                    static_cast<EntityRefSource>(
+                        entity_template->activated_trigger.target_source),
+                    entity_template->activated_trigger.damage_amount)});
+        }
         if (entity_template->actor_template_id != 0u) {
             registry.emplace_or_replace<ActorTemplateRef>(
                 *entity,
@@ -349,6 +363,116 @@ bool EntityLifecycleSystem::create_entity(
         create_info.owner_peer,
         static_cast<std::uint32_t>(type));
     engine.publish_snapshot();
+    return true;
+}
+
+bool ActivationSystem::activate_entity(
+    KernelEngine& engine,
+    const KernelServerEntityActivateInfo& activate_info) const {
+    if (!engine.running_ || !is_server_mode(engine.config_.mode) ||
+        activate_info.struct_size < sizeof(KernelServerEntityActivateInfo) ||
+        activate_info.request_id == 0u || activate_info.subject_net_id == 0u ||
+        activate_info.instigator_net_id == 0u) {
+        return false;
+    }
+    if (engine.processed_activation_requests_.contains(activate_info.request_id)) {
+        return true;
+    }
+
+    const std::optional<entt::entity> subject =
+        engine.world_.find_entity(activate_info.subject_net_id);
+    const std::optional<entt::entity> instigator =
+        engine.world_.find_entity(activate_info.instigator_net_id);
+    if (!subject.has_value() || !instigator.has_value() ||
+        !engine.world_.registry().all_of<
+            OnActivatedTriggerTag,
+            ActivatedActionGraphBinding,
+            Transform>(*subject) ||
+        !engine.world_.registry().all_of<
+            NetworkIdentity,
+            EntityKind,
+            Transform>(*instigator) ||
+        engine.world_.registry().get<EntityKind>(*instigator).type !=
+            EntityType::kActor) {
+        return false;
+    }
+    if (activate_info.target_net_id != 0u &&
+        !engine.world_.find_entity(activate_info.target_net_id).has_value()) {
+        return false;
+    }
+
+    const Transform& subject_transform =
+        engine.world_.registry().get<Transform>(*subject);
+    const Transform& instigator_transform =
+        engine.world_.registry().get<Transform>(*instigator);
+    const glm::vec3 offset =
+        subject_transform.position - instigator_transform.position;
+    const glm::vec3 direction = glm::length(offset) > 0.0001f
+        ? glm::normalize(offset)
+        : glm::vec3{1.0f, 0.0f, 0.0f};
+    const TriggerEvent event{
+        TriggerEventType::kActivated,
+        activate_info.subject_net_id,
+        activate_info.instigator_net_id,
+        activate_info.target_net_id,
+        subject_transform.position,
+        direction,
+        std::nullopt,
+    };
+    const NetworkIdentity& instigator_identity =
+        engine.world_.registry().get<NetworkIdentity>(*instigator);
+    const ActionExecutionProvenance provenance{
+        activate_info.request_id,
+        activate_info.action_instance_id,
+        engine.tick_loop_.current_tick(),
+        activate_info.instigator_net_id,
+        instigator_identity.owner_peer,
+        0u,
+        ActionAuthoritySource::kAuthoritativeSimulation,
+    };
+    const ActivatedActionGraphBinding& activated =
+        engine.world_.registry().get<ActivatedActionGraphBinding>(*subject);
+    std::vector<ActionGraphCommand> commands;
+    if (!evaluate_action_graph(
+            activated.binding,
+            activate_info.subject_net_id,
+            event,
+            provenance,
+            &commands,
+            nullptr)) {
+        return false;
+    }
+
+    for (const ActionGraphCommand& command : commands) {
+        const auto* damage = std::get_if<ActionApplyDamageCommand>(&command);
+        if (damage == nullptr) {
+            return false;
+        }
+        const std::optional<entt::entity> target =
+            engine.world_.find_entity(damage->target);
+        if (!target.has_value() ||
+            !engine.world_.registry().all_of<NetworkIdentity, Health>(*target)) {
+            return false;
+        }
+    }
+    for (std::size_t index = 0; index < commands.size(); ++index) {
+        const ActionApplyDamageCommand& damage =
+            std::get<ActionApplyDamageCommand>(commands[index]);
+        if (!engine.damage_pipeline_.submit_damage_request(DamageRequest{
+                provenance.server_tick,
+                static_cast<std::uint32_t>(index),
+                provenance.instigator,
+                damage.target,
+                provenance.owner_peer,
+                0u,
+                damage.amount,
+                engine.current_server_time_us(),
+                subject_transform.position,
+            })) {
+            return false;
+        }
+    }
+    engine.processed_activation_requests_.insert(activate_info.request_id);
     return true;
 }
 

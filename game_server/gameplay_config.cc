@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <functional>
 #include <initializer_list>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -235,6 +236,11 @@ void hash_actor_template(
     hash_vec3(hash, actor_template.director_spawn_position);
     hash_float(hash, actor_template.director_spawn_radius);
     hash_scalar(hash, actor_template.director_spawn_seed);
+    hash_string(hash, actor_template.activated_trigger.action_graph_ref);
+    for (const auto& parameter : actor_template.activated_trigger.parameters) {
+        hash_string(hash, parameter.first);
+        hash_string(hash, parameter.second);
+    }
 }
 
 KernelWeaponMechanicsDefinition hitscan_weapon(
@@ -1203,26 +1209,57 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
     const YAML::Node action = actions[0];
     reject_unknown_keys(
         action,
-        {"type", "projectile_template", "position", "direction"},
+        {
+            "type",
+            "projectile_template",
+            "position",
+            "direction",
+            "target",
+            "amount",
+        },
         path,
         source_kind,
         KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_UNKNOWN);
-    if (!action["type"] ||
-        action["type"].as<std::string>() != "spawn_projectile") {
-        throw std::runtime_error(
-            "first action graph phase only supports spawn_projectile: " + path);
+    if (!action["type"]) {
+        throw std::runtime_error("action graph action requires type: " + path);
     }
-    graph.projectile_template_parameter = parameter_reference_from_yaml(
-        action["projectile_template"], "projectile_template");
-    graph.position_parameter =
-        parameter_reference_from_yaml(action["position"], "position");
-    graph.direction_parameter =
-        parameter_reference_from_yaml(action["direction"], "direction");
-    for (const std::string* action_parameter : {
-             &graph.projectile_template_parameter,
-             &graph.position_parameter,
-             &graph.direction_parameter,
-         }) {
+    graph.action_type = action["type"].as<std::string>();
+    std::vector<const std::string*> action_parameters;
+    if (graph.action_type == "spawn_projectile") {
+        if (action["target"] || action["amount"]) {
+            throw std::runtime_error(
+                "spawn_projectile action has unsupported fields: " + path);
+        }
+        graph.projectile_template_parameter = parameter_reference_from_yaml(
+            action["projectile_template"], "projectile_template");
+        graph.position_parameter =
+            parameter_reference_from_yaml(action["position"], "position");
+        graph.direction_parameter =
+            parameter_reference_from_yaml(action["direction"], "direction");
+        action_parameters = {
+            &graph.projectile_template_parameter,
+            &graph.position_parameter,
+            &graph.direction_parameter,
+        };
+    } else if (graph.action_type == "apply_damage") {
+        if (action["projectile_template"] || action["position"] ||
+            action["direction"]) {
+            throw std::runtime_error(
+                "apply_damage action has unsupported fields: " + path);
+        }
+        graph.target_parameter =
+            parameter_reference_from_yaml(action["target"], "target");
+        graph.amount_parameter =
+            parameter_reference_from_yaml(action["amount"], "amount");
+        action_parameters = {
+            &graph.target_parameter,
+            &graph.amount_parameter,
+        };
+    } else {
+        throw std::runtime_error(
+            "unsupported action graph action type: " + graph.action_type);
+    }
+    for (const std::string* action_parameter : action_parameters) {
         if (std::none_of(
                 graph.parameters.begin(),
                 graph.parameters.end(),
@@ -1504,8 +1541,18 @@ std::uint16_t authored_entity_type_from_yaml(const YAML::Node& node) {
     if (value == "director") {
         return KernelEntityType_Director;
     }
+    if (value == "prop") {
+        return KernelEntityType_Prop;
+    }
     throw std::runtime_error("unsupported entity_type: " + value);
 }
+
+TriggerBindingConfig trigger_binding_from_yaml(
+    const YAML::Node& node,
+    const std::string& path,
+    std::uint32_t source_kind,
+    std::uint32_t template_kind,
+    std::uint32_t template_id);
 
 std::uint8_t camp_from_yaml(const YAML::Node& node) {
     if (!node) {
@@ -2190,6 +2237,86 @@ EntityTemplateConfig entity_template_from_yaml(
         return entity_template;
     }
 
+    if (entity_type == KernelEntityType_Prop) {
+        reject_unknown_keys(
+            node,
+            {
+                "id",
+                "name",
+                "entity_type",
+                "server_only",
+                "transform",
+                "health",
+                "physics",
+                "triggers",
+            },
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR);
+        EntityTemplateConfig entity_template;
+        entity_template.actor_template_id = node["id"].as<std::uint32_t>();
+        entity_template.name = node["name"].as<std::string>();
+        entity_template.entity_type = KernelEntityType_Prop;
+        entity_template.server_only =
+            node["server_only"] ? node["server_only"].as<bool>() : false;
+        if (node["transform"]) {
+            reject_unknown_keys(
+                node["transform"],
+                {"position"},
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                entity_template.actor_template_id);
+            if (node["transform"]["position"]) {
+                entity_template.transform_position =
+                    vec3_from_yaml(node["transform"]["position"]);
+            }
+        }
+        if (node["health"]) {
+            reject_unknown_keys(
+                node["health"],
+                {"hp", "max_hp"},
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                entity_template.actor_template_id);
+            entity_template.health.hp = node["health"]["hp"].as<std::uint16_t>();
+            entity_template.health.max_hp =
+                node["health"]["max_hp"].as<std::uint16_t>();
+        }
+        if (node["physics"]) {
+            reject_unknown_keys(
+                node["physics"],
+                {"collider_template"},
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                entity_template.actor_template_id);
+            if (node["physics"]["collider_template"]) {
+                entity_template.collider_template_id = collider_template_id_from_ref(
+                    node["physics"]["collider_template"], colliders);
+            }
+        }
+        if (node["triggers"]) {
+            reject_unknown_keys(
+                node["triggers"],
+                {"on_activated"},
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                entity_template.actor_template_id);
+            if (node["triggers"]["on_activated"]) {
+                entity_template.activated_trigger = trigger_binding_from_yaml(
+                    node["triggers"]["on_activated"],
+                    path,
+                    source_kind,
+                    KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                    entity_template.actor_template_id);
+            }
+        }
+        return entity_template;
+    }
+
     reject_unknown_keys(
         node,
         {
@@ -2525,31 +2652,30 @@ float collider_template_radius_for_area(
         std::max(definition.shape_params.y, definition.shape_params.z));
 }
 
-ProjectileTriggerBindingConfig projectile_trigger_binding_from_yaml(
+TriggerBindingConfig trigger_binding_from_yaml(
     const YAML::Node& node,
     const std::string& path,
     std::uint32_t source_kind,
-    std::uint32_t projectile_template_id) {
+    std::uint32_t template_kind,
+    std::uint32_t template_id) {
     reject_unknown_keys(
         node,
         {"action_graph", "parameters"},
         path,
         source_kind,
-        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_PROJECTILE,
-        projectile_template_id);
+        template_kind,
+        template_id);
     if (!node["action_graph"] || !node["action_graph"].IsScalar() ||
         !node["parameters"] || !node["parameters"].IsMap()) {
         throw std::runtime_error(
-            "projectile trigger requires action_graph and parameters map: " +
-            path);
+            "trigger requires action_graph and parameters map: " + path);
     }
-    ProjectileTriggerBindingConfig binding;
+    TriggerBindingConfig binding;
     binding.action_graph_ref = node["action_graph"].as<std::string>();
     for (const auto& entry : node["parameters"]) {
         if (!entry.first.IsScalar() || !entry.second.IsScalar()) {
             throw std::runtime_error(
-                "projectile trigger parameters must be scalar values: " +
-                path);
+                "trigger parameters must be scalar values: " + path);
         }
         binding.parameters.emplace_back(
             entry.first.as<std::string>(),
@@ -2765,18 +2891,20 @@ ProjectileTemplateConfig projectile_template_from_yaml(
         }
         if (triggers["on_projectile_impact"]) {
             projectile_template.projectile_impact_trigger =
-                projectile_trigger_binding_from_yaml(
+                trigger_binding_from_yaml(
                     triggers["on_projectile_impact"],
                     path,
                     source_kind,
+                    KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_PROJECTILE,
                     definition.projectile_template_id);
         }
         if (triggers["on_expired"]) {
             projectile_template.expired_trigger =
-                projectile_trigger_binding_from_yaml(
+                trigger_binding_from_yaml(
                     triggers["on_expired"],
                     path,
                     source_kind,
+                    KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_PROJECTILE,
                     definition.projectile_template_id);
         }
     }
@@ -2869,6 +2997,11 @@ void compile_projectile_trigger_binding(
     }
     const ActionGraphTemplateConfig* graph = action_graph_template_from_ref(
         binding.action_graph_ref, action_graph_templates);
+    if (graph->action_type != "spawn_projectile") {
+        throw std::runtime_error(
+            "projectile trigger requires spawn_projectile action graph: " +
+            binding.action_graph_ref);
+    }
     std::unordered_set<std::string> seen_parameters;
     for (const auto& parameter : binding.parameters) {
         if (!seen_parameters.insert(parameter.first).second ||
@@ -2922,6 +3055,85 @@ void compile_projectile_trigger_binding(
               .impact_spawn_projectile_template_id;
     compiled_template_id =
         spawned_projectile->definition.projectile_template_id;
+}
+
+KernelActivatedTriggerDefinition compile_activated_trigger_binding(
+    const TriggerBindingConfig& binding,
+    const std::vector<ActionGraphTemplateConfig>& action_graph_templates) {
+    KernelActivatedTriggerDefinition compiled{};
+    if (binding.action_graph_ref.empty()) {
+        return compiled;
+    }
+    const ActionGraphTemplateConfig* graph = action_graph_template_from_ref(
+        binding.action_graph_ref, action_graph_templates);
+    if (graph->action_type != "apply_damage") {
+        throw std::runtime_error(
+            "on_activated requires apply_damage action graph: " +
+            binding.action_graph_ref);
+    }
+    std::unordered_set<std::string> seen_parameters;
+    for (const auto& parameter : binding.parameters) {
+        if (!seen_parameters.insert(parameter.first).second ||
+            std::none_of(
+                graph->parameters.begin(),
+                graph->parameters.end(),
+                [&](const ActionGraphParameterConfig& declaration) {
+                    return declaration.name == parameter.first;
+                })) {
+            throw std::runtime_error(
+                "trigger binding passes undeclared or duplicate parameter: " +
+                parameter.first);
+        }
+    }
+    const auto graph_parameter = [&](const std::string& name)
+        -> const ActionGraphParameterConfig& {
+        const auto found = std::find_if(
+            graph->parameters.begin(),
+            graph->parameters.end(),
+            [&](const ActionGraphParameterConfig& parameter) {
+                return parameter.name == name;
+            });
+        if (found == graph->parameters.end()) {
+            throw std::runtime_error(
+                "action references undeclared graph parameter: " + name);
+        }
+        return *found;
+    };
+    for (const ActionGraphParameterConfig& parameter : graph->parameters) {
+        (void)trigger_parameter_value(binding, parameter);
+    }
+    const std::string target = trigger_parameter_value(
+        binding, graph_parameter(graph->target_parameter));
+    const std::string amount = trigger_parameter_value(
+        binding, graph_parameter(graph->amount_parameter));
+    const auto target_source = [&]() -> std::uint8_t {
+        if (target == "self") {
+            return KernelEntityRefSource_Self;
+        }
+        if (target == "event.subject") {
+            return KernelEntityRefSource_EventSubject;
+        }
+        if (target == "event.target") {
+            return KernelEntityRefSource_EventTarget;
+        }
+        if (target == "event.instigator") {
+            return KernelEntityRefSource_EventInstigator;
+        }
+        throw std::runtime_error(
+            "apply_damage target must be an entity reference expression");
+    }();
+    std::size_t parsed = 0;
+    const unsigned long parsed_amount = std::stoul(amount, &parsed);
+    if (parsed != amount.size() || parsed_amount == 0u ||
+        parsed_amount > std::numeric_limits<std::uint16_t>::max()) {
+        throw std::runtime_error(
+            "apply_damage amount must be a positive uint16");
+    }
+    compiled.struct_size = sizeof(KernelActivatedTriggerDefinition);
+    compiled.action_type = KernelEntityTriggerActionType_ApplyDamage;
+    compiled.target_source = target_source;
+    compiled.damage_amount = static_cast<std::uint16_t>(parsed_amount);
+    return compiled;
 }
 
 std::vector<ProjectileTemplateConfig> load_projectile_templates_from_source(
@@ -3513,9 +3725,12 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_scalar(&hash, parameter.has_default);
             hash_string(&hash, parameter.default_value);
         }
+        hash_string(&hash, graph.action_type);
         hash_string(&hash, graph.projectile_template_parameter);
         hash_string(&hash, graph.position_parameter);
         hash_string(&hash, graph.direction_parameter);
+        hash_string(&hash, graph.target_parameter);
+        hash_string(&hash, graph.amount_parameter);
     }
     std::vector<ActionTemplateConfig> action_templates = config.action_templates;
     std::sort(
@@ -4099,6 +4314,9 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             authored_template.movement_ground_probe_distance;
         entity_template.movement.ground_snap_distance =
             authored_template.movement_ground_snap_distance;
+        entity_template.activated_trigger = compile_activated_trigger_binding(
+            authored_template.activated_trigger,
+            config.action_graph_templates);
 
         if (authored_template.entity_type == kEntityTypeActor) {
             entity_template.component_flags =
@@ -4150,6 +4368,22 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             entity_template.ai.spawn_radius =
                 authored_template.director_spawn_radius;
             entity_template.ai.spawn_seed = authored_template.director_spawn_seed;
+        } else if (authored_template.entity_type == KernelEntityType_Prop) {
+            entity_template.component_flags = KERNEL_ENTITY_COMPONENT_TRANSFORM;
+            if (authored_template.server_only) {
+                entity_template.component_flags |= KERNEL_ENTITY_COMPONENT_SERVER_ONLY;
+            }
+            if (authored_template.health.max_hp != 0u) {
+                entity_template.component_flags |= KERNEL_ENTITY_COMPONENT_HEALTH;
+                entity_template.combat.hp = authored_template.health.hp;
+                entity_template.combat.max_hp = authored_template.health.max_hp;
+            }
+            if (authored_template.collider_template_id != 0u) {
+                entity_template.component_flags |= KERNEL_ENTITY_COMPONENT_HITBOX;
+                entity_template.combat.hitbox_center = authored_template.hitbox_center;
+                entity_template.combat.hitbox_half_extents =
+                    authored_template.hitbox_half_extents;
+            }
         }
         storage.entity_templates.push_back(entity_template);
     }

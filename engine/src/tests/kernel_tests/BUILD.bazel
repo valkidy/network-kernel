@@ -16,6 +16,12 @@ cc_test(
 )
 
 cc_test(
+    name = "activation_system_test",
+    srcs = ["activation_system_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
     name = "simulation_command_dispatcher_test",
     srcs = ["simulation_command_dispatcher_test.cc"],
     deps = ["//engine/src/kernel:kernel"],

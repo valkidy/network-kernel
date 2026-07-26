@@ -228,6 +228,19 @@ bool Kernel_ServerCreateEntity(
     uint32_t* out_net_id);
 
 KERNEL_RPC(R"json({
+  "method":"world.activate_entity",
+  "authority":"developer_write",
+  "phase":"simulation_tick",
+  "audit":true,
+  "params":[
+    {"name":"activate_info","type":"KernelServerEntityActivateInfo","passing":"const_ptr"}
+  ]
+})json")
+bool Kernel_ServerActivateEntity(
+    KernelHandle* kernel,
+    const KernelServerEntityActivateInfo* activate_info);
+
+KERNEL_RPC(R"json({
   "method":"world.destroy_entity",
   "authority":"developer_write",
   "phase":"simulation_tick",

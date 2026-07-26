@@ -407,7 +407,7 @@ void action_graph_binding_validation_is_typed_and_authoritative() {
     provenance.source_weapon_id = 5;
     provenance.authority_source =
         network_example::ActionAuthoritySource::kClientPrediction;
-    std::vector<network_example::SpawnProjectileCommand> commands;
+    std::vector<network_example::ActionGraphCommand> commands;
     require(network_example::evaluate_action_graph(
         binding, 10, event, provenance, &commands, &error));
     require(commands.empty());
@@ -417,13 +417,17 @@ void action_graph_binding_validation_is_typed_and_authoritative() {
     require(network_example::evaluate_action_graph(
         binding, 10, event, provenance, &commands, &error));
     require(commands.size() == 1);
-    require(commands[0].projectile_template_id == 8);
-    require(commands[0].position == event.position);
-    require(commands[0].direction == event.direction);
-    require(commands[0].provenance.action_instance_id == 40);
-    require(commands[0].provenance.instigator == 20);
-    require(commands[0].provenance.owner_peer == 7);
-    require(commands[0].provenance.source_weapon_id == 5);
+    const auto* command =
+        std::get_if<network_example::ActionSpawnProjectileCommand>(
+        &commands[0]);
+    require(command != nullptr);
+    require(command->projectile_template_id == 8);
+    require(command->position == event.position);
+    require(command->direction == event.direction);
+    require(command->provenance.action_instance_id == 40);
+    require(command->provenance.instigator == 20);
+    require(command->provenance.owner_peer == 7);
+    require(command->provenance.source_weapon_id == 5);
 }
 
 void impact_response_spawns_area_effect_projectile_once() {

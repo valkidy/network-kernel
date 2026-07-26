@@ -754,7 +754,7 @@ void execute_queued_trigger_events(
             return lhs.event.type < rhs.event.type;
         });
     for (const QueuedActionGraphEvent& queued : *trigger_events) {
-        std::vector<SpawnProjectileCommand> commands;
+        std::vector<ActionGraphCommand> commands;
         if (!evaluate_action_graph(
                 queued.binding,
                 queued.self,
@@ -764,22 +764,27 @@ void execute_queued_trigger_events(
                 nullptr)) {
             continue;
         }
-        for (const SpawnProjectileCommand& command : commands) {
+        for (const ActionGraphCommand& graph_command : commands) {
+            const auto* command =
+                std::get_if<ActionSpawnProjectileCommand>(&graph_command);
+            if (command == nullptr) {
+                continue;
+            }
             const RuntimeProjectileTemplate* projectile_template =
-                world.find_projectile_template(command.projectile_template_id);
+                world.find_projectile_template(command->projectile_template_id);
             if (projectile_template == nullptr) {
                 continue;
             }
             (void)spawn_projectile_from_template(
                 world,
                 *projectile_template,
-                command.provenance.owner_peer,
-                command.provenance.instigator,
-                command.provenance.source_weapon_id,
-                command.provenance.action_instance_id,
-                command.position,
-                command.direction,
-                command.provenance.server_tick,
+                command->provenance.owner_peer,
+                command->provenance.instigator,
+                command->provenance.source_weapon_id,
+                command->provenance.action_instance_id,
+                command->position,
+                command->direction,
+                command->provenance.server_tick,
                 fixed_delta_seconds,
                 events,
                 nullptr);

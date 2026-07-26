@@ -21,6 +21,7 @@ using PeerId = std::uint32_t;
 enum class EntityType : std::uint16_t {
     kUnknown = 0,
     kActor = 1,
+    kProp = 2,
     kProjectile = 3,
     kDirector = 5,
 };
@@ -490,13 +491,20 @@ struct ActionGraphParameterBinding {
     ActionGraphParameterExpression expression;
 };
 
-struct SpawnProjectileActionDefinition {
+struct ActionSpawnProjectileDefinition {
     std::string projectile_template_parameter;
     std::string position_parameter;
     std::string direction_parameter;
 };
 
-using ActionGraphAction = std::variant<SpawnProjectileActionDefinition>;
+struct ActionApplyDamageDefinition {
+    std::string target_parameter;
+    std::string amount_parameter;
+};
+
+using ActionGraphAction = std::variant<
+    ActionSpawnProjectileDefinition,
+    ActionApplyDamageDefinition>;
 
 struct ActionGraphTemplate {
     std::string id;
@@ -508,6 +516,10 @@ struct CompiledActionGraphBinding {
     TriggerEventType event_type = TriggerEventType::kCollision;
     ActionGraphTemplate graph;
     std::vector<ActionGraphParameterBinding> parameters;
+};
+
+struct ActivatedActionGraphBinding {
+    CompiledActionGraphBinding binding;
 };
 
 struct RuntimeProjectileTemplate {

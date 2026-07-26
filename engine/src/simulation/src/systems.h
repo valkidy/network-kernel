@@ -24,6 +24,13 @@ public:
         std::uint32_t reason) const;
 };
 
+class ActivationSystem {
+public:
+    bool activate_entity(
+        KernelEngine& engine,
+        const KernelServerEntityActivateInfo& activate_info) const;
+};
+
 class EntityStateSystem {
 public:
     bool set_actor_template(

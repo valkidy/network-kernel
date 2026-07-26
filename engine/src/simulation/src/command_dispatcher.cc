@@ -67,6 +67,12 @@ CommandResult Dispatcher::dispatch(
                     command.set_entity_actor_template.net_id,
                     command.set_entity_actor_template.actor_template_id),
                 command.set_entity_actor_template.net_id};
+        case CommandId::kActivateEntity:
+            return CommandResult{
+                ActivationSystem{}.activate_entity(
+                    engine,
+                    command.activate_entity.activate_info),
+                command.activate_entity.activate_info.subject_net_id};
         case CommandId::kUnknown:
             break;
     }

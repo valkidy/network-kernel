@@ -78,6 +78,42 @@ bool enqueue_create_entity(
     return true;
 }
 
+bool enqueue_activate_entity(
+    KernelEngine& engine,
+    const Json& params,
+    std::uint64_t request_id,
+    KernelRpcResponseStore& response_store,
+    const KernelRpcMethodRegistry&) {
+    if (!rpc_json::has_exact_fields(params, {"activate_info"})) {
+        response_store.complete_error(
+            request_id,
+            KernelRpcErrorCode::InvalidParams,
+            "Invalid params");
+        return true;
+    }
+    simulation::Command command{};
+    command.id = simulation::CommandId::kActivateEntity;
+    command.source = simulation::CommandSource::kControlPlane;
+    command.completion_token = request_id;
+    if (!rpc_json::read_param(
+            params,
+            "activate_info",
+            &command.activate_entity.activate_info)) {
+        response_store.complete_error(
+            request_id,
+            KernelRpcErrorCode::InvalidParams,
+            "Invalid params");
+        return true;
+    }
+    if (!KernelRpcWorldHandlers::enqueue_simulation_command(engine, command)) {
+        response_store.complete_error(
+            request_id,
+            KernelRpcErrorCode::ExecutionFailed,
+            "Execution failed");
+    }
+    return true;
+}
+
 bool enqueue_destroy_entity(
     KernelEngine& engine,
     const Json& params,
@@ -267,6 +303,9 @@ KernelRpcMethodHandler KernelRpcWorldHandlers::handler_for_symbol(
     }
     if (symbol == "Kernel_ServerCreateEntity") {
         return enqueue_create_entity;
+    }
+    if (symbol == "Kernel_ServerActivateEntity") {
+        return enqueue_activate_entity;
     }
     if (symbol == "Kernel_ServerDestroyEntity") {
         return enqueue_destroy_entity;

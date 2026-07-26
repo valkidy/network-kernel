@@ -66,6 +66,25 @@ cc_test(
 )
 
 cc_test(
+    name = "activation_gameplay_config_test",
+    srcs = ["activation_gameplay_config_test.cc"],
+    data = glob([
+        "action_graph_templates/*.yaml",
+        "action_templates/*.yaml",
+        "collider_templates/*.yaml",
+        "entity_templates/*.yaml",
+        "projectile_templates/*.yaml",
+        "weapon_templates/*.yaml",
+    ]) + [
+        "gameplay_catalog.yaml",
+    ],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
     name = "weapon_template_loader_test",
     srcs = ["weapon_template_loader_test.cc"],
     data = glob([

@@ -1,6 +1,8 @@
 #include "simulation/public/action_graph.h"
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <optional>
 #include <string_view>
 #include <utility>
@@ -151,7 +153,7 @@ CompiledActionGraphBinding compile_spawn_projectile_binding(
                 {"position", std::monostate{}},
                 {"direction", std::monostate{}},
             },
-            {SpawnProjectileActionDefinition{
+            {ActionSpawnProjectileDefinition{
                 "template",
                 "position",
                 "direction",
@@ -162,6 +164,26 @@ CompiledActionGraphBinding compile_spawn_projectile_binding(
                  ProjectileTemplateIdValue{projectile_template_id}}},
             {"position", EventVec3Expression{EventVec3Source::kPosition}},
             {"direction", EventVec3Expression{EventVec3Source::kDirection}},
+        },
+    };
+}
+
+CompiledActionGraphBinding compile_apply_damage_binding(
+    TriggerEventType event_type,
+    EntityRefSource target_source,
+    std::uint16_t amount) {
+    return CompiledActionGraphBinding{
+        event_type,
+        ActionGraphTemplate{
+            "action_apply_damage_at_activated",
+            {
+                {"target", std::monostate{}},
+                {"amount", static_cast<float>(amount)},
+            },
+            {ActionApplyDamageDefinition{"target", "amount"}},
+        },
+        {
+            {"target", EntityRefExpression{target_source}},
         },
     };
 }
@@ -193,9 +215,9 @@ bool validate_action_graph_binding(
         }
     }
     for (const ActionGraphAction& action : binding.graph.actions) {
-        const auto* spawn = std::get_if<SpawnProjectileActionDefinition>(&action);
-        if (spawn == nullptr ||
-            !validate_action_parameter(
+        if (const auto* spawn =
+                std::get_if<ActionSpawnProjectileDefinition>(&action)) {
+            if (!validate_action_parameter(
                 binding,
                 spawn->projectile_template_parameter,
                 ParameterType::kProjectileTemplateId,
@@ -210,6 +232,22 @@ bool validate_action_graph_binding(
                 spawn->direction_parameter,
                 ParameterType::kVec3,
                 error)) {
+                return false;
+            }
+            continue;
+        }
+        const auto* damage = std::get_if<ActionApplyDamageDefinition>(&action);
+        if (damage == nullptr ||
+            !validate_action_parameter(
+                binding,
+                damage->target_parameter,
+                ParameterType::kEntityId,
+                error) ||
+            !validate_action_parameter(
+                binding,
+                damage->amount_parameter,
+                ParameterType::kNumber,
+                error)) {
             return false;
         }
     }
@@ -221,7 +259,7 @@ bool evaluate_action_graph(
     NetId self,
     const TriggerEvent& event,
     const ActionExecutionProvenance& provenance,
-    std::vector<SpawnProjectileCommand>* commands,
+    std::vector<ActionGraphCommand>* commands,
     std::string* error) {
     if (commands == nullptr) {
         return fail(error, "action graph command output must not be null");
@@ -255,25 +293,55 @@ bool evaluate_action_graph(
         return true;
     }
     for (const ActionGraphAction& action : binding.graph.actions) {
-        const auto& spawn = std::get<SpawnProjectileActionDefinition>(action);
-        const ActionGraphParameterValue* template_value =
-            find_resolved_parameter(
-                parameters, spawn.projectile_template_parameter);
-        const ActionGraphParameterValue* position_value =
-            find_resolved_parameter(parameters, spawn.position_parameter);
-        const ActionGraphParameterValue* direction_value =
-            find_resolved_parameter(parameters, spawn.direction_parameter);
-        if (template_value == nullptr || position_value == nullptr ||
-            direction_value == nullptr ||
-            !std::holds_alternative<ProjectileTemplateIdValue>(*template_value) ||
-            !std::holds_alternative<glm::vec3>(*position_value) ||
-            !std::holds_alternative<glm::vec3>(*direction_value)) {
-            return fail(error, "spawn_projectile action input type mismatch");
+        if (const auto* spawn =
+                std::get_if<ActionSpawnProjectileDefinition>(&action)) {
+            const ActionGraphParameterValue* template_value =
+                find_resolved_parameter(
+                    parameters, spawn->projectile_template_parameter);
+            const ActionGraphParameterValue* position_value =
+                find_resolved_parameter(parameters, spawn->position_parameter);
+            const ActionGraphParameterValue* direction_value =
+                find_resolved_parameter(parameters, spawn->direction_parameter);
+            if (template_value == nullptr || position_value == nullptr ||
+                direction_value == nullptr ||
+                !std::holds_alternative<ProjectileTemplateIdValue>(
+                    *template_value) ||
+                !std::holds_alternative<glm::vec3>(*position_value) ||
+                !std::holds_alternative<glm::vec3>(*direction_value)) {
+                return fail(error, "spawn_projectile action input type mismatch");
+            }
+            commands->push_back(ActionSpawnProjectileCommand{
+                std::get<ProjectileTemplateIdValue>(*template_value).value,
+                std::get<glm::vec3>(*position_value),
+                std::get<glm::vec3>(*direction_value),
+                provenance,
+            });
+            continue;
         }
-        commands->push_back(SpawnProjectileCommand{
-            std::get<ProjectileTemplateIdValue>(*template_value).value,
-            std::get<glm::vec3>(*position_value),
-            std::get<glm::vec3>(*direction_value),
+
+        const auto& damage = std::get<ActionApplyDamageDefinition>(action);
+        const ActionGraphParameterValue* target_value =
+            find_resolved_parameter(parameters, damage.target_parameter);
+        const ActionGraphParameterValue* amount_value =
+            find_resolved_parameter(parameters, damage.amount_parameter);
+        if (target_value == nullptr || amount_value == nullptr ||
+            !std::holds_alternative<EntityIdValue>(*target_value) ||
+            !std::holds_alternative<float>(*amount_value)) {
+            return fail(error, "apply_damage action input type mismatch");
+        }
+        const float amount = std::get<float>(*amount_value);
+        if (!std::isfinite(amount) || amount <= 0.0f ||
+            amount > static_cast<float>(std::numeric_limits<std::uint16_t>::max()) ||
+            std::floor(amount) != amount) {
+            return fail(error, "apply_damage amount must be a positive uint16");
+        }
+        const NetId target = std::get<EntityIdValue>(*target_value).value;
+        if (target == 0u) {
+            return fail(error, "apply_damage target must not be null");
+        }
+        commands->push_back(ActionApplyDamageCommand{
+            target,
+            static_cast<std::uint16_t>(amount),
             provenance,
         });
     }

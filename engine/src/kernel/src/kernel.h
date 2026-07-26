@@ -29,6 +29,7 @@ namespace network_example {
 
 class EntityLifecycleSystem;
 class EntityStateSystem;
+class ActivationSystem;
 class DirectorIntentExecutor;
 class ListenServerTransport;
 class MovementSystem;
@@ -136,6 +137,8 @@ public:
     bool server_create_entity(
         const KernelServerEntityCreateInfo& create_info,
         NetId* out_net_id);
+    bool server_activate_entity(
+        const KernelServerEntityActivateInfo& activate_info);
     bool server_destroy_entity(NetId net_id, std::uint32_t reason);
     bool server_enqueue_entity_lifecycle(
         std::uint32_t command_source,
@@ -203,6 +206,7 @@ public:
 private:
     friend class EntityLifecycleSystem;
     friend class EntityStateSystem;
+    friend class ActivationSystem;
     friend class DirectorAISystem;
     friend class DirectorIntentExecutor;
     friend class MovementSystem;
@@ -572,6 +576,7 @@ private:
     World world_;
     HistoryBuffer history_buffer_;
     DamagePipeline damage_pipeline_;
+    std::unordered_set<std::uint64_t> processed_activation_requests_;
     std::unique_ptr<ITransport> transport_;
     ListenServerTransport* listen_server_transport_ = nullptr;
     std::vector<QueuedInput> pending_inputs_;

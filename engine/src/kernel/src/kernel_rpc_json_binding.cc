@@ -115,6 +115,27 @@ bool read_json(const Json& value, KernelServerEntityCreateInfo* out_value) {
     return true;
 }
 
+bool read_json(const Json& value, KernelServerEntityActivateInfo* out_value) {
+    if (out_value == nullptr ||
+        !has_exact_fields(
+            value,
+            {
+                "subject_net_id",
+                "instigator_net_id",
+                "target_net_id",
+                "action_instance_id",
+                "request_id",
+            })) {
+        return false;
+    }
+    out_value->struct_size = sizeof(*out_value);
+    return read_param(value, "subject_net_id", &out_value->subject_net_id) &&
+           read_param(value, "instigator_net_id", &out_value->instigator_net_id) &&
+           read_param(value, "target_net_id", &out_value->target_net_id) &&
+           read_param(value, "action_instance_id", &out_value->action_instance_id) &&
+           read_param(value, "request_id", &out_value->request_id);
+}
+
 Json vec3_json(const KernelVec3& value) {
     return {{"x", value.x}, {"y", value.y}, {"z", value.z}};
 }

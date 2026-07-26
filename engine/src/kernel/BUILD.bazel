@@ -211,6 +211,7 @@ cc_shared_library(
             "-Wl,-exported_symbol,_Kernel_GetColliderTemplates",
             "-Wl,-exported_symbol,_Kernel_GetColliderBindings",
             "-Wl,-exported_symbol,_Kernel_ServerCreateEntity",
+            "-Wl,-exported_symbol,_Kernel_ServerActivateEntity",
             "-Wl,-exported_symbol,_Kernel_ServerDestroyEntity",
             "-Wl,-exported_symbol,_Kernel_ServerSetEntityTransform",
             "-Wl,-exported_symbol,_Kernel_ServerSetEntityVelocity",

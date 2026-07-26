@@ -2178,9 +2178,20 @@ bool KernelEngine::load_gameplay_catalog(
         if (entity_template.struct_size < sizeof(KernelEntityTemplateDefinition) ||
             entity_template.entity_template_id == 0 ||
             (entity_template.entity_type != KernelEntityType_Actor &&
+             entity_template.entity_type != KernelEntityType_Prop &&
              entity_template.entity_type != KernelEntityType_Director) ||
             entity_template.ai.struct_size < sizeof(KernelEntityAiDefinition) ||
             entity_template.ai.controller_type > KernelAiControllerType_Director) {
+            return false;
+        }
+        if (entity_template.activated_trigger.struct_size != 0u &&
+            (entity_template.activated_trigger.struct_size <
+                 sizeof(KernelActivatedTriggerDefinition) ||
+             entity_template.activated_trigger.action_type !=
+                 KernelEntityTriggerActionType_ApplyDamage ||
+             entity_template.activated_trigger.target_source >
+                 KernelEntityRefSource_EventInstigator ||
+             entity_template.activated_trigger.damage_amount == 0u)) {
             return false;
         }
         if (entity_template.entity_type == KernelEntityType_Director &&
@@ -3151,6 +3162,11 @@ bool KernelEngine::server_create_entity(
     return EntityLifecycleSystem{}.create_entity(*this, create_info, out_net_id);
 }
 
+bool KernelEngine::server_activate_entity(
+    const KernelServerEntityActivateInfo& activate_info) {
+    return ActivationSystem{}.activate_entity(*this, activate_info);
+}
+
 bool KernelEngine::server_set_entity_actor_template(
     NetId net_id,
     std::uint32_t actor_template_id) {
@@ -3616,6 +3632,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     prediction_proxy_collider_ids_.clear();
     history_buffer_ = HistoryBuffer(history_frame_count(config_.tick));
     damage_pipeline_.clear();
+    processed_activation_requests_.clear();
     command_queue_.clear();
     rpc_response_store_.clear();
     pending_inputs_.clear();

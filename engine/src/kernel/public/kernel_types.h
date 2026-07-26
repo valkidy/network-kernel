@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 45u
+#define KERNEL_ABI_VERSION 46u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -301,9 +301,22 @@ typedef enum KernelActorType {
 typedef enum KernelEntityType {
     KernelEntityType_Unknown = 0,
     KernelEntityType_Actor = 1,
+    KernelEntityType_Prop = 2,
     KernelEntityType_Projectile = 3,
     KernelEntityType_Director = 5,
 } KernelEntityType;
+
+typedef enum KernelEntityTriggerActionType {
+    KernelEntityTriggerActionType_None = 0,
+    KernelEntityTriggerActionType_ApplyDamage = 1,
+} KernelEntityTriggerActionType;
+
+typedef enum KernelEntityRefSource {
+    KernelEntityRefSource_Self = 0,
+    KernelEntityRefSource_EventSubject = 1,
+    KernelEntityRefSource_EventTarget = 2,
+    KernelEntityRefSource_EventInstigator = 3,
+} KernelEntityRefSource;
 
 typedef enum KernelAiControllerType {
     KernelAiControllerType_None = 0,
@@ -641,6 +654,16 @@ typedef struct KernelServerEntityCreateInfo {
     uint32_t actor_template_id;
     uint32_t entity_template_id;
 } KernelServerEntityCreateInfo;
+
+KERNEL_RPC_STRUCT(R"json({"type":"KernelServerEntityActivateInfo"})json")
+typedef struct KernelServerEntityActivateInfo {
+    uint32_t struct_size;
+    uint32_t subject_net_id;
+    uint32_t instigator_net_id;
+    uint32_t target_net_id;
+    uint32_t action_instance_id;
+    uint64_t request_id;
+} KernelServerEntityActivateInfo;
 
 typedef struct KernelServerEntityState {
     uint32_t struct_size;
@@ -1208,6 +1231,13 @@ struct KernelEntityAiDefinition {
     uint32_t spawn_seed;
 };
 
+typedef struct KernelActivatedTriggerDefinition {
+    uint32_t struct_size;
+    uint8_t action_type;
+    uint8_t target_source;
+    uint16_t damage_amount;
+} KernelActivatedTriggerDefinition;
+
 struct KernelEntityTemplateDefinition {
     uint32_t struct_size;
     uint32_t entity_template_id;
@@ -1223,6 +1253,7 @@ struct KernelEntityTemplateDefinition {
     KernelAgentVisionConfig vision;
     KernelEntityAiDefinition ai;
     KernelMovementDefinition movement;
+    KernelActivatedTriggerDefinition activated_trigger;
 };
 
 typedef struct KernelEvent {

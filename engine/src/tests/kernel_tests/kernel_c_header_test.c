@@ -5,7 +5,9 @@
 
 #include "kernel/public/kernel_api.h"
 
-_Static_assert(KERNEL_ABI_VERSION == 45u, "sparse weapon IDs and fixed weapon slots ABI");
+_Static_assert(
+    KERNEL_ABI_VERSION == 46u,
+    "activated prop action graph ABI");
 _Static_assert(sizeof(ActionIntent) == 8u, "ActionIntent ABI size");
 _Static_assert(sizeof(ActionInput) == 8u, "ActionInput ABI size");
 _Static_assert(
@@ -99,7 +101,7 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 45u);
+    assert(KERNEL_ABI_VERSION == 46u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD == 4u);
@@ -212,11 +214,13 @@ int main(void) {
     assert(offsetof(RenderEntityState, collider_template_id) >
            offsetof(RenderEntityState, projectile_template_id));
     assert(offsetof(KernelCombatStateDefinition, collider_template_id) >
-           offsetof(KernelCombatStateDefinition, active_weapon_id));
+           offsetof(KernelCombatStateDefinition, active_weapon_slot));
     assert(offsetof(KernelServerEntityCreateInfo, entity_template_id) >
            offsetof(KernelServerEntityCreateInfo, actor_template_id));
     assert(offsetof(KernelEntityTemplateDefinition, ai) >
            offsetof(KernelEntityTemplateDefinition, vision));
+    assert(offsetof(KernelEntityTemplateDefinition, activated_trigger) >
+           offsetof(KernelEntityTemplateDefinition, movement));
     assert(RenderEntityStatus_Active == 0u);
     assert((KERNEL_VISUAL_FLAG_HP_UNKNOWN & KERNEL_VISUAL_FLAG_DEAD) == 0u);
     assert(sizeof(KernelEntityLifecycleEvent) > 0u);

@@ -1,0 +1,12 @@
+id: 200
+name: activation_damage_prop
+entity_type: prop
+health:
+  hp: 1
+  max_hp: 1
+triggers:
+  on_activated:
+    action_graph: action_apply_damage_at_activated
+    parameters:
+      target: event.target
+      amount: 25

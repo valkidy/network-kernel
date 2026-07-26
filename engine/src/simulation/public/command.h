@@ -21,6 +21,7 @@ enum class CommandId : std::uint8_t {
     kSetEntityState,
     kSetEntityActorTemplate,
     kSetEntityHealth,
+    kActivateEntity,
 };
 
 enum class CommandSource : std::uint8_t {
@@ -67,6 +68,10 @@ struct SetEntityActorTemplate {
     std::uint32_t actor_template_id = 0;
 };
 
+struct ActivateEntity {
+    KernelServerEntityActivateInfo activate_info{};
+};
+
 struct Command {
     CommandId id = CommandId::kUnknown;
     CommandSource source = CommandSource::kInternal;
@@ -78,6 +83,7 @@ struct Command {
     SetEntityVelocity set_entity_velocity{};
     SetEntityState set_entity_state{};
     SetEntityActorTemplate set_entity_actor_template{};
+    ActivateEntity activate_entity{};
 };
 
 struct CommandResult {

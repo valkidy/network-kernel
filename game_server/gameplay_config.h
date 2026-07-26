@@ -43,6 +43,11 @@ struct AgentSpawnDefinition {
     std::uint32_t spawn_seed = 1;
 };
 
+struct TriggerBindingConfig {
+    std::string action_graph_ref;
+    std::vector<std::pair<std::string, std::string>> parameters;
+};
+
 struct ActorTemplateConfig {
     std::uint32_t actor_template_id = 0;
     std::string name;
@@ -78,6 +83,7 @@ struct ActorTemplateConfig {
     KernelVec3 director_spawn_position{};
     float director_spawn_radius = 0.0f;
     std::uint32_t director_spawn_seed = 1;
+    TriggerBindingConfig activated_trigger;
 };
 
 using EntityTemplateConfig = ActorTemplateConfig;
@@ -124,15 +130,15 @@ struct ActionGraphParameterConfig {
 struct ActionGraphTemplateConfig {
     std::string id;
     std::vector<ActionGraphParameterConfig> parameters;
+    std::string action_type;
     std::string projectile_template_parameter;
     std::string position_parameter;
     std::string direction_parameter;
+    std::string target_parameter;
+    std::string amount_parameter;
 };
 
-struct ProjectileTriggerBindingConfig {
-    std::string action_graph_ref;
-    std::vector<std::pair<std::string, std::string>> parameters;
-};
+using ProjectileTriggerBindingConfig = TriggerBindingConfig;
 
 struct ProjectileTemplateConfig {
     std::string name;

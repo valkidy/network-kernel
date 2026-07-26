@@ -703,6 +703,15 @@ bool Kernel_ServerCreateEntity(
     });
 }
 
+bool Kernel_ServerActivateEntity(
+    KernelHandle* kernel,
+    const KernelServerEntityActivateInfo* activate_info) {
+    return abi_call("Kernel_ServerActivateEntity", false, [&]() {
+        return kernel != nullptr && activate_info != nullptr &&
+               kernel->engine->server_activate_entity(*activate_info);
+    });
+}
+
 bool Kernel_ServerDestroyEntity(
     KernelHandle* kernel,
     uint32_t net_id,
