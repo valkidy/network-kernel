@@ -1,6 +1,7 @@
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
+#include <optional>
 #include <source_location>
 #include <string>
 #include <vector>
@@ -430,6 +431,61 @@ void action_graph_binding_validation_is_typed_and_authoritative() {
     require(command->provenance.source_weapon_id == 5);
 }
 
+void action_graph_dispatcher_orders_captured_trigger_snapshots() {
+    const network_example::CompiledActionGraphBinding binding =
+        network_example::compile_apply_damage_binding(
+            network_example::TriggerEventType::kCollision,
+            network_example::EntityRefSource::kEventTarget,
+            5);
+    const auto queued_trigger = [&](
+        network_example::NetId subject,
+        network_example::NetId target,
+        std::uint64_t request_id) {
+        network_example::ActionExecutionProvenance provenance;
+        provenance.request_id = request_id;
+        provenance.server_tick = 2;
+        return network_example::ActionGraphQueuedTrigger{
+            binding,
+            subject,
+            network_example::TriggerEvent{
+                network_example::TriggerEventType::kCollision,
+                subject,
+                0,
+                target,
+                glm::vec3{static_cast<float>(subject), 0.0f, 0.0f},
+                glm::vec3{1.0f, 0.0f, 0.0f},
+                std::nullopt,
+            },
+            provenance,
+            0,
+        };
+    };
+    std::vector<network_example::ActionGraphQueuedTrigger> queued{
+        queued_trigger(20, 200, 2),
+        queued_trigger(10, 100, 1),
+    };
+    std::vector<network_example::ActionGraphCommandBatch> batches;
+    std::string error;
+    require(network_example::dispatch_action_graph_triggers(
+        &queued, &batches, &error));
+    require(queued.empty());
+    require(batches.size() == 2);
+    require(batches[0].event.subject == 10);
+    require(batches[1].event.subject == 20);
+    const auto* first_damage =
+        std::get_if<network_example::ActionApplyDamageCommand>(
+            &batches[0].commands.at(0));
+    const auto* second_damage =
+        std::get_if<network_example::ActionApplyDamageCommand>(
+            &batches[1].commands.at(0));
+    require(first_damage != nullptr);
+    require(second_damage != nullptr);
+    require(first_damage->source == 10);
+    require(first_damage->target == 100);
+    require(second_damage->source == 20);
+    require(second_damage->target == 200);
+}
+
 void impact_response_spawns_area_effect_projectile_once() {
     network_example::World world;
     const network_example::NetId enemy =
@@ -760,6 +816,7 @@ int main() {
     interaction_respects_masks_and_owner_peer_exclusion();
     multiple_reactions_resolve_by_projectile_pair_order();
     action_graph_binding_validation_is_typed_and_authoritative();
+    action_graph_dispatcher_orders_captured_trigger_snapshots();
     impact_response_spawns_area_effect_projectile_once();
     impact_response_is_additive_with_direct_hit_damage();
     world_impact_emits_impact_response_once();

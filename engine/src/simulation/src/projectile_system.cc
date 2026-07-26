@@ -615,14 +615,6 @@ std::vector<ProjectileHitRecord> make_projectile_hit_records(
     return records;
 }
 
-struct QueuedActionGraphEvent {
-    CompiledActionGraphBinding binding;
-    NetId self = 0;
-    TriggerEvent event;
-    ActionExecutionProvenance provenance;
-    std::uint32_t sequence = 0;
-};
-
 std::uint64_t trigger_request_id(
     std::uint32_t current_tick,
     NetId subject,
@@ -679,7 +671,7 @@ void queue_projectile_trigger(
     std::uint32_t current_tick,
     std::uint32_t sequence,
     bool historical,
-    std::vector<QueuedActionGraphEvent>* trigger_events) {
+    std::vector<ActionGraphQueuedTrigger>* trigger_events) {
     if (trigger_events == nullptr) {
         return;
     }
@@ -712,7 +704,7 @@ void queue_projectile_trigger(
               }}
             : std::nullopt,
     };
-    trigger_events->push_back(QueuedActionGraphEvent{
+    trigger_events->push_back(ActionGraphQueuedTrigger{
         std::move(*binding),
         identity.net_id,
         event,
@@ -732,39 +724,19 @@ void queue_projectile_trigger(
 
 void execute_queued_trigger_events(
     World& world,
-    std::vector<QueuedActionGraphEvent>* trigger_events,
+    std::vector<ActionGraphQueuedTrigger>* trigger_events,
     float fixed_delta_seconds,
     std::vector<KernelEvent>* events) {
     if (trigger_events == nullptr) {
         return;
     }
-    std::sort(
-        trigger_events->begin(),
-        trigger_events->end(),
-        [](const QueuedActionGraphEvent& lhs, const QueuedActionGraphEvent& rhs) {
-            if (lhs.provenance.server_tick != rhs.provenance.server_tick) {
-                return lhs.provenance.server_tick < rhs.provenance.server_tick;
-            }
-            if (lhs.event.subject != rhs.event.subject) {
-                return lhs.event.subject < rhs.event.subject;
-            }
-            if (lhs.sequence != rhs.sequence) {
-                return lhs.sequence < rhs.sequence;
-            }
-            return lhs.event.type < rhs.event.type;
-        });
-    for (const QueuedActionGraphEvent& queued : *trigger_events) {
-        std::vector<ActionGraphCommand> commands;
-        if (!evaluate_action_graph(
-                queued.binding,
-                queued.self,
-                queued.event,
-                queued.provenance,
-                &commands,
-                nullptr)) {
-            continue;
-        }
-        for (const ActionGraphCommand& graph_command : commands) {
+    std::vector<ActionGraphCommandBatch> command_batches;
+    if (!dispatch_action_graph_triggers(
+            trigger_events, &command_batches, nullptr)) {
+        return;
+    }
+    for (const ActionGraphCommandBatch& batch : command_batches) {
+        for (const ActionGraphCommand& graph_command : batch.commands) {
             const auto* command =
                 std::get_if<ActionSpawnProjectileCommand>(&graph_command);
             if (command == nullptr) {
@@ -790,7 +762,6 @@ void execute_queued_trigger_events(
                 nullptr);
         }
     }
-    trigger_events->clear();
 }
 
 ProjectileHitOutcome process_projectile_hit_records(
@@ -804,7 +775,7 @@ ProjectileHitOutcome process_projectile_hit_records(
     std::uint64_t hit_time_us,
     std::vector<KernelEvent>* events,
     DamagePipeline* damage_pipeline,
-    std::vector<QueuedActionGraphEvent>* trigger_events) {
+    std::vector<ActionGraphQueuedTrigger>* trigger_events) {
     ProjectileHitOutcome outcome{};
     if (records.empty()) {
         return outcome;
@@ -1183,7 +1154,7 @@ void simulate_projectiles(
         active_damage_pipeline = &local_damage_pipeline;
     }
     std::vector<NetId> projectiles_to_destroy;
-    std::vector<QueuedActionGraphEvent> trigger_events;
+    std::vector<ActionGraphQueuedTrigger> trigger_events;
 
     auto view = world.registry().view<NetworkIdentity, Transform, Velocity, ProjectileState, ProjectileTag>();
     for (const entt::entity entity : view) {
@@ -1367,7 +1338,7 @@ bool resolve_projectile_historical_hit(
                 const std::uint64_t hit_time_us =
                     tick_time_us(frame->server_tick, fixed_delta_seconds);
                 const NetworkIdentity identity{projectile_net_id, owner_peer};
-                std::vector<QueuedActionGraphEvent> trigger_events;
+                std::vector<ActionGraphQueuedTrigger> trigger_events;
                 queue_projectile_trigger(
                     world,
                     identity,

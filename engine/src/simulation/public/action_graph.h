@@ -28,6 +28,21 @@ using ActionGraphCommand = std::variant<
     ActionSpawnProjectileCommand,
     ActionApplyDamageCommand>;
 
+struct ActionGraphQueuedTrigger {
+    CompiledActionGraphBinding binding;
+    NetId self = 0;
+    TriggerEvent event;
+    ActionExecutionProvenance provenance;
+    std::uint32_t sequence = 0;
+};
+
+struct ActionGraphCommandBatch {
+    TriggerEvent event;
+    ActionExecutionProvenance provenance;
+    std::uint32_t sequence = 0;
+    std::vector<ActionGraphCommand> commands;
+};
+
 CompiledActionGraphBinding compile_spawn_projectile_binding(
     TriggerEventType event_type,
     std::uint32_t projectile_template_id);
@@ -47,6 +62,11 @@ bool evaluate_action_graph(
     const TriggerEvent& event,
     const ActionExecutionProvenance& provenance,
     std::vector<ActionGraphCommand>* commands,
+    std::string* error);
+
+bool dispatch_action_graph_triggers(
+    std::vector<ActionGraphQueuedTrigger>* queued_triggers,
+    std::vector<ActionGraphCommandBatch>* command_batches,
     std::string* error);
 
 }  // namespace network_example

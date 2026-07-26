@@ -508,23 +508,28 @@ bool ActivationSystem::activate_entity(
     };
     const ActionGraphActivatedBinding& activated =
         engine.world_.registry().get<ActionGraphActivatedBinding>(*subject);
-    std::vector<ActionGraphCommand> commands;
-    if (!evaluate_action_graph(
+    std::vector<ActionGraphQueuedTrigger> queued_triggers{
+        ActionGraphQueuedTrigger{
             activated.binding,
             activate_info.subject_net_id,
             event,
             provenance,
-            &commands,
-            nullptr)) {
+            0u,
+        },
+    };
+    std::vector<ActionGraphCommandBatch> command_batches;
+    if (!dispatch_action_graph_triggers(
+            &queued_triggers, &command_batches, nullptr) ||
+        command_batches.size() != 1u) {
         return false;
     }
 
     if (!submit_action_damage_commands(
             engine.world_,
             &engine.damage_pipeline_,
-            commands,
+            command_batches.front().commands,
             engine.current_server_time_us(),
-            subject_transform.position)) {
+            command_batches.front().event.position)) {
         return false;
     }
     engine.processed_activation_requests_.insert(activate_info.request_id);
@@ -546,7 +551,7 @@ void CollisionTriggerSystem::update(
         PeerId owner_peer = 0;
         glm::vec3 position{0.0f};
         glm::vec3 direction{0.0f};
-        const CompiledActionGraphBinding* binding = nullptr;
+        CompiledActionGraphBinding binding;
     };
     std::vector<CollisionFact> entered_collisions;
     std::unordered_set<std::uint64_t> current_pairs;
@@ -605,7 +610,7 @@ void CollisionTriggerSystem::update(
                         identity.owner_peer,
                         hit.position,
                         hit.normal,
-                        &collision_binding.binding,
+                        collision_binding.binding,
                     });
                 }
             }
@@ -621,6 +626,8 @@ void CollisionTriggerSystem::update(
         });
     engine.active_prop_collision_pairs_ = std::move(current_pairs);
 
+    std::vector<ActionGraphQueuedTrigger> queued_triggers;
+    queued_triggers.reserve(entered_collisions.size());
     for (const CollisionFact& collision : entered_collisions) {
         const TriggerEvent event{
             TriggerEventType::kCollision,
@@ -643,23 +650,27 @@ void CollisionTriggerSystem::update(
             0u,
             ActionAuthoritySource::kAuthoritativeSimulation,
         };
-        std::vector<ActionGraphCommand> commands;
-        if (collision.binding == nullptr ||
-            !evaluate_action_graph(
-                *collision.binding,
-                collision.subject,
-                event,
-                provenance,
-                &commands,
-                nullptr)) {
-            continue;
-        }
+        queued_triggers.push_back(ActionGraphQueuedTrigger{
+            collision.binding,
+            collision.subject,
+            event,
+            provenance,
+            0u,
+        });
+    }
+
+    std::vector<ActionGraphCommandBatch> command_batches;
+    if (!dispatch_action_graph_triggers(
+            &queued_triggers, &command_batches, nullptr)) {
+        return;
+    }
+    for (const ActionGraphCommandBatch& batch : command_batches) {
         (void)submit_action_damage_commands(
             engine.world_,
             &engine.damage_pipeline_,
-            commands,
+            batch.commands,
             server_time_us,
-            collision.position);
+            batch.event.position);
     }
 }
 

@@ -351,4 +351,59 @@ bool evaluate_action_graph(
     return true;
 }
 
+bool dispatch_action_graph_triggers(
+    std::vector<ActionGraphQueuedTrigger>* queued_triggers,
+    std::vector<ActionGraphCommandBatch>* command_batches,
+    std::string* error) {
+    if (queued_triggers == nullptr || command_batches == nullptr) {
+        return fail(error, "action graph dispatcher input must not be null");
+    }
+    std::sort(
+        queued_triggers->begin(),
+        queued_triggers->end(),
+        [](const ActionGraphQueuedTrigger& lhs,
+           const ActionGraphQueuedTrigger& rhs) {
+            if (lhs.provenance.server_tick != rhs.provenance.server_tick) {
+                return lhs.provenance.server_tick < rhs.provenance.server_tick;
+            }
+            if (lhs.event.subject != rhs.event.subject) {
+                return lhs.event.subject < rhs.event.subject;
+            }
+            if (lhs.sequence != rhs.sequence) {
+                return lhs.sequence < rhs.sequence;
+            }
+            if (lhs.event.type != rhs.event.type) {
+                return lhs.event.type < rhs.event.type;
+            }
+            if (lhs.event.target != rhs.event.target) {
+                return lhs.event.target < rhs.event.target;
+            }
+            return lhs.provenance.request_id < rhs.provenance.request_id;
+        });
+
+    std::vector<ActionGraphCommandBatch> dispatched;
+    dispatched.reserve(queued_triggers->size());
+    for (const ActionGraphQueuedTrigger& queued : *queued_triggers) {
+        ActionGraphCommandBatch batch{
+            queued.event,
+            queued.provenance,
+            queued.sequence,
+            {},
+        };
+        if (!evaluate_action_graph(
+                queued.binding,
+                queued.self,
+                queued.event,
+                queued.provenance,
+                &batch.commands,
+                error)) {
+            return false;
+        }
+        dispatched.push_back(std::move(batch));
+    }
+    *command_batches = std::move(dispatched);
+    queued_triggers->clear();
+    return true;
+}
+
 }  // namespace network_example
