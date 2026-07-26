@@ -89,13 +89,11 @@ bool spawn_projectile_from_template(
     projectile.initial_velocity = velocity;
     projectile.gravity = projectile_template.gravity;
     projectile.previous_position = position;
-    if (projectile_template.projectile_impact_binding.has_value() ||
-        projectile_template.impact_spawn_projectile_template_id != 0u) {
+    if (projectile_template.projectile_impact_binding.has_value()) {
         world.registry().emplace<OnProjectileImpactTriggerTag>(
             *projectile_entity);
     }
-    if (projectile_template.expired_binding.has_value() ||
-        projectile_template.expire_spawn_projectile_template_id != 0u) {
+    if (projectile_template.expired_binding.has_value()) {
         world.registry().emplace<OnExpiredTriggerTag>(*projectile_entity);
     }
     if (projectile_template.projectile_type == ProjectileType::kAreaEffect) {
@@ -643,21 +641,9 @@ std::optional<CompiledActionGraphBinding> projectile_trigger_binding(
     if (projectile_template == nullptr) {
         return std::nullopt;
     }
-    const std::optional<CompiledActionGraphBinding>& binding =
-        event_type == TriggerEventType::kExpired
+    return event_type == TriggerEventType::kExpired
         ? projectile_template->expired_binding
         : projectile_template->projectile_impact_binding;
-    if (binding.has_value()) {
-        return binding;
-    }
-    const std::uint32_t legacy_template_id =
-        event_type == TriggerEventType::kExpired
-        ? projectile_template->expire_spawn_projectile_template_id
-        : projectile_template->impact_spawn_projectile_template_id;
-    if (legacy_template_id == 0u) {
-        return std::nullopt;
-    }
-    return compile_spawn_projectile_binding(event_type, legacy_template_id);
 }
 
 void queue_projectile_trigger(

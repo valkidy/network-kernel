@@ -87,7 +87,6 @@ int main() {
     assert(
         rocket->mechanics.projectile_impact_trigger
             .spawn_projectile_template_id == 8);
-    assert(rocket->mechanics.impact_spawn_projectile_template_id == 0u);
 
     KernelConfig kernel_config{};
     kernel_config.mode = KernelMode_DedicatedServer;

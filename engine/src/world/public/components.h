@@ -559,7 +559,6 @@ struct RuntimeProjectileTemplate {
         ProjectileCollisionQueryMode::kAuto;
     ProjectileCollisionGeometry collision_geometry{};
     bool has_collision_geometry = false;
-    bool impact_destroy_self = true;
     ProjectileDamageFalloff damage_falloff = ProjectileDamageFalloff::kNone;
     std::uint16_t damage = 0;
     float speed = 0.0f;
@@ -569,8 +568,6 @@ struct RuntimeProjectileTemplate {
     float area_radius = 0.0f;
     std::uint32_t collision_mask = kCollisionMaskDamageable;
     std::uint32_t max_hit_count = 1;
-    std::uint32_t impact_spawn_projectile_template_id = 0;
-    std::uint32_t expire_spawn_projectile_template_id = 0;
     std::optional<CompiledActionGraphBinding> projectile_impact_binding;
     std::optional<CompiledActionGraphBinding> expired_binding;
     std::uint32_t damage_interval_ticks = 1;

@@ -486,7 +486,7 @@ void action_graph_dispatcher_orders_captured_trigger_snapshots() {
     require(second_damage->target == 200);
 }
 
-void impact_response_spawns_area_effect_projectile_once() {
+void projectile_impact_trigger_spawns_area_effect_projectile_once() {
     network_example::World world;
     const network_example::NetId enemy =
         world.spawn_enemy(glm::vec3{1.0f, 0.2f, 0.0f});
@@ -501,8 +501,9 @@ void impact_response_spawns_area_effect_projectile_once() {
     rocket_template.projectile_template_id = 3;
     rocket_template.weapon_id = 3;
     rocket_template.projectile_type = network_example::ProjectileType::kStandard;
-    rocket_template.impact_spawn_projectile_template_id = 8;
-    rocket_template.impact_destroy_self = 1u;
+    rocket_template.projectile_impact_binding =
+        network_example::compile_spawn_projectile_binding(
+            network_example::TriggerEventType::kProjectileImpact, 8);
 
     world.set_projectile_templates({
         rocket_template,
@@ -563,7 +564,7 @@ void impact_response_spawns_area_effect_projectile_once() {
     require(health.hp == 55);
 }
 
-void impact_response_is_additive_with_direct_hit_damage() {
+void projectile_impact_trigger_is_additive_with_direct_hit_damage() {
     network_example::World world;
     const network_example::NetId enemy =
         world.spawn_enemy(glm::vec3{1.0f, 0.5f, 0.0f});
@@ -576,8 +577,9 @@ void impact_response_is_additive_with_direct_hit_damage() {
 
     network_example::RuntimeProjectileTemplate rocket_template;
     rocket_template.projectile_template_id = 3;
-    rocket_template.impact_spawn_projectile_template_id = 8;
-    rocket_template.impact_destroy_self = true;
+    rocket_template.projectile_impact_binding =
+        network_example::compile_spawn_projectile_binding(
+            network_example::TriggerEventType::kProjectileImpact, 8);
     world.set_projectile_templates({
         rocket_template,
         area_effect_template(
@@ -617,7 +619,7 @@ void impact_response_is_additive_with_direct_hit_damage() {
     require(health.hp == 10);
 }
 
-void world_impact_emits_impact_response_once() {
+void world_impact_emits_projectile_trigger_once() {
     network_example::World world;
     network_example::physics::PhysicsWorld physics;
     world.set_collision_world(&physics);
@@ -638,7 +640,9 @@ void world_impact_emits_impact_response_once() {
 
     network_example::RuntimeProjectileTemplate rocket_template;
     rocket_template.projectile_template_id = 3;
-    rocket_template.impact_spawn_projectile_template_id = 8;
+    rocket_template.projectile_impact_binding =
+        network_example::compile_spawn_projectile_binding(
+            network_example::TriggerEventType::kProjectileImpact, 8);
     world.set_projectile_templates({
         rocket_template,
         area_effect_template(
@@ -674,7 +678,7 @@ void world_impact_emits_impact_response_once() {
     require(count_events(events, KernelEventType_DamageApplied) == 0);
 }
 
-void historical_hit_emits_impact_response_once() {
+void historical_hit_emits_projectile_trigger_once() {
     network_example::World world;
     const network_example::NetId enemy =
         world.spawn_enemy(glm::vec3{1.0f, 0.5f, 0.0f});
@@ -686,7 +690,9 @@ void historical_hit_emits_impact_response_once() {
 
     network_example::RuntimeProjectileTemplate rocket_template;
     rocket_template.projectile_template_id = 3;
-    rocket_template.impact_spawn_projectile_template_id = 8;
+    rocket_template.projectile_impact_binding =
+        network_example::compile_spawn_projectile_binding(
+            network_example::TriggerEventType::kProjectileImpact, 8);
     world.set_projectile_templates({
         rocket_template,
         area_effect_template(
@@ -748,12 +754,16 @@ void historical_hit_emits_impact_response_once() {
     require(count_events(events, KernelEventType_EntitySpawned) == 1);
 }
 
-void expired_response_does_not_reuse_impact_response() {
+void expired_trigger_does_not_reuse_impact_trigger() {
     network_example::World world;
     network_example::RuntimeProjectileTemplate projectile_template;
     projectile_template.projectile_template_id = 3;
-    projectile_template.impact_spawn_projectile_template_id = 8;
-    projectile_template.expire_spawn_projectile_template_id = 9;
+    projectile_template.projectile_impact_binding =
+        network_example::compile_spawn_projectile_binding(
+            network_example::TriggerEventType::kProjectileImpact, 8);
+    projectile_template.expired_binding =
+        network_example::compile_spawn_projectile_binding(
+            network_example::TriggerEventType::kExpired, 9);
     world.set_projectile_templates({
         projectile_template,
         area_effect_template(
@@ -817,10 +827,10 @@ int main() {
     multiple_reactions_resolve_by_projectile_pair_order();
     action_graph_binding_validation_is_typed_and_authoritative();
     action_graph_dispatcher_orders_captured_trigger_snapshots();
-    impact_response_spawns_area_effect_projectile_once();
-    impact_response_is_additive_with_direct_hit_damage();
-    world_impact_emits_impact_response_once();
-    historical_hit_emits_impact_response_once();
-    expired_response_does_not_reuse_impact_response();
+    projectile_impact_trigger_spawns_area_effect_projectile_once();
+    projectile_impact_trigger_is_additive_with_direct_hit_damage();
+    world_impact_emits_projectile_trigger_once();
+    historical_hit_emits_projectile_trigger_once();
+    expired_trigger_does_not_reuse_impact_trigger();
     return 0;
 }

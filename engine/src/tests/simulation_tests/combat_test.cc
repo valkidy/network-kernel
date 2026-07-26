@@ -8,6 +8,7 @@
 #include <glm/glm.hpp>
 
 #include "kernel/public/kernel_types.h"
+#include "simulation/public/action_graph.h"
 #include "simulation/public/simulation.h"
 
 namespace {
@@ -112,13 +113,19 @@ void configure_projectile_response_templates(network_example::World& world) {
     grenade_template.weapon_id = network_example::kWeaponSlot2;
     grenade_template.projectile_type = network_example::ProjectileType::kStandard;
     grenade_template.motion_model = network_example::ProjectileMotionModel::kParabolic;
-    grenade_template.damage = 40;
+    grenade_template.damage = 0;
+    grenade_template.damage_shape =
+        network_example::ProjectileDamageShape::kNone;
     grenade_template.speed = 15.0f;
     grenade_template.lifetime_ticks = 90;
     grenade_template.gravity = glm::vec3{0.0f, -9.8f, 0.0f};
     grenade_template.collision_mask = network_example::kCollisionLayerHostileSide;
-    grenade_template.impact_spawn_projectile_template_id = 8;
-    grenade_template.impact_destroy_self = 1u;
+    grenade_template.projectile_impact_binding =
+        network_example::compile_spawn_projectile_binding(
+            network_example::TriggerEventType::kProjectileImpact, 8);
+    grenade_template.expired_binding =
+        network_example::compile_spawn_projectile_binding(
+            network_example::TriggerEventType::kExpired, 8);
 
     network_example::RuntimeProjectileTemplate area_template;
     area_template.projectile_template_id = 8;
@@ -646,7 +653,7 @@ void projectile_damage_values_leave_enemy_flee_window() {
 
     const network_example::NetId grenade = spawned_projectile(grenade_events);
     require(grenade != 0);
-    require(projectile_state(grenade_world, grenade).damage == 40);
+    require(projectile_state(grenade_world, grenade).damage == 0);
 
     network_example::World rocket_world;
     spawn_player(rocket_world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
@@ -824,6 +831,10 @@ void server_projectile_damage_to_player_is_pended() {
     projectile.projectile_template_id = network_example::kWeaponSlot2;
     projectile.damage = 80;
     projectile.max_lifetime_ticks = 1;
+    const auto projectile_entity = world.find_entity(projectile_net_id);
+    assert(projectile_entity.has_value());
+    world.registry().emplace<network_example::OnExpiredTriggerTag>(
+        *projectile_entity);
 
     network_example::DamagePipeline pipeline;
     std::vector<KernelEvent> events;
@@ -1094,7 +1105,7 @@ void projectile_without_rewind_uses_current_muzzle() {
     assert(player != 0);
 }
 
-void projectile_historical_hit_query_hits_historical_target() {
+void projectile_historical_hit_emits_impact_trigger() {
     network_example::World world;
     spawn_player(world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
     const network_example::NetId enemy =
@@ -1123,9 +1134,10 @@ void projectile_historical_hit_query_hits_historical_target() {
     const network_example::NetId projectile = spawned_projectile(events);
     require(projectile != 0);
     require(!world.find_entity(projectile).has_value());
-    require(health(world, enemy).hp < 50);
+    require(count_events(events, KernelEventType_EntitySpawned) == 2);
+    require(health(world, enemy).hp == 50);
     require(count_events(events, KernelEventType_Explosion) == 0);
-    require(count_events(events, KernelEventType_DamageApplied) >= 1);
+    require(count_events(events, KernelEventType_DamageApplied) == 0);
 }
 
 void projectile_historical_hit_query_ignores_current_only_target() {
@@ -1450,7 +1462,7 @@ int main() {
     projectile_spammer_burst_spawns_three_spread_projectiles();
     projectile_rewind_spawns_from_historical_muzzle();
     projectile_without_rewind_uses_current_muzzle();
-    projectile_historical_hit_query_hits_historical_target();
+    projectile_historical_hit_emits_impact_trigger();
     projectile_historical_hit_query_ignores_current_only_target();
     rewind_hitscan_uses_historical_hit_volumes();
     rewind_shotgun_respects_range();

@@ -254,7 +254,7 @@ std::vector<std::uint8_t> make_entity_template_bundle_zip(
     std::vector<std::pair<std::string, std::string>> files;
     files.push_back({
         "gameplay_catalog.yaml",
-        "catalog_version: 2\n"
+        "catalog_version: 3\n"
         "action_template_dir: action_templates\n"
         "action_graph_template_dir: action_graph_templates\n"
         "reload_action_template:\n"
@@ -505,7 +505,7 @@ int main() {
     assert(
         config.static_collision_scene.collision_layer ==
         KERNEL_STATIC_COLLISION_LAYER_TERRAIN);
-    require(config.weapons.catalog_version == 2);
+    require(config.weapons.catalog_version == 3);
     require(config.weapons.catalog_hash != 0);
     require(
         config.weapons.catalog_hash ==
@@ -822,7 +822,7 @@ int main() {
         config.projectile_templates.size());
 
     const std::vector<std::uint8_t> unsupported_version_bundle = make_store_zip({
-        {"gameplay_catalog.yaml", "catalog_version: 1\n"},
+        {"gameplay_catalog.yaml", "catalog_version: 2\n"},
     });
     bool unsupported_version_rejected = false;
     try {
@@ -838,7 +838,7 @@ int main() {
     assert(unsupported_version_rejected);
 
     const std::vector<std::uint8_t> unknown_catalog_field_bundle = make_store_zip({
-        {"gameplay_catalog.yaml", "catalog_version: 2\nsurprise: true\n"},
+        {"gameplay_catalog.yaml", "catalog_version: 3\nsurprise: true\n"},
     });
     bool unknown_catalog_field_rejected = false;
     try {
@@ -854,7 +854,7 @@ int main() {
 
     const std::vector<std::uint8_t> unknown_nested_catalog_field_bundle = make_store_zip({
         {"gameplay_catalog.yaml",
-         "catalog_version: 2\n"
+         "catalog_version: 3\n"
          "weapon_template_dir: weapon_templates\n"
          "projectile_template_dir: projectile_templates\n"
          "collider_template_dir: collider_templates\n"
@@ -876,7 +876,7 @@ int main() {
 
     const std::vector<std::uint8_t> legacy_collider_field_bundle = make_store_zip({
         {"gameplay_catalog.yaml",
-         "catalog_version: 2\n"
+         "catalog_version: 3\n"
          "weapon_template_dir: weapon_templates\n"
          "projectile_template_dir: projectile_templates\n"
          "collider_template_file: collider_templates/default.yaml\n"},
@@ -896,7 +896,7 @@ int main() {
     std::vector<std::pair<std::string, std::string>> duplicate_collider_files;
     duplicate_collider_files.push_back({
         "gameplay_catalog.yaml",
-        "catalog_version: 2\n"
+        "catalog_version: 3\n"
         "reload_action_template:\n"
         "  id: 4199\n"
         "  name: shared_reload\n"
@@ -979,7 +979,7 @@ int main() {
 
     const std::vector<std::uint8_t> duplicate_path_bundle = make_store_zip({
         {"gameplay_catalog.yaml", "catalog_version: 1\n"},
-        {"gameplay_catalog.yaml", "catalog_version: 2\n"},
+        {"gameplay_catalog.yaml", "catalog_version: 3\n"},
     });
     bool duplicate_path_rejected = false;
     try {

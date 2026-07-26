@@ -64,7 +64,6 @@ KernelProjectileTemplateDefinition projectile_template() {
     projectile.mechanics.collider_template_id = 1;
     projectile.mechanics.collision_mask = KERNEL_COLLISION_MASK_NONE;
     projectile.mechanics.max_hit_count = 1;
-    projectile.mechanics.flags = 1u;
     return projectile;
 }
 

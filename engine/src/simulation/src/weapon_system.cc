@@ -309,6 +309,13 @@ NetId fire_projectile(
         projectile_state.initial_velocity = velocity;
         projectile_state.gravity = projectile_template.gravity;
         projectile_state.previous_position = current_position;
+        if (projectile_template.projectile_impact_binding.has_value()) {
+            world.registry().emplace<OnProjectileImpactTriggerTag>(
+                *projectile_entity);
+        }
+        if (projectile_template.expired_binding.has_value()) {
+            world.registry().emplace<OnExpiredTriggerTag>(*projectile_entity);
+        }
         if (projectile_template.motion_model == ProjectileMotionModel::kHoming) {
             world.registry().emplace<HomingState>(
                 *projectile_entity,

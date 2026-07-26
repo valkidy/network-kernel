@@ -270,6 +270,11 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip() {
             "action_templates/" + file,
             read_text_file(root / "game_server" / "action_templates" / file)});
     }
+    files.push_back({
+        "action_graph_templates/action_spawn_projectile_at_impact.yaml",
+        read_text_file(
+            root / "game_server" / "action_graph_templates" /
+            "action_spawn_projectile_at_impact.yaml")});
     const std::vector<std::string> projectile_files = {
         "beam_rifle_beam.yaml",
         "fire_floor_area.yaml",
@@ -372,10 +377,10 @@ int main() {
     assert(loaded_catalog);
     assert(load_result.status == KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS);
     assert(load_result.error_code == KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_NONE);
-    assert(load_result.catalog_version == 2);
+    assert(load_result.catalog_version == 3);
     assert(load_result.catalog_hash != 0);
     assert(load_result.projectile_template_count > 0);
-    assert(load_result.collider_template_count == 11);
+    assert(load_result.collider_template_count == 12);
     assert(load_result.collider_binding_count == 0);
     KernelSessionRulesConfig session_rules{};
     session_rules.struct_size = sizeof(session_rules);

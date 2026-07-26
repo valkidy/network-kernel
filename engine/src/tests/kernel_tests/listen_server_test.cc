@@ -130,7 +130,6 @@ KernelProjectileTemplateDefinition projectile_template(
     projectile.mechanics.collider_template_id = 10;
     projectile.mechanics.collision_mask = KERNEL_COLLISION_MASK_DAMAGEABLE;
     projectile.mechanics.max_hit_count = 1;
-    projectile.mechanics.flags = 1u;
     if (motion_model == KernelProjectileMotionModel_Parabolic) {
         projectile.mechanics.gravity = KernelVec3{0.0f, -9.8f, 0.0f};
     }

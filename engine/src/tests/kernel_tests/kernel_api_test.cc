@@ -60,7 +60,6 @@ KernelProjectileTemplateDefinition projectile_template(
     projectile_template.mechanics.collider_template_id = 10;
     projectile_template.mechanics.collision_mask = KERNEL_COLLISION_MASK_DAMAGEABLE;
     projectile_template.mechanics.max_hit_count = 1;
-    projectile_template.mechanics.flags = 1u;
     return projectile_template;
 }
 
@@ -241,7 +240,7 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 50u);
+    assert(KERNEL_ABI_VERSION == 51u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CONTROL_PLANE_RPC) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ACTION_TIMELINE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LOCAL_ACTION_RESULTS) != 0);

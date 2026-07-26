@@ -161,7 +161,6 @@ void hash_projectile_template(
     hash_scalar(hash, mechanics.collider_template_id);
     hash_scalar(hash, mechanics.collision_mask);
     hash_scalar(hash, mechanics.max_hit_count);
-    hash_scalar(hash, mechanics.flags);
     hash_scalar(hash, mechanics.homing.homing_mode);
     hash_scalar(hash, mechanics.homing.sync_mode);
     hash_scalar(hash, mechanics.homing.boost_ticks);
@@ -190,8 +189,6 @@ void hash_projectile_template(
         hash_scalar(hash, trigger->position_source);
         hash_scalar(hash, trigger->direction_source);
     }
-    hash_scalar(hash, mechanics.impact_spawn_projectile_template_id);
-    hash_scalar(hash, mechanics.expire_spawn_projectile_template_id);
 }
 
 void hash_actor_template(
@@ -473,7 +470,7 @@ std::uint8_t damage_shape_from_yaml(const YAML::Node& node) {
     }
     if (value == "explosion") {
         throw std::runtime_error(
-            "projectile damage_shape explosion has moved to impact_response");
+            "projectile damage_shape explosion has moved to an impact trigger");
     }
     if (value == "piercing_segment") {
         return KernelProjectileDamageShape_PiercingSegment;
@@ -496,17 +493,6 @@ std::uint8_t projectile_type_from_yaml(const YAML::Node& node) {
         return KernelProjectileType_Beam;
     }
     throw std::runtime_error("unsupported projectile type: " + value);
-}
-
-bool impact_spawns_projectile_from_yaml(const YAML::Node& node) {
-    const std::string value = node ? node.as<std::string>() : "none";
-    if (value == "none") {
-        return false;
-    }
-    if (value == "spawn_projectile") {
-        return true;
-    }
-    throw std::runtime_error("unsupported projectile impact action: " + value);
 }
 
 std::uint8_t damage_falloff_from_yaml(const YAML::Node& node) {
@@ -2788,7 +2774,6 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             "collision_mask",
             "max_hit_count",
             "gravity",
-            "impact_response",
             "triggers",
             "homing",
             "beam",
@@ -2807,7 +2792,8 @@ ProjectileTemplateConfig projectile_template_from_yaml(
     const std::string removed_radius_key = std::string("explosion_") + "radius";
     if (node[removed_radius_key]) {
         throw std::runtime_error(
-            "projectile template must use impact_response instead of removed radius field: " +
+            "projectile template must use triggers.on_projectile_impact "
+            "instead of removed radius field: " +
             projectile_template.name);
     }
     if (node["collision_query"] && node["collision_query_mode"]) {
@@ -2824,8 +2810,6 @@ ProjectileTemplateConfig projectile_template_from_yaml(
     mechanics.collision_query_mode = collision_query_mode_from_yaml(
         node["collision_query_mode"] ? node["collision_query_mode"]
                                      : node["collision_query"]);
-    mechanics.flags = 1u;
-
     if (mechanics.projectile_type == KernelProjectileType_AreaEffect) {
         const YAML::Node damage_behavior = node["damage_behavior"];
         if (!damage_behavior) {
@@ -2920,38 +2904,6 @@ ProjectileTemplateConfig projectile_template_from_yaml(
         throw std::runtime_error("beam block requires projectile type: beam");
     }
 
-    const YAML::Node impact_response = node["impact_response"];
-    if (impact_response) {
-        reject_unknown_keys(
-            impact_response,
-            {"action", "projectile_template", "destroy_self"},
-            path,
-            source_kind,
-            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_PROJECTILE,
-            definition.projectile_template_id);
-        if (impact_response["destroy_self"] &&
-            !impact_response["destroy_self"].as<bool>()) {
-            mechanics.flags &= ~1u;
-        }
-        if (impact_spawns_projectile_from_yaml(impact_response["action"])) {
-            if (!impact_response["projectile_template"]) {
-                throw std::runtime_error(
-                    "spawn_projectile impact response requires projectile_template: " +
-                    projectile_template.name);
-            }
-            projectile_template.impact_projectile_template_ref =
-                impact_response["projectile_template"].as<std::string>();
-        }
-        const bool impact_destroys_self = (mechanics.flags & 1u) != 0u;
-        const bool hit_response_destroys =
-            mechanics.hit_response == KernelProjectileHitResponse_Destroy;
-        if (impact_destroys_self != hit_response_destroys) {
-            throw std::runtime_error(
-                "impact_response.destroy_self conflicts with hit_response: " +
-                projectile_template.name);
-        }
-    }
-
     const YAML::Node triggers = node["triggers"];
     if (triggers) {
         reject_unknown_keys(
@@ -2961,11 +2913,6 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             source_kind,
             KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_PROJECTILE,
             definition.projectile_template_id);
-        if (impact_response && triggers["on_projectile_impact"]) {
-            throw std::runtime_error(
-                "projectile must not declare both impact_response and "
-                "triggers.on_projectile_impact: " + projectile_template.name);
-        }
         if (triggers["on_projectile_impact"]) {
             projectile_template.projectile_impact_trigger =
                 trigger_binding_from_yaml(
@@ -3284,16 +3231,6 @@ std::vector<ProjectileTemplateConfig> load_projectile_templates_from_source(
                    rhs.definition.projectile_template_id;
     });
     for (ProjectileTemplateConfig& projectile_template : projectile_templates) {
-        if (projectile_template.impact_projectile_template_ref.empty()) {
-            continue;
-        }
-        YAML::Node ref_node(projectile_template.impact_projectile_template_ref);
-        ProjectileTemplateConfig* impact_template =
-            projectile_template_from_ref(ref_node, &projectile_templates);
-        projectile_template.definition.mechanics.impact_spawn_projectile_template_id =
-            impact_template->definition.projectile_template_id;
-    }
-    for (ProjectileTemplateConfig& projectile_template : projectile_templates) {
         compile_projectile_trigger_binding(
             projectile_template.projectile_impact_trigger,
             false,
@@ -3321,10 +3258,6 @@ std::vector<ProjectileTemplateConfig> load_projectile_templates_from_source(
             }
             visited.push_back(current_id);
             for (const std::uint32_t next_id : {
-                     current->definition.mechanics
-                         .impact_spawn_projectile_template_id,
-                     current->definition.mechanics
-                         .expire_spawn_projectile_template_id,
                      current->definition.mechanics.projectile_impact_trigger
                          .spawn_projectile_template_id,
                      current->definition.mechanics.expired_trigger
@@ -3607,7 +3540,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     const std::uint32_t catalog_version =
         document["catalog_version"] ? document["catalog_version"].as<std::uint32_t>()
                                     : 1u;
-    if (catalog_version != 2u) {
+    if (catalog_version != 3u) {
         throw DataLoadError(
             KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNSUPPORTED_CATALOG_VERSION,
             "unsupported catalog_version: " + std::to_string(catalog_version),
@@ -4309,10 +4242,6 @@ std::vector<std::string> validate_gameplay_config(
               mechanics.beam.radius <= 0.0f ||
               mechanics.beam.damage_per_tick == 0 ||
               mechanics.beam.lifetime_ticks == 0)) ||
-            (mechanics.impact_spawn_projectile_template_id == 0 &&
-             mechanics.projectile_impact_trigger
-                     .spawn_projectile_template_id == 0 &&
-             !projectile_template.impact_projectile_template_ref.empty()) ||
             (mechanics.motion_model != KernelProjectileMotionModel_Homing
                  ? mechanics.homing.struct_size != 0
                  : mechanics.homing.struct_size <

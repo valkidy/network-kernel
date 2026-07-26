@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 50u
+#define KERNEL_ABI_VERSION 51u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -825,14 +825,11 @@ typedef struct KernelProjectileMechanicsDefinition {
     uint32_t collider_template_id;
     uint32_t collision_mask;
     uint32_t max_hit_count;
-    uint32_t flags;
     KernelHomingMechanicsDefinition homing;
     KernelAreaEffectMechanicsDefinition area_effect;
     KernelBeamMechanicsDefinition beam;
     KernelActionTriggerDefinition projectile_impact_trigger;
     KernelActionTriggerDefinition expired_trigger;
-    uint32_t impact_spawn_projectile_template_id;
-    uint32_t expire_spawn_projectile_template_id;
     uint8_t collision_query_mode;
     uint8_t reserved0;
     uint16_t reserved1;

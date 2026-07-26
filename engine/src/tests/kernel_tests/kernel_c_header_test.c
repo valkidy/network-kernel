@@ -6,7 +6,7 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 50u,
+    KERNEL_ABI_VERSION == 51u,
     "action trigger ABI");
 _Static_assert(
     sizeof(KernelActionTriggerDefinition) == 20u,
@@ -104,7 +104,7 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 50u);
+    assert(KERNEL_ABI_VERSION == 51u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD == 4u);
@@ -165,7 +165,7 @@ int main(void) {
     assert(KernelProjectileCollisionQueryMode_Ray == 3);
     assert(offsetof(KernelProjectileMechanicsDefinition, collision_query_mode) >
            offsetof(KernelProjectileMechanicsDefinition,
-                    expire_spawn_projectile_template_id));
+                    expired_trigger));
     assert(offsetof(KernelProjectileMechanicsDefinition, lifetime_ticks) >
            offsetof(KernelProjectileMechanicsDefinition, speed));
     assert(offsetof(KernelHomingMechanicsDefinition, max_turn_degrees_per_tick) >
