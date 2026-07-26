@@ -24,9 +24,17 @@ struct ActionApplyDamageCommand {
     ActionExecutionProvenance provenance;
 };
 
+struct ActionSpawnEntityCommand {
+    std::uint32_t entity_template_id = 0;
+    glm::vec3 position{0.0f};
+    NetId owner = 0;
+    ActionExecutionProvenance provenance;
+};
+
 using ActionGraphCommand = std::variant<
     ActionSpawnProjectileCommand,
-    ActionApplyDamageCommand>;
+    ActionApplyDamageCommand,
+    ActionSpawnEntityCommand>;
 
 struct ActionGraphQueuedTrigger {
     CompiledActionGraphBinding binding;
@@ -51,6 +59,12 @@ CompiledActionGraphBinding compile_apply_damage_binding(
     TriggerEventType event_type,
     EntityRefSource target_source,
     std::uint16_t amount);
+
+CompiledActionGraphBinding compile_spawn_entity_binding(
+    TriggerEventType event_type,
+    std::uint32_t entity_template_id,
+    EventVec3Source position_source,
+    EntityRefSource owner_source);
 
 bool validate_action_graph_binding(
     const CompiledActionGraphBinding& binding,

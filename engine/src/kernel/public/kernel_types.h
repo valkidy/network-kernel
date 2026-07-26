@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 48u
+#define KERNEL_ABI_VERSION 49u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -309,6 +309,7 @@ typedef enum KernelEntityType {
 typedef enum KernelEntityTriggerActionType {
     KernelEntityTriggerActionType_None = 0,
     KernelEntityTriggerActionType_ApplyDamage = 1,
+    KernelEntityTriggerActionType_SpawnEntity = 2,
 } KernelEntityTriggerActionType;
 
 typedef enum KernelEntityRefSource {
@@ -317,6 +318,11 @@ typedef enum KernelEntityRefSource {
     KernelEntityRefSource_EventTarget = 2,
     KernelEntityRefSource_EventInstigator = 3,
 } KernelEntityRefSource;
+
+typedef enum KernelEventVec3Source {
+    KernelEventVec3Source_Position = 0,
+    KernelEventVec3Source_Direction = 1,
+} KernelEventVec3Source;
 
 typedef enum KernelAiControllerType {
     KernelAiControllerType_None = 0,
@@ -1236,6 +1242,10 @@ typedef struct KernelActionTriggerDefinition {
     uint8_t action_type;
     uint8_t target_source;
     uint16_t damage_amount;
+    uint32_t spawn_entity_template_id;
+    uint8_t position_source;
+    uint8_t owner_source;
+    uint16_t reserved;
 } KernelActionTriggerDefinition;
 
 struct KernelEntityTemplateDefinition {

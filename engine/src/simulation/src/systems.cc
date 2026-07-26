@@ -46,47 +46,6 @@ std::uint64_t action_trigger_request_id(
     return hash;
 }
 
-bool submit_action_damage_commands(
-    World& world,
-    DamagePipeline* damage_pipeline,
-    const std::vector<ActionGraphCommand>& commands,
-    std::uint64_t server_time_us,
-    const glm::vec3& position) {
-    if (damage_pipeline == nullptr) {
-        return false;
-    }
-    for (const ActionGraphCommand& command : commands) {
-        const auto* damage = std::get_if<ActionApplyDamageCommand>(&command);
-        if (damage == nullptr || damage->source == 0u) {
-            return false;
-        }
-        const std::optional<entt::entity> target =
-            world.find_entity(damage->target);
-        if (!target.has_value() ||
-            !world.registry().all_of<NetworkIdentity, Health>(*target)) {
-            return false;
-        }
-    }
-    for (std::size_t index = 0; index < commands.size(); ++index) {
-        const ActionApplyDamageCommand& damage =
-            std::get<ActionApplyDamageCommand>(commands[index]);
-        if (!damage_pipeline->submit_damage_request(DamageRequest{
-                damage.provenance.server_tick,
-                static_cast<std::uint32_t>(index),
-                damage.source,
-                damage.target,
-                damage.provenance.owner_peer,
-                0u,
-                damage.amount,
-                server_time_us,
-                position,
-            })) {
-            return false;
-        }
-    }
-    return true;
-}
-
 glm::vec3 from_kernel_vec3(const KernelVec3& value) {
     return glm::vec3{value.x, value.y, value.z};
 }
@@ -125,6 +84,103 @@ const KernelEntityTemplateDefinition* find_entity_template(
             return entity_template.entity_template_id == entity_template_id;
         });
     return found == templates.end() ? nullptr : &*found;
+}
+
+std::optional<CompiledActionGraphBinding> compile_entity_trigger_binding(
+    const KernelActionTriggerDefinition& trigger,
+    TriggerEventType event_type) {
+    if (trigger.struct_size < sizeof(KernelActionTriggerDefinition)) {
+        return std::nullopt;
+    }
+    if (trigger.action_type == KernelEntityTriggerActionType_ApplyDamage) {
+        return compile_apply_damage_binding(
+            event_type,
+            static_cast<EntityRefSource>(trigger.target_source),
+            trigger.damage_amount);
+    }
+    if (trigger.action_type == KernelEntityTriggerActionType_SpawnEntity) {
+        return compile_spawn_entity_binding(
+            event_type,
+            trigger.spawn_entity_template_id,
+            static_cast<EventVec3Source>(trigger.position_source),
+            static_cast<EntityRefSource>(trigger.owner_source));
+    }
+    return std::nullopt;
+}
+
+bool execute_action_graph_commands(
+    KernelEngine& engine,
+    World& world,
+    DamagePipeline* damage_pipeline,
+    const std::vector<KernelEntityTemplateDefinition>& entity_templates,
+    const std::vector<ActionGraphCommand>& commands,
+    std::uint64_t server_time_us,
+    const glm::vec3& event_position) {
+    if (damage_pipeline == nullptr) {
+        return false;
+    }
+    for (const ActionGraphCommand& command : commands) {
+        if (const auto* damage =
+                std::get_if<ActionApplyDamageCommand>(&command)) {
+            const std::optional<entt::entity> target =
+                world.find_entity(damage->target);
+            if (damage->source == 0u || !target.has_value() ||
+                !world.registry().all_of<NetworkIdentity, Health>(*target)) {
+                return false;
+            }
+            continue;
+        }
+        const auto* spawn = std::get_if<ActionSpawnEntityCommand>(&command);
+        const std::optional<entt::entity> owner = spawn == nullptr
+            ? std::nullopt
+            : world.find_entity(spawn->owner);
+        if (spawn == nullptr ||
+            find_entity_template(entity_templates, spawn->entity_template_id) ==
+                nullptr ||
+            !owner.has_value() ||
+            !world.registry().all_of<NetworkIdentity>(*owner) ||
+            !std::isfinite(spawn->position.x) ||
+            !std::isfinite(spawn->position.y) ||
+            !std::isfinite(spawn->position.z)) {
+            return false;
+        }
+    }
+    for (std::size_t index = 0; index < commands.size(); ++index) {
+        const ActionGraphCommand& command = commands[index];
+        if (const auto* damage =
+                std::get_if<ActionApplyDamageCommand>(&command)) {
+            if (!damage_pipeline->submit_damage_request(DamageRequest{
+                    damage->provenance.server_tick,
+                    static_cast<std::uint32_t>(index),
+                    damage->source,
+                    damage->target,
+                    damage->provenance.owner_peer,
+                    0u,
+                    damage->amount,
+                    server_time_us,
+                    event_position,
+                })) {
+                return false;
+            }
+            continue;
+        }
+        const ActionSpawnEntityCommand& spawn =
+            std::get<ActionSpawnEntityCommand>(command);
+        const entt::entity owner = *world.find_entity(spawn.owner);
+        KernelServerEntityCreateInfo create_info{};
+        create_info.struct_size = sizeof(create_info);
+        create_info.entity_template_id = spawn.entity_template_id;
+        create_info.owner_peer =
+            world.registry().get<NetworkIdentity>(owner).owner_peer;
+        create_info.position = to_kernel_vec3(spawn.position);
+        create_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+        NetId spawned_net_id = 0;
+        if (!EntityLifecycleSystem{}.create_entity(
+                engine, create_info, &spawned_net_id)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 AiControllerType to_ai_controller_type(std::uint32_t controller_type) {
@@ -362,57 +418,41 @@ bool EntityLifecycleSystem::create_entity(
              KERNEL_ENTITY_COMPONENT_DIRECTOR_RUNTIME) != 0u) {
             materialize_director_runtime(registry, *entity, entity_template->ai);
         }
-        if (entity_template->activated_trigger.struct_size >=
-                sizeof(KernelActionTriggerDefinition) &&
-            entity_template->activated_trigger.action_type ==
-                KernelEntityTriggerActionType_ApplyDamage) {
+        if (const std::optional<CompiledActionGraphBinding> binding =
+                compile_entity_trigger_binding(
+                    entity_template->activated_trigger,
+                    TriggerEventType::kActivated)) {
             registry.emplace_or_replace<OnActivatedTriggerTag>(*entity);
             registry.emplace_or_replace<ActionGraphActivatedBinding>(
                 *entity,
-                ActionGraphActivatedBinding{compile_apply_damage_binding(
-                    TriggerEventType::kActivated,
-                    static_cast<EntityRefSource>(
-                        entity_template->activated_trigger.target_source),
-                    entity_template->activated_trigger.damage_amount)});
+                ActionGraphActivatedBinding{*binding});
         }
-        if (entity_template->collision_trigger.struct_size >=
-                sizeof(KernelActionTriggerDefinition) &&
-            entity_template->collision_trigger.action_type ==
-                KernelEntityTriggerActionType_ApplyDamage) {
+        if (const std::optional<CompiledActionGraphBinding> binding =
+                compile_entity_trigger_binding(
+                    entity_template->collision_trigger,
+                    TriggerEventType::kCollision)) {
             registry.emplace_or_replace<OnCollisionTriggerTag>(*entity);
             registry.emplace_or_replace<ActionGraphCollisionBinding>(
                 *entity,
-                ActionGraphCollisionBinding{compile_apply_damage_binding(
-                    TriggerEventType::kCollision,
-                    static_cast<EntityRefSource>(
-                        entity_template->collision_trigger.target_source),
-                    entity_template->collision_trigger.damage_amount)});
+                ActionGraphCollisionBinding{*binding});
         }
-        if (entity_template->health_depleted_trigger.struct_size >=
-                sizeof(KernelActionTriggerDefinition) &&
-            entity_template->health_depleted_trigger.action_type ==
-                KernelEntityTriggerActionType_ApplyDamage) {
+        if (const std::optional<CompiledActionGraphBinding> binding =
+                compile_entity_trigger_binding(
+                    entity_template->health_depleted_trigger,
+                    TriggerEventType::kHealthDepleted)) {
             registry.emplace_or_replace<OnHealthDepletedTriggerTag>(*entity);
             registry.emplace_or_replace<ActionGraphHealthDepletedBinding>(
                 *entity,
-                ActionGraphHealthDepletedBinding{compile_apply_damage_binding(
-                    TriggerEventType::kHealthDepleted,
-                    static_cast<EntityRefSource>(
-                        entity_template->health_depleted_trigger.target_source),
-                    entity_template->health_depleted_trigger.damage_amount)});
+                ActionGraphHealthDepletedBinding{*binding});
         }
-        if (entity_template->destroy_entity_trigger.struct_size >=
-                sizeof(KernelActionTriggerDefinition) &&
-            entity_template->destroy_entity_trigger.action_type ==
-                KernelEntityTriggerActionType_ApplyDamage) {
+        if (const std::optional<CompiledActionGraphBinding> binding =
+                compile_entity_trigger_binding(
+                    entity_template->destroy_entity_trigger,
+                    TriggerEventType::kDestroyEntity)) {
             registry.emplace_or_replace<OnDestroyEntityTriggerTag>(*entity);
             registry.emplace_or_replace<ActionGraphDestroyEntityBinding>(
                 *entity,
-                ActionGraphDestroyEntityBinding{compile_apply_damage_binding(
-                    TriggerEventType::kDestroyEntity,
-                    static_cast<EntityRefSource>(
-                        entity_template->destroy_entity_trigger.target_source),
-                    entity_template->destroy_entity_trigger.damage_amount)});
+                ActionGraphDestroyEntityBinding{*binding});
         }
         if (entity_template->actor_template_id != 0u) {
             registry.emplace_or_replace<ActorTemplateRef>(
@@ -553,9 +593,11 @@ bool ActivationSystem::activate_entity(
         return false;
     }
 
-    if (!submit_action_damage_commands(
+    if (!execute_action_graph_commands(
+            engine,
             engine.world_,
             &engine.damage_pipeline_,
+            engine.entity_templates_,
             command_batches.front().commands,
             engine.current_server_time_us(),
             command_batches.front().event.position)) {
@@ -696,9 +738,11 @@ void CollisionTriggerSystem::update(
         return;
     }
     for (const ActionGraphCommandBatch& batch : command_batches) {
-        (void)submit_action_damage_commands(
+        (void)execute_action_graph_commands(
+            engine,
             engine.world_,
             &engine.damage_pipeline_,
+            engine.entity_templates_,
             batch.commands,
             server_time_us,
             batch.event.position);
@@ -771,9 +815,11 @@ void EntityLifecycleSystem::process_health_depleted(
         return;
     }
     for (const ActionGraphCommandBatch& batch : command_batches) {
-        (void)submit_action_damage_commands(
+        (void)execute_action_graph_commands(
+            engine,
             engine.world_,
             &engine.damage_pipeline_,
+            engine.entity_templates_,
             batch.commands,
             server_time_us,
             batch.event.position);
@@ -933,9 +979,11 @@ bool EntityLifecycleSystem::destroy_entity_with_context(
     if (dispatch_action_graph_triggers(
             &queued_triggers, &command_batches, nullptr)) {
         for (const ActionGraphCommandBatch& batch : command_batches) {
-            (void)submit_action_damage_commands(
+            (void)execute_action_graph_commands(
+                engine,
                 engine.world_,
                 &engine.damage_pipeline_,
+                engine.entity_templates_,
                 batch.commands,
                 engine.current_server_time_us(),
                 batch.event.position);

@@ -16,7 +16,8 @@ triggers:
       target: event.instigator
       amount: 7
   on_destroy_entity:
-    action_graph: action_apply_damage_at_destroy_entity
+    action_graph: action_spawn_entity_at_destroy_entity
     parameters:
-      target: event.instigator
-      amount: 3
+      template: collision_damage_prop
+      position: event.position
+      owner: event.instigator

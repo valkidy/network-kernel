@@ -242,16 +242,28 @@ void lifecycle_triggers_capture_context_before_prop_destruction() {
     prop_template.destroy_entity_trigger.struct_size =
         sizeof(prop_template.destroy_entity_trigger);
     prop_template.destroy_entity_trigger.action_type =
-        KernelEntityTriggerActionType_ApplyDamage;
-    prop_template.destroy_entity_trigger.target_source =
+        KernelEntityTriggerActionType_SpawnEntity;
+    prop_template.destroy_entity_trigger.spawn_entity_template_id = 203;
+    prop_template.destroy_entity_trigger.position_source =
+        KernelEventVec3Source_Position;
+    prop_template.destroy_entity_trigger.owner_source =
         KernelEntityRefSource_EventInstigator;
-    prop_template.destroy_entity_trigger.damage_amount = 3;
     engine.entity_templates_.push_back(prop_template);
+
+    KernelEntityTemplateDefinition spawned_template{};
+    spawned_template.struct_size = sizeof(spawned_template);
+    spawned_template.entity_template_id = 203;
+    spawned_template.entity_type = KernelEntityType_Prop;
+    spawned_template.component_flags = KERNEL_ENTITY_COMPONENT_TRANSFORM;
+    spawned_template.ai.struct_size = sizeof(spawned_template.ai);
+    spawned_template.movement.struct_size = sizeof(spawned_template.movement);
+    engine.entity_templates_.push_back(spawned_template);
 
     KernelServerEntityCreateInfo actor_info{};
     actor_info.struct_size = sizeof(actor_info);
     actor_info.entity_type = KernelEntityType_Actor;
     actor_info.actor_type = KernelActorType_Player;
+    actor_info.owner_peer = 7;
     actor_info.position = KernelVec3{0.0f, 0.0f, 0.0f};
     actor_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
     std::uint32_t instigator = 0;
@@ -291,19 +303,35 @@ void lifecycle_triggers_capture_context_before_prop_destruction() {
     assert(engine.damage_pipeline_.pending_count() == 1);
     lifecycle.destroy_dead_entities(engine, health_depleted);
     assert(!engine.world_.find_entity(prop).has_value());
-    assert(engine.damage_pipeline_.pending_count() == 2);
+    assert(engine.damage_pipeline_.pending_count() == 1);
+
+    network_example::NetId spawned = 0;
+    auto spawned_view = engine.world_.registry().view<
+        const network_example::NetworkIdentity,
+        const network_example::EntityKind,
+        const network_example::Transform>();
+    for (const entt::entity entity : spawned_view) {
+        const auto& identity =
+            spawned_view.get<const network_example::NetworkIdentity>(entity);
+        const auto& kind =
+            spawned_view.get<const network_example::EntityKind>(entity);
+        if (kind.type == network_example::EntityType::kProp) {
+            spawned = identity.net_id;
+            assert(identity.owner_peer == 7);
+            const glm::vec3 position =
+                spawned_view.get<const network_example::Transform>(entity)
+                    .position;
+            assert(position == lethal_damage.hit_position);
+        }
+    }
+    assert(spawned != 0u);
 
     const auto ready = engine.damage_pipeline_.drain_ready_damage(
         engine.world_, std::numeric_limits<std::uint64_t>::max());
-    assert(ready.size() == 2);
-    std::vector<std::uint16_t> damage_amounts;
-    for (const network_example::ConfirmedDamage& damage : ready) {
-        assert(damage.source_net_id == prop);
-        assert(damage.target_net_id == instigator);
-        damage_amounts.push_back(damage.damage);
-    }
-    std::sort(damage_amounts.begin(), damage_amounts.end());
-    assert((damage_amounts == std::vector<std::uint16_t>{3, 7}));
+    assert(ready.size() == 1);
+    assert(ready.front().source_net_id == prop);
+    assert(ready.front().target_net_id == instigator);
+    assert(ready.front().damage == 7);
 }
 
 }  // namespace

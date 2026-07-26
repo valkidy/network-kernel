@@ -135,8 +135,10 @@ struct ActionGraphTemplateConfig {
     std::vector<ActionGraphParameterConfig> parameters;
     std::string action_type;
     std::string projectile_template_parameter;
+    std::string entity_template_parameter;
     std::string position_parameter;
     std::string direction_parameter;
+    std::string owner_parameter;
     std::string target_parameter;
     std::string amount_parameter;
 };

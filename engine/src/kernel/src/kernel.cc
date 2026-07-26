@@ -2190,14 +2190,33 @@ bool KernelEngine::load_gameplay_catalog(
                  &entity_template.health_depleted_trigger,
                  &entity_template.destroy_entity_trigger,
              }) {
-            if (trigger->struct_size != 0u &&
-                (trigger->struct_size < sizeof(KernelActionTriggerDefinition) ||
-                 trigger->action_type !=
-                     KernelEntityTriggerActionType_ApplyDamage ||
-                 trigger->target_source > KernelEntityRefSource_EventInstigator ||
-                 trigger->damage_amount == 0u)) {
+            if (trigger->struct_size == 0u) {
+                continue;
+            }
+            if (trigger->struct_size < sizeof(KernelActionTriggerDefinition)) {
                 return false;
             }
+            if (trigger->action_type ==
+                KernelEntityTriggerActionType_ApplyDamage) {
+                if (trigger->target_source >
+                        KernelEntityRefSource_EventInstigator ||
+                    trigger->damage_amount == 0u) {
+                    return false;
+                }
+                continue;
+            }
+            if (trigger->action_type ==
+                KernelEntityTriggerActionType_SpawnEntity) {
+                if (trigger->spawn_entity_template_id == 0u ||
+                    trigger->position_source !=
+                        KernelEventVec3Source_Position ||
+                    trigger->owner_source >
+                        KernelEntityRefSource_EventInstigator) {
+                    return false;
+                }
+                continue;
+            }
+            return false;
         }
         if (entity_template.entity_type == KernelEntityType_Director &&
             ((entity_template.component_flags &
@@ -2343,6 +2362,20 @@ bool KernelEngine::load_gameplay_catalog(
                 validated_entity_templates,
                 entity_template.ai.spawn_entity_template_id) == nullptr) {
             return false;
+        }
+        for (const KernelActionTriggerDefinition* trigger : {
+                 &entity_template.activated_trigger,
+                 &entity_template.collision_trigger,
+                 &entity_template.health_depleted_trigger,
+                 &entity_template.destroy_entity_trigger,
+             }) {
+            if (trigger->action_type ==
+                    KernelEntityTriggerActionType_SpawnEntity &&
+                find_entity_template(
+                    validated_entity_templates,
+                    trigger->spawn_entity_template_id) == nullptr) {
+                return false;
+            }
         }
         if (entity_template.collider_template_id != 0u &&
             find_collider_template(

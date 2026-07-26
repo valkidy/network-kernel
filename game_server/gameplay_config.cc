@@ -1228,8 +1228,10 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
         {
             "type",
             "projectile_template",
+            "entity_template",
             "position",
             "direction",
+            "owner",
             "target",
             "amount",
         },
@@ -1242,7 +1244,8 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
     graph.action_type = action["type"].as<std::string>();
     std::vector<const std::string*> action_parameters;
     if (graph.action_type == "spawn_projectile") {
-        if (action["target"] || action["amount"]) {
+        if (action["entity_template"] || action["owner"] ||
+            action["target"] || action["amount"]) {
             throw std::runtime_error(
                 "spawn_projectile action has unsupported fields: " + path);
         }
@@ -1257,9 +1260,27 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
             &graph.position_parameter,
             &graph.direction_parameter,
         };
+    } else if (graph.action_type == "spawn_entity") {
+        if (action["projectile_template"] || action["direction"] ||
+            action["target"] || action["amount"]) {
+            throw std::runtime_error(
+                "spawn_entity action has unsupported fields: " + path);
+        }
+        graph.entity_template_parameter = parameter_reference_from_yaml(
+            action["entity_template"], "entity_template");
+        graph.position_parameter =
+            parameter_reference_from_yaml(action["position"], "position");
+        graph.owner_parameter =
+            parameter_reference_from_yaml(action["owner"], "owner");
+        action_parameters = {
+            &graph.entity_template_parameter,
+            &graph.position_parameter,
+            &graph.owner_parameter,
+        };
     } else if (graph.action_type == "apply_damage") {
         if (action["projectile_template"] || action["position"] ||
-            action["direction"]) {
+            action["direction"] || action["entity_template"] ||
+            action["owner"]) {
             throw std::runtime_error(
                 "apply_damage action has unsupported fields: " + path);
         }
@@ -3107,16 +3128,19 @@ void compile_projectile_trigger_binding(
 KernelActionTriggerDefinition compile_action_trigger_binding(
     const TriggerBindingConfig& binding,
     std::string_view trigger_name,
-    const std::vector<ActionGraphTemplateConfig>& action_graph_templates) {
+    const std::vector<ActionGraphTemplateConfig>& action_graph_templates,
+    const std::vector<EntityTemplateConfig>& entity_templates) {
     KernelActionTriggerDefinition compiled{};
     if (binding.action_graph_ref.empty()) {
         return compiled;
     }
     const ActionGraphTemplateConfig* graph = action_graph_template_from_ref(
         binding.action_graph_ref, action_graph_templates);
-    if (graph->action_type != "apply_damage") {
+    if (graph->action_type != "apply_damage" &&
+        graph->action_type != "spawn_entity") {
         throw std::runtime_error(
-            std::string(trigger_name) + " requires apply_damage action graph: " +
+            std::string(trigger_name) +
+            " requires apply_damage or spawn_entity action graph: " +
             binding.action_graph_ref);
     }
     std::unordered_set<std::string> seen_parameters;
@@ -3150,26 +3174,48 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
     for (const ActionGraphParameterConfig& parameter : graph->parameters) {
         (void)trigger_parameter_value(binding, parameter);
     }
+    const auto entity_ref_source = [](const std::string& expression)
+        -> std::uint8_t {
+        if (expression == "self") {
+            return KernelEntityRefSource_Self;
+        }
+        if (expression == "event.subject") {
+            return KernelEntityRefSource_EventSubject;
+        }
+        if (expression == "event.target") {
+            return KernelEntityRefSource_EventTarget;
+        }
+        if (expression == "event.instigator") {
+            return KernelEntityRefSource_EventInstigator;
+        }
+        throw std::runtime_error(
+            "action parameter must be an entity reference expression");
+    };
+    compiled.struct_size = sizeof(KernelActionTriggerDefinition);
+    if (graph->action_type == "spawn_entity") {
+        const std::string entity_template = trigger_parameter_value(
+            binding, graph_parameter(graph->entity_template_parameter));
+        const std::string position = trigger_parameter_value(
+            binding, graph_parameter(graph->position_parameter));
+        const std::string owner = trigger_parameter_value(
+            binding, graph_parameter(graph->owner_parameter));
+        if (position != "event.position") {
+            throw std::runtime_error(
+                "spawn_entity position must bind to event.position");
+        }
+        compiled.action_type = KernelEntityTriggerActionType_SpawnEntity;
+        compiled.spawn_entity_template_id = entity_template_ref_from_yaml(
+            YAML::Node(entity_template), entity_templates);
+        compiled.position_source = KernelEventVec3Source_Position;
+        compiled.owner_source = entity_ref_source(owner);
+        return compiled;
+    }
+
     const std::string target = trigger_parameter_value(
         binding, graph_parameter(graph->target_parameter));
     const std::string amount = trigger_parameter_value(
         binding, graph_parameter(graph->amount_parameter));
-    const auto target_source = [&]() -> std::uint8_t {
-        if (target == "self") {
-            return KernelEntityRefSource_Self;
-        }
-        if (target == "event.subject") {
-            return KernelEntityRefSource_EventSubject;
-        }
-        if (target == "event.target") {
-            return KernelEntityRefSource_EventTarget;
-        }
-        if (target == "event.instigator") {
-            return KernelEntityRefSource_EventInstigator;
-        }
-        throw std::runtime_error(
-            "apply_damage target must be an entity reference expression");
-    }();
+    const std::uint8_t target_source = entity_ref_source(target);
     std::size_t parsed = 0;
     const unsigned long parsed_amount = std::stoul(amount, &parsed);
     if (parsed != amount.size() || parsed_amount == 0u ||
@@ -3177,7 +3223,6 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
         throw std::runtime_error(
             "apply_damage amount must be a positive uint16");
     }
-    compiled.struct_size = sizeof(KernelActionTriggerDefinition);
     compiled.action_type = KernelEntityTriggerActionType_ApplyDamage;
     compiled.target_source = target_source;
     compiled.damage_amount = static_cast<std::uint16_t>(parsed_amount);
@@ -4365,19 +4410,23 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
         entity_template.activated_trigger = compile_action_trigger_binding(
             authored_template.activated_trigger,
             "on_activated",
-            config.action_graph_templates);
+            config.action_graph_templates,
+            config.entity_templates);
         entity_template.collision_trigger = compile_action_trigger_binding(
             authored_template.collision_trigger,
             "on_collision",
-            config.action_graph_templates);
+            config.action_graph_templates,
+            config.entity_templates);
         entity_template.health_depleted_trigger = compile_action_trigger_binding(
             authored_template.health_depleted_trigger,
             "on_health_depleted",
-            config.action_graph_templates);
+            config.action_graph_templates,
+            config.entity_templates);
         entity_template.destroy_entity_trigger = compile_action_trigger_binding(
             authored_template.destroy_entity_trigger,
             "on_destroy_entity",
-            config.action_graph_templates);
+            config.action_graph_templates,
+            config.entity_templates);
 
         if (authored_template.entity_type == kEntityTypeActor) {
             entity_template.component_flags =

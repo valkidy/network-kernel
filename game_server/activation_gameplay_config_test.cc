@@ -18,6 +18,9 @@ int main() {
     assert(
         prop->activated_trigger.action_graph_ref ==
         "action_apply_damage_at_activated");
+    assert(
+        prop->destroy_entity_trigger.action_graph_ref ==
+        "action_spawn_entity_at_destroy_entity");
 
     const network_example::game_server::KernelGameplayCatalogStorage catalog =
         network_example::game_server::build_kernel_gameplay_catalog(config);
@@ -35,6 +38,16 @@ int main() {
         compiled->activated_trigger.target_source ==
         KernelEntityRefSource_EventTarget);
     assert(compiled->activated_trigger.damage_amount == 25);
+    assert(
+        compiled->destroy_entity_trigger.action_type ==
+        KernelEntityTriggerActionType_SpawnEntity);
+    assert(compiled->destroy_entity_trigger.spawn_entity_template_id == 201);
+    assert(
+        compiled->destroy_entity_trigger.position_source ==
+        KernelEventVec3Source_Position);
+    assert(
+        compiled->destroy_entity_trigger.owner_source ==
+        KernelEntityRefSource_EventInstigator);
 
     const auto collision_prop = std::find_if(
         config.entity_templates.begin(),

@@ -450,10 +450,15 @@ struct ProjectileTemplateIdValue {
     std::uint32_t value = 0;
 };
 
+struct EntityTemplateIdValue {
+    std::uint32_t value = 0;
+};
+
 using ActionGraphParameterValue = std::variant<
     std::monostate,
     EntityIdValue,
     ProjectileTemplateIdValue,
+    EntityTemplateIdValue,
     glm::vec3,
     float>;
 
@@ -503,9 +508,16 @@ struct ActionApplyDamageDefinition {
     std::string amount_parameter;
 };
 
+struct ActionSpawnEntityDefinition {
+    std::string entity_template_parameter;
+    std::string position_parameter;
+    std::string owner_parameter;
+};
+
 using ActionGraphAction = std::variant<
     ActionSpawnProjectileDefinition,
-    ActionApplyDamageDefinition>;
+    ActionApplyDamageDefinition,
+    ActionSpawnEntityDefinition>;
 
 struct ActionGraphTemplate {
     std::string id;

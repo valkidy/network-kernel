@@ -14,6 +14,7 @@ enum class ParameterType : std::uint8_t {
     kUnknown,
     kEntityId,
     kProjectileTemplateId,
+    kEntityTemplateId,
     kVec3,
     kNumber,
 };
@@ -31,6 +32,9 @@ ParameterType value_type(const ActionGraphParameterValue& value) {
     }
     if (std::holds_alternative<ProjectileTemplateIdValue>(value)) {
         return ParameterType::kProjectileTemplateId;
+    }
+    if (std::holds_alternative<EntityTemplateIdValue>(value)) {
+        return ParameterType::kEntityTemplateId;
     }
     if (std::holds_alternative<glm::vec3>(value)) {
         return ParameterType::kVec3;
@@ -200,6 +204,52 @@ CompiledActionGraphBinding compile_apply_damage_binding(
     };
 }
 
+// Keep this binding generic for all entity-template-backed spawns, including
+// props, obstacles, pickups, and deployables. Future rotation and placement
+// validation should live in spawn parameters and a placement policy/system,
+// rather than introducing specialized compilers such as
+// compile_spawn_prop_binding().
+CompiledActionGraphBinding compile_spawn_entity_binding(
+    TriggerEventType event_type,
+    std::uint32_t entity_template_id,
+    EventVec3Source position_source,
+    EntityRefSource owner_source) {
+    const std::string graph_id = [&]() {
+        switch (event_type) {
+            case TriggerEventType::kCollision:
+                return "action_spawn_entity_at_collision";
+            case TriggerEventType::kHealthDepleted:
+                return "action_spawn_entity_at_health_depleted";
+            case TriggerEventType::kDestroyEntity:
+                return "action_spawn_entity_at_destroy_entity";
+            default:
+                return "action_spawn_entity_at_activated";
+        }
+    }();
+    return CompiledActionGraphBinding{
+        event_type,
+        ActionGraphTemplate{
+            graph_id,
+            {
+                {"template", std::monostate{}},
+                {"position", std::monostate{}},
+                {"owner", std::monostate{}},
+            },
+            {ActionSpawnEntityDefinition{
+                "template",
+                "position",
+                "owner",
+            }},
+        },
+        {
+            {"template", ActionGraphParameterValue{
+                 EntityTemplateIdValue{entity_template_id}}},
+            {"position", EventVec3Expression{position_source}},
+            {"owner", EntityRefExpression{owner_source}},
+        },
+    };
+}
+
 bool validate_action_graph_binding(
     const CompiledActionGraphBinding& binding,
     std::string* error) {
@@ -244,6 +294,27 @@ bool validate_action_graph_binding(
                 spawn->direction_parameter,
                 ParameterType::kVec3,
                 error)) {
+                return false;
+            }
+            continue;
+        }
+        if (const auto* spawn =
+                std::get_if<ActionSpawnEntityDefinition>(&action)) {
+            if (!validate_action_parameter(
+                    binding,
+                    spawn->entity_template_parameter,
+                    ParameterType::kEntityTemplateId,
+                    error) ||
+                !validate_action_parameter(
+                    binding,
+                    spawn->position_parameter,
+                    ParameterType::kVec3,
+                    error) ||
+                !validate_action_parameter(
+                    binding,
+                    spawn->owner_parameter,
+                    ParameterType::kEntityId,
+                    error)) {
                 return false;
             }
             continue;
@@ -331,11 +402,51 @@ bool evaluate_action_graph(
             continue;
         }
 
-        const auto& damage = std::get<ActionApplyDamageDefinition>(action);
+        if (const auto* spawn =
+                std::get_if<ActionSpawnEntityDefinition>(&action)) {
+            const ActionGraphParameterValue* template_value =
+                find_resolved_parameter(
+                    parameters, spawn->entity_template_parameter);
+            const ActionGraphParameterValue* position_value =
+                find_resolved_parameter(parameters, spawn->position_parameter);
+            const ActionGraphParameterValue* owner_value =
+                find_resolved_parameter(parameters, spawn->owner_parameter);
+            if (template_value == nullptr || position_value == nullptr ||
+                owner_value == nullptr ||
+                !std::holds_alternative<EntityTemplateIdValue>(
+                    *template_value) ||
+                !std::holds_alternative<glm::vec3>(*position_value) ||
+                !std::holds_alternative<EntityIdValue>(*owner_value)) {
+                return fail(error, "spawn_entity action input type mismatch");
+            }
+            const std::uint32_t entity_template_id =
+                std::get<EntityTemplateIdValue>(*template_value).value;
+            const glm::vec3 position = std::get<glm::vec3>(*position_value);
+            const NetId owner = std::get<EntityIdValue>(*owner_value).value;
+            if (entity_template_id == 0u || owner == 0u ||
+                !std::isfinite(position.x) || !std::isfinite(position.y) ||
+                !std::isfinite(position.z)) {
+                return fail(
+                    error,
+                    "spawn_entity requires a template, owner, and finite position");
+            }
+            commands->push_back(ActionSpawnEntityCommand{
+                entity_template_id,
+                position,
+                owner,
+                provenance,
+            });
+            continue;
+        }
+
+        const auto* damage = std::get_if<ActionApplyDamageDefinition>(&action);
+        if (damage == nullptr) {
+            return fail(error, "unsupported action graph action");
+        }
         const ActionGraphParameterValue* target_value =
-            find_resolved_parameter(parameters, damage.target_parameter);
+            find_resolved_parameter(parameters, damage->target_parameter);
         const ActionGraphParameterValue* amount_value =
-            find_resolved_parameter(parameters, damage.amount_parameter);
+            find_resolved_parameter(parameters, damage->amount_parameter);
         if (target_value == nullptr || amount_value == nullptr ||
             !std::holds_alternative<EntityIdValue>(*target_value) ||
             !std::holds_alternative<float>(*amount_value)) {
