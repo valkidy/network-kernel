@@ -418,6 +418,7 @@ typedef enum KernelProjectileHitResponse {
 
 typedef enum KernelProjectileDamageShape {
     KernelProjectileDamageShape_DirectHit = 0,
+    KernelProjectileDamageShape_None = 1,
     KernelProjectileDamageShape_PiercingSegment = 2,
 } KernelProjectileDamageShape;
 

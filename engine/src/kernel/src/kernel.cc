@@ -22,6 +22,7 @@
 #include "protocol/public/packet_header.h"
 #include "protocol/public/session_packets.h"
 #include "protocol/public/sha256.h"
+#include "simulation/public/action_graph.h"
 #include "simulation/public/movement_solver.h"
 #include "simulation/src/command_dispatcher.h"
 #include "simulation/src/systems.h"
@@ -900,6 +901,9 @@ std::uint8_t to_kernel_projectile_hit_response(
 }
 
 ProjectileDamageShape to_projectile_damage_shape(std::uint8_t damage_shape) {
+    if (damage_shape == KernelProjectileDamageShape_None) {
+        return ProjectileDamageShape::kNone;
+    }
     if (damage_shape == KernelProjectileDamageShape_PiercingSegment) {
         return ProjectileDamageShape::kPiercingSegment;
     }
@@ -952,6 +956,8 @@ ProjectileCollisionQueryMode to_projectile_collision_query_mode(
 std::uint8_t to_kernel_projectile_damage_shape(
     ProjectileDamageShape damage_shape) {
     switch (damage_shape) {
+        case ProjectileDamageShape::kNone:
+            return KernelProjectileDamageShape_None;
         case ProjectileDamageShape::kPiercingSegment:
             return KernelProjectileDamageShape_PiercingSegment;
         case ProjectileDamageShape::kDirectHit:
@@ -1024,6 +1030,18 @@ RuntimeProjectileTemplate to_runtime_projectile_template(
         mechanics.impact_spawn_projectile_template_id;
     projectile_template.expire_spawn_projectile_template_id =
         mechanics.expire_spawn_projectile_template_id;
+    if (mechanics.impact_spawn_projectile_template_id != 0u) {
+        projectile_template.projectile_impact_binding =
+            compile_spawn_projectile_binding(
+                TriggerEventType::kProjectileImpact,
+                mechanics.impact_spawn_projectile_template_id);
+    }
+    if (mechanics.expire_spawn_projectile_template_id != 0u) {
+        projectile_template.expired_binding =
+            compile_spawn_projectile_binding(
+                TriggerEventType::kExpired,
+                mechanics.expire_spawn_projectile_template_id);
+    }
     if (mechanics.area_effect.lifetime_ticks > 0u) {
         projectile_template.lifetime_ticks = mechanics.area_effect.lifetime_ticks;
     }
@@ -1198,7 +1216,9 @@ bool validate_projectile_mechanics(
         mechanics.collision_query_mode > KernelProjectileCollisionQueryMode_Ray ||
         mechanics.hit_response == KernelProjectileHitResponse_Bounce ||
         mechanics.hit_response == KernelProjectileHitResponse_Attach ||
-        mechanics.damage == 0 ||
+        (mechanics.damage_shape == KernelProjectileDamageShape_None
+             ? mechanics.damage != 0
+             : mechanics.damage == 0) ||
         mechanics.collider_template_id == 0 ||
         mechanics.max_hit_count == 0) {
         return false;
@@ -1235,7 +1255,8 @@ bool validate_projectile_mechanics(
 bool validate_weapon_mechanics(const KernelWeaponMechanicsDefinition& definition) {
     if (definition.struct_size < sizeof(KernelWeaponMechanicsDefinition) ||
         definition.magazine_size == 0 ||
-        definition.damage == 0 ||
+        (definition.fire_mode != KernelWeaponFireMode_Projectile &&
+         definition.damage == 0) ||
         definition.fire_action_template_id == 0u ||
         definition.reload_action_template_id == 0u) {
         return false;

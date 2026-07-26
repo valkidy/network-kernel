@@ -14,7 +14,10 @@ gravity:
   x: 0.0
   y: 0.0
   z: 0.0
-impact_response:
-  action: spawn_projectile
-  projectile_template: rocket_explosion
-  destroy_self: true
+triggers:
+  on_projectile_impact:
+    action_graph: action_spawn_projectile_at_impact
+    parameters:
+      template: rocket_explosion
+      position: event.position
+      direction: event.direction

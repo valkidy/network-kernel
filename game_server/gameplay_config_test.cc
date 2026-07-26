@@ -221,6 +221,11 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
             "action_templates/" + file,
             read_text_file("game_server/action_templates/" + file)});
     }
+    files.push_back({
+        "action_graph_templates/action_spawn_projectile_at_impact.yaml",
+        read_text_file(
+            "game_server/action_graph_templates/"
+            "action_spawn_projectile_at_impact.yaml")});
     const std::vector<std::string> projectile_files = {
         "beam_rifle_beam.yaml",
         "fire_floor_area.yaml",
@@ -251,6 +256,7 @@ std::vector<std::uint8_t> make_entity_template_bundle_zip(
         "gameplay_catalog.yaml",
         "catalog_version: 2\n"
         "action_template_dir: action_templates\n"
+        "action_graph_template_dir: action_graph_templates\n"
         "reload_action_template:\n"
         "  id: 4199\n"
         "  name: shared_reload\n"
@@ -347,6 +353,11 @@ std::vector<std::uint8_t> make_entity_template_bundle_zip(
             "action_templates/" + file,
             read_text_file("game_server/action_templates/" + file)});
     }
+    files.push_back({
+        "action_graph_templates/action_spawn_projectile_at_impact.yaml",
+        read_text_file(
+            "game_server/action_graph_templates/"
+            "action_spawn_projectile_at_impact.yaml")});
     const std::vector<std::string> projectile_files = {
         "beam_rifle_beam.yaml",
         "fire_floor_area.yaml",
@@ -707,7 +718,9 @@ int main() {
         if (projectile.name == "grenade_shell_projectile") {
             found_grenade_shell = true;
             assert(projectile.definition.mechanics.collider_template_id == 7);
-            assert(projectile.definition.mechanics.damage == 45);
+            assert(projectile.definition.mechanics.damage == 0);
+            assert(projectile.definition.mechanics.damage_shape ==
+                   KernelProjectileDamageShape_None);
             assert(projectile.definition.mechanics
                        .impact_spawn_projectile_template_id == 8);
         }
@@ -721,9 +734,9 @@ int main() {
             assert(projectile.definition.mechanics.collider_template_id == 3);
             assert(projectile.definition.mechanics.damage_shape ==
                    KernelProjectileDamageShape_DirectHit);
+            assert(projectile.definition.mechanics.damage == 45);
             assert(projectile.definition.mechanics
                        .impact_spawn_projectile_template_id == 8);
-            assert((projectile.definition.mechanics.flags & 1u) != 0u);
         }
         if (projectile.name == "rocket_explosion") {
             found_rocket_explosion = true;

@@ -942,7 +942,8 @@ bool Kernel_ServerValidateMechanicsConfig(
         if (weapon_mechanics == nullptr ||
             weapon_mechanics->struct_size < sizeof(KernelWeaponMechanicsDefinition) ||
             weapon_mechanics->magazine_size == 0 ||
-            weapon_mechanics->damage == 0 ||
+            (weapon_mechanics->fire_mode != KernelWeaponFireMode_Projectile &&
+             weapon_mechanics->damage == 0) ||
             weapon_mechanics->fire_action_template_id == 0u ||
             weapon_mechanics->reload_action_template_id == 0u ||
             weapon_mechanics->fire_mode > KernelWeaponFireMode_Projectile) {

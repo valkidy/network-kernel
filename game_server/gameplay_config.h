@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "game_server/agent_sentry_controller.h"
@@ -114,10 +115,31 @@ struct ColliderCatalogConfig {
     std::vector<ColliderBindingConfig> bindings;
 };
 
+struct ActionGraphParameterConfig {
+    std::string name;
+    bool has_default = false;
+    std::string default_value;
+};
+
+struct ActionGraphTemplateConfig {
+    std::string id;
+    std::vector<ActionGraphParameterConfig> parameters;
+    std::string projectile_template_parameter;
+    std::string position_parameter;
+    std::string direction_parameter;
+};
+
+struct ProjectileTriggerBindingConfig {
+    std::string action_graph_ref;
+    std::vector<std::pair<std::string, std::string>> parameters;
+};
+
 struct ProjectileTemplateConfig {
     std::string name;
     KernelProjectileTemplateDefinition definition{};
     std::string impact_projectile_template_ref;
+    ProjectileTriggerBindingConfig projectile_impact_trigger;
+    ProjectileTriggerBindingConfig expired_trigger;
 };
 
 struct StaticCollisionSceneConfig {
@@ -135,6 +157,7 @@ struct GameServerGameplayConfig {
     std::vector<EntityTemplateConfig> entity_templates;
     std::vector<ActorTemplateConfig> actor_templates;
     ColliderCatalogConfig colliders;
+    std::vector<ActionGraphTemplateConfig> action_graph_templates;
     std::vector<ProjectileTemplateConfig> projectile_templates;
     StaticCollisionSceneConfig static_collision_scene;
 };

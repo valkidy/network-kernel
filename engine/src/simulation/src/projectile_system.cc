@@ -2,12 +2,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <optional>
 #include <utility>
 #include <vector>
 
 #include "physics/public/physics_world.h"
+#include "simulation/public/action_graph.h"
 
 namespace network_example {
 namespace {
@@ -87,6 +89,15 @@ bool spawn_projectile_from_template(
     projectile.initial_velocity = velocity;
     projectile.gravity = projectile_template.gravity;
     projectile.previous_position = position;
+    if (projectile_template.projectile_impact_binding.has_value() ||
+        projectile_template.impact_spawn_projectile_template_id != 0u) {
+        world.registry().emplace<OnProjectileImpactTriggerTag>(
+            *projectile_entity);
+    }
+    if (projectile_template.expired_binding.has_value() ||
+        projectile_template.expire_spawn_projectile_template_id != 0u) {
+        world.registry().emplace<OnExpiredTriggerTag>(*projectile_entity);
+    }
     if (projectile_template.projectile_type == ProjectileType::kAreaEffect) {
         world.registry().replace<Hitbox>(
             *projectile_entity,
@@ -604,41 +615,177 @@ std::vector<ProjectileHitRecord> make_projectile_hit_records(
     return records;
 }
 
-bool apply_projectile_impact_response(
+struct QueuedActionGraphEvent {
+    CompiledActionGraphBinding binding;
+    NetId self = 0;
+    TriggerEvent event;
+    ActionExecutionProvenance provenance;
+    std::uint32_t sequence = 0;
+};
+
+std::uint64_t trigger_request_id(
+    std::uint32_t current_tick,
+    NetId subject,
+    TriggerEventType event_type,
+    std::uint32_t sequence) {
+    std::uint64_t hash = UINT64_C(1469598103934665603);
+    const auto mix = [&](std::uint32_t value) {
+        for (std::uint32_t shift = 0; shift < 32u; shift += 8u) {
+            hash ^= (value >> shift) & 0xffu;
+            hash *= UINT64_C(1099511628211);
+        }
+    };
+    mix(current_tick);
+    mix(subject);
+    mix(static_cast<std::uint32_t>(event_type));
+    mix(sequence);
+    return hash;
+}
+
+std::optional<CompiledActionGraphBinding> projectile_trigger_binding(
+    World& world,
+    const ProjectileState& projectile,
+    TriggerEventType event_type) {
+    const RuntimeProjectileTemplate* projectile_template =
+        world.find_projectile_template(projectile.projectile_template_id);
+    if (projectile_template == nullptr) {
+        return std::nullopt;
+    }
+    const std::optional<CompiledActionGraphBinding>& binding =
+        event_type == TriggerEventType::kExpired
+        ? projectile_template->expired_binding
+        : projectile_template->projectile_impact_binding;
+    if (binding.has_value()) {
+        return binding;
+    }
+    const std::uint32_t legacy_template_id =
+        event_type == TriggerEventType::kExpired
+        ? projectile_template->expire_spawn_projectile_template_id
+        : projectile_template->impact_spawn_projectile_template_id;
+    if (legacy_template_id == 0u) {
+        return std::nullopt;
+    }
+    return compile_spawn_projectile_binding(event_type, legacy_template_id);
+}
+
+void queue_projectile_trigger(
     World& world,
     const NetworkIdentity& identity,
     const ProjectileState& projectile,
-    const glm::vec3& impact_position,
-    const glm::vec3& impact_direction,
+    TriggerEventType event_type,
+    NetId target,
+    const glm::vec3& position,
+    const glm::vec3& direction,
     std::uint32_t current_tick,
+    std::uint32_t sequence,
+    bool historical,
+    std::vector<QueuedActionGraphEvent>* trigger_events) {
+    if (trigger_events == nullptr) {
+        return;
+    }
+    const auto entity = world.find_entity(identity.net_id);
+    const bool subscribed = entity.has_value() &&
+        (event_type == TriggerEventType::kExpired
+             ? world.registry().all_of<OnExpiredTriggerTag>(*entity)
+             : world.registry().all_of<OnProjectileImpactTriggerTag>(*entity));
+    if (!subscribed) {
+        return;
+    }
+    std::optional<CompiledActionGraphBinding> binding =
+        projectile_trigger_binding(world, projectile, event_type);
+    if (!binding.has_value()) {
+        return;
+    }
+    const TriggerEvent event{
+        event_type,
+        identity.net_id,
+        projectile.shooter_net_id,
+        target,
+        position,
+        direction,
+        event_type == TriggerEventType::kProjectileImpact
+            ? std::optional<ProjectileImpactPayload>{ProjectileImpactPayload{
+                  projectile.projectile_template_id,
+                  projectile.action_instance_id,
+                  projectile.weapon_id,
+                  historical,
+              }}
+            : std::nullopt,
+    };
+    trigger_events->push_back(QueuedActionGraphEvent{
+        std::move(*binding),
+        identity.net_id,
+        event,
+        ActionExecutionProvenance{
+            trigger_request_id(
+                current_tick, identity.net_id, event_type, sequence),
+            projectile.action_instance_id,
+            current_tick,
+            projectile.shooter_net_id,
+            identity.owner_peer,
+            projectile.weapon_id,
+            ActionAuthoritySource::kAuthoritativeSimulation,
+        },
+        sequence,
+    });
+}
+
+void execute_queued_trigger_events(
+    World& world,
+    std::vector<QueuedActionGraphEvent>* trigger_events,
     float fixed_delta_seconds,
     std::vector<KernelEvent>* events) {
-    const RuntimeProjectileTemplate* projectile_template =
-        world.find_projectile_template(projectile.projectile_template_id);
-    if (projectile_template == nullptr ||
-        projectile_template->impact_spawn_projectile_template_id == 0u) {
-        return false;
+    if (trigger_events == nullptr) {
+        return;
     }
-    const RuntimeProjectileTemplate* impact_projectile_template =
-        world.find_projectile_template(
-            projectile_template->impact_spawn_projectile_template_id);
-    if (impact_projectile_template == nullptr) {
-        return false;
+    std::sort(
+        trigger_events->begin(),
+        trigger_events->end(),
+        [](const QueuedActionGraphEvent& lhs, const QueuedActionGraphEvent& rhs) {
+            if (lhs.provenance.server_tick != rhs.provenance.server_tick) {
+                return lhs.provenance.server_tick < rhs.provenance.server_tick;
+            }
+            if (lhs.event.subject != rhs.event.subject) {
+                return lhs.event.subject < rhs.event.subject;
+            }
+            if (lhs.sequence != rhs.sequence) {
+                return lhs.sequence < rhs.sequence;
+            }
+            return lhs.event.type < rhs.event.type;
+        });
+    for (const QueuedActionGraphEvent& queued : *trigger_events) {
+        std::vector<SpawnProjectileCommand> commands;
+        if (!evaluate_action_graph(
+                queued.binding,
+                queued.self,
+                queued.event,
+                queued.provenance,
+                &commands,
+                nullptr)) {
+            continue;
+        }
+        for (const SpawnProjectileCommand& command : commands) {
+            const RuntimeProjectileTemplate* projectile_template =
+                world.find_projectile_template(command.projectile_template_id);
+            if (projectile_template == nullptr) {
+                continue;
+            }
+            (void)spawn_projectile_from_template(
+                world,
+                *projectile_template,
+                command.provenance.owner_peer,
+                command.provenance.instigator,
+                command.provenance.source_weapon_id,
+                command.provenance.action_instance_id,
+                command.position,
+                command.direction,
+                command.provenance.server_tick,
+                fixed_delta_seconds,
+                events,
+                nullptr);
+        }
     }
-    (void)spawn_projectile_from_template(
-        world,
-        *impact_projectile_template,
-        identity.owner_peer,
-        projectile.shooter_net_id,
-        projectile.weapon_id,
-        projectile.action_instance_id,
-        impact_position,
-        impact_direction,
-        current_tick,
-        fixed_delta_seconds,
-        events,
-        nullptr);
-    return projectile_template->impact_destroy_self;
+    trigger_events->clear();
 }
 
 ProjectileHitOutcome process_projectile_hit_records(
@@ -651,7 +798,8 @@ ProjectileHitOutcome process_projectile_hit_records(
     float fixed_delta_seconds,
     std::uint64_t hit_time_us,
     std::vector<KernelEvent>* events,
-    DamagePipeline* damage_pipeline) {
+    DamagePipeline* damage_pipeline,
+    std::vector<QueuedActionGraphEvent>* trigger_events) {
     ProjectileHitOutcome outcome{};
     if (records.empty()) {
         return outcome;
@@ -666,17 +814,20 @@ ProjectileHitOutcome process_projectile_hit_records(
             }
             if (record.hit.identity.kind !=
                 physics::CollisionObjectKind::kActorHitbox) {
-                (void)apply_projectile_impact_response(
+                queue_projectile_trigger(
                     world,
                     identity,
                     projectile,
+                    TriggerEventType::kProjectileImpact,
+                    0,
                     record.hit.position,
                     normalized_or(
                         record.hit.position - projectile.previous_position,
                         glm::vec3{1.0f, 0.0f, 0.0f}),
                     current_tick,
-                    fixed_delta_seconds,
-                    events);
+                    record.sequence_id,
+                    false,
+                    trigger_events);
                 outcome.destroy_projectile = true;
                 return outcome;
             }
@@ -703,18 +854,21 @@ ProjectileHitOutcome process_projectile_hit_records(
         normalized_or(
             impact_position - projectile.previous_position,
             glm::vec3{1.0f, 0.0f, 0.0f});
-    if (apply_projectile_impact_response(
-            world,
-            identity,
-            projectile,
-            impact_position,
-            impact_direction,
-            current_tick,
-            fixed_delta_seconds,
-            events)) {
-        outcome.destroy_projectile = true;
-        return outcome;
-    }
+    queue_projectile_trigger(
+        world,
+        identity,
+        projectile,
+        TriggerEventType::kProjectileImpact,
+        records.front().hit.identity.kind ==
+                physics::CollisionObjectKind::kActorHitbox
+            ? records.front().target_net_id
+            : 0,
+        impact_position,
+        impact_direction,
+        current_tick,
+        records.front().sequence_id,
+        false,
+        trigger_events);
 
     if (projectile.damage_shape == ProjectileDamageShape::kDirectHit &&
         projectile.damage > 0 &&
@@ -1024,6 +1178,7 @@ void simulate_projectiles(
         active_damage_pipeline = &local_damage_pipeline;
     }
     std::vector<NetId> projectiles_to_destroy;
+    std::vector<QueuedActionGraphEvent> trigger_events;
 
     auto view = world.registry().view<NetworkIdentity, Transform, Velocity, ProjectileState, ProjectileTag>();
     for (const entt::entity entity : view) {
@@ -1113,26 +1268,33 @@ void simulate_projectiles(
                 fixed_delta_seconds,
                 hit_time_us,
                 events,
-                active_damage_pipeline);
+                active_damage_pipeline,
+                &trigger_events);
             if (outcome.destroy_projectile) {
                 push_unique_net_id(&projectiles_to_destroy, identity.net_id);
             }
             continue;
         }
 
-        (void)apply_projectile_impact_response(
+        queue_projectile_trigger(
             world,
             identity,
             projectile,
+            TriggerEventType::kExpired,
+            0,
             transform.position,
             normalized_or(
                 transform.position - projectile.previous_position,
                 glm::vec3{1.0f, 0.0f, 0.0f}),
             current_tick,
-            fixed_delta_seconds,
-            events);
+            0,
+            false,
+            &trigger_events);
         push_unique_net_id(&projectiles_to_destroy, identity.net_id);
     }
+
+    execute_queued_trigger_events(
+        world, &trigger_events, fixed_delta_seconds, events);
 
     std::sort(projectiles_to_destroy.begin(), projectiles_to_destroy.end());
     projectiles_to_destroy.erase(
@@ -1200,17 +1362,21 @@ bool resolve_projectile_historical_hit(
                 const std::uint64_t hit_time_us =
                     tick_time_us(frame->server_tick, fixed_delta_seconds);
                 const NetworkIdentity identity{projectile_net_id, owner_peer};
-                (void)apply_projectile_impact_response(
+                std::vector<QueuedActionGraphEvent> trigger_events;
+                queue_projectile_trigger(
                     world,
                     identity,
                     projectile,
+                    TriggerEventType::kProjectileImpact,
+                    hit.net_id,
                     hit.impact_position,
                     normalized_or(
                         current_position - previous_position,
                         glm::vec3{1.0f, 0.0f, 0.0f}),
                     current_tick,
-                    fixed_delta_seconds,
-                    events);
+                    0,
+                    true,
+                    &trigger_events);
                 if (projectile.damage_shape == ProjectileDamageShape::kDirectHit &&
                     projectile.damage > 0 &&
                     damage_pipeline != nullptr) {
@@ -1226,6 +1392,8 @@ bool resolve_projectile_historical_hit(
                         hit.impact_position,
                     });
                 }
+                execute_queued_trigger_events(
+                    world, &trigger_events, fixed_delta_seconds, events);
                 world.destroy(projectile_net_id);
                 return true;
             }

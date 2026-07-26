@@ -12,6 +12,7 @@ exports_files([
 cc_library(
     name = "simulation",
     srcs = [
+        "src/action_graph.cc",
         "src/action_system.cc",
         "src/area_effect_system.cc",
         "src/beam_system.cc",
@@ -23,6 +24,7 @@ cc_library(
         "src/weapon_system.cc",
     ],
     hdrs = [
+        "public/action_graph.h",
         "public/command.h",
         "public/movement_solver.h",
         "public/simulation.h",

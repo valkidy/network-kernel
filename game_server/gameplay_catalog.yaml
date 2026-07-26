@@ -1,5 +1,6 @@
 catalog_version: 2
 action_template_dir: action_templates
+action_graph_template_dir: action_graph_templates
 reload_action_template:
   id: 4199
   name: shared_reload

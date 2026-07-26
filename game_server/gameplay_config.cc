@@ -6,10 +6,12 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <initializer_list>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -315,7 +317,8 @@ bool validate_weapon_mechanics(
     const KernelWeaponMechanicsDefinition& weapon) {
     if (weapon.struct_size < sizeof(KernelWeaponMechanicsDefinition) ||
         weapon.magazine_size == 0 ||
-        weapon.damage == 0 ||
+        (weapon.fire_mode != KernelWeaponFireMode_Projectile &&
+         weapon.damage == 0) ||
         weapon.fire_action_template_id == 0u ||
         weapon.reload_action_template_id == 0u ||
         weapon.fire_mode > KernelWeaponFireMode_Projectile) {
@@ -433,6 +436,9 @@ std::uint8_t damage_shape_from_yaml(const YAML::Node& node) {
     const std::string value = node ? node.as<std::string>() : "direct_hit";
     if (value == "direct_hit") {
         return KernelProjectileDamageShape_DirectHit;
+    }
+    if (value == "none") {
+        return KernelProjectileDamageShape_None;
     }
     if (value == "explosion") {
         throw std::runtime_error(
@@ -1130,6 +1136,146 @@ std::vector<ActionTemplateConfig> load_action_templates_from_source(
                    rhs.definition.action_template_id;
         });
     return actions;
+}
+
+std::string parameter_reference_from_yaml(
+    const YAML::Node& node,
+    const std::string& field) {
+    if (!node || !node.IsScalar()) {
+        throw std::runtime_error(
+            "action graph " + field + " must be a params.* reference");
+    }
+    const std::string value = node.as<std::string>();
+    constexpr std::string_view kPrefix = "params.";
+    if (!value.starts_with(kPrefix) || value.size() == kPrefix.size()) {
+        throw std::runtime_error(
+            "action graph " + field + " must be a params.* reference");
+    }
+    return value.substr(kPrefix.size());
+}
+
+ActionGraphTemplateConfig action_graph_template_from_yaml(
+    const YAML::Node& node,
+    const std::string& path,
+    std::uint32_t source_kind) {
+    reject_unknown_keys(
+        node,
+        {"id", "parameters", "actions"},
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_UNKNOWN);
+    ActionGraphTemplateConfig graph;
+    graph.id = node["id"].as<std::string>();
+    const YAML::Node parameters = node["parameters"];
+    if (graph.id.empty() || !parameters || !parameters.IsMap()) {
+        throw std::runtime_error(
+            "action graph requires id and parameters map: " + path);
+    }
+    for (const auto& entry : parameters) {
+        const std::string name = entry.first.as<std::string>();
+        if (name.empty() ||
+            std::any_of(
+                graph.parameters.begin(),
+                graph.parameters.end(),
+                [&](const ActionGraphParameterConfig& parameter) {
+                    return parameter.name == name;
+                })) {
+            throw std::runtime_error(
+                "action graph parameter name must be unique: " + path);
+        }
+        const bool has_default = !entry.second.IsNull();
+        if (has_default && !entry.second.IsScalar()) {
+            throw std::runtime_error(
+                "first action graph phase only supports scalar defaults: " +
+                path);
+        }
+        graph.parameters.push_back(ActionGraphParameterConfig{
+            name,
+            has_default,
+            has_default ? entry.second.as<std::string>() : std::string{},
+        });
+    }
+    const YAML::Node actions = node["actions"];
+    if (!actions || !actions.IsSequence() || actions.size() != 1u) {
+        throw std::runtime_error(
+            "first action graph phase requires exactly one action: " + path);
+    }
+    const YAML::Node action = actions[0];
+    reject_unknown_keys(
+        action,
+        {"type", "projectile_template", "position", "direction"},
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_UNKNOWN);
+    if (!action["type"] ||
+        action["type"].as<std::string>() != "spawn_projectile") {
+        throw std::runtime_error(
+            "first action graph phase only supports spawn_projectile: " + path);
+    }
+    graph.projectile_template_parameter = parameter_reference_from_yaml(
+        action["projectile_template"], "projectile_template");
+    graph.position_parameter =
+        parameter_reference_from_yaml(action["position"], "position");
+    graph.direction_parameter =
+        parameter_reference_from_yaml(action["direction"], "direction");
+    for (const std::string* action_parameter : {
+             &graph.projectile_template_parameter,
+             &graph.position_parameter,
+             &graph.direction_parameter,
+         }) {
+        if (std::none_of(
+                graph.parameters.begin(),
+                graph.parameters.end(),
+                [&](const ActionGraphParameterConfig& parameter) {
+                    return parameter.name == *action_parameter;
+                })) {
+            throw std::runtime_error(
+                "action references undeclared graph parameter: " +
+                *action_parameter);
+        }
+    }
+    return graph;
+}
+
+std::vector<ActionGraphTemplateConfig> load_action_graph_templates_from_source(
+    const GameplayConfigSource& source,
+    const std::string& directory) {
+    std::vector<ActionGraphTemplateConfig> graphs;
+    for (const std::string& file : source.list_yaml_files(directory)) {
+        ActionGraphTemplateConfig graph = action_graph_template_from_yaml(
+            source.load_yaml(file), file, source.source_kind());
+        if (std::any_of(
+                graphs.begin(),
+                graphs.end(),
+                [&](const ActionGraphTemplateConfig& existing) {
+                    return existing.id == graph.id;
+                })) {
+            throw std::runtime_error(
+                "duplicate action graph id: " + graph.id);
+        }
+        graphs.push_back(std::move(graph));
+    }
+    std::sort(
+        graphs.begin(),
+        graphs.end(),
+        [](const ActionGraphTemplateConfig& lhs,
+           const ActionGraphTemplateConfig& rhs) {
+            return lhs.id < rhs.id;
+        });
+    return graphs;
+}
+
+const ActionGraphTemplateConfig* action_graph_template_from_ref(
+    const std::string& id,
+    const std::vector<ActionGraphTemplateConfig>& graphs) {
+    const auto found = std::find_if(
+        graphs.begin(),
+        graphs.end(),
+        [&](const ActionGraphTemplateConfig& graph) { return graph.id == id; });
+    if (found == graphs.end()) {
+        throw std::runtime_error("unknown action_graph reference: " + id);
+    }
+    return &*found;
 }
 
 const ActionTemplateConfig* action_template_from_ref(
@@ -2379,6 +2525,39 @@ float collider_template_radius_for_area(
         std::max(definition.shape_params.y, definition.shape_params.z));
 }
 
+ProjectileTriggerBindingConfig projectile_trigger_binding_from_yaml(
+    const YAML::Node& node,
+    const std::string& path,
+    std::uint32_t source_kind,
+    std::uint32_t projectile_template_id) {
+    reject_unknown_keys(
+        node,
+        {"action_graph", "parameters"},
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_PROJECTILE,
+        projectile_template_id);
+    if (!node["action_graph"] || !node["action_graph"].IsScalar() ||
+        !node["parameters"] || !node["parameters"].IsMap()) {
+        throw std::runtime_error(
+            "projectile trigger requires action_graph and parameters map: " +
+            path);
+    }
+    ProjectileTriggerBindingConfig binding;
+    binding.action_graph_ref = node["action_graph"].as<std::string>();
+    for (const auto& entry : node["parameters"]) {
+        if (!entry.first.IsScalar() || !entry.second.IsScalar()) {
+            throw std::runtime_error(
+                "projectile trigger parameters must be scalar values: " +
+                path);
+        }
+        binding.parameters.emplace_back(
+            entry.first.as<std::string>(),
+            entry.second.as<std::string>());
+    }
+    return binding;
+}
+
 ProjectileTemplateConfig projectile_template_from_yaml(
     const YAML::Node& node,
     const std::string& path,
@@ -2407,6 +2586,7 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             "max_hit_count",
             "gravity",
             "impact_response",
+            "triggers",
             "homing",
             "beam",
         },
@@ -2559,6 +2739,46 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             projectile_template.impact_projectile_template_ref =
                 impact_response["projectile_template"].as<std::string>();
         }
+        const bool impact_destroys_self = (mechanics.flags & 1u) != 0u;
+        const bool hit_response_destroys =
+            mechanics.hit_response == KernelProjectileHitResponse_Destroy;
+        if (impact_destroys_self != hit_response_destroys) {
+            throw std::runtime_error(
+                "impact_response.destroy_self conflicts with hit_response: " +
+                projectile_template.name);
+        }
+    }
+
+    const YAML::Node triggers = node["triggers"];
+    if (triggers) {
+        reject_unknown_keys(
+            triggers,
+            {"on_projectile_impact", "on_expired"},
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_PROJECTILE,
+            definition.projectile_template_id);
+        if (impact_response && triggers["on_projectile_impact"]) {
+            throw std::runtime_error(
+                "projectile must not declare both impact_response and "
+                "triggers.on_projectile_impact: " + projectile_template.name);
+        }
+        if (triggers["on_projectile_impact"]) {
+            projectile_template.projectile_impact_trigger =
+                projectile_trigger_binding_from_yaml(
+                    triggers["on_projectile_impact"],
+                    path,
+                    source_kind,
+                    definition.projectile_template_id);
+        }
+        if (triggers["on_expired"]) {
+            projectile_template.expired_trigger =
+                projectile_trigger_binding_from_yaml(
+                    triggers["on_expired"],
+                    path,
+                    source_kind,
+                    definition.projectile_template_id);
+        }
     }
 
     if (mechanics.motion_model == KernelProjectileMotionModel_Homing) {
@@ -2621,10 +2841,94 @@ ProjectileTemplateConfig* projectile_template_from_ref(
     const YAML::Node& node,
     std::vector<ProjectileTemplateConfig>* projectile_templates);
 
+std::string trigger_parameter_value(
+    const ProjectileTriggerBindingConfig& binding,
+    const ActionGraphParameterConfig& parameter) {
+    const auto found = std::find_if(
+        binding.parameters.begin(),
+        binding.parameters.end(),
+        [&](const auto& value) { return value.first == parameter.name; });
+    if (found != binding.parameters.end()) {
+        return found->second;
+    }
+    if (parameter.has_default) {
+        return parameter.default_value;
+    }
+    throw std::runtime_error(
+        "required action graph parameter is missing: " + parameter.name);
+}
+
+void compile_projectile_trigger_binding(
+    const ProjectileTriggerBindingConfig& binding,
+    bool expired,
+    const std::vector<ActionGraphTemplateConfig>& action_graph_templates,
+    std::vector<ProjectileTemplateConfig>* projectile_templates,
+    ProjectileTemplateConfig* projectile_template) {
+    if (binding.action_graph_ref.empty()) {
+        return;
+    }
+    const ActionGraphTemplateConfig* graph = action_graph_template_from_ref(
+        binding.action_graph_ref, action_graph_templates);
+    std::unordered_set<std::string> seen_parameters;
+    for (const auto& parameter : binding.parameters) {
+        if (!seen_parameters.insert(parameter.first).second ||
+            std::none_of(
+                graph->parameters.begin(),
+                graph->parameters.end(),
+                [&](const ActionGraphParameterConfig& declaration) {
+                    return declaration.name == parameter.first;
+                })) {
+            throw std::runtime_error(
+                "trigger binding passes undeclared or duplicate parameter: " +
+                parameter.first);
+        }
+    }
+    const auto graph_parameter = [&](const std::string& name)
+        -> const ActionGraphParameterConfig& {
+        const auto found = std::find_if(
+            graph->parameters.begin(),
+            graph->parameters.end(),
+            [&](const ActionGraphParameterConfig& parameter) {
+                return parameter.name == name;
+            });
+        if (found == graph->parameters.end()) {
+            throw std::runtime_error(
+                "action references undeclared graph parameter: " + name);
+        }
+        return *found;
+    };
+    for (const ActionGraphParameterConfig& parameter : graph->parameters) {
+        (void)trigger_parameter_value(binding, parameter);
+    }
+
+    const std::string projectile_ref = trigger_parameter_value(
+        binding, graph_parameter(graph->projectile_template_parameter));
+    const std::string position = trigger_parameter_value(
+        binding, graph_parameter(graph->position_parameter));
+    const std::string direction = trigger_parameter_value(
+        binding, graph_parameter(graph->direction_parameter));
+    if (position != "event.position" || direction != "event.direction") {
+        throw std::runtime_error(
+            "spawn_projectile trigger must bind position and direction to "
+            "event.position and event.direction");
+    }
+    ProjectileTemplateConfig* spawned_projectile = projectile_template_from_ref(
+        YAML::Node(projectile_ref), projectile_templates);
+    std::uint32_t& compiled_template_id =
+        expired
+        ? projectile_template->definition.mechanics
+              .expire_spawn_projectile_template_id
+        : projectile_template->definition.mechanics
+              .impact_spawn_projectile_template_id;
+    compiled_template_id =
+        spawned_projectile->definition.projectile_template_id;
+}
+
 std::vector<ProjectileTemplateConfig> load_projectile_templates_from_source(
     const GameplayConfigSource& source,
     const std::string& directory,
-    const ColliderCatalogConfig& colliders) {
+    const ColliderCatalogConfig& colliders,
+    const std::vector<ActionGraphTemplateConfig>& action_graph_templates) {
     std::vector<ProjectileTemplateConfig> projectile_templates;
     std::unordered_map<std::uint32_t, std::string> ids;
     std::unordered_map<std::string, std::uint32_t> names;
@@ -2671,26 +2975,49 @@ std::vector<ProjectileTemplateConfig> load_projectile_templates_from_source(
         projectile_template.definition.mechanics.impact_spawn_projectile_template_id =
             impact_template->definition.projectile_template_id;
     }
+    for (ProjectileTemplateConfig& projectile_template : projectile_templates) {
+        compile_projectile_trigger_binding(
+            projectile_template.projectile_impact_trigger,
+            false,
+            action_graph_templates,
+            &projectile_templates,
+            &projectile_template);
+        compile_projectile_trigger_binding(
+            projectile_template.expired_trigger,
+            true,
+            action_graph_templates,
+            &projectile_templates,
+            &projectile_template);
+    }
     for (const ProjectileTemplateConfig& projectile_template : projectile_templates) {
         std::vector<std::uint32_t> visited;
-        const ProjectileTemplateConfig* current = &projectile_template;
-        while (current != nullptr &&
-               current->definition.mechanics.impact_spawn_projectile_template_id != 0u) {
+        std::function<void(const ProjectileTemplateConfig*)> visit =
+            [&](const ProjectileTemplateConfig* current) {
             const std::uint32_t current_id =
                 current->definition.projectile_template_id;
             if (std::find(visited.begin(), visited.end(), current_id) !=
                 visited.end()) {
                 throw std::runtime_error(
-                    "projectile impact_response cycle: " +
+                    "projectile trigger graph reference cycle: " +
                     projectile_template.name);
             }
             visited.push_back(current_id);
-            current = projectile_template_from_ref(
-                YAML::Node(std::to_string(
-                    current->definition.mechanics
-                        .impact_spawn_projectile_template_id)),
-                &projectile_templates);
-        }
+            for (const std::uint32_t next_id : {
+                     current->definition.mechanics
+                         .impact_spawn_projectile_template_id,
+                     current->definition.mechanics
+                         .expire_spawn_projectile_template_id,
+                 }) {
+                if (next_id == 0u) {
+                    continue;
+                }
+                visit(projectile_template_from_ref(
+                    YAML::Node(std::to_string(next_id)),
+                    &projectile_templates));
+            }
+            visited.pop_back();
+        };
+        visit(&projectile_template);
     }
     return projectile_templates;
 }
@@ -2871,10 +3198,15 @@ GameServerGameplayConfig load_gameplay_config_from_weapon_template_source(
     config.colliders = load_collider_catalog_from_source(
         source,
         source.default_collider_template_dir_for_weapon_dir(directory));
+    const std::string action_graph_template_dir = source.resolve_path(
+        source.parent_path(directory), YAML::Node("action_graph_templates"));
+    config.action_graph_templates = load_action_graph_templates_from_source(
+        source, action_graph_template_dir);
     config.projectile_templates = load_projectile_templates_from_source(
         source,
         source.default_projectile_template_dir_for_weapon_dir(directory),
-        config.colliders);
+        config.colliders,
+        config.action_graph_templates);
     apply_weapon_template_references(
         source,
         directory,
@@ -2906,6 +3238,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
         {
             "catalog_version",
             "action_template_dir",
+            "action_graph_template_dir",
             "reload_action_template",
             "weapon_template_dir",
             "projectile_template_dir",
@@ -3020,10 +3353,17 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
         load_collider_catalog_from_source(source, collider_template_dir);
     const std::string projectile_template_dir =
         source.resolve_path(base_path, document["projectile_template_dir"]);
+    if (document["action_graph_template_dir"]) {
+        const std::string action_graph_template_dir =
+            source.resolve_path(base_path, document["action_graph_template_dir"]);
+        config.action_graph_templates = load_action_graph_templates_from_source(
+            source, action_graph_template_dir);
+    }
     config.projectile_templates = load_projectile_templates_from_source(
         source,
         projectile_template_dir,
-        config.colliders);
+        config.colliders,
+        config.action_graph_templates);
     apply_weapon_template_references(
         source,
         weapon_template_dir,
@@ -3157,6 +3497,26 @@ std::uint64_t compute_gameplay_catalog_hash(const WeaponCatalogConfig& weapons) 
 std::uint64_t compute_gameplay_catalog_hash(
     const GameServerGameplayConfig& config) {
     std::uint64_t hash = compute_gameplay_catalog_hash(config.weapons);
+    std::vector<ActionGraphTemplateConfig> action_graph_templates =
+        config.action_graph_templates;
+    std::sort(
+        action_graph_templates.begin(),
+        action_graph_templates.end(),
+        [](const ActionGraphTemplateConfig& lhs,
+           const ActionGraphTemplateConfig& rhs) {
+            return lhs.id < rhs.id;
+        });
+    for (const ActionGraphTemplateConfig& graph : action_graph_templates) {
+        hash_string(&hash, graph.id);
+        for (const ActionGraphParameterConfig& parameter : graph.parameters) {
+            hash_string(&hash, parameter.name);
+            hash_scalar(&hash, parameter.has_default);
+            hash_string(&hash, parameter.default_value);
+        }
+        hash_string(&hash, graph.projectile_template_parameter);
+        hash_string(&hash, graph.position_parameter);
+        hash_string(&hash, graph.direction_parameter);
+    }
     std::vector<ActionTemplateConfig> action_templates = config.action_templates;
     std::sort(
         action_templates.begin(),
@@ -3596,10 +3956,13 @@ std::vector<std::string> validate_gameplay_config(
             mechanics.hit_response == KernelProjectileHitResponse_Bounce ||
             mechanics.hit_response == KernelProjectileHitResponse_Attach ||
             (mechanics.damage_shape != KernelProjectileDamageShape_DirectHit &&
+             mechanics.damage_shape != KernelProjectileDamageShape_None &&
              mechanics.damage_shape != KernelProjectileDamageShape_PiercingSegment) ||
             mechanics.damage_falloff > KernelProjectileDamageFalloff_Linear ||
             mechanics.collision_query_mode > KernelProjectileCollisionQueryMode_Ray ||
-            mechanics.damage == 0 ||
+            (mechanics.damage_shape == KernelProjectileDamageShape_None
+                 ? mechanics.damage != 0
+                 : mechanics.damage == 0) ||
             std::find(
                 collider_template_ids.begin(),
                 collider_template_ids.end(),
