@@ -215,12 +215,12 @@ void reload_does_not_modify_pending_damage() {
         spawn_player(world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
     network_example::DamagePipeline pipeline;
     std::vector<KernelEvent> events;
+    KernelPlayerInput reload_input = defensive_input(0u, 90000);
+    reload_input.action_intent = KernelActionIntent{
+        1u, KernelActionBinding_Reload, 0u, 0u};
 
     assert(pipeline.submit_hit(world, player, 77, 0, 3, 40, 100000));
-    pipeline.ingest_defensive_input(
-        1,
-        defensive_input(InputButton_Reload, 90000),
-        120000);
+    pipeline.ingest_defensive_input(1, reload_input, 120000);
     pipeline.confirm_ready(world, 200000, 6, &events);
     assert(health(world, player).hp == 60);
     assert(events.size() == 2);
