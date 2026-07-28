@@ -153,7 +153,7 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
         out_info->struct_size = sizeof(KernelAbiInfo);
         out_info->abi_version = KERNEL_ABI_VERSION;
         out_info->kernel_config_size = sizeof(KernelConfig);
-        out_info->player_input_size = sizeof(PlayerInput);
+        out_info->player_input_size = sizeof(KernelPlayerInput);
         out_info->render_entity_state_size = sizeof(RenderEntityState);
         out_info->kernel_event_size = sizeof(KernelEvent);
         out_info->local_player_info_size = sizeof(KernelLocalPlayerInfo);
@@ -216,8 +216,8 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
         out_info->local_action_result_size = sizeof(KernelLocalActionResult);
         out_info->remote_action_presentation_event_size =
             sizeof(KernelRemoteActionPresentationEvent);
-        out_info->action_intent_size = sizeof(ActionIntent);
-        out_info->action_input_size = sizeof(ActionInput);
+        out_info->action_intent_size = sizeof(KernelActionIntent);
+        out_info->action_input_size = sizeof(KernelActionInput);
         out_info->item_template_definition_size =
             sizeof(KernelItemTemplateDefinition);
         out_info->gameplay_request_size = sizeof(KernelGameplayRequest);
@@ -449,13 +449,13 @@ void Kernel_Update(KernelHandle* kernel, float delta_seconds) {
     });
 }
 
-void Kernel_SubmitInput(
+void Kernel_SubmitPlayerInput(
     KernelHandle* kernel,
     uint32_t local_player_id,
-    const PlayerInput* input) {
-    abi_call_void("Kernel_SubmitInput", [&]() {
+    const KernelPlayerInput* input) {
+    abi_call_void("Kernel_SubmitPlayerInput", [&]() {
         if (kernel != nullptr && input != nullptr) {
-            kernel->engine->submit_input(local_player_id, *input);
+            kernel->engine->submit_player_input(local_player_id, *input);
         }
     });
 }
@@ -976,7 +976,7 @@ bool Kernel_ServerEnqueueEntityState(
 bool Kernel_ServerSubmitEntityInput(
     KernelHandle* kernel,
     uint32_t net_id,
-    const PlayerInput* input) {
+    const KernelPlayerInput* input) {
     return abi_call("Kernel_ServerSubmitEntityInput", false, [&]() {
         return kernel != nullptr && input != nullptr &&
                kernel->engine->server_submit_entity_input(net_id, *input);
@@ -987,7 +987,7 @@ bool Kernel_ServerEnqueueEntityInput(
     KernelHandle* kernel,
     uint32_t command_source,
     uint32_t net_id,
-    const PlayerInput* input) {
+    const KernelPlayerInput* input) {
     return abi_call("Kernel_ServerEnqueueEntityInput", false, [&]() {
         return kernel != nullptr && input != nullptr &&
                kernel->engine->server_enqueue_entity_input(

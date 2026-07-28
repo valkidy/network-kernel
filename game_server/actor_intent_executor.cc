@@ -128,7 +128,7 @@ ActorIntentExecutionResult ActorIntentExecutor::execute(
         binding_id = KernelActionBinding_Reload;
     }
 
-    PlayerInput input{};
+    KernelPlayerInput input{};
     input.input_seq = actor->next_input_seq++;
     input.selected_weapon = static_cast<std::uint8_t>(config_.weapon_id);
     if (perception.self_state.action.phase != KernelActionPhase_None) {
@@ -137,16 +137,16 @@ ActorIntentExecutionResult ActorIntentExecutor::execute(
             result.status = ai::IntentStatus::kRunning;
             return result;
         }
-        input.action_input = ActionInput{
+        input.action_input = KernelActionInput{
             perception.self_state.action.action_instance_id, 1u, 0u, 0u};
     } else {
         const std::uint32_t action_instance_id = actor->next_action_instance_id++;
         if (actor->next_action_instance_id == 0u) {
             actor->next_action_instance_id = 1u;
         }
-        input.action_intent = ActionIntent{
+        input.action_intent = KernelActionIntent{
             action_instance_id, binding_id, 0u, 0u};
-        input.action_input = ActionInput{action_instance_id, 1u, 0u, 0u};
+        input.action_input = KernelActionInput{action_instance_id, 1u, 0u, 0u};
     }
     input.aim_dir = normalized_direction(perception.self_state.position, target_position);
     result.submitted_input =

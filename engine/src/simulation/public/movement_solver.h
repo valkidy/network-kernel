@@ -13,11 +13,11 @@
 
 namespace network_example::movement_solver {
 
-glm::vec3 input_move_to_world(const PlayerInput& input);
+glm::vec3 input_move_to_world(const KernelPlayerInput& input);
 
 void apply_player_input(
     EntitySnapshot& entity,
-    const PlayerInput& input,
+    const KernelPlayerInput& input,
     float fixed_delta_seconds,
     float move_speed_meters_per_second);
 

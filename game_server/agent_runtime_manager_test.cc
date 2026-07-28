@@ -165,8 +165,8 @@ void run_server_frames(
     }
 }
 
-PlayerInput stationary_input(std::uint32_t input_seq) {
-    PlayerInput input{};
+KernelPlayerInput stationary_input(std::uint32_t input_seq) {
+    KernelPlayerInput input{};
     input.input_seq = input_seq;
     input.client_action_time_us =
         static_cast<std::uint64_t>(input_seq) * 33333u;
@@ -397,8 +397,8 @@ int main() {
         host_kernel,
         single_spawn_gameplay_config());
     for (std::uint32_t frame = 1; frame <= 12; ++frame) {
-        const PlayerInput input = stationary_input(frame);
-        Kernel_SubmitInput(host_kernel, 1, &input);
+        const KernelPlayerInput input = stationary_input(frame);
+        Kernel_SubmitPlayerInput(host_kernel, 1, &input);
         Kernel_Update(host_kernel, 1.0f / 30.0f);
         handle_pending_events(host_kernel, &host_game_server);
         host_game_server.tick(1.0f / 30.0f);

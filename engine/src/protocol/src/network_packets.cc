@@ -197,9 +197,9 @@ std::vector<const EntitySnapshot*> section_entities(
 
 }  // namespace
 
-std::vector<std::uint8_t> encode_input_packet(
+std::vector<std::uint8_t> encode_player_input_packet(
     PeerId player_id,
-    const PlayerInput& input,
+    const KernelPlayerInput& input,
     std::uint32_t sequence) {
     protocol_internal::PacketWriter payload;
     payload.reserve(kInputPayloadSize);
@@ -222,30 +222,30 @@ std::vector<std::uint8_t> encode_input_packet(
     payload.write_u8(input.action_input.flags);
     payload.write_u16(input.action_input.reserved);
     return protocol_internal::wrap_packet(
-        MessageType::kInputPacket,
+        MessageType::kPlayerInputPacket,
         payload.bytes(),
         sequence);
 }
 
-bool decode_input_packet(
+bool decode_player_input_packet(
     const std::uint8_t* data,
     std::size_t size,
     PeerId* out_player_id,
-    PlayerInput* out_input) {
+    KernelPlayerInput* out_input) {
     const std::uint8_t* payload = nullptr;
     std::size_t payload_size = 0;
     if (out_player_id == nullptr || out_input == nullptr ||
         !protocol_internal::unwrap_packet(
             data,
             size,
-            MessageType::kInputPacket,
+            MessageType::kPlayerInputPacket,
             &payload,
             &payload_size) ||
         payload_size != kInputPayloadSize) {
         return false;
     }
 
-    PlayerInput input{};
+    KernelPlayerInput input{};
     protocol_internal::PacketReader reader(payload, payload_size);
     if (!reader.read_u32(out_player_id) ||
         !reader.read_u32(&input.input_seq) ||

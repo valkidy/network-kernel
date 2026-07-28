@@ -279,7 +279,7 @@ std::vector<std::vector<network_example::QueuedInput>> make_inputs(
         }
         all[tick].reserve(actor_count);
         for (std::uint32_t actor = 0; actor < actor_count; ++actor) {
-            PlayerInput input{};
+            KernelPlayerInput input{};
             input.input_seq = tick + 1;
             input.move = KernelVec2{move.x, move.y};
             all[tick].push_back(network_example::QueuedInput{

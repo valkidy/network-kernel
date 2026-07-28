@@ -32,7 +32,7 @@ const WeaponMechanicsDefinition* current_weapon_definition_for_entity(
         world, entity, active_weapon_id(weapon));
 }
 
-glm::vec3 input_aim_to_world(const PlayerInput& input) {
+glm::vec3 input_aim_to_world(const KernelPlayerInput& input) {
     glm::vec3 aim{input.aim_dir.x, input.aim_dir.y, input.aim_dir.z};
     if (glm::length(aim) <= 0.0001f) {
         return glm::vec3{1.0f, 0.0f, 0.0f};

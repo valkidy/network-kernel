@@ -16,7 +16,7 @@ constexpr std::size_t kPacketHeaderSize = 28;
 
 enum class MessageType : std::uint16_t {
     kHandshake = 1,
-    kInputPacket = 2,
+    kPlayerInputPacket = 2,
     kSnapshotPacket = 3,
     kReliableEventPacket = 4,
     kFireCommand = 5,

@@ -121,7 +121,7 @@ public:
         std::uint32_t* out_response_json_size);
 
     void update(float delta_seconds);
-    void submit_input(PeerId local_player_id, const PlayerInput& input);
+    void submit_player_input(PeerId local_player_id, const KernelPlayerInput& input);
     bool load_gameplay_catalog(const KernelGameplayCatalogDefinition& catalog);
     bool load_gameplay_catalog_with_static_collision_scene(
         const KernelGameplayCatalogDefinition& catalog,
@@ -236,7 +236,7 @@ public:
         std::uint16_t animation_state,
         std::uint32_t visual_flags);
     bool server_set_entity_health(NetId net_id, std::uint16_t hp);
-    bool server_submit_entity_input(NetId net_id, const PlayerInput& input);
+    bool server_submit_entity_input(NetId net_id, const KernelPlayerInput& input);
     bool server_enqueue_entity_transform(
         std::uint32_t command_source,
         NetId net_id,
@@ -254,7 +254,7 @@ public:
     bool server_enqueue_entity_input(
         std::uint32_t command_source,
         NetId net_id,
-        const PlayerInput& input);
+        const KernelPlayerInput& input);
     bool server_set_entity_combat_state(
         NetId net_id,
         const KernelCombatStateDefinition& combat_state);
@@ -333,7 +333,7 @@ private:
         std::int64_t clock_offset_us = 0;
         bool has_clock_sync = false;
         ByteTokenBucket remote_presentation_budget;
-        PlayerInput latest_movement_input{};
+        KernelPlayerInput latest_movement_input{};
         std::uint32_t last_received_input_seq = 0;
         std::uint64_t last_movement_input_server_time_us = 0;
         bool has_received_input = false;
@@ -365,7 +365,7 @@ private:
     };
 
     struct PendingPredictionInput {
-        PlayerInput input{};
+        KernelPlayerInput input{};
         std::uint32_t prediction_tick = 0;
     };
 
@@ -531,16 +531,16 @@ private:
     void reconcile_local_prediction(const WorldSnapshot& snapshot);
     void reconcile_predicted_projectiles(const WorldSnapshot& snapshot);
     bool emit_client_input_for_tick();
-    void process_client_input_command(PeerId peer, const PlayerInput& input);
+    void process_client_input_command(PeerId peer, const KernelPlayerInput& input);
     bool cache_server_movement_input(
         PeerSession* session,
-        const PlayerInput& input,
+        const KernelPlayerInput& input,
         std::uint64_t received_server_time_us);
     std::vector<QueuedInput> build_effective_movement_inputs(
         std::uint64_t server_time_us);
     void acknowledge_simulated_movement_inputs(
         const std::vector<QueuedInput>& inputs);
-    void predict_local_input(const PlayerInput& input);
+    void predict_local_input(const KernelPlayerInput& input);
     bool prepare_prediction_physics();
     bool build_local_character_movement_config(
         movement_solver::CharacterMovementConfig* out_config);
@@ -548,12 +548,12 @@ private:
         const WorldSnapshot& snapshot,
         std::uint32_t prediction_tick);
     bool step_local_character_prediction(
-        const PlayerInput& input,
+        const KernelPlayerInput& input,
         std::uint32_t prediction_tick);
     void fail_client_prediction(std::string_view diagnostic);
-    bool predict_local_action(const PlayerInput& input);
-    void predict_local_projectile(const PlayerInput& input);
-    PlayerInput prepare_client_input(const PlayerInput& input);
+    bool predict_local_action(const KernelPlayerInput& input);
+    void predict_local_projectile(const KernelPlayerInput& input);
+    KernelPlayerInput prepare_client_input(const KernelPlayerInput& input);
     std::uint64_t client_local_action_time_us() const;
     std::uint64_t current_server_time_us() const;
     std::uint64_t convert_client_action_time_to_server_time(
@@ -636,7 +636,7 @@ private:
         std::uint64_t client_revision);
     void broadcast_reliable_event(const KernelEvent& event);
     void flush_prop_state_changes();
-    void prepare_server_action_intent(PeerSession* session, PlayerInput* input);
+    void prepare_server_action_intent(PeerSession* session, KernelPlayerInput* input);
     void finalize_server_action_outcomes(
         const std::vector<ActionOutcome>& outcomes);
     void queue_local_action_result(
@@ -716,8 +716,8 @@ private:
     std::unordered_set<NetId> client_metadata_timeout_reported_entities_;
     std::unordered_map<NetId, ClientEntityTombstone> client_despawned_entities_;
     std::vector<PendingPredictionInput> pending_prediction_inputs_;
-    PlayerInput latest_client_input_{};
-    std::deque<PlayerInput> pending_client_action_intents_;
+    KernelPlayerInput latest_client_input_{};
+    std::deque<KernelPlayerInput> pending_client_action_intents_;
     std::uint64_t latest_client_input_time_us_ = 0;
     std::uint32_t next_client_input_seq_ = 1;
     PeerId latest_client_input_peer_ = 0;

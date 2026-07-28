@@ -24,13 +24,13 @@ CommandResult Dispatcher::dispatch(
                     command.destroy_entity.net_id,
                     command.destroy_entity.reason),
                 command.destroy_entity.net_id};
-        case CommandId::kSubmitInput:
+        case CommandId::kSubmitPlayerInput:
             return CommandResult{
-                MovementSystem{}.submit_input(
+                MovementSystem{}.submit_player_input(
                     engine,
-                    command.submit_input.net_id,
-                    command.submit_input.input),
-                command.submit_input.net_id};
+                    command.submit_player_input.net_id,
+                    command.submit_player_input.input),
+                command.submit_player_input.net_id};
         case CommandId::kSetEntityTransform:
             return CommandResult{
                 EntityStateSystem{}.set_transform(

@@ -45,14 +45,14 @@ KernelConfig default_config() {
     return config;
 }
 
-PlayerInput scripted_input(std::uint32_t sequence) {
-    PlayerInput input{};
+KernelPlayerInput scripted_input(std::uint32_t sequence) {
+    KernelPlayerInput input{};
     input.input_seq = sequence;
     input.client_action_time_us = static_cast<std::uint64_t>(sequence) * 33333u;
     input.move = KernelVec2{0.0f, 0.0f};
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     if (sequence == 2) {
-        input.action_intent = ActionIntent{
+        input.action_intent = KernelActionIntent{
             sequence, KernelActionBinding_PrimaryFire, 0u, 0u};
     }
     return input;
@@ -224,8 +224,8 @@ int RunHostServer(
     bool observed_agent_render = false;
     constexpr float kDeltaSeconds = 1.0f / 30.0f;
     for (std::uint32_t frame = 0; frame < frame_count; ++frame) {
-        const PlayerInput input = scripted_input(sequence++);
-        Kernel_SubmitInput(kernel, 1, &input);
+        const KernelPlayerInput input = scripted_input(sequence++);
+        Kernel_SubmitPlayerInput(kernel, 1, &input);
         Kernel_Update(kernel, kDeltaSeconds);
 
         std::array<KernelEvent, 32> events{};

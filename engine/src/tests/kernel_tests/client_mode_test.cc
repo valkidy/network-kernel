@@ -407,9 +407,9 @@ void local_deterministic_prediction_query_uses_projectile_template_collider() {
 
     client.local_client_peer_id_ = 7;
     client.local_player_net_id_ = player_net_id;
-    PlayerInput input{};
+    KernelPlayerInput input{};
     input.input_seq = 1;
-    input.action_intent = ActionIntent{
+    input.action_intent = KernelActionIntent{
         1234u, KernelActionBinding_PrimaryFire, 0u, 0u};
     input.selected_weapon = 2;
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
@@ -543,7 +543,7 @@ void compensation_clamps_not_rejects_client_local_time() {
                180000,
                received_server_time_us) == 130000);
 
-    PlayerInput input{};
+    KernelPlayerInput input{};
     input.client_action_time_us = 180000;
     network_example::QueuedInput within_window{
         7,
@@ -1472,7 +1472,7 @@ void real_character_prediction_is_presented_smoothly_at_720_fps() {
         engine.client_local_time_us_ += static_cast<std::uint64_t>(
             static_cast<double>(kRenderDeltaSeconds) * 1000000.0);
         if (frame % 24u == 0u) {
-            PlayerInput input{};
+            KernelPlayerInput input{};
             input.move.x = frame < 96u ? 1.0f : 0.0f;
             require(engine.step_local_character_prediction(
                 input,
@@ -1557,9 +1557,9 @@ void owner_action_prediction_and_discrete_interpolation() {
         0,
     }});
 
-    PlayerInput input{};
+    KernelPlayerInput input{};
     input.input_seq = 1;
-    input.action_intent = ActionIntent{
+    input.action_intent = KernelActionIntent{
         7001u, KernelActionBinding_PrimaryFire, 0u, 0u};
     input.buttons = InputButton_Aim;
     input.selected_weapon = network_example::kWeaponSlot3;
@@ -3512,10 +3512,10 @@ void action_result_and_remote_presentation_queues_are_isolated() {
     network_example::KernelEngine client(config);
     client.reset_runtime_state(KernelMode_Client);
 
-    PlayerInput invalid_fire{};
-    invalid_fire.action_intent = ActionIntent{
+    KernelPlayerInput invalid_fire{};
+    invalid_fire.action_intent = KernelActionIntent{
         1u, KernelActionBinding_PrimaryFire, 1u, 0u};
-    const PlayerInput prepared = client.prepare_client_input(invalid_fire);
+    const KernelPlayerInput prepared = client.prepare_client_input(invalid_fire);
     require(prepared.action_intent.action_instance_id == 0u);
 
     client.outstanding_predicted_actions_.emplace(
@@ -3741,11 +3741,11 @@ void server_routes_fire_result_to_owner_and_presentation_to_observer() {
     server.peer_sessions_.push_back(owner);
     server.peer_sessions_.push_back(observer);
 
-    PlayerInput input{};
+    KernelPlayerInput input{};
     input.input_seq = 1;
-    input.action_intent = ActionIntent{
+    input.action_intent = KernelActionIntent{
         7001u, KernelActionBinding_PrimaryFire, 0u, 0u};
-    input.action_input = ActionInput{7001u, 1u, 0u, 0u};
+    input.action_input = KernelActionInput{7001u, 1u, 0u, 0u};
     input.selected_weapon = 0;
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     auto* owner_session = server.find_session(1);
@@ -3806,7 +3806,7 @@ void server_routes_fire_result_to_owner_and_presentation_to_observer() {
     require(observer_presentation);
 
     owner_session = server.find_session(1);
-    PlayerInput duplicate_input = input;
+    KernelPlayerInput duplicate_input = input;
     server.prepare_server_action_intent(owner_session, &duplicate_input);
     require(duplicate_input.action_intent.action_instance_id == 0u);
     server.simulate_tick();
@@ -3815,7 +3815,7 @@ void server_routes_fire_result_to_owner_and_presentation_to_observer() {
             .get<network_example::WeaponState>(*owner_entity)
             .ammo[0] == ammo_after);
 
-    PlayerInput release_input{};
+    KernelPlayerInput release_input{};
     release_input.input_seq = 2;
     release_input.selected_weapon = 0;
     server.pending_inputs_.push_back(network_example::QueuedInput{
@@ -3841,9 +3841,9 @@ void server_routes_fire_result_to_owner_and_presentation_to_observer() {
         0,
     }});
     input.input_seq = 3;
-    input.action_intent = ActionIntent{
+    input.action_intent = KernelActionIntent{
         7002u, KernelActionBinding_PrimaryFire, 0u, 0u};
-    input.action_input = ActionInput{7002u, 1u, 0u, 0u};
+    input.action_input = KernelActionInput{7002u, 1u, 0u, 0u};
     owner_session = server.find_session(1);
     server.prepare_server_action_intent(owner_session, &input);
     require(input.action_intent.action_instance_id == 7002u);
@@ -3902,9 +3902,9 @@ void server_routes_fire_result_to_owner_and_presentation_to_observer() {
         3,
     }});
     input.input_seq = 5;
-    input.action_intent = ActionIntent{
+    input.action_intent = KernelActionIntent{
         7003u, KernelActionBinding_PrimaryFire, 0u, 0u};
-    input.action_input = ActionInput{7003u, 1u, 0u, 0u};
+    input.action_input = KernelActionInput{7003u, 1u, 0u, 0u};
     const std::uint16_t hold_ammo_before =
         server.world_.registry()
             .get<network_example::WeaponState>(*owner_entity)
@@ -3962,14 +3962,14 @@ void native_fixed_tick_coalesces_client_input_and_owns_sequence() {
     network_example::LoopbackTransport* loopback = transport.get();
     client.transport_ = std::move(transport);
 
-    PlayerInput first{};
+    KernelPlayerInput first{};
     first.input_seq = 900u;
     first.move = KernelVec2{0.25f, 0.0f};
-    client.submit_input(7u, first);
-    PlayerInput latest = first;
+    client.submit_player_input(7u, first);
+    KernelPlayerInput latest = first;
     latest.input_seq = 3u;
     latest.move = KernelVec2{1.0f, 0.0f};
-    client.submit_input(7u, latest);
+    client.submit_player_input(7u, latest);
 
     require(client.pending_prediction_inputs_.empty());
     require(client.next_client_input_seq_ == 1u);
@@ -3981,8 +3981,8 @@ void native_fixed_tick_coalesces_client_input_and_owns_sequence() {
     network_example::TransportEvent sent;
     require(loopback->PollClientEvent(sent));
     network_example::PeerId sent_player = 0u;
-    PlayerInput sent_input{};
-    require(network_example::decode_input_packet(
+    KernelPlayerInput sent_input{};
+    require(network_example::decode_player_input_packet(
         sent.payload.data(), sent.payload.size(), &sent_player, &sent_input));
     require(sent_player == 7u);
     require(sent_input.input_seq == 1u);
@@ -3990,13 +3990,13 @@ void native_fixed_tick_coalesces_client_input_and_owns_sequence() {
 
     latest.input_seq = 5000u;
     latest.move = KernelVec2{0.0f, 1.0f};
-    client.submit_input(7u, latest);
+    client.submit_player_input(7u, latest);
     client.update(1.0f / 30.0f);
     require(client.pending_prediction_inputs_.size() == 2u);
     require(client.pending_prediction_inputs_[1].input.input_seq == 2u);
     require(client.pending_prediction_inputs_[1].input.move.y == 1.0f);
     require(loopback->PollClientEvent(sent));
-    require(network_example::decode_input_packet(
+    require(network_example::decode_player_input_packet(
         sent.payload.data(), sent.payload.size(), &sent_player, &sent_input));
     require(sent_input.input_seq == 2u);
     require(sent_input.move.y == 1.0f);
@@ -4013,12 +4013,12 @@ std::size_t fixed_tick_command_count_for_submit_rate(std::uint32_t updates_per_s
     client.local_client_peer_id_ = 7u;
     client.local_player_net_id_ = 1u;
 
-    PlayerInput input{};
+    KernelPlayerInput input{};
     input.move = KernelVec2{1.0f, 0.0f};
     const float delta_seconds = 1.0f / static_cast<float>(updates_per_second);
     for (std::uint32_t update = 0; update < updates_per_second; ++update) {
         input.input_seq = 1000u + update;
-        client.submit_input(7u, input);
+        client.submit_player_input(7u, input);
         client.update(delta_seconds);
     }
     require(client.pending_prediction_inputs_.empty() ||
@@ -4052,11 +4052,11 @@ void native_action_intent_latch_and_server_movement_hold_are_bounded() {
     client.local_client_peer_id_ = 7u;
     client.local_player_net_id_ = 1u;
 
-    PlayerInput edge{};
-    edge.action_intent = ActionIntent{
+    KernelPlayerInput edge{};
+    edge.action_intent = KernelActionIntent{
         42u, KernelActionBinding_PrimaryFire, 0u, 0u};
-    client.submit_input(7u, edge);
-    client.submit_input(7u, edge);
+    client.submit_player_input(7u, edge);
+    client.submit_player_input(7u, edge);
     require(client.pending_client_action_intents_.size() == 1u);
     client.update(1.0f / 30.0f);
     require(client.pending_client_action_intents_.empty());
@@ -4065,7 +4065,7 @@ void native_action_intent_latch_and_server_movement_hold_are_bounded() {
 
     for (std::uint32_t index = 0; index < 33u; ++index) {
         edge.action_intent.action_instance_id = 100u + index;
-        client.submit_input(7u, edge);
+        client.submit_player_input(7u, edge);
     }
     require(client.pending_client_action_intents_.size() == 32u);
     bool saw_overflow = false;
@@ -4087,12 +4087,12 @@ void native_action_intent_latch_and_server_movement_hold_are_bounded() {
     session.welcomed = true;
     server.peer_sessions_.push_back(session);
 
-    PlayerInput movement{};
+    KernelPlayerInput movement{};
     movement.input_seq = 1u;
     movement.move = KernelVec2{1.0f, 0.0f};
-    movement.action_intent = ActionIntent{
+    movement.action_intent = KernelActionIntent{
         500u, KernelActionBinding_PrimaryFire, 0u, 0u};
-    movement.action_input = ActionInput{500u, 1u, 0u, 0u};
+    movement.action_input = KernelActionInput{500u, 1u, 0u, 0u};
     require(server.cache_server_movement_input(
         &server.peer_sessions_[0], movement, UINT64_C(100000)));
     require(!server.cache_server_movement_input(
@@ -4194,12 +4194,12 @@ int main() {
     assert(kernel != nullptr);
     assert(Kernel_StartClient(kernel, "127.0.0.1:9"));
 
-    PlayerInput input{};
+    KernelPlayerInput input{};
     input.input_seq = 1;
     input.client_action_time_us = 33333;
     input.move = KernelVec2{1.0f, 0.0f};
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
-    Kernel_SubmitInput(kernel, 0, &input);
+    Kernel_SubmitPlayerInput(kernel, 0, &input);
 
     std::array<KernelEvent, 8> events{};
     const std::uint32_t event_count =

@@ -15,7 +15,7 @@ enum class CommandId : std::uint8_t {
     kUnknown = 0,
     kCreateEntity,
     kDestroyEntity,
-    kSubmitInput,
+    kSubmitPlayerInput,
     kSetEntityTransform,
     kSetEntityVelocity,
     kSetEntityState,
@@ -45,9 +45,9 @@ struct DestroyEntity {
     std::uint32_t reason = 0;
 };
 
-struct SubmitInput {
+struct SubmitPlayerInput {
     NetId net_id = 0;
-    PlayerInput input{};
+    KernelPlayerInput input{};
 };
 
 struct SetEntityTransform {
@@ -103,7 +103,7 @@ struct Command {
     std::uint64_t completion_token = 0;
     CreateEntity create_entity{};
     DestroyEntity destroy_entity{};
-    SubmitInput submit_input{};
+    SubmitPlayerInput submit_player_input{};
     SetEntityTransform set_entity_transform{};
     SetEntityVelocity set_entity_velocity{};
     SetEntityState set_entity_state{};

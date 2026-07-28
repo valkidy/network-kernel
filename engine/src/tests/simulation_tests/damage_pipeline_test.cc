@@ -15,8 +15,8 @@ network_example::Health& health(
     return world.registry().get<network_example::Health>(*entity);
 }
 
-PlayerInput defensive_input(std::uint32_t buttons, std::uint64_t action_time_us) {
-    PlayerInput input{};
+KernelPlayerInput defensive_input(std::uint32_t buttons, std::uint64_t action_time_us) {
+    KernelPlayerInput input{};
     input.input_seq = 1;
     input.client_action_time_us = action_time_us;
     input.buttons = buttons;

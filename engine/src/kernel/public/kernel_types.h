@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 54u
+#define KERNEL_ABI_VERSION 55u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -782,21 +782,21 @@ typedef struct KernelGameplayCatalogLoadOptions {
     uint32_t* out_static_scene_rejected;
 } KernelGameplayCatalogLoadOptions;
 
-typedef struct ActionIntent {
+typedef struct KernelActionIntent {
     uint32_t action_instance_id;
     uint16_t binding_id;
     uint8_t flags;
     uint8_t reserved;
-} ActionIntent;
+} KernelActionIntent;
 
-typedef struct ActionInput {
+typedef struct KernelActionInput {
     uint32_t action_instance_id;
     uint8_t held;
     uint8_t flags;
     uint16_t reserved;
-} ActionInput;
+} KernelActionInput;
 
-typedef struct PlayerInput {
+typedef struct KernelPlayerInput {
     uint32_t input_seq;
     uint64_t client_action_time_us;
     KernelVec2 move;
@@ -804,9 +804,9 @@ typedef struct PlayerInput {
     KernelVec3 aim_dir;
     uint32_t buttons;
     uint8_t selected_weapon;
-    ActionIntent action_intent;
-    ActionInput action_input;
-} PlayerInput;
+    KernelActionIntent action_intent;
+    KernelActionInput action_input;
+} KernelPlayerInput;
 
 typedef struct KernelLocalActionResult {
     uint32_t action_instance_id;
@@ -1608,8 +1608,8 @@ typedef struct KernelEntityLifecycleEvent {
 #ifdef __cplusplus
 }
 
-static_assert(sizeof(ActionIntent) == 8, "ActionIntent ABI must stay 8 bytes");
-static_assert(sizeof(ActionInput) == 8, "ActionInput ABI must stay 8 bytes");
+static_assert(sizeof(KernelActionIntent) == 8, "KernelActionIntent ABI must stay 8 bytes");
+static_assert(sizeof(KernelActionInput) == 8, "KernelActionInput ABI must stay 8 bytes");
 #endif
 
 #endif  // KERNEL_PUBLIC_KERNEL_TYPES_H_

@@ -15,7 +15,7 @@ class DamagePipeline;
 
 struct QueuedInput {
     PeerId owner_peer = 0;
-    PlayerInput input{};
+    KernelPlayerInput input{};
     std::uint32_t received_server_tick = 0;
     std::uint64_t action_server_time_us = 0;
     bool has_action_server_time = false;
@@ -96,7 +96,7 @@ public:
     void clear();
     void ingest_defensive_input(
         PeerId owner_peer,
-        const PlayerInput& input,
+        const KernelPlayerInput& input,
         std::uint64_t received_server_time_us,
         std::uint64_t action_server_time_us = 0,
         bool has_action_server_time = false);

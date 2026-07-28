@@ -16,23 +16,23 @@ bool nearly_equal(float lhs, float rhs) {
 }  // namespace
 
 int main() {
-    PlayerInput input{};
+    KernelPlayerInput input{};
     input.input_seq = 7;
     input.client_action_time_us = 11000;
     input.move = KernelVec2{0.5f, -0.25f};
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     input.buttons = InputButton_Sprint | InputButton_Dodge | InputButton_Parry;
     input.selected_weapon = 2;
-    input.action_intent = ActionIntent{
+    input.action_intent = KernelActionIntent{
         1234u, KernelActionBinding_PrimaryFire, 0u, 0u};
-    input.action_input = ActionInput{1234u, 1u, 0u, 0u};
+    input.action_input = KernelActionInput{1234u, 1u, 0u, 0u};
 
     const std::vector<std::uint8_t> input_packet =
-        network_example::encode_input_packet(3, input, 42);
+        network_example::encode_player_input_packet(3, input, 42);
     assert(input_packet.size() == 85u);
     network_example::PeerId decoded_player = 0;
-    PlayerInput decoded_input{};
-    assert(network_example::decode_input_packet(
+    KernelPlayerInput decoded_input{};
+    assert(network_example::decode_player_input_packet(
         input_packet.data(),
         input_packet.size(),
         &decoded_player,
@@ -543,7 +543,7 @@ int main() {
 
     std::vector<std::uint8_t> bad_header = input_packet;
     bad_header[0] = 0;
-    assert(!network_example::decode_input_packet(
+    assert(!network_example::decode_player_input_packet(
         bad_header.data(),
         bad_header.size(),
         &decoded_player,
@@ -551,7 +551,7 @@ int main() {
 
     std::vector<std::uint8_t> bad_crc = input_packet;
     bad_crc.back() ^= 0xffu;
-    assert(!network_example::decode_input_packet(
+    assert(!network_example::decode_player_input_packet(
         bad_crc.data(),
         bad_crc.size(),
         &decoded_player,
@@ -565,7 +565,7 @@ int main() {
 
     std::vector<std::uint8_t> bad_size = input_packet;
     bad_size.pop_back();
-    assert(!network_example::decode_input_packet(
+    assert(!network_example::decode_player_input_packet(
         bad_size.data(),
         bad_size.size(),
         &decoded_player,

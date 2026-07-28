@@ -141,16 +141,16 @@ struct PropStateChangeBatchPacket {
     std::vector<PropStateChangeRecord> records;
 };
 
-std::vector<std::uint8_t> encode_input_packet(
+std::vector<std::uint8_t> encode_player_input_packet(
     PeerId player_id,
-    const PlayerInput& input,
+    const KernelPlayerInput& input,
     std::uint32_t sequence = 0);
 
-bool decode_input_packet(
+bool decode_player_input_packet(
     const std::uint8_t* data,
     std::size_t size,
     PeerId* out_player_id,
-    PlayerInput* out_input);
+    KernelPlayerInput* out_input);
 
 std::vector<std::uint8_t> encode_snapshot_packet(
     const WorldSnapshot& snapshot,

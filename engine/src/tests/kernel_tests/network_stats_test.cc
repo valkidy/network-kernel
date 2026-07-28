@@ -105,11 +105,11 @@ void received_packet_sequence_gaps_update_loss_ratio() {
     network_example::KernelEngine engine(config);
     engine.reset_runtime_state(KernelMode_Client);
 
-    PlayerInput input{};
+    KernelPlayerInput input{};
     const std::vector<std::uint8_t> first_packet =
-        network_example::encode_input_packet(7, input, 1);
+        network_example::encode_player_input_packet(7, input, 1);
     const std::vector<std::uint8_t> fourth_packet =
-        network_example::encode_input_packet(7, input, 4);
+        network_example::encode_player_input_packet(7, input, 4);
     network_example::TransportEvent event;
     event.type = network_example::TransportEventType::kMessage;
     event.peer = 0;

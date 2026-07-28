@@ -38,7 +38,7 @@ void DamagePipeline::clear() {
 
 void DamagePipeline::ingest_defensive_input(
     PeerId owner_peer,
-    const PlayerInput& input,
+    const KernelPlayerInput& input,
     std::uint64_t received_server_time_us,
     std::uint64_t action_server_time_us,
     bool has_action_server_time) {

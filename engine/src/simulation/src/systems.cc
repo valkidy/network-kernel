@@ -1273,10 +1273,10 @@ bool EntityStateSystem::set_state(
     return true;
 }
 
-bool MovementSystem::submit_input(
+bool MovementSystem::submit_player_input(
     KernelEngine& engine,
     NetId net_id,
-    const PlayerInput& input) const {
+    const KernelPlayerInput& input) const {
     if (!engine.running_ || !is_server_mode(engine.config_.mode) || net_id == 0) {
         return false;
     }

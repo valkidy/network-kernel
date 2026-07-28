@@ -473,7 +473,7 @@ std::uint32_t derived_visual_flags(const World& world, entt::entity entity) {
     return flags;
 }
 
-glm::vec3 input_aim_to_world(const PlayerInput& input) {
+glm::vec3 input_aim_to_world(const KernelPlayerInput& input) {
     glm::vec3 aim{input.aim_dir.x, input.aim_dir.y, input.aim_dir.z};
     if (glm::length(aim) <= 0.0001f) {
         return glm::vec3{1.0f, 0.0f, 0.0f};
@@ -2008,7 +2008,7 @@ void KernelEngine::update(float delta_seconds) {
     rebuild_render_states();
 }
 
-void KernelEngine::submit_input(PeerId local_player_id, const PlayerInput& input) {
+void KernelEngine::submit_player_input(PeerId local_player_id, const KernelPlayerInput& input) {
     const bool local_client = config_.mode == KernelMode_Client ||
         (config_.mode == KernelMode_ListenServer &&
          listen_server_transport_ != nullptr);
@@ -2017,7 +2017,7 @@ void KernelEngine::submit_input(PeerId local_player_id, const PlayerInput& input
             push_event(KernelEventType_Error, 0, 0, 8);
             return;
         }
-        PlayerInput prepared = prepare_client_input(input);
+        KernelPlayerInput prepared = prepare_client_input(input);
         const std::uint32_t action_instance_id =
             prepared.action_intent.action_instance_id;
         if (action_instance_id != 0u) {
@@ -2025,7 +2025,7 @@ void KernelEngine::submit_input(PeerId local_player_id, const PlayerInput& input
                 std::any_of(
                     pending_client_action_intents_.begin(),
                     pending_client_action_intents_.end(),
-                    [action_instance_id](const PlayerInput& pending) {
+                    [action_instance_id](const KernelPlayerInput& pending) {
                         return pending.action_intent.action_instance_id ==
                             action_instance_id;
                     }) ||
@@ -2046,7 +2046,7 @@ void KernelEngine::submit_input(PeerId local_player_id, const PlayerInput& input
         }
 
         prepared.input_seq = 0u;
-        prepared.action_intent = ActionIntent{};
+        prepared.action_intent = KernelActionIntent{};
         latest_client_input_ = prepared;
         latest_client_input_time_us_ = client_local_time_us_;
         latest_client_input_peer_ = config_.mode == KernelMode_ListenServer
@@ -2076,7 +2076,7 @@ bool KernelEngine::emit_client_input_for_tick() {
         return false;
     }
 
-    PlayerInput input = latest_client_input_;
+    KernelPlayerInput input = latest_client_input_;
     const bool fresh = client_local_time_us_ >= latest_client_input_time_us_ &&
         client_local_time_us_ - latest_client_input_time_us_ <=
             kInputIntentTimeoutUs;
@@ -2084,11 +2084,11 @@ bool KernelEngine::emit_client_input_for_tick() {
         input.move = KernelVec2{};
         input.look_delta = KernelVec2{};
         input.buttons = 0u;
-        input.action_input = ActionInput{};
+        input.action_input = KernelActionInput{};
     }
-    input.action_intent = ActionIntent{};
+    input.action_intent = KernelActionIntent{};
     if (!pending_client_action_intents_.empty()) {
-        const PlayerInput edge = pending_client_action_intents_.front();
+        const KernelPlayerInput edge = pending_client_action_intents_.front();
         pending_client_action_intents_.pop_front();
         input.action_intent = edge.action_intent;
         input.client_action_time_us = edge.client_action_time_us;
@@ -2105,7 +2105,7 @@ bool KernelEngine::emit_client_input_for_tick() {
 
 void KernelEngine::process_client_input_command(
     PeerId peer,
-    const PlayerInput& input) {
+    const KernelPlayerInput& input) {
     predict_local_input(input);
     std::size_t predicted_weapon_slot = kWeaponSlotCount;
     const WeaponState* predicted_weapon_state = nullptr;
@@ -2161,7 +2161,7 @@ void KernelEngine::process_client_input_command(
     }
 
     const std::vector<std::uint8_t> packet =
-        encode_input_packet(peer, input, next_packet_sequence_++);
+        encode_player_input_packet(peer, input, next_packet_sequence_++);
     const bool sent = config_.mode == KernelMode_ListenServer
         ? listen_server_transport_ != nullptr &&
             listen_server_transport_->SendLocalClient(
@@ -2188,7 +2188,7 @@ void KernelEngine::process_client_input_command(
 
 bool KernelEngine::cache_server_movement_input(
     PeerSession* session,
-    const PlayerInput& input,
+    const KernelPlayerInput& input,
     std::uint64_t received_server_time_us) {
     if (session == nullptr ||
         (session->has_received_input &&
@@ -2196,8 +2196,8 @@ bool KernelEngine::cache_server_movement_input(
         return false;
     }
     session->latest_movement_input = input;
-    session->latest_movement_input.action_intent = ActionIntent{};
-    session->latest_movement_input.action_input = ActionInput{};
+    session->latest_movement_input.action_intent = KernelActionIntent{};
+    session->latest_movement_input.action_input = KernelActionInput{};
     session->last_received_input_seq = input.input_seq;
     session->last_movement_input_server_time_us = received_server_time_us;
     session->has_received_input = true;
@@ -2218,7 +2218,7 @@ std::vector<QueuedInput> KernelEngine::build_effective_movement_inputs(
             server_time_us - session->last_movement_input_server_time_us >
                 kInputIntentTimeoutUs) {
             session->has_movement_input = false;
-            session->latest_movement_input = PlayerInput{};
+            session->latest_movement_input = KernelPlayerInput{};
             return;
         }
         effective.push_back(QueuedInput{
@@ -3821,8 +3821,8 @@ bool KernelEngine::server_set_entity_health(NetId net_id, std::uint16_t hp) {
     return true;
 }
 
-bool KernelEngine::server_submit_entity_input(NetId net_id, const PlayerInput& input) {
-    return MovementSystem{}.submit_input(*this, net_id, input);
+bool KernelEngine::server_submit_entity_input(NetId net_id, const KernelPlayerInput& input) {
+    return MovementSystem{}.submit_player_input(*this, net_id, input);
 }
 
 bool KernelEngine::server_enqueue_entity_transform(
@@ -3889,7 +3889,7 @@ bool KernelEngine::server_enqueue_entity_state(
 bool KernelEngine::server_enqueue_entity_input(
     std::uint32_t command_source,
     NetId net_id,
-    const PlayerInput& input) {
+    const KernelPlayerInput& input) {
     if (!running_ || !is_server_mode(config_.mode)) {
         return false;
     }
@@ -3898,10 +3898,10 @@ bool KernelEngine::server_enqueue_entity_input(
         return false;
     }
     simulation::Command command{};
-    command.id = simulation::CommandId::kSubmitInput;
+    command.id = simulation::CommandId::kSubmitPlayerInput;
     command.source = source;
-    command.submit_input.net_id = net_id;
-    command.submit_input.input = input;
+    command.submit_player_input.net_id = net_id;
+    command.submit_player_input.input = input;
     return enqueue_simulation_command(command);
 }
 
@@ -4249,7 +4249,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     client_metadata_timeout_reported_entities_.clear();
     client_despawned_entities_.clear();
     pending_prediction_inputs_.clear();
-    latest_client_input_ = PlayerInput{};
+    latest_client_input_ = KernelPlayerInput{};
     pending_client_action_intents_.clear();
     latest_client_input_time_us_ = 0;
     next_client_input_seq_ = 1;
@@ -4490,9 +4490,9 @@ void KernelEngine::poll_transport() {
             }
 
             PeerId player_id = 0;
-            PlayerInput input{};
+            KernelPlayerInput input{};
             const auto decode_start = std::chrono::steady_clock::now();
-            if (!decode_input_packet(
+            if (!decode_player_input_packet(
                     transport_event.payload.data(),
                     transport_event.payload.size(),
                     &player_id,
@@ -4944,14 +4944,14 @@ void KernelEngine::handle_client_local_action_results(
             latest_client_snapshot_.header.server_tick >= result.authoritative_tick;
         if (terminal) {
             for (PendingPredictionInput& pending : pending_prediction_inputs_) {
-                PlayerInput& input = pending.input;
+                KernelPlayerInput& input = pending.input;
                 if (input.action_intent.action_instance_id ==
                     result.action_instance_id) {
-                    input.action_intent = ActionIntent{};
+                    input.action_intent = KernelActionIntent{};
                 }
                 if (input.action_input.action_instance_id ==
                     result.action_instance_id) {
-                    input.action_input = ActionInput{};
+                    input.action_input = KernelActionInput{};
                 }
             }
             if (!baseline_covers_result &&
@@ -5615,7 +5615,7 @@ void KernelEngine::clear_client_session() {
     latest_client_snapshot_ = WorldSnapshot{};
     predicted_local_entity_ = EntitySnapshot{};
     has_authoritative_local_entity_ = false;
-    latest_client_input_ = PlayerInput{};
+    latest_client_input_ = KernelPlayerInput{};
     pending_client_action_intents_.clear();
     latest_client_input_time_us_ = 0;
     next_client_input_seq_ = 1;
@@ -6141,7 +6141,7 @@ bool KernelEngine::sync_prediction_actor_proxies(
 }
 
 bool KernelEngine::step_local_character_prediction(
-    const PlayerInput& input,
+    const KernelPlayerInput& input,
     std::uint32_t prediction_tick) {
     if (prediction_physics_world_ == nullptr) {
         return session_rules_.actor_blocking_mode ==
@@ -6403,7 +6403,7 @@ void KernelEngine::reconcile_predicted_projectiles(const WorldSnapshot& snapshot
     }
 }
 
-void KernelEngine::predict_local_input(const PlayerInput& input) {
+void KernelEngine::predict_local_input(const KernelPlayerInput& input) {
     if (local_player_net_id_ == 0 || prediction_failed_) {
         return;
     }
@@ -6468,7 +6468,7 @@ void KernelEngine::predict_local_input(const PlayerInput& input) {
         PendingPredictionInput{input, prediction_tick});
 }
 
-bool KernelEngine::predict_local_action(const PlayerInput& input) {
+bool KernelEngine::predict_local_action(const KernelPlayerInput& input) {
     if (!has_predicted_local_entity_) {
         return false;
     }
@@ -6605,7 +6605,7 @@ bool KernelEngine::predict_local_action(const PlayerInput& input) {
     return committed;
 }
 
-void KernelEngine::predict_local_projectile(const PlayerInput& input) {
+void KernelEngine::predict_local_projectile(const KernelPlayerInput& input) {
     const std::uint32_t action_instance_id =
         predicted_local_entity_.action_instance_id;
     if (local_client_peer_id_ == 0 || action_instance_id == 0 ||
@@ -6671,8 +6671,8 @@ void KernelEngine::predict_local_projectile(const PlayerInput& input) {
     });
 }
 
-PlayerInput KernelEngine::prepare_client_input(const PlayerInput& input) {
-    PlayerInput input_to_send = input;
+KernelPlayerInput KernelEngine::prepare_client_input(const KernelPlayerInput& input) {
+    KernelPlayerInput input_to_send = input;
     if (input_to_send.client_action_time_us == 0) {
         input_to_send.client_action_time_us = client_local_action_time_us();
     }
@@ -6687,8 +6687,8 @@ PlayerInput KernelEngine::prepare_client_input(const PlayerInput& input) {
          (input_to_send.action_input.flags != 0u ||
           input_to_send.action_input.reserved != 0u ||
           input_to_send.action_input.held > 1u))) {
-        input_to_send.action_intent = ActionIntent{};
-        input_to_send.action_input = ActionInput{};
+        input_to_send.action_intent = KernelActionIntent{};
+        input_to_send.action_input = KernelActionInput{};
         push_event(KernelEventType_Error, local_player_net_id_, local_client_peer_id_, 27);
     }
     return input_to_send;
@@ -9124,7 +9124,7 @@ void KernelEngine::queue_local_action_result(
 
 void KernelEngine::prepare_server_action_intent(
     PeerSession* session,
-    PlayerInput* input) {
+    KernelPlayerInput* input) {
     if (session == nullptr || input == nullptr ||
         input->action_intent.action_instance_id == 0u) {
         if (session != nullptr && input != nullptr &&
@@ -9137,7 +9137,7 @@ void KernelEngine::prepare_server_action_intent(
         }
         return;
     }
-    const ActionIntent intent = input->action_intent;
+    const KernelActionIntent intent = input->action_intent;
     auto reject = [this, session, input, intent](
                       KernelLocalActionResultReason reason) {
         queue_local_action_result(
@@ -9149,7 +9149,7 @@ void KernelEngine::prepare_server_action_intent(
                 static_cast<std::uint8_t>(reason),
                 tick_loop_.current_tick(),
             });
-        input->action_intent = ActionIntent{};
+        input->action_intent = KernelActionIntent{};
     };
     if (intent.flags != 0u || intent.reserved != 0u ||
         (intent.binding_id != KernelActionBinding_PrimaryFire &&
@@ -9164,14 +9164,14 @@ void KernelEngine::prepare_server_action_intent(
             ++network_stats_.local_action_result_server_duplicates_suppressed;
         }
         queue_local_action_result(session, cached->second);
-        input->action_intent = ActionIntent{};
+        input->action_intent = KernelActionIntent{};
         return;
     }
     if (session->active_action_instance_id == intent.action_instance_id) {
         if (network_stats_enabled()) {
             ++network_stats_.local_action_result_server_duplicates_suppressed;
         }
-        input->action_intent = ActionIntent{};
+        input->action_intent = KernelActionIntent{};
         return;
     }
     if (session->action_instance_high_water != 0u &&

@@ -6,13 +6,13 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 53u,
+    KERNEL_ABI_VERSION == 55u,
     "action trigger ABI");
 _Static_assert(
-    sizeof(KernelActionTriggerDefinition) == 152u,
+    sizeof(KernelActionTriggerDefinition) == 224u,
     "KernelActionTriggerDefinition ABI size");
-_Static_assert(sizeof(ActionIntent) == 8u, "ActionIntent ABI size");
-_Static_assert(sizeof(ActionInput) == 8u, "ActionInput ABI size");
+_Static_assert(sizeof(KernelActionIntent) == 8u, "KernelActionIntent ABI size");
+_Static_assert(sizeof(KernelActionInput) == 8u, "KernelActionInput ABI size");
 _Static_assert(
     offsetof(KernelWeaponMechanicsDefinition, reserve_magazines) >
         offsetof(KernelWeaponMechanicsDefinition, magazine_size),
@@ -39,7 +39,7 @@ int main(void) {
     KernelConfig config;
     KernelNetworkStatsConfig network_stats_config;
     KernelLocalPlayerInfo local_player_info;
-    PlayerInput input;
+    KernelPlayerInput input;
     RenderEntityState state;
     KernelEvent event;
     KernelServerEntityCreateInfo create_info;
@@ -104,7 +104,7 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 53u);
+    assert(KERNEL_ABI_VERSION == 55u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD == 4u);
@@ -119,7 +119,7 @@ int main(void) {
     assert(sizeof(KernelLANDiscoveryResult) > 0u);
     assert(sizeof(KernelLocalPlayerInfo) > 0u);
     assert(sizeof(KernelConfig) > 0u);
-    assert(sizeof(PlayerInput) > 0u);
+    assert(sizeof(KernelPlayerInput) > 0u);
     assert(sizeof(RenderEntityState) > 0u);
     assert(sizeof(KernelEvent) > 0u);
     assert(sizeof(KernelServerEntityCreateInfo) > 0u);
@@ -204,9 +204,9 @@ int main(void) {
     assert((KERNEL_VISUAL_FLAG_MOVING & KERNEL_VISUAL_FLAG_DEAD) == 0u);
     assert((InputButton_Dodge & InputButton_Parry) == 0u);
     assert(sizeof(abi_info.abi_version) == sizeof(uint32_t));
-    assert(offsetof(PlayerInput, client_action_time_us) > offsetof(PlayerInput, input_seq));
-    assert(offsetof(PlayerInput, action_intent) > offsetof(PlayerInput, selected_weapon));
-    assert(offsetof(PlayerInput, action_input) > offsetof(PlayerInput, action_intent));
+    assert(offsetof(KernelPlayerInput, client_action_time_us) > offsetof(KernelPlayerInput, input_seq));
+    assert(offsetof(KernelPlayerInput, action_intent) > offsetof(KernelPlayerInput, selected_weapon));
+    assert(offsetof(KernelPlayerInput, action_input) > offsetof(KernelPlayerInput, action_intent));
     assert(offsetof(RenderEntityState, entity_id) == 0u);
     assert(offsetof(RenderEntityState, hp) > offsetof(RenderEntityState, velocity));
     assert(offsetof(RenderEntityState, max_hp) > offsetof(RenderEntityState, hp));

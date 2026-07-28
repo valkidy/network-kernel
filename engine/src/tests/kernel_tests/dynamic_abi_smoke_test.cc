@@ -207,10 +207,10 @@ int main() {
             "Kernel_StartListenServer");
     auto* kernel_update =
         load_symbol<void(KernelHandle*, float)>(library, "Kernel_Update");
-    auto* kernel_submit_input =
-        load_symbol<void(KernelHandle*, std::uint32_t, const PlayerInput*)>(
+    auto* kernel_submit_player_input =
+        load_symbol<void(KernelHandle*, std::uint32_t, const KernelPlayerInput*)>(
             library,
-            "Kernel_SubmitInput");
+            "Kernel_SubmitPlayerInput");
     auto* kernel_get_render_states =
         load_symbol<std::uint32_t(KernelHandle*, RenderEntityState*, std::uint32_t)>(
             library,
@@ -332,7 +332,7 @@ int main() {
             library,
             "Kernel_ServerSetEntityHealth");
     [[maybe_unused]] auto* kernel_server_submit_entity_input =
-        load_symbol<bool(KernelHandle*, std::uint32_t, const PlayerInput*)>(
+        load_symbol<bool(KernelHandle*, std::uint32_t, const KernelPlayerInput*)>(
             library,
             "Kernel_ServerSubmitEntityInput");
     auto* kernel_server_set_entity_combat_state =
@@ -451,7 +451,7 @@ int main() {
     assert(kernel_get_abi_info(&abi_info, sizeof(abi_info)));
     assert(abi_info.abi_version == KERNEL_ABI_VERSION);
     assert(abi_info.kernel_config_size == sizeof(KernelConfig));
-    assert(abi_info.player_input_size == sizeof(PlayerInput));
+    assert(abi_info.player_input_size == sizeof(KernelPlayerInput));
     assert(abi_info.render_entity_state_size == sizeof(RenderEntityState));
     assert(abi_info.kernel_event_size == sizeof(KernelEvent));
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS) != 0);
@@ -493,8 +493,8 @@ int main() {
     assert(
         (abi_info.capability_flags &
          KERNEL_CAPABILITY_REMOTE_ACTION_PRESENTATION) != 0);
-    assert(abi_info.action_intent_size == sizeof(ActionIntent));
-    assert(abi_info.action_input_size == sizeof(ActionInput));
+    assert(abi_info.action_intent_size == sizeof(KernelActionIntent));
+    assert(abi_info.action_input_size == sizeof(KernelActionInput));
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ACTION_INTENTS) != 0);
     assert(abi_info.projectile_mechanics_definition_size ==
            sizeof(KernelProjectileMechanicsDefinition));
@@ -699,14 +699,14 @@ int main() {
         KernelDespawnReason_Destroyed));
     assert(!kernel_server_clear_entity_weapon_mechanics(kernel, enemy, 3));
 
-    PlayerInput input{};
+    KernelPlayerInput input{};
     input.input_seq = 1;
     input.client_action_time_us = 33333;
     input.move = KernelVec2{1.0f, 0.0f};
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
-    input.action_intent = ActionIntent{
+    input.action_intent = KernelActionIntent{
         1u, KernelActionBinding_PrimaryFire, 0u, 0u};
-    kernel_submit_input(kernel, 1, &input);
+    kernel_submit_player_input(kernel, 1, &input);
     kernel_update(kernel, 1.0f / 30.0f);
 
     std::array<RenderEntityState, 16> states{};

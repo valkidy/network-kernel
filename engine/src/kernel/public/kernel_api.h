@@ -109,10 +109,10 @@ bool Kernel_ContinueClientHandshake(KernelHandle* kernel);
 
 void Kernel_Update(KernelHandle* kernel, float delta_seconds);
 
-void Kernel_SubmitInput(
+void Kernel_SubmitPlayerInput(
     KernelHandle* kernel,
     uint32_t local_player_id,
-    const PlayerInput* input);
+    const KernelPlayerInput* input);
 
 bool Kernel_LoadGameplayCatalog(
     KernelHandle* kernel,
@@ -371,7 +371,7 @@ bool Kernel_ServerSetEntityHealth(
 bool Kernel_ServerSubmitEntityInput(
     KernelHandle* kernel,
     uint32_t net_id,
-    const PlayerInput* input);
+    const KernelPlayerInput* input);
 
 bool Kernel_ServerSetEntityCombatState(
     KernelHandle* kernel,

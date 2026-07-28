@@ -87,10 +87,10 @@ public:
 
 class MovementSystem {
 public:
-    bool submit_input(
+    bool submit_player_input(
         KernelEngine& engine,
         NetId net_id,
-        const PlayerInput& input) const;
+        const KernelPlayerInput& input) const;
 };
 
 struct DirectorIntentExecutionResult {

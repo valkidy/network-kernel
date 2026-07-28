@@ -138,7 +138,7 @@ int main() {
     assert(abi_info.struct_size == sizeof(KernelAbiInfo));
     assert(abi_info.abi_version == KERNEL_ABI_VERSION);
     assert(abi_info.kernel_config_size == sizeof(KernelConfig));
-    assert(abi_info.player_input_size == sizeof(PlayerInput));
+    assert(abi_info.player_input_size == sizeof(KernelPlayerInput));
     assert(abi_info.render_entity_state_size == sizeof(RenderEntityState));
     assert(abi_info.kernel_event_size == sizeof(KernelEvent));
     assert(abi_info.server_entity_create_info_size ==
@@ -209,8 +209,8 @@ int main() {
     assert(
         abi_info.remote_action_presentation_event_size ==
         sizeof(KernelRemoteActionPresentationEvent));
-    assert(abi_info.action_intent_size == sizeof(ActionIntent));
-    assert(abi_info.action_input_size == sizeof(ActionInput));
+    assert(abi_info.action_intent_size == sizeof(KernelActionIntent));
+    assert(abi_info.action_input_size == sizeof(KernelActionInput));
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CLIENT_MODE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LISTEN_SERVER_MODE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_DEDICATED_SERVER_MODE) != 0);
@@ -251,7 +251,7 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 54u);
+    assert(KERNEL_ABI_VERSION == 55u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CONTROL_PLANE_RPC) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ACTION_TIMELINE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LOCAL_ACTION_RESULTS) != 0);
@@ -259,8 +259,8 @@ int main() {
         (abi_info.capability_flags &
          KERNEL_CAPABILITY_REMOTE_ACTION_PRESENTATION) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ACTION_INTENTS) != 0);
-    assert(sizeof(ActionIntent) == 8u);
-    assert(sizeof(ActionInput) == 8u);
+    assert(sizeof(KernelActionIntent) == 8u);
+    assert(sizeof(KernelActionInput) == 8u);
     assert(sizeof(KernelLocalActionResult) == 12u);
     assert(sizeof(KernelRemoteActionPresentationEvent) == 20u);
     assert(sizeof(KernelVec4) == 16u);
@@ -275,9 +275,9 @@ int main() {
     assert(KERNEL_COLLISION_LAYER_NEUTRAL == 0x00000020u);
     assert((KERNEL_COLLISION_MASK_DAMAGEABLE & KERNEL_COLLISION_LAYER_NEUTRAL) != 0u);
     assert(KERNEL_LAN_DISCOVERY_DEFAULT_PORT == 47777u);
-    assert(offsetof(PlayerInput, client_action_time_us) > offsetof(PlayerInput, input_seq));
-    assert(offsetof(PlayerInput, action_intent) >
-           offsetof(PlayerInput, client_action_time_us));
+    assert(offsetof(KernelPlayerInput, client_action_time_us) > offsetof(KernelPlayerInput, input_seq));
+    assert(offsetof(KernelPlayerInput, action_intent) >
+           offsetof(KernelPlayerInput, client_action_time_us));
     assert(offsetof(KernelEvent, event_time_us) > offsetof(KernelEvent, code));
     assert(offsetof(KernelEvent, presentation_time_us) > offsetof(KernelEvent, event_time_us));
     assert(offsetof(RenderEntityState, entity_id) == 0u);
@@ -419,7 +419,7 @@ int main() {
     assert(Kernel_LANDiscovery_PollResults(nullptr, nullptr, 0) == 0);
     Kernel_LANDiscovery_ClearResults(nullptr);
     Kernel_Update(nullptr, 1.0f / 30.0f);
-    Kernel_SubmitInput(nullptr, 1, nullptr);
+    Kernel_SubmitPlayerInput(nullptr, 1, nullptr);
     assert(!Kernel_LoadGameplayCatalog(nullptr, nullptr, nullptr));
     assert(Kernel_GetRenderStates(nullptr, nullptr, 0) == 0);
     assert(Kernel_GetRenderStatesAtTime(nullptr, 0, nullptr, 0) == 0);
@@ -490,7 +490,7 @@ int main() {
     assert(!Kernel_ServerSetEntityVelocity(nullptr, 1, &create_info.position));
     assert(!Kernel_ServerSetEntityState(nullptr, 1, 2, 3));
     assert(!Kernel_ServerSetEntityHealth(nullptr, 1, 2));
-    PlayerInput server_entity_input{};
+    KernelPlayerInput server_entity_input{};
     assert(!Kernel_ServerSubmitEntityInput(nullptr, 1, &server_entity_input));
     KernelCombatStateDefinition combat_state{};
     combat_state.struct_size = sizeof(combat_state);
@@ -1237,7 +1237,7 @@ int main() {
                static_cast<std::uint32_t>(queried_states.size())) == 1);
 
     server_entity_input.input_seq = 2;
-    server_entity_input.action_intent = ActionIntent{
+    server_entity_input.action_intent = KernelActionIntent{
         1u, KernelActionBinding_PrimaryFire, 0u, 0u};
     server_entity_input.selected_weapon = 3;
     server_entity_input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
@@ -1256,7 +1256,7 @@ int main() {
     assert(server_state.reserve_magazines[0] == 6);
 
     server_entity_input.input_seq = 3;
-    server_entity_input.action_intent = ActionIntent{
+    server_entity_input.action_intent = KernelActionIntent{
         2u, KernelActionBinding_Reload, 0u, 0u};
     server_entity_input.selected_weapon = 3;
     assert(Kernel_ServerSubmitEntityInput(
@@ -1281,11 +1281,11 @@ int main() {
     assert(server_state.ammo[0] == 3);
     assert(server_state.reserve_magazines[0] == 5);
 
-    PlayerInput input{};
+    KernelPlayerInput input{};
     input.input_seq = 1;
     input.move = KernelVec2{1.0f, 0.0f};
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
-    Kernel_SubmitInput(kernel, 1, &input);
+    Kernel_SubmitPlayerInput(kernel, 1, &input);
     Kernel_Update(kernel, 1.0f / 30.0f);
     server_state = KernelServerEntityState{};
     server_state.struct_size = sizeof(server_state);
@@ -1337,7 +1337,7 @@ int main() {
     assert(rendered_actor->hp == 240);
     assert(rendered_actor->max_hp == 240);
 
-    server_entity_input.action_intent = ActionIntent{
+    server_entity_input.action_intent = KernelActionIntent{
         3u, KernelActionBinding_PrimaryFire, 0u, 0u};
     server_entity_input.selected_weapon = 4;
     server_entity_input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
@@ -1358,7 +1358,7 @@ int main() {
     }
     assert(area_net_id != 0);
 
-    server_entity_input.action_intent = ActionIntent{
+    server_entity_input.action_intent = KernelActionIntent{
         4u, KernelActionBinding_PrimaryFire, 0u, 0u};
     server_entity_input.selected_weapon = 5;
     server_entity_input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
@@ -1379,7 +1379,7 @@ int main() {
     }
     assert(beam_net_id != 0);
 
-    server_entity_input.action_intent = ActionIntent{
+    server_entity_input.action_intent = KernelActionIntent{
         5u, KernelActionBinding_PrimaryFire, 0u, 0u};
     server_entity_input.selected_weapon = 6;
     server_entity_input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};

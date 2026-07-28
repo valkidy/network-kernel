@@ -7,7 +7,7 @@ int main() {
     const std::array<std::uint8_t, 3> payload = {1, 2, 3};
     network_example::PacketHeader header;
     header.message_type =
-        static_cast<std::uint16_t>(network_example::MessageType::kInputPacket);
+        static_cast<std::uint16_t>(network_example::MessageType::kPlayerInputPacket);
     header.sequence = 12;
     header.ack = 9;
     header.payload_size = payload.size();
