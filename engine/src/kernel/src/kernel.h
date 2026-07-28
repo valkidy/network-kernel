@@ -17,6 +17,7 @@
 #include "kernel/src/tick_loop.h"
 #include "physics/public/physics_world.h"
 #include "simulation/public/command.h"
+#include "simulation/public/item_system.h"
 #include "simulation/public/movement_solver.h"
 #include "simulation/public/simulation.h"
 #include "simulation/src/systems.h"
@@ -29,6 +30,7 @@ namespace network_example {
 
 class EntityLifecycleSystem;
 class EntityStateSystem;
+class ItemGameplaySystem;
 class ActivationSystem;
 class CollisionTriggerSystem;
 class DirectorIntentExecutor;
@@ -49,6 +51,27 @@ class Dispatcher;
 class KernelEngine {
 public:
     explicit KernelEngine(KernelConfig config);
+
+    World& simulation_world() { return world_; }
+    const World& simulation_world() const { return world_; }
+    ItemStore& item_store() { return item_store_; }
+    const ItemStore& item_store() const { return item_store_; }
+    const physics::PhysicsWorld* physics_world() const {
+        return physics_world_.get();
+    }
+    physics::PhysicsWorld* mutable_physics_world() {
+        return physics_world_.get();
+    }
+    bool has_static_collision_scene() const {
+        return !static_collision_scene_.empty();
+    }
+    DamagePipeline& damage_pipeline() { return damage_pipeline_; }
+    std::uint32_t current_tick() const { return tick_loop_.current_tick(); }
+    float fixed_delta_seconds() const {
+        return tick_loop_.fixed_delta_seconds();
+    }
+    const std::vector<KernelEntityTemplateDefinition>& authored_entity_templates()
+        const { return entity_templates_; }
 
     bool start_client(const char* address);
     bool start_client_catalog_sync(
@@ -140,6 +163,40 @@ public:
         NetId* out_net_id);
     bool server_activate_entity(
         const KernelServerEntityActivateInfo& activate_info);
+    bool server_create_inventory_container(
+        std::uint32_t owner_entity_id,
+        std::uint32_t slot_capacity,
+        KernelInventoryContainerId* out_container_id);
+    bool server_create_inventory_item(
+        std::uint32_t item_template_id,
+        std::uint32_t quantity,
+        KernelInventoryContainerId container_id,
+        KernelItemInstanceId* out_item_instance_id);
+    bool server_create_world_item(
+        std::uint32_t item_template_id,
+        std::uint32_t quantity,
+        const KernelVec3& position,
+        KernelItemInstanceId* out_item_instance_id,
+        std::uint32_t* out_prop_entity_id);
+    bool server_submit_gameplay_request(const KernelGameplayRequest& request);
+    bool submit_gameplay_request(const KernelGameplayRequest& request);
+    bool get_item_instance(
+        KernelItemInstanceId id,
+        KernelItemInstanceView* out_view) const;
+    bool get_inventory_container(
+        KernelInventoryContainerId id,
+        KernelInventoryContainerView* out_view) const;
+    std::uint32_t copy_inventory_slots(
+        KernelInventoryContainerId id,
+        KernelItemInstanceView* out_items,
+        std::uint32_t max_items) const;
+    std::uint32_t poll_gameplay_request_outcomes(
+        KernelGameplayRequestOutcome* out_outcomes,
+        std::uint32_t max_outcomes);
+    std::uint32_t poll_inventory_deltas(
+        KernelInventoryContainerId id,
+        KernelInventoryDelta* out_deltas,
+        std::uint32_t max_deltas);
     bool server_destroy_entity(NetId net_id, std::uint32_t reason);
     bool server_enqueue_entity_lifecycle(
         std::uint32_t command_source,
@@ -208,6 +265,7 @@ private:
     friend class EntityLifecycleSystem;
     friend class EntityStateSystem;
     friend class ActivationSystem;
+    friend class ItemGameplaySystem;
     friend class CollisionTriggerSystem;
     friend class DirectorAISystem;
     friend class DirectorIntentExecutor;
@@ -523,6 +581,9 @@ private:
         std::uint64_t server_time_us);
     void send_due_clock_sync_pings(std::uint64_t server_time_us);
     void send_reliable_event(PeerId peer, const KernelEvent& event);
+    void send_gameplay_request_outcome(
+        PeerId peer,
+        const KernelGameplayRequestOutcome& outcome);
     void broadcast_reliable_event(const KernelEvent& event);
     void prepare_server_action_intent(PeerSession* session, PlayerInput* input);
     void finalize_server_action_outcomes(
@@ -621,6 +682,10 @@ private:
     std::vector<KernelProjectileTemplateDefinition> projectile_templates_;
     std::vector<KernelColliderTemplateDefinition> collider_templates_;
     std::vector<KernelActionTemplateDefinition> action_templates_;
+    std::vector<KernelItemTemplateDefinition> item_templates_;
+    ItemStore item_store_;
+    std::vector<KernelGameplayRequestOutcome> processed_gameplay_requests_;
+    std::deque<KernelGameplayRequestOutcome> pending_gameplay_request_outcomes_;
     std::vector<KernelDebugInfo> debug_records_;
     std::unordered_map<NetId, KernelAgentVisionConfig> vision_configs_;
     std::unordered_map<NetId, VisionRuntimeState> vision_states_;

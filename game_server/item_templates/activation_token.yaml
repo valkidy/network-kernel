@@ -1,0 +1,27 @@
+id: 3000
+name: activation_token
+mode: stateful
+max_stack: 1
+capabilities: [pickupable, deployable, interactable]
+entity_template: activation_damage_prop
+input:
+  inventory:
+    use: none
+    fire: none
+  world:
+    interact_tap: activate
+    interact_hold: none
+world_interaction:
+  range: 3.0
+  line_of_sight_required: false
+throw:
+  mode: none
+use:
+  quantity_cost: 0
+  cooldown_ticks: 0
+  destroy_when_empty: false
+portable_state:
+  - id: hp
+    type: uint32
+    default: 1
+    world_projection: health_current

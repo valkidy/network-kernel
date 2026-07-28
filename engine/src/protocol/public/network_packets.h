@@ -154,6 +154,24 @@ bool decode_remote_action_presentation_batch_packet(
     std::size_t size,
     RemoteActionPresentationBatchPacket* out_packet);
 
+std::vector<std::uint8_t> encode_gameplay_request_packet(
+    const KernelGameplayRequest& request,
+    std::uint32_t sequence = 0);
+
+bool decode_gameplay_request_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    KernelGameplayRequest* out_request);
+
+std::vector<std::uint8_t> encode_gameplay_request_outcome_packet(
+    const KernelGameplayRequestOutcome& outcome,
+    std::uint32_t sequence = 0);
+
+bool decode_gameplay_request_outcome_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    KernelGameplayRequestOutcome* out_outcome);
+
 }  // namespace network_example
 
 #endif  // PROTOCOL_PUBLIC_NETWORK_PACKETS_H_

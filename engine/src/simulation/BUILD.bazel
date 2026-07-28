@@ -5,6 +5,8 @@ package(default_visibility = ["//visibility:public"])
 exports_files([
     "src/command_dispatcher.cc",
     "src/command_dispatcher.h",
+    "src/item_gameplay_system.cc",
+    "src/item_gameplay_system.h",
     "src/systems.cc",
     "src/systems.h",
 ])
@@ -18,6 +20,7 @@ cc_library(
         "src/beam_system.cc",
         "src/damage_pipeline.cc",
         "src/damage_system.cc",
+        "src/item_system.cc",
         "src/movement_solver.cc",
         "src/player_movement.cc",
         "src/projectile_system.cc",
@@ -26,6 +29,7 @@ cc_library(
     hdrs = [
         "public/action_graph.h",
         "public/command.h",
+        "public/item_system.h",
         "public/movement_solver.h",
         "public/simulation.h",
     ],

@@ -26,6 +26,7 @@
 #include "simulation/public/movement_solver.h"
 #include "simulation/src/command_dispatcher.h"
 #include "simulation/src/systems.h"
+#include "simulation/src/item_gameplay_system.h"
 #include "transport/public/gns_transport.h"
 #include "transport/public/listen_server_transport.h"
 #include "transport/public/network_simulator_transport.h"
@@ -786,6 +787,22 @@ KernelServerEntityState to_server_entity_state(
     if (world.registry().all_of<ActorTemplateRef>(entity)) {
         state.actor_template_id =
             world.registry().get<ActorTemplateRef>(entity).actor_template_id;
+    }
+    if (world.registry().all_of<ItemTemplateRef>(entity)) {
+        state.item_template_id =
+            world.registry().get<ItemTemplateRef>(entity).item_template_id;
+    }
+    if (world.registry().all_of<ItemInstanceRef>(entity)) {
+        state.item_instance_id =
+            world.registry().get<ItemInstanceRef>(entity).item_instance_id;
+    }
+    if (world.registry().all_of<PropWorldMode>(entity)) {
+        state.world_item_mode = static_cast<std::uint8_t>(
+            world.registry().get<PropWorldMode>(entity).mode);
+    }
+    if (world.registry().all_of<CarriedBy>(entity)) {
+        state.carrier_entity_id =
+            world.registry().get<CarriedBy>(entity).carrier_entity_id;
     }
     state.owner_peer = identity.owner_peer;
     state.position = to_kernel_vec3(transform.position);
@@ -2177,6 +2194,8 @@ bool KernelEngine::load_gameplay_catalog(
          catalog.collider_templates == nullptr) ||
         (catalog.action_template_count != 0 &&
          catalog.action_templates == nullptr) ||
+        (catalog.item_template_count != 0 &&
+         catalog.item_templates == nullptr) ||
         (catalog.entity_template_count != 0 &&
          catalog.entity_templates == nullptr) ||
         catalog.collider_binding_count != 0) {
@@ -2230,6 +2249,24 @@ bool KernelEngine::load_gameplay_catalog(
     validated_actor_templates.reserve(catalog.actor_template_count);
     validated_projectile_templates.reserve(catalog.projectile_template_count);
     validated_collider_templates.reserve(catalog.collider_template_count);
+    std::vector<KernelItemTemplateDefinition> validated_item_templates;
+    validated_item_templates.reserve(catalog.item_template_count);
+    std::string item_validation_error;
+    for (std::uint32_t index = 0; index < catalog.item_template_count; ++index) {
+        const KernelItemTemplateDefinition& item_template =
+            catalog.item_templates[index];
+        if (!validate_item_template(item_template, &item_validation_error) ||
+            std::any_of(
+                validated_item_templates.begin(),
+                validated_item_templates.end(),
+                [&](const KernelItemTemplateDefinition& candidate) {
+                    return candidate.item_template_id ==
+                        item_template.item_template_id;
+                })) {
+            return false;
+        }
+        validated_item_templates.push_back(item_template);
+    }
     for (std::uint32_t index = 0; index < catalog.actor_template_count; ++index) {
         const KernelActorTemplateDefinition& actor_template =
             catalog.actor_templates[index];
@@ -2300,6 +2337,49 @@ bool KernelEngine::load_gameplay_catalog(
              (entity_template.ai.spawn_actor_template_id == 0u &&
               entity_template.ai.spawn_entity_template_id == 0u))) {
             return false;
+        }
+        if (entity_template.entity_type == KernelEntityType_Prop &&
+            entity_template.prop.struct_size != 0u) {
+            const KernelPropInteractionDefinition& interaction =
+                entity_template.prop.interaction;
+            if (entity_template.prop.struct_size < sizeof(KernelPropDefinition) ||
+                interaction.struct_size <
+                    sizeof(KernelPropInteractionDefinition)) {
+                return false;
+            }
+            const auto valid_world_action = [](std::uint8_t action) {
+                return action == KernelDomainAction_None ||
+                    action == KernelDomainAction_Pickup ||
+                    action == KernelDomainAction_Carry ||
+                    action == KernelDomainAction_Activate;
+            };
+            if (!valid_world_action(interaction.world_interact_tap) ||
+                !valid_world_action(interaction.world_interact_hold) ||
+                ((interaction.world_interact_tap != KernelDomainAction_None ||
+                  interaction.world_interact_hold != KernelDomainAction_None) &&
+                 interaction.interaction_range <= 0.0f)) {
+                return false;
+            }
+            const auto has_capability = [&](std::uint8_t action) {
+                std::uint32_t required = 0;
+                if (action == KernelDomainAction_Pickup) {
+                    required = KernelItemCapability_Pickupable;
+                } else if (action == KernelDomainAction_Carry) {
+                    required = KernelItemCapability_Carryable;
+                } else if (action == KernelDomainAction_Activate) {
+                    required = KernelItemCapability_Interactable;
+                }
+                return required == 0 ||
+                    (interaction.capability_flags & required) != 0;
+            };
+            if (!has_capability(interaction.world_interact_tap) ||
+                !has_capability(interaction.world_interact_hold) ||
+                ((interaction.world_interact_tap == KernelDomainAction_Activate ||
+                  interaction.world_interact_hold == KernelDomainAction_Activate) &&
+                 entity_template.activated_trigger.struct_size <
+                     sizeof(KernelActionTriggerDefinition))) {
+                return false;
+            }
         }
         validated_entity_templates.push_back(entity_template);
     }
@@ -2458,6 +2538,67 @@ bool KernelEngine::load_gameplay_catalog(
             return false;
         }
     }
+    for (const KernelItemTemplateDefinition& item_template :
+         validated_item_templates) {
+        const KernelActionTriggerDefinition& item_trigger =
+            item_template.item_used_trigger;
+        const std::uint32_t item_action_count = item_trigger.action_count == 0u
+            ? (item_trigger.action_type == KernelEntityTriggerActionType_None
+                   ? 0u
+                   : 1u)
+            : item_trigger.action_count;
+        for (std::uint32_t index = 0; index < item_action_count; ++index) {
+            KernelActionDefinition action{};
+            if (item_trigger.action_count == 0u) {
+                action.action_type = item_trigger.action_type;
+                action.spawn_entity_template_id =
+                    item_trigger.spawn_entity_template_id;
+                action.spawn_projectile_template_id =
+                    item_trigger.spawn_projectile_template_id;
+            } else {
+                action = item_trigger.actions[index];
+            }
+            if ((action.action_type ==
+                     KernelEntityTriggerActionType_SpawnEntity &&
+                 find_entity_template(
+                     validated_entity_templates,
+                     action.spawn_entity_template_id) == nullptr) ||
+                (action.action_type ==
+                     KernelEntityTriggerActionType_SpawnProjectile &&
+                 find_projectile_template(
+                     validated_projectile_templates,
+                     action.spawn_projectile_template_id) == nullptr)) {
+                return false;
+            }
+        }
+        if (item_template.entity_template_id == 0u) {
+            continue;
+        }
+        const KernelEntityTemplateDefinition* entity_template =
+            find_entity_template(
+                validated_entity_templates,
+                item_template.entity_template_id);
+        if (entity_template == nullptr ||
+            entity_template->entity_type != KernelEntityType_Prop) {
+            return false;
+        }
+        const KernelPropInteractionDefinition& interaction =
+            entity_template->prop.interaction;
+        if (interaction.capability_flags != 0u ||
+            interaction.world_interact_tap != KernelDomainAction_None ||
+            interaction.world_interact_hold != KernelDomainAction_None) {
+            return false;
+        }
+        if (item_template.input_mapping.world_interact_tap ==
+                KernelDomainAction_Activate ||
+            item_template.input_mapping.world_interact_hold ==
+                KernelDomainAction_Activate) {
+            if (entity_template->activated_trigger.struct_size <
+                sizeof(KernelActionTriggerDefinition)) {
+                return false;
+            }
+        }
+    }
     std::vector<RuntimeProjectileTemplate> runtime_projectile_templates;
     runtime_projectile_templates.reserve(validated_projectile_templates.size());
     for (const KernelProjectileTemplateDefinition& projectile_template :
@@ -2489,6 +2630,10 @@ bool KernelEngine::load_gameplay_catalog(
     projectile_templates_ = std::move(validated_projectile_templates);
     collider_templates_ = std::move(validated_collider_templates);
     action_templates_ = std::move(validated_action_templates);
+    item_templates_ = std::move(validated_item_templates);
+    if (!item_store_.set_templates(item_templates_, &item_validation_error)) {
+        return false;
+    }
     world_.set_projectile_templates(runtime_projectile_templates);
     world_.set_action_templates(runtime_action_templates);
     if (running_ &&
@@ -3279,6 +3424,180 @@ bool KernelEngine::server_activate_entity(
     return ActivationSystem{}.activate_entity(*this, activate_info);
 }
 
+bool KernelEngine::server_create_inventory_container(
+    std::uint32_t owner_entity_id,
+    std::uint32_t slot_capacity,
+    KernelInventoryContainerId* out_container_id) {
+    if (out_container_id == nullptr ||
+        !world_.find_entity(owner_entity_id).has_value()) {
+        return false;
+    }
+    const auto created = item_store_.create_container(
+        owner_entity_id,
+        slot_capacity);
+    if (!created.has_value()) return false;
+    *out_container_id = *created;
+    return true;
+}
+
+bool KernelEngine::server_create_inventory_item(
+    std::uint32_t item_template_id,
+    std::uint32_t quantity,
+    KernelInventoryContainerId container_id,
+    KernelItemInstanceId* out_item_instance_id) {
+    if (out_item_instance_id == nullptr) return false;
+    const auto created = item_store_.create_inventory_item(
+        item_template_id,
+        quantity,
+        container_id);
+    if (!created.has_value()) return false;
+    *out_item_instance_id = *created;
+    return true;
+}
+
+bool KernelEngine::server_create_world_item(
+    std::uint32_t item_template_id,
+    std::uint32_t quantity,
+    const KernelVec3& position,
+    KernelItemInstanceId* out_item_instance_id,
+    std::uint32_t* out_prop_entity_id) {
+    if (out_item_instance_id == nullptr || out_prop_entity_id == nullptr) {
+        return false;
+    }
+    const KernelItemTemplateDefinition* definition =
+        item_store_.find_template(item_template_id);
+    if (definition == nullptr || definition->entity_template_id == 0) {
+        return false;
+    }
+    KernelServerEntityCreateInfo create{};
+    create.struct_size = sizeof(create);
+    create.entity_template_id = definition->entity_template_id;
+    create.position = position;
+    create.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+    std::uint32_t prop_id = 0;
+    if (!server_create_entity(create, &prop_id)) return false;
+    const auto item = item_store_.create_world_item(
+        item_template_id,
+        quantity,
+        prop_id,
+        KernelWorldItemMode_Placed);
+    if (!item.has_value()) {
+        server_destroy_entity(prop_id, KernelDespawnReason_Destroyed);
+        return false;
+    }
+    const std::optional<entt::entity> entity = world_.find_entity(prop_id);
+    world_.registry().emplace_or_replace<ItemTemplateRef>(
+        *entity,
+        ItemTemplateRef{item_template_id});
+    world_.registry().emplace_or_replace<ItemInstanceRef>(
+        *entity,
+        ItemInstanceRef{*item});
+    *out_item_instance_id = *item;
+    *out_prop_entity_id = prop_id;
+    return true;
+}
+
+bool KernelEngine::server_submit_gameplay_request(
+    const KernelGameplayRequest& request) {
+    return ItemGameplaySystem{}.submit_request(*this, request);
+}
+
+bool KernelEngine::submit_gameplay_request(
+    const KernelGameplayRequest& authored_request) {
+    if (config_.mode != KernelMode_Client) {
+        return server_submit_gameplay_request(authored_request);
+    }
+    if (!has_welcome_ || transport_ == nullptr ||
+        authored_request.struct_size < sizeof(KernelGameplayRequest)) {
+        return false;
+    }
+    KernelGameplayRequest request = authored_request;
+    request.struct_size = sizeof(request);
+    request.requester_peer = local_client_peer_id_;
+    if (request.instigator_net_id == 0u) {
+        request.instigator_net_id = local_player_net_id_;
+    }
+    const std::vector<std::uint8_t> packet =
+        encode_gameplay_request_packet(request, next_packet_sequence_++);
+    if (!transport_->Send(
+            kServerPeerId,
+            packet.data(),
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kReliableEvent)) {
+        return false;
+    }
+    record_sent_packet(
+        static_cast<std::uint32_t>(packet.size()),
+        SendMode::kReliable,
+        ChannelId::kReliableEvent);
+    return true;
+}
+
+bool KernelEngine::get_item_instance(
+    KernelItemInstanceId id,
+    KernelItemInstanceView* out_view) const {
+    if (out_view == nullptr ||
+        out_view->struct_size < sizeof(KernelItemInstanceView) ||
+        item_store_.find_item(id) == nullptr) {
+        return false;
+    }
+    *out_view = item_store_.item_view(id);
+    return true;
+}
+
+bool KernelEngine::get_inventory_container(
+    KernelInventoryContainerId id,
+    KernelInventoryContainerView* out_view) const {
+    if (out_view == nullptr ||
+        out_view->struct_size < sizeof(KernelInventoryContainerView) ||
+        item_store_.find_container(id) == nullptr) {
+        return false;
+    }
+    *out_view = item_store_.container_view(id);
+    return true;
+}
+
+std::uint32_t KernelEngine::copy_inventory_slots(
+    KernelInventoryContainerId id,
+    KernelItemInstanceView* out_items,
+    std::uint32_t max_items) const {
+    const InventoryContainerRecord* container = item_store_.find_container(id);
+    if (container == nullptr || out_items == nullptr || max_items == 0) {
+        return 0;
+    }
+    std::uint32_t copied = 0;
+    for (const KernelItemInstanceId item : container->slots) {
+        if (item == 0 || copied >= max_items) continue;
+        out_items[copied++] = item_store_.item_view(item);
+    }
+    return copied;
+}
+
+std::uint32_t KernelEngine::poll_gameplay_request_outcomes(
+    KernelGameplayRequestOutcome* out_outcomes,
+    std::uint32_t max_outcomes) {
+    if (out_outcomes == nullptr || max_outcomes == 0) return 0;
+    std::uint32_t copied = 0;
+    while (copied < max_outcomes &&
+           !pending_gameplay_request_outcomes_.empty()) {
+        out_outcomes[copied++] = pending_gameplay_request_outcomes_.front();
+        pending_gameplay_request_outcomes_.pop_front();
+    }
+    return copied;
+}
+
+std::uint32_t KernelEngine::poll_inventory_deltas(
+    KernelInventoryContainerId id,
+    KernelInventoryDelta* out_deltas,
+    std::uint32_t max_deltas) {
+    if (out_deltas == nullptr || max_deltas == 0) return 0;
+    std::vector<KernelInventoryDelta> deltas =
+        item_store_.take_inventory_deltas(id, max_deltas);
+    std::copy(deltas.begin(), deltas.end(), out_deltas);
+    return static_cast<std::uint32_t>(deltas.size());
+}
+
 bool KernelEngine::server_set_entity_actor_template(
     NetId net_id,
     std::uint32_t actor_template_id) {
@@ -3740,6 +4059,11 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     config_.mode = mode;
     tick_loop_ = TickLoop(config_.tick);
     world_ = World{false};
+    item_store_ = ItemStore{};
+    std::string item_validation_error;
+    item_store_.set_templates(item_templates_, &item_validation_error);
+    processed_gameplay_requests_.clear();
+    pending_gameplay_request_outcomes_.clear();
     physics_entity_collider_ids_.clear();
     prediction_proxy_collider_ids_.clear();
     history_buffer_ = HistoryBuffer(history_frame_count(config_.tick));
@@ -3901,6 +4225,45 @@ void KernelEngine::poll_transport() {
         } else if (
             transport_event.type == TransportEventType::kMessage &&
             transport_event.channel == ChannelId::kReliableEvent &&
+            is_server_mode(config_.mode)) {
+            record_received_packet_sequence(transport_event);
+            const PeerSession* session = find_session(transport_event.peer);
+            KernelGameplayRequest request{};
+            if (session == nullptr || !session->welcomed ||
+                !decode_gameplay_request_packet(
+                    transport_event.payload.data(),
+                    transport_event.payload.size(),
+                    &request)) {
+                push_event(KernelEventType_Error, 0, transport_event.peer, 31);
+                continue;
+            }
+            request.requester_peer = transport_event.peer;
+            if (request.instigator_net_id != session->player ||
+                !server_submit_gameplay_request(request)) {
+                KernelGameplayRequestOutcome rejected{};
+                rejected.struct_size = sizeof(rejected);
+                rejected.requester_peer = transport_event.peer;
+                rejected.request_id = request.request_id;
+                rejected.status = KernelGameplayRequestStatus_Rejected;
+                rejected.graph_outcome = KernelGameplayGraphOutcome_NotSubmitted;
+                rejected.rejection_reason =
+                    KernelGameplayRequestRejection_NotAuthorized;
+                send_gameplay_request_outcome(transport_event.peer, rejected);
+                continue;
+            }
+            const auto outcome = std::find_if(
+                processed_gameplay_requests_.rbegin(),
+                processed_gameplay_requests_.rend(),
+                [&](const KernelGameplayRequestOutcome& candidate) {
+                    return candidate.requester_peer == transport_event.peer &&
+                        candidate.request_id == request.request_id;
+                });
+            if (outcome != processed_gameplay_requests_.rend()) {
+                send_gameplay_request_outcome(transport_event.peer, *outcome);
+            }
+        } else if (
+            transport_event.type == TransportEventType::kMessage &&
+            transport_event.channel == ChannelId::kReliableEvent &&
             config_.mode == KernelMode_Client) {
             record_received_packet_sequence(transport_event);
             handle_client_reliable_event(transport_event);
@@ -4021,8 +4384,19 @@ void KernelEngine::handle_client_disconnect(PeerId peer) {
 }
 
 void KernelEngine::handle_client_reliable_event(const TransportEvent& transport_event) {
-    LocalActionResultBatchPacket local_action_results{};
+    KernelGameplayRequestOutcome gameplay_outcome{};
     auto decode_start = std::chrono::steady_clock::now();
+    if (decode_gameplay_request_outcome_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &gameplay_outcome)) {
+        record_packet_deserialization_cost(elapsed_cost_us(decode_start));
+        pending_gameplay_request_outcomes_.push_back(gameplay_outcome);
+        return;
+    }
+
+    LocalActionResultBatchPacket local_action_results{};
+    decode_start = std::chrono::steady_clock::now();
     if (decode_local_action_result_batch_packet(
             transport_event.payload.data(),
             transport_event.payload.size(),
@@ -6694,6 +7068,7 @@ void KernelEngine::simulate_tick() {
         movement_stats.character_move_count;
     benchmark_stats_.character_move_cost_us +=
         movement_stats.character_move_cost_us;
+    ItemGameplaySystem{}.update_carried_props(*this);
     simulate_velocity_movement(world_, fixed_delta);
     sync_entity_colliders_from_world();
     CollisionTriggerSystem{}.update(*this, server_time_us);
@@ -7825,6 +8200,27 @@ void KernelEngine::send_reliable_event(PeerId peer, const KernelEvent& event) {
             SendMode::kReliable,
             ChannelId::kReliableEvent);
     }
+}
+
+void KernelEngine::send_gameplay_request_outcome(
+    PeerId peer,
+    const KernelGameplayRequestOutcome& outcome) {
+    const std::vector<std::uint8_t> packet =
+        encode_gameplay_request_outcome_packet(
+            outcome, next_packet_sequence_++);
+    if (!transport_->Send(
+            peer,
+            packet.data(),
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kReliableEvent)) {
+        push_event(KernelEventType_Error, outcome.prop_entity_id, peer, 32);
+        return;
+    }
+    record_sent_packet(
+        static_cast<std::uint32_t>(packet.size()),
+        SendMode::kReliable,
+        ChannelId::kReliableEvent);
 }
 
 void KernelEngine::broadcast_reliable_event(const KernelEvent& event) {

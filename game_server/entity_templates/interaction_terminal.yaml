@@ -1,0 +1,19 @@
+id: 202
+name: interaction_terminal
+entity_type: prop
+interaction:
+  capabilities: [interactable]
+  interact_tap: activate
+  interact_hold: none
+  range: 3.0
+  line_of_sight_required: false
+carry_offset:
+  x: 0.5
+  y: 1.0
+  z: 0.0
+triggers:
+  on_activated:
+    action_graph: action_apply_damage_at_activated
+    parameters:
+      target: event.target
+      amount: 25

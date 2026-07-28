@@ -11,6 +11,12 @@
 namespace network_example {
 
 class KernelEngine;
+struct ActionGraphCommandBatch;
+
+bool execute_action_graph_command_batch(
+    KernelEngine& engine,
+    const ActionGraphCommandBatch& batch,
+    std::uint64_t server_time_us);
 struct ConfirmedDamage;
 
 class EntityLifecycleSystem {
@@ -18,7 +24,8 @@ public:
     bool create_entity(
         KernelEngine& engine,
         const KernelServerEntityCreateInfo& create_info,
-        NetId* out_net_id) const;
+        NetId* out_net_id,
+        bool publish_snapshot = true) const;
 
     bool destroy_entity(
         KernelEngine& engine,

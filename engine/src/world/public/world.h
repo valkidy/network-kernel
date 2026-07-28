@@ -1,6 +1,7 @@
 #ifndef WORLD_PUBLIC_WORLD_H_
 #define WORLD_PUBLIC_WORLD_H_
 
+#include <algorithm>
 #include <optional>
 #include <memory>
 #include <set>
@@ -61,15 +62,30 @@ public:
         std::uint64_t request_id,
         TriggerEventType event_type,
         std::uint32_t sequence) const {
+        return std::any_of(
+            processed_action_graph_batches_.begin(),
+            processed_action_graph_batches_.end(),
+            [request_id, event_type, sequence](const auto& key) {
+                return std::get<1>(key) == request_id &&
+                    std::get<2>(key) == event_type &&
+                    std::get<3>(key) == sequence;
+            });
+    }
+    bool action_graph_batch_processed(
+        PeerId requester_peer,
+        std::uint64_t request_id,
+        TriggerEventType event_type,
+        std::uint32_t sequence) const {
         return processed_action_graph_batches_.contains(
-            {request_id, event_type, sequence});
+            {requester_peer, request_id, event_type, sequence});
     }
     void mark_action_graph_batch_processed(
+        PeerId requester_peer,
         std::uint64_t request_id,
         TriggerEventType event_type,
         std::uint32_t sequence) {
         processed_action_graph_batches_.insert(
-            {request_id, event_type, sequence});
+            {requester_peer, request_id, event_type, sequence});
     }
 
     entt::registry& registry();
@@ -116,7 +132,8 @@ private:
     std::vector<ProjectileInteractionRule> projectile_interaction_rules_;
     std::vector<RuntimeProjectileTemplate> projectile_templates_;
     std::vector<RuntimeActionTemplate> action_templates_;
-    std::set<std::tuple<std::uint64_t, TriggerEventType, std::uint32_t>>
+    std::set<std::tuple<
+        PeerId, std::uint64_t, TriggerEventType, std::uint32_t>>
         processed_action_graph_batches_;
     ColliderRegistry collider_registry_;
     physics::PhysicsWorld* collision_world_ = nullptr;

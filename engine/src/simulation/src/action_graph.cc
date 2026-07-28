@@ -15,6 +15,7 @@ enum class ParameterType : std::uint8_t {
     kEntityId,
     kProjectileTemplateId,
     kEntityTemplateId,
+    kItemInstanceId,
     kVec3,
     kNumber,
 };
@@ -36,6 +37,9 @@ ParameterType value_type(const ActionGraphParameterValue& value) {
     if (std::holds_alternative<EntityTemplateIdValue>(value)) {
         return ParameterType::kEntityTemplateId;
     }
+    if (std::holds_alternative<ItemInstanceIdValue>(value)) {
+        return ParameterType::kItemInstanceId;
+    }
     if (std::holds_alternative<glm::vec3>(value)) {
         return ParameterType::kVec3;
     }
@@ -53,6 +57,9 @@ ParameterType expression_type(const ActionGraphParameterExpression& expression) 
     if (std::holds_alternative<EntityRefExpression>(expression)) {
         return ParameterType::kEntityId;
     }
+    if (std::holds_alternative<ItemRefExpression>(expression)) {
+        return ParameterType::kItemInstanceId;
+    }
     return ParameterType::kVec3;
 }
 
@@ -63,6 +70,7 @@ bool expression_available_for_event(
             std::get_if<EntityRefExpression>(&expression)) {
         if (entity_ref->source == EntityRefSource::kEventTarget) {
             return event_type == TriggerEventType::kActivated ||
+                event_type == TriggerEventType::kItemUsed ||
                 event_type == TriggerEventType::kCollision ||
                 event_type == TriggerEventType::kProjectileImpact;
         }
@@ -72,11 +80,15 @@ bool expression_available_for_event(
         return true;
     }
     const auto* event_vec3 = std::get_if<EventVec3Expression>(&expression);
+    if (std::holds_alternative<ItemRefExpression>(expression)) {
+        return event_type == TriggerEventType::kItemUsed;
+    }
     if (event_vec3 == nullptr ||
         event_vec3->source == EventVec3Source::kPosition) {
         return true;
     }
     return event_type == TriggerEventType::kActivated ||
+        event_type == TriggerEventType::kItemUsed ||
         event_type == TriggerEventType::kCollision ||
         event_type == TriggerEventType::kProjectileImpact ||
         event_type == TriggerEventType::kExpired;
@@ -126,6 +138,10 @@ std::optional<ActionGraphParameterValue> resolve_expression(
             case EntityRefSource::kEventInstigator:
                 return EntityIdValue{event.instigator};
         }
+    }
+    if (std::holds_alternative<ItemRefExpression>(expression)) {
+        if (!event.item_used.has_value()) return std::nullopt;
+        return ItemInstanceIdValue{event.item_used->item_instance_id};
     }
     const auto* event_vec3 = std::get_if<EventVec3Expression>(&expression);
     if (event_vec3 == nullptr) {
@@ -178,8 +194,7 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
     const std::uint32_t action_count = trigger.action_count == 0u
         ? (trigger.action_type == KernelEntityTriggerActionType_None ? 0u : 1u)
         : trigger.action_count;
-    if (action_count == 0u ||
-        action_count > KERNEL_MAX_ACTION_GRAPH_ACTIONS) {
+    if (action_count > KERNEL_MAX_ACTION_GRAPH_ACTIONS) {
         return std::nullopt;
     }
     CompiledActionGraphBinding binding;
@@ -614,7 +629,9 @@ bool evaluate_action_graph(
             return fail(error, "apply_damage target must not be null");
         }
         commands->push_back(ActionApplyDamageCommand{
-            self,
+            event.type == TriggerEventType::kItemUsed && self == 0u
+                ? event.instigator
+                : self,
             target,
             static_cast<std::uint16_t>(amount),
             provenance,

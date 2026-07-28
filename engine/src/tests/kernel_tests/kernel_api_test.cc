@@ -144,6 +144,17 @@ int main() {
     assert(abi_info.server_entity_create_info_size ==
            sizeof(KernelServerEntityCreateInfo));
     assert(abi_info.server_entity_state_size == sizeof(KernelServerEntityState));
+    assert(abi_info.item_template_definition_size ==
+           sizeof(KernelItemTemplateDefinition));
+    assert(abi_info.gameplay_request_size == sizeof(KernelGameplayRequest));
+    assert(abi_info.gameplay_request_outcome_size ==
+           sizeof(KernelGameplayRequestOutcome));
+    assert(abi_info.item_instance_view_size == sizeof(KernelItemInstanceView));
+    assert(abi_info.inventory_container_view_size ==
+           sizeof(KernelInventoryContainerView));
+    assert(abi_info.inventory_delta_size == sizeof(KernelInventoryDelta));
+    assert((abi_info.capability_flags &
+            KERNEL_CAPABILITY_ITEM_PROP_SYSTEM) != 0u);
     assert(abi_info.weapon_mechanics_definition_size ==
            sizeof(KernelWeaponMechanicsDefinition));
     assert(abi_info.projectile_mechanics_definition_size ==
@@ -240,7 +251,7 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 52u);
+    assert(KERNEL_ABI_VERSION == 53u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CONTROL_PLANE_RPC) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ACTION_TIMELINE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LOCAL_ACTION_RESULTS) != 0);

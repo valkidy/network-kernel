@@ -9,6 +9,7 @@ filegroup(
         "action_templates/*.yaml",
         "collider_templates/*.yaml",
         "entity_templates/*.yaml",
+        "item_templates/*.yaml",
         "projectile_templates/*.yaml",
         "weapon_templates/*.yaml",
     ]) + [
@@ -53,6 +54,7 @@ cc_test(
         "action_templates/*.yaml",
         "collider_templates/*.yaml",
         "entity_templates/*.yaml",
+        "item_templates/*.yaml",
         "projectile_templates/*.yaml",
         "weapon_templates/*.yaml",
     ]) + [
@@ -73,6 +75,7 @@ cc_test(
         "action_templates/*.yaml",
         "collider_templates/*.yaml",
         "entity_templates/*.yaml",
+        "item_templates/*.yaml",
         "projectile_templates/*.yaml",
         "weapon_templates/*.yaml",
     ]) + [
@@ -92,6 +95,7 @@ cc_test(
         "action_templates/*.yaml",
         "collider_templates/*.yaml",
         "entity_templates/*.yaml",
+        "item_templates/*.yaml",
         "projectile_templates/*.yaml",
         "weapon_templates/*.yaml",
     ]) + [
@@ -148,6 +152,7 @@ cc_test(
         "action_templates/*.yaml",
         "collider_templates/*.yaml",
         "entity_templates/*.yaml",
+        "item_templates/*.yaml",
         "projectile_templates/*.yaml",
         "weapon_templates/*.yaml",
     ]) + [
@@ -167,6 +172,7 @@ cc_test(
         "action_templates/*.yaml",
         "collider_templates/*.yaml",
         "entity_templates/*.yaml",
+        "item_templates/*.yaml",
         "projectile_templates/*.yaml",
         "weapon_templates/*.yaml",
     ]) + [

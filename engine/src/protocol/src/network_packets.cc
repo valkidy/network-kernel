@@ -24,7 +24,7 @@ constexpr std::size_t kActorHealthPayloadSize = 4;
 constexpr std::size_t kActorMovementPayloadSize = 22;
 constexpr std::size_t kProjectileCompactSnapshotPayloadSize = 34;
 constexpr std::size_t kProjectileHybridCorrectionSnapshotPayloadSize = 46;
-constexpr std::size_t kGenericSnapshotPayloadSize = 44;
+constexpr std::size_t kGenericSnapshotPayloadSize = 61;
 constexpr std::size_t kReliableEventPayloadSize = 34;
 constexpr std::size_t kEntitySpawnPayloadSize = 48;
 constexpr std::size_t kEntityDespawnPayloadSize = 12;
@@ -35,6 +35,8 @@ constexpr std::size_t kProjectileSpawnRecordPayloadSize = 40;
 constexpr std::size_t kActionBatchHeaderPayloadSize = 8;
 constexpr std::size_t kLocalActionResultPayloadSize = 12;
 constexpr std::size_t kRemoteActionPresentationPayloadSize = 20;
+constexpr std::size_t kGameplayRequestPayloadSize = 60;
+constexpr std::size_t kGameplayRequestOutcomePayloadSize = 32;
 
 enum class SnapshotSectionType : std::uint16_t {
     kActor = 1,
@@ -291,6 +293,10 @@ std::vector<std::uint8_t> encode_snapshot_packet(
                     payload.write_u16(entity->state);
                     payload.write_u32(entity->flags);
                     payload.write_u32(entity->state_flags);
+                    payload.write_u32(entity->item_template_id);
+                    payload.write_u64(entity->item_instance_id);
+                    payload.write_u8(entity->world_item_mode);
+                    payload.write_u32(entity->carrier_entity_id);
                     break;
             }
         }
@@ -444,7 +450,11 @@ bool decode_snapshot_packet(
                         !reader.read_vec3(&entity.velocity) ||
                         !reader.read_u16(&entity.state) ||
                         !reader.read_u32(&entity.flags) ||
-                        !reader.read_u32(&entity.state_flags)) {
+                        !reader.read_u32(&entity.state_flags) ||
+                        !reader.read_u32(&entity.item_template_id) ||
+                        !reader.read_u64(&entity.item_instance_id) ||
+                        !reader.read_u8(&entity.world_item_mode) ||
+                        !reader.read_u32(&entity.carrier_entity_id)) {
                         return false;
                     }
                     entity.type = static_cast<EntityType>(entity_type);
@@ -971,6 +981,122 @@ bool decode_remote_action_presentation_batch_packet(
         return false;
     }
     *out_packet = std::move(packet);
+    return true;
+}
+
+std::vector<std::uint8_t> encode_gameplay_request_packet(
+    const KernelGameplayRequest& request,
+    std::uint32_t sequence) {
+    protocol_internal::PacketWriter payload;
+    payload.reserve(kGameplayRequestPayloadSize);
+    payload.write_u32(request.requester_peer);
+    payload.write_u64(request.request_id);
+    payload.write_u32(request.instigator_net_id);
+    payload.write_u8(request.semantic_button);
+    payload.write_u8(0u);
+    payload.write_u16(0u);
+    payload.write_u64(request.selected_item_instance_id);
+    payload.write_u32(request.target_net_id);
+    payload.write_u32(request.requested_quantity);
+    payload.write_float(request.placement_position.x);
+    payload.write_float(request.placement_position.y);
+    payload.write_float(request.placement_position.z);
+    payload.write_float(request.throw_direction.x);
+    payload.write_float(request.throw_direction.y);
+    payload.write_float(request.throw_direction.z);
+    return protocol_internal::wrap_packet(
+        MessageType::kGameplayRequest, payload.bytes(), sequence);
+}
+
+bool decode_gameplay_request_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    KernelGameplayRequest* out_request) {
+    const std::uint8_t* payload = nullptr;
+    std::size_t payload_size = 0;
+    if (out_request == nullptr ||
+        !protocol_internal::unwrap_packet(
+            data, size, MessageType::kGameplayRequest, &payload, &payload_size) ||
+        payload_size != kGameplayRequestPayloadSize) {
+        return false;
+    }
+    KernelGameplayRequest request{};
+    request.struct_size = sizeof(request);
+    std::uint8_t reserved0 = 0;
+    std::uint16_t reserved1 = 0;
+    protocol_internal::PacketReader reader(payload, payload_size);
+    if (!reader.read_u32(&request.requester_peer) ||
+        !reader.read_u64(&request.request_id) ||
+        !reader.read_u32(&request.instigator_net_id) ||
+        !reader.read_u8(&request.semantic_button) ||
+        !reader.read_u8(&reserved0) ||
+        !reader.read_u16(&reserved1) ||
+        !reader.read_u64(&request.selected_item_instance_id) ||
+        !reader.read_u32(&request.target_net_id) ||
+        !reader.read_u32(&request.requested_quantity) ||
+        !reader.read_float(&request.placement_position.x) ||
+        !reader.read_float(&request.placement_position.y) ||
+        !reader.read_float(&request.placement_position.z) ||
+        !reader.read_float(&request.throw_direction.x) ||
+        !reader.read_float(&request.throw_direction.y) ||
+        !reader.read_float(&request.throw_direction.z) ||
+        reserved0 != 0u || reserved1 != 0u || !reader.done()) {
+        return false;
+    }
+    *out_request = request;
+    return true;
+}
+
+std::vector<std::uint8_t> encode_gameplay_request_outcome_packet(
+    const KernelGameplayRequestOutcome& outcome,
+    std::uint32_t sequence) {
+    protocol_internal::PacketWriter payload;
+    payload.reserve(kGameplayRequestOutcomePayloadSize);
+    payload.write_u32(outcome.requester_peer);
+    payload.write_u64(outcome.request_id);
+    payload.write_u8(outcome.status);
+    payload.write_u8(outcome.graph_outcome);
+    payload.write_u8(outcome.domain_action);
+    payload.write_u8(outcome.rejection_reason);
+    payload.write_u64(outcome.item_instance_id);
+    payload.write_u32(outcome.prop_entity_id);
+    payload.write_u32(outcome.committed_quantity);
+    return protocol_internal::wrap_packet(
+        MessageType::kGameplayRequestOutcome, payload.bytes(), sequence);
+}
+
+bool decode_gameplay_request_outcome_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    KernelGameplayRequestOutcome* out_outcome) {
+    const std::uint8_t* payload = nullptr;
+    std::size_t payload_size = 0;
+    if (out_outcome == nullptr ||
+        !protocol_internal::unwrap_packet(
+            data,
+            size,
+            MessageType::kGameplayRequestOutcome,
+            &payload,
+            &payload_size) ||
+        payload_size != kGameplayRequestOutcomePayloadSize) {
+        return false;
+    }
+    KernelGameplayRequestOutcome outcome{};
+    outcome.struct_size = sizeof(outcome);
+    protocol_internal::PacketReader reader(payload, payload_size);
+    if (!reader.read_u32(&outcome.requester_peer) ||
+        !reader.read_u64(&outcome.request_id) ||
+        !reader.read_u8(&outcome.status) ||
+        !reader.read_u8(&outcome.graph_outcome) ||
+        !reader.read_u8(&outcome.domain_action) ||
+        !reader.read_u8(&outcome.rejection_reason) ||
+        !reader.read_u64(&outcome.item_instance_id) ||
+        !reader.read_u32(&outcome.prop_entity_id) ||
+        !reader.read_u32(&outcome.committed_quantity) ||
+        !reader.done()) {
+        return false;
+    }
+    *out_outcome = outcome;
     return true;
 }
 

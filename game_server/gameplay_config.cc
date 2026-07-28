@@ -267,6 +267,15 @@ void hash_actor_template(
         hash_string(hash, parameter.first);
         hash_string(hash, parameter.second);
     }
+    hash_scalar(hash, actor_template.prop.interaction.capability_flags);
+    hash_scalar(hash, actor_template.prop.interaction.world_interact_tap);
+    hash_scalar(hash, actor_template.prop.interaction.world_interact_hold);
+    hash_scalar(hash, actor_template.prop.interaction.line_of_sight_required);
+    hash_float(hash, actor_template.prop.interaction.interaction_range);
+    hash_scalar(hash, actor_template.prop.interaction.line_of_sight_blocking_mask);
+    hash_float(hash, actor_template.prop.carry_offset_x);
+    hash_float(hash, actor_template.prop.carry_offset_y);
+    hash_float(hash, actor_template.prop.carry_offset_z);
 }
 
 KernelWeaponMechanicsDefinition hitscan_weapon(
@@ -1601,6 +1610,9 @@ TriggerBindingConfig trigger_binding_from_yaml(
     std::uint32_t template_kind,
     std::uint32_t template_id);
 
+std::uint32_t item_capability_from_yaml(const std::string& value);
+std::uint8_t domain_action_from_yaml(const YAML::Node& node);
+
 std::uint8_t camp_from_yaml(const YAML::Node& node) {
     if (!node) {
         return KernelAgentCamp_Unknown;
@@ -2295,6 +2307,8 @@ EntityTemplateConfig entity_template_from_yaml(
                 "transform",
                 "health",
                 "physics",
+                "interaction",
+                "carry_offset",
                 "triggers",
             },
             path,
@@ -2343,6 +2357,49 @@ EntityTemplateConfig entity_template_from_yaml(
                 entity_template.collider_template_id = collider_template_id_from_ref(
                     node["physics"]["collider_template"], colliders);
             }
+        }
+        entity_template.prop.struct_size = sizeof(entity_template.prop);
+        entity_template.prop.interaction.struct_size =
+            sizeof(entity_template.prop.interaction);
+        if (node["interaction"]) {
+            reject_unknown_keys(
+                node["interaction"],
+                {"capabilities", "interact_tap", "interact_hold", "range",
+                 "line_of_sight_required", "blocking_mask"},
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                entity_template.actor_template_id);
+            if (!node["interaction"]["capabilities"].IsSequence()) {
+                throw std::runtime_error(
+                    "prop interaction capabilities must be a sequence: " + path);
+            }
+            for (const YAML::Node& capability :
+                 node["interaction"]["capabilities"]) {
+                entity_template.prop.interaction.capability_flags |=
+                    item_capability_from_yaml(capability.as<std::string>());
+            }
+            entity_template.prop.interaction.world_interact_tap =
+                domain_action_from_yaml(node["interaction"]["interact_tap"]);
+            entity_template.prop.interaction.world_interact_hold =
+                domain_action_from_yaml(node["interaction"]["interact_hold"]);
+            entity_template.prop.interaction.interaction_range =
+                node["interaction"]["range"].as<float>();
+            entity_template.prop.interaction.line_of_sight_required =
+                node["interaction"]["line_of_sight_required"] &&
+                    node["interaction"]["line_of_sight_required"].as<bool>()
+                ? 1u
+                : 0u;
+            entity_template.prop.interaction.line_of_sight_blocking_mask =
+                node["interaction"]["blocking_mask"]
+                ? collision_mask_from_yaml(node["interaction"]["blocking_mask"])
+                : 0u;
+        }
+        if (node["carry_offset"]) {
+            const KernelVec3 offset = vec3_from_yaml(node["carry_offset"]);
+            entity_template.prop.carry_offset_x = offset.x;
+            entity_template.prop.carry_offset_y = offset.y;
+            entity_template.prop.carry_offset_z = offset.z;
         }
         if (node["triggers"]) {
             reject_unknown_keys(
@@ -2762,6 +2819,277 @@ TriggerBindingConfig trigger_binding_from_yaml(
     return binding;
 }
 
+std::uint32_t portable_state_field_id(const std::string& name) {
+    std::uint32_t hash = 2166136261u;
+    for (const unsigned char ch : name) {
+        hash ^= ch;
+        hash *= 16777619u;
+    }
+    return hash == 0u ? 1u : hash;
+}
+
+std::uint32_t item_capability_from_yaml(const std::string& value) {
+    if (value == "pickupable") return KernelItemCapability_Pickupable;
+    if (value == "deployable") return KernelItemCapability_Deployable;
+    if (value == "carryable") return KernelItemCapability_Carryable;
+    if (value == "consumable") return KernelItemCapability_Consumable;
+    if (value == "throwable") return KernelItemCapability_Throwable;
+    if (value == "interactable") return KernelItemCapability_Interactable;
+    throw std::runtime_error("unknown item capability: " + value);
+}
+
+std::uint8_t domain_action_from_yaml(const YAML::Node& node) {
+    if (!node) return KernelDomainAction_None;
+    const std::string value = node.as<std::string>();
+    if (value == "none") return KernelDomainAction_None;
+    if (value == "consume") return KernelDomainAction_Consume;
+    if (value == "pickup") return KernelDomainAction_Pickup;
+    if (value == "throw") return KernelDomainAction_Throw;
+    if (value == "place") return KernelDomainAction_Place;
+    if (value == "carry") return KernelDomainAction_Carry;
+    if (value == "activate") return KernelDomainAction_Activate;
+    throw std::runtime_error("unknown item domain action: " + value);
+}
+
+ItemTemplateConfig item_template_from_yaml(
+    const YAML::Node& node,
+    const std::string& path,
+    std::uint32_t source_kind,
+    const std::vector<EntityTemplateConfig>& entity_templates) {
+    reject_unknown_keys(
+        node,
+        {"id", "name", "mode", "max_stack", "capabilities",
+         "entity_template", "input", "world_interaction", "throw", "use", "portable_state",
+         "triggers"},
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ITEM);
+    if (!node["id"] || !node["name"] || !node["mode"] ||
+        !node["max_stack"] || !node["capabilities"]) {
+        throw std::runtime_error("item template is missing required fields: " + path);
+    }
+    ItemTemplateConfig item;
+    item.name = node["name"].as<std::string>();
+    KernelItemTemplateDefinition& definition = item.definition;
+    definition.struct_size = sizeof(definition);
+    definition.item_template_id = node["id"].as<std::uint32_t>();
+    const std::string mode = node["mode"].as<std::string>();
+    if (mode == "fungible") {
+        definition.item_mode = KernelItemMode_Fungible;
+    } else if (mode == "stateful") {
+        definition.item_mode = KernelItemMode_Stateful;
+    } else {
+        throw std::runtime_error("unknown item mode: " + mode);
+    }
+    definition.max_stack = node["max_stack"].as<std::uint16_t>();
+    if (!node["capabilities"].IsSequence()) {
+        throw std::runtime_error("item capabilities must be a sequence: " + path);
+    }
+    for (const YAML::Node& capability : node["capabilities"]) {
+        definition.capability_flags |=
+            item_capability_from_yaml(capability.as<std::string>());
+    }
+    if (node["entity_template"]) {
+        item.entity_template_ref = node["entity_template"].as<std::string>();
+        definition.entity_template_id =
+            entity_template_ref_from_yaml(node["entity_template"], entity_templates);
+    }
+    if (node["input"]) {
+        reject_unknown_keys(
+            node["input"],
+            {"inventory", "world"},
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ITEM,
+            definition.item_template_id);
+        const YAML::Node inventory = node["input"]["inventory"];
+        const YAML::Node world = node["input"]["world"];
+        if (inventory) {
+            reject_unknown_keys(
+                inventory,
+                {"use", "fire"},
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ITEM,
+                definition.item_template_id);
+            definition.input_mapping.inventory_use =
+                domain_action_from_yaml(inventory["use"]);
+            definition.input_mapping.inventory_fire =
+                domain_action_from_yaml(inventory["fire"]);
+        }
+        if (world) {
+            reject_unknown_keys(
+                world,
+                {"interact_tap", "interact_hold"},
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ITEM,
+                definition.item_template_id);
+            definition.input_mapping.world_interact_tap =
+                domain_action_from_yaml(world["interact_tap"]);
+            definition.input_mapping.world_interact_hold =
+                domain_action_from_yaml(world["interact_hold"]);
+        }
+    }
+    if (node["world_interaction"]) {
+        reject_unknown_keys(
+            node["world_interaction"],
+            {"range", "line_of_sight_required", "blocking_mask"},
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ITEM,
+            definition.item_template_id);
+        definition.interaction_range =
+            node["world_interaction"]["range"].as<float>();
+        definition.line_of_sight_required =
+            node["world_interaction"]["line_of_sight_required"] &&
+                node["world_interaction"]["line_of_sight_required"].as<bool>()
+            ? 1u
+            : 0u;
+        definition.line_of_sight_blocking_mask =
+            node["world_interaction"]["blocking_mask"]
+            ? collision_mask_from_yaml(
+                  node["world_interaction"]["blocking_mask"])
+            : 0u;
+    }
+    definition.throw_policy.struct_size = sizeof(definition.throw_policy);
+    if (node["throw"]) {
+        reject_unknown_keys(
+            node["throw"],
+            {"mode", "speed"},
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ITEM,
+            definition.item_template_id);
+        const std::string throw_mode = node["throw"]["mode"]
+            ? node["throw"]["mode"].as<std::string>()
+            : "none";
+        if (throw_mode == "none") {
+            definition.throw_policy.mode = KernelItemThrowMode_None;
+        } else if (throw_mode == "identity_preserving") {
+            definition.throw_policy.mode =
+                KernelItemThrowMode_IdentityPreserving;
+        } else if (throw_mode == "consume_and_spawn") {
+            definition.throw_policy.mode = KernelItemThrowMode_ConsumeAndSpawn;
+        } else {
+            throw std::runtime_error("unknown item throw mode: " + throw_mode);
+        }
+        definition.throw_policy.speed = node["throw"]["speed"]
+            ? node["throw"]["speed"].as<float>()
+            : 0.0f;
+    }
+    definition.use_policy.struct_size = sizeof(definition.use_policy);
+    if (node["use"]) {
+        reject_unknown_keys(
+            node["use"],
+            {"quantity_cost", "charge_field", "cooldown_ticks",
+             "destroy_when_empty"},
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ITEM,
+            definition.item_template_id);
+        definition.use_policy.quantity_cost = node["use"]["quantity_cost"]
+            ? node["use"]["quantity_cost"].as<std::uint32_t>()
+            : 0u;
+        definition.use_policy.cooldown_ticks = node["use"]["cooldown_ticks"]
+            ? node["use"]["cooldown_ticks"].as<std::uint32_t>()
+            : 0u;
+        definition.use_policy.destroy_when_empty =
+            node["use"]["destroy_when_empty"] &&
+                node["use"]["destroy_when_empty"].as<bool>()
+            ? 1u
+            : 0u;
+        if (node["use"]["charge_field"]) {
+            item.charge_field_ref =
+                node["use"]["charge_field"].as<std::string>();
+            definition.use_policy.charge_field_id =
+                portable_state_field_id(item.charge_field_ref);
+        }
+    }
+    if (node["portable_state"]) {
+        if (!node["portable_state"].IsSequence() ||
+            node["portable_state"].size() > KERNEL_MAX_PORTABLE_STATE_FIELDS) {
+            throw std::runtime_error("invalid item portable_state: " + path);
+        }
+        for (const YAML::Node& authored_field : node["portable_state"]) {
+            reject_unknown_keys(
+                authored_field,
+                {"id", "type", "default", "world_projection"},
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ITEM,
+                definition.item_template_id);
+            KernelPortableStateFieldDefinition& field =
+                definition.portable_state_fields[
+                    definition.portable_state_field_count++];
+            const std::string field_name = authored_field["id"].as<std::string>();
+            field.field_id = portable_state_field_id(field_name);
+            const std::string type = authored_field["type"].as<std::string>();
+            if (type == "uint32") {
+                field.type = KernelPortableStateType_Uint32;
+                field.uint32_default =
+                    authored_field["default"].as<std::uint32_t>();
+            } else if (type == "float") {
+                field.type = KernelPortableStateType_Float;
+                field.float_default = authored_field["default"].as<float>();
+            } else if (type == "bool") {
+                field.type = KernelPortableStateType_Bool;
+                field.bool_default = authored_field["default"].as<bool>() ? 1u : 0u;
+            } else {
+                throw std::runtime_error("unknown portable state type: " + type);
+            }
+            const std::string projection = authored_field["world_projection"]
+                ? authored_field["world_projection"].as<std::string>()
+                : "none";
+            if (projection == "none") {
+                field.world_projection = KernelPortableStateProjection_None;
+            } else if (projection == "health_current") {
+                field.world_projection =
+                    KernelPortableStateProjection_HealthCurrent;
+            } else {
+                throw std::runtime_error(
+                    "unknown portable state projection: " + projection);
+            }
+        }
+    }
+    definition.item_used_trigger.struct_size =
+        sizeof(definition.item_used_trigger);
+    if (node["triggers"] && node["triggers"]["on_item_used"]) {
+        item.item_used_trigger = trigger_binding_from_yaml(
+            node["triggers"]["on_item_used"],
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ITEM,
+            definition.item_template_id);
+    }
+    return item;
+}
+
+std::vector<ItemTemplateConfig> load_item_templates_from_source(
+    const GameplayConfigSource& source,
+    const std::string& directory,
+    const std::vector<EntityTemplateConfig>& entity_templates) {
+    std::vector<ItemTemplateConfig> items;
+    std::unordered_set<std::uint32_t> ids;
+    std::unordered_set<std::string> names;
+    for (const std::string& file : source.list_yaml_files(directory)) {
+        ItemTemplateConfig item = item_template_from_yaml(
+            source.load_yaml(file), file, source.source_kind(), entity_templates);
+        if (!ids.insert(item.definition.item_template_id).second ||
+            !names.insert(item.name).second) {
+            throw std::runtime_error("duplicate item template: " + file);
+        }
+        items.push_back(std::move(item));
+    }
+    std::sort(
+        items.begin(),
+        items.end(),
+        [](const ItemTemplateConfig& lhs, const ItemTemplateConfig& rhs) {
+            return lhs.definition.item_template_id < rhs.definition.item_template_id;
+        });
+    return items;
+}
+
 ProjectileTemplateConfig projectile_template_from_yaml(
     const YAML::Node& node,
     const std::string& path,
@@ -3034,13 +3362,18 @@ bool event_expression_available(
     if (expression == "event.subject" || expression == "event.position") {
         return true;
     }
+    if (expression == "event.item") {
+        return trigger_name == "on_item_used";
+    }
     if (expression == "event.target") {
         return trigger_name == "on_activated" ||
+            trigger_name == "on_item_used" ||
             trigger_name == "on_collision" ||
             trigger_name == "on_projectile_impact";
     }
     if (expression == "event.instigator") {
         return trigger_name == "on_activated" ||
+            trigger_name == "on_item_used" ||
             trigger_name == "on_health_depleted" ||
             trigger_name == "on_destroy_entity" ||
             trigger_name == "on_projectile_impact" ||
@@ -3048,6 +3381,7 @@ bool event_expression_available(
     }
     if (expression == "event.direction") {
         return trigger_name == "on_activated" ||
+            trigger_name == "on_item_used" ||
             trigger_name == "on_collision" ||
             trigger_name == "on_projectile_impact" ||
             trigger_name == "on_expired";
@@ -3175,7 +3509,8 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
     const TriggerBindingConfig& binding,
     std::string_view trigger_name,
     const std::vector<ActionGraphTemplateConfig>& action_graph_templates,
-    const std::vector<EntityTemplateConfig>& entity_templates) {
+    const std::vector<EntityTemplateConfig>& entity_templates,
+    const std::vector<ProjectileTemplateConfig>* projectile_templates = nullptr) {
     KernelActionTriggerDefinition compiled{};
     if (binding.action_graph_ref.empty()) {
         return compiled;
@@ -3219,6 +3554,47 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
     for (std::size_t index = 0; index < graph->actions.size(); ++index) {
         const ActionGraphActionConfig& action = graph->actions[index];
         KernelActionDefinition& compiled_action = compiled.actions[index];
+        if (action.action_type == "spawn_projectile") {
+            if (projectile_templates == nullptr) {
+                throw std::runtime_error(
+                    std::string(trigger_name) +
+                    " cannot spawn projectiles in this context");
+            }
+            const std::string projectile_ref = trigger_parameter_value(
+                binding,
+                graph_parameter(action.projectile_template_parameter));
+            const std::string position = trigger_parameter_value(
+                binding,
+                graph_parameter(action.position_parameter));
+            const std::string direction = trigger_parameter_value(
+                binding,
+                graph_parameter(action.direction_parameter));
+            if (position != "event.position" ||
+                direction != "event.direction") {
+                throw std::runtime_error(
+                    "spawn_projectile requires event position and direction");
+            }
+            const auto found = std::find_if(
+                projectile_templates->begin(),
+                projectile_templates->end(),
+                [&](const ProjectileTemplateConfig& candidate) {
+                    return candidate.name == projectile_ref ||
+                        std::to_string(
+                            candidate.definition.projectile_template_id) ==
+                            projectile_ref;
+                });
+            if (found == projectile_templates->end()) {
+                throw std::runtime_error(
+                    "unknown projectile template: " + projectile_ref);
+            }
+            compiled_action.action_type =
+                KernelEntityTriggerActionType_SpawnProjectile;
+            compiled_action.spawn_projectile_template_id =
+                found->definition.projectile_template_id;
+            compiled_action.position_source = KernelEventVec3Source_Position;
+            compiled_action.direction_source = KernelEventVec3Source_Direction;
+            continue;
+        }
         if (action.action_type == "spawn_entity") {
             const std::string entity_template = trigger_parameter_value(
                 binding, graph_parameter(action.entity_template_parameter));
@@ -3576,6 +3952,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             "projectile_template_dir",
             "actor_template_dir",
             "entity_template_dir",
+            "item_template_dir",
             "collider_template_dir",
             "static_collision_scene",
             "player",
@@ -3617,7 +3994,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     const std::uint32_t catalog_version =
         document["catalog_version"] ? document["catalog_version"].as<std::uint32_t>()
                                     : 1u;
-    if (catalog_version != 3u) {
+    if (catalog_version != 4u) {
         throw DataLoadError(
             KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNSUPPORTED_CATALOG_VERSION,
             "unsupported catalog_version: " + std::to_string(catalog_version),
@@ -3731,6 +4108,15 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
         config.entity_templates = config.actor_templates;
     } else {
         apply_default_actor_templates(&config);
+    }
+
+    if (document["item_template_dir"]) {
+        const std::string item_template_dir =
+            source.resolve_path(base_path, document["item_template_dir"]);
+        config.item_templates = load_item_templates_from_source(
+            source,
+            item_template_dir,
+            config.entity_templates);
     }
 
     apply_catalog_player_config(document, &config);
@@ -3867,6 +4253,54 @@ std::uint64_t compute_gameplay_catalog_hash(
     for (const ActionTemplateConfig& action_template : action_templates) {
         hash_string(&hash, action_template.name);
         hash_action_template(&hash, action_template.definition);
+    }
+    std::vector<ItemTemplateConfig> item_templates = config.item_templates;
+    std::sort(
+        item_templates.begin(),
+        item_templates.end(),
+        [](const ItemTemplateConfig& lhs, const ItemTemplateConfig& rhs) {
+            return lhs.definition.item_template_id <
+                rhs.definition.item_template_id;
+        });
+    for (const ItemTemplateConfig& item : item_templates) {
+        const KernelItemTemplateDefinition& definition = item.definition;
+        hash_string(&hash, item.name);
+        hash_scalar(&hash, definition.item_template_id);
+        hash_scalar(&hash, definition.item_mode);
+        hash_scalar(&hash, definition.max_stack);
+        hash_scalar(&hash, definition.capability_flags);
+        hash_scalar(&hash, definition.entity_template_id);
+        hash_scalar(&hash, definition.input_mapping.inventory_use);
+        hash_scalar(&hash, definition.input_mapping.inventory_fire);
+        hash_scalar(&hash, definition.input_mapping.world_interact_tap);
+        hash_scalar(&hash, definition.input_mapping.world_interact_hold);
+        hash_float(&hash, definition.interaction_range);
+        hash_scalar(&hash, definition.line_of_sight_required);
+        hash_scalar(&hash, definition.line_of_sight_blocking_mask);
+        hash_scalar(&hash, definition.throw_policy.mode);
+        hash_float(&hash, definition.throw_policy.speed);
+        hash_scalar(&hash, definition.use_policy.quantity_cost);
+        hash_scalar(&hash, definition.use_policy.charge_field_id);
+        hash_scalar(&hash, definition.use_policy.cooldown_ticks);
+        hash_scalar(&hash, definition.use_policy.destroy_when_empty);
+        hash_scalar(&hash, definition.portable_state_field_count);
+        for (std::uint32_t index = 0;
+             index < definition.portable_state_field_count;
+             ++index) {
+            const KernelPortableStateFieldDefinition& field =
+                definition.portable_state_fields[index];
+            hash_scalar(&hash, field.field_id);
+            hash_scalar(&hash, field.type);
+            hash_scalar(&hash, field.world_projection);
+            hash_scalar(&hash, field.uint32_default);
+            hash_float(&hash, field.float_default);
+            hash_scalar(&hash, field.bool_default);
+        }
+        hash_string(&hash, item.item_used_trigger.action_graph_ref);
+        for (const auto& parameter : item.item_used_trigger.parameters) {
+            hash_string(&hash, parameter.first);
+            hash_string(&hash, parameter.second);
+        }
     }
     hash_scalar(&hash, config.player.actor_template_id);
     hash_scalar(&hash, config.agent.actor_template_id);
@@ -4508,6 +4942,7 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
                 authored_template.director_spawn_radius;
             entity_template.ai.spawn_seed = authored_template.director_spawn_seed;
         } else if (authored_template.entity_type == KernelEntityType_Prop) {
+            entity_template.prop = authored_template.prop;
             entity_template.component_flags = KERNEL_ENTITY_COMPONENT_TRANSFORM;
             if (authored_template.server_only) {
                 entity_template.component_flags |= KERNEL_ENTITY_COMPONENT_SERVER_ONLY;
@@ -4558,6 +4993,16 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
     for (const ActionTemplateConfig& action_template : config.action_templates) {
         storage.action_templates.push_back(action_template.definition);
     }
+    for (const ItemTemplateConfig& authored_item : config.item_templates) {
+        KernelItemTemplateDefinition item = authored_item.definition;
+        item.item_used_trigger = compile_action_trigger_binding(
+            authored_item.item_used_trigger,
+            "on_item_used",
+            config.action_graph_templates,
+            config.entity_templates,
+            &config.projectile_templates);
+        storage.item_templates.push_back(item);
+    }
     storage.definition.struct_size = sizeof(storage.definition);
     storage.definition.catalog_version = config.weapons.catalog_version;
     storage.definition.catalog_hash = config.weapons.catalog_hash;
@@ -4577,6 +5022,9 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
     storage.definition.action_templates = storage.action_templates.data();
     storage.definition.action_template_count =
         static_cast<std::uint32_t>(storage.action_templates.size());
+    storage.definition.item_templates = storage.item_templates.data();
+    storage.definition.item_template_count =
+        static_cast<std::uint32_t>(storage.item_templates.size());
     return storage;
 }
 

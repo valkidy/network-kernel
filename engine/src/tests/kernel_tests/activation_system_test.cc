@@ -154,6 +154,19 @@ void activated_prop_applies_damage_exactly_once() {
     require(engine.world_.registry()
                .get<network_example::Health>(*prop_entity)
                .hp == 99);
+
+    actor_info.owner_peer = 8;
+    std::uint32_t second_instigator = 0;
+    require(engine.server_create_entity(actor_info, &second_instigator));
+    activation.instigator_net_id = second_instigator;
+    activation.action_instance_id = 10;
+    require(engine.server_activate_entity(activation));
+    require(engine.damage_pipeline_.pending_count() == 2);
+    require(engine.world_.action_graph_batch_processed(
+        8,
+        activation.request_id,
+        network_example::TriggerEventType::kActivated,
+        0));
 }
 
 void collision_prop_applies_damage_on_contact_enter() {

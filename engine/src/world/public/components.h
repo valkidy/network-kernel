@@ -13,6 +13,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+
 namespace network_example {
 
 using NetId = std::uint32_t;
@@ -85,6 +86,32 @@ struct EntityKind {
 
 struct ActorTemplateRef {
     std::uint32_t actor_template_id = 0;
+};
+
+struct EntityTemplateRef {
+    std::uint32_t entity_template_id = 0;
+};
+
+struct ItemTemplateRef {
+    std::uint32_t item_template_id = 0;
+};
+
+struct ItemInstanceRef {
+    std::uint64_t item_instance_id = 0;
+};
+
+enum class PropMode : std::uint8_t {
+    kPlaced = 0,
+    kCarrying = 1,
+    kInFlight = 2,
+};
+
+struct PropWorldMode {
+    PropMode mode = PropMode::kPlaced;
+};
+
+struct CarriedBy {
+    NetId carrier_entity_id = 0;
 };
 
 struct Transform {
@@ -416,6 +443,13 @@ struct ProjectileImpactPayload {
     bool historical = false;
 };
 
+struct ItemUsedPayload {
+    std::uint64_t item_instance_id = 0;
+    std::uint32_t item_template_id = 0;
+    std::uint8_t domain_action = 0;
+    std::uint32_t quantity = 0;
+};
+
 struct TriggerEvent {
     TriggerEventType type = TriggerEventType::kCollision;
     NetId subject = 0;
@@ -424,6 +458,7 @@ struct TriggerEvent {
     glm::vec3 position{0.0f};
     glm::vec3 direction{0.0f};
     std::optional<ProjectileImpactPayload> projectile_impact;
+    std::optional<ItemUsedPayload> item_used;
 };
 
 enum class ActionAuthoritySource : std::uint8_t {
@@ -440,6 +475,7 @@ struct ActionExecutionProvenance {
     std::uint8_t source_weapon_id = 0;
     ActionAuthoritySource authority_source =
         ActionAuthoritySource::kAuthoritativeSimulation;
+    PeerId requester_peer = 0;
 };
 
 struct EntityIdValue {
@@ -454,11 +490,16 @@ struct EntityTemplateIdValue {
     std::uint32_t value = 0;
 };
 
+struct ItemInstanceIdValue {
+    std::uint64_t value = 0;
+};
+
 using ActionGraphParameterValue = std::variant<
     std::monostate,
     EntityIdValue,
     ProjectileTemplateIdValue,
     EntityTemplateIdValue,
+    ItemInstanceIdValue,
     glm::vec3,
     float>;
 
@@ -482,10 +523,13 @@ struct EventVec3Expression {
     EventVec3Source source = EventVec3Source::kPosition;
 };
 
+struct ItemRefExpression {};
+
 using ActionGraphParameterExpression = std::variant<
     ActionGraphParameterValue,
     EntityRefExpression,
-    EventVec3Expression>;
+    EventVec3Expression,
+    ItemRefExpression>;
 
 struct ActionGraphParameterDefinition {
     std::string name;

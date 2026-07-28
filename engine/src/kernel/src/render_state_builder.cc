@@ -62,6 +62,10 @@ RenderEntityState render_state_from_world_entity(
     KernelActionRuntimeView action{};
     action.struct_size = sizeof(action);
     KernelVec3 aim_direction{1.0f, 0.0f, 0.0f};
+    std::uint32_t item_template_id = 0;
+    std::uint64_t item_instance_id = 0;
+    std::uint8_t world_item_mode = 0;
+    std::uint32_t carrier_entity_id = 0;
     if (world.registry().all_of<Velocity>(entity)) {
         velocity = to_kernel_vec3(world.registry().get<Velocity>(entity).linear);
     }
@@ -110,6 +114,22 @@ RenderEntityState render_state_from_world_entity(
         animation_state = static_cast<std::uint16_t>(
             world.registry().get<HomingState>(entity).phase);
     }
+    if (world.registry().all_of<ItemTemplateRef>(entity)) {
+        item_template_id =
+            world.registry().get<ItemTemplateRef>(entity).item_template_id;
+    }
+    if (world.registry().all_of<ItemInstanceRef>(entity)) {
+        item_instance_id =
+            world.registry().get<ItemInstanceRef>(entity).item_instance_id;
+    }
+    if (world.registry().all_of<PropWorldMode>(entity)) {
+        world_item_mode = static_cast<std::uint8_t>(
+            world.registry().get<PropWorldMode>(entity).mode);
+    }
+    if (world.registry().all_of<CarriedBy>(entity)) {
+        carrier_entity_id =
+            world.registry().get<CarriedBy>(entity).carrier_entity_id;
+    }
     return RenderEntityState{
         entity_id,
         identity.net_id,
@@ -131,6 +151,12 @@ RenderEntityState render_state_from_world_entity(
         actor_template_id,
         action,
         aim_direction,
+        item_template_id,
+        item_instance_id,
+        world_item_mode,
+        0,
+        0,
+        carrier_entity_id,
     };
 }
 
@@ -173,6 +199,12 @@ RenderEntityState render_state_from_snapshot_entity(
             entity.action_commit_count,
         },
         to_kernel_vec3(entity.aim_direction),
+        entity.item_template_id,
+        entity.item_instance_id,
+        entity.world_item_mode,
+        0,
+        0,
+        entity.carrier_entity_id,
     };
 }
 

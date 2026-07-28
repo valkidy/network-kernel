@@ -724,6 +724,9 @@ void execute_queued_trigger_events(
     for (const ActionGraphCommandBatch& batch : command_batches) {
         if (batch.provenance.request_id == 0u ||
             world.action_graph_batch_processed(
+                batch.provenance.requester_peer != 0u
+                    ? batch.provenance.requester_peer
+                    : batch.provenance.owner_peer,
                 batch.provenance.request_id,
                 batch.event.type,
                 batch.sequence)) {
@@ -767,6 +770,9 @@ void execute_queued_trigger_events(
         }
         if (committed) {
             world.mark_action_graph_batch_processed(
+                batch.provenance.requester_peer != 0u
+                    ? batch.provenance.requester_peer
+                    : batch.provenance.owner_peer,
                 batch.provenance.request_id,
                 batch.event.type,
                 batch.sequence);
@@ -1101,6 +1107,39 @@ void process_projectile_interactions(
 }
 
 }  // namespace
+
+bool spawn_action_graph_projectile(
+    World& world,
+    std::uint32_t projectile_template_id,
+    PeerId owner_peer,
+    NetId instigator,
+    std::uint32_t action_instance_id,
+    const glm::vec3& position,
+    const glm::vec3& direction,
+    std::uint32_t current_tick,
+    float fixed_delta_seconds) {
+    const RuntimeProjectileTemplate* projectile_template =
+        world.find_projectile_template(projectile_template_id);
+    if (projectile_template == nullptr ||
+        (projectile_template->projectile_type != ProjectileType::kAreaEffect &&
+         (!std::isfinite(projectile_template->speed) ||
+          projectile_template->speed <= 0.0f))) {
+        return false;
+    }
+    return spawn_projectile_from_template(
+        world,
+        *projectile_template,
+        owner_peer,
+        instigator,
+        0u,
+        action_instance_id,
+        position,
+        direction,
+        current_tick,
+        fixed_delta_seconds,
+        nullptr,
+        nullptr);
+}
 
 glm::vec3 projectile_position_at(
     const glm::vec3& origin,

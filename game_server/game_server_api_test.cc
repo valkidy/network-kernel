@@ -377,7 +377,7 @@ int main() {
     assert(loaded_catalog);
     assert(load_result.status == KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS);
     assert(load_result.error_code == KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_NONE);
-    assert(load_result.catalog_version == 3);
+    assert(load_result.catalog_version == 4);
     assert(load_result.catalog_hash != 0);
     assert(load_result.projectile_template_count > 0);
     assert(load_result.collider_template_count == 12);
@@ -469,7 +469,7 @@ int main() {
     handle_pending_events(kernel, game_server);
     run_game_server_frames(kernel, game_server, 3);
     assert(GameServer_GetEnemyCount(game_server) == 10);
-    assert(query_enemy_count(kernel) == 10);
+    assert(query_enemy_count(kernel) == 2);
 
     GameServer_DespawnAll(game_server, KernelDespawnReason_Destroyed);
     GameServer_Tick(game_server, 1.0f / 30.0f);

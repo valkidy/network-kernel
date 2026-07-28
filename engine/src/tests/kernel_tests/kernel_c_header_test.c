@@ -6,7 +6,7 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 52u,
+    KERNEL_ABI_VERSION == 53u,
     "action trigger ABI");
 _Static_assert(
     sizeof(KernelActionTriggerDefinition) == 152u,
@@ -104,7 +104,7 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 52u);
+    assert(KERNEL_ABI_VERSION == 53u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD == 4u);

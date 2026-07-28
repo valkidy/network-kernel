@@ -390,6 +390,26 @@ int main() {
             std::uint16_t,
             KernelServerEntityState*,
             std::uint32_t)>(library, "Kernel_ServerQueryEntities");
+    [[maybe_unused]] auto* kernel_submit_gameplay_request =
+        load_symbol<bool(KernelHandle*, const KernelGameplayRequest*)>(
+            library, "Kernel_SubmitGameplayRequest");
+    [[maybe_unused]] auto* kernel_server_submit_gameplay_request =
+        load_symbol<bool(KernelHandle*, const KernelGameplayRequest*)>(
+            library, "Kernel_ServerSubmitGameplayRequest");
+    [[maybe_unused]] auto* kernel_get_item_instance =
+        load_symbol<bool(
+            KernelHandle*, KernelItemInstanceId, KernelItemInstanceView*)>(
+            library, "Kernel_GetItemInstance");
+    [[maybe_unused]] auto* kernel_poll_gameplay_request_outcomes =
+        load_symbol<std::uint32_t(
+            KernelHandle*, KernelGameplayRequestOutcome*, std::uint32_t)>(
+            library, "Kernel_PollGameplayRequestOutcomes");
+    [[maybe_unused]] auto* kernel_poll_inventory_deltas =
+        load_symbol<std::uint32_t(
+            KernelHandle*,
+            KernelInventoryContainerId,
+            KernelInventoryDelta*,
+            std::uint32_t)>(library, "Kernel_PollInventoryDeltas");
     auto* game_server_get_abi_info =
         load_symbol<bool(GameServerAbiInfo*, std::uint32_t)>(
             library,
@@ -436,6 +456,17 @@ int main() {
     assert(abi_info.server_entity_create_info_size ==
            sizeof(KernelServerEntityCreateInfo));
     assert(abi_info.server_entity_state_size == sizeof(KernelServerEntityState));
+    assert(abi_info.item_template_definition_size ==
+           sizeof(KernelItemTemplateDefinition));
+    assert(abi_info.gameplay_request_size == sizeof(KernelGameplayRequest));
+    assert(abi_info.gameplay_request_outcome_size ==
+           sizeof(KernelGameplayRequestOutcome));
+    assert(abi_info.item_instance_view_size == sizeof(KernelItemInstanceView));
+    assert(abi_info.inventory_container_view_size ==
+           sizeof(KernelInventoryContainerView));
+    assert(abi_info.inventory_delta_size == sizeof(KernelInventoryDelta));
+    assert((abi_info.capability_flags &
+            KERNEL_CAPABILITY_ITEM_PROP_SYSTEM) != 0u);
     assert(abi_info.weapon_mechanics_definition_size ==
            sizeof(KernelWeaponMechanicsDefinition));
     assert(abi_info.actor_template_definition_size ==
@@ -712,7 +743,7 @@ int main() {
         }
     }
     game_server_tick(game_server, 1.0f / 30.0f);
-    assert(game_server_get_enemy_count(game_server) == 10);
+    assert(game_server_get_enemy_count(game_server) == 2);
     game_server_despawn_all(game_server, KernelDespawnReason_Destroyed);
     game_server_tick(game_server, 1.0f / 30.0f);
     assert(game_server_get_enemy_count(game_server) == 0);

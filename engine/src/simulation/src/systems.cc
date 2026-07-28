@@ -103,6 +103,9 @@ bool execute_action_graph_commands(
         return false;
     }
     if (world.action_graph_batch_processed(
+            batch.provenance.requester_peer != 0u
+                ? batch.provenance.requester_peer
+                : batch.provenance.owner_peer,
             batch.provenance.request_id,
             batch.event.type,
             batch.sequence)) {
@@ -116,6 +119,21 @@ bool execute_action_graph_commands(
                 world.find_entity(damage->target);
             if (damage->source == 0u || !target.has_value() ||
                 !world.registry().all_of<NetworkIdentity, Health>(*target)) {
+                return false;
+            }
+            continue;
+        }
+        if (const auto* projectile =
+                std::get_if<ActionSpawnProjectileCommand>(&command)) {
+            if (world.find_projectile_template(
+                    projectile->projectile_template_id) == nullptr ||
+                !std::isfinite(projectile->position.x) ||
+                !std::isfinite(projectile->position.y) ||
+                !std::isfinite(projectile->position.z) ||
+                !std::isfinite(projectile->direction.x) ||
+                !std::isfinite(projectile->direction.y) ||
+                !std::isfinite(projectile->direction.z) ||
+                glm::dot(projectile->direction, projectile->direction) == 0.0f) {
                 return false;
             }
             continue;
@@ -154,6 +172,22 @@ bool execute_action_graph_commands(
             }
             continue;
         }
+        if (const auto* projectile =
+                std::get_if<ActionSpawnProjectileCommand>(&command)) {
+            if (!spawn_action_graph_projectile(
+                    world,
+                    projectile->projectile_template_id,
+                    projectile->provenance.owner_peer,
+                    projectile->provenance.instigator,
+                    projectile->provenance.action_instance_id,
+                    projectile->position,
+                    projectile->direction,
+                    projectile->provenance.server_tick,
+                    engine.fixed_delta_seconds())) {
+                return false;
+            }
+            continue;
+        }
         const ActionSpawnEntityCommand& spawn =
             std::get<ActionSpawnEntityCommand>(command);
         const entt::entity owner = *world.find_entity(spawn.owner);
@@ -171,6 +205,9 @@ bool execute_action_graph_commands(
         }
     }
     world.mark_action_graph_batch_processed(
+        batch.provenance.requester_peer != 0u
+            ? batch.provenance.requester_peer
+            : batch.provenance.owner_peer,
         batch.provenance.request_id,
         batch.event.type,
         batch.sequence);
@@ -294,10 +331,24 @@ KernelEntityLifecycleEventType lifecycle_type_for_despawn_reason(
 
 }  // namespace
 
+bool execute_action_graph_command_batch(
+    KernelEngine& engine,
+    const ActionGraphCommandBatch& batch,
+    std::uint64_t server_time_us) {
+    return execute_action_graph_commands(
+        engine,
+        engine.simulation_world(),
+        &engine.damage_pipeline(),
+        engine.authored_entity_templates(),
+        batch,
+        server_time_us);
+}
+
 bool EntityLifecycleSystem::create_entity(
     KernelEngine& engine,
     const KernelServerEntityCreateInfo& create_info,
-    NetId* out_net_id) const {
+    NetId* out_net_id,
+    bool publish_snapshot) const {
     if (!engine.running_ || !is_server_mode(engine.config_.mode) ||
         out_net_id == nullptr ||
         create_info.struct_size < sizeof(KernelServerEntityCreateInfo)) {
@@ -337,6 +388,14 @@ bool EntityLifecycleSystem::create_entity(
     }
     if (entity_template != nullptr) {
         entt::registry& registry = engine.world_.registry();
+        registry.emplace_or_replace<EntityTemplateRef>(
+            *entity,
+            entity_template->entity_template_id);
+        if (type == EntityType::kProp) {
+            registry.emplace_or_replace<PropWorldMode>(
+                *entity,
+                PropWorldMode{PropMode::kPlaced});
+        }
         if (type == EntityType::kActor && actor_type == ActorType::kPlayer) {
             registry.emplace_or_replace<PlayerTag>(*entity);
         } else if (type == EntityType::kActor && actor_type == ActorType::kAgent) {
@@ -500,7 +559,9 @@ bool EntityLifecycleSystem::create_entity(
         net_id,
         create_info.owner_peer,
         static_cast<std::uint32_t>(type));
-    engine.publish_snapshot();
+    if (publish_snapshot) {
+        engine.publish_snapshot();
+    }
     return true;
 }
 
@@ -513,13 +574,6 @@ bool ActivationSystem::activate_entity(
         activate_info.instigator_net_id == 0u) {
         return false;
     }
-    if (engine.world_.action_graph_batch_processed(
-            activate_info.request_id,
-            TriggerEventType::kActivated,
-            0u)) {
-        return true;
-    }
-
     const std::optional<entt::entity> subject =
         engine.world_.find_entity(activate_info.subject_net_id);
     const std::optional<entt::entity> instigator =
@@ -537,6 +591,15 @@ bool ActivationSystem::activate_entity(
         engine.world_.registry().get<EntityKind>(*instigator).type !=
             EntityType::kActor) {
         return false;
+    }
+    const NetworkIdentity& instigator_identity =
+        engine.world_.registry().get<NetworkIdentity>(*instigator);
+    if (engine.world_.action_graph_batch_processed(
+            instigator_identity.owner_peer,
+            activate_info.request_id,
+            TriggerEventType::kActivated,
+            0u)) {
+        return true;
     }
     if (activate_info.target_net_id != 0u &&
         !engine.world_.find_entity(activate_info.target_net_id).has_value()) {
@@ -571,6 +634,7 @@ bool ActivationSystem::activate_entity(
         subject_identity.owner_peer,
         0u,
         ActionAuthoritySource::kAuthoritativeSimulation,
+        instigator_identity.owner_peer,
     };
     const ActionGraphActivatedBinding& activated =
         engine.world_.registry().get<ActionGraphActivatedBinding>(*subject);
@@ -691,6 +755,57 @@ void CollisionTriggerSystem::update(
                 : lhs.target < rhs.target;
         });
     engine.active_prop_collision_pairs_ = std::move(current_pairs);
+
+    auto in_flight_view = engine.world_.registry().view<
+        NetworkIdentity,
+        PropWorldMode,
+        Velocity>();
+    for (const entt::entity entity : in_flight_view) {
+        PropWorldMode& mode = in_flight_view.get<PropWorldMode>(entity);
+        if (mode.mode != PropMode::kInFlight) continue;
+        const NetworkIdentity& identity =
+            in_flight_view.get<NetworkIdentity>(entity);
+        bool collided = false;
+        for (const ColliderInstance& collider :
+             engine.world_.collider_registry().instances()) {
+            if (collider.entity_net_id != identity.net_id || !collider.enabled ||
+                collider.shape_type == ColliderShapeType::kSegment ||
+                collider.shape_type == ColliderShapeType::kCone) {
+                continue;
+            }
+            physics::OverlapRequest request{};
+            request.shape.type = collider.shape_type == ColliderShapeType::kSphere
+                ? physics::CollisionShapeType::kSphere
+                : collider.shape_type == ColliderShapeType::kCapsule
+                    ? physics::CollisionShapeType::kCapsule
+                    : physics::CollisionShapeType::kBox;
+            request.shape.half_extents = collider.half_extents;
+            request.shape.radius = collider.radius;
+            request.shape.capsule_half_height = collider.capsule_half_height;
+            request.position = collider.world_center;
+            request.rotation = collider.world_rotation;
+            request.filter.ignored_entity_net_id = identity.net_id;
+            request.filter.object_kind_mask =
+                (1u << static_cast<std::uint32_t>(
+                    physics::CollisionObjectKind::kTerrain)) |
+                (1u << static_cast<std::uint32_t>(
+                    physics::CollisionObjectKind::kStaticObstacle));
+            if (!engine.physics_world_->overlap_all(request).empty()) {
+                collided = true;
+                break;
+            }
+        }
+        if (!collided) continue;
+        mode.mode = PropMode::kPlaced;
+        in_flight_view.get<Velocity>(entity).linear = glm::vec3{0.0f};
+        if (engine.world_.registry().all_of<ItemInstanceRef>(entity)) {
+            const ItemInstanceRef& ref =
+                engine.world_.registry().get<ItemInstanceRef>(entity);
+            engine.item_store_.set_world_mode(
+                ref.item_instance_id,
+                KernelWorldItemMode_Placed);
+        }
+    }
 
     std::vector<ActionGraphQueuedTrigger> queued_triggers;
     queued_triggers.reserve(entered_collisions.size());

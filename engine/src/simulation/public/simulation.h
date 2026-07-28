@@ -70,6 +70,17 @@ glm::vec3 projectile_velocity_at(
     const glm::vec3& gravity,
     float elapsed_seconds);
 
+bool spawn_action_graph_projectile(
+    World& world,
+    std::uint32_t projectile_template_id,
+    PeerId owner_peer,
+    NetId instigator,
+    std::uint32_t action_instance_id,
+    const glm::vec3& position,
+    const glm::vec3& direction,
+    std::uint32_t current_tick,
+    float fixed_delta_seconds);
+
 std::vector<physics::CollisionHit> query_projectile_collision_hits(
     const physics::PhysicsWorld& collision_world,
     const ProjectileState& projectile,

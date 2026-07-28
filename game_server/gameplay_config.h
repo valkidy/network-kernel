@@ -87,12 +87,13 @@ struct ActorTemplateConfig {
     TriggerBindingConfig collision_trigger;
     TriggerBindingConfig health_depleted_trigger;
     TriggerBindingConfig destroy_entity_trigger;
+    KernelPropDefinition prop{};
 };
 
 using EntityTemplateConfig = ActorTemplateConfig;
 
 struct WeaponCatalogConfig {
-    std::uint32_t catalog_version = 3;
+    std::uint32_t catalog_version = 4;
     std::uint64_t catalog_hash = 0;
     std::array<bool, kWeaponIdCount> configured{};
     std::array<KernelWeaponMechanicsDefinition, kWeaponIdCount> definitions{};
@@ -147,6 +148,14 @@ struct ActionGraphTemplateConfig {
     std::vector<ActionGraphActionConfig> actions;
 };
 
+struct ItemTemplateConfig {
+    std::string name;
+    std::string entity_template_ref;
+    std::string charge_field_ref;
+    TriggerBindingConfig item_used_trigger;
+    KernelItemTemplateDefinition definition{};
+};
+
 using ProjectileTriggerBindingConfig = TriggerBindingConfig;
 
 struct ProjectileTemplateConfig {
@@ -172,6 +181,7 @@ struct GameServerGameplayConfig {
     std::vector<ActorTemplateConfig> actor_templates;
     ColliderCatalogConfig colliders;
     std::vector<ActionGraphTemplateConfig> action_graph_templates;
+    std::vector<ItemTemplateConfig> item_templates;
     std::vector<ProjectileTemplateConfig> projectile_templates;
     StaticCollisionSceneConfig static_collision_scene;
 };
@@ -183,6 +193,7 @@ struct KernelGameplayCatalogStorage {
     std::vector<KernelColliderTemplateDefinition> collider_templates;
     std::vector<KernelColliderBindingDefinition> collider_bindings;
     std::vector<KernelActionTemplateDefinition> action_templates;
+    std::vector<KernelItemTemplateDefinition> item_templates;
     KernelGameplayCatalogDefinition definition{};
 };
 

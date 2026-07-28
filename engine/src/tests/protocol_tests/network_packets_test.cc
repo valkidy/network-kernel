@@ -108,6 +108,14 @@ int main() {
     hybrid_projectile.state_flags |=
         network_example::kSnapshotStateFlagProjectileHybridCorrection;
     snapshot.entities.push_back(hybrid_projectile);
+    network_example::EntitySnapshot item_prop;
+    item_prop.net_id = 8;
+    item_prop.type = network_example::EntityType::kProp;
+    item_prop.item_template_id = 501;
+    item_prop.item_instance_id = 9001;
+    item_prop.world_item_mode = KernelWorldItemMode_Carrying;
+    item_prop.carrier_entity_id = 4;
+    snapshot.entities.push_back(item_prop);
 
     const std::vector<std::uint8_t> snapshot_packet =
         network_example::encode_snapshot_packet(snapshot, 43);
@@ -134,7 +142,7 @@ int main() {
     assert(decoded_snapshot.header.server_tick == 9);
     assert(decoded_snapshot.header.server_time_ms == 300);
     assert(decoded_snapshot.header.last_processed_input_seq == 7);
-    assert(decoded_snapshot.entities.size() == 4);
+    assert(decoded_snapshot.entities.size() == 5);
     assert(decoded_snapshot.entities[0].net_id == 4);
     assert(decoded_snapshot.entities[0].type == network_example::EntityType::kActor);
     assert(decoded_snapshot.entities[0].actor_type ==
@@ -180,6 +188,12 @@ int main() {
     assert(decoded_snapshot.entities[3].action_instance_id == 1234);
     assert((decoded_snapshot.entities[3].state_flags &
             network_example::kSnapshotStateFlagProjectileHybridCorrection) != 0u);
+    assert(decoded_snapshot.entities[4].net_id == 8);
+    assert(decoded_snapshot.entities[4].item_template_id == 501);
+    assert(decoded_snapshot.entities[4].item_instance_id == 9001);
+    assert(decoded_snapshot.entities[4].world_item_mode ==
+           KernelWorldItemMode_Carrying);
+    assert(decoded_snapshot.entities[4].carrier_entity_id == 4);
 
     KernelEvent reliable_event{};
     reliable_event.type = KernelEventType_PlayerLeft;
@@ -384,6 +398,51 @@ int main() {
         bad_presentation_count.data(),
         bad_presentation_count.size(),
         &decoded_presentation));
+
+    KernelGameplayRequest gameplay_request{};
+    gameplay_request.struct_size = sizeof(gameplay_request);
+    gameplay_request.requester_peer = 3;
+    gameplay_request.request_id = 10001;
+    gameplay_request.instigator_net_id = 4;
+    gameplay_request.semantic_button = KernelSemanticInputButton_Use;
+    gameplay_request.selected_item_instance_id = 9001;
+    gameplay_request.target_net_id = 6;
+    gameplay_request.requested_quantity = 2;
+    gameplay_request.placement_position = KernelVec3{1.0f, 2.0f, 3.0f};
+    gameplay_request.throw_direction = KernelVec3{0.0f, 1.0f, 0.0f};
+    const std::vector<std::uint8_t> gameplay_request_packet =
+        network_example::encode_gameplay_request_packet(gameplay_request, 26);
+    KernelGameplayRequest decoded_gameplay_request{};
+    assert(network_example::decode_gameplay_request_packet(
+        gameplay_request_packet.data(),
+        gameplay_request_packet.size(),
+        &decoded_gameplay_request));
+    assert(decoded_gameplay_request.request_id == 10001);
+    assert(decoded_gameplay_request.selected_item_instance_id == 9001);
+    assert(decoded_gameplay_request.requested_quantity == 2);
+
+    KernelGameplayRequestOutcome gameplay_outcome{};
+    gameplay_outcome.struct_size = sizeof(gameplay_outcome);
+    gameplay_outcome.requester_peer = 3;
+    gameplay_outcome.request_id = 10001;
+    gameplay_outcome.status = KernelGameplayRequestStatus_Committed;
+    gameplay_outcome.graph_outcome = KernelGameplayGraphOutcome_Succeeded;
+    gameplay_outcome.domain_action = KernelDomainAction_Consume;
+    gameplay_outcome.item_instance_id = 9001;
+    gameplay_outcome.committed_quantity = 2;
+    const std::vector<std::uint8_t> gameplay_outcome_packet =
+        network_example::encode_gameplay_request_outcome_packet(
+            gameplay_outcome, 27);
+    KernelGameplayRequestOutcome decoded_gameplay_outcome{};
+    assert(network_example::decode_gameplay_request_outcome_packet(
+        gameplay_outcome_packet.data(),
+        gameplay_outcome_packet.size(),
+        &decoded_gameplay_outcome));
+    assert(decoded_gameplay_outcome.status ==
+           KernelGameplayRequestStatus_Committed);
+    assert(decoded_gameplay_outcome.graph_outcome ==
+           KernelGameplayGraphOutcome_Succeeded);
+    assert(decoded_gameplay_outcome.committed_quantity == 2);
 
     std::vector<std::uint8_t> bad_header = input_packet;
     bad_header[0] = 0;
