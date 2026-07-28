@@ -24,9 +24,10 @@ constexpr std::size_t kActorHealthPayloadSize = 4;
 constexpr std::size_t kActorMovementPayloadSize = 22;
 constexpr std::size_t kProjectileCompactSnapshotPayloadSize = 34;
 constexpr std::size_t kProjectileHybridCorrectionSnapshotPayloadSize = 46;
-constexpr std::size_t kGenericSnapshotPayloadSize = 61;
+constexpr std::size_t kGenericSnapshotPayloadSize = 44;
+constexpr std::size_t kGenericHealthPayloadSize = 4;
 constexpr std::size_t kReliableEventPayloadSize = 34;
-constexpr std::size_t kEntitySpawnPayloadSize = 48;
+constexpr std::size_t kEntitySpawnPayloadSize = 73;
 constexpr std::size_t kEntityDespawnPayloadSize = 12;
 constexpr std::size_t kEntityTemplateUpdatePayloadSize = 12;
 constexpr std::size_t kProjectileSpawnBatchHeaderPayloadSize = 24;
@@ -37,6 +38,67 @@ constexpr std::size_t kLocalActionResultPayloadSize = 12;
 constexpr std::size_t kRemoteActionPresentationPayloadSize = 20;
 constexpr std::size_t kGameplayRequestPayloadSize = 60;
 constexpr std::size_t kGameplayRequestOutcomePayloadSize = 32;
+constexpr std::size_t kInventorySnapshotRequestPayloadSize = 16;
+constexpr std::size_t kMaxInventoryPacketPayloadSize = 16u * 1024u;
+
+bool valid_wire_item(const InventoryWireItem& item) {
+    return item.item_instance_id != 0u && item.item_template_id != 0u &&
+        item.quantity != 0u &&
+        item.portable_values.size() <= KERNEL_MAX_PORTABLE_STATE_FIELDS;
+}
+
+void write_wire_item(
+    protocol_internal::PacketWriter* writer,
+    const InventoryWireItem& item,
+    bool include_template,
+    std::uint16_t changed_fields) {
+    writer->write_u64(item.item_instance_id);
+    if (include_template) writer->write_u32(item.item_template_id);
+    if ((changed_fields & kInventoryChangeQuantity) != 0u) {
+        writer->write_u32(item.quantity);
+    }
+    if ((changed_fields & kInventoryChangeCooldown) != 0u) {
+        writer->write_u32(item.next_use_tick);
+    }
+    if ((changed_fields & kInventoryChangePortableState) != 0u) {
+        writer->write_u8(
+            static_cast<std::uint8_t>(item.portable_values.size()));
+        for (const std::uint32_t value : item.portable_values) {
+            writer->write_u32(value);
+        }
+    }
+}
+
+bool read_wire_item(
+    protocol_internal::PacketReader* reader,
+    InventoryWireItem* item,
+    bool include_template,
+    std::uint16_t changed_fields) {
+    if (!reader->read_u64(&item->item_instance_id)) return false;
+    if (include_template && !reader->read_u32(&item->item_template_id)) {
+        return false;
+    }
+    if ((changed_fields & kInventoryChangeQuantity) != 0u &&
+        !reader->read_u32(&item->quantity)) {
+        return false;
+    }
+    if ((changed_fields & kInventoryChangeCooldown) != 0u &&
+        !reader->read_u32(&item->next_use_tick)) {
+        return false;
+    }
+    if ((changed_fields & kInventoryChangePortableState) != 0u) {
+        std::uint8_t count = 0;
+        if (!reader->read_u8(&count) ||
+            count > KERNEL_MAX_PORTABLE_STATE_FIELDS) {
+            return false;
+        }
+        item->portable_values.resize(count);
+        for (std::uint32_t& value : item->portable_values) {
+            if (!reader->read_u32(&value)) return false;
+        }
+    }
+    return item->item_instance_id != 0u;
+}
 
 enum class SnapshotSectionType : std::uint16_t {
     kActor = 1,
@@ -293,10 +355,10 @@ std::vector<std::uint8_t> encode_snapshot_packet(
                     payload.write_u16(entity->state);
                     payload.write_u32(entity->flags);
                     payload.write_u32(entity->state_flags);
-                    payload.write_u32(entity->item_template_id);
-                    payload.write_u64(entity->item_instance_id);
-                    payload.write_u8(entity->world_item_mode);
-                    payload.write_u32(entity->carrier_entity_id);
+                    if ((entity->state_flags & kSnapshotStateFlagHpUnknown) == 0u) {
+                        payload.write_u16(entity->hp);
+                        payload.write_u16(entity->max_hp);
+                    }
                     break;
             }
         }
@@ -450,11 +512,12 @@ bool decode_snapshot_packet(
                         !reader.read_vec3(&entity.velocity) ||
                         !reader.read_u16(&entity.state) ||
                         !reader.read_u32(&entity.flags) ||
-                        !reader.read_u32(&entity.state_flags) ||
-                        !reader.read_u32(&entity.item_template_id) ||
-                        !reader.read_u64(&entity.item_instance_id) ||
-                        !reader.read_u8(&entity.world_item_mode) ||
-                        !reader.read_u32(&entity.carrier_entity_id)) {
+                        !reader.read_u32(&entity.state_flags)) {
+                        return false;
+                    }
+                    if ((entity.state_flags & kSnapshotStateFlagHpUnknown) == 0u &&
+                        (!reader.read_u16(&entity.hp) ||
+                         !reader.read_u16(&entity.max_hp))) {
                         return false;
                     }
                     entity.type = static_cast<EntityType>(entity_type);
@@ -519,7 +582,10 @@ std::size_t estimate_snapshot_entity_size(const EntitySnapshot& entity) {
             return kProjectileHybridCorrectionSnapshotPayloadSize;
         case SnapshotSectionType::kGeneric:
         default:
-            return kGenericSnapshotPayloadSize;
+            return kGenericSnapshotPayloadSize +
+                ((entity.state_flags & kSnapshotStateFlagHpUnknown) == 0u
+                    ? kGenericHealthPayloadSize
+                    : 0u);
     }
 }
 
@@ -598,6 +664,12 @@ std::vector<std::uint8_t> encode_entity_spawn_packet(
     payload.write_u32(packet.actor_template_id);
     payload.write_vec3(packet.position);
     payload.write_quat(packet.rotation);
+    payload.write_u32(packet.entity_template_id);
+    payload.write_u32(packet.collider_template_id);
+    payload.write_u32(packet.item_template_id);
+    payload.write_u64(packet.item_instance_id);
+    payload.write_u8(packet.world_item_mode);
+    payload.write_u32(packet.carrier_entity_id);
     return protocol_internal::wrap_packet(
         MessageType::kEntitySpawn,
         payload.bytes(),
@@ -633,6 +705,13 @@ bool decode_entity_spawn_packet(
         !reader.read_u32(&packet.actor_template_id) ||
         !reader.read_vec3(&packet.position) ||
         !reader.read_quat(&packet.rotation) ||
+        !reader.read_u32(&packet.entity_template_id) ||
+        !reader.read_u32(&packet.collider_template_id) ||
+        !reader.read_u32(&packet.item_template_id) ||
+        !reader.read_u64(&packet.item_instance_id) ||
+        !reader.read_u8(&packet.world_item_mode) ||
+        packet.world_item_mode > KernelWorldItemMode_InFlight ||
+        !reader.read_u32(&packet.carrier_entity_id) ||
         !reader.done()) {
         return false;
     }
@@ -1097,6 +1176,302 @@ bool decode_gameplay_request_outcome_packet(
         return false;
     }
     *out_outcome = outcome;
+    return true;
+}
+
+std::vector<std::uint8_t> encode_inventory_delta_batch_packet(
+    const InventoryDeltaBatchPacket& packet,
+    std::uint32_t sequence) {
+    if (packet.inventory_container_id == 0u || packet.first_revision == 0u ||
+        packet.records.empty() || packet.records.size() > UINT16_MAX) {
+        return {};
+    }
+    protocol_internal::PacketWriter payload;
+    payload.write_u64(packet.inventory_container_id);
+    payload.write_u64(packet.first_revision);
+    payload.write_u16(static_cast<std::uint16_t>(packet.records.size()));
+    for (const InventoryDeltaRecord& record : packet.records) {
+        if (record.type > KernelInventoryDeltaType_Move ||
+            record.changed_fields > kInventoryChangeAll ||
+            ((record.type == KernelInventoryDeltaType_Add ||
+              record.type == KernelInventoryDeltaType_Update) &&
+             !valid_wire_item(record.item))) {
+            return {};
+        }
+        payload.write_u8(static_cast<std::uint8_t>(record.type));
+        payload.write_u16(record.slot);
+        payload.write_u16(record.previous_slot);
+        payload.write_u16(record.changed_fields);
+        if (record.type == KernelInventoryDeltaType_Add) {
+            write_wire_item(&payload, record.item, true, kInventoryChangeAll);
+        } else if (record.type == KernelInventoryDeltaType_Update) {
+            write_wire_item(
+                &payload, record.item, false, record.changed_fields);
+        } else {
+            payload.write_u64(record.item.item_instance_id);
+        }
+    }
+    if (payload.bytes().size() > kMaxInventoryPacketPayloadSize) return {};
+    return protocol_internal::wrap_packet(
+        MessageType::kInventoryDeltaBatch, payload.bytes(), sequence);
+}
+
+bool decode_inventory_delta_batch_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    InventoryDeltaBatchPacket* out_packet) {
+    const std::uint8_t* payload = nullptr;
+    std::size_t payload_size = 0;
+    if (out_packet == nullptr || payload_size > kMaxInventoryPacketPayloadSize ||
+        !protocol_internal::unwrap_packet(
+            data, size, MessageType::kInventoryDeltaBatch, &payload, &payload_size) ||
+        payload_size < 18u || payload_size > kMaxInventoryPacketPayloadSize) {
+        return false;
+    }
+    InventoryDeltaBatchPacket packet;
+    std::uint16_t count = 0;
+    protocol_internal::PacketReader reader(payload, payload_size);
+    if (!reader.read_u64(&packet.inventory_container_id) ||
+        !reader.read_u64(&packet.first_revision) || !reader.read_u16(&count) ||
+        packet.inventory_container_id == 0u || packet.first_revision == 0u ||
+        count == 0u) {
+        return false;
+    }
+    packet.records.reserve(count);
+    for (std::uint16_t index = 0; index < count; ++index) {
+        InventoryDeltaRecord record;
+        std::uint8_t type = 0;
+        if (!reader.read_u8(&type) || !reader.read_u16(&record.slot) ||
+            !reader.read_u16(&record.previous_slot) ||
+            !reader.read_u16(&record.changed_fields) ||
+            type > KernelInventoryDeltaType_Move ||
+            record.changed_fields > kInventoryChangeAll) {
+            return false;
+        }
+        record.type = static_cast<KernelInventoryDeltaType>(type);
+        if (record.type == KernelInventoryDeltaType_Add) {
+            if (!read_wire_item(
+                    &reader, &record.item, true, kInventoryChangeAll) ||
+                record.item.item_template_id == 0u || record.item.quantity == 0u) {
+                return false;
+            }
+        } else if (record.type == KernelInventoryDeltaType_Update) {
+            if (!read_wire_item(
+                    &reader, &record.item, false, record.changed_fields)) {
+                return false;
+            }
+        } else if (!reader.read_u64(&record.item.item_instance_id) ||
+                   record.item.item_instance_id == 0u) {
+            return false;
+        }
+        packet.records.push_back(std::move(record));
+    }
+    if (!reader.done()) return false;
+    *out_packet = std::move(packet);
+    return true;
+}
+
+std::vector<std::uint8_t> encode_inventory_snapshot_request_packet(
+    const InventorySnapshotRequestPacket& packet,
+    std::uint32_t sequence) {
+    if (packet.inventory_container_id == 0u) return {};
+    protocol_internal::PacketWriter payload;
+    payload.write_u64(packet.inventory_container_id);
+    payload.write_u64(packet.client_revision);
+    return protocol_internal::wrap_packet(
+        MessageType::kInventorySnapshotRequest, payload.bytes(), sequence);
+}
+
+bool decode_inventory_snapshot_request_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    InventorySnapshotRequestPacket* out_packet) {
+    const std::uint8_t* payload = nullptr;
+    std::size_t payload_size = 0;
+    InventorySnapshotRequestPacket packet;
+    if (out_packet == nullptr ||
+        !protocol_internal::unwrap_packet(
+            data, size, MessageType::kInventorySnapshotRequest,
+            &payload, &payload_size) ||
+        payload_size != kInventorySnapshotRequestPayloadSize) {
+        return false;
+    }
+    protocol_internal::PacketReader reader(payload, payload_size);
+    if (!reader.read_u64(&packet.inventory_container_id) ||
+        !reader.read_u64(&packet.client_revision) ||
+        packet.inventory_container_id == 0u || !reader.done()) {
+        return false;
+    }
+    *out_packet = packet;
+    return true;
+}
+
+std::vector<std::uint8_t> encode_inventory_snapshot_page_packet(
+    const InventorySnapshotPagePacket& packet,
+    std::uint32_t sequence) {
+    if (packet.inventory_container_id == 0u || packet.owner_entity_id == 0u ||
+        packet.slot_capacity == 0u || packet.page_count == 0u ||
+        packet.page_index >= packet.page_count || packet.entries.size() > UINT16_MAX) {
+        return {};
+    }
+    protocol_internal::PacketWriter payload;
+    payload.write_u64(packet.inventory_container_id);
+    payload.write_u32(packet.owner_entity_id);
+    payload.write_u64(packet.revision);
+    payload.write_u32(packet.slot_capacity);
+    payload.write_u16(packet.page_index);
+    payload.write_u16(packet.page_count);
+    payload.write_u16(static_cast<std::uint16_t>(packet.entries.size()));
+    for (const InventorySnapshotEntry& entry : packet.entries) {
+        if (entry.slot >= packet.slot_capacity || !valid_wire_item(entry.item)) {
+            return {};
+        }
+        payload.write_u16(entry.slot);
+        write_wire_item(&payload, entry.item, true, kInventoryChangeAll);
+    }
+    if (payload.bytes().size() > kMaxInventoryPacketPayloadSize) return {};
+    return protocol_internal::wrap_packet(
+        MessageType::kInventorySnapshotPage, payload.bytes(), sequence);
+}
+
+bool decode_inventory_snapshot_page_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    InventorySnapshotPagePacket* out_packet) {
+    const std::uint8_t* payload = nullptr;
+    std::size_t payload_size = 0;
+    if (out_packet == nullptr ||
+        !protocol_internal::unwrap_packet(
+            data, size, MessageType::kInventorySnapshotPage,
+            &payload, &payload_size) ||
+        payload_size < 30u || payload_size > kMaxInventoryPacketPayloadSize) {
+        return false;
+    }
+    InventorySnapshotPagePacket packet;
+    std::uint16_t count = 0;
+    protocol_internal::PacketReader reader(payload, payload_size);
+    if (!reader.read_u64(&packet.inventory_container_id) ||
+        !reader.read_u32(&packet.owner_entity_id) ||
+        !reader.read_u64(&packet.revision) ||
+        !reader.read_u32(&packet.slot_capacity) ||
+        !reader.read_u16(&packet.page_index) ||
+        !reader.read_u16(&packet.page_count) || !reader.read_u16(&count) ||
+        packet.inventory_container_id == 0u || packet.owner_entity_id == 0u ||
+        packet.slot_capacity == 0u || packet.page_count == 0u ||
+        packet.page_index >= packet.page_count) {
+        return false;
+    }
+    packet.entries.reserve(count);
+    for (std::uint16_t index = 0; index < count; ++index) {
+        InventorySnapshotEntry entry;
+        if (!reader.read_u16(&entry.slot) || entry.slot >= packet.slot_capacity ||
+            !read_wire_item(&reader, &entry.item, true, kInventoryChangeAll) ||
+            entry.item.item_template_id == 0u || entry.item.quantity == 0u) {
+            return false;
+        }
+        packet.entries.push_back(std::move(entry));
+    }
+    if (!reader.done()) return false;
+    *out_packet = std::move(packet);
+    return true;
+}
+
+std::vector<std::uint8_t> encode_prop_state_change_batch_packet(
+    const PropStateChangeBatchPacket& packet,
+    std::uint32_t sequence) {
+    if (packet.records.empty() || packet.records.size() > UINT16_MAX) return {};
+    protocol_internal::PacketWriter payload;
+    payload.write_u32(packet.server_tick);
+    payload.write_u16(static_cast<std::uint16_t>(packet.records.size()));
+    for (const PropStateChangeRecord& record : packet.records) {
+        if (record.net_id == 0u || record.changed_fields == 0u ||
+            (record.changed_fields & ~(kPropStateChangeMode |
+                kPropStateChangeTransform | kPropStateChangeVelocity)) != 0u) {
+            return {};
+        }
+        payload.write_u32(record.net_id);
+        payload.write_u8(record.changed_fields);
+        if ((record.changed_fields & kPropStateChangeMode) != 0u) {
+            payload.write_u8(static_cast<std::uint8_t>(record.world_mode));
+            payload.write_u32(record.carrier_entity_id);
+        }
+        if ((record.changed_fields & kPropStateChangeTransform) != 0u) {
+            payload.write_float(record.position.x);
+            payload.write_float(record.position.y);
+            payload.write_float(record.position.z);
+            payload.write_float(record.rotation.x);
+            payload.write_float(record.rotation.y);
+            payload.write_float(record.rotation.z);
+            payload.write_float(record.rotation.w);
+        }
+        if ((record.changed_fields & kPropStateChangeVelocity) != 0u) {
+            payload.write_float(record.velocity.x);
+            payload.write_float(record.velocity.y);
+            payload.write_float(record.velocity.z);
+        }
+    }
+    return protocol_internal::wrap_packet(
+        MessageType::kPropStateChangeBatch, payload.bytes(), sequence);
+}
+
+bool decode_prop_state_change_batch_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    PropStateChangeBatchPacket* out_packet) {
+    const std::uint8_t* payload = nullptr;
+    std::size_t payload_size = 0;
+    if (out_packet == nullptr ||
+        !protocol_internal::unwrap_packet(
+            data, size, MessageType::kPropStateChangeBatch,
+            &payload, &payload_size) || payload_size < 6u) {
+        return false;
+    }
+    PropStateChangeBatchPacket packet;
+    std::uint16_t count = 0;
+    protocol_internal::PacketReader reader(payload, payload_size);
+    if (!reader.read_u32(&packet.server_tick) || !reader.read_u16(&count) ||
+        count == 0u) {
+        return false;
+    }
+    packet.records.reserve(count);
+    for (std::uint16_t index = 0; index < count; ++index) {
+        PropStateChangeRecord record;
+        if (!reader.read_u32(&record.net_id) ||
+            !reader.read_u8(&record.changed_fields) || record.net_id == 0u ||
+            record.changed_fields == 0u ||
+            (record.changed_fields & ~(kPropStateChangeMode |
+                kPropStateChangeTransform | kPropStateChangeVelocity)) != 0u) {
+            return false;
+        }
+        if ((record.changed_fields & kPropStateChangeMode) != 0u) {
+            std::uint8_t mode = 0;
+            if (!reader.read_u8(&mode) ||
+                !reader.read_u32(&record.carrier_entity_id) ||
+                mode > KernelWorldItemMode_InFlight) {
+                return false;
+            }
+            record.world_mode = static_cast<KernelWorldItemMode>(mode);
+        }
+        if ((record.changed_fields & kPropStateChangeTransform) != 0u &&
+            (!reader.read_float(&record.position.x) ||
+             !reader.read_float(&record.position.y) ||
+             !reader.read_float(&record.position.z) ||
+             !reader.read_float(&record.rotation.x) ||
+             !reader.read_float(&record.rotation.y) ||
+             !reader.read_float(&record.rotation.z) ||
+             !reader.read_float(&record.rotation.w))) {
+            return false;
+        }
+        if ((record.changed_fields & kPropStateChangeVelocity) != 0u &&
+            (!reader.read_float(&record.velocity.x) ||
+             !reader.read_float(&record.velocity.y) ||
+             !reader.read_float(&record.velocity.z))) {
+            return false;
+        }
+        packet.records.push_back(record);
+    }
+    if (!reader.done()) return false;
+    *out_packet = std::move(packet);
     return true;
 }
 

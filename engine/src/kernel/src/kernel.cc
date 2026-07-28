@@ -1,6 +1,7 @@
 #include "kernel/src/kernel.h"
 
 #include <algorithm>
+#include <bit>
 #include <chrono>
 #include <cctype>
 #include <cstddef>
@@ -52,6 +53,84 @@ constexpr float kPredictionCorrectionHalfLifeSeconds = 0.05f;
 constexpr float kPredictionCorrectionEpsilonMeters = 0.001f;
 constexpr float kPredictionCorrectionSnapDistanceMeters = 2.0f;
 constexpr float kPredictionPresentationMinSpeedMetersPerSecond = 0.001f;
+constexpr std::size_t kInventoryDeltaRecordsPerPacket = 64u;
+constexpr std::size_t kInventorySnapshotEntriesPerPage = 128u;
+
+std::uint32_t portable_state_word(
+    const KernelPortableStateFieldDefinition& field) {
+    if (field.type == KernelPortableStateType_Float) {
+        return std::bit_cast<std::uint32_t>(field.float_default);
+    }
+    if (field.type == KernelPortableStateType_Bool) {
+        return field.bool_default != 0u ? 1u : 0u;
+    }
+    return field.uint32_default;
+}
+
+InventoryWireItem inventory_wire_item(const KernelItemInstanceView& view) {
+    InventoryWireItem item;
+    item.item_instance_id = view.item_instance_id;
+    item.item_template_id = view.item_template_id;
+    item.quantity = view.quantity;
+    item.next_use_tick = view.next_use_tick;
+    item.portable_values.reserve(view.portable_state_field_count);
+    for (std::uint32_t index = 0;
+         index < view.portable_state_field_count;
+         ++index) {
+        item.portable_values.push_back(
+            portable_state_word(view.portable_state_fields[index]));
+    }
+    return item;
+}
+
+bool inventory_view_from_wire(
+    const ItemStore& store,
+    const InventoryWireItem& wire,
+    KernelInventoryContainerId container_id,
+    std::uint16_t slot,
+    KernelItemInstanceView* out_view) {
+    if (out_view == nullptr || wire.item_instance_id == 0u ||
+        wire.item_template_id == 0u || wire.quantity == 0u) {
+        return false;
+    }
+    const KernelItemTemplateDefinition* item_template =
+        store.find_template(wire.item_template_id);
+    if (item_template == nullptr || wire.portable_values.size() !=
+            item_template->portable_state_field_count) {
+        return false;
+    }
+    KernelItemInstanceView view{};
+    view.struct_size = sizeof(view);
+    view.item_instance_id = wire.item_instance_id;
+    view.item_template_id = wire.item_template_id;
+    view.quantity = wire.quantity;
+    view.residency = KernelItemResidency_Inventory;
+    view.world_mode = KernelWorldItemMode_Placed;
+    view.slot = slot;
+    view.inventory_container_id = container_id;
+    view.next_use_tick = wire.next_use_tick;
+    view.portable_state_field_count =
+        item_template->portable_state_field_count;
+    for (std::uint32_t index = 0;
+         index < item_template->portable_state_field_count;
+         ++index) {
+        view.portable_state_fields[index] =
+            item_template->portable_state_fields[index];
+        const std::uint32_t word = wire.portable_values[index];
+        if (view.portable_state_fields[index].type ==
+            KernelPortableStateType_Float) {
+            view.portable_state_fields[index].float_default =
+                std::bit_cast<float>(word);
+        } else if (view.portable_state_fields[index].type ==
+                   KernelPortableStateType_Bool) {
+            view.portable_state_fields[index].bool_default = word != 0u;
+        } else {
+            view.portable_state_fields[index].uint32_default = word;
+        }
+    }
+    *out_view = view;
+    return true;
+}
 
 KernelConfig with_kernel_defaults(KernelConfig config) {
     config.tick = with_tick_defaults(config.tick);
@@ -3428,7 +3507,7 @@ bool KernelEngine::server_create_inventory_container(
     std::uint32_t owner_entity_id,
     std::uint32_t slot_capacity,
     KernelInventoryContainerId* out_container_id) {
-    if (out_container_id == nullptr ||
+    if (!is_server_mode(config_.mode) || out_container_id == nullptr ||
         !world_.find_entity(owner_entity_id).has_value()) {
         return false;
     }
@@ -3445,7 +3524,9 @@ bool KernelEngine::server_create_inventory_item(
     std::uint32_t quantity,
     KernelInventoryContainerId container_id,
     KernelItemInstanceId* out_item_instance_id) {
-    if (out_item_instance_id == nullptr) return false;
+    if (!is_server_mode(config_.mode) || out_item_instance_id == nullptr) {
+        return false;
+    }
     const auto created = item_store_.create_inventory_item(
         item_template_id,
         quantity,
@@ -3461,7 +3542,8 @@ bool KernelEngine::server_create_world_item(
     const KernelVec3& position,
     KernelItemInstanceId* out_item_instance_id,
     std::uint32_t* out_prop_entity_id) {
-    if (out_item_instance_id == nullptr || out_prop_entity_id == nullptr) {
+    if (!is_server_mode(config_.mode) || out_item_instance_id == nullptr ||
+        out_prop_entity_id == nullptr) {
         return false;
     }
     const KernelItemTemplateDefinition* definition =
@@ -3499,6 +3581,7 @@ bool KernelEngine::server_create_world_item(
 
 bool KernelEngine::server_submit_gameplay_request(
     const KernelGameplayRequest& request) {
+    if (!is_server_mode(config_.mode)) return false;
     return ItemGameplaySystem{}.submit_request(*this, request);
 }
 
@@ -3555,7 +3638,52 @@ bool KernelEngine::get_inventory_container(
         return false;
     }
     *out_view = item_store_.container_view(id);
+    if (config_.mode == KernelMode_Client) {
+        const auto sync = client_inventory_sync_states_.find(id);
+        out_view->sync_state = sync == client_inventory_sync_states_.end()
+            ? KernelInventorySyncState_NotAvailable
+            : static_cast<std::uint8_t>(sync->second);
+    }
     return true;
+}
+
+std::uint32_t KernelEngine::copy_owned_inventory_containers(
+    std::uint32_t owner_entity_id,
+    KernelInventoryContainerView* out_containers,
+    std::uint32_t max_containers) const {
+    if (owner_entity_id == 0u) {
+        return 0u;
+    }
+    std::vector<KernelInventoryContainerId> ids =
+        item_store_.containers_for_owner(owner_entity_id);
+    if (config_.mode == KernelMode_Client) {
+        for (const auto& [id, assembly] : client_inventory_snapshot_assemblies_) {
+            if (assembly.container.owner_entity_id == owner_entity_id &&
+                std::find(ids.begin(), ids.end(), id) == ids.end()) {
+                ids.push_back(id);
+            }
+        }
+        std::sort(ids.begin(), ids.end());
+    }
+    if (out_containers == nullptr || max_containers == 0u) {
+        return static_cast<std::uint32_t>(ids.size());
+    }
+    const std::uint32_t count = std::min<std::uint32_t>(
+        max_containers, static_cast<std::uint32_t>(ids.size()));
+    for (std::uint32_t index = 0; index < count; ++index) {
+        const auto assembly = client_inventory_snapshot_assemblies_.find(ids[index]);
+        out_containers[index] = item_store_.find_container(ids[index]) != nullptr
+            ? item_store_.container_view(ids[index])
+            : assembly->second.container;
+        if (config_.mode == KernelMode_Client) {
+            const auto sync = client_inventory_sync_states_.find(ids[index]);
+            out_containers[index].sync_state =
+                sync == client_inventory_sync_states_.end()
+                ? KernelInventorySyncState_NotAvailable
+                : static_cast<std::uint8_t>(sync->second);
+        }
+    }
+    return count;
 }
 
 std::uint32_t KernelEngine::copy_inventory_slots(
@@ -3563,8 +3691,14 @@ std::uint32_t KernelEngine::copy_inventory_slots(
     KernelItemInstanceView* out_items,
     std::uint32_t max_items) const {
     const InventoryContainerRecord* container = item_store_.find_container(id);
-    if (container == nullptr || out_items == nullptr || max_items == 0) {
+    if (container == nullptr) {
         return 0;
+    }
+    if (out_items == nullptr || max_items == 0u) {
+        return static_cast<std::uint32_t>(std::count_if(
+            container->slots.begin(),
+            container->slots.end(),
+            [](KernelItemInstanceId item) { return item != 0u; }));
     }
     std::uint32_t copied = 0;
     for (const KernelItemInstanceId item : container->slots) {
@@ -3585,6 +3719,23 @@ std::uint32_t KernelEngine::poll_gameplay_request_outcomes(
         pending_gameplay_request_outcomes_.pop_front();
     }
     return copied;
+}
+
+bool KernelEngine::get_gameplay_request_outcome(
+    std::uint32_t requester_peer,
+    std::uint64_t request_id,
+    KernelGameplayRequestOutcome* out_outcome) const {
+    if (request_id == 0u || out_outcome == nullptr) return false;
+    const auto outcome = std::find_if(
+        processed_gameplay_requests_.begin(),
+        processed_gameplay_requests_.end(),
+        [&](const KernelGameplayRequestOutcome& candidate) {
+            return candidate.requester_peer == requester_peer &&
+                candidate.request_id == request_id;
+        });
+    if (outcome == processed_gameplay_requests_.end()) return false;
+    *out_outcome = *outcome;
+    return true;
 }
 
 std::uint32_t KernelEngine::poll_inventory_deltas(
@@ -4060,10 +4211,17 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     tick_loop_ = TickLoop(config_.tick);
     world_ = World{false};
     item_store_ = ItemStore{};
+    client_inventory_snapshot_assemblies_.clear();
+    client_inventory_sync_states_.clear();
+    client_inventory_resync_pending_.clear();
+    pending_prop_state_changes_.clear();
+    claimed_item_instances_.clear();
+    claimed_prop_entities_.clear();
     std::string item_validation_error;
     item_store_.set_templates(item_templates_, &item_validation_error);
     processed_gameplay_requests_.clear();
     pending_gameplay_request_outcomes_.clear();
+    pending_network_gameplay_outcomes_.clear();
     physics_entity_collider_ids_.clear();
     prediction_proxy_collider_ids_.clear();
     history_buffer_ = HistoryBuffer(history_frame_count(config_.tick));
@@ -4228,6 +4386,27 @@ void KernelEngine::poll_transport() {
             is_server_mode(config_.mode)) {
             record_received_packet_sequence(transport_event);
             const PeerSession* session = find_session(transport_event.peer);
+            InventorySnapshotRequestPacket inventory_request;
+            if (session != nullptr && session->welcomed &&
+                decode_inventory_snapshot_request_packet(
+                    transport_event.payload.data(),
+                    transport_event.payload.size(),
+                    &inventory_request)) {
+                const InventoryContainerRecord* container =
+                    item_store_.find_container(
+                        inventory_request.inventory_container_id);
+                if (container == nullptr ||
+                    container->owner_entity_id != session->player) {
+                    push_event(KernelEventType_Error, 0, transport_event.peer, 33);
+                    continue;
+                }
+                ++network_stats_.inventory_resync_request_count;
+                PeerSession* mutable_session = find_session(transport_event.peer);
+                send_inventory_snapshot(
+                    mutable_session,
+                    inventory_request.inventory_container_id);
+                continue;
+            }
             KernelGameplayRequest request{};
             if (session == nullptr || !session->welcomed ||
                 !decode_gameplay_request_packet(
@@ -4248,7 +4427,8 @@ void KernelEngine::poll_transport() {
                 rejected.graph_outcome = KernelGameplayGraphOutcome_NotSubmitted;
                 rejected.rejection_reason =
                     KernelGameplayRequestRejection_NotAuthorized;
-                send_gameplay_request_outcome(transport_event.peer, rejected);
+                pending_network_gameplay_outcomes_.push_back(
+                    {transport_event.peer, rejected});
                 continue;
             }
             const auto outcome = std::find_if(
@@ -4259,7 +4439,8 @@ void KernelEngine::poll_transport() {
                         candidate.request_id == request.request_id;
                 });
             if (outcome != processed_gameplay_requests_.rend()) {
-                send_gameplay_request_outcome(transport_event.peer, *outcome);
+                pending_network_gameplay_outcomes_.push_back(
+                    {transport_event.peer, *outcome});
             }
         } else if (
             transport_event.type == TransportEventType::kMessage &&
@@ -4383,9 +4564,192 @@ void KernelEngine::handle_client_disconnect(PeerId peer) {
     push_event(KernelEventType_Disconnected, 0, peer);
 }
 
+void KernelEngine::handle_client_inventory_snapshot_page(
+    const InventorySnapshotPagePacket& packet) {
+    ClientInventorySnapshotAssembly& assembly =
+        client_inventory_snapshot_assemblies_[packet.inventory_container_id];
+    if (assembly.page_count == 0u ||
+        assembly.container.revision != packet.revision ||
+        assembly.page_count != packet.page_count) {
+        assembly = ClientInventorySnapshotAssembly{};
+        assembly.container.struct_size = sizeof(KernelInventoryContainerView);
+        assembly.container.inventory_container_id =
+            packet.inventory_container_id;
+        assembly.container.owner_entity_id = packet.owner_entity_id;
+        assembly.container.slot_capacity = packet.slot_capacity;
+        assembly.container.revision = packet.revision;
+        assembly.container.sync_state = KernelInventorySyncState_Syncing;
+        assembly.page_count = packet.page_count;
+        assembly.received_pages.assign(packet.page_count, false);
+    }
+    if (packet.page_index >= assembly.received_pages.size() ||
+        assembly.received_pages[packet.page_index]) {
+        return;
+    }
+    for (const InventorySnapshotEntry& entry : packet.entries) {
+        KernelItemInstanceView item{};
+        if (!inventory_view_from_wire(
+                item_store_,
+                entry.item,
+                packet.inventory_container_id,
+                entry.slot,
+                &item)) {
+            client_inventory_sync_states_[packet.inventory_container_id] =
+                KernelInventorySyncState_Desynced;
+            ++network_stats_.inventory_revision_gap_count;
+            request_inventory_snapshot(packet.inventory_container_id, 0u);
+            return;
+        }
+        assembly.items.push_back(item);
+    }
+    assembly.received_pages[packet.page_index] = true;
+    client_inventory_sync_states_[packet.inventory_container_id] =
+        KernelInventorySyncState_Syncing;
+    if (!std::all_of(
+            assembly.received_pages.begin(),
+            assembly.received_pages.end(),
+            [](bool received) { return received; })) {
+        return;
+    }
+    assembly.container.occupied_slot_count =
+        static_cast<std::uint32_t>(assembly.items.size());
+    assembly.container.sync_state = KernelInventorySyncState_Ready;
+    if (!item_store_.apply_replica_snapshot(
+            assembly.container, assembly.items)) {
+        client_inventory_sync_states_[packet.inventory_container_id] =
+            KernelInventorySyncState_Desynced;
+        request_inventory_snapshot(packet.inventory_container_id, 0u);
+        return;
+    }
+    client_inventory_sync_states_[packet.inventory_container_id] =
+        KernelInventorySyncState_Ready;
+    client_inventory_resync_pending_.erase(packet.inventory_container_id);
+    client_inventory_snapshot_assemblies_.erase(packet.inventory_container_id);
+}
+
+void KernelEngine::handle_client_inventory_delta_batch(
+    const InventoryDeltaBatchPacket& packet) {
+    const InventoryContainerRecord* container =
+        item_store_.find_container(packet.inventory_container_id);
+    if (container == nullptr) {
+        client_inventory_sync_states_[packet.inventory_container_id] =
+            KernelInventorySyncState_Desynced;
+        ++network_stats_.inventory_revision_gap_count;
+        request_inventory_snapshot(packet.inventory_container_id, 0u);
+        return;
+    }
+    const std::uint64_t last_revision = packet.first_revision +
+        static_cast<std::uint64_t>(packet.records.size()) - 1u;
+    if (last_revision <= container->revision) return;
+    if (packet.first_revision != container->revision + 1u) {
+        client_inventory_sync_states_[packet.inventory_container_id] =
+            KernelInventorySyncState_Desynced;
+        ++network_stats_.inventory_revision_gap_count;
+        request_inventory_snapshot(
+            packet.inventory_container_id, container->revision);
+        return;
+    }
+    std::vector<KernelInventoryDelta> deltas;
+    deltas.reserve(packet.records.size());
+    for (std::size_t index = 0; index < packet.records.size(); ++index) {
+        const InventoryDeltaRecord& record = packet.records[index];
+        KernelInventoryDelta delta{};
+        delta.struct_size = sizeof(delta);
+        delta.inventory_container_id = packet.inventory_container_id;
+        delta.revision = packet.first_revision + index;
+        delta.type = static_cast<std::uint8_t>(record.type);
+        delta.slot = record.slot;
+        delta.previous_slot = record.previous_slot;
+        delta.changed_fields = record.changed_fields;
+        if (record.type == KernelInventoryDeltaType_Add) {
+            if (!inventory_view_from_wire(
+                    item_store_,
+                    record.item,
+                    packet.inventory_container_id,
+                    record.slot,
+                    &delta.item)) {
+                request_inventory_snapshot(
+                    packet.inventory_container_id, container->revision);
+                return;
+            }
+        } else {
+            delta.item = item_store_.item_view(record.item.item_instance_id);
+            if (delta.item.item_instance_id == 0u) {
+                request_inventory_snapshot(
+                    packet.inventory_container_id, container->revision);
+                return;
+            }
+            if (record.type == KernelInventoryDeltaType_Update) {
+                InventoryWireItem merged = inventory_wire_item(delta.item);
+                if ((record.changed_fields & kInventoryChangeQuantity) != 0u) {
+                    merged.quantity = record.item.quantity;
+                }
+                if ((record.changed_fields & kInventoryChangeCooldown) != 0u) {
+                    merged.next_use_tick = record.item.next_use_tick;
+                }
+                if ((record.changed_fields &
+                     kInventoryChangePortableState) != 0u) {
+                    merged.portable_values = record.item.portable_values;
+                }
+                if (!inventory_view_from_wire(
+                        item_store_,
+                        merged,
+                        packet.inventory_container_id,
+                        record.slot,
+                        &delta.item)) {
+                    request_inventory_snapshot(
+                        packet.inventory_container_id, container->revision);
+                    return;
+                }
+            }
+        }
+        deltas.push_back(delta);
+    }
+    if (!item_store_.apply_replica_deltas(
+            packet.inventory_container_id, deltas)) {
+        client_inventory_sync_states_[packet.inventory_container_id] =
+            KernelInventorySyncState_Desynced;
+        request_inventory_snapshot(
+            packet.inventory_container_id, container->revision);
+        return;
+    }
+    client_inventory_sync_states_[packet.inventory_container_id] =
+        KernelInventorySyncState_Ready;
+}
+
 void KernelEngine::handle_client_reliable_event(const TransportEvent& transport_event) {
-    KernelGameplayRequestOutcome gameplay_outcome{};
+    PropStateChangeBatchPacket prop_state_batch;
     auto decode_start = std::chrono::steady_clock::now();
+    if (decode_prop_state_change_batch_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &prop_state_batch)) {
+        record_packet_deserialization_cost(elapsed_cost_us(decode_start));
+        handle_client_prop_state_change_batch(prop_state_batch);
+        return;
+    }
+    InventorySnapshotPagePacket inventory_snapshot;
+    decode_start = std::chrono::steady_clock::now();
+    if (decode_inventory_snapshot_page_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &inventory_snapshot)) {
+        record_packet_deserialization_cost(elapsed_cost_us(decode_start));
+        handle_client_inventory_snapshot_page(inventory_snapshot);
+        return;
+    }
+    InventoryDeltaBatchPacket inventory_delta;
+    decode_start = std::chrono::steady_clock::now();
+    if (decode_inventory_delta_batch_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &inventory_delta)) {
+        record_packet_deserialization_cost(elapsed_cost_us(decode_start));
+        handle_client_inventory_delta_batch(inventory_delta);
+        return;
+    }
+    KernelGameplayRequestOutcome gameplay_outcome{};
+    decode_start = std::chrono::steady_clock::now();
     if (decode_gameplay_request_outcome_packet(
             transport_event.payload.data(),
             transport_event.payload.size(),
@@ -4801,23 +5165,18 @@ void KernelEngine::handle_client_projectile_spawn_batch(
                     return entity.net_id == record.projectile_net_id;
                 });
             if (replicated == client_replicated_entities_.end()) {
-                client_replicated_entities_.push_back(ClientReplicatedEntity{
-                    record.projectile_net_id,
-                    EntityType::kProjectile,
-                    ActorType::kUnknown,
-                    record.owner_peer,
-                    0,
-                    projectile_template->projectile_template_id,
-                    projectile_template->mechanics.collider_template_id,
-                    record.spawn_position,
-                    glm::quat{1.0f, 0.0f, 0.0f, 0.0f},
-                    record.initial_velocity,
-                    packet.server_tick,
-                    0,
-                    0,
-                    false,
-                    false,
-                });
+                ClientReplicatedEntity entity{};
+                entity.net_id = record.projectile_net_id;
+                entity.type = EntityType::kProjectile;
+                entity.owner_peer = record.owner_peer;
+                entity.projectile_template_id =
+                    projectile_template->projectile_template_id;
+                entity.collider_template_id =
+                    projectile_template->mechanics.collider_template_id;
+                entity.position = record.spawn_position;
+                entity.velocity = record.initial_velocity;
+                entity.snapshot_tick = packet.server_tick;
+                client_replicated_entities_.push_back(entity);
             } else {
                 replicated->type = EntityType::kProjectile;
                 replicated->actor_type = ActorType::kUnknown;
@@ -5064,28 +5423,33 @@ void KernelEngine::handle_client_spawn(const EntitySpawnPacket& packet) {
             return entity.net_id == packet.net_id;
         });
     if (found == client_replicated_entities_.end()) {
-        client_replicated_entities_.push_back(ClientReplicatedEntity{
-            packet.net_id,
-            packet.entity_type,
-            packet.actor_type,
-            packet.owner_peer,
-            packet.actor_template_id,
-            0,
-            0,
-            packet.position,
-            packet.rotation,
-            glm::vec3{0.0f, 0.0f, 0.0f},
-            packet.server_tick,
-            0,
-            0,
-            false,
-            false,
-        });
+        ClientReplicatedEntity entity{};
+        entity.net_id = packet.net_id;
+        entity.type = packet.entity_type;
+        entity.actor_type = packet.actor_type;
+        entity.owner_peer = packet.owner_peer;
+        entity.actor_template_id = packet.actor_template_id;
+        entity.entity_template_id = packet.entity_template_id;
+        entity.collider_template_id = packet.collider_template_id;
+        entity.item_template_id = packet.item_template_id;
+        entity.item_instance_id = packet.item_instance_id;
+        entity.world_item_mode = packet.world_item_mode;
+        entity.carrier_entity_id = packet.carrier_entity_id;
+        entity.position = packet.position;
+        entity.rotation = packet.rotation;
+        entity.snapshot_tick = packet.server_tick;
+        client_replicated_entities_.push_back(entity);
     } else {
         found->type = packet.entity_type;
         found->actor_type = packet.actor_type;
         found->owner_peer = packet.owner_peer;
         found->actor_template_id = packet.actor_template_id;
+        found->entity_template_id = packet.entity_template_id;
+        found->collider_template_id = packet.collider_template_id;
+        found->item_template_id = packet.item_template_id;
+        found->item_instance_id = packet.item_instance_id;
+        found->world_item_mode = packet.world_item_mode;
+        found->carrier_entity_id = packet.carrier_entity_id;
         found->position = packet.position;
         found->rotation = packet.rotation;
         found->active = false;
@@ -5119,23 +5483,12 @@ void KernelEngine::handle_client_template_update(
             return entity.net_id == packet.net_id;
         });
     if (found == client_replicated_entities_.end()) {
-        client_replicated_entities_.push_back(ClientReplicatedEntity{
-            packet.net_id,
-            EntityType::kActor,
-            ActorType::kUnknown,
-            0,
-            packet.actor_template_id,
-            0,
-            0,
-            glm::vec3{0.0f, 0.0f, 0.0f},
-            glm::quat{1.0f, 0.0f, 0.0f, 0.0f},
-            glm::vec3{0.0f, 0.0f, 0.0f},
-            packet.server_tick,
-            0,
-            0,
-            false,
-            false,
-        });
+        ClientReplicatedEntity entity{};
+        entity.net_id = packet.net_id;
+        entity.type = EntityType::kActor;
+        entity.actor_template_id = packet.actor_template_id;
+        entity.snapshot_tick = packet.server_tick;
+        client_replicated_entities_.push_back(entity);
     } else {
         found->actor_template_id = packet.actor_template_id;
     }
@@ -7203,12 +7556,16 @@ void KernelEngine::simulate_tick() {
     }
     pending_server_remote_presentations_.clear();
     broadcast_combat_events(first_tick_event, last_tick_event);
-    send_due_clock_sync_pings(server_time_us);
     history_buffer_.write_frame(world_, tick_loop_.current_tick());
     if (released_first_physics_actor ||
-        tick_loop_.should_write_snapshot()) {
+        tick_loop_.should_write_snapshot() ||
+        !pending_network_gameplay_outcomes_.empty()) {
         publish_snapshot();
     }
+    flush_inventory_replication();
+    flush_prop_state_changes();
+    flush_network_gameplay_request_outcomes();
+    send_due_clock_sync_pings(server_time_us);
     pending_inputs_.clear();
     record_simulation_tick_cost(
         elapsed_cost_us(tick_cost_start),
@@ -7601,6 +7958,12 @@ void KernelEngine::sync_session_relevance(
 void KernelEngine::send_entity_spawn(PeerId peer, const EntitySnapshot& entity) {
     PeerId owner_peer = 0;
     std::uint32_t actor_template_id = 0;
+    std::uint32_t entity_template_id = 0;
+    std::uint32_t collider_template_id = 0;
+    std::uint32_t item_template_id = 0;
+    KernelItemInstanceId item_instance_id = 0;
+    std::uint8_t world_item_mode = KernelWorldItemMode_Placed;
+    NetId carrier_entity_id = 0;
     glm::vec3 spawn_position = entity.position;
     const std::optional<entt::entity> world_entity = world_.find_entity(entity.net_id);
     if (world_entity.has_value() &&
@@ -7611,6 +7974,35 @@ void KernelEngine::send_entity_spawn(PeerId peer, const EntitySnapshot& entity) 
         world_.registry().all_of<ActorTemplateRef>(*world_entity)) {
         actor_template_id =
             world_.registry().get<ActorTemplateRef>(*world_entity).actor_template_id;
+    }
+    if (world_entity.has_value() &&
+        world_.registry().all_of<EntityTemplateRef>(*world_entity)) {
+        entity_template_id =
+            world_.registry().get<EntityTemplateRef>(*world_entity).entity_template_id;
+        const KernelEntityTemplateDefinition* entity_template =
+            find_entity_template(entity_templates_, entity_template_id);
+        collider_template_id =
+            entity_template == nullptr ? 0u : entity_template->collider_template_id;
+    }
+    if (world_entity.has_value() &&
+        world_.registry().all_of<ItemTemplateRef>(*world_entity)) {
+        item_template_id =
+            world_.registry().get<ItemTemplateRef>(*world_entity).item_template_id;
+    }
+    if (world_entity.has_value() &&
+        world_.registry().all_of<ItemInstanceRef>(*world_entity)) {
+        item_instance_id =
+            world_.registry().get<ItemInstanceRef>(*world_entity).item_instance_id;
+    }
+    if (world_entity.has_value() &&
+        world_.registry().all_of<PropWorldMode>(*world_entity)) {
+        world_item_mode = static_cast<std::uint8_t>(
+            world_.registry().get<PropWorldMode>(*world_entity).mode);
+    }
+    if (world_entity.has_value() &&
+        world_.registry().all_of<CarriedBy>(*world_entity)) {
+        carrier_entity_id =
+            world_.registry().get<CarriedBy>(*world_entity).carrier_entity_id;
     }
     if (world_entity.has_value() &&
         world_.registry().all_of<ProjectileState>(*world_entity)) {
@@ -7627,6 +8019,12 @@ void KernelEngine::send_entity_spawn(PeerId peer, const EntitySnapshot& entity) 
             actor_template_id,
             spawn_position,
             entity.rotation,
+            entity_template_id,
+            collider_template_id,
+            item_template_id,
+            item_instance_id,
+            world_item_mode,
+            carrier_entity_id,
         },
         next_packet_sequence_++);
     if (!transport_->Send(
@@ -7645,6 +8043,142 @@ void KernelEngine::send_entity_spawn(PeerId peer, const EntitySnapshot& entity) 
     if (entity.type == EntityType::kProjectile) {
         send_projectile_spawn_batch(peer, entity);
     }
+}
+
+void KernelEngine::queue_prop_state_change(NetId net_id) {
+    if (net_id != 0u) pending_prop_state_changes_.push_back(net_id);
+}
+
+bool KernelEngine::claim_scope_transfer(
+    KernelItemInstanceId item_instance_id,
+    NetId prop_entity_id) {
+    if ((item_instance_id != 0u &&
+         claimed_item_instances_.contains(item_instance_id)) ||
+        (prop_entity_id != 0u && claimed_prop_entities_.contains(prop_entity_id))) {
+        return false;
+    }
+    if (item_instance_id != 0u) claimed_item_instances_.insert(item_instance_id);
+    if (prop_entity_id != 0u) claimed_prop_entities_.insert(prop_entity_id);
+    return true;
+}
+
+std::pair<std::size_t, std::size_t>
+KernelEngine::scope_transfer_publication_checkpoint() const {
+    return {events_.size(), pending_prop_state_changes_.size()};
+}
+
+void KernelEngine::finish_scope_transfer(
+    KernelItemInstanceId item_instance_id,
+    NetId prop_entity_id,
+    bool committed,
+    std::pair<std::size_t, std::size_t> publication_checkpoint) {
+    claimed_item_instances_.erase(item_instance_id);
+    claimed_prop_entities_.erase(prop_entity_id);
+    if (committed) return;
+    if (publication_checkpoint.first <= events_.size()) {
+        events_.resize(publication_checkpoint.first);
+    }
+    if (publication_checkpoint.second <= pending_prop_state_changes_.size()) {
+        pending_prop_state_changes_.resize(publication_checkpoint.second);
+    }
+}
+
+void KernelEngine::flush_prop_state_changes() {
+    if (pending_prop_state_changes_.empty()) return;
+    std::sort(
+        pending_prop_state_changes_.begin(), pending_prop_state_changes_.end());
+    pending_prop_state_changes_.erase(
+        std::unique(
+            pending_prop_state_changes_.begin(),
+            pending_prop_state_changes_.end()),
+        pending_prop_state_changes_.end());
+
+    PropStateChangeBatchPacket batch{};
+    batch.server_tick = tick_loop_.current_tick();
+    for (const NetId net_id : pending_prop_state_changes_) {
+        const std::optional<entt::entity> entity = world_.find_entity(net_id);
+        if (!entity.has_value() ||
+            !world_.registry().all_of<Transform, PropWorldMode>(*entity)) {
+            continue;
+        }
+        const Transform& transform = world_.registry().get<Transform>(*entity);
+        PropStateChangeRecord record{};
+        record.net_id = net_id;
+        record.changed_fields = kPropStateChangeMode | kPropStateChangeTransform |
+            kPropStateChangeVelocity;
+        record.world_mode = static_cast<KernelWorldItemMode>(
+            world_.registry().get<PropWorldMode>(*entity).mode);
+        record.carrier_entity_id = world_.registry().all_of<CarriedBy>(*entity)
+            ? world_.registry().get<CarriedBy>(*entity).carrier_entity_id
+            : 0u;
+        record.position = transform.position;
+        record.rotation = transform.rotation;
+        record.velocity = world_.registry().all_of<Velocity>(*entity)
+            ? world_.registry().get<Velocity>(*entity).linear
+            : glm::vec3{0.0f};
+        batch.records.push_back(record);
+    }
+    pending_prop_state_changes_.clear();
+    if (batch.records.empty()) return;
+
+    const auto send = [&](PeerSession* session) {
+        PropStateChangeBatchPacket relevant{};
+        relevant.server_tick = batch.server_tick;
+        for (const PropStateChangeRecord& record : batch.records) {
+            if (session->relevant_entities.contains(record.net_id)) {
+                relevant.records.push_back(record);
+            }
+        }
+        if (relevant.records.empty()) return;
+        const std::vector<std::uint8_t> packet =
+            encode_prop_state_change_batch_packet(relevant, next_packet_sequence_++);
+        if (packet.empty() || !transport_->Send(
+                session->peer,
+                packet.data(),
+                static_cast<std::uint32_t>(packet.size()),
+                SendMode::kReliable,
+                ChannelId::kReliableEvent)) {
+            push_event(KernelEventType_Error, 0u, session->peer, 29u);
+            return;
+        }
+        record_sent_packet(
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kReliableEvent);
+        network_stats_.prop_state_bytes_sent += packet.size();
+    };
+    if (config_.mode == KernelMode_ListenServer && local_listen_session_.welcomed) {
+        send(&local_listen_session_);
+    }
+    for (PeerSession& session : peer_sessions_) {
+        if (session.welcomed) send(&session);
+    }
+}
+
+void KernelEngine::handle_client_prop_state_change_batch(
+    const PropStateChangeBatchPacket& packet) {
+    for (const PropStateChangeRecord& record : packet.records) {
+        auto entity = std::find_if(
+            client_replicated_entities_.begin(),
+            client_replicated_entities_.end(),
+            [&record](const ClientReplicatedEntity& candidate) {
+                return candidate.net_id == record.net_id;
+            });
+        if (entity == client_replicated_entities_.end()) continue;
+        if ((record.changed_fields & kPropStateChangeMode) != 0u) {
+            entity->world_item_mode = static_cast<std::uint8_t>(record.world_mode);
+            entity->carrier_entity_id = record.carrier_entity_id;
+        }
+        if ((record.changed_fields & kPropStateChangeTransform) != 0u) {
+            entity->position = record.position;
+            entity->rotation = record.rotation;
+        }
+        if ((record.changed_fields & kPropStateChangeVelocity) != 0u) {
+            entity->velocity = record.velocity;
+        }
+        entity->snapshot_tick = packet.server_tick;
+    }
+    if (has_client_snapshot_) rebuild_render_states();
 }
 
 void KernelEngine::send_projectile_spawn_batch(
@@ -7874,6 +8408,10 @@ void KernelEngine::rebuild_render_states_from_snapshot(
         }
 
         EntitySnapshot render_entity = entity;
+        render_entity.item_template_id = replicated->item_template_id;
+        render_entity.item_instance_id = replicated->item_instance_id;
+        render_entity.world_item_mode = replicated->world_item_mode;
+        render_entity.carrier_entity_id = replicated->carrier_entity_id;
         if ((render_entity.state_flags & kSnapshotStateFlagHpUnknown) != 0u) {
             if (replicated->hp_known) {
                 render_entity.hp = replicated->hp;
@@ -7893,6 +8431,8 @@ void KernelEngine::rebuild_render_states_from_snapshot(
         } else if (
             state.entity_type == static_cast<std::uint16_t>(EntityType::kProjectile)) {
             state.projectile_template_id = replicated->projectile_template_id;
+            state.collider_template_id = replicated->collider_template_id;
+        } else {
             state.collider_template_id = replicated->collider_template_id;
         }
         rendered_entities.insert(entity.net_id);
@@ -7946,6 +8486,12 @@ void KernelEngine::rebuild_render_states_from_snapshot(
             entity.actor_template_id,
             KernelActionRuntimeView{sizeof(KernelActionRuntimeView)},
             KernelVec3{1.0f, 0.0f, 0.0f},
+            entity.item_template_id,
+            entity.item_instance_id,
+            entity.world_item_mode,
+            0,
+            0,
+            entity.carrier_entity_id,
         });
     }
 }
@@ -8221,6 +8767,185 @@ void KernelEngine::send_gameplay_request_outcome(
         static_cast<std::uint32_t>(packet.size()),
         SendMode::kReliable,
         ChannelId::kReliableEvent);
+}
+
+void KernelEngine::flush_network_gameplay_request_outcomes() {
+    for (const auto& [peer, outcome] : pending_network_gameplay_outcomes_) {
+        send_gameplay_request_outcome(peer, outcome);
+    }
+    pending_network_gameplay_outcomes_.clear();
+}
+
+bool KernelEngine::send_inventory_snapshot(
+    PeerSession* session,
+    KernelInventoryContainerId container_id) {
+    if (session == nullptr || !session->welcomed) return false;
+    const InventoryContainerRecord* container =
+        item_store_.find_container(container_id);
+    if (container == nullptr || container->owner_entity_id != session->player) {
+        return false;
+    }
+    std::vector<InventorySnapshotEntry> entries;
+    entries.reserve(container->slots.size());
+    for (std::uint16_t slot = 0; slot < container->slots.size(); ++slot) {
+        const KernelItemInstanceId id = container->slots[slot];
+        if (id == 0u) continue;
+        entries.push_back(InventorySnapshotEntry{
+            slot,
+            inventory_wire_item(item_store_.item_view(id)),
+        });
+    }
+    const std::size_t page_count_size = std::max<std::size_t>(
+        1u,
+        (entries.size() + kInventorySnapshotEntriesPerPage - 1u) /
+            kInventorySnapshotEntriesPerPage);
+    if (page_count_size > UINT16_MAX) return false;
+    ITransport* target_transport =
+        session->peer == kLocalListenPeerId && listen_server_transport_ != nullptr
+        ? static_cast<ITransport*>(listen_server_transport_)
+        : transport_.get();
+    if (target_transport == nullptr) return false;
+    for (std::size_t page_index = 0; page_index < page_count_size; ++page_index) {
+        const std::size_t begin = page_index * kInventorySnapshotEntriesPerPage;
+        const std::size_t end = std::min(
+            entries.size(), begin + kInventorySnapshotEntriesPerPage);
+        InventorySnapshotPagePacket page;
+        page.inventory_container_id = container_id;
+        page.owner_entity_id = container->owner_entity_id;
+        page.revision = container->revision;
+        page.slot_capacity = container->slot_capacity;
+        page.page_index = static_cast<std::uint16_t>(page_index);
+        page.page_count = static_cast<std::uint16_t>(page_count_size);
+        if (begin < end) {
+            page.entries.assign(entries.begin() + begin, entries.begin() + end);
+        }
+        const std::vector<std::uint8_t> packet =
+            encode_inventory_snapshot_page_packet(
+                page, next_packet_sequence_++);
+        if (packet.empty() || !target_transport->Send(
+                session->peer,
+                packet.data(),
+                static_cast<std::uint32_t>(packet.size()),
+                SendMode::kReliable,
+                ChannelId::kReliableEvent)) {
+            return false;
+        }
+        network_stats_.inventory_snapshot_bytes_sent += packet.size();
+        record_sent_packet(
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kReliableEvent);
+    }
+    session->inventory_revisions[container_id] = container->revision;
+    return true;
+}
+
+bool KernelEngine::send_inventory_delta_batch(
+    PeerSession* session,
+    KernelInventoryContainerId container_id,
+    std::span<const KernelInventoryDelta> deltas) {
+    if (session == nullptr || !session->welcomed || deltas.empty()) return false;
+    const InventoryContainerRecord* container =
+        item_store_.find_container(container_id);
+    if (container == nullptr || container->owner_entity_id != session->player) {
+        return false;
+    }
+    InventoryDeltaBatchPacket batch;
+    batch.inventory_container_id = container_id;
+    batch.first_revision = deltas.front().revision;
+    batch.records.reserve(deltas.size());
+    for (const KernelInventoryDelta& delta : deltas) {
+        InventoryDeltaRecord record;
+        record.type = static_cast<KernelInventoryDeltaType>(delta.type);
+        record.slot = delta.slot;
+        record.previous_slot = delta.previous_slot;
+        record.changed_fields = delta.changed_fields;
+        record.item = inventory_wire_item(delta.item);
+        batch.records.push_back(std::move(record));
+    }
+    const std::vector<std::uint8_t> packet =
+        encode_inventory_delta_batch_packet(batch, next_packet_sequence_++);
+    ITransport* target_transport =
+        session->peer == kLocalListenPeerId && listen_server_transport_ != nullptr
+        ? static_cast<ITransport*>(listen_server_transport_)
+        : transport_.get();
+    if (packet.empty() || target_transport == nullptr ||
+        !target_transport->Send(
+            session->peer,
+            packet.data(),
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kReliableEvent)) {
+        return false;
+    }
+    session->inventory_revisions[container_id] = deltas.back().revision;
+    network_stats_.inventory_delta_bytes_sent += packet.size();
+    record_sent_packet(
+        static_cast<std::uint32_t>(packet.size()),
+        SendMode::kReliable,
+        ChannelId::kReliableEvent);
+    return true;
+}
+
+void KernelEngine::flush_inventory_replication() {
+    const auto flush_session = [&](PeerSession* session) {
+        if (session == nullptr || !session->welcomed || session->player == 0u) {
+            return;
+        }
+        for (const KernelInventoryContainerId container_id :
+             item_store_.containers_for_owner(session->player)) {
+            const InventoryContainerRecord* container =
+                item_store_.find_container(container_id);
+            if (container == nullptr) continue;
+            const auto cursor = session->inventory_revisions.find(container_id);
+            if (cursor == session->inventory_revisions.end()) {
+                send_inventory_snapshot(session, container_id);
+                continue;
+            }
+            if (cursor->second >= container->revision) continue;
+            const std::vector<KernelInventoryDelta> deltas =
+                item_store_.inventory_deltas_since(
+                    container_id,
+                    cursor->second,
+                    kInventoryDeltaRecordsPerPacket);
+            if (deltas.empty() || deltas.front().revision != cursor->second + 1u) {
+                send_inventory_snapshot(session, container_id);
+                continue;
+            }
+            send_inventory_delta_batch(session, container_id, deltas);
+        }
+    };
+    if (config_.mode == KernelMode_ListenServer) {
+        flush_session(&local_listen_session_);
+    }
+    for (PeerSession& session : peer_sessions_) flush_session(&session);
+}
+
+void KernelEngine::request_inventory_snapshot(
+    KernelInventoryContainerId container_id,
+    std::uint64_t client_revision) {
+    if (config_.mode != KernelMode_Client || transport_ == nullptr ||
+        container_id == 0u ||
+        !client_inventory_resync_pending_.insert(container_id).second) {
+        return;
+    }
+    const std::vector<std::uint8_t> packet =
+        encode_inventory_snapshot_request_packet(
+            InventorySnapshotRequestPacket{container_id, client_revision},
+            next_packet_sequence_++);
+    if (!packet.empty() && transport_->Send(
+            kServerPeerId,
+            packet.data(),
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kReliableEvent)) {
+        record_sent_packet(
+            static_cast<std::uint32_t>(packet.size()),
+            SendMode::kReliable,
+            ChannelId::kReliableEvent);
+    } else {
+        client_inventory_resync_pending_.erase(container_id);
+    }
 }
 
 void KernelEngine::broadcast_reliable_event(const KernelEvent& event) {

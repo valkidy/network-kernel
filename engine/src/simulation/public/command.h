@@ -22,6 +22,10 @@ enum class CommandId : std::uint8_t {
     kSetEntityActorTemplate,
     kSetEntityHealth,
     kActivateEntity,
+    kCreateInventoryContainer,
+    kCreateInventoryItem,
+    kCreateWorldItem,
+    kSubmitGameplayRequest,
 };
 
 enum class CommandSource : std::uint8_t {
@@ -72,6 +76,27 @@ struct ActivateEntity {
     KernelServerEntityActivateInfo activate_info{};
 };
 
+struct CreateInventoryContainer {
+    std::uint32_t owner_entity_id = 0;
+    std::uint32_t slot_capacity = 0;
+};
+
+struct CreateInventoryItem {
+    std::uint32_t item_template_id = 0;
+    std::uint32_t quantity = 0;
+    KernelInventoryContainerId container_id = 0;
+};
+
+struct CreateWorldItem {
+    std::uint32_t item_template_id = 0;
+    std::uint32_t quantity = 0;
+    KernelVec3 position{};
+};
+
+struct SubmitGameplayRequest {
+    KernelGameplayRequest request{};
+};
+
 struct Command {
     CommandId id = CommandId::kUnknown;
     CommandSource source = CommandSource::kInternal;
@@ -84,11 +109,17 @@ struct Command {
     SetEntityState set_entity_state{};
     SetEntityActorTemplate set_entity_actor_template{};
     ActivateEntity activate_entity{};
+    CreateInventoryContainer create_inventory_container{};
+    CreateInventoryItem create_inventory_item{};
+    CreateWorldItem create_world_item{};
+    SubmitGameplayRequest submit_gameplay_request{};
 };
 
 struct CommandResult {
     bool ok = false;
     NetId net_id = 0;
+    KernelInventoryContainerId inventory_container_id = 0;
+    KernelItemInstanceId item_instance_id = 0;
 };
 
 class CommandQueue {

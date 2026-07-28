@@ -142,14 +142,29 @@ bool execute_action_graph_commands(
         const std::optional<entt::entity> owner = spawn == nullptr
             ? std::nullopt
             : world.find_entity(spawn->owner);
+        const KernelEntityTemplateDefinition* entity_template = spawn == nullptr
+            ? nullptr
+            : find_entity_template(entity_templates, spawn->entity_template_id);
         if (spawn == nullptr ||
-            find_entity_template(entity_templates, spawn->entity_template_id) ==
-                nullptr ||
+            entity_template == nullptr ||
             !owner.has_value() ||
             !world.registry().all_of<NetworkIdentity>(*owner) ||
             !std::isfinite(spawn->position.x) ||
             !std::isfinite(spawn->position.y) ||
             !std::isfinite(spawn->position.z)) {
+            return false;
+        }
+        if (spawn->item_template_id != 0u) {
+            const KernelItemTemplateDefinition* item_template =
+                engine.item_store().find_template(spawn->item_template_id);
+            if (item_template == nullptr || spawn->quantity == 0u ||
+                item_template->entity_template_id != spawn->entity_template_id ||
+                spawn->quantity > item_template->max_stack ||
+                (item_template->item_mode == KernelItemMode_Stateful &&
+                 spawn->quantity != 1u)) {
+                return false;
+            }
+        } else if (spawn->quantity != 0u) {
             return false;
         }
     }
@@ -200,8 +215,29 @@ bool execute_action_graph_commands(
         create_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
         NetId spawned_net_id = 0;
         if (!EntityLifecycleSystem{}.create_entity(
-                engine, create_info, &spawned_net_id)) {
+                engine, create_info, &spawned_net_id, false)) {
             return false;
+        }
+        if (spawn.item_template_id != 0u) {
+            const auto item_id = engine.item_store().create_world_item(
+                spawn.item_template_id,
+                spawn.quantity,
+                spawned_net_id,
+                KernelWorldItemMode_Placed);
+            const std::optional<entt::entity> spawned =
+                world.find_entity(spawned_net_id);
+            if (!item_id.has_value() || !spawned.has_value()) {
+                EntityLifecycleSystem{}.destroy_entity(
+                    engine, spawned_net_id, KernelDespawnReason_Destroyed);
+                return false;
+            }
+            world.registry().emplace_or_replace<ItemTemplateRef>(
+                *spawned, ItemTemplateRef{spawn.item_template_id});
+            world.registry().emplace_or_replace<ItemInstanceRef>(
+                *spawned, ItemInstanceRef{*item_id});
+            world.registry().emplace_or_replace<PropWorldMode>(
+                *spawned, PropWorldMode{PropMode::kPlaced});
+            engine.queue_prop_state_change(spawned_net_id);
         }
     }
     world.mark_action_graph_batch_processed(
@@ -805,6 +841,7 @@ void CollisionTriggerSystem::update(
                 ref.item_instance_id,
                 KernelWorldItemMode_Placed);
         }
+        engine.queue_prop_state_change(identity.net_id);
     }
 
     std::vector<ActionGraphQueuedTrigger> queued_triggers;

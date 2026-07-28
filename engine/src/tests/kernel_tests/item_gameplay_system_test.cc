@@ -262,10 +262,178 @@ void graph_failure_after_commit_does_not_refund_or_retry() {
         KernelGameplayGraphOutcome_FailedAfterCommit);
 }
 
+void consume_graph_spawns_new_item_backed_prop() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+    engine.entity_templates_.push_back(prop_template());
+
+    KernelItemTemplateDefinition output = item_template();
+    output.item_template_id = 14;
+    output.capability_flags = KernelItemCapability_Pickupable;
+    output.input_mapping = KernelItemInputMappingDefinition{};
+    output.throw_policy.mode = KernelItemThrowMode_None;
+    output.throw_policy.speed = 0.0f;
+    output.use_policy.quantity_cost = 0u;
+    output.item_used_trigger = KernelActionTriggerDefinition{};
+
+    KernelItemTemplateDefinition source = item_template();
+    source.item_template_id = 15;
+    source.entity_template_id = 0u;
+    source.capability_flags = KernelItemCapability_Consumable;
+    source.input_mapping.inventory_fire = KernelDomainAction_None;
+    source.input_mapping.world_interact_tap = KernelDomainAction_None;
+    source.input_mapping.world_interact_hold = KernelDomainAction_None;
+    source.throw_policy.mode = KernelItemThrowMode_None;
+    source.throw_policy.speed = 0.0f;
+    source.item_used_trigger.struct_size = sizeof(source.item_used_trigger);
+    source.item_used_trigger.action_count = 1u;
+    KernelActionDefinition& spawn = source.item_used_trigger.actions[0];
+    spawn.action_type = KernelEntityTriggerActionType_SpawnEntity;
+    spawn.spawn_entity_template_id = 200u;
+    spawn.position_source = KernelEventVec3Source_Position;
+    spawn.owner_source = KernelEntityRefSource_EventInstigator;
+    spawn.spawn_item_template_id = 14u;
+    spawn.spawn_item_quantity = 2u;
+
+    engine.item_templates_ = {source, output};
+    std::string error;
+    require(engine.item_store_.set_templates(engine.item_templates_, &error));
+
+    KernelServerEntityCreateInfo actor_info{};
+    actor_info.struct_size = sizeof(actor_info);
+    actor_info.entity_type = KernelEntityType_Actor;
+    actor_info.actor_type = KernelActorType_Player;
+    actor_info.owner_peer = 7;
+    actor_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+    std::uint32_t actor = 0;
+    require(engine.server_create_entity(actor_info, &actor));
+    KernelInventoryContainerId container = 0;
+    require(engine.server_create_inventory_container(actor, 1, &container));
+    KernelItemInstanceId source_item = 0;
+    require(engine.server_create_inventory_item(15, 1, container, &source_item));
+
+    KernelGameplayRequest consume = request(
+        250, actor, KernelSemanticInputButton_Use);
+    consume.selected_item_instance_id = source_item;
+    consume.placement_position = KernelVec3{1.0f, 0.0f, 0.0f};
+    require(engine.server_submit_gameplay_request(consume));
+    require(engine.item_store_.find_item(source_item)->terminal);
+
+    KernelGameplayRequestOutcome outcome{};
+    require(engine.poll_gameplay_request_outcomes(&outcome, 1) == 1);
+    require(outcome.graph_outcome == KernelGameplayGraphOutcome_Succeeded);
+    KernelItemInstanceId spawned_item = 0;
+    std::uint32_t spawned_prop = 0;
+    for (const auto& [id, record] : engine.item_store_.items_) {
+        if (id != source_item && !record.terminal) {
+            spawned_item = id;
+            spawned_prop = record.residency.prop_entity_id;
+        }
+    }
+    require(spawned_item != 0u && spawned_item != source_item);
+    require(spawned_prop != 0u);
+    const auto prop = engine.world_.find_entity(spawned_prop);
+    require(prop.has_value());
+    require(engine.world_.registry().get<network_example::ItemInstanceRef>(*prop)
+        .item_instance_id == spawned_item);
+    require(engine.world_.registry().get<network_example::PropWorldMode>(*prop)
+        .mode == network_example::PropMode::kPlaced);
+}
+
+void semantic_activate_validates_context_range_stale_and_dedupe() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+
+    KernelEntityTemplateDefinition prop = prop_template();
+    prop.activated_trigger.struct_size = sizeof(prop.activated_trigger);
+    engine.entity_templates_.push_back(prop);
+    KernelItemTemplateDefinition activation_item = item_template();
+    activation_item.item_template_id = 13;
+    activation_item.capability_flags =
+        KernelItemCapability_Pickupable | KernelItemCapability_Interactable;
+    activation_item.input_mapping.inventory_use = KernelDomainAction_None;
+    activation_item.input_mapping.inventory_fire = KernelDomainAction_None;
+    activation_item.input_mapping.world_interact_tap = KernelDomainAction_Activate;
+    activation_item.input_mapping.world_interact_hold = KernelDomainAction_None;
+    activation_item.throw_policy.mode = KernelItemThrowMode_None;
+    activation_item.throw_policy.speed = 0.0f;
+    activation_item.use_policy.quantity_cost = 0;
+    engine.item_templates_.push_back(activation_item);
+    std::string error;
+    require(engine.item_store_.set_templates(engine.item_templates_, &error));
+
+    KernelServerEntityCreateInfo actor_info{};
+    actor_info.struct_size = sizeof(actor_info);
+    actor_info.entity_type = KernelEntityType_Actor;
+    actor_info.actor_type = KernelActorType_Player;
+    actor_info.owner_peer = 7;
+    actor_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+    std::uint32_t actor = 0;
+    require(engine.server_create_entity(actor_info, &actor));
+
+    KernelItemInstanceId item = 0;
+    std::uint32_t prop_id = 0;
+    require(engine.server_create_world_item(
+        13,
+        1,
+        KernelVec3{1.0f, 0.0f, 0.0f},
+        &item,
+        &prop_id));
+
+    KernelGameplayRequest no_action = request(
+        300, actor, KernelSemanticInputButton_InteractHold);
+    no_action.target_net_id = prop_id;
+    require(engine.server_submit_gameplay_request(no_action));
+
+    KernelGameplayRequest activate = request(
+        301, actor, KernelSemanticInputButton_InteractTap);
+    activate.target_net_id = prop_id;
+    require(engine.server_submit_gameplay_request(activate));
+    require(engine.server_submit_gameplay_request(activate));
+
+    const auto prop_entity = engine.world_.find_entity(prop_id);
+    require(prop_entity.has_value());
+    engine.world_.registry().get<network_example::Transform>(*prop_entity).position =
+        glm::vec3{10.0f, 0.0f, 0.0f};
+    KernelGameplayRequest out_of_range = request(
+        302, actor, KernelSemanticInputButton_InteractTap);
+    out_of_range.target_net_id = prop_id;
+    require(engine.server_submit_gameplay_request(out_of_range));
+
+    require(engine.server_destroy_entity(
+        prop_id, KernelDespawnReason_Destroyed));
+    KernelGameplayRequest stale = request(
+        303, actor, KernelSemanticInputButton_InteractTap);
+    stale.target_net_id = prop_id;
+    require(engine.server_submit_gameplay_request(stale));
+
+    KernelGameplayRequestOutcome outcomes[5]{};
+    require(engine.poll_gameplay_request_outcomes(outcomes, 5) == 5);
+    require(outcomes[0].status == KernelGameplayRequestStatus_NoAction);
+    require(outcomes[1].status == KernelGameplayRequestStatus_Committed);
+    require(outcomes[1].domain_action == KernelDomainAction_Activate);
+    require(outcomes[2].request_id == outcomes[1].request_id);
+    require(outcomes[2].status == outcomes[1].status);
+    require(outcomes[3].status == KernelGameplayRequestStatus_Rejected);
+    require(outcomes[3].rejection_reason ==
+        KernelGameplayRequestRejection_OutOfRange);
+    require(outcomes[4].status == KernelGameplayRequestStatus_NoAction);
+}
+
 }  // namespace
 
 int main() {
     semantic_requests_preserve_identity_and_dedupe();
     graph_failure_after_commit_does_not_refund_or_retry();
+    consume_graph_spawns_new_item_backed_prop();
+    semantic_activate_validates_context_range_stale_and_dedupe();
     return 0;
 }

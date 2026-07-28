@@ -7,6 +7,8 @@
 namespace network_example {
 namespace {
 
+constexpr std::size_t kInventoryDeltaHistoryLimit = 256u;
+
 bool action_allowed_in_inventory(std::uint8_t action) {
     return action == KernelDomainAction_None ||
         action == KernelDomainAction_Consume ||
@@ -410,6 +412,16 @@ const InventoryContainerRecord* ItemStore::find_container_for_owner(
     return found == containers_.end() ? nullptr : &found->second;
 }
 
+std::vector<KernelInventoryContainerId> ItemStore::containers_for_owner(
+    std::uint32_t owner_entity_id) const {
+    std::vector<KernelInventoryContainerId> result;
+    for (const auto& [id, container] : containers_) {
+        if (container.owner_entity_id == owner_entity_id) result.push_back(id);
+    }
+    std::sort(result.begin(), result.end());
+    return result;
+}
+
 std::optional<KernelItemInstanceId> ItemStore::split_inventory_stack(
     KernelItemInstanceId source_id,
     std::uint32_t quantity,
@@ -441,7 +453,8 @@ std::optional<KernelItemInstanceId> ItemStore::split_inventory_stack(
         KernelInventoryDeltaType_Update,
         source->residency.slot,
         source->residency.slot,
-        source);
+        source,
+        KernelInventoryChange_Quantity);
     return created;
 }
 
@@ -476,7 +489,8 @@ std::uint32_t ItemStore::merge_inventory_stacks(
         KernelInventoryDeltaType_Update,
         destination->residency.slot,
         destination->residency.slot,
-        destination);
+        destination,
+        KernelInventoryChange_Quantity);
     if (source->quantity == 0) {
         terminate(source_id);
     } else {
@@ -485,7 +499,8 @@ std::uint32_t ItemStore::merge_inventory_stacks(
             KernelInventoryDeltaType_Update,
             source->residency.slot,
             source->residency.slot,
-            source);
+            source,
+            KernelInventoryChange_Quantity);
     }
     return moved;
 }
@@ -524,7 +539,8 @@ std::optional<KernelItemInstanceId> ItemStore::split_to_world(
         KernelInventoryDeltaType_Update,
         source->residency.slot,
         source->residency.slot,
-        source);
+        source,
+        KernelInventoryChange_Quantity);
     return id;
 }
 
@@ -578,7 +594,8 @@ std::optional<KernelItemInstanceId> ItemStore::transfer_world_to_inventory(
             KernelInventoryDeltaType_Update,
             destination->residency.slot,
             destination->residency.slot,
-            destination);
+            destination,
+            KernelInventoryChange_Quantity);
     }
     source = find_item(source_id);
     if (source->quantity == 0) {
@@ -659,7 +676,12 @@ std::optional<ItemConsumeResult> ItemStore::consume(
             KernelInventoryDeltaType_Update,
             item->residency.slot,
             item->residency.slot,
-            item);
+            item,
+            definition->use_policy.charge_field_id != 0u
+                ? KernelInventoryChange_PortableState |
+                    KernelInventoryChange_Cooldown
+                : KernelInventoryChange_Quantity |
+                    KernelInventoryChange_Cooldown);
     }
     return result;
 }
@@ -692,7 +714,9 @@ std::optional<ItemConsumeResult> ItemStore::consume_quantity(
             KernelInventoryDeltaType_Update,
             item->residency.slot,
             item->residency.slot,
-            item);
+            item,
+            KernelInventoryChange_Quantity |
+                KernelInventoryChange_Cooldown);
     }
     return result;
 }
@@ -785,6 +809,33 @@ bool ItemStore::move_to_inventory(
     return true;
 }
 
+bool ItemStore::move_inventory_slot(
+    KernelItemInstanceId id,
+    std::uint16_t destination_slot) {
+    ItemInstanceRecord* item = find_item(id);
+    if (item == nullptr || item->terminal ||
+        item->residency.kind != KernelItemResidency_Inventory) {
+        return false;
+    }
+    auto container = containers_.find(item->residency.container_id);
+    if (container == containers_.end() ||
+        destination_slot >= container->second.slots.size() ||
+        container->second.slots[destination_slot] != 0u) {
+        return false;
+    }
+    const std::uint16_t previous_slot = item->residency.slot;
+    container->second.slots[previous_slot] = 0u;
+    container->second.slots[destination_slot] = id;
+    item->residency.slot = destination_slot;
+    publish_delta(
+        &container->second,
+        KernelInventoryDeltaType_Move,
+        destination_slot,
+        previous_slot,
+        item);
+    return true;
+}
+
 bool ItemStore::set_world_mode(
     KernelItemInstanceId id,
     KernelWorldItemMode world_mode,
@@ -820,7 +871,8 @@ void ItemStore::publish_delta(
     KernelInventoryDeltaType type,
     std::uint16_t slot,
     std::uint16_t previous_slot,
-    const ItemInstanceRecord* item) {
+    const ItemInstanceRecord* item,
+    std::uint16_t changed_fields) {
     if (container == nullptr) {
         return;
     }
@@ -832,10 +884,21 @@ void ItemStore::publish_delta(
     delta.type = static_cast<std::uint8_t>(type);
     delta.slot = slot;
     delta.previous_slot = previous_slot;
+    delta.changed_fields = type == KernelInventoryDeltaType_Add
+        ? KernelInventoryChange_All
+        : type == KernelInventoryDeltaType_Update ? changed_fields : 0u;
     if (item != nullptr) {
         delta.item = item_view(item->item_instance_id);
     }
     pending_deltas_[container->inventory_container_id].push_back(delta);
+    std::vector<KernelInventoryDelta>& history =
+        delta_history_[container->inventory_container_id];
+    history.push_back(delta);
+    if (history.size() > kInventoryDeltaHistoryLimit) {
+        history.erase(
+            history.begin(),
+            history.begin() + (history.size() - kInventoryDeltaHistoryLimit));
+    }
 }
 
 std::vector<KernelInventoryDelta> ItemStore::take_inventory_deltas(
@@ -853,6 +916,165 @@ std::vector<KernelInventoryDelta> ItemStore::take_inventory_deltas(
         pending_deltas_.erase(found);
     }
     return result;
+}
+
+std::vector<KernelInventoryDelta> ItemStore::inventory_deltas_since(
+    KernelInventoryContainerId container_id,
+    std::uint64_t after_revision,
+    std::size_t max_deltas) const {
+    const auto found = delta_history_.find(container_id);
+    if (found == delta_history_.end() || max_deltas == 0u) return {};
+    std::vector<KernelInventoryDelta> result;
+    result.reserve(std::min(max_deltas, found->second.size()));
+    for (const KernelInventoryDelta& delta : found->second) {
+        if (delta.revision <= after_revision) continue;
+        result.push_back(delta);
+        if (result.size() == max_deltas) break;
+    }
+    return result;
+}
+
+bool ItemStore::apply_replica_snapshot(
+    const KernelInventoryContainerView& view,
+    std::span<const KernelItemInstanceView> item_views) {
+    if (view.struct_size < sizeof(KernelInventoryContainerView) ||
+        view.inventory_container_id == 0u || view.owner_entity_id == 0u ||
+        view.slot_capacity == 0u ||
+        view.slot_capacity > std::numeric_limits<std::uint16_t>::max()) {
+        return false;
+    }
+    std::unordered_set<std::uint16_t> slots;
+    std::unordered_set<KernelItemInstanceId> ids;
+    for (const KernelItemInstanceView& item : item_views) {
+        if (item.struct_size < sizeof(KernelItemInstanceView) ||
+            item.item_instance_id == 0u || item.item_template_id == 0u ||
+            item.quantity == 0u || item.slot >= view.slot_capacity ||
+            !slots.insert(item.slot).second ||
+            !ids.insert(item.item_instance_id).second ||
+            find_template(item.item_template_id) == nullptr ||
+            item.portable_state_field_count > KERNEL_MAX_PORTABLE_STATE_FIELDS) {
+            return false;
+        }
+    }
+    for (auto& [id, item] : items_) {
+        if (!item.terminal &&
+            item.residency.kind == KernelItemResidency_Inventory &&
+            item.residency.container_id == view.inventory_container_id) {
+            item.terminal = true;
+            item.quantity = 0u;
+            item.residency = ItemResidency{};
+            item.residency.kind = KernelItemResidency_Terminal;
+        }
+    }
+    InventoryContainerRecord container{
+        view.inventory_container_id,
+        view.owner_entity_id,
+        view.slot_capacity,
+        std::vector<KernelItemInstanceId>(view.slot_capacity, 0u),
+        view.revision,
+    };
+    for (const KernelItemInstanceView& item_view : item_views) {
+        ItemInstanceRecord item;
+        item.item_instance_id = item_view.item_instance_id;
+        item.item_template_id = item_view.item_template_id;
+        item.quantity = item_view.quantity;
+        item.next_use_tick = item_view.next_use_tick;
+        item.portable_state.assign(
+            item_view.portable_state_fields,
+            item_view.portable_state_fields +
+                item_view.portable_state_field_count);
+        item.residency = ItemResidency{
+            KernelItemResidency_Inventory,
+            view.inventory_container_id,
+            item_view.slot,
+            0u,
+            KernelWorldItemMode_Placed,
+            0u,
+        };
+        container.slots[item_view.slot] = item_view.item_instance_id;
+        items_[item_view.item_instance_id] = std::move(item);
+    }
+    containers_[view.inventory_container_id] = std::move(container);
+    next_container_id_ = std::max(
+        next_container_id_, view.inventory_container_id + 1u);
+    for (const KernelItemInstanceView& item : item_views) {
+        next_item_instance_id_ = std::max(
+            next_item_instance_id_, item.item_instance_id + 1u);
+    }
+    return true;
+}
+
+bool ItemStore::apply_replica_deltas(
+    KernelInventoryContainerId container_id,
+    std::span<const KernelInventoryDelta> deltas) {
+    auto container = containers_.find(container_id);
+    if (container == containers_.end()) return false;
+    std::uint64_t expected_revision = container->second.revision + 1u;
+    for (const KernelInventoryDelta& delta : deltas) {
+        if (delta.inventory_container_id != container_id ||
+            delta.revision != expected_revision ||
+            delta.type > KernelInventoryDeltaType_Move ||
+            delta.slot >= container->second.slots.size()) {
+            return false;
+        }
+        const KernelItemInstanceId id = delta.item.item_instance_id;
+        if (id == 0u) return false;
+        if (delta.type == KernelInventoryDeltaType_Remove) {
+            if (container->second.slots[delta.slot] != id) return false;
+            container->second.slots[delta.slot] = 0u;
+            ItemInstanceRecord* item = find_item(id);
+            if (item != nullptr) {
+                item->quantity = 0u;
+                item->terminal = true;
+                item->residency = ItemResidency{};
+                item->residency.kind = KernelItemResidency_Terminal;
+            }
+        } else if (delta.type == KernelInventoryDeltaType_Move) {
+            if (delta.previous_slot >= container->second.slots.size() ||
+                container->second.slots[delta.previous_slot] != id ||
+                container->second.slots[delta.slot] != 0u) {
+                return false;
+            }
+            container->second.slots[delta.previous_slot] = 0u;
+            container->second.slots[delta.slot] = id;
+            ItemInstanceRecord* item = find_item(id);
+            if (item == nullptr) return false;
+            item->residency.slot = delta.slot;
+        } else {
+            if (delta.item.struct_size < sizeof(KernelItemInstanceView) ||
+                delta.item.item_template_id == 0u || delta.item.quantity == 0u ||
+                find_template(delta.item.item_template_id) == nullptr) {
+                return false;
+            }
+            if (delta.type == KernelInventoryDeltaType_Add &&
+                container->second.slots[delta.slot] != 0u) {
+                return false;
+            }
+            ItemInstanceRecord item;
+            item.item_instance_id = id;
+            item.item_template_id = delta.item.item_template_id;
+            item.quantity = delta.item.quantity;
+            item.next_use_tick = delta.item.next_use_tick;
+            item.portable_state.assign(
+                delta.item.portable_state_fields,
+                delta.item.portable_state_fields +
+                    delta.item.portable_state_field_count);
+            item.residency = ItemResidency{
+                KernelItemResidency_Inventory,
+                container_id,
+                delta.slot,
+                0u,
+                KernelWorldItemMode_Placed,
+                0u,
+            };
+            items_[id] = std::move(item);
+            container->second.slots[delta.slot] = id;
+        }
+        container->second.revision = delta.revision;
+        pending_deltas_[container_id].push_back(delta);
+        ++expected_revision;
+    }
+    return true;
 }
 
 KernelItemInstanceView ItemStore::item_view(KernelItemInstanceId id) const {
@@ -899,6 +1121,7 @@ KernelInventoryContainerView ItemStore::container_view(
         container->slots.end(),
         [](KernelItemInstanceId item) { return item != 0; }));
     view.revision = container->revision;
+    view.sync_state = KernelInventorySyncState_Ready;
     return view;
 }
 

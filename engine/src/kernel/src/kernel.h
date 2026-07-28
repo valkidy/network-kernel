@@ -6,9 +6,11 @@
 #include <cstdint>
 #include <deque>
 #include <memory>
+#include <span>
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "kernel/public/kernel_types.h"
@@ -38,7 +40,11 @@ class ListenServerTransport;
 class MovementSystem;
 struct EntityDespawnPacket;
 struct EntitySpawnPacket;
+struct PropStateChangeBatchPacket;
 struct EntityTemplateUpdatePacket;
+struct InventoryDeltaBatchPacket;
+struct InventorySnapshotPagePacket;
+struct InventorySnapshotRequestPacket;
 struct LocalActionResultBatchPacket;
 struct ProjectileSpawnBatchPacket;
 struct RemoteActionPresentationBatchPacket;
@@ -56,6 +62,17 @@ public:
     const World& simulation_world() const { return world_; }
     ItemStore& item_store() { return item_store_; }
     const ItemStore& item_store() const { return item_store_; }
+    void queue_prop_state_change(NetId net_id);
+    bool claim_scope_transfer(
+        KernelItemInstanceId item_instance_id,
+        NetId prop_entity_id);
+    std::pair<std::size_t, std::size_t> scope_transfer_publication_checkpoint()
+        const;
+    void finish_scope_transfer(
+        KernelItemInstanceId item_instance_id,
+        NetId prop_entity_id,
+        bool committed,
+        std::pair<std::size_t, std::size_t> publication_checkpoint);
     const physics::PhysicsWorld* physics_world() const {
         return physics_world_.get();
     }
@@ -186,6 +203,10 @@ public:
     bool get_inventory_container(
         KernelInventoryContainerId id,
         KernelInventoryContainerView* out_view) const;
+    std::uint32_t copy_owned_inventory_containers(
+        std::uint32_t owner_entity_id,
+        KernelInventoryContainerView* out_containers,
+        std::uint32_t max_containers) const;
     std::uint32_t copy_inventory_slots(
         KernelInventoryContainerId id,
         KernelItemInstanceView* out_items,
@@ -193,6 +214,10 @@ public:
     std::uint32_t poll_gameplay_request_outcomes(
         KernelGameplayRequestOutcome* out_outcomes,
         std::uint32_t max_outcomes);
+    bool get_gameplay_request_outcome(
+        std::uint32_t requester_peer,
+        std::uint64_t request_id,
+        KernelGameplayRequestOutcome* out_outcome) const;
     std::uint32_t poll_inventory_deltas(
         KernelInventoryContainerId id,
         KernelInventoryDelta* out_deltas,
@@ -298,6 +323,8 @@ private:
         std::vector<KernelLocalActionResult> pending_action_results;
         std::size_t actor_snapshot_cursor = 0;
         std::size_t projectile_snapshot_cursor = 0;
+        std::unordered_map<KernelInventoryContainerId, std::uint64_t>
+            inventory_revisions;
         std::uint32_t pending_clock_sync_nonce = 0;
         std::uint64_t pending_clock_sync_server_time_us = 0;
         std::uint64_t last_clock_sync_sent_server_time_us = 0;
@@ -320,8 +347,13 @@ private:
         ActorType actor_type = ActorType::kUnknown;
         PeerId owner_peer = 0;
         std::uint32_t actor_template_id = 0;
+        std::uint32_t entity_template_id = 0;
         std::uint32_t projectile_template_id = 0;
         std::uint32_t collider_template_id = 0;
+        std::uint32_t item_template_id = 0;
+        KernelItemInstanceId item_instance_id = 0;
+        std::uint8_t world_item_mode = KernelWorldItemMode_Placed;
+        NetId carrier_entity_id = 0;
         glm::vec3 position{0.0f, 0.0f, 0.0f};
         glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
         glm::vec3 velocity{0.0f, 0.0f, 0.0f};
@@ -584,7 +616,26 @@ private:
     void send_gameplay_request_outcome(
         PeerId peer,
         const KernelGameplayRequestOutcome& outcome);
+    void flush_network_gameplay_request_outcomes();
+    void flush_inventory_replication();
+    bool send_inventory_snapshot(
+        PeerSession* session,
+        KernelInventoryContainerId container_id);
+    bool send_inventory_delta_batch(
+        PeerSession* session,
+        KernelInventoryContainerId container_id,
+        std::span<const KernelInventoryDelta> deltas);
+    void handle_client_inventory_delta_batch(
+        const InventoryDeltaBatchPacket& packet);
+    void handle_client_inventory_snapshot_page(
+        const InventorySnapshotPagePacket& packet);
+    void handle_client_prop_state_change_batch(
+        const PropStateChangeBatchPacket& packet);
+    void request_inventory_snapshot(
+        KernelInventoryContainerId container_id,
+        std::uint64_t client_revision);
     void broadcast_reliable_event(const KernelEvent& event);
+    void flush_prop_state_changes();
     void prepare_server_action_intent(PeerSession* session, PlayerInput* input);
     void finalize_server_action_outcomes(
         const std::vector<ActionOutcome>& outcomes);
@@ -686,6 +737,23 @@ private:
     ItemStore item_store_;
     std::vector<KernelGameplayRequestOutcome> processed_gameplay_requests_;
     std::deque<KernelGameplayRequestOutcome> pending_gameplay_request_outcomes_;
+    std::vector<std::pair<PeerId, KernelGameplayRequestOutcome>>
+        pending_network_gameplay_outcomes_;
+    struct ClientInventorySnapshotAssembly {
+        KernelInventoryContainerView container{};
+        std::uint16_t page_count = 0;
+        std::vector<bool> received_pages;
+        std::vector<KernelItemInstanceView> items;
+    };
+    std::unordered_map<KernelInventoryContainerId, ClientInventorySnapshotAssembly>
+        client_inventory_snapshot_assemblies_;
+    std::unordered_map<KernelInventoryContainerId, KernelInventorySyncState>
+        client_inventory_sync_states_;
+    std::unordered_set<KernelInventoryContainerId>
+        client_inventory_resync_pending_;
+    std::vector<NetId> pending_prop_state_changes_;
+    std::unordered_set<KernelItemInstanceId> claimed_item_instances_;
+    std::unordered_set<NetId> claimed_prop_entities_;
     std::vector<KernelDebugInfo> debug_records_;
     std::unordered_map<NetId, KernelAgentVisionConfig> vision_configs_;
     std::unordered_map<NetId, VisionRuntimeState> vision_states_;

@@ -123,7 +123,7 @@ struct KernelRpcMethodRegistry::Impl {
 KernelRpcMethodRegistry::KernelRpcMethodRegistry()
     : impl_(std::make_unique<Impl>()) {
     impl_->schema = std::string(generated_kernel_rpc_schema());
-    const Json schema = Json::parse(impl_->schema);
+    Json schema = Json::parse(impl_->schema);
     for (const auto& generated : generated_kernel_rpc_methods()) {
         const auto schema_method = std::find_if(
             schema.at("methods").begin(),
@@ -143,6 +143,99 @@ KernelRpcMethodRegistry::KernelRpcMethodRegistry()
             handler_for_generated_method(generated),
         });
     }
+    const auto add_manual = [&] (
+        std::string method,
+        KernelRpcAuthority authority,
+        KernelRpcExecutionPhase phase,
+        std::string_view symbol,
+        std::initializer_list<KernelRpcParameterDescriptor> parameters) {
+        std::vector<KernelRpcParameterDescriptor> owned(parameters);
+        Json schema_parameters = Json::array();
+        for (const KernelRpcParameterDescriptor& parameter : owned) {
+            schema_parameters.push_back(Json{
+                {"name", parameter.name},
+                {"type", parameter.type},
+                {"passing", parameter.passing},
+                {"direction", parameter.direction},
+            });
+        }
+        const char* authority_name = authority == KernelRpcAuthority::kDeveloperWrite
+            ? "developer_write" : "developer_read_only";
+        const char* phase_name = phase == KernelRpcExecutionPhase::kSimulationTick
+            ? "simulation_tick" : "immediate_read_only";
+        schema["methods"].push_back(Json{
+            {"method", method},
+            {"authority", authority_name},
+            {"phase", phase_name},
+            {"implementation", "manual_json"},
+            {"internal", false},
+            {"params", schema_parameters},
+        });
+        impl_->methods.push_back(KernelRpcMethodDescriptor{
+            std::move(method),
+            authority,
+            phase,
+            "implemented",
+            false,
+            std::move(owned),
+            KernelRpcWorldHandlers::handler_for_symbol(symbol),
+        });
+    };
+    const auto input = [](std::string name, std::string type) {
+        return KernelRpcParameterDescriptor{
+            std::move(name), std::move(type), "value", "input"};
+    };
+    add_manual(
+        "inventory.create_container",
+        KernelRpcAuthority::kDeveloperWrite,
+        KernelRpcExecutionPhase::kSimulationTick,
+        "KernelRpc_CreateInventoryContainer",
+        {input("owner_entity_id", "uint32_t"), input("slot_capacity", "uint32_t")});
+    add_manual(
+        "inventory.create_item",
+        KernelRpcAuthority::kDeveloperWrite,
+        KernelRpcExecutionPhase::kSimulationTick,
+        "KernelRpc_CreateInventoryItem",
+        {input("item_template_id", "uint32_t"), input("quantity", "uint32_t"),
+         input("container_id", "KernelInventoryContainerId")});
+    add_manual(
+        "item.create_world",
+        KernelRpcAuthority::kDeveloperWrite,
+        KernelRpcExecutionPhase::kSimulationTick,
+        "KernelRpc_CreateWorldItem",
+        {input("item_template_id", "uint32_t"), input("quantity", "uint32_t"),
+         input("position", "KernelVec3")});
+    add_manual(
+        "gameplay.submit_request",
+        KernelRpcAuthority::kDeveloperWrite,
+        KernelRpcExecutionPhase::kSimulationTick,
+        "KernelRpc_SubmitGameplayRequest",
+        {input("request", "KernelGameplayRequest")});
+    add_manual(
+        "item.get",
+        KernelRpcAuthority::kDeveloperReadOnly,
+        KernelRpcExecutionPhase::kImmediateReadOnly,
+        "KernelRpc_GetItem",
+        {input("item_instance_id", "KernelItemInstanceId")});
+    add_manual(
+        "inventory.list_owned",
+        KernelRpcAuthority::kDeveloperReadOnly,
+        KernelRpcExecutionPhase::kImmediateReadOnly,
+        "KernelRpc_ListOwnedInventory",
+        {input("owner_entity_id", "uint32_t")});
+    add_manual(
+        "inventory.get_snapshot",
+        KernelRpcAuthority::kDeveloperReadOnly,
+        KernelRpcExecutionPhase::kImmediateReadOnly,
+        "KernelRpc_GetInventorySnapshot",
+        {input("container_id", "KernelInventoryContainerId")});
+    add_manual(
+        "gameplay.get_request_outcome",
+        KernelRpcAuthority::kDeveloperReadOnly,
+        KernelRpcExecutionPhase::kImmediateReadOnly,
+        "KernelRpc_GetGameplayRequestOutcome",
+        {input("requester_peer", "uint32_t"), input("request_id", "uint64_t")});
+    impl_->schema = schema.dump();
 }
 
 KernelRpcMethodRegistry::~KernelRpcMethodRegistry() = default;

@@ -278,6 +278,44 @@ void reject(
     outcome->rejection_reason = static_cast<std::uint8_t>(reason);
 }
 
+class ScopeTransferTransaction {
+public:
+    ScopeTransferTransaction(
+        KernelEngine& engine,
+        const KernelGameplayRequestOutcome* outcome)
+        : engine_(engine), outcome_(outcome) {}
+
+    bool claim(KernelItemInstanceId item_instance_id, NetId prop_entity_id) {
+        if (armed_) return false;
+        checkpoint_ = engine_.scope_transfer_publication_checkpoint();
+        if (!engine_.claim_scope_transfer(item_instance_id, prop_entity_id)) {
+            return false;
+        }
+        item_instance_id_ = item_instance_id;
+        prop_entity_id_ = prop_entity_id;
+        armed_ = true;
+        return true;
+    }
+
+    ~ScopeTransferTransaction() {
+        if (!armed_) return;
+        engine_.finish_scope_transfer(
+            item_instance_id_,
+            prop_entity_id_,
+            outcome_ != nullptr &&
+                outcome_->status == KernelGameplayRequestStatus_Committed,
+            checkpoint_);
+    }
+
+private:
+    KernelEngine& engine_;
+    const KernelGameplayRequestOutcome* outcome_ = nullptr;
+    KernelItemInstanceId item_instance_id_ = 0;
+    NetId prop_entity_id_ = 0;
+    std::pair<std::size_t, std::size_t> checkpoint_{};
+    bool armed_ = false;
+};
+
 std::optional<ActionGraphCommandBatch> prepare_item_graph_batch(
     KernelEngine& engine,
     const KernelGameplayRequest& request,
@@ -387,6 +425,7 @@ bool ItemGameplaySystem::submit_request(
                        .owner_peer != request.requester_peer) {
         reject(&outcome, KernelGameplayRequestRejection_NotAuthorized);
     } else {
+        ScopeTransferTransaction transfer_transaction(engine, &outcome);
         ItemInstanceRecord* item = request.selected_item_instance_id == 0
             ? nullptr
             : engine.item_store_.find_item(request.selected_item_instance_id);
@@ -503,6 +542,16 @@ bool ItemGameplaySystem::submit_request(
             reject(&outcome, KernelGameplayRequestRejection_OutOfRange);
             goto record_outcome;
         }
+        if ((action == KernelDomainAction_Pickup ||
+             action == KernelDomainAction_Carry ||
+             action == KernelDomainAction_Place ||
+             action == KernelDomainAction_Throw) &&
+            !transfer_transaction.claim(
+                item == nullptr ? 0u : item->item_instance_id,
+                target.has_value() ? request.target_net_id : 0u)) {
+            reject(&outcome, KernelGameplayRequestRejection_Claimed);
+            goto record_outcome;
+        }
 
         if (action == KernelDomainAction_Activate) {
             if ((capabilities & KernelItemCapability_Interactable) == 0 ||
@@ -544,6 +593,7 @@ bool ItemGameplaySystem::submit_request(
             engine.world_.registry().get_or_emplace<Velocity>(*target).linear =
                 glm::vec3{0.0f};
             set_prop_collision_enabled(engine, request.target_net_id, false);
+            engine.queue_prop_state_change(request.target_net_id);
             outcome.status = KernelGameplayRequestStatus_Committed;
             outcome.prop_entity_id = request.target_net_id;
             outcome.rejection_reason = KernelGameplayRequestRejection_None;
@@ -596,6 +646,7 @@ bool ItemGameplaySystem::submit_request(
                 set_prop_collision_enabled(engine, request.target_net_id, true);
             }
             engine.world_.registry().remove<CarriedBy>(*target);
+            engine.queue_prop_state_change(request.target_net_id);
             outcome.status = KernelGameplayRequestStatus_Committed;
             outcome.prop_entity_id = request.target_net_id;
             outcome.rejection_reason = KernelGameplayRequestRejection_None;
@@ -771,6 +822,7 @@ bool ItemGameplaySystem::submit_request(
             engine.world_.registry().get_or_emplace<Velocity>(*target).linear =
                 glm::vec3{0.0f};
             set_prop_collision_enabled(engine, request.target_net_id, false);
+            engine.queue_prop_state_change(request.target_net_id);
             outcome.status = KernelGameplayRequestStatus_Committed;
             outcome.prop_entity_id = request.target_net_id;
             outcome.rejection_reason = KernelGameplayRequestRejection_None;
@@ -815,6 +867,7 @@ bool ItemGameplaySystem::submit_request(
                 set_prop_collision_enabled(
                     engine, item->residency.prop_entity_id, true);
                 outcome.prop_entity_id = item->residency.prop_entity_id;
+                engine.queue_prop_state_change(item->residency.prop_entity_id);
             } else {
                 const std::uint32_t quantity = request.requested_quantity == 0u
                     ? item->quantity
@@ -1007,6 +1060,7 @@ bool ItemGameplaySystem::submit_request(
                 *prop,
                 Velocity{direction * item_template->throw_policy.speed});
             set_prop_collision_enabled(engine, prop_id, true);
+            engine.queue_prop_state_change(prop_id);
             outcome.status = KernelGameplayRequestStatus_Committed;
             outcome.prop_entity_id = prop_id;
             outcome.rejection_reason = KernelGameplayRequestRejection_None;

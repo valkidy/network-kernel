@@ -410,6 +410,12 @@ int main() {
             KernelInventoryContainerId,
             KernelInventoryDelta*,
             std::uint32_t)>(library, "Kernel_PollInventoryDeltas");
+    [[maybe_unused]] auto* kernel_copy_owned_inventory_containers =
+        load_symbol<std::uint32_t(
+            KernelHandle*,
+            std::uint32_t,
+            KernelInventoryContainerView*,
+            std::uint32_t)>(library, "Kernel_CopyOwnedInventoryContainers");
     auto* game_server_get_abi_info =
         load_symbol<bool(GameServerAbiInfo*, std::uint32_t)>(
             library,
@@ -549,9 +555,9 @@ int main() {
     require(std::string(build_info.module_name) == "network_kernel");
     require(build_info.module_file_name[0] != '\0');
     require(has_version_revision_suffix(build_info.module_version));
-    require(build_info.protocol_version != 0);
-    require(build_info.snapshot_schema_version != 0);
-    require(build_info.packet_schema_version != 0);
+    require(build_info.protocol_version == 3u);
+    require(build_info.snapshot_schema_version == 17u);
+    require(build_info.packet_schema_version == 19u);
     require(build_info.git_commit[0] != '\0');
     require(std::string(build_info.git_commit) != "unknown");
     require(std::string(build_info.module_version) != build_info.git_commit);

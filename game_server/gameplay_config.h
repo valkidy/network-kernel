@@ -93,7 +93,7 @@ struct ActorTemplateConfig {
 using EntityTemplateConfig = ActorTemplateConfig;
 
 struct WeaponCatalogConfig {
-    std::uint32_t catalog_version = 4;
+    std::uint32_t catalog_version = 5;
     std::uint64_t catalog_hash = 0;
     std::array<bool, kWeaponIdCount> configured{};
     std::array<KernelWeaponMechanicsDefinition, kWeaponIdCount> definitions{};
@@ -140,6 +140,8 @@ struct ActionGraphActionConfig {
     std::string owner_parameter;
     std::string target_parameter;
     std::string amount_parameter;
+    std::string item_template_ref;
+    std::uint32_t quantity = 0;
 };
 
 struct ActionGraphTemplateConfig {

@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 53u
+#define KERNEL_ABI_VERSION 54u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -441,6 +441,8 @@ typedef struct KernelActionDefinition {
     uint8_t direction_source;
     uint8_t owner_source;
     uint8_t reserved;
+    uint32_t spawn_item_template_id;
+    uint32_t spawn_item_quantity;
 } KernelActionDefinition;
 
 typedef struct KernelActionTriggerDefinition {
@@ -456,6 +458,8 @@ typedef struct KernelActionTriggerDefinition {
     uint8_t direction_source;
     uint8_t owner_source;
     uint8_t reserved;
+    uint32_t spawn_item_template_id;
+    uint32_t spawn_item_quantity;
     uint32_t action_count;
     KernelActionDefinition actions[KERNEL_MAX_ACTION_GRAPH_ACTIONS];
 } KernelActionTriggerDefinition;
@@ -940,7 +944,17 @@ typedef struct KernelInventoryContainerView {
     uint32_t slot_capacity;
     uint32_t occupied_slot_count;
     uint64_t revision;
+    uint8_t sync_state;
+    uint8_t reserved0;
+    uint16_t reserved1;
 } KernelInventoryContainerView;
+
+typedef enum KernelInventorySyncState {
+    KernelInventorySyncState_NotAvailable = 0,
+    KernelInventorySyncState_Syncing = 1,
+    KernelInventorySyncState_Ready = 2,
+    KernelInventorySyncState_Desynced = 3,
+} KernelInventorySyncState;
 
 typedef enum KernelInventoryDeltaType {
     KernelInventoryDeltaType_Add = 0,
@@ -948,6 +962,16 @@ typedef enum KernelInventoryDeltaType {
     KernelInventoryDeltaType_Remove = 2,
     KernelInventoryDeltaType_Move = 3,
 } KernelInventoryDeltaType;
+
+typedef enum KernelInventoryChangeFlag {
+    KernelInventoryChange_Quantity = 1u << 0,
+    KernelInventoryChange_Cooldown = 1u << 1,
+    KernelInventoryChange_PortableState = 1u << 2,
+    KernelInventoryChange_All =
+        KernelInventoryChange_Quantity |
+        KernelInventoryChange_Cooldown |
+        KernelInventoryChange_PortableState,
+} KernelInventoryChangeFlag;
 
 typedef struct KernelInventoryDelta {
     uint32_t struct_size;
@@ -957,7 +981,7 @@ typedef struct KernelInventoryDelta {
     uint8_t reserved0;
     uint16_t slot;
     uint16_t previous_slot;
-    uint16_t reserved1;
+    uint16_t changed_fields;
     KernelItemInstanceView item;
 } KernelInventoryDelta;
 
@@ -1330,6 +1354,11 @@ typedef struct KernelNetworkStats {
     uint32_t max_remote_presentation_batch_size;
     uint64_t zero_action_instance_attempts;
     uint64_t action_instance_collisions;
+    uint64_t inventory_delta_bytes_sent;
+    uint64_t inventory_snapshot_bytes_sent;
+    uint64_t prop_state_bytes_sent;
+    uint64_t inventory_resync_request_count;
+    uint64_t inventory_revision_gap_count;
 } KernelNetworkStats;
 
 typedef struct KernelHitDebugInfo {

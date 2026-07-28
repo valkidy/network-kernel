@@ -213,6 +213,8 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
             action.position_source = trigger.position_source;
             action.direction_source = trigger.direction_source;
             action.owner_source = trigger.owner_source;
+            action.spawn_item_template_id = trigger.spawn_item_template_id;
+            action.spawn_item_quantity = trigger.spawn_item_quantity;
         } else {
             action = trigger.actions[index];
         }
@@ -258,6 +260,8 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
                 template_name,
                 position_name,
                 owner_name,
+                action.spawn_item_template_id,
+                action.spawn_item_quantity,
             });
             binding.parameters.push_back({
                 template_name,
@@ -600,6 +604,8 @@ bool evaluate_action_graph(
                 entity_template_id,
                 position,
                 owner,
+                spawn->item_template_id,
+                spawn->quantity,
                 provenance,
             });
             continue;

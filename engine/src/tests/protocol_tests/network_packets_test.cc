@@ -115,6 +115,8 @@ int main() {
     item_prop.item_instance_id = 9001;
     item_prop.world_item_mode = KernelWorldItemMode_Carrying;
     item_prop.carrier_entity_id = 4;
+    item_prop.hp = 50;
+    item_prop.max_hp = 100;
     snapshot.entities.push_back(item_prop);
 
     const std::vector<std::uint8_t> snapshot_packet =
@@ -143,6 +145,10 @@ int main() {
     assert(decoded_snapshot.header.server_time_ms == 300);
     assert(decoded_snapshot.header.last_processed_input_seq == 7);
     assert(decoded_snapshot.entities.size() == 5);
+    assert(decoded_snapshot.entities[4].item_template_id == 0u);
+    assert(decoded_snapshot.entities[4].item_instance_id == 0u);
+    assert(decoded_snapshot.entities[4].hp == 50u);
+    assert(decoded_snapshot.entities[4].max_hp == 100u);
     assert(decoded_snapshot.entities[0].net_id == 4);
     assert(decoded_snapshot.entities[0].type == network_example::EntityType::kActor);
     assert(decoded_snapshot.entities[0].actor_type ==
@@ -231,8 +237,15 @@ int main() {
     spawn.actor_template_id = 2;
     spawn.position = glm::vec3{3.0f, 4.0f, 5.0f};
     spawn.rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+    spawn.entity_template_id = 200;
+    spawn.collider_template_id = 300;
+    spawn.item_template_id = 501;
+    spawn.item_instance_id = 9001;
+    spawn.world_item_mode = KernelWorldItemMode_Carrying;
+    spawn.carrier_entity_id = 4;
     const std::vector<std::uint8_t> spawn_packet =
         network_example::encode_entity_spawn_packet(spawn, 45);
+    assert(spawn_packet.size() == 101u);
     network_example::EntitySpawnPacket decoded_spawn{};
     assert(network_example::decode_entity_spawn_packet(
         spawn_packet.data(),
@@ -244,6 +257,12 @@ int main() {
     assert(decoded_spawn.owner_peer == 9);
     assert(decoded_spawn.server_tick == 12);
     assert(decoded_spawn.actor_template_id == 2);
+    assert(decoded_spawn.entity_template_id == 200);
+    assert(decoded_spawn.collider_template_id == 300);
+    assert(decoded_spawn.item_template_id == 501);
+    assert(decoded_spawn.item_instance_id == 9001);
+    assert(decoded_spawn.world_item_mode == KernelWorldItemMode_Carrying);
+    assert(decoded_spawn.carrier_entity_id == 4);
     assert(nearly_equal(decoded_spawn.position.y, 4.0f));
     assert(nearly_equal(decoded_spawn.rotation.w, 1.0f));
     assert(!network_example::decode_entity_spawn_packet(
@@ -443,6 +462,84 @@ int main() {
     assert(decoded_gameplay_outcome.graph_outcome ==
            KernelGameplayGraphOutcome_Succeeded);
     assert(decoded_gameplay_outcome.committed_quantity == 2);
+
+    network_example::InventoryDeltaBatchPacket inventory_batch;
+    inventory_batch.inventory_container_id = 70;
+    inventory_batch.first_revision = 4;
+    network_example::InventoryDeltaRecord add;
+    add.type = KernelInventoryDeltaType_Add;
+    add.slot = 2;
+    add.item.item_instance_id = 9001;
+    add.item.item_template_id = 501;
+    add.item.quantity = 3;
+    add.item.next_use_tick = 44;
+    add.item.portable_values = {12u, 1u};
+    inventory_batch.records.push_back(add);
+    network_example::InventoryDeltaRecord remove;
+    remove.type = KernelInventoryDeltaType_Remove;
+    remove.slot = 3;
+    remove.item.item_instance_id = 9002;
+    inventory_batch.records.push_back(remove);
+    const auto inventory_packet =
+        network_example::encode_inventory_delta_batch_packet(inventory_batch, 28);
+    assert(inventory_packet.size() == 97u);
+    network_example::InventoryDeltaBatchPacket decoded_inventory;
+    assert(network_example::decode_inventory_delta_batch_packet(
+        inventory_packet.data(), inventory_packet.size(), &decoded_inventory));
+    assert(decoded_inventory.first_revision == 4);
+    assert(decoded_inventory.records.size() == 2);
+    assert(decoded_inventory.records[0].item.portable_values[0] == 12u);
+
+    network_example::InventorySnapshotRequestPacket snapshot_request{70, 3};
+    const auto snapshot_request_bytes =
+        network_example::encode_inventory_snapshot_request_packet(
+            snapshot_request, 29);
+    assert(snapshot_request_bytes.size() == 44u);
+    network_example::InventorySnapshotRequestPacket decoded_snapshot_request;
+    assert(network_example::decode_inventory_snapshot_request_packet(
+        snapshot_request_bytes.data(), snapshot_request_bytes.size(),
+        &decoded_snapshot_request));
+    assert(decoded_snapshot_request.client_revision == 3);
+
+    network_example::InventorySnapshotPagePacket inventory_snapshot;
+    inventory_snapshot.inventory_container_id = 70;
+    inventory_snapshot.owner_entity_id = 4;
+    inventory_snapshot.revision = 5;
+    inventory_snapshot.slot_capacity = 8;
+    inventory_snapshot.page_count = 1;
+    inventory_snapshot.entries.push_back({2, add.item});
+    const auto inventory_snapshot_bytes =
+        network_example::encode_inventory_snapshot_page_packet(
+            inventory_snapshot, 30);
+    assert(inventory_snapshot_bytes.size() == 89u);
+    network_example::InventorySnapshotPagePacket decoded_inventory_snapshot;
+    assert(network_example::decode_inventory_snapshot_page_packet(
+        inventory_snapshot_bytes.data(), inventory_snapshot_bytes.size(),
+        &decoded_inventory_snapshot));
+    assert(decoded_inventory_snapshot.entries.size() == 1);
+    assert(decoded_inventory_snapshot.entries[0].slot == 2);
+
+    network_example::PropStateChangeBatchPacket prop_changes;
+    prop_changes.server_tick = 50;
+    network_example::PropStateChangeRecord prop_change;
+    prop_change.net_id = 12;
+    prop_change.changed_fields = network_example::kPropStateChangeMode |
+        network_example::kPropStateChangeTransform |
+        network_example::kPropStateChangeVelocity;
+    prop_change.world_mode = KernelWorldItemMode_InFlight;
+    prop_change.position = glm::vec3{1.0f, 2.0f, 3.0f};
+    prop_change.rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+    prop_change.velocity = glm::vec3{4.0f, 5.0f, 6.0f};
+    prop_changes.records.push_back(prop_change);
+    const auto prop_change_bytes =
+        network_example::encode_prop_state_change_batch_packet(prop_changes, 31);
+    assert(prop_change_bytes.size() == 84u);
+    network_example::PropStateChangeBatchPacket decoded_prop_changes;
+    assert(network_example::decode_prop_state_change_batch_packet(
+        prop_change_bytes.data(), prop_change_bytes.size(),
+        &decoded_prop_changes));
+    assert(decoded_prop_changes.records[0].world_mode ==
+        KernelWorldItemMode_InFlight);
 
     std::vector<std::uint8_t> bad_header = input_packet;
     bad_header[0] = 0;

@@ -21,6 +21,12 @@ struct EntitySpawnPacket {
     std::uint32_t actor_template_id = 0;
     glm::vec3 position{0.0f, 0.0f, 0.0f};
     glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+    std::uint32_t entity_template_id = 0;
+    std::uint32_t collider_template_id = 0;
+    std::uint32_t item_template_id = 0;
+    KernelItemInstanceId item_instance_id = 0;
+    std::uint8_t world_item_mode = KernelWorldItemMode_Placed;
+    std::uint32_t carrier_entity_id = 0;
 };
 
 struct EntityDespawnPacket {
@@ -64,6 +70,75 @@ struct LocalActionResultBatchPacket {
 struct RemoteActionPresentationBatchPacket {
     std::uint32_t server_tick = 0;
     std::vector<KernelRemoteActionPresentationEvent> records;
+};
+
+inline constexpr std::uint16_t kInventoryChangeQuantity = 1u << 0;
+inline constexpr std::uint16_t kInventoryChangeCooldown = 1u << 1;
+inline constexpr std::uint16_t kInventoryChangePortableState = 1u << 2;
+inline constexpr std::uint16_t kInventoryChangeAll =
+    kInventoryChangeQuantity |
+    kInventoryChangeCooldown |
+    kInventoryChangePortableState;
+
+struct InventoryWireItem {
+    KernelItemInstanceId item_instance_id = 0;
+    std::uint32_t item_template_id = 0;
+    std::uint32_t quantity = 0;
+    std::uint32_t next_use_tick = 0;
+    std::vector<std::uint32_t> portable_values;
+};
+
+struct InventoryDeltaRecord {
+    KernelInventoryDeltaType type = KernelInventoryDeltaType_Add;
+    std::uint16_t slot = 0;
+    std::uint16_t previous_slot = 0;
+    std::uint16_t changed_fields = kInventoryChangeAll;
+    InventoryWireItem item;
+};
+
+struct InventoryDeltaBatchPacket {
+    KernelInventoryContainerId inventory_container_id = 0;
+    std::uint64_t first_revision = 0;
+    std::vector<InventoryDeltaRecord> records;
+};
+
+struct InventorySnapshotRequestPacket {
+    KernelInventoryContainerId inventory_container_id = 0;
+    std::uint64_t client_revision = 0;
+};
+
+struct InventorySnapshotEntry {
+    std::uint16_t slot = 0;
+    InventoryWireItem item;
+};
+
+struct InventorySnapshotPagePacket {
+    KernelInventoryContainerId inventory_container_id = 0;
+    std::uint32_t owner_entity_id = 0;
+    std::uint64_t revision = 0;
+    std::uint32_t slot_capacity = 0;
+    std::uint16_t page_index = 0;
+    std::uint16_t page_count = 0;
+    std::vector<InventorySnapshotEntry> entries;
+};
+
+inline constexpr std::uint8_t kPropStateChangeMode = 1u << 0;
+inline constexpr std::uint8_t kPropStateChangeTransform = 1u << 1;
+inline constexpr std::uint8_t kPropStateChangeVelocity = 1u << 2;
+
+struct PropStateChangeRecord {
+    NetId net_id = 0;
+    std::uint8_t changed_fields = 0;
+    KernelWorldItemMode world_mode = KernelWorldItemMode_Placed;
+    NetId carrier_entity_id = 0;
+    glm::vec3 position{0.0f};
+    glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+    glm::vec3 velocity{0.0f};
+};
+
+struct PropStateChangeBatchPacket {
+    std::uint32_t server_tick = 0;
+    std::vector<PropStateChangeRecord> records;
 };
 
 std::vector<std::uint8_t> encode_input_packet(
@@ -171,6 +246,38 @@ bool decode_gameplay_request_outcome_packet(
     const std::uint8_t* data,
     std::size_t size,
     KernelGameplayRequestOutcome* out_outcome);
+
+std::vector<std::uint8_t> encode_inventory_delta_batch_packet(
+    const InventoryDeltaBatchPacket& packet,
+    std::uint32_t sequence = 0);
+bool decode_inventory_delta_batch_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    InventoryDeltaBatchPacket* out_packet);
+
+std::vector<std::uint8_t> encode_inventory_snapshot_request_packet(
+    const InventorySnapshotRequestPacket& packet,
+    std::uint32_t sequence = 0);
+bool decode_inventory_snapshot_request_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    InventorySnapshotRequestPacket* out_packet);
+
+std::vector<std::uint8_t> encode_inventory_snapshot_page_packet(
+    const InventorySnapshotPagePacket& packet,
+    std::uint32_t sequence = 0);
+bool decode_inventory_snapshot_page_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    InventorySnapshotPagePacket* out_packet);
+
+std::vector<std::uint8_t> encode_prop_state_change_batch_packet(
+    const PropStateChangeBatchPacket& packet,
+    std::uint32_t sequence = 0);
+bool decode_prop_state_change_batch_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    PropStateChangeBatchPacket* out_packet);
 
 }  // namespace network_example
 

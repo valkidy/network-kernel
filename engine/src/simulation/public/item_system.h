@@ -79,6 +79,8 @@ public:
         KernelInventoryContainerId id) const;
     const InventoryContainerRecord* find_container_for_owner(
         std::uint32_t owner_entity_id) const;
+    std::vector<KernelInventoryContainerId> containers_for_owner(
+        std::uint32_t owner_entity_id) const;
 
     std::optional<KernelItemInstanceId> split_inventory_stack(
         KernelItemInstanceId source_id,
@@ -111,6 +113,9 @@ public:
         KernelItemInstanceId id,
         KernelInventoryContainerId container_id,
         std::optional<std::uint16_t> preferred_slot = std::nullopt);
+    bool move_inventory_slot(
+        KernelItemInstanceId id,
+        std::uint16_t destination_slot);
     bool set_world_mode(
         KernelItemInstanceId id,
         KernelWorldItemMode world_mode,
@@ -120,6 +125,16 @@ public:
     std::vector<KernelInventoryDelta> take_inventory_deltas(
         KernelInventoryContainerId container_id,
         std::size_t max_deltas = std::numeric_limits<std::size_t>::max());
+    std::vector<KernelInventoryDelta> inventory_deltas_since(
+        KernelInventoryContainerId container_id,
+        std::uint64_t after_revision,
+        std::size_t max_deltas = std::numeric_limits<std::size_t>::max()) const;
+    bool apply_replica_snapshot(
+        const KernelInventoryContainerView& container,
+        std::span<const KernelItemInstanceView> items);
+    bool apply_replica_deltas(
+        KernelInventoryContainerId container_id,
+        std::span<const KernelInventoryDelta> deltas);
     KernelItemInstanceView item_view(KernelItemInstanceId id) const;
     KernelInventoryContainerView container_view(
         KernelInventoryContainerId id) const;
@@ -134,7 +149,8 @@ private:
         KernelInventoryDeltaType type,
         std::uint16_t slot,
         std::uint16_t previous_slot,
-        const ItemInstanceRecord* item);
+        const ItemInstanceRecord* item,
+        std::uint16_t changed_fields = KernelInventoryChange_All);
 
     KernelItemInstanceId next_item_instance_id_ = 1;
     KernelInventoryContainerId next_container_id_ = 1;
@@ -144,6 +160,8 @@ private:
         containers_;
     std::unordered_map<KernelInventoryContainerId, std::vector<KernelInventoryDelta>>
         pending_deltas_;
+    std::unordered_map<KernelInventoryContainerId, std::vector<KernelInventoryDelta>>
+        delta_history_;
 };
 
 }  // namespace network_example

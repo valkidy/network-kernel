@@ -377,7 +377,7 @@ int main() {
     assert(loaded_catalog);
     assert(load_result.status == KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS);
     assert(load_result.error_code == KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_NONE);
-    assert(load_result.catalog_version == 4);
+    assert(load_result.catalog_version == 5);
     assert(load_result.catalog_hash != 0);
     assert(load_result.projectile_template_count > 0);
     assert(load_result.collider_template_count == 12);

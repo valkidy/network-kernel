@@ -266,6 +266,12 @@ bool Kernel_GetInventoryContainer(
     KernelInventoryContainerId container_id,
     KernelInventoryContainerView* out_view);
 
+uint32_t Kernel_CopyOwnedInventoryContainers(
+    KernelHandle* kernel,
+    uint32_t owner_entity_id,
+    KernelInventoryContainerView* out_containers,
+    uint32_t max_containers);
+
 uint32_t Kernel_CopyInventorySlots(
     KernelHandle* kernel,
     KernelInventoryContainerId container_id,

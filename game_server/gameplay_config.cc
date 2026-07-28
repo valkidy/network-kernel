@@ -1225,10 +1225,10 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
         });
     }
     const YAML::Node actions = node["actions"];
-    if (!actions || !actions.IsSequence() || actions.size() == 0u ||
+    if (!actions || !actions.IsSequence() ||
         actions.size() > KERNEL_MAX_ACTION_GRAPH_ACTIONS) {
         throw std::runtime_error(
-            "action graph requires between one and " +
+            "action graph requires between zero and " +
             std::to_string(KERNEL_MAX_ACTION_GRAPH_ACTIONS) +
             " actions: " + path);
     }
@@ -1246,6 +1246,8 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 "owner",
                 "target",
                 "amount",
+                "item_template",
+                "quantity",
             },
             path,
             source_kind,
@@ -1259,7 +1261,8 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
         std::vector<const std::string*> action_parameters;
         if (compiled_action.action_type == "spawn_projectile") {
             if (action["entity_template"] || action["owner"] ||
-                action["target"] || action["amount"]) {
+                action["target"] || action["amount"] ||
+                action["item_template"] || action["quantity"]) {
                 throw std::runtime_error(
                     "spawn_projectile action has unsupported fields: " + path);
             }
@@ -1288,6 +1291,21 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 parameter_reference_from_yaml(action["position"], "position");
             compiled_action.owner_parameter =
                 parameter_reference_from_yaml(action["owner"], "owner");
+            if (action["item_template"] || action["quantity"]) {
+                if (!action["item_template"] || !action["quantity"]) {
+                    throw std::runtime_error(
+                        "spawn_entity item_template and quantity must be authored together: " +
+                        path);
+                }
+                compiled_action.item_template_ref =
+                    action["item_template"].as<std::string>();
+                compiled_action.quantity = action["quantity"].as<std::uint32_t>();
+                if (compiled_action.item_template_ref.empty() ||
+                    compiled_action.quantity == 0u) {
+                    throw std::runtime_error(
+                        "spawn_entity item quantity must be positive: " + path);
+                }
+            }
             action_parameters = {
                 &compiled_action.entity_template_parameter,
                 &compiled_action.position_parameter,
@@ -1296,7 +1314,8 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
         } else if (compiled_action.action_type == "apply_damage") {
             if (action["projectile_template"] || action["position"] ||
                 action["direction"] || action["entity_template"] ||
-                action["owner"]) {
+                action["owner"] || action["item_template"] ||
+                action["quantity"]) {
                 throw std::runtime_error(
                     "apply_damage action has unsupported fields: " + path);
             }
@@ -3434,6 +3453,8 @@ void mirror_first_action(KernelActionTriggerDefinition* trigger) {
     trigger->position_source = action.position_source;
     trigger->direction_source = action.direction_source;
     trigger->owner_source = action.owner_source;
+    trigger->spawn_item_template_id = action.spawn_item_template_id;
+    trigger->spawn_item_quantity = action.spawn_item_quantity;
 }
 
 void compile_projectile_trigger_binding(
@@ -3510,7 +3531,8 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
     std::string_view trigger_name,
     const std::vector<ActionGraphTemplateConfig>& action_graph_templates,
     const std::vector<EntityTemplateConfig>& entity_templates,
-    const std::vector<ProjectileTemplateConfig>* projectile_templates = nullptr) {
+    const std::vector<ProjectileTemplateConfig>* projectile_templates = nullptr,
+    const std::vector<ItemTemplateConfig>* item_templates = nullptr) {
     KernelActionTriggerDefinition compiled{};
     if (binding.action_graph_ref.empty()) {
         return compiled;
@@ -3613,6 +3635,37 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
                     YAML::Node(entity_template), entity_templates);
             compiled_action.position_source = KernelEventVec3Source_Position;
             compiled_action.owner_source = entity_ref_source(owner);
+            if (!action.item_template_ref.empty()) {
+                if (item_templates == nullptr) {
+                    throw std::runtime_error(
+                        std::string(trigger_name) +
+                        " cannot spawn item-backed entities in this context");
+                }
+                const auto item = std::find_if(
+                    item_templates->begin(),
+                    item_templates->end(),
+                    [&](const ItemTemplateConfig& candidate) {
+                        return candidate.name == action.item_template_ref ||
+                            std::to_string(
+                                candidate.definition.item_template_id) ==
+                                action.item_template_ref;
+                    });
+                if (item == item_templates->end()) {
+                    throw std::runtime_error(
+                        "unknown item template: " + action.item_template_ref);
+                }
+                if (item->definition.entity_template_id !=
+                        compiled_action.spawn_entity_template_id ||
+                    action.quantity > item->definition.max_stack ||
+                    (item->definition.item_mode == KernelItemMode_Stateful &&
+                     action.quantity != 1u)) {
+                    throw std::runtime_error(
+                        "spawn_entity item template/quantity does not match entity template policy");
+                }
+                compiled_action.spawn_item_template_id =
+                    item->definition.item_template_id;
+                compiled_action.spawn_item_quantity = action.quantity;
+            }
             continue;
         }
         if (action.action_type != "apply_damage") {
@@ -3994,7 +4047,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     const std::uint32_t catalog_version =
         document["catalog_version"] ? document["catalog_version"].as<std::uint32_t>()
                                     : 1u;
-    if (catalog_version != 4u) {
+    if (catalog_version != 5u) {
         throw DataLoadError(
             KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNSUPPORTED_CATALOG_VERSION,
             "unsupported catalog_version: " + std::to_string(catalog_version),
@@ -4240,6 +4293,8 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_string(&hash, action.owner_parameter);
             hash_string(&hash, action.target_parameter);
             hash_string(&hash, action.amount_parameter);
+            hash_string(&hash, action.item_template_ref);
+            hash_scalar(&hash, action.quantity);
         }
     }
     std::vector<ActionTemplateConfig> action_templates = config.action_templates;
@@ -5000,7 +5055,8 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             "on_item_used",
             config.action_graph_templates,
             config.entity_templates,
-            &config.projectile_templates);
+            &config.projectile_templates,
+            &config.item_templates);
         storage.item_templates.push_back(item);
     }
     storage.definition.struct_size = sizeof(storage.definition);

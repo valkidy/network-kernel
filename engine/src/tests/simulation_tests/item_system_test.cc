@@ -90,6 +90,21 @@ void validates_templates() {
     invalid = stateful_template();
     invalid.use_policy.charge_field_id = 99;
     require(!network_example::validate_item_template(invalid, &error));
+
+    invalid = fungible_template();
+    invalid.input_mapping.inventory_use = KernelDomainAction_Pickup;
+    require(!network_example::validate_item_template(invalid, &error));
+
+    invalid = fungible_template();
+    invalid.input_mapping.world_interact_tap = KernelDomainAction_Consume;
+    require(!network_example::validate_item_template(invalid, &error));
+
+    invalid = fungible_template();
+    invalid.portable_state_field_count = 2;
+    invalid.portable_state_fields[0].field_id = 9;
+    invalid.portable_state_fields[0].type = KernelPortableStateType_Bool;
+    invalid.portable_state_fields[1] = invalid.portable_state_fields[0];
+    require(!network_example::validate_item_template(invalid, &error));
 }
 
 void enforces_slots_split_merge_and_tombstones() {
@@ -121,6 +136,7 @@ void enforces_slots_split_merge_and_tombstones() {
     require(next.has_value());
     require(*next > *split);
     require(store.container_view(*container).occupied_slot_count == 2);
+    require(store.move_inventory_slot(*next, 0) == false);
 
     const std::vector<KernelInventoryDelta> first_delta_page =
         store.take_inventory_deltas(*container, 1);
@@ -135,12 +151,23 @@ void enforces_slots_split_merge_and_tombstones() {
 
     require(store.consume(*next, 5).has_value());
     require(store.item_view(*next).portable_state_fields[0].uint32_default == 2);
+    const std::vector<KernelInventoryDelta> charge_delta =
+        store.take_inventory_deltas(*container);
+    require(charge_delta.size() == 1u);
+    require(charge_delta[0].changed_fields ==
+        (KernelInventoryChange_PortableState |
+         KernelInventoryChange_Cooldown));
     require(!store.consume(*next, 6).has_value());
     require(store.consume(*next, 7).has_value());
     const auto last_charge = store.consume(*next, 9);
     require(last_charge.has_value());
     require(last_charge->terminal);
     require(store.find_item(*next)->terminal);
+
+    const std::vector<KernelInventoryDelta> history =
+        store.inventory_deltas_since(*container, 0);
+    require(!history.empty());
+    require(history.back().revision == store.container_view(*container).revision);
 }
 
 void preserves_identity_across_residency_and_world_modes() {
@@ -171,11 +198,42 @@ void preserves_identity_across_residency_and_world_modes() {
         KernelItemResidency_Inventory);
 }
 
+void applies_replica_snapshot_and_contiguous_deltas() {
+    network_example::ItemStore source;
+    network_example::ItemStore replica;
+    const std::vector<KernelItemTemplateDefinition> templates = {
+        fungible_template(),
+    };
+    std::string error;
+    require(source.set_templates(templates, &error));
+    require(replica.set_templates(templates, &error));
+    const auto container = source.create_container(42, 3);
+    const auto item = source.create_inventory_item(10, 2, *container);
+    KernelInventoryContainerView container_view = source.container_view(*container);
+    KernelItemInstanceView item_view = source.item_view(*item);
+    require(replica.apply_replica_snapshot(container_view, {&item_view, 1}));
+    require(replica.find_item(*item)->quantity == 2);
+
+    source.take_inventory_deltas(*container);
+    require(source.move_inventory_slot(*item, 2));
+    const auto deltas = source.inventory_deltas_since(
+        *container, container_view.revision);
+    require(replica.apply_replica_deltas(*container, deltas));
+    require(replica.find_item(*item)->residency.slot == 2);
+    require(replica.container_view(*container).revision ==
+        source.container_view(*container).revision);
+
+    KernelInventoryDelta gap = deltas.back();
+    gap.revision += 2;
+    require(!replica.apply_replica_deltas(*container, {&gap, 1}));
+}
+
 }  // namespace
 
 int main() {
     validates_templates();
     enforces_slots_split_merge_and_tombstones();
     preserves_identity_across_residency_and_world_modes();
+    applies_replica_snapshot_and_contiguous_deltas();
     return 0;
 }

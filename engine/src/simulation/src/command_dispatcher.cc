@@ -73,6 +73,38 @@ CommandResult Dispatcher::dispatch(
                     engine,
                     command.activate_entity.activate_info),
                 command.activate_entity.activate_info.subject_net_id};
+        case CommandId::kCreateInventoryContainer: {
+            KernelInventoryContainerId container_id = 0;
+            const bool ok = engine.server_create_inventory_container(
+                command.create_inventory_container.owner_entity_id,
+                command.create_inventory_container.slot_capacity,
+                &container_id);
+            return CommandResult{ok, 0u, container_id, 0u};
+        }
+        case CommandId::kCreateInventoryItem: {
+            KernelItemInstanceId item_id = 0;
+            const bool ok = engine.server_create_inventory_item(
+                command.create_inventory_item.item_template_id,
+                command.create_inventory_item.quantity,
+                command.create_inventory_item.container_id,
+                &item_id);
+            return CommandResult{ok, 0u, 0u, item_id};
+        }
+        case CommandId::kCreateWorldItem: {
+            KernelItemInstanceId item_id = 0;
+            NetId prop_id = 0;
+            const bool ok = engine.server_create_world_item(
+                command.create_world_item.item_template_id,
+                command.create_world_item.quantity,
+                command.create_world_item.position,
+                &item_id,
+                &prop_id);
+            return CommandResult{ok, prop_id, 0u, item_id};
+        }
+        case CommandId::kSubmitGameplayRequest:
+            return CommandResult{
+                engine.server_submit_gameplay_request(
+                    command.submit_gameplay_request.request)};
         case CommandId::kUnknown:
             break;
     }

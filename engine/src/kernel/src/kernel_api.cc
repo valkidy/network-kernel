@@ -799,6 +799,21 @@ bool Kernel_GetInventoryContainer(
     });
 }
 
+uint32_t Kernel_CopyOwnedInventoryContainers(
+    KernelHandle* kernel,
+    uint32_t owner_entity_id,
+    KernelInventoryContainerView* out_containers,
+    uint32_t max_containers) {
+    return abi_call("Kernel_CopyOwnedInventoryContainers", 0u, [&]() {
+        return kernel == nullptr
+            ? 0u
+            : kernel->engine->copy_owned_inventory_containers(
+                  owner_entity_id,
+                  out_containers,
+                  max_containers);
+    });
+}
+
 uint32_t Kernel_CopyInventorySlots(
     KernelHandle* kernel,
     KernelInventoryContainerId container_id,

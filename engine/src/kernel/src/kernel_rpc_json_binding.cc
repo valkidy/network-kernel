@@ -136,6 +136,34 @@ bool read_json(const Json& value, KernelServerEntityActivateInfo* out_value) {
            read_param(value, "request_id", &out_value->request_id);
 }
 
+bool read_json(const Json& value, KernelGameplayRequest* out_value) {
+    if (out_value == nullptr ||
+        !has_exact_fields(value, {
+            "requester_peer",
+            "request_id",
+            "instigator_net_id",
+            "semantic_button",
+            "selected_item_instance_id",
+            "target_net_id",
+            "requested_quantity",
+            "placement_position",
+            "throw_direction",
+        })) {
+        return false;
+    }
+    out_value->struct_size = sizeof(*out_value);
+    return read_param(value, "requester_peer", &out_value->requester_peer) &&
+        read_param(value, "request_id", &out_value->request_id) &&
+        read_param(value, "instigator_net_id", &out_value->instigator_net_id) &&
+        read_param(value, "semantic_button", &out_value->semantic_button) &&
+        read_param(value, "selected_item_instance_id",
+            &out_value->selected_item_instance_id) &&
+        read_param(value, "target_net_id", &out_value->target_net_id) &&
+        read_param(value, "requested_quantity", &out_value->requested_quantity) &&
+        read_param(value, "placement_position", &out_value->placement_position) &&
+        read_param(value, "throw_direction", &out_value->throw_direction);
+}
+
 Json vec3_json(const KernelVec3& value) {
     return {{"x", value.x}, {"y", value.y}, {"z", value.z}};
 }
