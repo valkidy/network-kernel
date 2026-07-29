@@ -280,12 +280,14 @@ macos_codesigned_artifact(
 
 cc_shared_library(
     name = "_network_kernel_shared_mingw_unstripped",
+    additional_linker_inputs = [":network_kernel_exports.def"],
     deps = [
         ":kernel",
         "//game_server:game_server_bridge",
     ],
     shared_lib_name = "network_kernel.unstripped.dll",
     user_link_flags = [
+        "$(location :network_kernel_exports.def)",
         "-lws2_32",
         "-lbcrypt",
         "-lcrypt32",
