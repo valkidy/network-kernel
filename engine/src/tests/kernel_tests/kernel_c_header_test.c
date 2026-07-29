@@ -6,19 +6,23 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 56u,
-    "health change and world impact ABI");
+    KERNEL_ABI_VERSION == 57u,
+    "collision mask and action condition ABI");
 _Static_assert(
-    sizeof(KernelActionTriggerDefinition) == 260u,
+    sizeof(KernelActionTriggerDefinition) == 296u,
     "KernelActionTriggerDefinition ABI size");
 _Static_assert(
     offsetof(KernelActionDefinition, health_change_amount) >
         offsetof(KernelActionDefinition, spawn_item_quantity),
     "health change amount is appended to action ABI");
 _Static_assert(
-    offsetof(KernelEntityTemplateDefinition, world_impact_trigger) >
+    offsetof(KernelActionDefinition, condition_type) >
+        offsetof(KernelActionDefinition, health_change_amount),
+    "action condition is appended to action ABI");
+_Static_assert(
+    offsetof(KernelEntityTemplateDefinition, collision_trigger_mask) >
         offsetof(KernelEntityTemplateDefinition, prop),
-    "world impact trigger is appended to entity template ABI");
+    "collision trigger mask follows prop definition");
 _Static_assert(
     offsetof(KernelEvent, health_delta) >
         offsetof(KernelEvent, presentation_time_us),

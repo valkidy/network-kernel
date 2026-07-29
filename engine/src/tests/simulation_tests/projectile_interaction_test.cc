@@ -627,7 +627,7 @@ void projectile_impact_trigger_is_additive_with_direct_hit_damage() {
     require(health.hp == 10);
 }
 
-void world_impact_emits_projectile_trigger_once() {
+void static_impact_emits_projectile_trigger_once() {
     network_example::World world;
     network_example::physics::PhysicsWorld physics;
     world.set_collision_world(&physics);
@@ -668,7 +668,8 @@ void world_impact_emits_projectile_trigger_once() {
         1,
         glm::vec3{0.0f, 0.5f, 0.0f},
         glm::vec3{20.0f, 0.0f, 0.0f},
-        3);
+        3,
+        network_example::kCollisionLayerStaticObstacle);
     const auto rocket_entity = world.find_entity(rocket);
     require(rocket_entity.has_value());
     network_example::ProjectileState& projectile =
@@ -837,7 +838,7 @@ int main() {
     action_graph_dispatcher_orders_captured_trigger_snapshots();
     projectile_impact_trigger_spawns_area_effect_projectile_once();
     projectile_impact_trigger_is_additive_with_direct_hit_damage();
-    world_impact_emits_projectile_trigger_once();
+    static_impact_emits_projectile_trigger_once();
     historical_hit_emits_projectile_trigger_once();
     expired_trigger_does_not_reuse_impact_trigger();
     return 0;

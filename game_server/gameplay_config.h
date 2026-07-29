@@ -85,7 +85,7 @@ struct ActorTemplateConfig {
     std::uint32_t director_spawn_seed = 1;
     TriggerBindingConfig activated_trigger;
     TriggerBindingConfig collision_trigger;
-    TriggerBindingConfig world_impact_trigger;
+    std::uint32_t collision_trigger_mask = KERNEL_COLLISION_MASK_NONE;
     TriggerBindingConfig health_depleted_trigger;
     TriggerBindingConfig destroy_entity_trigger;
     KernelPropDefinition prop{};
@@ -143,6 +143,7 @@ struct ActionGraphActionConfig {
     std::string amount_parameter;
     std::string item_template_ref;
     std::uint32_t quantity = 0;
+    std::uint32_t condition_type = KernelActionConditionType_Always;
 };
 
 struct ActionGraphTemplateConfig {

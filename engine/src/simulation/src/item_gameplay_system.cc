@@ -9,6 +9,7 @@
 
 #include "kernel/src/kernel.h"
 #include "physics/public/physics_world.h"
+#include "simulation/public/collision_filter.h"
 #include "simulation/public/action_graph.h"
 #include "simulation/src/systems.h"
 
@@ -226,7 +227,7 @@ bool has_line_of_sight(
     ray.origin = origin;
     ray.direction = displacement / distance;
     ray.max_distance = distance;
-    ray.filter.collision_mask = blocking_mask;
+    ray.filter = collision_filter_from_mask(blocking_mask);
     ray.filter.ignored_entity_net_id = actor_id;
     const std::vector<physics::CollisionHit> hits =
         physics_world->ray_cast_all(ray);

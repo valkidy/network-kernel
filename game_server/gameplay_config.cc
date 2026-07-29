@@ -191,6 +191,7 @@ void hash_projectile_template(
             hash_scalar(hash, action.spawn_projectile_template_id);
             hash_scalar(hash, action.position_source);
             hash_scalar(hash, action.direction_source);
+            hash_scalar(hash, action.condition_type);
         }
     }
 }
@@ -252,12 +253,8 @@ void hash_actor_template(
         hash_string(hash, parameter.second);
     }
     hash_string(hash, actor_template.collision_trigger.action_graph_ref);
+    hash_scalar(hash, actor_template.collision_trigger_mask);
     for (const auto& parameter : actor_template.collision_trigger.parameters) {
-        hash_string(hash, parameter.first);
-        hash_string(hash, parameter.second);
-    }
-    hash_string(hash, actor_template.world_impact_trigger.action_graph_ref);
-    for (const auto& parameter : actor_template.world_impact_trigger.parameters) {
         hash_string(hash, parameter.first);
         hash_string(hash, parameter.second);
     }
@@ -399,7 +396,7 @@ std::string trim_ascii(const std::string& value) {
 }
 
 std::uint32_t collision_mask_token_from_yaml(const std::string& token) {
-    if (token == "damageable") {
+    if (token == "actor" || token == "damageable") {
         return KERNEL_COLLISION_MASK_DAMAGEABLE;
     }
     if (token == "none" || token == "0") {
@@ -423,12 +420,20 @@ std::uint32_t collision_mask_token_from_yaml(const std::string& token) {
     if (token == "agent_vision") {
         return KERNEL_COLLISION_LAYER_AGENT_VISION;
     }
+    if (token == "terrain") {
+        return KERNEL_COLLISION_LAYER_TERRAIN;
+    }
+    if (token == "obstacle" || token == "static_obstacle") {
+        return KERNEL_COLLISION_LAYER_STATIC_OBSTACLE;
+    }
     throw std::runtime_error("unsupported collision_mask: " + token);
 }
 
-std::uint32_t collision_mask_from_yaml(const YAML::Node& node) {
+std::uint32_t collision_mask_from_yaml(
+    const YAML::Node& node,
+    std::uint32_t default_mask = KERNEL_COLLISION_MASK_DAMAGEABLE) {
     if (!node) {
-        return KERNEL_COLLISION_MASK_DAMAGEABLE;
+        return default_mask;
     }
     const std::string value = node.as<std::string>();
     std::uint32_t mask = 0;
@@ -448,6 +453,16 @@ std::uint32_t collision_mask_from_yaml(const YAML::Node& node) {
         start = separator + 1;
     }
     return mask;
+}
+
+void require_supported_collision_mask(
+    std::uint32_t mask,
+    std::uint32_t supported_mask,
+    const std::string& context) {
+    if ((mask & ~supported_mask) != 0u) {
+        throw std::runtime_error(
+            context + " contains unsupported collision_mask bits");
+    }
 }
 
 std::uint8_t motion_model_from_yaml(const YAML::Node& node) {
@@ -1253,6 +1268,7 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 "amount",
                 "item_template",
                 "quantity",
+                "when",
             },
             path,
             source_kind,
@@ -1263,6 +1279,15 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
         }
         ActionGraphActionConfig compiled_action;
         compiled_action.action_type = action["type"].as<std::string>();
+        if (action["when"]) {
+            const std::string condition = action["when"].as<std::string>();
+            if (condition != "event.has_target") {
+                throw std::runtime_error(
+                    "unsupported action condition: " + condition);
+            }
+            compiled_action.condition_type =
+                KernelActionConditionType_EventHasTarget;
+        }
         std::vector<const std::string*> action_parameters;
         if (compiled_action.action_type == "spawn_projectile") {
             if (action["entity_template"] || action["owner"] ||
@@ -1634,7 +1659,8 @@ TriggerBindingConfig trigger_binding_from_yaml(
     const std::string& path,
     std::uint32_t source_kind,
     std::uint32_t template_kind,
-    std::uint32_t template_id);
+    std::uint32_t template_id,
+    bool allow_collision_mask = false);
 
 std::uint32_t item_capability_from_yaml(const std::string& value);
 std::uint8_t domain_action_from_yaml(const YAML::Node& node);
@@ -2420,6 +2446,11 @@ EntityTemplateConfig entity_template_from_yaml(
                 node["interaction"]["blocking_mask"]
                 ? collision_mask_from_yaml(node["interaction"]["blocking_mask"])
                 : 0u;
+            require_supported_collision_mask(
+                entity_template.prop.interaction.line_of_sight_blocking_mask,
+                KERNEL_COLLISION_MASK_ACTOR |
+                    KERNEL_COLLISION_MASK_STATIC_WORLD,
+                "prop interaction blocking_mask");
         }
         if (node["carry_offset"]) {
             const KernelVec3 offset = vec3_from_yaml(node["carry_offset"]);
@@ -2433,7 +2464,6 @@ EntityTemplateConfig entity_template_from_yaml(
                 {
                     "on_activated",
                     "on_collision",
-                    "on_world_impact",
                     "on_health_depleted",
                     "on_destroy_entity",
                 },
@@ -2450,20 +2480,26 @@ EntityTemplateConfig entity_template_from_yaml(
                     entity_template.actor_template_id);
             }
             if (node["triggers"]["on_collision"]) {
+                const YAML::Node collision =
+                    node["triggers"]["on_collision"];
+                if (!collision["collision_mask"]) {
+                    throw std::runtime_error(
+                        "on_collision requires collision_mask: " + path);
+                }
+                entity_template.collision_trigger_mask =
+                    collision_mask_from_yaml(collision["collision_mask"]);
+                require_supported_collision_mask(
+                    entity_template.collision_trigger_mask,
+                    KERNEL_COLLISION_MASK_ACTOR |
+                        KERNEL_COLLISION_MASK_STATIC_WORLD,
+                    "on_collision");
                 entity_template.collision_trigger = trigger_binding_from_yaml(
-                    node["triggers"]["on_collision"],
+                    collision,
                     path,
                     source_kind,
                     KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
-                    entity_template.actor_template_id);
-            }
-            if (node["triggers"]["on_world_impact"]) {
-                entity_template.world_impact_trigger = trigger_binding_from_yaml(
-                    node["triggers"]["on_world_impact"],
-                    path,
-                    source_kind,
-                    KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
-                    entity_template.actor_template_id);
+                    entity_template.actor_template_id,
+                    true);
             }
             if (node["triggers"]["on_health_depleted"]) {
                 entity_template.health_depleted_trigger =
@@ -2827,14 +2863,25 @@ TriggerBindingConfig trigger_binding_from_yaml(
     const std::string& path,
     std::uint32_t source_kind,
     std::uint32_t template_kind,
-    std::uint32_t template_id) {
-    reject_unknown_keys(
-        node,
-        {"action_graph", "parameters"},
-        path,
-        source_kind,
-        template_kind,
-        template_id);
+    std::uint32_t template_id,
+    bool allow_collision_mask) {
+    if (allow_collision_mask) {
+        reject_unknown_keys(
+            node,
+            {"action_graph", "parameters", "collision_mask"},
+            path,
+            source_kind,
+            template_kind,
+            template_id);
+    } else {
+        reject_unknown_keys(
+            node,
+            {"action_graph", "parameters"},
+            path,
+            source_kind,
+            template_kind,
+            template_id);
+    }
     if (!node["action_graph"] || !node["action_graph"].IsScalar() ||
         !node["parameters"] || !node["parameters"].IsMap()) {
         throw std::runtime_error(
@@ -2986,6 +3033,11 @@ ItemTemplateConfig item_template_from_yaml(
             ? collision_mask_from_yaml(
                   node["world_interaction"]["blocking_mask"])
             : 0u;
+        require_supported_collision_mask(
+            definition.line_of_sight_blocking_mask,
+            KERNEL_COLLISION_MASK_ACTOR |
+                KERNEL_COLLISION_MASK_STATIC_WORLD,
+            "item interaction blocking_mask");
     }
     definition.throw_policy.struct_size = sizeof(definition.throw_policy);
     if (node["throw"]) {
@@ -3184,7 +3236,23 @@ ProjectileTemplateConfig projectile_template_from_yaml(
                                 : (node["type"] ? node["type"] : node["kind"]));
     mechanics.collider_template_id =
         collider_template_id_from_ref(node["collider_template"], colliders);
-    mechanics.collision_mask = collision_mask_from_yaml(node["collision_mask"]);
+    const std::uint32_t static_collision_mask =
+        KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_MASK_STATIC_WORLD;
+    mechanics.collision_mask = collision_mask_from_yaml(
+        node["collision_mask"],
+        mechanics.projectile_type == KernelProjectileType_AreaEffect
+            ? KERNEL_COLLISION_MASK_ACTOR
+            : static_collision_mask);
+    const std::uint32_t supported_collision_mask =
+        mechanics.projectile_type == KernelProjectileType_AreaEffect
+            ? KERNEL_COLLISION_MASK_ACTOR
+            : mechanics.projectile_type == KernelProjectileType_Beam
+                ? static_collision_mask
+                : static_collision_mask | KERNEL_COLLISION_LAYER_PROJECTILE;
+    require_supported_collision_mask(
+        mechanics.collision_mask,
+        supported_collision_mask,
+        "projectile " + projectile_template.name);
     mechanics.collision_query_mode = collision_query_mode_from_yaml(
         node["collision_query_mode"] ? node["collision_query_mode"]
                                      : node["collision_query"]);
@@ -3277,7 +3345,12 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             beam["damage_per_tick"].as<std::uint16_t>();
         mechanics.beam.lifetime_ticks =
             beam["lifetime_ticks"] ? beam["lifetime_ticks"].as<std::uint32_t>() : 2u;
-        mechanics.beam.collision_mask = collision_mask_from_yaml(beam["collision_mask"]);
+        mechanics.beam.collision_mask = collision_mask_from_yaml(
+            beam["collision_mask"], static_collision_mask);
+        require_supported_collision_mask(
+            mechanics.beam.collision_mask,
+            static_collision_mask,
+            "beam " + projectile_template.name);
     } else if (node["beam"]) {
         throw std::runtime_error("beam block requires projectile type: beam");
     }
@@ -3418,7 +3491,6 @@ bool event_expression_available(
         return trigger_name == "on_activated" ||
             trigger_name == "on_item_used" ||
             trigger_name == "on_collision" ||
-            trigger_name == "on_world_impact" ||
             trigger_name == "on_projectile_impact" ||
             trigger_name == "on_expired";
     }
@@ -3473,6 +3545,7 @@ void mirror_first_action(KernelActionTriggerDefinition* trigger) {
     trigger->spawn_item_template_id = action.spawn_item_template_id;
     trigger->spawn_item_quantity = action.spawn_item_quantity;
     trigger->health_change_amount = action.health_change_amount;
+    trigger->condition_type = action.condition_type;
 }
 
 void compile_projectile_trigger_binding(
@@ -3534,6 +3607,7 @@ void compile_projectile_trigger_binding(
             projectile_template_from_ref(
                 YAML::Node(projectile_ref), projectile_templates);
         KernelActionDefinition& compiled_action = compiled.actions[index];
+        compiled_action.condition_type = action.condition_type;
         compiled_action.action_type =
             KernelEntityTriggerActionType_SpawnProjectile;
         compiled_action.spawn_projectile_template_id =
@@ -3594,6 +3668,7 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
     for (std::size_t index = 0; index < graph->actions.size(); ++index) {
         const ActionGraphActionConfig& action = graph->actions[index];
         KernelActionDefinition& compiled_action = compiled.actions[index];
+        compiled_action.condition_type = action.condition_type;
         if (action.action_type == "spawn_projectile") {
             if (projectile_templates == nullptr) {
                 throw std::runtime_error(
@@ -4331,6 +4406,7 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_string(&hash, action.amount_parameter);
             hash_string(&hash, action.item_template_ref);
             hash_scalar(&hash, action.quantity);
+            hash_scalar(&hash, action.condition_type);
         }
     }
     std::vector<ActionTemplateConfig> action_templates = config.action_templates;
@@ -4971,11 +5047,8 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             "on_collision",
             config.action_graph_templates,
             config.entity_templates);
-        entity_template.world_impact_trigger = compile_action_trigger_binding(
-            authored_template.world_impact_trigger,
-            "on_world_impact",
-            config.action_graph_templates,
-            config.entity_templates);
+        entity_template.collision_trigger_mask =
+            authored_template.collision_trigger_mask;
         entity_template.health_depleted_trigger = compile_action_trigger_binding(
             authored_template.health_depleted_trigger,
             "on_health_depleted",

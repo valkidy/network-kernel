@@ -248,9 +248,13 @@ inline constexpr std::uint32_t kCollisionLayerPlayerSide = 0x00000001u;
 inline constexpr std::uint32_t kCollisionLayerHostileSide = 0x00000002u;
 inline constexpr std::uint32_t kCollisionLayerProjectile = 0x00000004u;
 inline constexpr std::uint32_t kCollisionLayerNeutral = 0x00000020u;
+inline constexpr std::uint32_t kCollisionLayerTerrain = 0x00000040u;
+inline constexpr std::uint32_t kCollisionLayerStaticObstacle = 0x00000080u;
 inline constexpr std::uint32_t kCollisionMaskNone = 0x00000000u;
 inline constexpr std::uint32_t kCollisionMaskDamageable =
     kCollisionLayerPlayerSide | kCollisionLayerHostileSide | kCollisionLayerNeutral;
+inline constexpr std::uint32_t kCollisionMaskStaticWorld =
+    kCollisionLayerTerrain | kCollisionLayerStaticObstacle;
 
 struct WeaponState {
     std::uint8_t active_weapon_slot = 0;
@@ -427,7 +431,6 @@ enum class TriggerEventType : std::uint8_t {
     kHealthDepleted,
     kDestroyEntity,
     kExpired,
-    kWorldImpact,
 };
 
 struct OnCollisionTriggerTag {};
@@ -436,7 +439,6 @@ struct OnActivatedTriggerTag {};
 struct OnHealthDepletedTriggerTag {};
 struct OnDestroyEntityTriggerTag {};
 struct OnExpiredTriggerTag {};
-struct OnWorldImpactTriggerTag {};
 
 struct ProjectileImpactPayload {
     std::uint32_t projectile_template_id = 0;
@@ -521,6 +523,11 @@ enum class EventVec3Source : std::uint8_t {
     kDirection,
 };
 
+enum class ActionConditionType : std::uint8_t {
+    kAlways,
+    kEventHasTarget,
+};
+
 struct EventVec3Expression {
     EventVec3Source source = EventVec3Source::kPosition;
 };
@@ -547,16 +554,19 @@ struct ActionSpawnProjectileDefinition {
     std::string projectile_template_parameter;
     std::string position_parameter;
     std::string direction_parameter;
+    ActionConditionType condition = ActionConditionType::kAlways;
 };
 
 struct ActionApplyDamageDefinition {
     std::string target_parameter;
     std::string amount_parameter;
+    ActionConditionType condition = ActionConditionType::kAlways;
 };
 
 struct ActionApplyHealthChangeDefinition {
     std::string target_parameter;
     std::string amount_parameter;
+    ActionConditionType condition = ActionConditionType::kAlways;
 };
 
 struct ActionSpawnEntityDefinition {
@@ -565,6 +575,7 @@ struct ActionSpawnEntityDefinition {
     std::string owner_parameter;
     std::uint32_t item_template_id = 0;
     std::uint32_t quantity = 0;
+    ActionConditionType condition = ActionConditionType::kAlways;
 };
 
 using ActionGraphAction = std::variant<
@@ -591,6 +602,7 @@ struct ActionGraphActivatedBinding {
 
 struct ActionGraphCollisionBinding {
     CompiledActionGraphBinding binding;
+    std::uint32_t collision_mask = kCollisionMaskNone;
 };
 
 struct ActionGraphHealthDepletedBinding {
@@ -598,10 +610,6 @@ struct ActionGraphHealthDepletedBinding {
 };
 
 struct ActionGraphDestroyEntityBinding {
-    CompiledActionGraphBinding binding;
-};
-
-struct ActionGraphWorldImpactBinding {
     CompiledActionGraphBinding binding;
 };
 

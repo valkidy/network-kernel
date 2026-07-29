@@ -822,10 +822,11 @@ int main() {
         "actions:\n"
         "  - type: apply_health_change\n"
         "    target: params.target\n"
-        "    amount: params.amount\n";
-    const std::string world_impact_prop =
+        "    amount: params.amount\n"
+        "    when: event.has_target\n";
+    const std::string collision_prop =
         "id: 300\n"
-        "name: health_change_world_impact_prop\n"
+        "name: health_change_collision_prop\n"
         "entity_type: prop\n"
         "health:\n"
         "  hp: 3\n"
@@ -833,10 +834,11 @@ int main() {
         "physics:\n"
         "  collider_template: rocket_aabb\n"
         "triggers:\n"
-        "  on_world_impact:\n"
+        "  on_collision:\n"
+        "    collision_mask: actor | terrain | obstacle\n"
         "    action_graph: action_apply_health_change\n"
         "    parameters:\n"
-        "      target: self\n"
+        "      target: event.target\n"
         "      amount: 30\n";
     const std::vector<std::uint8_t> health_change_bundle =
         make_gameplay_bundle_zip(
@@ -844,8 +846,8 @@ int main() {
             {
                 {"action_graph_templates/action_apply_health_change.yaml",
                  health_change_graph},
-                {"entity_templates/health_change_world_impact_prop.yaml",
-                 world_impact_prop},
+                {"entity_templates/health_change_collision_prop.yaml",
+                 collision_prop},
             });
     const network_example::game_server::GameServerGameplayConfig
         health_change_config =
@@ -864,15 +866,25 @@ int main() {
             return entity.entity_template_id == 300u;
         });
     require(health_prop != health_change_catalog.entity_templates.end());
-    require(health_prop->world_impact_trigger.action_count == 1u);
+    require(health_prop->collision_trigger.action_count == 1u);
     require(
-        health_prop->world_impact_trigger.action_type ==
+        health_prop->collision_trigger.action_type ==
         KernelEntityTriggerActionType_ApplyHealthChange);
-    require(health_prop->world_impact_trigger.health_change_amount == 30);
+    require(health_prop->collision_trigger.health_change_amount == 30);
     require(
-        health_prop->world_impact_trigger.actions[0].action_type ==
+        health_prop->collision_trigger.condition_type ==
+        KernelActionConditionType_EventHasTarget);
+    require(
+        health_prop->collision_trigger_mask ==
+        (KERNEL_COLLISION_MASK_ACTOR |
+         KERNEL_COLLISION_MASK_STATIC_WORLD));
+    require(
+        health_prop->collision_trigger.actions[0].action_type ==
         KernelEntityTriggerActionType_ApplyHealthChange);
-    require(health_prop->world_impact_trigger.actions[0].health_change_amount == 30);
+    require(health_prop->collision_trigger.actions[0].health_change_amount == 30);
+    require(
+        health_prop->collision_trigger.actions[0].condition_type ==
+        KernelActionConditionType_EventHasTarget);
     auto health_change_hash_config = health_change_config;
     const auto authored_health_prop = std::find_if(
         health_change_hash_config.entity_templates.begin(),
@@ -883,12 +895,12 @@ int main() {
     require(
         authored_health_prop != health_change_hash_config.entity_templates.end());
     const auto amount_parameter = std::find_if(
-        authored_health_prop->world_impact_trigger.parameters.begin(),
-        authored_health_prop->world_impact_trigger.parameters.end(),
+        authored_health_prop->collision_trigger.parameters.begin(),
+        authored_health_prop->collision_trigger.parameters.end(),
         [](const auto& parameter) { return parameter.first == "amount"; });
     require(
         amount_parameter !=
-        authored_health_prop->world_impact_trigger.parameters.end());
+        authored_health_prop->collision_trigger.parameters.end());
     amount_parameter->second = "31";
     require(
         network_example::game_server::compute_gameplay_catalog_hash(
@@ -899,7 +911,7 @@ int main() {
     for (const char* invalid_amount : {"0", "65536", "-65536"}) {
         const std::string invalid_prop =
             "id: 300\n"
-            "name: health_change_world_impact_prop\n"
+            "name: health_change_collision_prop\n"
             "entity_type: prop\n"
             "health:\n"
             "  hp: 3\n"
@@ -907,7 +919,8 @@ int main() {
             "physics:\n"
             "  collider_template: rocket_aabb\n"
             "triggers:\n"
-            "  on_world_impact:\n"
+            "  on_collision:\n"
+            "    collision_mask: actor\n"
             "    action_graph: action_apply_health_change\n"
             "    parameters:\n"
             "      target: self\n"
@@ -918,7 +931,7 @@ int main() {
                 {
                     {"action_graph_templates/action_apply_health_change.yaml",
                      health_change_graph},
-                    {"entity_templates/health_change_world_impact_prop.yaml",
+                    {"entity_templates/health_change_collision_prop.yaml",
                      invalid_prop},
                 });
         bool rejected = false;
@@ -930,6 +943,52 @@ int main() {
                     "gameplay_catalog.yaml");
             (void)network_example::game_server::build_kernel_gameplay_catalog(
                 invalid_config);
+        } catch (const std::exception&) {
+            rejected = true;
+        }
+        require(rejected);
+    }
+
+    for (const std::string& invalid_trigger : {
+             std::string(
+                 "  on_collision:\n"
+                 "    action_graph: action_apply_health_change\n"
+                 "    parameters:\n"
+                 "      target: self\n"
+                 "      amount: 30\n"),
+             std::string(
+                 "  on_world_impact:\n"
+                 "    action_graph: action_apply_health_change\n"
+                 "    parameters:\n"
+                 "      target: self\n"
+                 "      amount: 30\n"),
+         }) {
+        const std::string invalid_prop =
+            "id: 300\n"
+            "name: invalid_collision_prop\n"
+            "entity_type: prop\n"
+            "health:\n"
+            "  hp: 3\n"
+            "  max_hp: 3\n"
+            "physics:\n"
+            "  collider_template: rocket_aabb\n"
+            "triggers:\n" + invalid_trigger;
+        const std::vector<std::uint8_t> invalid_bundle =
+            make_gameplay_bundle_zip(
+                read_text_file("game_server/entity_templates/sentry_grunt.yaml"),
+                {
+                    {"action_graph_templates/action_apply_health_change.yaml",
+                     health_change_graph},
+                    {"entity_templates/invalid_collision_prop.yaml",
+                     invalid_prop},
+                });
+        bool rejected = false;
+        try {
+            (void)network_example::game_server::
+                load_gameplay_config_from_bundle_memory(
+                    invalid_bundle.data(),
+                    static_cast<std::uint32_t>(invalid_bundle.size()),
+                    "gameplay_catalog.yaml");
         } catch (const std::exception&) {
             rejected = true;
         }

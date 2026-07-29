@@ -71,6 +71,10 @@ bool compatible_runtime_state(
 }
 
 bool valid_item_graph_action(const KernelActionDefinition& action) {
+    if (action.condition_type >
+        KernelActionConditionType_EventHasTarget) {
+        return false;
+    }
     if (action.action_type == KernelEntityTriggerActionType_ApplyDamage) {
         return action.damage_amount != 0u &&
             action.target_source <= KernelEntityRefSource_EventInstigator;
@@ -123,6 +127,7 @@ bool valid_item_used_graph(
             action.direction_source = trigger.direction_source;
             action.owner_source = trigger.owner_source;
             action.health_change_amount = trigger.health_change_amount;
+            action.condition_type = trigger.condition_type;
         } else {
             action = trigger.actions[index];
         }

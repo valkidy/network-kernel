@@ -91,8 +91,24 @@ bool expression_available_for_event(
         event_type == TriggerEventType::kItemUsed ||
         event_type == TriggerEventType::kCollision ||
         event_type == TriggerEventType::kProjectileImpact ||
-        event_type == TriggerEventType::kExpired ||
-        event_type == TriggerEventType::kWorldImpact;
+        event_type == TriggerEventType::kExpired;
+}
+
+std::optional<ActionConditionType> action_condition_from_kernel(
+    std::uint32_t condition_type) {
+    if (condition_type == KernelActionConditionType_Always) {
+        return ActionConditionType::kAlways;
+    }
+    if (condition_type == KernelActionConditionType_EventHasTarget) {
+        return ActionConditionType::kEventHasTarget;
+    }
+    return std::nullopt;
+}
+
+ActionConditionType action_condition(const ActionGraphAction& action) {
+    return std::visit(
+        [](const auto& definition) { return definition.condition; },
+        action);
 }
 
 const ActionGraphParameterDefinition* find_parameter_definition(
@@ -217,8 +233,14 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
             action.spawn_item_template_id = trigger.spawn_item_template_id;
             action.spawn_item_quantity = trigger.spawn_item_quantity;
             action.health_change_amount = trigger.health_change_amount;
+            action.condition_type = trigger.condition_type;
         } else {
             action = trigger.actions[index];
+        }
+        const std::optional<ActionConditionType> condition =
+            action_condition_from_kernel(action.condition_type);
+        if (!condition.has_value()) {
+            return std::nullopt;
         }
         const std::string suffix = "_" + std::to_string(index);
         if (action.action_type ==
@@ -233,6 +255,7 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
                 template_name,
                 position_name,
                 direction_name,
+                *condition,
             });
             binding.parameters.push_back({
                 template_name,
@@ -264,6 +287,7 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
                 owner_name,
                 action.spawn_item_template_id,
                 action.spawn_item_quantity,
+                *condition,
             });
             binding.parameters.push_back({
                 template_name,
@@ -303,11 +327,13 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
             binding.graph.actions.push_back(ActionApplyDamageDefinition{
                 target_name,
                 amount_name,
+                *condition,
             });
         } else {
             binding.graph.actions.push_back(ActionApplyHealthChangeDefinition{
                 target_name,
                 amount_name,
+                *condition,
             });
         }
         binding.parameters.push_back({
@@ -363,8 +389,6 @@ CompiledActionGraphBinding compile_apply_damage_binding(
                 return "action_apply_damage_at_health_depleted";
             case TriggerEventType::kDestroyEntity:
                 return "action_apply_damage_at_destroy_entity";
-            case TriggerEventType::kWorldImpact:
-                return "action_apply_damage_at_world_impact";
             default:
                 return "action_apply_damage_at_activated";
         }
@@ -403,8 +427,6 @@ CompiledActionGraphBinding compile_spawn_entity_binding(
                 return "action_spawn_entity_at_health_depleted";
             case TriggerEventType::kDestroyEntity:
                 return "action_spawn_entity_at_destroy_entity";
-            case TriggerEventType::kWorldImpact:
-                return "action_spawn_entity_at_world_impact";
             default:
                 return "action_spawn_entity_at_activated";
         }
@@ -574,6 +596,10 @@ bool evaluate_action_graph(
         return true;
     }
     for (const ActionGraphAction& action : binding.graph.actions) {
+        if (action_condition(action) == ActionConditionType::kEventHasTarget &&
+            event.target == 0u) {
+            continue;
+        }
         if (const auto* spawn =
                 std::get_if<ActionSpawnProjectileDefinition>(&action)) {
             const ActionGraphParameterValue* template_value =

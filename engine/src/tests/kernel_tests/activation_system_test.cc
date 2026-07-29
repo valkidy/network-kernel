@@ -199,12 +199,15 @@ void collision_prop_applies_damage_on_contact_enter() {
     prop_template.entity_template_id = 201;
     prop_template.entity_type = KernelEntityType_Prop;
     prop_template.component_flags =
-        KERNEL_ENTITY_COMPONENT_TRANSFORM | KERNEL_ENTITY_COMPONENT_HITBOX;
+        KERNEL_ENTITY_COMPONENT_TRANSFORM |
+        KERNEL_ENTITY_COMPONENT_VELOCITY |
+        KERNEL_ENTITY_COMPONENT_HITBOX;
     prop_template.collider_template_id = 10;
     prop_template.ai.struct_size = sizeof(prop_template.ai);
     prop_template.movement.struct_size = sizeof(prop_template.movement);
     prop_template.collision_trigger.struct_size =
         sizeof(prop_template.collision_trigger);
+    prop_template.collision_trigger_mask = KERNEL_COLLISION_MASK_ACTOR;
     prop_template.collision_trigger.action_type =
         KernelEntityTriggerActionType_ApplyDamage;
     prop_template.collision_trigger.target_source =
@@ -217,6 +220,9 @@ void collision_prop_applies_damage_on_contact_enter() {
         create_info(201, KernelVec3{0.0f, 0.0f, 0.0f}), &prop));
     const auto prop_entity = engine.world_.find_entity(prop);
     require(prop_entity.has_value());
+    engine.world_.registry().replace<network_example::PropWorldMode>(
+        *prop_entity,
+        network_example::PropWorldMode{network_example::PropMode::kInFlight});
     require((engine.world_.registry().all_of<
         network_example::OnCollisionTriggerTag,
         network_example::ActionGraphCollisionBinding>(*prop_entity)));
@@ -499,7 +505,7 @@ void health_change_applies_signed_clamped_delta() {
     require(engine.events_[2].health_delta == -20);
 }
 
-void world_impact_runs_once_for(
+void static_collision_runs_once_for(
     network_example::physics::CollisionObjectKind impact_kind,
     network_example::physics::CollisionLayer impact_layer) {
     KernelConfig config{};
@@ -530,21 +536,30 @@ void world_impact_runs_once_for(
     bottle.combat.max_hp = 1;
     bottle.ai.struct_size = sizeof(bottle.ai);
     bottle.movement.struct_size = sizeof(bottle.movement);
-    bottle.world_impact_trigger.struct_size =
-        sizeof(bottle.world_impact_trigger);
-    bottle.world_impact_trigger.action_count = 2;
-    bottle.world_impact_trigger.actions[0].action_type =
+    bottle.collision_trigger.struct_size =
+        sizeof(bottle.collision_trigger);
+    bottle.collision_trigger_mask =
+        KERNEL_COLLISION_MASK_STATIC_WORLD;
+    bottle.collision_trigger.action_count = 3;
+    bottle.collision_trigger.actions[0].action_type =
         KernelEntityTriggerActionType_ApplyDamage;
-    bottle.world_impact_trigger.actions[0].target_source =
+    bottle.collision_trigger.actions[0].target_source =
         KernelEntityRefSource_Self;
-    bottle.world_impact_trigger.actions[0].damage_amount = 1;
-    bottle.world_impact_trigger.actions[1].action_type =
+    bottle.collision_trigger.actions[0].damage_amount = 1;
+    bottle.collision_trigger.actions[1].action_type =
         KernelEntityTriggerActionType_SpawnEntity;
-    bottle.world_impact_trigger.actions[1].spawn_entity_template_id = 207;
-    bottle.world_impact_trigger.actions[1].position_source =
+    bottle.collision_trigger.actions[1].spawn_entity_template_id = 207;
+    bottle.collision_trigger.actions[1].position_source =
         KernelEventVec3Source_Position;
-    bottle.world_impact_trigger.actions[1].owner_source =
+    bottle.collision_trigger.actions[1].owner_source =
         KernelEntityRefSource_Self;
+    bottle.collision_trigger.actions[2].action_type =
+        KernelEntityTriggerActionType_ApplyHealthChange;
+    bottle.collision_trigger.actions[2].target_source =
+        KernelEntityRefSource_EventTarget;
+    bottle.collision_trigger.actions[2].health_change_amount = 30;
+    bottle.collision_trigger.actions[2].condition_type =
+        KernelActionConditionType_EventHasTarget;
     engine.entity_templates_.push_back(bottle);
 
     KernelEntityTemplateDefinition ice{};
@@ -609,6 +624,9 @@ void world_impact_runs_once_for(
     obstacle.position = glm::vec3{0.0f, 0.5f, 0.0f};
     std::string error;
     require(engine.physics_world_->upsert_object(obstacle, &error));
+    obstacle.identity.collider_id = 901;
+    obstacle.position = glm::vec3{0.1f, 0.5f, 0.0f};
+    require(engine.physics_world_->upsert_object(obstacle, &error));
 
     network_example::CollisionTriggerSystem{}.update(engine, 2000);
     require(engine.world_.registry()
@@ -650,11 +668,11 @@ void world_impact_runs_once_for(
     require(!engine.world_.find_entity(bottle_id).has_value());
 }
 
-void world_impact_accepts_terrain_and_static_obstacle() {
-    world_impact_runs_once_for(
+void static_collision_accepts_terrain_and_static_obstacle() {
+    static_collision_runs_once_for(
         network_example::physics::CollisionObjectKind::kTerrain,
         network_example::physics::CollisionLayer::kTerrain);
-    world_impact_runs_once_for(
+    static_collision_runs_once_for(
         network_example::physics::CollisionObjectKind::kStaticObstacle,
         network_example::physics::CollisionLayer::kStaticObstacle);
 }
@@ -666,6 +684,6 @@ int main() {
     collision_prop_applies_damage_on_contact_enter();
     lifecycle_triggers_capture_context_before_prop_destruction();
     health_change_applies_signed_clamped_delta();
-    world_impact_accepts_terrain_and_static_obstacle();
+    static_collision_accepts_terrain_and_static_obstacle();
     return 0;
 }

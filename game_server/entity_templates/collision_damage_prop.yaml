@@ -8,6 +8,7 @@ physics:
   collider_template: collision_damage_prop_hitbox
 triggers:
   on_collision:
+    collision_mask: actor
     action_graph: action_apply_damage_at_collision
     parameters:
       source: self

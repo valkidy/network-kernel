@@ -29,6 +29,7 @@ cc_library(
     hdrs = [
         "public/action_graph.h",
         "public/command.h",
+        "public/collision_filter.h",
         "public/item_system.h",
         "public/movement_solver.h",
         "public/simulation.h",

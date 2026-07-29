@@ -67,6 +67,9 @@ int main() {
         });
     assert(compiled_collision != catalog.entity_templates.end());
     assert(
+        compiled_collision->collision_trigger_mask ==
+        KERNEL_COLLISION_MASK_ACTOR);
+    assert(
         (compiled_collision->component_flags &
          KERNEL_ENTITY_COMPONENT_HEALTH) != 0u);
     assert(compiled_collision->combat.hp == 1);

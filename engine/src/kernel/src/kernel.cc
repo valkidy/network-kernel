@@ -715,6 +715,14 @@ bool projectile_trigger_is_valid(
     if (spawned_ids.size() != expected_count) {
         return false;
     }
+    for (std::uint32_t index = 0; index < expected_count; ++index) {
+        const std::uint32_t condition_type = trigger.action_count == 0u
+            ? trigger.condition_type
+            : trigger.actions[index].condition_type;
+        if (condition_type > KernelActionConditionType_EventHasTarget) {
+            return false;
+        }
+    }
     return std::all_of(
         spawned_ids.begin(),
         spawned_ids.end(),
@@ -1352,7 +1360,8 @@ bool validate_area_effect_mechanics(
            area_effect.radius > 0.0f &&
            area_effect.damage_per_interval > 0 &&
            area_effect.damage_interval_ticks > 0 &&
-           area_effect.lifetime_ticks > 0;
+           area_effect.lifetime_ticks > 0 &&
+           (area_effect.collision_mask & ~KERNEL_COLLISION_MASK_ACTOR) == 0u;
 }
 
 bool validate_beam_mechanics(const KernelBeamMechanicsDefinition& beam) {
@@ -1360,7 +1369,10 @@ bool validate_beam_mechanics(const KernelBeamMechanicsDefinition& beam) {
            beam.length > 0.0f &&
            beam.radius > 0.0f &&
            beam.damage_per_tick > 0 &&
-           beam.lifetime_ticks > 0;
+           beam.lifetime_ticks > 0 &&
+           (beam.collision_mask &
+            ~(KERNEL_COLLISION_MASK_ACTOR |
+              KERNEL_COLLISION_MASK_STATIC_WORLD)) == 0u;
 }
 
 bool validate_projectile_mechanics(
@@ -1391,6 +1403,18 @@ bool validate_projectile_mechanics(
         mechanics.max_hit_count == 0 ||
         !valid_trigger(mechanics.projectile_impact_trigger) ||
         !valid_trigger(mechanics.expired_trigger)) {
+        return false;
+    }
+    const std::uint32_t supported_collision_mask =
+        mechanics.projectile_type == KernelProjectileType_AreaEffect
+            ? KERNEL_COLLISION_MASK_ACTOR
+            : mechanics.projectile_type == KernelProjectileType_Beam
+                ? KERNEL_COLLISION_MASK_ACTOR |
+                    KERNEL_COLLISION_MASK_STATIC_WORLD
+                : KERNEL_COLLISION_MASK_ACTOR |
+                    KERNEL_COLLISION_MASK_STATIC_WORLD |
+                    KERNEL_COLLISION_LAYER_PROJECTILE;
+    if ((mechanics.collision_mask & ~supported_collision_mask) != 0u) {
         return false;
     }
     if (mechanics.projectile_type == KernelProjectileType_Standard &&
@@ -2379,7 +2403,6 @@ bool KernelEngine::load_gameplay_catalog(
                  &entity_template.collision_trigger,
                  &entity_template.health_depleted_trigger,
                  &entity_template.destroy_entity_trigger,
-                 &entity_template.world_impact_trigger,
              }) {
             if (trigger->struct_size == 0u) {
                 continue;
@@ -2409,8 +2432,13 @@ bool KernelEngine::load_gameplay_catalog(
                     action.owner_source = trigger->owner_source;
                     action.health_change_amount =
                         trigger->health_change_amount;
+                    action.condition_type = trigger->condition_type;
                 } else {
                     action = trigger->actions[action_index];
+                }
+                if (action.condition_type >
+                    KernelActionConditionType_EventHasTarget) {
+                    return false;
                 }
                 if (action.action_type ==
                     KernelEntityTriggerActionType_ApplyDamage) {
@@ -2449,6 +2477,13 @@ bool KernelEngine::load_gameplay_catalog(
                 }
                 return false;
             }
+        }
+        if ((entity_template.collision_trigger_mask &
+             ~(KERNEL_COLLISION_MASK_ACTOR |
+               KERNEL_COLLISION_MASK_STATIC_WORLD)) != 0u ||
+            (entity_template.collision_trigger.struct_size == 0u &&
+             entity_template.collision_trigger_mask != 0u)) {
+            return false;
         }
         if (entity_template.entity_type == KernelEntityType_Director &&
             ((entity_template.component_flags &
@@ -2643,7 +2678,6 @@ bool KernelEngine::load_gameplay_catalog(
                  &entity_template.collision_trigger,
                  &entity_template.health_depleted_trigger,
                  &entity_template.destroy_entity_trigger,
-                 &entity_template.world_impact_trigger,
              }) {
             const std::uint32_t count = trigger->action_count == 0u
                 ? (trigger->action_type == KernelEntityTriggerActionType_None

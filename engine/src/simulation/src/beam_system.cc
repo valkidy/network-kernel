@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "physics/public/physics_world.h"
+#include "simulation/public/collision_filter.h"
 
 namespace network_example {
 namespace {
@@ -78,7 +79,7 @@ void simulate_beams(
         request.shape.radius = beam.radius;
         request.start = beam.origin;
         request.displacement = beam.direction * beam.length;
-        request.filter.gameplay_category_mask = beam.collision_mask;
+        request.filter = collision_filter_from_mask(beam.collision_mask);
         request.filter.ignored_entity_net_id = beam.shooter_net_id;
         const std::vector<physics::CollisionHit> hits =
             collision_world->shape_cast_all(request);

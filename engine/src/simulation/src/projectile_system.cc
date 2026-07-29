@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "physics/public/physics_world.h"
+#include "simulation/public/collision_filter.h"
 #include "simulation/public/action_graph.h"
 
 namespace network_example {
@@ -1259,9 +1260,9 @@ void simulate_projectiles(
         const Transform& transform = hit_view.get<Transform>(entity);
         ProjectileState& projectile = hit_view.get<ProjectileState>(entity);
 
-        physics::CollisionQueryFilter filter;
+        physics::CollisionQueryFilter filter =
+            collision_filter_from_mask(projectile.collision_mask);
         filter.ignored_entity_net_id = projectile.shooter_net_id;
-        filter.gameplay_category_mask = projectile.collision_mask;
         const physics::PhysicsWorld* collision_world = world.collision_world();
         const std::vector<physics::CollisionHit> hits =
             collision_world == nullptr

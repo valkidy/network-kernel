@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "physics/public/physics_world.h"
+#include "simulation/public/collision_filter.h"
 
 namespace network_example {
 namespace {
@@ -74,9 +75,7 @@ void simulate_area_effects(
         request.shape.type = physics::CollisionShapeType::kSphere;
         request.shape.radius = area_effect.radius;
         request.position = transform.position;
-        request.filter.collision_mask = physics::collision_layer_bit(
-            physics::CollisionLayer::kDamageable);
-        request.filter.gameplay_category_mask = area_effect.collision_mask;
+        request.filter = collision_filter_from_mask(area_effect.collision_mask);
         request.filter.ignored_entity_net_id = projectile.shooter_net_id;
         std::vector<physics::CollisionHit> hits =
             collision_world->overlap_all(request);

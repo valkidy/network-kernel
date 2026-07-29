@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 56u
+#define KERNEL_ABI_VERSION 57u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -107,10 +107,16 @@
 #define KERNEL_COLLISION_LAYER_PROJECTILE UINT32_C(0x00000004)
 #define KERNEL_COLLISION_LAYER_AGENT_VISION UINT32_C(0x00000010)
 #define KERNEL_COLLISION_LAYER_NEUTRAL UINT32_C(0x00000020)
+#define KERNEL_COLLISION_LAYER_TERRAIN UINT32_C(0x00000040)
+#define KERNEL_COLLISION_LAYER_STATIC_OBSTACLE UINT32_C(0x00000080)
 #define KERNEL_COLLISION_MASK_NONE UINT32_C(0x00000000)
 #define KERNEL_COLLISION_MASK_DAMAGEABLE \
     (KERNEL_COLLISION_LAYER_PLAYER_SIDE | KERNEL_COLLISION_LAYER_HOSTILE_SIDE | \
      KERNEL_COLLISION_LAYER_NEUTRAL)
+#define KERNEL_COLLISION_MASK_ACTOR KERNEL_COLLISION_MASK_DAMAGEABLE
+#define KERNEL_COLLISION_MASK_STATIC_WORLD \
+    (KERNEL_COLLISION_LAYER_TERRAIN | \
+     KERNEL_COLLISION_LAYER_STATIC_OBSTACLE)
 
 /*
  * Visual flags are composable presentation hints, never gameplay authority.
@@ -431,6 +437,11 @@ typedef enum KernelEventVec3Source {
     KernelEventVec3Source_Direction = 1,
 } KernelEventVec3Source;
 
+typedef enum KernelActionConditionType {
+    KernelActionConditionType_Always = 0,
+    KernelActionConditionType_EventHasTarget = 1,
+} KernelActionConditionType;
+
 #define KERNEL_MAX_ACTION_GRAPH_ACTIONS 8
 
 typedef struct KernelActionDefinition {
@@ -446,6 +457,7 @@ typedef struct KernelActionDefinition {
     uint32_t spawn_item_template_id;
     uint32_t spawn_item_quantity;
     int32_t health_change_amount;
+    uint32_t condition_type;
 } KernelActionDefinition;
 
 typedef struct KernelActionTriggerDefinition {
@@ -466,6 +478,7 @@ typedef struct KernelActionTriggerDefinition {
     uint32_t action_count;
     KernelActionDefinition actions[KERNEL_MAX_ACTION_GRAPH_ACTIONS];
     int32_t health_change_amount;
+    uint32_t condition_type;
 } KernelActionTriggerDefinition;
 
 #define KERNEL_MAX_PORTABLE_STATE_FIELDS 8
@@ -1587,7 +1600,7 @@ struct KernelEntityTemplateDefinition {
     KernelActionTriggerDefinition health_depleted_trigger;
     KernelActionTriggerDefinition destroy_entity_trigger;
     KernelPropDefinition prop;
-    KernelActionTriggerDefinition world_impact_trigger;
+    uint32_t collision_trigger_mask;
 };
 
 typedef struct KernelEvent {

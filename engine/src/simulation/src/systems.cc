@@ -13,6 +13,7 @@
 
 #include "kernel/src/kernel.h"
 #include "simulation/public/action_graph.h"
+#include "simulation/public/collision_filter.h"
 #include "simulation/src/item_gameplay_system.h"
 
 namespace network_example {
@@ -580,16 +581,9 @@ bool EntityLifecycleSystem::create_entity(
             registry.emplace_or_replace<OnCollisionTriggerTag>(*entity);
             registry.emplace_or_replace<ActionGraphCollisionBinding>(
                 *entity,
-                ActionGraphCollisionBinding{*binding});
-        }
-        if (const std::optional<CompiledActionGraphBinding> binding =
-                compile_entity_trigger_binding(
-                    entity_template->world_impact_trigger,
-                    TriggerEventType::kWorldImpact)) {
-            registry.emplace_or_replace<OnWorldImpactTriggerTag>(*entity);
-            registry.emplace_or_replace<ActionGraphWorldImpactBinding>(
-                *entity,
-                ActionGraphWorldImpactBinding{*binding});
+                ActionGraphCollisionBinding{
+                    *binding,
+                    entity_template->collision_trigger_mask});
         }
         if (const std::optional<CompiledActionGraphBinding> binding =
                 compile_entity_trigger_binding(
@@ -785,19 +779,13 @@ void CollisionTriggerSystem::update(
         glm::vec3 direction{0.0f};
         CompiledActionGraphBinding binding;
     };
-    struct WorldImpactFact {
-        NetId subject = 0;
-        PeerId owner_peer = 0;
-        glm::vec3 position{0.0f};
-        glm::vec3 normal{0.0f, 1.0f, 0.0f};
-        CompiledActionGraphBinding binding;
-    };
     std::vector<CollisionFact> entered_collisions;
-    std::vector<WorldImpactFact> world_impacts;
     std::unordered_set<std::uint64_t> current_pairs;
     auto view = engine.world_.registry().view<
         NetworkIdentity,
         EntityKind,
+        PropWorldMode,
+        Velocity,
         OnCollisionTriggerTag,
         ActionGraphCollisionBinding>();
     for (const entt::entity entity : view) {
@@ -806,9 +794,15 @@ void CollisionTriggerSystem::update(
         if (kind.type != EntityType::kProp) {
             continue;
         }
+        PropWorldMode& mode = view.get<PropWorldMode>(entity);
+        if (mode.mode != PropMode::kInFlight) {
+            continue;
+        }
         const ActionGraphCollisionBinding& collision_binding =
             view.get<ActionGraphCollisionBinding>(entity);
         std::unordered_set<NetId> seen_targets;
+        std::optional<std::pair<physics::CollisionHit, std::uint32_t>>
+            static_contact;
         for (const ColliderInstance& collider :
              engine.world_.collider_registry().instances()) {
             if (collider.entity_net_id != identity.net_id || !collider.enabled ||
@@ -828,14 +822,39 @@ void CollisionTriggerSystem::update(
             request.shape.capsule_half_height = collider.capsule_half_height;
             request.position = collider.world_center;
             request.rotation = collider.world_rotation;
-            request.filter.collision_mask = physics::collision_layer_bit(
-                physics::CollisionLayer::kDamageable);
+            request.filter = collision_filter_from_mask(
+                collision_binding.collision_mask);
             request.filter.ignored_entity_net_id = identity.net_id;
-            request.filter.object_kind_mask =
-                1u << static_cast<std::uint8_t>(
-                    physics::CollisionObjectKind::kActorHitbox);
             for (const physics::CollisionHit& hit :
                  engine.physics_world_->overlap_all(request)) {
+                if (hit.identity.kind !=
+                        physics::CollisionObjectKind::kActorHitbox) {
+                    const auto hit_key = std::tuple{
+                        hit.distance,
+                        collider.collider_id,
+                        static_cast<std::uint8_t>(hit.identity.kind),
+                        hit.identity.collider_id,
+                        hit.subshape_id,
+                    };
+                    if (!static_contact.has_value()) {
+                        static_contact = std::pair{hit, collider.collider_id};
+                    } else {
+                        const physics::CollisionHit& current =
+                            static_contact->first;
+                        const auto current_key = std::tuple{
+                            current.distance,
+                            static_contact->second,
+                            static_cast<std::uint8_t>(current.identity.kind),
+                            current.identity.collider_id,
+                            current.subshape_id,
+                        };
+                        if (hit_key < current_key) {
+                            static_contact =
+                                std::pair{hit, collider.collider_id};
+                        }
+                    }
+                    continue;
+                }
                 if (hit.identity.entity_net_id == 0u ||
                     !seen_targets.insert(hit.identity.entity_net_id).second) {
                     continue;
@@ -855,6 +874,26 @@ void CollisionTriggerSystem::update(
                 }
             }
         }
+        if (static_contact.has_value()) {
+            mode.mode = PropMode::kPlaced;
+            view.get<Velocity>(entity).linear = glm::vec3{0.0f};
+            if (engine.world_.registry().all_of<ItemInstanceRef>(entity)) {
+                const ItemInstanceRef& ref =
+                    engine.world_.registry().get<ItemInstanceRef>(entity);
+                engine.item_store_.set_world_mode(
+                    ref.item_instance_id,
+                    KernelWorldItemMode_Placed);
+            }
+            engine.queue_prop_state_change(identity.net_id);
+            entered_collisions.push_back(CollisionFact{
+                identity.net_id,
+                0u,
+                identity.owner_peer,
+                static_contact->first.position,
+                static_contact->first.normal,
+                collision_binding.binding,
+            });
+        }
     }
     std::sort(
         entered_collisions.begin(),
@@ -866,101 +905,8 @@ void CollisionTriggerSystem::update(
         });
     engine.active_prop_collision_pairs_ = std::move(current_pairs);
 
-    auto in_flight_view = engine.world_.registry().view<
-        NetworkIdentity,
-        PropWorldMode,
-        Velocity>();
-    for (const entt::entity entity : in_flight_view) {
-        PropWorldMode& mode = in_flight_view.get<PropWorldMode>(entity);
-        if (mode.mode != PropMode::kInFlight) continue;
-        const NetworkIdentity& identity =
-            in_flight_view.get<NetworkIdentity>(entity);
-        std::optional<std::pair<physics::CollisionHit, std::uint32_t>> impact;
-        for (const ColliderInstance& collider :
-             engine.world_.collider_registry().instances()) {
-            if (collider.entity_net_id != identity.net_id || !collider.enabled ||
-                collider.shape_type == ColliderShapeType::kSegment ||
-                collider.shape_type == ColliderShapeType::kCone) {
-                continue;
-            }
-            physics::OverlapRequest request{};
-            request.shape.type = collider.shape_type == ColliderShapeType::kSphere
-                ? physics::CollisionShapeType::kSphere
-                : collider.shape_type == ColliderShapeType::kCapsule
-                    ? physics::CollisionShapeType::kCapsule
-                    : physics::CollisionShapeType::kBox;
-            request.shape.half_extents = collider.half_extents;
-            request.shape.radius = collider.radius;
-            request.shape.capsule_half_height = collider.capsule_half_height;
-            request.position = collider.world_center;
-            request.rotation = collider.world_rotation;
-            request.filter.ignored_entity_net_id = identity.net_id;
-            request.filter.object_kind_mask =
-                (1u << static_cast<std::uint32_t>(
-                    physics::CollisionObjectKind::kTerrain)) |
-                (1u << static_cast<std::uint32_t>(
-                    physics::CollisionObjectKind::kStaticObstacle));
-            for (const physics::CollisionHit& hit :
-                 engine.physics_world_->overlap_all(request)) {
-                const auto hit_key = std::tuple{
-                    hit.distance,
-                    collider.collider_id,
-                    static_cast<std::uint8_t>(hit.identity.kind),
-                    hit.identity.collider_id,
-                    hit.subshape_id,
-                };
-                if (!impact.has_value()) {
-                    impact = std::pair{hit, collider.collider_id};
-                    continue;
-                }
-                const physics::CollisionHit& current = impact->first;
-                const auto current_key = std::tuple{
-                    current.distance,
-                    impact->second,
-                    static_cast<std::uint8_t>(current.identity.kind),
-                    current.identity.collider_id,
-                    current.subshape_id,
-                };
-                if (hit_key < current_key) {
-                    impact = std::pair{hit, collider.collider_id};
-                }
-            }
-        }
-        if (!impact.has_value()) continue;
-        mode.mode = PropMode::kPlaced;
-        in_flight_view.get<Velocity>(entity).linear = glm::vec3{0.0f};
-        if (engine.world_.registry().all_of<ItemInstanceRef>(entity)) {
-            const ItemInstanceRef& ref =
-                engine.world_.registry().get<ItemInstanceRef>(entity);
-            engine.item_store_.set_world_mode(
-                ref.item_instance_id,
-                KernelWorldItemMode_Placed);
-        }
-        if (engine.world_.registry().all_of<
-                OnWorldImpactTriggerTag,
-                ActionGraphWorldImpactBinding>(entity)) {
-            world_impacts.push_back(WorldImpactFact{
-                identity.net_id,
-                identity.owner_peer,
-                impact->first.position,
-                impact->first.normal,
-                engine.world_.registry()
-                    .get<ActionGraphWorldImpactBinding>(entity)
-                    .binding,
-            });
-        }
-        engine.queue_prop_state_change(identity.net_id);
-    }
-
-    std::sort(
-        world_impacts.begin(),
-        world_impacts.end(),
-        [](const WorldImpactFact& lhs, const WorldImpactFact& rhs) {
-            return lhs.subject < rhs.subject;
-        });
-
     std::vector<ActionGraphQueuedTrigger> queued_triggers;
-    queued_triggers.reserve(entered_collisions.size() + world_impacts.size());
+    queued_triggers.reserve(entered_collisions.size());
     for (const CollisionFact& collision : entered_collisions) {
         if (engine.next_action_graph_sequence_ == 0u) {
             engine.next_action_graph_sequence_ = 1u;
@@ -997,43 +943,6 @@ void CollisionTriggerSystem::update(
             sequence,
         });
     }
-    for (const WorldImpactFact& impact : world_impacts) {
-        if (engine.next_action_graph_sequence_ == 0u) {
-            engine.next_action_graph_sequence_ = 1u;
-        }
-        const std::uint32_t sequence = engine.next_action_graph_sequence_++;
-        const TriggerEvent event{
-            TriggerEventType::kWorldImpact,
-            impact.subject,
-            0u,
-            0u,
-            impact.position,
-            impact.normal,
-            std::nullopt,
-        };
-        const ActionExecutionProvenance provenance{
-            action_trigger_request_id(
-                engine.tick_loop_.current_tick(),
-                TriggerEventType::kWorldImpact,
-                impact.subject,
-                0u,
-                sequence),
-            0u,
-            engine.tick_loop_.current_tick(),
-            impact.subject,
-            impact.owner_peer,
-            0u,
-            ActionAuthoritySource::kAuthoritativeSimulation,
-        };
-        queued_triggers.push_back(ActionGraphQueuedTrigger{
-            impact.binding,
-            impact.subject,
-            event,
-            provenance,
-            sequence,
-        });
-    }
-
     std::vector<ActionGraphCommandBatch> command_batches;
     if (!dispatch_action_graph_triggers(
             &queued_triggers, &command_batches, nullptr)) {

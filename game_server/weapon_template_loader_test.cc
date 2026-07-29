@@ -785,7 +785,8 @@ void collision_mask_expressions_are_loaded() {
     network_example::game_server::GameServerGameplayConfig config =
         network_example::game_server::load_gameplay_config_from_weapon_template_directory(
             none_dir.string());
-    assert(projectile_mechanics(config, 3).collision_mask == KERNEL_COLLISION_MASK_NONE);
+    assert(projectile_mechanics(config, 3).collision_mask ==
+           KERNEL_COLLISION_MASK_NONE);
 
     const std::filesystem::path zero_dir = tmp_dir("mask_zero");
     write_valid_templates(zero_dir);
@@ -852,6 +853,23 @@ void malformed_collision_masks_are_rejected() {
         "max_hit_count: 1\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
     assert(load_fails(empty_token_dir));
+
+    const std::filesystem::path area_static_dir =
+        tmp_dir("area_static_mask");
+    write_valid_templates(area_static_dir);
+    write_file(
+        area_static_dir.parent_path() /
+            "projectile_templates" / "fire_floor_area.yaml",
+        "id: 4\nname: fire_floor_area\ntype: area_effect\n"
+        "collider_template: area_effect_sphere\n"
+        "lifetime_ticks: 6\n"
+        "damage_behavior:\n"
+        "  type: area_interval\n"
+        "  damage_per_interval: 12\n"
+        "  damage_interval_ticks: 2\n"
+        "  falloff: none\n"
+        "collision_mask: hostile_side | terrain\n");
+    assert(load_fails(area_static_dir));
 }
 
 void catalog_file_loads_colliders() {
