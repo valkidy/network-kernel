@@ -85,6 +85,7 @@ struct ActorTemplateConfig {
     std::uint32_t director_spawn_seed = 1;
     TriggerBindingConfig activated_trigger;
     TriggerBindingConfig collision_trigger;
+    TriggerBindingConfig world_impact_trigger;
     TriggerBindingConfig health_depleted_trigger;
     TriggerBindingConfig destroy_entity_trigger;
     KernelPropDefinition prop{};

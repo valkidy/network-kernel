@@ -256,6 +256,11 @@ void hash_actor_template(
         hash_string(hash, parameter.first);
         hash_string(hash, parameter.second);
     }
+    hash_string(hash, actor_template.world_impact_trigger.action_graph_ref);
+    for (const auto& parameter : actor_template.world_impact_trigger.parameters) {
+        hash_string(hash, parameter.first);
+        hash_string(hash, parameter.second);
+    }
     hash_string(hash, actor_template.health_depleted_trigger.action_graph_ref);
     for (const auto& parameter :
          actor_template.health_depleted_trigger.parameters) {
@@ -1311,13 +1316,15 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 &compiled_action.position_parameter,
                 &compiled_action.owner_parameter,
             };
-        } else if (compiled_action.action_type == "apply_damage") {
+        } else if (compiled_action.action_type == "apply_damage" ||
+                   compiled_action.action_type == "apply_health_change") {
             if (action["projectile_template"] || action["position"] ||
                 action["direction"] || action["entity_template"] ||
                 action["owner"] || action["item_template"] ||
                 action["quantity"]) {
                 throw std::runtime_error(
-                    "apply_damage action has unsupported fields: " + path);
+                    compiled_action.action_type +
+                    " action has unsupported fields: " + path);
             }
             compiled_action.target_parameter =
                 parameter_reference_from_yaml(action["target"], "target");
@@ -2426,6 +2433,7 @@ EntityTemplateConfig entity_template_from_yaml(
                 {
                     "on_activated",
                     "on_collision",
+                    "on_world_impact",
                     "on_health_depleted",
                     "on_destroy_entity",
                 },
@@ -2444,6 +2452,14 @@ EntityTemplateConfig entity_template_from_yaml(
             if (node["triggers"]["on_collision"]) {
                 entity_template.collision_trigger = trigger_binding_from_yaml(
                     node["triggers"]["on_collision"],
+                    path,
+                    source_kind,
+                    KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                    entity_template.actor_template_id);
+            }
+            if (node["triggers"]["on_world_impact"]) {
+                entity_template.world_impact_trigger = trigger_binding_from_yaml(
+                    node["triggers"]["on_world_impact"],
                     path,
                     source_kind,
                     KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
@@ -3402,6 +3418,7 @@ bool event_expression_available(
         return trigger_name == "on_activated" ||
             trigger_name == "on_item_used" ||
             trigger_name == "on_collision" ||
+            trigger_name == "on_world_impact" ||
             trigger_name == "on_projectile_impact" ||
             trigger_name == "on_expired";
     }
@@ -3455,6 +3472,7 @@ void mirror_first_action(KernelActionTriggerDefinition* trigger) {
     trigger->owner_source = action.owner_source;
     trigger->spawn_item_template_id = action.spawn_item_template_id;
     trigger->spawn_item_quantity = action.spawn_item_quantity;
+    trigger->health_change_amount = action.health_change_amount;
 }
 
 void compile_projectile_trigger_binding(
@@ -3668,10 +3686,11 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
             }
             continue;
         }
-        if (action.action_type != "apply_damage") {
+        if (action.action_type != "apply_damage" &&
+            action.action_type != "apply_health_change") {
             throw std::runtime_error(
                 std::string(trigger_name) +
-                " requires apply_damage or spawn_entity actions: " +
+                " requires apply_damage, apply_health_change, or spawn_entity actions: " +
                 binding.action_graph_ref);
         }
         const std::string target = trigger_parameter_value(
@@ -3679,17 +3698,34 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
         const std::string amount = trigger_parameter_value(
             binding, graph_parameter(action.amount_parameter));
         std::size_t parsed = 0;
-        const unsigned long parsed_amount = std::stoul(amount, &parsed);
-        if (parsed != amount.size() || parsed_amount == 0u ||
-            parsed_amount > std::numeric_limits<std::uint16_t>::max()) {
-            throw std::runtime_error(
-                "apply_damage amount must be a positive uint16");
+        const long parsed_amount = std::stol(amount, &parsed);
+        if (action.action_type == "apply_damage") {
+            if (parsed != amount.size() || parsed_amount <= 0 ||
+                parsed_amount > std::numeric_limits<std::uint16_t>::max()) {
+                throw std::runtime_error(
+                    "apply_damage amount must be a positive uint16");
+            }
+            compiled_action.action_type =
+                KernelEntityTriggerActionType_ApplyDamage;
+            compiled_action.damage_amount =
+                static_cast<std::uint16_t>(parsed_amount);
+        } else {
+            if (parsed != amount.size() || parsed_amount == 0 ||
+                parsed_amount <
+                    -static_cast<long>(
+                        std::numeric_limits<std::uint16_t>::max()) ||
+                parsed_amount >
+                    static_cast<long>(
+                        std::numeric_limits<std::uint16_t>::max())) {
+                throw std::runtime_error(
+                    "apply_health_change amount must be within signed uint16 range");
+            }
+            compiled_action.action_type =
+                KernelEntityTriggerActionType_ApplyHealthChange;
+            compiled_action.health_change_amount =
+                static_cast<std::int32_t>(parsed_amount);
         }
-        compiled_action.action_type =
-            KernelEntityTriggerActionType_ApplyDamage;
         compiled_action.target_source = entity_ref_source(target);
-        compiled_action.damage_amount =
-            static_cast<std::uint16_t>(parsed_amount);
     }
     mirror_first_action(&compiled);
     return compiled;
@@ -4933,6 +4969,11 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
         entity_template.collision_trigger = compile_action_trigger_binding(
             authored_template.collision_trigger,
             "on_collision",
+            config.action_graph_templates,
+            config.entity_templates);
+        entity_template.world_impact_trigger = compile_action_trigger_binding(
+            authored_template.world_impact_trigger,
+            "on_world_impact",
             config.action_graph_templates,
             config.entity_templates);
         entity_template.health_depleted_trigger = compile_action_trigger_binding(

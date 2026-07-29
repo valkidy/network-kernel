@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <optional>
+#include <tuple>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -12,6 +13,7 @@
 
 #include "kernel/src/kernel.h"
 #include "simulation/public/action_graph.h"
+#include "simulation/src/item_gameplay_system.h"
 
 namespace network_example {
 namespace {
@@ -123,6 +125,16 @@ bool execute_action_graph_commands(
             }
             continue;
         }
+        if (const auto* health_change =
+                std::get_if<ActionApplyHealthChangeCommand>(&command)) {
+            const std::optional<entt::entity> target =
+                world.find_entity(health_change->target);
+            if (health_change->source == 0u || !target.has_value() ||
+                !world.registry().all_of<NetworkIdentity, Health>(*target)) {
+                return false;
+            }
+            continue;
+        }
         if (const auto* projectile =
                 std::get_if<ActionSpawnProjectileCommand>(&command)) {
             if (world.find_projectile_template(
@@ -187,6 +199,42 @@ bool execute_action_graph_commands(
             }
             continue;
         }
+        if (const auto* health_change =
+                std::get_if<ActionApplyHealthChangeCommand>(&command)) {
+            if (health_change->amount < 0) {
+                const std::uint16_t damage_amount =
+                    static_cast<std::uint16_t>(-health_change->amount);
+                if (!damage_pipeline->submit_damage_request(DamageRequest{
+                        health_change->provenance.server_tick,
+                        static_cast<std::uint32_t>(index),
+                        health_change->source,
+                        health_change->target,
+                        health_change->provenance.owner_peer,
+                        0u,
+                        damage_amount,
+                        server_time_us,
+                        batch.event.position,
+                    })) {
+                    return false;
+                }
+                continue;
+            }
+            const entt::entity target = *world.find_entity(health_change->target);
+            Health& health = world.registry().get<Health>(target);
+            if (health.hp == 0u || health.hp >= health.max_hp) {
+                continue;
+            }
+            const std::uint32_t increased = std::min<std::uint32_t>(
+                static_cast<std::uint32_t>(health.max_hp - health.hp),
+                static_cast<std::uint32_t>(health_change->amount));
+            health.hp = static_cast<std::uint16_t>(health.hp + increased);
+            engine.queue_health_changed_event(
+                health_change->target,
+                health_change->provenance.owner_peer,
+                static_cast<std::int32_t>(increased),
+                server_time_us);
+            continue;
+        }
         if (const auto* projectile =
                 std::get_if<ActionSpawnProjectileCommand>(&command)) {
             if (!spawn_action_graph_projectile(
@@ -237,6 +285,15 @@ bool execute_action_graph_commands(
                 *spawned, ItemInstanceRef{*item_id});
             world.registry().emplace_or_replace<PropWorldMode>(
                 *spawned, PropWorldMode{PropMode::kPlaced});
+            const ItemInstanceRecord* item =
+                engine.item_store().find_item(*item_id);
+            if (item == nullptr ||
+                !ItemGameplaySystem{}.decorate_item_prop(
+                    engine, spawned_net_id, *item)) {
+                EntityLifecycleSystem{}.destroy_entity(
+                    engine, spawned_net_id, KernelDespawnReason_Destroyed);
+                return false;
+            }
             engine.queue_prop_state_change(spawned_net_id);
         }
     }
@@ -527,6 +584,15 @@ bool EntityLifecycleSystem::create_entity(
         }
         if (const std::optional<CompiledActionGraphBinding> binding =
                 compile_entity_trigger_binding(
+                    entity_template->world_impact_trigger,
+                    TriggerEventType::kWorldImpact)) {
+            registry.emplace_or_replace<OnWorldImpactTriggerTag>(*entity);
+            registry.emplace_or_replace<ActionGraphWorldImpactBinding>(
+                *entity,
+                ActionGraphWorldImpactBinding{*binding});
+        }
+        if (const std::optional<CompiledActionGraphBinding> binding =
+                compile_entity_trigger_binding(
                     entity_template->health_depleted_trigger,
                     TriggerEventType::kHealthDepleted)) {
             registry.emplace_or_replace<OnHealthDepletedTriggerTag>(*entity);
@@ -719,7 +785,15 @@ void CollisionTriggerSystem::update(
         glm::vec3 direction{0.0f};
         CompiledActionGraphBinding binding;
     };
+    struct WorldImpactFact {
+        NetId subject = 0;
+        PeerId owner_peer = 0;
+        glm::vec3 position{0.0f};
+        glm::vec3 normal{0.0f, 1.0f, 0.0f};
+        CompiledActionGraphBinding binding;
+    };
     std::vector<CollisionFact> entered_collisions;
+    std::vector<WorldImpactFact> world_impacts;
     std::unordered_set<std::uint64_t> current_pairs;
     auto view = engine.world_.registry().view<
         NetworkIdentity,
@@ -801,7 +875,7 @@ void CollisionTriggerSystem::update(
         if (mode.mode != PropMode::kInFlight) continue;
         const NetworkIdentity& identity =
             in_flight_view.get<NetworkIdentity>(entity);
-        bool collided = false;
+        std::optional<std::pair<physics::CollisionHit, std::uint32_t>> impact;
         for (const ColliderInstance& collider :
              engine.world_.collider_registry().instances()) {
             if (collider.entity_net_id != identity.net_id || !collider.enabled ||
@@ -826,12 +900,33 @@ void CollisionTriggerSystem::update(
                     physics::CollisionObjectKind::kTerrain)) |
                 (1u << static_cast<std::uint32_t>(
                     physics::CollisionObjectKind::kStaticObstacle));
-            if (!engine.physics_world_->overlap_all(request).empty()) {
-                collided = true;
-                break;
+            for (const physics::CollisionHit& hit :
+                 engine.physics_world_->overlap_all(request)) {
+                const auto hit_key = std::tuple{
+                    hit.distance,
+                    collider.collider_id,
+                    static_cast<std::uint8_t>(hit.identity.kind),
+                    hit.identity.collider_id,
+                    hit.subshape_id,
+                };
+                if (!impact.has_value()) {
+                    impact = std::pair{hit, collider.collider_id};
+                    continue;
+                }
+                const physics::CollisionHit& current = impact->first;
+                const auto current_key = std::tuple{
+                    current.distance,
+                    impact->second,
+                    static_cast<std::uint8_t>(current.identity.kind),
+                    current.identity.collider_id,
+                    current.subshape_id,
+                };
+                if (hit_key < current_key) {
+                    impact = std::pair{hit, collider.collider_id};
+                }
             }
         }
-        if (!collided) continue;
+        if (!impact.has_value()) continue;
         mode.mode = PropMode::kPlaced;
         in_flight_view.get<Velocity>(entity).linear = glm::vec3{0.0f};
         if (engine.world_.registry().all_of<ItemInstanceRef>(entity)) {
@@ -841,11 +936,31 @@ void CollisionTriggerSystem::update(
                 ref.item_instance_id,
                 KernelWorldItemMode_Placed);
         }
+        if (engine.world_.registry().all_of<
+                OnWorldImpactTriggerTag,
+                ActionGraphWorldImpactBinding>(entity)) {
+            world_impacts.push_back(WorldImpactFact{
+                identity.net_id,
+                identity.owner_peer,
+                impact->first.position,
+                impact->first.normal,
+                engine.world_.registry()
+                    .get<ActionGraphWorldImpactBinding>(entity)
+                    .binding,
+            });
+        }
         engine.queue_prop_state_change(identity.net_id);
     }
 
+    std::sort(
+        world_impacts.begin(),
+        world_impacts.end(),
+        [](const WorldImpactFact& lhs, const WorldImpactFact& rhs) {
+            return lhs.subject < rhs.subject;
+        });
+
     std::vector<ActionGraphQueuedTrigger> queued_triggers;
-    queued_triggers.reserve(entered_collisions.size());
+    queued_triggers.reserve(entered_collisions.size() + world_impacts.size());
     for (const CollisionFact& collision : entered_collisions) {
         if (engine.next_action_graph_sequence_ == 0u) {
             engine.next_action_graph_sequence_ = 1u;
@@ -877,6 +992,42 @@ void CollisionTriggerSystem::update(
         queued_triggers.push_back(ActionGraphQueuedTrigger{
             collision.binding,
             collision.subject,
+            event,
+            provenance,
+            sequence,
+        });
+    }
+    for (const WorldImpactFact& impact : world_impacts) {
+        if (engine.next_action_graph_sequence_ == 0u) {
+            engine.next_action_graph_sequence_ = 1u;
+        }
+        const std::uint32_t sequence = engine.next_action_graph_sequence_++;
+        const TriggerEvent event{
+            TriggerEventType::kWorldImpact,
+            impact.subject,
+            0u,
+            0u,
+            impact.position,
+            impact.normal,
+            std::nullopt,
+        };
+        const ActionExecutionProvenance provenance{
+            action_trigger_request_id(
+                engine.tick_loop_.current_tick(),
+                TriggerEventType::kWorldImpact,
+                impact.subject,
+                0u,
+                sequence),
+            0u,
+            engine.tick_loop_.current_tick(),
+            impact.subject,
+            impact.owner_peer,
+            0u,
+            ActionAuthoritySource::kAuthoritativeSimulation,
+        };
+        queued_triggers.push_back(ActionGraphQueuedTrigger{
+            impact.binding,
+            impact.subject,
             event,
             provenance,
             sequence,
@@ -1061,6 +1212,18 @@ bool EntityLifecycleSystem::destroy_entity_with_context(
         entity_type = static_cast<std::uint16_t>(kind.type);
         actor_type = static_cast<std::uint16_t>(kind.actor_type);
     }
+    KernelItemInstanceId world_item_id = 0u;
+    if (engine.world_.registry().all_of<ItemInstanceRef>(*entity)) {
+        const KernelItemInstanceId candidate =
+            engine.world_.registry().get<ItemInstanceRef>(*entity)
+                .item_instance_id;
+        const ItemInstanceRecord* item = engine.item_store_.find_item(candidate);
+        if (item != nullptr && !item->terminal &&
+            item->residency.kind == KernelItemResidency_World &&
+            item->residency.prop_entity_id == net_id) {
+            world_item_id = candidate;
+        }
+    }
     std::vector<ActionGraphQueuedTrigger> queued_triggers;
     if (engine.world_.registry().all_of<
             OnDestroyEntityTriggerTag,
@@ -1101,6 +1264,9 @@ bool EntityLifecycleSystem::destroy_entity_with_context(
     }
     if (!engine.world_.destroy(net_id)) {
         return false;
+    }
+    if (world_item_id != 0u) {
+        (void)engine.item_store_.terminate(world_item_id);
     }
     engine.pending_first_physics_actors_.erase(net_id);
     engine.vision_configs_.erase(net_id);

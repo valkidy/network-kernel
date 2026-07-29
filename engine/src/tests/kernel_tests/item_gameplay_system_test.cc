@@ -428,6 +428,240 @@ void semantic_activate_validates_context_range_stale_and_dedupe() {
     require(outcomes[4].status == KernelGameplayRequestStatus_NoAction);
 }
 
+void stateful_health_round_trips_and_world_destroy_is_terminal() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+
+    KernelEntityTemplateDefinition stateful_prop = prop_template();
+    stateful_prop.component_flags |= KERNEL_ENTITY_COMPONENT_HEALTH;
+    stateful_prop.combat.hp = 3;
+    stateful_prop.combat.max_hp = 3;
+    engine.entity_templates_.push_back(stateful_prop);
+
+    KernelItemTemplateDefinition stateful = item_template();
+    stateful.item_template_id = 20;
+    stateful.item_mode = KernelItemMode_Stateful;
+    stateful.max_stack = 1;
+    stateful.capability_flags =
+        KernelItemCapability_Pickupable | KernelItemCapability_Throwable;
+    stateful.input_mapping.inventory_use = KernelDomainAction_None;
+    stateful.input_mapping.inventory_fire = KernelDomainAction_Throw;
+    stateful.input_mapping.world_interact_tap = KernelDomainAction_Pickup;
+    stateful.input_mapping.world_interact_hold = KernelDomainAction_None;
+    stateful.use_policy.quantity_cost = 0;
+    stateful.portable_state_field_count = 1;
+    stateful.portable_state_fields[0].field_id = 7;
+    stateful.portable_state_fields[0].type = KernelPortableStateType_Uint32;
+    stateful.portable_state_fields[0].world_projection =
+        KernelPortableStateProjection_HealthCurrent;
+    stateful.portable_state_fields[0].uint32_default = 3;
+    engine.item_templates_.push_back(stateful);
+    std::string error;
+    require(engine.item_store_.set_templates(engine.item_templates_, &error));
+
+    KernelItemInstanceId server_item = 0;
+    std::uint32_t server_prop = 0;
+    require(engine.server_create_world_item(
+        20,
+        1,
+        KernelVec3{2.0f, 0.0f, 0.0f},
+        &server_item,
+        &server_prop));
+    const auto server_entity = engine.world_.find_entity(server_prop);
+    require(server_entity.has_value());
+    require(engine.world_.registry().get<network_example::Health>(*server_entity).hp ==
+        3u);
+    require(engine.server_destroy_entity(
+        server_prop, KernelDespawnReason_Destroyed));
+    require(engine.item_store_.find_item(server_item)->terminal);
+
+    KernelServerEntityCreateInfo actor_info{};
+    actor_info.struct_size = sizeof(actor_info);
+    actor_info.entity_type = KernelEntityType_Actor;
+    actor_info.actor_type = KernelActorType_Player;
+    actor_info.owner_peer = 7;
+    actor_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+    std::uint32_t actor = 0;
+    require(engine.server_create_entity(actor_info, &actor));
+    KernelInventoryContainerId container = 0;
+    require(engine.server_create_inventory_container(actor, 1, &container));
+    KernelItemInstanceId item = 0;
+    require(engine.server_create_inventory_item(20, 1, container, &item));
+
+    KernelGameplayRequest throw_item = request(
+        400, actor, KernelSemanticInputButton_Fire);
+    throw_item.selected_item_instance_id = item;
+    require(engine.server_submit_gameplay_request(throw_item));
+    KernelGameplayRequestOutcome outcome{};
+    require(engine.poll_gameplay_request_outcomes(&outcome, 1) == 1);
+    require(outcome.item_instance_id == item);
+    const std::uint32_t first_prop = outcome.prop_entity_id;
+    const auto first_entity = engine.world_.find_entity(first_prop);
+    require(first_entity.has_value());
+    require(engine.world_.registry().get<network_example::Health>(*first_entity).hp ==
+        3u);
+
+    engine.world_.registry().get<network_example::Health>(*first_entity).hp = 2;
+    require(engine.item_store_.set_world_mode(item, KernelWorldItemMode_Placed));
+    engine.world_.registry().replace<network_example::PropWorldMode>(
+        *first_entity,
+        network_example::PropWorldMode{network_example::PropMode::kPlaced});
+    KernelGameplayRequest pickup = request(
+        401, actor, KernelSemanticInputButton_InteractTap);
+    pickup.target_net_id = first_prop;
+    require(engine.server_submit_gameplay_request(pickup));
+    require(engine.poll_gameplay_request_outcomes(&outcome, 1) == 1);
+    const network_example::ItemInstanceRecord* stored =
+        engine.item_store_.find_item(item);
+    require(stored != nullptr);
+    require(!stored->terminal);
+    require(stored->residency.kind == KernelItemResidency_Inventory);
+    require(stored->portable_state.size() == 1u);
+    require(stored->portable_state[0].uint32_default == 2u);
+    require(!engine.world_.find_entity(first_prop).has_value());
+
+    throw_item.request_id = 402;
+    require(engine.server_submit_gameplay_request(throw_item));
+    require(engine.poll_gameplay_request_outcomes(&outcome, 1) == 1);
+    require(outcome.item_instance_id == item);
+    const std::uint32_t second_prop = outcome.prop_entity_id;
+    require(second_prop != first_prop);
+    const auto second_entity = engine.world_.find_entity(second_prop);
+    require(second_entity.has_value());
+    require(engine.world_.registry().get<network_example::Health>(*second_entity).hp ==
+        2u);
+
+    require(engine.server_destroy_entity(
+        second_prop, KernelDespawnReason_Destroyed));
+    stored = engine.item_store_.find_item(item);
+    require(stored != nullptr && stored->terminal);
+}
+
+void catalog_cross_validates_health_projection() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    network_example::KernelEngine engine(config);
+
+    KernelEntityTemplateDefinition entity = prop_template();
+    entity.component_flags |= KERNEL_ENTITY_COMPONENT_HEALTH;
+    entity.combat.hp = 3;
+    entity.combat.max_hp = 3;
+
+    KernelItemTemplateDefinition item = item_template();
+    item.item_template_id = 21;
+    item.item_mode = KernelItemMode_Stateful;
+    item.max_stack = 1;
+    item.capability_flags =
+        KernelItemCapability_Pickupable | KernelItemCapability_Throwable;
+    item.input_mapping.inventory_use = KernelDomainAction_None;
+    item.input_mapping.inventory_fire = KernelDomainAction_Throw;
+    item.input_mapping.world_interact_tap = KernelDomainAction_Pickup;
+    item.input_mapping.world_interact_hold = KernelDomainAction_None;
+    item.use_policy.quantity_cost = 0;
+    item.portable_state_field_count = 1;
+    item.portable_state_fields[0].field_id = 7;
+    item.portable_state_fields[0].type = KernelPortableStateType_Uint32;
+    item.portable_state_fields[0].world_projection =
+        KernelPortableStateProjection_HealthCurrent;
+    item.portable_state_fields[0].uint32_default = 3;
+
+    const auto load = [&](const KernelEntityTemplateDefinition& entity_definition,
+                          const KernelItemTemplateDefinition& item_definition) {
+        KernelGameplayCatalogDefinition catalog{};
+        catalog.struct_size = sizeof(catalog);
+        catalog.catalog_version = 1;
+        catalog.catalog_hash = 1;
+        catalog.entity_templates = &entity_definition;
+        catalog.entity_template_count = 1;
+        catalog.item_templates = &item_definition;
+        catalog.item_template_count = 1;
+        return engine.load_gameplay_catalog(catalog);
+    };
+
+    require(load(entity, item));
+
+    KernelItemTemplateDefinition invalid_item = item;
+    invalid_item.portable_state_fields[0].uint32_default = 4;
+    require(!load(entity, invalid_item));
+
+    KernelEntityTemplateDefinition invalid_entity = entity;
+    invalid_entity.component_flags &= ~KERNEL_ENTITY_COMPONENT_HEALTH;
+    require(!load(invalid_entity, item));
+
+    invalid_item = item;
+    invalid_item.item_mode = KernelItemMode_Fungible;
+    require(!load(entity, invalid_item));
+}
+
+void health_change_no_op_still_consumes_item() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+
+    KernelItemTemplateDefinition potion = item_template();
+    potion.item_template_id = 22;
+    potion.entity_template_id = 0;
+    potion.capability_flags = KernelItemCapability_Consumable;
+    potion.input_mapping.inventory_use = KernelDomainAction_Consume;
+    potion.input_mapping.inventory_fire = KernelDomainAction_None;
+    potion.input_mapping.world_interact_tap = KernelDomainAction_None;
+    potion.input_mapping.world_interact_hold = KernelDomainAction_None;
+    potion.throw_policy.mode = KernelItemThrowMode_None;
+    potion.throw_policy.speed = 0.0f;
+    potion.item_used_trigger.action_type =
+        KernelEntityTriggerActionType_ApplyHealthChange;
+    potion.item_used_trigger.target_source =
+        KernelEntityRefSource_EventInstigator;
+    potion.item_used_trigger.health_change_amount = 30;
+    engine.item_templates_.push_back(potion);
+    std::string error;
+    require(engine.item_store_.set_templates(engine.item_templates_, &error));
+
+    KernelServerEntityCreateInfo actor_info{};
+    actor_info.struct_size = sizeof(actor_info);
+    actor_info.entity_type = KernelEntityType_Actor;
+    actor_info.actor_type = KernelActorType_Player;
+    actor_info.owner_peer = 7;
+    actor_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+    std::uint32_t actor = 0;
+    require(engine.server_create_entity(actor_info, &actor));
+    const auto actor_entity = engine.world_.find_entity(actor);
+    require(actor_entity.has_value());
+    engine.world_.registry().replace<network_example::Health>(
+        *actor_entity,
+        network_example::Health{100, 100});
+    KernelInventoryContainerId container = 0;
+    require(engine.server_create_inventory_container(actor, 1, &container));
+    KernelItemInstanceId item = 0;
+    require(engine.server_create_inventory_item(22, 2, container, &item));
+
+    KernelGameplayRequest consume = request(
+        500, actor, KernelSemanticInputButton_Use);
+    consume.selected_item_instance_id = item;
+    engine.events_.clear();
+    require(engine.server_submit_gameplay_request(consume));
+    require(engine.item_store_.find_item(item)->quantity == 1u);
+    require(engine.events_.empty());
+    KernelGameplayRequestOutcome outcome{};
+    require(engine.poll_gameplay_request_outcomes(&outcome, 1) == 1);
+    require(outcome.graph_outcome == KernelGameplayGraphOutcome_Succeeded);
+
+    engine.world_.registry().get<network_example::Health>(*actor_entity).hp = 0;
+    consume.request_id = 501;
+    require(engine.server_submit_gameplay_request(consume));
+    require(engine.item_store_.find_item(item)->terminal);
+    require(engine.events_.empty());
+    require(engine.poll_gameplay_request_outcomes(&outcome, 1) == 1);
+    require(outcome.graph_outcome == KernelGameplayGraphOutcome_Succeeded);
+}
+
 }  // namespace
 
 int main() {
@@ -435,5 +669,8 @@ int main() {
     graph_failure_after_commit_does_not_refund_or_retry();
     consume_graph_spawns_new_item_backed_prop();
     semantic_activate_validates_context_range_stale_and_dedupe();
+    stateful_health_round_trips_and_world_destroy_is_terminal();
+    catalog_cross_validates_health_projection();
+    health_change_no_op_still_consumes_item();
     return 0;
 }

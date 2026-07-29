@@ -85,6 +85,17 @@ bool valid_item_graph_action(const KernelActionDefinition& action) {
             action.position_source <= KernelEventVec3Source_Direction &&
             action.direction_source <= KernelEventVec3Source_Direction;
     }
+    if (action.action_type ==
+        KernelEntityTriggerActionType_ApplyHealthChange) {
+        return action.health_change_amount != 0 &&
+            action.health_change_amount >=
+                -static_cast<std::int32_t>(
+                    std::numeric_limits<std::uint16_t>::max()) &&
+            action.health_change_amount <=
+                static_cast<std::int32_t>(
+                    std::numeric_limits<std::uint16_t>::max()) &&
+            action.target_source <= KernelEntityRefSource_EventInstigator;
+    }
     return false;
 }
 
@@ -111,6 +122,7 @@ bool valid_item_used_graph(
             action.position_source = trigger.position_source;
             action.direction_source = trigger.direction_source;
             action.owner_source = trigger.owner_source;
+            action.health_change_amount = trigger.health_change_amount;
         } else {
             action = trigger.actions[index];
         }
@@ -157,7 +169,8 @@ bool validate_item_template(
         }
         if (field.world_projection ==
             KernelPortableStateProjection_HealthCurrent) {
-            if (has_health_projection ||
+            if (definition.item_mode != KernelItemMode_Stateful ||
+                has_health_projection ||
                 field.type != KernelPortableStateType_Uint32) {
                 return set_error(error, "invalid health projection");
             }

@@ -171,11 +171,17 @@ void area_effect_damage_order_is_deterministic() {
     network_example::simulate_area_effects(world, 0, &events, &pipeline);
     pipeline.confirm_ready(world, 0, 0, &events);
 
-    require(events.size() == 4);
+    require(events.size() == 6);
     require(events[0].type == KernelEventType_HitConfirmed);
     require(events[0].net_id == first);
-    require(events[2].type == KernelEventType_HitConfirmed);
-    require(events[2].net_id == second);
+    require(events[2].type == KernelEventType_HealthChanged);
+    require(events[2].net_id == first);
+    require(events[2].health_delta == -10);
+    require(events[3].type == KernelEventType_HitConfirmed);
+    require(events[3].net_id == second);
+    require(events[5].type == KernelEventType_HealthChanged);
+    require(events[5].net_id == second);
+    require(events[5].health_delta == -10);
 }
 
 }  // namespace

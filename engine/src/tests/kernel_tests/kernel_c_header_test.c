@@ -6,11 +6,23 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 55u,
-    "action trigger ABI");
+    KERNEL_ABI_VERSION == 56u,
+    "health change and world impact ABI");
 _Static_assert(
-    sizeof(KernelActionTriggerDefinition) == 224u,
+    sizeof(KernelActionTriggerDefinition) == 260u,
     "KernelActionTriggerDefinition ABI size");
+_Static_assert(
+    offsetof(KernelActionDefinition, health_change_amount) >
+        offsetof(KernelActionDefinition, spawn_item_quantity),
+    "health change amount is appended to action ABI");
+_Static_assert(
+    offsetof(KernelEntityTemplateDefinition, world_impact_trigger) >
+        offsetof(KernelEntityTemplateDefinition, prop),
+    "world impact trigger is appended to entity template ABI");
+_Static_assert(
+    offsetof(KernelEvent, health_delta) >
+        offsetof(KernelEvent, presentation_time_us),
+    "health delta is appended to event ABI");
 _Static_assert(sizeof(KernelActionIntent) == 8u, "KernelActionIntent ABI size");
 _Static_assert(sizeof(KernelActionInput) == 8u, "KernelActionInput ABI size");
 _Static_assert(
@@ -104,7 +116,7 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 55u);
+    assert(KERNEL_ABI_VERSION == 56u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD == 4u);

@@ -2379,6 +2379,7 @@ bool KernelEngine::load_gameplay_catalog(
                  &entity_template.collision_trigger,
                  &entity_template.health_depleted_trigger,
                  &entity_template.destroy_entity_trigger,
+                 &entity_template.world_impact_trigger,
              }) {
             if (trigger->struct_size == 0u) {
                 continue;
@@ -2386,27 +2387,68 @@ bool KernelEngine::load_gameplay_catalog(
             if (trigger->struct_size < sizeof(KernelActionTriggerDefinition)) {
                 return false;
             }
-            if (trigger->action_type ==
-                KernelEntityTriggerActionType_ApplyDamage) {
-                if (trigger->target_source >
-                        KernelEntityRefSource_EventInstigator ||
-                    trigger->damage_amount == 0u) {
-                    return false;
-                }
-                continue;
+            const std::uint32_t count = trigger->action_count == 0u
+                ? (trigger->action_type == KernelEntityTriggerActionType_None
+                       ? 0u
+                       : 1u)
+                : trigger->action_count;
+            if (count > KERNEL_MAX_ACTION_GRAPH_ACTIONS) {
+                return false;
             }
-            if (trigger->action_type ==
-                KernelEntityTriggerActionType_SpawnEntity) {
-                if (trigger->spawn_entity_template_id == 0u ||
-                    trigger->position_source !=
-                        KernelEventVec3Source_Position ||
-                    trigger->owner_source >
-                        KernelEntityRefSource_EventInstigator) {
-                    return false;
+            for (std::uint32_t action_index = 0;
+                 action_index < count;
+                 ++action_index) {
+                KernelActionDefinition action{};
+                if (trigger->action_count == 0u) {
+                    action.action_type = trigger->action_type;
+                    action.target_source = trigger->target_source;
+                    action.damage_amount = trigger->damage_amount;
+                    action.spawn_entity_template_id =
+                        trigger->spawn_entity_template_id;
+                    action.position_source = trigger->position_source;
+                    action.owner_source = trigger->owner_source;
+                    action.health_change_amount =
+                        trigger->health_change_amount;
+                } else {
+                    action = trigger->actions[action_index];
                 }
-                continue;
+                if (action.action_type ==
+                    KernelEntityTriggerActionType_ApplyDamage) {
+                    if (action.target_source >
+                            KernelEntityRefSource_EventInstigator ||
+                        action.damage_amount == 0u) {
+                        return false;
+                    }
+                    continue;
+                }
+                if (action.action_type ==
+                    KernelEntityTriggerActionType_ApplyHealthChange) {
+                    if (action.target_source >
+                            KernelEntityRefSource_EventInstigator ||
+                        action.health_change_amount == 0 ||
+                        action.health_change_amount <
+                            -static_cast<std::int32_t>(
+                                std::numeric_limits<std::uint16_t>::max()) ||
+                        action.health_change_amount >
+                            static_cast<std::int32_t>(
+                                std::numeric_limits<std::uint16_t>::max())) {
+                        return false;
+                    }
+                    continue;
+                }
+                if (action.action_type ==
+                    KernelEntityTriggerActionType_SpawnEntity) {
+                    if (action.spawn_entity_template_id == 0u ||
+                        action.position_source !=
+                            KernelEventVec3Source_Position ||
+                        action.owner_source >
+                            KernelEntityRefSource_EventInstigator) {
+                        return false;
+                    }
+                    continue;
+                }
+                return false;
             }
-            return false;
         }
         if (entity_template.entity_type == KernelEntityType_Director &&
             ((entity_template.component_flags &
@@ -2601,13 +2643,30 @@ bool KernelEngine::load_gameplay_catalog(
                  &entity_template.collision_trigger,
                  &entity_template.health_depleted_trigger,
                  &entity_template.destroy_entity_trigger,
+                 &entity_template.world_impact_trigger,
              }) {
-            if (trigger->action_type ==
-                    KernelEntityTriggerActionType_SpawnEntity &&
-                find_entity_template(
-                    validated_entity_templates,
-                    trigger->spawn_entity_template_id) == nullptr) {
-                return false;
+            const std::uint32_t count = trigger->action_count == 0u
+                ? (trigger->action_type == KernelEntityTriggerActionType_None
+                       ? 0u
+                       : 1u)
+                : trigger->action_count;
+            for (std::uint32_t action_index = 0;
+                 action_index < count;
+                 ++action_index) {
+                const std::uint8_t action_type = trigger->action_count == 0u
+                    ? trigger->action_type
+                    : trigger->actions[action_index].action_type;
+                const std::uint32_t entity_template_id =
+                    trigger->action_count == 0u
+                    ? trigger->spawn_entity_template_id
+                    : trigger->actions[action_index]
+                          .spawn_entity_template_id;
+                if (action_type == KernelEntityTriggerActionType_SpawnEntity &&
+                    find_entity_template(
+                        validated_entity_templates,
+                        entity_template_id) == nullptr) {
+                    return false;
+                }
             }
         }
         if (entity_template.collider_template_id != 0u &&
@@ -2650,7 +2709,18 @@ bool KernelEngine::load_gameplay_catalog(
                 return false;
             }
         }
+        const bool has_health_projection = std::any_of(
+            item_template.portable_state_fields,
+            item_template.portable_state_fields +
+                item_template.portable_state_field_count,
+            [](const KernelPortableStateFieldDefinition& field) {
+                return field.world_projection ==
+                    KernelPortableStateProjection_HealthCurrent;
+            });
         if (item_template.entity_template_id == 0u) {
+            if (has_health_projection) {
+                return false;
+            }
             continue;
         }
         const KernelEntityTemplateDefinition* entity_template =
@@ -2660,6 +2730,22 @@ bool KernelEngine::load_gameplay_catalog(
         if (entity_template == nullptr ||
             entity_template->entity_type != KernelEntityType_Prop) {
             return false;
+        }
+        for (std::uint32_t index = 0;
+             index < item_template.portable_state_field_count;
+             ++index) {
+            const KernelPortableStateFieldDefinition& field =
+                item_template.portable_state_fields[index];
+            if (field.world_projection !=
+                KernelPortableStateProjection_HealthCurrent) {
+                continue;
+            }
+            if (item_template.item_mode != KernelItemMode_Stateful ||
+                (entity_template->component_flags &
+                 KERNEL_ENTITY_COMPONENT_HEALTH) == 0u ||
+                field.uint32_default > entity_template->combat.max_hp) {
+                return false;
+            }
         }
         const KernelPropInteractionDefinition& interaction =
             entity_template->prop.interaction;
@@ -3557,7 +3643,10 @@ bool KernelEngine::server_create_world_item(
     create.position = position;
     create.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
     std::uint32_t prop_id = 0;
-    if (!server_create_entity(create, &prop_id)) return false;
+    if (!EntityLifecycleSystem{}.create_entity(
+            *this, create, &prop_id, false)) {
+        return false;
+    }
     const auto item = item_store_.create_world_item(
         item_template_id,
         quantity,
@@ -3574,8 +3663,16 @@ bool KernelEngine::server_create_world_item(
     world_.registry().emplace_or_replace<ItemInstanceRef>(
         *entity,
         ItemInstanceRef{*item});
+    const ItemInstanceRecord* item_record = item_store_.find_item(*item);
+    if (item_record == nullptr ||
+        !ItemGameplaySystem{}.decorate_item_prop(*this, prop_id, *item_record)) {
+        server_destroy_entity(prop_id, KernelDespawnReason_Destroyed);
+        return false;
+    }
     *out_item_instance_id = *item;
     *out_prop_entity_id = prop_id;
+    queue_prop_state_change(prop_id);
+    publish_snapshot();
     return true;
 }
 
@@ -4171,6 +4268,26 @@ void KernelEngine::push_event(
     PeerId peer_id,
     std::uint32_t code) {
     events_.push_back(KernelEvent{type, tick_loop_.current_tick(), net_id, peer_id, code});
+}
+
+void KernelEngine::queue_health_changed_event(
+    NetId net_id,
+    PeerId source_peer,
+    std::int32_t health_delta,
+    std::uint64_t event_time_us) {
+    if (health_delta == 0) {
+        return;
+    }
+    events_.push_back(KernelEvent{
+        KernelEventType_HealthChanged,
+        tick_loop_.current_tick(),
+        net_id,
+        source_peer,
+        0u,
+        event_time_us,
+        event_time_us,
+        health_delta,
+    });
 }
 
 void KernelEngine::register_actor_for_first_physics(NetId net_id) {

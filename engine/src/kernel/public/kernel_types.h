@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 55u
+#define KERNEL_ABI_VERSION 56u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -286,6 +286,7 @@ typedef enum KernelEventType {
     KernelEventType_MissionStateChanged = 10,
     KernelEventType_Error = 11,
     KernelEventType_ActorLanded = 12,
+    KernelEventType_HealthChanged = 13,
 } KernelEventType;
 
 typedef enum KernelDespawnReason {
@@ -415,6 +416,7 @@ typedef enum KernelEntityTriggerActionType {
     KernelEntityTriggerActionType_ApplyDamage = 1,
     KernelEntityTriggerActionType_SpawnEntity = 2,
     KernelEntityTriggerActionType_SpawnProjectile = 3,
+    KernelEntityTriggerActionType_ApplyHealthChange = 4,
 } KernelEntityTriggerActionType;
 
 typedef enum KernelEntityRefSource {
@@ -443,6 +445,7 @@ typedef struct KernelActionDefinition {
     uint8_t reserved;
     uint32_t spawn_item_template_id;
     uint32_t spawn_item_quantity;
+    int32_t health_change_amount;
 } KernelActionDefinition;
 
 typedef struct KernelActionTriggerDefinition {
@@ -462,6 +465,7 @@ typedef struct KernelActionTriggerDefinition {
     uint32_t spawn_item_quantity;
     uint32_t action_count;
     KernelActionDefinition actions[KERNEL_MAX_ACTION_GRAPH_ACTIONS];
+    int32_t health_change_amount;
 } KernelActionTriggerDefinition;
 
 #define KERNEL_MAX_PORTABLE_STATE_FIELDS 8
@@ -1583,6 +1587,7 @@ struct KernelEntityTemplateDefinition {
     KernelActionTriggerDefinition health_depleted_trigger;
     KernelActionTriggerDefinition destroy_entity_trigger;
     KernelPropDefinition prop;
+    KernelActionTriggerDefinition world_impact_trigger;
 };
 
 typedef struct KernelEvent {
@@ -1593,6 +1598,7 @@ typedef struct KernelEvent {
     uint32_t code;
     uint64_t event_time_us;
     uint64_t presentation_time_us;
+    int32_t health_delta;
 } KernelEvent;
 
 typedef struct KernelEntityLifecycleEvent {

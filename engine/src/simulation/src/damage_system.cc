@@ -44,6 +44,20 @@ std::vector<ConfirmedDamage> apply_damage_applications(
                 damage.hit_time_us,
                 damage.hit_time_us,
             });
+            const std::uint16_t hp_after =
+                world.registry().get<Health>(*target).hp;
+            if (hp_after < hp_before) {
+                events->push_back(KernelEvent{
+                    KernelEventType_HealthChanged,
+                    current_tick,
+                    damage.target_net_id,
+                    damage.source_peer,
+                    0u,
+                    damage.hit_time_us,
+                    damage.hit_time_us,
+                    -static_cast<std::int32_t>(hp_before - hp_after),
+                });
+            }
         }
     }
     return health_depleted;

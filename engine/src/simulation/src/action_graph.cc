@@ -91,7 +91,8 @@ bool expression_available_for_event(
         event_type == TriggerEventType::kItemUsed ||
         event_type == TriggerEventType::kCollision ||
         event_type == TriggerEventType::kProjectileImpact ||
-        event_type == TriggerEventType::kExpired;
+        event_type == TriggerEventType::kExpired ||
+        event_type == TriggerEventType::kWorldImpact;
 }
 
 const ActionGraphParameterDefinition* find_parameter_definition(
@@ -215,6 +216,7 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
             action.owner_source = trigger.owner_source;
             action.spawn_item_template_id = trigger.spawn_item_template_id;
             action.spawn_item_quantity = trigger.spawn_item_quantity;
+            action.health_change_amount = trigger.health_change_amount;
         } else {
             action = trigger.actions[index];
         }
@@ -280,7 +282,12 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
             });
             continue;
         }
-        if (action.action_type != KernelEntityTriggerActionType_ApplyDamage) {
+        const bool applies_damage =
+            action.action_type == KernelEntityTriggerActionType_ApplyDamage;
+        const bool applies_health_change =
+            action.action_type ==
+            KernelEntityTriggerActionType_ApplyHealthChange;
+        if (!applies_damage && !applies_health_change) {
             return std::nullopt;
         }
         const std::string target_name = "target" + suffix;
@@ -288,12 +295,21 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
         binding.graph.parameters.push_back({target_name, std::monostate{}});
         binding.graph.parameters.push_back({
             amount_name,
-            static_cast<float>(action.damage_amount),
+            applies_damage
+                ? static_cast<float>(action.damage_amount)
+                : static_cast<float>(action.health_change_amount),
         });
-        binding.graph.actions.push_back(ActionApplyDamageDefinition{
-            target_name,
-            amount_name,
-        });
+        if (applies_damage) {
+            binding.graph.actions.push_back(ActionApplyDamageDefinition{
+                target_name,
+                amount_name,
+            });
+        } else {
+            binding.graph.actions.push_back(ActionApplyHealthChangeDefinition{
+                target_name,
+                amount_name,
+            });
+        }
         binding.parameters.push_back({
             target_name,
             EntityRefExpression{static_cast<EntityRefSource>(
@@ -347,6 +363,8 @@ CompiledActionGraphBinding compile_apply_damage_binding(
                 return "action_apply_damage_at_health_depleted";
             case TriggerEventType::kDestroyEntity:
                 return "action_apply_damage_at_destroy_entity";
+            case TriggerEventType::kWorldImpact:
+                return "action_apply_damage_at_world_impact";
             default:
                 return "action_apply_damage_at_activated";
         }
@@ -385,6 +403,8 @@ CompiledActionGraphBinding compile_spawn_entity_binding(
                 return "action_spawn_entity_at_health_depleted";
             case TriggerEventType::kDestroyEntity:
                 return "action_spawn_entity_at_destroy_entity";
+            case TriggerEventType::kWorldImpact:
+                return "action_spawn_entity_at_world_impact";
             default:
                 return "action_spawn_entity_at_activated";
         }
@@ -490,15 +510,23 @@ bool validate_action_graph_binding(
             continue;
         }
         const auto* damage = std::get_if<ActionApplyDamageDefinition>(&action);
-        if (damage == nullptr ||
+        const auto* health_change =
+            std::get_if<ActionApplyHealthChangeDefinition>(&action);
+        const std::string* target_parameter = damage != nullptr
+            ? &damage->target_parameter
+            : health_change != nullptr ? &health_change->target_parameter : nullptr;
+        const std::string* amount_parameter = damage != nullptr
+            ? &damage->amount_parameter
+            : health_change != nullptr ? &health_change->amount_parameter : nullptr;
+        if (target_parameter == nullptr || amount_parameter == nullptr ||
             !validate_action_parameter(
                 binding,
-                damage->target_parameter,
+                *target_parameter,
                 ParameterType::kEntityId,
                 error) ||
             !validate_action_parameter(
                 binding,
-                damage->amount_parameter,
+                *amount_parameter,
                 ParameterType::kNumber,
                 error)) {
             return false;
@@ -612,36 +640,72 @@ bool evaluate_action_graph(
         }
 
         const auto* damage = std::get_if<ActionApplyDamageDefinition>(&action);
-        if (damage == nullptr) {
+        const auto* health_change =
+            std::get_if<ActionApplyHealthChangeDefinition>(&action);
+        if (damage == nullptr && health_change == nullptr) {
             return fail(error, "unsupported action graph action");
         }
+        const std::string& target_parameter = damage != nullptr
+            ? damage->target_parameter
+            : health_change->target_parameter;
+        const std::string& amount_parameter = damage != nullptr
+            ? damage->amount_parameter
+            : health_change->amount_parameter;
         const ActionGraphParameterValue* target_value =
-            find_resolved_parameter(parameters, damage->target_parameter);
+            find_resolved_parameter(parameters, target_parameter);
         const ActionGraphParameterValue* amount_value =
-            find_resolved_parameter(parameters, damage->amount_parameter);
+            find_resolved_parameter(parameters, amount_parameter);
         if (target_value == nullptr || amount_value == nullptr ||
             !std::holds_alternative<EntityIdValue>(*target_value) ||
             !std::holds_alternative<float>(*amount_value)) {
-            return fail(error, "apply_damage action input type mismatch");
+            return fail(
+                error,
+                damage != nullptr
+                    ? "apply_damage action input type mismatch"
+                    : "apply_health_change action input type mismatch");
         }
         const float amount = std::get<float>(*amount_value);
-        if (!std::isfinite(amount) || amount <= 0.0f ||
-            amount > static_cast<float>(std::numeric_limits<std::uint16_t>::max()) ||
-            std::floor(amount) != amount) {
+        if (!std::isfinite(amount) || std::floor(amount) != amount) {
+            return fail(error, "health action amount must be a finite integer");
+        }
+        if (damage != nullptr &&
+            (amount <= 0.0f ||
+             amount > static_cast<float>(
+                 std::numeric_limits<std::uint16_t>::max()))) {
             return fail(error, "apply_damage amount must be a positive uint16");
+        }
+        if (health_change != nullptr &&
+            (amount == 0.0f ||
+             amount < -static_cast<float>(
+                 std::numeric_limits<std::uint16_t>::max()) ||
+             amount > static_cast<float>(
+                 std::numeric_limits<std::uint16_t>::max()))) {
+            return fail(
+                error,
+                "apply_health_change amount must be a non-zero signed uint16 range");
         }
         const NetId target = std::get<EntityIdValue>(*target_value).value;
         if (target == 0u) {
-            return fail(error, "apply_damage target must not be null");
+            return fail(error, "health action target must not be null");
         }
-        commands->push_back(ActionApplyDamageCommand{
-            event.type == TriggerEventType::kItemUsed && self == 0u
-                ? event.instigator
-                : self,
-            target,
-            static_cast<std::uint16_t>(amount),
-            provenance,
-        });
+        const NetId source = event.type == TriggerEventType::kItemUsed && self == 0u
+            ? event.instigator
+            : self;
+        if (damage != nullptr) {
+            commands->push_back(ActionApplyDamageCommand{
+                source,
+                target,
+                static_cast<std::uint16_t>(amount),
+                provenance,
+            });
+        } else {
+            commands->push_back(ActionApplyHealthChangeCommand{
+                source,
+                target,
+                static_cast<std::int32_t>(amount),
+                provenance,
+            });
+        }
     }
     return true;
 }

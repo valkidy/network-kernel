@@ -26,6 +26,13 @@ struct ActionApplyDamageCommand {
     ActionExecutionProvenance provenance;
 };
 
+struct ActionApplyHealthChangeCommand {
+    NetId source = 0;
+    NetId target = 0;
+    std::int32_t amount = 0;
+    ActionExecutionProvenance provenance;
+};
+
 struct ActionSpawnEntityCommand {
     std::uint32_t entity_template_id = 0;
     glm::vec3 position{0.0f};
@@ -38,6 +45,7 @@ struct ActionSpawnEntityCommand {
 using ActionGraphCommand = std::variant<
     ActionSpawnProjectileCommand,
     ActionApplyDamageCommand,
+    ActionApplyHealthChangeCommand,
     ActionSpawnEntityCommand>;
 
 struct ActionGraphQueuedTrigger {

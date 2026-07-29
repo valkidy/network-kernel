@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <limits>
 #include <memory>
@@ -14,11 +15,18 @@
 
 namespace {
 
-void require(bool condition) {
+void require_impl(bool condition, const char* expression, int line) {
     if (!condition) {
+        std::fprintf(
+            stderr,
+            "require failed at line %d: %s\n",
+            line,
+            expression);
         std::abort();
     }
 }
+
+#define require(condition) require_impl((condition), #condition, __LINE__)
 
 KernelServerEntityCreateInfo create_info(
     std::uint32_t entity_template_id,
@@ -386,11 +394,278 @@ void lifecycle_triggers_capture_context_before_prop_destruction() {
     require(ready.front().damage == 7);
 }
 
+void health_change_applies_signed_clamped_delta() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+
+    KernelEntityTemplateDefinition healer{};
+    healer.struct_size = sizeof(healer);
+    healer.entity_template_id = 204;
+    healer.entity_type = KernelEntityType_Prop;
+    healer.component_flags = KERNEL_ENTITY_COMPONENT_TRANSFORM;
+    healer.ai.struct_size = sizeof(healer.ai);
+    healer.movement.struct_size = sizeof(healer.movement);
+    healer.activated_trigger.struct_size = sizeof(healer.activated_trigger);
+    healer.activated_trigger.action_type =
+        KernelEntityTriggerActionType_ApplyHealthChange;
+    healer.activated_trigger.target_source = KernelEntityRefSource_EventTarget;
+    healer.activated_trigger.health_change_amount = 30;
+    engine.entity_templates_.push_back(healer);
+
+    KernelEntityTemplateDefinition drain = healer;
+    drain.entity_template_id = 205;
+    drain.activated_trigger.health_change_amount = -30;
+    engine.entity_templates_.push_back(drain);
+
+    std::uint32_t healer_id = 0;
+    std::uint32_t drain_id = 0;
+    require(engine.server_create_entity(
+        create_info(204, KernelVec3{0.0f, 0.0f, 0.0f}), &healer_id));
+    require(engine.server_create_entity(
+        create_info(205, KernelVec3{0.0f, 0.0f, 0.0f}), &drain_id));
+    const network_example::NetId target =
+        engine.world_.spawn_enemy(glm::vec3{1.0f, 0.0f, 0.0f});
+    const auto target_entity = engine.world_.find_entity(target);
+    require(target_entity.has_value());
+
+    KernelServerEntityActivateInfo activation{};
+    activation.struct_size = sizeof(activation);
+    activation.subject_net_id = healer_id;
+    activation.instigator_net_id = target;
+    activation.target_net_id = target;
+    activation.action_instance_id = 1;
+    activation.request_id = 2001;
+
+    engine.world_.registry().replace<network_example::Health>(
+        *target_entity, network_example::Health{70, 100});
+    engine.events_.clear();
+    require(engine.server_activate_entity(activation));
+    require(engine.world_.registry().get<network_example::Health>(*target_entity).hp ==
+        100);
+    require(engine.events_.size() == 1u);
+    require(engine.events_.front().type == KernelEventType_HealthChanged);
+    require(engine.events_.front().health_delta == 30);
+
+    engine.world_.registry().replace<network_example::Health>(
+        *target_entity, network_example::Health{90, 100});
+    engine.events_.clear();
+    activation.action_instance_id = 2;
+    activation.request_id = 2002;
+    require(engine.server_activate_entity(activation));
+    require(engine.world_.registry().get<network_example::Health>(*target_entity).hp ==
+        100);
+    require(engine.events_.size() == 1u);
+    require(engine.events_.front().health_delta == 10);
+
+    engine.events_.clear();
+    activation.action_instance_id = 3;
+    activation.request_id = 2003;
+    require(engine.server_activate_entity(activation));
+    require(engine.events_.empty());
+
+    engine.world_.registry().replace<network_example::Health>(
+        *target_entity, network_example::Health{0, 100});
+    activation.action_instance_id = 4;
+    activation.request_id = 2004;
+    require(engine.server_activate_entity(activation));
+    require(engine.world_.registry().get<network_example::Health>(*target_entity).hp ==
+        0);
+    require(engine.events_.empty());
+
+    engine.world_.registry().replace<network_example::Health>(
+        *target_entity, network_example::Health{20, 100});
+    activation.subject_net_id = drain_id;
+    activation.action_instance_id = 5;
+    activation.request_id = 2005;
+    require(engine.server_activate_entity(activation));
+    require(engine.damage_pipeline_.pending_count() == 1u);
+    const auto ready = engine.damage_pipeline_.drain_ready_damage(
+        engine.world_, std::numeric_limits<std::uint64_t>::max());
+    require(ready.size() == 1u);
+    require(ready.front().damage == 30u);
+    const auto depleted = network_example::apply_damage_applications(
+        engine.world_, ready, 1, &engine.events_);
+    require(depleted.size() == 1u);
+    require(engine.world_.registry().get<network_example::Health>(*target_entity).hp ==
+        0);
+    require(engine.events_.size() == 3u);
+    require(engine.events_[0].type == KernelEventType_HitConfirmed);
+    require(engine.events_[1].type == KernelEventType_DamageApplied);
+    require(engine.events_[2].type == KernelEventType_HealthChanged);
+    require(engine.events_[2].health_delta == -20);
+}
+
+void world_impact_runs_once_for(
+    network_example::physics::CollisionObjectKind impact_kind,
+    network_example::physics::CollisionLayer impact_layer) {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+    if (engine.physics_world_ == nullptr) {
+        engine.physics_world_ =
+            std::make_unique<network_example::physics::PhysicsWorld>();
+        engine.world_.set_collision_world(engine.physics_world_.get());
+    }
+    engine.collider_templates_.push_back(
+        box_collider(30, KERNEL_COLLISION_LAYER_NEUTRAL));
+
+    KernelEntityTemplateDefinition bottle{};
+    bottle.struct_size = sizeof(bottle);
+    bottle.entity_template_id = 206;
+    bottle.entity_type = KernelEntityType_Prop;
+    bottle.component_flags =
+        KERNEL_ENTITY_COMPONENT_TRANSFORM |
+        KERNEL_ENTITY_COMPONENT_VELOCITY |
+        KERNEL_ENTITY_COMPONENT_HEALTH |
+        KERNEL_ENTITY_COMPONENT_HITBOX;
+    bottle.collider_template_id = 30;
+    bottle.combat.hp = 1;
+    bottle.combat.max_hp = 1;
+    bottle.ai.struct_size = sizeof(bottle.ai);
+    bottle.movement.struct_size = sizeof(bottle.movement);
+    bottle.world_impact_trigger.struct_size =
+        sizeof(bottle.world_impact_trigger);
+    bottle.world_impact_trigger.action_count = 2;
+    bottle.world_impact_trigger.actions[0].action_type =
+        KernelEntityTriggerActionType_ApplyDamage;
+    bottle.world_impact_trigger.actions[0].target_source =
+        KernelEntityRefSource_Self;
+    bottle.world_impact_trigger.actions[0].damage_amount = 1;
+    bottle.world_impact_trigger.actions[1].action_type =
+        KernelEntityTriggerActionType_SpawnEntity;
+    bottle.world_impact_trigger.actions[1].spawn_entity_template_id = 207;
+    bottle.world_impact_trigger.actions[1].position_source =
+        KernelEventVec3Source_Position;
+    bottle.world_impact_trigger.actions[1].owner_source =
+        KernelEntityRefSource_Self;
+    engine.entity_templates_.push_back(bottle);
+
+    KernelEntityTemplateDefinition ice{};
+    ice.struct_size = sizeof(ice);
+    ice.entity_template_id = 207;
+    ice.entity_type = KernelEntityType_Prop;
+    ice.component_flags =
+        KERNEL_ENTITY_COMPONENT_TRANSFORM | KERNEL_ENTITY_COMPONENT_HEALTH;
+    ice.combat.hp = 100;
+    ice.combat.max_hp = 100;
+    ice.ai.struct_size = sizeof(ice.ai);
+    ice.movement.struct_size = sizeof(ice.movement);
+    engine.entity_templates_.push_back(ice);
+
+    std::uint32_t bottle_id = 0;
+    require(engine.server_create_entity(
+        create_info(206, KernelVec3{0.0f, 0.0f, 0.0f}), &bottle_id));
+    const auto bottle_entity = engine.world_.find_entity(bottle_id);
+    require(bottle_entity.has_value());
+    engine.world_.registry().replace<network_example::PropWorldMode>(
+        *bottle_entity,
+        network_example::PropWorldMode{network_example::PropMode::kInFlight});
+    engine.world_.registry().replace<network_example::Velocity>(
+        *bottle_entity,
+        network_example::Velocity{glm::vec3{1.0f, 0.0f, 0.0f}});
+    engine.sync_entity_colliders_from_world();
+
+    KernelServerEntityCreateInfo actor_info{};
+    actor_info.struct_size = sizeof(actor_info);
+    actor_info.entity_type = KernelEntityType_Actor;
+    actor_info.actor_type = KernelActorType_Player;
+    actor_info.position = KernelVec3{0.0f, 0.0f, 0.0f};
+    actor_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+    std::uint32_t actor = 0;
+    require(engine.server_create_entity(actor_info, &actor));
+    const auto actor_entity = engine.world_.find_entity(actor);
+    require(actor_entity.has_value());
+    engine.world_.registry().replace<network_example::Hitbox>(
+        *actor_entity,
+        network_example::Hitbox{
+            {0.0f, 0.5f, 0.0f},
+            {0.5f, 0.5f, 0.5f},
+            31});
+    engine.materialize_entity_collider(actor);
+    engine.sync_entity_colliders_from_world();
+    network_example::CollisionTriggerSystem{}.update(engine, 1000);
+    require(engine.world_.registry()
+                .get<network_example::PropWorldMode>(*bottle_entity)
+                .mode == network_example::PropMode::kInFlight);
+    require(engine.damage_pipeline_.pending_count() == 0u);
+
+    network_example::physics::CollisionObjectDescriptor obstacle{};
+    obstacle.identity = network_example::physics::CollisionObjectIdentity{
+        0,
+        900,
+        0,
+        impact_kind,
+        impact_layer,
+    };
+    obstacle.shape.type = network_example::physics::CollisionShapeType::kBox;
+    obstacle.shape.half_extents = glm::vec3{0.5f, 0.5f, 0.5f};
+    obstacle.position = glm::vec3{0.0f, 0.5f, 0.0f};
+    std::string error;
+    require(engine.physics_world_->upsert_object(obstacle, &error));
+
+    network_example::CollisionTriggerSystem{}.update(engine, 2000);
+    require(engine.world_.registry()
+                .get<network_example::PropWorldMode>(*bottle_entity)
+                .mode == network_example::PropMode::kPlaced);
+    require(engine.damage_pipeline_.pending_count() == 1u);
+    std::uint32_t ice_count = 0;
+    auto ice_view = engine.world_.registry().view<
+        const network_example::EntityTemplateRef,
+        const network_example::Health>();
+    for (const entt::entity entity : ice_view) {
+        if (ice_view.get<const network_example::EntityTemplateRef>(entity)
+                .entity_template_id == 207u) {
+            ++ice_count;
+            require(ice_view.get<const network_example::Health>(entity).hp == 100u);
+        }
+    }
+    require(ice_count == 1u);
+
+    network_example::CollisionTriggerSystem{}.update(engine, 3000);
+    require(engine.damage_pipeline_.pending_count() == 1u);
+    ice_count = 0;
+    for (const entt::entity entity : ice_view) {
+        if (ice_view.get<const network_example::EntityTemplateRef>(entity)
+                .entity_template_id == 207u) {
+            ++ice_count;
+        }
+    }
+    require(ice_count == 1u);
+
+    const auto ready = engine.damage_pipeline_.drain_ready_damage(
+        engine.world_, std::numeric_limits<std::uint64_t>::max());
+    const auto depleted = network_example::apply_damage_applications(
+        engine.world_, ready, 1, nullptr);
+    require(depleted.size() == 1u);
+    network_example::EntityLifecycleSystem lifecycle;
+    lifecycle.process_health_depleted(engine, depleted, 3000);
+    lifecycle.destroy_dead_entities(engine, depleted);
+    require(!engine.world_.find_entity(bottle_id).has_value());
+}
+
+void world_impact_accepts_terrain_and_static_obstacle() {
+    world_impact_runs_once_for(
+        network_example::physics::CollisionObjectKind::kTerrain,
+        network_example::physics::CollisionLayer::kTerrain);
+    world_impact_runs_once_for(
+        network_example::physics::CollisionObjectKind::kStaticObstacle,
+        network_example::physics::CollisionLayer::kStaticObstacle);
+}
+
 }  // namespace
 
 int main() {
     activated_prop_applies_damage_exactly_once();
     collision_prop_applies_damage_on_contact_enter();
     lifecycle_triggers_capture_context_before_prop_destruction();
+    health_change_applies_signed_clamped_delta();
+    world_impact_accepts_terrain_and_static_obstacle();
     return 0;
 }

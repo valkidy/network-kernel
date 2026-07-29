@@ -427,6 +427,7 @@ enum class TriggerEventType : std::uint8_t {
     kHealthDepleted,
     kDestroyEntity,
     kExpired,
+    kWorldImpact,
 };
 
 struct OnCollisionTriggerTag {};
@@ -435,6 +436,7 @@ struct OnActivatedTriggerTag {};
 struct OnHealthDepletedTriggerTag {};
 struct OnDestroyEntityTriggerTag {};
 struct OnExpiredTriggerTag {};
+struct OnWorldImpactTriggerTag {};
 
 struct ProjectileImpactPayload {
     std::uint32_t projectile_template_id = 0;
@@ -552,6 +554,11 @@ struct ActionApplyDamageDefinition {
     std::string amount_parameter;
 };
 
+struct ActionApplyHealthChangeDefinition {
+    std::string target_parameter;
+    std::string amount_parameter;
+};
+
 struct ActionSpawnEntityDefinition {
     std::string entity_template_parameter;
     std::string position_parameter;
@@ -563,6 +570,7 @@ struct ActionSpawnEntityDefinition {
 using ActionGraphAction = std::variant<
     ActionSpawnProjectileDefinition,
     ActionApplyDamageDefinition,
+    ActionApplyHealthChangeDefinition,
     ActionSpawnEntityDefinition>;
 
 struct ActionGraphTemplate {
@@ -590,6 +598,10 @@ struct ActionGraphHealthDepletedBinding {
 };
 
 struct ActionGraphDestroyEntityBinding {
+    CompiledActionGraphBinding binding;
+};
+
+struct ActionGraphWorldImpactBinding {
     CompiledActionGraphBinding binding;
 };
 

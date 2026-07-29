@@ -233,7 +233,7 @@ bool has_line_of_sight(
     return hits.empty() || hits.front().identity.entity_net_id == target_id;
 }
 
-bool decorate_item_prop(
+bool decorate_item_prop_impl(
     KernelEngine& engine,
     std::uint32_t prop_id,
     const ItemInstanceRecord& item) {
@@ -250,6 +250,19 @@ bool decorate_item_prop(
     registry.emplace_or_replace<PropWorldMode>(
         *entity,
         PropWorldMode{static_cast<PropMode>(item.residency.world_mode)});
+    for (const KernelPortableStateFieldDefinition& field : item.portable_state) {
+        if (field.world_projection !=
+            KernelPortableStateProjection_HealthCurrent) {
+            continue;
+        }
+        if (!registry.all_of<Health>(*entity)) {
+            return false;
+        }
+        Health& health = registry.get<Health>(*entity);
+        health.hp = static_cast<std::uint16_t>(std::min<std::uint32_t>(
+            field.uint32_default,
+            health.max_hp));
+    }
     return true;
 }
 
@@ -375,10 +388,15 @@ std::optional<ActionGraphCommandBatch> prepare_item_graph_batch(
         return std::nullopt;
     }
     for (const ActionGraphCommand& command : commands) {
-        if (const auto* damage =
-                std::get_if<ActionApplyDamageCommand>(&command)) {
+        const auto* damage = std::get_if<ActionApplyDamageCommand>(&command);
+        const auto* health_change =
+            std::get_if<ActionApplyHealthChangeCommand>(&command);
+        if (damage != nullptr || health_change != nullptr) {
+            const NetId target_id = damage != nullptr
+                ? damage->target
+                : health_change->target;
             const std::optional<entt::entity> target =
-                engine.simulation_world().find_entity(damage->target);
+                engine.simulation_world().find_entity(target_id);
             if (!target.has_value() ||
                 !engine.simulation_world().registry().all_of<Health>(*target)) {
                 return std::nullopt;
@@ -394,6 +412,13 @@ std::optional<ActionGraphCommandBatch> prepare_item_graph_batch(
 }
 
 }  // namespace
+
+bool ItemGameplaySystem::decorate_item_prop(
+    KernelEngine& engine,
+    std::uint32_t prop_id,
+    const ItemInstanceRecord& item) const {
+    return decorate_item_prop_impl(engine, prop_id, item);
+}
 
 bool ItemGameplaySystem::submit_request(
     KernelEngine& engine,
@@ -711,13 +736,19 @@ bool ItemGameplaySystem::submit_request(
                     goto record_outcome;
                 }
                 for (const ActionGraphCommand& command : commands) {
-                    if (const auto* damage =
-                            std::get_if<ActionApplyDamageCommand>(&command)) {
-                        const std::optional<entt::entity> damage_target =
-                            engine.world_.find_entity(damage->target);
-                        if (!damage_target.has_value() ||
+                    const auto* damage =
+                        std::get_if<ActionApplyDamageCommand>(&command);
+                    const auto* health_change =
+                        std::get_if<ActionApplyHealthChangeCommand>(&command);
+                    if (damage != nullptr || health_change != nullptr) {
+                        const NetId target_id = damage != nullptr
+                            ? damage->target
+                            : health_change->target;
+                        const std::optional<entt::entity> target =
+                            engine.world_.find_entity(target_id);
+                        if (!target.has_value() ||
                             !engine.world_.registry().all_of<Health>(
-                                *damage_target)) {
+                                *target)) {
                             reject(
                                 &outcome,
                                 KernelGameplayRequestRejection_GraphRejected);
@@ -880,6 +911,8 @@ bool ItemGameplaySystem::submit_request(
                         KernelGameplayRequestRejection_InvalidQuantity);
                     goto record_outcome;
                 }
+                const KernelInventoryContainerId source_container_id =
+                    item->residency.container_id;
                 const auto prop_id = spawn_prop(
                     engine,
                     *item_template,
@@ -919,7 +952,16 @@ bool ItemGameplaySystem::submit_request(
                     placed_id = *split;
                 }
                 item = engine.item_store_.find_item(placed_id);
-                decorate_item_prop(engine, *prop_id, *item);
+                if (!decorate_item_prop(engine, *prop_id, *item)) {
+                    (void)engine.item_store_.move_to_inventory(
+                        placed_id, source_container_id);
+                    EntityLifecycleSystem{}.destroy_entity(
+                        engine, *prop_id, KernelDespawnReason_Destroyed);
+                    reject(
+                        &outcome,
+                        KernelGameplayRequestRejection_InvalidPlacement);
+                    goto record_outcome;
+                }
                 outcome.prop_entity_id = *prop_id;
                 outcome.item_instance_id = placed_id;
                 outcome.committed_quantity = quantity;
@@ -999,6 +1041,8 @@ bool ItemGameplaySystem::submit_request(
                     reject(&outcome, KernelGameplayRequestRejection_InvalidQuantity);
                     goto record_outcome;
                 }
+                const KernelInventoryContainerId source_container_id =
+                    item->residency.container_id;
                 const Transform& actor_transform =
                     engine.world_.registry().get<Transform>(*instigator);
                 const KernelVec3 position{
@@ -1040,7 +1084,16 @@ bool ItemGameplaySystem::submit_request(
                     goto record_outcome;
                 }
                 item = engine.item_store_.find_item(thrown_id);
-                decorate_item_prop(engine, prop_id, *item);
+                if (!decorate_item_prop(engine, prop_id, *item)) {
+                    (void)engine.item_store_.move_to_inventory(
+                        thrown_id, source_container_id);
+                    EntityLifecycleSystem{}.destroy_entity(
+                        engine, prop_id, KernelDespawnReason_Destroyed);
+                    reject(
+                        &outcome,
+                        KernelGameplayRequestRejection_InvalidPlacement);
+                    goto record_outcome;
+                }
                 outcome.item_instance_id = thrown_id;
                 outcome.committed_quantity = quantity;
             } else {

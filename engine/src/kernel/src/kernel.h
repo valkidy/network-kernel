@@ -196,6 +196,11 @@ public:
         KernelItemInstanceId* out_item_instance_id,
         std::uint32_t* out_prop_entity_id);
     bool server_submit_gameplay_request(const KernelGameplayRequest& request);
+    void queue_health_changed_event(
+        NetId net_id,
+        PeerId source_peer,
+        std::int32_t health_delta,
+        std::uint64_t event_time_us);
     bool submit_gameplay_request(const KernelGameplayRequest& request);
     bool get_item_instance(
         KernelItemInstanceId id,

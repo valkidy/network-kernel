@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -34,11 +35,18 @@ static_assert(
         network_example::game_server::AgentSentryConfig>::value,
     "AgentSentryConfig must not duplicate weapon template magazine_size.");
 
-void require(bool condition) {
+void require_impl(bool condition, const char* expression, int line) {
     if (!condition) {
+        std::fprintf(
+            stderr,
+            "require failed at line %d: %s\n",
+            line,
+            expression);
         std::abort();
     }
 }
+
+#define require(condition) require_impl((condition), #condition, __LINE__)
 
 std::string read_text_file(const std::string& path) {
     std::ifstream file(path, std::ios::binary);
@@ -805,6 +813,128 @@ int main() {
     assert(bundle_config.projectile_templates.size() == config.projectile_templates.size());
     assert(bundle_config.actor_templates.size() == config.actor_templates.size());
     assert(bundle_config.agent.actor_template_id == config.agent.actor_template_id);
+
+    const std::string health_change_graph =
+        "id: action_apply_health_change\n"
+        "parameters:\n"
+        "  target: null\n"
+        "  amount: 1\n"
+        "actions:\n"
+        "  - type: apply_health_change\n"
+        "    target: params.target\n"
+        "    amount: params.amount\n";
+    const std::string world_impact_prop =
+        "id: 300\n"
+        "name: health_change_world_impact_prop\n"
+        "entity_type: prop\n"
+        "health:\n"
+        "  hp: 3\n"
+        "  max_hp: 3\n"
+        "physics:\n"
+        "  collider_template: rocket_aabb\n"
+        "triggers:\n"
+        "  on_world_impact:\n"
+        "    action_graph: action_apply_health_change\n"
+        "    parameters:\n"
+        "      target: self\n"
+        "      amount: 30\n";
+    const std::vector<std::uint8_t> health_change_bundle =
+        make_gameplay_bundle_zip(
+            read_text_file("game_server/entity_templates/sentry_grunt.yaml"),
+            {
+                {"action_graph_templates/action_apply_health_change.yaml",
+                 health_change_graph},
+                {"entity_templates/health_change_world_impact_prop.yaml",
+                 world_impact_prop},
+            });
+    const network_example::game_server::GameServerGameplayConfig
+        health_change_config =
+            network_example::game_server::load_gameplay_config_from_bundle_memory(
+                health_change_bundle.data(),
+                static_cast<std::uint32_t>(health_change_bundle.size()),
+                "gameplay_catalog.yaml");
+    const network_example::game_server::KernelGameplayCatalogStorage
+        health_change_catalog =
+            network_example::game_server::build_kernel_gameplay_catalog(
+                health_change_config);
+    const auto health_prop = std::find_if(
+        health_change_catalog.entity_templates.begin(),
+        health_change_catalog.entity_templates.end(),
+        [](const KernelEntityTemplateDefinition& entity) {
+            return entity.entity_template_id == 300u;
+        });
+    require(health_prop != health_change_catalog.entity_templates.end());
+    require(health_prop->world_impact_trigger.action_count == 1u);
+    require(
+        health_prop->world_impact_trigger.action_type ==
+        KernelEntityTriggerActionType_ApplyHealthChange);
+    require(health_prop->world_impact_trigger.health_change_amount == 30);
+    require(
+        health_prop->world_impact_trigger.actions[0].action_type ==
+        KernelEntityTriggerActionType_ApplyHealthChange);
+    require(health_prop->world_impact_trigger.actions[0].health_change_amount == 30);
+    auto health_change_hash_config = health_change_config;
+    const auto authored_health_prop = std::find_if(
+        health_change_hash_config.entity_templates.begin(),
+        health_change_hash_config.entity_templates.end(),
+        [](const network_example::game_server::EntityTemplateConfig& entity) {
+            return entity.actor_template_id == 300u;
+        });
+    require(
+        authored_health_prop != health_change_hash_config.entity_templates.end());
+    const auto amount_parameter = std::find_if(
+        authored_health_prop->world_impact_trigger.parameters.begin(),
+        authored_health_prop->world_impact_trigger.parameters.end(),
+        [](const auto& parameter) { return parameter.first == "amount"; });
+    require(
+        amount_parameter !=
+        authored_health_prop->world_impact_trigger.parameters.end());
+    amount_parameter->second = "31";
+    require(
+        network_example::game_server::compute_gameplay_catalog_hash(
+            health_change_config) !=
+        network_example::game_server::compute_gameplay_catalog_hash(
+            health_change_hash_config));
+
+    for (const char* invalid_amount : {"0", "65536", "-65536"}) {
+        const std::string invalid_prop =
+            "id: 300\n"
+            "name: health_change_world_impact_prop\n"
+            "entity_type: prop\n"
+            "health:\n"
+            "  hp: 3\n"
+            "  max_hp: 3\n"
+            "physics:\n"
+            "  collider_template: rocket_aabb\n"
+            "triggers:\n"
+            "  on_world_impact:\n"
+            "    action_graph: action_apply_health_change\n"
+            "    parameters:\n"
+            "      target: self\n"
+            "      amount: " + std::string(invalid_amount) + "\n";
+        const std::vector<std::uint8_t> invalid_bundle =
+            make_gameplay_bundle_zip(
+                read_text_file("game_server/entity_templates/sentry_grunt.yaml"),
+                {
+                    {"action_graph_templates/action_apply_health_change.yaml",
+                     health_change_graph},
+                    {"entity_templates/health_change_world_impact_prop.yaml",
+                     invalid_prop},
+                });
+        bool rejected = false;
+        try {
+            const auto invalid_config = network_example::game_server::
+                load_gameplay_config_from_bundle_memory(
+                    invalid_bundle.data(),
+                    static_cast<std::uint32_t>(invalid_bundle.size()),
+                    "gameplay_catalog.yaml");
+            (void)network_example::game_server::build_kernel_gameplay_catalog(
+                invalid_config);
+        } catch (const std::exception&) {
+            rejected = true;
+        }
+        require(rejected);
+    }
 
     const std::vector<std::uint8_t> bundle_with_large_binary =
         make_gameplay_bundle_zip(
