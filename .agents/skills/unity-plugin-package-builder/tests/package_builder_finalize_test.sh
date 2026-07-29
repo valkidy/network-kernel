@@ -54,6 +54,10 @@ for arg in "$@"; do
         echo "fake built dylib" > "$FAKE_BAZEL_BIN/engine/src/kernel/signed/libnetwork_kernel.dylib"
         ;;
       *" --config=mingw_w64 "*)
+        if [[ "${FAKE_WINDOWS_BUILD_FAILURE:-}" == "1" ]]; then
+          echo "x86_64-w64-mingw32-ld: error: export ordinal too large: 67110" >&2
+          exit 1
+        fi
         mkdir -p "$FAKE_BAZEL_BIN/engine/src/kernel"
         echo "fake built dll" > "$FAKE_BAZEL_BIN/engine/src/kernel/network_kernel.dll"
         ;;
@@ -96,7 +100,7 @@ cat <<'SYMBOLS'
 00000000 T _Kernel_StartListenServer
 00000000 T _Kernel_StartDedicatedServer
 00000000 T _Kernel_Update
-00000000 T _Kernel_SubmitInput
+00000000 T _Kernel_SubmitPlayerInput
 00000000 T _Kernel_ServerSubmitEntityInput
 00000000 T _Kernel_GetRenderStates
 00000000 T _Kernel_GetRenderStatesAtTime
@@ -170,7 +174,7 @@ Export Table:
 	[   6] Kernel_StartListenServer
 	[   7] Kernel_StartDedicatedServer
 	[   8] Kernel_Update
-	[   9] Kernel_SubmitInput
+	[   9] Kernel_SubmitPlayerInput
 	[  10] Kernel_ServerSubmitEntityInput
 	[  11] Kernel_GetRenderStates
 	[  12] Kernel_GetRenderStatesAtTime
@@ -260,6 +264,17 @@ touch "$destination/com.network-example.kernel-0.6.4.tgz"
 printf '%s\n' "com.network-example.kernel-0.6.4.tgz"
 SH
 
+  write_file "$bin_dir/node" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "${1:-}" == "-e" && "$#" -ge 3 ]] || exit 1
+case "$2" in
+  *p.version*) sed -nE 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$3" ;;
+  *p.name*) sed -nE 's/.*"name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$3" ;;
+  *) exit 1 ;;
+esac
+SH
+
   for command_name in rsync tar; do
     write_file "$bin_dir/$command_name" <<'SH'
 #!/usr/bin/env bash
@@ -308,6 +323,7 @@ JSON
     "$repo_dir/plugins/com.network-example.kernel/Tests~/AbiSmoke" \
     "$repo_dir/engine/src/kernel/public" \
     "$repo_dir/game_server/public"
+  touch "$repo_dir/engine/src/kernel/BUILD.bazel"
 
   echo "fake dylib" > "$repo_dir/plugins/com.network-example.kernel/Assets/Plugins/macOS/libnetwork_kernel.dylib"
   echo "fake dll" > "$repo_dir/plugins/com.network-example.kernel/Assets/Plugins/Windows/x86_64/network_kernel.dll"
@@ -352,6 +368,9 @@ namespace NetworkExample.Kernel {
   public static class KernelConstants {
     public const uint AbiVersion = 7;
   }
+  public struct KernelActionIntent {}
+  public struct KernelActionInput {}
+  public struct KernelPlayerInput {}
 }
 CS
   write_file "$repo_dir/plugins/com.network-example.kernel/Runtime/Core/GameServerTypes.cs" <<'CS'
@@ -366,6 +385,7 @@ CS
 namespace NetworkExample.Kernel {
   internal static class KernelNative {
     internal const string LibraryName = "network_kernel";
+    internal const string SubmitPlayerInputSymbol = "Kernel_SubmitPlayerInput";
   }
 }
 CS
@@ -541,7 +561,7 @@ test_auto_commit_skips_when_disallowed_files_are_dirty() {
   make_fake_repo "$repo_dir" "feat-unity-plugin"
 
   echo "// allowed managed change" >> "$repo_dir/plugins/com.network-example.kernel/Runtime/Client/NetworkClient.cs"
-  node -e "const fs=require('fs'); const p='$repo_dir/plugins/com.network-example.kernel/package.json'; const json=JSON.parse(fs.readFileSync(p)); json.description='dirty'; fs.writeFileSync(p, JSON.stringify(json, null, 2) + '\n');"
+  printf '\n' >> "$repo_dir/plugins/com.network-example.kernel/package.json"
 
   run_builder "$repo_dir" "$output_file" \
     --mode verify \
@@ -598,6 +618,32 @@ test_build_native_verifies_bazel_signed_dylib() {
   assert_contains "$(cat "$codesign_log")" "--verify --verbose=4 $sandbox_dir/bazel-bin/engine/src/kernel/signed/libnetwork_kernel.dylib"
   if grep -q "network_kernel.dll" "$codesign_log"; then
     fail "expected Windows DLL to skip codesign"
+  fi
+}
+
+test_native_build_failure_prints_prominent_work_failed_summary() {
+  local sandbox_dir repo_dir output_file status output
+  sandbox_dir="$(mktemp -d "${TMPDIR:-/tmp}/package-builder-work-failed.XXXXXX")"
+  repo_dir="$sandbox_dir/repo"
+  output_file="$sandbox_dir/output.txt"
+  make_fake_repo "$repo_dir" "feat-unity-plugin"
+
+  set +e
+  export FAKE_WINDOWS_BUILD_FAILURE=1
+  run_builder "$repo_dir" "$output_file" --mode all --unity off --auto-commit off
+  status="$?"
+  unset FAKE_WINDOWS_BUILD_FAILURE
+  set -e
+
+  [[ "$status" -ne 0 ]] || fail "expected Windows native build to fail"
+  output="$(cat "$output_file")"
+  assert_contains "$output" "Work failed"
+  assert_contains "$output" "The Unity package was not produced."
+  assert_contains "$output" "Failed step: Windows x86_64 native plugin build"
+  assert_contains "$output" "macOS native plugin built and codesign verified"
+  assert_contains "$output" "x86_64-w64-mingw32-ld: error: export ordinal too large: 67110"
+  if [[ "$output" == *"Staged macOS native plugin"* ]]; then
+    fail "expected packaging to stop before native plugin staging"
   fi
 }
 
@@ -666,6 +712,9 @@ namespace NetworkExample.Kernel {
   public static class KernelConstants {
     public const uint AbiVersion = 15;
   }
+  public struct KernelActionIntent {}
+  public struct KernelActionInput {}
+  public struct KernelPlayerInput {}
 }
 CS
 
@@ -693,6 +742,9 @@ namespace NetworkExample.Kernel {
   public static class KernelConstants {
     public const uint AbiVersion = 16;
   }
+  public struct KernelActionIntent {}
+  public struct KernelActionInput {}
+  public struct KernelPlayerInput {}
 }
 CS
 
@@ -873,6 +925,7 @@ test_release_notes_are_prepended_and_auto_committed_for_allowed_files
 test_auto_commit_skips_when_disallowed_files_are_dirty
 test_auto_commit_skips_without_release_note_bullets
 test_build_native_verifies_bazel_signed_dylib
+test_native_build_failure_prints_prominent_work_failed_summary
 test_stage_verifies_staged_dylib_from_existing_build_output
 test_verify_fails_when_windows_runtime_dll_is_missing
 test_verify_requires_abi_15_kernel_exports

@@ -33,6 +33,37 @@ RELEASE_NOTES_META_REL="${RELEASE_NOTES_REL}.meta"
 RELEASE_NOTES=()
 OPENSSL_WINDOWS_DLLS=(libcrypto-4-x64.dll libssl-4-x64.dll)
 MINGW_RUNTIME_DLLS=(libstdc++-6.dll libwinpthread-1.dll)
+CURRENT_WORK_STEP="initialization"
+COMPLETED_WORK_STEPS=()
+ARTIFACT_PATH=""
+
+mark_work_completed() {
+  COMPLETED_WORK_STEPS+=("$1")
+}
+
+report_work_failure() {
+  local status="$1"
+  [[ "$status" -ne 0 ]] || return 0
+  trap - EXIT
+
+  {
+    printf '\nWork failed\n'
+    if [[ -n "$ARTIFACT_PATH" && -f "$ARTIFACT_PATH" ]]; then
+      printf 'The Unity package workflow failed after producing: %s\n' "$ARTIFACT_PATH"
+    else
+      printf 'The Unity package was not produced.\n'
+    fi
+    printf 'Failed step: %s\n' "$CURRENT_WORK_STEP"
+    if [[ "${#COMPLETED_WORK_STEPS[@]}" -gt 0 ]]; then
+      printf 'Completed before failure:\n'
+      printf -- '- %s\n' "${COMPLETED_WORK_STEPS[@]}"
+    fi
+    printf 'No later workflow steps were run. See the error output above for the root cause.\n'
+  } >&2
+  exit "$status"
+}
+
+trap 'report_work_failure "$?"' EXIT
 
 REQUIRED_EXPORTS=(
   Kernel_Create
@@ -310,6 +341,7 @@ resolve_built_windows_dll() {
 
 build_native() {
   if platform_enabled macos; then
+    CURRENT_WORK_STEP="macOS native plugin build"
     note "Building macOS native plugin: $NATIVE_TARGET"
     "$BAZEL_CMD" \
       --output_base="$OUTPUT_BASE" \
@@ -320,10 +352,13 @@ build_native() {
       -c opt \
       "$NATIVE_TARGET"
     resolve_built_macos_dylib
+    CURRENT_WORK_STEP="macOS native plugin codesign verification"
     verify_signed_native_plugin "$BUILT_MACOS_DYLIB" "Bazel-built macOS native plugin"
+    mark_work_completed "macOS native plugin built and codesign verified"
   fi
 
   if platform_enabled windows-x86_64; then
+    CURRENT_WORK_STEP="Windows x86_64 native plugin build"
     note "Building Windows x86_64 native plugin: $NATIVE_TARGET"
     "$BAZEL_CMD" \
       --output_base="$OUTPUT_BASE" \
@@ -333,6 +368,7 @@ build_native() {
       -c opt \
       "$NATIVE_TARGET"
     resolve_built_windows_dll
+    mark_work_completed "Windows x86_64 native plugin built"
   fi
 }
 
@@ -950,38 +986,63 @@ finalize_auto_commit() {
   note "Auto commit created: feat: bump Unity package to $version"
 }
 
-ARTIFACT_PATH=""
-
+CURRENT_WORK_STEP="preflight"
 preflight
+mark_work_completed "preflight passed"
 
 case "$MODE" in
   all)
     build_native
+    CURRENT_WORK_STEP="native plugin staging"
     stage_native
+    mark_work_completed "native plugins staged"
+    CURRENT_WORK_STEP="gameplay catalog bundle staging"
     stage_gameplay_catalog_bundle
+    mark_work_completed "gameplay catalog bundle staged"
+    CURRENT_WORK_STEP="UPM package verification and packing"
     pack_package
+    mark_work_completed "UPM package verified and packed"
+    CURRENT_WORK_STEP="Unity batchmode smoke"
     run_unity_smoke
+    mark_work_completed "Unity batchmode smoke completed or skipped by policy"
     ;;
   build-native)
     build_native
     ;;
   stage)
+    CURRENT_WORK_STEP="native plugin staging"
     stage_native
+    mark_work_completed "native plugins staged"
+    CURRENT_WORK_STEP="gameplay catalog bundle staging"
     stage_gameplay_catalog_bundle
+    mark_work_completed "gameplay catalog bundle staged"
+    CURRENT_WORK_STEP="Unity package verification"
     verify_package
+    mark_work_completed "Unity package verification passed"
     ;;
   verify)
+    CURRENT_WORK_STEP="Unity package verification"
     verify_package
+    mark_work_completed "Unity package verification passed"
     ;;
   pack)
+    CURRENT_WORK_STEP="gameplay catalog bundle staging"
     stage_gameplay_catalog_bundle
+    mark_work_completed "gameplay catalog bundle staged"
+    CURRENT_WORK_STEP="UPM package verification and packing"
     pack_package
+    mark_work_completed "UPM package verified and packed"
+    CURRENT_WORK_STEP="Unity batchmode smoke"
     run_unity_smoke
+    mark_work_completed "Unity batchmode smoke completed or skipped by policy"
     ;;
 esac
 
+CURRENT_WORK_STEP="release-note and auto-commit finalization"
 finalize_auto_commit
+mark_work_completed "release-note and auto-commit finalization completed"
 
+CURRENT_WORK_STEP="success summary"
 note "Summary"
 if [[ -f "$STAGED_MACOS_DYLIB" ]]; then
   echo "staged_macos_dylib=$STAGED_MACOS_DYLIB"

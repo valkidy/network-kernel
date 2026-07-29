@@ -197,7 +197,35 @@ Auto commit details:
 
 ## Reporting
 
-Report:
+On any failure, stop immediately and lead the user-facing response with the
+literal Markdown H2 heading `## Work failed`. Match the heading level, spacing,
+and concise wording used by `## Work completed`; do not bury it below logs or a
+general summary. Put one blank line after the heading. Present a single-line
+error as inline code in its own paragraph, and use a fenced `text` block only
+for a multi-line excerpt. Follow this compact structure:
+
+```md
+## Work failed
+
+The Unity package was not produced. <completed work>, but <failed step>:
+
+`<most relevant single error line>`
+
+<cause or scope conclusion, only when supported by evidence>
+
+Packaging stopped before <stages that did not run>.
+```
+
+Use `The Unity package workflow failed after producing: <path>` instead when a
+tarball was produced before a later step failed. State which earlier stages
+completed and which later stages did not run. Preserve the most actionable
+native, linker, ABI, packaging, or Unity error line verbatim. Only claim that a
+failure also exists on `main`, or is unrelated to the current changes, after
+actually verifying that conclusion; otherwise omit it. Do not update release
+notes or auto-commit after a failed required stage.
+
+On success, lead with the matching Markdown H2 heading `## Work completed`, put
+one blank line after it, and report:
 
 - Final `.tgz` path when packing runs.
 - Staged macOS dylib and Windows DLL paths when staging runs.
