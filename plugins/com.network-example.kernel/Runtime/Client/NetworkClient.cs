@@ -114,7 +114,7 @@ namespace NetworkExample.Kernel.Client
             return kernel.GetRenderStatesAtTime(clientRenderTimeUs, states);
         }
 
-        public bool TrySubmitInput(PlayerInput input)
+        public bool TrySubmitInput(KernelPlayerInput input)
         {
             if (!IsReady)
             {

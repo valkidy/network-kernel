@@ -21,7 +21,7 @@ namespace NetworkExample.Kernel.Editor
             KernelAbi.ValidateNativeAbi();
             GameServerAbi.ValidateNativeAbi();
             KernelAbiInfo info = KernelAbi.GetInfo();
-            Require(KernelConstants.AbiVersion == 45, "Managed kernel ABI version was not v45.");
+            Require(KernelConstants.AbiVersion == 57, "Managed kernel ABI version was not v57.");
             RequireClientPredictionFailureStateTransition();
             Require(
                 (info.capability_flags & KernelConstants.CapabilityEntityLifecycleEvents) != 0,
@@ -39,6 +39,9 @@ namespace NetworkExample.Kernel.Editor
                 (info.capability_flags & KernelConstants.CapabilityActionTimeline) != 0 &&
                 (info.capability_flags & KernelConstants.CapabilityActionIntents) != 0,
                 "Kernel action timeline capabilities were missing.");
+            Require(
+                (info.capability_flags & KernelConstants.CapabilityItemPropSystem) != 0,
+                "Kernel item/prop system capability was missing.");
             Require(
                 info.gameplay_catalog_manifest_size ==
                     KernelGameplayCatalogManifest.StructSize,
@@ -249,7 +252,7 @@ namespace NetworkExample.Kernel.Editor
 
             RequireExternalGameplayCatalogSyncIfConfigured();
 
-            Debug.Log("Network kernel ABI 45 smoke passed.");
+            Debug.Log("Network kernel ABI 57 smoke passed.");
         }
 
         private static void RequireControlPlaneRpc(Kernel kernel, uint enemyNetId)
@@ -940,7 +943,7 @@ namespace NetworkExample.Kernel.Editor
                     client.LocalPeerId == 0 && client.LocalPlayerNetId == 0,
                     "Prediction failure did not clear managed local-player identifiers.");
                 Require(
-                    !client.TrySubmitInput(new PlayerInput()),
+                    !client.TrySubmitInput(new KernelPlayerInput()),
                     "Prediction failure did not stop managed input submission.");
             }
         }
@@ -970,11 +973,11 @@ namespace NetworkExample.Kernel.Editor
             byte selectedWeapon,
             KernelEntityType entityType)
         {
-            var input = new PlayerInput
+            var input = new KernelPlayerInput
             {
                 selected_weapon = selectedWeapon,
                 aim_dir = new KernelVec3(1.0f, 0.0f, 0.0f),
-                action_intent = new ActionIntent
+                action_intent = new KernelActionIntent
                 {
                     action_instance_id = nextActionInstanceId++,
                     binding_id = KernelActionBinding.PrimaryFire,

@@ -231,7 +231,7 @@ public sealed class NetworkKernelClientBehaviour : MonoBehaviour
     private void SubmitInput()
     {
         bool firePressed = Input.GetMouseButtonDown(0);
-        var input = new PlayerInput
+        var input = new KernelPlayerInput
         {
             input_seq = sequence,
             client_action_time_us = clientRenderTimeUs,
@@ -239,7 +239,7 @@ public sealed class NetworkKernelClientBehaviour : MonoBehaviour
             aim_dir = new KernelVec3(1.0f, 0.0f, 0.0f),
             buttons = Input.GetMouseButton(1) ? (uint)InputButton.Aim : 0U,
             selected_weapon = RocketWeaponId,
-            action_intent = new ActionIntent
+            action_intent = new KernelActionIntent
             {
                 action_instance_id = firePressed ? sequence : 0U,
                 binding_id = KernelActionBinding.PrimaryFire,

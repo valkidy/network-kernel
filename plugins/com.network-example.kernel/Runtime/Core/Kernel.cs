@@ -317,10 +317,10 @@ namespace NetworkExample.Kernel
             KernelNative.Kernel_Update(handle, deltaSeconds);
         }
 
-        public void SubmitInput(uint localPlayerId, PlayerInput input)
+        public void SubmitInput(uint localPlayerId, KernelPlayerInput input)
         {
             ThrowIfDisposed();
-            KernelNative.Kernel_SubmitInput(handle, localPlayerId, ref input);
+            KernelNative.Kernel_SubmitPlayerInput(handle, localPlayerId, ref input);
         }
 
         public bool LoadGameplayCatalog(KernelGameplayCatalog catalog)
@@ -659,6 +659,150 @@ namespace NetworkExample.Kernel
             return KernelNative.Kernel_ServerCreateEntity(handle, ref createInfo, out netId);
         }
 
+        public bool ServerCreateInventoryContainer(
+            uint ownerEntityId,
+            uint slotCapacity,
+            out ulong containerId)
+        {
+            ThrowIfDisposed();
+            return KernelNative.Kernel_ServerCreateInventoryContainer(
+                handle,
+                ownerEntityId,
+                slotCapacity,
+                out containerId);
+        }
+
+        public bool ServerCreateInventoryItem(
+            uint itemTemplateId,
+            uint quantity,
+            ulong containerId,
+            out ulong itemInstanceId)
+        {
+            ThrowIfDisposed();
+            return KernelNative.Kernel_ServerCreateInventoryItem(
+                handle,
+                itemTemplateId,
+                quantity,
+                containerId,
+                out itemInstanceId);
+        }
+
+        public bool ServerCreateWorldItem(
+            uint itemTemplateId,
+            uint quantity,
+            KernelVec3 position,
+            out ulong itemInstanceId,
+            out uint propEntityId)
+        {
+            ThrowIfDisposed();
+            return KernelNative.Kernel_ServerCreateWorldItem(
+                handle,
+                itemTemplateId,
+                quantity,
+                ref position,
+                out itemInstanceId,
+                out propEntityId);
+        }
+
+        public bool ServerSubmitGameplayRequest(KernelGameplayRequest request)
+        {
+            ThrowIfDisposed();
+            request.struct_size = KernelGameplayRequest.StructSize;
+            return KernelNative.Kernel_ServerSubmitGameplayRequest(handle, ref request);
+        }
+
+        public bool SubmitGameplayRequest(KernelGameplayRequest request)
+        {
+            ThrowIfDisposed();
+            request.struct_size = KernelGameplayRequest.StructSize;
+            return KernelNative.Kernel_SubmitGameplayRequest(handle, ref request);
+        }
+
+        public bool TryGetItemInstance(
+            ulong itemInstanceId,
+            out KernelItemInstanceView view)
+        {
+            ThrowIfDisposed();
+            view = new KernelItemInstanceView
+            {
+                struct_size = KernelItemInstanceView.StructSize,
+                portable_state_fields = new KernelPortableStateFieldDefinition[
+                    KernelConstants.MaxPortableStateFields],
+            };
+            return KernelNative.Kernel_GetItemInstance(handle, itemInstanceId, ref view);
+        }
+
+        public bool TryGetInventoryContainer(
+            ulong containerId,
+            out KernelInventoryContainerView view)
+        {
+            ThrowIfDisposed();
+            view = new KernelInventoryContainerView
+            {
+                struct_size = KernelInventoryContainerView.StructSize,
+            };
+            return KernelNative.Kernel_GetInventoryContainer(handle, containerId, ref view);
+        }
+
+        public uint CopyOwnedInventoryContainers(
+            uint ownerEntityId,
+            KernelInventoryContainerView[] containers)
+        {
+            ThrowIfDisposed();
+            if (containers == null || containers.Length == 0)
+            {
+                return 0;
+            }
+            return KernelNative.Kernel_CopyOwnedInventoryContainers(
+                handle,
+                ownerEntityId,
+                containers,
+                (uint)containers.Length);
+        }
+
+        public uint CopyInventorySlots(ulong containerId, KernelItemInstanceView[] items)
+        {
+            ThrowIfDisposed();
+            if (items == null || items.Length == 0)
+            {
+                return 0;
+            }
+            PrepareItemInstanceViews(items);
+            return KernelNative.Kernel_CopyInventorySlots(
+                handle,
+                containerId,
+                items,
+                (uint)items.Length);
+        }
+
+        public uint PollGameplayRequestOutcomes(KernelGameplayRequestOutcome[] outcomes)
+        {
+            ThrowIfDisposed();
+            if (outcomes == null || outcomes.Length == 0)
+            {
+                return 0;
+            }
+            return KernelNative.Kernel_PollGameplayRequestOutcomes(
+                handle,
+                outcomes,
+                (uint)outcomes.Length);
+        }
+
+        public uint PollInventoryDeltas(ulong containerId, KernelInventoryDelta[] deltas)
+        {
+            ThrowIfDisposed();
+            if (deltas == null || deltas.Length == 0)
+            {
+                return 0;
+            }
+            PrepareInventoryDeltas(deltas);
+            return KernelNative.Kernel_PollInventoryDeltas(
+                handle,
+                containerId,
+                deltas,
+                (uint)deltas.Length);
+        }
+
         public bool ServerDestroyEntity(uint netId, KernelDespawnReason reason)
         {
             ThrowIfDisposed();
@@ -703,7 +847,7 @@ namespace NetworkExample.Kernel
             return KernelNative.Kernel_ServerSetEntityHealth(handle, netId, hp);
         }
 
-        public bool ServerSubmitEntityInput(uint netId, PlayerInput input)
+        public bool ServerSubmitEntityInput(uint netId, KernelPlayerInput input)
         {
             ThrowIfDisposed();
             return KernelNative.Kernel_ServerSubmitEntityInput(handle, netId, ref input);
@@ -882,6 +1026,55 @@ namespace NetworkExample.Kernel
             {
                 projectileMechanics.beam.struct_size = KernelBeamMechanicsDefinition.StructSize;
             }
+            PrepareActionTrigger(ref projectileMechanics.projectile_impact_trigger);
+            PrepareActionTrigger(ref projectileMechanics.expired_trigger);
+        }
+
+        private static void PrepareActionTrigger(ref KernelActionTriggerDefinition trigger)
+        {
+            if (trigger.struct_size == 0)
+            {
+                trigger.struct_size = KernelActionTriggerDefinition.StructSize;
+            }
+            if (trigger.actions == null ||
+                trigger.actions.Length != KernelConstants.MaxActionGraphActions)
+            {
+                trigger.actions = new KernelActionDefinition[
+                    KernelConstants.MaxActionGraphActions];
+            }
+        }
+
+        private static void PrepareItemInstanceViews(KernelItemInstanceView[] views)
+        {
+            for (int index = 0; index < views.Length; ++index)
+            {
+                views[index].struct_size = KernelItemInstanceView.StructSize;
+                if (views[index].portable_state_fields == null ||
+                    views[index].portable_state_fields.Length !=
+                        KernelConstants.MaxPortableStateFields)
+                {
+                    views[index].portable_state_fields =
+                        new KernelPortableStateFieldDefinition[
+                            KernelConstants.MaxPortableStateFields];
+                }
+            }
+        }
+
+        private static void PrepareInventoryDeltas(KernelInventoryDelta[] deltas)
+        {
+            for (int index = 0; index < deltas.Length; ++index)
+            {
+                deltas[index].struct_size = KernelInventoryDelta.StructSize;
+                deltas[index].item.struct_size = KernelItemInstanceView.StructSize;
+                if (deltas[index].item.portable_state_fields == null ||
+                    deltas[index].item.portable_state_fields.Length !=
+                        KernelConstants.MaxPortableStateFields)
+                {
+                    deltas[index].item.portable_state_fields =
+                        new KernelPortableStateFieldDefinition[
+                            KernelConstants.MaxPortableStateFields];
+                }
+            }
         }
 
         private static bool LoadGameplayCatalog(IntPtr kernel, KernelGameplayCatalog catalog)
@@ -898,6 +1091,8 @@ namespace NetworkExample.Kernel
                 catalog.EntityTemplates ?? new KernelEntityTemplateDefinition[0];
             KernelActionTemplateDefinition[] actionTemplates =
                 catalog.ActionTemplates ?? new KernelActionTemplateDefinition[0];
+            KernelItemTemplateDefinition[] itemTemplates =
+                catalog.ItemTemplates ?? new KernelItemTemplateDefinition[0];
 
             PrepareActorTemplates(actorTemplates);
             PrepareProjectileTemplates(projectileTemplates);
@@ -905,13 +1100,15 @@ namespace NetworkExample.Kernel
             PrepareColliderBindings(colliderBindings);
             PrepareEntityTemplates(entityTemplates);
             PrepareActionTemplates(actionTemplates);
+            PrepareItemTemplates(itemTemplates);
 
             GCHandle actorTemplatesHandle = PinArray(actorTemplates, out IntPtr actorTemplatesPtr);
-            GCHandle projectileTemplatesHandle = PinArray(projectileTemplates, out IntPtr projectileTemplatesPtr);
+            IntPtr projectileTemplatesPtr = MarshalArray(projectileTemplates);
             GCHandle colliderTemplatesHandle = PinArray(colliderTemplates, out IntPtr colliderTemplatesPtr);
             GCHandle colliderBindingsHandle = PinArray(colliderBindings, out IntPtr colliderBindingsPtr);
             IntPtr entityTemplatesPtr = MarshalArray(entityTemplates);
             GCHandle actionTemplatesHandle = PinArray(actionTemplates, out IntPtr actionTemplatesPtr);
+            IntPtr itemTemplatesPtr = MarshalArray(itemTemplates);
             try
             {
                 var nativeCatalog = new KernelGameplayCatalogDefinition
@@ -931,6 +1128,8 @@ namespace NetworkExample.Kernel
                     entity_template_count = (uint)entityTemplates.Length,
                     action_templates = actionTemplatesPtr,
                     action_template_count = (uint)actionTemplates.Length,
+                    item_templates = itemTemplatesPtr,
+                    item_template_count = (uint)itemTemplates.Length,
                 };
                 return KernelNative.Kernel_LoadGameplayCatalog(
                     kernel,
@@ -940,13 +1139,18 @@ namespace NetworkExample.Kernel
             finally
             {
                 FreeIfAllocated(actorTemplatesHandle);
-                FreeIfAllocated(projectileTemplatesHandle);
+                FreeMarshaledArray<KernelProjectileTemplateDefinition>(
+                    projectileTemplatesPtr,
+                    projectileTemplates.Length);
                 FreeIfAllocated(colliderTemplatesHandle);
                 FreeIfAllocated(colliderBindingsHandle);
                 FreeMarshaledArray<KernelEntityTemplateDefinition>(
                     entityTemplatesPtr,
                     entityTemplates.Length);
                 FreeIfAllocated(actionTemplatesHandle);
+                FreeMarshaledArray<KernelItemTemplateDefinition>(
+                    itemTemplatesPtr,
+                    itemTemplates.Length);
             }
         }
 
@@ -1000,6 +1204,49 @@ namespace NetworkExample.Kernel
                 {
                     templates[index].movement.struct_size = KernelMovementDefinition.StructSize;
                 }
+                PrepareActionTrigger(ref templates[index].activated_trigger);
+                PrepareActionTrigger(ref templates[index].collision_trigger);
+                PrepareActionTrigger(ref templates[index].health_depleted_trigger);
+                PrepareActionTrigger(ref templates[index].destroy_entity_trigger);
+                if (templates[index].prop.struct_size == 0)
+                {
+                    templates[index].prop.struct_size = KernelPropDefinition.StructSize;
+                }
+                if (templates[index].prop.interaction.struct_size == 0)
+                {
+                    templates[index].prop.interaction.struct_size =
+                        KernelPropInteractionDefinition.StructSize;
+                }
+            }
+        }
+
+        private static void PrepareItemTemplates(KernelItemTemplateDefinition[] templates)
+        {
+            for (int index = 0; index < templates.Length; ++index)
+            {
+                if (templates[index].struct_size == 0)
+                {
+                    templates[index].struct_size = KernelItemTemplateDefinition.StructSize;
+                }
+                if (templates[index].throw_policy.struct_size == 0)
+                {
+                    templates[index].throw_policy.struct_size =
+                        KernelItemThrowDefinition.StructSize;
+                }
+                if (templates[index].use_policy.struct_size == 0)
+                {
+                    templates[index].use_policy.struct_size =
+                        KernelItemUseDefinition.StructSize;
+                }
+                if (templates[index].portable_state_fields == null ||
+                    templates[index].portable_state_fields.Length !=
+                        KernelConstants.MaxPortableStateFields)
+                {
+                    templates[index].portable_state_fields =
+                        new KernelPortableStateFieldDefinition[
+                            KernelConstants.MaxPortableStateFields];
+                }
+                PrepareActionTrigger(ref templates[index].item_used_trigger);
             }
         }
 

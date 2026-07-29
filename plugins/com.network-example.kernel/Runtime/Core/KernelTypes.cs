@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 45;
+        public const uint AbiVersion = 57;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int GameplayCatalogEntryPathSize = 128;
@@ -22,6 +22,8 @@ namespace NetworkExample.Kernel
         public const uint StaticCollisionSceneMaxBytes = 16U * 1024U * 1024U;
         public const uint StaticCollisionLayerTerrain = 1U;
         public const int MaxWeaponSlots = 4;
+        public const int MaxActionGraphActions = 8;
+        public const int MaxPortableStateFields = 8;
         public const byte DebugWildcardU8 = 0xff;
 
         public const uint GameplayCatalogLoadStatusFailed = 0;
@@ -53,6 +55,7 @@ namespace NetworkExample.Kernel
         public const uint GameplayCatalogTemplateKindActor = 4;
         public const uint GameplayCatalogTemplateKindCollider = 5;
         public const uint GameplayCatalogTemplateKindAction = 6;
+        public const uint GameplayCatalogTemplateKindItem = 7;
 
         public const ulong CapabilityClientMode = 0x0000000000000001UL;
         public const ulong CapabilityListenServerMode = 0x0000000000000002UL;
@@ -93,6 +96,7 @@ namespace NetworkExample.Kernel
         public const ulong CapabilityLocalActionResults = 0x0000004000000000UL;
         public const ulong CapabilityRemoteActionPresentation = 0x0000008000000000UL;
         public const ulong CapabilityActionIntents = 0x0000010000000000UL;
+        public const ulong CapabilityItemPropSystem = 0x0000020000000000UL;
 
         public const uint CollisionLayerPlayerSide = 0x00000001U;
         public const uint CollisionLayerHostileSide = 0x00000002U;
@@ -102,8 +106,14 @@ namespace NetworkExample.Kernel
         public const uint CollisionLayerProjectile = 0x00000004U;
         public const uint CollisionLayerAgentVision = 0x00000010U;
         public const uint CollisionLayerNeutral = 0x00000020U;
+        public const uint CollisionLayerTerrain = 0x00000040U;
+        public const uint CollisionLayerStaticObstacle = 0x00000080U;
+        public const uint CollisionMaskNone = 0x00000000U;
         public const uint CollisionMaskDamageable =
             CollisionLayerPlayer | CollisionLayerHostile | CollisionLayerNeutral;
+        public const uint CollisionMaskActor = CollisionMaskDamageable;
+        public const uint CollisionMaskStaticWorld =
+            CollisionLayerTerrain | CollisionLayerStaticObstacle;
 
         public const uint VisualFlagMoving = 0x00000001U;
         public const uint VisualFlagReloading = 0x00000002U;
@@ -153,6 +163,7 @@ namespace NetworkExample.Kernel
         MissionStateChanged = 10,
         Error = 11,
         ActorLanded = 12,
+        HealthChanged = 13,
     }
 
     public enum KernelDespawnReason : uint
@@ -210,6 +221,7 @@ namespace NetworkExample.Kernel
         Unknown = 0,
         Actor = 1,
         Player = Actor,
+        Prop = 2,
         Projectile = 3,
         Director = 5,
     }
@@ -219,6 +231,141 @@ namespace NetworkExample.Kernel
         Unknown = 0,
         Player = 1,
         Agent = 2,
+    }
+
+    public enum KernelItemMode
+    {
+        Fungible = 0,
+        Stateful = 1,
+    }
+
+    [Flags]
+    public enum KernelItemCapabilityFlag : uint
+    {
+        Pickupable = 1U << 0,
+        Deployable = 1U << 1,
+        Carryable = 1U << 2,
+        Consumable = 1U << 3,
+        Throwable = 1U << 4,
+        Interactable = 1U << 5,
+    }
+
+    public enum KernelDomainAction
+    {
+        None = 0,
+        Consume = 1,
+        Pickup = 2,
+        Throw = 3,
+        Place = 4,
+        Carry = 5,
+        Activate = 6,
+    }
+
+    public enum KernelItemResidencyKind
+    {
+        None = 0,
+        Inventory = 1,
+        World = 2,
+        Terminal = 3,
+    }
+
+    public enum KernelWorldItemMode
+    {
+        Placed = 0,
+        Carrying = 1,
+        InFlight = 2,
+    }
+
+    public enum KernelItemThrowMode
+    {
+        None = 0,
+        IdentityPreserving = 1,
+        ConsumeAndSpawn = 2,
+    }
+
+    public enum KernelSemanticInputButton
+    {
+        Use = 0,
+        Fire = 1,
+        InteractTap = 2,
+        InteractHold = 3,
+    }
+
+    public enum KernelPortableStateType
+    {
+        Uint32 = 0,
+        Float = 1,
+        Bool = 2,
+    }
+
+    public enum KernelPortableStateProjection
+    {
+        None = 0,
+        HealthCurrent = 1,
+    }
+
+    public enum KernelGameplayRequestStatus
+    {
+        NoAction = 0,
+        Rejected = 1,
+        Committed = 2,
+    }
+
+    public enum KernelGameplayGraphOutcome
+    {
+        NotSubmitted = 0,
+        Succeeded = 1,
+        FailedAfterCommit = 2,
+    }
+
+    public enum KernelGameplayRequestRejectionReason
+    {
+        None = 0,
+        InvalidRequest = 1,
+        UnknownInstigator = 2,
+        UnknownTarget = 3,
+        UnknownItem = 4,
+        StaleReference = 5,
+        InvalidContext = 6,
+        MissingCapability = 7,
+        NotAuthorized = 8,
+        OutOfRange = 9,
+        LineOfSight = 10,
+        InventoryFull = 11,
+        InvalidQuantity = 12,
+        InvalidPlacement = 13,
+        Claimed = 14,
+        Cooldown = 15,
+        GraphRejected = 16,
+    }
+
+    public enum KernelEntityTriggerActionType
+    {
+        None = 0,
+        ApplyDamage = 1,
+        SpawnEntity = 2,
+        SpawnProjectile = 3,
+        ApplyHealthChange = 4,
+    }
+
+    public enum KernelEntityRefSource
+    {
+        Self = 0,
+        EventSubject = 1,
+        EventTarget = 2,
+        EventInstigator = 3,
+    }
+
+    public enum KernelEventVec3Source
+    {
+        Position = 0,
+        Direction = 1,
+    }
+
+    public enum KernelActionConditionType
+    {
+        Always = 0,
+        EventHasTarget = 1,
     }
 
     [Flags]
@@ -346,6 +493,7 @@ namespace NetworkExample.Kernel
     public enum KernelProjectileDamageShape : byte
     {
         DirectHit = 0,
+        None = 1,
         PiercingSegment = 2,
     }
 
@@ -477,6 +625,12 @@ namespace NetworkExample.Kernel
         public uint remote_action_presentation_event_size;
         public uint action_intent_size;
         public uint action_input_size;
+        public uint item_template_definition_size;
+        public uint gameplay_request_size;
+        public uint gameplay_request_outcome_size;
+        public uint item_instance_view_size;
+        public uint inventory_container_view_size;
+        public uint inventory_delta_size;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
@@ -715,29 +869,181 @@ namespace NetworkExample.Kernel
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    public struct ActionIntent
+    public struct KernelActionDefinition
+    {
+        public byte action_type;
+        public byte target_source;
+        public ushort damage_amount;
+        public uint spawn_entity_template_id;
+        public uint spawn_projectile_template_id;
+        public byte position_source;
+        public byte direction_source;
+        public byte owner_source;
+        public byte reserved;
+        public uint spawn_item_template_id;
+        public uint spawn_item_quantity;
+        public int health_change_amount;
+        public uint condition_type;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelActionDefinition>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelActionTriggerDefinition
+    {
+        public uint struct_size;
+        public byte action_type;
+        public byte target_source;
+        public ushort damage_amount;
+        public uint spawn_entity_template_id;
+        public uint spawn_projectile_template_id;
+        public byte position_source;
+        public byte direction_source;
+        public byte owner_source;
+        public byte reserved;
+        public uint spawn_item_template_id;
+        public uint spawn_item_quantity;
+        public uint action_count;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = KernelConstants.MaxActionGraphActions)]
+        public KernelActionDefinition[] actions;
+        public int health_change_amount;
+        public uint condition_type;
+
+        public static uint StructSize =>
+            (uint)Marshal.SizeOf<KernelActionTriggerDefinition>();
+
+        public static KernelActionTriggerDefinition Create()
+        {
+            return new KernelActionTriggerDefinition
+            {
+                struct_size = StructSize,
+                actions = new KernelActionDefinition[KernelConstants.MaxActionGraphActions],
+            };
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelPortableStateFieldDefinition
+    {
+        public uint field_id;
+        public byte type;
+        public byte world_projection;
+        public ushort reserved0;
+        public uint uint32_default;
+        public float float_default;
+        public uint bool_default;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelItemInputMappingDefinition
+    {
+        public byte inventory_use;
+        public byte inventory_fire;
+        public byte world_interact_tap;
+        public byte world_interact_hold;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelItemThrowDefinition
+    {
+        public uint struct_size;
+        public byte mode;
+        public byte reserved0;
+        public ushort reserved1;
+        public float speed;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelItemThrowDefinition>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelItemUseDefinition
+    {
+        public uint struct_size;
+        public uint quantity_cost;
+        public uint charge_field_id;
+        public uint cooldown_ticks;
+        public uint destroy_when_empty;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelItemUseDefinition>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelItemTemplateDefinition
+    {
+        public uint struct_size;
+        public uint item_template_id;
+        public byte item_mode;
+        public byte reserved0;
+        public ushort max_stack;
+        public uint capability_flags;
+        public uint entity_template_id;
+        public KernelItemInputMappingDefinition input_mapping;
+        public float interaction_range;
+        public uint line_of_sight_required;
+        public uint line_of_sight_blocking_mask;
+        public KernelItemThrowDefinition throw_policy;
+        public KernelItemUseDefinition use_policy;
+        public uint portable_state_field_count;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = KernelConstants.MaxPortableStateFields)]
+        public KernelPortableStateFieldDefinition[] portable_state_fields;
+        public KernelActionTriggerDefinition item_used_trigger;
+
+        public static uint StructSize =>
+            (uint)Marshal.SizeOf<KernelItemTemplateDefinition>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelPropInteractionDefinition
+    {
+        public uint struct_size;
+        public uint capability_flags;
+        public byte world_interact_tap;
+        public byte world_interact_hold;
+        public byte line_of_sight_required;
+        public byte reserved0;
+        public float interaction_range;
+        public uint line_of_sight_blocking_mask;
+
+        public static uint StructSize =>
+            (uint)Marshal.SizeOf<KernelPropInteractionDefinition>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelPropDefinition
+    {
+        public uint struct_size;
+        public KernelPropInteractionDefinition interaction;
+        public float carry_offset_x;
+        public float carry_offset_y;
+        public float carry_offset_z;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelPropDefinition>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelActionIntent
     {
         public uint action_instance_id;
         public KernelActionBinding binding_id;
         public byte flags;
         public byte reserved;
 
-        public static uint StructSize => (uint)Marshal.SizeOf<ActionIntent>();
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelActionIntent>();
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    public struct ActionInput
+    public struct KernelActionInput
     {
         public uint action_instance_id;
         public byte held;
         public byte flags;
         public ushort reserved;
 
-        public static uint StructSize => (uint)Marshal.SizeOf<ActionInput>();
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelActionInput>();
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    public struct PlayerInput
+    public struct KernelPlayerInput
     {
         public uint input_seq;
         public ulong client_action_time_us;
@@ -746,8 +1052,10 @@ namespace NetworkExample.Kernel
         public KernelVec3 aim_dir;
         public uint buttons;
         public byte selected_weapon;
-        public ActionIntent action_intent;
-        public ActionInput action_input;
+        public KernelActionIntent action_intent;
+        public KernelActionInput action_input;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelPlayerInput>();
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -816,6 +1124,12 @@ namespace NetworkExample.Kernel
         public uint actor_template_id;
         public KernelActionRuntimeView action;
         public KernelVec3 aim_direction;
+        public uint item_template_id;
+        public ulong item_instance_id;
+        public byte world_item_mode;
+        public byte reserved_item0;
+        public ushort reserved_item1;
+        public uint carrier_entity_id;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -833,6 +1147,137 @@ namespace NetworkExample.Kernel
         public uint entity_template_id;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelServerEntityCreateInfo>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelServerEntityActivateInfo
+    {
+        public uint struct_size;
+        public uint subject_net_id;
+        public uint instigator_net_id;
+        public uint target_net_id;
+        public uint action_instance_id;
+        public ulong request_id;
+
+        public static uint StructSize =>
+            (uint)Marshal.SizeOf<KernelServerEntityActivateInfo>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelGameplayRequest
+    {
+        public uint struct_size;
+        public uint requester_peer;
+        public ulong request_id;
+        public uint instigator_net_id;
+        public byte semantic_button;
+        public byte reserved0;
+        public ushort reserved1;
+        public ulong selected_item_instance_id;
+        public uint target_net_id;
+        public uint requested_quantity;
+        public KernelVec3 placement_position;
+        public KernelVec3 throw_direction;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelGameplayRequest>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelGameplayRequestOutcome
+    {
+        public uint struct_size;
+        public uint requester_peer;
+        public ulong request_id;
+        public byte status;
+        public byte graph_outcome;
+        public byte domain_action;
+        public byte rejection_reason;
+        public ulong item_instance_id;
+        public uint prop_entity_id;
+        public uint committed_quantity;
+
+        public static uint StructSize =>
+            (uint)Marshal.SizeOf<KernelGameplayRequestOutcome>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelItemInstanceView
+    {
+        public uint struct_size;
+        public ulong item_instance_id;
+        public uint item_template_id;
+        public uint quantity;
+        public byte residency;
+        public byte world_mode;
+        public ushort slot;
+        public ulong inventory_container_id;
+        public uint prop_entity_id;
+        public uint carrier_entity_id;
+        public uint terminal;
+        public uint next_use_tick;
+        public uint portable_state_field_count;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = KernelConstants.MaxPortableStateFields)]
+        public KernelPortableStateFieldDefinition[] portable_state_fields;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelItemInstanceView>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelInventoryContainerView
+    {
+        public uint struct_size;
+        public ulong inventory_container_id;
+        public uint owner_entity_id;
+        public uint slot_capacity;
+        public uint occupied_slot_count;
+        public ulong revision;
+        public byte sync_state;
+        public byte reserved0;
+        public ushort reserved1;
+
+        public static uint StructSize =>
+            (uint)Marshal.SizeOf<KernelInventoryContainerView>();
+    }
+
+    public enum KernelInventorySyncState
+    {
+        NotAvailable = 0,
+        Syncing = 1,
+        Ready = 2,
+        Desynced = 3,
+    }
+
+    public enum KernelInventoryDeltaType
+    {
+        Add = 0,
+        Update = 1,
+        Remove = 2,
+        Move = 3,
+    }
+
+    [Flags]
+    public enum KernelInventoryChangeFlag : uint
+    {
+        Quantity = 1U << 0,
+        Cooldown = 1U << 1,
+        PortableState = 1U << 2,
+        All = Quantity | Cooldown | PortableState,
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelInventoryDelta
+    {
+        public uint struct_size;
+        public ulong inventory_container_id;
+        public ulong revision;
+        public byte type;
+        public byte reserved0;
+        public ushort slot;
+        public ushort previous_slot;
+        public ushort changed_fields;
+        public KernelItemInstanceView item;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelInventoryDelta>();
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -865,6 +1310,12 @@ namespace NetworkExample.Kernel
         public uint reload_remaining_ticks;
         public KernelActionRuntimeView action;
         public KernelVec3 aim_direction;
+        public uint item_template_id;
+        public ulong item_instance_id;
+        public byte world_item_mode;
+        public byte reserved_item0;
+        public ushort reserved_item1;
+        public uint carrier_entity_id;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelServerEntityState>();
     }
@@ -952,6 +1403,7 @@ namespace NetworkExample.Kernel
         public KernelColliderBindingDefinition[] ColliderBindings;
         public KernelEntityTemplateDefinition[] EntityTemplates;
         public KernelActionTemplateDefinition[] ActionTemplates;
+        public KernelItemTemplateDefinition[] ItemTemplates;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
@@ -1079,6 +1531,8 @@ namespace NetworkExample.Kernel
         public uint entity_template_count;
         public IntPtr action_templates;
         public uint action_template_count;
+        public IntPtr item_templates;
+        public uint item_template_count;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelGameplayCatalogDefinition>();
     }
@@ -1162,6 +1616,11 @@ namespace NetworkExample.Kernel
         public uint max_remote_presentation_batch_size;
         public ulong zero_action_instance_attempts;
         public ulong action_instance_collisions;
+        public ulong inventory_delta_bytes_sent;
+        public ulong inventory_snapshot_bytes_sent;
+        public ulong prop_state_bytes_sent;
+        public ulong inventory_resync_request_count;
+        public ulong inventory_revision_gap_count;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelNetworkStats>();
     }
@@ -1377,12 +1836,11 @@ namespace NetworkExample.Kernel
         public uint collider_template_id;
         public uint collision_mask;
         public uint max_hit_count;
-        public uint flags;
         public KernelHomingMechanicsDefinition homing;
         public KernelAreaEffectMechanicsDefinition area_effect;
         public KernelBeamMechanicsDefinition beam;
-        public uint impact_spawn_projectile_template_id;
-        public uint expire_spawn_projectile_template_id;
+        public KernelActionTriggerDefinition projectile_impact_trigger;
+        public KernelActionTriggerDefinition expired_trigger;
         public byte collision_query_mode;
         public byte reserved0;
         public ushort reserved1;
@@ -1550,6 +2008,12 @@ namespace NetworkExample.Kernel
         public KernelAgentVisionConfig vision;
         public KernelEntityAiDefinition ai;
         public KernelMovementDefinition movement;
+        public KernelActionTriggerDefinition activated_trigger;
+        public KernelActionTriggerDefinition collision_trigger;
+        public KernelActionTriggerDefinition health_depleted_trigger;
+        public KernelActionTriggerDefinition destroy_entity_trigger;
+        public KernelPropDefinition prop;
+        public uint collision_trigger_mask;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelEntityTemplateDefinition>();
     }
@@ -1564,6 +2028,7 @@ namespace NetworkExample.Kernel
         public uint code;
         public ulong event_time_us;
         public ulong presentation_time_us;
+        public int health_delta;
     }
 
     [StructLayout(LayoutKind.Sequential)]

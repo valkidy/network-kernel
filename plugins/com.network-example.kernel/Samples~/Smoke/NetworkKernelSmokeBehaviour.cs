@@ -30,14 +30,14 @@ public sealed class NetworkKernelSmokeBehaviour : MonoBehaviour
         clientRenderTimeUs += SecondsToMicroseconds(deltaSeconds);
 
         bool firePressed = Input.GetMouseButtonDown(0);
-        var input = new PlayerInput
+        var input = new KernelPlayerInput
         {
             input_seq = sequence,
             client_action_time_us = clientRenderTimeUs,
             move = new KernelVec2(Input.GetAxisRaw("Horizontal"), Input.GetAxisRaw("Vertical")),
             aim_dir = new KernelVec3(1.0f, 0.0f, 0.0f),
             buttons = Input.GetMouseButton(1) ? (uint)InputButton.Aim : 0U,
-            action_intent = new ActionIntent
+            action_intent = new KernelActionIntent
             {
                 action_instance_id = firePressed ? sequence : 0U,
                 binding_id = KernelActionBinding.PrimaryFire,

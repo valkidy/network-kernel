@@ -231,7 +231,7 @@ namespace NetworkExample.Kernel.Host
             return kernel.GetRenderStatesAtTime(clientRenderTimeUs, states);
         }
 
-        public bool TrySubmitLocalInput(PlayerInput input)
+        public bool TrySubmitLocalInput(KernelPlayerInput input)
         {
             ThrowIfNotRunning();
             return localClient.TrySubmitInput(kernel, input);

@@ -150,10 +150,10 @@ namespace NetworkExample.Kernel
         internal static extern void Kernel_Update(IntPtr kernel, float deltaSeconds);
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void Kernel_SubmitInput(
+        internal static extern void Kernel_SubmitPlayerInput(
             IntPtr kernel,
             uint localPlayerId,
-            ref PlayerInput input);
+            ref KernelPlayerInput input);
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)]
@@ -281,6 +281,86 @@ namespace NetworkExample.Kernel
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerCreateInventoryContainer(
+            IntPtr kernel,
+            uint ownerEntityId,
+            uint slotCapacity,
+            out ulong outContainerId);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerCreateInventoryItem(
+            IntPtr kernel,
+            uint itemTemplateId,
+            uint quantity,
+            ulong containerId,
+            out ulong outItemInstanceId);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerCreateWorldItem(
+            IntPtr kernel,
+            uint itemTemplateId,
+            uint quantity,
+            ref KernelVec3 position,
+            out ulong outItemInstanceId,
+            out uint outPropEntityId);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_ServerSubmitGameplayRequest(
+            IntPtr kernel,
+            ref KernelGameplayRequest request);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_SubmitGameplayRequest(
+            IntPtr kernel,
+            ref KernelGameplayRequest request);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_GetItemInstance(
+            IntPtr kernel,
+            ulong itemInstanceId,
+            ref KernelItemInstanceView outView);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool Kernel_GetInventoryContainer(
+            IntPtr kernel,
+            ulong containerId,
+            ref KernelInventoryContainerView outView);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint Kernel_CopyOwnedInventoryContainers(
+            IntPtr kernel,
+            uint ownerEntityId,
+            [Out] KernelInventoryContainerView[] outContainers,
+            uint maxContainers);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint Kernel_CopyInventorySlots(
+            IntPtr kernel,
+            ulong containerId,
+            [Out] KernelItemInstanceView[] outItems,
+            uint maxItems);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint Kernel_PollGameplayRequestOutcomes(
+            IntPtr kernel,
+            [Out] KernelGameplayRequestOutcome[] outOutcomes,
+            uint maxOutcomes);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint Kernel_PollInventoryDeltas(
+            IntPtr kernel,
+            ulong containerId,
+            [Out] KernelInventoryDelta[] outDeltas,
+            uint maxDeltas);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
         internal static extern bool Kernel_ServerDestroyEntity(
             IntPtr kernel,
             uint netId,
@@ -321,7 +401,7 @@ namespace NetworkExample.Kernel
         internal static extern bool Kernel_ServerSubmitEntityInput(
             IntPtr kernel,
             uint netId,
-            ref PlayerInput input);
+            ref KernelPlayerInput input);
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)]

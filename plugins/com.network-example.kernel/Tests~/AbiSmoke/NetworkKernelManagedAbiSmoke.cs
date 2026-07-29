@@ -32,7 +32,7 @@ public static class NetworkKernelManagedAbiSmoke
         KernelAbiInfo info = KernelAbi.GetInfo();
         KernelBuildInfo buildInfo = KernelAbi.GetBuildInfo();
         GameServerAbiInfo gameServerInfo = GameServerAbi.GetInfo();
-        Require(KernelConstants.AbiVersion == 45, "Managed kernel ABI version was not v45.");
+        Require(KernelConstants.AbiVersion == 57, "Managed kernel ABI version was not v57.");
         Require(
             (info.capability_flags & KernelConstants.CapabilityEntityLifecycleEvents) != 0,
             "Kernel lifecycle event capability was missing.");
@@ -49,6 +49,9 @@ public static class NetworkKernelManagedAbiSmoke
             (info.capability_flags & KernelConstants.CapabilityActionTimeline) != 0 &&
             (info.capability_flags & KernelConstants.CapabilityActionIntents) != 0,
             "Kernel action timeline capabilities were missing.");
+        Require(
+            (info.capability_flags & KernelConstants.CapabilityItemPropSystem) != 0,
+            "Kernel item/prop system capability was missing.");
         Require(
             info.gameplay_catalog_manifest_size ==
                 KernelGameplayCatalogManifest.StructSize,
@@ -916,11 +919,11 @@ public static class NetworkKernelManagedAbiSmoke
         byte selectedWeapon,
         KernelEntityType entityType)
     {
-        var input = new PlayerInput
+        var input = new KernelPlayerInput
         {
             selected_weapon = selectedWeapon,
             aim_dir = new KernelVec3(1.0f, 0.0f, 0.0f),
-            action_intent = new ActionIntent
+            action_intent = new KernelActionIntent
             {
                 action_instance_id = nextActionInstanceId++,
                 binding_id = KernelActionBinding.PrimaryFire,

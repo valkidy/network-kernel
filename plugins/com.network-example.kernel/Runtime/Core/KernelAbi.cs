@@ -155,10 +155,17 @@ namespace NetworkExample.Kernel
                 info,
                 KernelConstants.CapabilityActionIntents,
                 "Kernel action intent capability is missing.");
+            RequireCapability(
+                info,
+                KernelConstants.CapabilityItemPropSystem,
+                "Kernel item/prop system capability is missing.");
 
             RequireSize(nameof(KernelAbiInfo), info.struct_size, Marshal.SizeOf<KernelAbiInfo>());
             RequireSize(nameof(KernelConfig), info.kernel_config_size, Marshal.SizeOf<KernelConfig>());
-            RequireSize(nameof(PlayerInput), info.player_input_size, Marshal.SizeOf<PlayerInput>());
+            RequireSize(
+                nameof(KernelPlayerInput),
+                info.player_input_size,
+                Marshal.SizeOf<KernelPlayerInput>());
             RequireSize(
                 nameof(RenderEntityState),
                 info.render_entity_state_size,
@@ -317,13 +324,37 @@ namespace NetworkExample.Kernel
                 info.remote_action_presentation_event_size,
                 Marshal.SizeOf<KernelRemoteActionPresentationEvent>());
             RequireSize(
-                nameof(ActionIntent),
+                nameof(KernelActionIntent),
                 info.action_intent_size,
-                Marshal.SizeOf<ActionIntent>());
+                Marshal.SizeOf<KernelActionIntent>());
             RequireSize(
-                nameof(ActionInput),
+                nameof(KernelActionInput),
                 info.action_input_size,
-                Marshal.SizeOf<ActionInput>());
+                Marshal.SizeOf<KernelActionInput>());
+            RequireSize(
+                nameof(KernelItemTemplateDefinition),
+                info.item_template_definition_size,
+                Marshal.SizeOf<KernelItemTemplateDefinition>());
+            RequireSize(
+                nameof(KernelGameplayRequest),
+                info.gameplay_request_size,
+                Marshal.SizeOf<KernelGameplayRequest>());
+            RequireSize(
+                nameof(KernelGameplayRequestOutcome),
+                info.gameplay_request_outcome_size,
+                Marshal.SizeOf<KernelGameplayRequestOutcome>());
+            RequireSize(
+                nameof(KernelItemInstanceView),
+                info.item_instance_view_size,
+                Marshal.SizeOf<KernelItemInstanceView>());
+            RequireSize(
+                nameof(KernelInventoryContainerView),
+                info.inventory_container_view_size,
+                Marshal.SizeOf<KernelInventoryContainerView>());
+            RequireSize(
+                nameof(KernelInventoryDelta),
+                info.inventory_delta_size,
+                Marshal.SizeOf<KernelInventoryDelta>());
         }
 
         private static void RequireCapability(

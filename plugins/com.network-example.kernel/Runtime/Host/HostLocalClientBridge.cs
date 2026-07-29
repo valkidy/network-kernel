@@ -28,7 +28,7 @@ namespace NetworkExample.Kernel.Host
             }
         }
 
-        public bool TrySubmitInput(Kernel kernel, PlayerInput input)
+        public bool TrySubmitInput(Kernel kernel, KernelPlayerInput input)
         {
             if (!IsReady)
             {
