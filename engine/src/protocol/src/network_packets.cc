@@ -1386,7 +1386,10 @@ std::vector<std::uint8_t> encode_prop_state_change_batch_packet(
     for (const PropStateChangeRecord& record : packet.records) {
         if (record.net_id == 0u || record.changed_fields == 0u ||
             (record.changed_fields & ~(kPropStateChangeMode |
-                kPropStateChangeTransform | kPropStateChangeVelocity)) != 0u) {
+                kPropStateChangeTransform | kPropStateChangeVelocity |
+                kPropStateChangeHealth)) != 0u ||
+            ((record.changed_fields & kPropStateChangeHealth) != 0u &&
+             (record.max_hp == 0u || record.hp > record.max_hp))) {
             return {};
         }
         payload.write_u32(record.net_id);
@@ -1408,6 +1411,10 @@ std::vector<std::uint8_t> encode_prop_state_change_batch_packet(
             payload.write_float(record.velocity.x);
             payload.write_float(record.velocity.y);
             payload.write_float(record.velocity.z);
+        }
+        if ((record.changed_fields & kPropStateChangeHealth) != 0u) {
+            payload.write_u16(record.hp);
+            payload.write_u16(record.max_hp);
         }
     }
     return protocol_internal::wrap_packet(
@@ -1440,7 +1447,8 @@ bool decode_prop_state_change_batch_packet(
             !reader.read_u8(&record.changed_fields) || record.net_id == 0u ||
             record.changed_fields == 0u ||
             (record.changed_fields & ~(kPropStateChangeMode |
-                kPropStateChangeTransform | kPropStateChangeVelocity)) != 0u) {
+                kPropStateChangeTransform | kPropStateChangeVelocity |
+                kPropStateChangeHealth)) != 0u) {
             return false;
         }
         if ((record.changed_fields & kPropStateChangeMode) != 0u) {
@@ -1466,6 +1474,12 @@ bool decode_prop_state_change_batch_packet(
             (!reader.read_float(&record.velocity.x) ||
              !reader.read_float(&record.velocity.y) ||
              !reader.read_float(&record.velocity.z))) {
+            return false;
+        }
+        if ((record.changed_fields & kPropStateChangeHealth) != 0u &&
+            (!reader.read_u16(&record.hp) ||
+             !reader.read_u16(&record.max_hp) ||
+             record.max_hp == 0u || record.hp > record.max_hp)) {
             return false;
         }
         packet.records.push_back(record);

@@ -3948,7 +3948,15 @@ bool KernelEngine::server_set_entity_health(NetId net_id, std::uint16_t hp) {
     if (!entity.has_value() || !world_.registry().all_of<Health>(*entity)) {
         return false;
     }
-    world_.registry().get<Health>(*entity).hp = hp;
+    Health& health = world_.registry().get<Health>(*entity);
+    if (health.hp == hp) {
+        return true;
+    }
+    health.hp = hp;
+    if (world_.registry().all_of<EntityKind>(*entity) &&
+        world_.registry().get<EntityKind>(*entity).type == EntityType::kProp) {
+        queue_prop_state_change(net_id);
+    }
     return true;
 }
 
@@ -5906,9 +5914,15 @@ void KernelEngine::handle_client_snapshot(WorldSnapshot snapshot) {
         if (replicated == client_replicated_entities_.end()) {
             continue;
         }
-        replicated->position = entity.position;
-        replicated->rotation = entity.rotation;
-        replicated->velocity = entity.velocity;
+        const bool newer_than_prop_state = !replicated->has_prop_state ||
+            static_cast<std::int32_t>(
+                latest_client_snapshot_.header.server_tick -
+                replicated->prop_state_tick) > 0;
+        if (newer_than_prop_state) {
+            replicated->position = entity.position;
+            replicated->rotation = entity.rotation;
+            replicated->velocity = entity.velocity;
+        }
         replicated->snapshot_tick = latest_client_snapshot_.header.server_tick;
         replicated->active = true;
     }
@@ -7684,6 +7698,18 @@ void KernelEngine::simulate_tick() {
     DirectorAISystem{}.update(*this);
     DirectorIntentExecutor{}.update(*this);
     const std::size_t last_tick_event = events_.size();
+    for (std::size_t index = first_tick_event; index < last_tick_event; ++index) {
+        if (events_[index].type != KernelEventType_HealthChanged) {
+            continue;
+        }
+        const std::optional<entt::entity> entity =
+            world_.find_entity(events_[index].net_id);
+        if (entity.has_value() &&
+            world_.registry().all_of<EntityKind>(*entity) &&
+            world_.registry().get<EntityKind>(*entity).type == EntityType::kProp) {
+            queue_prop_state_change(events_[index].net_id);
+        }
+    }
     finalize_server_action_outcomes(action_outcomes);
     queue_remote_presentation_from_events(
         first_tick_event,
@@ -7767,6 +7793,10 @@ WorldSnapshot KernelEngine::build_snapshot_send_set(
     const auto prepare_send_entity =
         [&](const EntitySnapshot& entity) -> std::optional<EntitySnapshot> {
             EntitySnapshot send_entity = entity;
+            if (entity.type == EntityType::kProp &&
+                is_dormant_placed_prop(entity.net_id)) {
+                return std::nullopt;
+            }
             if (entity.type != EntityType::kProjectile) {
                 return send_entity;
             }
@@ -8086,6 +8116,16 @@ void KernelEngine::sync_session_relevance(
         if (session->relevant_entities.find(entity.net_id) ==
             session->relevant_entities.end()) {
             send_entity_spawn(session->peer, entity);
+            if (entity.type == EntityType::kProp &&
+                is_dormant_placed_prop(entity.net_id)) {
+                PropStateChangeBatchPacket prop_state{};
+                prop_state.server_tick = tick_loop_.current_tick();
+                PropStateChangeRecord record{};
+                if (make_prop_state_change_record(entity.net_id, &record)) {
+                    prop_state.records.push_back(record);
+                    send_prop_state_changes(session, prop_state);
+                }
+            }
         }
     }
 
@@ -8104,6 +8144,18 @@ void KernelEngine::sync_session_relevance(
         }
     }
     session->relevant_entities = std::move(next_relevant);
+}
+
+bool KernelEngine::is_dormant_placed_prop(NetId net_id) const {
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value() ||
+        !world_.registry().all_of<EntityKind, PropWorldMode>(*entity) ||
+        world_.registry().get<EntityKind>(*entity).type != EntityType::kProp ||
+        world_.registry().get<PropWorldMode>(*entity).mode != PropMode::kPlaced) {
+        return false;
+    }
+    return !world_.registry().all_of<Velocity>(*entity) ||
+        glm::length(world_.registry().get<Velocity>(*entity).linear) <= 0.001f;
 }
 
 void KernelEngine::send_entity_spawn(PeerId peer, const EntitySnapshot& entity) {
@@ -8200,6 +8252,62 @@ void KernelEngine::queue_prop_state_change(NetId net_id) {
     if (net_id != 0u) pending_prop_state_changes_.push_back(net_id);
 }
 
+bool KernelEngine::make_prop_state_change_record(
+    NetId net_id,
+    PropStateChangeRecord* out_record) const {
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (out_record == nullptr || !entity.has_value() ||
+        !world_.registry().all_of<EntityKind, Transform, PropWorldMode>(*entity) ||
+        world_.registry().get<EntityKind>(*entity).type != EntityType::kProp) {
+        return false;
+    }
+    const Transform& transform = world_.registry().get<Transform>(*entity);
+    PropStateChangeRecord record{};
+    record.net_id = net_id;
+    record.changed_fields = kPropStateChangeMode | kPropStateChangeTransform |
+        kPropStateChangeVelocity;
+    record.world_mode = static_cast<KernelWorldItemMode>(
+        world_.registry().get<PropWorldMode>(*entity).mode);
+    record.carrier_entity_id = world_.registry().all_of<CarriedBy>(*entity)
+        ? world_.registry().get<CarriedBy>(*entity).carrier_entity_id
+        : 0u;
+    record.position = transform.position;
+    record.rotation = transform.rotation;
+    record.velocity = world_.registry().all_of<Velocity>(*entity)
+        ? world_.registry().get<Velocity>(*entity).linear
+        : glm::vec3{0.0f};
+    if (world_.registry().all_of<Health>(*entity)) {
+        const Health& health = world_.registry().get<Health>(*entity);
+        record.changed_fields |= kPropStateChangeHealth;
+        record.hp = health.hp;
+        record.max_hp = health.max_hp;
+    }
+    *out_record = record;
+    return true;
+}
+
+void KernelEngine::send_prop_state_changes(
+    PeerSession* session,
+    const PropStateChangeBatchPacket& packet) {
+    if (session == nullptr || packet.records.empty()) return;
+    const std::vector<std::uint8_t> encoded =
+        encode_prop_state_change_batch_packet(packet, next_packet_sequence_++);
+    if (encoded.empty() || !transport_->Send(
+            session->peer,
+            encoded.data(),
+            static_cast<std::uint32_t>(encoded.size()),
+            SendMode::kReliable,
+            ChannelId::kReliableEvent)) {
+        push_event(KernelEventType_Error, 0u, session->peer, 29u);
+        return;
+    }
+    record_sent_packet(
+        static_cast<std::uint32_t>(encoded.size()),
+        SendMode::kReliable,
+        ChannelId::kReliableEvent);
+    network_stats_.prop_state_bytes_sent += encoded.size();
+}
+
 bool KernelEngine::claim_scope_transfer(
     KernelItemInstanceId item_instance_id,
     NetId prop_entity_id) {
@@ -8247,27 +8355,10 @@ void KernelEngine::flush_prop_state_changes() {
     PropStateChangeBatchPacket batch{};
     batch.server_tick = tick_loop_.current_tick();
     for (const NetId net_id : pending_prop_state_changes_) {
-        const std::optional<entt::entity> entity = world_.find_entity(net_id);
-        if (!entity.has_value() ||
-            !world_.registry().all_of<Transform, PropWorldMode>(*entity)) {
-            continue;
-        }
-        const Transform& transform = world_.registry().get<Transform>(*entity);
         PropStateChangeRecord record{};
-        record.net_id = net_id;
-        record.changed_fields = kPropStateChangeMode | kPropStateChangeTransform |
-            kPropStateChangeVelocity;
-        record.world_mode = static_cast<KernelWorldItemMode>(
-            world_.registry().get<PropWorldMode>(*entity).mode);
-        record.carrier_entity_id = world_.registry().all_of<CarriedBy>(*entity)
-            ? world_.registry().get<CarriedBy>(*entity).carrier_entity_id
-            : 0u;
-        record.position = transform.position;
-        record.rotation = transform.rotation;
-        record.velocity = world_.registry().all_of<Velocity>(*entity)
-            ? world_.registry().get<Velocity>(*entity).linear
-            : glm::vec3{0.0f};
-        batch.records.push_back(record);
+        if (make_prop_state_change_record(net_id, &record)) {
+            batch.records.push_back(record);
+        }
     }
     pending_prop_state_changes_.clear();
     if (batch.records.empty()) return;
@@ -8281,22 +8372,7 @@ void KernelEngine::flush_prop_state_changes() {
             }
         }
         if (relevant.records.empty()) return;
-        const std::vector<std::uint8_t> packet =
-            encode_prop_state_change_batch_packet(relevant, next_packet_sequence_++);
-        if (packet.empty() || !transport_->Send(
-                session->peer,
-                packet.data(),
-                static_cast<std::uint32_t>(packet.size()),
-                SendMode::kReliable,
-                ChannelId::kReliableEvent)) {
-            push_event(KernelEventType_Error, 0u, session->peer, 29u);
-            return;
-        }
-        record_sent_packet(
-            static_cast<std::uint32_t>(packet.size()),
-            SendMode::kReliable,
-            ChannelId::kReliableEvent);
-        network_stats_.prop_state_bytes_sent += packet.size();
+        send_prop_state_changes(session, relevant);
     };
     if (config_.mode == KernelMode_ListenServer && local_listen_session_.welcomed) {
         send(&local_listen_session_);
@@ -8316,6 +8392,14 @@ void KernelEngine::handle_client_prop_state_change_batch(
                 return candidate.net_id == record.net_id;
             });
         if (entity == client_replicated_entities_.end()) continue;
+        if (entity->has_prop_state &&
+            static_cast<std::int32_t>(
+                packet.server_tick - entity->prop_state_tick) < 0) {
+            continue;
+        }
+        if (!entity->has_prop_state || packet.server_tick != entity->prop_state_tick) {
+            entity->prop_state_fields = 0u;
+        }
         if ((record.changed_fields & kPropStateChangeMode) != 0u) {
             entity->world_item_mode = static_cast<std::uint8_t>(record.world_mode);
             entity->carrier_entity_id = record.carrier_entity_id;
@@ -8327,7 +8411,14 @@ void KernelEngine::handle_client_prop_state_change_batch(
         if ((record.changed_fields & kPropStateChangeVelocity) != 0u) {
             entity->velocity = record.velocity;
         }
-        entity->snapshot_tick = packet.server_tick;
+        if ((record.changed_fields & kPropStateChangeHealth) != 0u) {
+            entity->hp = record.hp;
+            entity->max_hp = record.max_hp;
+            entity->hp_known = true;
+        }
+        entity->prop_state_tick = packet.server_tick;
+        entity->prop_state_fields |= record.changed_fields;
+        entity->has_prop_state = true;
     }
     if (has_client_snapshot_) rebuild_render_states();
 }
@@ -8563,6 +8654,24 @@ void KernelEngine::rebuild_render_states_from_snapshot(
         render_entity.item_instance_id = replicated->item_instance_id;
         render_entity.world_item_mode = replicated->world_item_mode;
         render_entity.carrier_entity_id = replicated->carrier_entity_id;
+        const bool use_reliable_prop_state =
+            entity.type == EntityType::kProp && replicated->has_prop_state &&
+            static_cast<std::int32_t>(
+                snapshot.header.server_tick - replicated->prop_state_tick) <= 0;
+        if (use_reliable_prop_state) {
+            if ((replicated->prop_state_fields & kPropStateChangeTransform) != 0u) {
+                render_entity.position = replicated->position;
+                render_entity.rotation = replicated->rotation;
+            }
+            if ((replicated->prop_state_fields & kPropStateChangeVelocity) != 0u) {
+                render_entity.velocity = replicated->velocity;
+            }
+            if ((replicated->prop_state_fields & kPropStateChangeHealth) != 0u) {
+                render_entity.hp = replicated->hp;
+                render_entity.max_hp = replicated->max_hp;
+                render_entity.state_flags &= ~kSnapshotStateFlagHpUnknown;
+            }
+        }
         if ((render_entity.state_flags & kSnapshotStateFlagHpUnknown) != 0u) {
             if (replicated->hp_known) {
                 render_entity.hp = replicated->hp;
@@ -8588,11 +8697,15 @@ void KernelEngine::rebuild_render_states_from_snapshot(
         }
         rendered_entities.insert(entity.net_id);
         replicated->active = true;
-        replicated->position = entity.position;
-        replicated->rotation = entity.rotation;
-        if ((entity.state_flags & kSnapshotStateFlagHpUnknown) == 0u) {
-            replicated->hp = entity.hp;
-            replicated->max_hp = entity.max_hp;
+        if (!use_reliable_prop_state) {
+            replicated->position = entity.position;
+            replicated->rotation = entity.rotation;
+            replicated->velocity = entity.velocity;
+        }
+        if (!use_reliable_prop_state &&
+            (entity.state_flags & kSnapshotStateFlagHpUnknown) == 0u) {
+            replicated->hp = render_entity.hp;
+            replicated->max_hp = render_entity.max_hp;
             replicated->hp_known = true;
         }
     }

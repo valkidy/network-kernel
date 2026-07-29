@@ -125,6 +125,7 @@ struct InventorySnapshotPagePacket {
 inline constexpr std::uint8_t kPropStateChangeMode = 1u << 0;
 inline constexpr std::uint8_t kPropStateChangeTransform = 1u << 1;
 inline constexpr std::uint8_t kPropStateChangeVelocity = 1u << 2;
+inline constexpr std::uint8_t kPropStateChangeHealth = 1u << 3;
 
 struct PropStateChangeRecord {
     NetId net_id = 0;
@@ -134,6 +135,8 @@ struct PropStateChangeRecord {
     glm::vec3 position{0.0f};
     glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
     glm::vec3 velocity{0.0f};
+    std::uint16_t hp = 0;
+    std::uint16_t max_hp = 0;
 };
 
 struct PropStateChangeBatchPacket {

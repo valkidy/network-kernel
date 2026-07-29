@@ -525,21 +525,30 @@ int main() {
     prop_change.net_id = 12;
     prop_change.changed_fields = network_example::kPropStateChangeMode |
         network_example::kPropStateChangeTransform |
-        network_example::kPropStateChangeVelocity;
+        network_example::kPropStateChangeVelocity |
+        network_example::kPropStateChangeHealth;
     prop_change.world_mode = KernelWorldItemMode_InFlight;
     prop_change.position = glm::vec3{1.0f, 2.0f, 3.0f};
     prop_change.rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
     prop_change.velocity = glm::vec3{4.0f, 5.0f, 6.0f};
+    prop_change.hp = 3;
+    prop_change.max_hp = 5;
     prop_changes.records.push_back(prop_change);
     const auto prop_change_bytes =
         network_example::encode_prop_state_change_batch_packet(prop_changes, 31);
-    assert(prop_change_bytes.size() == 84u);
+    assert(prop_change_bytes.size() == 88u);
     network_example::PropStateChangeBatchPacket decoded_prop_changes;
     assert(network_example::decode_prop_state_change_batch_packet(
         prop_change_bytes.data(), prop_change_bytes.size(),
         &decoded_prop_changes));
     assert(decoded_prop_changes.records[0].world_mode ==
         KernelWorldItemMode_InFlight);
+    assert(decoded_prop_changes.records[0].hp == 3u);
+    assert(decoded_prop_changes.records[0].max_hp == 5u);
+    network_example::PropStateChangeBatchPacket invalid_prop_health = prop_changes;
+    invalid_prop_health.records[0].hp = 6;
+    assert(network_example::encode_prop_state_change_batch_packet(
+               invalid_prop_health, 32).empty());
 
     std::vector<std::uint8_t> bad_header = input_packet;
     bad_header[0] = 0;

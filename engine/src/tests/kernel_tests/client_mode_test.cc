@@ -2549,6 +2549,82 @@ void budget_omitted_projectile_snapshot_does_not_delete_bound_prediction() {
     require(client.predicted_projectiles_[0].net_id == 101);
 }
 
+void reliable_prop_state_overrides_older_snapshot_and_survives_omission() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+
+    network_example::EntitySpawnPacket spawn{};
+    spawn.net_id = 51;
+    spawn.entity_type = network_example::EntityType::kProp;
+    spawn.server_tick = 10;
+    spawn.position = glm::vec3{5.0f, 0.0f, 0.0f};
+    spawn.entity_template_id = 7;
+    spawn.item_template_id = 13;
+    spawn.item_instance_id = 1001;
+    spawn.world_item_mode = KernelWorldItemMode_InFlight;
+    client.handle_client_spawn(spawn);
+
+    network_example::WorldSnapshot flight;
+    flight.header.server_tick = 10;
+    network_example::EntitySnapshot prop;
+    prop.net_id = 51;
+    prop.type = network_example::EntityType::kProp;
+    prop.position = glm::vec3{5.0f, 0.0f, 0.0f};
+    prop.velocity = glm::vec3{8.0f, 0.0f, 0.0f};
+    prop.hp = 5;
+    prop.max_hp = 5;
+    flight.entities.push_back(prop);
+    client.handle_client_snapshot(flight);
+
+    network_example::PropStateChangeBatchPacket landed{};
+    landed.server_tick = 12;
+    network_example::PropStateChangeRecord landed_record{};
+    landed_record.net_id = 51;
+    landed_record.changed_fields = network_example::kPropStateChangeMode |
+        network_example::kPropStateChangeTransform |
+        network_example::kPropStateChangeVelocity |
+        network_example::kPropStateChangeHealth;
+    landed_record.world_mode = KernelWorldItemMode_Placed;
+    landed_record.position = glm::vec3{2.0f, 0.0f, 0.0f};
+    landed_record.rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+    landed_record.velocity = glm::vec3{0.0f};
+    landed_record.hp = 3;
+    landed_record.max_hp = 5;
+    landed.records.push_back(landed_record);
+    client.handle_client_prop_state_change_batch(landed);
+
+    std::array<RenderEntityState, 4> states{};
+    std::uint32_t count =
+        client.get_render_states_at_time(400000, states.data(), states.size());
+    require(count == 1);
+    require(states[0].net_id == 51);
+    require(states[0].position.x == 2.0f);
+    require(states[0].velocity.x == 0.0f);
+    require(states[0].world_item_mode == KernelWorldItemMode_Placed);
+    require(states[0].hp == 3);
+    require(states[0].max_hp == 5);
+
+    network_example::PropStateChangeBatchPacket stale = landed;
+    stale.server_tick = 11;
+    stale.records[0].position = glm::vec3{99.0f, 0.0f, 0.0f};
+    stale.records[0].hp = 1;
+    client.handle_client_prop_state_change_batch(stale);
+
+    network_example::WorldSnapshot omitted;
+    omitted.header.server_tick = 13;
+    client.handle_client_snapshot(omitted);
+    count = client.get_render_states_at_time(433333, states.data(), states.size());
+    require(count == 1);
+    require(states[0].net_id == 51);
+    require(states[0].position.x == 2.0f);
+    require(states[0].hp == 3);
+}
+
 void destroyed_tombstone_blocks_older_snapshot_render() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
@@ -4158,6 +4234,7 @@ int main() {
     client_despawn_removes_predicted_projectile();
     out_of_range_despawn_keeps_local_deterministic_predicted_projectile();
     budget_omitted_projectile_snapshot_does_not_delete_bound_prediction();
+    reliable_prop_state_overrides_older_snapshot_and_survives_omission();
     destroyed_tombstone_blocks_older_snapshot_render();
     out_of_range_tombstone_does_not_fail_client_prediction();
     out_of_range_reentry_without_metadata_still_fails_prediction();

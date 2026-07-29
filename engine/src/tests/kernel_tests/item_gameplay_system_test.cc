@@ -505,7 +505,11 @@ void stateful_health_round_trips_and_world_destroy_is_terminal() {
     require(engine.world_.registry().get<network_example::Health>(*first_entity).hp ==
         3u);
 
-    engine.world_.registry().get<network_example::Health>(*first_entity).hp = 2;
+    require(engine.server_set_entity_health(first_prop, 2));
+    require(std::find(
+                engine.pending_prop_state_changes_.begin(),
+                engine.pending_prop_state_changes_.end(),
+                first_prop) != engine.pending_prop_state_changes_.end());
     require(engine.item_store_.set_world_mode(item, KernelWorldItemMode_Placed));
     engine.world_.registry().replace<network_example::PropWorldMode>(
         *first_entity,

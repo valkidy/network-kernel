@@ -41,6 +41,7 @@ class MovementSystem;
 struct EntityDespawnPacket;
 struct EntitySpawnPacket;
 struct PropStateChangeBatchPacket;
+struct PropStateChangeRecord;
 struct EntityTemplateUpdatePacket;
 struct InventoryDeltaBatchPacket;
 struct InventorySnapshotPagePacket;
@@ -366,6 +367,9 @@ private:
         std::uint16_t hp = 0;
         std::uint16_t max_hp = 0;
         bool hp_known = false;
+        std::uint32_t prop_state_tick = 0;
+        std::uint8_t prop_state_fields = 0;
+        bool has_prop_state = false;
         bool active = false;
     };
 
@@ -598,6 +602,7 @@ private:
     void sync_session_relevance(
         PeerSession* session,
         const WorldSnapshot& snapshot);
+    bool is_dormant_placed_prop(NetId net_id) const;
     void send_entity_spawn(PeerId peer, const EntitySnapshot& entity);
     void send_projectile_spawn_batch(PeerId peer, const EntitySnapshot& entity);
     void send_entity_despawn(
@@ -641,6 +646,12 @@ private:
         std::uint64_t client_revision);
     void broadcast_reliable_event(const KernelEvent& event);
     void flush_prop_state_changes();
+    bool make_prop_state_change_record(
+        NetId net_id,
+        PropStateChangeRecord* out_record) const;
+    void send_prop_state_changes(
+        PeerSession* session,
+        const PropStateChangeBatchPacket& packet);
     void prepare_server_action_intent(PeerSession* session, KernelPlayerInput* input);
     void finalize_server_action_outcomes(
         const std::vector<ActionOutcome>& outcomes);

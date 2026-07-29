@@ -1309,6 +1309,10 @@ bool EntityStateSystem::set_transform(
     transform.position = from_kernel_vec3(position);
     transform.rotation = from_kernel_quat(rotation);
     engine.sync_entity_colliders_from_world();
+    if (engine.world_.registry().all_of<EntityKind>(*entity) &&
+        engine.world_.registry().get<EntityKind>(*entity).type == EntityType::kProp) {
+        engine.queue_prop_state_change(net_id);
+    }
     return true;
 }
 
@@ -1326,6 +1330,10 @@ bool EntityStateSystem::set_velocity(
     }
     engine.world_.registry().get<Velocity>(*entity).linear =
         from_kernel_vec3(velocity);
+    if (engine.world_.registry().all_of<EntityKind>(*entity) &&
+        engine.world_.registry().get<EntityKind>(*entity).type == EntityType::kProp) {
+        engine.queue_prop_state_change(net_id);
+    }
     return true;
 }
 

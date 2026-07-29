@@ -61,6 +61,45 @@ bool poll_despawn(
     return false;
 }
 
+bool poll_prop_bootstrap(
+    network_example::KernelEngine& engine,
+    network_example::NetId expected_net_id,
+    std::uint16_t expected_hp) {
+    bool saw_spawn = false;
+    network_example::TransportEvent event;
+    while (engine.transport_->PollEvent(event)) {
+        if (event.channel != network_example::ChannelId::kReliableEvent) {
+            continue;
+        }
+        network_example::EntitySpawnPacket spawn{};
+        if (network_example::decode_entity_spawn_packet(
+                event.payload.data(), event.payload.size(), &spawn)) {
+            if (spawn.net_id == expected_net_id) {
+                saw_spawn = true;
+                assert(spawn.entity_type == network_example::EntityType::kProp);
+            }
+            continue;
+        }
+        network_example::PropStateChangeBatchPacket prop_state{};
+        if (!network_example::decode_prop_state_change_batch_packet(
+                event.payload.data(), event.payload.size(), &prop_state)) {
+            continue;
+        }
+        for (const network_example::PropStateChangeRecord& record :
+             prop_state.records) {
+            if (record.net_id == expected_net_id) {
+                assert(saw_spawn);
+                assert(record.world_mode == KernelWorldItemMode_Placed);
+                assert((record.changed_fields &
+                        network_example::kPropStateChangeHealth) != 0u);
+                assert(record.hp == expected_hp);
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 std::vector<network_example::EntityDespawnPacket> poll_client_despawns(
     network_example::LoopbackTransport* transport) {
     std::vector<network_example::EntityDespawnPacket> despawns;
@@ -365,6 +404,21 @@ int main() {
         engine.world_.spawn_enemy(glm::vec3{10.0f, 0.0f, 0.0f});
     const network_example::NetId far_enemy =
         engine.world_.spawn_enemy(glm::vec3{70.0f, 0.0f, 0.0f});
+    const network_example::NetId dormant_prop =
+        engine.world_.spawn_enemy(glm::vec3{5.0f, 0.0f, 0.0f});
+    const std::optional<entt::entity> dormant_prop_entity =
+        engine.world_.find_entity(dormant_prop);
+    assert(dormant_prop_entity.has_value());
+    engine.world_.registry().replace<network_example::EntityKind>(
+        *dormant_prop_entity,
+        network_example::EntityKind{
+            network_example::EntityType::kProp,
+            network_example::ActorType::kUnknown});
+    engine.world_.registry().emplace<network_example::PropWorldMode>(
+        *dormant_prop_entity,
+        network_example::PropWorldMode{network_example::PropMode::kPlaced});
+    engine.world_.registry().get<network_example::Velocity>(
+        *dormant_prop_entity).linear = glm::vec3{0.0f};
     const network_example::NetId owned_projectile = engine.world_.spawn_projectile(
         1,
         glm::vec3{100.0f, 0.0f, 0.0f},
@@ -410,6 +464,7 @@ int main() {
     assert(player_one_snapshot.header.last_processed_input_seq == 7);
     assert(contains_entity(player_one_snapshot, player_one));
     assert(contains_entity(player_one_snapshot, near_enemy));
+    assert(contains_entity(player_one_snapshot, dormant_prop));
     assert(contains_entity(player_one_snapshot, owned_projectile));
     assert(contains_entity(player_one_snapshot, toward_projectile));
     assert(!contains_entity(player_one_snapshot, player_two));
@@ -421,6 +476,60 @@ int main() {
             player_one_snapshot,
             network_example::estimate_snapshot_packet_size(player_one_snapshot));
     assert(!contains_entity(player_one_send_set, owned_projectile));
+    assert(!contains_entity(player_one_send_set, dormant_prop));
+    const auto dormant_snapshot = std::find_if(
+        player_one_snapshot.entities.begin(),
+        player_one_snapshot.entities.end(),
+        [dormant_prop](const network_example::EntitySnapshot& entity) {
+            return entity.net_id == dormant_prop;
+        });
+    assert(dormant_snapshot != player_one_snapshot.entities.end());
+    assert(network_example::estimate_snapshot_entity_size(*dormant_snapshot) == 48u);
+    assert(network_example::estimate_snapshot_entity_size(*dormant_snapshot) * 15u ==
+           720u);
+
+    engine.sync_session_relevance(&session_one, player_one_snapshot);
+    assert(poll_prop_bootstrap(
+        engine,
+        dormant_prop,
+        engine.world_.registry().get<network_example::Health>(
+            *dormant_prop_entity).hp));
+
+    engine.world_.registry().get<network_example::PropWorldMode>(
+        *dormant_prop_entity).mode = network_example::PropMode::kInFlight;
+    const network_example::WorldSnapshot in_flight_relevant =
+        engine.build_relevant_snapshot(session_one, 110);
+    const network_example::WorldSnapshot in_flight_send_set =
+        engine.build_snapshot_send_set(session_one, in_flight_relevant, 4096);
+    assert(contains_entity(in_flight_send_set, dormant_prop));
+
+    engine.world_.registry().get<network_example::PropWorldMode>(
+        *dormant_prop_entity).mode = network_example::PropMode::kPlaced;
+    engine.world_.registry().get<network_example::Velocity>(
+        *dormant_prop_entity).linear = glm::vec3{1.0f, 0.0f, 0.0f};
+    const network_example::WorldSnapshot moving_placed_relevant =
+        engine.build_relevant_snapshot(session_one, 120);
+    const network_example::WorldSnapshot moving_placed_send_set =
+        engine.build_snapshot_send_set(session_one, moving_placed_relevant, 4096);
+    assert(contains_entity(moving_placed_send_set, dormant_prop));
+
+    engine.world_.registry().get<network_example::Velocity>(
+        *dormant_prop_entity).linear = glm::vec3{0.0f};
+    set_position(engine.world_, dormant_prop, glm::vec3{40.01f, 0.0f, 0.0f});
+    const network_example::WorldSnapshot dormant_out_of_range =
+        engine.build_relevant_snapshot(session_one, 130);
+    engine.sync_session_relevance(&session_one, dormant_out_of_range);
+    assert(poll_despawn(
+        engine, dormant_prop, KernelDespawnReason_OutOfRange));
+    set_position(engine.world_, dormant_prop, glm::vec3{5.0f, 0.0f, 0.0f});
+    const network_example::WorldSnapshot dormant_reentered =
+        engine.build_relevant_snapshot(session_one, 140);
+    engine.sync_session_relevance(&session_one, dormant_reentered);
+    assert(poll_prop_bootstrap(
+        engine,
+        dormant_prop,
+        engine.world_.registry().get<network_example::Health>(
+            *dormant_prop_entity).hp));
 
     const network_example::WorldSnapshot player_two_snapshot =
         engine.build_relevant_snapshot(session_two, 100);
