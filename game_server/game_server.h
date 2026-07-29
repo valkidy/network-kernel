@@ -25,6 +25,9 @@ public:
 
 private:
     void configure_player(std::uint32_t net_id) const;
+    bool configure_player_inventory(
+        std::uint32_t net_id,
+        const ActorTemplateConfig& actor_template) const;
 
     KernelHandle* kernel_ = nullptr;
     GameServerGameplayConfig config_;

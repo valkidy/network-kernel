@@ -48,6 +48,12 @@ struct TriggerBindingConfig {
     std::vector<std::pair<std::string, std::string>> parameters;
 };
 
+struct InventorySlotConfig {
+    std::string item_template_ref;
+    std::uint32_t item_template_id = 0;
+    std::uint32_t quantity = 0;
+};
+
 struct ActorTemplateConfig {
     std::uint32_t actor_template_id = 0;
     std::string name;
@@ -70,6 +76,8 @@ struct ActorTemplateConfig {
     std::array<std::uint32_t, KERNEL_MAX_WEAPON_SLOTS> weapon_ids{};
     std::uint8_t weapon_slot_count = 0;
     std::uint8_t active_weapon_slot = 0;
+    std::uint16_t inventory_slot_capacity = 0;
+    std::vector<InventorySlotConfig> inventory_slots;
     std::uint16_t animation_idle = 0;
     std::uint16_t animation_chasing = 0;
     AgentSentryConfig sentry{};

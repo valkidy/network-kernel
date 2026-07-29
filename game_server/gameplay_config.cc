@@ -223,6 +223,14 @@ void hash_actor_template(
         hash_scalar(hash, actor_template.weapon_ids[index]);
     }
     hash_scalar(hash, actor_template.active_weapon_slot);
+    hash_scalar(hash, actor_template.inventory_slot_capacity);
+    hash_scalar(
+        hash,
+        static_cast<std::uint32_t>(actor_template.inventory_slots.size()));
+    for (const InventorySlotConfig& slot : actor_template.inventory_slots) {
+        hash_scalar(hash, slot.item_template_id);
+        hash_scalar(hash, slot.quantity);
+    }
     hash_scalar(hash, actor_template.animation_idle);
     hash_scalar(hash, actor_template.animation_chasing);
     hash_scalar(hash, actor_template.sentry.alert_ticks);
@@ -2123,6 +2131,8 @@ ActorTemplateConfig actor_template_from_yaml(
             "hitbox",
             "weapon_slots",
             "active_weapon_slot",
+            "inventory_slot_capacity",
+            "inventory_slots",
             "animations",
             "ai",
             "vision",
@@ -2273,6 +2283,61 @@ ActorTemplateConfig actor_template_from_yaml(
         throw std::runtime_error(
             "actor template active_weapon_slot is out of range: " +
             actor_template.name);
+    }
+
+    const bool has_inventory_slot_capacity =
+        static_cast<bool>(node["inventory_slot_capacity"]);
+    const bool has_inventory_slots = static_cast<bool>(node["inventory_slots"]);
+    if (has_inventory_slot_capacity != has_inventory_slots) {
+        throw std::runtime_error(
+            "actor template inventory_slot_capacity and inventory_slots must "
+            "be specified together: " + actor_template.name);
+    }
+    if (has_inventory_slot_capacity) {
+        const std::uint32_t capacity =
+            node["inventory_slot_capacity"].as<std::uint32_t>();
+        if (capacity == 0 || capacity > UINT16_MAX) {
+            throw std::runtime_error(
+                "actor template inventory_slot_capacity must be in uint16 "
+                "range: " + actor_template.name);
+        }
+        const YAML::Node inventory_slots = node["inventory_slots"];
+        if (!inventory_slots.IsSequence()) {
+            throw std::runtime_error(
+                "actor template inventory_slots must be a sequence: " +
+                actor_template.name);
+        }
+        if (inventory_slots.size() > capacity) {
+            throw std::runtime_error(
+                "actor template inventory_slots exceeds capacity: " +
+                actor_template.name);
+        }
+        actor_template.inventory_slot_capacity =
+            static_cast<std::uint16_t>(capacity);
+        for (const YAML::Node& slot_node : inventory_slots) {
+            if (!slot_node || !slot_node.IsMap()) {
+                throw std::runtime_error(
+                    "actor template inventory slot must be a mapping: " +
+                    actor_template.name);
+            }
+            reject_unknown_keys(
+                slot_node,
+                {"item_template", "quantity"},
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                actor_template.actor_template_id);
+            if (!slot_node["item_template"] || !slot_node["quantity"]) {
+                throw std::runtime_error(
+                    "actor template inventory slot requires item_template and "
+                    "quantity: " + actor_template.name);
+            }
+            InventorySlotConfig slot;
+            slot.item_template_ref =
+                slot_node["item_template"].as<std::string>();
+            slot.quantity = slot_node["quantity"].as<std::uint32_t>();
+            actor_template.inventory_slots.push_back(std::move(slot));
+        }
     }
 
     const YAML::Node animations = node["animations"];
@@ -3175,6 +3240,26 @@ std::vector<ItemTemplateConfig> load_item_templates_from_source(
             return lhs.definition.item_template_id < rhs.definition.item_template_id;
         });
     return items;
+}
+
+void resolve_inventory_item_template_references(
+    const std::vector<ItemTemplateConfig>& item_templates,
+    std::vector<EntityTemplateConfig>* entity_templates) {
+    for (EntityTemplateConfig& entity_template : *entity_templates) {
+        for (InventorySlotConfig& slot : entity_template.inventory_slots) {
+            const auto item = std::find_if(
+                item_templates.begin(),
+                item_templates.end(),
+                [&slot](const ItemTemplateConfig& candidate) {
+                    return candidate.name == slot.item_template_ref ||
+                        std::to_string(candidate.definition.item_template_id) ==
+                            slot.item_template_ref;
+                });
+            if (item != item_templates.end()) {
+                slot.item_template_id = item->definition.item_template_id;
+            }
+        }
+    }
 }
 
 ProjectileTemplateConfig projectile_template_from_yaml(
@@ -4282,6 +4367,10 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             item_template_dir,
             config.entity_templates);
     }
+    resolve_inventory_item_template_references(
+        config.item_templates, &config.entity_templates);
+    config.actor_templates =
+        actor_templates_from_entity_templates(config.entity_templates);
 
     apply_catalog_player_config(document, &config);
     apply_catalog_agent_config(document, &config);
@@ -4741,6 +4830,37 @@ std::vector<std::string> validate_gameplay_config(
             if (weapon_id > UINT8_MAX ||
                 !config.weapons.configured[weapon_id]) {
                 errors.push_back("actor template weapon slot must reference a valid weapon");
+            }
+        }
+        const bool has_inventory = actor_template.inventory_slot_capacity != 0 ||
+            !actor_template.inventory_slots.empty();
+        if (has_inventory && actor_template.actor_type != kActorTypePlayer) {
+            errors.push_back("only player actor templates may configure inventory");
+        }
+        if (has_inventory &&
+            (actor_template.inventory_slot_capacity == 0 ||
+             actor_template.inventory_slots.size() >
+                 actor_template.inventory_slot_capacity)) {
+            errors.push_back("actor template inventory capacity must be valid");
+        }
+        for (const InventorySlotConfig& slot : actor_template.inventory_slots) {
+            const auto item = std::find_if(
+                config.item_templates.begin(),
+                config.item_templates.end(),
+                [&slot](const ItemTemplateConfig& candidate) {
+                    return candidate.definition.item_template_id ==
+                        slot.item_template_id;
+                });
+            if (item == config.item_templates.end()) {
+                errors.push_back(
+                    "actor template inventory slot must reference a valid item");
+                continue;
+            }
+            if (slot.quantity == 0 ||
+                slot.quantity > item->definition.max_stack ||
+                (item->definition.item_mode == KernelItemMode_Stateful &&
+                 slot.quantity != 1)) {
+                errors.push_back("actor template inventory quantity must be valid");
             }
         }
         if (actor_template.actor_type == kActorTypeAgent &&
