@@ -5041,24 +5041,28 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             authored_template.activated_trigger,
             "on_activated",
             config.action_graph_templates,
-            config.entity_templates);
+            config.entity_templates,
+            &config.projectile_templates);
         entity_template.collision_trigger = compile_action_trigger_binding(
             authored_template.collision_trigger,
             "on_collision",
             config.action_graph_templates,
-            config.entity_templates);
+            config.entity_templates,
+            &config.projectile_templates);
         entity_template.collision_trigger_mask =
             authored_template.collision_trigger_mask;
         entity_template.health_depleted_trigger = compile_action_trigger_binding(
             authored_template.health_depleted_trigger,
             "on_health_depleted",
             config.action_graph_templates,
-            config.entity_templates);
+            config.entity_templates,
+            &config.projectile_templates);
         entity_template.destroy_entity_trigger = compile_action_trigger_binding(
             authored_template.destroy_entity_trigger,
             "on_destroy_entity",
             config.action_graph_templates,
-            config.entity_templates);
+            config.entity_templates,
+            &config.projectile_templates);
 
         if (authored_template.entity_type == kEntityTypeActor) {
             entity_template.component_flags =

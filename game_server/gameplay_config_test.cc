@@ -908,6 +908,77 @@ int main() {
         network_example::game_server::compute_gameplay_catalog_hash(
             health_change_hash_config));
 
+    const std::string collision_projectile_graph =
+        "id: action_spawn_projectile_at_collision\n"
+        "parameters:\n"
+        "  template: null\n"
+        "  position: null\n"
+        "  direction: null\n"
+        "actions:\n"
+        "  - type: spawn_projectile\n"
+        "    projectile_template: params.template\n"
+        "    position: params.position\n"
+        "    direction: params.direction\n";
+    const std::string collision_projectile_prop =
+        "id: 301\n"
+        "name: collision_projectile_prop\n"
+        "entity_type: prop\n"
+        "health:\n"
+        "  hp: 1\n"
+        "  max_hp: 1\n"
+        "physics:\n"
+        "  collider_template: rocket_aabb\n"
+        "triggers:\n"
+        "  on_collision:\n"
+        "    collision_mask: terrain\n"
+        "    action_graph: action_spawn_projectile_at_collision\n"
+        "    parameters:\n"
+        "      template: fire_floor_area\n"
+        "      position: event.position\n"
+        "      direction: event.direction\n";
+    const std::vector<std::uint8_t> collision_projectile_bundle =
+        make_gameplay_bundle_zip(
+            read_text_file("game_server/entity_templates/sentry_grunt.yaml"),
+            {
+                {"action_graph_templates/"
+                 "action_spawn_projectile_at_collision.yaml",
+                 collision_projectile_graph},
+                {"entity_templates/collision_projectile_prop.yaml",
+                 collision_projectile_prop},
+            });
+    const network_example::game_server::GameServerGameplayConfig
+        collision_projectile_config =
+            network_example::game_server::load_gameplay_config_from_bundle_memory(
+                collision_projectile_bundle.data(),
+                static_cast<std::uint32_t>(collision_projectile_bundle.size()),
+                "gameplay_catalog.yaml");
+    const network_example::game_server::KernelGameplayCatalogStorage
+        collision_projectile_catalog =
+            network_example::game_server::build_kernel_gameplay_catalog(
+                collision_projectile_config);
+    const auto collision_projectile = std::find_if(
+        collision_projectile_catalog.entity_templates.begin(),
+        collision_projectile_catalog.entity_templates.end(),
+        [](const KernelEntityTemplateDefinition& entity) {
+            return entity.entity_template_id == 301u;
+        });
+    require(
+        collision_projectile !=
+        collision_projectile_catalog.entity_templates.end());
+    require(collision_projectile->collision_trigger.action_count == 1u);
+    require(
+        collision_projectile->collision_trigger.action_type ==
+        KernelEntityTriggerActionType_SpawnProjectile);
+    require(
+        collision_projectile->collision_trigger.spawn_projectile_template_id ==
+        4u);
+    require(
+        collision_projectile->collision_trigger.position_source ==
+        KernelEventVec3Source_Position);
+    require(
+        collision_projectile->collision_trigger.direction_source ==
+        KernelEventVec3Source_Direction);
+
     for (const char* invalid_amount : {"0", "65536", "-65536"}) {
         const std::string invalid_prop =
             "id: 300\n"
