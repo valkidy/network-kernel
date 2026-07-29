@@ -1,5 +1,10 @@
 0.6.9 release notes:
 
+- rebuilds macOS and Windows native plugins for kernel ABI 57
+
+
+0.6.9 release notes:
+
 - aligns Unity plugin API with kernel ABI 57
 - adds managed item, prop, inventory, and semantic gameplay-request bindings
 - updates samples and ABI smoke coverage for renamed player input and item/prop layouts
