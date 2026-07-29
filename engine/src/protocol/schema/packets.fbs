@@ -2,7 +2,7 @@ namespace NetworkExample.Protocol;
 
 enum MessageType : ushort {
   Handshake = 1,
-  InputPacket = 2,
+  PlayerInputPacket = 2,
   SnapshotPacket = 3,
   ReliableEventPacket = 4,
   FireCommand = 5,
@@ -30,21 +30,21 @@ table Quat {
   w:float;
 }
 
-table ActionIntent {
+table KernelActionIntent {
   action_instance_id:uint;
   binding_id:ushort;
   flags:ubyte;
   reserved:ubyte;
 }
 
-table ActionInput {
+table KernelActionInput {
   action_instance_id:uint;
   held:ubyte;
   flags:ubyte;
   reserved:ushort;
 }
 
-table InputPacket {
+table PlayerInputPacket {
   player_id:uint;
   input_seq:uint;
   client_action_time_us:ulong;
@@ -53,8 +53,8 @@ table InputPacket {
   aim_dir:Vec3;
   buttons:uint;
   selected_weapon:ubyte;
-  action_intent:ActionIntent;
-  action_input:ActionInput;
+  action_intent:KernelActionIntent;
+  action_input:KernelActionInput;
 }
 
 table EntitySnapshot {

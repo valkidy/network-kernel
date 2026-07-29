@@ -159,7 +159,7 @@ bool Kernel_ServerEnqueueEntityInput(
     KernelHandle* kernel,
     uint32_t command_source,
     uint32_t net_id,
-    const PlayerInput* input);
+    const KernelPlayerInput* input);
 
 #ifdef __cplusplus
 }  // extern "C"

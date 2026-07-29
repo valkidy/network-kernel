@@ -153,7 +153,7 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
         out_info->struct_size = sizeof(KernelAbiInfo);
         out_info->abi_version = KERNEL_ABI_VERSION;
         out_info->kernel_config_size = sizeof(KernelConfig);
-        out_info->player_input_size = sizeof(PlayerInput);
+        out_info->player_input_size = sizeof(KernelPlayerInput);
         out_info->render_entity_state_size = sizeof(RenderEntityState);
         out_info->kernel_event_size = sizeof(KernelEvent);
         out_info->local_player_info_size = sizeof(KernelLocalPlayerInfo);
@@ -216,8 +216,17 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
         out_info->local_action_result_size = sizeof(KernelLocalActionResult);
         out_info->remote_action_presentation_event_size =
             sizeof(KernelRemoteActionPresentationEvent);
-        out_info->action_intent_size = sizeof(ActionIntent);
-        out_info->action_input_size = sizeof(ActionInput);
+        out_info->action_intent_size = sizeof(KernelActionIntent);
+        out_info->action_input_size = sizeof(KernelActionInput);
+        out_info->item_template_definition_size =
+            sizeof(KernelItemTemplateDefinition);
+        out_info->gameplay_request_size = sizeof(KernelGameplayRequest);
+        out_info->gameplay_request_outcome_size =
+            sizeof(KernelGameplayRequestOutcome);
+        out_info->item_instance_view_size = sizeof(KernelItemInstanceView);
+        out_info->inventory_container_view_size =
+            sizeof(KernelInventoryContainerView);
+        out_info->inventory_delta_size = sizeof(KernelInventoryDelta);
         out_info->capability_flags =
             KERNEL_CAPABILITY_CLIENT_MODE |
             KERNEL_CAPABILITY_LISTEN_SERVER_MODE |
@@ -257,7 +266,8 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_ACTION_TIMELINE |
             KERNEL_CAPABILITY_LOCAL_ACTION_RESULTS |
             KERNEL_CAPABILITY_REMOTE_ACTION_PRESENTATION |
-            KERNEL_CAPABILITY_ACTION_INTENTS;
+            KERNEL_CAPABILITY_ACTION_INTENTS |
+            KERNEL_CAPABILITY_ITEM_PROP_SYSTEM;
         return true;
     });
 }
@@ -439,13 +449,13 @@ void Kernel_Update(KernelHandle* kernel, float delta_seconds) {
     });
 }
 
-void Kernel_SubmitInput(
+void Kernel_SubmitPlayerInput(
     KernelHandle* kernel,
     uint32_t local_player_id,
-    const PlayerInput* input) {
-    abi_call_void("Kernel_SubmitInput", [&]() {
+    const KernelPlayerInput* input) {
+    abi_call_void("Kernel_SubmitPlayerInput", [&]() {
         if (kernel != nullptr && input != nullptr) {
-            kernel->engine->submit_input(local_player_id, *input);
+            kernel->engine->submit_player_input(local_player_id, *input);
         }
     });
 }
@@ -703,6 +713,150 @@ bool Kernel_ServerCreateEntity(
     });
 }
 
+bool Kernel_ServerCreateInventoryContainer(
+    KernelHandle* kernel,
+    uint32_t owner_entity_id,
+    uint32_t slot_capacity,
+    KernelInventoryContainerId* out_container_id) {
+    return abi_call("Kernel_ServerCreateInventoryContainer", false, [&]() {
+        return kernel != nullptr &&
+            kernel->engine->server_create_inventory_container(
+                owner_entity_id,
+                slot_capacity,
+                out_container_id);
+    });
+}
+
+bool Kernel_ServerCreateInventoryItem(
+    KernelHandle* kernel,
+    uint32_t item_template_id,
+    uint32_t quantity,
+    KernelInventoryContainerId container_id,
+    KernelItemInstanceId* out_item_instance_id) {
+    return abi_call("Kernel_ServerCreateInventoryItem", false, [&]() {
+        return kernel != nullptr &&
+            kernel->engine->server_create_inventory_item(
+                item_template_id,
+                quantity,
+                container_id,
+                out_item_instance_id);
+    });
+}
+
+bool Kernel_ServerCreateWorldItem(
+    KernelHandle* kernel,
+    uint32_t item_template_id,
+    uint32_t quantity,
+    const KernelVec3* position,
+    KernelItemInstanceId* out_item_instance_id,
+    uint32_t* out_prop_entity_id) {
+    return abi_call("Kernel_ServerCreateWorldItem", false, [&]() {
+        return kernel != nullptr && position != nullptr &&
+            kernel->engine->server_create_world_item(
+                item_template_id,
+                quantity,
+                *position,
+                out_item_instance_id,
+                out_prop_entity_id);
+    });
+}
+
+bool Kernel_ServerSubmitGameplayRequest(
+    KernelHandle* kernel,
+    const KernelGameplayRequest* request) {
+    return abi_call("Kernel_ServerSubmitGameplayRequest", false, [&]() {
+        return kernel != nullptr && request != nullptr &&
+            kernel->engine->server_submit_gameplay_request(*request);
+    });
+}
+
+bool Kernel_SubmitGameplayRequest(
+    KernelHandle* kernel,
+    const KernelGameplayRequest* request) {
+    return abi_call("Kernel_SubmitGameplayRequest", false, [&]() {
+        return kernel != nullptr && request != nullptr &&
+            kernel->engine->submit_gameplay_request(*request);
+    });
+}
+
+bool Kernel_GetItemInstance(
+    KernelHandle* kernel,
+    KernelItemInstanceId item_instance_id,
+    KernelItemInstanceView* out_view) {
+    return abi_call("Kernel_GetItemInstance", false, [&]() {
+        return kernel != nullptr &&
+            kernel->engine->get_item_instance(item_instance_id, out_view);
+    });
+}
+
+bool Kernel_GetInventoryContainer(
+    KernelHandle* kernel,
+    KernelInventoryContainerId container_id,
+    KernelInventoryContainerView* out_view) {
+    return abi_call("Kernel_GetInventoryContainer", false, [&]() {
+        return kernel != nullptr &&
+            kernel->engine->get_inventory_container(container_id, out_view);
+    });
+}
+
+uint32_t Kernel_CopyOwnedInventoryContainers(
+    KernelHandle* kernel,
+    uint32_t owner_entity_id,
+    KernelInventoryContainerView* out_containers,
+    uint32_t max_containers) {
+    return abi_call("Kernel_CopyOwnedInventoryContainers", 0u, [&]() {
+        return kernel == nullptr
+            ? 0u
+            : kernel->engine->copy_owned_inventory_containers(
+                  owner_entity_id,
+                  out_containers,
+                  max_containers);
+    });
+}
+
+uint32_t Kernel_CopyInventorySlots(
+    KernelHandle* kernel,
+    KernelInventoryContainerId container_id,
+    KernelItemInstanceView* out_items,
+    uint32_t max_items) {
+    return abi_call("Kernel_CopyInventorySlots", 0u, [&]() {
+        return kernel == nullptr
+            ? 0u
+            : kernel->engine->copy_inventory_slots(
+                  container_id,
+                  out_items,
+                  max_items);
+    });
+}
+
+uint32_t Kernel_PollGameplayRequestOutcomes(
+    KernelHandle* kernel,
+    KernelGameplayRequestOutcome* out_outcomes,
+    uint32_t max_outcomes) {
+    return abi_call("Kernel_PollGameplayRequestOutcomes", 0u, [&]() {
+        return kernel == nullptr
+            ? 0u
+            : kernel->engine->poll_gameplay_request_outcomes(
+                  out_outcomes,
+                  max_outcomes);
+    });
+}
+
+uint32_t Kernel_PollInventoryDeltas(
+    KernelHandle* kernel,
+    KernelInventoryContainerId container_id,
+    KernelInventoryDelta* out_deltas,
+    uint32_t max_deltas) {
+    return abi_call("Kernel_PollInventoryDeltas", 0u, [&]() {
+        return kernel == nullptr
+            ? 0u
+            : kernel->engine->poll_inventory_deltas(
+                  container_id,
+                  out_deltas,
+                  max_deltas);
+    });
+}
+
 bool Kernel_ServerDestroyEntity(
     KernelHandle* kernel,
     uint32_t net_id,
@@ -822,7 +976,7 @@ bool Kernel_ServerEnqueueEntityState(
 bool Kernel_ServerSubmitEntityInput(
     KernelHandle* kernel,
     uint32_t net_id,
-    const PlayerInput* input) {
+    const KernelPlayerInput* input) {
     return abi_call("Kernel_ServerSubmitEntityInput", false, [&]() {
         return kernel != nullptr && input != nullptr &&
                kernel->engine->server_submit_entity_input(net_id, *input);
@@ -833,7 +987,7 @@ bool Kernel_ServerEnqueueEntityInput(
     KernelHandle* kernel,
     uint32_t command_source,
     uint32_t net_id,
-    const PlayerInput* input) {
+    const KernelPlayerInput* input) {
     return abi_call("Kernel_ServerEnqueueEntityInput", false, [&]() {
         return kernel != nullptr && input != nullptr &&
                kernel->engine->server_enqueue_entity_input(
@@ -942,7 +1096,8 @@ bool Kernel_ServerValidateMechanicsConfig(
         if (weapon_mechanics == nullptr ||
             weapon_mechanics->struct_size < sizeof(KernelWeaponMechanicsDefinition) ||
             weapon_mechanics->magazine_size == 0 ||
-            weapon_mechanics->damage == 0 ||
+            (weapon_mechanics->fire_mode != KernelWeaponFireMode_Projectile &&
+             weapon_mechanics->damage == 0) ||
             weapon_mechanics->fire_action_template_id == 0u ||
             weapon_mechanics->reload_action_template_id == 0u ||
             weapon_mechanics->fire_mode > KernelWeaponFireMode_Projectile) {

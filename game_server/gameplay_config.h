@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "game_server/agent_sentry_controller.h"
@@ -42,6 +43,17 @@ struct AgentSpawnDefinition {
     std::uint32_t spawn_seed = 1;
 };
 
+struct TriggerBindingConfig {
+    std::string action_graph_ref;
+    std::vector<std::pair<std::string, std::string>> parameters;
+};
+
+struct InventorySlotConfig {
+    std::string item_template_ref;
+    std::uint32_t item_template_id = 0;
+    std::uint32_t quantity = 0;
+};
+
 struct ActorTemplateConfig {
     std::uint32_t actor_template_id = 0;
     std::string name;
@@ -64,6 +76,8 @@ struct ActorTemplateConfig {
     std::array<std::uint32_t, KERNEL_MAX_WEAPON_SLOTS> weapon_ids{};
     std::uint8_t weapon_slot_count = 0;
     std::uint8_t active_weapon_slot = 0;
+    std::uint16_t inventory_slot_capacity = 0;
+    std::vector<InventorySlotConfig> inventory_slots;
     std::uint16_t animation_idle = 0;
     std::uint16_t animation_chasing = 0;
     AgentSentryConfig sentry{};
@@ -77,12 +91,18 @@ struct ActorTemplateConfig {
     KernelVec3 director_spawn_position{};
     float director_spawn_radius = 0.0f;
     std::uint32_t director_spawn_seed = 1;
+    TriggerBindingConfig activated_trigger;
+    TriggerBindingConfig collision_trigger;
+    std::uint32_t collision_trigger_mask = KERNEL_COLLISION_MASK_NONE;
+    TriggerBindingConfig health_depleted_trigger;
+    TriggerBindingConfig destroy_entity_trigger;
+    KernelPropDefinition prop{};
 };
 
 using EntityTemplateConfig = ActorTemplateConfig;
 
 struct WeaponCatalogConfig {
-    std::uint32_t catalog_version = 2;
+    std::uint32_t catalog_version = 5;
     std::uint64_t catalog_hash = 0;
     std::array<bool, kWeaponIdCount> configured{};
     std::array<KernelWeaponMechanicsDefinition, kWeaponIdCount> definitions{};
@@ -114,10 +134,47 @@ struct ColliderCatalogConfig {
     std::vector<ColliderBindingConfig> bindings;
 };
 
+struct ActionGraphParameterConfig {
+    std::string name;
+    bool has_default = false;
+    std::string default_value;
+};
+
+struct ActionGraphActionConfig {
+    std::string action_type;
+    std::string projectile_template_parameter;
+    std::string entity_template_parameter;
+    std::string position_parameter;
+    std::string direction_parameter;
+    std::string owner_parameter;
+    std::string target_parameter;
+    std::string amount_parameter;
+    std::string item_template_ref;
+    std::uint32_t quantity = 0;
+    std::uint32_t condition_type = KernelActionConditionType_Always;
+};
+
+struct ActionGraphTemplateConfig {
+    std::string id;
+    std::vector<ActionGraphParameterConfig> parameters;
+    std::vector<ActionGraphActionConfig> actions;
+};
+
+struct ItemTemplateConfig {
+    std::string name;
+    std::string entity_template_ref;
+    std::string charge_field_ref;
+    TriggerBindingConfig item_used_trigger;
+    KernelItemTemplateDefinition definition{};
+};
+
+using ProjectileTriggerBindingConfig = TriggerBindingConfig;
+
 struct ProjectileTemplateConfig {
     std::string name;
     KernelProjectileTemplateDefinition definition{};
-    std::string impact_projectile_template_ref;
+    ProjectileTriggerBindingConfig projectile_impact_trigger;
+    ProjectileTriggerBindingConfig expired_trigger;
 };
 
 struct StaticCollisionSceneConfig {
@@ -135,6 +192,8 @@ struct GameServerGameplayConfig {
     std::vector<EntityTemplateConfig> entity_templates;
     std::vector<ActorTemplateConfig> actor_templates;
     ColliderCatalogConfig colliders;
+    std::vector<ActionGraphTemplateConfig> action_graph_templates;
+    std::vector<ItemTemplateConfig> item_templates;
     std::vector<ProjectileTemplateConfig> projectile_templates;
     StaticCollisionSceneConfig static_collision_scene;
 };
@@ -146,6 +205,7 @@ struct KernelGameplayCatalogStorage {
     std::vector<KernelColliderTemplateDefinition> collider_templates;
     std::vector<KernelColliderBindingDefinition> collider_bindings;
     std::vector<KernelActionTemplateDefinition> action_templates;
+    std::vector<KernelItemTemplateDefinition> item_templates;
     KernelGameplayCatalogDefinition definition{};
 };
 

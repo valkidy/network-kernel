@@ -15,7 +15,7 @@ bool nearly_equal(float lhs, float rhs) {
 }
 
 void movement_solver_clamps_diagonal_input() {
-    PlayerInput input{};
+    KernelPlayerInput input{};
     input.move = KernelVec2{3.0f, 4.0f};
 
     const glm::vec3 movement = network_example::movement_solver::input_move_to_world(input);
@@ -28,7 +28,7 @@ void movement_solver_clamps_diagonal_input() {
 void movement_solver_applies_player_input_to_snapshot() {
     network_example::EntitySnapshot entity{};
     entity.position = glm::vec3{1.0f, 2.0f, 3.0f};
-    PlayerInput input{};
+    KernelPlayerInput input{};
     input.move = KernelVec2{3.0f, 4.0f};
 
     network_example::movement_solver::apply_player_input(entity, input, 0.5f, 10.0f);
@@ -50,7 +50,7 @@ void simulate_player_movement_uses_solver_formula() {
     world.registry().get<network_example::MovementState>(*entity)
         .speed_meters_per_second = 10.0f;
 
-    PlayerInput input{};
+    KernelPlayerInput input{};
     input.move = KernelVec2{3.0f, 4.0f};
     const std::vector<network_example::QueuedInput> inputs{
         network_example::QueuedInput{7, input, 0, 0, false, 0},

@@ -1,0 +1,34 @@
+id: 3003
+name: stateful_potion
+mode: stateful
+max_stack: 1
+capabilities: [consumable, pickupable, throwable]
+entity_template: stateful_potion_prop
+input:
+  inventory:
+    use: consume
+    fire: throw
+  world:
+    interact_tap: pickup
+    interact_hold: none
+world_interaction:
+  range: 3.0
+  line_of_sight_required: false
+throw:
+  mode: identity_preserving
+  speed: 1.0
+use:
+  quantity_cost: 1
+  cooldown_ticks: 0
+  destroy_when_empty: true
+portable_state:
+  - id: hp
+    type: uint32
+    default: 3
+    world_projection: health_current
+triggers:
+  on_item_used:
+    action_graph: action_apply_health_change_at_item_used
+    parameters:
+      target: event.target
+      amount: 30

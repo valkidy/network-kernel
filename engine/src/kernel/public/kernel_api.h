@@ -109,10 +109,10 @@ bool Kernel_ContinueClientHandshake(KernelHandle* kernel);
 
 void Kernel_Update(KernelHandle* kernel, float delta_seconds);
 
-void Kernel_SubmitInput(
+void Kernel_SubmitPlayerInput(
     KernelHandle* kernel,
     uint32_t local_player_id,
-    const PlayerInput* input);
+    const KernelPlayerInput* input);
 
 bool Kernel_LoadGameplayCatalog(
     KernelHandle* kernel,
@@ -227,6 +227,68 @@ bool Kernel_ServerCreateEntity(
     const KernelServerEntityCreateInfo* create_info,
     uint32_t* out_net_id);
 
+bool Kernel_ServerCreateInventoryContainer(
+    KernelHandle* kernel,
+    uint32_t owner_entity_id,
+    uint32_t slot_capacity,
+    KernelInventoryContainerId* out_container_id);
+
+bool Kernel_ServerCreateInventoryItem(
+    KernelHandle* kernel,
+    uint32_t item_template_id,
+    uint32_t quantity,
+    KernelInventoryContainerId container_id,
+    KernelItemInstanceId* out_item_instance_id);
+
+bool Kernel_ServerCreateWorldItem(
+    KernelHandle* kernel,
+    uint32_t item_template_id,
+    uint32_t quantity,
+    const KernelVec3* position,
+    KernelItemInstanceId* out_item_instance_id,
+    uint32_t* out_prop_entity_id);
+
+bool Kernel_ServerSubmitGameplayRequest(
+    KernelHandle* kernel,
+    const KernelGameplayRequest* request);
+
+bool Kernel_SubmitGameplayRequest(
+    KernelHandle* kernel,
+    const KernelGameplayRequest* request);
+
+bool Kernel_GetItemInstance(
+    KernelHandle* kernel,
+    KernelItemInstanceId item_instance_id,
+    KernelItemInstanceView* out_view);
+
+bool Kernel_GetInventoryContainer(
+    KernelHandle* kernel,
+    KernelInventoryContainerId container_id,
+    KernelInventoryContainerView* out_view);
+
+uint32_t Kernel_CopyOwnedInventoryContainers(
+    KernelHandle* kernel,
+    uint32_t owner_entity_id,
+    KernelInventoryContainerView* out_containers,
+    uint32_t max_containers);
+
+uint32_t Kernel_CopyInventorySlots(
+    KernelHandle* kernel,
+    KernelInventoryContainerId container_id,
+    KernelItemInstanceView* out_items,
+    uint32_t max_items);
+
+uint32_t Kernel_PollGameplayRequestOutcomes(
+    KernelHandle* kernel,
+    KernelGameplayRequestOutcome* out_outcomes,
+    uint32_t max_outcomes);
+
+uint32_t Kernel_PollInventoryDeltas(
+    KernelHandle* kernel,
+    KernelInventoryContainerId container_id,
+    KernelInventoryDelta* out_deltas,
+    uint32_t max_deltas);
+
 KERNEL_RPC(R"json({
   "method":"world.destroy_entity",
   "authority":"developer_write",
@@ -309,7 +371,7 @@ bool Kernel_ServerSetEntityHealth(
 bool Kernel_ServerSubmitEntityInput(
     KernelHandle* kernel,
     uint32_t net_id,
-    const PlayerInput* input);
+    const KernelPlayerInput* input);
 
 bool Kernel_ServerSetEntityCombatState(
     KernelHandle* kernel,

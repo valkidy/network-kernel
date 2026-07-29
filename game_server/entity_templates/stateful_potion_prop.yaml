@@ -1,0 +1,15 @@
+id: 205
+name: stateful_potion_prop
+entity_type: prop
+health:
+  hp: 3
+  max_hp: 3
+physics:
+  collider_template: collision_damage_prop_hitbox
+triggers:
+  on_collision:
+    collision_mask: actor|terrain|obstacle
+    action_graph: action_apply_damage_at_destroy_entity
+    parameters:
+      target: self
+      amount: 1

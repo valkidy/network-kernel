@@ -16,23 +16,23 @@ bool nearly_equal(float lhs, float rhs) {
 }  // namespace
 
 int main() {
-    PlayerInput input{};
+    KernelPlayerInput input{};
     input.input_seq = 7;
     input.client_action_time_us = 11000;
     input.move = KernelVec2{0.5f, -0.25f};
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     input.buttons = InputButton_Sprint | InputButton_Dodge | InputButton_Parry;
     input.selected_weapon = 2;
-    input.action_intent = ActionIntent{
+    input.action_intent = KernelActionIntent{
         1234u, KernelActionBinding_PrimaryFire, 0u, 0u};
-    input.action_input = ActionInput{1234u, 1u, 0u, 0u};
+    input.action_input = KernelActionInput{1234u, 1u, 0u, 0u};
 
     const std::vector<std::uint8_t> input_packet =
-        network_example::encode_input_packet(3, input, 42);
+        network_example::encode_player_input_packet(3, input, 42);
     assert(input_packet.size() == 85u);
     network_example::PeerId decoded_player = 0;
-    PlayerInput decoded_input{};
-    assert(network_example::decode_input_packet(
+    KernelPlayerInput decoded_input{};
+    assert(network_example::decode_player_input_packet(
         input_packet.data(),
         input_packet.size(),
         &decoded_player,
@@ -108,6 +108,16 @@ int main() {
     hybrid_projectile.state_flags |=
         network_example::kSnapshotStateFlagProjectileHybridCorrection;
     snapshot.entities.push_back(hybrid_projectile);
+    network_example::EntitySnapshot item_prop;
+    item_prop.net_id = 8;
+    item_prop.type = network_example::EntityType::kProp;
+    item_prop.item_template_id = 501;
+    item_prop.item_instance_id = 9001;
+    item_prop.world_item_mode = KernelWorldItemMode_Carrying;
+    item_prop.carrier_entity_id = 4;
+    item_prop.hp = 50;
+    item_prop.max_hp = 100;
+    snapshot.entities.push_back(item_prop);
 
     const std::vector<std::uint8_t> snapshot_packet =
         network_example::encode_snapshot_packet(snapshot, 43);
@@ -134,7 +144,11 @@ int main() {
     assert(decoded_snapshot.header.server_tick == 9);
     assert(decoded_snapshot.header.server_time_ms == 300);
     assert(decoded_snapshot.header.last_processed_input_seq == 7);
-    assert(decoded_snapshot.entities.size() == 4);
+    assert(decoded_snapshot.entities.size() == 5);
+    assert(decoded_snapshot.entities[4].item_template_id == 0u);
+    assert(decoded_snapshot.entities[4].item_instance_id == 0u);
+    assert(decoded_snapshot.entities[4].hp == 50u);
+    assert(decoded_snapshot.entities[4].max_hp == 100u);
     assert(decoded_snapshot.entities[0].net_id == 4);
     assert(decoded_snapshot.entities[0].type == network_example::EntityType::kActor);
     assert(decoded_snapshot.entities[0].actor_type ==
@@ -180,6 +194,12 @@ int main() {
     assert(decoded_snapshot.entities[3].action_instance_id == 1234);
     assert((decoded_snapshot.entities[3].state_flags &
             network_example::kSnapshotStateFlagProjectileHybridCorrection) != 0u);
+    assert(decoded_snapshot.entities[4].net_id == 8);
+    assert(decoded_snapshot.entities[4].item_template_id == 501);
+    assert(decoded_snapshot.entities[4].item_instance_id == 9001);
+    assert(decoded_snapshot.entities[4].world_item_mode ==
+           KernelWorldItemMode_Carrying);
+    assert(decoded_snapshot.entities[4].carrier_entity_id == 4);
 
     KernelEvent reliable_event{};
     reliable_event.type = KernelEventType_PlayerLeft;
@@ -217,8 +237,15 @@ int main() {
     spawn.actor_template_id = 2;
     spawn.position = glm::vec3{3.0f, 4.0f, 5.0f};
     spawn.rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+    spawn.entity_template_id = 200;
+    spawn.collider_template_id = 300;
+    spawn.item_template_id = 501;
+    spawn.item_instance_id = 9001;
+    spawn.world_item_mode = KernelWorldItemMode_Carrying;
+    spawn.carrier_entity_id = 4;
     const std::vector<std::uint8_t> spawn_packet =
         network_example::encode_entity_spawn_packet(spawn, 45);
+    assert(spawn_packet.size() == 101u);
     network_example::EntitySpawnPacket decoded_spawn{};
     assert(network_example::decode_entity_spawn_packet(
         spawn_packet.data(),
@@ -230,6 +257,12 @@ int main() {
     assert(decoded_spawn.owner_peer == 9);
     assert(decoded_spawn.server_tick == 12);
     assert(decoded_spawn.actor_template_id == 2);
+    assert(decoded_spawn.entity_template_id == 200);
+    assert(decoded_spawn.collider_template_id == 300);
+    assert(decoded_spawn.item_template_id == 501);
+    assert(decoded_spawn.item_instance_id == 9001);
+    assert(decoded_spawn.world_item_mode == KernelWorldItemMode_Carrying);
+    assert(decoded_spawn.carrier_entity_id == 4);
     assert(nearly_equal(decoded_spawn.position.y, 4.0f));
     assert(nearly_equal(decoded_spawn.rotation.w, 1.0f));
     assert(!network_example::decode_entity_spawn_packet(
@@ -385,9 +418,141 @@ int main() {
         bad_presentation_count.size(),
         &decoded_presentation));
 
+    KernelGameplayRequest gameplay_request{};
+    gameplay_request.struct_size = sizeof(gameplay_request);
+    gameplay_request.requester_peer = 3;
+    gameplay_request.request_id = 10001;
+    gameplay_request.instigator_net_id = 4;
+    gameplay_request.semantic_button = KernelSemanticInputButton_Use;
+    gameplay_request.selected_item_instance_id = 9001;
+    gameplay_request.target_net_id = 6;
+    gameplay_request.requested_quantity = 2;
+    gameplay_request.placement_position = KernelVec3{1.0f, 2.0f, 3.0f};
+    gameplay_request.throw_direction = KernelVec3{0.0f, 1.0f, 0.0f};
+    const std::vector<std::uint8_t> gameplay_request_packet =
+        network_example::encode_gameplay_request_packet(gameplay_request, 26);
+    KernelGameplayRequest decoded_gameplay_request{};
+    assert(network_example::decode_gameplay_request_packet(
+        gameplay_request_packet.data(),
+        gameplay_request_packet.size(),
+        &decoded_gameplay_request));
+    assert(decoded_gameplay_request.request_id == 10001);
+    assert(decoded_gameplay_request.selected_item_instance_id == 9001);
+    assert(decoded_gameplay_request.requested_quantity == 2);
+
+    KernelGameplayRequestOutcome gameplay_outcome{};
+    gameplay_outcome.struct_size = sizeof(gameplay_outcome);
+    gameplay_outcome.requester_peer = 3;
+    gameplay_outcome.request_id = 10001;
+    gameplay_outcome.status = KernelGameplayRequestStatus_Committed;
+    gameplay_outcome.graph_outcome = KernelGameplayGraphOutcome_Succeeded;
+    gameplay_outcome.domain_action = KernelDomainAction_Consume;
+    gameplay_outcome.item_instance_id = 9001;
+    gameplay_outcome.committed_quantity = 2;
+    const std::vector<std::uint8_t> gameplay_outcome_packet =
+        network_example::encode_gameplay_request_outcome_packet(
+            gameplay_outcome, 27);
+    KernelGameplayRequestOutcome decoded_gameplay_outcome{};
+    assert(network_example::decode_gameplay_request_outcome_packet(
+        gameplay_outcome_packet.data(),
+        gameplay_outcome_packet.size(),
+        &decoded_gameplay_outcome));
+    assert(decoded_gameplay_outcome.status ==
+           KernelGameplayRequestStatus_Committed);
+    assert(decoded_gameplay_outcome.graph_outcome ==
+           KernelGameplayGraphOutcome_Succeeded);
+    assert(decoded_gameplay_outcome.committed_quantity == 2);
+
+    network_example::InventoryDeltaBatchPacket inventory_batch;
+    inventory_batch.inventory_container_id = 70;
+    inventory_batch.first_revision = 4;
+    network_example::InventoryDeltaRecord add;
+    add.type = KernelInventoryDeltaType_Add;
+    add.slot = 2;
+    add.item.item_instance_id = 9001;
+    add.item.item_template_id = 501;
+    add.item.quantity = 3;
+    add.item.next_use_tick = 44;
+    add.item.portable_values = {12u, 1u};
+    inventory_batch.records.push_back(add);
+    network_example::InventoryDeltaRecord remove;
+    remove.type = KernelInventoryDeltaType_Remove;
+    remove.slot = 3;
+    remove.item.item_instance_id = 9002;
+    inventory_batch.records.push_back(remove);
+    const auto inventory_packet =
+        network_example::encode_inventory_delta_batch_packet(inventory_batch, 28);
+    assert(inventory_packet.size() == 97u);
+    network_example::InventoryDeltaBatchPacket decoded_inventory;
+    assert(network_example::decode_inventory_delta_batch_packet(
+        inventory_packet.data(), inventory_packet.size(), &decoded_inventory));
+    assert(decoded_inventory.first_revision == 4);
+    assert(decoded_inventory.records.size() == 2);
+    assert(decoded_inventory.records[0].item.portable_values[0] == 12u);
+
+    network_example::InventorySnapshotRequestPacket snapshot_request{70, 3};
+    const auto snapshot_request_bytes =
+        network_example::encode_inventory_snapshot_request_packet(
+            snapshot_request, 29);
+    assert(snapshot_request_bytes.size() == 44u);
+    network_example::InventorySnapshotRequestPacket decoded_snapshot_request;
+    assert(network_example::decode_inventory_snapshot_request_packet(
+        snapshot_request_bytes.data(), snapshot_request_bytes.size(),
+        &decoded_snapshot_request));
+    assert(decoded_snapshot_request.client_revision == 3);
+
+    network_example::InventorySnapshotPagePacket inventory_snapshot;
+    inventory_snapshot.inventory_container_id = 70;
+    inventory_snapshot.owner_entity_id = 4;
+    inventory_snapshot.revision = 5;
+    inventory_snapshot.slot_capacity = 8;
+    inventory_snapshot.page_count = 1;
+    inventory_snapshot.entries.push_back({2, add.item});
+    const auto inventory_snapshot_bytes =
+        network_example::encode_inventory_snapshot_page_packet(
+            inventory_snapshot, 30);
+    assert(inventory_snapshot_bytes.size() == 89u);
+    network_example::InventorySnapshotPagePacket decoded_inventory_snapshot;
+    assert(network_example::decode_inventory_snapshot_page_packet(
+        inventory_snapshot_bytes.data(), inventory_snapshot_bytes.size(),
+        &decoded_inventory_snapshot));
+    assert(decoded_inventory_snapshot.entries.size() == 1);
+    assert(decoded_inventory_snapshot.entries[0].slot == 2);
+
+    network_example::PropStateChangeBatchPacket prop_changes;
+    prop_changes.server_tick = 50;
+    network_example::PropStateChangeRecord prop_change;
+    prop_change.net_id = 12;
+    prop_change.changed_fields = network_example::kPropStateChangeMode |
+        network_example::kPropStateChangeTransform |
+        network_example::kPropStateChangeVelocity |
+        network_example::kPropStateChangeHealth;
+    prop_change.world_mode = KernelWorldItemMode_InFlight;
+    prop_change.position = glm::vec3{1.0f, 2.0f, 3.0f};
+    prop_change.rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+    prop_change.velocity = glm::vec3{4.0f, 5.0f, 6.0f};
+    prop_change.hp = 3;
+    prop_change.max_hp = 5;
+    prop_changes.records.push_back(prop_change);
+    const auto prop_change_bytes =
+        network_example::encode_prop_state_change_batch_packet(prop_changes, 31);
+    assert(prop_change_bytes.size() == 88u);
+    network_example::PropStateChangeBatchPacket decoded_prop_changes;
+    assert(network_example::decode_prop_state_change_batch_packet(
+        prop_change_bytes.data(), prop_change_bytes.size(),
+        &decoded_prop_changes));
+    assert(decoded_prop_changes.records[0].world_mode ==
+        KernelWorldItemMode_InFlight);
+    assert(decoded_prop_changes.records[0].hp == 3u);
+    assert(decoded_prop_changes.records[0].max_hp == 5u);
+    network_example::PropStateChangeBatchPacket invalid_prop_health = prop_changes;
+    invalid_prop_health.records[0].hp = 6;
+    assert(network_example::encode_prop_state_change_batch_packet(
+               invalid_prop_health, 32).empty());
+
     std::vector<std::uint8_t> bad_header = input_packet;
     bad_header[0] = 0;
-    assert(!network_example::decode_input_packet(
+    assert(!network_example::decode_player_input_packet(
         bad_header.data(),
         bad_header.size(),
         &decoded_player,
@@ -395,7 +560,7 @@ int main() {
 
     std::vector<std::uint8_t> bad_crc = input_packet;
     bad_crc.back() ^= 0xffu;
-    assert(!network_example::decode_input_packet(
+    assert(!network_example::decode_player_input_packet(
         bad_crc.data(),
         bad_crc.size(),
         &decoded_player,
@@ -409,7 +574,7 @@ int main() {
 
     std::vector<std::uint8_t> bad_size = input_packet;
     bad_size.pop_back();
-    assert(!network_example::decode_input_packet(
+    assert(!network_example::decode_player_input_packet(
         bad_size.data(),
         bad_size.size(),
         &decoded_player,

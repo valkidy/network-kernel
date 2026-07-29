@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 42u`.
+`KERNEL_ABI_VERSION == 55u`.
 
 ## Ownership
 
@@ -31,6 +31,12 @@ Additive changes must prefer new `Kernel_*` functions or new capability flags.
 Breaking changes to public struct layout, enum semantics, buffer ownership, or
 function signatures require a `KERNEL_ABI_VERSION` bump.
 
+ABI version 55 aligns the player-input naming contract with gameplay requests:
+`KernelPlayerInput`, `KernelActionIntent`, `KernelActionInput`, and
+`Kernel_SubmitPlayerInput` replace their unprefixed or abbreviated names. This
+is a source and dynamic-symbol breaking rename; the struct layouts and player
+input packet bytes remain unchanged.
+
 ABI version 42 adds `KernelLocalActionResultReason_Cooldown = 12` for projected
 Primary Fire admission. Action result records and public struct sizes remain
 unchanged; packet schema remains 16 and snapshot schema remains 14.
@@ -47,15 +53,15 @@ the new configuration layout. Packet schema remains 16, snapshot schema remains
 14, and the owner-result and remote-presentation records remain 12 B and 20 B.
 
 ABI version 40 replaces discrete Fire/Reload button input with the 8-byte
-`ActionIntent` start contract and 8-byte `ActionInput` hold/release contract.
-`PlayerInput::action_intent` and `PlayerInput::action_input` are the only native
+`KernelActionIntent` start contract and 8-byte `KernelActionInput` hold/release contract.
+`KernelPlayerInput::action_intent` and `KernelPlayerInput::action_input` are the only native
 Fire/Reload entry points. `KernelAbiInfo` reports both struct sizes and
 `KERNEL_CAPABILITY_ACTION_INTENTS`; `KernelWeaponMechanicsDefinition` requires
 explicit Fire and Reload action template ids. Packet schema version 16 carries
 the new input fields, while snapshot schema remains 14. ABI 40 provides no ABI
 39 or packet 15 adapter.
 
-The client-side `Kernel_SubmitInput` contract is intent sampling rather than an
+The client-side `Kernel_SubmitPlayerInput` contract is intent sampling rather than an
 immediate simulation or transport step. Client and listen-local input sequence
 ids are native-owned; the kernel coalesces repeated submits and emits at most
 one prediction/input packet per fixed tick. Callers should submit intent before

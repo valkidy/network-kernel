@@ -99,7 +99,7 @@ void queued_lifecycle_destroy_applies_on_next_tick() {
     Kernel_Destroy(kernel);
 }
 
-void queued_submit_input_drains_before_movement() {
+void queued_submit_player_input_drains_before_movement() {
     KernelConfig config = server_config();
     KernelHandle* kernel = Kernel_Create(&config);
     assert(kernel != nullptr);
@@ -109,7 +109,7 @@ void queued_submit_input_drains_before_movement() {
     KernelServerEntityCreateInfo create_info = player_create_info();
     assert(Kernel_ServerCreateEntity(kernel, &create_info, &net_id));
 
-    PlayerInput input{};
+    KernelPlayerInput input{};
     input.input_seq = 11;
     input.move = KernelVec2{1.0f, 0.0f};
     assert(Kernel_ServerEnqueueEntityInput(
@@ -192,7 +192,7 @@ void tick_monitor_records_warning_when_threshold_is_low() {
 int main() {
     queued_transform_applies_on_next_tick();
     queued_lifecycle_destroy_applies_on_next_tick();
-    queued_submit_input_drains_before_movement();
+    queued_submit_player_input_drains_before_movement();
     queue_capacity_rejects_after_default_capacity();
     queue_warning_threshold_records_warning_once();
     tick_monitor_records_warning_when_threshold_is_low();

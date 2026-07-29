@@ -45,6 +45,10 @@ struct EntitySnapshot {
     glm::vec3 ground_normal{0.0f, 1.0f, 0.0f};
     NetId supporting_entity_net_id = 0;
     std::uint32_t supporting_collider_id = 0;
+    std::uint32_t item_template_id = 0;
+    std::uint64_t item_instance_id = 0;
+    std::uint8_t world_item_mode = 0;
+    NetId carrier_entity_id = 0;
 };
 
 struct WorldSnapshot {

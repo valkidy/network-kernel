@@ -1,0 +1,23 @@
+id: 200
+name: activation_damage_prop
+entity_type: prop
+health:
+  hp: 1
+  max_hp: 1
+triggers:
+  on_activated:
+    action_graph: action_apply_damage_at_activated
+    parameters:
+      target: event.target
+      amount: 25
+  on_health_depleted:
+    action_graph: action_apply_damage_at_health_depleted
+    parameters:
+      target: event.instigator
+      amount: 7
+  on_destroy_entity:
+    action_graph: action_spawn_entity_at_destroy_entity
+    parameters:
+      template: collision_damage_prop
+      position: event.position
+      owner: event.instigator

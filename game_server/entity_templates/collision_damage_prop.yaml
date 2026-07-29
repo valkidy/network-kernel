@@ -1,0 +1,17 @@
+id: 201
+name: collision_damage_prop
+entity_type: prop
+health:
+  hp: 1
+  max_hp: 1
+physics:
+  collider_template: collision_damage_prop_hitbox
+triggers:
+  on_collision:
+    collision_mask: actor
+    action_graph: action_apply_damage_at_collision
+    parameters:
+      source: self
+      target: event.target
+      self_damage: 1
+      target_damage: 25

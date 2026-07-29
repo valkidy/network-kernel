@@ -65,3 +65,9 @@ cc_test(
     srcs = ["projectile_interaction_test.cc"],
     deps = ["//engine/src/simulation:simulation"],
 )
+
+cc_test(
+    name = "item_system_test",
+    srcs = ["item_system_test.cc"],
+    deps = ["//engine/src/simulation:simulation"],
+)

@@ -8,6 +8,7 @@
 #include <glm/glm.hpp>
 
 #include "kernel/public/kernel_types.h"
+#include "simulation/public/action_graph.h"
 #include "simulation/public/simulation.h"
 
 namespace {
@@ -53,36 +54,36 @@ network_example::Transform& transform_state(
     return world.registry().get<network_example::Transform>(*entity);
 }
 
-PlayerInput fire_input(std::uint8_t weapon_id) {
+KernelPlayerInput fire_input(std::uint8_t weapon_id) {
     static std::uint32_t next_action_instance_id = 1u;
-    PlayerInput input{};
+    KernelPlayerInput input{};
     input.input_seq = 1;
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     input.selected_weapon = weapon_id;
-    input.action_intent = ActionIntent{
+    input.action_intent = KernelActionIntent{
         next_action_instance_id,
         KernelActionBinding_PrimaryFire,
         0u,
         0u,
     };
-    input.action_input = ActionInput{
+    input.action_input = KernelActionInput{
         next_action_instance_id++, 1u, 0u, 0u};
     return input;
 }
 
-void set_action_instance(PlayerInput& input, std::uint32_t action_instance_id) {
+void set_action_instance(KernelPlayerInput& input, std::uint32_t action_instance_id) {
     input.action_intent.action_instance_id = action_instance_id;
     input.action_input.action_instance_id = action_instance_id;
 }
 
-PlayerInput release_action(const PlayerInput& active) {
-    PlayerInput release = active;
-    release.action_intent = ActionIntent{};
+KernelPlayerInput release_action(const KernelPlayerInput& active) {
+    KernelPlayerInput release = active;
+    release.action_intent = KernelActionIntent{};
     release.action_input.held = 0u;
     return release;
 }
 
-std::vector<network_example::QueuedInput> queue(PlayerInput input) {
+std::vector<network_example::QueuedInput> queue(KernelPlayerInput input) {
     return {network_example::QueuedInput{1, input}};
 }
 
@@ -112,13 +113,19 @@ void configure_projectile_response_templates(network_example::World& world) {
     grenade_template.weapon_id = network_example::kWeaponSlot2;
     grenade_template.projectile_type = network_example::ProjectileType::kStandard;
     grenade_template.motion_model = network_example::ProjectileMotionModel::kParabolic;
-    grenade_template.damage = 40;
+    grenade_template.damage = 0;
+    grenade_template.damage_shape =
+        network_example::ProjectileDamageShape::kNone;
     grenade_template.speed = 15.0f;
     grenade_template.lifetime_ticks = 90;
     grenade_template.gravity = glm::vec3{0.0f, -9.8f, 0.0f};
     grenade_template.collision_mask = network_example::kCollisionLayerHostileSide;
-    grenade_template.impact_spawn_projectile_template_id = 8;
-    grenade_template.impact_destroy_self = 1u;
+    grenade_template.projectile_impact_binding =
+        network_example::compile_spawn_projectile_binding(
+            network_example::TriggerEventType::kProjectileImpact, 8);
+    grenade_template.expired_binding =
+        network_example::compile_spawn_projectile_binding(
+            network_example::TriggerEventType::kExpired, 8);
 
     network_example::RuntimeProjectileTemplate area_template;
     area_template.projectile_template_id = 8;
@@ -355,7 +362,7 @@ void action_timeline_drives_rocket_rifle_and_beam() {
     rocket_tuning.definitions[network_example::kWeaponSlot3]
         .fire_action_template_id = rocket_action.action_template_id;
     std::vector<KernelEvent> events;
-    PlayerInput rocket_input = fire_input(network_example::kWeaponSlot3);
+    KernelPlayerInput rocket_input = fire_input(network_example::kWeaponSlot3);
     set_action_instance(rocket_input, 7001u);
     network_example::simulate_weapons(rocket_world, queue(rocket_input), 0, &events);
     require(count_events(events, KernelEventType_FireConfirmed) == 0);
@@ -369,7 +376,7 @@ void action_timeline_drives_rocket_rifle_and_beam() {
     events.clear();
     network_example::simulate_weapons(rocket_world, queue(rocket_input), 3, &events);
     require(events.empty());
-    PlayerInput release = release_action(rocket_input);
+    KernelPlayerInput release = release_action(rocket_input);
     network_example::simulate_weapons(rocket_world, queue(release), 4, &events);
     rocket_input.input_seq = 2;
     set_action_instance(rocket_input, 7002u);
@@ -402,7 +409,7 @@ void action_timeline_drives_rocket_rifle_and_beam() {
         rifle_world.registry().get<network_example::WeaponTuning>(*rifle_entity);
     rifle_tuning.definitions[network_example::kWeaponSlot0]
         .fire_action_template_id = rifle_action.action_template_id;
-    PlayerInput rifle_input = fire_input(network_example::kWeaponSlot0);
+    KernelPlayerInput rifle_input = fire_input(network_example::kWeaponSlot0);
     set_action_instance(rifle_input, 7002u);
     events.clear();
     network_example::simulate_weapons(rifle_world, queue(rifle_input), 0, &events);
@@ -451,7 +458,7 @@ void action_timeline_drives_rocket_rifle_and_beam() {
     beam_template.beam_length = 10.0f;
     beam_template.beam_radius = 0.25f;
     beam_world.set_projectile_templates({beam_template});
-    PlayerInput beam_input = fire_input(network_example::kWeaponId5);
+    KernelPlayerInput beam_input = fire_input(network_example::kWeaponId5);
     set_action_instance(beam_input, 8001u);
     events.clear();
     network_example::simulate_weapons(beam_world, queue(beam_input), 0, &events);
@@ -461,7 +468,7 @@ void action_timeline_drives_rocket_rifle_and_beam() {
     beam_input.input_seq = 2;
     set_action_instance(beam_input, 8002u);
     network_example::simulate_weapons(beam_world, queue(beam_input), 4, &events);
-    beam_input.action_intent = ActionIntent{};
+    beam_input.action_intent = KernelActionIntent{};
     network_example::simulate_weapons(beam_world, queue(beam_input), 9, &events);
     require(projectile_count(beam_world) == 1);
     network_example::simulate_weapons(beam_world, queue(beam_input), 10, &events);
@@ -494,7 +501,7 @@ void finite_press_and_per_weapon_gates_are_independent() {
         burst_world.registry().get<network_example::WeaponTuning>(*burst_entity);
     burst_tuning.definitions[network_example::kWeaponSlot0]
         .fire_action_template_id = burst_action.action_template_id;
-    PlayerInput burst_input = fire_input(network_example::kWeaponSlot0);
+    KernelPlayerInput burst_input = fire_input(network_example::kWeaponSlot0);
     set_action_instance(burst_input, 7100u);
     std::vector<KernelEvent> events;
     network_example::simulate_weapons(
@@ -534,17 +541,17 @@ void finite_press_and_per_weapon_gates_are_independent() {
     switch_tuning.definitions[network_example::kWeaponSlot1]
         .fire_action_template_id = shared_action.action_template_id;
 
-    PlayerInput first = fire_input(network_example::kWeaponSlot0);
+    KernelPlayerInput first = fire_input(network_example::kWeaponSlot0);
     set_action_instance(first, 7200u);
     events.clear();
     network_example::simulate_weapons(switch_world, queue(first), 0, &events);
-    PlayerInput other_weapon = fire_input(network_example::kWeaponSlot1);
+    KernelPlayerInput other_weapon = fire_input(network_example::kWeaponSlot1);
     set_action_instance(other_weapon, 7201u);
     network_example::simulate_weapons(
         switch_world, queue(other_weapon), 1, &events);
     require(count_events(events, KernelEventType_FireConfirmed) == 2);
 
-    PlayerInput early_switch_back = fire_input(network_example::kWeaponSlot0);
+    KernelPlayerInput early_switch_back = fire_input(network_example::kWeaponSlot0);
     set_action_instance(early_switch_back, 7202u);
     std::vector<network_example::ActionOutcome> outcomes;
     network_example::simulate_weapons(
@@ -556,7 +563,7 @@ void finite_press_and_per_weapon_gates_are_independent() {
     require(!outcomes.empty());
     require(outcomes.back().reason == KernelLocalActionResultReason_Cooldown);
 
-    PlayerInput ready_switch_back = fire_input(network_example::kWeaponSlot0);
+    KernelPlayerInput ready_switch_back = fire_input(network_example::kWeaponSlot0);
     set_action_instance(ready_switch_back, 7203u);
     network_example::simulate_weapons(
         switch_world, queue(ready_switch_back), 3, &events);
@@ -594,7 +601,7 @@ void rocket_moves_linearly_and_grenade_arcs() {
     network_example::World rocket_world;
     spawn_player(rocket_world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
     std::vector<KernelEvent> rocket_events;
-    PlayerInput rocket_input = fire_input(network_example::kWeaponSlot3);
+    KernelPlayerInput rocket_input = fire_input(network_example::kWeaponSlot3);
     set_action_instance(rocket_input, 9101u);
     network_example::simulate_weapons(
         rocket_world,
@@ -615,7 +622,7 @@ void rocket_moves_linearly_and_grenade_arcs() {
     network_example::World grenade_world;
     spawn_player(grenade_world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
     std::vector<KernelEvent> grenade_events;
-    PlayerInput grenade_input = fire_input(network_example::kWeaponSlot2);
+    KernelPlayerInput grenade_input = fire_input(network_example::kWeaponSlot2);
     set_action_instance(grenade_input, 9102u);
     network_example::simulate_weapons(
         grenade_world,
@@ -646,7 +653,7 @@ void projectile_damage_values_leave_enemy_flee_window() {
 
     const network_example::NetId grenade = spawned_projectile(grenade_events);
     require(grenade != 0);
-    require(projectile_state(grenade_world, grenade).damage == 40);
+    require(projectile_state(grenade_world, grenade).damage == 0);
 
     network_example::World rocket_world;
     spawn_player(rocket_world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
@@ -707,9 +714,9 @@ void rejects_fire_during_cooldown_and_reload() {
     reload_weapon.ammo[network_example::kWeaponSlot0] = 15;
     reload_weapon.reserve_magazines[network_example::kWeaponSlot0] = 1;
 
-    PlayerInput reload_input = fire_input(network_example::kWeaponSlot0);
+    KernelPlayerInput reload_input = fire_input(network_example::kWeaponSlot0);
     reload_input.action_intent.binding_id = KernelActionBinding_Reload;
-    reload_input.action_input = ActionInput{};
+    reload_input.action_input = KernelActionInput{};
     reload_input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     events.clear();
     network_example::simulate_weapons(reload_world, queue(reload_input), 5, &events);
@@ -768,7 +775,7 @@ void grenade_sweeps_and_explodes_with_falloff() {
         spawn_enemy(world, glm::vec3{5.5f, 0.0f, 0.0f});
 
     std::vector<KernelEvent> events;
-    PlayerInput grenade_input = fire_input(network_example::kWeaponSlot2);
+    KernelPlayerInput grenade_input = fire_input(network_example::kWeaponSlot2);
     set_action_instance(grenade_input, 4321u);
     network_example::simulate_weapons(
         world,
@@ -824,6 +831,10 @@ void server_projectile_damage_to_player_is_pended() {
     projectile.projectile_template_id = network_example::kWeaponSlot2;
     projectile.damage = 80;
     projectile.max_lifetime_ticks = 1;
+    const auto projectile_entity = world.find_entity(projectile_net_id);
+    assert(projectile_entity.has_value());
+    world.registry().emplace<network_example::OnExpiredTriggerTag>(
+        *projectile_entity);
 
     network_example::DamagePipeline pipeline;
     std::vector<KernelEvent> events;
@@ -871,7 +882,7 @@ void projectile_weapon_fires_again_after_cooldown() {
         spawn_player(world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
 
     std::vector<KernelEvent> events;
-    PlayerInput grenade_input = fire_input(network_example::kWeaponSlot2);
+    KernelPlayerInput grenade_input = fire_input(network_example::kWeaponSlot2);
     set_action_instance(grenade_input, 8765u);
     network_example::simulate_weapons(
         world,
@@ -933,7 +944,7 @@ void local_predicted_spammer_can_spawn_many_low_damage_projectiles() {
 
     std::vector<KernelEvent> all_events;
     for (std::uint32_t tick = 0; tick < 12; ++tick) {
-        PlayerInput input = fire_input(network_example::kWeaponSlot2);
+        KernelPlayerInput input = fire_input(network_example::kWeaponSlot2);
         input.input_seq = tick + 1;
         set_action_instance(input, 10000u + tick);
         std::vector<KernelEvent> events;
@@ -998,7 +1009,7 @@ void projectile_spammer_burst_spawns_three_spread_projectiles() {
     network_example::WeaponState& weapon = weapon_state(world, player);
     weapon.ammo[network_example::kWeaponSlot2] = spammer.magazine_size;
 
-    PlayerInput input = fire_input(network_example::kWeaponSlot2);
+    KernelPlayerInput input = fire_input(network_example::kWeaponSlot2);
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     std::vector<KernelEvent> events;
     network_example::simulate_weapons(world, queue(input), 0, &events);
@@ -1039,7 +1050,7 @@ void projectile_rewind_spawns_from_historical_muzzle() {
     world.registry().get<network_example::Transform>(*world.find_entity(player)).position =
         glm::vec3{10.0f, 0.0f, 0.0f};
 
-    PlayerInput grenade_input = fire_input(network_example::kWeaponSlot2);
+    KernelPlayerInput grenade_input = fire_input(network_example::kWeaponSlot2);
     set_action_instance(grenade_input, 9001u);
     std::vector<KernelEvent> events;
     network_example::simulate_weapons(
@@ -1094,7 +1105,7 @@ void projectile_without_rewind_uses_current_muzzle() {
     assert(player != 0);
 }
 
-void projectile_historical_hit_query_hits_historical_target() {
+void projectile_historical_hit_emits_impact_trigger() {
     network_example::World world;
     spawn_player(world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
     const network_example::NetId enemy =
@@ -1123,9 +1134,10 @@ void projectile_historical_hit_query_hits_historical_target() {
     const network_example::NetId projectile = spawned_projectile(events);
     require(projectile != 0);
     require(!world.find_entity(projectile).has_value());
-    require(health(world, enemy).hp < 50);
+    require(count_events(events, KernelEventType_EntitySpawned) == 2);
+    require(health(world, enemy).hp == 50);
     require(count_events(events, KernelEventType_Explosion) == 0);
-    require(count_events(events, KernelEventType_DamageApplied) >= 1);
+    require(count_events(events, KernelEventType_DamageApplied) == 0);
 }
 
 void projectile_historical_hit_query_ignores_current_only_target() {
@@ -1255,7 +1267,7 @@ void area_effect_weapon_spawns_and_damages_enemy() {
     network_example::WeaponState& weapon = weapon_state(world, 1);
     weapon.weapon_ids[0] = network_example::kWeaponId4;
     weapon.ammo[0] = 3;
-    PlayerInput input = fire_input(network_example::kWeaponId4);
+    KernelPlayerInput input = fire_input(network_example::kWeaponId4);
     network_example::simulate_weapons(world, queue(input), 4, &events);
 
     const network_example::NetId area = spawned_area_effect(events);
@@ -1450,7 +1462,7 @@ int main() {
     projectile_spammer_burst_spawns_three_spread_projectiles();
     projectile_rewind_spawns_from_historical_muzzle();
     projectile_without_rewind_uses_current_muzzle();
-    projectile_historical_hit_query_hits_historical_target();
+    projectile_historical_hit_emits_impact_trigger();
     projectile_historical_hit_query_ignores_current_only_target();
     rewind_hitscan_uses_historical_hit_volumes();
     rewind_shotgun_respects_range();

@@ -44,7 +44,7 @@ REQUIRED_EXPORTS=(
   Kernel_StartListenServer
   Kernel_StartDedicatedServer
   Kernel_Update
-  Kernel_SubmitInput
+  Kernel_SubmitPlayerInput
   Kernel_GetRenderStates
   Kernel_GetRenderStatesAtTime
   Kernel_PollEvents
@@ -165,7 +165,7 @@ esac
 find_repo_root() {
   local dir="$PWD"
   while [[ "$dir" != "/" ]]; do
-    if [[ -f "$dir/WORKSPACE" && -f "$dir/${PACKAGE_DIR_REL}/package.json" ]]; then
+    if [[ -f "$dir/WORKSPACE" && -f "$dir/engine/src/kernel/BUILD.bazel" ]]; then
       printf '%s\n' "$dir"
       return 0
     fi
@@ -669,6 +669,18 @@ verify_package() {
   [[ -n "$native_game_server_abi" ]] || die "could not read GAME_SERVER_ABI_VERSION"
   [[ -n "$managed_game_server_abi" ]] || die "could not read GameServerConstants.AbiVersion"
   [[ "$native_game_server_abi" == "$managed_game_server_abi" ]] || die "game server ABI version mismatch: native=$native_game_server_abi managed=$managed_game_server_abi"
+
+  grep -q 'public struct KernelActionIntent' "$PACKAGE_DIR/Runtime/Core/KernelTypes.cs" ||
+    die "managed ABI is missing KernelActionIntent"
+  grep -q 'public struct KernelActionInput' "$PACKAGE_DIR/Runtime/Core/KernelTypes.cs" ||
+    die "managed ABI is missing KernelActionInput"
+  grep -q 'public struct KernelPlayerInput' "$PACKAGE_DIR/Runtime/Core/KernelTypes.cs" ||
+    die "managed ABI is missing KernelPlayerInput"
+  grep -q 'Kernel_SubmitPlayerInput' "$PACKAGE_DIR/Runtime/Core/KernelNative.cs" ||
+    die "managed binding is missing Kernel_SubmitPlayerInput"
+  if grep -q 'Kernel_SubmitInput' "$PACKAGE_DIR/Runtime/Core/KernelNative.cs"; then
+    die "managed binding still references removed symbol Kernel_SubmitInput"
+  fi
 
   local required_exports=()
   build_required_exports "$native_abi" "$native_game_server_abi"

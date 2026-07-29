@@ -1,5 +1,6 @@
-catalog_version: 2
+catalog_version: 5
 action_template_dir: action_templates
+action_graph_template_dir: action_graph_templates
 reload_action_template:
   id: 4199
   name: shared_reload
@@ -14,6 +15,7 @@ reload_action_template:
 weapon_template_dir: weapon_templates
 projectile_template_dir: projectile_templates
 entity_template_dir: entity_templates
+item_template_dir: item_templates
 collider_template_dir: collider_templates
 static_collision_scene:
   entry_path: mesh_assets/jolt/undulating.joltmesh

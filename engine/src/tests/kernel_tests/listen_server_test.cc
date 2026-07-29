@@ -130,7 +130,6 @@ KernelProjectileTemplateDefinition projectile_template(
     projectile.mechanics.collider_template_id = 10;
     projectile.mechanics.collision_mask = KERNEL_COLLISION_MASK_DAMAGEABLE;
     projectile.mechanics.max_hit_count = 1;
-    projectile.mechanics.flags = 1u;
     if (motion_model == KernelProjectileMotionModel_Parabolic) {
         projectile.mechanics.gravity = KernelVec3{0.0f, -9.8f, 0.0f};
     }
@@ -411,12 +410,12 @@ int main() {
     assert(queried_player.hp == 100);
     assert(queried_player.max_hp == 100);
 
-    PlayerInput input{};
+    KernelPlayerInput input{};
     input.input_seq = 1;
     input.client_action_time_us = 0;
     input.move = KernelVec2{1.0f, 0.0f};
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
-    Kernel_SubmitInput(kernel, 1, &input);
+    Kernel_SubmitPlayerInput(kernel, 1, &input);
 
     Kernel_Update(kernel, 0.0f);
     std::array<RenderEntityState, 16> predicted_states{};
@@ -455,14 +454,14 @@ int main() {
     const RenderEntityState held_player = find_player(held_states, held_count);
     assert(held_player.position.x > after_player.position.x);
 
-    PlayerInput fire_input{};
+    KernelPlayerInput fire_input{};
     fire_input.input_seq = 2;
     fire_input.client_action_time_us = 66666;
     fire_input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
-    fire_input.action_intent = ActionIntent{
+    fire_input.action_intent = KernelActionIntent{
         3000u, KernelActionBinding_PrimaryFire, 0u, 0u};
     fire_input.selected_weapon = 0;
-    Kernel_SubmitInput(kernel, 1, &fire_input);
+    Kernel_SubmitPlayerInput(kernel, 1, &fire_input);
     Kernel_Update(kernel, 1.0f / 30.0f);
 
     std::array<KernelEvent, 16> combat_events{};
@@ -479,14 +478,14 @@ int main() {
     }
     assert(saw_fire_confirmed);
 
-    PlayerInput projectile_input{};
+    KernelPlayerInput projectile_input{};
     projectile_input.input_seq = 3;
     projectile_input.client_action_time_us = 100000;
-    projectile_input.action_intent = ActionIntent{
+    projectile_input.action_intent = KernelActionIntent{
         3001u, KernelActionBinding_PrimaryFire, 0u, 0u};
     projectile_input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     projectile_input.selected_weapon = 2;
-    Kernel_SubmitInput(kernel, 1, &projectile_input);
+    Kernel_SubmitPlayerInput(kernel, 1, &projectile_input);
 
     std::array<RenderEntityState, 16> before_projectile_states{};
     const std::uint32_t before_projectile_count = Kernel_GetRenderStates(
@@ -554,14 +553,14 @@ int main() {
     assert(moved_projectile_state.entity_type == 3);
     assert(moved_projectile_state.position.x > projectile_state.position.x);
 
-    PlayerInput rocket_input{};
+    KernelPlayerInput rocket_input{};
     rocket_input.input_seq = 4;
     rocket_input.client_action_time_us = 133333;
-    rocket_input.action_intent = ActionIntent{
+    rocket_input.action_intent = KernelActionIntent{
         3002u, KernelActionBinding_PrimaryFire, 0u, 0u};
     rocket_input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     rocket_input.selected_weapon = network_example::kWeaponSlot3;
-    Kernel_SubmitInput(kernel, 1, &rocket_input);
+    Kernel_SubmitPlayerInput(kernel, 1, &rocket_input);
 
     std::array<RenderEntityState, 16> before_rocket_states{};
     const std::uint32_t before_rocket_count = Kernel_GetRenderStates(
@@ -611,14 +610,14 @@ int main() {
     assert(rocket_state.action_instance_id ==
            rocket_input.action_intent.action_instance_id);
 
-    PlayerInput rejected_projectile_input{};
+    KernelPlayerInput rejected_projectile_input{};
     rejected_projectile_input.input_seq = 5;
     rejected_projectile_input.client_action_time_us = 166666;
-    rejected_projectile_input.action_intent = ActionIntent{
+    rejected_projectile_input.action_intent = KernelActionIntent{
         3003u, KernelActionBinding_PrimaryFire, 0u, 0u};
     rejected_projectile_input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     rejected_projectile_input.selected_weapon = 2;
-    Kernel_SubmitInput(kernel, 1, &rejected_projectile_input);
+    Kernel_SubmitPlayerInput(kernel, 1, &rejected_projectile_input);
     std::array<RenderEntityState, 16> rejected_predicted_states{};
     const std::uint32_t rejected_predicted_count = Kernel_GetRenderStates(
         kernel,

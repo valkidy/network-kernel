@@ -6,9 +6,11 @@
 #include <cstdint>
 #include <deque>
 #include <memory>
+#include <span>
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "kernel/public/kernel_types.h"
@@ -17,6 +19,7 @@
 #include "kernel/src/tick_loop.h"
 #include "physics/public/physics_world.h"
 #include "simulation/public/command.h"
+#include "simulation/public/item_system.h"
 #include "simulation/public/movement_solver.h"
 #include "simulation/public/simulation.h"
 #include "simulation/src/systems.h"
@@ -29,12 +32,20 @@ namespace network_example {
 
 class EntityLifecycleSystem;
 class EntityStateSystem;
+class ItemGameplaySystem;
+class ActivationSystem;
+class CollisionTriggerSystem;
 class DirectorIntentExecutor;
 class ListenServerTransport;
 class MovementSystem;
 struct EntityDespawnPacket;
 struct EntitySpawnPacket;
+struct PropStateChangeBatchPacket;
+struct PropStateChangeRecord;
 struct EntityTemplateUpdatePacket;
+struct InventoryDeltaBatchPacket;
+struct InventorySnapshotPagePacket;
+struct InventorySnapshotRequestPacket;
 struct LocalActionResultBatchPacket;
 struct ProjectileSpawnBatchPacket;
 struct RemoteActionPresentationBatchPacket;
@@ -47,6 +58,38 @@ class Dispatcher;
 class KernelEngine {
 public:
     explicit KernelEngine(KernelConfig config);
+
+    World& simulation_world() { return world_; }
+    const World& simulation_world() const { return world_; }
+    ItemStore& item_store() { return item_store_; }
+    const ItemStore& item_store() const { return item_store_; }
+    void queue_prop_state_change(NetId net_id);
+    bool claim_scope_transfer(
+        KernelItemInstanceId item_instance_id,
+        NetId prop_entity_id);
+    std::pair<std::size_t, std::size_t> scope_transfer_publication_checkpoint()
+        const;
+    void finish_scope_transfer(
+        KernelItemInstanceId item_instance_id,
+        NetId prop_entity_id,
+        bool committed,
+        std::pair<std::size_t, std::size_t> publication_checkpoint);
+    const physics::PhysicsWorld* physics_world() const {
+        return physics_world_.get();
+    }
+    physics::PhysicsWorld* mutable_physics_world() {
+        return physics_world_.get();
+    }
+    bool has_static_collision_scene() const {
+        return !static_collision_scene_.empty();
+    }
+    DamagePipeline& damage_pipeline() { return damage_pipeline_; }
+    std::uint32_t current_tick() const { return tick_loop_.current_tick(); }
+    float fixed_delta_seconds() const {
+        return tick_loop_.fixed_delta_seconds();
+    }
+    const std::vector<KernelEntityTemplateDefinition>& authored_entity_templates()
+        const { return entity_templates_; }
 
     bool start_client(const char* address);
     bool start_client_catalog_sync(
@@ -79,7 +122,7 @@ public:
         std::uint32_t* out_response_json_size);
 
     void update(float delta_seconds);
-    void submit_input(PeerId local_player_id, const PlayerInput& input);
+    void submit_player_input(PeerId local_player_id, const KernelPlayerInput& input);
     bool load_gameplay_catalog(const KernelGameplayCatalogDefinition& catalog);
     bool load_gameplay_catalog_with_static_collision_scene(
         const KernelGameplayCatalogDefinition& catalog,
@@ -136,6 +179,55 @@ public:
     bool server_create_entity(
         const KernelServerEntityCreateInfo& create_info,
         NetId* out_net_id);
+    bool server_activate_entity(
+        const KernelServerEntityActivateInfo& activate_info);
+    bool server_create_inventory_container(
+        std::uint32_t owner_entity_id,
+        std::uint32_t slot_capacity,
+        KernelInventoryContainerId* out_container_id);
+    bool server_create_inventory_item(
+        std::uint32_t item_template_id,
+        std::uint32_t quantity,
+        KernelInventoryContainerId container_id,
+        KernelItemInstanceId* out_item_instance_id);
+    bool server_create_world_item(
+        std::uint32_t item_template_id,
+        std::uint32_t quantity,
+        const KernelVec3& position,
+        KernelItemInstanceId* out_item_instance_id,
+        std::uint32_t* out_prop_entity_id);
+    bool server_submit_gameplay_request(const KernelGameplayRequest& request);
+    void queue_health_changed_event(
+        NetId net_id,
+        PeerId source_peer,
+        std::int32_t health_delta,
+        std::uint64_t event_time_us);
+    bool submit_gameplay_request(const KernelGameplayRequest& request);
+    bool get_item_instance(
+        KernelItemInstanceId id,
+        KernelItemInstanceView* out_view) const;
+    bool get_inventory_container(
+        KernelInventoryContainerId id,
+        KernelInventoryContainerView* out_view) const;
+    std::uint32_t copy_owned_inventory_containers(
+        std::uint32_t owner_entity_id,
+        KernelInventoryContainerView* out_containers,
+        std::uint32_t max_containers) const;
+    std::uint32_t copy_inventory_slots(
+        KernelInventoryContainerId id,
+        KernelItemInstanceView* out_items,
+        std::uint32_t max_items) const;
+    std::uint32_t poll_gameplay_request_outcomes(
+        KernelGameplayRequestOutcome* out_outcomes,
+        std::uint32_t max_outcomes);
+    bool get_gameplay_request_outcome(
+        std::uint32_t requester_peer,
+        std::uint64_t request_id,
+        KernelGameplayRequestOutcome* out_outcome) const;
+    std::uint32_t poll_inventory_deltas(
+        KernelInventoryContainerId id,
+        KernelInventoryDelta* out_deltas,
+        std::uint32_t max_deltas);
     bool server_destroy_entity(NetId net_id, std::uint32_t reason);
     bool server_enqueue_entity_lifecycle(
         std::uint32_t command_source,
@@ -150,7 +242,7 @@ public:
         std::uint16_t animation_state,
         std::uint32_t visual_flags);
     bool server_set_entity_health(NetId net_id, std::uint16_t hp);
-    bool server_submit_entity_input(NetId net_id, const PlayerInput& input);
+    bool server_submit_entity_input(NetId net_id, const KernelPlayerInput& input);
     bool server_enqueue_entity_transform(
         std::uint32_t command_source,
         NetId net_id,
@@ -168,7 +260,7 @@ public:
     bool server_enqueue_entity_input(
         std::uint32_t command_source,
         NetId net_id,
-        const PlayerInput& input);
+        const KernelPlayerInput& input);
     bool server_set_entity_combat_state(
         NetId net_id,
         const KernelCombatStateDefinition& combat_state);
@@ -203,6 +295,9 @@ public:
 private:
     friend class EntityLifecycleSystem;
     friend class EntityStateSystem;
+    friend class ActivationSystem;
+    friend class ItemGameplaySystem;
+    friend class CollisionTriggerSystem;
     friend class DirectorAISystem;
     friend class DirectorIntentExecutor;
     friend class MovementSystem;
@@ -234,6 +329,8 @@ private:
         std::vector<KernelLocalActionResult> pending_action_results;
         std::size_t actor_snapshot_cursor = 0;
         std::size_t projectile_snapshot_cursor = 0;
+        std::unordered_map<KernelInventoryContainerId, std::uint64_t>
+            inventory_revisions;
         std::uint32_t pending_clock_sync_nonce = 0;
         std::uint64_t pending_clock_sync_server_time_us = 0;
         std::uint64_t last_clock_sync_sent_server_time_us = 0;
@@ -242,7 +339,7 @@ private:
         std::int64_t clock_offset_us = 0;
         bool has_clock_sync = false;
         ByteTokenBucket remote_presentation_budget;
-        PlayerInput latest_movement_input{};
+        KernelPlayerInput latest_movement_input{};
         std::uint32_t last_received_input_seq = 0;
         std::uint64_t last_movement_input_server_time_us = 0;
         bool has_received_input = false;
@@ -256,8 +353,13 @@ private:
         ActorType actor_type = ActorType::kUnknown;
         PeerId owner_peer = 0;
         std::uint32_t actor_template_id = 0;
+        std::uint32_t entity_template_id = 0;
         std::uint32_t projectile_template_id = 0;
         std::uint32_t collider_template_id = 0;
+        std::uint32_t item_template_id = 0;
+        KernelItemInstanceId item_instance_id = 0;
+        std::uint8_t world_item_mode = KernelWorldItemMode_Placed;
+        NetId carrier_entity_id = 0;
         glm::vec3 position{0.0f, 0.0f, 0.0f};
         glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
         glm::vec3 velocity{0.0f, 0.0f, 0.0f};
@@ -265,11 +367,14 @@ private:
         std::uint16_t hp = 0;
         std::uint16_t max_hp = 0;
         bool hp_known = false;
+        std::uint32_t prop_state_tick = 0;
+        std::uint8_t prop_state_fields = 0;
+        bool has_prop_state = false;
         bool active = false;
     };
 
     struct PendingPredictionInput {
-        PlayerInput input{};
+        KernelPlayerInput input{};
         std::uint32_t prediction_tick = 0;
     };
 
@@ -435,16 +540,16 @@ private:
     void reconcile_local_prediction(const WorldSnapshot& snapshot);
     void reconcile_predicted_projectiles(const WorldSnapshot& snapshot);
     bool emit_client_input_for_tick();
-    void process_client_input_command(PeerId peer, const PlayerInput& input);
+    void process_client_input_command(PeerId peer, const KernelPlayerInput& input);
     bool cache_server_movement_input(
         PeerSession* session,
-        const PlayerInput& input,
+        const KernelPlayerInput& input,
         std::uint64_t received_server_time_us);
     std::vector<QueuedInput> build_effective_movement_inputs(
         std::uint64_t server_time_us);
     void acknowledge_simulated_movement_inputs(
         const std::vector<QueuedInput>& inputs);
-    void predict_local_input(const PlayerInput& input);
+    void predict_local_input(const KernelPlayerInput& input);
     bool prepare_prediction_physics();
     bool build_local_character_movement_config(
         movement_solver::CharacterMovementConfig* out_config);
@@ -452,12 +557,12 @@ private:
         const WorldSnapshot& snapshot,
         std::uint32_t prediction_tick);
     bool step_local_character_prediction(
-        const PlayerInput& input,
+        const KernelPlayerInput& input,
         std::uint32_t prediction_tick);
     void fail_client_prediction(std::string_view diagnostic);
-    bool predict_local_action(const PlayerInput& input);
-    void predict_local_projectile(const PlayerInput& input);
-    PlayerInput prepare_client_input(const PlayerInput& input);
+    bool predict_local_action(const KernelPlayerInput& input);
+    void predict_local_projectile(const KernelPlayerInput& input);
+    KernelPlayerInput prepare_client_input(const KernelPlayerInput& input);
     std::uint64_t client_local_action_time_us() const;
     std::uint64_t current_server_time_us() const;
     std::uint64_t convert_client_action_time_to_server_time(
@@ -497,6 +602,7 @@ private:
     void sync_session_relevance(
         PeerSession* session,
         const WorldSnapshot& snapshot);
+    bool is_dormant_placed_prop(NetId net_id) const;
     void send_entity_spawn(PeerId peer, const EntitySnapshot& entity);
     void send_projectile_spawn_batch(PeerId peer, const EntitySnapshot& entity);
     void send_entity_despawn(
@@ -517,8 +623,36 @@ private:
         std::uint64_t server_time_us);
     void send_due_clock_sync_pings(std::uint64_t server_time_us);
     void send_reliable_event(PeerId peer, const KernelEvent& event);
+    void send_gameplay_request_outcome(
+        PeerId peer,
+        const KernelGameplayRequestOutcome& outcome);
+    void flush_network_gameplay_request_outcomes();
+    void flush_inventory_replication();
+    bool send_inventory_snapshot(
+        PeerSession* session,
+        KernelInventoryContainerId container_id);
+    bool send_inventory_delta_batch(
+        PeerSession* session,
+        KernelInventoryContainerId container_id,
+        std::span<const KernelInventoryDelta> deltas);
+    void handle_client_inventory_delta_batch(
+        const InventoryDeltaBatchPacket& packet);
+    void handle_client_inventory_snapshot_page(
+        const InventorySnapshotPagePacket& packet);
+    void handle_client_prop_state_change_batch(
+        const PropStateChangeBatchPacket& packet);
+    void request_inventory_snapshot(
+        KernelInventoryContainerId container_id,
+        std::uint64_t client_revision);
     void broadcast_reliable_event(const KernelEvent& event);
-    void prepare_server_action_intent(PeerSession* session, PlayerInput* input);
+    void flush_prop_state_changes();
+    bool make_prop_state_change_record(
+        NetId net_id,
+        PropStateChangeRecord* out_record) const;
+    void send_prop_state_changes(
+        PeerSession* session,
+        const PropStateChangeBatchPacket& packet);
+    void prepare_server_action_intent(PeerSession* session, KernelPlayerInput* input);
     void finalize_server_action_outcomes(
         const std::vector<ActionOutcome>& outcomes);
     void queue_local_action_result(
@@ -572,6 +706,8 @@ private:
     World world_;
     HistoryBuffer history_buffer_;
     DamagePipeline damage_pipeline_;
+    std::uint32_t next_action_graph_sequence_ = 1;
+    std::unordered_set<std::uint64_t> active_prop_collision_pairs_;
     std::unique_ptr<ITransport> transport_;
     ListenServerTransport* listen_server_transport_ = nullptr;
     std::vector<QueuedInput> pending_inputs_;
@@ -596,8 +732,8 @@ private:
     std::unordered_set<NetId> client_metadata_timeout_reported_entities_;
     std::unordered_map<NetId, ClientEntityTombstone> client_despawned_entities_;
     std::vector<PendingPredictionInput> pending_prediction_inputs_;
-    PlayerInput latest_client_input_{};
-    std::deque<PlayerInput> pending_client_action_intents_;
+    KernelPlayerInput latest_client_input_{};
+    std::deque<KernelPlayerInput> pending_client_action_intents_;
     std::uint64_t latest_client_input_time_us_ = 0;
     std::uint32_t next_client_input_seq_ = 1;
     PeerId latest_client_input_peer_ = 0;
@@ -613,6 +749,27 @@ private:
     std::vector<KernelProjectileTemplateDefinition> projectile_templates_;
     std::vector<KernelColliderTemplateDefinition> collider_templates_;
     std::vector<KernelActionTemplateDefinition> action_templates_;
+    std::vector<KernelItemTemplateDefinition> item_templates_;
+    ItemStore item_store_;
+    std::vector<KernelGameplayRequestOutcome> processed_gameplay_requests_;
+    std::deque<KernelGameplayRequestOutcome> pending_gameplay_request_outcomes_;
+    std::vector<std::pair<PeerId, KernelGameplayRequestOutcome>>
+        pending_network_gameplay_outcomes_;
+    struct ClientInventorySnapshotAssembly {
+        KernelInventoryContainerView container{};
+        std::uint16_t page_count = 0;
+        std::vector<bool> received_pages;
+        std::vector<KernelItemInstanceView> items;
+    };
+    std::unordered_map<KernelInventoryContainerId, ClientInventorySnapshotAssembly>
+        client_inventory_snapshot_assemblies_;
+    std::unordered_map<KernelInventoryContainerId, KernelInventorySyncState>
+        client_inventory_sync_states_;
+    std::unordered_set<KernelInventoryContainerId>
+        client_inventory_resync_pending_;
+    std::vector<NetId> pending_prop_state_changes_;
+    std::unordered_set<KernelItemInstanceId> claimed_item_instances_;
+    std::unordered_set<NetId> claimed_prop_entities_;
     std::vector<KernelDebugInfo> debug_records_;
     std::unordered_map<NetId, KernelAgentVisionConfig> vision_configs_;
     std::unordered_map<NetId, VisionRuntimeState> vision_states_;

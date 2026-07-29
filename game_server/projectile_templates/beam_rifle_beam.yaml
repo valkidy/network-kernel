@@ -9,7 +9,7 @@ hit_response: destroy
 damage_shape: direct_hit
 speed: 0.0
 lifetime_ticks: 0
-collision_mask: hostile_side
+collision_mask: hostile_side | terrain | obstacle
 max_hit_count: 1
 gravity: {x: 0.0, y: 0.0, z: 0.0}
 beam:
@@ -17,4 +17,4 @@ beam:
   radius: 0.25
   damage_per_tick: 1
   lifetime_ticks: 2
-  collision_mask: hostile_side
+  collision_mask: hostile_side | terrain | obstacle

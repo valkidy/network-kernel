@@ -105,11 +105,11 @@ void received_packet_sequence_gaps_update_loss_ratio() {
     network_example::KernelEngine engine(config);
     engine.reset_runtime_state(KernelMode_Client);
 
-    PlayerInput input{};
+    KernelPlayerInput input{};
     const std::vector<std::uint8_t> first_packet =
-        network_example::encode_input_packet(7, input, 1);
+        network_example::encode_player_input_packet(7, input, 1);
     const std::vector<std::uint8_t> fourth_packet =
-        network_example::encode_input_packet(7, input, 4);
+        network_example::encode_player_input_packet(7, input, 4);
     network_example::TransportEvent event;
     event.type = network_example::TransportEventType::kMessage;
     event.peer = 0;
@@ -253,6 +253,82 @@ void render_time_expiry_drops_pending_remote_presentation() {
     require(client.remote_action_presentation_events_.empty());
     require(client.pending_remote_action_presentation_events_.empty());
     require(client.network_stats_.remote_presentation_stale_dropped == 1u);
+}
+
+void inventory_replication_is_owner_only_delta_driven_and_idle_zero() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30u;
+    config.tick.snapshot_rate = 15u;
+    network_example::KernelEngine server(config);
+    server.reset_runtime_state(KernelMode_DedicatedServer);
+    auto loopback = std::make_unique<network_example::LoopbackTransport>();
+    require(loopback->StartServer(7793));
+    auto* transport = loopback.get();
+    server.transport_ = std::move(loopback);
+
+    KernelItemTemplateDefinition item{};
+    item.struct_size = sizeof(item);
+    item.item_template_id = 10u;
+    item.item_mode = KernelItemMode_Fungible;
+    item.max_stack = 10u;
+    item.use_policy.struct_size = sizeof(item.use_policy);
+    item.throw_policy.struct_size = sizeof(item.throw_policy);
+    std::string error;
+    require(server.item_store_.set_templates({&item, 1u}, &error));
+    const auto container = server.item_store_.create_container(11u, 4u);
+    require(container.has_value());
+    require(server.item_store_.create_inventory_item(10u, 1u, *container)
+        .has_value());
+
+    server.peer_sessions_.resize(2u);
+    server.peer_sessions_[0].peer = 7u;
+    server.peer_sessions_[0].player = 11u;
+    server.peer_sessions_[0].welcomed = true;
+    server.peer_sessions_[1].peer = 8u;
+    server.peer_sessions_[1].player = 12u;
+    server.peer_sessions_[1].welcomed = true;
+    server.flush_inventory_replication();
+
+    std::uint32_t owner_snapshots = 0u;
+    std::uint32_t nonowner_inventory_packets = 0u;
+    network_example::TransportEvent event{};
+    while (transport->PollClientEvent(event)) {
+        network_example::InventorySnapshotPagePacket snapshot{};
+        network_example::InventoryDeltaBatchPacket delta{};
+        const bool is_inventory =
+            network_example::decode_inventory_snapshot_page_packet(
+                event.payload.data(), event.payload.size(), &snapshot) ||
+            network_example::decode_inventory_delta_batch_packet(
+                event.payload.data(), event.payload.size(), &delta);
+        if (!is_inventory) continue;
+        if (event.peer == 7u) ++owner_snapshots;
+        if (event.peer == 8u) ++nonowner_inventory_packets;
+    }
+    require(owner_snapshots == 1u);
+    require(nonowner_inventory_packets == 0u);
+    const std::uint64_t initial_bytes =
+        server.network_stats_.inventory_snapshot_bytes_sent;
+    require(initial_bytes == 81u);
+    server.flush_inventory_replication();
+    require(!transport->PollClientEvent(event));
+    require(server.network_stats_.inventory_snapshot_bytes_sent == initial_bytes);
+    require(server.network_stats_.inventory_delta_bytes_sent == 0u);
+
+    require(server.item_store_.create_inventory_item(10u, 1u, *container)
+        .has_value());
+    server.flush_inventory_replication();
+    std::uint32_t owner_delta_batches = 0u;
+    while (transport->PollClientEvent(event)) {
+        network_example::InventoryDeltaBatchPacket delta{};
+        if (network_example::decode_inventory_delta_batch_packet(
+                event.payload.data(), event.payload.size(), &delta)) {
+            require(event.peer == 7u);
+            ++owner_delta_batches;
+        }
+    }
+    require(owner_delta_batches == 1u);
+    require(server.network_stats_.inventory_delta_bytes_sent == 74u);
 }
 
 struct TrafficRow {
@@ -453,6 +529,7 @@ int main(int argc, char** argv) {
     stats_modes_apply_defaults_and_timing_policy();
     owner_results_bypass_drop_and_remote_budget_prefers_priority();
     render_time_expiry_drops_pending_remote_presentation();
+    inventory_replication_is_owner_only_delta_driven_and_idle_zero();
     const std::vector<TrafficRow> rows = traffic_matrix();
     if (argc == 2 && std::string_view(argv[1]).starts_with("--report=")) {
         write_traffic_report(std::string(argv[1]).substr(9), rows);

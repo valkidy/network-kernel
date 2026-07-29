@@ -62,7 +62,7 @@ Local player movement uses prediction and reconciliation.
 When the local player sends input:
 
 ```text
-1. Client sends PlayerInput to the server.
+1. Client sends KernelPlayerInput to the server.
 2. Client immediately simulates the input locally.
 3. Server processes the input authoritatively.
 4. Server snapshots include the last processed input sequence.
@@ -117,7 +117,7 @@ When the local player fires one:
 
 ```text
 1. Client immediately creates a predicted projectile.
-2. Client sends PlayerInput with InputButton_Fire and client_action_id.
+2. Client sends KernelPlayerInput with InputButton_Fire and client_action_id.
 3. Server validates the fire action.
 4. Server creates the authoritative projectile.
 5. Server snapshots include projectile net_id, owner_peer, velocity,

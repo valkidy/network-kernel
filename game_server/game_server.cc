@@ -80,6 +80,38 @@ void GameServer::configure_player(std::uint32_t net_id) const {
             config_.weapons.definitions[actor_template->weapon_ids[slot]];
         Kernel_ServerSetEntityWeaponMechanics(kernel_, net_id, &weapon);
     }
+    configure_player_inventory(net_id, *actor_template);
+}
+
+bool GameServer::configure_player_inventory(
+    std::uint32_t net_id,
+    const ActorTemplateConfig& actor_template) const {
+    if (actor_template.inventory_slot_capacity == 0) {
+        return true;
+    }
+    if (Kernel_CopyOwnedInventoryContainers(kernel_, net_id, nullptr, 0) != 0) {
+        return true;
+    }
+    KernelInventoryContainerId container_id = 0;
+    if (!Kernel_ServerCreateInventoryContainer(
+            kernel_,
+            net_id,
+            actor_template.inventory_slot_capacity,
+            &container_id)) {
+        return false;
+    }
+    for (const InventorySlotConfig& slot : actor_template.inventory_slots) {
+        KernelItemInstanceId item_instance_id = 0;
+        if (!Kernel_ServerCreateInventoryItem(
+                kernel_,
+                slot.item_template_id,
+                slot.quantity,
+                container_id,
+                &item_instance_id)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 }  // namespace network_example::game_server

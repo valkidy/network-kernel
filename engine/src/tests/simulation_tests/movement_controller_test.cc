@@ -132,7 +132,7 @@ struct Fixture {
         assert(physics.upsert_object(object, &error));
     }
 
-    void tick(const PlayerInput* input = nullptr) {
+    void tick(const KernelPlayerInput* input = nullptr) {
         std::vector<QueuedInput> inputs;
         if (input != nullptr) {
             inputs.push_back(QueuedInput{7, *input, tick_index, 0, false, 0});
@@ -210,7 +210,7 @@ void kinematic_blocks_on_wall_and_queries_ground_each_tick() {
         glm::vec3{2.0f, 1.0f, 0.0f},
         glm::vec3{0.25f, 1.0f, 3.0f});
     fixture.tick();
-    PlayerInput input{};
+    KernelPlayerInput input{};
     input.move = KernelVec2{1.0f, 0.0f};
     for (std::uint32_t tick = 0; tick < 60; ++tick) {
         input.input_seq = tick + 1;
@@ -233,7 +233,7 @@ void character_is_grounded_and_slides_along_wall() {
         glm::vec3{2.0f, 1.0f, 0.0f},
         glm::vec3{0.25f, 1.0f, 20.0f});
     fixture.tick();
-    PlayerInput input{};
+    KernelPlayerInput input{};
     input.move = KernelVec2{1.0f, 1.0f};
     for (std::uint32_t tick = 0; tick < 60; ++tick) {
         input.input_seq = tick + 1;
@@ -284,7 +284,7 @@ void character_steps_over_obstacle_while_kinematic_stops() {
         200,
         glm::vec3{2.0f, 0.15f, 0.0f},
         glm::vec3{0.25f, 0.15f, 2.0f});
-    PlayerInput input{};
+    KernelPlayerInput input{};
     input.move = KernelVec2{1.0f, 0.0f};
     for (std::uint32_t tick = 0; tick < 40; ++tick) {
         input.input_seq = tick + 1;
@@ -302,7 +302,7 @@ void character_steps_over_obstacle_while_kinematic_stops() {
 void character_blocks_against_other_actor_movement_body() {
     Fixture fixture(MovementState::ControllerType::kCharacter, {0.0f, 0.0f, 0.0f});
     fixture.add_movement_obstacle(200, 99, {2.0f, 0.0f, 0.0f});
-    PlayerInput input{};
+    KernelPlayerInput input{};
     input.move = KernelVec2{1.0f, 0.0f};
     for (std::uint32_t tick = 0; tick < 30; ++tick) {
         input.input_seq = tick + 1;
@@ -335,7 +335,7 @@ void character_replay_is_deterministic() {
     Fixture second(MovementState::ControllerType::kCharacter, {0.0f, 0.0f, 0.0f});
     first.add_box(200, {2.0f, 1.0f, 0.0f}, {0.25f, 1.0f, 2.0f});
     second.add_box(200, {2.0f, 1.0f, 0.0f}, {0.25f, 1.0f, 2.0f});
-    PlayerInput input{};
+    KernelPlayerInput input{};
     input.move = KernelVec2{1.0f, 0.5f};
     for (std::uint32_t tick = 0; tick < 60; ++tick) {
         input.input_seq = tick + 1;
@@ -369,7 +369,7 @@ void walkable_and_steep_slopes_follow_controller_policy() {
         {2.0f, 0.838f, 0.0f},
         {3.0f, 0.2f, 2.0f},
         walkable_rotation);
-    PlayerInput input{};
+    KernelPlayerInput input{};
     input.move = KernelVec2{1.0f, 0.0f};
     for (std::uint32_t tick = 0; tick < 25; ++tick) {
         input.input_seq = tick + 1;

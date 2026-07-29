@@ -12,7 +12,6 @@ namespace {
 
 constexpr std::uint16_t kMaxReserveMagazines =
     std::numeric_limits<std::uint16_t>::max();
-constexpr std::uint8_t kSparseWeaponId = 99;
 
 std::filesystem::path runfiles_root() {
     const char* test_srcdir = std::getenv("TEST_SRCDIR");
@@ -73,9 +72,27 @@ void write_valid_action_catalog(const std::filesystem::path& weapon_dir) {
     }
 }
 
+void write_valid_action_graph_catalog(const std::filesystem::path& weapon_dir) {
+    const std::filesystem::path source_dir =
+        runfiles_root() / "game_server" / "action_graph_templates";
+    const std::filesystem::path destination_dir =
+        weapon_dir.parent_path() / "action_graph_templates";
+    std::filesystem::create_directories(destination_dir);
+    for (const std::filesystem::directory_entry& entry :
+         std::filesystem::directory_iterator(source_dir)) {
+        if (entry.is_regular_file() && entry.path().extension() == ".yaml") {
+            std::filesystem::copy_file(
+                entry.path(),
+                destination_dir / entry.path().filename(),
+                std::filesystem::copy_options::overwrite_existing);
+        }
+    }
+}
+
 void write_valid_templates(const std::filesystem::path& dir) {
     write_valid_collider_catalog(dir);
     write_valid_action_catalog(dir);
+    write_valid_action_graph_catalog(dir);
     write_file(
         dir.parent_path() / "projectile_templates" / "spammer.yaml",
         "id: 2\nname: spammer_projectile\ndamage: 1\n"
@@ -94,10 +111,13 @@ void write_valid_templates(const std::filesystem::path& dir) {
         "damage_shape: direct_hit\nspeed: 35.0\nlifetime_ticks: 75\n"
         "collision_mask: damageable\nmax_hit_count: 1\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n"
-        "impact_response:\n"
-        "  action: spawn_projectile\n"
-        "  projectile_template: rocket_explosion\n"
-        "  destroy_self: true\n");
+        "triggers:\n"
+        "  on_projectile_impact:\n"
+        "    action_graph: action_spawn_projectile_at_impact\n"
+        "    parameters:\n"
+        "      template: rocket_explosion\n"
+        "      position: event.position\n"
+        "      direction: event.direction\n");
     write_file(
         dir.parent_path() / "projectile_templates" / "rocket_explosion.yaml",
         "id: 8\nname: rocket_explosion\nkind: area_effect\n"
@@ -137,10 +157,13 @@ void write_valid_templates(const std::filesystem::path& dir) {
         "damage_shape: direct_hit\nspeed: 24.0\nlifetime_ticks: 180\n"
         "collision_mask: damageable\nmax_hit_count: 1\n"
         "gravity: {x: 0.0, y: -9.81, z: 0.0}\n"
-        "impact_response:\n"
-        "  action: spawn_projectile\n"
-        "  projectile_template: rocket_explosion\n"
-        "  destroy_self: true\n");
+        "triggers:\n"
+        "  on_projectile_impact:\n"
+        "    action_graph: action_spawn_projectile_at_impact\n"
+        "    parameters:\n"
+        "      template: rocket_explosion\n"
+        "      position: event.position\n"
+        "      direction: event.direction\n");
     write_file(
         dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
         "id: 4\nname: fire_floor_area\ntype: area_effect\n"
@@ -259,7 +282,8 @@ void valid_repo_templates_load_all_slots() {
         const KernelProjectileTemplateDefinition& projectile_template =
             storage.definition.projectile_templates[index];
         if (projectile_template.weapon_id == network_example::game_server::kWeaponSpammer ||
-            projectile_template.weapon_id == kSparseWeaponId ||
+            projectile_template.weapon_id ==
+                network_example::game_server::kWeaponGrenade ||
             projectile_template.weapon_id ==
                 network_example::game_server::kWeaponHomingMissile) {
             assert(projectile_template.mechanics.collider_template_id == 7);
@@ -267,7 +291,10 @@ void valid_repo_templates_load_all_slots() {
         if (projectile_template.weapon_id == network_example::game_server::kWeaponRocket) {
             assert(projectile_template.mechanics.collider_template_id == 3);
             assert(projectile_template.mechanics
-                       .impact_spawn_projectile_template_id == 8);
+                       .projectile_impact_trigger.action_type ==
+                   KernelEntityTriggerActionType_SpawnProjectile);
+            assert(projectile_template.mechanics.projectile_impact_trigger
+                       .spawn_projectile_template_id == 8);
             assert(projectile_template.mechanics.collision_query_mode ==
                    KernelProjectileCollisionQueryMode_Auto);
         }
@@ -303,11 +330,11 @@ void valid_repo_templates_load_all_slots() {
                .projectile_template_id == 5);
     assert(config.weapons.definitions[network_example::game_server::kWeaponHomingMissile]
                .projectile_template_id == 6);
-    assert(config.weapons.configured[kSparseWeaponId]);
-    assert(!config.weapons.configured[network_example::game_server::kWeaponGrenade]);
-    assert(config.weapons.projectile_sync_modes[kSparseWeaponId] ==
+    assert(config.weapons.configured[network_example::game_server::kWeaponGrenade]);
+    assert(config.weapons.projectile_sync_modes
+               [network_example::game_server::kWeaponGrenade] ==
            KernelProjectileSyncMode_LocalPredictedDeterministic);
-    assert(config.weapons.names[kSparseWeaponId] ==
+    assert(config.weapons.names[network_example::game_server::kWeaponGrenade] ==
            "Grenade Launcher");
     assert(config.weapons.projectile_sync_modes
                [network_example::game_server::kWeaponRocket] ==
@@ -321,14 +348,14 @@ void valid_repo_templates_load_all_slots() {
            "Beam Rifle");
     assert(config.weapons.names[network_example::game_server::kWeaponHomingMissile] ==
            "Homing Missile");
-    assert(config.action_templates.size() == 8);
+    assert(config.action_templates.size() == 9);
     assert(config.weapons.definitions[network_example::game_server::kWeaponRifle]
                .fire_action_template_id == 4096);
     assert(config.weapons.definitions[network_example::game_server::kWeaponRocket]
                .fire_action_template_id == 4099);
     assert(config.weapons.definitions[network_example::game_server::kWeaponBeamRifle]
                .fire_action_template_id == 4101);
-    assert(storage.definition.action_template_count == 8);
+    assert(storage.definition.action_template_count == 9);
     assert(config.action_templates[3].definition.commit_offset_ticks == 3);
     assert(config.action_templates[3].definition.commit_interval_ticks == 30);
     assert(config.action_templates[5].definition.trigger_mode ==
@@ -758,7 +785,8 @@ void collision_mask_expressions_are_loaded() {
     network_example::game_server::GameServerGameplayConfig config =
         network_example::game_server::load_gameplay_config_from_weapon_template_directory(
             none_dir.string());
-    assert(projectile_mechanics(config, 3).collision_mask == KERNEL_COLLISION_MASK_NONE);
+    assert(projectile_mechanics(config, 3).collision_mask ==
+           KERNEL_COLLISION_MASK_NONE);
 
     const std::filesystem::path zero_dir = tmp_dir("mask_zero");
     write_valid_templates(zero_dir);
@@ -825,6 +853,23 @@ void malformed_collision_masks_are_rejected() {
         "max_hit_count: 1\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
     assert(load_fails(empty_token_dir));
+
+    const std::filesystem::path area_static_dir =
+        tmp_dir("area_static_mask");
+    write_valid_templates(area_static_dir);
+    write_file(
+        area_static_dir.parent_path() /
+            "projectile_templates" / "fire_floor_area.yaml",
+        "id: 4\nname: fire_floor_area\ntype: area_effect\n"
+        "collider_template: area_effect_sphere\n"
+        "lifetime_ticks: 6\n"
+        "damage_behavior:\n"
+        "  type: area_interval\n"
+        "  damage_per_interval: 12\n"
+        "  damage_interval_ticks: 2\n"
+        "  falloff: none\n"
+        "collision_mask: hostile_side | terrain\n");
+    assert(load_fails(area_static_dir));
 }
 
 void catalog_file_loads_colliders() {
@@ -833,9 +878,9 @@ void catalog_file_loads_colliders() {
     const network_example::game_server::GameServerGameplayConfig config =
         network_example::game_server::load_gameplay_config_from_catalog_file(
             catalog_file.string());
-    assert(config.weapons.catalog_version == 2);
+    assert(config.weapons.catalog_version == 5);
     assert(config.weapons.catalog_hash != 0);
-    assert(config.colliders.templates.size() == 11);
+    assert(config.colliders.templates.size() == 12);
     assert(config.colliders.bindings.empty());
 }
 

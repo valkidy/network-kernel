@@ -1,0 +1,8 @@
+id: 12
+name: collision_damage_prop_hitbox
+shape: aabb
+center: {x: 0.0, y: 0.5, z: 0.0}
+half_extents: {x: 0.5, y: 0.5, z: 0.5}
+radius: 0.0
+purpose: hit
+layer: neutral

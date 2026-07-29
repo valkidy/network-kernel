@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -13,6 +14,8 @@
 #include <vector>
 
 #include "game_server/agent_runtime.h"
+#include "game_server/game_server.h"
+#include "kernel/public/kernel_api.h"
 #include "kernel/public/kernel_types.h"
 
 namespace {
@@ -34,11 +37,18 @@ static_assert(
         network_example::game_server::AgentSentryConfig>::value,
     "AgentSentryConfig must not duplicate weapon template magazine_size.");
 
-void require(bool condition) {
+void require_impl(bool condition, const char* expression, int line) {
     if (!condition) {
+        std::fprintf(
+            stderr,
+            "require failed at line %d: %s\n",
+            line,
+            expression);
         std::abort();
     }
 }
+
+#define require(condition) require_impl((condition), #condition, __LINE__)
 
 std::string read_text_file(const std::string& path) {
     std::ifstream file(path, std::ios::binary);
@@ -158,6 +168,7 @@ void append_collider_template_files(
         "sentry_grunt_vision_cone.yaml",
         "sentry_grunt_hit_aabb.yaml",
         "area_effect_sphere.yaml",
+        "collision_damage_prop_hitbox.yaml",
         "player_hit_aabb.yaml",
         "player_movement_capsule.yaml",
         "rocket_aabb.yaml",
@@ -175,7 +186,8 @@ void append_collider_template_files(
 
 std::vector<std::uint8_t> make_gameplay_bundle_zip(
     const std::string& sentry_actor_yaml,
-    const std::vector<std::pair<std::string, std::string>>& extra_files = {}) {
+    const std::vector<std::pair<std::string, std::string>>& extra_files = {},
+    const std::string& player_actor_yaml = {}) {
     std::vector<std::pair<std::string, std::string>> files;
     files.push_back({
         "gameplay_catalog.yaml",
@@ -183,13 +195,28 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
     append_collider_template_files(&files);
     files.push_back({
         "entity_templates/player.yaml",
-        read_text_file("game_server/entity_templates/player.yaml")});
+        player_actor_yaml.empty()
+            ? read_text_file("game_server/entity_templates/player.yaml")
+            : player_actor_yaml});
     files.push_back({
         "entity_templates/sentry_grunt.yaml",
         sentry_actor_yaml});
     files.push_back({
         "entity_templates/earth_mother.yaml",
         read_text_file("game_server/entity_templates/earth_mother.yaml")});
+    const std::vector<std::string> additional_entity_files = {
+        "activation_damage_prop.yaml",
+        "collision_damage_prop.yaml",
+        "ice_block.yaml",
+        "interaction_terminal.yaml",
+        "stateful_magic_bottle_prop.yaml",
+        "stateful_potion_prop.yaml",
+    };
+    for (const std::string& file : additional_entity_files) {
+        files.push_back({
+            "entity_templates/" + file,
+            read_text_file("game_server/entity_templates/" + file)});
+    }
 
     const std::vector<std::string> weapon_files = {
         "beam_rifle.yaml",
@@ -221,6 +248,33 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
             "action_templates/" + file,
             read_text_file("game_server/action_templates/" + file)});
     }
+    const std::vector<std::string> action_graph_files = {
+        "action_apply_damage_at_activated.yaml",
+        "action_apply_damage_at_collision.yaml",
+        "action_apply_damage_at_destroy_entity.yaml",
+        "action_apply_damage_at_health_depleted.yaml",
+        "action_apply_health_change_at_item_used.yaml",
+        "action_spawn_entity_at_destroy_entity.yaml",
+        "action_spawn_ice_and_damage_self_at_collision.yaml",
+        "action_spawn_projectile_at_impact.yaml",
+    };
+    for (const std::string& file : action_graph_files) {
+        files.push_back({
+            "action_graph_templates/" + file,
+            read_text_file("game_server/action_graph_templates/" + file)});
+    }
+    const std::vector<std::string> item_files = {
+        "activation_token.yaml",
+        "fungible_potion.yaml",
+        "grenade_consumable.yaml",
+        "stateful_magic_bottle.yaml",
+        "stateful_potion.yaml",
+    };
+    for (const std::string& file : item_files) {
+        files.push_back({
+            "item_templates/" + file,
+            read_text_file("game_server/item_templates/" + file)});
+    }
     const std::vector<std::string> projectile_files = {
         "beam_rifle_beam.yaml",
         "fire_floor_area.yaml",
@@ -244,13 +298,24 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip() {
         read_text_file("game_server/entity_templates/sentry_grunt.yaml"));
 }
 
+std::string replace_once(
+    std::string text,
+    const std::string& from,
+    const std::string& to) {
+    const std::size_t position = text.find(from);
+    require(position != std::string::npos);
+    text.replace(position, from.size(), to);
+    return text;
+}
+
 std::vector<std::uint8_t> make_entity_template_bundle_zip(
     const std::string& sentry_template_yaml) {
     std::vector<std::pair<std::string, std::string>> files;
     files.push_back({
         "gameplay_catalog.yaml",
-        "catalog_version: 2\n"
+        "catalog_version: 5\n"
         "action_template_dir: action_templates\n"
+        "action_graph_template_dir: action_graph_templates\n"
         "reload_action_template:\n"
         "  id: 4199\n"
         "  name: shared_reload\n"
@@ -347,6 +412,11 @@ std::vector<std::uint8_t> make_entity_template_bundle_zip(
             "action_templates/" + file,
             read_text_file("game_server/action_templates/" + file)});
     }
+    files.push_back({
+        "action_graph_templates/action_spawn_projectile_at_impact.yaml",
+        read_text_file(
+            "game_server/action_graph_templates/"
+            "action_spawn_projectile_at_impact.yaml")});
     const std::vector<std::string> projectile_files = {
         "beam_rifle_beam.yaml",
         "fire_floor_area.yaml",
@@ -405,6 +475,102 @@ int main() {
     const std::vector<std::string> errors =
         network_example::game_server::validate_gameplay_config(config);
     assert(errors.empty());
+
+    const std::string production_player_yaml =
+        read_text_file("game_server/entity_templates/player.yaml");
+    const std::string production_sentry_yaml =
+        read_text_file("game_server/entity_templates/sentry_grunt.yaml");
+    const auto load_player_yaml = [&](const std::string& player_yaml) {
+        const std::vector<std::uint8_t> bundle = make_gameplay_bundle_zip(
+            production_sentry_yaml, {}, player_yaml);
+        return network_example::game_server::load_gameplay_config_from_bundle_memory(
+            bundle.data(),
+            static_cast<std::uint32_t>(bundle.size()),
+            "gameplay_catalog.yaml");
+    };
+    const auto rejects_player_yaml = [&](const std::string& player_yaml) {
+        try {
+            (void)load_player_yaml(player_yaml);
+            return false;
+        } catch (const std::exception&) {
+            return true;
+        }
+    };
+    const network_example::game_server::GameServerGameplayConfig numeric_item_config =
+        load_player_yaml(replace_once(
+            production_player_yaml,
+            "item_template: fungible_potion",
+            "item_template: 3002"));
+    assert(numeric_item_config.actor_templates[0]
+               .inventory_slots[0]
+               .item_template_id == 3002);
+    assert(rejects_player_yaml(replace_once(
+        production_player_yaml,
+        "inventory_slot_capacity: 8\n",
+        "")));
+    assert(rejects_player_yaml(replace_once(
+        production_player_yaml,
+        "inventory_slots:\n"
+        "  - item_template: fungible_potion\n"
+        "    quantity: 5\n"
+        "  - item_template: stateful_potion\n"
+        "    quantity: 1\n"
+        "  - item_template: stateful_magic_bottle\n"
+        "    quantity: 1\n",
+        "")));
+    assert(rejects_player_yaml(replace_once(
+        production_player_yaml,
+        "inventory_slots:\n",
+        "inventory_slots: {}\n")));
+    assert(rejects_player_yaml(replace_once(
+        production_player_yaml,
+        "  - item_template: fungible_potion\n    quantity: 5\n",
+        "  - null\n")));
+    assert(rejects_player_yaml(replace_once(
+        production_player_yaml,
+        "    quantity: 5\n",
+        "    quantity: 5\n    unsupported: true\n")));
+    assert(rejects_player_yaml(replace_once(
+        production_player_yaml,
+        "    quantity: 5\n",
+        "")));
+    assert(rejects_player_yaml(replace_once(
+        production_player_yaml,
+        "item_template: fungible_potion",
+        "item_template: missing_item")));
+    assert(rejects_player_yaml(replace_once(
+        production_player_yaml,
+        "quantity: 5",
+        "quantity: 0")));
+    assert(rejects_player_yaml(replace_once(
+        production_player_yaml,
+        "quantity: 5",
+        "quantity: 6")));
+    assert(rejects_player_yaml(replace_once(
+        production_player_yaml,
+        "item_template: stateful_potion\n    quantity: 1",
+        "item_template: stateful_potion\n    quantity: 2")));
+    assert(rejects_player_yaml(replace_once(
+        production_player_yaml,
+        "inventory_slot_capacity: 8",
+        "inventory_slot_capacity: 2")));
+    const std::vector<std::uint8_t> agent_inventory_bundle =
+        make_gameplay_bundle_zip(
+            production_sentry_yaml +
+                "\ninventory_slot_capacity: 1\n"
+                "inventory_slots:\n"
+                "  - item_template: fungible_potion\n"
+                "    quantity: 1\n");
+    bool agent_inventory_rejected = false;
+    try {
+        (void)network_example::game_server::load_gameplay_config_from_bundle_memory(
+            agent_inventory_bundle.data(),
+            static_cast<std::uint32_t>(agent_inventory_bundle.size()),
+            "gameplay_catalog.yaml");
+    } catch (const std::exception&) {
+        agent_inventory_rejected = true;
+    }
+    assert(agent_inventory_rejected);
 
     const std::vector<std::uint8_t> entity_bundle =
         make_entity_template_bundle_zip(
@@ -494,7 +660,7 @@ int main() {
     assert(
         config.static_collision_scene.collision_layer ==
         KERNEL_STATIC_COLLISION_LAYER_TERRAIN);
-    require(config.weapons.catalog_version == 2);
+    require(config.weapons.catalog_version == 5);
     require(config.weapons.catalog_hash != 0);
     require(
         config.weapons.catalog_hash ==
@@ -516,6 +682,19 @@ int main() {
     require(
         config.weapons.catalog_hash !=
         network_example::game_server::compute_gameplay_catalog_hash(changed_config));
+    require(!config.item_templates.empty());
+    changed_config = config;
+    changed_config.item_templates.front().definition.throw_policy.speed += 1.0f;
+    require(
+        config.weapons.catalog_hash !=
+        network_example::game_server::compute_gameplay_catalog_hash(changed_config));
+    changed_config = config;
+    changed_config.item_templates.front()
+        .definition.portable_state_fields[0]
+        .uint32_default += 1u;
+    require(
+        config.weapons.catalog_hash !=
+        network_example::game_server::compute_gameplay_catalog_hash(changed_config));
     const KernelCombatStateDefinition player_combat_state =
         network_example::game_server::make_player_combat_state(config);
     assert(player_combat_state.hp == 1000);
@@ -525,7 +704,7 @@ int main() {
 
     assert(config.agent.actor_template_id == 2);
     assert(config.agent.spawn_position.x == 6.0f);
-    assert(config.agent.spawn_count == 10);
+    assert(config.agent.spawn_count == 2);
     assert(config.agent.spawn_radius == 5.0f);
     assert(config.agent.spawn_seed == 4242);
     const KernelCombatStateDefinition enemy_combat_state =
@@ -576,7 +755,7 @@ int main() {
     const KernelWeaponMechanicsDefinition& grenade_launcher =
         config.weapons.definitions[network_example::game_server::kWeaponGrenade];
     assert(grenade_launcher.fire_mode == KernelWeaponFireMode_Projectile);
-    assert(grenade_launcher.damage == 45);
+    assert(grenade_launcher.damage == 0);
     assert(grenade_launcher.magazine_size == 6);
     assert(grenade_launcher.projectile_template_id == 7);
     assert(config.weapons.collider_template_ids
@@ -605,7 +784,7 @@ int main() {
         config.weapons
             .projectile_sync_modes[network_example::game_server::kWeaponRocket] ==
         KernelProjectileSyncMode_ServerSnapshotOnly);
-    assert(config.colliders.templates.size() == 11);
+    assert(config.colliders.templates.size() == 12);
     assert(config.colliders.bindings.empty());
     assert(config.actor_templates.size() == 2);
     const network_example::game_server::ActorTemplateConfig& player_template =
@@ -620,6 +799,14 @@ int main() {
     assert(player_template.weapon_ids[1] == network_example::game_server::kWeaponShotgun);
     assert(player_template.weapon_ids[2] == network_example::game_server::kWeaponGrenade);
     assert(player_template.active_weapon_slot == 0);
+    assert(player_template.inventory_slot_capacity == 8);
+    assert(player_template.inventory_slots.size() == 3);
+    assert(player_template.inventory_slots[0].item_template_id == 3002);
+    assert(player_template.inventory_slots[0].quantity == 5);
+    assert(player_template.inventory_slots[1].item_template_id == 3003);
+    assert(player_template.inventory_slots[1].quantity == 1);
+    assert(player_template.inventory_slots[2].item_template_id == 3004);
+    assert(player_template.inventory_slots[2].quantity == 1);
     assert(player_template.vision.camp == KernelAgentCamp_PlayerSide);
     assert(player_template.vision.vision_collider_template_id == 0);
     assert(player_template.movement_controller_type ==
@@ -707,9 +894,14 @@ int main() {
         if (projectile.name == "grenade_shell_projectile") {
             found_grenade_shell = true;
             assert(projectile.definition.mechanics.collider_template_id == 7);
-            assert(projectile.definition.mechanics.damage == 45);
+            assert(projectile.definition.mechanics.damage == 0);
+            assert(projectile.definition.mechanics.damage_shape ==
+                   KernelProjectileDamageShape_None);
             assert(projectile.definition.mechanics
-                       .impact_spawn_projectile_template_id == 8);
+                       .projectile_impact_trigger.action_type ==
+                   KernelEntityTriggerActionType_SpawnProjectile);
+            assert(projectile.definition.mechanics.projectile_impact_trigger
+                       .spawn_projectile_template_id == 8);
         }
         if (projectile.name == "spammer_projectile") {
             found_spammer_projectile = true;
@@ -721,9 +913,12 @@ int main() {
             assert(projectile.definition.mechanics.collider_template_id == 3);
             assert(projectile.definition.mechanics.damage_shape ==
                    KernelProjectileDamageShape_DirectHit);
+            assert(projectile.definition.mechanics.damage == 45);
             assert(projectile.definition.mechanics
-                       .impact_spawn_projectile_template_id == 8);
-            assert((projectile.definition.mechanics.flags & 1u) != 0u);
+                       .projectile_impact_trigger.action_type ==
+                   KernelEntityTriggerActionType_SpawnProjectile);
+            assert(projectile.definition.mechanics.projectile_impact_trigger
+                       .spawn_projectile_template_id == 8);
         }
         if (projectile.name == "rocket_explosion") {
             found_rocket_explosion = true;
@@ -774,6 +969,258 @@ int main() {
     assert(bundle_config.actor_templates.size() == config.actor_templates.size());
     assert(bundle_config.agent.actor_template_id == config.agent.actor_template_id);
 
+    const std::string health_change_graph =
+        "id: action_apply_health_change\n"
+        "parameters:\n"
+        "  target: null\n"
+        "  amount: 1\n"
+        "actions:\n"
+        "  - type: apply_health_change\n"
+        "    target: params.target\n"
+        "    amount: params.amount\n"
+        "    when: event.has_target\n";
+    const std::string collision_prop =
+        "id: 300\n"
+        "name: health_change_collision_prop\n"
+        "entity_type: prop\n"
+        "health:\n"
+        "  hp: 3\n"
+        "  max_hp: 3\n"
+        "physics:\n"
+        "  collider_template: rocket_aabb\n"
+        "triggers:\n"
+        "  on_collision:\n"
+        "    collision_mask: actor | terrain | obstacle\n"
+        "    action_graph: action_apply_health_change\n"
+        "    parameters:\n"
+        "      target: event.target\n"
+        "      amount: 30\n";
+    const std::vector<std::uint8_t> health_change_bundle =
+        make_gameplay_bundle_zip(
+            read_text_file("game_server/entity_templates/sentry_grunt.yaml"),
+            {
+                {"action_graph_templates/action_apply_health_change.yaml",
+                 health_change_graph},
+                {"entity_templates/health_change_collision_prop.yaml",
+                 collision_prop},
+            });
+    const network_example::game_server::GameServerGameplayConfig
+        health_change_config =
+            network_example::game_server::load_gameplay_config_from_bundle_memory(
+                health_change_bundle.data(),
+                static_cast<std::uint32_t>(health_change_bundle.size()),
+                "gameplay_catalog.yaml");
+    const network_example::game_server::KernelGameplayCatalogStorage
+        health_change_catalog =
+            network_example::game_server::build_kernel_gameplay_catalog(
+                health_change_config);
+    const auto health_prop = std::find_if(
+        health_change_catalog.entity_templates.begin(),
+        health_change_catalog.entity_templates.end(),
+        [](const KernelEntityTemplateDefinition& entity) {
+            return entity.entity_template_id == 300u;
+        });
+    require(health_prop != health_change_catalog.entity_templates.end());
+    require(health_prop->collision_trigger.action_count == 1u);
+    require(
+        health_prop->collision_trigger.action_type ==
+        KernelEntityTriggerActionType_ApplyHealthChange);
+    require(health_prop->collision_trigger.health_change_amount == 30);
+    require(
+        health_prop->collision_trigger.condition_type ==
+        KernelActionConditionType_EventHasTarget);
+    require(
+        health_prop->collision_trigger_mask ==
+        (KERNEL_COLLISION_MASK_ACTOR |
+         KERNEL_COLLISION_MASK_STATIC_WORLD));
+    require(
+        health_prop->collision_trigger.actions[0].action_type ==
+        KernelEntityTriggerActionType_ApplyHealthChange);
+    require(health_prop->collision_trigger.actions[0].health_change_amount == 30);
+    require(
+        health_prop->collision_trigger.actions[0].condition_type ==
+        KernelActionConditionType_EventHasTarget);
+    auto health_change_hash_config = health_change_config;
+    const auto authored_health_prop = std::find_if(
+        health_change_hash_config.entity_templates.begin(),
+        health_change_hash_config.entity_templates.end(),
+        [](const network_example::game_server::EntityTemplateConfig& entity) {
+            return entity.actor_template_id == 300u;
+        });
+    require(
+        authored_health_prop != health_change_hash_config.entity_templates.end());
+    const auto amount_parameter = std::find_if(
+        authored_health_prop->collision_trigger.parameters.begin(),
+        authored_health_prop->collision_trigger.parameters.end(),
+        [](const auto& parameter) { return parameter.first == "amount"; });
+    require(
+        amount_parameter !=
+        authored_health_prop->collision_trigger.parameters.end());
+    amount_parameter->second = "31";
+    require(
+        network_example::game_server::compute_gameplay_catalog_hash(
+            health_change_config) !=
+        network_example::game_server::compute_gameplay_catalog_hash(
+            health_change_hash_config));
+
+    const std::string collision_projectile_graph =
+        "id: action_spawn_projectile_at_collision\n"
+        "parameters:\n"
+        "  template: null\n"
+        "  position: null\n"
+        "  direction: null\n"
+        "actions:\n"
+        "  - type: spawn_projectile\n"
+        "    projectile_template: params.template\n"
+        "    position: params.position\n"
+        "    direction: params.direction\n";
+    const std::string collision_projectile_prop =
+        "id: 301\n"
+        "name: collision_projectile_prop\n"
+        "entity_type: prop\n"
+        "health:\n"
+        "  hp: 1\n"
+        "  max_hp: 1\n"
+        "physics:\n"
+        "  collider_template: rocket_aabb\n"
+        "triggers:\n"
+        "  on_collision:\n"
+        "    collision_mask: terrain\n"
+        "    action_graph: action_spawn_projectile_at_collision\n"
+        "    parameters:\n"
+        "      template: fire_floor_area\n"
+        "      position: event.position\n"
+        "      direction: event.direction\n";
+    const std::vector<std::uint8_t> collision_projectile_bundle =
+        make_gameplay_bundle_zip(
+            read_text_file("game_server/entity_templates/sentry_grunt.yaml"),
+            {
+                {"action_graph_templates/"
+                 "action_spawn_projectile_at_collision.yaml",
+                 collision_projectile_graph},
+                {"entity_templates/collision_projectile_prop.yaml",
+                 collision_projectile_prop},
+            });
+    const network_example::game_server::GameServerGameplayConfig
+        collision_projectile_config =
+            network_example::game_server::load_gameplay_config_from_bundle_memory(
+                collision_projectile_bundle.data(),
+                static_cast<std::uint32_t>(collision_projectile_bundle.size()),
+                "gameplay_catalog.yaml");
+    const network_example::game_server::KernelGameplayCatalogStorage
+        collision_projectile_catalog =
+            network_example::game_server::build_kernel_gameplay_catalog(
+                collision_projectile_config);
+    const auto collision_projectile = std::find_if(
+        collision_projectile_catalog.entity_templates.begin(),
+        collision_projectile_catalog.entity_templates.end(),
+        [](const KernelEntityTemplateDefinition& entity) {
+            return entity.entity_template_id == 301u;
+        });
+    require(
+        collision_projectile !=
+        collision_projectile_catalog.entity_templates.end());
+    require(collision_projectile->collision_trigger.action_count == 1u);
+    require(
+        collision_projectile->collision_trigger.action_type ==
+        KernelEntityTriggerActionType_SpawnProjectile);
+    require(
+        collision_projectile->collision_trigger.spawn_projectile_template_id ==
+        4u);
+    require(
+        collision_projectile->collision_trigger.position_source ==
+        KernelEventVec3Source_Position);
+    require(
+        collision_projectile->collision_trigger.direction_source ==
+        KernelEventVec3Source_Direction);
+
+    for (const char* invalid_amount : {"0", "65536", "-65536"}) {
+        const std::string invalid_prop =
+            "id: 300\n"
+            "name: health_change_collision_prop\n"
+            "entity_type: prop\n"
+            "health:\n"
+            "  hp: 3\n"
+            "  max_hp: 3\n"
+            "physics:\n"
+            "  collider_template: rocket_aabb\n"
+            "triggers:\n"
+            "  on_collision:\n"
+            "    collision_mask: actor\n"
+            "    action_graph: action_apply_health_change\n"
+            "    parameters:\n"
+            "      target: self\n"
+            "      amount: " + std::string(invalid_amount) + "\n";
+        const std::vector<std::uint8_t> invalid_bundle =
+            make_gameplay_bundle_zip(
+                read_text_file("game_server/entity_templates/sentry_grunt.yaml"),
+                {
+                    {"action_graph_templates/action_apply_health_change.yaml",
+                     health_change_graph},
+                    {"entity_templates/health_change_collision_prop.yaml",
+                     invalid_prop},
+                });
+        bool rejected = false;
+        try {
+            const auto invalid_config = network_example::game_server::
+                load_gameplay_config_from_bundle_memory(
+                    invalid_bundle.data(),
+                    static_cast<std::uint32_t>(invalid_bundle.size()),
+                    "gameplay_catalog.yaml");
+            (void)network_example::game_server::build_kernel_gameplay_catalog(
+                invalid_config);
+        } catch (const std::exception&) {
+            rejected = true;
+        }
+        require(rejected);
+    }
+
+    for (const std::string& invalid_trigger : {
+             std::string(
+                 "  on_collision:\n"
+                 "    action_graph: action_apply_health_change\n"
+                 "    parameters:\n"
+                 "      target: self\n"
+                 "      amount: 30\n"),
+             std::string(
+                 "  on_world_impact:\n"
+                 "    action_graph: action_apply_health_change\n"
+                 "    parameters:\n"
+                 "      target: self\n"
+                 "      amount: 30\n"),
+         }) {
+        const std::string invalid_prop =
+            "id: 300\n"
+            "name: invalid_collision_prop\n"
+            "entity_type: prop\n"
+            "health:\n"
+            "  hp: 3\n"
+            "  max_hp: 3\n"
+            "physics:\n"
+            "  collider_template: rocket_aabb\n"
+            "triggers:\n" + invalid_trigger;
+        const std::vector<std::uint8_t> invalid_bundle =
+            make_gameplay_bundle_zip(
+                read_text_file("game_server/entity_templates/sentry_grunt.yaml"),
+                {
+                    {"action_graph_templates/action_apply_health_change.yaml",
+                     health_change_graph},
+                    {"entity_templates/invalid_collision_prop.yaml",
+                     invalid_prop},
+                });
+        bool rejected = false;
+        try {
+            (void)network_example::game_server::
+                load_gameplay_config_from_bundle_memory(
+                    invalid_bundle.data(),
+                    static_cast<std::uint32_t>(invalid_bundle.size()),
+                    "gameplay_catalog.yaml");
+        } catch (const std::exception&) {
+            rejected = true;
+        }
+        require(rejected);
+    }
+
     const std::vector<std::uint8_t> bundle_with_large_binary =
         make_gameplay_bundle_zip(
             read_text_file("game_server/entity_templates/sentry_grunt.yaml"),
@@ -803,7 +1250,7 @@ int main() {
         config.projectile_templates.size());
 
     const std::vector<std::uint8_t> unsupported_version_bundle = make_store_zip({
-        {"gameplay_catalog.yaml", "catalog_version: 1\n"},
+        {"gameplay_catalog.yaml", "catalog_version: 2\n"},
     });
     bool unsupported_version_rejected = false;
     try {
@@ -819,7 +1266,7 @@ int main() {
     assert(unsupported_version_rejected);
 
     const std::vector<std::uint8_t> unknown_catalog_field_bundle = make_store_zip({
-        {"gameplay_catalog.yaml", "catalog_version: 2\nsurprise: true\n"},
+        {"gameplay_catalog.yaml", "catalog_version: 5\nsurprise: true\n"},
     });
     bool unknown_catalog_field_rejected = false;
     try {
@@ -835,7 +1282,7 @@ int main() {
 
     const std::vector<std::uint8_t> unknown_nested_catalog_field_bundle = make_store_zip({
         {"gameplay_catalog.yaml",
-         "catalog_version: 2\n"
+         "catalog_version: 5\n"
          "weapon_template_dir: weapon_templates\n"
          "projectile_template_dir: projectile_templates\n"
          "collider_template_dir: collider_templates\n"
@@ -857,7 +1304,7 @@ int main() {
 
     const std::vector<std::uint8_t> legacy_collider_field_bundle = make_store_zip({
         {"gameplay_catalog.yaml",
-         "catalog_version: 2\n"
+         "catalog_version: 5\n"
          "weapon_template_dir: weapon_templates\n"
          "projectile_template_dir: projectile_templates\n"
          "collider_template_file: collider_templates/default.yaml\n"},
@@ -877,7 +1324,7 @@ int main() {
     std::vector<std::pair<std::string, std::string>> duplicate_collider_files;
     duplicate_collider_files.push_back({
         "gameplay_catalog.yaml",
-        "catalog_version: 2\n"
+        "catalog_version: 5\n"
         "reload_action_template:\n"
         "  id: 4199\n"
         "  name: shared_reload\n"
@@ -960,7 +1407,7 @@ int main() {
 
     const std::vector<std::uint8_t> duplicate_path_bundle = make_store_zip({
         {"gameplay_catalog.yaml", "catalog_version: 1\n"},
-        {"gameplay_catalog.yaml", "catalog_version: 2\n"},
+        {"gameplay_catalog.yaml", "catalog_version: 5\n"},
     });
     bool duplicate_path_rejected = false;
     try {
@@ -998,6 +1445,47 @@ int main() {
         config.weapons.catalog_hash !=
         network_example::game_server::compute_gameplay_catalog_hash(
             actor_hash_changed));
+    actor_hash_changed = config;
+    actor_hash_changed.actor_templates[0].inventory_slot_capacity += 1;
+    require(
+        config.weapons.catalog_hash !=
+        network_example::game_server::compute_gameplay_catalog_hash(
+            actor_hash_changed));
+    actor_hash_changed = config;
+    actor_hash_changed.actor_templates[0].inventory_slots[0].quantity -= 1;
+    require(
+        config.weapons.catalog_hash !=
+        network_example::game_server::compute_gameplay_catalog_hash(
+            actor_hash_changed));
+    actor_hash_changed = config;
+    std::swap(
+        actor_hash_changed.actor_templates[0].inventory_slots[0],
+        actor_hash_changed.actor_templates[0].inventory_slots[1]);
+    require(
+        config.weapons.catalog_hash !=
+        network_example::game_server::compute_gameplay_catalog_hash(
+            actor_hash_changed));
+
+    invalid = config;
+    invalid.actor_templates[0].inventory_slot_capacity = 2;
+    assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
+    invalid = config;
+    invalid.actor_templates[0].inventory_slots[0].quantity = 0;
+    assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
+    invalid = config;
+    invalid.actor_templates[0].inventory_slots[0].quantity = 6;
+    assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
+    invalid = config;
+    invalid.actor_templates[0].inventory_slots[1].quantity = 2;
+    assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
+    invalid = config;
+    invalid.actor_templates[0].inventory_slots[0].item_template_id = 999999;
+    assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
+    invalid = config;
+    invalid.actor_templates[1].inventory_slot_capacity = 1;
+    invalid.actor_templates[1].inventory_slots = {
+        config.actor_templates[0].inventory_slots[0]};
+    assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
 
     invalid = config;
     invalid.actor_templates[1].sentry.weapon_id =
@@ -1019,6 +1507,105 @@ int main() {
     invalid.actor_templates[1].sentry.patrol_rotation_max_degrees =
         invalid.actor_templates[1].sentry.patrol_rotation_min_degrees - 1.0f;
     assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
+
+    const auto create_player_entity = [](KernelHandle* kernel) {
+        KernelServerEntityCreateInfo create_info{};
+        create_info.struct_size = sizeof(create_info);
+        create_info.entity_type = network_example::game_server::kEntityTypeActor;
+        create_info.actor_type = KernelActorType_Player;
+        create_info.owner_peer = 7;
+        create_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+        std::uint32_t net_id = 0;
+        assert(Kernel_ServerCreateEntity(kernel, &create_info, &net_id));
+        return net_id;
+    };
+    const auto make_server_kernel = []() {
+        KernelConfig kernel_config{};
+        kernel_config.mode = KernelMode_DedicatedServer;
+        kernel_config.tick.server_tick_rate = 30;
+        kernel_config.tick.snapshot_rate = 30;
+        KernelHandle* kernel = Kernel_Create(&kernel_config);
+        assert(kernel != nullptr);
+        return kernel;
+    };
+
+    KernelHandle* inventory_kernel = make_server_kernel();
+    network_example::game_server::GameServer inventory_server(
+        inventory_kernel, config);
+    assert(Kernel_StartDedicatedServer(inventory_kernel, 7898));
+    const std::uint32_t inventory_player = create_player_entity(inventory_kernel);
+    KernelEvent player_joined{};
+    player_joined.type = KernelEventType_PlayerJoined;
+    player_joined.net_id = inventory_player;
+    inventory_server.handle_event(player_joined);
+    std::array<KernelInventoryContainerView, 2> containers{};
+    for (KernelInventoryContainerView& container : containers) {
+        container.struct_size = sizeof(KernelInventoryContainerView);
+    }
+    assert(Kernel_CopyOwnedInventoryContainers(
+               inventory_kernel,
+               inventory_player,
+               containers.data(),
+               static_cast<std::uint32_t>(containers.size())) == 1);
+    assert(containers[0].slot_capacity == 8);
+    assert(containers[0].occupied_slot_count == 3);
+    std::array<KernelItemInstanceView, 8> items{};
+    for (KernelItemInstanceView& item : items) {
+        item.struct_size = sizeof(KernelItemInstanceView);
+    }
+    assert(Kernel_CopyInventorySlots(
+               inventory_kernel,
+               containers[0].inventory_container_id,
+               items.data(),
+               static_cast<std::uint32_t>(items.size())) == 3);
+    assert(items[0].slot == 0 && items[0].item_template_id == 3002 &&
+           items[0].quantity == 5);
+    assert(items[1].slot == 1 && items[1].item_template_id == 3003 &&
+           items[1].quantity == 1);
+    assert(items[1].portable_state_field_count == 1);
+    assert(items[1].portable_state_fields[0].uint32_default == 3);
+    assert(items[2].slot == 2 && items[2].item_template_id == 3004 &&
+           items[2].quantity == 1);
+    assert(items[2].portable_state_field_count == 1);
+    assert(items[2].portable_state_fields[0].uint32_default == 1);
+    inventory_server.handle_event(player_joined);
+    assert(Kernel_CopyOwnedInventoryContainers(
+               inventory_kernel,
+               inventory_player,
+               containers.data(),
+               static_cast<std::uint32_t>(containers.size())) == 1);
+    assert(Kernel_CopyInventorySlots(
+               inventory_kernel,
+               containers[0].inventory_container_id,
+               items.data(),
+               static_cast<std::uint32_t>(items.size())) == 3);
+    Kernel_Destroy(inventory_kernel);
+
+    network_example::game_server::GameServerGameplayConfig no_inventory_config =
+        config;
+    no_inventory_config.actor_templates[0].inventory_slot_capacity = 0;
+    no_inventory_config.actor_templates[0].inventory_slots.clear();
+    no_inventory_config.entity_templates[0].inventory_slot_capacity = 0;
+    no_inventory_config.entity_templates[0].inventory_slots.clear();
+    no_inventory_config.weapons.catalog_hash =
+        network_example::game_server::compute_gameplay_catalog_hash(
+            no_inventory_config);
+    assert(network_example::game_server::validate_gameplay_config(
+               no_inventory_config).empty());
+    KernelHandle* no_inventory_kernel = make_server_kernel();
+    network_example::game_server::GameServer no_inventory_server(
+        no_inventory_kernel, no_inventory_config);
+    assert(Kernel_StartDedicatedServer(no_inventory_kernel, 7899));
+    const std::uint32_t no_inventory_player =
+        create_player_entity(no_inventory_kernel);
+    player_joined.net_id = no_inventory_player;
+    no_inventory_server.handle_event(player_joined);
+    assert(Kernel_CopyOwnedInventoryContainers(
+               no_inventory_kernel,
+               no_inventory_player,
+               nullptr,
+               0) == 0);
+    Kernel_Destroy(no_inventory_kernel);
 
     return 0;
 }

@@ -4,10 +4,15 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
+#include <string>
 #include <unordered_map>
+#include <variant>
+#include <vector>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
+
 
 namespace network_example {
 
@@ -17,6 +22,7 @@ using PeerId = std::uint32_t;
 enum class EntityType : std::uint16_t {
     kUnknown = 0,
     kActor = 1,
+    kProp = 2,
     kProjectile = 3,
     kDirector = 5,
 };
@@ -80,6 +86,32 @@ struct EntityKind {
 
 struct ActorTemplateRef {
     std::uint32_t actor_template_id = 0;
+};
+
+struct EntityTemplateRef {
+    std::uint32_t entity_template_id = 0;
+};
+
+struct ItemTemplateRef {
+    std::uint32_t item_template_id = 0;
+};
+
+struct ItemInstanceRef {
+    std::uint64_t item_instance_id = 0;
+};
+
+enum class PropMode : std::uint8_t {
+    kPlaced = 0,
+    kCarrying = 1,
+    kInFlight = 2,
+};
+
+struct PropWorldMode {
+    PropMode mode = PropMode::kPlaced;
+};
+
+struct CarriedBy {
+    NetId carrier_entity_id = 0;
 };
 
 struct Transform {
@@ -177,6 +209,7 @@ enum class ProjectileHitResponse : std::uint8_t {
 
 enum class ProjectileDamageShape : std::uint8_t {
     kDirectHit = 0,
+    kNone = 1,
     kPiercingSegment = 2,
 };
 
@@ -215,9 +248,13 @@ inline constexpr std::uint32_t kCollisionLayerPlayerSide = 0x00000001u;
 inline constexpr std::uint32_t kCollisionLayerHostileSide = 0x00000002u;
 inline constexpr std::uint32_t kCollisionLayerProjectile = 0x00000004u;
 inline constexpr std::uint32_t kCollisionLayerNeutral = 0x00000020u;
+inline constexpr std::uint32_t kCollisionLayerTerrain = 0x00000040u;
+inline constexpr std::uint32_t kCollisionLayerStaticObstacle = 0x00000080u;
 inline constexpr std::uint32_t kCollisionMaskNone = 0x00000000u;
 inline constexpr std::uint32_t kCollisionMaskDamageable =
     kCollisionLayerPlayerSide | kCollisionLayerHostileSide | kCollisionLayerNeutral;
+inline constexpr std::uint32_t kCollisionMaskStaticWorld =
+    kCollisionLayerTerrain | kCollisionLayerStaticObstacle;
 
 struct WeaponState {
     std::uint8_t active_weapon_slot = 0;
@@ -386,6 +423,196 @@ struct ProjectileState {
     glm::vec3 previous_position{0.0f, 0.0f, 0.0f};
 };
 
+enum class TriggerEventType : std::uint8_t {
+    kCollision,
+    kProjectileImpact,
+    kActivated,
+    kItemUsed,
+    kHealthDepleted,
+    kDestroyEntity,
+    kExpired,
+};
+
+struct OnCollisionTriggerTag {};
+struct OnProjectileImpactTriggerTag {};
+struct OnActivatedTriggerTag {};
+struct OnHealthDepletedTriggerTag {};
+struct OnDestroyEntityTriggerTag {};
+struct OnExpiredTriggerTag {};
+
+struct ProjectileImpactPayload {
+    std::uint32_t projectile_template_id = 0;
+    std::uint32_t action_instance_id = 0;
+    std::uint8_t source_weapon_id = 0;
+    bool historical = false;
+};
+
+struct ItemUsedPayload {
+    std::uint64_t item_instance_id = 0;
+    std::uint32_t item_template_id = 0;
+    std::uint8_t domain_action = 0;
+    std::uint32_t quantity = 0;
+};
+
+struct TriggerEvent {
+    TriggerEventType type = TriggerEventType::kCollision;
+    NetId subject = 0;
+    NetId instigator = 0;
+    NetId target = 0;
+    glm::vec3 position{0.0f};
+    glm::vec3 direction{0.0f};
+    std::optional<ProjectileImpactPayload> projectile_impact;
+    std::optional<ItemUsedPayload> item_used;
+};
+
+enum class ActionAuthoritySource : std::uint8_t {
+    kAuthoritativeSimulation,
+    kClientPrediction,
+};
+
+struct ActionExecutionProvenance {
+    std::uint64_t request_id = 0;
+    std::uint32_t action_instance_id = 0;
+    std::uint32_t server_tick = 0;
+    NetId instigator = 0;
+    PeerId owner_peer = 0;
+    std::uint8_t source_weapon_id = 0;
+    ActionAuthoritySource authority_source =
+        ActionAuthoritySource::kAuthoritativeSimulation;
+    PeerId requester_peer = 0;
+};
+
+struct EntityIdValue {
+    NetId value = 0;
+};
+
+struct ProjectileTemplateIdValue {
+    std::uint32_t value = 0;
+};
+
+struct EntityTemplateIdValue {
+    std::uint32_t value = 0;
+};
+
+struct ItemInstanceIdValue {
+    std::uint64_t value = 0;
+};
+
+using ActionGraphParameterValue = std::variant<
+    std::monostate,
+    EntityIdValue,
+    ProjectileTemplateIdValue,
+    EntityTemplateIdValue,
+    ItemInstanceIdValue,
+    glm::vec3,
+    float>;
+
+enum class EntityRefSource : std::uint8_t {
+    kSelf,
+    kEventSubject,
+    kEventTarget,
+    kEventInstigator,
+};
+
+struct EntityRefExpression {
+    EntityRefSource source = EntityRefSource::kSelf;
+};
+
+enum class EventVec3Source : std::uint8_t {
+    kPosition,
+    kDirection,
+};
+
+enum class ActionConditionType : std::uint8_t {
+    kAlways,
+    kEventHasTarget,
+};
+
+struct EventVec3Expression {
+    EventVec3Source source = EventVec3Source::kPosition;
+};
+
+struct ItemRefExpression {};
+
+using ActionGraphParameterExpression = std::variant<
+    ActionGraphParameterValue,
+    EntityRefExpression,
+    EventVec3Expression,
+    ItemRefExpression>;
+
+struct ActionGraphParameterDefinition {
+    std::string name;
+    ActionGraphParameterValue default_value;
+};
+
+struct ActionGraphParameterBinding {
+    std::string name;
+    ActionGraphParameterExpression expression;
+};
+
+struct ActionSpawnProjectileDefinition {
+    std::string projectile_template_parameter;
+    std::string position_parameter;
+    std::string direction_parameter;
+    ActionConditionType condition = ActionConditionType::kAlways;
+};
+
+struct ActionApplyDamageDefinition {
+    std::string target_parameter;
+    std::string amount_parameter;
+    ActionConditionType condition = ActionConditionType::kAlways;
+};
+
+struct ActionApplyHealthChangeDefinition {
+    std::string target_parameter;
+    std::string amount_parameter;
+    ActionConditionType condition = ActionConditionType::kAlways;
+};
+
+struct ActionSpawnEntityDefinition {
+    std::string entity_template_parameter;
+    std::string position_parameter;
+    std::string owner_parameter;
+    std::uint32_t item_template_id = 0;
+    std::uint32_t quantity = 0;
+    ActionConditionType condition = ActionConditionType::kAlways;
+};
+
+using ActionGraphAction = std::variant<
+    ActionSpawnProjectileDefinition,
+    ActionApplyDamageDefinition,
+    ActionApplyHealthChangeDefinition,
+    ActionSpawnEntityDefinition>;
+
+struct ActionGraphTemplate {
+    std::string id;
+    std::vector<ActionGraphParameterDefinition> parameters;
+    std::vector<ActionGraphAction> actions;
+};
+
+struct CompiledActionGraphBinding {
+    TriggerEventType event_type = TriggerEventType::kCollision;
+    ActionGraphTemplate graph;
+    std::vector<ActionGraphParameterBinding> parameters;
+};
+
+struct ActionGraphActivatedBinding {
+    CompiledActionGraphBinding binding;
+};
+
+struct ActionGraphCollisionBinding {
+    CompiledActionGraphBinding binding;
+    std::uint32_t collision_mask = kCollisionMaskNone;
+};
+
+struct ActionGraphHealthDepletedBinding {
+    CompiledActionGraphBinding binding;
+};
+
+struct ActionGraphDestroyEntityBinding {
+    CompiledActionGraphBinding binding;
+};
+
 struct RuntimeProjectileTemplate {
     std::uint32_t projectile_template_id = 0;
     std::uint8_t weapon_id = 0;
@@ -398,7 +625,6 @@ struct RuntimeProjectileTemplate {
         ProjectileCollisionQueryMode::kAuto;
     ProjectileCollisionGeometry collision_geometry{};
     bool has_collision_geometry = false;
-    bool impact_destroy_self = true;
     ProjectileDamageFalloff damage_falloff = ProjectileDamageFalloff::kNone;
     std::uint16_t damage = 0;
     float speed = 0.0f;
@@ -408,8 +634,8 @@ struct RuntimeProjectileTemplate {
     float area_radius = 0.0f;
     std::uint32_t collision_mask = kCollisionMaskDamageable;
     std::uint32_t max_hit_count = 1;
-    std::uint32_t impact_spawn_projectile_template_id = 0;
-    std::uint32_t expire_spawn_projectile_template_id = 0;
+    std::optional<CompiledActionGraphBinding> projectile_impact_binding;
+    std::optional<CompiledActionGraphBinding> expired_binding;
     std::uint32_t damage_interval_ticks = 1;
     float beam_length = 0.0f;
     float beam_radius = 0.0f;
