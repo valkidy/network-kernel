@@ -220,6 +220,7 @@ cc_shared_library(
             "-Wl,-exported_symbol,_Kernel_SubmitGameplayRequest",
             "-Wl,-exported_symbol,_Kernel_GetItemInstance",
             "-Wl,-exported_symbol,_Kernel_GetInventoryContainer",
+            "-Wl,-exported_symbol,_Kernel_CopyOwnedInventoryContainers",
             "-Wl,-exported_symbol,_Kernel_CopyInventorySlots",
             "-Wl,-exported_symbol,_Kernel_PollGameplayRequestOutcomes",
             "-Wl,-exported_symbol,_Kernel_PollInventoryDeltas",

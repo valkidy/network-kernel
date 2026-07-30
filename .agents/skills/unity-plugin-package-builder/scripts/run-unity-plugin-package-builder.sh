@@ -620,6 +620,9 @@ build_required_exports() {
       Kernel_ServerClearEntityVisionConfig
     )
   fi
+  if [[ "$native_abi" -ge 54 ]]; then
+    REQUIRED_EXPORTS_BUILT+=(Kernel_CopyOwnedInventoryContainers)
+  fi
   if [[ "$native_game_server_abi" -ge 2 ]]; then
     REQUIRED_EXPORTS_BUILT+=(
       GameServer_CreateWithWeaponTemplateDirectory
