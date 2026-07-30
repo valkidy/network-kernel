@@ -1,5 +1,10 @@
 0.6.9 release notes:
 
+- fixes macOS owned inventory container API export
+
+
+0.6.9 release notes:
+
 - rebuilds macOS and Windows native plugins for kernel ABI 57
 
 
