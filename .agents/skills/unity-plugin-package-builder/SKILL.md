@@ -94,8 +94,22 @@ package builder script:
      wrapper methods, editor smoke, and managed smoke with the native headers.
    - If the pass finds required native C++/ABI changes, stop and use
      `unity-plugin-plan-guideline` instead of continuing package-builder work.
-3. After the Unity API is aligned, run the bundled script as the only build,
-   stage, verify, pack, release-note, and optional Unity batchmode entry point.
+3. Verify the native shared-library export lists before building:
+   - Build the canonical export set from the public `Kernel_*` and
+     `GameServer_*` C ABI declarations in `engine/src/kernel/public/kernel_api.h`
+     and `game_server/public/game_server_api.h`, and confirm every entry has a
+     C++ implementation in `engine/src/kernel/src/kernel_api.cc` or
+     `game_server/src/game_server_api.cc`.
+   - Compare that set with the macOS `-Wl,-exported_symbol` allowlist in
+     `engine/src/kernel/BUILD.bazel` and the Windows exports in
+     `engine/src/kernel/network_kernel_exports.def`. Normalize the macOS
+     leading underscore before comparison.
+   - Require all three sets to match exactly. On any missing implementation,
+     missing platform export, or stale extra export, report the mismatched
+     symbol and file, then stop before native build, staging, or packaging.
+4. After the Unity API and native exports are aligned, run the bundled script
+   as the only entry point for build, stage, verify, pack, release-note, and
+   optional Unity batchmode work.
 
 ## Branch And Safety
 
