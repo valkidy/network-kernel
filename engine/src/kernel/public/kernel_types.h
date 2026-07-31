@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 60u
+#define KERNEL_ABI_VERSION 61u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -867,12 +867,10 @@ typedef struct RenderEntityState {
     uint32_t spawn_tick;
     uint32_t action_instance_id;
     uint32_t status;
-    uint32_t projectile_template_id;
+    uint32_t template_id;
     uint32_t collider_template_id;
-    uint32_t actor_template_id;
     KernelActionRuntimeView action;
     KernelVec3 aim_direction;
-    uint32_t item_template_id;
     KernelItemInstanceId item_instance_id;
     uint8_t world_item_mode;
     uint8_t reserved_item0;

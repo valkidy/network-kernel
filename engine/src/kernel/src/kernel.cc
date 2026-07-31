@@ -7252,9 +7252,9 @@ void KernelEngine::append_predicted_local_render_state() {
     if (state.entity_type == static_cast<std::uint16_t>(EntityType::kActor) &&
         replicated != client_replicated_entities_.end() &&
         replicated->actor_template_id != 0u) {
-        state.actor_template_id = replicated->actor_template_id;
+        state.template_id = replicated->actor_template_id;
         state.collider_template_id =
-            collider_template_id_for_actor_template(state.actor_template_id);
+            collider_template_id_for_actor_template(state.template_id);
     }
     state.status = RenderEntityStatus_Predicted;
     render_states_.push_back(state);
@@ -7292,7 +7292,6 @@ void KernelEngine::append_predicted_projectile_render_states() {
             RenderEntityStatus_Predicted,
             projectile.projectile_template_id,
             projectile.collider_template_id,
-            0,
             KernelActionRuntimeView{sizeof(KernelActionRuntimeView)},
             KernelVec3{1.0f, 0.0f, 0.0f},
         });
@@ -8679,9 +8678,9 @@ void KernelEngine::rebuild_render_states_from_world() {
         } else if (world_.registry().all_of<Hitbox>(entity)) {
             const Hitbox& hitbox = world_.registry().get<Hitbox>(entity);
             state.collider_template_id = hitbox.collider_template_id;
-        } else if (kind.type == EntityType::kActor && state.actor_template_id != 0u) {
+        } else if (kind.type == EntityType::kActor && state.template_id != 0u) {
             state.collider_template_id =
-                collider_template_id_for_actor_template(state.actor_template_id);
+                collider_template_id_for_actor_template(state.template_id);
         } else {
             state.collider_template_id = 0;
         }
@@ -8691,6 +8690,21 @@ void KernelEngine::rebuild_render_states_from_world() {
 
 void KernelEngine::rebuild_render_states_from_snapshot(
     std::uint64_t client_render_time_us) {
+    const auto render_template_id =
+        [](const ClientReplicatedEntity& entity) -> std::uint32_t {
+        if (entity.type == EntityType::kActor) {
+            return entity.actor_template_id;
+        }
+        if (entity.type == EntityType::kProjectile) {
+            return entity.projectile_template_id;
+        }
+        if (entity.type == EntityType::kProp &&
+            entity.item_instance_id != 0u &&
+            entity.item_template_id != 0u) {
+            return entity.item_template_id;
+        }
+        return entity.entity_template_id;
+    };
     render_states_.clear();
     append_predicted_local_render_state();
     append_predicted_projectile_render_states();
@@ -8775,14 +8789,13 @@ void KernelEngine::rebuild_render_states_from_snapshot(
             render_entity,
             entity_id_for_net_id(entity.net_id)));
         RenderEntityState& state = render_states_.back();
+        state.template_id = render_template_id(*replicated);
         if (state.entity_type == static_cast<std::uint16_t>(EntityType::kActor) &&
             replicated->actor_template_id != 0u) {
-            state.actor_template_id = replicated->actor_template_id;
             state.collider_template_id =
                 collider_template_id_for_actor_template(replicated->actor_template_id);
         } else if (
             state.entity_type == static_cast<std::uint16_t>(EntityType::kProjectile)) {
-            state.projectile_template_id = replicated->projectile_template_id;
             state.collider_template_id = replicated->collider_template_id;
         } else {
             state.collider_template_id = replicated->collider_template_id;
@@ -8837,12 +8850,10 @@ void KernelEngine::rebuild_render_states_from_snapshot(
             0,
             0,
             RenderEntityStatus_Stale,
-            entity.projectile_template_id,
+            render_template_id(entity),
             collider_template_id,
-            entity.actor_template_id,
             KernelActionRuntimeView{sizeof(KernelActionRuntimeView)},
             KernelVec3{1.0f, 0.0f, 0.0f},
-            entity.item_template_id,
             entity.item_instance_id,
             entity.world_item_mode,
             0,

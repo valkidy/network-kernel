@@ -254,7 +254,7 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 60u);
+    assert(KERNEL_ABI_VERSION == 61u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CONTROL_PLANE_RPC) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ACTION_TIMELINE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LOCAL_ACTION_RESULTS) != 0);
@@ -289,12 +289,10 @@ int main() {
     assert(offsetof(RenderEntityState, hp) > offsetof(RenderEntityState, velocity));
     assert(offsetof(RenderEntityState, max_hp) > offsetof(RenderEntityState, hp));
     assert(offsetof(RenderEntityState, status) > offsetof(RenderEntityState, action_instance_id));
-    assert(offsetof(RenderEntityState, projectile_template_id) >
+    assert(offsetof(RenderEntityState, template_id) >
            offsetof(RenderEntityState, status));
     assert(offsetof(RenderEntityState, collider_template_id) >
-           offsetof(RenderEntityState, projectile_template_id));
-    assert(offsetof(RenderEntityState, actor_template_id) >
-           offsetof(RenderEntityState, collider_template_id));
+           offsetof(RenderEntityState, template_id));
     assert(offsetof(KernelNetworkStats, replication_metadata_timeout_count) >
            offsetof(KernelNetworkStats, loss_ratio));
     assert(offsetof(KernelNetworkStats, replication_stale_snapshot_drop_count) >
@@ -316,7 +314,8 @@ int main() {
     assert(offsetof(KernelServerEntityState, action) >
            offsetof(KernelServerEntityState, reload_remaining_ticks));
     assert(offsetof(RenderEntityState, action) >
-           offsetof(RenderEntityState, actor_template_id));
+           offsetof(RenderEntityState, collider_template_id));
+    assert(sizeof(RenderEntityState) == 144u);
     assert(offsetof(KernelWeaponMechanicsDefinition, reserve_magazines) >
            offsetof(KernelWeaponMechanicsDefinition, magazine_size));
     assert(offsetof(KernelWeaponMechanicsDefinition, damage) >

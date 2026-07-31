@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 60u`.
+`KERNEL_ABI_VERSION == 61u`.
 
 ## Ownership
 
@@ -30,6 +30,16 @@ failures return `NULL`, `false`, or `0`.
 Additive changes must prefer new `Kernel_*` functions or new capability flags.
 Breaking changes to public struct layout, enum semantics, buffer ownership, or
 function signatures require a `KERNEL_ABI_VERSION` bump.
+
+ABI version 61 replaces the specialized actor, projectile, item, and entity
+template fields in `RenderEntityState` with one `template_id`. Its namespace is
+derived from the render entity: Actors use the Actor Template ID, Projectiles
+use the Projectile Template ID, Item-backed Props use the Item Template ID, and
+pure Props or other entity-template-backed objects use the Entity Template ID.
+`collider_template_id` remains separate because it is resolved per rendered
+entity, while `item_instance_id` remains the stable runtime Item identity.
+Reliable spawn metadata supplies the client projection without changing
+snapshot packets.
 
 ABI version 60 adds authoritative lifecycle and population policy for temporary
 pure Props. `KernelPropDefinition` carries `lifetime_ticks` and a resolved

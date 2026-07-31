@@ -55,8 +55,7 @@ RenderEntityState render_state_from_world_entity(
     std::uint32_t visual_flags = derived_visual_flags(world, entity);
     std::uint32_t spawn_tick = 0;
     std::uint32_t action_instance_id = 0;
-    std::uint32_t actor_template_id = 0;
-    std::uint32_t projectile_template_id = 0;
+    std::uint32_t template_id = 0;
     std::uint16_t hp = 0;
     std::uint16_t max_hp = 0;
     KernelActionRuntimeView action{};
@@ -88,10 +87,10 @@ RenderEntityState render_state_from_world_entity(
             world.registry().get<ProjectileState>(entity);
         spawn_tick = projectile.spawn_tick;
         action_instance_id = projectile.action_instance_id;
-        projectile_template_id = projectile.projectile_template_id;
+        template_id = projectile.projectile_template_id;
     }
     if (world.registry().all_of<ActorTemplateRef>(entity)) {
-        actor_template_id =
+        template_id =
             world.registry().get<ActorTemplateRef>(entity).actor_template_id;
     }
     if (world.registry().all_of<ActionInputState>(entity)) {
@@ -130,6 +129,14 @@ RenderEntityState render_state_from_world_entity(
         carrier_entity_id =
             world.registry().get<CarriedBy>(entity).carrier_entity_id;
     }
+    if (kind.type == EntityType::kProp && item_instance_id != 0u &&
+        item_template_id != 0u) {
+        template_id = item_template_id;
+    } else if (template_id == 0u &&
+               world.registry().all_of<EntityTemplateRef>(entity)) {
+        template_id =
+            world.registry().get<EntityTemplateRef>(entity).entity_template_id;
+    }
     return RenderEntityState{
         entity_id,
         identity.net_id,
@@ -146,12 +153,10 @@ RenderEntityState render_state_from_world_entity(
         spawn_tick,
         action_instance_id,
         RenderEntityStatus_Active,
-        projectile_template_id,
+        template_id,
         0,
-        actor_template_id,
         action,
         aim_direction,
-        item_template_id,
         item_instance_id,
         world_item_mode,
         0,
@@ -187,7 +192,6 @@ RenderEntityState render_state_from_snapshot_entity(
         RenderEntityStatus_Active,
         0,
         0,
-        0,
         KernelActionRuntimeView{
             sizeof(KernelActionRuntimeView),
             entity.action_template_id,
@@ -199,7 +203,6 @@ RenderEntityState render_state_from_snapshot_entity(
             entity.action_commit_count,
         },
         to_kernel_vec3(entity.aim_direction),
-        entity.item_template_id,
         entity.item_instance_id,
         entity.world_item_mode,
         0,
