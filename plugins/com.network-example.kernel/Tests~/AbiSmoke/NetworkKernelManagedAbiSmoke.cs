@@ -32,7 +32,10 @@ public static class NetworkKernelManagedAbiSmoke
         KernelAbiInfo info = KernelAbi.GetInfo();
         KernelBuildInfo buildInfo = KernelAbi.GetBuildInfo();
         GameServerAbiInfo gameServerInfo = GameServerAbi.GetInfo();
-        Require(KernelConstants.AbiVersion == 60, "Managed kernel ABI version was not v60.");
+        Require(KernelConstants.AbiVersion == 61, "Managed kernel ABI version was not v61.");
+        Require(
+            RenderEntityState.StructSize == 144,
+            "Managed RenderEntityState layout was not 144 bytes.");
         Require(
             (info.capability_flags & KernelConstants.CapabilityEntityLifecycleEvents) != 0,
             "Kernel lifecycle event capability was missing.");

@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 60;
+        public const uint AbiVersion = 61;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int GameplayCatalogEntryPathSize = 128;
@@ -1117,17 +1117,17 @@ namespace NetworkExample.Kernel
         public uint spawn_tick;
         public uint action_instance_id;
         public RenderEntityStatus status;
-        public uint projectile_template_id;
+        public uint template_id;
         public uint collider_template_id;
-        public uint actor_template_id;
         public KernelActionRuntimeView action;
         public KernelVec3 aim_direction;
-        public uint item_template_id;
         public ulong item_instance_id;
         public byte world_item_mode;
         public byte reserved_item0;
         public ushort reserved_item1;
         public uint carrier_entity_id;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<RenderEntityState>();
     }
 
     [StructLayout(LayoutKind.Sequential)]
