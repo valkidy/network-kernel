@@ -172,6 +172,9 @@ int main() {
            sizeof(KernelCombatStateDefinition));
     assert(abi_info.gameplay_catalog_definition_size ==
            sizeof(KernelGameplayCatalogDefinition));
+    assert(
+        abi_info.prop_population_rule_definition_size ==
+        sizeof(KernelPropPopulationRuleDefinition));
     assert(abi_info.gameplay_catalog_load_result_size ==
            sizeof(KernelGameplayCatalogLoadResult));
     assert(abi_info.gameplay_catalog_load_options_size ==
@@ -251,7 +254,7 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 59u);
+    assert(KERNEL_ABI_VERSION == 60u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CONTROL_PLANE_RPC) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ACTION_TIMELINE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LOCAL_ACTION_RESULTS) != 0);

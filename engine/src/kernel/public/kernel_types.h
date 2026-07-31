@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 59u
+#define KERNEL_ABI_VERSION 60u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -190,6 +190,7 @@ typedef struct KernelAbiInfo {
     uint32_t lan_discovery_result_size;
     uint64_t capability_flags;
     uint32_t gameplay_catalog_definition_size;
+    uint32_t prop_population_rule_definition_size;
     uint32_t gameplay_catalog_load_result_size;
     uint32_t gameplay_catalog_load_options_size;
     uint32_t actor_template_definition_size;
@@ -299,6 +300,8 @@ typedef enum KernelDespawnReason {
     KernelDespawnReason_Destroyed = 0,
     KernelDespawnReason_OutOfRange = 1,
     KernelDespawnReason_Disconnected = 2,
+    KernelDespawnReason_Expired = 3,
+    KernelDespawnReason_CapacityEvicted = 4,
 } KernelDespawnReason;
 
 typedef enum RenderEntityStatus {
@@ -531,6 +534,12 @@ typedef struct KernelPropInteractionDefinition {
     uint32_t line_of_sight_blocking_mask;
 } KernelPropInteractionDefinition;
 
+typedef struct KernelPropPopulationRuleDefinition {
+    uint32_t struct_size;
+    uint32_t population_group_id;
+    uint32_t max_alive;
+} KernelPropPopulationRuleDefinition;
+
 typedef struct KernelPropDefinition {
     uint32_t struct_size;
     KernelPropInteractionDefinition interaction;
@@ -538,6 +547,8 @@ typedef struct KernelPropDefinition {
     float carry_offset_y;
     float carry_offset_z;
     uint32_t throw_trajectory_projectile_template_id;
+    uint32_t lifetime_ticks;
+    uint32_t population_group_id;
 } KernelPropDefinition;
 
 typedef enum KernelAiControllerType {
@@ -1202,6 +1213,8 @@ typedef struct KernelGameplayCatalogDefinition {
     uint32_t action_template_count;
     const KernelItemTemplateDefinition* item_templates;
     uint32_t item_template_count;
+    const KernelPropPopulationRuleDefinition* prop_population_rules;
+    uint32_t prop_population_rule_count;
 } KernelGameplayCatalogDefinition;
 
 typedef struct KernelGameplayCatalogLoadResult {

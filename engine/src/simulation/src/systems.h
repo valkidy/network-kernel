@@ -32,6 +32,8 @@ public:
         NetId net_id,
         std::uint32_t reason) const;
 
+    void update_prop_lifetimes(KernelEngine& engine) const;
+
     void process_health_depleted(
         KernelEngine& engine,
         const std::vector<ConfirmedDamage>& health_depleted,
@@ -48,7 +50,12 @@ private:
         std::uint32_t reason,
         NetId instigator,
         std::uint8_t source_code,
-        const glm::vec3* event_position) const;
+        const glm::vec3* event_position,
+        bool execute_destroy_graph = true) const;
+
+    void enforce_prop_population_limit(
+        KernelEngine& engine,
+        std::uint32_t population_group_id) const;
 };
 
 class ActivationSystem {

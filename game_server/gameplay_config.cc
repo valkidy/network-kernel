@@ -196,6 +196,14 @@ void hash_projectile_template(
     }
 }
 
+void reject_unknown_keys(
+    const YAML::Node& node,
+    std::initializer_list<const char*> keys,
+    const std::string& path,
+    std::uint32_t source_kind,
+    std::uint32_t template_kind,
+    std::uint32_t template_id = 0);
+
 void hash_actor_template(
     std::uint64_t* hash,
     const ActorTemplateConfig& actor_template) {
@@ -287,6 +295,78 @@ void hash_actor_template(
     hash_scalar(
         hash,
         actor_template.prop.throw_trajectory_projectile_template_id);
+    hash_scalar(hash, actor_template.prop.lifetime_ticks);
+    hash_scalar(hash, actor_template.prop.population_group_id);
+}
+
+std::vector<PropPopulationRuleConfig> prop_population_rules_from_yaml(
+    const YAML::Node& node,
+    const std::string& path,
+    std::uint32_t source_kind) {
+    if (!node || !node.IsSequence()) {
+        throw std::runtime_error(
+            "prop_population_rules must be a sequence: " + path);
+    }
+    std::vector<PropPopulationRuleConfig> rules;
+    for (const YAML::Node& entry : node) {
+        reject_unknown_keys(
+            entry,
+            {"id", "name", "max_alive"},
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+        if (!entry["id"] || !entry["name"] || !entry["max_alive"]) {
+            throw std::runtime_error(
+                "prop population rule requires id, name, and max_alive: " +
+                path);
+        }
+        PropPopulationRuleConfig rule;
+        rule.name = entry["name"].as<std::string>();
+        rule.definition.struct_size = sizeof(rule.definition);
+        rule.definition.population_group_id = entry["id"].as<std::uint32_t>();
+        rule.definition.max_alive = entry["max_alive"].as<std::uint32_t>();
+        if (rule.definition.population_group_id == 0u || rule.name.empty() ||
+            rule.definition.max_alive == 0u ||
+            rule.definition.max_alive > 256u) {
+            throw std::runtime_error(
+                "prop population rule id and name must be non-empty and "
+                "max_alive must be between 1 and 256: " + path);
+        }
+        const bool duplicate = std::any_of(
+            rules.begin(),
+            rules.end(),
+            [&](const PropPopulationRuleConfig& candidate) {
+                return candidate.name == rule.name ||
+                    candidate.definition.population_group_id ==
+                        rule.definition.population_group_id;
+            });
+        if (duplicate) {
+            throw std::runtime_error(
+                "prop population rule id and name must be unique: " + path);
+        }
+        rules.push_back(std::move(rule));
+    }
+    return rules;
+}
+
+std::uint32_t prop_population_group_id_from_ref(
+    const YAML::Node& node,
+    const std::vector<PropPopulationRuleConfig>& rules) {
+    if (!node || !node.IsScalar()) {
+        throw std::runtime_error(
+            "prop population_group reference must be a scalar");
+    }
+    const std::string value = node.as<std::string>();
+    const auto found = std::find_if(
+        rules.begin(),
+        rules.end(),
+        [&value](const PropPopulationRuleConfig& rule) {
+            return rule.name == value;
+        });
+    if (found == rules.end()) {
+        throw std::runtime_error("unknown prop population_group: " + value);
+    }
+    return found->definition.population_group_id;
 }
 
 KernelWeaponMechanicsDefinition hitscan_weapon(
@@ -958,7 +1038,7 @@ void reject_unknown_keys(
     const std::string& path,
     std::uint32_t source_kind,
     std::uint32_t template_kind,
-    std::uint32_t template_id = 0) {
+    std::uint32_t template_id) {
     if (!node || !node.IsMap()) {
         return;
     }
@@ -2439,7 +2519,8 @@ EntityTemplateConfig entity_template_from_yaml(
     std::uint32_t source_kind,
     const WeaponCatalogConfig& weapons,
     const ColliderCatalogConfig& colliders,
-    const std::vector<ProjectileTemplateConfig>& projectile_templates) {
+    const std::vector<ProjectileTemplateConfig>& projectile_templates,
+    const std::vector<PropPopulationRuleConfig>& prop_population_rules) {
     const std::uint16_t entity_type =
         authored_entity_type_from_yaml(node["entity_type"]);
     if (entity_type == kEntityTypeActor) {
@@ -2463,6 +2544,7 @@ EntityTemplateConfig entity_template_from_yaml(
                 "interaction",
                 "throw",
                 "carry_offset",
+                "lifecycle",
                 "triggers",
             },
             path,
@@ -2515,6 +2597,36 @@ EntityTemplateConfig entity_template_from_yaml(
         entity_template.prop.struct_size = sizeof(entity_template.prop);
         entity_template.prop.interaction.struct_size =
             sizeof(entity_template.prop.interaction);
+        if (node["lifecycle"]) {
+            reject_unknown_keys(
+                node["lifecycle"],
+                {"lifetime_ticks", "population_group"},
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                entity_template.actor_template_id);
+            if (!node["lifecycle"]["lifetime_ticks"] &&
+                !node["lifecycle"]["population_group"]) {
+                throw std::runtime_error(
+                    "prop lifecycle requires lifetime_ticks or "
+                    "population_group: " + path);
+            }
+            if (node["lifecycle"]["lifetime_ticks"]) {
+                entity_template.prop.lifetime_ticks =
+                    node["lifecycle"]["lifetime_ticks"].as<std::uint32_t>();
+                if (entity_template.prop.lifetime_ticks == 0u) {
+                    throw std::runtime_error(
+                        "prop lifecycle lifetime_ticks must be positive: " +
+                        path);
+                }
+            }
+            if (node["lifecycle"]["population_group"]) {
+                entity_template.prop.population_group_id =
+                    prop_population_group_id_from_ref(
+                        node["lifecycle"]["population_group"],
+                        prop_population_rules);
+            }
+        }
         if (node["interaction"]) {
             reject_unknown_keys(
                 node["interaction"],
@@ -2862,7 +2974,8 @@ std::vector<EntityTemplateConfig> load_entity_templates_from_source(
     const std::string& directory,
     const WeaponCatalogConfig& weapons,
     const ColliderCatalogConfig& colliders,
-    const std::vector<ProjectileTemplateConfig>& projectile_templates) {
+    const std::vector<ProjectileTemplateConfig>& projectile_templates,
+    const std::vector<PropPopulationRuleConfig>& prop_population_rules) {
     std::vector<EntityTemplateConfig> entity_templates;
     std::unordered_map<std::uint32_t, std::string> ids;
     std::unordered_map<std::string, std::uint32_t> names;
@@ -2875,7 +2988,8 @@ std::vector<EntityTemplateConfig> load_entity_templates_from_source(
                 source.source_kind(),
                 weapons,
                 colliders,
-                projectile_templates);
+                projectile_templates,
+                prop_population_rules);
         if (ids.contains(entity_template.actor_template_id)) {
             throw std::runtime_error("duplicate entity template id: " + file);
         }
@@ -4214,6 +4328,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             "entity_template_dir",
             "item_template_dir",
             "collider_template_dir",
+            "prop_population_rules",
             "static_collision_scene",
             "player",
             "enemy",
@@ -4254,7 +4369,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     const std::uint32_t catalog_version =
         document["catalog_version"] ? document["catalog_version"].as<std::uint32_t>()
                                     : 1u;
-    if (catalog_version != 7u) {
+    if (catalog_version != 8u) {
         throw DataLoadError(
             KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNSUPPORTED_CATALOG_VERSION,
             "unsupported catalog_version: " + std::to_string(catalog_version),
@@ -4279,6 +4394,12 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     const std::string weapon_template_dir =
         source.resolve_path(base_path, document["weapon_template_dir"]);
     GameServerGameplayConfig config;
+    if (document["prop_population_rules"]) {
+        config.prop_population_rules = prop_population_rules_from_yaml(
+            document["prop_population_rules"],
+            path,
+            source.source_kind());
+    }
     if (document["static_collision_scene"]) {
         const YAML::Node scene = document["static_collision_scene"];
         if (!scene["entry_path"] || !scene["scene_id"] ||
@@ -4355,7 +4476,8 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             entity_template_dir,
             config.weapons,
             config.colliders,
-            config.projectile_templates);
+            config.projectile_templates,
+            config.prop_population_rules);
         config.actor_templates =
             actor_templates_from_entity_templates(config.entity_templates);
     } else if (document["actor_template_dir"]) {
@@ -4481,6 +4603,21 @@ std::uint64_t compute_gameplay_catalog_hash(const WeaponCatalogConfig& weapons) 
 std::uint64_t compute_gameplay_catalog_hash(
     const GameServerGameplayConfig& config) {
     std::uint64_t hash = compute_gameplay_catalog_hash(config.weapons);
+    std::vector<PropPopulationRuleConfig> prop_population_rules =
+        config.prop_population_rules;
+    std::sort(
+        prop_population_rules.begin(),
+        prop_population_rules.end(),
+        [](const PropPopulationRuleConfig& lhs,
+           const PropPopulationRuleConfig& rhs) {
+            return lhs.definition.population_group_id <
+                rhs.definition.population_group_id;
+        });
+    for (const PropPopulationRuleConfig& rule : prop_population_rules) {
+        hash_string(&hash, rule.name);
+        hash_scalar(&hash, rule.definition.population_group_id);
+        hash_scalar(&hash, rule.definition.max_alive);
+    }
     std::vector<ActionGraphTemplateConfig> action_graph_templates =
         config.action_graph_templates;
     std::sort(
@@ -4735,6 +4872,65 @@ std::uint8_t active_weapon_id(const ActorTemplateConfig& actor_template) {
 std::vector<std::string> validate_gameplay_config(
     const GameServerGameplayConfig& config) {
     std::vector<std::string> errors;
+    std::vector<std::uint32_t> prop_population_rule_ids;
+    std::vector<std::string> prop_population_rule_names;
+    for (const PropPopulationRuleConfig& rule :
+         config.prop_population_rules) {
+        if (rule.definition.struct_size <
+                sizeof(KernelPropPopulationRuleDefinition) ||
+            rule.definition.population_group_id == 0u ||
+            rule.definition.max_alive == 0u ||
+            rule.definition.max_alive > 256u || rule.name.empty() ||
+            std::find(
+                prop_population_rule_ids.begin(),
+                prop_population_rule_ids.end(),
+                rule.definition.population_group_id) !=
+                prop_population_rule_ids.end() ||
+            std::find(
+                prop_population_rule_names.begin(),
+                prop_population_rule_names.end(),
+                rule.name) != prop_population_rule_names.end()) {
+            errors.push_back("prop population rule must be valid and unique");
+        }
+        prop_population_rule_ids.push_back(
+            rule.definition.population_group_id);
+        prop_population_rule_names.push_back(rule.name);
+    }
+    for (const EntityTemplateConfig& entity_template :
+         config.entity_templates) {
+        if (entity_template.entity_type != KernelEntityType_Prop &&
+            (entity_template.prop.lifetime_ticks != 0u ||
+             entity_template.prop.population_group_id != 0u)) {
+            errors.push_back("only prop templates may declare lifecycle");
+        }
+        if (entity_template.prop.population_group_id != 0u &&
+            std::find(
+                prop_population_rule_ids.begin(),
+                prop_population_rule_ids.end(),
+                entity_template.prop.population_group_id) ==
+                prop_population_rule_ids.end()) {
+            errors.push_back(
+                "prop lifecycle must reference a valid population group");
+        }
+    }
+    for (const ItemTemplateConfig& item : config.item_templates) {
+        if (item.definition.entity_template_id == 0u) {
+            continue;
+        }
+        const auto entity_template = std::find_if(
+            config.entity_templates.begin(),
+            config.entity_templates.end(),
+            [&](const EntityTemplateConfig& candidate) {
+                return candidate.actor_template_id ==
+                    item.definition.entity_template_id;
+            });
+        if (entity_template != config.entity_templates.end() &&
+            (entity_template->prop.lifetime_ticks != 0u ||
+             entity_template->prop.population_group_id != 0u)) {
+            errors.push_back(
+                "item-backed prop must not declare lifecycle or population");
+        }
+    }
     const StaticCollisionSceneConfig& static_scene =
         config.static_collision_scene;
     const bool has_static_scene = !static_scene.entry_path.empty() ||
@@ -5308,6 +5504,10 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             &config.item_templates);
         storage.item_templates.push_back(item);
     }
+    for (const PropPopulationRuleConfig& authored_rule :
+         config.prop_population_rules) {
+        storage.prop_population_rules.push_back(authored_rule.definition);
+    }
     storage.definition.struct_size = sizeof(storage.definition);
     storage.definition.catalog_version = config.weapons.catalog_version;
     storage.definition.catalog_hash = config.weapons.catalog_hash;
@@ -5330,6 +5530,10 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
     storage.definition.item_templates = storage.item_templates.data();
     storage.definition.item_template_count =
         static_cast<std::uint32_t>(storage.item_templates.size());
+    storage.definition.prop_population_rules =
+        storage.prop_population_rules.data();
+    storage.definition.prop_population_rule_count =
+        static_cast<std::uint32_t>(storage.prop_population_rules.size());
     return storage;
 }
 

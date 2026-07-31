@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 59u`.
+`KERNEL_ABI_VERSION == 60u`.
 
 ## Ownership
 
@@ -30,6 +30,18 @@ failures return `NULL`, `false`, or `0`.
 Additive changes must prefer new `Kernel_*` functions or new capability flags.
 Breaking changes to public struct layout, enum semantics, buffer ownership, or
 function signatures require a `KERNEL_ABI_VERSION` bump.
+
+ABI version 60 adds authoritative lifecycle and population policy for temporary
+pure Props. `KernelPropDefinition` carries `lifetime_ticks` and a resolved
+population group id; `KernelGameplayCatalogDefinition` carries
+`KernelPropPopulationRuleDefinition` entries. Gameplay catalog version 8
+authors rules with `prop_population_rules` and per-Prop `lifecycle` blocks.
+`ice_block` expires after 900 ticks and belongs to the
+`temporary_deployable` group, which is capped at 256 live entities. V1
+overflow is fixed to deterministic oldest-first eviction by spawn tick and
+NetId; no `overflow` authoring field is accepted. Expiry and capacity eviction
+publish authoritative despawns without executing `on_destroy_entity`.
+Packet schema 21, snapshot schema 17, and protocol 3 are unchanged.
 
 ABI version 59 replaces the Item throw speed with a trajectory Projectile
 Template reference and adds the same reference to pure Prop policy. Gameplay

@@ -1,6 +1,9 @@
 id: 204
 name: ice_block
 entity_type: prop
+lifecycle:
+  lifetime_ticks: 900
+  population_group: temporary_deployable
 health:
   hp: 100
   max_hp: 100

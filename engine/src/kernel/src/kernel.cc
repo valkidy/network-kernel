@@ -2327,6 +2327,8 @@ bool KernelEngine::load_gameplay_catalog(
          catalog.action_templates == nullptr) ||
         (catalog.item_template_count != 0 &&
          catalog.item_templates == nullptr) ||
+        (catalog.prop_population_rule_count != 0 &&
+         catalog.prop_population_rules == nullptr) ||
         (catalog.entity_template_count != 0 &&
          catalog.entity_templates == nullptr) ||
         catalog.collider_binding_count != 0) {
@@ -2382,6 +2384,30 @@ bool KernelEngine::load_gameplay_catalog(
     validated_collider_templates.reserve(catalog.collider_template_count);
     std::vector<KernelItemTemplateDefinition> validated_item_templates;
     validated_item_templates.reserve(catalog.item_template_count);
+    std::vector<KernelPropPopulationRuleDefinition>
+        validated_prop_population_rules;
+    validated_prop_population_rules.reserve(
+        catalog.prop_population_rule_count);
+    for (std::uint32_t index = 0;
+         index < catalog.prop_population_rule_count;
+         ++index) {
+        const KernelPropPopulationRuleDefinition& rule =
+            catalog.prop_population_rules[index];
+        if (rule.struct_size <
+                sizeof(KernelPropPopulationRuleDefinition) ||
+            rule.population_group_id == 0u || rule.max_alive == 0u ||
+            rule.max_alive > 256u ||
+            std::any_of(
+                validated_prop_population_rules.begin(),
+                validated_prop_population_rules.end(),
+                [&](const KernelPropPopulationRuleDefinition& candidate) {
+                    return candidate.population_group_id ==
+                        rule.population_group_id;
+                })) {
+            return false;
+        }
+        validated_prop_population_rules.push_back(rule);
+    }
     std::string item_validation_error;
     for (std::uint32_t index = 0; index < catalog.item_template_count; ++index) {
         const KernelItemTemplateDefinition& item_template =
@@ -2522,6 +2548,11 @@ bool KernelEngine::load_gameplay_catalog(
               entity_template.ai.spawn_entity_template_id == 0u))) {
             return false;
         }
+        if (entity_template.entity_type != KernelEntityType_Prop &&
+            (entity_template.prop.lifetime_ticks != 0u ||
+             entity_template.prop.population_group_id != 0u)) {
+            return false;
+        }
         if (entity_template.entity_type == KernelEntityType_Prop &&
             entity_template.prop.struct_size != 0u) {
             const KernelPropInteractionDefinition& interaction =
@@ -2555,6 +2586,16 @@ bool KernelEngine::load_gameplay_catalog(
             if (throwable !=
                 (entity_template.prop
                      .throw_trajectory_projectile_template_id != 0u)) {
+                return false;
+            }
+            if (entity_template.prop.population_group_id != 0u &&
+                std::none_of(
+                    validated_prop_population_rules.begin(),
+                    validated_prop_population_rules.end(),
+                    [&](const KernelPropPopulationRuleDefinition& rule) {
+                        return rule.population_group_id ==
+                            entity_template.prop.population_group_id;
+                    })) {
                 return false;
             }
         }
@@ -2826,7 +2867,9 @@ bool KernelEngine::load_gameplay_catalog(
             entity_template->prop.interaction;
         if (interaction.capability_flags != 0u ||
             entity_template->prop
-                    .throw_trajectory_projectile_template_id != 0u) {
+                    .throw_trajectory_projectile_template_id != 0u ||
+            entity_template->prop.lifetime_ticks != 0u ||
+            entity_template->prop.population_group_id != 0u) {
             return false;
         }
         if (item_template.throw_policy.mode ==
@@ -2876,6 +2919,8 @@ bool KernelEngine::load_gameplay_catalog(
     collider_templates_ = std::move(validated_collider_templates);
     action_templates_ = std::move(validated_action_templates);
     item_templates_ = std::move(validated_item_templates);
+    prop_population_rules_ =
+        std::move(validated_prop_population_rules);
     if (!item_store_.set_templates(item_templates_, &item_validation_error)) {
         return false;
     }
@@ -7591,6 +7636,7 @@ void KernelEngine::simulate_tick() {
         actors_before_tick.insert(net_id);
     }
     world_.collider_registry().expire_tick_lifetimes();
+    EntityLifecycleSystem{}.update_prop_lifetimes(*this);
     const std::size_t queue_depth = command_queue_.size();
     const std::size_t processed_command_count = drain_simulation_commands();
     advance_predicted_projectiles(fixed_delta);

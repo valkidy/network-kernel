@@ -1,4 +1,8 @@
-catalog_version: 7
+catalog_version: 8
+prop_population_rules:
+  - id: 1
+    name: temporary_deployable
+    max_alive: 256
 action_template_dir: action_templates
 action_graph_template_dir: action_graph_templates
 reload_action_template:

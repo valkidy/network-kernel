@@ -489,6 +489,16 @@ bool EntityLifecycleSystem::create_entity(
             registry.emplace_or_replace<PropWorldMode>(
                 *entity,
                 PropWorldMode{PropMode::kPlaced});
+            if (entity_template->prop.lifetime_ticks != 0u ||
+                entity_template->prop.population_group_id != 0u) {
+                registry.emplace_or_replace<PropLifecycle>(
+                    *entity,
+                    PropLifecycle{
+                        engine.tick_loop_.current_tick(),
+                        entity_template->prop.lifetime_ticks,
+                        entity_template->prop.population_group_id,
+                    });
+            }
         }
         if (type == EntityType::kActor && actor_type == ActorType::kPlayer) {
             registry.emplace_or_replace<PlayerTag>(*entity);
@@ -655,6 +665,11 @@ bool EntityLifecycleSystem::create_entity(
         net_id,
         create_info.owner_peer,
         static_cast<std::uint32_t>(type));
+    if (entity_template != nullptr &&
+        entity_template->prop.population_group_id != 0u) {
+        enforce_prop_population_limit(
+            engine, entity_template->prop.population_group_id);
+    }
     if (publish_snapshot) {
         engine.publish_snapshot();
     }
@@ -1027,6 +1042,78 @@ bool EntityLifecycleSystem::destroy_entity(
         engine, net_id, reason, 0u, 0u, nullptr);
 }
 
+void EntityLifecycleSystem::update_prop_lifetimes(
+    KernelEngine& engine) const {
+    std::vector<NetId> expired;
+    auto view = engine.world_.registry().view<NetworkIdentity, PropLifecycle>();
+    for (const entt::entity entity : view) {
+        PropLifecycle& lifecycle = view.get<PropLifecycle>(entity);
+        if (lifecycle.remaining_lifetime_ticks == 0u) {
+            continue;
+        }
+        --lifecycle.remaining_lifetime_ticks;
+        if (lifecycle.remaining_lifetime_ticks == 0u) {
+            expired.push_back(view.get<NetworkIdentity>(entity).net_id);
+        }
+    }
+    std::sort(expired.begin(), expired.end());
+    for (const NetId net_id : expired) {
+        // Lifecycle expiry is resource cleanup and intentionally bypasses
+        // gameplay on_destroy_entity graphs.
+        (void)destroy_entity_with_context(
+            engine,
+            net_id,
+            KernelDespawnReason_Expired,
+            0u,
+            0u,
+            nullptr,
+            false);
+    }
+}
+
+void EntityLifecycleSystem::enforce_prop_population_limit(
+    KernelEngine& engine,
+    std::uint32_t population_group_id) const {
+    const auto rule = std::find_if(
+        engine.prop_population_rules_.begin(),
+        engine.prop_population_rules_.end(),
+        [population_group_id](
+            const KernelPropPopulationRuleDefinition& candidate) {
+            return candidate.population_group_id == population_group_id;
+        });
+    if (rule == engine.prop_population_rules_.end()) {
+        return;
+    }
+    std::vector<std::tuple<std::uint32_t, NetId>> members;
+    auto view = engine.world_.registry().view<NetworkIdentity, PropLifecycle>();
+    for (const entt::entity entity : view) {
+        const PropLifecycle& lifecycle = view.get<PropLifecycle>(entity);
+        if (lifecycle.population_group_id != population_group_id) {
+            continue;
+        }
+        members.emplace_back(
+            lifecycle.spawn_tick,
+            view.get<NetworkIdentity>(entity).net_id);
+    }
+    std::sort(members.begin(), members.end());
+    // V1 fixes overflow handling to deterministic despawn-oldest. Add an
+    // authored overflow policy before supporting alternatives such as reject-new.
+    while (members.size() > rule->max_alive) {
+        const NetId oldest = std::get<1>(members.front());
+        members.erase(members.begin());
+        // Capacity eviction is resource cleanup and intentionally bypasses
+        // gameplay on_destroy_entity graphs to prevent spawn cascades.
+        (void)destroy_entity_with_context(
+            engine,
+            oldest,
+            KernelDespawnReason_CapacityEvicted,
+            0u,
+            0u,
+            nullptr,
+            false);
+    }
+}
+
 void EntityLifecycleSystem::process_health_depleted(
     KernelEngine& engine,
     const std::vector<ConfirmedDamage>& health_depleted,
@@ -1140,7 +1227,8 @@ bool EntityLifecycleSystem::destroy_entity_with_context(
     std::uint32_t reason,
     NetId instigator,
     std::uint8_t source_code,
-    const glm::vec3* event_position) const {
+    const glm::vec3* event_position,
+    bool execute_destroy_graph) const {
     if (!engine.running_ || !is_server_mode(engine.config_.mode) || net_id == 0) {
         return false;
     }
@@ -1194,7 +1282,8 @@ bool EntityLifecycleSystem::destroy_entity_with_context(
         }
     }
     std::vector<ActionGraphQueuedTrigger> queued_triggers;
-    if (engine.world_.registry().all_of<
+    if (execute_destroy_graph &&
+        engine.world_.registry().all_of<
             OnDestroyEntityTriggerTag,
             ActionGraphDestroyEntityBinding>(*entity)) {
         const ActionGraphDestroyEntityBinding& binding =

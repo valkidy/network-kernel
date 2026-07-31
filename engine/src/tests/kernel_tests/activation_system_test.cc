@@ -572,7 +572,20 @@ void static_collision_runs_once_for(
     ice.combat.max_hp = 100;
     ice.ai.struct_size = sizeof(ice.ai);
     ice.movement.struct_size = sizeof(ice.movement);
+    ice.prop.struct_size = sizeof(ice.prop);
+    ice.prop.interaction.struct_size = sizeof(ice.prop.interaction);
+    ice.prop.lifetime_ticks = 900;
+    ice.prop.population_group_id = 1;
     engine.entity_templates_.push_back(ice);
+    KernelPropPopulationRuleDefinition population_rule{};
+    population_rule.struct_size = sizeof(population_rule);
+    population_rule.population_group_id = 1;
+    population_rule.max_alive = 1;
+    engine.prop_population_rules_.push_back(population_rule);
+
+    std::uint32_t oldest_ice = 0;
+    require(engine.server_create_entity(
+        create_info(207, KernelVec3{-2.0f, 0.0f, 0.0f}), &oldest_ice));
 
     std::uint32_t bottle_id = 0;
     require(engine.server_create_entity(
@@ -629,6 +642,11 @@ void static_collision_runs_once_for(
     require(engine.physics_world_->upsert_object(obstacle, &error));
 
     network_example::CollisionTriggerSystem{}.update(engine, 2000);
+    require(!engine.world_.find_entity(oldest_ice).has_value());
+    require(!engine.lifecycle_events_.empty());
+    require(
+        engine.lifecycle_events_.back().reason ==
+        KernelDespawnReason_CapacityEvicted);
     require(engine.world_.registry()
                 .get<network_example::PropWorldMode>(*bottle_entity)
                 .mode == network_example::PropMode::kPlaced);
@@ -677,6 +695,49 @@ void static_collision_accepts_terrain_and_static_obstacle() {
         network_example::physics::CollisionLayer::kStaticObstacle);
 }
 
+void prop_lifetime_expires_without_affecting_permanent_props() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+
+    KernelEntityTemplateDefinition expiring{};
+    expiring.struct_size = sizeof(expiring);
+    expiring.entity_template_id = 300;
+    expiring.entity_type = KernelEntityType_Prop;
+    expiring.component_flags = KERNEL_ENTITY_COMPONENT_TRANSFORM;
+    expiring.ai.struct_size = sizeof(expiring.ai);
+    expiring.movement.struct_size = sizeof(expiring.movement);
+    expiring.prop.struct_size = sizeof(expiring.prop);
+    expiring.prop.interaction.struct_size = sizeof(expiring.prop.interaction);
+    expiring.prop.lifetime_ticks = 3;
+    engine.entity_templates_.push_back(expiring);
+
+    KernelEntityTemplateDefinition permanent = expiring;
+    permanent.entity_template_id = 301;
+    permanent.prop.lifetime_ticks = 0;
+    engine.entity_templates_.push_back(permanent);
+
+    std::uint32_t expiring_id = 0;
+    std::uint32_t permanent_id = 0;
+    require(engine.server_create_entity(
+        create_info(300, KernelVec3{}), &expiring_id));
+    require(engine.server_create_entity(
+        create_info(301, KernelVec3{}), &permanent_id));
+    network_example::EntityLifecycleSystem lifecycle;
+    lifecycle.update_prop_lifetimes(engine);
+    lifecycle.update_prop_lifetimes(engine);
+    require(engine.world_.find_entity(expiring_id).has_value());
+    lifecycle.update_prop_lifetimes(engine);
+    require(!engine.world_.find_entity(expiring_id).has_value());
+    require(engine.world_.find_entity(permanent_id).has_value());
+    require(
+        engine.lifecycle_events_.back().reason ==
+        KernelDespawnReason_Expired);
+}
+
 }  // namespace
 
 int main() {
@@ -685,5 +746,6 @@ int main() {
     lifecycle_triggers_capture_context_before_prop_destruction();
     health_change_applies_signed_clamped_delta();
     static_collision_accepts_terrain_and_static_obstacle();
+    prop_lifetime_expires_without_affecting_permanent_props();
     return 0;
 }
