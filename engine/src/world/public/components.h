@@ -423,6 +423,21 @@ struct ProjectileState {
     glm::vec3 previous_position{0.0f, 0.0f, 0.0f};
 };
 
+struct ThrownPropMotion {
+    ProjectileMotionModel motion_model = ProjectileMotionModel::kLinear;
+    std::uint32_t age_ticks = 0;
+    glm::vec3 spawn_position{0.0f};
+    glm::vec3 initial_velocity{0.0f};
+    glm::vec3 gravity{0.0f};
+    glm::vec3 previous_position{0.0f};
+};
+
+struct PropLifecycle {
+    std::uint32_t spawn_tick = 0;
+    std::uint32_t remaining_lifetime_ticks = 0;
+    std::uint32_t population_group_id = 0;
+};
+
 enum class TriggerEventType : std::uint8_t {
     kCollision,
     kProjectileImpact,
@@ -572,6 +587,7 @@ struct ActionApplyHealthChangeDefinition {
 struct ActionSpawnEntityDefinition {
     std::string entity_template_parameter;
     std::string position_parameter;
+    std::string direction_parameter;
     std::string owner_parameter;
     std::uint32_t item_template_id = 0;
     std::uint32_t quantity = 0;

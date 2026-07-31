@@ -24,13 +24,10 @@ KernelItemTemplateDefinition fungible_template() {
         KernelItemCapability_Throwable |
         KernelItemCapability_Consumable;
     item.entity_template_id = 100;
-    item.input_mapping.inventory_use = KernelDomainAction_Consume;
-    item.input_mapping.inventory_fire = KernelDomainAction_Throw;
-    item.input_mapping.world_interact_tap = KernelDomainAction_Pickup;
     item.interaction_range = 3.0f;
     item.throw_policy.struct_size = sizeof(item.throw_policy);
     item.throw_policy.mode = KernelItemThrowMode_IdentityPreserving;
-    item.throw_policy.speed = 12.0f;
+    item.throw_policy.trajectory_projectile_template_id = 7;
     item.use_policy.struct_size = sizeof(item.use_policy);
     item.use_policy.quantity_cost = 1;
     item.item_used_trigger.struct_size = sizeof(item.item_used_trigger);
@@ -44,7 +41,6 @@ KernelItemTemplateDefinition stateful_template() {
     item.item_mode = KernelItemMode_Stateful;
     item.max_stack = 1;
     item.capability_flags = KernelItemCapability_Consumable;
-    item.input_mapping.inventory_use = KernelDomainAction_Consume;
     item.throw_policy.struct_size = sizeof(item.throw_policy);
     item.use_policy.struct_size = sizeof(item.use_policy);
     item.use_policy.charge_field_id = 7;
@@ -77,6 +73,7 @@ void validates_templates() {
 
     invalid = fungible_template();
     invalid.throw_policy.mode = KernelItemThrowMode_ConsumeAndSpawn;
+    invalid.throw_policy.trajectory_projectile_template_id = 0;
     require(!network_example::validate_item_template(invalid, &error));
 
     invalid = fungible_template();
@@ -91,12 +88,8 @@ void validates_templates() {
     invalid.use_policy.charge_field_id = 99;
     require(!network_example::validate_item_template(invalid, &error));
 
-    invalid = fungible_template();
-    invalid.input_mapping.inventory_use = KernelDomainAction_Pickup;
-    require(!network_example::validate_item_template(invalid, &error));
-
-    invalid = fungible_template();
-    invalid.input_mapping.world_interact_tap = KernelDomainAction_Consume;
+    invalid = stateful_template();
+    invalid.capability_flags |= KernelItemCapability_Throwable;
     require(!network_example::validate_item_template(invalid, &error));
 
     invalid = fungible_template();

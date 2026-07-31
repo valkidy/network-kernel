@@ -4,19 +4,12 @@ mode: stateful
 max_stack: 1
 capabilities: [consumable, pickupable, throwable]
 entity_template: stateful_potion_prop
-input:
-  inventory:
-    use: consume
-    fire: throw
-  world:
-    interact_tap: pickup
-    interact_hold: none
 world_interaction:
   range: 3.0
   line_of_sight_required: false
 throw:
   mode: identity_preserving
-  speed: 1.0
+  trajectory_projectile: grenade_shell_projectile
 use:
   quantity_cost: 1
   cooldown_ticks: 0

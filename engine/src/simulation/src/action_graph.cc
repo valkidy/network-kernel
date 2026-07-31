@@ -277,13 +277,22 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
         if (action.action_type == KernelEntityTriggerActionType_SpawnEntity) {
             const std::string template_name = "entity_template" + suffix;
             const std::string position_name = "position" + suffix;
+            const std::string direction_name =
+                action.direction_source == KernelEventVec3Source_Direction
+                ? "direction" + suffix
+                : "";
             const std::string owner_name = "owner" + suffix;
             binding.graph.parameters.push_back({template_name, std::monostate{}});
             binding.graph.parameters.push_back({position_name, std::monostate{}});
+            if (!direction_name.empty()) {
+                binding.graph.parameters.push_back(
+                    {direction_name, std::monostate{}});
+            }
             binding.graph.parameters.push_back({owner_name, std::monostate{}});
             binding.graph.actions.push_back(ActionSpawnEntityDefinition{
                 template_name,
                 position_name,
+                direction_name,
                 owner_name,
                 action.spawn_item_template_id,
                 action.spawn_item_quantity,
@@ -299,6 +308,12 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
                 EventVec3Expression{static_cast<EventVec3Source>(
                     action.position_source)},
             });
+            if (!direction_name.empty()) {
+                binding.parameters.push_back({
+                    direction_name,
+                    EventVec3Expression{EventVec3Source::kDirection},
+                });
+            }
             binding.parameters.push_back({
                 owner_name,
                 EntityRefExpression{static_cast<EntityRefSource>(
@@ -443,6 +458,7 @@ CompiledActionGraphBinding compile_spawn_entity_binding(
             {ActionSpawnEntityDefinition{
                 "template",
                 "position",
+                "",
                 "owner",
             }},
         },
@@ -522,6 +538,12 @@ bool validate_action_graph_binding(
                     spawn->position_parameter,
                     ParameterType::kVec3,
                     error) ||
+                (!spawn->direction_parameter.empty() &&
+                 !validate_action_parameter(
+                     binding,
+                     spawn->direction_parameter,
+                     ParameterType::kVec3,
+                     error)) ||
                 !validate_action_parameter(
                     binding,
                     spawn->owner_parameter,
@@ -633,10 +655,18 @@ bool evaluate_action_graph(
                     parameters, spawn->entity_template_parameter);
             const ActionGraphParameterValue* position_value =
                 find_resolved_parameter(parameters, spawn->position_parameter);
+            const ActionGraphParameterValue* direction_value =
+                spawn->direction_parameter.empty()
+                ? nullptr
+                : find_resolved_parameter(
+                      parameters, spawn->direction_parameter);
             const ActionGraphParameterValue* owner_value =
                 find_resolved_parameter(parameters, spawn->owner_parameter);
             if (template_value == nullptr || position_value == nullptr ||
                 owner_value == nullptr ||
+                (!spawn->direction_parameter.empty() &&
+                 (direction_value == nullptr ||
+                  !std::holds_alternative<glm::vec3>(*direction_value))) ||
                 !std::holds_alternative<EntityTemplateIdValue>(
                     *template_value) ||
                 !std::holds_alternative<glm::vec3>(*position_value) ||
@@ -646,17 +676,25 @@ bool evaluate_action_graph(
             const std::uint32_t entity_template_id =
                 std::get<EntityTemplateIdValue>(*template_value).value;
             const glm::vec3 position = std::get<glm::vec3>(*position_value);
+            const glm::vec3 direction =
+                direction_value == nullptr
+                ? glm::vec3{0.0f}
+                : std::get<glm::vec3>(*direction_value);
             const NetId owner = std::get<EntityIdValue>(*owner_value).value;
             if (entity_template_id == 0u || owner == 0u ||
                 !std::isfinite(position.x) || !std::isfinite(position.y) ||
-                !std::isfinite(position.z)) {
+                !std::isfinite(position.z) ||
+                !std::isfinite(direction.x) ||
+                !std::isfinite(direction.y) ||
+                !std::isfinite(direction.z)) {
                 return fail(
                     error,
-                    "spawn_entity requires a template, owner, and finite position");
+                    "spawn_entity requires a template, owner, finite position, and finite direction");
             }
             commands->push_back(ActionSpawnEntityCommand{
                 entity_template_id,
                 position,
+                direction,
                 owner,
                 spawn->item_template_id,
                 spawn->quantity,

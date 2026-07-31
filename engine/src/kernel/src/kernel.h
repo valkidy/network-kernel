@@ -750,6 +750,7 @@ private:
     std::vector<KernelColliderTemplateDefinition> collider_templates_;
     std::vector<KernelActionTemplateDefinition> action_templates_;
     std::vector<KernelItemTemplateDefinition> item_templates_;
+    std::vector<KernelPropPopulationRuleDefinition> prop_population_rules_;
     ItemStore item_store_;
     std::vector<KernelGameplayRequestOutcome> processed_gameplay_requests_;
     std::deque<KernelGameplayRequestOutcome> pending_gameplay_request_outcomes_;

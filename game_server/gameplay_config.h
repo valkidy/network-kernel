@@ -102,7 +102,7 @@ struct ActorTemplateConfig {
 using EntityTemplateConfig = ActorTemplateConfig;
 
 struct WeaponCatalogConfig {
-    std::uint32_t catalog_version = 5;
+    std::uint32_t catalog_version = 8;
     std::uint64_t catalog_hash = 0;
     std::array<bool, kWeaponIdCount> configured{};
     std::array<KernelWeaponMechanicsDefinition, kWeaponIdCount> definitions{};
@@ -177,6 +177,11 @@ struct ProjectileTemplateConfig {
     ProjectileTriggerBindingConfig expired_trigger;
 };
 
+struct PropPopulationRuleConfig {
+    std::string name;
+    KernelPropPopulationRuleDefinition definition{};
+};
+
 struct StaticCollisionSceneConfig {
     std::string entry_path;
     std::uint32_t scene_id = 0;
@@ -195,6 +200,7 @@ struct GameServerGameplayConfig {
     std::vector<ActionGraphTemplateConfig> action_graph_templates;
     std::vector<ItemTemplateConfig> item_templates;
     std::vector<ProjectileTemplateConfig> projectile_templates;
+    std::vector<PropPopulationRuleConfig> prop_population_rules;
     StaticCollisionSceneConfig static_collision_scene;
 };
 
@@ -206,6 +212,7 @@ struct KernelGameplayCatalogStorage {
     std::vector<KernelColliderBindingDefinition> collider_bindings;
     std::vector<KernelActionTemplateDefinition> action_templates;
     std::vector<KernelItemTemplateDefinition> item_templates;
+    std::vector<KernelPropPopulationRuleDefinition> prop_population_rules;
     KernelGameplayCatalogDefinition definition{};
 };
 

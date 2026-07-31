@@ -218,6 +218,7 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip() {
         "sentry_grunt_hit_aabb.yaml",
         "area_effect_sphere.yaml",
         "collision_damage_prop_hitbox.yaml",
+        "ice_block_hitbox.yaml",
         "player_hit_aabb.yaml",
         "player_movement_capsule.yaml",
         "rocket_aabb.yaml",
@@ -407,10 +408,10 @@ int main() {
     assert(loaded_catalog);
     assert(load_result.status == KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS);
     assert(load_result.error_code == KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_NONE);
-    assert(load_result.catalog_version == 5);
+    assert(load_result.catalog_version == 8);
     assert(load_result.catalog_hash != 0);
     assert(load_result.projectile_template_count > 0);
-    assert(load_result.collider_template_count == 12);
+    assert(load_result.collider_template_count == 13);
     assert(load_result.collider_binding_count == 0);
     KernelSessionRulesConfig session_rules{};
     session_rules.struct_size = sizeof(session_rules);

@@ -4,19 +4,12 @@ mode: stateful
 max_stack: 1
 capabilities: [pickupable, throwable]
 entity_template: stateful_magic_bottle_prop
-input:
-  inventory:
-    use: none
-    fire: throw
-  world:
-    interact_tap: pickup
-    interact_hold: none
 world_interaction:
   range: 3.0
   line_of_sight_required: false
 throw:
   mode: identity_preserving
-  speed: 1.0
+  trajectory_projectile: grenade_shell_projectile
 use:
   quantity_cost: 0
   cooldown_ticks: 0

@@ -1,23 +1,23 @@
 # Item / Prop Authoring and Native Runtime Guide
 
-This document describes the native Item / Prop contract introduced with Kernel
-ABI 55, protocol 3, snapshot schema 17, packet schema 19, and gameplay catalog
-version 5. Unity UI, input gesture presentation, and C# bindings are separate
+This document describes the native Item / Prop contract at Kernel ABI 59,
+protocol 3, snapshot schema 17, packet schema 21, and gameplay catalog version
+7. Unity UI, input gesture presentation, and C# bindings are separate
 integration work.
 
 ## Authoring
 
 The root gameplay catalog accepts `item_template_dir`. Each YAML file in that
 directory defines one Item Template with a stable numeric ID, `fungible` or
-`stateful` mode, maximum stack size, capabilities, semantic input mappings,
-optional Item-backed Prop entity template, throw/use policy, portable state,
-and `on_item_used` Action Graph binding.
+`stateful` mode, maximum stack size, capabilities, optional Item-backed Prop
+entity template, throw/use policy, portable state, and `on_item_used` Action
+Graph binding.
 
-Inventory mappings accept `consume`, `place`, `throw`, or `none`. World
-mappings accept `pickup`, `carry`, `activate`, or `none`. Every non-`none`
-mapping requires its corresponding capability. World interaction mappings
-also require an authored interaction range; LOS can be enabled with a blocking
-mask. Carrying mappings are fixed by the runtime: Use places and Fire throws.
+Capabilities are the authoritative action allowlist. World-facing capabilities
+require an authored interaction range; LOS can be enabled with a blocking mask.
+Throwable Items require a non-`none` throw policy, and a non-`none` throw policy
+requires the Throwable capability. Client input bindings are not part of the
+Item or Entity Template schema.
 
 An Entity Template referenced by an Item Template must be a Prop and must not
 also author a Prop interaction policy. Pure world Props author their policy in
@@ -30,7 +30,12 @@ Prop is removed. Stateful Items always have quantity one. A stateful
 consumable can name one `uint32` charge field and choose whether reaching zero
 terminates the Item.
 
-Identity-preserving Throw requires an Item-backed Prop Entity Template.
+Identity-preserving Throw requires an Item-backed Prop Entity Template and a
+`trajectory_projectile` reference. It inherits only that Projectile Template's
+movement model, speed, and gravity. Throwable pure Props author the same
+reference in their top-level `throw` block. The referenced Projectile must be a
+standard linear or parabolic projectile; its collider, collision mask, damage,
+lifetime, hit response, sync mode, and triggers are not inherited.
 Consume-and-spawn Throw requires a non-empty `on_item_used` graph containing a
 spawn action. A normal Consume may explicitly bind an empty graph; it commits
 successfully with no graph side effect.
@@ -62,17 +67,19 @@ a fresh non-reused Item Instance ID.
 
 Submit gameplay through `Kernel_SubmitGameplayRequest` (client or server) or
 the server-only `Kernel_ServerSubmitGameplayRequest`. Do not encode these
-requests in per-tick `KernelPlayerInput`. The reliable request key is
-`(requester_peer, request_id)`. The server validates the requester, current
-actor ownership, selected Item residency, target, range, LOS, capability,
-quantity/charge, cooldown, placement, and graph admission using current
-authoritative state.
+requests in per-tick `KernelPlayerInput`. The client maps its input/controller
+state to a `KernelDomainAction` and writes it to
+`KernelGameplayRequest::domain_action`. The reliable request key is
+`(requester_peer, request_id)`. The server validates the requested action,
+requester, current actor ownership, selected Item residency, target, range,
+LOS, capability, quantity/charge, cooldown, placement, and graph admission
+using current authoritative state.
 
 Poll `KernelGameplayRequestOutcome` with
 `Kernel_PollGameplayRequestOutcomes`. Domain status and graph status are
 separate:
 
-- `NoAction` means the effective mapping was `none`.
+- `NoAction` is a reserved compatibility value and is not emitted by ABI 59.
 - `Rejected` means no domain commit occurred.
 - `Committed` means the authoritative Item/Prop state changed.
 - `NotSubmitted` means no graph was required.
@@ -98,10 +105,13 @@ fungible partial split. Placement validates finite coordinates, actor range,
 and current collider overlap.
 
 Identity-preserving Throw transfers or splits an Inventory Item, or reuses the
-Carrying Prop. Direction is normalized after server validation and speed comes
-from the Item Template. InFlight Props cannot be picked up, carried, or
-activated. Their first valid collider contact zeros velocity and changes the
-mode to Placed.
+Carrying Prop. Direction is normalized after server validation, the launch
+origin is one metre above the actor root, and the referenced trajectory
+Projectile supplies movement model, speed, and gravity. InFlight Props follow
+the same analytic ballistic path as grenade projectiles and sweep their own hit
+collider between ticks. They cannot be picked up, carried, or activated. Their
+first valid static contact places the Prop at the hit fraction, zeros velocity,
+and changes the mode to Placed; collision graphs receive the contact position.
 
 Requests are processed by the single-threaded authoritative queue. The first
 request that commits a contested Item/Prop wins; later requests receive a

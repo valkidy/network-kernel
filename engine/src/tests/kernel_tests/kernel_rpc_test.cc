@@ -77,7 +77,6 @@ void load_item_catalog(KernelHandle* kernel) {
     item.max_stack = 10;
     item.capability_flags = KernelItemCapability_Consumable;
     item.entity_template_id = 200;
-    item.input_mapping.inventory_use = KernelDomainAction_Consume;
     item.throw_policy.struct_size = sizeof(item.throw_policy);
     item.throw_policy.mode = KernelItemThrowMode_None;
     item.use_policy.struct_size = sizeof(item.use_policy);
@@ -545,7 +544,7 @@ void item_inventory_rpc_contract() {
         kernel,
         std::string(R"({"jsonrpc":"2.0","id":35,"method":"gameplay.submit_request","params":{"request":{"requester_peer":7,"request_id":900,"instigator_net_id":)") +
             std::to_string(actor) +
-            R"(,"semantic_button":0,"selected_item_instance_id":)" +
+            R"(,"domain_action":1,"selected_item_instance_id":)" +
             std::to_string(item_id) +
             R"(,"target_net_id":0,"requested_quantity":1,"placement_position":{"x":0.0,"y":0.0,"z":0.0},"throw_direction":{"x":1.0,"y":0.0,"z":0.0}}}})" );
     Kernel_Update(kernel, 1.0f / 30.0f);

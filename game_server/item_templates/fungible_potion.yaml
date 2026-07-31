@@ -3,13 +3,6 @@ name: fungible_potion
 mode: fungible
 max_stack: 5
 capabilities: [consumable]
-input:
-  inventory:
-    use: consume
-    fire: none
-  world:
-    interact_tap: none
-    interact_hold: none
 throw:
   mode: none
 use:

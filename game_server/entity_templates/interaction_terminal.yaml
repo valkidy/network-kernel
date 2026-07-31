@@ -3,8 +3,6 @@ name: interaction_terminal
 entity_type: prop
 interaction:
   capabilities: [interactable]
-  interact_tap: activate
-  interact_hold: none
   range: 3.0
   line_of_sight_required: false
 carry_offset:

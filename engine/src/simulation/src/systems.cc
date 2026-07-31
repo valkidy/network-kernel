@@ -65,6 +65,31 @@ glm::quat from_kernel_quat(const KernelQuat& value) {
     return glm::quat{value.w, value.x, value.y, value.z};
 }
 
+glm::vec3 normalized_direction_or_zero(const glm::vec3& direction) {
+    const float length_squared = glm::dot(direction, direction);
+    if (!std::isfinite(length_squared) || length_squared <= 0.00000001f) {
+        return glm::vec3{0.0f};
+    }
+    return direction / std::sqrt(length_squared);
+}
+
+KernelQuat yaw_rotation_from_direction(const glm::vec3& direction) {
+    const glm::vec3 horizontal =
+        normalized_direction_or_zero(glm::vec3{direction.x, 0.0f, direction.z});
+    if (horizontal == glm::vec3{0.0f}) {
+        return KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+    }
+    const float yaw = std::atan2(horizontal.x, horizontal.z);
+    const glm::quat rotation =
+        glm::angleAxis(yaw, glm::vec3{0.0f, 1.0f, 0.0f});
+    return KernelQuat{
+        rotation.x,
+        rotation.y,
+        rotation.z,
+        rotation.w,
+    };
+}
+
 const KernelActorTemplateDefinition* find_actor_template(
     const std::vector<KernelActorTemplateDefinition>& templates,
     std::uint32_t actor_template_id) {
@@ -261,7 +286,7 @@ bool execute_action_graph_commands(
         create_info.owner_peer =
             world.registry().get<NetworkIdentity>(owner).owner_peer;
         create_info.position = to_kernel_vec3(spawn.position);
-        create_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+        create_info.rotation = yaw_rotation_from_direction(spawn.direction);
         NetId spawned_net_id = 0;
         if (!EntityLifecycleSystem{}.create_entity(
                 engine, create_info, &spawned_net_id, false)) {
@@ -489,6 +514,16 @@ bool EntityLifecycleSystem::create_entity(
             registry.emplace_or_replace<PropWorldMode>(
                 *entity,
                 PropWorldMode{PropMode::kPlaced});
+            if (entity_template->prop.lifetime_ticks != 0u ||
+                entity_template->prop.population_group_id != 0u) {
+                registry.emplace_or_replace<PropLifecycle>(
+                    *entity,
+                    PropLifecycle{
+                        engine.tick_loop_.current_tick(),
+                        entity_template->prop.lifetime_ticks,
+                        entity_template->prop.population_group_id,
+                    });
+            }
         }
         if (type == EntityType::kActor && actor_type == ActorType::kPlayer) {
             registry.emplace_or_replace<PlayerTag>(*entity);
@@ -655,6 +690,11 @@ bool EntityLifecycleSystem::create_entity(
         net_id,
         create_info.owner_peer,
         static_cast<std::uint32_t>(type));
+    if (entity_template != nullptr &&
+        entity_template->prop.population_group_id != 0u) {
+        enforce_prop_population_limit(
+            engine, entity_template->prop.population_group_id);
+    }
     if (publish_snapshot) {
         engine.publish_snapshot();
     }
@@ -800,6 +840,18 @@ void CollisionTriggerSystem::update(
         }
         const ActionGraphCollisionBinding& collision_binding =
             view.get<ActionGraphCollisionBinding>(entity);
+        glm::vec3 collision_direction =
+            normalized_direction_or_zero(view.get<Velocity>(entity).linear);
+        if (const ThrownPropMotion* motion =
+                engine.world_.registry().try_get<ThrownPropMotion>(entity)) {
+            const Transform& transform =
+                engine.world_.registry().get<Transform>(entity);
+            const glm::vec3 swept_direction = normalized_direction_or_zero(
+                transform.position - motion->previous_position);
+            if (swept_direction != glm::vec3{0.0f}) {
+                collision_direction = swept_direction;
+            }
+        }
         std::unordered_set<NetId> seen_targets;
         std::optional<std::pair<physics::CollisionHit, std::uint32_t>>
             static_contact;
@@ -820,16 +872,64 @@ void CollisionTriggerSystem::update(
             request.shape.half_extents = collider.half_extents;
             request.shape.radius = collider.radius;
             request.shape.capsule_half_height = collider.capsule_half_height;
-            request.position = collider.world_center;
-            request.rotation = collider.world_rotation;
-            request.filter = collision_filter_from_mask(
+            physics::CollisionQueryFilter filter = collision_filter_from_mask(
                 collision_binding.collision_mask);
-            request.filter.ignored_entity_net_id = identity.net_id;
-            for (const physics::CollisionHit& hit :
-                 engine.physics_world_->overlap_all(request)) {
+            filter.ignored_entity_net_id = identity.net_id;
+            std::vector<physics::CollisionHit> hits;
+            const ThrownPropMotion* thrown_motion =
+                engine.world_.registry().try_get<ThrownPropMotion>(entity);
+            if (thrown_motion != nullptr) {
+                const Transform& transform =
+                    engine.world_.registry().get<Transform>(entity);
+                const glm::vec3 previous_center =
+                    thrown_motion->previous_position +
+                    transform.rotation * collider.local_center;
+                const glm::vec3 displacement =
+                    collider.world_center - previous_center;
+                if (glm::dot(displacement, displacement) > 0.00000001f) {
+                    physics::ShapeCastRequest request{};
+                    request.shape.type =
+                        collider.shape_type == ColliderShapeType::kSphere
+                        ? physics::CollisionShapeType::kSphere
+                        : collider.shape_type == ColliderShapeType::kCapsule
+                            ? physics::CollisionShapeType::kCapsule
+                            : physics::CollisionShapeType::kBox;
+                    request.shape.half_extents = collider.half_extents;
+                    request.shape.radius = collider.radius;
+                    request.shape.capsule_half_height =
+                        collider.capsule_half_height;
+                    request.start = previous_center;
+                    request.rotation = collider.world_rotation;
+                    request.displacement = displacement;
+                    request.filter = filter;
+                    hits = engine.physics_world_->shape_cast_all(request);
+                }
+            }
+            if (hits.empty()) {
+                physics::OverlapRequest request{};
+                request.shape.type =
+                    collider.shape_type == ColliderShapeType::kSphere
+                    ? physics::CollisionShapeType::kSphere
+                    : collider.shape_type == ColliderShapeType::kCapsule
+                        ? physics::CollisionShapeType::kCapsule
+                        : physics::CollisionShapeType::kBox;
+                request.shape.half_extents = collider.half_extents;
+                request.shape.radius = collider.radius;
+                request.shape.capsule_half_height =
+                    collider.capsule_half_height;
+                request.position = collider.world_center;
+                request.rotation = collider.world_rotation;
+                request.filter = filter;
+                hits = engine.physics_world_->overlap_all(request);
+                for (physics::CollisionHit& hit : hits) {
+                    hit.fraction = 1.0f;
+                }
+            }
+            for (const physics::CollisionHit& hit : hits) {
                 if (hit.identity.kind !=
                         physics::CollisionObjectKind::kActorHitbox) {
                     const auto hit_key = std::tuple{
+                        hit.fraction,
                         hit.distance,
                         collider.collider_id,
                         static_cast<std::uint8_t>(hit.identity.kind),
@@ -842,6 +942,7 @@ void CollisionTriggerSystem::update(
                         const physics::CollisionHit& current =
                             static_contact->first;
                         const auto current_key = std::tuple{
+                            current.fraction,
                             current.distance,
                             static_contact->second,
                             static_cast<std::uint8_t>(current.identity.kind),
@@ -868,13 +969,26 @@ void CollisionTriggerSystem::update(
                         hit.identity.entity_net_id,
                         identity.owner_peer,
                         hit.position,
-                        hit.normal,
+                        collision_direction == glm::vec3{0.0f}
+                            ? hit.normal
+                            : collision_direction,
                         collision_binding.binding,
                     });
                 }
             }
         }
         if (static_contact.has_value()) {
+            if (const ThrownPropMotion* motion =
+                    engine.world_.registry().try_get<ThrownPropMotion>(entity)) {
+                Transform& transform =
+                    engine.world_.registry().get<Transform>(entity);
+                const glm::vec3 displacement =
+                    transform.position - motion->previous_position;
+                transform.position = motion->previous_position +
+                    displacement *
+                        std::clamp(static_contact->first.fraction, 0.0f, 1.0f);
+                engine.world_.registry().remove<ThrownPropMotion>(entity);
+            }
             mode.mode = PropMode::kPlaced;
             view.get<Velocity>(entity).linear = glm::vec3{0.0f};
             if (engine.world_.registry().all_of<ItemInstanceRef>(entity)) {
@@ -890,7 +1004,9 @@ void CollisionTriggerSystem::update(
                 0u,
                 identity.owner_peer,
                 static_contact->first.position,
-                static_contact->first.normal,
+                collision_direction == glm::vec3{0.0f}
+                    ? static_contact->first.normal
+                    : collision_direction,
                 collision_binding.binding,
             });
         }
@@ -965,6 +1081,78 @@ bool EntityLifecycleSystem::destroy_entity(
     std::uint32_t reason) const {
     return destroy_entity_with_context(
         engine, net_id, reason, 0u, 0u, nullptr);
+}
+
+void EntityLifecycleSystem::update_prop_lifetimes(
+    KernelEngine& engine) const {
+    std::vector<NetId> expired;
+    auto view = engine.world_.registry().view<NetworkIdentity, PropLifecycle>();
+    for (const entt::entity entity : view) {
+        PropLifecycle& lifecycle = view.get<PropLifecycle>(entity);
+        if (lifecycle.remaining_lifetime_ticks == 0u) {
+            continue;
+        }
+        --lifecycle.remaining_lifetime_ticks;
+        if (lifecycle.remaining_lifetime_ticks == 0u) {
+            expired.push_back(view.get<NetworkIdentity>(entity).net_id);
+        }
+    }
+    std::sort(expired.begin(), expired.end());
+    for (const NetId net_id : expired) {
+        // Lifecycle expiry is resource cleanup and intentionally bypasses
+        // gameplay on_destroy_entity graphs.
+        (void)destroy_entity_with_context(
+            engine,
+            net_id,
+            KernelDespawnReason_Expired,
+            0u,
+            0u,
+            nullptr,
+            false);
+    }
+}
+
+void EntityLifecycleSystem::enforce_prop_population_limit(
+    KernelEngine& engine,
+    std::uint32_t population_group_id) const {
+    const auto rule = std::find_if(
+        engine.prop_population_rules_.begin(),
+        engine.prop_population_rules_.end(),
+        [population_group_id](
+            const KernelPropPopulationRuleDefinition& candidate) {
+            return candidate.population_group_id == population_group_id;
+        });
+    if (rule == engine.prop_population_rules_.end()) {
+        return;
+    }
+    std::vector<std::tuple<std::uint32_t, NetId>> members;
+    auto view = engine.world_.registry().view<NetworkIdentity, PropLifecycle>();
+    for (const entt::entity entity : view) {
+        const PropLifecycle& lifecycle = view.get<PropLifecycle>(entity);
+        if (lifecycle.population_group_id != population_group_id) {
+            continue;
+        }
+        members.emplace_back(
+            lifecycle.spawn_tick,
+            view.get<NetworkIdentity>(entity).net_id);
+    }
+    std::sort(members.begin(), members.end());
+    // V1 fixes overflow handling to deterministic despawn-oldest. Add an
+    // authored overflow policy before supporting alternatives such as reject-new.
+    while (members.size() > rule->max_alive) {
+        const NetId oldest = std::get<1>(members.front());
+        members.erase(members.begin());
+        // Capacity eviction is resource cleanup and intentionally bypasses
+        // gameplay on_destroy_entity graphs to prevent spawn cascades.
+        (void)destroy_entity_with_context(
+            engine,
+            oldest,
+            KernelDespawnReason_CapacityEvicted,
+            0u,
+            0u,
+            nullptr,
+            false);
+    }
 }
 
 void EntityLifecycleSystem::process_health_depleted(
@@ -1080,7 +1268,8 @@ bool EntityLifecycleSystem::destroy_entity_with_context(
     std::uint32_t reason,
     NetId instigator,
     std::uint8_t source_code,
-    const glm::vec3* event_position) const {
+    const glm::vec3* event_position,
+    bool execute_destroy_graph) const {
     if (!engine.running_ || !is_server_mode(engine.config_.mode) || net_id == 0) {
         return false;
     }
@@ -1134,7 +1323,8 @@ bool EntityLifecycleSystem::destroy_entity_with_context(
         }
     }
     std::vector<ActionGraphQueuedTrigger> queued_triggers;
-    if (engine.world_.registry().all_of<
+    if (execute_destroy_graph &&
+        engine.world_.registry().all_of<
             OnDestroyEntityTriggerTag,
             ActionGraphDestroyEntityBinding>(*entity)) {
         const ActionGraphDestroyEntityBinding& binding =

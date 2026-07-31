@@ -423,7 +423,7 @@ int main() {
     gameplay_request.requester_peer = 3;
     gameplay_request.request_id = 10001;
     gameplay_request.instigator_net_id = 4;
-    gameplay_request.semantic_button = KernelSemanticInputButton_Use;
+    gameplay_request.domain_action = KernelDomainAction_Consume;
     gameplay_request.selected_item_instance_id = 9001;
     gameplay_request.target_net_id = 6;
     gameplay_request.requested_quantity = 2;
@@ -437,6 +437,7 @@ int main() {
         gameplay_request_packet.size(),
         &decoded_gameplay_request));
     assert(decoded_gameplay_request.request_id == 10001);
+    assert(decoded_gameplay_request.domain_action == KernelDomainAction_Consume);
     assert(decoded_gameplay_request.selected_item_instance_id == 9001);
     assert(decoded_gameplay_request.requested_quantity == 2);
 

@@ -169,6 +169,7 @@ void append_collider_template_files(
         "sentry_grunt_hit_aabb.yaml",
         "area_effect_sphere.yaml",
         "collision_damage_prop_hitbox.yaml",
+        "ice_block_hitbox.yaml",
         "player_hit_aabb.yaml",
         "player_movement_capsule.yaml",
         "rocket_aabb.yaml",
@@ -187,11 +188,14 @@ void append_collider_template_files(
 std::vector<std::uint8_t> make_gameplay_bundle_zip(
     const std::string& sentry_actor_yaml,
     const std::vector<std::pair<std::string, std::string>>& extra_files = {},
-    const std::string& player_actor_yaml = {}) {
+    const std::string& player_actor_yaml = {},
+    const std::string& catalog_yaml = {}) {
     std::vector<std::pair<std::string, std::string>> files;
     files.push_back({
         "gameplay_catalog.yaml",
-        read_text_file("game_server/gameplay_catalog.yaml")});
+        catalog_yaml.empty()
+            ? read_text_file("game_server/gameplay_catalog.yaml")
+            : catalog_yaml});
     append_collider_template_files(&files);
     files.push_back({
         "entity_templates/player.yaml",
@@ -313,7 +317,7 @@ std::vector<std::uint8_t> make_entity_template_bundle_zip(
     std::vector<std::pair<std::string, std::string>> files;
     files.push_back({
         "gameplay_catalog.yaml",
-        "catalog_version: 5\n"
+        "catalog_version: 8\n"
         "action_template_dir: action_templates\n"
         "action_graph_template_dir: action_graph_templates\n"
         "reload_action_template:\n"
@@ -660,7 +664,36 @@ int main() {
     assert(
         config.static_collision_scene.collision_layer ==
         KERNEL_STATIC_COLLISION_LAYER_TERRAIN);
-    require(config.weapons.catalog_version == 5);
+    require(config.weapons.catalog_version == 8);
+    require(config.prop_population_rules.size() == 1u);
+    require(config.prop_population_rules[0].name == "temporary_deployable");
+    require(
+        config.prop_population_rules[0].definition.population_group_id == 1u);
+    require(config.prop_population_rules[0].definition.max_alive == 256u);
+    const auto ice_block = std::find_if(
+        config.entity_templates.begin(),
+        config.entity_templates.end(),
+        [](const network_example::game_server::EntityTemplateConfig& entity) {
+            return entity.name == "ice_block";
+        });
+    require(ice_block != config.entity_templates.end());
+    require(ice_block->prop.lifetime_ticks == 900u);
+    require(ice_block->prop.population_group_id == 1u);
+    const auto ice_block_collider = std::find_if(
+        config.colliders.templates.begin(),
+        config.colliders.templates.end(),
+        [](const network_example::game_server::ColliderTemplateConfig& collider) {
+            return collider.name == "ice_block_hitbox";
+        });
+    require(ice_block_collider != config.colliders.templates.end());
+    require(ice_block->collider_template_id == 13u);
+    require(
+        ice_block_collider->definition.shape_type ==
+        KernelColliderShapeType_OrientedBox);
+    require(ice_block_collider->definition.center.y == 1.5f);
+    require(ice_block_collider->definition.shape_params.x == 1.0f);
+    require(ice_block_collider->definition.shape_params.y == 1.5f);
+    require(ice_block_collider->definition.shape_params.z == 0.3f);
     require(config.weapons.catalog_hash != 0);
     require(
         config.weapons.catalog_hash ==
@@ -682,9 +715,27 @@ int main() {
     require(
         config.weapons.catalog_hash !=
         network_example::game_server::compute_gameplay_catalog_hash(changed_config));
+    changed_config = config;
+    changed_config.prop_population_rules[0].definition.max_alive -= 1u;
+    require(
+        config.weapons.catalog_hash !=
+        network_example::game_server::compute_gameplay_catalog_hash(changed_config));
+    changed_config = config;
+    const auto changed_ice = std::find_if(
+        changed_config.entity_templates.begin(),
+        changed_config.entity_templates.end(),
+        [](const network_example::game_server::EntityTemplateConfig& entity) {
+            return entity.name == "ice_block";
+        });
+    require(changed_ice != changed_config.entity_templates.end());
+    changed_ice->prop.lifetime_ticks += 1u;
+    require(
+        config.weapons.catalog_hash !=
+        network_example::game_server::compute_gameplay_catalog_hash(changed_config));
     require(!config.item_templates.empty());
     changed_config = config;
-    changed_config.item_templates.front().definition.throw_policy.speed += 1.0f;
+    changed_config.item_templates.front()
+        .definition.throw_policy.trajectory_projectile_template_id += 1u;
     require(
         config.weapons.catalog_hash !=
         network_example::game_server::compute_gameplay_catalog_hash(changed_config));
@@ -727,6 +778,20 @@ int main() {
     assert(config_enemy_template->vision.vision_collider_template_id == 9);
     const network_example::game_server::KernelGameplayCatalogStorage catalog =
         network_example::game_server::build_kernel_gameplay_catalog(config);
+    const auto magic_bottle = std::find_if(
+        catalog.entity_templates.begin(),
+        catalog.entity_templates.end(),
+        [](const KernelEntityTemplateDefinition& entity) {
+            return entity.entity_template_id == 203u;
+        });
+    require(magic_bottle != catalog.entity_templates.end());
+    require(magic_bottle->collision_trigger.action_count == 2u);
+    require(
+        magic_bottle->collision_trigger.actions[0].action_type ==
+        KernelEntityTriggerActionType_SpawnEntity);
+    require(
+        magic_bottle->collision_trigger.actions[0].direction_source ==
+        KernelEventVec3Source_Direction);
     assert(catalog.definition.actor_template_count == config.actor_templates.size());
     assert(catalog.actor_templates.size() == config.actor_templates.size());
     assert(catalog.actor_templates[1].actor_template_id == 2);
@@ -784,7 +849,7 @@ int main() {
         config.weapons
             .projectile_sync_modes[network_example::game_server::kWeaponRocket] ==
         KernelProjectileSyncMode_ServerSnapshotOnly);
-    assert(config.colliders.templates.size() == 12);
+    assert(config.colliders.templates.size() == 13);
     assert(config.colliders.bindings.empty());
     assert(config.actor_templates.size() == 2);
     const network_example::game_server::ActorTemplateConfig& player_template =
@@ -1250,7 +1315,7 @@ int main() {
         config.projectile_templates.size());
 
     const std::vector<std::uint8_t> unsupported_version_bundle = make_store_zip({
-        {"gameplay_catalog.yaml", "catalog_version: 2\n"},
+        {"gameplay_catalog.yaml", "catalog_version: 7\n"},
     });
     bool unsupported_version_rejected = false;
     try {
@@ -1266,7 +1331,7 @@ int main() {
     assert(unsupported_version_rejected);
 
     const std::vector<std::uint8_t> unknown_catalog_field_bundle = make_store_zip({
-        {"gameplay_catalog.yaml", "catalog_version: 5\nsurprise: true\n"},
+        {"gameplay_catalog.yaml", "catalog_version: 8\nsurprise: true\n"},
     });
     bool unknown_catalog_field_rejected = false;
     try {
@@ -1280,9 +1345,114 @@ int main() {
     }
     assert(unknown_catalog_field_rejected);
 
+    const std::string production_catalog =
+        read_text_file("game_server/gameplay_catalog.yaml");
+    const auto rejects_catalog = [&](const std::string& catalog_yaml) {
+        const std::vector<std::uint8_t> bundle = make_gameplay_bundle_zip(
+            production_sentry_yaml, {}, {}, catalog_yaml);
+        try {
+            (void)network_example::game_server::
+                load_gameplay_config_from_bundle_memory(
+                    bundle.data(),
+                    static_cast<std::uint32_t>(bundle.size()),
+                    "gameplay_catalog.yaml");
+            return false;
+        } catch (const std::exception&) {
+            return true;
+        }
+    };
+    require(rejects_catalog(replace_once(
+        production_catalog,
+        "    max_alive: 256\n",
+        "    max_alive: 256\n"
+        "    overflow: despawn_oldest\n")));
+    require(rejects_catalog(replace_once(
+        production_catalog,
+        "    max_alive: 256\n",
+        "    max_alive: 257\n")));
+    require(rejects_catalog(replace_once(
+        production_catalog,
+        "    max_alive: 256\n",
+        "    max_alive: 256\n"
+        "  - id: 1\n"
+        "    name: duplicate\n"
+        "    max_alive: 1\n")));
+
+    const std::vector<std::uint8_t> legacy_item_input_bundle =
+        make_gameplay_bundle_zip(
+            read_text_file("game_server/entity_templates/sentry_grunt.yaml"),
+            {{"item_templates/legacy.yaml",
+              "id: 9900\n"
+              "name: legacy\n"
+              "mode: fungible\n"
+              "max_stack: 1\n"
+              "capabilities: []\n"
+              "input:\n"
+              "  inventory:\n"
+              "    use: none\n"}});
+    bool legacy_item_input_rejected = false;
+    try {
+        (void)network_example::game_server::load_gameplay_config_from_bundle_memory(
+            legacy_item_input_bundle.data(),
+            static_cast<std::uint32_t>(legacy_item_input_bundle.size()),
+            "gameplay_catalog.yaml");
+    } catch (const std::exception& error) {
+        legacy_item_input_rejected =
+            std::string(error.what()).find("unknown field") != std::string::npos;
+    }
+    assert(legacy_item_input_rejected);
+
+    const std::vector<std::uint8_t> legacy_throw_speed_bundle =
+        make_gameplay_bundle_zip(
+            read_text_file("game_server/entity_templates/sentry_grunt.yaml"),
+            {{"item_templates/legacy_throw.yaml",
+              "id: 9902\n"
+              "name: legacy_throw\n"
+              "mode: stateful\n"
+              "max_stack: 1\n"
+              "capabilities: [throwable]\n"
+              "throw:\n"
+              "  mode: identity_preserving\n"
+              "  speed: 10.0\n"}});
+    bool legacy_throw_speed_rejected = false;
+    try {
+        (void)network_example::game_server::load_gameplay_config_from_bundle_memory(
+            legacy_throw_speed_bundle.data(),
+            static_cast<std::uint32_t>(legacy_throw_speed_bundle.size()),
+            "gameplay_catalog.yaml");
+    } catch (const std::exception& error) {
+        legacy_throw_speed_rejected =
+            std::string(error.what()).find("unknown field") !=
+            std::string::npos;
+    }
+    assert(legacy_throw_speed_rejected);
+
+    const std::vector<std::uint8_t> legacy_prop_mapping_bundle =
+        make_gameplay_bundle_zip(
+            read_text_file("game_server/entity_templates/sentry_grunt.yaml"),
+            {{"entity_templates/legacy.yaml",
+              "id: 9901\n"
+              "name: legacy_prop\n"
+              "entity_type: prop\n"
+              "interaction:\n"
+              "  capabilities: [interactable]\n"
+              "  interact_tap: activate\n"
+              "  range: 3.0\n"}});
+    bool legacy_prop_mapping_rejected = false;
+    try {
+        (void)network_example::game_server::load_gameplay_config_from_bundle_memory(
+            legacy_prop_mapping_bundle.data(),
+            static_cast<std::uint32_t>(legacy_prop_mapping_bundle.size()),
+            "gameplay_catalog.yaml");
+    } catch (const std::exception& error) {
+        legacy_prop_mapping_rejected =
+            std::string(error.what()).find("unknown field") != std::string::npos;
+    }
+    assert(legacy_prop_mapping_rejected);
+
     const std::vector<std::uint8_t> unknown_nested_catalog_field_bundle = make_store_zip({
         {"gameplay_catalog.yaml",
-         "catalog_version: 5\n"
+         "catalog_version: 8\n"
          "weapon_template_dir: weapon_templates\n"
          "projectile_template_dir: projectile_templates\n"
          "collider_template_dir: collider_templates\n"
@@ -1304,7 +1474,7 @@ int main() {
 
     const std::vector<std::uint8_t> legacy_collider_field_bundle = make_store_zip({
         {"gameplay_catalog.yaml",
-         "catalog_version: 5\n"
+         "catalog_version: 8\n"
          "weapon_template_dir: weapon_templates\n"
          "projectile_template_dir: projectile_templates\n"
          "collider_template_file: collider_templates/default.yaml\n"},
@@ -1324,7 +1494,7 @@ int main() {
     std::vector<std::pair<std::string, std::string>> duplicate_collider_files;
     duplicate_collider_files.push_back({
         "gameplay_catalog.yaml",
-        "catalog_version: 5\n"
+        "catalog_version: 8\n"
         "reload_action_template:\n"
         "  id: 4199\n"
         "  name: shared_reload\n"
@@ -1407,7 +1577,7 @@ int main() {
 
     const std::vector<std::uint8_t> duplicate_path_bundle = make_store_zip({
         {"gameplay_catalog.yaml", "catalog_version: 1\n"},
-        {"gameplay_catalog.yaml", "catalog_version: 5\n"},
+        {"gameplay_catalog.yaml", "catalog_version: 8\n"},
     });
     bool duplicate_path_rejected = false;
     try {

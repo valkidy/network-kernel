@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 57u
+#define KERNEL_ABI_VERSION 60u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -190,6 +190,7 @@ typedef struct KernelAbiInfo {
     uint32_t lan_discovery_result_size;
     uint64_t capability_flags;
     uint32_t gameplay_catalog_definition_size;
+    uint32_t prop_population_rule_definition_size;
     uint32_t gameplay_catalog_load_result_size;
     uint32_t gameplay_catalog_load_options_size;
     uint32_t actor_template_definition_size;
@@ -299,6 +300,8 @@ typedef enum KernelDespawnReason {
     KernelDespawnReason_Destroyed = 0,
     KernelDespawnReason_OutOfRange = 1,
     KernelDespawnReason_Disconnected = 2,
+    KernelDespawnReason_Expired = 3,
+    KernelDespawnReason_CapacityEvicted = 4,
 } KernelDespawnReason;
 
 typedef enum RenderEntityStatus {
@@ -366,13 +369,6 @@ typedef enum KernelItemThrowMode {
     KernelItemThrowMode_IdentityPreserving = 1,
     KernelItemThrowMode_ConsumeAndSpawn = 2,
 } KernelItemThrowMode;
-
-typedef enum KernelSemanticInputButton {
-    KernelSemanticInputButton_Use = 0,
-    KernelSemanticInputButton_Fire = 1,
-    KernelSemanticInputButton_InteractTap = 2,
-    KernelSemanticInputButton_InteractHold = 3,
-} KernelSemanticInputButton;
 
 typedef enum KernelPortableStateType {
     KernelPortableStateType_Uint32 = 0,
@@ -493,19 +489,12 @@ typedef struct KernelPortableStateFieldDefinition {
     uint32_t bool_default;
 } KernelPortableStateFieldDefinition;
 
-typedef struct KernelItemInputMappingDefinition {
-    uint8_t inventory_use;
-    uint8_t inventory_fire;
-    uint8_t world_interact_tap;
-    uint8_t world_interact_hold;
-} KernelItemInputMappingDefinition;
-
 typedef struct KernelItemThrowDefinition {
     uint32_t struct_size;
     uint8_t mode;
     uint8_t reserved0;
     uint16_t reserved1;
-    float speed;
+    uint32_t trajectory_projectile_template_id;
 } KernelItemThrowDefinition;
 
 typedef struct KernelItemUseDefinition {
@@ -524,7 +513,6 @@ typedef struct KernelItemTemplateDefinition {
     uint16_t max_stack;
     uint32_t capability_flags;
     uint32_t entity_template_id;
-    KernelItemInputMappingDefinition input_mapping;
     float interaction_range;
     uint32_t line_of_sight_required;
     uint32_t line_of_sight_blocking_mask;
@@ -539,13 +527,18 @@ typedef struct KernelItemTemplateDefinition {
 typedef struct KernelPropInteractionDefinition {
     uint32_t struct_size;
     uint32_t capability_flags;
-    uint8_t world_interact_tap;
-    uint8_t world_interact_hold;
     uint8_t line_of_sight_required;
     uint8_t reserved0;
+    uint16_t reserved1;
     float interaction_range;
     uint32_t line_of_sight_blocking_mask;
 } KernelPropInteractionDefinition;
+
+typedef struct KernelPropPopulationRuleDefinition {
+    uint32_t struct_size;
+    uint32_t population_group_id;
+    uint32_t max_alive;
+} KernelPropPopulationRuleDefinition;
 
 typedef struct KernelPropDefinition {
     uint32_t struct_size;
@@ -553,6 +546,9 @@ typedef struct KernelPropDefinition {
     float carry_offset_x;
     float carry_offset_y;
     float carry_offset_z;
+    uint32_t throw_trajectory_projectile_template_id;
+    uint32_t lifetime_ticks;
+    uint32_t population_group_id;
 } KernelPropDefinition;
 
 typedef enum KernelAiControllerType {
@@ -913,7 +909,7 @@ typedef struct KernelGameplayRequest {
     uint32_t requester_peer;
     uint64_t request_id;
     uint32_t instigator_net_id;
-    uint8_t semantic_button;
+    uint8_t domain_action;
     uint8_t reserved0;
     uint16_t reserved1;
     KernelItemInstanceId selected_item_instance_id;
@@ -1217,6 +1213,8 @@ typedef struct KernelGameplayCatalogDefinition {
     uint32_t action_template_count;
     const KernelItemTemplateDefinition* item_templates;
     uint32_t item_template_count;
+    const KernelPropPopulationRuleDefinition* prop_population_rules;
+    uint32_t prop_population_rule_count;
 } KernelGameplayCatalogDefinition;
 
 typedef struct KernelGameplayCatalogLoadResult {

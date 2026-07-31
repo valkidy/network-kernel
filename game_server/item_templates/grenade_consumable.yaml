@@ -3,16 +3,8 @@ name: grenade_consumable
 mode: fungible
 max_stack: 5
 capabilities: [throwable]
-input:
-  inventory:
-    use: none
-    fire: throw
-  world:
-    interact_tap: none
-    interact_hold: none
 throw:
   mode: consume_and_spawn
-  speed: 1.0
 use:
   quantity_cost: 1
   cooldown_ticks: 15
