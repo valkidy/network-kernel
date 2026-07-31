@@ -3291,6 +3291,54 @@ void local_deterministic_sphere_projectile_hits_prediction_terrain() {
     require(stats.total_entity_count == 0);
 }
 
+void local_deterministic_projectile_hits_prediction_pure_prop() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+    load_projectile_collision_catalog(
+        &client, KernelProjectileSyncMode_LocalPredictedDeterministic);
+    install_prediction_terrain_box(
+        &client,
+        glm::vec3{100.0f, 0.0f, 0.0f},
+        glm::vec3{0.1f, 0.1f, 0.1f});
+
+    KernelColliderTemplateDefinition ice_block_collider{};
+    ice_block_collider.struct_size = sizeof(ice_block_collider);
+    ice_block_collider.template_id = 13;
+    ice_block_collider.shape_type = KernelColliderShapeType_OrientedBox;
+    ice_block_collider.center = KernelVec3{0.0f, 1.5f, 0.0f};
+    ice_block_collider.shape_params = KernelVec4{1.0f, 1.5f, 0.3f, 0.0f};
+    ice_block_collider.layer_mask = KERNEL_COLLISION_LAYER_NEUTRAL;
+    ice_block_collider.purpose_flags = KernelColliderPurpose_Hit;
+    client.collider_templates_.push_back(ice_block_collider);
+
+    RenderEntityState ice_block{};
+    ice_block.net_id = 204;
+    ice_block.entity_type =
+        static_cast<std::uint16_t>(network_example::EntityType::kProp);
+    ice_block.position = KernelVec3{2.0f, 0.0f, 0.0f};
+    ice_block.rotation.w = 1.0f;
+    ice_block.collider_template_id = ice_block_collider.template_id;
+    client.render_states_.push_back(ice_block);
+    client.sync_client_render_colliders();
+    require(client.prediction_obstacle_collider_ids_.contains(ice_block.net_id));
+
+    client.predicted_projectiles_.push_back(predicted_projectile(
+        KernelProjectileSyncMode_LocalPredictedDeterministic));
+    client.advance_predicted_projectiles(1.0f / 30.0f);
+
+    require(client.predicted_projectiles_.size() == 1);
+    require(client.predicted_projectiles_[0].locally_terminated);
+    require(client.predicted_projectiles_[0].position.x > 0.7f);
+    require(client.predicted_projectiles_[0].position.x < 2.1f);
+
+    client.render_states_.clear();
+    client.sync_client_render_colliders();
+    require(client.prediction_obstacle_collider_ids_.empty());
+}
+
 void local_deterministic_box_projectile_hits_prediction_terrain() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
@@ -4285,6 +4333,7 @@ int main() {
     server_snapshot_send_set_carries_vision_debug_to_client();
     predicted_projectile_lifetime_cleanup_removes_batch_projectile();
     local_deterministic_sphere_projectile_hits_prediction_terrain();
+    local_deterministic_projectile_hits_prediction_pure_prop();
     local_deterministic_box_projectile_hits_prediction_terrain();
     local_projectile_miss_and_hybrid_remain_kinematic();
     local_projectile_missing_physics_falls_back_once();

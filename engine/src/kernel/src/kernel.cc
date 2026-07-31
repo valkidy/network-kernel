@@ -1651,6 +1651,7 @@ bool KernelEngine::prepare_prediction_physics() {
     }
     prediction_physics_world_ = std::move(world);
     prediction_proxy_collider_ids_.clear();
+    prediction_obstacle_collider_ids_.clear();
     next_prediction_proxy_collider_id_ = 0xc0000000u;
     return true;
 }
@@ -3644,6 +3645,7 @@ void KernelEngine::sync_client_render_colliders() {
     }
 
     world_.collider_registry().mutable_instances().clear();
+    std::unordered_set<NetId> current_prediction_obstacles;
     for (const RenderEntityState& state : render_states_) {
         const EntityType entity_type =
             static_cast<EntityType>(state.entity_type);
@@ -3688,6 +3690,62 @@ void KernelEngine::sync_client_render_colliders() {
                 collider_template->template_id,
                 collider);
         }
+        if (prediction_physics_world_ == nullptr ||
+            entity_type != EntityType::kProp ||
+            state.item_instance_id != 0u ||
+            state.net_id == 0u ||
+            (collider.purpose_flags & KernelColliderPurpose_Hit) == 0u ||
+            collider.shape_type == ColliderShapeType::kSegment ||
+            collider.shape_type == ColliderShapeType::kCone) {
+            continue;
+        }
+
+        auto proxy = prediction_obstacle_collider_ids_.find(state.net_id);
+        if (proxy == prediction_obstacle_collider_ids_.end()) {
+            proxy = prediction_obstacle_collider_ids_
+                        .emplace(
+                            state.net_id,
+                            next_prediction_proxy_collider_id_++)
+                        .first;
+        }
+        physics::CollisionObjectDescriptor object{};
+        object.identity.entity_net_id = state.net_id;
+        object.identity.collider_id = proxy->second;
+        object.identity.kind = physics::CollisionObjectKind::kStaticObstacle;
+        object.identity.layer = physics::CollisionLayer::kStaticObstacle;
+        object.identity.gameplay_category = collider.layer_mask;
+        object.shape.type = collider.shape_type == ColliderShapeType::kSphere
+            ? physics::CollisionShapeType::kSphere
+            : collider.shape_type == ColliderShapeType::kCapsule
+                ? physics::CollisionShapeType::kCapsule
+                : physics::CollisionShapeType::kBox;
+        object.shape.half_extents = collider.half_extents;
+        object.shape.radius = collider.radius;
+        object.shape.capsule_half_height = collider.capsule_half_height;
+        object.position = collider.world_center;
+        object.rotation = collider.world_rotation;
+        object.enabled = collider.enabled;
+        std::string error;
+        if (!prediction_physics_world_->upsert_object(object, &error)) {
+            spdlog::error(
+                "failed to update prediction obstacle proxy net_id={}: {}",
+                state.net_id,
+                error);
+            continue;
+        }
+        current_prediction_obstacles.insert(state.net_id);
+    }
+
+    for (auto proxy = prediction_obstacle_collider_ids_.begin();
+         proxy != prediction_obstacle_collider_ids_.end();) {
+        if (current_prediction_obstacles.contains(proxy->first)) {
+            ++proxy;
+            continue;
+        }
+        if (prediction_physics_world_ != nullptr) {
+            prediction_physics_world_->remove_object(proxy->second);
+        }
+        proxy = prediction_obstacle_collider_ids_.erase(proxy);
     }
 }
 
@@ -4474,6 +4532,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     pending_network_gameplay_outcomes_.clear();
     physics_entity_collider_ids_.clear();
     prediction_proxy_collider_ids_.clear();
+    prediction_obstacle_collider_ids_.clear();
     history_buffer_ = HistoryBuffer(history_frame_count(config_.tick));
     damage_pipeline_.clear();
     next_action_graph_sequence_ = 1;
@@ -5783,6 +5842,14 @@ void KernelEngine::handle_client_despawn(const EntityDespawnPacket& packet) {
         }
         prediction_proxy_collider_ids_.erase(proxy);
     }
+    const auto obstacle =
+        prediction_obstacle_collider_ids_.find(packet.net_id);
+    if (obstacle != prediction_obstacle_collider_ids_.end()) {
+        if (prediction_physics_world_ != nullptr) {
+            prediction_physics_world_->remove_object(obstacle->second);
+        }
+        prediction_obstacle_collider_ids_.erase(obstacle);
+    }
     client_metadata_timeout_reported_entities_.erase(packet.net_id);
     predicted_projectiles_.erase(
         std::remove_if(
@@ -5852,6 +5919,14 @@ void KernelEngine::clear_client_session() {
         }
     }
     prediction_proxy_collider_ids_.clear();
+    for (const auto& [net_id, collider_id] :
+         prediction_obstacle_collider_ids_) {
+        (void)net_id;
+        if (prediction_physics_world_ != nullptr) {
+            prediction_physics_world_->remove_object(collider_id);
+        }
+    }
+    prediction_obstacle_collider_ids_.clear();
     local_client_peer_id_ = 0;
     local_player_net_id_ = 0;
     local_last_processed_input_seq_ = 0;
