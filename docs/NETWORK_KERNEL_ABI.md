@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 55u`.
+`KERNEL_ABI_VERSION == 58u`.
 
 ## Ownership
 
@@ -30,6 +30,14 @@ failures return `NULL`, `false`, or `0`.
 Additive changes must prefer new `Kernel_*` functions or new capability flags.
 Breaking changes to public struct layout, enum semantics, buffer ownership, or
 function signatures require a `KERNEL_ABI_VERSION` bump.
+
+ABI version 58 replaces `KernelGameplayRequest::semantic_button` with the
+explicit `domain_action` contract, removes Item and Prop input mappings, and
+makes template capabilities the authoritative action allowlist.
+`KernelGameplayRequestStatus_NoAction` remains reserved but is not emitted.
+Packet schema 21 carries the direct domain action byte; gameplay catalog
+version 6 rejects the removed Item `input` and Prop tap/hold mapping fields.
+There is no ABI 57, packet 20, or catalog 5 adapter.
 
 ABI version 55 aligns the player-input naming contract with gameplay requests:
 `KernelPlayerInput`, `KernelActionIntent`, `KernelActionInput`, and

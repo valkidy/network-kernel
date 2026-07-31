@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 57u
+#define KERNEL_ABI_VERSION 58u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -367,13 +367,6 @@ typedef enum KernelItemThrowMode {
     KernelItemThrowMode_ConsumeAndSpawn = 2,
 } KernelItemThrowMode;
 
-typedef enum KernelSemanticInputButton {
-    KernelSemanticInputButton_Use = 0,
-    KernelSemanticInputButton_Fire = 1,
-    KernelSemanticInputButton_InteractTap = 2,
-    KernelSemanticInputButton_InteractHold = 3,
-} KernelSemanticInputButton;
-
 typedef enum KernelPortableStateType {
     KernelPortableStateType_Uint32 = 0,
     KernelPortableStateType_Float = 1,
@@ -493,13 +486,6 @@ typedef struct KernelPortableStateFieldDefinition {
     uint32_t bool_default;
 } KernelPortableStateFieldDefinition;
 
-typedef struct KernelItemInputMappingDefinition {
-    uint8_t inventory_use;
-    uint8_t inventory_fire;
-    uint8_t world_interact_tap;
-    uint8_t world_interact_hold;
-} KernelItemInputMappingDefinition;
-
 typedef struct KernelItemThrowDefinition {
     uint32_t struct_size;
     uint8_t mode;
@@ -524,7 +510,6 @@ typedef struct KernelItemTemplateDefinition {
     uint16_t max_stack;
     uint32_t capability_flags;
     uint32_t entity_template_id;
-    KernelItemInputMappingDefinition input_mapping;
     float interaction_range;
     uint32_t line_of_sight_required;
     uint32_t line_of_sight_blocking_mask;
@@ -539,10 +524,9 @@ typedef struct KernelItemTemplateDefinition {
 typedef struct KernelPropInteractionDefinition {
     uint32_t struct_size;
     uint32_t capability_flags;
-    uint8_t world_interact_tap;
-    uint8_t world_interact_hold;
     uint8_t line_of_sight_required;
     uint8_t reserved0;
+    uint16_t reserved1;
     float interaction_range;
     uint32_t line_of_sight_blocking_mask;
 } KernelPropInteractionDefinition;
@@ -913,7 +897,7 @@ typedef struct KernelGameplayRequest {
     uint32_t requester_peer;
     uint64_t request_id;
     uint32_t instigator_net_id;
-    uint8_t semantic_button;
+    uint8_t domain_action;
     uint8_t reserved0;
     uint16_t reserved1;
     KernelItemInstanceId selected_item_instance_id;

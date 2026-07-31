@@ -142,7 +142,7 @@ bool read_json(const Json& value, KernelGameplayRequest* out_value) {
             "requester_peer",
             "request_id",
             "instigator_net_id",
-            "semantic_button",
+            "domain_action",
             "selected_item_instance_id",
             "target_net_id",
             "requested_quantity",
@@ -155,7 +155,7 @@ bool read_json(const Json& value, KernelGameplayRequest* out_value) {
     return read_param(value, "requester_peer", &out_value->requester_peer) &&
         read_param(value, "request_id", &out_value->request_id) &&
         read_param(value, "instigator_net_id", &out_value->instigator_net_id) &&
-        read_param(value, "semantic_button", &out_value->semantic_button) &&
+        read_param(value, "domain_action", &out_value->domain_action) &&
         read_param(value, "selected_item_instance_id",
             &out_value->selected_item_instance_id) &&
         read_param(value, "target_net_id", &out_value->target_net_id) &&

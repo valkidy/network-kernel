@@ -1,23 +1,23 @@
 # Item / Prop Authoring and Native Runtime Guide
 
-This document describes the native Item / Prop contract introduced with Kernel
-ABI 55, protocol 3, snapshot schema 17, packet schema 19, and gameplay catalog
-version 5. Unity UI, input gesture presentation, and C# bindings are separate
+This document describes the native Item / Prop contract at Kernel ABI 58,
+protocol 3, snapshot schema 17, packet schema 21, and gameplay catalog version
+6. Unity UI, input gesture presentation, and C# bindings are separate
 integration work.
 
 ## Authoring
 
 The root gameplay catalog accepts `item_template_dir`. Each YAML file in that
 directory defines one Item Template with a stable numeric ID, `fungible` or
-`stateful` mode, maximum stack size, capabilities, semantic input mappings,
-optional Item-backed Prop entity template, throw/use policy, portable state,
-and `on_item_used` Action Graph binding.
+`stateful` mode, maximum stack size, capabilities, optional Item-backed Prop
+entity template, throw/use policy, portable state, and `on_item_used` Action
+Graph binding.
 
-Inventory mappings accept `consume`, `place`, `throw`, or `none`. World
-mappings accept `pickup`, `carry`, `activate`, or `none`. Every non-`none`
-mapping requires its corresponding capability. World interaction mappings
-also require an authored interaction range; LOS can be enabled with a blocking
-mask. Carrying mappings are fixed by the runtime: Use places and Fire throws.
+Capabilities are the authoritative action allowlist. World-facing capabilities
+require an authored interaction range; LOS can be enabled with a blocking mask.
+Throwable Items require a non-`none` throw policy, and a non-`none` throw policy
+requires the Throwable capability. Client input bindings are not part of the
+Item or Entity Template schema.
 
 An Entity Template referenced by an Item Template must be a Prop and must not
 also author a Prop interaction policy. Pure world Props author their policy in
@@ -62,17 +62,19 @@ a fresh non-reused Item Instance ID.
 
 Submit gameplay through `Kernel_SubmitGameplayRequest` (client or server) or
 the server-only `Kernel_ServerSubmitGameplayRequest`. Do not encode these
-requests in per-tick `KernelPlayerInput`. The reliable request key is
-`(requester_peer, request_id)`. The server validates the requester, current
-actor ownership, selected Item residency, target, range, LOS, capability,
-quantity/charge, cooldown, placement, and graph admission using current
-authoritative state.
+requests in per-tick `KernelPlayerInput`. The client maps its input/controller
+state to a `KernelDomainAction` and writes it to
+`KernelGameplayRequest::domain_action`. The reliable request key is
+`(requester_peer, request_id)`. The server validates the requested action,
+requester, current actor ownership, selected Item residency, target, range,
+LOS, capability, quantity/charge, cooldown, placement, and graph admission
+using current authoritative state.
 
 Poll `KernelGameplayRequestOutcome` with
 `Kernel_PollGameplayRequestOutcomes`. Domain status and graph status are
 separate:
 
-- `NoAction` means the effective mapping was `none`.
+- `NoAction` is a reserved compatibility value and is not emitted by ABI 58.
 - `Rejected` means no domain commit occurred.
 - `Committed` means the authoritative Item/Prop state changed.
 - `NotSubmitted` means no graph was required.

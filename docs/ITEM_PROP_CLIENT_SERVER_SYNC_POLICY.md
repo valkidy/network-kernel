@@ -2,8 +2,8 @@
 
 ## Compatibility baseline
 
-This policy describes the implemented ABI 55 wire contract: network protocol
-3, packet schema 19, snapshot schema 17, and gameplay catalog version 5. The
+This policy describes the implemented ABI 58 wire contract: network protocol
+3, packet schema 21, snapshot schema 17, and gameplay catalog version 6. The
 handshake rejects older peers; there is no compatibility translation.
 
 The server is authoritative for Item/Container ID allocation, residency,
@@ -16,7 +16,7 @@ run an authoritative Item graph.
 
 | Data | Recipient | Transport | Cadence / trigger | Relevance |
 |---|---|---|---|---|
-| Catalog schema, templates, mappings, portable field order and policies | Connecting peer | Existing reliable session catalog bundle | Handshake/hash mismatch only | Session |
+| Catalog schema, templates, capabilities, portable field order and policies | Connecting peer | Existing reliable session catalog bundle | Handshake/hash mismatch only | Session |
 | Owned Inventory initial state | Container owner only | Reliable `InventorySnapshotPage(26)` | Once after welcomed/catalog-ready; again on resync | Owner, never observers |
 | Owned Inventory mutations | Container owner only | Reliable `InventoryDeltaBatch(24)` | At most one batch per container per server tick; no packet while idle | Owner, never observers |
 | Inventory resync request | Server | Reliable `InventorySnapshotRequest(25)` | Once when a client detects a gap, until a snapshot completes | Owning session validated server-side |
@@ -95,11 +95,11 @@ transforms on the client.
 
 ## Gameplay, transaction and Action Graph policy
 
-Semantic requests are deduplicated by `(requester_peer, request_id)`. The
-server resolves the effective mapping from current residency and validates
-ownership, target, range, LOS, capability, placement, quantity/charge,
-cooldown, and graph admission. `NoAction` is cached and reliable like other
-outcomes.
+Gameplay requests are deduplicated by `(requester_peer, request_id)`. Each
+request carries an explicit `KernelDomainAction`; the server validates its
+current residency context, ownership, target, range, LOS, capability,
+placement, quantity/charge, cooldown, and graph admission. `NoAction` remains
+reserved for compatibility but is not emitted.
 
 Pickup, Carry, Place and identity-preserving Throw use a scope-transfer
 transaction. The transaction claims the source Item/Prop, performs destination
@@ -107,7 +107,7 @@ and materialization preflight, and keeps generated lifecycle/Prop replication
 facts hidden until commit. A failed request restores the source and discards
 those facts. Queue ordering decides races: the first successful commit changes
 authoritative residency, so later requests see the committed state and return
-a stable rejection or `NoAction`.
+a stable rejection.
 
 Consume and consume-and-spawn Throw perform graph preflight before resource
 commit. After commit, an immutable `kItemUsed` event drives one accepted graph

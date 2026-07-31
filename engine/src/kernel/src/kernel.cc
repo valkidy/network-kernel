@@ -2503,35 +2503,20 @@ bool KernelEngine::load_gameplay_catalog(
                     sizeof(KernelPropInteractionDefinition)) {
                 return false;
             }
-            const auto valid_world_action = [](std::uint8_t action) {
-                return action == KernelDomainAction_None ||
-                    action == KernelDomainAction_Pickup ||
-                    action == KernelDomainAction_Carry ||
-                    action == KernelDomainAction_Activate;
-            };
-            if (!valid_world_action(interaction.world_interact_tap) ||
-                !valid_world_action(interaction.world_interact_hold) ||
-                ((interaction.world_interact_tap != KernelDomainAction_None ||
-                  interaction.world_interact_hold != KernelDomainAction_None) &&
-                 interaction.interaction_range <= 0.0f)) {
+            constexpr std::uint32_t kPurePropCapabilities =
+                KernelItemCapability_Carryable |
+                KernelItemCapability_Throwable |
+                KernelItemCapability_Interactable;
+            if ((interaction.capability_flags & ~kPurePropCapabilities) != 0u) {
                 return false;
             }
-            const auto has_capability = [&](std::uint8_t action) {
-                std::uint32_t required = 0;
-                if (action == KernelDomainAction_Pickup) {
-                    required = KernelItemCapability_Pickupable;
-                } else if (action == KernelDomainAction_Carry) {
-                    required = KernelItemCapability_Carryable;
-                } else if (action == KernelDomainAction_Activate) {
-                    required = KernelItemCapability_Interactable;
-                }
-                return required == 0 ||
-                    (interaction.capability_flags & required) != 0;
-            };
-            if (!has_capability(interaction.world_interact_tap) ||
-                !has_capability(interaction.world_interact_hold) ||
-                ((interaction.world_interact_tap == KernelDomainAction_Activate ||
-                  interaction.world_interact_hold == KernelDomainAction_Activate) &&
+            constexpr std::uint32_t kRangedPropCapabilities =
+                KernelItemCapability_Carryable |
+                KernelItemCapability_Interactable;
+            if (((interaction.capability_flags & kRangedPropCapabilities) != 0u &&
+                 interaction.interaction_range <= 0.0f) ||
+                ((interaction.capability_flags &
+                  KernelItemCapability_Interactable) != 0u &&
                  entity_template.activated_trigger.struct_size <
                      sizeof(KernelActionTriggerDefinition))) {
                 return false;
@@ -2783,15 +2768,11 @@ bool KernelEngine::load_gameplay_catalog(
         }
         const KernelPropInteractionDefinition& interaction =
             entity_template->prop.interaction;
-        if (interaction.capability_flags != 0u ||
-            interaction.world_interact_tap != KernelDomainAction_None ||
-            interaction.world_interact_hold != KernelDomainAction_None) {
+        if (interaction.capability_flags != 0u) {
             return false;
         }
-        if (item_template.input_mapping.world_interact_tap ==
-                KernelDomainAction_Activate ||
-            item_template.input_mapping.world_interact_hold ==
-                KernelDomainAction_Activate) {
+        if ((item_template.capability_flags &
+             KernelItemCapability_Interactable) != 0u) {
             if (entity_template->activated_trigger.struct_size <
                 sizeof(KernelActionTriggerDefinition)) {
                 return false;

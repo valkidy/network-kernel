@@ -6,8 +6,8 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 57u,
-    "collision mask and action condition ABI");
+    KERNEL_ABI_VERSION == 58u,
+    "direct gameplay action ABI");
 _Static_assert(
     sizeof(KernelActionTriggerDefinition) == 296u,
     "KernelActionTriggerDefinition ABI size");
@@ -120,7 +120,7 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 56u);
+    assert(KERNEL_ABI_VERSION == 58u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD == 4u);

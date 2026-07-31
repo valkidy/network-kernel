@@ -9,39 +9,6 @@ namespace {
 
 constexpr std::size_t kInventoryDeltaHistoryLimit = 256u;
 
-bool action_allowed_in_inventory(std::uint8_t action) {
-    return action == KernelDomainAction_None ||
-        action == KernelDomainAction_Consume ||
-        action == KernelDomainAction_Place ||
-        action == KernelDomainAction_Throw;
-}
-
-bool action_allowed_in_world(std::uint8_t action) {
-    return action == KernelDomainAction_None ||
-        action == KernelDomainAction_Pickup ||
-        action == KernelDomainAction_Carry ||
-        action == KernelDomainAction_Activate;
-}
-
-std::uint32_t required_capability(std::uint8_t action) {
-    switch (action) {
-        case KernelDomainAction_Consume:
-            return KernelItemCapability_Consumable;
-        case KernelDomainAction_Pickup:
-            return KernelItemCapability_Pickupable;
-        case KernelDomainAction_Throw:
-            return KernelItemCapability_Throwable;
-        case KernelDomainAction_Place:
-            return KernelItemCapability_Deployable;
-        case KernelDomainAction_Carry:
-            return KernelItemCapability_Carryable;
-        case KernelDomainAction_Activate:
-            return KernelItemCapability_Interactable;
-        default:
-            return 0;
-    }
-}
-
 bool set_error(std::string* error, const char* message) {
     if (error != nullptr) {
         *error = message;
@@ -182,30 +149,13 @@ bool validate_item_template(
             has_health_projection = true;
         }
     }
-    const KernelItemInputMappingDefinition& mapping = definition.input_mapping;
-    if (!action_allowed_in_inventory(mapping.inventory_use) ||
-        !action_allowed_in_inventory(mapping.inventory_fire) ||
-        !action_allowed_in_world(mapping.world_interact_tap) ||
-        !action_allowed_in_world(mapping.world_interact_hold)) {
-        return set_error(error, "domain action is invalid for mapping context");
-    }
-    const std::uint8_t actions[] = {
-        mapping.inventory_use,
-        mapping.inventory_fire,
-        mapping.world_interact_tap,
-        mapping.world_interact_hold,
-    };
-    for (const std::uint8_t action : actions) {
-        const std::uint32_t capability = required_capability(action);
-        if (capability != 0 &&
-            (definition.capability_flags & capability) == 0) {
-            return set_error(error, "domain action is missing required capability");
-        }
-    }
-    if ((mapping.world_interact_tap != KernelDomainAction_None ||
-         mapping.world_interact_hold != KernelDomainAction_None) &&
+    constexpr std::uint32_t kWorldFacingCapabilities =
+        KernelItemCapability_Pickupable |
+        KernelItemCapability_Carryable |
+        KernelItemCapability_Interactable;
+    if ((definition.capability_flags & kWorldFacingCapabilities) != 0u &&
         definition.interaction_range <= 0.0f) {
-        return set_error(error, "world mapping requires interaction range");
+        return set_error(error, "world capability requires interaction range");
     }
     if ((definition.capability_flags & KernelItemCapability_Deployable) != 0 &&
         definition.entity_template_id == 0) {
@@ -226,12 +176,17 @@ bool validate_item_template(
             error,
             "identity-preserving throw requires entity template");
     }
+    const bool throwable =
+        (definition.capability_flags & KernelItemCapability_Throwable) != 0u;
+    if (throwable !=
+        (definition.throw_policy.mode != KernelItemThrowMode_None)) {
+        return set_error(error, "throwable capability and policy must match");
+    }
     if (definition.use_policy.struct_size < sizeof(KernelItemUseDefinition)) {
         return set_error(error, "invalid use policy");
     }
     const bool consumes =
-        mapping.inventory_use == KernelDomainAction_Consume ||
-        mapping.inventory_fire == KernelDomainAction_Consume ||
+        (definition.capability_flags & KernelItemCapability_Consumable) != 0u ||
         definition.throw_policy.mode == KernelItemThrowMode_ConsumeAndSpawn;
     if (consumes && !valid_item_used_graph(
             definition.item_used_trigger,

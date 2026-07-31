@@ -1071,7 +1071,7 @@ std::vector<std::uint8_t> encode_gameplay_request_packet(
     payload.write_u32(request.requester_peer);
     payload.write_u64(request.request_id);
     payload.write_u32(request.instigator_net_id);
-    payload.write_u8(request.semantic_button);
+    payload.write_u8(request.domain_action);
     payload.write_u8(0u);
     payload.write_u16(0u);
     payload.write_u64(request.selected_item_instance_id);
@@ -1107,7 +1107,7 @@ bool decode_gameplay_request_packet(
     if (!reader.read_u32(&request.requester_peer) ||
         !reader.read_u64(&request.request_id) ||
         !reader.read_u32(&request.instigator_net_id) ||
-        !reader.read_u8(&request.semantic_button) ||
+        !reader.read_u8(&request.domain_action) ||
         !reader.read_u8(&reserved0) ||
         !reader.read_u16(&reserved1) ||
         !reader.read_u64(&request.selected_item_instance_id) ||

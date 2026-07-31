@@ -1,4 +1,4 @@
-catalog_version: 5
+catalog_version: 6
 action_template_dir: action_templates
 action_graph_template_dir: action_graph_templates
 reload_action_template:

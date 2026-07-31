@@ -251,7 +251,7 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 57u);
+    assert(KERNEL_ABI_VERSION == 58u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CONTROL_PLANE_RPC) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ACTION_TIMELINE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LOCAL_ACTION_RESULTS) != 0);
@@ -347,7 +347,7 @@ int main() {
     require(has_version_revision_suffix(build_info.module_version));
     require(build_info.protocol_version == 3u);
     require(build_info.snapshot_schema_version == 17u);
-    require(build_info.packet_schema_version == 20u);
+    require(build_info.packet_schema_version == 21u);
     require(build_info.git_commit[0] != '\0');
     require(std::strcmp(build_info.git_commit, "unknown") != 0);
     require(std::strcmp(build_info.module_version, build_info.git_commit) != 0);

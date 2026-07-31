@@ -278,8 +278,6 @@ void hash_actor_template(
         hash_string(hash, parameter.second);
     }
     hash_scalar(hash, actor_template.prop.interaction.capability_flags);
-    hash_scalar(hash, actor_template.prop.interaction.world_interact_tap);
-    hash_scalar(hash, actor_template.prop.interaction.world_interact_hold);
     hash_scalar(hash, actor_template.prop.interaction.line_of_sight_required);
     hash_float(hash, actor_template.prop.interaction.interaction_range);
     hash_scalar(hash, actor_template.prop.interaction.line_of_sight_blocking_mask);
@@ -1671,7 +1669,6 @@ TriggerBindingConfig trigger_binding_from_yaml(
     bool allow_collision_mask = false);
 
 std::uint32_t item_capability_from_yaml(const std::string& value);
-std::uint8_t domain_action_from_yaml(const YAML::Node& node);
 
 std::uint8_t camp_from_yaml(const YAML::Node& node) {
     if (!node) {
@@ -2481,8 +2478,8 @@ EntityTemplateConfig entity_template_from_yaml(
         if (node["interaction"]) {
             reject_unknown_keys(
                 node["interaction"],
-                {"capabilities", "interact_tap", "interact_hold", "range",
-                 "line_of_sight_required", "blocking_mask"},
+                {"capabilities", "range", "line_of_sight_required",
+                 "blocking_mask"},
                 path,
                 source_kind,
                 KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
@@ -2496,10 +2493,6 @@ EntityTemplateConfig entity_template_from_yaml(
                 entity_template.prop.interaction.capability_flags |=
                     item_capability_from_yaml(capability.as<std::string>());
             }
-            entity_template.prop.interaction.world_interact_tap =
-                domain_action_from_yaml(node["interaction"]["interact_tap"]);
-            entity_template.prop.interaction.world_interact_hold =
-                domain_action_from_yaml(node["interaction"]["interact_hold"]);
             entity_template.prop.interaction.interaction_range =
                 node["interaction"]["range"].as<float>();
             entity_template.prop.interaction.line_of_sight_required =
@@ -2985,19 +2978,6 @@ std::uint32_t item_capability_from_yaml(const std::string& value) {
     throw std::runtime_error("unknown item capability: " + value);
 }
 
-std::uint8_t domain_action_from_yaml(const YAML::Node& node) {
-    if (!node) return KernelDomainAction_None;
-    const std::string value = node.as<std::string>();
-    if (value == "none") return KernelDomainAction_None;
-    if (value == "consume") return KernelDomainAction_Consume;
-    if (value == "pickup") return KernelDomainAction_Pickup;
-    if (value == "throw") return KernelDomainAction_Throw;
-    if (value == "place") return KernelDomainAction_Place;
-    if (value == "carry") return KernelDomainAction_Carry;
-    if (value == "activate") return KernelDomainAction_Activate;
-    throw std::runtime_error("unknown item domain action: " + value);
-}
-
 ItemTemplateConfig item_template_from_yaml(
     const YAML::Node& node,
     const std::string& path,
@@ -3006,7 +2986,7 @@ ItemTemplateConfig item_template_from_yaml(
     reject_unknown_keys(
         node,
         {"id", "name", "mode", "max_stack", "capabilities",
-         "entity_template", "input", "world_interaction", "throw", "use", "portable_state",
+         "entity_template", "world_interaction", "throw", "use", "portable_state",
          "triggers"},
         path,
         source_kind,
@@ -3040,43 +3020,6 @@ ItemTemplateConfig item_template_from_yaml(
         item.entity_template_ref = node["entity_template"].as<std::string>();
         definition.entity_template_id =
             entity_template_ref_from_yaml(node["entity_template"], entity_templates);
-    }
-    if (node["input"]) {
-        reject_unknown_keys(
-            node["input"],
-            {"inventory", "world"},
-            path,
-            source_kind,
-            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ITEM,
-            definition.item_template_id);
-        const YAML::Node inventory = node["input"]["inventory"];
-        const YAML::Node world = node["input"]["world"];
-        if (inventory) {
-            reject_unknown_keys(
-                inventory,
-                {"use", "fire"},
-                path,
-                source_kind,
-                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ITEM,
-                definition.item_template_id);
-            definition.input_mapping.inventory_use =
-                domain_action_from_yaml(inventory["use"]);
-            definition.input_mapping.inventory_fire =
-                domain_action_from_yaml(inventory["fire"]);
-        }
-        if (world) {
-            reject_unknown_keys(
-                world,
-                {"interact_tap", "interact_hold"},
-                path,
-                source_kind,
-                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ITEM,
-                definition.item_template_id);
-            definition.input_mapping.world_interact_tap =
-                domain_action_from_yaml(world["interact_tap"]);
-            definition.input_mapping.world_interact_hold =
-                domain_action_from_yaml(world["interact_hold"]);
-        }
     }
     if (node["world_interaction"]) {
         reject_unknown_keys(
@@ -4243,7 +4186,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     const std::uint32_t catalog_version =
         document["catalog_version"] ? document["catalog_version"].as<std::uint32_t>()
                                     : 1u;
-    if (catalog_version != 5u) {
+    if (catalog_version != 6u) {
         throw DataLoadError(
             KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNSUPPORTED_CATALOG_VERSION,
             "unsupported catalog_version: " + std::to_string(catalog_version),
@@ -4526,10 +4469,6 @@ std::uint64_t compute_gameplay_catalog_hash(
         hash_scalar(&hash, definition.max_stack);
         hash_scalar(&hash, definition.capability_flags);
         hash_scalar(&hash, definition.entity_template_id);
-        hash_scalar(&hash, definition.input_mapping.inventory_use);
-        hash_scalar(&hash, definition.input_mapping.inventory_fire);
-        hash_scalar(&hash, definition.input_mapping.world_interact_tap);
-        hash_scalar(&hash, definition.input_mapping.world_interact_hold);
         hash_float(&hash, definition.interaction_range);
         hash_scalar(&hash, definition.line_of_sight_required);
         hash_scalar(&hash, definition.line_of_sight_blocking_mask);

@@ -16,6 +16,68 @@
 namespace network_example {
 namespace {
 
+enum class GameplayRequestContext {
+    kInvalid,
+    kInventoryItem,
+    kPlacedItem,
+    kCarryingItem,
+    kPlacedProp,
+    kCarryingProp,
+};
+
+bool valid_domain_action(std::uint8_t action) {
+    return action >= KernelDomainAction_Consume &&
+        action <= KernelDomainAction_Activate;
+}
+
+bool action_allowed_in_context(
+    GameplayRequestContext context,
+    std::uint8_t action) {
+    switch (context) {
+        case GameplayRequestContext::kInventoryItem:
+            return action == KernelDomainAction_Consume ||
+                action == KernelDomainAction_Place ||
+                action == KernelDomainAction_Throw;
+        case GameplayRequestContext::kPlacedItem:
+            return action == KernelDomainAction_Pickup ||
+                action == KernelDomainAction_Carry ||
+                action == KernelDomainAction_Activate;
+        case GameplayRequestContext::kCarryingItem:
+        case GameplayRequestContext::kCarryingProp:
+            return action == KernelDomainAction_Place ||
+                action == KernelDomainAction_Throw;
+        case GameplayRequestContext::kPlacedProp:
+            return action == KernelDomainAction_Carry ||
+                action == KernelDomainAction_Activate;
+        case GameplayRequestContext::kInvalid:
+            return false;
+    }
+    return false;
+}
+
+std::uint32_t required_capability(
+    GameplayRequestContext context,
+    std::uint8_t action) {
+    switch (action) {
+        case KernelDomainAction_Consume:
+            return KernelItemCapability_Consumable;
+        case KernelDomainAction_Pickup:
+            return KernelItemCapability_Pickupable;
+        case KernelDomainAction_Throw:
+            return KernelItemCapability_Throwable;
+        case KernelDomainAction_Place:
+            return context == GameplayRequestContext::kInventoryItem
+                ? KernelItemCapability_Deployable
+                : KernelItemCapability_Carryable;
+        case KernelDomainAction_Carry:
+            return KernelItemCapability_Carryable;
+        case KernelDomainAction_Activate:
+            return KernelItemCapability_Interactable;
+        default:
+            return 0u;
+    }
+}
+
 KernelGameplayRequestOutcome outcome_for(
     const KernelGameplayRequest& request) {
     KernelGameplayRequestOutcome outcome{};
@@ -26,53 +88,10 @@ KernelGameplayRequestOutcome outcome_for(
     outcome.graph_outcome = KernelGameplayGraphOutcome_NotSubmitted;
     outcome.rejection_reason = KernelGameplayRequestRejection_InvalidRequest;
     outcome.item_instance_id = request.selected_item_instance_id;
+    outcome.domain_action = valid_domain_action(request.domain_action)
+        ? request.domain_action
+        : KernelDomainAction_None;
     return outcome;
-}
-
-std::uint8_t inventory_mapping(
-    const KernelItemTemplateDefinition& definition,
-    std::uint8_t button) {
-    if (button == KernelSemanticInputButton_Use) {
-        return definition.input_mapping.inventory_use;
-    }
-    if (button == KernelSemanticInputButton_Fire) {
-        return definition.input_mapping.inventory_fire;
-    }
-    return KernelDomainAction_None;
-}
-
-std::uint8_t world_mapping(
-    const KernelItemTemplateDefinition& definition,
-    std::uint8_t button) {
-    if (button == KernelSemanticInputButton_InteractTap) {
-        return definition.input_mapping.world_interact_tap;
-    }
-    if (button == KernelSemanticInputButton_InteractHold) {
-        return definition.input_mapping.world_interact_hold;
-    }
-    return KernelDomainAction_None;
-}
-
-std::uint8_t pure_prop_mapping(
-    const KernelPropInteractionDefinition& definition,
-    std::uint8_t button) {
-    if (button == KernelSemanticInputButton_InteractTap) {
-        return definition.world_interact_tap;
-    }
-    if (button == KernelSemanticInputButton_InteractHold) {
-        return definition.world_interact_hold;
-    }
-    return KernelDomainAction_None;
-}
-
-std::uint8_t carrying_mapping(std::uint8_t button) {
-    if (button == KernelSemanticInputButton_Fire) {
-        return KernelDomainAction_Throw;
-    }
-    if (button == KernelSemanticInputButton_InteractTap) {
-        return KernelDomainAction_Place;
-    }
-    return KernelDomainAction_None;
 }
 
 const KernelEntityTemplateDefinition* find_entity_template(
@@ -425,8 +444,7 @@ bool ItemGameplaySystem::submit_request(
     KernelEngine& engine,
     const KernelGameplayRequest& request) const {
     if (request.struct_size < sizeof(KernelGameplayRequest) ||
-        request.request_id == 0 || request.instigator_net_id == 0 ||
-        request.semantic_button > KernelSemanticInputButton_InteractHold) {
+        request.request_id == 0 || request.instigator_net_id == 0) {
         return false;
     }
     const auto duplicate = std::find_if(
@@ -442,6 +460,12 @@ bool ItemGameplaySystem::submit_request(
     }
 
     KernelGameplayRequestOutcome outcome = outcome_for(request);
+    if (!valid_domain_action(request.domain_action)) {
+        reject(&outcome, KernelGameplayRequestRejection_InvalidRequest);
+        engine.processed_gameplay_requests_.push_back(outcome);
+        engine.pending_gameplay_request_outcomes_.push_back(outcome);
+        return true;
+    }
     const std::optional<entt::entity> instigator =
         engine.world_.find_entity(request.instigator_net_id);
     if (!instigator.has_value()) {
@@ -459,6 +483,10 @@ bool ItemGameplaySystem::submit_request(
             request.target_net_id == 0
             ? std::nullopt
             : engine.world_.find_entity(request.target_net_id);
+        if (request.target_net_id != 0u && !target.has_value()) {
+            reject(&outcome, KernelGameplayRequestRejection_UnknownTarget);
+            goto record_outcome;
+        }
         if (item == nullptr && target.has_value() &&
             engine.world_.registry().all_of<ItemInstanceRef>(*target)) {
             const ItemInstanceRef& ref =
@@ -466,11 +494,16 @@ bool ItemGameplaySystem::submit_request(
             item = engine.item_store_.find_item(ref.item_instance_id);
             outcome.item_instance_id = ref.item_instance_id;
         }
+        if (request.selected_item_instance_id != 0u && item == nullptr) {
+            reject(&outcome, KernelGameplayRequestRejection_UnknownItem);
+            goto record_outcome;
+        }
 
         const KernelItemTemplateDefinition* item_template = item == nullptr
             ? nullptr
             : engine.item_store_.find_template(item->item_template_id);
-        std::uint8_t action = KernelDomainAction_None;
+        const std::uint8_t action = request.domain_action;
+        GameplayRequestContext context = GameplayRequestContext::kInvalid;
         float interaction_range = 0.0f;
         std::uint32_t capabilities = 0;
         bool line_of_sight_required = false;
@@ -484,10 +517,9 @@ bool ItemGameplaySystem::submit_request(
             if (item->residency.kind == KernelItemResidency_Inventory) {
                 if (!actor_owns_item(engine, *item, request.instigator_net_id)) {
                     reject(&outcome, KernelGameplayRequestRejection_NotAuthorized);
-                    action = KernelDomainAction_None;
                     goto record_outcome;
                 }
-                action = inventory_mapping(*item_template, request.semantic_button);
+                context = GameplayRequestContext::kInventoryItem;
             } else if (item->residency.kind == KernelItemResidency_World &&
                        item->residency.world_mode ==
                            KernelWorldItemMode_Carrying) {
@@ -496,10 +528,10 @@ bool ItemGameplaySystem::submit_request(
                     reject(&outcome, KernelGameplayRequestRejection_Claimed);
                     goto record_outcome;
                 }
-                action = carrying_mapping(request.semantic_button);
+                context = GameplayRequestContext::kCarryingItem;
             } else if (item->residency.kind == KernelItemResidency_World &&
                        item->residency.world_mode == KernelWorldItemMode_Placed) {
-                action = world_mapping(*item_template, request.semantic_button);
+                context = GameplayRequestContext::kPlacedItem;
             } else {
                 reject(&outcome, KernelGameplayRequestRejection_InvalidContext);
                 goto record_outcome;
@@ -532,19 +564,22 @@ bool ItemGameplaySystem::submit_request(
                         reject(&outcome, KernelGameplayRequestRejection_Claimed);
                         goto record_outcome;
                     }
-                    action = carrying_mapping(request.semantic_button);
-                } else {
-                    action = pure_prop_mapping(
-                        entity_template->prop.interaction,
-                        request.semantic_button);
+                    context = GameplayRequestContext::kCarryingProp;
+                } else if (mode != nullptr &&
+                           mode->mode == PropMode::kPlaced) {
+                    context = GameplayRequestContext::kPlacedProp;
                 }
             }
         }
 
-        outcome.domain_action = action;
-        if (action == KernelDomainAction_None) {
-            outcome.status = KernelGameplayRequestStatus_NoAction;
-            outcome.rejection_reason = KernelGameplayRequestRejection_None;
+        if (!action_allowed_in_context(context, action)) {
+            reject(&outcome, KernelGameplayRequestRejection_InvalidContext);
+            goto record_outcome;
+        }
+        const std::uint32_t required =
+            required_capability(context, action);
+        if (required != 0u && (capabilities & required) == 0u) {
+            reject(&outcome, KernelGameplayRequestRejection_MissingCapability);
             goto record_outcome;
         }
         if (line_of_sight_required && target.has_value() &&
