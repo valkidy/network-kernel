@@ -683,8 +683,8 @@ void static_collision_runs_once_for(
             return state.net_id == spawned_ice_net_id;
         });
     require(spawned_ice_render != engine.render_states_.end());
-    require(spawned_ice_render->entity_template_id == 207u);
-    require(spawned_ice_render->item_template_id == 0u);
+    require(spawned_ice_render->template_id == 207u);
+    require(spawned_ice_render->item_instance_id == 0u);
     const glm::vec3 ice_forward =
         ice_view.get<const network_example::Transform>(*spawned_ice).rotation *
         glm::vec3{0.0f, 0.0f, 1.0f};

@@ -289,12 +289,10 @@ int main() {
     assert(offsetof(RenderEntityState, hp) > offsetof(RenderEntityState, velocity));
     assert(offsetof(RenderEntityState, max_hp) > offsetof(RenderEntityState, hp));
     assert(offsetof(RenderEntityState, status) > offsetof(RenderEntityState, action_instance_id));
-    assert(offsetof(RenderEntityState, projectile_template_id) >
+    assert(offsetof(RenderEntityState, template_id) >
            offsetof(RenderEntityState, status));
     assert(offsetof(RenderEntityState, collider_template_id) >
-           offsetof(RenderEntityState, projectile_template_id));
-    assert(offsetof(RenderEntityState, actor_template_id) >
-           offsetof(RenderEntityState, collider_template_id));
+           offsetof(RenderEntityState, template_id));
     assert(offsetof(KernelNetworkStats, replication_metadata_timeout_count) >
            offsetof(KernelNetworkStats, loss_ratio));
     assert(offsetof(KernelNetworkStats, replication_stale_snapshot_drop_count) >
@@ -316,9 +314,8 @@ int main() {
     assert(offsetof(KernelServerEntityState, action) >
            offsetof(KernelServerEntityState, reload_remaining_ticks));
     assert(offsetof(RenderEntityState, action) >
-           offsetof(RenderEntityState, actor_template_id));
-    assert(offsetof(RenderEntityState, entity_template_id) >
-           offsetof(RenderEntityState, carrier_entity_id));
+           offsetof(RenderEntityState, collider_template_id));
+    assert(sizeof(RenderEntityState) == 144u);
     assert(offsetof(KernelWeaponMechanicsDefinition, reserve_magazines) >
            offsetof(KernelWeaponMechanicsDefinition, magazine_size));
     assert(offsetof(KernelWeaponMechanicsDefinition, damage) >

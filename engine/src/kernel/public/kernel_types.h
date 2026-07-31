@@ -867,18 +867,15 @@ typedef struct RenderEntityState {
     uint32_t spawn_tick;
     uint32_t action_instance_id;
     uint32_t status;
-    uint32_t projectile_template_id;
+    uint32_t template_id;
     uint32_t collider_template_id;
-    uint32_t actor_template_id;
     KernelActionRuntimeView action;
     KernelVec3 aim_direction;
-    uint32_t item_template_id;
     KernelItemInstanceId item_instance_id;
     uint8_t world_item_mode;
     uint8_t reserved_item0;
     uint16_t reserved_item1;
     uint32_t carrier_entity_id;
-    uint32_t entity_template_id;
 } RenderEntityState;
 
 KERNEL_RPC_STRUCT(R"json({"type":"KernelServerEntityCreateInfo"})json")

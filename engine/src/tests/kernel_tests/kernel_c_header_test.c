@@ -228,10 +228,11 @@ int main(void) {
     assert(offsetof(RenderEntityState, max_hp) > offsetof(RenderEntityState, hp));
     assert(offsetof(RenderEntityState, status) >
            offsetof(RenderEntityState, action_instance_id));
-    assert(offsetof(RenderEntityState, projectile_template_id) >
+    assert(offsetof(RenderEntityState, template_id) >
            offsetof(RenderEntityState, status));
     assert(offsetof(RenderEntityState, collider_template_id) >
-           offsetof(RenderEntityState, projectile_template_id));
+           offsetof(RenderEntityState, template_id));
+    assert(sizeof(RenderEntityState) == 144u);
     assert(offsetof(KernelCombatStateDefinition, collider_template_id) >
            offsetof(KernelCombatStateDefinition, active_weapon_slot));
     assert(offsetof(KernelServerEntityCreateInfo, entity_template_id) >

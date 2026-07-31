@@ -338,7 +338,7 @@ void client_query_collider_shapes_reports_render_colliders() {
     for (std::uint32_t index = 0; index < state_count; ++index) {
         if (states[index].net_id == 101) {
             saw_projectile = true;
-            require(states[index].projectile_template_id == 3);
+            require(states[index].template_id == 3);
             require(states[index].collider_template_id == 10);
         }
     }
@@ -426,7 +426,7 @@ void local_deterministic_prediction_query_uses_projectile_template_collider() {
     require(state_count == 1);
     require(states[0].net_id == 0);
     require(states[0].status == RenderEntityStatus_Predicted);
-    require(states[0].projectile_template_id == 3);
+    require(states[0].template_id == 3);
     require(states[0].collider_template_id == 10);
 
     std::array<KernelColliderShapeView, 4> shapes{};
@@ -2334,7 +2334,7 @@ void projectile_snapshot_waits_for_reliable_metadata_before_render() {
     require(count == 1);
     require(states[0].net_id == 101);
     require(states[0].status == RenderEntityStatus_Active);
-    require(states[0].projectile_template_id == 3);
+    require(states[0].template_id == 3);
     require(states[0].collider_template_id == 10);
     require(client.query_collider_shapes(nullptr, shapes.data(), shapes.size()) == 1);
     require(shapes[0].entity_net_id == 101);
@@ -2603,8 +2603,8 @@ void reliable_prop_state_overrides_older_snapshot_and_survives_omission() {
         client.get_render_states_at_time(400000, states.data(), states.size());
     require(count == 1);
     require(states[0].net_id == 51);
-    require(states[0].entity_template_id == 7);
-    require(states[0].item_template_id == 13);
+    require(states[0].template_id == 13);
+    require(states[0].item_instance_id == 1001);
     require(states[0].position.x == 2.0f);
     require(states[0].velocity.x == 0.0f);
     require(states[0].world_item_mode == KernelWorldItemMode_Placed);
@@ -2623,8 +2623,8 @@ void reliable_prop_state_overrides_older_snapshot_and_survives_omission() {
     count = client.get_render_states_at_time(433333, states.data(), states.size());
     require(count == 1);
     require(states[0].net_id == 51);
-    require(states[0].entity_template_id == 7);
-    require(states[0].item_template_id == 13);
+    require(states[0].template_id == 13);
+    require(states[0].item_instance_id == 1001);
     require(states[0].position.x == 2.0f);
     require(states[0].hp == 3);
 }
@@ -2659,6 +2659,41 @@ void destroyed_tombstone_blocks_older_snapshot_render() {
     for (std::uint32_t index = 0; index < count; ++index) {
         require(states[index].net_id != 21);
     }
+}
+
+void pure_prop_render_uses_entity_template_as_template_id() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+
+    network_example::EntitySpawnPacket spawn{};
+    spawn.net_id = 52;
+    spawn.entity_type = network_example::EntityType::kProp;
+    spawn.server_tick = 10;
+    spawn.entity_template_id = 204;
+    spawn.position = glm::vec3{3.0f, 0.0f, 0.0f};
+    client.handle_client_spawn(spawn);
+
+    network_example::WorldSnapshot snapshot;
+    snapshot.header.server_tick = 10;
+    network_example::EntitySnapshot prop;
+    prop.net_id = 52;
+    prop.type = network_example::EntityType::kProp;
+    prop.position = spawn.position;
+    snapshot.entities.push_back(prop);
+    client.handle_client_snapshot(snapshot);
+
+    std::array<RenderEntityState, 2> states{};
+    const std::uint32_t count =
+        client.get_render_states_at_time(333333, states.data(), states.size());
+    require(count == 1);
+    require(states[0].net_id == 52);
+    require(states[0].template_id == 204);
+    require(states[0].item_instance_id == 0);
 }
 
 void out_of_range_tombstone_does_not_fail_client_prediction() {
@@ -2843,7 +2878,7 @@ void actor_template_update_rebinds_cached_snapshot_debug_metadata() {
     std::array<RenderEntityState, 2> states{};
     require(client.get_render_states_at_time(333333, states.data(), states.size()) == 1);
     require(states[0].net_id == 30);
-    require(states[0].actor_template_id == 2);
+    require(states[0].template_id == 2);
     require(states[0].collider_template_id == 20);
 
     std::array<KernelColliderShapeView, 2> shapes{};
@@ -2859,7 +2894,7 @@ void actor_template_update_rebinds_cached_snapshot_debug_metadata() {
 
     require(client.get_render_states_at_time(333333, states.data(), states.size()) == 1);
     require(states[0].net_id == 30);
-    require(states[0].actor_template_id == 4);
+    require(states[0].template_id == 4);
     require(states[0].collider_template_id == 21);
     require(client.query_collider_shapes(nullptr, shapes.data(), shapes.size()) == 1);
     require(shapes[0].entity_net_id == 30);
@@ -2958,10 +2993,10 @@ void predicted_local_render_state_uses_reliable_actor_template_metadata() {
     auto remote = find_state(20);
     require(local != states.end());
     require(local->status == RenderEntityStatus_Predicted);
-    require(local->actor_template_id == 1);
+    require(local->template_id == 1);
     require(local->collider_template_id == 20);
     require(remote != states.end());
-    require(remote->actor_template_id == 1);
+    require(remote->template_id == 1);
     require(remote->collider_template_id == 20);
 
     client.handle_client_template_update(network_example::EntityTemplateUpdatePacket{
@@ -2976,10 +3011,10 @@ void predicted_local_render_state_uses_reliable_actor_template_metadata() {
     remote = find_state(20);
     require(local != states.end());
     require(local->status == RenderEntityStatus_Predicted);
-    require(local->actor_template_id == 4);
+    require(local->template_id == 4);
     require(local->collider_template_id == 21);
     require(remote != states.end());
-    require(remote->actor_template_id == 1);
+    require(remote->template_id == 1);
     require(remote->collider_template_id == 20);
 }
 
@@ -4239,6 +4274,7 @@ int main() {
     out_of_range_despawn_keeps_local_deterministic_predicted_projectile();
     budget_omitted_projectile_snapshot_does_not_delete_bound_prediction();
     reliable_prop_state_overrides_older_snapshot_and_survives_omission();
+    pure_prop_render_uses_entity_template_as_template_id();
     destroyed_tombstone_blocks_older_snapshot_render();
     out_of_range_tombstone_does_not_fail_client_prediction();
     out_of_range_reentry_without_metadata_still_fails_prediction();

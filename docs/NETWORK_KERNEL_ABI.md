@@ -31,11 +31,15 @@ Additive changes must prefer new `Kernel_*` functions or new capability flags.
 Breaking changes to public struct layout, enum semantics, buffer ownership, or
 function signatures require a `KERNEL_ABI_VERSION` bump.
 
-ABI version 61 appends `entity_template_id` to `RenderEntityState`. Server and
-host render states read it from `EntityTemplateRef`; client render states
-restore it from reliable spawn metadata. Pure Props can therefore select
-presentation assets by entity-template ID without adding the field to snapshot
-packets.
+ABI version 61 replaces the specialized actor, projectile, item, and entity
+template fields in `RenderEntityState` with one `template_id`. Its namespace is
+derived from the render entity: Actors use the Actor Template ID, Projectiles
+use the Projectile Template ID, Item-backed Props use the Item Template ID, and
+pure Props or other entity-template-backed objects use the Entity Template ID.
+`collider_template_id` remains separate because it is resolved per rendered
+entity, while `item_instance_id` remains the stable runtime Item identity.
+Reliable spawn metadata supplies the client projection without changing
+snapshot packets.
 
 ABI version 60 adds authoritative lifecycle and population policy for temporary
 pure Props. `KernelPropDefinition` carries `lifetime_ticks` and a resolved
