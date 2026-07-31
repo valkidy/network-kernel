@@ -4,10 +4,12 @@
 #include <cstdlib>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include <entt/entt.hpp>
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #define private public
 #include "kernel/src/kernel.h"
@@ -551,6 +553,8 @@ void static_collision_runs_once_for(
     bottle.collision_trigger.actions[1].spawn_entity_template_id = 207;
     bottle.collision_trigger.actions[1].position_source =
         KernelEventVec3Source_Position;
+    bottle.collision_trigger.actions[1].direction_source =
+        KernelEventVec3Source_Direction;
     bottle.collision_trigger.actions[1].owner_source =
         KernelEntityRefSource_Self;
     bottle.collision_trigger.actions[2].action_type =
@@ -652,17 +656,27 @@ void static_collision_runs_once_for(
                 .mode == network_example::PropMode::kPlaced);
     require(engine.damage_pipeline_.pending_count() == 1u);
     std::uint32_t ice_count = 0;
+    std::optional<entt::entity> spawned_ice;
     auto ice_view = engine.world_.registry().view<
         const network_example::EntityTemplateRef,
-        const network_example::Health>();
+        const network_example::Health,
+        const network_example::Transform>();
     for (const entt::entity entity : ice_view) {
         if (ice_view.get<const network_example::EntityTemplateRef>(entity)
                 .entity_template_id == 207u) {
             ++ice_count;
+            spawned_ice = entity;
             require(ice_view.get<const network_example::Health>(entity).hp == 100u);
         }
     }
     require(ice_count == 1u);
+    require(spawned_ice.has_value());
+    const glm::vec3 ice_forward =
+        ice_view.get<const network_example::Transform>(*spawned_ice).rotation *
+        glm::vec3{0.0f, 0.0f, 1.0f};
+    require(std::abs(ice_forward.x - 1.0f) < 0.0001f);
+    require(std::abs(ice_forward.y) < 0.0001f);
+    require(std::abs(ice_forward.z) < 0.0001f);
 
     network_example::CollisionTriggerSystem{}.update(engine, 3000);
     require(engine.damage_pipeline_.pending_count() == 1u);

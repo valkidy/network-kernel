@@ -1398,8 +1398,8 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 &compiled_action.direction_parameter,
             };
         } else if (compiled_action.action_type == "spawn_entity") {
-            if (action["projectile_template"] || action["direction"] ||
-                action["target"] || action["amount"]) {
+            if (action["projectile_template"] || action["target"] ||
+                action["amount"]) {
                 throw std::runtime_error(
                     "spawn_entity action has unsupported fields: " + path);
             }
@@ -1408,6 +1408,11 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                     action["entity_template"], "entity_template");
             compiled_action.position_parameter =
                 parameter_reference_from_yaml(action["position"], "position");
+            if (action["direction"]) {
+                compiled_action.direction_parameter =
+                    parameter_reference_from_yaml(
+                        action["direction"], "direction");
+            }
             compiled_action.owner_parameter =
                 parameter_reference_from_yaml(action["owner"], "owner");
             if (action["item_template"] || action["quantity"]) {
@@ -1430,6 +1435,10 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 &compiled_action.position_parameter,
                 &compiled_action.owner_parameter,
             };
+            if (!compiled_action.direction_parameter.empty()) {
+                action_parameters.push_back(
+                    &compiled_action.direction_parameter);
+            }
         } else if (compiled_action.action_type == "apply_damage" ||
                    compiled_action.action_type == "apply_health_change") {
             if (action["projectile_template"] || action["position"] ||
@@ -3925,11 +3934,18 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
                 binding, graph_parameter(action.entity_template_parameter));
             const std::string position = trigger_parameter_value(
                 binding, graph_parameter(action.position_parameter));
+            const std::string direction =
+                action.direction_parameter.empty()
+                ? ""
+                : trigger_parameter_value(
+                      binding, graph_parameter(action.direction_parameter));
             const std::string owner = trigger_parameter_value(
                 binding, graph_parameter(action.owner_parameter));
-            if (position != "event.position") {
+            if (position != "event.position" ||
+                (!action.direction_parameter.empty() &&
+                 direction != "event.direction")) {
                 throw std::runtime_error(
-                    "spawn_entity position must bind to event.position");
+                    "spawn_entity position/direction must bind to event.position/event.direction");
             }
             compiled_action.action_type =
                 KernelEntityTriggerActionType_SpawnEntity;
@@ -3937,6 +3953,10 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
                 entity_template_ref_from_yaml(
                     YAML::Node(entity_template), entity_templates);
             compiled_action.position_source = KernelEventVec3Source_Position;
+            if (!action.direction_parameter.empty()) {
+                compiled_action.direction_source =
+                    KernelEventVec3Source_Direction;
+            }
             compiled_action.owner_source = entity_ref_source(owner);
             if (!action.item_template_ref.empty()) {
                 if (item_templates == nullptr) {

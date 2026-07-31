@@ -169,6 +169,7 @@ void append_collider_template_files(
         "sentry_grunt_hit_aabb.yaml",
         "area_effect_sphere.yaml",
         "collision_damage_prop_hitbox.yaml",
+        "ice_block_hitbox.yaml",
         "player_hit_aabb.yaml",
         "player_movement_capsule.yaml",
         "rocket_aabb.yaml",
@@ -678,6 +679,21 @@ int main() {
     require(ice_block != config.entity_templates.end());
     require(ice_block->prop.lifetime_ticks == 900u);
     require(ice_block->prop.population_group_id == 1u);
+    const auto ice_block_collider = std::find_if(
+        config.colliders.templates.begin(),
+        config.colliders.templates.end(),
+        [](const network_example::game_server::ColliderTemplateConfig& collider) {
+            return collider.name == "ice_block_hitbox";
+        });
+    require(ice_block_collider != config.colliders.templates.end());
+    require(ice_block->collider_template_id == 13u);
+    require(
+        ice_block_collider->definition.shape_type ==
+        KernelColliderShapeType_OrientedBox);
+    require(ice_block_collider->definition.center.y == 1.5f);
+    require(ice_block_collider->definition.shape_params.x == 1.0f);
+    require(ice_block_collider->definition.shape_params.y == 1.5f);
+    require(ice_block_collider->definition.shape_params.z == 0.3f);
     require(config.weapons.catalog_hash != 0);
     require(
         config.weapons.catalog_hash ==
@@ -762,6 +778,20 @@ int main() {
     assert(config_enemy_template->vision.vision_collider_template_id == 9);
     const network_example::game_server::KernelGameplayCatalogStorage catalog =
         network_example::game_server::build_kernel_gameplay_catalog(config);
+    const auto magic_bottle = std::find_if(
+        catalog.entity_templates.begin(),
+        catalog.entity_templates.end(),
+        [](const KernelEntityTemplateDefinition& entity) {
+            return entity.entity_template_id == 203u;
+        });
+    require(magic_bottle != catalog.entity_templates.end());
+    require(magic_bottle->collision_trigger.action_count == 2u);
+    require(
+        magic_bottle->collision_trigger.actions[0].action_type ==
+        KernelEntityTriggerActionType_SpawnEntity);
+    require(
+        magic_bottle->collision_trigger.actions[0].direction_source ==
+        KernelEventVec3Source_Direction);
     assert(catalog.definition.actor_template_count == config.actor_templates.size());
     assert(catalog.actor_templates.size() == config.actor_templates.size());
     assert(catalog.actor_templates[1].actor_template_id == 2);
@@ -819,7 +849,7 @@ int main() {
         config.weapons
             .projectile_sync_modes[network_example::game_server::kWeaponRocket] ==
         KernelProjectileSyncMode_ServerSnapshotOnly);
-    assert(config.colliders.templates.size() == 12);
+    assert(config.colliders.templates.size() == 13);
     assert(config.colliders.bindings.empty());
     assert(config.actor_templates.size() == 2);
     const network_example::game_server::ActorTemplateConfig& player_template =

@@ -8,4 +8,4 @@ health:
   hp: 100
   max_hp: 100
 physics:
-  collider_template: collision_damage_prop_hitbox
+  collider_template: ice_block_hitbox

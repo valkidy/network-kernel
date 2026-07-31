@@ -36,6 +36,7 @@ struct ActionApplyHealthChangeCommand {
 struct ActionSpawnEntityCommand {
     std::uint32_t entity_template_id = 0;
     glm::vec3 position{0.0f};
+    glm::vec3 direction{0.0f};
     NetId owner = 0;
     std::uint32_t item_template_id = 0;
     std::uint32_t quantity = 0;

@@ -65,6 +65,31 @@ glm::quat from_kernel_quat(const KernelQuat& value) {
     return glm::quat{value.w, value.x, value.y, value.z};
 }
 
+glm::vec3 normalized_direction_or_zero(const glm::vec3& direction) {
+    const float length_squared = glm::dot(direction, direction);
+    if (!std::isfinite(length_squared) || length_squared <= 0.00000001f) {
+        return glm::vec3{0.0f};
+    }
+    return direction / std::sqrt(length_squared);
+}
+
+KernelQuat yaw_rotation_from_direction(const glm::vec3& direction) {
+    const glm::vec3 horizontal =
+        normalized_direction_or_zero(glm::vec3{direction.x, 0.0f, direction.z});
+    if (horizontal == glm::vec3{0.0f}) {
+        return KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+    }
+    const float yaw = std::atan2(horizontal.x, horizontal.z);
+    const glm::quat rotation =
+        glm::angleAxis(yaw, glm::vec3{0.0f, 1.0f, 0.0f});
+    return KernelQuat{
+        rotation.x,
+        rotation.y,
+        rotation.z,
+        rotation.w,
+    };
+}
+
 const KernelActorTemplateDefinition* find_actor_template(
     const std::vector<KernelActorTemplateDefinition>& templates,
     std::uint32_t actor_template_id) {
@@ -261,7 +286,7 @@ bool execute_action_graph_commands(
         create_info.owner_peer =
             world.registry().get<NetworkIdentity>(owner).owner_peer;
         create_info.position = to_kernel_vec3(spawn.position);
-        create_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+        create_info.rotation = yaw_rotation_from_direction(spawn.direction);
         NetId spawned_net_id = 0;
         if (!EntityLifecycleSystem{}.create_entity(
                 engine, create_info, &spawned_net_id, false)) {
@@ -815,6 +840,18 @@ void CollisionTriggerSystem::update(
         }
         const ActionGraphCollisionBinding& collision_binding =
             view.get<ActionGraphCollisionBinding>(entity);
+        glm::vec3 collision_direction =
+            normalized_direction_or_zero(view.get<Velocity>(entity).linear);
+        if (const ThrownPropMotion* motion =
+                engine.world_.registry().try_get<ThrownPropMotion>(entity)) {
+            const Transform& transform =
+                engine.world_.registry().get<Transform>(entity);
+            const glm::vec3 swept_direction = normalized_direction_or_zero(
+                transform.position - motion->previous_position);
+            if (swept_direction != glm::vec3{0.0f}) {
+                collision_direction = swept_direction;
+            }
+        }
         std::unordered_set<NetId> seen_targets;
         std::optional<std::pair<physics::CollisionHit, std::uint32_t>>
             static_contact;
@@ -932,7 +969,9 @@ void CollisionTriggerSystem::update(
                         hit.identity.entity_net_id,
                         identity.owner_peer,
                         hit.position,
-                        hit.normal,
+                        collision_direction == glm::vec3{0.0f}
+                            ? hit.normal
+                            : collision_direction,
                         collision_binding.binding,
                     });
                 }
@@ -965,7 +1004,9 @@ void CollisionTriggerSystem::update(
                 0u,
                 identity.owner_peer,
                 static_contact->first.position,
-                static_contact->first.normal,
+                collision_direction == glm::vec3{0.0f}
+                    ? static_contact->first.normal
+                    : collision_direction,
                 collision_binding.binding,
             });
         }

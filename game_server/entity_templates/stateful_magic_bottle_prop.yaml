@@ -13,6 +13,7 @@ triggers:
     parameters:
       template: ice_block
       position: event.position
+      direction: event.direction
       owner: self
       source: self
       self_damage: 1

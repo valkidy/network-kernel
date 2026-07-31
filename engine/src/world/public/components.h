@@ -587,6 +587,7 @@ struct ActionApplyHealthChangeDefinition {
 struct ActionSpawnEntityDefinition {
     std::string entity_template_parameter;
     std::string position_parameter;
+    std::string direction_parameter;
     std::string owner_parameter;
     std::uint32_t item_template_id = 0;
     std::uint32_t quantity = 0;
