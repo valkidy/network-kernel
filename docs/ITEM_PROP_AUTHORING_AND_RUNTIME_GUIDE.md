@@ -1,8 +1,8 @@
 # Item / Prop Authoring and Native Runtime Guide
 
-This document describes the native Item / Prop contract at Kernel ABI 58,
+This document describes the native Item / Prop contract at Kernel ABI 59,
 protocol 3, snapshot schema 17, packet schema 21, and gameplay catalog version
-6. Unity UI, input gesture presentation, and C# bindings are separate
+7. Unity UI, input gesture presentation, and C# bindings are separate
 integration work.
 
 ## Authoring
@@ -30,7 +30,12 @@ Prop is removed. Stateful Items always have quantity one. A stateful
 consumable can name one `uint32` charge field and choose whether reaching zero
 terminates the Item.
 
-Identity-preserving Throw requires an Item-backed Prop Entity Template.
+Identity-preserving Throw requires an Item-backed Prop Entity Template and a
+`trajectory_projectile` reference. It inherits only that Projectile Template's
+movement model, speed, and gravity. Throwable pure Props author the same
+reference in their top-level `throw` block. The referenced Projectile must be a
+standard linear or parabolic projectile; its collider, collision mask, damage,
+lifetime, hit response, sync mode, and triggers are not inherited.
 Consume-and-spawn Throw requires a non-empty `on_item_used` graph containing a
 spawn action. A normal Consume may explicitly bind an empty graph; it commits
 successfully with no graph side effect.
@@ -74,7 +79,7 @@ Poll `KernelGameplayRequestOutcome` with
 `Kernel_PollGameplayRequestOutcomes`. Domain status and graph status are
 separate:
 
-- `NoAction` is a reserved compatibility value and is not emitted by ABI 58.
+- `NoAction` is a reserved compatibility value and is not emitted by ABI 59.
 - `Rejected` means no domain commit occurred.
 - `Committed` means the authoritative Item/Prop state changed.
 - `NotSubmitted` means no graph was required.
@@ -100,10 +105,13 @@ fungible partial split. Placement validates finite coordinates, actor range,
 and current collider overlap.
 
 Identity-preserving Throw transfers or splits an Inventory Item, or reuses the
-Carrying Prop. Direction is normalized after server validation and speed comes
-from the Item Template. InFlight Props cannot be picked up, carried, or
-activated. Their first valid collider contact zeros velocity and changes the
-mode to Placed.
+Carrying Prop. Direction is normalized after server validation, the launch
+origin is one metre above the actor root, and the referenced trajectory
+Projectile supplies movement model, speed, and gravity. InFlight Props follow
+the same analytic ballistic path as grenade projectiles and sweep their own hit
+collider between ticks. They cannot be picked up, carried, or activated. Their
+first valid static contact places the Prop at the hit fraction, zeros velocity,
+and changes the mode to Placed; collision graphs receive the contact position.
 
 Requests are processed by the single-threaded authoritative queue. The first
 request that commits a contested Item/Prop wins; later requests receive a

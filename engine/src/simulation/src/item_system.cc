@@ -163,18 +163,23 @@ bool validate_item_template(
     }
     if (definition.throw_policy.struct_size <
             sizeof(KernelItemThrowDefinition) ||
-        definition.throw_policy.mode >
-            KernelItemThrowMode_ConsumeAndSpawn ||
-        (definition.throw_policy.mode != KernelItemThrowMode_None &&
-         definition.throw_policy.speed <= 0.0f)) {
+        definition.throw_policy.mode > KernelItemThrowMode_ConsumeAndSpawn) {
         return set_error(error, "invalid throw policy");
     }
     if (definition.throw_policy.mode ==
             KernelItemThrowMode_IdentityPreserving &&
-        definition.entity_template_id == 0) {
+        (definition.entity_template_id == 0 ||
+         definition.throw_policy.trajectory_projectile_template_id == 0u)) {
         return set_error(
             error,
-            "identity-preserving throw requires entity template");
+            "identity-preserving throw requires entity and trajectory templates");
+    }
+    if (definition.throw_policy.mode !=
+            KernelItemThrowMode_IdentityPreserving &&
+        definition.throw_policy.trajectory_projectile_template_id != 0u) {
+        return set_error(
+            error,
+            "throw trajectory is only valid for identity-preserving throw");
     }
     const bool throwable =
         (definition.capability_flags & KernelItemCapability_Throwable) != 0u;

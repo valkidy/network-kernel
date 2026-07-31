@@ -2,8 +2,8 @@
 
 ## Compatibility baseline
 
-This policy describes the implemented ABI 58 wire contract: network protocol
-3, packet schema 21, snapshot schema 17, and gameplay catalog version 6. The
+This policy describes the implemented ABI 59 wire contract: network protocol
+3, packet schema 21, snapshot schema 17, and gameplay catalog version 7. The
 handshake rejects older peers; there is no compatibility translation.
 
 The server is authoritative for Item/Container ID allocation, residency,
@@ -92,6 +92,12 @@ and velocity. It is sent only to sessions for which the Prop is currently
 relevant. Placed, Carrying, and InFlight transforms continue to use the normal
 snapshot stream; this version does not quantize transforms or derive Carrying
 transforms on the client.
+
+Identity-preserving Thrown Props use the referenced Projectile Template's
+linear or parabolic movement model, speed, and gravity on the authoritative
+server. They retain Prop identity and replication, sweep their own collider,
+and settle on the first valid static contact. Projectile prediction, lifetime,
+hit response, damage, and triggers are not applied to the Prop.
 
 ## Gameplay, transaction and Action Graph policy
 

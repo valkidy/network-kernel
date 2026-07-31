@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 58u
+#define KERNEL_ABI_VERSION 59u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -491,7 +491,7 @@ typedef struct KernelItemThrowDefinition {
     uint8_t mode;
     uint8_t reserved0;
     uint16_t reserved1;
-    float speed;
+    uint32_t trajectory_projectile_template_id;
 } KernelItemThrowDefinition;
 
 typedef struct KernelItemUseDefinition {
@@ -537,6 +537,7 @@ typedef struct KernelPropDefinition {
     float carry_offset_x;
     float carry_offset_y;
     float carry_offset_z;
+    uint32_t throw_trajectory_projectile_template_id;
 } KernelPropDefinition;
 
 typedef enum KernelAiControllerType {

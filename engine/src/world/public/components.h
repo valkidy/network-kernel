@@ -423,6 +423,15 @@ struct ProjectileState {
     glm::vec3 previous_position{0.0f, 0.0f, 0.0f};
 };
 
+struct ThrownPropMotion {
+    ProjectileMotionModel motion_model = ProjectileMotionModel::kLinear;
+    std::uint32_t age_ticks = 0;
+    glm::vec3 spawn_position{0.0f};
+    glm::vec3 initial_velocity{0.0f};
+    glm::vec3 gravity{0.0f};
+    glm::vec3 previous_position{0.0f};
+};
+
 enum class TriggerEventType : std::uint8_t {
     kCollision,
     kProjectileImpact,

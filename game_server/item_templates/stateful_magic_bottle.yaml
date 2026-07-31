@@ -9,7 +9,7 @@ world_interaction:
   line_of_sight_required: false
 throw:
   mode: identity_preserving
-  speed: 1.0
+  trajectory_projectile: grenade_shell_projectile
 use:
   quantity_cost: 0
   cooldown_ticks: 0

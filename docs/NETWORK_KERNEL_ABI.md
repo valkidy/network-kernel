@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 58u`.
+`KERNEL_ABI_VERSION == 59u`.
 
 ## Ownership
 
@@ -30,6 +30,12 @@ failures return `NULL`, `false`, or `0`.
 Additive changes must prefer new `Kernel_*` functions or new capability flags.
 Breaking changes to public struct layout, enum semantics, buffer ownership, or
 function signatures require a `KERNEL_ABI_VERSION` bump.
+
+ABI version 59 replaces the Item throw speed with a trajectory Projectile
+Template reference and adds the same reference to pure Prop policy. Gameplay
+catalog version 7 rejects the removed `throw.speed` field. Identity-preserving
+Thrown Props inherit only movement model, speed, and gravity; packet schema 21,
+snapshot schema 17, and protocol 3 are unchanged.
 
 ABI version 58 replaces `KernelGameplayRequest::semantic_button` with the
 explicit `domain_action` contract, removes Item and Prop input mappings, and

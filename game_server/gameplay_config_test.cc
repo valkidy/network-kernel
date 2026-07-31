@@ -313,7 +313,7 @@ std::vector<std::uint8_t> make_entity_template_bundle_zip(
     std::vector<std::pair<std::string, std::string>> files;
     files.push_back({
         "gameplay_catalog.yaml",
-        "catalog_version: 6\n"
+        "catalog_version: 7\n"
         "action_template_dir: action_templates\n"
         "action_graph_template_dir: action_graph_templates\n"
         "reload_action_template:\n"
@@ -660,7 +660,7 @@ int main() {
     assert(
         config.static_collision_scene.collision_layer ==
         KERNEL_STATIC_COLLISION_LAYER_TERRAIN);
-    require(config.weapons.catalog_version == 6);
+    require(config.weapons.catalog_version == 7);
     require(config.weapons.catalog_hash != 0);
     require(
         config.weapons.catalog_hash ==
@@ -684,7 +684,8 @@ int main() {
         network_example::game_server::compute_gameplay_catalog_hash(changed_config));
     require(!config.item_templates.empty());
     changed_config = config;
-    changed_config.item_templates.front().definition.throw_policy.speed += 1.0f;
+    changed_config.item_templates.front()
+        .definition.throw_policy.trajectory_projectile_template_id += 1u;
     require(
         config.weapons.catalog_hash !=
         network_example::game_server::compute_gameplay_catalog_hash(changed_config));
@@ -1266,7 +1267,7 @@ int main() {
     assert(unsupported_version_rejected);
 
     const std::vector<std::uint8_t> unknown_catalog_field_bundle = make_store_zip({
-        {"gameplay_catalog.yaml", "catalog_version: 6\nsurprise: true\n"},
+        {"gameplay_catalog.yaml", "catalog_version: 7\nsurprise: true\n"},
     });
     bool unknown_catalog_field_rejected = false;
     try {
@@ -1282,7 +1283,7 @@ int main() {
 
     const std::vector<std::uint8_t> legacy_item_input_bundle = make_store_zip({
         {"gameplay_catalog.yaml",
-         "catalog_version: 6\n"
+         "catalog_version: 7\n"
          "item_template_dir: item_templates\n"},
         {"item_templates/legacy.yaml",
          "id: 9900\n"
@@ -1306,9 +1307,36 @@ int main() {
     }
     assert(legacy_item_input_rejected);
 
+    const std::vector<std::uint8_t> legacy_throw_speed_bundle = make_store_zip({
+        {"gameplay_catalog.yaml",
+         "catalog_version: 7\n"
+         "item_template_dir: item_templates\n"},
+        {"item_templates/legacy_throw.yaml",
+         "id: 9902\n"
+         "name: legacy_throw\n"
+         "mode: stateful\n"
+         "max_stack: 1\n"
+         "capabilities: [throwable]\n"
+         "throw:\n"
+         "  mode: identity_preserving\n"
+         "  speed: 10.0\n"},
+    });
+    bool legacy_throw_speed_rejected = false;
+    try {
+        (void)network_example::game_server::load_gameplay_config_from_bundle_memory(
+            legacy_throw_speed_bundle.data(),
+            static_cast<std::uint32_t>(legacy_throw_speed_bundle.size()),
+            "gameplay_catalog.yaml");
+    } catch (const std::exception& error) {
+        legacy_throw_speed_rejected =
+            std::string(error.what()).find("unknown field") !=
+            std::string::npos;
+    }
+    assert(legacy_throw_speed_rejected);
+
     const std::vector<std::uint8_t> legacy_prop_mapping_bundle = make_store_zip({
         {"gameplay_catalog.yaml",
-         "catalog_version: 6\n"
+         "catalog_version: 7\n"
          "entity_template_dir: entity_templates\n"},
         {"entity_templates/legacy.yaml",
          "id: 9901\n"
@@ -1333,7 +1361,7 @@ int main() {
 
     const std::vector<std::uint8_t> unknown_nested_catalog_field_bundle = make_store_zip({
         {"gameplay_catalog.yaml",
-         "catalog_version: 6\n"
+         "catalog_version: 7\n"
          "weapon_template_dir: weapon_templates\n"
          "projectile_template_dir: projectile_templates\n"
          "collider_template_dir: collider_templates\n"
@@ -1355,7 +1383,7 @@ int main() {
 
     const std::vector<std::uint8_t> legacy_collider_field_bundle = make_store_zip({
         {"gameplay_catalog.yaml",
-         "catalog_version: 6\n"
+         "catalog_version: 7\n"
          "weapon_template_dir: weapon_templates\n"
          "projectile_template_dir: projectile_templates\n"
          "collider_template_file: collider_templates/default.yaml\n"},
@@ -1375,7 +1403,7 @@ int main() {
     std::vector<std::pair<std::string, std::string>> duplicate_collider_files;
     duplicate_collider_files.push_back({
         "gameplay_catalog.yaml",
-        "catalog_version: 6\n"
+        "catalog_version: 7\n"
         "reload_action_template:\n"
         "  id: 4199\n"
         "  name: shared_reload\n"
@@ -1458,7 +1486,7 @@ int main() {
 
     const std::vector<std::uint8_t> duplicate_path_bundle = make_store_zip({
         {"gameplay_catalog.yaml", "catalog_version: 1\n"},
-        {"gameplay_catalog.yaml", "catalog_version: 6\n"},
+        {"gameplay_catalog.yaml", "catalog_version: 7\n"},
     });
     bool duplicate_path_rejected = false;
     try {

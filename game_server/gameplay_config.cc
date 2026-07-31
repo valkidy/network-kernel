@@ -284,6 +284,9 @@ void hash_actor_template(
     hash_float(hash, actor_template.prop.carry_offset_x);
     hash_float(hash, actor_template.prop.carry_offset_y);
     hash_float(hash, actor_template.prop.carry_offset_z);
+    hash_scalar(
+        hash,
+        actor_template.prop.throw_trajectory_projectile_template_id);
 }
 
 KernelWeaponMechanicsDefinition hitscan_weapon(
@@ -2395,12 +2398,48 @@ ActorTemplateConfig actor_template_from_yaml(
     return actor_template;
 }
 
+std::uint32_t projectile_template_id_from_ref(
+    const YAML::Node& node,
+    const std::vector<ProjectileTemplateConfig>& projectile_templates) {
+    if (!node || !node.IsScalar()) {
+        throw std::runtime_error("projectile_template reference must be a scalar");
+    }
+    const std::string value = node.as<std::string>();
+    if (!value.empty() &&
+        std::all_of(value.begin(), value.end(), [](unsigned char ch) {
+            return std::isdigit(ch);
+        })) {
+        const std::uint32_t template_id =
+            static_cast<std::uint32_t>(std::stoul(value));
+        const auto found = std::find_if(
+            projectile_templates.begin(),
+            projectile_templates.end(),
+            [template_id](const ProjectileTemplateConfig& candidate) {
+                return candidate.definition.projectile_template_id ==
+                    template_id;
+            });
+        if (found != projectile_templates.end()) return template_id;
+        throw std::runtime_error("unknown projectile_template id: " + value);
+    }
+    const auto found = std::find_if(
+        projectile_templates.begin(),
+        projectile_templates.end(),
+        [&value](const ProjectileTemplateConfig& candidate) {
+            return candidate.name == value;
+        });
+    if (found == projectile_templates.end()) {
+        throw std::runtime_error("unknown projectile_template name: " + value);
+    }
+    return found->definition.projectile_template_id;
+}
+
 EntityTemplateConfig entity_template_from_yaml(
     const YAML::Node& node,
     const std::string& path,
     std::uint32_t source_kind,
     const WeaponCatalogConfig& weapons,
-    const ColliderCatalogConfig& colliders) {
+    const ColliderCatalogConfig& colliders,
+    const std::vector<ProjectileTemplateConfig>& projectile_templates) {
     const std::uint16_t entity_type =
         authored_entity_type_from_yaml(node["entity_type"]);
     if (entity_type == kEntityTypeActor) {
@@ -2422,6 +2461,7 @@ EntityTemplateConfig entity_template_from_yaml(
                 "health",
                 "physics",
                 "interaction",
+                "throw",
                 "carry_offset",
                 "triggers",
             },
@@ -2509,6 +2549,23 @@ EntityTemplateConfig entity_template_from_yaml(
                 KERNEL_COLLISION_MASK_ACTOR |
                     KERNEL_COLLISION_MASK_STATIC_WORLD,
                 "prop interaction blocking_mask");
+        }
+        if (node["throw"]) {
+            reject_unknown_keys(
+                node["throw"],
+                {"trajectory_projectile"},
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                entity_template.actor_template_id);
+            if (!node["throw"]["trajectory_projectile"]) {
+                throw std::runtime_error(
+                    "prop throw requires trajectory_projectile: " + path);
+            }
+            entity_template.prop.throw_trajectory_projectile_template_id =
+                projectile_template_id_from_ref(
+                    node["throw"]["trajectory_projectile"],
+                    projectile_templates);
         }
         if (node["carry_offset"]) {
             const KernelVec3 offset = vec3_from_yaml(node["carry_offset"]);
@@ -2804,7 +2861,8 @@ std::vector<EntityTemplateConfig> load_entity_templates_from_source(
     const GameplayConfigSource& source,
     const std::string& directory,
     const WeaponCatalogConfig& weapons,
-    const ColliderCatalogConfig& colliders) {
+    const ColliderCatalogConfig& colliders,
+    const std::vector<ProjectileTemplateConfig>& projectile_templates) {
     std::vector<EntityTemplateConfig> entity_templates;
     std::unordered_map<std::uint32_t, std::string> ids;
     std::unordered_map<std::string, std::uint32_t> names;
@@ -2816,7 +2874,8 @@ std::vector<EntityTemplateConfig> load_entity_templates_from_source(
                 file,
                 source.source_kind(),
                 weapons,
-                colliders);
+                colliders,
+                projectile_templates);
         if (ids.contains(entity_template.actor_template_id)) {
             throw std::runtime_error("duplicate entity template id: " + file);
         }
@@ -2982,7 +3041,8 @@ ItemTemplateConfig item_template_from_yaml(
     const YAML::Node& node,
     const std::string& path,
     std::uint32_t source_kind,
-    const std::vector<EntityTemplateConfig>& entity_templates) {
+    const std::vector<EntityTemplateConfig>& entity_templates,
+    const std::vector<ProjectileTemplateConfig>& projectile_templates) {
     reject_unknown_keys(
         node,
         {"id", "name", "mode", "max_stack", "capabilities",
@@ -3051,7 +3111,7 @@ ItemTemplateConfig item_template_from_yaml(
     if (node["throw"]) {
         reject_unknown_keys(
             node["throw"],
-            {"mode", "speed"},
+            {"mode", "trajectory_projectile"},
             path,
             source_kind,
             KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ITEM,
@@ -3069,9 +3129,12 @@ ItemTemplateConfig item_template_from_yaml(
         } else {
             throw std::runtime_error("unknown item throw mode: " + throw_mode);
         }
-        definition.throw_policy.speed = node["throw"]["speed"]
-            ? node["throw"]["speed"].as<float>()
-            : 0.0f;
+        definition.throw_policy.trajectory_projectile_template_id =
+            node["throw"]["trajectory_projectile"]
+            ? projectile_template_id_from_ref(
+                  node["throw"]["trajectory_projectile"],
+                  projectile_templates)
+            : 0u;
     }
     definition.use_policy.struct_size = sizeof(definition.use_policy);
     if (node["use"]) {
@@ -3163,13 +3226,18 @@ ItemTemplateConfig item_template_from_yaml(
 std::vector<ItemTemplateConfig> load_item_templates_from_source(
     const GameplayConfigSource& source,
     const std::string& directory,
-    const std::vector<EntityTemplateConfig>& entity_templates) {
+    const std::vector<EntityTemplateConfig>& entity_templates,
+    const std::vector<ProjectileTemplateConfig>& projectile_templates) {
     std::vector<ItemTemplateConfig> items;
     std::unordered_set<std::uint32_t> ids;
     std::unordered_set<std::string> names;
     for (const std::string& file : source.list_yaml_files(directory)) {
         ItemTemplateConfig item = item_template_from_yaml(
-            source.load_yaml(file), file, source.source_kind(), entity_templates);
+            source.load_yaml(file),
+            file,
+            source.source_kind(),
+            entity_templates,
+            projectile_templates);
         if (!ids.insert(item.definition.item_template_id).second ||
             !names.insert(item.name).second) {
             throw std::runtime_error("duplicate item template: " + file);
@@ -4186,7 +4254,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     const std::uint32_t catalog_version =
         document["catalog_version"] ? document["catalog_version"].as<std::uint32_t>()
                                     : 1u;
-    if (catalog_version != 6u) {
+    if (catalog_version != 7u) {
         throw DataLoadError(
             KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNSUPPORTED_CATALOG_VERSION,
             "unsupported catalog_version: " + std::to_string(catalog_version),
@@ -4286,7 +4354,8 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             source,
             entity_template_dir,
             config.weapons,
-            config.colliders);
+            config.colliders,
+            config.projectile_templates);
         config.actor_templates =
             actor_templates_from_entity_templates(config.entity_templates);
     } else if (document["actor_template_dir"]) {
@@ -4308,7 +4377,8 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
         config.item_templates = load_item_templates_from_source(
             source,
             item_template_dir,
-            config.entity_templates);
+            config.entity_templates,
+            config.projectile_templates);
     }
     resolve_inventory_item_template_references(
         config.item_templates, &config.entity_templates);
@@ -4473,7 +4543,9 @@ std::uint64_t compute_gameplay_catalog_hash(
         hash_scalar(&hash, definition.line_of_sight_required);
         hash_scalar(&hash, definition.line_of_sight_blocking_mask);
         hash_scalar(&hash, definition.throw_policy.mode);
-        hash_float(&hash, definition.throw_policy.speed);
+        hash_scalar(
+            &hash,
+            definition.throw_policy.trajectory_projectile_template_id);
         hash_scalar(&hash, definition.use_policy.quantity_cost);
         hash_scalar(&hash, definition.use_policy.charge_field_id);
         hash_scalar(&hash, definition.use_policy.cooldown_ticks);

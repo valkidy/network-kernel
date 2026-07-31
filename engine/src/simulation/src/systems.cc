@@ -820,16 +820,64 @@ void CollisionTriggerSystem::update(
             request.shape.half_extents = collider.half_extents;
             request.shape.radius = collider.radius;
             request.shape.capsule_half_height = collider.capsule_half_height;
-            request.position = collider.world_center;
-            request.rotation = collider.world_rotation;
-            request.filter = collision_filter_from_mask(
+            physics::CollisionQueryFilter filter = collision_filter_from_mask(
                 collision_binding.collision_mask);
-            request.filter.ignored_entity_net_id = identity.net_id;
-            for (const physics::CollisionHit& hit :
-                 engine.physics_world_->overlap_all(request)) {
+            filter.ignored_entity_net_id = identity.net_id;
+            std::vector<physics::CollisionHit> hits;
+            const ThrownPropMotion* thrown_motion =
+                engine.world_.registry().try_get<ThrownPropMotion>(entity);
+            if (thrown_motion != nullptr) {
+                const Transform& transform =
+                    engine.world_.registry().get<Transform>(entity);
+                const glm::vec3 previous_center =
+                    thrown_motion->previous_position +
+                    transform.rotation * collider.local_center;
+                const glm::vec3 displacement =
+                    collider.world_center - previous_center;
+                if (glm::dot(displacement, displacement) > 0.00000001f) {
+                    physics::ShapeCastRequest request{};
+                    request.shape.type =
+                        collider.shape_type == ColliderShapeType::kSphere
+                        ? physics::CollisionShapeType::kSphere
+                        : collider.shape_type == ColliderShapeType::kCapsule
+                            ? physics::CollisionShapeType::kCapsule
+                            : physics::CollisionShapeType::kBox;
+                    request.shape.half_extents = collider.half_extents;
+                    request.shape.radius = collider.radius;
+                    request.shape.capsule_half_height =
+                        collider.capsule_half_height;
+                    request.start = previous_center;
+                    request.rotation = collider.world_rotation;
+                    request.displacement = displacement;
+                    request.filter = filter;
+                    hits = engine.physics_world_->shape_cast_all(request);
+                }
+            }
+            if (hits.empty()) {
+                physics::OverlapRequest request{};
+                request.shape.type =
+                    collider.shape_type == ColliderShapeType::kSphere
+                    ? physics::CollisionShapeType::kSphere
+                    : collider.shape_type == ColliderShapeType::kCapsule
+                        ? physics::CollisionShapeType::kCapsule
+                        : physics::CollisionShapeType::kBox;
+                request.shape.half_extents = collider.half_extents;
+                request.shape.radius = collider.radius;
+                request.shape.capsule_half_height =
+                    collider.capsule_half_height;
+                request.position = collider.world_center;
+                request.rotation = collider.world_rotation;
+                request.filter = filter;
+                hits = engine.physics_world_->overlap_all(request);
+                for (physics::CollisionHit& hit : hits) {
+                    hit.fraction = 1.0f;
+                }
+            }
+            for (const physics::CollisionHit& hit : hits) {
                 if (hit.identity.kind !=
                         physics::CollisionObjectKind::kActorHitbox) {
                     const auto hit_key = std::tuple{
+                        hit.fraction,
                         hit.distance,
                         collider.collider_id,
                         static_cast<std::uint8_t>(hit.identity.kind),
@@ -842,6 +890,7 @@ void CollisionTriggerSystem::update(
                         const physics::CollisionHit& current =
                             static_contact->first;
                         const auto current_key = std::tuple{
+                            current.fraction,
                             current.distance,
                             static_contact->second,
                             static_cast<std::uint8_t>(current.identity.kind),
@@ -875,6 +924,17 @@ void CollisionTriggerSystem::update(
             }
         }
         if (static_contact.has_value()) {
+            if (const ThrownPropMotion* motion =
+                    engine.world_.registry().try_get<ThrownPropMotion>(entity)) {
+                Transform& transform =
+                    engine.world_.registry().get<Transform>(entity);
+                const glm::vec3 displacement =
+                    transform.position - motion->previous_position;
+                transform.position = motion->previous_position +
+                    displacement *
+                        std::clamp(static_contact->first.fraction, 0.0f, 1.0f);
+                engine.world_.registry().remove<ThrownPropMotion>(entity);
+            }
             mode.mode = PropMode::kPlaced;
             view.get<Velocity>(entity).linear = glm::vec3{0.0f};
             if (engine.world_.registry().all_of<ItemInstanceRef>(entity)) {

@@ -9,8 +9,9 @@
 
 #include "kernel/src/kernel.h"
 #include "physics/public/physics_world.h"
-#include "simulation/public/collision_filter.h"
 #include "simulation/public/action_graph.h"
+#include "simulation/public/collision_filter.h"
+#include "simulation/public/simulation.h"
 #include "simulation/src/systems.h"
 
 namespace network_example {
@@ -24,6 +25,58 @@ enum class GameplayRequestContext {
     kPlacedProp,
     kCarryingProp,
 };
+
+constexpr glm::vec3 kThrowMuzzleOffset{0.0f, 1.0f, 0.0f};
+
+std::optional<glm::vec3> throw_origin(
+    KernelEngine& engine,
+    NetId instigator_net_id) {
+    const std::optional<entt::entity> actor =
+        engine.simulation_world().find_entity(instigator_net_id);
+    if (!actor.has_value() ||
+        !engine.simulation_world().registry().all_of<Transform>(*actor)) {
+        return std::nullopt;
+    }
+    return engine.simulation_world().registry().get<Transform>(*actor).position +
+        kThrowMuzzleOffset;
+}
+
+bool begin_thrown_prop_motion(
+    KernelEngine& engine,
+    entt::entity prop,
+    const glm::vec3& origin,
+    const glm::vec3& direction,
+    std::uint32_t trajectory_projectile_template_id) {
+    const RuntimeProjectileTemplate* trajectory =
+        engine.simulation_world().find_projectile_template(
+            trajectory_projectile_template_id);
+    if (trajectory == nullptr ||
+        trajectory->projectile_type != ProjectileType::kStandard ||
+        (trajectory->motion_model != ProjectileMotionModel::kLinear &&
+         trajectory->motion_model != ProjectileMotionModel::kParabolic) ||
+        !std::isfinite(trajectory->speed) || trajectory->speed <= 0.0f ||
+        !std::isfinite(trajectory->gravity.x) ||
+        !std::isfinite(trajectory->gravity.y) ||
+        !std::isfinite(trajectory->gravity.z)) {
+        return false;
+    }
+    const glm::vec3 initial_velocity = direction * trajectory->speed;
+    entt::registry& registry = engine.simulation_world().registry();
+    registry.get<Transform>(prop).position = origin;
+    registry.emplace_or_replace<Velocity>(
+        prop, Velocity{initial_velocity});
+    registry.emplace_or_replace<ThrownPropMotion>(
+        prop,
+        ThrownPropMotion{
+            trajectory->motion_model,
+            0u,
+            origin,
+            initial_velocity,
+            trajectory->gravity,
+            origin,
+        });
+    return true;
+}
 
 bool valid_domain_action(std::uint8_t action) {
     return action >= KernelDomainAction_Consume &&
@@ -367,8 +420,11 @@ std::optional<ActionGraphCommandBatch> prepare_item_graph_batch(
     const std::optional<entt::entity> actor =
         engine.simulation_world().find_entity(request.instigator_net_id);
     if (!actor.has_value()) return std::nullopt;
-    const glm::vec3 position =
+    glm::vec3 position =
         engine.simulation_world().registry().get<Transform>(*actor).position;
+    if (domain_action == KernelDomainAction_Throw) {
+        position += kThrowMuzzleOffset;
+    }
     const TriggerEvent event{
         TriggerEventType::kItemUsed,
         0u,
@@ -693,17 +749,34 @@ bool ItemGameplaySystem::submit_request(
                     request.throw_direction.y,
                     request.throw_direction.z};
                 if ((capabilities & KernelItemCapability_Throwable) == 0 ||
+                    !std::isfinite(direction.x) ||
+                    !std::isfinite(direction.y) ||
+                    !std::isfinite(direction.z) ||
                     glm::dot(direction, direction) == 0.0f) {
                     reject(&outcome, KernelGameplayRequestRejection_MissingCapability);
                     goto record_outcome;
                 }
                 direction = glm::normalize(direction);
+                const EntityTemplateRef& template_ref =
+                    engine.world_.registry().get<EntityTemplateRef>(*target);
+                const KernelEntityTemplateDefinition* entity_template =
+                    find_entity_template(engine, template_ref.entity_template_id);
+                const std::optional<glm::vec3> origin =
+                    throw_origin(engine, request.instigator_net_id);
+                if (entity_template == nullptr || !origin.has_value() ||
+                    !begin_thrown_prop_motion(
+                        engine,
+                        *target,
+                        *origin,
+                        direction,
+                        entity_template->prop
+                            .throw_trajectory_projectile_template_id)) {
+                    reject(&outcome, KernelGameplayRequestRejection_InvalidContext);
+                    goto record_outcome;
+                }
                 engine.world_.registry().emplace_or_replace<PropWorldMode>(
                     *target,
                     PropWorldMode{PropMode::kInFlight});
-                engine.world_.registry().emplace_or_replace<Velocity>(
-                    *target,
-                    Velocity{direction * 10.0f});
                 set_prop_collision_enabled(engine, request.target_net_id, true);
             }
             engine.world_.registry().remove<CarriedBy>(*target);
@@ -1067,6 +1140,12 @@ bool ItemGameplaySystem::submit_request(
                 goto record_outcome;
             }
             std::uint32_t prop_id = item->residency.prop_entity_id;
+            const std::optional<glm::vec3> origin =
+                throw_origin(engine, request.instigator_net_id);
+            if (!origin.has_value()) {
+                reject(&outcome, KernelGameplayRequestRejection_UnknownInstigator);
+                goto record_outcome;
+            }
             if (item->residency.kind == KernelItemResidency_Inventory) {
                 const std::uint32_t quantity = request.requested_quantity == 0
                     ? 1u
@@ -1079,12 +1158,10 @@ bool ItemGameplaySystem::submit_request(
                 }
                 const KernelInventoryContainerId source_container_id =
                     item->residency.container_id;
-                const Transform& actor_transform =
-                    engine.world_.registry().get<Transform>(*instigator);
                 const KernelVec3 position{
-                    actor_transform.position.x,
-                    actor_transform.position.y,
-                    actor_transform.position.z};
+                    origin->x,
+                    origin->y,
+                    origin->z};
                 const auto spawned = spawn_prop(engine, *item_template, position);
                 if (!spawned.has_value()) {
                     reject(&outcome, KernelGameplayRequestRejection_InvalidPlacement);
@@ -1145,9 +1222,17 @@ bool ItemGameplaySystem::submit_request(
             }
             const std::optional<entt::entity> prop =
                 engine.world_.find_entity(prop_id);
-            engine.world_.registry().emplace_or_replace<Velocity>(
-                *prop,
-                Velocity{direction * item_template->throw_policy.speed});
+            if (!prop.has_value() ||
+                !begin_thrown_prop_motion(
+                    engine,
+                    *prop,
+                    *origin,
+                    direction,
+                    item_template->throw_policy
+                        .trajectory_projectile_template_id)) {
+                reject(&outcome, KernelGameplayRequestRejection_InvalidContext);
+                goto record_outcome;
+            }
             set_prop_collision_enabled(engine, prop_id, true);
             engine.queue_prop_state_change(prop_id);
             outcome.status = KernelGameplayRequestStatus_Committed;

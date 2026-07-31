@@ -102,7 +102,7 @@ struct ActorTemplateConfig {
 using EntityTemplateConfig = ActorTemplateConfig;
 
 struct WeaponCatalogConfig {
-    std::uint32_t catalog_version = 6;
+    std::uint32_t catalog_version = 7;
     std::uint64_t catalog_hash = 0;
     std::array<bool, kWeaponIdCount> configured{};
     std::array<KernelWeaponMechanicsDefinition, kWeaponIdCount> definitions{};

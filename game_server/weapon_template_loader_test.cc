@@ -878,7 +878,7 @@ void catalog_file_loads_colliders() {
     const network_example::game_server::GameServerGameplayConfig config =
         network_example::game_server::load_gameplay_config_from_catalog_file(
             catalog_file.string());
-    assert(config.weapons.catalog_version == 6);
+    assert(config.weapons.catalog_version == 7);
     assert(config.weapons.catalog_hash != 0);
     assert(config.colliders.templates.size() == 12);
     assert(config.colliders.bindings.empty());

@@ -599,6 +599,34 @@ const KernelProjectileTemplateDefinition* find_projectile_template(
     return found == templates.end() ? nullptr : &*found;
 }
 
+bool valid_throw_trajectory(
+    const std::vector<KernelProjectileTemplateDefinition>& templates,
+    std::uint32_t projectile_template_id) {
+    const KernelProjectileTemplateDefinition* projectile_template =
+        find_projectile_template(templates, projectile_template_id);
+    if (projectile_template == nullptr) return false;
+    const KernelProjectileMechanicsDefinition& mechanics =
+        projectile_template->mechanics;
+    return mechanics.projectile_type == KernelProjectileType_Standard &&
+        (mechanics.motion_model == KernelProjectileMotionModel_Linear ||
+         mechanics.motion_model == KernelProjectileMotionModel_Parabolic) &&
+        std::isfinite(mechanics.speed) && mechanics.speed > 0.0f &&
+        std::isfinite(mechanics.gravity.x) &&
+        std::isfinite(mechanics.gravity.y) &&
+        std::isfinite(mechanics.gravity.z);
+}
+
+bool valid_throw_collider(
+    const KernelColliderTemplateDefinition* collider_template) {
+    return collider_template != nullptr &&
+        (collider_template->purpose_flags & KernelColliderPurpose_Hit) != 0u &&
+        (collider_template->shape_type == KernelColliderShapeType_Aabb ||
+         collider_template->shape_type ==
+             KernelColliderShapeType_OrientedBox ||
+         collider_template->shape_type == KernelColliderShapeType_Sphere ||
+         collider_template->shape_type == KernelColliderShapeType_Capsule);
+}
+
 const KernelActorTemplateDefinition* find_actor_template(
     const std::vector<KernelActorTemplateDefinition>& templates,
     std::uint32_t actor_template_id) {
@@ -2521,6 +2549,14 @@ bool KernelEngine::load_gameplay_catalog(
                      sizeof(KernelActionTriggerDefinition))) {
                 return false;
             }
+            const bool throwable =
+                (interaction.capability_flags &
+                 KernelItemCapability_Throwable) != 0u;
+            if (throwable !=
+                (entity_template.prop
+                     .throw_trajectory_projectile_template_id != 0u)) {
+                return false;
+            }
         }
         validated_entity_templates.push_back(entity_template);
     }
@@ -2694,9 +2730,29 @@ bool KernelEngine::load_gameplay_catalog(
                 entity_template.collider_template_id) == nullptr) {
             return false;
         }
+        if (entity_template.entity_type == KernelEntityType_Prop &&
+            (entity_template.prop.interaction.capability_flags &
+             KernelItemCapability_Throwable) != 0u &&
+            (!valid_throw_trajectory(
+                 validated_projectile_templates,
+                 entity_template.prop
+                     .throw_trajectory_projectile_template_id) ||
+             !valid_throw_collider(find_collider_template(
+                 validated_collider_templates,
+                 entity_template.collider_template_id)))) {
+            return false;
+        }
     }
     for (const KernelItemTemplateDefinition& item_template :
          validated_item_templates) {
+        if (item_template.throw_policy.mode ==
+                KernelItemThrowMode_IdentityPreserving &&
+            !valid_throw_trajectory(
+                validated_projectile_templates,
+                item_template.throw_policy
+                    .trajectory_projectile_template_id)) {
+            return false;
+        }
         const KernelActionTriggerDefinition& item_trigger =
             item_template.item_used_trigger;
         const std::uint32_t item_action_count = item_trigger.action_count == 0u
@@ -2768,7 +2824,16 @@ bool KernelEngine::load_gameplay_catalog(
         }
         const KernelPropInteractionDefinition& interaction =
             entity_template->prop.interaction;
-        if (interaction.capability_flags != 0u) {
+        if (interaction.capability_flags != 0u ||
+            entity_template->prop
+                    .throw_trajectory_projectile_template_id != 0u) {
+            return false;
+        }
+        if (item_template.throw_policy.mode ==
+                KernelItemThrowMode_IdentityPreserving &&
+            !valid_throw_collider(find_collider_template(
+                validated_collider_templates,
+                entity_template->collider_template_id))) {
             return false;
         }
         if ((item_template.capability_flags &

@@ -27,7 +27,7 @@ KernelItemTemplateDefinition fungible_template() {
     item.interaction_range = 3.0f;
     item.throw_policy.struct_size = sizeof(item.throw_policy);
     item.throw_policy.mode = KernelItemThrowMode_IdentityPreserving;
-    item.throw_policy.speed = 12.0f;
+    item.throw_policy.trajectory_projectile_template_id = 7;
     item.use_policy.struct_size = sizeof(item.use_policy);
     item.use_policy.quantity_cost = 1;
     item.item_used_trigger.struct_size = sizeof(item.item_used_trigger);
@@ -73,6 +73,7 @@ void validates_templates() {
 
     invalid = fungible_template();
     invalid.throw_policy.mode = KernelItemThrowMode_ConsumeAndSpawn;
+    invalid.throw_policy.trajectory_projectile_template_id = 0;
     require(!network_example::validate_item_template(invalid, &error));
 
     invalid = fungible_template();

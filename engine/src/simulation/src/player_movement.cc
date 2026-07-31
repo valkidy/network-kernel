@@ -518,10 +518,42 @@ void simulate_velocity_movement(World& world, float fixed_delta_seconds) {
         return;
     }
 
+    auto thrown_view = world.registry().view<
+        Transform,
+        Velocity,
+        PropWorldMode,
+        ThrownPropMotion>();
+    for (const entt::entity entity : thrown_view) {
+        if (thrown_view.get<PropWorldMode>(entity).mode !=
+            PropMode::kInFlight) {
+            continue;
+        }
+        Transform& transform = thrown_view.get<Transform>(entity);
+        Velocity& velocity = thrown_view.get<Velocity>(entity);
+        ThrownPropMotion& motion =
+            thrown_view.get<ThrownPropMotion>(entity);
+        motion.previous_position = transform.position;
+        ++motion.age_ticks;
+        const float elapsed_seconds =
+            static_cast<float>(motion.age_ticks) * fixed_delta_seconds;
+        transform.position = projectile_position_at(
+            motion.spawn_position,
+            motion.initial_velocity,
+            motion.motion_model,
+            motion.gravity,
+            elapsed_seconds);
+        velocity.linear = projectile_velocity_at(
+            motion.initial_velocity,
+            motion.motion_model,
+            motion.gravity,
+            elapsed_seconds);
+    }
+
     auto view = world.registry().view<Transform, Velocity>();
     for (const entt::entity entity : view) {
         if (world.registry().all_of<MovementState>(entity) ||
-            world.registry().all_of<ProjectileTag>(entity)) {
+            world.registry().all_of<ProjectileTag>(entity) ||
+            world.registry().all_of<ThrownPropMotion>(entity)) {
             continue;
         }
         Transform& transform = view.get<Transform>(entity);
