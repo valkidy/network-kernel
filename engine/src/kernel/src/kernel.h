@@ -821,6 +821,7 @@ private:
     std::unordered_set<std::uint32_t> physics_entity_collider_ids_;
     std::unique_ptr<physics::PhysicsWorld> prediction_physics_world_;
     std::unordered_map<NetId, std::uint32_t> prediction_proxy_collider_ids_;
+    std::unordered_map<NetId, std::uint32_t> prediction_obstacle_collider_ids_;
     std::uint32_t next_prediction_proxy_collider_id_ = 0xc0000000u;
     std::unordered_map<PeerId, GameplayCatalogTransfer>
         gameplay_catalog_transfers_;
