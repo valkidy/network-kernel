@@ -1,5 +1,16 @@
 0.6.9 release notes:
 
+- aligns Unity editor and managed ABI smoke with kernel ABI 60
+
+
+0.6.9 release notes:
+
+- aligns Unity plugin API with kernel ABI 60
+- updates native plugins and gameplay catalog bundle
+
+
+0.6.9 release notes:
+
 - fixes macOS owned inventory container API export
 
 

@@ -21,7 +21,7 @@ namespace NetworkExample.Kernel.Editor
             KernelAbi.ValidateNativeAbi();
             GameServerAbi.ValidateNativeAbi();
             KernelAbiInfo info = KernelAbi.GetInfo();
-            Require(KernelConstants.AbiVersion == 57, "Managed kernel ABI version was not v57.");
+            Require(KernelConstants.AbiVersion == 60, "Managed kernel ABI version was not v60.");
             RequireClientPredictionFailureStateTransition();
             Require(
                 (info.capability_flags & KernelConstants.CapabilityEntityLifecycleEvents) != 0,

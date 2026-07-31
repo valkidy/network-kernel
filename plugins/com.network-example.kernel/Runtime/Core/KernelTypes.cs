@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 57;
+        public const uint AbiVersion = 60;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int GameplayCatalogEntryPathSize = 128;
@@ -171,6 +171,8 @@ namespace NetworkExample.Kernel
         Destroyed = 0,
         OutOfRange = 1,
         Disconnected = 2,
+        Expired = 3,
+        CapacityEvicted = 4,
     }
 
     public enum KernelGameplayCatalogSyncState
@@ -281,14 +283,6 @@ namespace NetworkExample.Kernel
         None = 0,
         IdentityPreserving = 1,
         ConsumeAndSpawn = 2,
-    }
-
-    public enum KernelSemanticInputButton
-    {
-        Use = 0,
-        Fire = 1,
-        InteractTap = 2,
-        InteractHold = 3,
     }
 
     public enum KernelPortableStateType
@@ -599,6 +593,7 @@ namespace NetworkExample.Kernel
         public uint lan_discovery_result_size;
         public ulong capability_flags;
         public uint gameplay_catalog_definition_size;
+        public uint prop_population_rule_definition_size;
         public uint gameplay_catalog_load_result_size;
         public uint gameplay_catalog_load_options_size;
         public uint actor_template_definition_size;
@@ -935,22 +930,13 @@ namespace NetworkExample.Kernel
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    public struct KernelItemInputMappingDefinition
-    {
-        public byte inventory_use;
-        public byte inventory_fire;
-        public byte world_interact_tap;
-        public byte world_interact_hold;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
     public struct KernelItemThrowDefinition
     {
         public uint struct_size;
         public byte mode;
         public byte reserved0;
         public ushort reserved1;
-        public float speed;
+        public uint trajectory_projectile_template_id;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelItemThrowDefinition>();
     }
@@ -977,7 +963,6 @@ namespace NetworkExample.Kernel
         public ushort max_stack;
         public uint capability_flags;
         public uint entity_template_id;
-        public KernelItemInputMappingDefinition input_mapping;
         public float interaction_range;
         public uint line_of_sight_required;
         public uint line_of_sight_blocking_mask;
@@ -997,15 +982,25 @@ namespace NetworkExample.Kernel
     {
         public uint struct_size;
         public uint capability_flags;
-        public byte world_interact_tap;
-        public byte world_interact_hold;
         public byte line_of_sight_required;
         public byte reserved0;
+        public ushort reserved1;
         public float interaction_range;
         public uint line_of_sight_blocking_mask;
 
         public static uint StructSize =>
             (uint)Marshal.SizeOf<KernelPropInteractionDefinition>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelPropPopulationRuleDefinition
+    {
+        public uint struct_size;
+        public uint population_group_id;
+        public uint max_alive;
+
+        public static uint StructSize =>
+            (uint)Marshal.SizeOf<KernelPropPopulationRuleDefinition>();
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -1016,6 +1011,9 @@ namespace NetworkExample.Kernel
         public float carry_offset_x;
         public float carry_offset_y;
         public float carry_offset_z;
+        public uint throw_trajectory_projectile_template_id;
+        public uint lifetime_ticks;
+        public uint population_group_id;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelPropDefinition>();
     }
@@ -1170,7 +1168,7 @@ namespace NetworkExample.Kernel
         public uint requester_peer;
         public ulong request_id;
         public uint instigator_net_id;
-        public byte semantic_button;
+        public byte domain_action;
         public byte reserved0;
         public ushort reserved1;
         public ulong selected_item_instance_id;
@@ -1404,6 +1402,7 @@ namespace NetworkExample.Kernel
         public KernelEntityTemplateDefinition[] EntityTemplates;
         public KernelActionTemplateDefinition[] ActionTemplates;
         public KernelItemTemplateDefinition[] ItemTemplates;
+        public KernelPropPopulationRuleDefinition[] PropPopulationRules;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
@@ -1533,6 +1532,8 @@ namespace NetworkExample.Kernel
         public uint action_template_count;
         public IntPtr item_templates;
         public uint item_template_count;
+        public IntPtr prop_population_rules;
+        public uint prop_population_rule_count;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelGameplayCatalogDefinition>();
     }

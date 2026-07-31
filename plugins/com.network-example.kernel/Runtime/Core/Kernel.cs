@@ -1093,6 +1093,8 @@ namespace NetworkExample.Kernel
                 catalog.ActionTemplates ?? new KernelActionTemplateDefinition[0];
             KernelItemTemplateDefinition[] itemTemplates =
                 catalog.ItemTemplates ?? new KernelItemTemplateDefinition[0];
+            KernelPropPopulationRuleDefinition[] propPopulationRules =
+                catalog.PropPopulationRules ?? new KernelPropPopulationRuleDefinition[0];
 
             PrepareActorTemplates(actorTemplates);
             PrepareProjectileTemplates(projectileTemplates);
@@ -1101,6 +1103,7 @@ namespace NetworkExample.Kernel
             PrepareEntityTemplates(entityTemplates);
             PrepareActionTemplates(actionTemplates);
             PrepareItemTemplates(itemTemplates);
+            PreparePropPopulationRules(propPopulationRules);
 
             GCHandle actorTemplatesHandle = PinArray(actorTemplates, out IntPtr actorTemplatesPtr);
             IntPtr projectileTemplatesPtr = MarshalArray(projectileTemplates);
@@ -1109,6 +1112,8 @@ namespace NetworkExample.Kernel
             IntPtr entityTemplatesPtr = MarshalArray(entityTemplates);
             GCHandle actionTemplatesHandle = PinArray(actionTemplates, out IntPtr actionTemplatesPtr);
             IntPtr itemTemplatesPtr = MarshalArray(itemTemplates);
+            GCHandle propPopulationRulesHandle =
+                PinArray(propPopulationRules, out IntPtr propPopulationRulesPtr);
             try
             {
                 var nativeCatalog = new KernelGameplayCatalogDefinition
@@ -1130,6 +1135,8 @@ namespace NetworkExample.Kernel
                     action_template_count = (uint)actionTemplates.Length,
                     item_templates = itemTemplatesPtr,
                     item_template_count = (uint)itemTemplates.Length,
+                    prop_population_rules = propPopulationRulesPtr,
+                    prop_population_rule_count = (uint)propPopulationRules.Length,
                 };
                 return KernelNative.Kernel_LoadGameplayCatalog(
                     kernel,
@@ -1151,6 +1158,7 @@ namespace NetworkExample.Kernel
                 FreeMarshaledArray<KernelItemTemplateDefinition>(
                     itemTemplatesPtr,
                     itemTemplates.Length);
+                FreeIfAllocated(propPopulationRulesHandle);
             }
         }
 
@@ -1247,6 +1255,19 @@ namespace NetworkExample.Kernel
                             KernelConstants.MaxPortableStateFields];
                 }
                 PrepareActionTrigger(ref templates[index].item_used_trigger);
+            }
+        }
+
+        private static void PreparePropPopulationRules(
+            KernelPropPopulationRuleDefinition[] rules)
+        {
+            for (int index = 0; index < rules.Length; ++index)
+            {
+                if (rules[index].struct_size == 0)
+                {
+                    rules[index].struct_size =
+                        KernelPropPopulationRuleDefinition.StructSize;
+                }
             }
         }
 
