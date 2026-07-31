@@ -1,5 +1,10 @@
 0.6.9 release notes:
 
+- aligns Unity package artifacts with kernel ABI 61
+
+
+0.6.9 release notes:
+
 - aligns Unity editor and managed ABI smoke with kernel ABI 60
 
 
