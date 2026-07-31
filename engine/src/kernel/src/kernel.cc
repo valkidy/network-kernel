@@ -7249,6 +7249,9 @@ void KernelEngine::append_predicted_local_render_state() {
         [this](const ClientReplicatedEntity& replicated_entity) {
             return replicated_entity.net_id == local_player_net_id_;
         });
+    if (replicated != client_replicated_entities_.end()) {
+        state.entity_template_id = replicated->entity_template_id;
+    }
     if (state.entity_type == static_cast<std::uint16_t>(EntityType::kActor) &&
         replicated != client_replicated_entities_.end() &&
         replicated->actor_template_id != 0u) {
@@ -8775,6 +8778,7 @@ void KernelEngine::rebuild_render_states_from_snapshot(
             render_entity,
             entity_id_for_net_id(entity.net_id)));
         RenderEntityState& state = render_states_.back();
+        state.entity_template_id = replicated->entity_template_id;
         if (state.entity_type == static_cast<std::uint16_t>(EntityType::kActor) &&
             replicated->actor_template_id != 0u) {
             state.actor_template_id = replicated->actor_template_id;
@@ -8848,6 +8852,7 @@ void KernelEngine::rebuild_render_states_from_snapshot(
             0,
             0,
             entity.carrier_entity_id,
+            entity.entity_template_id,
         });
     }
 }

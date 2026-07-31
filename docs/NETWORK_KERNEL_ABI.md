@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 60u`.
+`KERNEL_ABI_VERSION == 61u`.
 
 ## Ownership
 
@@ -30,6 +30,12 @@ failures return `NULL`, `false`, or `0`.
 Additive changes must prefer new `Kernel_*` functions or new capability flags.
 Breaking changes to public struct layout, enum semantics, buffer ownership, or
 function signatures require a `KERNEL_ABI_VERSION` bump.
+
+ABI version 61 appends `entity_template_id` to `RenderEntityState`. Server and
+host render states read it from `EntityTemplateRef`; client render states
+restore it from reliable spawn metadata. Pure Props can therefore select
+presentation assets by entity-template ID without adding the field to snapshot
+packets.
 
 ABI version 60 adds authoritative lifecycle and population policy for temporary
 pure Props. `KernelPropDefinition` carries `lifetime_ticks` and a resolved

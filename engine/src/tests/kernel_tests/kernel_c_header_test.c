@@ -6,7 +6,7 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 60u,
+    KERNEL_ABI_VERSION == 61u,
     "temporary prop lifecycle ABI");
 _Static_assert(
     sizeof(KernelActionTriggerDefinition) == 296u,
@@ -120,7 +120,7 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 60u);
+    assert(KERNEL_ABI_VERSION == 61u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD == 4u);

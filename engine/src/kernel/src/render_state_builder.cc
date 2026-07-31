@@ -66,6 +66,7 @@ RenderEntityState render_state_from_world_entity(
     std::uint64_t item_instance_id = 0;
     std::uint8_t world_item_mode = 0;
     std::uint32_t carrier_entity_id = 0;
+    std::uint32_t entity_template_id = 0;
     if (world.registry().all_of<Velocity>(entity)) {
         velocity = to_kernel_vec3(world.registry().get<Velocity>(entity).linear);
     }
@@ -130,6 +131,10 @@ RenderEntityState render_state_from_world_entity(
         carrier_entity_id =
             world.registry().get<CarriedBy>(entity).carrier_entity_id;
     }
+    if (world.registry().all_of<EntityTemplateRef>(entity)) {
+        entity_template_id =
+            world.registry().get<EntityTemplateRef>(entity).entity_template_id;
+    }
     return RenderEntityState{
         entity_id,
         identity.net_id,
@@ -157,6 +162,7 @@ RenderEntityState render_state_from_world_entity(
         0,
         0,
         carrier_entity_id,
+        entity_template_id,
     };
 }
 
@@ -205,6 +211,7 @@ RenderEntityState render_state_from_snapshot_entity(
         0,
         0,
         entity.carrier_entity_id,
+        0,
     };
 }
 

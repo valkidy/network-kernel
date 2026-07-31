@@ -2603,6 +2603,8 @@ void reliable_prop_state_overrides_older_snapshot_and_survives_omission() {
         client.get_render_states_at_time(400000, states.data(), states.size());
     require(count == 1);
     require(states[0].net_id == 51);
+    require(states[0].entity_template_id == 7);
+    require(states[0].item_template_id == 13);
     require(states[0].position.x == 2.0f);
     require(states[0].velocity.x == 0.0f);
     require(states[0].world_item_mode == KernelWorldItemMode_Placed);
@@ -2621,6 +2623,8 @@ void reliable_prop_state_overrides_older_snapshot_and_survives_omission() {
     count = client.get_render_states_at_time(433333, states.data(), states.size());
     require(count == 1);
     require(states[0].net_id == 51);
+    require(states[0].entity_template_id == 7);
+    require(states[0].item_template_id == 13);
     require(states[0].position.x == 2.0f);
     require(states[0].hp == 3);
 }

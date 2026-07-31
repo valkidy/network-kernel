@@ -671,6 +671,20 @@ void static_collision_runs_once_for(
     }
     require(ice_count == 1u);
     require(spawned_ice.has_value());
+    engine.rebuild_render_states_from_world();
+    const std::uint32_t spawned_ice_net_id =
+        engine.world_.registry()
+            .get<network_example::NetworkIdentity>(*spawned_ice)
+            .net_id;
+    const auto spawned_ice_render = std::find_if(
+        engine.render_states_.begin(),
+        engine.render_states_.end(),
+        [spawned_ice_net_id](const RenderEntityState& state) {
+            return state.net_id == spawned_ice_net_id;
+        });
+    require(spawned_ice_render != engine.render_states_.end());
+    require(spawned_ice_render->entity_template_id == 207u);
+    require(spawned_ice_render->item_template_id == 0u);
     const glm::vec3 ice_forward =
         ice_view.get<const network_example::Transform>(*spawned_ice).rotation *
         glm::vec3{0.0f, 0.0f, 1.0f};

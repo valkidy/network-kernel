@@ -254,7 +254,7 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 60u);
+    assert(KERNEL_ABI_VERSION == 61u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CONTROL_PLANE_RPC) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ACTION_TIMELINE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LOCAL_ACTION_RESULTS) != 0);
@@ -317,6 +317,8 @@ int main() {
            offsetof(KernelServerEntityState, reload_remaining_ticks));
     assert(offsetof(RenderEntityState, action) >
            offsetof(RenderEntityState, actor_template_id));
+    assert(offsetof(RenderEntityState, entity_template_id) >
+           offsetof(RenderEntityState, carrier_entity_id));
     assert(offsetof(KernelWeaponMechanicsDefinition, reserve_magazines) >
            offsetof(KernelWeaponMechanicsDefinition, magazine_size));
     assert(offsetof(KernelWeaponMechanicsDefinition, damage) >

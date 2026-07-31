@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 60u
+#define KERNEL_ABI_VERSION 61u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -878,6 +878,7 @@ typedef struct RenderEntityState {
     uint8_t reserved_item0;
     uint16_t reserved_item1;
     uint32_t carrier_entity_id;
+    uint32_t entity_template_id;
 } RenderEntityState;
 
 KERNEL_RPC_STRUCT(R"json({"type":"KernelServerEntityCreateInfo"})json")
