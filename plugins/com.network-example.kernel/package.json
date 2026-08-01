@@ -27,6 +27,11 @@
       "displayName": "Host",
       "description": "Listen-host MonoBehaviour that runs the pure runtime SDK plus native GameServer bridge and exposes render states as data.",
       "path": "Samples~/Host"
+    },
+    {
+      "displayName": "Monster Observer",
+      "description": "Listen-host observer for the deterministic simplified_monster_sim_v4 patrol with root and skeleton presentation.",
+      "path": "Samples~/MonsterObserver"
     }
   ]
 }

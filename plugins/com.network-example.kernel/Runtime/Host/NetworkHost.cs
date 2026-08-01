@@ -231,6 +231,20 @@ namespace NetworkExample.Kernel.Host
             return kernel.GetRenderStatesAtTime(clientRenderTimeUs, states);
         }
 
+        public uint GetSkeletonRenderStates(SkeletonRenderStateBuffer buffer)
+        {
+            ThrowIfNotRunning();
+            return kernel.GetSkeletonRenderStates(buffer);
+        }
+
+        public uint GetSkeletonRenderStatesAtTime(
+            ulong clientRenderTimeUs,
+            SkeletonRenderStateBuffer buffer)
+        {
+            ThrowIfNotRunning();
+            return kernel.GetSkeletonRenderStatesAtTime(clientRenderTimeUs, buffer);
+        }
+
         public bool TrySubmitLocalInput(KernelPlayerInput input)
         {
             ThrowIfNotRunning();
