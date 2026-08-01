@@ -59,8 +59,9 @@ locomotion:
     processing_order: [front_left, front_right, rear_left, rear_right]
   foothold:
     query: raycast
-    query_start_height_meters: 1.0
-    query_distance_meters: 2.0
+    # Covers the observed 0.99 m rise and 16.68 m drop around the nominal feet.
+    query_start_height_meters: 2.0
+    query_distance_meters: 20.0
     candidate_offsets_meters:
       - {x: 0.0, z: 0.0}
       - {x: 0.2, z: 0.0}
