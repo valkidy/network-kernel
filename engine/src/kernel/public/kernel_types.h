@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 62u
+#define KERNEL_ABI_VERSION 63u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -26,6 +26,7 @@
 #define KERNEL_STATIC_COLLISION_LAYER_TERRAIN UINT32_C(1)
 
 #define KERNEL_MAX_WEAPON_SLOTS 4u
+#define KERNEL_MAX_SKELETON_LEGS 8u
 
 #define KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED UINT32_C(0)
 #define KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS UINT32_C(1)
@@ -171,6 +172,7 @@
 #define KERNEL_ENTITY_COMPONENT_SENTRY_RUNTIME UINT32_C(0x00000040)
 #define KERNEL_ENTITY_COMPONENT_DIRECTOR_RUNTIME UINT32_C(0x00000080)
 #define KERNEL_ENTITY_COMPONENT_SERVER_ONLY UINT32_C(0x00000100)
+#define KERNEL_ENTITY_COMPONENT_SKELETON UINT32_C(0x00000200)
 
 #ifdef __cplusplus
 extern "C" {
@@ -234,6 +236,9 @@ typedef struct KernelAbiInfo {
     uint32_t bone_local_transform_size;
     uint32_t skeleton_render_state_size;
     uint32_t skeleton_render_state_result_size;
+    uint32_t skeleton_asset_definition_size;
+    uint32_t skeleton_binding_definition_size;
+    uint32_t skeleton_leg_definition_size;
 } KernelAbiInfo;
 
 typedef struct KernelBuildInfo {
@@ -1211,6 +1216,35 @@ typedef struct KernelActorTemplateDefinition {
     KernelAgentVisionConfig vision;
 } KernelActorTemplateDefinition;
 
+typedef struct KernelSkeletonAssetDefinition {
+    uint32_t struct_size;
+    uint32_t skeleton_asset_id;
+    uint64_t skeleton_content_hash;
+    const uint8_t* runtime_skeleton_data;
+    uint32_t runtime_skeleton_size;
+    uint32_t bone_count;
+} KernelSkeletonAssetDefinition;
+
+typedef struct KernelSkeletonLegDefinition {
+    uint32_t leg_id;
+    uint32_t hip_bone_index;
+    uint32_t knee_bone_index;
+    uint32_t foot_bone_index;
+} KernelSkeletonLegDefinition;
+
+typedef struct KernelSkeletonBindingDefinition {
+    uint32_t struct_size;
+    uint32_t skeleton_asset_id;
+    uint64_t skeleton_content_hash;
+    uint32_t bone_count;
+    uint32_t root_bone_index;
+    uint32_t body_bone_index;
+    uint32_t leg_count;
+    uint32_t processing_order_count;
+    KernelSkeletonLegDefinition legs[KERNEL_MAX_SKELETON_LEGS];
+    uint32_t processing_order[KERNEL_MAX_SKELETON_LEGS];
+} KernelSkeletonBindingDefinition;
+
 typedef struct KernelActionTemplateDefinition {
     /*
      * Action templates contain gameplay policy only.
@@ -1254,6 +1288,8 @@ typedef struct KernelGameplayCatalogDefinition {
     uint32_t item_template_count;
     const KernelPropPopulationRuleDefinition* prop_population_rules;
     uint32_t prop_population_rule_count;
+    const KernelSkeletonAssetDefinition* skeleton_assets;
+    uint32_t skeleton_asset_count;
 } KernelGameplayCatalogDefinition;
 
 typedef struct KernelGameplayCatalogLoadResult {
@@ -1638,6 +1674,7 @@ struct KernelEntityTemplateDefinition {
     KernelActionTriggerDefinition destroy_entity_trigger;
     KernelPropDefinition prop;
     uint32_t collision_trigger_mask;
+    KernelSkeletonBindingDefinition skeleton;
 };
 
 typedef struct KernelEvent {

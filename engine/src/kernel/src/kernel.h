@@ -535,6 +535,8 @@ private:
     glm::vec3 predicted_local_render_position() const;
     void rebuild_render_states();
     void rebuild_render_states_at_time(std::uint64_t client_render_time_us);
+    void rebuild_skeleton_presentation_at_time(
+        std::uint64_t client_render_time_us);
     void rebuild_render_states_from_world();
     void rebuild_render_states_from_snapshot(std::uint64_t client_render_time_us);
     void report_render_state_overflow_if_needed();
@@ -766,6 +768,7 @@ private:
     std::vector<KernelActionTemplateDefinition> action_templates_;
     std::vector<KernelItemTemplateDefinition> item_templates_;
     std::vector<KernelPropPopulationRuleDefinition> prop_population_rules_;
+    std::vector<RuntimeSkeletonAsset> skeleton_assets_;
     ItemStore item_store_;
     std::vector<KernelGameplayRequestOutcome> processed_gameplay_requests_;
     std::deque<KernelGameplayRequestOutcome> pending_gameplay_request_outcomes_;

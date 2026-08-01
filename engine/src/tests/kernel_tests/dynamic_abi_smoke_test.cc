@@ -480,6 +480,12 @@ int main() {
            sizeof(KernelSkeletonRenderState));
     assert(abi_info.skeleton_render_state_result_size ==
            sizeof(KernelSkeletonRenderStateResult));
+    assert(abi_info.skeleton_asset_definition_size ==
+           sizeof(KernelSkeletonAssetDefinition));
+    assert(abi_info.skeleton_binding_definition_size ==
+           sizeof(KernelSkeletonBindingDefinition));
+    assert(abi_info.skeleton_leg_definition_size ==
+           sizeof(KernelSkeletonLegDefinition));
     assert((abi_info.capability_flags &
             KERNEL_CAPABILITY_SKELETON_RENDER_STATES) != 0u);
     KernelSkeletonRenderStateResult skeleton_result{};

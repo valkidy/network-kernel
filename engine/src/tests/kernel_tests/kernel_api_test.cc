@@ -159,6 +159,12 @@ int main() {
            sizeof(KernelSkeletonRenderState));
     assert(abi_info.skeleton_render_state_result_size ==
            sizeof(KernelSkeletonRenderStateResult));
+    assert(abi_info.skeleton_asset_definition_size ==
+           sizeof(KernelSkeletonAssetDefinition));
+    assert(abi_info.skeleton_binding_definition_size ==
+           sizeof(KernelSkeletonBindingDefinition));
+    assert(abi_info.skeleton_leg_definition_size ==
+           sizeof(KernelSkeletonLegDefinition));
     assert((abi_info.capability_flags &
             KERNEL_CAPABILITY_ITEM_PROP_SYSTEM) != 0u);
     assert(abi_info.weapon_mechanics_definition_size ==
@@ -260,7 +266,7 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 62u);
+    assert(KERNEL_ABI_VERSION == 63u);
     assert((abi_info.capability_flags &
             KERNEL_CAPABILITY_SKELETON_RENDER_STATES) != 0u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CONTROL_PLANE_RPC) != 0);

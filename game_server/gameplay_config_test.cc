@@ -66,6 +66,13 @@ std::vector<std::uint8_t> read_binary_file(const std::string& path) {
         std::istreambuf_iterator<char>());
 }
 
+std::string read_binary_string(const std::string& path) {
+    const std::vector<std::uint8_t> bytes = read_binary_file(path);
+    return std::string(
+        reinterpret_cast<const char*>(bytes.data()),
+        bytes.size());
+}
+
 std::filesystem::path runfiles_root() {
     const char* test_srcdir = std::getenv("TEST_SRCDIR");
     const char* test_workspace = std::getenv("TEST_WORKSPACE");
@@ -189,7 +196,8 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
     const std::string& sentry_actor_yaml,
     const std::vector<std::pair<std::string, std::string>>& extra_files = {},
     const std::string& player_actor_yaml = {},
-    const std::string& catalog_yaml = {}) {
+    const std::string& catalog_yaml = {},
+    const std::string& monster_actor_yaml = {}) {
     std::vector<std::pair<std::string, std::string>> files;
     files.push_back({
         "gameplay_catalog.yaml",
@@ -221,6 +229,22 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
             "entity_templates/" + file,
             read_text_file("game_server/entity_templates/" + file)});
     }
+    files.push_back({
+        "entity_templates/monster_sim.yaml",
+        monster_actor_yaml.empty()
+            ? read_text_file("game_server/entity_templates/monster_sim.yaml")
+            : monster_actor_yaml});
+    files.push_back({
+        "skeleton_assets/generated/"
+        "simplified_monster_sim_v4.skeleton_manifest.json",
+        read_text_file(
+            "game_server/skeleton_assets/generated/"
+            "simplified_monster_sim_v4.skeleton_manifest.json")});
+    files.push_back({
+        "skeleton_assets/generated/simplified_monster_sim_v4.ozz",
+        read_binary_string(
+            "game_server/skeleton_assets/generated/"
+            "simplified_monster_sim_v4.ozz")});
 
     const std::vector<std::string> weapon_files = {
         "beam_rifle.yaml",
@@ -484,6 +508,30 @@ int main() {
         read_text_file("game_server/entity_templates/player.yaml");
     const std::string production_sentry_yaml =
         read_text_file("game_server/entity_templates/sentry_grunt.yaml");
+    const std::string production_monster_yaml =
+        read_text_file("game_server/entity_templates/monster_sim.yaml");
+    bool invalid_leg_hierarchy_rejected = false;
+    try {
+        const std::vector<std::uint8_t> invalid_leg_bundle =
+            make_gameplay_bundle_zip(
+                production_sentry_yaml,
+                {},
+                {},
+                {},
+                replace_once(
+                    production_monster_yaml,
+                    "foot_bone: JNT_LegFrontLeft_Foot",
+                    "foot_bone: JNT_LegFrontLeft_Hip"));
+        (void)network_example::game_server::load_gameplay_config_from_bundle_memory(
+            invalid_leg_bundle.data(),
+            static_cast<std::uint32_t>(invalid_leg_bundle.size()),
+            "gameplay_catalog.yaml");
+    } catch (const std::exception& error) {
+        invalid_leg_hierarchy_rejected =
+            std::string(error.what()).find("invalid two-bone hierarchy") !=
+            std::string::npos;
+    }
+    assert(invalid_leg_hierarchy_rejected);
     const auto load_player_yaml = [&](const std::string& player_yaml) {
         const std::vector<std::uint8_t> bundle = make_gameplay_bundle_zip(
             production_sentry_yaml, {}, player_yaml);
@@ -778,6 +826,32 @@ int main() {
     assert(config_enemy_template->vision.vision_collider_template_id == 9);
     const network_example::game_server::KernelGameplayCatalogStorage catalog =
         network_example::game_server::build_kernel_gameplay_catalog(config);
+    require(config.skeleton_assets.size() == 1u);
+    require(config.skeleton_assets[0].skeleton_asset_id == 1u);
+    require(config.skeleton_assets[0].bones.size() == 41u);
+    const auto monster_template = std::find_if(
+        config.entity_templates.begin(),
+        config.entity_templates.end(),
+        [](const network_example::game_server::EntityTemplateConfig& entity) {
+            return entity.name == "monster_sim";
+        });
+    require(monster_template != config.entity_templates.end());
+    require(monster_template->skeleton.enabled);
+    require(monster_template->skeleton.legs.size() == 4u);
+    require(monster_template->skeleton.processing_order.size() == 4u);
+    require(catalog.definition.skeleton_asset_count == 1u);
+    require(catalog.skeleton_assets[0].bone_count == 41u);
+    const auto monster_definition = std::find_if(
+        catalog.entity_templates.begin(),
+        catalog.entity_templates.end(),
+        [](const KernelEntityTemplateDefinition& entity) {
+            return entity.entity_template_id == 20u;
+        });
+    require(monster_definition != catalog.entity_templates.end());
+    require(
+        (monster_definition->component_flags &
+         KERNEL_ENTITY_COMPONENT_SKELETON) != 0u);
+    require(monster_definition->skeleton.leg_count == 4u);
     const auto magic_bottle = std::find_if(
         catalog.entity_templates.begin(),
         catalog.entity_templates.end(),
@@ -1698,6 +1772,63 @@ int main() {
         assert(kernel != nullptr);
         return kernel;
     };
+
+    KernelHandle* skeleton_kernel = make_server_kernel();
+    assert(network_example::game_server::load_kernel_gameplay_catalog(
+        skeleton_kernel,
+        config));
+    assert(Kernel_StartDedicatedServer(skeleton_kernel, 7900));
+    KernelServerEntityCreateInfo skeleton_create{};
+    skeleton_create.struct_size = sizeof(skeleton_create);
+    skeleton_create.entity_template_id = 20u;
+    skeleton_create.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+    std::uint32_t skeleton_entity_id = 0u;
+    assert(Kernel_ServerCreateEntity(
+        skeleton_kernel,
+        &skeleton_create,
+        &skeleton_entity_id));
+    Kernel_Update(skeleton_kernel, 1.0f / 30.0f);
+    KernelSkeletonRenderStateResult skeleton_result{};
+    skeleton_result.struct_size = sizeof(skeleton_result);
+    assert(Kernel_GetSkeletonRenderStates(
+               skeleton_kernel,
+               nullptr,
+               0u,
+               nullptr,
+               0u,
+               &skeleton_result) == 0u);
+    assert(skeleton_result.status ==
+           KERNEL_SKELETON_RENDER_STATUS_INSUFFICIENT_CAPACITY);
+    assert(skeleton_result.required_state_count == 1u);
+    assert(skeleton_result.required_bone_transform_count == 41u);
+    std::array<KernelSkeletonRenderState, 1> skeleton_states{};
+    std::array<KernelBoneLocalTransform, 41> bone_transforms{};
+    skeleton_result.struct_size = sizeof(skeleton_result);
+    assert(Kernel_GetSkeletonRenderStates(
+               skeleton_kernel,
+               skeleton_states.data(),
+               skeleton_states.size(),
+               bone_transforms.data(),
+               bone_transforms.size() - 1u,
+               &skeleton_result) == 0u);
+    assert(skeleton_result.status ==
+           KERNEL_SKELETON_RENDER_STATUS_INSUFFICIENT_CAPACITY);
+    skeleton_result.struct_size = sizeof(skeleton_result);
+    assert(Kernel_GetSkeletonRenderStates(
+               skeleton_kernel,
+               skeleton_states.data(),
+               skeleton_states.size(),
+               bone_transforms.data(),
+               bone_transforms.size(),
+               &skeleton_result) == 1u);
+    assert(skeleton_result.status == KERNEL_SKELETON_RENDER_STATUS_SUCCESS);
+    assert(skeleton_states[0].entity_net_id == skeleton_entity_id);
+    assert(skeleton_states[0].skeleton_asset_id == 1u);
+    assert(skeleton_states[0].bone_count == 41u);
+    assert((skeleton_states[0].pose_flags &
+            KERNEL_SKELETON_POSE_FLAG_BIND_POSE) != 0u);
+    assert(bone_transforms[0].local_scale.x == 1.0f);
+    Kernel_Destroy(skeleton_kernel);
 
     KernelHandle* inventory_kernel = make_server_kernel();
     network_example::game_server::GameServer inventory_server(

@@ -140,6 +140,7 @@ cc_library(
         "@glm//:glm",
         "@com_github_nlohmann_json//:json",
         "@spdlog//:spdlog",
+        "@ozz_animation//:ozz_animation",
     ],
 )
 

@@ -235,6 +235,12 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             sizeof(KernelSkeletonRenderState);
         out_info->skeleton_render_state_result_size =
             sizeof(KernelSkeletonRenderStateResult);
+        out_info->skeleton_asset_definition_size =
+            sizeof(KernelSkeletonAssetDefinition);
+        out_info->skeleton_binding_definition_size =
+            sizeof(KernelSkeletonBindingDefinition);
+        out_info->skeleton_leg_definition_size =
+            sizeof(KernelSkeletonLegDefinition);
         out_info->capability_flags =
             KERNEL_CAPABILITY_CLIENT_MODE |
             KERNEL_CAPABILITY_LISTEN_SERVER_MODE |

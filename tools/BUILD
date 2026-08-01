@@ -50,6 +50,12 @@ cc_binary(
     deps = ["@ozz_animation//:ozz_animation"],
 )
 
+cc_binary(
+    name = "ozz_skeleton_manifest",
+    srcs = ["ozz_skeleton_manifest.cc"],
+    deps = ["@ozz_animation//:ozz_animation"],
+)
+
 genrule(
     name = "ozz_smoke_glb",
     outs = ["ozz_smoke.glb"],

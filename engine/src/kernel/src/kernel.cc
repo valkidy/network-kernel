@@ -651,6 +651,18 @@ const KernelEntityTemplateDefinition* find_entity_template(
     return found == templates.end() ? nullptr : &*found;
 }
 
+const RuntimeSkeletonAsset* find_skeleton_asset(
+    const std::vector<RuntimeSkeletonAsset>& assets,
+    std::uint32_t skeleton_asset_id) {
+    const auto found = std::find_if(
+        assets.begin(),
+        assets.end(),
+        [skeleton_asset_id](const RuntimeSkeletonAsset& asset) {
+            return asset.skeleton_asset_id == skeleton_asset_id;
+        });
+    return found == assets.end() ? nullptr : &*found;
+}
+
 glm::vec3 collider_template_half_extents(
     const KernelColliderTemplateDefinition& collider_template) {
     return glm::vec3{
@@ -2330,10 +2342,25 @@ bool KernelEngine::load_gameplay_catalog(
          catalog.item_templates == nullptr) ||
         (catalog.prop_population_rule_count != 0 &&
          catalog.prop_population_rules == nullptr) ||
+        (catalog.skeleton_asset_count != 0 &&
+         catalog.skeleton_assets == nullptr) ||
         (catalog.entity_template_count != 0 &&
          catalog.entity_templates == nullptr) ||
         catalog.collider_binding_count != 0) {
         return false;
+    }
+
+    std::vector<RuntimeSkeletonAsset> validated_skeleton_assets;
+    validated_skeleton_assets.reserve(catalog.skeleton_asset_count);
+    for (std::uint32_t index = 0; index < catalog.skeleton_asset_count; ++index) {
+        RuntimeSkeletonAsset asset;
+        if (!load_runtime_skeleton_asset(catalog.skeleton_assets[index], &asset) ||
+            find_skeleton_asset(
+                validated_skeleton_assets,
+                asset.skeleton_asset_id) != nullptr) {
+            return false;
+        }
+        validated_skeleton_assets.push_back(std::move(asset));
     }
 
     std::vector<KernelActionTemplateDefinition> validated_action_templates;
@@ -2452,6 +2479,59 @@ bool KernelEngine::load_gameplay_catalog(
             entity_template.ai.struct_size < sizeof(KernelEntityAiDefinition) ||
             entity_template.ai.controller_type > KernelAiControllerType_Director) {
             return false;
+        }
+        const KernelSkeletonBindingDefinition& skeleton =
+            entity_template.skeleton;
+        const bool skeleton_enabled = skeleton.struct_size != 0u;
+        if (skeleton_enabled !=
+            ((entity_template.component_flags &
+              KERNEL_ENTITY_COMPONENT_SKELETON) != 0u)) {
+            return false;
+        }
+        if (skeleton_enabled) {
+            const RuntimeSkeletonAsset* asset = find_skeleton_asset(
+                validated_skeleton_assets,
+                skeleton.skeleton_asset_id);
+            if (skeleton.struct_size <
+                    sizeof(KernelSkeletonBindingDefinition) ||
+                asset == nullptr ||
+                skeleton.skeleton_content_hash !=
+                    asset->skeleton_content_hash ||
+                skeleton.bone_count !=
+                    static_cast<std::uint32_t>(asset->skeleton.num_joints()) ||
+                skeleton.root_bone_index >= skeleton.bone_count ||
+                skeleton.body_bone_index >= skeleton.bone_count ||
+                skeleton.leg_count == 0u ||
+                skeleton.leg_count > KERNEL_MAX_SKELETON_LEGS ||
+                skeleton.processing_order_count != skeleton.leg_count) {
+                return false;
+            }
+            std::array<bool, KERNEL_MAX_SKELETON_LEGS> ordered{};
+            for (std::uint32_t leg_index = 0u;
+                 leg_index < skeleton.leg_count;
+                 ++leg_index) {
+                const KernelSkeletonLegDefinition& leg =
+                    skeleton.legs[leg_index];
+                if (leg.leg_id != leg_index ||
+                    leg.hip_bone_index >= skeleton.bone_count ||
+                    leg.knee_bone_index >= skeleton.bone_count ||
+                    leg.foot_bone_index >= skeleton.bone_count ||
+                    leg.hip_bone_index == leg.knee_bone_index ||
+                    leg.hip_bone_index == leg.foot_bone_index ||
+                    leg.knee_bone_index == leg.foot_bone_index ||
+                    asset->skeleton.joint_parents()[leg.knee_bone_index] !=
+                        static_cast<std::int16_t>(leg.hip_bone_index) ||
+                    asset->skeleton.joint_parents()[leg.foot_bone_index] !=
+                        static_cast<std::int16_t>(leg.knee_bone_index)) {
+                    return false;
+                }
+                const std::uint32_t ordered_leg =
+                    skeleton.processing_order[leg_index];
+                if (ordered_leg >= skeleton.leg_count || ordered[ordered_leg]) {
+                    return false;
+                }
+                ordered[ordered_leg] = true;
+            }
         }
         for (const KernelActionTriggerDefinition* trigger : {
                  &entity_template.activated_trigger,
@@ -2922,6 +3002,7 @@ bool KernelEngine::load_gameplay_catalog(
     item_templates_ = std::move(validated_item_templates);
     prop_population_rules_ =
         std::move(validated_prop_population_rules);
+    skeleton_assets_ = std::move(validated_skeleton_assets);
     if (!item_store_.set_templates(item_templates_, &item_validation_error)) {
         return false;
     }
@@ -2980,6 +3061,7 @@ std::uint32_t KernelEngine::get_skeleton_render_states(
     KernelBoneLocalTransform* out_bone_transforms,
     std::uint32_t max_bone_transforms,
     KernelSkeletonRenderStateResult* out_result) {
+    rebuild_skeleton_presentation_at_time(client_local_time_us_);
     return copy_skeleton_render_states(
         skeleton_presentation_poses_,
         0u,
@@ -2998,6 +3080,7 @@ std::uint32_t KernelEngine::get_skeleton_render_states_at_time(
     KernelBoneLocalTransform* out_bone_transforms,
     std::uint32_t max_bone_transforms,
     KernelSkeletonRenderStateResult* out_result) {
+    rebuild_skeleton_presentation_at_time(client_render_time_us);
     return copy_skeleton_render_states(
         skeleton_presentation_poses_,
         KERNEL_SKELETON_RENDER_RESULT_FLAG_AT_TIME,
@@ -8745,6 +8828,36 @@ void KernelEngine::rebuild_render_states_at_time(
     report_render_state_overflow_if_needed();
     benchmark_stats_.render_solver_cost_us +=
         std::max<std::uint64_t>(1, elapsed_cost_us(cost_start));
+}
+
+void KernelEngine::rebuild_skeleton_presentation_at_time(
+    std::uint64_t client_render_time_us) {
+    rebuild_render_states_at_time(client_render_time_us);
+    skeleton_presentation_poses_.clear();
+    for (const RenderEntityState& render_state : render_states_) {
+        const KernelEntityTemplateDefinition* entity_template =
+            find_entity_template(entity_templates_, render_state.template_id);
+        if (entity_template == nullptr ||
+            entity_template->skeleton.struct_size <
+                sizeof(KernelSkeletonBindingDefinition)) {
+            continue;
+        }
+        const RuntimeSkeletonAsset* asset = find_skeleton_asset(
+            skeleton_assets_,
+            entity_template->skeleton.skeleton_asset_id);
+        if (asset == nullptr) {
+            continue;
+        }
+        SkeletonPresentationPose pose;
+        pose.entity_net_id = render_state.net_id;
+        pose.skeleton_asset_id = asset->skeleton_asset_id;
+        pose.skeleton_content_hash = asset->skeleton_content_hash;
+        pose.pose_tick = tick_loop_.current_tick();
+        pose.pose_flags = KERNEL_SKELETON_POSE_FLAG_BIND_POSE;
+        pose.pose_time_us = client_render_time_us;
+        pose.local_transforms = asset->bind_pose;
+        skeleton_presentation_poses_.push_back(std::move(pose));
+    }
 }
 
 void KernelEngine::report_render_state_overflow_if_needed() {
