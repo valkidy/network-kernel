@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 64u
+#define KERNEL_ABI_VERSION 65u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -27,6 +27,7 @@
 
 #define KERNEL_MAX_WEAPON_SLOTS 4u
 #define KERNEL_MAX_SKELETON_LEGS 8u
+#define KERNEL_MAX_FOOTHOLD_CANDIDATES 8u
 
 #define KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED UINT32_C(0)
 #define KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS UINT32_C(1)
@@ -109,6 +110,12 @@
 #define KERNEL_SKELETON_RENDER_STATUS_INVALID_ARGUMENT UINT32_C(2)
 
 #define KERNEL_SKELETON_POSE_FLAG_BIND_POSE UINT32_C(0x00000001)
+#define KERNEL_SKELETON_POSE_FLAG_PROCEDURAL UINT32_C(0x00000002)
+
+typedef enum KernelFootholdQueryType {
+    KernelFootholdQueryType_None = 0,
+    KernelFootholdQueryType_Raycast = 1,
+} KernelFootholdQueryType;
 #define KERNEL_SKELETON_RENDER_RESULT_FLAG_AT_TIME UINT32_C(0x00000001)
 
 #define KERNEL_COLLISION_LAYER_PLAYER_SIDE UINT32_C(0x00000001)
@@ -1249,6 +1256,13 @@ typedef struct KernelSkeletonBindingDefinition {
     uint32_t gait_cycle_ticks;
     uint32_t gait_swing_ticks;
     uint32_t max_swinging_legs;
+    uint8_t foothold_query_type;
+    uint8_t reserved_foothold0;
+    uint16_t reserved_foothold1;
+    float foothold_query_start_height_meters;
+    float foothold_query_distance_meters;
+    uint32_t foothold_candidate_count;
+    KernelVec2 foothold_candidate_offsets[KERNEL_MAX_FOOTHOLD_CANDIDATES];
     KernelSkeletonLegDefinition legs[KERNEL_MAX_SKELETON_LEGS];
     uint32_t processing_order[KERNEL_MAX_SKELETON_LEGS];
 } KernelSkeletonBindingDefinition;

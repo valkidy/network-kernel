@@ -7911,6 +7911,64 @@ void KernelEngine::update_legged_locomotion(
         transform.rotation = glm::angleAxis(
             state->second.root_yaw_radians,
             glm::vec3{0.0f, 1.0f, 0.0f});
+
+        const RuntimeSkeletonAsset* skeleton_asset = find_skeleton_asset(
+            skeleton_assets_,
+            entity_template->skeleton.skeleton_asset_id);
+        if (skeleton_asset == nullptr) {
+            state->second.pose_valid = false;
+            continue;
+        }
+        const glm::vec3 root_velocity =
+            world_.registry().all_of<Velocity>(entity)
+            ? world_.registry().get<Velocity>(entity).linear
+            : glm::vec3{0.0f};
+        const LocomotionGroundingQuery grounding_query =
+            [this, net_id](
+                const glm::vec3& origin,
+                float max_distance,
+                LocomotionGroundingHit* out_hit) {
+                if (physics_world_ == nullptr || out_hit == nullptr) {
+                    return false;
+                }
+                physics::RayCastRequest request{};
+                request.origin = origin;
+                request.direction = glm::vec3{0.0f, -1.0f, 0.0f};
+                request.max_distance = max_distance;
+                request.filter.collision_mask =
+                    physics::collision_layer_bit(
+                        physics::CollisionLayer::kTerrain) |
+                    physics::collision_layer_bit(
+                        physics::CollisionLayer::kStaticObstacle);
+                request.filter.ignored_entity_net_id = net_id;
+                request.filter.object_kind_mask =
+                    (1u << static_cast<std::uint32_t>(
+                         physics::CollisionObjectKind::kTerrain)) |
+                    (1u << static_cast<std::uint32_t>(
+                         physics::CollisionObjectKind::kStaticObstacle));
+                physics::CollisionHit hit{};
+                if (!physics_world_->ray_cast_closest(request, &hit)) {
+                    return false;
+                }
+                out_hit->position = hit.position;
+                out_hit->normal = hit.normal;
+                out_hit->supporting_entity_net_id =
+                    hit.identity.entity_net_id;
+                out_hit->supporting_collider_id = hit.identity.collider_id;
+                return true;
+            };
+        if (!solve_legged_locomotion_pose(
+                skeleton_asset->skeleton,
+                skeleton_asset->bind_pose,
+                entity_template->skeleton,
+                transform.position,
+                root_velocity,
+                entity_template->movement.max_slope_degrees,
+                fixed_delta_seconds,
+                grounding_query,
+                &state->second)) {
+            state->second.pose_valid = false;
+        }
     }
     std::erase_if(
         locomotion_states_,
@@ -8963,9 +9021,17 @@ void KernelEngine::rebuild_skeleton_presentation_at_time(
         pose.skeleton_asset_id = asset->skeleton_asset_id;
         pose.skeleton_content_hash = asset->skeleton_content_hash;
         pose.pose_tick = tick_loop_.current_tick();
-        pose.pose_flags = KERNEL_SKELETON_POSE_FLAG_BIND_POSE;
         pose.pose_time_us = client_render_time_us;
-        pose.local_transforms = asset->bind_pose;
+        const auto locomotion = locomotion_states_.find(render_state.net_id);
+        if (locomotion != locomotion_states_.end() &&
+            locomotion->second.pose_valid &&
+            locomotion->second.local_pose.size() == asset->bind_pose.size()) {
+            pose.pose_flags = KERNEL_SKELETON_POSE_FLAG_PROCEDURAL;
+            pose.local_transforms = locomotion->second.local_pose;
+        } else {
+            pose.pose_flags = KERNEL_SKELETON_POSE_FLAG_BIND_POSE;
+            pose.local_transforms = asset->bind_pose;
+        }
         skeleton_presentation_poses_.push_back(std::move(pose));
     }
 }

@@ -100,6 +100,10 @@ struct SkeletonBindingConfig {
     std::uint32_t gait_cycle_ticks = 0;
     std::uint32_t gait_swing_ticks = 0;
     std::uint32_t max_swinging_legs = 0;
+    std::uint8_t foothold_query_type = KernelFootholdQueryType_None;
+    float foothold_query_start_height_meters = 0.0f;
+    float foothold_query_distance_meters = 0.0f;
+    std::vector<KernelVec2> foothold_candidate_offsets;
     std::vector<SkeletonLegConfig> legs;
     std::vector<std::uint32_t> processing_order;
 };

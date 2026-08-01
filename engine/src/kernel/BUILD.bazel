@@ -69,7 +69,11 @@ cc_library(
     srcs = ["src/legged_locomotion.cc"],
     hdrs = ["src/legged_locomotion.h"],
     includes = [".."],
-    deps = [":kernel_types"],
+    deps = [
+        ":kernel_types",
+        "@glm//:glm",
+        "@ozz_animation//:ozz_animation",
+    ],
 )
 
 genrule(

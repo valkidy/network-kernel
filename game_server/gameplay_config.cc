@@ -83,6 +83,11 @@ void hash_vec3(std::uint64_t* hash, const KernelVec3& value) {
     hash_float(hash, value.z);
 }
 
+void hash_vec2(std::uint64_t* hash, const KernelVec2& value) {
+    hash_float(hash, value.x);
+    hash_float(hash, value.y);
+}
+
 void hash_vec4(std::uint64_t* hash, const KernelVec4& value) {
     hash_float(hash, value.x);
     hash_float(hash, value.y);
@@ -324,6 +329,21 @@ void hash_actor_template(
         hash_scalar(hash, actor_template.skeleton.gait_cycle_ticks);
         hash_scalar(hash, actor_template.skeleton.gait_swing_ticks);
         hash_scalar(hash, actor_template.skeleton.max_swinging_legs);
+        hash_scalar(hash, actor_template.skeleton.foothold_query_type);
+        hash_float(
+            hash,
+            actor_template.skeleton.foothold_query_start_height_meters);
+        hash_float(
+            hash,
+            actor_template.skeleton.foothold_query_distance_meters);
+        hash_scalar(
+            hash,
+            static_cast<std::uint32_t>(
+                actor_template.skeleton.foothold_candidate_offsets.size()));
+        for (const KernelVec2& offset :
+             actor_template.skeleton.foothold_candidate_offsets) {
+            hash_vec2(hash, offset);
+        }
         for (const std::uint32_t leg_index :
              actor_template.skeleton.processing_order) {
             hash_scalar(hash, leg_index);
@@ -2796,13 +2816,21 @@ ActorTemplateConfig actor_template_from_yaml(
         const YAML::Node locomotion = node["locomotion"];
         reject_unknown_keys(
             locomotion,
-            {"type", "forward_axis", "input_deadzone", "gait", "legs"},
+            {
+                "type",
+                "forward_axis",
+                "input_deadzone",
+                "gait",
+                "foothold",
+                "legs",
+            },
             path,
             source_kind,
             KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
             actor_template.actor_template_id);
         if (!locomotion["type"] || !locomotion["forward_axis"] ||
-            !locomotion["gait"] || !locomotion["legs"] ||
+            !locomotion["gait"] || !locomotion["foothold"] ||
+            !locomotion["legs"] ||
             !locomotion["legs"].IsSequence()) {
             throw std::runtime_error(
                 "locomotion requires type, forward_axis, gait, and legs: " +
@@ -2980,6 +3008,63 @@ ActorTemplateConfig actor_template_from_yaml(
             throw std::runtime_error(
                 "locomotion gait exceeds max_swinging_legs: " +
                 actor_template.name);
+        }
+
+        const YAML::Node foothold = locomotion["foothold"];
+        reject_unknown_keys(
+            foothold,
+            {
+                "query",
+                "query_start_height_meters",
+                "query_distance_meters",
+                "candidate_offsets_meters",
+            },
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+            actor_template.actor_template_id);
+        if (!foothold["query"] ||
+            foothold["query"].as<std::string>() != "raycast" ||
+            !foothold["query_start_height_meters"] ||
+            !foothold["query_distance_meters"] ||
+            !foothold["candidate_offsets_meters"] ||
+            !foothold["candidate_offsets_meters"].IsSequence() ||
+            foothold["candidate_offsets_meters"].size() == 0u ||
+            foothold["candidate_offsets_meters"].size() >
+                KERNEL_MAX_FOOTHOLD_CANDIDATES) {
+            throw std::runtime_error(
+                "invalid locomotion foothold query: " + actor_template.name);
+        }
+        binding.foothold_query_type = KernelFootholdQueryType_Raycast;
+        binding.foothold_query_start_height_meters =
+            foothold["query_start_height_meters"].as<float>();
+        binding.foothold_query_distance_meters =
+            foothold["query_distance_meters"].as<float>();
+        if (!std::isfinite(binding.foothold_query_start_height_meters) ||
+            binding.foothold_query_start_height_meters < 0.0f ||
+            !std::isfinite(binding.foothold_query_distance_meters) ||
+            binding.foothold_query_distance_meters <= 0.0f) {
+            throw std::runtime_error(
+                "invalid locomotion foothold distances: " +
+                actor_template.name);
+        }
+        for (const YAML::Node& offset_node :
+             foothold["candidate_offsets_meters"]) {
+            if (!offset_node["x"] || !offset_node["z"]) {
+                throw std::runtime_error(
+                    "locomotion foothold candidate requires x/z: " +
+                    actor_template.name);
+            }
+            const KernelVec2 offset{
+                offset_node["x"].as<float>(),
+                offset_node["z"].as<float>(),
+            };
+            if (!std::isfinite(offset.x) || !std::isfinite(offset.y)) {
+                throw std::runtime_error(
+                    "non-finite locomotion foothold candidate: " +
+                    actor_template.name);
+            }
+            binding.foothold_candidate_offsets.push_back(offset);
         }
     }
     return actor_template;
@@ -5997,6 +6082,25 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
                 authored_template.skeleton.gait_swing_ticks;
             entity_template.skeleton.max_swinging_legs =
                 authored_template.skeleton.max_swinging_legs;
+            entity_template.skeleton.foothold_query_type =
+                authored_template.skeleton.foothold_query_type;
+            entity_template.skeleton.foothold_query_start_height_meters =
+                authored_template.skeleton
+                    .foothold_query_start_height_meters;
+            entity_template.skeleton.foothold_query_distance_meters =
+                authored_template.skeleton.foothold_query_distance_meters;
+            entity_template.skeleton.foothold_candidate_count =
+                static_cast<std::uint32_t>(
+                    authored_template.skeleton
+                        .foothold_candidate_offsets.size());
+            for (std::uint32_t candidate = 0u;
+                 candidate <
+                     entity_template.skeleton.foothold_candidate_count;
+                 ++candidate) {
+                entity_template.skeleton.foothold_candidate_offsets[candidate] =
+                    authored_template.skeleton
+                        .foothold_candidate_offsets[candidate];
+            }
             for (std::uint32_t leg_index = 0u;
                  leg_index < entity_template.skeleton.leg_count;
                  ++leg_index) {

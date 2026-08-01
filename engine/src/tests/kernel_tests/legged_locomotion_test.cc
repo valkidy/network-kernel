@@ -14,6 +14,11 @@ KernelSkeletonBindingDefinition make_fixture(std::uint32_t leg_count) {
     definition.gait_cycle_ticks = leg_count == 2u ? 20u : 60u;
     definition.gait_swing_ticks = leg_count == 2u ? 5u : 24u;
     definition.max_swinging_legs = 2u;
+    definition.foothold_query_type = KernelFootholdQueryType_Raycast;
+    definition.foothold_query_start_height_meters = 1.0f;
+    definition.foothold_query_distance_meters = 2.0f;
+    definition.foothold_candidate_count = 1u;
+    definition.foothold_candidate_offsets[0] = KernelVec2{0.0f, 0.0f};
     definition.leg_count = leg_count;
     definition.processing_order_count = leg_count;
     const std::array<std::uint32_t, 4> offsets{0u, 15u, 30u, 45u};
@@ -49,6 +54,9 @@ int main() {
     KernelSkeletonBindingDefinition invalid_schedule = quadruped;
     invalid_schedule.max_swinging_legs = 1u;
     require(!network_example::validate_locomotion_definition(invalid_schedule));
+    KernelSkeletonBindingDefinition invalid_foothold = quadruped;
+    invalid_foothold.foothold_query_distance_meters = 0.0f;
+    require(!network_example::validate_locomotion_definition(invalid_foothold));
     network_example::LocomotionState quadruped_state;
     require(network_example::initialize_locomotion_state(
         quadruped, 0.0f, 100u, &quadruped_state));

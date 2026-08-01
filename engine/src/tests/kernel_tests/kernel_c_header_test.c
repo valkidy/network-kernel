@@ -6,7 +6,7 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 64u,
+    KERNEL_ABI_VERSION == 65u,
     "skeleton asset ABI");
 _Static_assert(
     sizeof(KernelActionTriggerDefinition) == 296u,
@@ -132,7 +132,7 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 64u);
+    assert(KERNEL_ABI_VERSION == 65u);
     assert(sizeof(KernelBoneLocalTransform) > 0u);
     assert(sizeof(KernelSkeletonRenderState) > 0u);
     assert(sizeof(KernelSkeletonRenderStateResult) > 0u);
