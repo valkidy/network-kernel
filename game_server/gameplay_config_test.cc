@@ -312,9 +312,10 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
             read_text_file("game_server/entity_templates/" + file)});
     }
     files.push_back({
-        "entity_templates/monster_sim.yaml",
+        "entity_templates/monster_sim_actor.yaml",
         monster_actor_yaml.empty()
-            ? read_text_file("game_server/entity_templates/monster_sim.yaml")
+            ? read_text_file(
+                  "game_server/entity_templates/monster_sim_actor.yaml")
             : monster_actor_yaml});
     files.push_back({
         "skeleton_assets/generated/"
@@ -591,7 +592,7 @@ int main() {
     const std::string production_sentry_yaml =
         read_text_file("game_server/entity_templates/sentry_grunt.yaml");
     const std::string production_monster_yaml =
-        read_text_file("game_server/entity_templates/monster_sim.yaml");
+        read_text_file("game_server/entity_templates/monster_sim_actor.yaml");
     bool invalid_leg_hierarchy_rejected = false;
     try {
         const std::vector<std::uint8_t> invalid_leg_bundle =
@@ -617,7 +618,7 @@ int main() {
                 KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR);
         require(error.template_id == 20u);
         require(error.field == "skeleton");
-        require(error.path.find("monster_sim.yaml") != std::string::npos);
+        require(error.path.find("monster_sim_actor.yaml") != std::string::npos);
         require(std::string(error.what()).find("simplified_monster_sim_v4") !=
                 std::string::npos);
         require(std::string(error.what()).find("JNT_LegFrontLeft_Hip") !=
@@ -943,7 +944,7 @@ int main() {
         changed_config.entity_templates.begin(),
         changed_config.entity_templates.end(),
         [](const network_example::game_server::EntityTemplateConfig& entity) {
-            return entity.name == "monster_sim";
+            return entity.name == "monster_sim_actor";
         });
     require(changed_monster_sentry != changed_config.entity_templates.end());
     changed_monster_sentry->sentry.patrol_extent_x_meters += 1.0f;
@@ -1025,7 +1026,7 @@ int main() {
         config.entity_templates.begin(),
         config.entity_templates.end(),
         [](const network_example::game_server::EntityTemplateConfig& entity) {
-            return entity.name == "monster_sim";
+            return entity.name == "monster_sim_actor";
         });
     require(monster_template != config.entity_templates.end());
     require(monster_template->skeleton.enabled);
@@ -1837,6 +1838,7 @@ int main() {
                 monster_observer_config,
                 monster_observer_config.agent.actor_template_id);
     require(monster_observer_actor != nullptr);
+    require(monster_observer_actor->name == "monster_sim_actor");
     require(monster_observer_actor->sentry.passive_patrol);
     require(
         monster_observer_config.weapons.catalog_hash !=
@@ -1862,7 +1864,7 @@ int main() {
         read_text_file("game_server/gameplay_catalog.yaml") +
         "enemy:\n"
         "  actor_template: sentry_grunt\n"
-        "  entity_template: monster_sim\n";
+        "  entity_template: monster_sim_actor\n";
     bool conflicting_enemy_rejected = false;
     try {
         const std::vector<std::uint8_t> conflicting_enemy_bundle =
