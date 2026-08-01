@@ -1,5 +1,10 @@
 0.6.9 release notes:
 
+- updates native plugins
+
+
+0.6.9 release notes:
+
 - aligns Unity package artifacts with kernel ABI 61
 
 
