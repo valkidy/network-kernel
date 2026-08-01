@@ -662,7 +662,7 @@ int main() {
                 {},
                 replace_once(
                     production_monster_yaml,
-                    "query_distance_meters: 2.0",
+                    "query_distance_meters: 20.0",
                     "query_distance_meters: 0.0"));
         (void)network_example::game_server::load_gameplay_config_from_bundle_memory(
             invalid_foothold_bundle.data(),
@@ -1043,6 +1043,10 @@ int main() {
     require(monster_template->skeleton.max_swinging_legs == 2u);
     require(monster_template->skeleton.foothold_query_type ==
             KernelFootholdQueryType_Raycast);
+    require(monster_template->skeleton.foothold_query_start_height_meters ==
+            2.0f);
+    require(monster_template->skeleton.foothold_query_distance_meters ==
+            20.0f);
     require(monster_template->skeleton.foothold_candidate_offsets.size() == 5u);
     require(catalog.definition.skeleton_asset_count == 1u);
     require(catalog.skeleton_assets[0].bone_count == 41u);
@@ -1061,6 +1065,10 @@ int main() {
     require(monster_definition->skeleton.gait_cycle_ticks == 60u);
     require(monster_definition->skeleton.gait_swing_ticks == 24u);
     require(monster_definition->skeleton.legs[1].phase_offset_ticks == 15u);
+    require(monster_definition->skeleton.foothold_query_start_height_meters ==
+            2.0f);
+    require(monster_definition->skeleton.foothold_query_distance_meters ==
+            20.0f);
     require(monster_definition->skeleton.foothold_candidate_count == 5u);
     require(monster_definition->skeleton.foothold_candidate_offsets[1].x ==
             0.2f);
