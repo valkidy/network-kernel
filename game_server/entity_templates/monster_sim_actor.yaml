@@ -1,5 +1,5 @@
 id: 20
-name: monster_sim
+name: monster_sim_actor
 entity_type: actor
 actor_type: agent
 camp: enemy_side
