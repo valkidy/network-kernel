@@ -1,19 +1,16 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Serialization;
 
 namespace NetworkExample.Kernel.Presentation
 {
     [Serializable]
     public sealed class KernelEntityPresentationCatalogEntry
     {
-        [Tooltip("Entity kind used to disambiguate actor, projectile, item, and prop IDs.")]
-        public KernelEntityType EntityType = KernelEntityType.Actor;
-
-        [Tooltip(
-            "Render template ID. For actors this is the actor template ID when one " +
-            "is authored, otherwise the entity template ID fallback.")]
-        public uint TemplateId;
+        [FormerlySerializedAs("TemplateId")]
+        [Tooltip("Actor template ID used to select this prefab.")]
+        public uint ActorTemplateId;
 
         public GameObject Prefab;
     }
@@ -27,35 +24,30 @@ namespace NetworkExample.Kernel.Presentation
 
         public bool TryGetPrefab(RenderEntityState state, out GameObject prefab)
         {
-            if (entries != null)
+            if (state.entity_type != KernelEntityType.Actor)
             {
-                for (int index = 0; index < entries.Length; ++index)
-                {
-                    KernelEntityPresentationCatalogEntry entry = entries[index];
-                    if (entry != null &&
-                        entry.EntityType == state.entity_type &&
-                        entry.TemplateId == state.template_id)
-                    {
-                        prefab = entry.Prefab;
-                        return prefab != null;
-                    }
-                }
+                prefab = null;
+                return false;
             }
 
-            prefab = null;
-            return false;
+            return TryGetPrefab(state.template_id, out prefab);
         }
 
         public bool TryGetPrefab(uint actorTemplateId, out GameObject prefab)
         {
+            if (actorTemplateId == 0)
+            {
+                prefab = null;
+                return false;
+            }
+
             if (entries != null)
             {
                 for (int index = 0; index < entries.Length; ++index)
                 {
                     KernelEntityPresentationCatalogEntry entry = entries[index];
                     if (entry != null &&
-                        entry.EntityType == KernelEntityType.Actor &&
-                        entry.TemplateId == actorTemplateId)
+                        entry.ActorTemplateId == actorTemplateId)
                     {
                         prefab = entry.Prefab;
                         return prefab != null;
