@@ -411,7 +411,7 @@ int main() {
     assert(load_result.catalog_version == 8);
     assert(load_result.catalog_hash != 0);
     assert(load_result.projectile_template_count > 0);
-    assert(load_result.collider_template_count == 13);
+    assert(load_result.collider_template_count == 14);
     assert(load_result.collider_binding_count == 0);
     KernelSessionRulesConfig session_rules{};
     session_rules.struct_size = sizeof(session_rules);

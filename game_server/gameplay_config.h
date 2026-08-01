@@ -41,6 +41,7 @@ struct AgentSpawnDefinition {
     std::uint32_t spawn_count = 1;
     float spawn_radius = 0.0f;
     std::uint32_t spawn_seed = 1;
+    bool override_director_spawn = false;
 };
 
 struct TriggerBindingConfig {

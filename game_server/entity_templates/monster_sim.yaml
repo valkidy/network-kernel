@@ -10,7 +10,7 @@ health:
 movement:
   controller: grounded
   move_speed_meters_per_second: 2.5
-  collider_template: sentry_grunt_movement_capsule
+  collider_template: monster_sim_movement_capsule
   gravity: {x: 0.0, y: -9.81, z: 0.0}
   max_slope_degrees: 50.0
   step_height: 0.4
@@ -33,6 +33,9 @@ ai:
     patrol_rotation_interval_ticks: 30
     patrol_rotation_min_degrees: 15.0
     patrol_rotation_max_degrees: 30.0
+    passive_patrol: true
+    patrol_extent_x_meters: 8.0
+    patrol_input_magnitude: 0.6
     weapon_id: 2
     animation_idle: idle
     animation_attack: chasing

@@ -174,6 +174,49 @@ void AgentSentryController::tick(
         agent.velocity = zero_vec3();
         agent.animation_state = 0;
         agent.sentry.self_id = agent.net_id;
+
+        if (config_.passive_patrol) {
+            if (entity_state.position.x >=
+                agent.patrol_anchor.x + config_.patrol_extent_x_meters) {
+                agent.patrol_direction = -1;
+            } else if (entity_state.position.x <=
+                       agent.patrol_anchor.x - config_.patrol_extent_x_meters) {
+                agent.patrol_direction = 1;
+            }
+
+            KernelPlayerInput input{};
+            input.input_seq = agent.next_input_seq;
+            input.move = KernelVec2{
+                static_cast<float>(agent.patrol_direction) *
+                    config_.patrol_input_magnitude,
+                0.0f,
+            };
+            if (Kernel_ServerSubmitEntityInput(kernel, agent.net_id, &input)) {
+                ++agent.next_input_seq;
+            }
+            agent.velocity = KernelVec3{
+                input.move.x * config_.move_speed_meters_per_second,
+                entity_state.velocity.y,
+                0.0f,
+            };
+            Kernel_ServerEnqueueEntityVelocity(
+                kernel,
+                KernelCommandSource_AI,
+                agent.net_id,
+                &agent.velocity);
+            agent.sentry.target = 0;
+            agent.target_player_net_id = 0;
+            agent.sentry.state = AgentSentryState::kIdle;
+            agent.animation_state = config_.animation_idle;
+            Kernel_ServerEnqueueEntityState(
+                kernel,
+                KernelCommandSource_AI,
+                agent.net_id,
+                agent.animation_state,
+                0);
+            continue;
+        }
+
         KernelQuat desired_rotation = entity_state.rotation;
         bool should_update_rotation = false;
 
