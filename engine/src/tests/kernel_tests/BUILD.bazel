@@ -40,8 +40,20 @@ cc_test(
 )
 
 cc_test(
+    name = "legged_locomotion_test",
+    srcs = ["legged_locomotion_test.cc"],
+    deps = ["//engine/src/kernel:legged_locomotion"],
+)
+
+cc_test(
     name = "kernel_api_test",
     srcs = ["kernel_api_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
+    name = "skeleton_presentation_test",
+    srcs = ["skeleton_presentation_test.cc"],
     deps = ["//engine/src/kernel:kernel"],
 )
 

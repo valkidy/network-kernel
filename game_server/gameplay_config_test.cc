@@ -1,6 +1,7 @@
 #include "game_server/gameplay_config.h"
 
 #include <cassert>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -17,6 +18,8 @@
 #include "game_server/game_server.h"
 #include "kernel/public/kernel_api.h"
 #include "kernel/public/kernel_types.h"
+#include "kernel/src/legged_locomotion.h"
+#include "kernel/src/skeleton_presentation.h"
 
 namespace {
 
@@ -64,6 +67,13 @@ std::vector<std::uint8_t> read_binary_file(const std::string& path) {
     return std::vector<std::uint8_t>(
         std::istreambuf_iterator<char>(file),
         std::istreambuf_iterator<char>());
+}
+
+std::string read_binary_string(const std::string& path) {
+    const std::vector<std::uint8_t> bytes = read_binary_file(path);
+    return std::string(
+        reinterpret_cast<const char*>(bytes.data()),
+        bytes.size());
 }
 
 std::filesystem::path runfiles_root() {
@@ -189,7 +199,8 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
     const std::string& sentry_actor_yaml,
     const std::vector<std::pair<std::string, std::string>>& extra_files = {},
     const std::string& player_actor_yaml = {},
-    const std::string& catalog_yaml = {}) {
+    const std::string& catalog_yaml = {},
+    const std::string& monster_actor_yaml = {}) {
     std::vector<std::pair<std::string, std::string>> files;
     files.push_back({
         "gameplay_catalog.yaml",
@@ -221,6 +232,22 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
             "entity_templates/" + file,
             read_text_file("game_server/entity_templates/" + file)});
     }
+    files.push_back({
+        "entity_templates/monster_sim.yaml",
+        monster_actor_yaml.empty()
+            ? read_text_file("game_server/entity_templates/monster_sim.yaml")
+            : monster_actor_yaml});
+    files.push_back({
+        "skeleton_assets/generated/"
+        "simplified_monster_sim_v4.skeleton_manifest.json",
+        read_text_file(
+            "game_server/skeleton_assets/generated/"
+            "simplified_monster_sim_v4.skeleton_manifest.json")});
+    files.push_back({
+        "skeleton_assets/generated/simplified_monster_sim_v4.ozz",
+        read_binary_string(
+            "game_server/skeleton_assets/generated/"
+            "simplified_monster_sim_v4.ozz")});
 
     const std::vector<std::string> weapon_files = {
         "beam_rifle.yaml",
@@ -484,6 +511,74 @@ int main() {
         read_text_file("game_server/entity_templates/player.yaml");
     const std::string production_sentry_yaml =
         read_text_file("game_server/entity_templates/sentry_grunt.yaml");
+    const std::string production_monster_yaml =
+        read_text_file("game_server/entity_templates/monster_sim.yaml");
+    bool invalid_leg_hierarchy_rejected = false;
+    try {
+        const std::vector<std::uint8_t> invalid_leg_bundle =
+            make_gameplay_bundle_zip(
+                production_sentry_yaml,
+                {},
+                {},
+                {},
+                replace_once(
+                    production_monster_yaml,
+                    "foot_bone: JNT_LegFrontLeft_Foot",
+                    "foot_bone: JNT_LegFrontLeft_Hip"));
+        (void)network_example::game_server::load_gameplay_config_from_bundle_memory(
+            invalid_leg_bundle.data(),
+            static_cast<std::uint32_t>(invalid_leg_bundle.size()),
+            "gameplay_catalog.yaml");
+    } catch (const std::exception& error) {
+        invalid_leg_hierarchy_rejected =
+            std::string(error.what()).find("invalid two-bone hierarchy") !=
+            std::string::npos;
+    }
+    require(invalid_leg_hierarchy_rejected);
+    bool invalid_gait_schedule_rejected = false;
+    try {
+        const std::vector<std::uint8_t> invalid_gait_bundle =
+            make_gameplay_bundle_zip(
+                production_sentry_yaml,
+                {},
+                {},
+                {},
+                replace_once(
+                    production_monster_yaml,
+                    "max_swinging_legs: 2",
+                    "max_swinging_legs: 1"));
+        (void)network_example::game_server::load_gameplay_config_from_bundle_memory(
+            invalid_gait_bundle.data(),
+            static_cast<std::uint32_t>(invalid_gait_bundle.size()),
+            "gameplay_catalog.yaml");
+    } catch (const std::exception& error) {
+        invalid_gait_schedule_rejected =
+            std::string(error.what()).find("exceeds max_swinging_legs") !=
+            std::string::npos;
+    }
+    require(invalid_gait_schedule_rejected);
+    bool invalid_foothold_distance_rejected = false;
+    try {
+        const std::vector<std::uint8_t> invalid_foothold_bundle =
+            make_gameplay_bundle_zip(
+                production_sentry_yaml,
+                {},
+                {},
+                {},
+                replace_once(
+                    production_monster_yaml,
+                    "query_distance_meters: 2.0",
+                    "query_distance_meters: 0.0"));
+        (void)network_example::game_server::load_gameplay_config_from_bundle_memory(
+            invalid_foothold_bundle.data(),
+            static_cast<std::uint32_t>(invalid_foothold_bundle.size()),
+            "gameplay_catalog.yaml");
+    } catch (const std::exception& error) {
+        invalid_foothold_distance_rejected =
+            std::string(error.what()).find("invalid locomotion foothold") !=
+            std::string::npos;
+    }
+    require(invalid_foothold_distance_rejected);
     const auto load_player_yaml = [&](const std::string& player_yaml) {
         const std::vector<std::uint8_t> bundle = make_gameplay_bundle_zip(
             production_sentry_yaml, {}, player_yaml);
@@ -778,6 +873,214 @@ int main() {
     assert(config_enemy_template->vision.vision_collider_template_id == 9);
     const network_example::game_server::KernelGameplayCatalogStorage catalog =
         network_example::game_server::build_kernel_gameplay_catalog(config);
+    require(config.skeleton_assets.size() == 1u);
+    require(config.skeleton_assets[0].skeleton_asset_id == 1u);
+    require(config.skeleton_assets[0].bones.size() == 41u);
+    const auto monster_template = std::find_if(
+        config.entity_templates.begin(),
+        config.entity_templates.end(),
+        [](const network_example::game_server::EntityTemplateConfig& entity) {
+            return entity.name == "monster_sim";
+        });
+    require(monster_template != config.entity_templates.end());
+    require(monster_template->skeleton.enabled);
+    require(monster_template->skeleton.legs.size() == 4u);
+    require(monster_template->skeleton.processing_order.size() == 4u);
+    require(monster_template->movement_max_yaw_degrees_per_second == 45.0f);
+    require(monster_template->skeleton.input_deadzone == 0.01f);
+    require(monster_template->skeleton.gait_cycle_ticks == 60u);
+    require(monster_template->skeleton.gait_swing_ticks == 24u);
+    require(monster_template->skeleton.max_swinging_legs == 2u);
+    require(monster_template->skeleton.foothold_query_type ==
+            KernelFootholdQueryType_Raycast);
+    require(monster_template->skeleton.foothold_candidate_offsets.size() == 5u);
+    require(catalog.definition.skeleton_asset_count == 1u);
+    require(catalog.skeleton_assets[0].bone_count == 41u);
+    const auto monster_definition = std::find_if(
+        catalog.entity_templates.begin(),
+        catalog.entity_templates.end(),
+        [](const KernelEntityTemplateDefinition& entity) {
+            return entity.entity_template_id == 20u;
+        });
+    require(monster_definition != catalog.entity_templates.end());
+    require(
+        (monster_definition->component_flags &
+         KERNEL_ENTITY_COMPONENT_SKELETON) != 0u);
+    require(monster_definition->skeleton.leg_count == 4u);
+    require(monster_definition->movement.max_yaw_degrees_per_second == 45.0f);
+    require(monster_definition->skeleton.gait_cycle_ticks == 60u);
+    require(monster_definition->skeleton.gait_swing_ticks == 24u);
+    require(monster_definition->skeleton.legs[1].phase_offset_ticks == 15u);
+    require(monster_definition->skeleton.foothold_candidate_count == 5u);
+    require(monster_definition->skeleton.foothold_candidate_offsets[1].x ==
+            0.2f);
+
+    network_example::RuntimeSkeletonAsset locomotion_asset;
+    require(network_example::load_runtime_skeleton_asset(
+        catalog.skeleton_assets[0], &locomotion_asset));
+    network_example::LocomotionState grounded_locomotion;
+    require(network_example::initialize_locomotion_state(
+        monster_definition->skeleton, 0.0f, 0u, &grounded_locomotion));
+    require(network_example::advance_locomotion_state(
+        monster_definition->skeleton,
+        KernelVec2{0.0f, 1.0f},
+        monster_definition->movement.max_yaw_degrees_per_second,
+        1.0f / 30.0f,
+        0u,
+        &grounded_locomotion));
+    std::vector<glm::vec3> grounding_origins;
+    const network_example::LocomotionGroundingQuery ordered_grounding =
+        [&grounding_origins](
+            const glm::vec3& origin,
+            float,
+            network_example::LocomotionGroundingHit* hit) {
+            grounding_origins.push_back(origin);
+            if ((grounding_origins.size() % 2u) == 1u) {
+                hit->position = glm::vec3{origin.x, 0.0f, origin.z};
+                hit->normal = glm::vec3{1.0f, 0.0f, 0.0f};
+                return true;
+            }
+            hit->position = glm::vec3{origin.x, 0.0f, origin.z};
+            hit->normal = glm::vec3{0.0f, 1.0f, 0.0f};
+            hit->supporting_entity_net_id = 77u;
+            hit->supporting_collider_id = 9u;
+            return true;
+        };
+    require(network_example::solve_legged_locomotion_pose(
+        locomotion_asset.skeleton,
+        locomotion_asset.bind_pose,
+        monster_definition->skeleton,
+        glm::vec3{0.0f},
+        glm::vec3{0.0f},
+        monster_definition->movement.max_slope_degrees,
+        1.0f / 30.0f,
+        ordered_grounding,
+        &grounded_locomotion));
+    require(grounding_origins.size() == 8u);
+    require(std::abs(
+        grounding_origins[1].x - grounding_origins[0].x - 0.2f) < 0.0001f);
+    require(grounded_locomotion.pose_valid);
+    require(grounded_locomotion.local_pose.size() == 41u);
+    for (const network_example::LegLocomotionState& leg :
+         grounded_locomotion.legs) {
+        require(leg.ground_hit_valid);
+        require(leg.grounding_candidate_index == 1u);
+        require(leg.supporting_entity_net_id == 77u);
+        require(leg.supporting_collider_id == 9u);
+    }
+    require(network_example::advance_locomotion_state(
+        monster_definition->skeleton,
+        KernelVec2{0.0f, 1.0f},
+        monster_definition->movement.max_yaw_degrees_per_second,
+        1.0f / 30.0f,
+        1u,
+        &grounded_locomotion));
+    require(network_example::solve_legged_locomotion_pose(
+        locomotion_asset.skeleton,
+        locomotion_asset.bind_pose,
+        monster_definition->skeleton,
+        glm::vec3{1.0f, 0.0f, 0.0f},
+        glm::vec3{0.0f},
+        monster_definition->movement.max_slope_degrees,
+        1.0f / 30.0f,
+        ordered_grounding,
+        &grounded_locomotion));
+    require(grounding_origins.size() == 8u);
+    for (const network_example::LegLocomotionState& leg :
+         grounded_locomotion.legs) {
+        if (leg.gait_state == network_example::LegGaitState::kSupport) {
+            require(leg.planted);
+            require(glm::length(
+                leg.foot_target_world - leg.planted_foothold_world) <
+                0.0001f);
+        }
+    }
+
+    network_example::LocomotionState missed_locomotion;
+    require(network_example::initialize_locomotion_state(
+        monster_definition->skeleton, 0.0f, 0u, &missed_locomotion));
+    require(network_example::advance_locomotion_state(
+        monster_definition->skeleton,
+        KernelVec2{},
+        monster_definition->movement.max_yaw_degrees_per_second,
+        1.0f / 30.0f,
+        0u,
+        &missed_locomotion));
+    require(network_example::solve_legged_locomotion_pose(
+        locomotion_asset.skeleton,
+        locomotion_asset.bind_pose,
+        monster_definition->skeleton,
+        glm::vec3{0.0f},
+        glm::vec3{0.0f},
+        monster_definition->movement.max_slope_degrees,
+        1.0f / 30.0f,
+        [](const glm::vec3&, float,
+           network_example::LocomotionGroundingHit*) { return false; },
+        &missed_locomotion));
+    for (const network_example::LegLocomotionState& leg :
+         missed_locomotion.legs) {
+        require(!leg.ground_hit_valid);
+        require(!leg.planted);
+    }
+
+    network_example::LocomotionState clamped_locomotion;
+    require(network_example::initialize_locomotion_state(
+        monster_definition->skeleton, 0.0f, 0u, &clamped_locomotion));
+    require(network_example::advance_locomotion_state(
+        monster_definition->skeleton,
+        KernelVec2{},
+        monster_definition->movement.max_yaw_degrees_per_second,
+        1.0f / 30.0f,
+        0u,
+        &clamped_locomotion));
+    require(network_example::solve_legged_locomotion_pose(
+        locomotion_asset.skeleton,
+        locomotion_asset.bind_pose,
+        monster_definition->skeleton,
+        glm::vec3{0.0f},
+        glm::vec3{0.0f},
+        monster_definition->movement.max_slope_degrees,
+        1.0f / 30.0f,
+        [](const glm::vec3& origin, float,
+           network_example::LocomotionGroundingHit* hit) {
+            hit->position = origin + glm::vec3{100.0f, 0.0f, 0.0f};
+            hit->normal = glm::vec3{0.0f, 1.0f, 0.0f};
+            return true;
+        },
+        &clamped_locomotion));
+    require(std::any_of(
+        clamped_locomotion.legs.begin(),
+        clamped_locomotion.legs.end(),
+        [](const network_example::LegLocomotionState& leg) {
+            return leg.ik_reach_clamped;
+        }));
+    bool ik_rotation_changed = false;
+    for (const network_example::LegLocomotionState& leg :
+         clamped_locomotion.legs) {
+        const KernelQuat& solved =
+            clamped_locomotion.local_pose[leg.hip_bone_index].local_rotation;
+        const KernelQuat& bind =
+            locomotion_asset.bind_pose[leg.hip_bone_index].local_rotation;
+        ik_rotation_changed = ik_rotation_changed ||
+            std::abs(solved.x - bind.x) > 0.00001f ||
+            std::abs(solved.y - bind.y) > 0.00001f ||
+            std::abs(solved.z - bind.z) > 0.00001f ||
+            std::abs(solved.w - bind.w) > 0.00001f;
+    }
+    require(ik_rotation_changed);
+    for (const KernelBoneLocalTransform& transform :
+         clamped_locomotion.local_pose) {
+        require(std::isfinite(transform.local_position.x));
+        require(std::isfinite(transform.local_position.y));
+        require(std::isfinite(transform.local_position.z));
+        require(std::isfinite(transform.local_rotation.x));
+        require(std::isfinite(transform.local_rotation.y));
+        require(std::isfinite(transform.local_rotation.z));
+        require(std::isfinite(transform.local_rotation.w));
+        require(std::isfinite(transform.local_scale.x));
+        require(std::isfinite(transform.local_scale.y));
+        require(std::isfinite(transform.local_scale.z));
+    }
     const auto magic_bottle = std::find_if(
         catalog.entity_templates.begin(),
         catalog.entity_templates.end(),
@@ -851,7 +1154,7 @@ int main() {
         KernelProjectileSyncMode_ServerSnapshotOnly);
     assert(config.colliders.templates.size() == 13);
     assert(config.colliders.bindings.empty());
-    assert(config.actor_templates.size() == 2);
+    assert(config.actor_templates.size() == 3);
     const network_example::game_server::ActorTemplateConfig& player_template =
         config.actor_templates[0];
     assert(player_template.actor_template_id == 1);
@@ -1698,6 +2001,91 @@ int main() {
         assert(kernel != nullptr);
         return kernel;
     };
+
+    KernelHandle* skeleton_kernel = make_server_kernel();
+    require(network_example::game_server::load_kernel_gameplay_catalog(
+        skeleton_kernel,
+        config));
+    require(Kernel_StartDedicatedServer(skeleton_kernel, 7900));
+    KernelServerEntityCreateInfo skeleton_create{};
+    skeleton_create.struct_size = sizeof(skeleton_create);
+    skeleton_create.entity_template_id = 20u;
+    skeleton_create.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+    std::uint32_t skeleton_entity_id = 0u;
+    require(Kernel_ServerCreateEntity(
+        skeleton_kernel,
+        &skeleton_create,
+        &skeleton_entity_id));
+    KernelPlayerInput locomotion_input{};
+    locomotion_input.input_seq = 1u;
+    locomotion_input.move = KernelVec2{1.0f, 0.0f};
+    require(Kernel_ServerSubmitEntityInput(
+        skeleton_kernel,
+        skeleton_entity_id,
+        &locomotion_input));
+    Kernel_Update(skeleton_kernel, 1.0f / 30.0f);
+    KernelSkeletonRenderStateResult skeleton_result{};
+    skeleton_result.struct_size = sizeof(skeleton_result);
+    require(Kernel_GetSkeletonRenderStates(
+               skeleton_kernel,
+               nullptr,
+               0u,
+               nullptr,
+               0u,
+               &skeleton_result) == 0u);
+    require(skeleton_result.status ==
+           KERNEL_SKELETON_RENDER_STATUS_INSUFFICIENT_CAPACITY);
+    require(skeleton_result.required_state_count == 1u);
+    require(skeleton_result.required_bone_transform_count == 41u);
+    std::array<KernelSkeletonRenderState, 1> skeleton_states{};
+    std::array<KernelBoneLocalTransform, 41> bone_transforms{};
+    skeleton_result.struct_size = sizeof(skeleton_result);
+    require(Kernel_GetSkeletonRenderStates(
+               skeleton_kernel,
+               skeleton_states.data(),
+               skeleton_states.size(),
+               bone_transforms.data(),
+               bone_transforms.size() - 1u,
+               &skeleton_result) == 0u);
+    require(skeleton_result.status ==
+           KERNEL_SKELETON_RENDER_STATUS_INSUFFICIENT_CAPACITY);
+    skeleton_result.struct_size = sizeof(skeleton_result);
+    require(Kernel_GetSkeletonRenderStates(
+               skeleton_kernel,
+               skeleton_states.data(),
+               skeleton_states.size(),
+               bone_transforms.data(),
+               bone_transforms.size(),
+               &skeleton_result) == 1u);
+    require(skeleton_result.status == KERNEL_SKELETON_RENDER_STATUS_SUCCESS);
+    require(skeleton_states[0].entity_net_id == skeleton_entity_id);
+    require(skeleton_states[0].skeleton_asset_id == 1u);
+    require(skeleton_states[0].bone_count == 41u);
+    require((skeleton_states[0].pose_flags &
+            KERNEL_SKELETON_POSE_FLAG_PROCEDURAL) != 0u);
+    require(bone_transforms[0].local_scale.x == 1.0f);
+    std::array<RenderEntityState, 256> locomotion_render_states{};
+    const std::uint32_t locomotion_render_count = Kernel_GetRenderStates(
+        skeleton_kernel,
+        locomotion_render_states.data(),
+        locomotion_render_states.size());
+    const auto locomotion_render_state = std::find_if(
+        locomotion_render_states.begin(),
+        locomotion_render_states.begin() + locomotion_render_count,
+        [skeleton_entity_id](const RenderEntityState& state) {
+            return state.net_id == skeleton_entity_id;
+        });
+    require(locomotion_render_state !=
+            locomotion_render_states.begin() + locomotion_render_count);
+    const float expected_half_yaw_radians =
+        45.0f * 3.14159265358979323846f / 180.0f / 30.0f / 2.0f;
+    require(std::abs(
+        locomotion_render_state->rotation.y -
+        std::sin(expected_half_yaw_radians)) < 0.0001f);
+    require(std::abs(
+        locomotion_render_state->rotation.w -
+        std::cos(expected_half_yaw_radians)) < 0.0001f);
+    Kernel_Destroy(skeleton_kernel);
 
     KernelHandle* inventory_kernel = make_server_kernel();
     network_example::game_server::GameServer inventory_server(

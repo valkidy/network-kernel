@@ -153,6 +153,18 @@ int main() {
     assert(abi_info.inventory_container_view_size ==
            sizeof(KernelInventoryContainerView));
     assert(abi_info.inventory_delta_size == sizeof(KernelInventoryDelta));
+    assert(abi_info.bone_local_transform_size ==
+           sizeof(KernelBoneLocalTransform));
+    assert(abi_info.skeleton_render_state_size ==
+           sizeof(KernelSkeletonRenderState));
+    assert(abi_info.skeleton_render_state_result_size ==
+           sizeof(KernelSkeletonRenderStateResult));
+    assert(abi_info.skeleton_asset_definition_size ==
+           sizeof(KernelSkeletonAssetDefinition));
+    assert(abi_info.skeleton_binding_definition_size ==
+           sizeof(KernelSkeletonBindingDefinition));
+    assert(abi_info.skeleton_leg_definition_size ==
+           sizeof(KernelSkeletonLegDefinition));
     assert((abi_info.capability_flags &
             KERNEL_CAPABILITY_ITEM_PROP_SYSTEM) != 0u);
     assert(abi_info.weapon_mechanics_definition_size ==
@@ -254,7 +266,9 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 61u);
+    assert(KERNEL_ABI_VERSION == 65u);
+    assert((abi_info.capability_flags &
+            KERNEL_CAPABILITY_SKELETON_RENDER_STATES) != 0u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_CONTROL_PLANE_RPC) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ACTION_TIMELINE) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_LOCAL_ACTION_RESULTS) != 0);
@@ -425,6 +439,12 @@ int main() {
     assert(!Kernel_LoadGameplayCatalog(nullptr, nullptr, nullptr));
     assert(Kernel_GetRenderStates(nullptr, nullptr, 0) == 0);
     assert(Kernel_GetRenderStatesAtTime(nullptr, 0, nullptr, 0) == 0);
+    KernelSkeletonRenderStateResult null_skeleton_result{};
+    null_skeleton_result.struct_size = sizeof(null_skeleton_result);
+    assert(Kernel_GetSkeletonRenderStates(
+               nullptr, nullptr, 0, nullptr, 0, &null_skeleton_result) == 0u);
+    assert(null_skeleton_result.status ==
+           KERNEL_SKELETON_RENDER_STATUS_INVALID_ARGUMENT);
     assert(Kernel_PollEvents(nullptr, nullptr, 0) == 0);
     assert(Kernel_PollEntityLifecycleEvents(nullptr, nullptr, 0) == 0);
     KernelBenchmarkStats benchmark_stats{};
@@ -1306,6 +1326,22 @@ int main() {
     const std::uint32_t render_count =
         Kernel_GetRenderStates(kernel, states.data(), states.size());
     assert(render_count >= 1);
+    KernelSkeletonRenderStateResult skeleton_result{};
+    skeleton_result.struct_size = sizeof(skeleton_result);
+    assert(Kernel_GetSkeletonRenderStates(
+               kernel, nullptr, 0u, nullptr, 0u, &skeleton_result) == 0u);
+    assert(skeleton_result.status == KERNEL_SKELETON_RENDER_STATUS_SUCCESS);
+    assert(skeleton_result.required_state_count == 0u);
+    skeleton_result.struct_size = sizeof(skeleton_result);
+    assert(Kernel_GetSkeletonRenderStatesAtTime(
+               kernel,
+               33333u,
+               nullptr,
+               0u,
+               nullptr,
+               0u,
+               &skeleton_result) == 0u);
+    assert(skeleton_result.flags == KERNEL_SKELETON_RENDER_RESULT_FLAG_AT_TIME);
     const RenderEntityState* rendered_actor = nullptr;
     for (std::uint32_t index = 0; index < render_count; ++index) {
         if (states[index].net_id == created_net_id) {

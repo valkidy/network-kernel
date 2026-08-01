@@ -16,6 +16,8 @@
 #include "kernel/public/kernel_types.h"
 #include "kernel/src/kernel_api_internal.h"
 #include "kernel/src/kernel_rpc.h"
+#include "kernel/src/skeleton_presentation.h"
+#include "kernel/src/legged_locomotion.h"
 #include "kernel/src/tick_loop.h"
 #include "physics/public/physics_world.h"
 #include "simulation/public/command.h"
@@ -136,6 +138,19 @@ public:
         std::uint64_t client_render_time_us,
         RenderEntityState* out_states,
         std::uint32_t max_states);
+    std::uint32_t get_skeleton_render_states(
+        KernelSkeletonRenderState* out_states,
+        std::uint32_t max_states,
+        KernelBoneLocalTransform* out_bone_transforms,
+        std::uint32_t max_bone_transforms,
+        KernelSkeletonRenderStateResult* out_result);
+    std::uint32_t get_skeleton_render_states_at_time(
+        std::uint64_t client_render_time_us,
+        KernelSkeletonRenderState* out_states,
+        std::uint32_t max_states,
+        KernelBoneLocalTransform* out_bone_transforms,
+        std::uint32_t max_bone_transforms,
+        KernelSkeletonRenderStateResult* out_result);
     std::uint32_t poll_events(KernelEvent* out_events, std::uint32_t max_events);
     std::uint32_t poll_entity_lifecycle_events(
         KernelEntityLifecycleEvent* out_events,
@@ -501,6 +516,9 @@ private:
     void handle_client_despawn(const EntityDespawnPacket& packet);
     void clear_client_session();
     void simulate_tick();
+    void update_legged_locomotion(
+        const std::vector<QueuedInput>& movement_inputs,
+        float fixed_delta_seconds);
     void finalize_simulated_projectile_destructions(
         std::size_t first_event,
         std::size_t last_event,
@@ -521,6 +539,8 @@ private:
     glm::vec3 predicted_local_render_position() const;
     void rebuild_render_states();
     void rebuild_render_states_at_time(std::uint64_t client_render_time_us);
+    void rebuild_skeleton_presentation_at_time(
+        std::uint64_t client_render_time_us);
     void rebuild_render_states_from_world();
     void rebuild_render_states_from_snapshot(std::uint64_t client_render_time_us);
     void report_render_state_overflow_if_needed();
@@ -723,6 +743,8 @@ private:
         pending_remote_action_presentation_events_;
     std::vector<RemotePresentationDedup> remote_presentation_dedup_;
     std::vector<RenderEntityState> render_states_;
+    std::vector<SkeletonPresentationPose> skeleton_presentation_poses_;
+    std::unordered_map<NetId, LocomotionState> locomotion_states_;
     WorldSnapshot latest_snapshot_;
     WorldSnapshot latest_client_snapshot_;
     std::vector<WorldSnapshot> client_snapshot_buffer_;
@@ -751,6 +773,7 @@ private:
     std::vector<KernelActionTemplateDefinition> action_templates_;
     std::vector<KernelItemTemplateDefinition> item_templates_;
     std::vector<KernelPropPopulationRuleDefinition> prop_population_rules_;
+    std::vector<RuntimeSkeletonAsset> skeleton_assets_;
     ItemStore item_store_;
     std::vector<KernelGameplayRequestOutcome> processed_gameplay_requests_;
     std::deque<KernelGameplayRequestOutcome> pending_gameplay_request_outcomes_;

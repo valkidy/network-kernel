@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 61u
+#define KERNEL_ABI_VERSION 65u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -26,6 +26,8 @@
 #define KERNEL_STATIC_COLLISION_LAYER_TERRAIN UINT32_C(1)
 
 #define KERNEL_MAX_WEAPON_SLOTS 4u
+#define KERNEL_MAX_SKELETON_LEGS 8u
+#define KERNEL_MAX_FOOTHOLD_CANDIDATES 8u
 
 #define KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED UINT32_C(0)
 #define KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS UINT32_C(1)
@@ -101,6 +103,20 @@
 #define KERNEL_CAPABILITY_REMOTE_ACTION_PRESENTATION UINT64_C(0x0000008000000000)
 #define KERNEL_CAPABILITY_ACTION_INTENTS UINT64_C(0x0000010000000000)
 #define KERNEL_CAPABILITY_ITEM_PROP_SYSTEM UINT64_C(0x0000020000000000)
+#define KERNEL_CAPABILITY_SKELETON_RENDER_STATES UINT64_C(0x0000040000000000)
+
+#define KERNEL_SKELETON_RENDER_STATUS_SUCCESS UINT32_C(0)
+#define KERNEL_SKELETON_RENDER_STATUS_INSUFFICIENT_CAPACITY UINT32_C(1)
+#define KERNEL_SKELETON_RENDER_STATUS_INVALID_ARGUMENT UINT32_C(2)
+
+#define KERNEL_SKELETON_POSE_FLAG_BIND_POSE UINT32_C(0x00000001)
+#define KERNEL_SKELETON_POSE_FLAG_PROCEDURAL UINT32_C(0x00000002)
+
+typedef enum KernelFootholdQueryType {
+    KernelFootholdQueryType_None = 0,
+    KernelFootholdQueryType_Raycast = 1,
+} KernelFootholdQueryType;
+#define KERNEL_SKELETON_RENDER_RESULT_FLAG_AT_TIME UINT32_C(0x00000001)
 
 #define KERNEL_COLLISION_LAYER_PLAYER_SIDE UINT32_C(0x00000001)
 #define KERNEL_COLLISION_LAYER_HOSTILE_SIDE UINT32_C(0x00000002)
@@ -163,6 +179,7 @@
 #define KERNEL_ENTITY_COMPONENT_SENTRY_RUNTIME UINT32_C(0x00000040)
 #define KERNEL_ENTITY_COMPONENT_DIRECTOR_RUNTIME UINT32_C(0x00000080)
 #define KERNEL_ENTITY_COMPONENT_SERVER_ONLY UINT32_C(0x00000100)
+#define KERNEL_ENTITY_COMPONENT_SKELETON UINT32_C(0x00000200)
 
 #ifdef __cplusplus
 extern "C" {
@@ -223,6 +240,12 @@ typedef struct KernelAbiInfo {
     uint32_t item_instance_view_size;
     uint32_t inventory_container_view_size;
     uint32_t inventory_delta_size;
+    uint32_t bone_local_transform_size;
+    uint32_t skeleton_render_state_size;
+    uint32_t skeleton_render_state_result_size;
+    uint32_t skeleton_asset_definition_size;
+    uint32_t skeleton_binding_definition_size;
+    uint32_t skeleton_leg_definition_size;
 } KernelAbiInfo;
 
 typedef struct KernelBuildInfo {
@@ -878,6 +901,36 @@ typedef struct RenderEntityState {
     uint32_t carrier_entity_id;
 } RenderEntityState;
 
+typedef struct KernelBoneLocalTransform {
+    KernelVec3 local_position;
+    KernelQuat local_rotation;
+    KernelVec3 local_scale;
+} KernelBoneLocalTransform;
+
+typedef struct KernelSkeletonRenderState {
+    uint32_t entity_net_id;
+    uint32_t skeleton_asset_id;
+    uint64_t skeleton_content_hash;
+    uint32_t first_bone_transform;
+    uint32_t bone_count;
+    uint32_t pose_tick;
+    uint32_t pose_flags;
+    uint64_t pose_time_us;
+} KernelSkeletonRenderState;
+
+typedef struct KernelSkeletonRenderStateResult {
+    uint32_t struct_size;
+    uint32_t status;
+    uint32_t required_state_count;
+    uint32_t required_bone_transform_count;
+    uint32_t written_state_count;
+    uint32_t written_bone_transform_count;
+    uint32_t source_tick;
+    uint32_t flags;
+    uint64_t requested_render_time_us;
+    uint64_t evaluated_render_time_us;
+} KernelSkeletonRenderStateResult;
+
 KERNEL_RPC_STRUCT(R"json({"type":"KernelServerEntityCreateInfo"})json")
 typedef struct KernelServerEntityCreateInfo {
     uint32_t struct_size;
@@ -1170,6 +1223,50 @@ typedef struct KernelActorTemplateDefinition {
     KernelAgentVisionConfig vision;
 } KernelActorTemplateDefinition;
 
+typedef struct KernelSkeletonAssetDefinition {
+    uint32_t struct_size;
+    uint32_t skeleton_asset_id;
+    uint64_t skeleton_content_hash;
+    const uint8_t* runtime_skeleton_data;
+    uint32_t runtime_skeleton_size;
+    uint32_t bone_count;
+} KernelSkeletonAssetDefinition;
+
+typedef struct KernelSkeletonLegDefinition {
+    uint32_t leg_id;
+    uint32_t hip_bone_index;
+    uint32_t knee_bone_index;
+    uint32_t foot_bone_index;
+    uint32_t phase_offset_ticks;
+    KernelVec3 pole_local;
+    float step_height_meters;
+    float max_reach_ratio;
+} KernelSkeletonLegDefinition;
+
+typedef struct KernelSkeletonBindingDefinition {
+    uint32_t struct_size;
+    uint32_t skeleton_asset_id;
+    uint64_t skeleton_content_hash;
+    uint32_t bone_count;
+    uint32_t root_bone_index;
+    uint32_t body_bone_index;
+    uint32_t leg_count;
+    uint32_t processing_order_count;
+    float input_deadzone;
+    uint32_t gait_cycle_ticks;
+    uint32_t gait_swing_ticks;
+    uint32_t max_swinging_legs;
+    uint8_t foothold_query_type;
+    uint8_t reserved_foothold0;
+    uint16_t reserved_foothold1;
+    float foothold_query_start_height_meters;
+    float foothold_query_distance_meters;
+    uint32_t foothold_candidate_count;
+    KernelVec2 foothold_candidate_offsets[KERNEL_MAX_FOOTHOLD_CANDIDATES];
+    KernelSkeletonLegDefinition legs[KERNEL_MAX_SKELETON_LEGS];
+    uint32_t processing_order[KERNEL_MAX_SKELETON_LEGS];
+} KernelSkeletonBindingDefinition;
+
 typedef struct KernelActionTemplateDefinition {
     /*
      * Action templates contain gameplay policy only.
@@ -1213,6 +1310,8 @@ typedef struct KernelGameplayCatalogDefinition {
     uint32_t item_template_count;
     const KernelPropPopulationRuleDefinition* prop_population_rules;
     uint32_t prop_population_rule_count;
+    const KernelSkeletonAssetDefinition* skeleton_assets;
+    uint32_t skeleton_asset_count;
 } KernelGameplayCatalogDefinition;
 
 typedef struct KernelGameplayCatalogLoadResult {
@@ -1560,6 +1659,7 @@ typedef struct KernelMovementDefinition {
     float step_height;
     float ground_probe_distance;
     float ground_snap_distance;
+    float max_yaw_degrees_per_second;
 } KernelMovementDefinition;
 
 struct KernelEntityAiDefinition {
@@ -1597,6 +1697,7 @@ struct KernelEntityTemplateDefinition {
     KernelActionTriggerDefinition destroy_entity_trigger;
     KernelPropDefinition prop;
     uint32_t collision_trigger_mask;
+    KernelSkeletonBindingDefinition skeleton;
 };
 
 typedef struct KernelEvent {

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <initializer_list>
 #include <limits>
@@ -55,6 +56,7 @@ constexpr const char* kDefaultGameplayCatalogPath =
     "game_server/gameplay_catalog.yaml";
 constexpr std::uint64_t kMaxYamlEntryBytes = 1024ull * 1024ull;
 constexpr std::uint64_t kMaxTotalYamlBytes = 8ull * 1024ull * 1024ull;
+constexpr std::uint64_t kMaxSkeletonAssetBytes = 4ull * 1024ull * 1024ull;
 constexpr std::uint16_t kDefaultReserveMagazines = 6;
 void hash_bytes(std::uint64_t* hash, const void* data, std::size_t size) {
     const auto* bytes = static_cast<const std::uint8_t*>(data);
@@ -79,6 +81,11 @@ void hash_vec3(std::uint64_t* hash, const KernelVec3& value) {
     hash_float(hash, value.x);
     hash_float(hash, value.y);
     hash_float(hash, value.z);
+}
+
+void hash_vec2(std::uint64_t* hash, const KernelVec2& value) {
+    hash_float(hash, value.x);
+    hash_float(hash, value.y);
 }
 
 void hash_vec4(std::uint64_t* hash, const KernelVec4& value) {
@@ -226,6 +233,7 @@ void hash_actor_template(
     hash_float(hash, actor_template.movement_step_height);
     hash_float(hash, actor_template.movement_ground_probe_distance);
     hash_float(hash, actor_template.movement_ground_snap_distance);
+    hash_float(hash, actor_template.movement_max_yaw_degrees_per_second);
     hash_scalar(hash, actor_template.weapon_slot_count);
     for (std::uint8_t index = 0; index < actor_template.weapon_slot_count; ++index) {
         hash_scalar(hash, actor_template.weapon_ids[index]);
@@ -297,6 +305,50 @@ void hash_actor_template(
         actor_template.prop.throw_trajectory_projectile_template_id);
     hash_scalar(hash, actor_template.prop.lifetime_ticks);
     hash_scalar(hash, actor_template.prop.population_group_id);
+    hash_scalar(hash, actor_template.skeleton.enabled);
+    if (actor_template.skeleton.enabled) {
+        hash_scalar(hash, actor_template.skeleton.skeleton_asset_id);
+        hash_scalar(hash, actor_template.skeleton.content_hash);
+        hash_scalar(hash, actor_template.skeleton.root_bone_index);
+        hash_scalar(hash, actor_template.skeleton.body_bone_index);
+        hash_scalar(
+            hash,
+            static_cast<std::uint32_t>(
+                actor_template.skeleton.legs.size()));
+        for (const SkeletonLegConfig& leg : actor_template.skeleton.legs) {
+            hash_string(hash, leg.id);
+            hash_scalar(hash, leg.hip_bone_index);
+            hash_scalar(hash, leg.knee_bone_index);
+            hash_scalar(hash, leg.foot_bone_index);
+            hash_scalar(hash, leg.phase_offset_ticks);
+            hash_vec3(hash, leg.pole_local);
+            hash_float(hash, leg.step_height_meters);
+            hash_float(hash, leg.max_reach_ratio);
+        }
+        hash_float(hash, actor_template.skeleton.input_deadzone);
+        hash_scalar(hash, actor_template.skeleton.gait_cycle_ticks);
+        hash_scalar(hash, actor_template.skeleton.gait_swing_ticks);
+        hash_scalar(hash, actor_template.skeleton.max_swinging_legs);
+        hash_scalar(hash, actor_template.skeleton.foothold_query_type);
+        hash_float(
+            hash,
+            actor_template.skeleton.foothold_query_start_height_meters);
+        hash_float(
+            hash,
+            actor_template.skeleton.foothold_query_distance_meters);
+        hash_scalar(
+            hash,
+            static_cast<std::uint32_t>(
+                actor_template.skeleton.foothold_candidate_offsets.size()));
+        for (const KernelVec2& offset :
+             actor_template.skeleton.foothold_candidate_offsets) {
+            hash_vec2(hash, offset);
+        }
+        for (const std::uint32_t leg_index :
+             actor_template.skeleton.processing_order) {
+            hash_scalar(hash, leg_index);
+        }
+    }
 }
 
 std::vector<PropPopulationRuleConfig> prop_population_rules_from_yaml(
@@ -686,6 +738,8 @@ class GameplayConfigSource {
 public:
     virtual ~GameplayConfigSource() = default;
     virtual YAML::Node load_yaml(const std::string& path) const = 0;
+    virtual std::vector<std::uint8_t> load_bytes(
+        const std::string& path) const = 0;
     virtual std::vector<std::string> list_yaml_files(
         const std::string& directory) const = 0;
     virtual std::string parent_path(const std::string& path) const = 0;
@@ -717,6 +771,18 @@ public:
                 error.mark.line >= 0 ? error.mark.line + 1 : -1,
                 error.mark.column >= 0 ? error.mark.column + 1 : -1);
         }
+    }
+
+    std::vector<std::uint8_t> load_bytes(
+        const std::string& path) const override {
+        std::ifstream input(path, std::ios::binary);
+        const std::vector<std::uint8_t> bytes{
+            std::istreambuf_iterator<char>(input),
+            std::istreambuf_iterator<char>()};
+        if (input.bad() || bytes.empty()) {
+            throw std::runtime_error("failed to read binary asset: " + path);
+        }
+        return bytes;
     }
 
     std::vector<std::string> list_yaml_files(
@@ -852,6 +918,18 @@ bool has_yaml_extension(const std::string& path) {
            path.compare(path.size() - 5, 5, kYamlSuffix) == 0;
 }
 
+bool has_json_extension(const std::string& path) {
+    constexpr const char* kJsonSuffix = ".json";
+    return path.size() >= 5 &&
+           path.compare(path.size() - 5, 5, kJsonSuffix) == 0;
+}
+
+bool has_ozz_extension(const std::string& path) {
+    constexpr const char* kOzzSuffix = ".ozz";
+    return path.size() >= 4 &&
+           path.compare(path.size() - 4, 4, kOzzSuffix) == 0;
+}
+
 class MemoryZipGameplayConfigSource final : public GameplayConfigSource {
 public:
     MemoryZipGameplayConfigSource(
@@ -908,18 +986,27 @@ public:
                 zip_entry_close(archive.get());
                 continue;
             }
-            if (!has_yaml_extension(path)) {
+            const bool document_entry =
+                has_yaml_extension(path) || has_json_extension(path);
+            const bool skeleton_entry = has_ozz_extension(path);
+            if (!document_entry && !skeleton_entry) {
                 zip_entry_close(archive.get());
                 continue;
             }
 
             const unsigned long long entry_size = zip_entry_size(archive.get());
-            if (entry_size > kMaxYamlEntryBytes) {
+            const std::uint64_t entry_limit = document_entry
+                ? kMaxYamlEntryBytes
+                : kMaxSkeletonAssetBytes;
+            if (entry_size > entry_limit) {
                 throw std::runtime_error("archive entry exceeds size limit: " + path);
             }
-            total_yaml_bytes += entry_size;
-            if (total_yaml_bytes > kMaxTotalYamlBytes) {
-                throw std::runtime_error("archive YAML content exceeds total size limit");
+            if (document_entry) {
+                total_yaml_bytes += entry_size;
+                if (total_yaml_bytes > kMaxTotalYamlBytes) {
+                    throw std::runtime_error(
+                        "archive YAML content exceeds total size limit");
+                }
             }
             std::string data(static_cast<std::size_t>(entry_size), '\0');
             if (entry_size > 0) {
@@ -962,6 +1049,23 @@ public:
                 error.mark.line >= 0 ? error.mark.line + 1 : -1,
                 error.mark.column >= 0 ? error.mark.column + 1 : -1);
         }
+    }
+
+    std::vector<std::uint8_t> load_bytes(
+        const std::string& path) const override {
+        const std::string normalized = normalize_archive_path(path);
+        const auto found = files_.find(normalized);
+        if (found == files_.end()) {
+            throw DataLoadError(
+                KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_MISSING_BUNDLE_ENTRY,
+                "missing binary asset in bundle: " + normalized,
+                normalized,
+                {},
+                KERNEL_GAMEPLAY_CATALOG_LOAD_SOURCE_BUNDLE);
+        }
+        return std::vector<std::uint8_t>(
+            found->second.begin(),
+            found->second.end());
     }
 
     std::vector<std::string> list_yaml_files(
@@ -2200,12 +2304,162 @@ std::uint32_t actor_collider_template_id_from_yaml(
     throw std::runtime_error("unknown actor collider_template name: " + value);
 }
 
+std::uint64_t uint64_from_yaml(const YAML::Node& node) {
+    const std::string value = node.as<std::string>();
+    std::size_t consumed = 0u;
+    const std::uint64_t parsed = std::stoull(value, &consumed, 0);
+    if (consumed != value.size()) {
+        throw std::runtime_error("invalid uint64 value: " + value);
+    }
+    return parsed;
+}
+
+std::vector<SkeletonAssetConfig> load_skeleton_assets_from_yaml(
+    const GameplayConfigSource& source,
+    const std::string& catalog_base_path,
+    const YAML::Node& manifests) {
+    if (!manifests || !manifests.IsSequence()) {
+        throw std::runtime_error("skeleton_manifests must be a sequence");
+    }
+    std::vector<SkeletonAssetConfig> assets;
+    for (const YAML::Node& reference_node : manifests) {
+        if (!reference_node.IsScalar()) {
+            throw std::runtime_error(
+                "skeleton manifest reference must be a scalar");
+        }
+        const std::string logical_manifest =
+            reference_node.as<std::string>();
+        const std::string manifest_path = source.resolve_path(
+            catalog_base_path,
+            reference_node);
+        const YAML::Node manifest = source.load_yaml(manifest_path);
+        reject_unknown_keys(
+            manifest,
+            {
+                "manifest_version",
+                "asset_id",
+                "name",
+                "content_hash",
+                "runtime_skeleton",
+                "bone_count",
+                "bones",
+            },
+            manifest_path,
+            source.source_kind(),
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+        if (!manifest["manifest_version"] ||
+            manifest["manifest_version"].as<std::uint32_t>() != 1u ||
+            !manifest["asset_id"] || !manifest["name"] ||
+            !manifest["content_hash"] || !manifest["runtime_skeleton"] ||
+            !manifest["bone_count"] || !manifest["bones"] ||
+            !manifest["bones"].IsSequence()) {
+            throw std::runtime_error(
+                "invalid skeleton manifest: " + manifest_path);
+        }
+
+        SkeletonAssetConfig asset;
+        asset.skeleton_asset_id =
+            manifest["asset_id"].as<std::uint32_t>();
+        asset.name = manifest["name"].as<std::string>();
+        asset.content_hash = uint64_from_yaml(manifest["content_hash"]);
+        asset.manifest_reference = logical_manifest;
+        const std::string runtime_file =
+            manifest["runtime_skeleton"].as<std::string>();
+        asset.runtime_reference =
+            (std::filesystem::path(logical_manifest).parent_path() /
+             runtime_file)
+                .lexically_normal()
+                .generic_string();
+        const std::string runtime_path = source.resolve_path(
+            source.parent_path(manifest_path),
+            manifest["runtime_skeleton"]);
+        asset.runtime_skeleton = source.load_bytes(runtime_path);
+
+        std::uint64_t runtime_hash = 14695981039346656037ull;
+        hash_bytes(
+            &runtime_hash,
+            asset.runtime_skeleton.data(),
+            asset.runtime_skeleton.size());
+        if (runtime_hash != asset.content_hash) {
+            throw std::runtime_error(
+                "skeleton content hash mismatch: " + manifest_path);
+        }
+
+        const std::uint32_t bone_count =
+            manifest["bone_count"].as<std::uint32_t>();
+        if (bone_count == 0u || bone_count > 1024u ||
+            manifest["bones"].size() != bone_count) {
+            throw std::runtime_error(
+                "invalid skeleton bone_count: " + manifest_path);
+        }
+        std::unordered_set<std::string> bone_names;
+        asset.bones.reserve(bone_count);
+        for (std::uint32_t index = 0u; index < bone_count; ++index) {
+            const YAML::Node bone = manifest["bones"][index];
+            reject_unknown_keys(
+                bone,
+                {"index", "name", "parent_index"},
+                manifest_path,
+                source.source_kind(),
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG,
+                asset.skeleton_asset_id);
+            const std::int32_t parent_index =
+                bone["parent_index"].as<std::int32_t>();
+            const std::string name = bone["name"].as<std::string>();
+            if (bone["index"].as<std::uint32_t>() != index || name.empty() ||
+                !bone_names.insert(name).second || parent_index < -1 ||
+                parent_index >= static_cast<std::int32_t>(index)) {
+                throw std::runtime_error(
+                    "invalid skeleton bone entry: " + manifest_path);
+            }
+            asset.bones.push_back(
+                SkeletonManifestBoneConfig{name, parent_index});
+        }
+        if (asset.skeleton_asset_id == 0u || asset.content_hash == 0u ||
+            std::any_of(
+                assets.begin(),
+                assets.end(),
+                [&asset](const SkeletonAssetConfig& candidate) {
+                    return candidate.skeleton_asset_id ==
+                               asset.skeleton_asset_id ||
+                        candidate.name == asset.name ||
+                        candidate.manifest_reference ==
+                            asset.manifest_reference;
+                })) {
+            throw std::runtime_error(
+                "duplicate or invalid skeleton asset: " + manifest_path);
+        }
+        assets.push_back(std::move(asset));
+    }
+    return assets;
+}
+
+std::uint32_t skeleton_bone_index(
+    const SkeletonAssetConfig& asset,
+    const std::string& name,
+    const std::string& field) {
+    const auto found = std::find_if(
+        asset.bones.begin(),
+        asset.bones.end(),
+        [&name](const SkeletonManifestBoneConfig& bone) {
+            return bone.name == name;
+        });
+    if (found == asset.bones.end()) {
+        throw std::runtime_error(
+            "skeleton asset " + asset.name + " missing " + field +
+            " bone: " + name);
+    }
+    return static_cast<std::uint32_t>(
+        std::distance(asset.bones.begin(), found));
+}
+
 ActorTemplateConfig actor_template_from_yaml(
     const YAML::Node& node,
     const std::string& path,
     std::uint32_t source_kind,
     const WeaponCatalogConfig& weapons,
-    const ColliderCatalogConfig& colliders) {
+    const ColliderCatalogConfig& colliders,
+    const std::vector<SkeletonAssetConfig>& skeleton_assets) {
     reject_unknown_keys(
         node,
         {
@@ -2225,6 +2479,8 @@ ActorTemplateConfig actor_template_from_yaml(
             "animations",
             "ai",
             "vision",
+            "skeleton",
+            "locomotion",
         },
         path,
         source_kind,
@@ -2289,6 +2545,7 @@ ActorTemplateConfig actor_template_from_yaml(
             "step_height",
             "ground_probe_distance",
             "ground_snap_distance",
+            "max_yaw_degrees_per_second",
         },
         path,
         source_kind,
@@ -2318,6 +2575,10 @@ ActorTemplateConfig actor_template_from_yaml(
     if (movement["ground_snap_distance"]) {
         actor_template.movement_ground_snap_distance =
             movement["ground_snap_distance"].as<float>();
+    }
+    if (movement["max_yaw_degrees_per_second"]) {
+        actor_template.movement_max_yaw_degrees_per_second =
+            movement["max_yaw_degrees_per_second"].as<float>();
     }
 
     const YAML::Node hitbox = node["hitbox"];
@@ -2484,6 +2745,328 @@ ActorTemplateConfig actor_template_from_yaml(
         colliders,
         path,
         source_kind);
+    if (node["locomotion"] && !node["skeleton"]) {
+        throw std::runtime_error(
+            "actor template locomotion requires skeleton: " +
+            actor_template.name);
+    }
+    if (node["skeleton"]) {
+        const YAML::Node skeleton = node["skeleton"];
+        reject_unknown_keys(
+            skeleton,
+            {
+                "runtime_asset",
+                "source_manifest",
+                "content_hash",
+                "root_bone",
+                "body_bone",
+            },
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+            actor_template.actor_template_id);
+        if (!skeleton["runtime_asset"] || !skeleton["source_manifest"] ||
+            !skeleton["root_bone"] || !skeleton["body_bone"] ||
+            !node["locomotion"]) {
+            throw std::runtime_error(
+                "skeleton requires runtime_asset, source_manifest, root_bone, "
+                "body_bone, and locomotion: " + actor_template.name);
+        }
+        SkeletonBindingConfig& binding = actor_template.skeleton;
+        binding.runtime_asset =
+            skeleton["runtime_asset"].as<std::string>();
+        binding.source_manifest =
+            skeleton["source_manifest"].as<std::string>();
+        const auto asset = std::find_if(
+            skeleton_assets.begin(),
+            skeleton_assets.end(),
+            [&binding](const SkeletonAssetConfig& candidate) {
+                return candidate.manifest_reference ==
+                           binding.source_manifest &&
+                    candidate.runtime_reference == binding.runtime_asset;
+            });
+        if (asset == skeleton_assets.end()) {
+            throw std::runtime_error(
+                "unknown skeleton asset/manifest pair: " +
+                binding.runtime_asset + " / " + binding.source_manifest);
+        }
+        if (skeleton["content_hash"] &&
+            uint64_from_yaml(skeleton["content_hash"]) !=
+                asset->content_hash) {
+            throw std::runtime_error(
+                "entity template skeleton content_hash mismatch: " +
+                actor_template.name);
+        }
+        binding.enabled = true;
+        binding.skeleton_asset_id = asset->skeleton_asset_id;
+        binding.content_hash = asset->content_hash;
+        binding.bone_count =
+            static_cast<std::uint32_t>(asset->bones.size());
+        binding.root_bone = skeleton["root_bone"].as<std::string>();
+        binding.body_bone = skeleton["body_bone"].as<std::string>();
+        binding.root_bone_index = skeleton_bone_index(
+            *asset,
+            binding.root_bone,
+            "root_bone");
+        binding.body_bone_index = skeleton_bone_index(
+            *asset,
+            binding.body_bone,
+            "body_bone");
+
+        const YAML::Node locomotion = node["locomotion"];
+        reject_unknown_keys(
+            locomotion,
+            {
+                "type",
+                "forward_axis",
+                "input_deadzone",
+                "gait",
+                "foothold",
+                "legs",
+            },
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+            actor_template.actor_template_id);
+        if (!locomotion["type"] || !locomotion["forward_axis"] ||
+            !locomotion["gait"] || !locomotion["foothold"] ||
+            !locomotion["legs"] ||
+            !locomotion["legs"].IsSequence()) {
+            throw std::runtime_error(
+                "locomotion requires type, forward_axis, gait, and legs: " +
+                actor_template.name);
+        }
+        binding.locomotion_type = locomotion["type"].as<std::string>();
+        binding.forward_axis = locomotion["forward_axis"].as<std::string>();
+        binding.input_deadzone = locomotion["input_deadzone"]
+            ? locomotion["input_deadzone"].as<float>()
+            : 0.01f;
+        if (binding.locomotion_type != "procedural_legged" ||
+            binding.forward_axis != "positive_z" ||
+            !std::isfinite(binding.input_deadzone) ||
+            binding.input_deadzone < 0.0f || binding.input_deadzone >= 1.0f ||
+            !std::isfinite(
+                actor_template.movement_max_yaw_degrees_per_second) ||
+            actor_template.movement_max_yaw_degrees_per_second <= 0.0f ||
+            locomotion["legs"].size() == 0u ||
+            locomotion["legs"].size() > KERNEL_MAX_SKELETON_LEGS) {
+            throw std::runtime_error(
+                "unsupported or invalid skeleton locomotion: " +
+                actor_template.name);
+        }
+        std::unordered_set<std::string> leg_ids;
+        for (const YAML::Node& leg_node : locomotion["legs"]) {
+            reject_unknown_keys(
+                leg_node,
+                {
+                    "id",
+                    "hip_bone",
+                    "knee_bone",
+                    "foot_bone",
+                    "phase_offset_ticks",
+                    "pole_local",
+                    "step_height_meters",
+                    "max_reach_ratio",
+                },
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                actor_template.actor_template_id);
+            if (!leg_node["id"] || !leg_node["hip_bone"] ||
+                !leg_node["knee_bone"] || !leg_node["foot_bone"]) {
+                throw std::runtime_error(
+                    "locomotion leg requires id and hip/knee/foot bones: " +
+                    actor_template.name);
+            }
+            SkeletonLegConfig leg;
+            leg.id = leg_node["id"].as<std::string>();
+            leg.hip_bone = leg_node["hip_bone"].as<std::string>();
+            leg.knee_bone = leg_node["knee_bone"].as<std::string>();
+            leg.foot_bone = leg_node["foot_bone"].as<std::string>();
+            if (!leg_ids.insert(leg.id).second) {
+                throw std::runtime_error(
+                    "duplicate locomotion leg id: " + leg.id);
+            }
+            leg.hip_bone_index = skeleton_bone_index(
+                *asset, leg.hip_bone, leg.id + ".hip_bone");
+            leg.knee_bone_index = skeleton_bone_index(
+                *asset, leg.knee_bone, leg.id + ".knee_bone");
+            leg.foot_bone_index = skeleton_bone_index(
+                *asset, leg.foot_bone, leg.id + ".foot_bone");
+            if (asset->bones[leg.knee_bone_index].parent_index !=
+                    static_cast<std::int32_t>(leg.hip_bone_index) ||
+                asset->bones[leg.foot_bone_index].parent_index !=
+                    static_cast<std::int32_t>(leg.knee_bone_index)) {
+                throw std::runtime_error(
+                    "invalid two-bone hierarchy for leg: " + leg.id);
+            }
+            leg.phase_offset_ticks = leg_node["phase_offset_ticks"]
+                ? leg_node["phase_offset_ticks"].as<std::uint32_t>()
+                : 0u;
+            leg.pole_local = vec3_from_yaml(leg_node["pole_local"]);
+            leg.step_height_meters = leg_node["step_height_meters"]
+                ? leg_node["step_height_meters"].as<float>()
+                : 0.0f;
+            leg.max_reach_ratio = leg_node["max_reach_ratio"]
+                ? leg_node["max_reach_ratio"].as<float>()
+                : 0.95f;
+            const float pole_length_squared =
+                leg.pole_local.x * leg.pole_local.x +
+                leg.pole_local.y * leg.pole_local.y +
+                leg.pole_local.z * leg.pole_local.z;
+            if (!std::isfinite(leg.pole_local.x) ||
+                !std::isfinite(leg.pole_local.y) ||
+                !std::isfinite(leg.pole_local.z) ||
+                !std::isfinite(leg.step_height_meters) ||
+                !std::isfinite(leg.max_reach_ratio) ||
+                pole_length_squared <= 0.0f ||
+                leg.step_height_meters < 0.0f ||
+                leg.max_reach_ratio <= 0.0f ||
+                leg.max_reach_ratio > 1.0f) {
+                throw std::runtime_error(
+                    "invalid locomotion leg parameters: " + leg.id);
+            }
+            binding.legs.push_back(std::move(leg));
+        }
+
+        const YAML::Node gait = locomotion["gait"];
+        reject_unknown_keys(
+            gait,
+            {
+                "type",
+                "cycle_ticks",
+                "swing_ticks",
+                "max_swinging_legs",
+                "processing_order",
+            },
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+            actor_template.actor_template_id);
+        if (!gait["type"] || gait["type"].as<std::string>() != "fixed_walk" ||
+            !gait["cycle_ticks"] || !gait["swing_ticks"] ||
+            !gait["max_swinging_legs"] || !gait["processing_order"] ||
+            !gait["processing_order"].IsSequence()) {
+            throw std::runtime_error(
+                "locomotion gait requires fixed_walk parameters: " +
+                actor_template.name);
+        }
+        binding.gait_cycle_ticks = gait["cycle_ticks"].as<std::uint32_t>();
+        binding.gait_swing_ticks = gait["swing_ticks"].as<std::uint32_t>();
+        binding.max_swinging_legs =
+            gait["max_swinging_legs"].as<std::uint32_t>();
+        std::unordered_set<std::uint32_t> processing_order;
+        for (const YAML::Node& leg_ref : gait["processing_order"]) {
+            const std::string leg_id = leg_ref.as<std::string>();
+            const auto leg = std::find_if(
+                binding.legs.begin(),
+                binding.legs.end(),
+                [&leg_id](const SkeletonLegConfig& candidate) {
+                    return candidate.id == leg_id;
+                });
+            if (leg == binding.legs.end()) {
+                throw std::runtime_error(
+                    "processing_order references undefined leg: " + leg_id);
+            }
+            const std::uint32_t leg_index = static_cast<std::uint32_t>(
+                std::distance(binding.legs.begin(), leg));
+            if (!processing_order.insert(leg_index).second) {
+                throw std::runtime_error(
+                    "processing_order repeats leg: " + leg_id);
+            }
+            binding.processing_order.push_back(leg_index);
+        }
+        if (binding.processing_order.size() != binding.legs.size() ||
+            binding.gait_cycle_ticks == 0u ||
+            binding.gait_swing_ticks == 0u ||
+            binding.gait_swing_ticks >= binding.gait_cycle_ticks ||
+            binding.max_swinging_legs == 0u ||
+            binding.max_swinging_legs > binding.legs.size()) {
+            throw std::runtime_error(
+                "invalid locomotion gait values: " + actor_template.name);
+        }
+        for (SkeletonLegConfig& leg : binding.legs) {
+            leg.phase_offset_ticks %= binding.gait_cycle_ticks;
+        }
+        std::uint32_t authored_max_swinging = 0u;
+        for (const SkeletonLegConfig& phase_origin : binding.legs) {
+            const std::uint32_t gait_phase =
+                (binding.gait_cycle_ticks - phase_origin.phase_offset_ticks) %
+                binding.gait_cycle_ticks;
+            std::uint32_t swinging = 0u;
+            for (const SkeletonLegConfig& leg : binding.legs) {
+                const std::uint32_t leg_phase = static_cast<std::uint32_t>(
+                    (static_cast<std::uint64_t>(gait_phase) +
+                     leg.phase_offset_ticks) %
+                    binding.gait_cycle_ticks);
+                swinging += leg_phase < binding.gait_swing_ticks ? 1u : 0u;
+            }
+            authored_max_swinging =
+                std::max(authored_max_swinging, swinging);
+        }
+        if (authored_max_swinging > binding.max_swinging_legs) {
+            throw std::runtime_error(
+                "locomotion gait exceeds max_swinging_legs: " +
+                actor_template.name);
+        }
+
+        const YAML::Node foothold = locomotion["foothold"];
+        reject_unknown_keys(
+            foothold,
+            {
+                "query",
+                "query_start_height_meters",
+                "query_distance_meters",
+                "candidate_offsets_meters",
+            },
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+            actor_template.actor_template_id);
+        if (!foothold["query"] ||
+            foothold["query"].as<std::string>() != "raycast" ||
+            !foothold["query_start_height_meters"] ||
+            !foothold["query_distance_meters"] ||
+            !foothold["candidate_offsets_meters"] ||
+            !foothold["candidate_offsets_meters"].IsSequence() ||
+            foothold["candidate_offsets_meters"].size() == 0u ||
+            foothold["candidate_offsets_meters"].size() >
+                KERNEL_MAX_FOOTHOLD_CANDIDATES) {
+            throw std::runtime_error(
+                "invalid locomotion foothold query: " + actor_template.name);
+        }
+        binding.foothold_query_type = KernelFootholdQueryType_Raycast;
+        binding.foothold_query_start_height_meters =
+            foothold["query_start_height_meters"].as<float>();
+        binding.foothold_query_distance_meters =
+            foothold["query_distance_meters"].as<float>();
+        if (!std::isfinite(binding.foothold_query_start_height_meters) ||
+            binding.foothold_query_start_height_meters < 0.0f ||
+            !std::isfinite(binding.foothold_query_distance_meters) ||
+            binding.foothold_query_distance_meters <= 0.0f) {
+            throw std::runtime_error(
+                "invalid locomotion foothold distances: " +
+                actor_template.name);
+        }
+        for (const YAML::Node& offset_node :
+             foothold["candidate_offsets_meters"]) {
+            if (!offset_node["x"] || !offset_node["z"]) {
+                throw std::runtime_error(
+                    "locomotion foothold candidate requires x/z: " +
+                    actor_template.name);
+            }
+            const KernelVec2 offset{
+                offset_node["x"].as<float>(),
+                offset_node["z"].as<float>(),
+            };
+            if (!std::isfinite(offset.x) || !std::isfinite(offset.y)) {
+                throw std::runtime_error(
+                    "non-finite locomotion foothold candidate: " +
+                    actor_template.name);
+            }
+            binding.foothold_candidate_offsets.push_back(offset);
+        }
+    }
     return actor_template;
 }
 
@@ -2529,12 +3112,19 @@ EntityTemplateConfig entity_template_from_yaml(
     const WeaponCatalogConfig& weapons,
     const ColliderCatalogConfig& colliders,
     const std::vector<ProjectileTemplateConfig>& projectile_templates,
-    const std::vector<PropPopulationRuleConfig>& prop_population_rules) {
+    const std::vector<PropPopulationRuleConfig>& prop_population_rules,
+    const std::vector<SkeletonAssetConfig>& skeleton_assets) {
     const std::uint16_t entity_type =
         authored_entity_type_from_yaml(node["entity_type"]);
     if (entity_type == kEntityTypeActor) {
         EntityTemplateConfig entity_template =
-            actor_template_from_yaml(node, path, source_kind, weapons, colliders);
+            actor_template_from_yaml(
+                node,
+                path,
+                source_kind,
+                weapons,
+                colliders,
+                skeleton_assets);
         entity_template.entity_type = kEntityTypeActor;
         return entity_template;
     }
@@ -2943,7 +3533,8 @@ std::vector<ActorTemplateConfig> load_actor_templates_from_source(
     const GameplayConfigSource& source,
     const std::string& directory,
     const WeaponCatalogConfig& weapons,
-    const ColliderCatalogConfig& colliders) {
+    const ColliderCatalogConfig& colliders,
+    const std::vector<SkeletonAssetConfig>& skeleton_assets) {
     std::vector<ActorTemplateConfig> actor_templates;
     std::unordered_map<std::uint32_t, std::string> ids;
     std::unordered_map<std::string, std::uint32_t> names;
@@ -2955,7 +3546,8 @@ std::vector<ActorTemplateConfig> load_actor_templates_from_source(
                 file,
                 source.source_kind(),
                 weapons,
-                colliders);
+                colliders,
+                skeleton_assets);
         if (ids.contains(actor_template.actor_template_id)) {
             throw std::runtime_error("duplicate actor template id: " + file);
         }
@@ -2984,7 +3576,8 @@ std::vector<EntityTemplateConfig> load_entity_templates_from_source(
     const WeaponCatalogConfig& weapons,
     const ColliderCatalogConfig& colliders,
     const std::vector<ProjectileTemplateConfig>& projectile_templates,
-    const std::vector<PropPopulationRuleConfig>& prop_population_rules) {
+    const std::vector<PropPopulationRuleConfig>& prop_population_rules,
+    const std::vector<SkeletonAssetConfig>& skeleton_assets) {
     std::vector<EntityTemplateConfig> entity_templates;
     std::unordered_map<std::uint32_t, std::string> ids;
     std::unordered_map<std::string, std::uint32_t> names;
@@ -2998,7 +3591,8 @@ std::vector<EntityTemplateConfig> load_entity_templates_from_source(
                 weapons,
                 colliders,
                 projectile_templates,
-                prop_population_rules);
+                prop_population_rules,
+                skeleton_assets);
         if (ids.contains(entity_template.actor_template_id)) {
             throw std::runtime_error("duplicate entity template id: " + file);
         }
@@ -4350,6 +4944,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             "collider_template_dir",
             "prop_population_rules",
             "static_collision_scene",
+            "skeleton_manifests",
             "player",
             "enemy",
         },
@@ -4414,6 +5009,12 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     const std::string weapon_template_dir =
         source.resolve_path(base_path, document["weapon_template_dir"]);
     GameServerGameplayConfig config;
+    if (document["skeleton_manifests"]) {
+        config.skeleton_assets = load_skeleton_assets_from_yaml(
+            source,
+            base_path,
+            document["skeleton_manifests"]);
+    }
     if (document["prop_population_rules"]) {
         config.prop_population_rules = prop_population_rules_from_yaml(
             document["prop_population_rules"],
@@ -4497,7 +5098,8 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             config.weapons,
             config.colliders,
             config.projectile_templates,
-            config.prop_population_rules);
+            config.prop_population_rules,
+            config.skeleton_assets);
         config.actor_templates =
             actor_templates_from_entity_templates(config.entity_templates);
     } else if (document["actor_template_dir"]) {
@@ -4507,7 +5109,8 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             source,
             actor_template_dir,
             config.weapons,
-            config.colliders);
+            config.colliders,
+            config.skeleton_assets);
         config.entity_templates = config.actor_templates;
     } else {
         apply_default_actor_templates(&config);
@@ -4736,6 +5339,20 @@ std::uint64_t compute_gameplay_catalog_hash(
     hash_scalar(&hash, config.static_collision_scene.scene_id);
     hash_scalar(&hash, config.static_collision_scene.collider_id);
     hash_scalar(&hash, config.static_collision_scene.collision_layer);
+    std::vector<SkeletonAssetConfig> skeleton_assets = config.skeleton_assets;
+    std::sort(
+        skeleton_assets.begin(),
+        skeleton_assets.end(),
+        [](const SkeletonAssetConfig& lhs, const SkeletonAssetConfig& rhs) {
+            return lhs.skeleton_asset_id < rhs.skeleton_asset_id;
+        });
+    for (const SkeletonAssetConfig& asset : skeleton_assets) {
+        hash_scalar(&hash, asset.skeleton_asset_id);
+        hash_scalar(&hash, asset.content_hash);
+        hash_scalar(
+            &hash,
+            static_cast<std::uint32_t>(asset.bones.size()));
+    }
     std::vector<ActorTemplateConfig> actor_templates = config.actor_templates;
     std::sort(
         actor_templates.begin(),
@@ -5044,6 +5661,10 @@ std::vector<std::string> validate_gameplay_config(
             actor_template.movement_step_height < 0.0f ||
             actor_template.movement_ground_probe_distance <= 0.0f ||
             actor_template.movement_ground_snap_distance < 0.0f ||
+            (actor_template.skeleton.enabled &&
+             (!std::isfinite(
+                  actor_template.movement_max_yaw_degrees_per_second) ||
+              actor_template.movement_max_yaw_degrees_per_second <= 0.0f)) ||
             actor_template.hitbox_half_extents.x <= 0.0f ||
             actor_template.hitbox_half_extents.y <= 0.0f ||
             actor_template.hitbox_half_extents.z <= 0.0f ||
@@ -5343,6 +5964,28 @@ KernelCombatStateDefinition make_combat_state_from_actor_template(
 KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
     const GameServerGameplayConfig& config) {
     KernelGameplayCatalogStorage storage;
+    storage.skeleton_asset_bytes.reserve(config.skeleton_assets.size());
+    storage.skeleton_assets.reserve(config.skeleton_assets.size());
+    for (const SkeletonAssetConfig& authored_asset : config.skeleton_assets) {
+        storage.skeleton_asset_bytes.push_back(
+            authored_asset.runtime_skeleton);
+    }
+    for (std::size_t index = 0u;
+         index < config.skeleton_assets.size();
+         ++index) {
+        const SkeletonAssetConfig& authored_asset =
+            config.skeleton_assets[index];
+        const std::vector<std::uint8_t>& bytes =
+            storage.skeleton_asset_bytes[index];
+        storage.skeleton_assets.push_back(KernelSkeletonAssetDefinition{
+            sizeof(KernelSkeletonAssetDefinition),
+            authored_asset.skeleton_asset_id,
+            authored_asset.content_hash,
+            bytes.data(),
+            static_cast<std::uint32_t>(bytes.size()),
+            static_cast<std::uint32_t>(authored_asset.bones.size()),
+        });
+    }
     for (const ActorTemplateConfig& actor_template : config.actor_templates) {
         KernelActorTemplateDefinition definition{};
         definition.struct_size = sizeof(KernelActorTemplateDefinition);
@@ -5384,6 +6027,8 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             authored_template.movement_ground_probe_distance;
         entity_template.movement.ground_snap_distance =
             authored_template.movement_ground_snap_distance;
+        entity_template.movement.max_yaw_degrees_per_second =
+            authored_template.movement_max_yaw_degrees_per_second;
         entity_template.activated_trigger = compile_action_trigger_binding(
             authored_template.activated_trigger,
             "on_activated",
@@ -5410,6 +6055,72 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             config.action_graph_templates,
             config.entity_templates,
             &config.projectile_templates);
+        if (authored_template.skeleton.enabled) {
+            entity_template.skeleton.struct_size =
+                sizeof(KernelSkeletonBindingDefinition);
+            entity_template.skeleton.skeleton_asset_id =
+                authored_template.skeleton.skeleton_asset_id;
+            entity_template.skeleton.skeleton_content_hash =
+                authored_template.skeleton.content_hash;
+            entity_template.skeleton.bone_count =
+                authored_template.skeleton.bone_count;
+            entity_template.skeleton.root_bone_index =
+                authored_template.skeleton.root_bone_index;
+            entity_template.skeleton.body_bone_index =
+                authored_template.skeleton.body_bone_index;
+            entity_template.skeleton.leg_count =
+                static_cast<std::uint32_t>(
+                    authored_template.skeleton.legs.size());
+            entity_template.skeleton.processing_order_count =
+                static_cast<std::uint32_t>(
+                    authored_template.skeleton.processing_order.size());
+            entity_template.skeleton.input_deadzone =
+                authored_template.skeleton.input_deadzone;
+            entity_template.skeleton.gait_cycle_ticks =
+                authored_template.skeleton.gait_cycle_ticks;
+            entity_template.skeleton.gait_swing_ticks =
+                authored_template.skeleton.gait_swing_ticks;
+            entity_template.skeleton.max_swinging_legs =
+                authored_template.skeleton.max_swinging_legs;
+            entity_template.skeleton.foothold_query_type =
+                authored_template.skeleton.foothold_query_type;
+            entity_template.skeleton.foothold_query_start_height_meters =
+                authored_template.skeleton
+                    .foothold_query_start_height_meters;
+            entity_template.skeleton.foothold_query_distance_meters =
+                authored_template.skeleton.foothold_query_distance_meters;
+            entity_template.skeleton.foothold_candidate_count =
+                static_cast<std::uint32_t>(
+                    authored_template.skeleton
+                        .foothold_candidate_offsets.size());
+            for (std::uint32_t candidate = 0u;
+                 candidate <
+                     entity_template.skeleton.foothold_candidate_count;
+                 ++candidate) {
+                entity_template.skeleton.foothold_candidate_offsets[candidate] =
+                    authored_template.skeleton
+                        .foothold_candidate_offsets[candidate];
+            }
+            for (std::uint32_t leg_index = 0u;
+                 leg_index < entity_template.skeleton.leg_count;
+                 ++leg_index) {
+                const SkeletonLegConfig& leg =
+                    authored_template.skeleton.legs[leg_index];
+                entity_template.skeleton.legs[leg_index] =
+                    KernelSkeletonLegDefinition{
+                        leg_index,
+                        leg.hip_bone_index,
+                        leg.knee_bone_index,
+                        leg.foot_bone_index,
+                        leg.phase_offset_ticks,
+                        leg.pole_local,
+                        leg.step_height_meters,
+                        leg.max_reach_ratio,
+                    };
+                entity_template.skeleton.processing_order[leg_index] =
+                    authored_template.skeleton.processing_order[leg_index];
+            }
+        }
 
         if (authored_template.entity_type == kEntityTypeActor) {
             entity_template.component_flags =
@@ -5478,6 +6189,10 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
                 entity_template.combat.hitbox_half_extents =
                     authored_template.hitbox_half_extents;
             }
+        }
+        if (authored_template.skeleton.enabled) {
+            entity_template.component_flags |=
+                KERNEL_ENTITY_COMPONENT_SKELETON;
         }
         storage.entity_templates.push_back(entity_template);
     }
@@ -5554,6 +6269,9 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
         storage.prop_population_rules.data();
     storage.definition.prop_population_rule_count =
         static_cast<std::uint32_t>(storage.prop_population_rules.size());
+    storage.definition.skeleton_assets = storage.skeleton_assets.data();
+    storage.definition.skeleton_asset_count =
+        static_cast<std::uint32_t>(storage.skeleton_assets.size());
     return storage;
 }
 

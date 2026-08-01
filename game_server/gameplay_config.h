@@ -54,6 +54,60 @@ struct InventorySlotConfig {
     std::uint32_t quantity = 0;
 };
 
+struct SkeletonManifestBoneConfig {
+    std::string name;
+    std::int32_t parent_index = -1;
+};
+
+struct SkeletonAssetConfig {
+    std::uint32_t skeleton_asset_id = 0;
+    std::string name;
+    std::uint64_t content_hash = 0;
+    std::string manifest_reference;
+    std::string runtime_reference;
+    std::vector<std::uint8_t> runtime_skeleton;
+    std::vector<SkeletonManifestBoneConfig> bones;
+};
+
+struct SkeletonLegConfig {
+    std::string id;
+    std::string hip_bone;
+    std::string knee_bone;
+    std::string foot_bone;
+    std::uint32_t hip_bone_index = 0;
+    std::uint32_t knee_bone_index = 0;
+    std::uint32_t foot_bone_index = 0;
+    std::uint32_t phase_offset_ticks = 0;
+    KernelVec3 pole_local{};
+    float step_height_meters = 0.0f;
+    float max_reach_ratio = 0.0f;
+};
+
+struct SkeletonBindingConfig {
+    bool enabled = false;
+    std::uint32_t skeleton_asset_id = 0;
+    std::uint64_t content_hash = 0;
+    std::uint32_t bone_count = 0;
+    std::string runtime_asset;
+    std::string source_manifest;
+    std::string root_bone;
+    std::string body_bone;
+    std::uint32_t root_bone_index = 0;
+    std::uint32_t body_bone_index = 0;
+    std::string locomotion_type;
+    std::string forward_axis;
+    float input_deadzone = 0.0f;
+    std::uint32_t gait_cycle_ticks = 0;
+    std::uint32_t gait_swing_ticks = 0;
+    std::uint32_t max_swinging_legs = 0;
+    std::uint8_t foothold_query_type = KernelFootholdQueryType_None;
+    float foothold_query_start_height_meters = 0.0f;
+    float foothold_query_distance_meters = 0.0f;
+    std::vector<KernelVec2> foothold_candidate_offsets;
+    std::vector<SkeletonLegConfig> legs;
+    std::vector<std::uint32_t> processing_order;
+};
+
 struct ActorTemplateConfig {
     std::uint32_t actor_template_id = 0;
     std::string name;
@@ -73,6 +127,7 @@ struct ActorTemplateConfig {
     float movement_step_height = 0.4f;
     float movement_ground_probe_distance = 0.25f;
     float movement_ground_snap_distance = 0.5f;
+    float movement_max_yaw_degrees_per_second = 0.0f;
     std::array<std::uint32_t, KERNEL_MAX_WEAPON_SLOTS> weapon_ids{};
     std::uint8_t weapon_slot_count = 0;
     std::uint8_t active_weapon_slot = 0;
@@ -97,6 +152,7 @@ struct ActorTemplateConfig {
     TriggerBindingConfig health_depleted_trigger;
     TriggerBindingConfig destroy_entity_trigger;
     KernelPropDefinition prop{};
+    SkeletonBindingConfig skeleton;
 };
 
 using EntityTemplateConfig = ActorTemplateConfig;
@@ -201,6 +257,7 @@ struct GameServerGameplayConfig {
     std::vector<ItemTemplateConfig> item_templates;
     std::vector<ProjectileTemplateConfig> projectile_templates;
     std::vector<PropPopulationRuleConfig> prop_population_rules;
+    std::vector<SkeletonAssetConfig> skeleton_assets;
     StaticCollisionSceneConfig static_collision_scene;
 };
 
@@ -213,6 +270,8 @@ struct KernelGameplayCatalogStorage {
     std::vector<KernelActionTemplateDefinition> action_templates;
     std::vector<KernelItemTemplateDefinition> item_templates;
     std::vector<KernelPropPopulationRuleDefinition> prop_population_rules;
+    std::vector<std::vector<std::uint8_t>> skeleton_asset_bytes;
+    std::vector<KernelSkeletonAssetDefinition> skeleton_assets;
     KernelGameplayCatalogDefinition definition{};
 };
 

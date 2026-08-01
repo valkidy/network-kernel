@@ -1,0 +1,11 @@
+licenses(["notice"])
+
+load(":skeleton_asset_rules.bzl", "skeleton_asset")
+
+package(default_visibility = ["//visibility:public"])
+
+skeleton_asset(
+    name = "simplified_monster_sim_v4",
+    src = "raw/simplified_monster_sim_v4.glb",
+    asset_id = 1,
+)

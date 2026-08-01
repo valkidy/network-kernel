@@ -14,6 +14,7 @@
 
 #include <fmt/format.h>
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <spdlog/spdlog.h>
 
 #include "kernel/public/kernel_api.h"
@@ -649,6 +650,18 @@ const KernelEntityTemplateDefinition* find_entity_template(
             return entity_template.entity_template_id == entity_template_id;
         });
     return found == templates.end() ? nullptr : &*found;
+}
+
+const RuntimeSkeletonAsset* find_skeleton_asset(
+    const std::vector<RuntimeSkeletonAsset>& assets,
+    std::uint32_t skeleton_asset_id) {
+    const auto found = std::find_if(
+        assets.begin(),
+        assets.end(),
+        [skeleton_asset_id](const RuntimeSkeletonAsset& asset) {
+            return asset.skeleton_asset_id == skeleton_asset_id;
+        });
+    return found == assets.end() ? nullptr : &*found;
 }
 
 glm::vec3 collider_template_half_extents(
@@ -2330,10 +2343,25 @@ bool KernelEngine::load_gameplay_catalog(
          catalog.item_templates == nullptr) ||
         (catalog.prop_population_rule_count != 0 &&
          catalog.prop_population_rules == nullptr) ||
+        (catalog.skeleton_asset_count != 0 &&
+         catalog.skeleton_assets == nullptr) ||
         (catalog.entity_template_count != 0 &&
          catalog.entity_templates == nullptr) ||
         catalog.collider_binding_count != 0) {
         return false;
+    }
+
+    std::vector<RuntimeSkeletonAsset> validated_skeleton_assets;
+    validated_skeleton_assets.reserve(catalog.skeleton_asset_count);
+    for (std::uint32_t index = 0; index < catalog.skeleton_asset_count; ++index) {
+        RuntimeSkeletonAsset asset;
+        if (!load_runtime_skeleton_asset(catalog.skeleton_assets[index], &asset) ||
+            find_skeleton_asset(
+                validated_skeleton_assets,
+                asset.skeleton_asset_id) != nullptr) {
+            return false;
+        }
+        validated_skeleton_assets.push_back(std::move(asset));
     }
 
     std::vector<KernelActionTemplateDefinition> validated_action_templates;
@@ -2452,6 +2480,79 @@ bool KernelEngine::load_gameplay_catalog(
             entity_template.ai.struct_size < sizeof(KernelEntityAiDefinition) ||
             entity_template.ai.controller_type > KernelAiControllerType_Director) {
             return false;
+        }
+        const KernelSkeletonBindingDefinition& skeleton =
+            entity_template.skeleton;
+        const bool skeleton_enabled = skeleton.struct_size != 0u;
+        if (skeleton_enabled !=
+            ((entity_template.component_flags &
+              KERNEL_ENTITY_COMPONENT_SKELETON) != 0u)) {
+            return false;
+        }
+        if (skeleton_enabled) {
+            const RuntimeSkeletonAsset* asset = find_skeleton_asset(
+                validated_skeleton_assets,
+                skeleton.skeleton_asset_id);
+            if (skeleton.struct_size <
+                    sizeof(KernelSkeletonBindingDefinition) ||
+                asset == nullptr ||
+                skeleton.skeleton_content_hash !=
+                    asset->skeleton_content_hash ||
+                skeleton.bone_count !=
+                    static_cast<std::uint32_t>(asset->skeleton.num_joints()) ||
+                skeleton.root_bone_index >= skeleton.bone_count ||
+                skeleton.body_bone_index >= skeleton.bone_count ||
+                skeleton.leg_count == 0u ||
+                skeleton.leg_count > KERNEL_MAX_SKELETON_LEGS ||
+                skeleton.processing_order_count != skeleton.leg_count ||
+                !validate_locomotion_definition(skeleton) ||
+                !std::isfinite(skeleton.input_deadzone) ||
+                skeleton.input_deadzone < 0.0f ||
+                skeleton.input_deadzone >= 1.0f ||
+                skeleton.gait_cycle_ticks == 0u ||
+                skeleton.gait_swing_ticks == 0u ||
+                skeleton.gait_swing_ticks >= skeleton.gait_cycle_ticks ||
+                skeleton.max_swinging_legs == 0u ||
+                skeleton.max_swinging_legs > skeleton.leg_count ||
+                !std::isfinite(
+                    entity_template.movement.max_yaw_degrees_per_second) ||
+                entity_template.movement.max_yaw_degrees_per_second <= 0.0f) {
+                return false;
+            }
+            std::array<bool, KERNEL_MAX_SKELETON_LEGS> ordered{};
+            for (std::uint32_t leg_index = 0u;
+                 leg_index < skeleton.leg_count;
+                 ++leg_index) {
+                const KernelSkeletonLegDefinition& leg =
+                    skeleton.legs[leg_index];
+                if (leg.leg_id != leg_index ||
+                    leg.hip_bone_index >= skeleton.bone_count ||
+                    leg.knee_bone_index >= skeleton.bone_count ||
+                    leg.foot_bone_index >= skeleton.bone_count ||
+                    leg.hip_bone_index == leg.knee_bone_index ||
+                    leg.hip_bone_index == leg.foot_bone_index ||
+                    leg.knee_bone_index == leg.foot_bone_index ||
+                    !std::isfinite(leg.pole_local.x) ||
+                    !std::isfinite(leg.pole_local.y) ||
+                    !std::isfinite(leg.pole_local.z) ||
+                    !std::isfinite(leg.step_height_meters) ||
+                    leg.step_height_meters < 0.0f ||
+                    !std::isfinite(leg.max_reach_ratio) ||
+                    leg.max_reach_ratio <= 0.0f ||
+                    leg.max_reach_ratio > 1.0f ||
+                    asset->skeleton.joint_parents()[leg.knee_bone_index] !=
+                        static_cast<std::int16_t>(leg.hip_bone_index) ||
+                    asset->skeleton.joint_parents()[leg.foot_bone_index] !=
+                        static_cast<std::int16_t>(leg.knee_bone_index)) {
+                    return false;
+                }
+                const std::uint32_t ordered_leg =
+                    skeleton.processing_order[leg_index];
+                if (ordered_leg >= skeleton.leg_count || ordered[ordered_leg]) {
+                    return false;
+                }
+                ordered[ordered_leg] = true;
+            }
         }
         for (const KernelActionTriggerDefinition* trigger : {
                  &entity_template.activated_trigger,
@@ -2922,6 +3023,8 @@ bool KernelEngine::load_gameplay_catalog(
     item_templates_ = std::move(validated_item_templates);
     prop_population_rules_ =
         std::move(validated_prop_population_rules);
+    skeleton_assets_ = std::move(validated_skeleton_assets);
+    locomotion_states_.clear();
     if (!item_store_.set_templates(item_templates_, &item_validation_error)) {
         return false;
     }
@@ -2972,6 +3075,43 @@ std::uint32_t KernelEngine::get_render_states_at_time(
         std::min(max_states, static_cast<std::uint32_t>(render_states_.size()));
     std::memcpy(out_states, render_states_.data(), sizeof(RenderEntityState) * count);
     return count;
+}
+
+std::uint32_t KernelEngine::get_skeleton_render_states(
+    KernelSkeletonRenderState* out_states,
+    std::uint32_t max_states,
+    KernelBoneLocalTransform* out_bone_transforms,
+    std::uint32_t max_bone_transforms,
+    KernelSkeletonRenderStateResult* out_result) {
+    rebuild_skeleton_presentation_at_time(client_local_time_us_);
+    return copy_skeleton_render_states(
+        skeleton_presentation_poses_,
+        0u,
+        client_local_time_us_,
+        out_states,
+        max_states,
+        out_bone_transforms,
+        max_bone_transforms,
+        out_result);
+}
+
+std::uint32_t KernelEngine::get_skeleton_render_states_at_time(
+    std::uint64_t client_render_time_us,
+    KernelSkeletonRenderState* out_states,
+    std::uint32_t max_states,
+    KernelBoneLocalTransform* out_bone_transforms,
+    std::uint32_t max_bone_transforms,
+    KernelSkeletonRenderStateResult* out_result) {
+    rebuild_skeleton_presentation_at_time(client_render_time_us);
+    return copy_skeleton_render_states(
+        skeleton_presentation_poses_,
+        KERNEL_SKELETON_RENDER_RESULT_FLAG_AT_TIME,
+        client_render_time_us,
+        out_states,
+        max_states,
+        out_bone_transforms,
+        max_bone_transforms,
+        out_result);
 }
 
 std::uint32_t KernelEngine::poll_events(KernelEvent* out_events, std::uint32_t max_events) {
@@ -4549,6 +4689,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     pending_remote_action_presentation_events_.clear();
     remote_presentation_dedup_.clear();
     render_states_.clear();
+    locomotion_states_.clear();
     latest_snapshot_ = WorldSnapshot{};
     latest_client_snapshot_ = WorldSnapshot{};
     client_snapshot_buffer_.clear();
@@ -7692,6 +7833,150 @@ void KernelEngine::finalize_simulated_projectile_destructions(
     }
 }
 
+void KernelEngine::update_legged_locomotion(
+    const std::vector<QueuedInput>& movement_inputs,
+    float fixed_delta_seconds) {
+    std::unordered_set<NetId> active_locomotion_entities;
+    const auto view = world_.registry().view<NetworkIdentity, Transform>();
+    for (const entt::entity entity : view) {
+        std::uint32_t template_id = 0u;
+        if (world_.registry().all_of<EntityTemplateRef>(entity)) {
+            template_id = world_.registry()
+                .get<EntityTemplateRef>(entity)
+                .entity_template_id;
+        } else if (world_.registry().all_of<ActorTemplateRef>(entity)) {
+            template_id = world_.registry()
+                .get<ActorTemplateRef>(entity)
+                .actor_template_id;
+        }
+        const KernelEntityTemplateDefinition* entity_template =
+            find_entity_template(entity_templates_, template_id);
+        if (entity_template == nullptr ||
+            entity_template->skeleton.struct_size <
+                sizeof(KernelSkeletonBindingDefinition)) {
+            continue;
+        }
+
+        const NetId net_id = view.get<NetworkIdentity>(entity).net_id;
+        Transform& transform = view.get<Transform>(entity);
+        active_locomotion_entities.insert(net_id);
+        auto [state, inserted] = locomotion_states_.try_emplace(net_id);
+        if (inserted) {
+            const glm::vec3 forward =
+                transform.rotation * glm::vec3{0.0f, 0.0f, 1.0f};
+            const float initial_yaw = std::atan2(forward.x, forward.z);
+            if (!initialize_locomotion_state(
+                    entity_template->skeleton,
+                    initial_yaw,
+                    tick_loop_.current_tick(),
+                    &state->second)) {
+                locomotion_states_.erase(state);
+                continue;
+            }
+        }
+
+        const QueuedInput* entity_input = nullptr;
+        const NetworkIdentity& identity = view.get<NetworkIdentity>(entity);
+        for (const QueuedInput& candidate : movement_inputs) {
+            if (candidate.controlled_net_id != net_id ||
+                (entity_input != nullptr &&
+                 candidate.input.input_seq <= entity_input->input.input_seq)) {
+                continue;
+            }
+            entity_input = &candidate;
+        }
+        if (entity_input == nullptr) {
+            for (const QueuedInput& candidate : movement_inputs) {
+                if (candidate.controlled_net_id != 0u ||
+                    candidate.owner_peer != identity.owner_peer ||
+                    (entity_input != nullptr &&
+                     candidate.input.input_seq <= entity_input->input.input_seq)) {
+                    continue;
+                }
+                entity_input = &candidate;
+            }
+        }
+        const KernelVec2 move_input = entity_input == nullptr
+            ? KernelVec2{}
+            : entity_input->input.move;
+        if (!advance_locomotion_state(
+                entity_template->skeleton,
+                move_input,
+                entity_template->movement.max_yaw_degrees_per_second,
+                fixed_delta_seconds,
+                tick_loop_.current_tick(),
+                &state->second)) {
+            continue;
+        }
+        transform.rotation = glm::angleAxis(
+            state->second.root_yaw_radians,
+            glm::vec3{0.0f, 1.0f, 0.0f});
+
+        const RuntimeSkeletonAsset* skeleton_asset = find_skeleton_asset(
+            skeleton_assets_,
+            entity_template->skeleton.skeleton_asset_id);
+        if (skeleton_asset == nullptr) {
+            state->second.pose_valid = false;
+            continue;
+        }
+        const glm::vec3 root_velocity =
+            world_.registry().all_of<Velocity>(entity)
+            ? world_.registry().get<Velocity>(entity).linear
+            : glm::vec3{0.0f};
+        const LocomotionGroundingQuery grounding_query =
+            [this, net_id](
+                const glm::vec3& origin,
+                float max_distance,
+                LocomotionGroundingHit* out_hit) {
+                if (physics_world_ == nullptr || out_hit == nullptr) {
+                    return false;
+                }
+                physics::RayCastRequest request{};
+                request.origin = origin;
+                request.direction = glm::vec3{0.0f, -1.0f, 0.0f};
+                request.max_distance = max_distance;
+                request.filter.collision_mask =
+                    physics::collision_layer_bit(
+                        physics::CollisionLayer::kTerrain) |
+                    physics::collision_layer_bit(
+                        physics::CollisionLayer::kStaticObstacle);
+                request.filter.ignored_entity_net_id = net_id;
+                request.filter.object_kind_mask =
+                    (1u << static_cast<std::uint32_t>(
+                         physics::CollisionObjectKind::kTerrain)) |
+                    (1u << static_cast<std::uint32_t>(
+                         physics::CollisionObjectKind::kStaticObstacle));
+                physics::CollisionHit hit{};
+                if (!physics_world_->ray_cast_closest(request, &hit)) {
+                    return false;
+                }
+                out_hit->position = hit.position;
+                out_hit->normal = hit.normal;
+                out_hit->supporting_entity_net_id =
+                    hit.identity.entity_net_id;
+                out_hit->supporting_collider_id = hit.identity.collider_id;
+                return true;
+            };
+        if (!solve_legged_locomotion_pose(
+                skeleton_asset->skeleton,
+                skeleton_asset->bind_pose,
+                entity_template->skeleton,
+                transform.position,
+                root_velocity,
+                entity_template->movement.max_slope_degrees,
+                fixed_delta_seconds,
+                grounding_query,
+                &state->second)) {
+            state->second.pose_valid = false;
+        }
+    }
+    std::erase_if(
+        locomotion_states_,
+        [&active_locomotion_entities](const auto& entry) {
+            return !active_locomotion_entities.contains(entry.first);
+        });
+}
+
 void KernelEngine::simulate_tick() {
     const auto tick_cost_start = std::chrono::steady_clock::now();
     const float fixed_delta = tick_loop_.fixed_delta_seconds();
@@ -7739,6 +8024,7 @@ void KernelEngine::simulate_tick() {
         &movement_stats,
         session_rules_.actor_blocking_mode,
         &physics_finalized_actor_net_ids);
+    update_legged_locomotion(movement_inputs, fixed_delta);
     acknowledge_simulated_movement_inputs(movement_inputs);
     benchmark_stats_.grounded_query_count +=
         movement_stats.grounded_query_count;
@@ -8710,6 +8996,44 @@ void KernelEngine::rebuild_render_states_at_time(
     report_render_state_overflow_if_needed();
     benchmark_stats_.render_solver_cost_us +=
         std::max<std::uint64_t>(1, elapsed_cost_us(cost_start));
+}
+
+void KernelEngine::rebuild_skeleton_presentation_at_time(
+    std::uint64_t client_render_time_us) {
+    rebuild_render_states_at_time(client_render_time_us);
+    skeleton_presentation_poses_.clear();
+    for (const RenderEntityState& render_state : render_states_) {
+        const KernelEntityTemplateDefinition* entity_template =
+            find_entity_template(entity_templates_, render_state.template_id);
+        if (entity_template == nullptr ||
+            entity_template->skeleton.struct_size <
+                sizeof(KernelSkeletonBindingDefinition)) {
+            continue;
+        }
+        const RuntimeSkeletonAsset* asset = find_skeleton_asset(
+            skeleton_assets_,
+            entity_template->skeleton.skeleton_asset_id);
+        if (asset == nullptr) {
+            continue;
+        }
+        SkeletonPresentationPose pose;
+        pose.entity_net_id = render_state.net_id;
+        pose.skeleton_asset_id = asset->skeleton_asset_id;
+        pose.skeleton_content_hash = asset->skeleton_content_hash;
+        pose.pose_tick = tick_loop_.current_tick();
+        pose.pose_time_us = client_render_time_us;
+        const auto locomotion = locomotion_states_.find(render_state.net_id);
+        if (locomotion != locomotion_states_.end() &&
+            locomotion->second.pose_valid &&
+            locomotion->second.local_pose.size() == asset->bind_pose.size()) {
+            pose.pose_flags = KERNEL_SKELETON_POSE_FLAG_PROCEDURAL;
+            pose.local_transforms = locomotion->second.local_pose;
+        } else {
+            pose.pose_flags = KERNEL_SKELETON_POSE_FLAG_BIND_POSE;
+            pose.local_transforms = asset->bind_pose;
+        }
+        skeleton_presentation_poses_.push_back(std::move(pose));
+    }
 }
 
 void KernelEngine::report_render_state_overflow_if_needed() {
