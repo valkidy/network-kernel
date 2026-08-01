@@ -1,6 +1,7 @@
 #include "game_server/gameplay_config.h"
 
 #include <cassert>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -531,7 +532,29 @@ int main() {
             std::string(error.what()).find("invalid two-bone hierarchy") !=
             std::string::npos;
     }
-    assert(invalid_leg_hierarchy_rejected);
+    require(invalid_leg_hierarchy_rejected);
+    bool invalid_gait_schedule_rejected = false;
+    try {
+        const std::vector<std::uint8_t> invalid_gait_bundle =
+            make_gameplay_bundle_zip(
+                production_sentry_yaml,
+                {},
+                {},
+                {},
+                replace_once(
+                    production_monster_yaml,
+                    "max_swinging_legs: 2",
+                    "max_swinging_legs: 1"));
+        (void)network_example::game_server::load_gameplay_config_from_bundle_memory(
+            invalid_gait_bundle.data(),
+            static_cast<std::uint32_t>(invalid_gait_bundle.size()),
+            "gameplay_catalog.yaml");
+    } catch (const std::exception& error) {
+        invalid_gait_schedule_rejected =
+            std::string(error.what()).find("exceeds max_swinging_legs") !=
+            std::string::npos;
+    }
+    require(invalid_gait_schedule_rejected);
     const auto load_player_yaml = [&](const std::string& player_yaml) {
         const std::vector<std::uint8_t> bundle = make_gameplay_bundle_zip(
             production_sentry_yaml, {}, player_yaml);
@@ -839,6 +862,11 @@ int main() {
     require(monster_template->skeleton.enabled);
     require(monster_template->skeleton.legs.size() == 4u);
     require(monster_template->skeleton.processing_order.size() == 4u);
+    require(monster_template->movement_max_yaw_degrees_per_second == 45.0f);
+    require(monster_template->skeleton.input_deadzone == 0.01f);
+    require(monster_template->skeleton.gait_cycle_ticks == 60u);
+    require(monster_template->skeleton.gait_swing_ticks == 24u);
+    require(monster_template->skeleton.max_swinging_legs == 2u);
     require(catalog.definition.skeleton_asset_count == 1u);
     require(catalog.skeleton_assets[0].bone_count == 41u);
     const auto monster_definition = std::find_if(
@@ -852,6 +880,10 @@ int main() {
         (monster_definition->component_flags &
          KERNEL_ENTITY_COMPONENT_SKELETON) != 0u);
     require(monster_definition->skeleton.leg_count == 4u);
+    require(monster_definition->movement.max_yaw_degrees_per_second == 45.0f);
+    require(monster_definition->skeleton.gait_cycle_ticks == 60u);
+    require(monster_definition->skeleton.gait_swing_ticks == 24u);
+    require(monster_definition->skeleton.legs[1].phase_offset_ticks == 15u);
     const auto magic_bottle = std::find_if(
         catalog.entity_templates.begin(),
         catalog.entity_templates.end(),
@@ -1774,60 +1806,88 @@ int main() {
     };
 
     KernelHandle* skeleton_kernel = make_server_kernel();
-    assert(network_example::game_server::load_kernel_gameplay_catalog(
+    require(network_example::game_server::load_kernel_gameplay_catalog(
         skeleton_kernel,
         config));
-    assert(Kernel_StartDedicatedServer(skeleton_kernel, 7900));
+    require(Kernel_StartDedicatedServer(skeleton_kernel, 7900));
     KernelServerEntityCreateInfo skeleton_create{};
     skeleton_create.struct_size = sizeof(skeleton_create);
     skeleton_create.entity_template_id = 20u;
     skeleton_create.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
     std::uint32_t skeleton_entity_id = 0u;
-    assert(Kernel_ServerCreateEntity(
+    require(Kernel_ServerCreateEntity(
         skeleton_kernel,
         &skeleton_create,
         &skeleton_entity_id));
+    KernelPlayerInput locomotion_input{};
+    locomotion_input.input_seq = 1u;
+    locomotion_input.move = KernelVec2{1.0f, 0.0f};
+    require(Kernel_ServerSubmitEntityInput(
+        skeleton_kernel,
+        skeleton_entity_id,
+        &locomotion_input));
     Kernel_Update(skeleton_kernel, 1.0f / 30.0f);
     KernelSkeletonRenderStateResult skeleton_result{};
     skeleton_result.struct_size = sizeof(skeleton_result);
-    assert(Kernel_GetSkeletonRenderStates(
+    require(Kernel_GetSkeletonRenderStates(
                skeleton_kernel,
                nullptr,
                0u,
                nullptr,
                0u,
                &skeleton_result) == 0u);
-    assert(skeleton_result.status ==
+    require(skeleton_result.status ==
            KERNEL_SKELETON_RENDER_STATUS_INSUFFICIENT_CAPACITY);
-    assert(skeleton_result.required_state_count == 1u);
-    assert(skeleton_result.required_bone_transform_count == 41u);
+    require(skeleton_result.required_state_count == 1u);
+    require(skeleton_result.required_bone_transform_count == 41u);
     std::array<KernelSkeletonRenderState, 1> skeleton_states{};
     std::array<KernelBoneLocalTransform, 41> bone_transforms{};
     skeleton_result.struct_size = sizeof(skeleton_result);
-    assert(Kernel_GetSkeletonRenderStates(
+    require(Kernel_GetSkeletonRenderStates(
                skeleton_kernel,
                skeleton_states.data(),
                skeleton_states.size(),
                bone_transforms.data(),
                bone_transforms.size() - 1u,
                &skeleton_result) == 0u);
-    assert(skeleton_result.status ==
+    require(skeleton_result.status ==
            KERNEL_SKELETON_RENDER_STATUS_INSUFFICIENT_CAPACITY);
     skeleton_result.struct_size = sizeof(skeleton_result);
-    assert(Kernel_GetSkeletonRenderStates(
+    require(Kernel_GetSkeletonRenderStates(
                skeleton_kernel,
                skeleton_states.data(),
                skeleton_states.size(),
                bone_transforms.data(),
                bone_transforms.size(),
                &skeleton_result) == 1u);
-    assert(skeleton_result.status == KERNEL_SKELETON_RENDER_STATUS_SUCCESS);
-    assert(skeleton_states[0].entity_net_id == skeleton_entity_id);
-    assert(skeleton_states[0].skeleton_asset_id == 1u);
-    assert(skeleton_states[0].bone_count == 41u);
-    assert((skeleton_states[0].pose_flags &
+    require(skeleton_result.status == KERNEL_SKELETON_RENDER_STATUS_SUCCESS);
+    require(skeleton_states[0].entity_net_id == skeleton_entity_id);
+    require(skeleton_states[0].skeleton_asset_id == 1u);
+    require(skeleton_states[0].bone_count == 41u);
+    require((skeleton_states[0].pose_flags &
             KERNEL_SKELETON_POSE_FLAG_BIND_POSE) != 0u);
-    assert(bone_transforms[0].local_scale.x == 1.0f);
+    require(bone_transforms[0].local_scale.x == 1.0f);
+    std::array<RenderEntityState, 256> locomotion_render_states{};
+    const std::uint32_t locomotion_render_count = Kernel_GetRenderStates(
+        skeleton_kernel,
+        locomotion_render_states.data(),
+        locomotion_render_states.size());
+    const auto locomotion_render_state = std::find_if(
+        locomotion_render_states.begin(),
+        locomotion_render_states.begin() + locomotion_render_count,
+        [skeleton_entity_id](const RenderEntityState& state) {
+            return state.net_id == skeleton_entity_id;
+        });
+    require(locomotion_render_state !=
+            locomotion_render_states.begin() + locomotion_render_count);
+    const float expected_half_yaw_radians =
+        45.0f * 3.14159265358979323846f / 180.0f / 30.0f / 2.0f;
+    require(std::abs(
+        locomotion_render_state->rotation.y -
+        std::sin(expected_half_yaw_radians)) < 0.0001f);
+    require(std::abs(
+        locomotion_render_state->rotation.w -
+        std::cos(expected_half_yaw_radians)) < 0.0001f);
     Kernel_Destroy(skeleton_kernel);
 
     KernelHandle* inventory_kernel = make_server_kernel();

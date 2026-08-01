@@ -64,6 +64,14 @@ cc_library(
     deps = [":kernel_types"],
 )
 
+cc_library(
+    name = "legged_locomotion",
+    srcs = ["src/legged_locomotion.cc"],
+    hdrs = ["src/legged_locomotion.h"],
+    includes = [".."],
+    deps = [":kernel_types"],
+)
+
 genrule(
     name = "build_info_macros",
     srcs = ["VERSION"],
@@ -128,6 +136,7 @@ cc_library(
     deps = [
         ":kernel_api_internal",
         ":kernel_types",
+        ":legged_locomotion",
         ":tick_loop",
         "//engine/components/ai:ai_intent",
         "//engine/src/protocol:protocol",

@@ -123,6 +123,7 @@ struct ActorTemplateConfig {
     float movement_step_height = 0.4f;
     float movement_ground_probe_distance = 0.25f;
     float movement_ground_snap_distance = 0.5f;
+    float movement_max_yaw_degrees_per_second = 0.0f;
     std::array<std::uint32_t, KERNEL_MAX_WEAPON_SLOTS> weapon_ids{};
     std::uint8_t weapon_slot_count = 0;
     std::uint8_t active_weapon_slot = 0;

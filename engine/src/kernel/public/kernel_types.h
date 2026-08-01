@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 63u
+#define KERNEL_ABI_VERSION 64u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -1230,6 +1230,10 @@ typedef struct KernelSkeletonLegDefinition {
     uint32_t hip_bone_index;
     uint32_t knee_bone_index;
     uint32_t foot_bone_index;
+    uint32_t phase_offset_ticks;
+    KernelVec3 pole_local;
+    float step_height_meters;
+    float max_reach_ratio;
 } KernelSkeletonLegDefinition;
 
 typedef struct KernelSkeletonBindingDefinition {
@@ -1241,6 +1245,10 @@ typedef struct KernelSkeletonBindingDefinition {
     uint32_t body_bone_index;
     uint32_t leg_count;
     uint32_t processing_order_count;
+    float input_deadzone;
+    uint32_t gait_cycle_ticks;
+    uint32_t gait_swing_ticks;
+    uint32_t max_swinging_legs;
     KernelSkeletonLegDefinition legs[KERNEL_MAX_SKELETON_LEGS];
     uint32_t processing_order[KERNEL_MAX_SKELETON_LEGS];
 } KernelSkeletonBindingDefinition;
@@ -1637,6 +1645,7 @@ typedef struct KernelMovementDefinition {
     float step_height;
     float ground_probe_distance;
     float ground_snap_distance;
+    float max_yaw_degrees_per_second;
 } KernelMovementDefinition;
 
 struct KernelEntityAiDefinition {

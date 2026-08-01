@@ -228,6 +228,7 @@ void hash_actor_template(
     hash_float(hash, actor_template.movement_step_height);
     hash_float(hash, actor_template.movement_ground_probe_distance);
     hash_float(hash, actor_template.movement_ground_snap_distance);
+    hash_float(hash, actor_template.movement_max_yaw_degrees_per_second);
     hash_scalar(hash, actor_template.weapon_slot_count);
     for (std::uint8_t index = 0; index < actor_template.weapon_slot_count; ++index) {
         hash_scalar(hash, actor_template.weapon_ids[index]);
@@ -314,7 +315,15 @@ void hash_actor_template(
             hash_scalar(hash, leg.hip_bone_index);
             hash_scalar(hash, leg.knee_bone_index);
             hash_scalar(hash, leg.foot_bone_index);
+            hash_scalar(hash, leg.phase_offset_ticks);
+            hash_vec3(hash, leg.pole_local);
+            hash_float(hash, leg.step_height_meters);
+            hash_float(hash, leg.max_reach_ratio);
         }
+        hash_float(hash, actor_template.skeleton.input_deadzone);
+        hash_scalar(hash, actor_template.skeleton.gait_cycle_ticks);
+        hash_scalar(hash, actor_template.skeleton.gait_swing_ticks);
+        hash_scalar(hash, actor_template.skeleton.max_swinging_legs);
         for (const std::uint32_t leg_index :
              actor_template.skeleton.processing_order) {
             hash_scalar(hash, leg_index);
@@ -2516,6 +2525,7 @@ ActorTemplateConfig actor_template_from_yaml(
             "step_height",
             "ground_probe_distance",
             "ground_snap_distance",
+            "max_yaw_degrees_per_second",
         },
         path,
         source_kind,
@@ -2545,6 +2555,10 @@ ActorTemplateConfig actor_template_from_yaml(
     if (movement["ground_snap_distance"]) {
         actor_template.movement_ground_snap_distance =
             movement["ground_snap_distance"].as<float>();
+    }
+    if (movement["max_yaw_degrees_per_second"]) {
+        actor_template.movement_max_yaw_degrees_per_second =
+            movement["max_yaw_degrees_per_second"].as<float>();
     }
 
     const YAML::Node hitbox = node["hitbox"];
@@ -2801,7 +2815,11 @@ ActorTemplateConfig actor_template_from_yaml(
             : 0.01f;
         if (binding.locomotion_type != "procedural_legged" ||
             binding.forward_axis != "positive_z" ||
+            !std::isfinite(binding.input_deadzone) ||
             binding.input_deadzone < 0.0f || binding.input_deadzone >= 1.0f ||
+            !std::isfinite(
+                actor_template.movement_max_yaw_degrees_per_second) ||
+            actor_template.movement_max_yaw_degrees_per_second <= 0.0f ||
             locomotion["legs"].size() == 0u ||
             locomotion["legs"].size() > KERNEL_MAX_SKELETON_LEGS) {
             throw std::runtime_error(
@@ -2864,6 +2882,22 @@ ActorTemplateConfig actor_template_from_yaml(
             leg.max_reach_ratio = leg_node["max_reach_ratio"]
                 ? leg_node["max_reach_ratio"].as<float>()
                 : 0.95f;
+            const float pole_length_squared =
+                leg.pole_local.x * leg.pole_local.x +
+                leg.pole_local.y * leg.pole_local.y +
+                leg.pole_local.z * leg.pole_local.z;
+            if (!std::isfinite(leg.pole_local.x) ||
+                !std::isfinite(leg.pole_local.y) ||
+                !std::isfinite(leg.pole_local.z) ||
+                !std::isfinite(leg.step_height_meters) ||
+                !std::isfinite(leg.max_reach_ratio) ||
+                pole_length_squared <= 0.0f ||
+                leg.step_height_meters < 0.0f ||
+                leg.max_reach_ratio <= 0.0f ||
+                leg.max_reach_ratio > 1.0f) {
+                throw std::runtime_error(
+                    "invalid locomotion leg parameters: " + leg.id);
+            }
             binding.legs.push_back(std::move(leg));
         }
 
@@ -2917,11 +2951,35 @@ ActorTemplateConfig actor_template_from_yaml(
         if (binding.processing_order.size() != binding.legs.size() ||
             binding.gait_cycle_ticks == 0u ||
             binding.gait_swing_ticks == 0u ||
-            binding.gait_swing_ticks > binding.gait_cycle_ticks ||
+            binding.gait_swing_ticks >= binding.gait_cycle_ticks ||
             binding.max_swinging_legs == 0u ||
             binding.max_swinging_legs > binding.legs.size()) {
             throw std::runtime_error(
                 "invalid locomotion gait values: " + actor_template.name);
+        }
+        for (SkeletonLegConfig& leg : binding.legs) {
+            leg.phase_offset_ticks %= binding.gait_cycle_ticks;
+        }
+        std::uint32_t authored_max_swinging = 0u;
+        for (const SkeletonLegConfig& phase_origin : binding.legs) {
+            const std::uint32_t gait_phase =
+                (binding.gait_cycle_ticks - phase_origin.phase_offset_ticks) %
+                binding.gait_cycle_ticks;
+            std::uint32_t swinging = 0u;
+            for (const SkeletonLegConfig& leg : binding.legs) {
+                const std::uint32_t leg_phase = static_cast<std::uint32_t>(
+                    (static_cast<std::uint64_t>(gait_phase) +
+                     leg.phase_offset_ticks) %
+                    binding.gait_cycle_ticks);
+                swinging += leg_phase < binding.gait_swing_ticks ? 1u : 0u;
+            }
+            authored_max_swinging =
+                std::max(authored_max_swinging, swinging);
+        }
+        if (authored_max_swinging > binding.max_swinging_legs) {
+            throw std::runtime_error(
+                "locomotion gait exceeds max_swinging_legs: " +
+                actor_template.name);
         }
     }
     return actor_template;
@@ -5518,6 +5576,10 @@ std::vector<std::string> validate_gameplay_config(
             actor_template.movement_step_height < 0.0f ||
             actor_template.movement_ground_probe_distance <= 0.0f ||
             actor_template.movement_ground_snap_distance < 0.0f ||
+            (actor_template.skeleton.enabled &&
+             (!std::isfinite(
+                  actor_template.movement_max_yaw_degrees_per_second) ||
+              actor_template.movement_max_yaw_degrees_per_second <= 0.0f)) ||
             actor_template.hitbox_half_extents.x <= 0.0f ||
             actor_template.hitbox_half_extents.y <= 0.0f ||
             actor_template.hitbox_half_extents.z <= 0.0f ||
@@ -5880,6 +5942,8 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             authored_template.movement_ground_probe_distance;
         entity_template.movement.ground_snap_distance =
             authored_template.movement_ground_snap_distance;
+        entity_template.movement.max_yaw_degrees_per_second =
+            authored_template.movement_max_yaw_degrees_per_second;
         entity_template.activated_trigger = compile_action_trigger_binding(
             authored_template.activated_trigger,
             "on_activated",
@@ -5925,6 +5989,14 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             entity_template.skeleton.processing_order_count =
                 static_cast<std::uint32_t>(
                     authored_template.skeleton.processing_order.size());
+            entity_template.skeleton.input_deadzone =
+                authored_template.skeleton.input_deadzone;
+            entity_template.skeleton.gait_cycle_ticks =
+                authored_template.skeleton.gait_cycle_ticks;
+            entity_template.skeleton.gait_swing_ticks =
+                authored_template.skeleton.gait_swing_ticks;
+            entity_template.skeleton.max_swinging_legs =
+                authored_template.skeleton.max_swinging_legs;
             for (std::uint32_t leg_index = 0u;
                  leg_index < entity_template.skeleton.leg_count;
                  ++leg_index) {
@@ -5936,6 +6008,10 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
                         leg.hip_bone_index,
                         leg.knee_bone_index,
                         leg.foot_bone_index,
+                        leg.phase_offset_ticks,
+                        leg.pole_local,
+                        leg.step_height_meters,
+                        leg.max_reach_ratio,
                     };
                 entity_template.skeleton.processing_order[leg_index] =
                     authored_template.skeleton.processing_order[leg_index];

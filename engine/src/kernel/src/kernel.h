@@ -17,6 +17,7 @@
 #include "kernel/src/kernel_api_internal.h"
 #include "kernel/src/kernel_rpc.h"
 #include "kernel/src/skeleton_presentation.h"
+#include "kernel/src/legged_locomotion.h"
 #include "kernel/src/tick_loop.h"
 #include "physics/public/physics_world.h"
 #include "simulation/public/command.h"
@@ -515,6 +516,9 @@ private:
     void handle_client_despawn(const EntityDespawnPacket& packet);
     void clear_client_session();
     void simulate_tick();
+    void update_legged_locomotion(
+        const std::vector<QueuedInput>& movement_inputs,
+        float fixed_delta_seconds);
     void finalize_simulated_projectile_destructions(
         std::size_t first_event,
         std::size_t last_event,
@@ -740,6 +744,7 @@ private:
     std::vector<RemotePresentationDedup> remote_presentation_dedup_;
     std::vector<RenderEntityState> render_states_;
     std::vector<SkeletonPresentationPose> skeleton_presentation_poses_;
+    std::unordered_map<NetId, LocomotionState> locomotion_states_;
     WorldSnapshot latest_snapshot_;
     WorldSnapshot latest_client_snapshot_;
     std::vector<WorldSnapshot> client_snapshot_buffer_;

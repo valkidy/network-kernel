@@ -14,6 +14,7 @@
 
 #include <fmt/format.h>
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <spdlog/spdlog.h>
 
 #include "kernel/public/kernel_api.h"
@@ -2503,7 +2504,19 @@ bool KernelEngine::load_gameplay_catalog(
                 skeleton.body_bone_index >= skeleton.bone_count ||
                 skeleton.leg_count == 0u ||
                 skeleton.leg_count > KERNEL_MAX_SKELETON_LEGS ||
-                skeleton.processing_order_count != skeleton.leg_count) {
+                skeleton.processing_order_count != skeleton.leg_count ||
+                !validate_locomotion_definition(skeleton) ||
+                !std::isfinite(skeleton.input_deadzone) ||
+                skeleton.input_deadzone < 0.0f ||
+                skeleton.input_deadzone >= 1.0f ||
+                skeleton.gait_cycle_ticks == 0u ||
+                skeleton.gait_swing_ticks == 0u ||
+                skeleton.gait_swing_ticks >= skeleton.gait_cycle_ticks ||
+                skeleton.max_swinging_legs == 0u ||
+                skeleton.max_swinging_legs > skeleton.leg_count ||
+                !std::isfinite(
+                    entity_template.movement.max_yaw_degrees_per_second) ||
+                entity_template.movement.max_yaw_degrees_per_second <= 0.0f) {
                 return false;
             }
             std::array<bool, KERNEL_MAX_SKELETON_LEGS> ordered{};
@@ -2519,6 +2532,14 @@ bool KernelEngine::load_gameplay_catalog(
                     leg.hip_bone_index == leg.knee_bone_index ||
                     leg.hip_bone_index == leg.foot_bone_index ||
                     leg.knee_bone_index == leg.foot_bone_index ||
+                    !std::isfinite(leg.pole_local.x) ||
+                    !std::isfinite(leg.pole_local.y) ||
+                    !std::isfinite(leg.pole_local.z) ||
+                    !std::isfinite(leg.step_height_meters) ||
+                    leg.step_height_meters < 0.0f ||
+                    !std::isfinite(leg.max_reach_ratio) ||
+                    leg.max_reach_ratio <= 0.0f ||
+                    leg.max_reach_ratio > 1.0f ||
                     asset->skeleton.joint_parents()[leg.knee_bone_index] !=
                         static_cast<std::int16_t>(leg.hip_bone_index) ||
                     asset->skeleton.joint_parents()[leg.foot_bone_index] !=
@@ -3003,6 +3024,7 @@ bool KernelEngine::load_gameplay_catalog(
     prop_population_rules_ =
         std::move(validated_prop_population_rules);
     skeleton_assets_ = std::move(validated_skeleton_assets);
+    locomotion_states_.clear();
     if (!item_store_.set_templates(item_templates_, &item_validation_error)) {
         return false;
     }
@@ -4667,6 +4689,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     pending_remote_action_presentation_events_.clear();
     remote_presentation_dedup_.clear();
     render_states_.clear();
+    locomotion_states_.clear();
     latest_snapshot_ = WorldSnapshot{};
     latest_client_snapshot_ = WorldSnapshot{};
     client_snapshot_buffer_.clear();
@@ -7810,6 +7833,92 @@ void KernelEngine::finalize_simulated_projectile_destructions(
     }
 }
 
+void KernelEngine::update_legged_locomotion(
+    const std::vector<QueuedInput>& movement_inputs,
+    float fixed_delta_seconds) {
+    std::unordered_set<NetId> active_locomotion_entities;
+    const auto view = world_.registry().view<NetworkIdentity, Transform>();
+    for (const entt::entity entity : view) {
+        std::uint32_t template_id = 0u;
+        if (world_.registry().all_of<EntityTemplateRef>(entity)) {
+            template_id = world_.registry()
+                .get<EntityTemplateRef>(entity)
+                .entity_template_id;
+        } else if (world_.registry().all_of<ActorTemplateRef>(entity)) {
+            template_id = world_.registry()
+                .get<ActorTemplateRef>(entity)
+                .actor_template_id;
+        }
+        const KernelEntityTemplateDefinition* entity_template =
+            find_entity_template(entity_templates_, template_id);
+        if (entity_template == nullptr ||
+            entity_template->skeleton.struct_size <
+                sizeof(KernelSkeletonBindingDefinition)) {
+            continue;
+        }
+
+        const NetId net_id = view.get<NetworkIdentity>(entity).net_id;
+        Transform& transform = view.get<Transform>(entity);
+        active_locomotion_entities.insert(net_id);
+        auto [state, inserted] = locomotion_states_.try_emplace(net_id);
+        if (inserted) {
+            const glm::vec3 forward =
+                transform.rotation * glm::vec3{0.0f, 0.0f, 1.0f};
+            const float initial_yaw = std::atan2(forward.x, forward.z);
+            if (!initialize_locomotion_state(
+                    entity_template->skeleton,
+                    initial_yaw,
+                    tick_loop_.current_tick(),
+                    &state->second)) {
+                locomotion_states_.erase(state);
+                continue;
+            }
+        }
+
+        const QueuedInput* entity_input = nullptr;
+        const NetworkIdentity& identity = view.get<NetworkIdentity>(entity);
+        for (const QueuedInput& candidate : movement_inputs) {
+            if (candidate.controlled_net_id != net_id ||
+                (entity_input != nullptr &&
+                 candidate.input.input_seq <= entity_input->input.input_seq)) {
+                continue;
+            }
+            entity_input = &candidate;
+        }
+        if (entity_input == nullptr) {
+            for (const QueuedInput& candidate : movement_inputs) {
+                if (candidate.controlled_net_id != 0u ||
+                    candidate.owner_peer != identity.owner_peer ||
+                    (entity_input != nullptr &&
+                     candidate.input.input_seq <= entity_input->input.input_seq)) {
+                    continue;
+                }
+                entity_input = &candidate;
+            }
+        }
+        const KernelVec2 move_input = entity_input == nullptr
+            ? KernelVec2{}
+            : entity_input->input.move;
+        if (!advance_locomotion_state(
+                entity_template->skeleton,
+                move_input,
+                entity_template->movement.max_yaw_degrees_per_second,
+                fixed_delta_seconds,
+                tick_loop_.current_tick(),
+                &state->second)) {
+            continue;
+        }
+        transform.rotation = glm::angleAxis(
+            state->second.root_yaw_radians,
+            glm::vec3{0.0f, 1.0f, 0.0f});
+    }
+    std::erase_if(
+        locomotion_states_,
+        [&active_locomotion_entities](const auto& entry) {
+            return !active_locomotion_entities.contains(entry.first);
+        });
+}
+
 void KernelEngine::simulate_tick() {
     const auto tick_cost_start = std::chrono::steady_clock::now();
     const float fixed_delta = tick_loop_.fixed_delta_seconds();
@@ -7857,6 +7966,7 @@ void KernelEngine::simulate_tick() {
         &movement_stats,
         session_rules_.actor_blocking_mode,
         &physics_finalized_actor_net_ids);
+    update_legged_locomotion(movement_inputs, fixed_delta);
     acknowledge_simulated_movement_inputs(movement_inputs);
     benchmark_stats_.grounded_query_count +=
         movement_stats.grounded_query_count;
