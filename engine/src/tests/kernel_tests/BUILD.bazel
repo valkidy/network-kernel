@@ -46,6 +46,12 @@ cc_test(
 )
 
 cc_test(
+    name = "skeleton_presentation_test",
+    srcs = ["skeleton_presentation_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
     name = "kernel_rpc_test",
     srcs = ["kernel_rpc_test.cc"],
     deps = [

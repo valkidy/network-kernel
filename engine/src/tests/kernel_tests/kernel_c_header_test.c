@@ -6,8 +6,8 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 61u,
-    "temporary prop lifecycle ABI");
+    KERNEL_ABI_VERSION == 62u,
+    "skeleton presentation ABI");
 _Static_assert(
     sizeof(KernelActionTriggerDefinition) == 296u,
     "KernelActionTriggerDefinition ABI size");
@@ -57,6 +57,9 @@ int main(void) {
     KernelLocalPlayerInfo local_player_info;
     KernelPlayerInput input;
     RenderEntityState state;
+    KernelBoneLocalTransform bone_transform;
+    KernelSkeletonRenderState skeleton_state;
+    KernelSkeletonRenderStateResult skeleton_result;
     KernelEvent event;
     KernelServerEntityCreateInfo create_info;
     KernelServerEntityState server_state;
@@ -93,6 +96,9 @@ int main(void) {
     (void)local_player_info;
     (void)input;
     (void)state;
+    (void)bone_transform;
+    (void)skeleton_state;
+    (void)skeleton_result;
     (void)event;
     (void)create_info;
     (void)server_state;
@@ -120,7 +126,10 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 61u);
+    assert(KERNEL_ABI_VERSION == 62u);
+    assert(sizeof(KernelBoneLocalTransform) > 0u);
+    assert(sizeof(KernelSkeletonRenderState) > 0u);
+    assert(sizeof(KernelSkeletonRenderStateResult) > 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD == 4u);

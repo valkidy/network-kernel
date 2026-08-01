@@ -16,6 +16,7 @@
 #include "kernel/public/kernel_types.h"
 #include "kernel/src/kernel_api_internal.h"
 #include "kernel/src/kernel_rpc.h"
+#include "kernel/src/skeleton_presentation.h"
 #include "kernel/src/tick_loop.h"
 #include "physics/public/physics_world.h"
 #include "simulation/public/command.h"
@@ -136,6 +137,19 @@ public:
         std::uint64_t client_render_time_us,
         RenderEntityState* out_states,
         std::uint32_t max_states);
+    std::uint32_t get_skeleton_render_states(
+        KernelSkeletonRenderState* out_states,
+        std::uint32_t max_states,
+        KernelBoneLocalTransform* out_bone_transforms,
+        std::uint32_t max_bone_transforms,
+        KernelSkeletonRenderStateResult* out_result);
+    std::uint32_t get_skeleton_render_states_at_time(
+        std::uint64_t client_render_time_us,
+        KernelSkeletonRenderState* out_states,
+        std::uint32_t max_states,
+        KernelBoneLocalTransform* out_bone_transforms,
+        std::uint32_t max_bone_transforms,
+        KernelSkeletonRenderStateResult* out_result);
     std::uint32_t poll_events(KernelEvent* out_events, std::uint32_t max_events);
     std::uint32_t poll_entity_lifecycle_events(
         KernelEntityLifecycleEvent* out_events,
@@ -723,6 +737,7 @@ private:
         pending_remote_action_presentation_events_;
     std::vector<RemotePresentationDedup> remote_presentation_dedup_;
     std::vector<RenderEntityState> render_states_;
+    std::vector<SkeletonPresentationPose> skeleton_presentation_poses_;
     WorldSnapshot latest_snapshot_;
     WorldSnapshot latest_client_snapshot_;
     std::vector<WorldSnapshot> client_snapshot_buffer_;

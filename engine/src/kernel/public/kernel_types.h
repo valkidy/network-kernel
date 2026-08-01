@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 61u
+#define KERNEL_ABI_VERSION 62u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -101,6 +101,14 @@
 #define KERNEL_CAPABILITY_REMOTE_ACTION_PRESENTATION UINT64_C(0x0000008000000000)
 #define KERNEL_CAPABILITY_ACTION_INTENTS UINT64_C(0x0000010000000000)
 #define KERNEL_CAPABILITY_ITEM_PROP_SYSTEM UINT64_C(0x0000020000000000)
+#define KERNEL_CAPABILITY_SKELETON_RENDER_STATES UINT64_C(0x0000040000000000)
+
+#define KERNEL_SKELETON_RENDER_STATUS_SUCCESS UINT32_C(0)
+#define KERNEL_SKELETON_RENDER_STATUS_INSUFFICIENT_CAPACITY UINT32_C(1)
+#define KERNEL_SKELETON_RENDER_STATUS_INVALID_ARGUMENT UINT32_C(2)
+
+#define KERNEL_SKELETON_POSE_FLAG_BIND_POSE UINT32_C(0x00000001)
+#define KERNEL_SKELETON_RENDER_RESULT_FLAG_AT_TIME UINT32_C(0x00000001)
 
 #define KERNEL_COLLISION_LAYER_PLAYER_SIDE UINT32_C(0x00000001)
 #define KERNEL_COLLISION_LAYER_HOSTILE_SIDE UINT32_C(0x00000002)
@@ -223,6 +231,9 @@ typedef struct KernelAbiInfo {
     uint32_t item_instance_view_size;
     uint32_t inventory_container_view_size;
     uint32_t inventory_delta_size;
+    uint32_t bone_local_transform_size;
+    uint32_t skeleton_render_state_size;
+    uint32_t skeleton_render_state_result_size;
 } KernelAbiInfo;
 
 typedef struct KernelBuildInfo {
@@ -877,6 +888,36 @@ typedef struct RenderEntityState {
     uint16_t reserved_item1;
     uint32_t carrier_entity_id;
 } RenderEntityState;
+
+typedef struct KernelBoneLocalTransform {
+    KernelVec3 local_position;
+    KernelQuat local_rotation;
+    KernelVec3 local_scale;
+} KernelBoneLocalTransform;
+
+typedef struct KernelSkeletonRenderState {
+    uint32_t entity_net_id;
+    uint32_t skeleton_asset_id;
+    uint64_t skeleton_content_hash;
+    uint32_t first_bone_transform;
+    uint32_t bone_count;
+    uint32_t pose_tick;
+    uint32_t pose_flags;
+    uint64_t pose_time_us;
+} KernelSkeletonRenderState;
+
+typedef struct KernelSkeletonRenderStateResult {
+    uint32_t struct_size;
+    uint32_t status;
+    uint32_t required_state_count;
+    uint32_t required_bone_transform_count;
+    uint32_t written_state_count;
+    uint32_t written_bone_transform_count;
+    uint32_t source_tick;
+    uint32_t flags;
+    uint64_t requested_render_time_us;
+    uint64_t evaluated_render_time_us;
+} KernelSkeletonRenderStateResult;
 
 KERNEL_RPC_STRUCT(R"json({"type":"KernelServerEntityCreateInfo"})json")
 typedef struct KernelServerEntityCreateInfo {

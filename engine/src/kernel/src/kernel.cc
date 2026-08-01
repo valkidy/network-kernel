@@ -2974,6 +2974,41 @@ std::uint32_t KernelEngine::get_render_states_at_time(
     return count;
 }
 
+std::uint32_t KernelEngine::get_skeleton_render_states(
+    KernelSkeletonRenderState* out_states,
+    std::uint32_t max_states,
+    KernelBoneLocalTransform* out_bone_transforms,
+    std::uint32_t max_bone_transforms,
+    KernelSkeletonRenderStateResult* out_result) {
+    return copy_skeleton_render_states(
+        skeleton_presentation_poses_,
+        0u,
+        client_local_time_us_,
+        out_states,
+        max_states,
+        out_bone_transforms,
+        max_bone_transforms,
+        out_result);
+}
+
+std::uint32_t KernelEngine::get_skeleton_render_states_at_time(
+    std::uint64_t client_render_time_us,
+    KernelSkeletonRenderState* out_states,
+    std::uint32_t max_states,
+    KernelBoneLocalTransform* out_bone_transforms,
+    std::uint32_t max_bone_transforms,
+    KernelSkeletonRenderStateResult* out_result) {
+    return copy_skeleton_render_states(
+        skeleton_presentation_poses_,
+        KERNEL_SKELETON_RENDER_RESULT_FLAG_AT_TIME,
+        client_render_time_us,
+        out_states,
+        max_states,
+        out_bone_transforms,
+        max_bone_transforms,
+        out_result);
+}
+
 std::uint32_t KernelEngine::poll_events(KernelEvent* out_events, std::uint32_t max_events) {
     if (out_events == nullptr || max_events == 0) {
         return 0;

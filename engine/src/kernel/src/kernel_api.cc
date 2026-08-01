@@ -229,6 +229,12 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
         out_info->inventory_container_view_size =
             sizeof(KernelInventoryContainerView);
         out_info->inventory_delta_size = sizeof(KernelInventoryDelta);
+        out_info->bone_local_transform_size =
+            sizeof(KernelBoneLocalTransform);
+        out_info->skeleton_render_state_size =
+            sizeof(KernelSkeletonRenderState);
+        out_info->skeleton_render_state_result_size =
+            sizeof(KernelSkeletonRenderStateResult);
         out_info->capability_flags =
             KERNEL_CAPABILITY_CLIENT_MODE |
             KERNEL_CAPABILITY_LISTEN_SERVER_MODE |
@@ -269,7 +275,8 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_LOCAL_ACTION_RESULTS |
             KERNEL_CAPABILITY_REMOTE_ACTION_PRESENTATION |
             KERNEL_CAPABILITY_ACTION_INTENTS |
-            KERNEL_CAPABILITY_ITEM_PROP_SYSTEM;
+            KERNEL_CAPABILITY_ITEM_PROP_SYSTEM |
+            KERNEL_CAPABILITY_SKELETON_RENDER_STATES;
         return true;
     });
 }
@@ -530,6 +537,67 @@ uint32_t Kernel_GetRenderStatesAtTime(
             out_states,
             max_states);
     });
+}
+
+uint32_t Kernel_GetSkeletonRenderStates(
+    KernelHandle* kernel,
+    KernelSkeletonRenderState* out_states,
+    uint32_t max_states,
+    KernelBoneLocalTransform* out_bone_transforms,
+    uint32_t max_bone_transforms,
+    KernelSkeletonRenderStateResult* out_result) {
+    return abi_call("Kernel_GetSkeletonRenderStates", 0u, [&]() -> std::uint32_t {
+        if (kernel == nullptr || kernel->engine == nullptr) {
+            if (out_result != nullptr &&
+                out_result->struct_size >= sizeof(*out_result)) {
+                const std::uint32_t result_size = out_result->struct_size;
+                *out_result = KernelSkeletonRenderStateResult{};
+                out_result->struct_size = result_size;
+                out_result->status =
+                    KERNEL_SKELETON_RENDER_STATUS_INVALID_ARGUMENT;
+            }
+            return 0u;
+        }
+        return kernel->engine->get_skeleton_render_states(
+            out_states,
+            max_states,
+            out_bone_transforms,
+            max_bone_transforms,
+            out_result);
+    });
+}
+
+uint32_t Kernel_GetSkeletonRenderStatesAtTime(
+    KernelHandle* kernel,
+    uint64_t client_render_time_us,
+    KernelSkeletonRenderState* out_states,
+    uint32_t max_states,
+    KernelBoneLocalTransform* out_bone_transforms,
+    uint32_t max_bone_transforms,
+    KernelSkeletonRenderStateResult* out_result) {
+    return abi_call(
+        "Kernel_GetSkeletonRenderStatesAtTime",
+        0u,
+        [&]() -> std::uint32_t {
+            if (kernel == nullptr || kernel->engine == nullptr) {
+                if (out_result != nullptr &&
+                    out_result->struct_size >= sizeof(*out_result)) {
+                    const std::uint32_t result_size = out_result->struct_size;
+                    *out_result = KernelSkeletonRenderStateResult{};
+                    out_result->struct_size = result_size;
+                    out_result->status =
+                        KERNEL_SKELETON_RENDER_STATUS_INVALID_ARGUMENT;
+                }
+                return 0u;
+            }
+            return kernel->engine->get_skeleton_render_states_at_time(
+                client_render_time_us,
+                out_states,
+                max_states,
+                out_bone_transforms,
+                max_bone_transforms,
+                out_result);
+        });
 }
 
 uint32_t Kernel_PollEvents(

@@ -137,6 +137,23 @@ uint32_t Kernel_GetRenderStatesAtTime(
     RenderEntityState* out_states,
     uint32_t max_states);
 
+uint32_t Kernel_GetSkeletonRenderStates(
+    KernelHandle* kernel,
+    KernelSkeletonRenderState* out_states,
+    uint32_t max_states,
+    KernelBoneLocalTransform* out_bone_transforms,
+    uint32_t max_bone_transforms,
+    KernelSkeletonRenderStateResult* out_result);
+
+uint32_t Kernel_GetSkeletonRenderStatesAtTime(
+    KernelHandle* kernel,
+    uint64_t client_render_time_us,
+    KernelSkeletonRenderState* out_states,
+    uint32_t max_states,
+    KernelBoneLocalTransform* out_bone_transforms,
+    uint32_t max_bone_transforms,
+    KernelSkeletonRenderStateResult* out_result);
+
 uint32_t Kernel_PollEvents(
     KernelHandle* kernel,
     KernelEvent* out_events,

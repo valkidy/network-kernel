@@ -221,6 +221,27 @@ int main() {
             std::uint64_t,
             RenderEntityState*,
             std::uint32_t)>(library, "Kernel_GetRenderStatesAtTime");
+    auto* kernel_get_skeleton_render_states =
+        load_symbol<std::uint32_t(
+            KernelHandle*,
+            KernelSkeletonRenderState*,
+            std::uint32_t,
+            KernelBoneLocalTransform*,
+            std::uint32_t,
+            KernelSkeletonRenderStateResult*)>(
+            library,
+            "Kernel_GetSkeletonRenderStates");
+    [[maybe_unused]] auto* kernel_get_skeleton_render_states_at_time =
+        load_symbol<std::uint32_t(
+            KernelHandle*,
+            std::uint64_t,
+            KernelSkeletonRenderState*,
+            std::uint32_t,
+            KernelBoneLocalTransform*,
+            std::uint32_t,
+            KernelSkeletonRenderStateResult*)>(
+            library,
+            "Kernel_GetSkeletonRenderStatesAtTime");
     [[maybe_unused]] auto* kernel_get_projectile_templates =
         load_symbol<std::uint32_t(
             KernelHandle*,
@@ -453,6 +474,20 @@ int main() {
     assert(abi_info.kernel_config_size == sizeof(KernelConfig));
     assert(abi_info.player_input_size == sizeof(KernelPlayerInput));
     assert(abi_info.render_entity_state_size == sizeof(RenderEntityState));
+    assert(abi_info.bone_local_transform_size ==
+           sizeof(KernelBoneLocalTransform));
+    assert(abi_info.skeleton_render_state_size ==
+           sizeof(KernelSkeletonRenderState));
+    assert(abi_info.skeleton_render_state_result_size ==
+           sizeof(KernelSkeletonRenderStateResult));
+    assert((abi_info.capability_flags &
+            KERNEL_CAPABILITY_SKELETON_RENDER_STATES) != 0u);
+    KernelSkeletonRenderStateResult skeleton_result{};
+    skeleton_result.struct_size = sizeof(skeleton_result);
+    assert(kernel_get_skeleton_render_states(
+               nullptr, nullptr, 0u, nullptr, 0u, &skeleton_result) == 0u);
+    assert(skeleton_result.status ==
+           KERNEL_SKELETON_RENDER_STATUS_INVALID_ARGUMENT);
     assert(abi_info.kernel_event_size == sizeof(KernelEvent));
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS) != 0);
     assert(kernel_poll_entity_lifecycle_events(nullptr, nullptr, 0) == 0);

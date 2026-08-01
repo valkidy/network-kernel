@@ -32,6 +32,8 @@ EXPORTS
     Kernel_LoadGameplayCatalogFromMemory
     Kernel_GetRenderStates
     Kernel_GetRenderStatesAtTime
+    Kernel_GetSkeletonRenderStates
+    Kernel_GetSkeletonRenderStatesAtTime
     Kernel_PollEvents
     Kernel_PollEntityLifecycleEvents
     Kernel_PollLocalActionResults
