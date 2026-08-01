@@ -388,6 +388,30 @@ namespace NetworkExample.Kernel
                 (uint)states.Length);
         }
 
+        public uint GetSkeletonRenderStates(SkeletonRenderStateBuffer buffer)
+        {
+            ThrowIfDisposed();
+            if (buffer == null)
+            {
+                throw new ArgumentNullException(nameof(buffer));
+            }
+
+            return GetSkeletonRenderStatesInternal(buffer, false, 0UL);
+        }
+
+        public uint GetSkeletonRenderStatesAtTime(
+            ulong clientRenderTimeUs,
+            SkeletonRenderStateBuffer buffer)
+        {
+            ThrowIfDisposed();
+            if (buffer == null)
+            {
+                throw new ArgumentNullException(nameof(buffer));
+            }
+
+            return GetSkeletonRenderStatesInternal(buffer, true, clientRenderTimeUs);
+        }
+
         public uint PollEvents(KernelEvent[] events)
         {
             ThrowIfDisposed();
@@ -1026,8 +1050,26 @@ namespace NetworkExample.Kernel
             {
                 projectileMechanics.beam.struct_size = KernelBeamMechanicsDefinition.StructSize;
             }
-            PrepareActionTrigger(ref projectileMechanics.projectile_impact_trigger);
-            PrepareActionTrigger(ref projectileMechanics.expired_trigger);
+            PrepareOptionalActionTriggerStorage(
+                ref projectileMechanics.projectile_impact_trigger);
+            PrepareOptionalActionTriggerStorage(ref projectileMechanics.expired_trigger);
+        }
+
+        private static void PrepareOptionalActionTriggerStorage(
+            ref KernelActionTriggerDefinition trigger)
+        {
+            if (trigger.struct_size != 0 || trigger.action_type != 0 ||
+                trigger.action_count != 0)
+            {
+                PrepareActionTrigger(ref trigger);
+                return;
+            }
+            if (trigger.actions == null ||
+                trigger.actions.Length != KernelConstants.MaxActionGraphActions)
+            {
+                trigger.actions =
+                    new KernelActionDefinition[KernelConstants.MaxActionGraphActions];
+            }
         }
 
         private static void PrepareActionTrigger(ref KernelActionTriggerDefinition trigger)
@@ -1095,6 +1137,8 @@ namespace NetworkExample.Kernel
                 catalog.ItemTemplates ?? new KernelItemTemplateDefinition[0];
             KernelPropPopulationRuleDefinition[] propPopulationRules =
                 catalog.PropPopulationRules ?? new KernelPropPopulationRuleDefinition[0];
+            KernelSkeletonAssetDefinition[] skeletonAssets =
+                catalog.SkeletonAssets ?? new KernelSkeletonAssetDefinition[0];
 
             PrepareActorTemplates(actorTemplates);
             PrepareProjectileTemplates(projectileTemplates);
@@ -1104,6 +1148,7 @@ namespace NetworkExample.Kernel
             PrepareActionTemplates(actionTemplates);
             PrepareItemTemplates(itemTemplates);
             PreparePropPopulationRules(propPopulationRules);
+            PrepareSkeletonAssets(skeletonAssets);
 
             GCHandle actorTemplatesHandle = PinArray(actorTemplates, out IntPtr actorTemplatesPtr);
             IntPtr projectileTemplatesPtr = MarshalArray(projectileTemplates);
@@ -1114,6 +1159,8 @@ namespace NetworkExample.Kernel
             IntPtr itemTemplatesPtr = MarshalArray(itemTemplates);
             GCHandle propPopulationRulesHandle =
                 PinArray(propPopulationRules, out IntPtr propPopulationRulesPtr);
+            GCHandle skeletonAssetsHandle =
+                PinArray(skeletonAssets, out IntPtr skeletonAssetsPtr);
             try
             {
                 var nativeCatalog = new KernelGameplayCatalogDefinition
@@ -1137,6 +1184,8 @@ namespace NetworkExample.Kernel
                     item_template_count = (uint)itemTemplates.Length,
                     prop_population_rules = propPopulationRulesPtr,
                     prop_population_rule_count = (uint)propPopulationRules.Length,
+                    skeleton_assets = skeletonAssetsPtr,
+                    skeleton_asset_count = (uint)skeletonAssets.Length,
                 };
                 return KernelNative.Kernel_LoadGameplayCatalog(
                     kernel,
@@ -1159,6 +1208,7 @@ namespace NetworkExample.Kernel
                     itemTemplatesPtr,
                     itemTemplates.Length);
                 FreeIfAllocated(propPopulationRulesHandle);
+                FreeIfAllocated(skeletonAssetsHandle);
             }
         }
 
@@ -1212,6 +1262,7 @@ namespace NetworkExample.Kernel
                 {
                     templates[index].movement.struct_size = KernelMovementDefinition.StructSize;
                 }
+                PrepareSkeletonBinding(ref templates[index].skeleton);
                 PrepareActionTrigger(ref templates[index].activated_trigger);
                 PrepareActionTrigger(ref templates[index].collision_trigger);
                 PrepareActionTrigger(ref templates[index].health_depleted_trigger);
@@ -1269,6 +1320,95 @@ namespace NetworkExample.Kernel
                         KernelPropPopulationRuleDefinition.StructSize;
                 }
             }
+        }
+
+        private static void PrepareSkeletonAssets(
+            KernelSkeletonAssetDefinition[] assets)
+        {
+            for (int index = 0; index < assets.Length; ++index)
+            {
+                if (assets[index].struct_size == 0)
+                {
+                    assets[index].struct_size = KernelSkeletonAssetDefinition.StructSize;
+                }
+            }
+        }
+
+        private static void PrepareSkeletonBinding(
+            ref KernelSkeletonBindingDefinition binding)
+        {
+            if (binding.foothold_candidate_offsets == null)
+            {
+                binding.foothold_candidate_offsets =
+                    new KernelVec2[KernelConstants.MaxFootholdCandidates];
+            }
+            if (binding.legs == null)
+            {
+                binding.legs =
+                    new KernelSkeletonLegDefinition[KernelConstants.MaxSkeletonLegs];
+            }
+            if (binding.processing_order == null)
+            {
+                binding.processing_order = new uint[KernelConstants.MaxSkeletonLegs];
+            }
+        }
+
+        private uint GetSkeletonRenderStatesInternal(
+            SkeletonRenderStateBuffer buffer,
+            bool atTime,
+            ulong clientRenderTimeUs)
+        {
+            KernelSkeletonRenderStateResult result =
+                KernelSkeletonRenderStateResult.Create();
+            uint written = QuerySkeletonRenderStates(
+                buffer,
+                atTime,
+                clientRenderTimeUs,
+                ref result);
+            if (result.status ==
+                KernelConstants.SkeletonRenderStatusInsufficientCapacity)
+            {
+                buffer.EnsureCapacity(
+                    result.required_state_count,
+                    result.required_bone_transform_count);
+                result = KernelSkeletonRenderStateResult.Create();
+                written = QuerySkeletonRenderStates(
+                    buffer,
+                    atTime,
+                    clientRenderTimeUs,
+                    ref result);
+            }
+
+            buffer.Commit(result);
+            return written;
+        }
+
+        private uint QuerySkeletonRenderStates(
+            SkeletonRenderStateBuffer buffer,
+            bool atTime,
+            ulong clientRenderTimeUs,
+            ref KernelSkeletonRenderStateResult result)
+        {
+            KernelSkeletonRenderState[] states =
+                buffer.States.Length == 0 ? null : buffer.States;
+            KernelBoneLocalTransform[] bones =
+                buffer.BoneTransforms.Length == 0 ? null : buffer.BoneTransforms;
+            return atTime
+                ? KernelNative.Kernel_GetSkeletonRenderStatesAtTime(
+                    handle,
+                    clientRenderTimeUs,
+                    states,
+                    (uint)buffer.States.Length,
+                    bones,
+                    (uint)buffer.BoneTransforms.Length,
+                    ref result)
+                : KernelNative.Kernel_GetSkeletonRenderStates(
+                    handle,
+                    states,
+                    (uint)buffer.States.Length,
+                    bones,
+                    (uint)buffer.BoneTransforms.Length,
+                    ref result);
         }
 
         private static void PrepareColliderTemplates(
@@ -1387,6 +1527,77 @@ namespace NetworkExample.Kernel
         ~Kernel()
         {
             Dispose(false);
+        }
+    }
+
+    public sealed class SkeletonRenderStateBuffer
+    {
+        public SkeletonRenderStateBuffer(
+            int initialStateCapacity = 0,
+            int initialBoneTransformCapacity = 0)
+        {
+            if (initialStateCapacity < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(initialStateCapacity));
+            }
+            if (initialBoneTransformCapacity < 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(initialBoneTransformCapacity));
+            }
+
+            States = new KernelSkeletonRenderState[initialStateCapacity];
+            BoneTransforms =
+                new KernelBoneLocalTransform[initialBoneTransformCapacity];
+            Result = KernelSkeletonRenderStateResult.Create();
+        }
+
+        public KernelSkeletonRenderState[] States { get; private set; }
+        public KernelBoneLocalTransform[] BoneTransforms { get; private set; }
+        public KernelSkeletonRenderStateResult Result { get; private set; }
+        public uint StateCount => Result.written_state_count;
+        public uint BoneTransformCount => Result.written_bone_transform_count;
+
+        public ArraySegment<KernelBoneLocalTransform> GetBoneTransforms(
+            KernelSkeletonRenderState state)
+        {
+            ulong end = (ulong)state.first_bone_transform + state.bone_count;
+            if (end > (ulong)Result.written_bone_transform_count)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(state),
+                    "Skeleton state references bone transforms outside the current result.");
+            }
+            return new ArraySegment<KernelBoneLocalTransform>(
+                BoneTransforms,
+                (int)state.first_bone_transform,
+                (int)state.bone_count);
+        }
+
+        internal void EnsureCapacity(uint requiredStates, uint requiredBones)
+        {
+            if (requiredStates > int.MaxValue || requiredBones > int.MaxValue)
+            {
+                throw new InvalidOperationException(
+                    "Skeleton render-state capacity exceeds managed array limits.");
+            }
+            if (States.Length < requiredStates)
+            {
+                KernelSkeletonRenderState[] states = States;
+                Array.Resize(ref states, (int)requiredStates);
+                States = states;
+            }
+            if (BoneTransforms.Length < requiredBones)
+            {
+                KernelBoneLocalTransform[] boneTransforms = BoneTransforms;
+                Array.Resize(ref boneTransforms, (int)requiredBones);
+                BoneTransforms = boneTransforms;
+            }
+        }
+
+        internal void Commit(KernelSkeletonRenderStateResult result)
+        {
+            Result = result;
         }
     }
 }

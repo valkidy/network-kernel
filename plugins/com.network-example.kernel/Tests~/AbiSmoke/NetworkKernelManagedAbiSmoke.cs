@@ -32,7 +32,7 @@ public static class NetworkKernelManagedAbiSmoke
         KernelAbiInfo info = KernelAbi.GetInfo();
         KernelBuildInfo buildInfo = KernelAbi.GetBuildInfo();
         GameServerAbiInfo gameServerInfo = GameServerAbi.GetInfo();
-        Require(KernelConstants.AbiVersion == 61, "Managed kernel ABI version was not v61.");
+        Require(KernelConstants.AbiVersion == 65, "Managed kernel ABI version was not v65.");
         Require(
             RenderEntityState.StructSize == 144,
             "Managed RenderEntityState layout was not 144 bytes.");
@@ -80,8 +80,20 @@ public static class NetworkKernelManagedAbiSmoke
             KernelSessionRulesConfig.StructSize == 8,
             "Kernel configuration layout size mismatch.");
         Require(
-            KernelMovementDefinition.StructSize == 40,
+            KernelMovementDefinition.StructSize == 44,
             "Kernel movement definition layout size mismatch.");
+        Require(
+            KernelBoneLocalTransform.StructSize == 40 &&
+            KernelSkeletonRenderState.StructSize == 40 &&
+            KernelSkeletonRenderStateResult.StructSize == 48 &&
+            KernelSkeletonAssetDefinition.StructSize == 32 &&
+            KernelSkeletonLegDefinition.StructSize == 40 &&
+            KernelSkeletonBindingDefinition.StructSize == 488,
+            "Kernel skeleton ABI layout size mismatch.");
+        Require(
+            (info.capability_flags &
+             KernelConstants.CapabilitySkeletonRenderStates) != 0,
+            "Kernel skeleton render-state capability was missing.");
         Require(
             (KernelConstants.VisualFlagHpUnknown & KernelConstants.VisualFlagDead) == 0,
             "Kernel HpUnknown visual flag overlapped Dead.");
@@ -166,6 +178,7 @@ public static class NetworkKernelManagedAbiSmoke
                 kernel.ServerCreateEntity(createInfo, out uint enemyNetId) && enemyNetId != 0,
                 "Kernel_ServerCreateEntity failed.");
 
+            RequireSkeletonRenderStates(kernel);
             RequireAbi26CatalogDiagnostics(kernel);
             Require(
                 kernel.ServerSetEntityActorTemplate(enemyNetId, 404),
@@ -509,6 +522,54 @@ public static class NetworkKernelManagedAbiSmoke
         SetAndQueryWeapon(kernel, enemyNetId, AreaEffectWeapon(), 4);
         SetAndQueryWeapon(kernel, enemyNetId, BeamWeapon(), 5);
         SetAndQueryWeapon(kernel, enemyNetId, HomingWeapon(), 6);
+    }
+
+    private static void RequireSkeletonRenderStates(Kernel kernel)
+    {
+        var createInfo = new KernelServerEntityCreateInfo
+        {
+            entity_type = KernelEntityType.Actor,
+            actor_type = KernelActorType.Agent,
+            entity_template_id = 20,
+            position = new KernelVec3(0.0f, 0.0f, 0.0f),
+            rotation = new KernelQuat(0.0f, 0.0f, 0.0f, 1.0f),
+        };
+        Require(
+            kernel.ServerCreateEntity(createInfo, out uint entityId) && entityId != 0,
+            "Kernel_ServerCreateEntity failed for skeleton entity.");
+        for (int tick = 0; tick < 2; ++tick)
+        {
+            kernel.Update(1.0f / 30.0f);
+        }
+
+        var buffer = new SkeletonRenderStateBuffer();
+        Require(
+            kernel.GetSkeletonRenderStates(buffer) == 1 &&
+            buffer.StateCount == 1 &&
+            buffer.BoneTransformCount == 41,
+            "Kernel_GetSkeletonRenderStates did not resize and return a complete pose.");
+        Require(
+            buffer.States[0].entity_net_id == entityId &&
+            buffer.States[0].bone_count == 41 &&
+            (buffer.States[0].pose_flags &
+             KernelConstants.SkeletonPoseFlagProcedural) != 0,
+            "Skeleton render state identity or pose flags were invalid.");
+        Require(
+            buffer.GetBoneTransforms(buffer.States[0]).Count == 41,
+            "Skeleton render-state bone segment was incomplete.");
+
+        KernelSkeletonRenderState[] reusedStates = buffer.States;
+        KernelBoneLocalTransform[] reusedBones = buffer.BoneTransforms;
+        Require(
+            kernel.GetSkeletonRenderStatesAtTime(33333, buffer) == 1 &&
+            ReferenceEquals(reusedStates, buffer.States) &&
+            ReferenceEquals(reusedBones, buffer.BoneTransforms) &&
+            (buffer.Result.flags &
+             KernelConstants.SkeletonRenderResultFlagAtTime) != 0,
+            "Skeleton render-state buffer was not reused for at-time query.");
+        Require(
+            kernel.ServerDestroyEntity(entityId, KernelDespawnReason.Destroyed),
+            "Kernel_ServerDestroyEntity failed for skeleton entity.");
     }
 
     private static void RequireAbi26CatalogDiagnostics(Kernel kernel)

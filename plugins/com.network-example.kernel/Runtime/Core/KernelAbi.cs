@@ -159,6 +159,10 @@ namespace NetworkExample.Kernel
                 info,
                 KernelConstants.CapabilityItemPropSystem,
                 "Kernel item/prop system capability is missing.");
+            RequireCapability(
+                info,
+                KernelConstants.CapabilitySkeletonRenderStates,
+                "Kernel skeleton render-state capability is missing.");
 
             RequireSize(nameof(KernelAbiInfo), info.struct_size, Marshal.SizeOf<KernelAbiInfo>());
             RequireSize(nameof(KernelConfig), info.kernel_config_size, Marshal.SizeOf<KernelConfig>());
@@ -359,6 +363,30 @@ namespace NetworkExample.Kernel
                 nameof(KernelInventoryDelta),
                 info.inventory_delta_size,
                 Marshal.SizeOf<KernelInventoryDelta>());
+            RequireSize(
+                nameof(KernelBoneLocalTransform),
+                info.bone_local_transform_size,
+                Marshal.SizeOf<KernelBoneLocalTransform>());
+            RequireSize(
+                nameof(KernelSkeletonRenderState),
+                info.skeleton_render_state_size,
+                Marshal.SizeOf<KernelSkeletonRenderState>());
+            RequireSize(
+                nameof(KernelSkeletonRenderStateResult),
+                info.skeleton_render_state_result_size,
+                Marshal.SizeOf<KernelSkeletonRenderStateResult>());
+            RequireSize(
+                nameof(KernelSkeletonAssetDefinition),
+                info.skeleton_asset_definition_size,
+                Marshal.SizeOf<KernelSkeletonAssetDefinition>());
+            RequireSize(
+                nameof(KernelSkeletonBindingDefinition),
+                info.skeleton_binding_definition_size,
+                Marshal.SizeOf<KernelSkeletonBindingDefinition>());
+            RequireSize(
+                nameof(KernelSkeletonLegDefinition),
+                info.skeleton_leg_definition_size,
+                Marshal.SizeOf<KernelSkeletonLegDefinition>());
         }
 
         private static void RequireCapability(

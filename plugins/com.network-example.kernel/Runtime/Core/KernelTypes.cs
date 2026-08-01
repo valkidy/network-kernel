@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 61;
+        public const uint AbiVersion = 65;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int GameplayCatalogEntryPathSize = 128;
@@ -22,6 +22,8 @@ namespace NetworkExample.Kernel
         public const uint StaticCollisionSceneMaxBytes = 16U * 1024U * 1024U;
         public const uint StaticCollisionLayerTerrain = 1U;
         public const int MaxWeaponSlots = 4;
+        public const int MaxSkeletonLegs = 8;
+        public const int MaxFootholdCandidates = 8;
         public const int MaxActionGraphActions = 8;
         public const int MaxPortableStateFields = 8;
         public const byte DebugWildcardU8 = 0xff;
@@ -97,6 +99,15 @@ namespace NetworkExample.Kernel
         public const ulong CapabilityRemoteActionPresentation = 0x0000008000000000UL;
         public const ulong CapabilityActionIntents = 0x0000010000000000UL;
         public const ulong CapabilityItemPropSystem = 0x0000020000000000UL;
+        public const ulong CapabilitySkeletonRenderStates = 0x0000040000000000UL;
+
+        public const uint SkeletonRenderStatusSuccess = 0;
+        public const uint SkeletonRenderStatusInsufficientCapacity = 1;
+        public const uint SkeletonRenderStatusInvalidArgument = 2;
+        public const uint SkeletonPoseFlagBindPose = 0x00000001U;
+        public const uint SkeletonPoseFlagProcedural = 0x00000002U;
+        public const uint SkeletonRenderResultFlagAtTime = 0x00000001U;
+        public const uint EntityComponentSkeleton = 0x00000200U;
 
         public const uint CollisionLayerPlayerSide = 0x00000001U;
         public const uint CollisionLayerHostileSide = 0x00000002U;
@@ -562,6 +573,12 @@ namespace NetworkExample.Kernel
         Character = 3,
     }
 
+    public enum KernelFootholdQueryType : byte
+    {
+        None = 0,
+        Raycast = 1,
+    }
+
     [Flags]
     public enum KernelDebugRecordType : uint
     {
@@ -626,6 +643,12 @@ namespace NetworkExample.Kernel
         public uint item_instance_view_size;
         public uint inventory_container_view_size;
         public uint inventory_delta_size;
+        public uint bone_local_transform_size;
+        public uint skeleton_render_state_size;
+        public uint skeleton_render_state_result_size;
+        public uint skeleton_asset_definition_size;
+        public uint skeleton_binding_definition_size;
+        public uint skeleton_leg_definition_size;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
@@ -1131,6 +1154,59 @@ namespace NetworkExample.Kernel
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    public struct KernelBoneLocalTransform
+    {
+        public KernelVec3 local_position;
+        public KernelQuat local_rotation;
+        public KernelVec3 local_scale;
+
+        public static uint StructSize =>
+            (uint)Marshal.SizeOf<KernelBoneLocalTransform>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelSkeletonRenderState
+    {
+        public uint entity_net_id;
+        public uint skeleton_asset_id;
+        public ulong skeleton_content_hash;
+        public uint first_bone_transform;
+        public uint bone_count;
+        public uint pose_tick;
+        public uint pose_flags;
+        public ulong pose_time_us;
+
+        public static uint StructSize =>
+            (uint)Marshal.SizeOf<KernelSkeletonRenderState>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelSkeletonRenderStateResult
+    {
+        public uint struct_size;
+        public uint status;
+        public uint required_state_count;
+        public uint required_bone_transform_count;
+        public uint written_state_count;
+        public uint written_bone_transform_count;
+        public uint source_tick;
+        public uint flags;
+        public ulong requested_render_time_us;
+        public ulong evaluated_render_time_us;
+
+        public static uint StructSize =>
+            (uint)Marshal.SizeOf<KernelSkeletonRenderStateResult>();
+
+        public static KernelSkeletonRenderStateResult Create()
+        {
+            return new KernelSkeletonRenderStateResult
+            {
+                struct_size = StructSize,
+            };
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     public struct KernelServerEntityCreateInfo
     {
         public uint struct_size;
@@ -1403,6 +1479,7 @@ namespace NetworkExample.Kernel
         public KernelActionTemplateDefinition[] ActionTemplates;
         public KernelItemTemplateDefinition[] ItemTemplates;
         public KernelPropPopulationRuleDefinition[] PropPopulationRules;
+        public KernelSkeletonAssetDefinition[] SkeletonAssets;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
@@ -1534,6 +1611,8 @@ namespace NetworkExample.Kernel
         public uint item_template_count;
         public IntPtr prop_population_rules;
         public uint prop_population_rule_count;
+        public IntPtr skeleton_assets;
+        public uint skeleton_asset_count;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelGameplayCatalogDefinition>();
     }
@@ -1970,6 +2049,7 @@ namespace NetworkExample.Kernel
         public float step_height;
         public float ground_probe_distance;
         public float ground_snap_distance;
+        public float max_yaw_degrees_per_second;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelMovementDefinition>();
     }
@@ -1990,6 +2070,80 @@ namespace NetworkExample.Kernel
         public uint spawn_seed;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelEntityAiDefinition>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelSkeletonAssetDefinition
+    {
+        public uint struct_size;
+        public uint skeleton_asset_id;
+        public ulong skeleton_content_hash;
+        public IntPtr runtime_skeleton_data;
+        public uint runtime_skeleton_size;
+        public uint bone_count;
+
+        public static uint StructSize =>
+            (uint)Marshal.SizeOf<KernelSkeletonAssetDefinition>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelSkeletonLegDefinition
+    {
+        public uint leg_id;
+        public uint hip_bone_index;
+        public uint knee_bone_index;
+        public uint foot_bone_index;
+        public uint phase_offset_ticks;
+        public KernelVec3 pole_local;
+        public float step_height_meters;
+        public float max_reach_ratio;
+
+        public static uint StructSize =>
+            (uint)Marshal.SizeOf<KernelSkeletonLegDefinition>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KernelSkeletonBindingDefinition
+    {
+        public uint struct_size;
+        public uint skeleton_asset_id;
+        public ulong skeleton_content_hash;
+        public uint bone_count;
+        public uint root_bone_index;
+        public uint body_bone_index;
+        public uint leg_count;
+        public uint processing_order_count;
+        public float input_deadzone;
+        public uint gait_cycle_ticks;
+        public uint gait_swing_ticks;
+        public uint max_swinging_legs;
+        public KernelFootholdQueryType foothold_query_type;
+        public byte reserved_foothold0;
+        public ushort reserved_foothold1;
+        public float foothold_query_start_height_meters;
+        public float foothold_query_distance_meters;
+        public uint foothold_candidate_count;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = KernelConstants.MaxFootholdCandidates)]
+        public KernelVec2[] foothold_candidate_offsets;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = KernelConstants.MaxSkeletonLegs)]
+        public KernelSkeletonLegDefinition[] legs;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = KernelConstants.MaxSkeletonLegs)]
+        public uint[] processing_order;
+
+        public static uint StructSize =>
+            (uint)Marshal.SizeOf<KernelSkeletonBindingDefinition>();
+
+        public static KernelSkeletonBindingDefinition Create()
+        {
+            return new KernelSkeletonBindingDefinition
+            {
+                struct_size = StructSize,
+                foothold_candidate_offsets =
+                    new KernelVec2[KernelConstants.MaxFootholdCandidates],
+                legs = new KernelSkeletonLegDefinition[KernelConstants.MaxSkeletonLegs],
+                processing_order = new uint[KernelConstants.MaxSkeletonLegs],
+            };
+        }
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -2015,6 +2169,7 @@ namespace NetworkExample.Kernel
         public KernelActionTriggerDefinition destroy_entity_trigger;
         public KernelPropDefinition prop;
         public uint collision_trigger_mask;
+        public KernelSkeletonBindingDefinition skeleton;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelEntityTemplateDefinition>();
     }

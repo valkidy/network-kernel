@@ -185,6 +185,25 @@ namespace NetworkExample.Kernel
             uint maxStates);
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint Kernel_GetSkeletonRenderStates(
+            IntPtr kernel,
+            [Out] KernelSkeletonRenderState[] outStates,
+            uint maxStates,
+            [Out] KernelBoneLocalTransform[] outBoneTransforms,
+            uint maxBoneTransforms,
+            ref KernelSkeletonRenderStateResult outResult);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint Kernel_GetSkeletonRenderStatesAtTime(
+            IntPtr kernel,
+            ulong clientRenderTimeUs,
+            [Out] KernelSkeletonRenderState[] outStates,
+            uint maxStates,
+            [Out] KernelBoneLocalTransform[] outBoneTransforms,
+            uint maxBoneTransforms,
+            ref KernelSkeletonRenderStateResult outResult);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern uint Kernel_PollEvents(
             IntPtr kernel,
             [Out] KernelEvent[] outEvents,

@@ -21,7 +21,7 @@ namespace NetworkExample.Kernel.Editor
             KernelAbi.ValidateNativeAbi();
             GameServerAbi.ValidateNativeAbi();
             KernelAbiInfo info = KernelAbi.GetInfo();
-            Require(KernelConstants.AbiVersion == 61, "Managed kernel ABI version was not v61.");
+            Require(KernelConstants.AbiVersion == 65, "Managed kernel ABI version was not v65.");
             Require(
                 RenderEntityState.StructSize == 144,
                 "Managed RenderEntityState layout was not 144 bytes.");
@@ -70,8 +70,19 @@ namespace NetworkExample.Kernel.Editor
                 KernelSessionRulesConfig.StructSize == 8,
                 "Kernel configuration layout size mismatch.");
             Require(
-                KernelMovementDefinition.StructSize == 40,
+                KernelMovementDefinition.StructSize == 44,
                 "Kernel movement definition layout size mismatch.");
+            Require(
+                KernelBoneLocalTransform.StructSize == 40 &&
+                KernelSkeletonRenderState.StructSize == 40 &&
+                KernelSkeletonRenderStateResult.StructSize == 48 &&
+                KernelSkeletonBindingDefinition.StructSize == 488,
+                "Kernel skeleton ABI layout size mismatch.");
+            Require(
+                (info.capability_flags &
+                 KernelConstants.CapabilitySkeletonRenderStates) != 0,
+                "Kernel skeleton render-state capability was missing.");
+            RequireSkeletonBindingValidation();
             Require(
                 (KernelConstants.VisualFlagHpUnknown & KernelConstants.VisualFlagDead) == 0,
                 "Kernel HpUnknown visual flag overlapped Dead.");
@@ -255,7 +266,43 @@ namespace NetworkExample.Kernel.Editor
 
             RequireExternalGameplayCatalogSyncIfConfigured();
 
-            Debug.Log("Network kernel ABI 57 smoke passed.");
+            Debug.Log("Network kernel ABI 65 smoke passed.");
+        }
+
+        private static void RequireSkeletonBindingValidation()
+        {
+            var root = new GameObject("KernelSkeletonBindingSmoke");
+            try
+            {
+                Transform first = new GameObject("FirstBone").transform;
+                Transform second = new GameObject("SecondBone").transform;
+                first.SetParent(root.transform, false);
+                second.SetParent(first, false);
+                KernelSkeletonBinding binding =
+                    root.AddComponent<KernelSkeletonBinding>();
+                binding.SkeletonAssetId = 7;
+                binding.SkeletonContentHash = 0x1234UL;
+                binding.Bones = new[] { first, second };
+                var state = new KernelSkeletonRenderState
+                {
+                    skeleton_asset_id = 7,
+                    skeleton_content_hash = 0x1234UL,
+                    bone_count = 2,
+                };
+                Require(
+                    binding.TryValidate(state, out string error),
+                    $"Valid KernelSkeletonBinding was rejected: {error}");
+
+                binding.Bones = new[] { first, first };
+                Require(
+                    !binding.TryValidate(state, out error) &&
+                    error.Contains("duplicates"),
+                    "Duplicate KernelSkeletonBinding bones were not rejected.");
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(root);
+            }
         }
 
         private static void RequireControlPlaneRpc(Kernel kernel, uint enemyNetId)
