@@ -14,6 +14,10 @@ namespace NetworkExample.Kernel.Presentation
         private Vector3[] prefabBindPositions;
         private Quaternion[] prefabBindRotations;
         private Vector3[] prefabBindScales;
+        private Vector3[] nativeReferencePositions;
+        private Quaternion[] nativeReferenceRotations;
+        private Vector3[] nativeReferenceScales;
+        private bool nativeReferencePoseCaptured;
         private KernelSkeletonRenderState pendingState;
         private SkeletonRenderStateBuffer pendingBuffer;
         private bool hasPendingPose;
@@ -47,21 +51,33 @@ namespace NetworkExample.Kernel.Presentation
 
             ArraySegment<KernelBoneLocalTransform> transforms =
                 buffer.GetBoneTransforms(state);
+            if (binding.PreservePrefabBindPose &&
+                !nativeReferencePoseCaptured)
+            {
+                CaptureNativeReferencePose(transforms);
+            }
             for (int index = 0; index < transforms.Count; ++index)
             {
                 KernelBoneLocalTransform local =
                     transforms.Array[transforms.Offset + index];
                 Transform bone = binding.Bones[index];
-                Vector3 nativePosition = ToVector3(local.local_position);
-                Quaternion nativeRotation = Normalize(local.local_rotation);
+                Vector3 nativePosition = ReflectPositionX(
+                    ToVector3(local.local_position));
+                Quaternion nativeRotation = ReflectRotationX(
+                    Normalize(local.local_rotation));
                 Vector3 nativeScale = ToVector3(local.local_scale);
                 if (binding.PreservePrefabBindPose)
                 {
-                    bone.localPosition = prefabBindPositions[index] + nativePosition;
-                    bone.localRotation = prefabBindRotations[index] * nativeRotation;
+                    bone.localPosition = prefabBindPositions[index] +
+                        nativePosition - nativeReferencePositions[index];
+                    Quaternion rotationDelta =
+                        Quaternion.Inverse(nativeReferenceRotations[index]) *
+                        nativeRotation;
+                    bone.localRotation =
+                        prefabBindRotations[index] * rotationDelta;
                     bone.localScale = Vector3.Scale(
                         prefabBindScales[index],
-                        nativeScale);
+                        DivideScale(nativeScale, nativeReferenceScales[index]));
                 }
                 else
                 {
@@ -180,6 +196,30 @@ namespace NetworkExample.Kernel.Presentation
             }
         }
 
+        private void CaptureNativeReferencePose(
+            ArraySegment<KernelBoneLocalTransform> transforms)
+        {
+            // Presentation can attach after the native stream is already procedural,
+            // so a bind-flagged state is not guaranteed. Treat the first valid pose
+            // as the reference that maps absolute native GLB transforms into deltas
+            // applied on top of the imported FBX bind pose.
+            int count = transforms.Count;
+            nativeReferencePositions = new Vector3[count];
+            nativeReferenceRotations = new Quaternion[count];
+            nativeReferenceScales = new Vector3[count];
+            for (int index = 0; index < count; ++index)
+            {
+                KernelBoneLocalTransform local =
+                    transforms.Array[transforms.Offset + index];
+                nativeReferencePositions[index] = ReflectPositionX(
+                    ToVector3(local.local_position));
+                nativeReferenceRotations[index] = ReflectRotationX(
+                    Normalize(local.local_rotation));
+                nativeReferenceScales[index] = ToVector3(local.local_scale);
+            }
+            nativeReferencePoseCaptured = true;
+        }
+
         private void LateUpdate()
         {
             if (!hasPendingPose)
@@ -236,6 +276,31 @@ namespace NetworkExample.Kernel.Presentation
         private static Vector3 ToVector3(KernelVec3 value)
         {
             return new Vector3(value.x, value.y, value.z);
+        }
+
+        private static Vector3 ReflectPositionX(Vector3 value)
+        {
+            return new Vector3(-value.x, value.y, value.z);
+        }
+
+        private static Quaternion ReflectRotationX(Quaternion value)
+        {
+            return new Quaternion(value.x, -value.y, -value.z, value.w);
+        }
+
+        private static Vector3 DivideScale(Vector3 value, Vector3 reference)
+        {
+            return new Vector3(
+                DivideScaleComponent(value.x, reference.x),
+                DivideScaleComponent(value.y, reference.y),
+                DivideScaleComponent(value.z, reference.z));
+        }
+
+        private static float DivideScaleComponent(float value, float reference)
+        {
+            return Mathf.Abs(reference) > 1.0e-8f
+                ? value / reference
+                : 1.0f;
         }
     }
 }

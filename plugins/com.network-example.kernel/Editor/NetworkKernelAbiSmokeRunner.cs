@@ -8,6 +8,7 @@ using UnityEditor;
 using UnityEngine;
 using NetworkExample.Kernel.Client;
 using NetworkExample.Kernel.Host;
+using NetworkExample.Kernel.Presentation;
 
 namespace NetworkExample.Kernel.Editor
 {
@@ -83,6 +84,7 @@ namespace NetworkExample.Kernel.Editor
                  KernelConstants.CapabilitySkeletonRenderStates) != 0,
                 "Kernel skeleton render-state capability was missing.");
             RequireSkeletonBindingValidation();
+            RequireSkeletonAbsolutePoseApplication();
             Require(
                 (KernelConstants.VisualFlagHpUnknown & KernelConstants.VisualFlagDead) == 0,
                 "Kernel HpUnknown visual flag overlapped Dead.");
@@ -344,6 +346,267 @@ namespace NetworkExample.Kernel.Editor
             {
                 UnityEngine.Object.DestroyImmediate(root);
             }
+        }
+
+        private static void RequireSkeletonAbsolutePoseApplication()
+        {
+            var root = new GameObject("KernelSkeletonAbsolutePoseSmoke");
+            try
+            {
+                Transform bone = new GameObject("AbsolutePoseBone").transform;
+                bone.SetParent(root.transform, false);
+                Vector3 bindPosition = new Vector3(10.0f, 20.0f, 30.0f);
+                Quaternion bindRotation = Quaternion.Euler(25.0f, 0.0f, 10.0f);
+                Vector3 bindScale = new Vector3(1.5f, 2.0f, 2.5f);
+                bone.localPosition = bindPosition;
+                bone.localRotation = bindRotation;
+                bone.localScale = bindScale;
+
+                KernelSkeletonPoseApplicator applicator =
+                    CreateSkeletonPoseApplicator(root, bone);
+                KernelSkeletonRenderState state = SkeletonState(
+                    KernelConstants.SkeletonPoseFlagProcedural);
+                SkeletonRenderStateBuffer firstPose = SkeletonBuffer(
+                    state,
+                    BoneTransform(
+                        new Vector3(3.0f, 4.0f, 5.0f),
+                        Quaternion.identity,
+                        new Vector3(2.0f, 2.0f, 4.0f)));
+                Require(
+                    applicator.TryApply(state, firstPose, out string error),
+                    $"First absolute skeleton pose was rejected: {error}");
+                RequireVectorApproximately(
+                    bone.localPosition,
+                    bindPosition,
+                    "First procedural pose was added to the FBX bind position.");
+                RequireQuaternionApproximately(
+                    bone.localRotation,
+                    bindRotation,
+                    "First procedural pose was multiplied into the FBX bind rotation.");
+                RequireVectorApproximately(
+                    bone.localScale,
+                    bindScale,
+                    "First procedural pose changed the FBX bind scale.");
+
+                Quaternion nativeYaw = Quaternion.AngleAxis(30.0f, Vector3.up);
+                SkeletonRenderStateBuffer secondPose = SkeletonBuffer(
+                    state,
+                    BoneTransform(
+                        new Vector3(4.0f, 6.0f, 8.0f),
+                        nativeYaw,
+                        new Vector3(4.0f, 1.0f, 4.0f)));
+                Require(
+                    applicator.TryApply(state, secondPose, out error),
+                    $"Second absolute skeleton pose was rejected: {error}");
+                RequireVectorApproximately(
+                    bone.localPosition,
+                    bindPosition + new Vector3(-1.0f, 2.0f, 3.0f),
+                    "Native position delta did not use the X-reflected basis.");
+                Quaternion reflectedYaw =
+                    new Quaternion(nativeYaw.x, -nativeYaw.y, -nativeYaw.z, nativeYaw.w);
+                RequireQuaternionApproximately(
+                    bone.localRotation,
+                    bindRotation * reflectedYaw,
+                    "Native rotation delta was not applied after the FBX bind rotation.");
+                Require(
+                    Quaternion.Angle(
+                        bone.localRotation,
+                        reflectedYaw * bindRotation) > 0.1f,
+                    "Skeleton rotation smoke did not distinguish bind * delta from delta * bind.");
+                RequireVectorApproximately(
+                    bone.localScale,
+                    Vector3.Scale(bindScale, new Vector3(2.0f, 0.5f, 1.0f)),
+                    "Native absolute scale was not converted to a reference-relative ratio.");
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(root);
+            }
+
+            RequireSkeletonZeroReferenceScale();
+            RequireSkeletonReferenceReset();
+        }
+
+        private static void RequireSkeletonZeroReferenceScale()
+        {
+            var root = new GameObject("KernelSkeletonZeroScaleSmoke");
+            try
+            {
+                Transform bone = new GameObject("ZeroScaleBone").transform;
+                bone.SetParent(root.transform, false);
+                bone.localScale = new Vector3(2.0f, 3.0f, 4.0f);
+                KernelSkeletonPoseApplicator applicator =
+                    CreateSkeletonPoseApplicator(root, bone);
+                KernelSkeletonRenderState state = SkeletonState(
+                    KernelConstants.SkeletonPoseFlagProcedural);
+                Require(
+                    applicator.TryApply(
+                        state,
+                        SkeletonBuffer(
+                            state,
+                            BoneTransform(
+                                Vector3.zero,
+                                Quaternion.identity,
+                                new Vector3(0.0f, 1.0e-10f, 2.0f))),
+                        out string error),
+                    $"Zero-scale skeleton reference was rejected: {error}");
+                Require(
+                    applicator.TryApply(
+                        state,
+                        SkeletonBuffer(
+                            state,
+                            BoneTransform(
+                                Vector3.zero,
+                                Quaternion.identity,
+                                new Vector3(5.0f, 6.0f, 4.0f))),
+                        out error),
+                    $"Skeleton pose after zero-scale reference was rejected: {error}");
+                RequireVectorApproximately(
+                    bone.localScale,
+                    new Vector3(2.0f, 3.0f, 8.0f),
+                    "Zero or near-zero reference scale produced an unsafe ratio.");
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(root);
+            }
+        }
+
+        private static void RequireSkeletonReferenceReset()
+        {
+            Vector3 bindPosition = new Vector3(7.0f, 8.0f, 9.0f);
+            Vector3[] nativeReferences =
+            {
+                new Vector3(1.0f, 2.0f, 3.0f),
+                new Vector3(20.0f, 30.0f, 40.0f),
+            };
+            for (int index = 0; index < nativeReferences.Length; ++index)
+            {
+                var root = new GameObject($"KernelSkeletonRespawnSmoke{index}");
+                try
+                {
+                    Transform bone = new GameObject("RespawnBone").transform;
+                    bone.SetParent(root.transform, false);
+                    bone.localPosition = bindPosition;
+                    KernelSkeletonPoseApplicator applicator =
+                        CreateSkeletonPoseApplicator(root, bone);
+                    KernelSkeletonRenderState state = SkeletonState(
+                        KernelConstants.SkeletonPoseFlagProcedural);
+                    Require(
+                        applicator.TryApply(
+                            state,
+                            SkeletonBuffer(
+                                state,
+                                BoneTransform(
+                                    nativeReferences[index],
+                                    Quaternion.identity,
+                                    Vector3.one)),
+                            out string error),
+                        $"Respawn reference pose {index} was rejected: {error}");
+                    RequireVectorApproximately(
+                        bone.localPosition,
+                        bindPosition,
+                        "A new skeleton instance reused a stale native reference pose.");
+                }
+                finally
+                {
+                    UnityEngine.Object.DestroyImmediate(root);
+                }
+            }
+        }
+
+        private static KernelSkeletonPoseApplicator CreateSkeletonPoseApplicator(
+            GameObject root,
+            Transform bone)
+        {
+            KernelSkeletonBinding binding = root.AddComponent<KernelSkeletonBinding>();
+            binding.SkeletonAssetId = 7;
+            binding.SkeletonContentHash = 0x1234UL;
+            binding.AutoMapKnownSkeleton = false;
+            binding.PreservePrefabBindPose = true;
+            binding.Bones = new[] { bone };
+            return root.AddComponent<KernelSkeletonPoseApplicator>();
+        }
+
+        private static KernelSkeletonRenderState SkeletonState(uint poseFlags)
+        {
+            return new KernelSkeletonRenderState
+            {
+                entity_net_id = 1,
+                skeleton_asset_id = 7,
+                skeleton_content_hash = 0x1234UL,
+                first_bone_transform = 0,
+                bone_count = 1,
+                pose_tick = 2,
+                pose_flags = poseFlags,
+                pose_time_us = 66666,
+            };
+        }
+
+        private static SkeletonRenderStateBuffer SkeletonBuffer(
+            KernelSkeletonRenderState state,
+            KernelBoneLocalTransform transform)
+        {
+            var buffer = new SkeletonRenderStateBuffer(1, 1);
+            buffer.States[0] = state;
+            buffer.BoneTransforms[0] = transform;
+            MethodInfo commit = typeof(SkeletonRenderStateBuffer).GetMethod(
+                "Commit",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            Require(commit != null, "Skeleton smoke could not access buffer commit.");
+            commit.Invoke(
+                buffer,
+                new object[]
+                {
+                    new KernelSkeletonRenderStateResult
+                    {
+                        struct_size = KernelSkeletonRenderStateResult.StructSize,
+                        status = KernelConstants.SkeletonRenderStatusSuccess,
+                        required_state_count = 1,
+                        required_bone_transform_count = 1,
+                        written_state_count = 1,
+                        written_bone_transform_count = 1,
+                        source_tick = state.pose_tick,
+                    },
+                });
+            return buffer;
+        }
+
+        private static KernelBoneLocalTransform BoneTransform(
+            Vector3 position,
+            Quaternion rotation,
+            Vector3 scale)
+        {
+            return new KernelBoneLocalTransform
+            {
+                local_position = new KernelVec3(position.x, position.y, position.z),
+                local_rotation = new KernelQuat(
+                    rotation.x,
+                    rotation.y,
+                    rotation.z,
+                    rotation.w),
+                local_scale = new KernelVec3(scale.x, scale.y, scale.z),
+            };
+        }
+
+        private static void RequireVectorApproximately(
+            Vector3 actual,
+            Vector3 expected,
+            string message)
+        {
+            Require(
+                (actual - expected).sqrMagnitude <= 1.0e-8f,
+                $"{message} expected={expected} actual={actual}");
+        }
+
+        private static void RequireQuaternionApproximately(
+            Quaternion actual,
+            Quaternion expected,
+            string message)
+        {
+            Require(
+                Quaternion.Angle(actual, expected) <= 0.001f,
+                $"{message} expected={expected} actual={actual}");
         }
 
         private static void RequireControlPlaneRpc(Kernel kernel, uint enemyNetId)
