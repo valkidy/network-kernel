@@ -35,9 +35,6 @@ public sealed class NetworkKernelMonsterObserverBehaviour : MonoBehaviour
 
     private readonly RenderEntityState[] rootStates = new RenderEntityState[128];
     private readonly KernelEvent[] events = new KernelEvent[64];
-    private readonly SkeletonRenderStateBuffer skeletonStates =
-        new SkeletonRenderStateBuffer(4, 128);
-
     private NetworkHost host;
     private GameObject referenceGround;
     private ulong clientRenderTimeUs;
@@ -113,17 +110,18 @@ public sealed class NetworkKernelMonsterObserverBehaviour : MonoBehaviour
         clientRenderTimeUs += SecondsToMicroseconds(deltaSeconds);
         host.Update(deltaSeconds, events);
 
-        uint rootStateCount =
-            host.GetRenderStatesAtTime(clientRenderTimeUs, rootStates);
-        host.GetSkeletonRenderStatesAtTime(clientRenderTimeUs, skeletonStates);
-        presentationWorld.Present(rootStates, rootStateCount, skeletonStates);
+        uint rootStateCount = presentationWorld.Present(
+            host.Kernel,
+            clientRenderTimeUs,
+            rootStates);
 
         ++logFrame;
         if (logFrame % 120U == 0U)
         {
             Debug.Log(
                 $"Monster Observer roots={rootStateCount} " +
-                $"skeletons={skeletonStates.StateCount} enemies={host.EnemyCount} " +
+                $"skeletons={presentationWorld.LastSkeletonStateCount} " +
+                $"enemies={host.EnemyCount} " +
                 $"local_player={host.LocalPlayerNetId}.");
         }
     }
@@ -276,7 +274,8 @@ public sealed class NetworkKernelMonsterObserverBehaviour : MonoBehaviour
             var bones = new Transform[ParentBoneIndices.Length];
             for (int index = 0; index < bones.Length; ++index)
             {
-                var boneObject = new GameObject($"Bone_{index:D2}");
+                var boneObject = new GameObject(
+                    KernelSkeletonBinding.GetMonsterSimV4BoneName(index));
                 Transform parent = ParentBoneIndices[index] < 0
                     ? root.transform
                     : bones[ParentBoneIndices[index]];

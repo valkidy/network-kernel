@@ -7,7 +7,14 @@ namespace NetworkExample.Kernel.Presentation
     [Serializable]
     public sealed class KernelEntityPresentationCatalogEntry
     {
+        [Tooltip("Entity kind used to disambiguate actor, projectile, item, and prop IDs.")]
+        public KernelEntityType EntityType = KernelEntityType.Actor;
+
+        [Tooltip(
+            "Render template ID. For actors this is the actor template ID when one " +
+            "is authored, otherwise the entity template ID fallback.")]
         public uint TemplateId;
+
         public GameObject Prefab;
     }
 
@@ -18,14 +25,37 @@ namespace NetworkExample.Kernel.Presentation
         private KernelEntityPresentationCatalogEntry[] entries =
             Array.Empty<KernelEntityPresentationCatalogEntry>();
 
-        public bool TryGetPrefab(uint templateId, out GameObject prefab)
+        public bool TryGetPrefab(RenderEntityState state, out GameObject prefab)
         {
             if (entries != null)
             {
                 for (int index = 0; index < entries.Length; ++index)
                 {
                     KernelEntityPresentationCatalogEntry entry = entries[index];
-                    if (entry != null && entry.TemplateId == templateId)
+                    if (entry != null &&
+                        entry.EntityType == state.entity_type &&
+                        entry.TemplateId == state.template_id)
+                    {
+                        prefab = entry.Prefab;
+                        return prefab != null;
+                    }
+                }
+            }
+
+            prefab = null;
+            return false;
+        }
+
+        public bool TryGetPrefab(uint actorTemplateId, out GameObject prefab)
+        {
+            if (entries != null)
+            {
+                for (int index = 0; index < entries.Length; ++index)
+                {
+                    KernelEntityPresentationCatalogEntry entry = entries[index];
+                    if (entry != null &&
+                        entry.EntityType == KernelEntityType.Actor &&
+                        entry.TemplateId == actorTemplateId)
                     {
                         prefab = entry.Prefab;
                         return prefab != null;
@@ -43,6 +73,7 @@ namespace NetworkExample.Kernel.Presentation
     {
         private sealed class PresentationInstance
         {
+            public KernelEntityType EntityType;
             public uint TemplateId;
             public GameObject GameObject;
             public KernelSkeletonPoseApplicator SkeletonApplicator;
@@ -63,8 +94,34 @@ namespace NetworkExample.Kernel.Presentation
             new Dictionary<uint, PresentationInstance>();
         private readonly HashSet<uint> visibleNetIds = new HashSet<uint>();
         private readonly List<uint> staleNetIds = new List<uint>();
+        private readonly SkeletonRenderStateBuffer queriedSkeletonStates =
+            new SkeletonRenderStateBuffer(4, 128);
 
         public Func<RenderEntityState, GameObject> FallbackFactory { get; set; }
+        public uint LastSkeletonStateCount => queriedSkeletonStates.StateCount;
+
+        public uint Present(
+            Kernel kernel,
+            ulong clientRenderTimeUs,
+            RenderEntityState[] rootStates)
+        {
+            if (kernel == null)
+            {
+                throw new ArgumentNullException(nameof(kernel));
+            }
+            if (rootStates == null)
+            {
+                throw new ArgumentNullException(nameof(rootStates));
+            }
+
+            uint rootStateCount =
+                kernel.GetRenderStatesAtTime(clientRenderTimeUs, rootStates);
+            kernel.GetSkeletonRenderStatesAtTime(
+                clientRenderTimeUs,
+                queriedSkeletonStates);
+            Present(rootStates, rootStateCount, queriedSkeletonStates);
+            return rootStateCount;
+        }
 
         public void Present(
             RenderEntityState[] rootStates,
@@ -137,7 +194,8 @@ namespace NetworkExample.Kernel.Presentation
         {
             if (instances.TryGetValue(state.net_id, out PresentationInstance existing))
             {
-                if (existing.TemplateId == state.template_id)
+                if (existing.EntityType == state.entity_type &&
+                    existing.TemplateId == state.template_id)
                 {
                     return existing;
                 }
@@ -151,7 +209,7 @@ namespace NetworkExample.Kernel.Presentation
 
             GameObject instanceObject = null;
             if (catalog != null &&
-                catalog.TryGetPrefab(state.template_id, out GameObject prefab))
+                catalog.TryGetPrefab(state, out GameObject prefab))
             {
                 instanceObject = Instantiate(prefab, ResolveRoot());
             }
@@ -189,6 +247,7 @@ namespace NetworkExample.Kernel.Presentation
 
             var instance = new PresentationInstance
             {
+                EntityType = state.entity_type,
                 TemplateId = state.template_id,
                 GameObject = instanceObject,
                 SkeletonApplicator = skeletonApplicator,
@@ -218,7 +277,10 @@ namespace NetworkExample.Kernel.Presentation
                     continue;
                 }
 
-                if (!instance.SkeletonApplicator.TryApply(state, buffer, out string error) &&
+                if (!instance.SkeletonApplicator.TryStagePose(
+                        state,
+                        buffer,
+                        out string error) &&
                     !instance.SkeletonErrorLogged)
                 {
                     Debug.LogError(

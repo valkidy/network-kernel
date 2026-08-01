@@ -298,6 +298,47 @@ namespace NetworkExample.Kernel.Editor
                     !binding.TryValidate(state, out error) &&
                     error.Contains("duplicates"),
                     "Duplicate KernelSkeletonBinding bones were not rejected.");
+
+                RequireMonsterSimV4AutoBinding();
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(root);
+            }
+        }
+
+        private static void RequireMonsterSimV4AutoBinding()
+        {
+            var root = new GameObject("MonsterSimV4AutoBindingSmoke");
+            try
+            {
+                var expectedBones = new Transform[41];
+                for (int index = 0; index < expectedBones.Length; ++index)
+                {
+                    var bone = new GameObject(
+                        KernelSkeletonBinding.GetMonsterSimV4BoneName(index));
+                    int parentIndex =
+                        KernelSkeletonBinding.GetMonsterSimV4ParentBoneIndex(index);
+                    bone.transform.SetParent(
+                        parentIndex < 0 ? root.transform : expectedBones[parentIndex],
+                        false);
+                    expectedBones[index] = bone.transform;
+                }
+
+                KernelSkeletonBinding binding =
+                    root.AddComponent<KernelSkeletonBinding>();
+                Require(
+                    binding.TryAutoMap(out string error),
+                    $"Monster v4 automatic bone mapping failed: {error}");
+                Require(
+                    binding.Bones.Length == expectedBones.Length,
+                    "Monster v4 automatic bone mapping returned the wrong count.");
+                for (int index = 0; index < expectedBones.Length; ++index)
+                {
+                    Require(
+                        binding.Bones[index] == expectedBones[index],
+                        $"Monster v4 automatic bone mapping mismatched index {index}.");
+                }
             }
             finally
             {

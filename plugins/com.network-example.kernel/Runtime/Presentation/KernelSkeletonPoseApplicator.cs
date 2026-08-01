@@ -5,13 +5,77 @@ namespace NetworkExample.Kernel.Presentation
 {
     [DisallowMultipleComponent]
     [RequireComponent(typeof(KernelSkeletonBinding))]
+    [DefaultExecutionOrder(10000)]
     public sealed class KernelSkeletonPoseApplicator : MonoBehaviour
     {
         private KernelSkeletonBinding binding;
         private bool bindingValidated;
         private string bindingError;
+        private Vector3[] prefabBindPositions;
+        private Quaternion[] prefabBindRotations;
+        private Vector3[] prefabBindScales;
+        private KernelSkeletonRenderState pendingState;
+        private SkeletonRenderStateBuffer pendingBuffer;
+        private bool hasPendingPose;
+        private bool applyErrorLogged;
+
+        public bool TryStagePose(
+            KernelSkeletonRenderState state,
+            SkeletonRenderStateBuffer buffer,
+            out string error)
+        {
+            if (!TryValidatePose(state, buffer, out error))
+            {
+                return false;
+            }
+
+            pendingState = state;
+            pendingBuffer = buffer;
+            hasPendingPose = true;
+            return true;
+        }
 
         public bool TryApply(
+            KernelSkeletonRenderState state,
+            SkeletonRenderStateBuffer buffer,
+            out string error)
+        {
+            if (!TryValidatePose(state, buffer, out error))
+            {
+                return false;
+            }
+
+            ArraySegment<KernelBoneLocalTransform> transforms =
+                buffer.GetBoneTransforms(state);
+            for (int index = 0; index < transforms.Count; ++index)
+            {
+                KernelBoneLocalTransform local =
+                    transforms.Array[transforms.Offset + index];
+                Transform bone = binding.Bones[index];
+                Vector3 nativePosition = ToVector3(local.local_position);
+                Quaternion nativeRotation = Normalize(local.local_rotation);
+                Vector3 nativeScale = ToVector3(local.local_scale);
+                if (binding.PreservePrefabBindPose)
+                {
+                    bone.localPosition = prefabBindPositions[index] + nativePosition;
+                    bone.localRotation = prefabBindRotations[index] * nativeRotation;
+                    bone.localScale = Vector3.Scale(
+                        prefabBindScales[index],
+                        nativeScale);
+                }
+                else
+                {
+                    bone.localPosition = nativePosition;
+                    bone.localRotation = nativeRotation;
+                    bone.localScale = nativeScale;
+                }
+            }
+
+            error = null;
+            return true;
+        }
+
+        private bool TryValidatePose(
             KernelSkeletonRenderState state,
             SkeletonRenderStateBuffer buffer,
             out string error)
@@ -21,35 +85,30 @@ namespace NetworkExample.Kernel.Presentation
                 error = "Skeleton render-state buffer is null.";
                 return false;
             }
-
-            if (binding == null)
+            if (!EnsureBinding(out error))
             {
-                binding = GetComponent<KernelSkeletonBinding>();
-                bindingValidated = binding != null && binding.TryValidate(out bindingError);
-            }
-            if (!bindingValidated)
-            {
-                error = binding == null
-                    ? "KernelSkeletonBinding is missing."
-                    : bindingError;
                 return false;
             }
             if (state.skeleton_asset_id != binding.SkeletonAssetId)
             {
                 error =
-                    $"Skeleton asset mismatch: state={state.skeleton_asset_id}, binding={binding.SkeletonAssetId}.";
+                    $"Skeleton asset mismatch: state={state.skeleton_asset_id}, " +
+                    $"binding={binding.SkeletonAssetId}.";
                 return false;
             }
             if (state.skeleton_content_hash != binding.SkeletonContentHash)
             {
                 error =
-                    $"Skeleton content hash mismatch: state=0x{state.skeleton_content_hash:x16}, binding=0x{binding.SkeletonContentHash:x16}.";
+                    $"Skeleton content hash mismatch: " +
+                    $"state=0x{state.skeleton_content_hash:x16}, " +
+                    $"binding=0x{binding.SkeletonContentHash:x16}.";
                 return false;
             }
             if (state.bone_count != (uint)binding.Bones.Length)
             {
                 error =
-                    $"Bone count mismatch: state={state.bone_count}, binding={binding.Bones.Length}.";
+                    $"Bone count mismatch: state={state.bone_count}, " +
+                    $"binding={binding.Bones.Length}.";
                 return false;
             }
 
@@ -79,17 +138,64 @@ namespace NetworkExample.Kernel.Presentation
                 }
             }
 
-            for (int index = 0; index < transforms.Count; ++index)
-            {
-                KernelBoneLocalTransform local = transforms.Array[transforms.Offset + index];
-                Transform bone = binding.Bones[index];
-                bone.localPosition = ToVector3(local.local_position);
-                bone.localRotation = Normalize(local.local_rotation);
-                bone.localScale = ToVector3(local.local_scale);
-            }
-
             error = null;
             return true;
+        }
+
+        private bool EnsureBinding(out string error)
+        {
+            if (binding == null)
+            {
+                binding = GetComponent<KernelSkeletonBinding>();
+            }
+            if (!bindingValidated)
+            {
+                bindingValidated =
+                    binding != null && binding.TryValidate(out bindingError);
+                if (bindingValidated)
+                {
+                    CapturePrefabBindPose();
+                }
+            }
+            error = bindingValidated
+                ? null
+                : binding == null
+                    ? "KernelSkeletonBinding is missing."
+                    : bindingError;
+            return bindingValidated;
+        }
+
+        private void CapturePrefabBindPose()
+        {
+            int count = binding.Bones.Length;
+            prefabBindPositions = new Vector3[count];
+            prefabBindRotations = new Quaternion[count];
+            prefabBindScales = new Vector3[count];
+            for (int index = 0; index < count; ++index)
+            {
+                Transform bone = binding.Bones[index];
+                prefabBindPositions[index] = bone.localPosition;
+                prefabBindRotations[index] = bone.localRotation;
+                prefabBindScales[index] = bone.localScale;
+            }
+        }
+
+        private void LateUpdate()
+        {
+            if (!hasPendingPose)
+            {
+                return;
+            }
+
+            hasPendingPose = false;
+            if (!TryApply(pendingState, pendingBuffer, out string error) &&
+                !applyErrorLogged)
+            {
+                Debug.LogError(
+                    $"Failed to apply staged skeleton pose: {error}",
+                    this);
+                applyErrorLogged = true;
+            }
         }
 
         private static bool IsFinite(KernelBoneLocalTransform transform)
