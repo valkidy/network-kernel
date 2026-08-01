@@ -15,6 +15,10 @@ struct AgentSentryConfig {
     std::uint32_t patrol_rotation_interval_ticks = 30;
     float patrol_rotation_min_degrees = 15.0f;
     float patrol_rotation_max_degrees = 30.0f;
+    bool passive_patrol = false;
+    float patrol_extent_x_meters = 0.0f;
+    float patrol_input_magnitude = 0.0f;
+    float move_speed_meters_per_second = 0.0f;
     std::uint16_t weapon_id = UINT16_MAX;
     std::uint16_t animation_idle = 0;
     std::uint16_t animation_attack = 0;

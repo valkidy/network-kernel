@@ -1,0 +1,8 @@
+id: 14
+name: monster_sim_movement_capsule
+shape: capsule
+center: {x: 0.0, y: 8.0, z: 0.0}
+half_height: 5.0
+radius: 3.0
+purpose: movement
+layer: hostile_side

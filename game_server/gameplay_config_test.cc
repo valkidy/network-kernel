@@ -1,5 +1,7 @@
 #include "game_server/gameplay_config.h"
 
+#include <algorithm>
+#include <array>
 #include <cassert>
 #include <cmath>
 #include <cstdint>
@@ -52,6 +54,82 @@ void require_impl(bool condition, const char* expression, int line) {
 }
 
 #define require(condition) require_impl((condition), #condition, __LINE__)
+
+void hash_u64(std::uint64_t* hash, std::uint64_t value) {
+    constexpr std::uint64_t kFnvPrime = 1099511628211ull;
+    for (std::uint32_t byte = 0u; byte < 8u; ++byte) {
+        *hash ^= (value >> (byte * 8u)) & 0xffu;
+        *hash *= kFnvPrime;
+    }
+}
+
+void hash_quantized_float(std::uint64_t* hash, float value) {
+    const auto quantized = static_cast<std::int64_t>(
+        std::llround(static_cast<double>(value) * 10000.0));
+    hash_u64(hash, static_cast<std::uint64_t>(quantized));
+}
+
+void hash_vec3(std::uint64_t* hash, const glm::vec3& value) {
+    hash_quantized_float(hash, value.x);
+    hash_quantized_float(hash, value.y);
+    hash_quantized_float(hash, value.z);
+}
+
+std::uint64_t quantized_locomotion_hash(
+    const network_example::LocomotionState& state,
+    const glm::vec3& root_position,
+    const glm::vec3& root_velocity) {
+    constexpr std::uint64_t kFnvOffsetBasis = 14695981039346656037ull;
+    std::uint64_t hash = kFnvOffsetBasis;
+    hash_vec3(&hash, root_position);
+    hash_vec3(&hash, root_velocity);
+    hash_quantized_float(&hash, state.root_yaw_radians);
+    hash_u64(&hash, state.gait_start_tick);
+    hash_u64(&hash, state.gait_phase_tick);
+    hash_u64(&hash, state.pose_valid ? 1u : 0u);
+    hash_u64(&hash, state.legs.size());
+    for (const network_example::LegLocomotionState& leg : state.legs) {
+        hash_u64(&hash, leg.hip_bone_index);
+        hash_u64(&hash, leg.knee_bone_index);
+        hash_u64(&hash, leg.foot_bone_index);
+        hash_u64(&hash, leg.phase_tick);
+        hash_u64(&hash, static_cast<std::uint8_t>(leg.gait_state));
+        hash_u64(&hash, leg.entered_swing ? 1u : 0u);
+        hash_u64(&hash, leg.entered_support ? 1u : 0u);
+        hash_vec3(&hash, leg.swing_start_world);
+        hash_vec3(&hash, leg.landing_target_world);
+        hash_vec3(&hash, leg.planted_foothold_world);
+        hash_vec3(&hash, leg.foot_target_world);
+        hash_vec3(&hash, leg.ground_hit_position);
+        hash_vec3(&hash, leg.ground_hit_normal);
+        hash_u64(&hash, leg.grounding_candidate_index);
+        hash_u64(&hash, leg.supporting_entity_net_id);
+        hash_u64(&hash, leg.supporting_collider_id);
+        hash_u64(&hash, leg.landing_target_valid ? 1u : 0u);
+        hash_u64(&hash, leg.planted ? 1u : 0u);
+        hash_u64(&hash, leg.ground_hit_valid ? 1u : 0u);
+        hash_u64(&hash, leg.ik_reach_clamped ? 1u : 0u);
+        hash_u64(&hash, leg.foot_target_valid ? 1u : 0u);
+    }
+    hash_u64(&hash, state.last_processing_order.size());
+    for (const std::uint32_t leg_index : state.last_processing_order) {
+        hash_u64(&hash, leg_index);
+    }
+    hash_u64(&hash, state.local_pose.size());
+    for (const KernelBoneLocalTransform& transform : state.local_pose) {
+        hash_quantized_float(&hash, transform.local_position.x);
+        hash_quantized_float(&hash, transform.local_position.y);
+        hash_quantized_float(&hash, transform.local_position.z);
+        hash_quantized_float(&hash, transform.local_rotation.x);
+        hash_quantized_float(&hash, transform.local_rotation.y);
+        hash_quantized_float(&hash, transform.local_rotation.z);
+        hash_quantized_float(&hash, transform.local_rotation.w);
+        hash_quantized_float(&hash, transform.local_scale.x);
+        hash_quantized_float(&hash, transform.local_scale.y);
+        hash_quantized_float(&hash, transform.local_scale.z);
+    }
+    return hash;
+}
 
 std::string read_text_file(const std::string& path) {
     std::ifstream file(path, std::ios::binary);
@@ -180,6 +258,7 @@ void append_collider_template_files(
         "area_effect_sphere.yaml",
         "collision_damage_prop_hitbox.yaml",
         "ice_block_hitbox.yaml",
+        "monster_sim_movement_capsule.yaml",
         "player_hit_aabb.yaml",
         "player_movement_capsule.yaml",
         "rocket_aabb.yaml",
@@ -529,7 +608,22 @@ int main() {
             invalid_leg_bundle.data(),
             static_cast<std::uint32_t>(invalid_leg_bundle.size()),
             "gameplay_catalog.yaml");
-    } catch (const std::exception& error) {
+    } catch (const network_example::game_server::DataLoadError& error) {
+        require(error.error_code ==
+                KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_YAML);
+        require(error.source_kind ==
+                KERNEL_GAMEPLAY_CATALOG_LOAD_SOURCE_BUNDLE);
+        require(error.template_kind ==
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR);
+        require(error.template_id == 20u);
+        require(error.field == "skeleton");
+        require(error.path.find("monster_sim.yaml") != std::string::npos);
+        require(std::string(error.what()).find("simplified_monster_sim_v4") !=
+                std::string::npos);
+        require(std::string(error.what()).find("JNT_LegFrontLeft_Hip") !=
+                std::string::npos);
+        require(std::string(error.what()).find("JNT_LegFrontLeft_Knee") !=
+                std::string::npos);
         invalid_leg_hierarchy_rejected =
             std::string(error.what()).find("invalid two-bone hierarchy") !=
             std::string::npos;
@@ -709,6 +803,9 @@ int main() {
         "    patrol_rotation_interval_ticks: 2\n"
         "    patrol_rotation_min_degrees: 10.5\n"
         "    patrol_rotation_max_degrees: 22.5\n"
+        "    passive_patrol: true\n"
+        "    patrol_extent_x_meters: 8.0\n"
+        "    patrol_input_magnitude: 0.6\n"
         "    weapon_id: 2\n"
         "    animation_idle: idle\n"
         "    animation_attack: chasing\n";
@@ -728,11 +825,42 @@ int main() {
     assert(data_driven_sentry.sentry.patrol_rotation_interval_ticks == 2);
     assert(data_driven_sentry.sentry.patrol_rotation_min_degrees == 10.5f);
     assert(data_driven_sentry.sentry.patrol_rotation_max_degrees == 22.5f);
+    assert(data_driven_sentry.sentry.passive_patrol);
+    assert(data_driven_sentry.sentry.patrol_extent_x_meters == 8.0f);
+    assert(data_driven_sentry.sentry.patrol_input_magnitude == 0.6f);
+    assert(data_driven_sentry.sentry.move_speed_meters_per_second == 2.5f);
     assert(data_driven_sentry.sentry.weapon_id == 2);
     assert(data_driven_sentry.sentry.animation_idle ==
            data_driven_sentry.animation_idle);
     assert(data_driven_sentry.sentry.animation_attack ==
            data_driven_sentry.animation_chasing);
+
+    for (const std::pair<std::string, std::string>& invalid_patrol_value : {
+             std::pair<std::string, std::string>{
+                 "patrol_extent_x_meters: 8.0",
+                 "patrol_extent_x_meters: 0.0"},
+             std::pair<std::string, std::string>{
+                 "patrol_input_magnitude: 0.6",
+                 "patrol_input_magnitude: .nan"},
+         }) {
+        bool invalid_passive_patrol_rejected = false;
+        try {
+            const std::vector<std::uint8_t> invalid_passive_patrol_bundle =
+                make_entity_template_bundle_zip(replace_once(
+                    data_driven_sentry_yaml,
+                    invalid_patrol_value.first,
+                    invalid_patrol_value.second));
+            (void)network_example::game_server::
+                load_gameplay_config_from_bundle_memory(
+                    invalid_passive_patrol_bundle.data(),
+                    static_cast<std::uint32_t>(
+                        invalid_passive_patrol_bundle.size()),
+                    "gameplay_catalog.yaml");
+        } catch (const std::exception&) {
+            invalid_passive_patrol_rejected = true;
+        }
+        assert(invalid_passive_patrol_rejected);
+    }
 
     const std::vector<std::uint8_t> invalid_enemy_entity_bundle =
         make_entity_template_bundle_zip(
@@ -811,6 +939,23 @@ int main() {
         config.weapons.catalog_hash !=
         network_example::game_server::compute_gameplay_catalog_hash(changed_config));
     changed_config = config;
+    const auto changed_monster_sentry = std::find_if(
+        changed_config.entity_templates.begin(),
+        changed_config.entity_templates.end(),
+        [](const network_example::game_server::EntityTemplateConfig& entity) {
+            return entity.name == "monster_sim";
+        });
+    require(changed_monster_sentry != changed_config.entity_templates.end());
+    changed_monster_sentry->sentry.patrol_extent_x_meters += 1.0f;
+    require(
+        config.weapons.catalog_hash !=
+        network_example::game_server::compute_gameplay_catalog_hash(changed_config));
+    changed_config = config;
+    changed_config.agent.override_director_spawn = true;
+    require(
+        config.weapons.catalog_hash !=
+        network_example::game_server::compute_gameplay_catalog_hash(changed_config));
+    changed_config = config;
     changed_config.prop_population_rules[0].definition.max_alive -= 1u;
     require(
         config.weapons.catalog_hash !=
@@ -884,6 +1029,10 @@ int main() {
         });
     require(monster_template != config.entity_templates.end());
     require(monster_template->skeleton.enabled);
+    require(monster_template->sentry.passive_patrol);
+    require(monster_template->sentry.patrol_extent_x_meters == 8.0f);
+    require(monster_template->sentry.patrol_input_magnitude == 0.6f);
+    require(monster_template->movement_collider_template_id == 14u);
     require(monster_template->skeleton.legs.size() == 4u);
     require(monster_template->skeleton.processing_order.size() == 4u);
     require(monster_template->movement_max_yaw_degrees_per_second == 45.0f);
@@ -1081,6 +1230,57 @@ int main() {
         require(std::isfinite(transform.local_scale.y));
         require(std::isfinite(transform.local_scale.z));
     }
+
+    const auto replay_locomotion = [&]() {
+        network_example::LocomotionState state;
+        require(network_example::initialize_locomotion_state(
+            monster_definition->skeleton, 0.0f, 0u, &state));
+        glm::vec3 root_position{0.0f};
+        std::vector<std::uint64_t> hashes;
+        hashes.reserve(90u);
+        for (std::uint32_t tick = 0u; tick < 90u; ++tick) {
+            const KernelVec2 input = tick < 30u
+                ? KernelVec2{0.0f, 1.0f}
+                : tick < 60u ? KernelVec2{1.0f, 0.0f} : KernelVec2{};
+            const glm::vec3 root_velocity{
+                input.x * 2.0f,
+                0.0f,
+                input.y * 2.0f,
+            };
+            root_position += root_velocity * (1.0f / 30.0f);
+            require(network_example::advance_locomotion_state(
+                monster_definition->skeleton,
+                input,
+                monster_definition->movement.max_yaw_degrees_per_second,
+                1.0f / 30.0f,
+                tick,
+                &state));
+            require(network_example::solve_legged_locomotion_pose(
+                locomotion_asset.skeleton,
+                locomotion_asset.bind_pose,
+                monster_definition->skeleton,
+                root_position,
+                root_velocity,
+                monster_definition->movement.max_slope_degrees,
+                1.0f / 30.0f,
+                [](const glm::vec3& origin, float,
+                   network_example::LocomotionGroundingHit* hit) {
+                    hit->position = glm::vec3{origin.x, 0.0f, origin.z};
+                    hit->normal = glm::vec3{0.0f, 1.0f, 0.0f};
+                    hit->supporting_entity_net_id = 77u;
+                    hit->supporting_collider_id = 9u;
+                    return true;
+                },
+                &state));
+            hashes.push_back(quantized_locomotion_hash(
+                state, root_position, root_velocity));
+        }
+        return hashes;
+    };
+    const std::vector<std::uint64_t> first_replay = replay_locomotion();
+    const std::vector<std::uint64_t> second_replay = replay_locomotion();
+    require(first_replay == second_replay);
+    require(first_replay.front() != first_replay.back());
     const auto magic_bottle = std::find_if(
         catalog.entity_templates.begin(),
         catalog.entity_templates.end(),
@@ -1617,6 +1817,72 @@ int main() {
         generated_bundle_config.projectile_templates.size() ==
         config.projectile_templates.size());
 
+    const network_example::game_server::GameServerGameplayConfig
+        monster_observer_config =
+            network_example::game_server::load_gameplay_config_from_bundle_memory(
+                generated_bundle.data(),
+                static_cast<std::uint32_t>(generated_bundle.size()),
+                "monster_observer_gameplay_catalog.yaml");
+    require(monster_observer_config.weapons.catalog_version == 9u);
+    require(monster_observer_config.agent.override_director_spawn);
+    require(monster_observer_config.agent.actor_template_id == 20u);
+    require(monster_observer_config.agent.spawn_count == 1u);
+    require(monster_observer_config.agent.spawn_radius == 0.0f);
+    require(monster_observer_config.agent.spawn_seed == 4242u);
+    require(monster_observer_config.agent.spawn_position.x == 0.0f);
+    require(monster_observer_config.agent.spawn_position.y == 10.0f);
+    const network_example::game_server::ActorTemplateConfig*
+        monster_observer_actor =
+            network_example::game_server::find_actor_template(
+                monster_observer_config,
+                monster_observer_config.agent.actor_template_id);
+    require(monster_observer_actor != nullptr);
+    require(monster_observer_actor->sentry.passive_patrol);
+    require(
+        monster_observer_config.weapons.catalog_hash !=
+        generated_bundle_config.weapons.catalog_hash);
+    const network_example::game_server::KernelGameplayCatalogStorage
+        monster_observer_catalog =
+            network_example::game_server::build_kernel_gameplay_catalog(
+                monster_observer_config);
+    const auto monster_observer_director = std::find_if(
+        monster_observer_catalog.entity_templates.begin(),
+        monster_observer_catalog.entity_templates.end(),
+        [](const KernelEntityTemplateDefinition& definition) {
+            return definition.entity_type == KernelEntityType_Director;
+        });
+    require(
+        monster_observer_director !=
+        monster_observer_catalog.entity_templates.end());
+    require(monster_observer_director->ai.spawn_target_count == 1u);
+    require(monster_observer_director->ai.spawn_entity_template_id == 20u);
+    require(monster_observer_director->ai.spawn_actor_template_id == 20u);
+
+    const std::string conflicting_enemy_catalog =
+        read_text_file("game_server/gameplay_catalog.yaml") +
+        "enemy:\n"
+        "  actor_template: sentry_grunt\n"
+        "  entity_template: monster_sim\n";
+    bool conflicting_enemy_rejected = false;
+    try {
+        const std::vector<std::uint8_t> conflicting_enemy_bundle =
+            make_gameplay_bundle_zip(
+                production_sentry_yaml,
+                {},
+                {},
+                conflicting_enemy_catalog);
+        (void)network_example::game_server::
+            load_gameplay_config_from_bundle_memory(
+                conflicting_enemy_bundle.data(),
+                static_cast<std::uint32_t>(conflicting_enemy_bundle.size()),
+                "gameplay_catalog.yaml");
+    } catch (const std::exception& error) {
+        conflicting_enemy_rejected =
+            std::string(error.what()).find("both actor_template and entity_template") !=
+            std::string::npos;
+    }
+    require(conflicting_enemy_rejected);
+
     const std::vector<std::uint8_t> unsupported_version_bundle = make_store_zip({
         {"gameplay_catalog.yaml", "catalog_version: 7\n"},
     });
@@ -2086,6 +2352,194 @@ int main() {
         locomotion_render_state->rotation.w -
         std::cos(expected_half_yaw_radians)) < 0.0001f);
     Kernel_Destroy(skeleton_kernel);
+
+    KernelConfig observer_kernel_config{};
+    observer_kernel_config.mode = KernelMode_ListenServer;
+    observer_kernel_config.tick.server_tick_rate = 30;
+    observer_kernel_config.tick.snapshot_rate = 30;
+    observer_kernel_config.max_events = 128;
+    observer_kernel_config.max_render_states = 128;
+    KernelHandle* observer_kernel = Kernel_Create(&observer_kernel_config);
+    require(observer_kernel != nullptr);
+    KernelGameplayCatalogLoadResult observer_load_result{};
+    observer_load_result.struct_size = sizeof(observer_load_result);
+    require(Kernel_LoadGameplayCatalogFromMemory(
+        observer_kernel,
+        generated_bundle.data(),
+        static_cast<std::uint32_t>(generated_bundle.size()),
+        "monster_observer_gameplay_catalog.yaml",
+        &observer_load_result));
+    require(
+        observer_load_result.status ==
+        KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS);
+    require(Kernel_StartListenServer(observer_kernel, 7897));
+    network_example::game_server::GameServer observer_server(
+        observer_kernel,
+        monster_observer_config);
+
+    std::uint32_t observer_monster_net_id = 0u;
+    float observer_monster_min_x = std::numeric_limits<float>::infinity();
+    float observer_monster_max_x = -std::numeric_limits<float>::infinity();
+    bool observer_monster_moved_positive = false;
+    bool observer_monster_moved_negative = false;
+    KernelVec3 observer_monster_last_position{};
+    KernelVec3 observer_monster_last_velocity{};
+    std::uint16_t observer_player_hp = 0u;
+    for (std::uint32_t frame = 0u; frame < 420u; ++frame) {
+        Kernel_Update(observer_kernel, 1.0f / 30.0f);
+
+        std::array<KernelEvent, 128> events{};
+        const std::uint32_t event_count = Kernel_PollEvents(
+            observer_kernel,
+            events.data(),
+            static_cast<std::uint32_t>(events.size()));
+        for (std::uint32_t event_index = 0u;
+             event_index < event_count;
+             ++event_index) {
+            observer_server.handle_event(events[event_index]);
+        }
+        observer_server.tick(1.0f / 30.0f);
+
+        std::array<KernelServerEntityState, 8> actor_states{};
+        for (KernelServerEntityState& state : actor_states) {
+            state.struct_size = sizeof(KernelServerEntityState);
+        }
+        const std::uint32_t actor_state_count = Kernel_ServerQueryEntities(
+            observer_kernel,
+            network_example::game_server::kEntityTypeActor,
+            actor_states.data(),
+            static_cast<std::uint32_t>(actor_states.size()));
+        std::uint32_t observer_agent_count = 0u;
+        for (std::uint32_t state_index = 0u;
+             state_index < actor_state_count;
+             ++state_index) {
+            const KernelServerEntityState& state = actor_states[state_index];
+            if (state.actor_type == network_example::game_server::kActorTypePlayer) {
+                observer_player_hp = state.hp;
+                continue;
+            }
+            if (state.actor_type != network_example::game_server::kActorTypeAgent) {
+                continue;
+            }
+            ++observer_agent_count;
+            require(state.actor_template_id == 20u);
+            observer_monster_net_id = state.net_id;
+            observer_monster_min_x =
+                std::min(observer_monster_min_x, state.position.x);
+            observer_monster_max_x =
+                std::max(observer_monster_max_x, state.position.x);
+            observer_monster_moved_positive =
+                observer_monster_moved_positive || state.velocity.x > 0.1f;
+            observer_monster_moved_negative =
+                observer_monster_moved_negative || state.velocity.x < -0.1f;
+            observer_monster_last_position = state.position;
+            observer_monster_last_velocity = state.velocity;
+            require(state.position.x >= -8.5f);
+            require(state.position.x <= 8.5f);
+        }
+        require(observer_agent_count <= 1u);
+    }
+
+    require(observer_monster_net_id != 0u);
+    if (observer_monster_max_x - observer_monster_min_x <= 8.0f ||
+        !observer_monster_moved_positive ||
+        !observer_monster_moved_negative) {
+        std::fprintf(
+            stderr,
+            "observer patrol diagnostic min_x=%f max_x=%f positive=%d negative=%d "
+            "position=(%f,%f,%f) velocity=(%f,%f,%f) next_input_seq=%u\n",
+            observer_monster_min_x,
+            observer_monster_max_x,
+            observer_monster_moved_positive ? 1 : 0,
+            observer_monster_moved_negative ? 1 : 0,
+            observer_monster_last_position.x,
+            observer_monster_last_position.y,
+            observer_monster_last_position.z,
+            observer_monster_last_velocity.x,
+            observer_monster_last_velocity.y,
+            observer_monster_last_velocity.z,
+            observer_server.agent_runtime_manager().agents().empty()
+                ? 0u
+                : observer_server.agent_runtime_manager().agents()[0]
+                      .next_input_seq);
+    }
+    require(observer_monster_max_x - observer_monster_min_x > 8.0f);
+    require(observer_monster_moved_positive);
+    require(observer_monster_moved_negative);
+    require(observer_player_hp == 1000u);
+    require(observer_server.agent_runtime_manager().agent_count() == 1u);
+    require(
+        observer_server.agent_runtime_manager().agents()[0].next_input_seq > 300u);
+    require(
+        observer_server.agent_runtime_manager().agents()[0].target_player_net_id == 0u);
+    require(
+        observer_server.agent_runtime_manager().agents()[0].sentry.state ==
+        network_example::game_server::AgentSentryState::kIdle);
+
+    std::array<RenderEntityState, 128> observer_render_states{};
+    const std::uint32_t observer_render_count = Kernel_GetRenderStates(
+        observer_kernel,
+        observer_render_states.data(),
+        static_cast<std::uint32_t>(observer_render_states.size()));
+    const auto observer_monster_render_state = std::find_if(
+        observer_render_states.begin(),
+        observer_render_states.begin() + observer_render_count,
+        [observer_monster_net_id](const RenderEntityState& state) {
+            return state.net_id == observer_monster_net_id;
+        });
+    require(
+        observer_monster_render_state !=
+        observer_render_states.begin() + observer_render_count);
+    require(observer_monster_render_state->template_id == 20u);
+
+    std::array<KernelSkeletonRenderState, 4> observer_skeleton_states{};
+    std::array<KernelBoneLocalTransform, 164> observer_bone_transforms{};
+    KernelSkeletonRenderStateResult observer_skeleton_result{};
+    observer_skeleton_result.struct_size = sizeof(observer_skeleton_result);
+    require(Kernel_GetSkeletonRenderStates(
+                observer_kernel,
+                observer_skeleton_states.data(),
+                static_cast<std::uint32_t>(observer_skeleton_states.size()),
+                observer_bone_transforms.data(),
+                static_cast<std::uint32_t>(observer_bone_transforms.size()),
+                &observer_skeleton_result) == 1u);
+    const auto observer_monster_skeleton_state = std::find_if(
+        observer_skeleton_states.begin(),
+        observer_skeleton_states.begin() + observer_skeleton_result.written_state_count,
+        [observer_monster_net_id](const KernelSkeletonRenderState& state) {
+            return state.entity_net_id == observer_monster_net_id;
+        });
+    require(
+        observer_monster_skeleton_state !=
+        observer_skeleton_states.begin() +
+            observer_skeleton_result.written_state_count);
+    require(observer_monster_skeleton_state->skeleton_asset_id == 1u);
+    require(
+        observer_monster_skeleton_state->skeleton_content_hash ==
+        UINT64_C(0x1c171165d9bb479b));
+    require(observer_monster_skeleton_state->bone_count == 41u);
+    require(
+        (observer_monster_skeleton_state->pose_flags &
+         KERNEL_SKELETON_POSE_FLAG_PROCEDURAL) != 0u);
+    const std::uint32_t observer_first_bone =
+        observer_monster_skeleton_state->first_bone_transform;
+    for (std::uint32_t bone_index = 0u;
+         bone_index < observer_monster_skeleton_state->bone_count;
+         ++bone_index) {
+        const KernelBoneLocalTransform& transform =
+            observer_bone_transforms[observer_first_bone + bone_index];
+        require(std::isfinite(transform.local_position.x));
+        require(std::isfinite(transform.local_position.y));
+        require(std::isfinite(transform.local_position.z));
+        require(std::isfinite(transform.local_rotation.x));
+        require(std::isfinite(transform.local_rotation.y));
+        require(std::isfinite(transform.local_rotation.z));
+        require(std::isfinite(transform.local_rotation.w));
+        require(std::isfinite(transform.local_scale.x));
+        require(std::isfinite(transform.local_scale.y));
+        require(std::isfinite(transform.local_scale.z));
+    }
+    Kernel_Destroy(observer_kernel);
 
     KernelHandle* inventory_kernel = make_server_kernel();
     network_example::game_server::GameServer inventory_server(

@@ -254,6 +254,9 @@ void hash_actor_template(
     hash_scalar(hash, actor_template.sentry.patrol_rotation_interval_ticks);
     hash_float(hash, actor_template.sentry.patrol_rotation_min_degrees);
     hash_float(hash, actor_template.sentry.patrol_rotation_max_degrees);
+    hash_scalar(hash, actor_template.sentry.passive_patrol);
+    hash_float(hash, actor_template.sentry.patrol_extent_x_meters);
+    hash_float(hash, actor_template.sentry.patrol_input_magnitude);
     hash_scalar(hash, actor_template.sentry.weapon_id);
     hash_scalar(hash, actor_template.vision.camp);
     hash_scalar(hash, actor_template.vision.vision_collider_template_id);
@@ -2164,6 +2167,8 @@ AgentSentryConfig sentry_config_from_yaml(
     const std::string& path,
     std::uint32_t source_kind) {
     AgentSentryConfig sentry = actor_template.sentry;
+    sentry.move_speed_meters_per_second =
+        actor_template.move_speed_meters_per_second;
     sentry.weapon_id = active_weapon_id(actor_template);
     sentry.animation_idle = actor_template.animation_idle;
     sentry.animation_attack = actor_template.animation_chasing;
@@ -2178,6 +2183,9 @@ AgentSentryConfig sentry_config_from_yaml(
                 "patrol_rotation_interval_ticks",
                 "patrol_rotation_min_degrees",
                 "patrol_rotation_max_degrees",
+                "passive_patrol",
+                "patrol_extent_x_meters",
+                "patrol_input_magnitude",
                 "weapon_id",
                 "animation_idle",
                 "animation_attack",
@@ -2203,6 +2211,17 @@ AgentSentryConfig sentry_config_from_yaml(
         if (sentry_node["patrol_rotation_max_degrees"]) {
             sentry.patrol_rotation_max_degrees =
                 sentry_node["patrol_rotation_max_degrees"].as<float>();
+        }
+        if (sentry_node["passive_patrol"]) {
+            sentry.passive_patrol = sentry_node["passive_patrol"].as<bool>();
+        }
+        if (sentry_node["patrol_extent_x_meters"]) {
+            sentry.patrol_extent_x_meters =
+                sentry_node["patrol_extent_x_meters"].as<float>();
+        }
+        if (sentry_node["patrol_input_magnitude"]) {
+            sentry.patrol_input_magnitude =
+                sentry_node["patrol_input_magnitude"].as<float>();
         }
         if (sentry_node["weapon_id"]) {
             const int authored_weapon_id = sentry_node["weapon_id"].as<int>();
@@ -2451,6 +2470,47 @@ std::uint32_t skeleton_bone_index(
     }
     return static_cast<std::uint32_t>(
         std::distance(asset.bones.begin(), found));
+}
+
+bool is_skeleton_locomotion_diagnostic(std::string_view diagnostic) {
+    return diagnostic.find("skeleton") != std::string_view::npos ||
+        diagnostic.find("bone") != std::string_view::npos ||
+        diagnostic.find("locomotion") != std::string_view::npos ||
+        diagnostic.find("gait") != std::string_view::npos ||
+        diagnostic.find("foothold") != std::string_view::npos ||
+        diagnostic.find("processing_order") != std::string_view::npos;
+}
+
+std::uint32_t template_id_for_diagnostic(const YAML::Node& node) {
+    if (!node["id"] || !node["id"].IsScalar()) {
+        return 0u;
+    }
+    try {
+        return node["id"].as<std::uint32_t>();
+    } catch (...) {
+        return 0u;
+    }
+}
+
+[[noreturn]] void throw_skeleton_locomotion_data_error(
+    const YAML::Node& node,
+    const std::string& path,
+    std::uint32_t source_kind,
+    const std::exception& error) {
+    const std::string diagnostic = error.what();
+    const std::uint32_t template_id = template_id_for_diagnostic(node);
+    const bool skeleton_field =
+        diagnostic.find("skeleton") != std::string::npos ||
+        diagnostic.find("bone") != std::string::npos;
+    throw DataLoadError(
+        KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_YAML,
+        "entity template " + std::to_string(template_id) + ": " +
+            diagnostic,
+        path,
+        skeleton_field ? "skeleton" : "locomotion",
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+        template_id);
 }
 
 ActorTemplateConfig actor_template_from_yaml(
@@ -2898,7 +2958,10 @@ ActorTemplateConfig actor_template_from_yaml(
                 asset->bones[leg.foot_bone_index].parent_index !=
                     static_cast<std::int32_t>(leg.knee_bone_index)) {
                 throw std::runtime_error(
-                    "invalid two-bone hierarchy for leg: " + leg.id);
+                    "skeleton asset " + asset->name + " leg " + leg.id +
+                    " bones " + leg.hip_bone + " -> " + leg.knee_bone +
+                    " -> " + leg.foot_bone +
+                    " has invalid two-bone hierarchy");
             }
             leg.phase_offset_ticks = leg_node["phase_offset_ticks"]
                 ? leg_node["phase_offset_ticks"].as<std::uint32_t>()
@@ -2924,7 +2987,10 @@ ActorTemplateConfig actor_template_from_yaml(
                 leg.max_reach_ratio <= 0.0f ||
                 leg.max_reach_ratio > 1.0f) {
                 throw std::runtime_error(
-                    "invalid locomotion leg parameters: " + leg.id);
+                    "skeleton asset " + asset->name + " leg " + leg.id +
+                    " bones " + leg.hip_bone + " -> " + leg.knee_bone +
+                    " -> " + leg.foot_bone +
+                    " has invalid locomotion parameters");
             }
             binding.legs.push_back(std::move(leg));
         }
@@ -3540,14 +3606,25 @@ std::vector<ActorTemplateConfig> load_actor_templates_from_source(
     std::unordered_map<std::string, std::uint32_t> names;
     const std::vector<std::string> files = source.list_yaml_files(directory);
     for (const std::string& file : files) {
-        ActorTemplateConfig actor_template =
-            actor_template_from_yaml(
-                source.load_yaml(file),
+        const YAML::Node node = source.load_yaml(file);
+        ActorTemplateConfig actor_template;
+        try {
+            actor_template = actor_template_from_yaml(
+                node,
                 file,
                 source.source_kind(),
                 weapons,
                 colliders,
                 skeleton_assets);
+        } catch (const DataLoadError&) {
+            throw;
+        } catch (const std::exception& error) {
+            if (!is_skeleton_locomotion_diagnostic(error.what())) {
+                throw;
+            }
+            throw_skeleton_locomotion_data_error(
+                node, file, source.source_kind(), error);
+        }
         if (ids.contains(actor_template.actor_template_id)) {
             throw std::runtime_error("duplicate actor template id: " + file);
         }
@@ -3583,9 +3660,11 @@ std::vector<EntityTemplateConfig> load_entity_templates_from_source(
     std::unordered_map<std::string, std::uint32_t> names;
     const std::vector<std::string> files = source.list_yaml_files(directory);
     for (const std::string& file : files) {
-        EntityTemplateConfig entity_template =
-            entity_template_from_yaml(
-                source.load_yaml(file),
+        const YAML::Node node = source.load_yaml(file);
+        EntityTemplateConfig entity_template;
+        try {
+            entity_template = entity_template_from_yaml(
+                node,
                 file,
                 source.source_kind(),
                 weapons,
@@ -3593,6 +3672,15 @@ std::vector<EntityTemplateConfig> load_entity_templates_from_source(
                 projectile_templates,
                 prop_population_rules,
                 skeleton_assets);
+        } catch (const DataLoadError&) {
+            throw;
+        } catch (const std::exception& error) {
+            if (!is_skeleton_locomotion_diagnostic(error.what())) {
+                throw;
+            }
+            throw_skeleton_locomotion_data_error(
+                node, file, source.source_kind(), error);
+        }
         if (ids.contains(entity_template.actor_template_id)) {
             throw std::runtime_error("duplicate entity template id: " + file);
         }
@@ -4964,6 +5052,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             document["enemy"],
             {
                 "actor_template",
+                "entity_template",
                 "spawn_count",
                 "spawn_radius",
                 "spawn_seed",
@@ -4984,7 +5073,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     const std::uint32_t catalog_version =
         document["catalog_version"] ? document["catalog_version"].as<std::uint32_t>()
                                     : 1u;
-    if (catalog_version != 8u) {
+    if (catalog_version != 8u && catalog_version != 9u) {
         throw DataLoadError(
             KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNSUPPORTED_CATALOG_VERSION,
             "unsupported catalog_version: " + std::to_string(catalog_version),
@@ -5186,6 +5275,11 @@ void apply_catalog_agent_config(
         }
         return;
     }
+    if (agent["actor_template"] && agent["entity_template"]) {
+        throw std::runtime_error(
+            "enemy cannot define both actor_template and entity_template");
+    }
+    config->agent.override_director_spawn = true;
     if (agent["spawn_count"]) {
         config->agent.spawn_count = agent["spawn_count"].as<std::uint32_t>();
     }
@@ -5201,6 +5295,11 @@ void apply_catalog_agent_config(
     if (agent["actor_template"]) {
         config->agent.actor_template_id =
             actor_template_ref_from_yaml(agent["actor_template"], config->actor_templates);
+    }
+    if (agent["entity_template"]) {
+        config->agent.actor_template_id =
+            entity_template_ref_from_yaml(
+                agent["entity_template"], config->entity_templates);
     }
 }
 
@@ -5335,6 +5434,7 @@ std::uint64_t compute_gameplay_catalog_hash(
     hash_scalar(&hash, config.agent.spawn_count);
     hash_float(&hash, config.agent.spawn_radius);
     hash_scalar(&hash, config.agent.spawn_seed);
+    hash_scalar(&hash, config.agent.override_director_spawn);
     hash_string(&hash, config.static_collision_scene.entry_path);
     hash_scalar(&hash, config.static_collision_scene.scene_id);
     hash_scalar(&hash, config.static_collision_scene.collider_id);
@@ -5723,7 +5823,19 @@ std::vector<std::string> validate_gameplay_config(
              actor_template.sentry.patrol_rotation_interval_ticks == 0 ||
              actor_template.sentry.patrol_rotation_min_degrees <= 0.0f ||
              actor_template.sentry.patrol_rotation_max_degrees <
-                 actor_template.sentry.patrol_rotation_min_degrees)) {
+                 actor_template.sentry.patrol_rotation_min_degrees ||
+             !std::isfinite(actor_template.sentry.patrol_extent_x_meters) ||
+             !std::isfinite(actor_template.sentry.patrol_input_magnitude) ||
+             (actor_template.sentry.passive_patrol &&
+              (actor_template.sentry.patrol_extent_x_meters <= 0.0f ||
+               actor_template.sentry.patrol_input_magnitude <= 0.0f ||
+               actor_template.sentry.patrol_input_magnitude > 1.0f ||
+               !std::isfinite(
+                   actor_template.sentry.move_speed_meters_per_second) ||
+               actor_template.sentry.move_speed_meters_per_second <= 0.0f)) ||
+             (!actor_template.sentry.passive_patrol &&
+              (actor_template.sentry.patrol_extent_x_meters != 0.0f ||
+               actor_template.sentry.patrol_input_magnitude != 0.0f)))) {
             errors.push_back("agent sentry actor template must be valid");
         }
         if (actor_template.vision.struct_size < sizeof(KernelAgentVisionConfig) ||
@@ -6161,17 +6273,28 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
                 authored_template.ai_tick_interval == 0u
                     ? 1u
                     : authored_template.ai_tick_interval;
-            entity_template.ai.spawn_target_count =
-                authored_template.director_spawn_target_count;
-            entity_template.ai.spawn_entity_template_id =
-                authored_template.director_spawn_entity_template_id;
-            entity_template.ai.spawn_actor_template_id =
-                authored_template.director_spawn_actor_template_id;
-            entity_template.ai.spawn_position =
-                authored_template.director_spawn_position;
-            entity_template.ai.spawn_radius =
-                authored_template.director_spawn_radius;
-            entity_template.ai.spawn_seed = authored_template.director_spawn_seed;
+            if (config.agent.override_director_spawn) {
+                entity_template.ai.spawn_target_count = config.agent.spawn_count;
+                entity_template.ai.spawn_entity_template_id =
+                    config.agent.actor_template_id;
+                entity_template.ai.spawn_actor_template_id =
+                    config.agent.actor_template_id;
+                entity_template.ai.spawn_position = config.agent.spawn_position;
+                entity_template.ai.spawn_radius = config.agent.spawn_radius;
+                entity_template.ai.spawn_seed = config.agent.spawn_seed;
+            } else {
+                entity_template.ai.spawn_target_count =
+                    authored_template.director_spawn_target_count;
+                entity_template.ai.spawn_entity_template_id =
+                    authored_template.director_spawn_entity_template_id;
+                entity_template.ai.spawn_actor_template_id =
+                    authored_template.director_spawn_actor_template_id;
+                entity_template.ai.spawn_position =
+                    authored_template.director_spawn_position;
+                entity_template.ai.spawn_radius =
+                    authored_template.director_spawn_radius;
+                entity_template.ai.spawn_seed = authored_template.director_spawn_seed;
+            }
         } else if (authored_template.entity_type == KernelEntityType_Prop) {
             entity_template.prop = authored_template.prop;
             entity_template.component_flags = KERNEL_ENTITY_COMPONENT_TRANSFORM;

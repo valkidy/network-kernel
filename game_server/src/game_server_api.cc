@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <new>
 #include <string>
@@ -84,6 +85,15 @@ void set_load_error(
 void set_load_error(
     KernelGameplayCatalogLoadResult* out_result,
     const network_example::game_server::DataLoadError& error) {
+    std::fprintf(
+        stderr,
+        "gameplay catalog load failed: template_kind=%u template_id=%u "
+        "path=%s field=%s diagnostic=%s\n",
+        static_cast<unsigned int>(error.template_kind),
+        static_cast<unsigned int>(error.template_id),
+        error.path.c_str(),
+        error.field.c_str(),
+        error.what());
     set_load_error(
         out_result,
         error.error_code,

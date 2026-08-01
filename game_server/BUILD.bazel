@@ -14,6 +14,7 @@ filegroup(
         "weapon_templates/*.yaml",
     ]) + [
         "gameplay_catalog.yaml",
+        "test_catalogs/monster_observer/gameplay_catalog.yaml",
         "//game_server/skeleton_assets:simplified_monster_sim_v4_assets",
     ],
 )
@@ -65,6 +66,7 @@ cc_test(
     ],
     deps = [
         ":game_server",
+        ":game_server_bridge",
         "//engine/src/kernel:kernel",
     ],
 )
