@@ -1,5 +1,6 @@
 #include "game_server/gameplay_config.h"
 
+#include <array>
 #include <cassert>
 #include <cmath>
 #include <cstdint>
@@ -52,6 +53,82 @@ void require_impl(bool condition, const char* expression, int line) {
 }
 
 #define require(condition) require_impl((condition), #condition, __LINE__)
+
+void hash_u64(std::uint64_t* hash, std::uint64_t value) {
+    constexpr std::uint64_t kFnvPrime = 1099511628211ull;
+    for (std::uint32_t byte = 0u; byte < 8u; ++byte) {
+        *hash ^= (value >> (byte * 8u)) & 0xffu;
+        *hash *= kFnvPrime;
+    }
+}
+
+void hash_quantized_float(std::uint64_t* hash, float value) {
+    const auto quantized = static_cast<std::int64_t>(
+        std::llround(static_cast<double>(value) * 10000.0));
+    hash_u64(hash, static_cast<std::uint64_t>(quantized));
+}
+
+void hash_vec3(std::uint64_t* hash, const glm::vec3& value) {
+    hash_quantized_float(hash, value.x);
+    hash_quantized_float(hash, value.y);
+    hash_quantized_float(hash, value.z);
+}
+
+std::uint64_t quantized_locomotion_hash(
+    const network_example::LocomotionState& state,
+    const glm::vec3& root_position,
+    const glm::vec3& root_velocity) {
+    constexpr std::uint64_t kFnvOffsetBasis = 14695981039346656037ull;
+    std::uint64_t hash = kFnvOffsetBasis;
+    hash_vec3(&hash, root_position);
+    hash_vec3(&hash, root_velocity);
+    hash_quantized_float(&hash, state.root_yaw_radians);
+    hash_u64(&hash, state.gait_start_tick);
+    hash_u64(&hash, state.gait_phase_tick);
+    hash_u64(&hash, state.pose_valid ? 1u : 0u);
+    hash_u64(&hash, state.legs.size());
+    for (const network_example::LegLocomotionState& leg : state.legs) {
+        hash_u64(&hash, leg.hip_bone_index);
+        hash_u64(&hash, leg.knee_bone_index);
+        hash_u64(&hash, leg.foot_bone_index);
+        hash_u64(&hash, leg.phase_tick);
+        hash_u64(&hash, static_cast<std::uint8_t>(leg.gait_state));
+        hash_u64(&hash, leg.entered_swing ? 1u : 0u);
+        hash_u64(&hash, leg.entered_support ? 1u : 0u);
+        hash_vec3(&hash, leg.swing_start_world);
+        hash_vec3(&hash, leg.landing_target_world);
+        hash_vec3(&hash, leg.planted_foothold_world);
+        hash_vec3(&hash, leg.foot_target_world);
+        hash_vec3(&hash, leg.ground_hit_position);
+        hash_vec3(&hash, leg.ground_hit_normal);
+        hash_u64(&hash, leg.grounding_candidate_index);
+        hash_u64(&hash, leg.supporting_entity_net_id);
+        hash_u64(&hash, leg.supporting_collider_id);
+        hash_u64(&hash, leg.landing_target_valid ? 1u : 0u);
+        hash_u64(&hash, leg.planted ? 1u : 0u);
+        hash_u64(&hash, leg.ground_hit_valid ? 1u : 0u);
+        hash_u64(&hash, leg.ik_reach_clamped ? 1u : 0u);
+        hash_u64(&hash, leg.foot_target_valid ? 1u : 0u);
+    }
+    hash_u64(&hash, state.last_processing_order.size());
+    for (const std::uint32_t leg_index : state.last_processing_order) {
+        hash_u64(&hash, leg_index);
+    }
+    hash_u64(&hash, state.local_pose.size());
+    for (const KernelBoneLocalTransform& transform : state.local_pose) {
+        hash_quantized_float(&hash, transform.local_position.x);
+        hash_quantized_float(&hash, transform.local_position.y);
+        hash_quantized_float(&hash, transform.local_position.z);
+        hash_quantized_float(&hash, transform.local_rotation.x);
+        hash_quantized_float(&hash, transform.local_rotation.y);
+        hash_quantized_float(&hash, transform.local_rotation.z);
+        hash_quantized_float(&hash, transform.local_rotation.w);
+        hash_quantized_float(&hash, transform.local_scale.x);
+        hash_quantized_float(&hash, transform.local_scale.y);
+        hash_quantized_float(&hash, transform.local_scale.z);
+    }
+    return hash;
+}
 
 std::string read_text_file(const std::string& path) {
     std::ifstream file(path, std::ios::binary);
@@ -529,7 +606,22 @@ int main() {
             invalid_leg_bundle.data(),
             static_cast<std::uint32_t>(invalid_leg_bundle.size()),
             "gameplay_catalog.yaml");
-    } catch (const std::exception& error) {
+    } catch (const network_example::game_server::DataLoadError& error) {
+        require(error.error_code ==
+                KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_YAML);
+        require(error.source_kind ==
+                KERNEL_GAMEPLAY_CATALOG_LOAD_SOURCE_BUNDLE);
+        require(error.template_kind ==
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR);
+        require(error.template_id == 20u);
+        require(error.field == "skeleton");
+        require(error.path.find("monster_sim.yaml") != std::string::npos);
+        require(std::string(error.what()).find("simplified_monster_sim_v4") !=
+                std::string::npos);
+        require(std::string(error.what()).find("JNT_LegFrontLeft_Hip") !=
+                std::string::npos);
+        require(std::string(error.what()).find("JNT_LegFrontLeft_Knee") !=
+                std::string::npos);
         invalid_leg_hierarchy_rejected =
             std::string(error.what()).find("invalid two-bone hierarchy") !=
             std::string::npos;
@@ -1081,6 +1173,57 @@ int main() {
         require(std::isfinite(transform.local_scale.y));
         require(std::isfinite(transform.local_scale.z));
     }
+
+    const auto replay_locomotion = [&]() {
+        network_example::LocomotionState state;
+        require(network_example::initialize_locomotion_state(
+            monster_definition->skeleton, 0.0f, 0u, &state));
+        glm::vec3 root_position{0.0f};
+        std::vector<std::uint64_t> hashes;
+        hashes.reserve(90u);
+        for (std::uint32_t tick = 0u; tick < 90u; ++tick) {
+            const KernelVec2 input = tick < 30u
+                ? KernelVec2{0.0f, 1.0f}
+                : tick < 60u ? KernelVec2{1.0f, 0.0f} : KernelVec2{};
+            const glm::vec3 root_velocity{
+                input.x * 2.0f,
+                0.0f,
+                input.y * 2.0f,
+            };
+            root_position += root_velocity * (1.0f / 30.0f);
+            require(network_example::advance_locomotion_state(
+                monster_definition->skeleton,
+                input,
+                monster_definition->movement.max_yaw_degrees_per_second,
+                1.0f / 30.0f,
+                tick,
+                &state));
+            require(network_example::solve_legged_locomotion_pose(
+                locomotion_asset.skeleton,
+                locomotion_asset.bind_pose,
+                monster_definition->skeleton,
+                root_position,
+                root_velocity,
+                monster_definition->movement.max_slope_degrees,
+                1.0f / 30.0f,
+                [](const glm::vec3& origin, float,
+                   network_example::LocomotionGroundingHit* hit) {
+                    hit->position = glm::vec3{origin.x, 0.0f, origin.z};
+                    hit->normal = glm::vec3{0.0f, 1.0f, 0.0f};
+                    hit->supporting_entity_net_id = 77u;
+                    hit->supporting_collider_id = 9u;
+                    return true;
+                },
+                &state));
+            hashes.push_back(quantized_locomotion_hash(
+                state, root_position, root_velocity));
+        }
+        return hashes;
+    };
+    const std::vector<std::uint64_t> first_replay = replay_locomotion();
+    const std::vector<std::uint64_t> second_replay = replay_locomotion();
+    require(first_replay == second_replay);
+    require(first_replay.front() != first_replay.back());
     const auto magic_bottle = std::find_if(
         catalog.entity_templates.begin(),
         catalog.entity_templates.end(),

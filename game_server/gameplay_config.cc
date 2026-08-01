@@ -2453,6 +2453,47 @@ std::uint32_t skeleton_bone_index(
         std::distance(asset.bones.begin(), found));
 }
 
+bool is_skeleton_locomotion_diagnostic(std::string_view diagnostic) {
+    return diagnostic.find("skeleton") != std::string_view::npos ||
+        diagnostic.find("bone") != std::string_view::npos ||
+        diagnostic.find("locomotion") != std::string_view::npos ||
+        diagnostic.find("gait") != std::string_view::npos ||
+        diagnostic.find("foothold") != std::string_view::npos ||
+        diagnostic.find("processing_order") != std::string_view::npos;
+}
+
+std::uint32_t template_id_for_diagnostic(const YAML::Node& node) {
+    if (!node["id"] || !node["id"].IsScalar()) {
+        return 0u;
+    }
+    try {
+        return node["id"].as<std::uint32_t>();
+    } catch (...) {
+        return 0u;
+    }
+}
+
+[[noreturn]] void throw_skeleton_locomotion_data_error(
+    const YAML::Node& node,
+    const std::string& path,
+    std::uint32_t source_kind,
+    const std::exception& error) {
+    const std::string diagnostic = error.what();
+    const std::uint32_t template_id = template_id_for_diagnostic(node);
+    const bool skeleton_field =
+        diagnostic.find("skeleton") != std::string::npos ||
+        diagnostic.find("bone") != std::string::npos;
+    throw DataLoadError(
+        KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_YAML,
+        "entity template " + std::to_string(template_id) + ": " +
+            diagnostic,
+        path,
+        skeleton_field ? "skeleton" : "locomotion",
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+        template_id);
+}
+
 ActorTemplateConfig actor_template_from_yaml(
     const YAML::Node& node,
     const std::string& path,
@@ -2898,7 +2939,10 @@ ActorTemplateConfig actor_template_from_yaml(
                 asset->bones[leg.foot_bone_index].parent_index !=
                     static_cast<std::int32_t>(leg.knee_bone_index)) {
                 throw std::runtime_error(
-                    "invalid two-bone hierarchy for leg: " + leg.id);
+                    "skeleton asset " + asset->name + " leg " + leg.id +
+                    " bones " + leg.hip_bone + " -> " + leg.knee_bone +
+                    " -> " + leg.foot_bone +
+                    " has invalid two-bone hierarchy");
             }
             leg.phase_offset_ticks = leg_node["phase_offset_ticks"]
                 ? leg_node["phase_offset_ticks"].as<std::uint32_t>()
@@ -2924,7 +2968,10 @@ ActorTemplateConfig actor_template_from_yaml(
                 leg.max_reach_ratio <= 0.0f ||
                 leg.max_reach_ratio > 1.0f) {
                 throw std::runtime_error(
-                    "invalid locomotion leg parameters: " + leg.id);
+                    "skeleton asset " + asset->name + " leg " + leg.id +
+                    " bones " + leg.hip_bone + " -> " + leg.knee_bone +
+                    " -> " + leg.foot_bone +
+                    " has invalid locomotion parameters");
             }
             binding.legs.push_back(std::move(leg));
         }
@@ -3540,14 +3587,25 @@ std::vector<ActorTemplateConfig> load_actor_templates_from_source(
     std::unordered_map<std::string, std::uint32_t> names;
     const std::vector<std::string> files = source.list_yaml_files(directory);
     for (const std::string& file : files) {
-        ActorTemplateConfig actor_template =
-            actor_template_from_yaml(
-                source.load_yaml(file),
+        const YAML::Node node = source.load_yaml(file);
+        ActorTemplateConfig actor_template;
+        try {
+            actor_template = actor_template_from_yaml(
+                node,
                 file,
                 source.source_kind(),
                 weapons,
                 colliders,
                 skeleton_assets);
+        } catch (const DataLoadError&) {
+            throw;
+        } catch (const std::exception& error) {
+            if (!is_skeleton_locomotion_diagnostic(error.what())) {
+                throw;
+            }
+            throw_skeleton_locomotion_data_error(
+                node, file, source.source_kind(), error);
+        }
         if (ids.contains(actor_template.actor_template_id)) {
             throw std::runtime_error("duplicate actor template id: " + file);
         }
@@ -3583,9 +3641,11 @@ std::vector<EntityTemplateConfig> load_entity_templates_from_source(
     std::unordered_map<std::string, std::uint32_t> names;
     const std::vector<std::string> files = source.list_yaml_files(directory);
     for (const std::string& file : files) {
-        EntityTemplateConfig entity_template =
-            entity_template_from_yaml(
-                source.load_yaml(file),
+        const YAML::Node node = source.load_yaml(file);
+        EntityTemplateConfig entity_template;
+        try {
+            entity_template = entity_template_from_yaml(
+                node,
                 file,
                 source.source_kind(),
                 weapons,
@@ -3593,6 +3653,15 @@ std::vector<EntityTemplateConfig> load_entity_templates_from_source(
                 projectile_templates,
                 prop_population_rules,
                 skeleton_assets);
+        } catch (const DataLoadError&) {
+            throw;
+        } catch (const std::exception& error) {
+            if (!is_skeleton_locomotion_diagnostic(error.what())) {
+                throw;
+            }
+            throw_skeleton_locomotion_data_error(
+                node, file, source.source_kind(), error);
+        }
         if (ids.contains(entity_template.actor_template_id)) {
             throw std::runtime_error("duplicate entity template id: " + file);
         }

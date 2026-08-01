@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 61u`.
+`KERNEL_ABI_VERSION == 65u`.
 
 ## Ownership
 
@@ -38,6 +38,13 @@ use the Projectile Template ID, Item-backed Props use the Item Template ID, and
 pure Props or other entity-template-backed objects use the Entity Template ID.
 `collider_template_id` remains separate because it is resolved per rendered
 entity, while `item_instance_id` remains the stable runtime Item identity.
+
+ABI versions 62 through 65 add skeleton asset and locomotion definitions,
+complete local-pose presentation types, and the read-only
+`Kernel_GetSkeletonRenderStates` / `Kernel_GetSkeletonRenderStatesAtTime`
+queries. Skeleton pose buffers remain caller-owned and are not added to the
+snapshot or network packet schema.
+
 Reliable spawn metadata supplies the client projection without changing
 snapshot packets.
 
