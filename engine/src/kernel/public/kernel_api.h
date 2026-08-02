@@ -154,6 +154,18 @@ uint32_t Kernel_GetSkeletonRenderStatesAtTime(
     uint32_t max_bone_transforms,
     KernelSkeletonRenderStateResult* out_result);
 
+/*
+ * Copies the native Ozz bind pose for a loaded skeleton asset. Returns the
+ * complete bone count while writing at most max_bone_transforms entries, or 0
+ * for an invalid handle, unknown asset, or content-hash mismatch.
+ */
+uint32_t Kernel_GetSkeletonBindPose(
+    KernelHandle* kernel,
+    uint32_t skeleton_asset_id,
+    uint64_t skeleton_content_hash,
+    KernelBoneLocalTransform* out_bone_transforms,
+    uint32_t max_bone_transforms);
+
 uint32_t Kernel_PollEvents(
     KernelHandle* kernel,
     KernelEvent* out_events,

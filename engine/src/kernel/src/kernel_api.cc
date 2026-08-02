@@ -282,7 +282,8 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             KERNEL_CAPABILITY_REMOTE_ACTION_PRESENTATION |
             KERNEL_CAPABILITY_ACTION_INTENTS |
             KERNEL_CAPABILITY_ITEM_PROP_SYSTEM |
-            KERNEL_CAPABILITY_SKELETON_RENDER_STATES;
+            KERNEL_CAPABILITY_SKELETON_RENDER_STATES |
+            KERNEL_CAPABILITY_SKELETON_BIND_POSE;
         return true;
     });
 }
@@ -604,6 +605,24 @@ uint32_t Kernel_GetSkeletonRenderStatesAtTime(
                 max_bone_transforms,
                 out_result);
         });
+}
+
+uint32_t Kernel_GetSkeletonBindPose(
+    KernelHandle* kernel,
+    uint32_t skeleton_asset_id,
+    uint64_t skeleton_content_hash,
+    KernelBoneLocalTransform* out_bone_transforms,
+    uint32_t max_bone_transforms) {
+    return abi_call("Kernel_GetSkeletonBindPose", 0u, [&]() -> std::uint32_t {
+        if (kernel == nullptr || kernel->engine == nullptr) {
+            return 0u;
+        }
+        return kernel->engine->get_skeleton_bind_pose(
+            skeleton_asset_id,
+            skeleton_content_hash,
+            out_bone_transforms,
+            max_bone_transforms);
+    });
 }
 
 uint32_t Kernel_PollEvents(

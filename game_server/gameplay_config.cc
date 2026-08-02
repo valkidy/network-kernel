@@ -323,14 +323,14 @@ void hash_actor_template(
             hash_scalar(hash, leg.hip_bone_index);
             hash_scalar(hash, leg.knee_bone_index);
             hash_scalar(hash, leg.foot_bone_index);
-            hash_scalar(hash, leg.phase_offset_ticks);
+            hash_scalar(hash, leg.gait_group);
             hash_vec3(hash, leg.pole_local);
             hash_float(hash, leg.step_height_meters);
             hash_float(hash, leg.max_reach_ratio);
         }
         hash_float(hash, actor_template.skeleton.input_deadzone);
-        hash_scalar(hash, actor_template.skeleton.gait_cycle_ticks);
-        hash_scalar(hash, actor_template.skeleton.gait_swing_ticks);
+        hash_float(hash, actor_template.skeleton.step_threshold_meters);
+        hash_scalar(hash, actor_template.skeleton.step_duration_ticks);
         hash_scalar(hash, actor_template.skeleton.max_swinging_legs);
         hash_scalar(hash, actor_template.skeleton.foothold_query_type);
         hash_float(
@@ -2923,7 +2923,7 @@ ActorTemplateConfig actor_template_from_yaml(
                     "hip_bone",
                     "knee_bone",
                     "foot_bone",
-                    "phase_offset_ticks",
+                    "gait_group",
                     "pole_local",
                     "step_height_meters",
                     "max_reach_ratio",
@@ -2963,8 +2963,8 @@ ActorTemplateConfig actor_template_from_yaml(
                     " -> " + leg.foot_bone +
                     " has invalid two-bone hierarchy");
             }
-            leg.phase_offset_ticks = leg_node["phase_offset_ticks"]
-                ? leg_node["phase_offset_ticks"].as<std::uint32_t>()
+            leg.gait_group = leg_node["gait_group"]
+                ? leg_node["gait_group"].as<std::uint32_t>()
                 : 0u;
             leg.pole_local = vec3_from_yaml(leg_node["pole_local"]);
             leg.step_height_meters = leg_node["step_height_meters"]
@@ -3000,8 +3000,8 @@ ActorTemplateConfig actor_template_from_yaml(
             gait,
             {
                 "type",
-                "cycle_ticks",
-                "swing_ticks",
+                "step_threshold_meters",
+                "step_duration_ticks",
                 "max_swinging_legs",
                 "processing_order",
             },
@@ -3009,16 +3009,20 @@ ActorTemplateConfig actor_template_from_yaml(
             source_kind,
             KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
             actor_template.actor_template_id);
-        if (!gait["type"] || gait["type"].as<std::string>() != "fixed_walk" ||
-            !gait["cycle_ticks"] || !gait["swing_ticks"] ||
+        if (!gait["type"] ||
+            gait["type"].as<std::string>() != "displacement_threshold" ||
+            !gait["step_threshold_meters"] ||
+            !gait["step_duration_ticks"] ||
             !gait["max_swinging_legs"] || !gait["processing_order"] ||
             !gait["processing_order"].IsSequence()) {
             throw std::runtime_error(
-                "locomotion gait requires fixed_walk parameters: " +
+                "locomotion gait requires displacement_threshold parameters: " +
                 actor_template.name);
         }
-        binding.gait_cycle_ticks = gait["cycle_ticks"].as<std::uint32_t>();
-        binding.gait_swing_ticks = gait["swing_ticks"].as<std::uint32_t>();
+        binding.step_threshold_meters =
+            gait["step_threshold_meters"].as<float>();
+        binding.step_duration_ticks =
+            gait["step_duration_ticks"].as<std::uint32_t>();
         binding.max_swinging_legs =
             gait["max_swinging_legs"].as<std::uint32_t>();
         std::unordered_set<std::uint32_t> processing_order;
@@ -3043,37 +3047,20 @@ ActorTemplateConfig actor_template_from_yaml(
             binding.processing_order.push_back(leg_index);
         }
         if (binding.processing_order.size() != binding.legs.size() ||
-            binding.gait_cycle_ticks == 0u ||
-            binding.gait_swing_ticks == 0u ||
-            binding.gait_swing_ticks >= binding.gait_cycle_ticks ||
+            !std::isfinite(binding.step_threshold_meters) ||
+            binding.step_threshold_meters <= 0.0f ||
+            binding.step_duration_ticks == 0u ||
             binding.max_swinging_legs == 0u ||
             binding.max_swinging_legs > binding.legs.size()) {
             throw std::runtime_error(
                 "invalid locomotion gait values: " + actor_template.name);
         }
-        for (SkeletonLegConfig& leg : binding.legs) {
-            leg.phase_offset_ticks %= binding.gait_cycle_ticks;
-        }
-        std::uint32_t authored_max_swinging = 0u;
-        for (const SkeletonLegConfig& phase_origin : binding.legs) {
-            const std::uint32_t gait_phase =
-                (binding.gait_cycle_ticks - phase_origin.phase_offset_ticks) %
-                binding.gait_cycle_ticks;
-            std::uint32_t swinging = 0u;
-            for (const SkeletonLegConfig& leg : binding.legs) {
-                const std::uint32_t leg_phase = static_cast<std::uint32_t>(
-                    (static_cast<std::uint64_t>(gait_phase) +
-                     leg.phase_offset_ticks) %
-                    binding.gait_cycle_ticks);
-                swinging += leg_phase < binding.gait_swing_ticks ? 1u : 0u;
+        for (const SkeletonLegConfig& leg : binding.legs) {
+            if (leg.gait_group >= binding.legs.size()) {
+                throw std::runtime_error(
+                    "locomotion gait_group is out of range: " +
+                    actor_template.name);
             }
-            authored_max_swinging =
-                std::max(authored_max_swinging, swinging);
-        }
-        if (authored_max_swinging > binding.max_swinging_legs) {
-            throw std::runtime_error(
-                "locomotion gait exceeds max_swinging_legs: " +
-                actor_template.name);
         }
 
         const YAML::Node foothold = locomotion["foothold"];
@@ -6188,10 +6175,10 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
                     authored_template.skeleton.processing_order.size());
             entity_template.skeleton.input_deadzone =
                 authored_template.skeleton.input_deadzone;
-            entity_template.skeleton.gait_cycle_ticks =
-                authored_template.skeleton.gait_cycle_ticks;
-            entity_template.skeleton.gait_swing_ticks =
-                authored_template.skeleton.gait_swing_ticks;
+            entity_template.skeleton.step_threshold_meters =
+                authored_template.skeleton.step_threshold_meters;
+            entity_template.skeleton.step_duration_ticks =
+                authored_template.skeleton.step_duration_ticks;
             entity_template.skeleton.max_swinging_legs =
                 authored_template.skeleton.max_swinging_legs;
             entity_template.skeleton.foothold_query_type =
@@ -6224,7 +6211,7 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
                         leg.hip_bone_index,
                         leg.knee_bone_index,
                         leg.foot_bone_index,
-                        leg.phase_offset_ticks,
+                        leg.gait_group,
                         leg.pole_local,
                         leg.step_height_meters,
                         leg.max_reach_ratio,

@@ -24,9 +24,9 @@ bool valid_definition(const KernelSkeletonBindingDefinition& definition) {
         definition.leg_count == 0u ||
         definition.leg_count > KERNEL_MAX_SKELETON_LEGS ||
         definition.processing_order_count != definition.leg_count ||
-        definition.gait_cycle_ticks == 0u ||
-        definition.gait_swing_ticks == 0u ||
-        definition.gait_swing_ticks >= definition.gait_cycle_ticks ||
+        !std::isfinite(definition.step_threshold_meters) ||
+        definition.step_threshold_meters <= 0.0f ||
+        definition.step_duration_ticks == 0u ||
         definition.max_swinging_legs == 0u ||
         definition.max_swinging_legs > definition.leg_count ||
         !std::isfinite(definition.input_deadzone) ||
@@ -59,27 +59,10 @@ bool valid_definition(const KernelSkeletonBindingDefinition& definition) {
         }
         ordered[leg_index] = true;
     }
-    std::uint32_t authored_max_swinging = 0u;
-    for (std::uint32_t origin = 0u; origin < definition.leg_count; ++origin) {
-        const std::uint32_t origin_offset =
-            definition.legs[origin].phase_offset_ticks %
-            definition.gait_cycle_ticks;
-        const std::uint32_t gait_phase =
-            (definition.gait_cycle_ticks - origin_offset) %
-            definition.gait_cycle_ticks;
-        std::uint32_t swinging = 0u;
-        for (std::uint32_t leg = 0u; leg < definition.leg_count; ++leg) {
-            const std::uint32_t leg_phase = static_cast<std::uint32_t>(
-                (static_cast<std::uint64_t>(gait_phase) +
-                 definition.legs[leg].phase_offset_ticks %
-                     definition.gait_cycle_ticks) %
-                definition.gait_cycle_ticks);
-            swinging += leg_phase < definition.gait_swing_ticks ? 1u : 0u;
+    for (std::uint32_t leg = 0u; leg < definition.leg_count; ++leg) {
+        if (definition.legs[leg].gait_group >= definition.leg_count) {
+            return false;
         }
-        authored_max_swinging = std::max(authored_max_swinging, swinging);
-    }
-    if (authored_max_swinging > definition.max_swinging_legs) {
-        return false;
     }
     return true;
 }
@@ -224,7 +207,6 @@ bool validate_locomotion_definition(
 bool initialize_locomotion_state(
     const KernelSkeletonBindingDefinition& definition,
     float initial_root_yaw_radians,
-    std::uint32_t simulation_tick,
     LocomotionState* out_state) {
     if (out_state == nullptr || !valid_definition(definition) ||
         !std::isfinite(initial_root_yaw_radians)) {
@@ -232,18 +214,20 @@ bool initialize_locomotion_state(
     }
     LocomotionState state;
     state.root_yaw_radians = initial_root_yaw_radians;
-    state.gait_start_tick = simulation_tick;
     state.legs.reserve(definition.leg_count);
     state.last_processing_order.reserve(definition.leg_count);
     for (std::uint32_t index = 0u; index < definition.leg_count; ++index) {
         const KernelSkeletonLegDefinition& leg = definition.legs[index];
-        state.legs.push_back(LegLocomotionState{
-            leg.hip_bone_index,
-            leg.knee_bone_index,
-            leg.foot_bone_index,
-            0u,
-            LegGaitState::kSupport,
-        });
+        LegLocomotionState leg_state;
+        leg_state.hip_bone_index = leg.hip_bone_index;
+        leg_state.knee_bone_index = leg.knee_bone_index;
+        leg_state.foot_bone_index = leg.foot_bone_index;
+        leg_state.gait_group = leg.gait_group;
+        state.legs.push_back(leg_state);
+    }
+    for (std::uint32_t order = 0u; order < definition.leg_count; ++order) {
+        state.last_processing_order.push_back(
+            definition.processing_order[order]);
     }
     *out_state = std::move(state);
     return true;
@@ -254,7 +238,6 @@ bool advance_locomotion_state(
     const KernelVec2& move_input,
     float max_yaw_degrees_per_second,
     float fixed_delta_seconds,
-    std::uint32_t simulation_tick,
     LocomotionState* state) {
     if (state == nullptr || !valid_definition(definition) ||
         state->legs.size() != definition.leg_count ||
@@ -281,27 +264,12 @@ bool advance_locomotion_state(
             2.0f * std::numbers::pi_v<float>);
     }
 
-    state->gait_phase_tick =
-        (simulation_tick - state->gait_start_tick) %
-        definition.gait_cycle_ticks;
     state->last_processing_order.clear();
     for (std::uint32_t order = 0u; order < definition.leg_count; ++order) {
         const std::uint32_t leg_index = definition.processing_order[order];
-        const KernelSkeletonLegDefinition& definition_leg =
-            definition.legs[leg_index];
         LegLocomotionState& leg = state->legs[leg_index];
-        const LegGaitState previous_gait_state = leg.gait_state;
-        leg.phase_tick = static_cast<std::uint32_t>(
-            (static_cast<std::uint64_t>(state->gait_phase_tick) +
-             definition_leg.phase_offset_ticks) %
-            definition.gait_cycle_ticks);
-        leg.gait_state = leg.phase_tick < definition.gait_swing_ticks
-            ? LegGaitState::kSwing
-            : LegGaitState::kSupport;
-        leg.entered_swing = previous_gait_state == LegGaitState::kSupport &&
-            leg.gait_state == LegGaitState::kSwing;
-        leg.entered_support = previous_gait_state == LegGaitState::kSwing &&
-            leg.gait_state == LegGaitState::kSupport;
+        leg.entered_swing = false;
+        leg.entered_support = false;
         state->last_processing_order.push_back(leg_index);
     }
     return true;
@@ -312,7 +280,6 @@ bool solve_legged_locomotion_pose(
     std::span<const KernelBoneLocalTransform> bind_pose,
     const KernelSkeletonBindingDefinition& definition,
     const glm::vec3& root_position,
-    const glm::vec3& root_velocity,
     float max_slope_degrees,
     float fixed_delta_seconds,
     const LocomotionGroundingQuery& grounding_query,
@@ -321,7 +288,7 @@ bool solve_legged_locomotion_pose(
         skeleton.num_joints() != static_cast<int>(bind_pose.size()) ||
         definition.bone_count != bind_pose.size() ||
         state->legs.size() != definition.leg_count ||
-        !finite_vec3(root_position) || !finite_vec3(root_velocity) ||
+        !finite_vec3(root_position) ||
         !std::isfinite(max_slope_degrees) || max_slope_degrees <= 0.0f ||
         max_slope_degrees >= 90.0f ||
         !std::isfinite(fixed_delta_seconds) || fixed_delta_seconds <= 0.0f) {
@@ -349,95 +316,135 @@ bool solve_legged_locomotion_pose(
     const float minimum_ground_normal_y =
         std::cos(max_slope_degrees * std::numbers::pi_v<float> / 180.0f);
 
+    std::array<glm::vec3, KERNEL_MAX_SKELETON_LEGS> bind_foot_models{};
+    std::array<glm::vec3, KERNEL_MAX_SKELETON_LEGS> hip_models{};
+    std::array<glm::vec3, KERNEL_MAX_SKELETON_LEGS> grounded_homes{};
+    std::array<float, KERNEL_MAX_SKELETON_LEGS> maximum_reaches{};
+    std::array<bool, KERNEL_MAX_SKELETON_LEGS> grounded_home_valid{};
     for (const std::uint32_t leg_index : state->last_processing_order) {
         const KernelSkeletonLegDefinition& definition_leg =
             definition.legs[leg_index];
         LegLocomotionState& leg = state->legs[leg_index];
-        const glm::vec3 bind_foot_model =
+        bind_foot_models[leg_index] =
             model_position(models[definition_leg.foot_bone_index]);
-        const glm::vec3 hip_model =
+        hip_models[leg_index] =
             model_position(models[definition_leg.hip_bone_index]);
         const glm::vec3 knee_model =
             model_position(models[definition_leg.knee_bone_index]);
         const glm::vec3 foot_model =
             model_position(models[definition_leg.foot_bone_index]);
-        const float maximum_reach =
-            (glm::length(knee_model - hip_model) +
+        maximum_reaches[leg_index] =
+            (glm::length(knee_model - hip_models[leg_index]) +
              glm::length(foot_model - knee_model)) *
             definition_leg.max_reach_ratio;
-        const std::uint32_t remaining_swing_ticks =
-            leg.gait_state == LegGaitState::kSwing
-            ? definition.gait_swing_ticks - leg.phase_tick
-            : 0u;
-        const glm::vec3 predicted_root_position = root_position +
-            root_velocity * fixed_delta_seconds *
-                static_cast<float>(remaining_swing_ticks);
-        const glm::vec3 nominal_world = predicted_root_position +
-            root_rotation * bind_foot_model;
-
-        if (leg.gait_state == LegGaitState::kSwing) {
-            if (leg.entered_swing || !leg.foot_target_valid) {
-                leg.swing_start_world = leg.foot_target_valid
-                    ? leg.foot_target_world
-                    : root_position + root_rotation * bind_foot_model;
-            }
-            leg.planted = false;
-            if (leg.entered_swing || !leg.landing_target_valid) {
-                leg.landing_target_valid = query_foothold(
-                    definition,
-                    nominal_world,
-                    predicted_root_position + root_rotation * hip_model,
-                    maximum_reach,
-                    root_rotation,
-                    minimum_ground_normal_y,
-                    grounding_query,
-                    &leg);
-            }
-            leg.landing_target_world = leg.landing_target_valid
-                ? leg.ground_hit_position
+        const glm::vec3 nominal_world = root_position +
+            root_rotation * bind_foot_models[leg_index];
+        const glm::vec3 hip_world = root_position +
+            root_rotation * hip_models[leg_index];
+        grounded_home_valid[leg_index] = query_foothold(
+            definition,
+            nominal_world,
+            hip_world,
+            maximum_reaches[leg_index],
+            root_rotation,
+            minimum_ground_normal_y,
+            grounding_query,
+            &leg);
+        if (grounded_home_valid[leg_index]) {
+            grounded_homes[leg_index] = leg.ground_hit_position;
+        }
+        if (!leg.foot_target_valid) {
+            leg.planted_foothold_world = grounded_home_valid[leg_index]
+                ? grounded_homes[leg_index]
                 : nominal_world;
-            const float swing_phase = definition.gait_swing_ticks <= 1u
+            leg.foot_target_world = leg.planted_foothold_world;
+            leg.foot_target_valid = true;
+            leg.planted = grounded_home_valid[leg_index];
+        }
+    }
+
+    std::uint32_t active_gait_group = UINT32_MAX;
+    std::uint32_t swinging_leg_count = 0u;
+    for (const LegLocomotionState& leg : state->legs) {
+        if (leg.gait_state != LegGaitState::kSwing) {
+            continue;
+        }
+        if (active_gait_group == UINT32_MAX) {
+            active_gait_group = leg.gait_group;
+        }
+        ++swinging_leg_count;
+    }
+    if (active_gait_group == UINT32_MAX) {
+        for (const std::uint32_t leg_index : state->last_processing_order) {
+            const LegLocomotionState& leg = state->legs[leg_index];
+            if (leg.gait_state == LegGaitState::kSupport &&
+                grounded_home_valid[leg_index] &&
+                glm::length(
+                    leg.planted_foothold_world - grounded_homes[leg_index]) >
+                    definition.step_threshold_meters) {
+                active_gait_group = leg.gait_group;
+                break;
+            }
+        }
+    }
+    if (active_gait_group != UINT32_MAX) {
+        for (const std::uint32_t leg_index : state->last_processing_order) {
+            LegLocomotionState& leg = state->legs[leg_index];
+            if (swinging_leg_count >= definition.max_swinging_legs ||
+                leg.gait_state != LegGaitState::kSupport ||
+                leg.gait_group != active_gait_group ||
+                !grounded_home_valid[leg_index]) {
+                continue;
+            }
+            leg.gait_state = LegGaitState::kSwing;
+            leg.entered_swing = true;
+            leg.swing_tick = 0u;
+            leg.swing_start_world = leg.foot_target_world;
+            leg.landing_target_world = grounded_homes[leg_index];
+            leg.landing_target_valid = true;
+            leg.planted = false;
+            ++swinging_leg_count;
+        }
+    }
+
+    for (const std::uint32_t leg_index : state->last_processing_order) {
+        const KernelSkeletonLegDefinition& definition_leg =
+            definition.legs[leg_index];
+        LegLocomotionState& leg = state->legs[leg_index];
+        const glm::vec3 hip_model = hip_models[leg_index];
+        const float maximum_reach = maximum_reaches[leg_index];
+        if (leg.gait_state == LegGaitState::kSwing) {
+            if (grounded_home_valid[leg_index]) {
+                leg.landing_target_world = grounded_homes[leg_index];
+                leg.landing_target_valid = true;
+            }
+            const float swing_phase = definition.step_duration_ticks <= 1u
                 ? 1.0f
-                : static_cast<float>(leg.phase_tick) /
-                    static_cast<float>(definition.gait_swing_ticks - 1u);
+                : std::min(
+                    1.0f,
+                    static_cast<float>(leg.swing_tick) /
+                        static_cast<float>(definition.step_duration_ticks - 1u));
+            const glm::vec3 landing_target = leg.landing_target_valid
+                ? leg.landing_target_world
+                : leg.swing_start_world;
             leg.foot_target_world = glm::mix(
                 leg.swing_start_world,
-                leg.landing_target_world,
+                landing_target,
                 swing_phase);
-            leg.foot_target_world.y +=
-                4.0f * definition_leg.step_height_meters * swing_phase *
-                (1.0f - swing_phase);
-            leg.foot_target_valid = true;
+            leg.foot_target_world.y += definition_leg.step_height_meters *
+                std::sin(swing_phase * std::numbers::pi_v<float>);
+            if (swing_phase >= 1.0f) {
+                leg.gait_state = LegGaitState::kSupport;
+                leg.entered_support = true;
+                leg.swing_tick = 0u;
+                leg.planted_foothold_world = landing_target;
+                leg.foot_target_world = landing_target;
+                leg.planted = leg.landing_target_valid;
+            } else {
+                ++leg.swing_tick;
+            }
         } else {
-            if (leg.entered_support && leg.landing_target_valid) {
-                leg.planted_foothold_world = leg.landing_target_world;
-                leg.planted = true;
-            }
-            const glm::vec3 hip_world =
-                root_position + root_rotation * hip_model;
-            if (leg.planted &&
-                glm::length(leg.planted_foothold_world - hip_world) >
-                    maximum_reach) {
-                leg.planted = false;
-            }
-            if (!leg.planted) {
-                leg.planted = query_foothold(
-                    definition,
-                    root_position + root_rotation * bind_foot_model,
-                    hip_world,
-                    maximum_reach,
-                    root_rotation,
-                    minimum_ground_normal_y,
-                    grounding_query,
-                    &leg);
-                if (leg.planted) {
-                    leg.planted_foothold_world = leg.ground_hit_position;
-                }
-            }
-            leg.foot_target_world = leg.planted
-                ? leg.planted_foothold_world
-                : root_position + root_rotation * bind_foot_model;
-            leg.foot_target_valid = true;
+            leg.foot_target_world = leg.planted_foothold_world;
         }
 
         glm::vec3 target_model = inverse_root_rotation *

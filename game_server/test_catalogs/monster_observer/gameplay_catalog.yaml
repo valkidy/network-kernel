@@ -22,7 +22,8 @@ entity_template_dir: entity_templates
 item_template_dir: item_templates
 collider_template_dir: collider_templates
 skeleton_manifests:
-  - skeleton_assets/generated/simplified_monster_sim_v4.skeleton_manifest.json
+  - skeleton_assets/generated/simplified_monster_quadruped_v5.skeleton_manifest.json
+  - skeleton_assets/generated/rock_robot_biped_24u_v3.skeleton_manifest.json
 static_collision_scene:
   entry_path: mesh_assets/jolt/undulating.joltmesh
   scene_id: 1

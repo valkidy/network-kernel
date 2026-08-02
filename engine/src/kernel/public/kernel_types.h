@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 65u
+#define KERNEL_ABI_VERSION 66u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -104,6 +104,7 @@
 #define KERNEL_CAPABILITY_ACTION_INTENTS UINT64_C(0x0000010000000000)
 #define KERNEL_CAPABILITY_ITEM_PROP_SYSTEM UINT64_C(0x0000020000000000)
 #define KERNEL_CAPABILITY_SKELETON_RENDER_STATES UINT64_C(0x0000040000000000)
+#define KERNEL_CAPABILITY_SKELETON_BIND_POSE UINT64_C(0x0000080000000000)
 
 #define KERNEL_SKELETON_RENDER_STATUS_SUCCESS UINT32_C(0)
 #define KERNEL_SKELETON_RENDER_STATUS_INSUFFICIENT_CAPACITY UINT32_C(1)
@@ -1237,7 +1238,7 @@ typedef struct KernelSkeletonLegDefinition {
     uint32_t hip_bone_index;
     uint32_t knee_bone_index;
     uint32_t foot_bone_index;
-    uint32_t phase_offset_ticks;
+    uint32_t gait_group;
     KernelVec3 pole_local;
     float step_height_meters;
     float max_reach_ratio;
@@ -1253,8 +1254,8 @@ typedef struct KernelSkeletonBindingDefinition {
     uint32_t leg_count;
     uint32_t processing_order_count;
     float input_deadzone;
-    uint32_t gait_cycle_ticks;
-    uint32_t gait_swing_ticks;
+    float step_threshold_meters;
+    uint32_t step_duration_ticks;
     uint32_t max_swinging_legs;
     uint8_t foothold_query_type;
     uint8_t reserved_foothold0;
