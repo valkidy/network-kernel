@@ -1,4 +1,5 @@
 #include <cassert>
+#include <cmath>
 #include <cstdint>
 #include <fstream>
 #include <iterator>
@@ -240,6 +241,32 @@ int main(int argc, char** argv) {
     terrain_ray.filter.gameplay_category_mask = 0;
     assert(world0.ray_cast_closest(terrain_ray, &closest));
     assert(closest.identity.kind == CollisionObjectKind::kTerrain);
+
+    PhysicsWorld normal_world(PhysicsWorldConfig{0});
+    CollisionObjectDescriptor tilted = actor(
+        100,
+        100,
+        glm::vec3(0.0f),
+        network_example::physics::kGameplayCategoryNeutral);
+    constexpr float kHalfAngleRadians = 0.2617993878f;
+    tilted.rotation = glm::quat(
+        std::cos(kHalfAngleRadians),
+        0.0f,
+        0.0f,
+        std::sin(kHalfAngleRadians));
+    assert(normal_world.upsert_object(tilted, &error));
+    RayCastRequest normal_ray{};
+    normal_ray.origin = glm::vec3(0.0f, 3.0f, 0.0f);
+    normal_ray.direction = glm::vec3(0.0f, -1.0f, 0.0f);
+    normal_ray.max_distance = 10.0f;
+    normal_ray.filter.collision_mask =
+        network_example::physics::collision_layer_bit(
+            CollisionLayer::kDamageable);
+    normal_ray.filter.gameplay_category_mask =
+        network_example::physics::kGameplayCategoryNeutral;
+    assert(normal_world.ray_cast_closest(normal_ray, &closest));
+    assert(std::abs(closest.normal.x) > 0.4f);
+    assert(closest.normal.y > 0.8f && closest.normal.y < 0.9f);
 
     std::vector<std::uint8_t> corrupt = terrain;
     corrupt[0] ^= 0xffu;

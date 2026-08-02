@@ -100,6 +100,7 @@ std::uint64_t quantized_locomotion_hash(
         hash_vec3(&hash, leg.landing_target_world);
         hash_vec3(&hash, leg.planted_foothold_world);
         hash_vec3(&hash, leg.foot_target_world);
+        hash_vec3(&hash, leg.solved_foot_world);
         hash_vec3(&hash, leg.ground_hit_position);
         hash_vec3(&hash, leg.ground_hit_normal);
         hash_u64(&hash, leg.grounding_candidate_index);
@@ -1094,11 +1095,11 @@ int main() {
             network_example::LocomotionGroundingHit* hit) {
             grounding_origins.push_back(origin);
             if ((grounding_origins.size() % 2u) == 1u) {
-                hit->position = glm::vec3{origin.x, 0.0f, origin.z};
+                hit->position = origin - glm::vec3{0.0f, 2.0f, 0.0f};
                 hit->normal = glm::vec3{1.0f, 0.0f, 0.0f};
                 return true;
             }
-            hit->position = glm::vec3{origin.x, 0.0f, origin.z};
+            hit->position = origin - glm::vec3{0.2f, 2.0f, 0.0f};
             hit->normal = glm::vec3{0.0f, 1.0f, 0.0f};
             hit->supporting_entity_net_id = 77u;
             hit->supporting_collider_id = 9u;
@@ -1143,14 +1144,18 @@ int main() {
         1.0f / 30.0f,
         ordered_grounding,
         &grounded_locomotion));
-    require(grounding_origins.size() == 8u);
+    require(grounding_origins.size() > 8u);
     for (const network_example::LegLocomotionState& leg :
          grounded_locomotion.legs) {
         if (leg.gait_state == network_example::LegGaitState::kSupport) {
             require(leg.planted);
+            require(!leg.ik_reach_clamped);
             require(glm::length(
                 leg.foot_target_world - leg.planted_foothold_world) <
                 0.0001f);
+            require(glm::length(
+                leg.solved_foot_world - leg.planted_foothold_world) <
+                0.005f);
         }
     }
 
@@ -1206,26 +1211,14 @@ int main() {
             return true;
         },
         &clamped_locomotion));
-    require(std::any_of(
-        clamped_locomotion.legs.begin(),
-        clamped_locomotion.legs.end(),
-        [](const network_example::LegLocomotionState& leg) {
-            return leg.ik_reach_clamped;
-        }));
-    bool ik_rotation_changed = false;
     for (const network_example::LegLocomotionState& leg :
          clamped_locomotion.legs) {
-        const KernelQuat& solved =
-            clamped_locomotion.local_pose[leg.hip_bone_index].local_rotation;
-        const KernelQuat& bind =
-            locomotion_asset.bind_pose[leg.hip_bone_index].local_rotation;
-        ik_rotation_changed = ik_rotation_changed ||
-            std::abs(solved.x - bind.x) > 0.00001f ||
-            std::abs(solved.y - bind.y) > 0.00001f ||
-            std::abs(solved.z - bind.z) > 0.00001f ||
-            std::abs(solved.w - bind.w) > 0.00001f;
+        require(!leg.ground_hit_valid);
+        require(!leg.planted);
+        require(!leg.ik_reach_clamped);
+        require(glm::length(
+            leg.solved_foot_world - leg.foot_target_world) < 0.005f);
     }
-    require(ik_rotation_changed);
     for (const KernelBoneLocalTransform& transform :
          clamped_locomotion.local_pose) {
         require(std::isfinite(transform.local_position.x));

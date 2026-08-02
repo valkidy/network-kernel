@@ -76,7 +76,7 @@ locomotion:
       phase_offset_ticks: 0
       pole_local: {x: 0.0, y: 0.0, z: 1.0}
       step_height_meters: 0.45
-      max_reach_ratio: 0.95
+      max_reach_ratio: 0.99
     - id: rear_right
       hip_bone: JNT_LegRearRight_Hip
       knee_bone: JNT_LegRearRight_Knee
@@ -84,7 +84,7 @@ locomotion:
       phase_offset_ticks: 15
       pole_local: {x: 0.0, y: 0.0, z: -1.0}
       step_height_meters: 0.45
-      max_reach_ratio: 0.95
+      max_reach_ratio: 0.99
     - id: front_right
       hip_bone: JNT_LegFrontRight_Hip
       knee_bone: JNT_LegFrontRight_Knee
@@ -92,7 +92,7 @@ locomotion:
       phase_offset_ticks: 30
       pole_local: {x: 0.0, y: 0.0, z: 1.0}
       step_height_meters: 0.45
-      max_reach_ratio: 0.95
+      max_reach_ratio: 0.99
     - id: rear_left
       hip_bone: JNT_LegRearLeft_Hip
       knee_bone: JNT_LegRearLeft_Knee
@@ -100,4 +100,4 @@ locomotion:
       phase_offset_ticks: 45
       pole_local: {x: 0.0, y: 0.0, z: -1.0}
       step_height_meters: 0.45
-      max_reach_ratio: 0.95
+      max_reach_ratio: 0.99
