@@ -377,16 +377,15 @@ namespace NetworkExample.Kernel.Editor
                     $"First absolute skeleton pose was rejected: {error}");
                 RequireVectorApproximately(
                     bone.localPosition,
-                    bindPosition,
-                    "First procedural pose was added to the FBX bind position.");
-                RequireQuaternionApproximately(
-                    bone.localRotation,
-                    bindRotation,
-                    "First procedural pose was multiplied into the FBX bind rotation.");
+                    new Vector3(-3.0f, 4.0f, 5.0f),
+                    "First procedural position was incorrectly used as its own reference.");
+                Require(
+                    Quaternion.Angle(bone.localRotation, bindRotation) > 0.1f,
+                    "First procedural rotation was incorrectly cancelled to the bind rotation.");
                 RequireVectorApproximately(
                     bone.localScale,
-                    bindScale,
-                    "First procedural pose changed the FBX bind scale.");
+                    new Vector3(2.0f, 2.0f, 4.0f),
+                    "First procedural scale was incorrectly cancelled to the bind scale.");
 
                 Quaternion nativeYaw = Quaternion.AngleAxis(30.0f, Vector3.up);
                 SkeletonRenderStateBuffer secondPose = SkeletonBuffer(
@@ -400,23 +399,23 @@ namespace NetworkExample.Kernel.Editor
                     $"Second absolute skeleton pose was rejected: {error}");
                 RequireVectorApproximately(
                     bone.localPosition,
-                    bindPosition + new Vector3(-1.0f, 2.0f, 3.0f),
-                    "Native position delta did not use the X-reflected basis.");
+                    new Vector3(-4.0f, 6.0f, 8.0f),
+                    "Native position did not use the X-reflected bind basis.");
                 Quaternion reflectedYaw =
                     new Quaternion(nativeYaw.x, -nativeYaw.y, -nativeYaw.z, nativeYaw.w);
                 RequireQuaternionApproximately(
                     bone.localRotation,
-                    bindRotation * reflectedYaw,
-                    "Native rotation delta was not applied after the FBX bind rotation.");
+                    reflectedYaw,
+                    "Native rotation was not applied relative to the stable bind pose.");
                 Require(
                     Quaternion.Angle(
                         bone.localRotation,
-                        reflectedYaw * bindRotation) > 0.1f,
-                    "Skeleton rotation smoke did not distinguish bind * delta from delta * bind.");
+                        bindRotation) > 0.1f,
+                    "Skeleton rotation smoke did not distinguish pose from bind.");
                 RequireVectorApproximately(
                     bone.localScale,
-                    Vector3.Scale(bindScale, new Vector3(2.0f, 0.5f, 1.0f)),
-                    "Native absolute scale was not converted to a reference-relative ratio.");
+                    new Vector3(4.0f, 1.0f, 4.0f),
+                    "Native absolute scale was not applied from the stable bind reference.");
             }
             finally
             {
@@ -434,7 +433,7 @@ namespace NetworkExample.Kernel.Editor
             {
                 Transform bone = new GameObject("ZeroScaleBone").transform;
                 bone.SetParent(root.transform, false);
-                bone.localScale = new Vector3(2.0f, 3.0f, 4.0f);
+                bone.localScale = new Vector3(0.0f, 1.0e-10f, 2.0f);
                 KernelSkeletonPoseApplicator applicator =
                     CreateSkeletonPoseApplicator(root, bone);
                 KernelSkeletonRenderState state = SkeletonState(
@@ -447,7 +446,7 @@ namespace NetworkExample.Kernel.Editor
                             BoneTransform(
                                 Vector3.zero,
                                 Quaternion.identity,
-                                new Vector3(0.0f, 1.0e-10f, 2.0f))),
+                                new Vector3(5.0f, 6.0f, 4.0f))),
                         out string error),
                     $"Zero-scale skeleton reference was rejected: {error}");
                 Require(
@@ -458,12 +457,12 @@ namespace NetworkExample.Kernel.Editor
                             BoneTransform(
                                 Vector3.zero,
                                 Quaternion.identity,
-                                new Vector3(5.0f, 6.0f, 4.0f))),
+                                new Vector3(10.0f, 12.0f, 8.0f))),
                         out error),
                     $"Skeleton pose after zero-scale reference was rejected: {error}");
                 RequireVectorApproximately(
                     bone.localScale,
-                    new Vector3(2.0f, 3.0f, 8.0f),
+                    new Vector3(0.0f, 1.0e-10f, 8.0f),
                     "Zero or near-zero reference scale produced an unsafe ratio.");
             }
             finally
@@ -505,8 +504,11 @@ namespace NetworkExample.Kernel.Editor
                         $"Respawn reference pose {index} was rejected: {error}");
                     RequireVectorApproximately(
                         bone.localPosition,
-                        bindPosition,
-                        "A new skeleton instance reused a stale native reference pose.");
+                        new Vector3(
+                            -nativeReferences[index].x,
+                            nativeReferences[index].y,
+                            nativeReferences[index].z),
+                        "A new skeleton instance did not use its stable bind reference.");
                 }
                 finally
                 {

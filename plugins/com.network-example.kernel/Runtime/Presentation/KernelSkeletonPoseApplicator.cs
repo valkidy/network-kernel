@@ -17,7 +17,6 @@ namespace NetworkExample.Kernel.Presentation
         private Vector3[] nativeReferencePositions;
         private Quaternion[] nativeReferenceRotations;
         private Vector3[] nativeReferenceScales;
-        private bool nativeReferencePoseCaptured;
         private KernelSkeletonRenderState pendingState;
         private SkeletonRenderStateBuffer pendingBuffer;
         private bool hasPendingPose;
@@ -51,11 +50,6 @@ namespace NetworkExample.Kernel.Presentation
 
             ArraySegment<KernelBoneLocalTransform> transforms =
                 buffer.GetBoneTransforms(state);
-            if (binding.PreservePrefabBindPose &&
-                !nativeReferencePoseCaptured)
-            {
-                CaptureNativeReferencePose(transforms);
-            }
             for (int index = 0; index < transforms.Count; ++index)
             {
                 KernelBoneLocalTransform local =
@@ -187,37 +181,23 @@ namespace NetworkExample.Kernel.Presentation
             prefabBindPositions = new Vector3[count];
             prefabBindRotations = new Quaternion[count];
             prefabBindScales = new Vector3[count];
+            nativeReferencePositions = new Vector3[count];
+            nativeReferenceRotations = new Quaternion[count];
+            nativeReferenceScales = new Vector3[count];
             for (int index = 0; index < count; ++index)
             {
                 Transform bone = binding.Bones[index];
                 prefabBindPositions[index] = bone.localPosition;
                 prefabBindRotations[index] = bone.localRotation;
                 prefabBindScales[index] = bone.localScale;
+                // The bound Unity hierarchy is imported from the same skeleton
+                // identified by SkeletonContentHash. Its local bind values are the
+                // GLB/Ozz bind pose already converted into the Unity basis used
+                // below; a procedural frame must never become this reference.
+                nativeReferencePositions[index] = prefabBindPositions[index];
+                nativeReferenceRotations[index] = prefabBindRotations[index];
+                nativeReferenceScales[index] = prefabBindScales[index];
             }
-        }
-
-        private void CaptureNativeReferencePose(
-            ArraySegment<KernelBoneLocalTransform> transforms)
-        {
-            // Presentation can attach after the native stream is already procedural,
-            // so a bind-flagged state is not guaranteed. Treat the first valid pose
-            // as the reference that maps absolute native GLB transforms into deltas
-            // applied on top of the imported FBX bind pose.
-            int count = transforms.Count;
-            nativeReferencePositions = new Vector3[count];
-            nativeReferenceRotations = new Quaternion[count];
-            nativeReferenceScales = new Vector3[count];
-            for (int index = 0; index < count; ++index)
-            {
-                KernelBoneLocalTransform local =
-                    transforms.Array[transforms.Offset + index];
-                nativeReferencePositions[index] = ReflectPositionX(
-                    ToVector3(local.local_position));
-                nativeReferenceRotations[index] = ReflectRotationX(
-                    Normalize(local.local_rotation));
-                nativeReferenceScales[index] = ToVector3(local.local_scale);
-            }
-            nativeReferencePoseCaptured = true;
         }
 
         private void LateUpdate()
