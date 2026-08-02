@@ -17,6 +17,7 @@ namespace NetworkExample.Kernel.Presentation
         private Vector3[] nativeReferencePositions;
         private Quaternion[] nativeReferenceRotations;
         private Vector3[] nativeReferenceScales;
+        private bool nativeReferenceValid;
         private KernelSkeletonRenderState pendingState;
         private SkeletonRenderStateBuffer pendingBuffer;
         private bool hasPendingPose;
@@ -27,7 +28,20 @@ namespace NetworkExample.Kernel.Presentation
             SkeletonRenderStateBuffer buffer,
             out string error)
         {
+            return TryStagePose(null, state, buffer, out error);
+        }
+
+        public bool TryStagePose(
+            Kernel kernel,
+            KernelSkeletonRenderState state,
+            SkeletonRenderStateBuffer buffer,
+            out string error)
+        {
             if (!TryValidatePose(state, buffer, out error))
+            {
+                return false;
+            }
+            if (!EnsureNativeReferencePose(kernel, out error))
             {
                 return false;
             }
@@ -43,7 +57,20 @@ namespace NetworkExample.Kernel.Presentation
             SkeletonRenderStateBuffer buffer,
             out string error)
         {
+            return TryApply(null, state, buffer, out error);
+        }
+
+        public bool TryApply(
+            Kernel kernel,
+            KernelSkeletonRenderState state,
+            SkeletonRenderStateBuffer buffer,
+            out string error)
+        {
             if (!TryValidatePose(state, buffer, out error))
+            {
+                return false;
+            }
+            if (!EnsureNativeReferencePose(kernel, out error))
             {
                 return false;
             }
@@ -55,10 +82,8 @@ namespace NetworkExample.Kernel.Presentation
                 KernelBoneLocalTransform local =
                     transforms.Array[transforms.Offset + index];
                 Transform bone = binding.Bones[index];
-                Vector3 nativePosition = ReflectPositionX(
-                    ToVector3(local.local_position));
-                Quaternion nativeRotation = ReflectRotationX(
-                    Normalize(local.local_rotation));
+                Vector3 nativePosition = ToVector3(local.local_position);
+                Quaternion nativeRotation = Normalize(local.local_rotation);
                 Vector3 nativeScale = ToVector3(local.local_scale);
                 if (binding.PreservePrefabBindPose)
                 {
@@ -81,6 +106,48 @@ namespace NetworkExample.Kernel.Presentation
                 }
             }
 
+            error = null;
+            return true;
+        }
+
+        public bool TrySetNativeBindPose(
+            KernelBoneLocalTransform[] nativeBindPose,
+            out string error)
+        {
+            if (!EnsureBinding(out error))
+            {
+                return false;
+            }
+            if (nativeBindPose == null ||
+                nativeBindPose.Length != binding.Bones.Length)
+            {
+                error =
+                    $"Native bind-pose count must be {binding.Bones.Length}.";
+                return false;
+            }
+
+            int count = nativeBindPose.Length;
+            var positions = new Vector3[count];
+            var rotations = new Quaternion[count];
+            var scales = new Vector3[count];
+            for (int index = 0; index < count; ++index)
+            {
+                KernelBoneLocalTransform local = nativeBindPose[index];
+                if (!IsFinite(local) ||
+                    QuaternionLengthSquared(local.local_rotation) <= 1.0e-12f)
+                {
+                    error = $"Native bind-pose transform {index} is invalid.";
+                    return false;
+                }
+                positions[index] = ToVector3(local.local_position);
+                rotations[index] = Normalize(local.local_rotation);
+                scales[index] = ToVector3(local.local_scale);
+            }
+
+            nativeReferencePositions = positions;
+            nativeReferenceRotations = rotations;
+            nativeReferenceScales = scales;
+            nativeReferenceValid = true;
             error = null;
             return true;
         }
@@ -181,23 +248,45 @@ namespace NetworkExample.Kernel.Presentation
             prefabBindPositions = new Vector3[count];
             prefabBindRotations = new Quaternion[count];
             prefabBindScales = new Vector3[count];
-            nativeReferencePositions = new Vector3[count];
-            nativeReferenceRotations = new Quaternion[count];
-            nativeReferenceScales = new Vector3[count];
             for (int index = 0; index < count; ++index)
             {
                 Transform bone = binding.Bones[index];
                 prefabBindPositions[index] = bone.localPosition;
                 prefabBindRotations[index] = bone.localRotation;
                 prefabBindScales[index] = bone.localScale;
-                // The bound Unity hierarchy is imported from the same skeleton
-                // identified by SkeletonContentHash. Its local bind values are the
-                // GLB/Ozz bind pose already converted into the Unity basis used
-                // below; a procedural frame must never become this reference.
-                nativeReferencePositions[index] = prefabBindPositions[index];
-                nativeReferenceRotations[index] = prefabBindRotations[index];
-                nativeReferenceScales[index] = prefabBindScales[index];
             }
+        }
+
+        private bool EnsureNativeReferencePose(Kernel kernel, out string error)
+        {
+            if (!binding.PreservePrefabBindPose || nativeReferenceValid)
+            {
+                error = null;
+                return true;
+            }
+            if (kernel == null)
+            {
+                error =
+                    "Native skeleton bind pose is unavailable. Stage or apply " +
+                    "the pose with a Kernel instance first.";
+                return false;
+            }
+
+            int count = binding.Bones.Length;
+            var nativeBindPose = new KernelBoneLocalTransform[count];
+            uint requiredCount = kernel.GetSkeletonBindPose(
+                binding.SkeletonAssetId,
+                binding.SkeletonContentHash,
+                nativeBindPose);
+            if (requiredCount != (uint)count)
+            {
+                error =
+                    $"Native bind-pose mismatch: query returned {requiredCount} " +
+                    $"bones for asset={binding.SkeletonAssetId}, " +
+                    $"hash=0x{binding.SkeletonContentHash:x16}; expected {count}.";
+                return false;
+            }
+            return TrySetNativeBindPose(nativeBindPose, out error);
         }
 
         private void LateUpdate()
@@ -256,16 +345,6 @@ namespace NetworkExample.Kernel.Presentation
         private static Vector3 ToVector3(KernelVec3 value)
         {
             return new Vector3(value.x, value.y, value.z);
-        }
-
-        private static Vector3 ReflectPositionX(Vector3 value)
-        {
-            return new Vector3(-value.x, value.y, value.z);
-        }
-
-        private static Quaternion ReflectRotationX(Quaternion value)
-        {
-            return new Quaternion(value.x, -value.y, -value.z, value.w);
         }
 
         private static Vector3 DivideScale(Vector3 value, Vector3 reference)

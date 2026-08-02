@@ -412,6 +412,20 @@ namespace NetworkExample.Kernel
             return GetSkeletonRenderStatesInternal(buffer, true, clientRenderTimeUs);
         }
 
+        public uint GetSkeletonBindPose(
+            uint skeletonAssetId,
+            ulong skeletonContentHash,
+            KernelBoneLocalTransform[] boneTransforms)
+        {
+            ThrowIfDisposed();
+            return KernelNative.Kernel_GetSkeletonBindPose(
+                handle,
+                skeletonAssetId,
+                skeletonContentHash,
+                boneTransforms,
+                boneTransforms == null ? 0U : (uint)boneTransforms.Length);
+        }
+
         public uint PollEvents(KernelEvent[] events)
         {
             ThrowIfDisposed();

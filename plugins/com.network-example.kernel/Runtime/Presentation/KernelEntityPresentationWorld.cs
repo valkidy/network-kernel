@@ -111,7 +111,11 @@ namespace NetworkExample.Kernel.Presentation
             kernel.GetSkeletonRenderStatesAtTime(
                 clientRenderTimeUs,
                 queriedSkeletonStates);
-            Present(rootStates, rootStateCount, queriedSkeletonStates);
+            PresentInternal(
+                rootStates,
+                rootStateCount,
+                queriedSkeletonStates,
+                kernel);
             return rootStateCount;
         }
 
@@ -119,6 +123,15 @@ namespace NetworkExample.Kernel.Presentation
             RenderEntityState[] rootStates,
             uint rootStateCount,
             SkeletonRenderStateBuffer skeletonStates)
+        {
+            PresentInternal(rootStates, rootStateCount, skeletonStates, null);
+        }
+
+        private void PresentInternal(
+            RenderEntityState[] rootStates,
+            uint rootStateCount,
+            SkeletonRenderStateBuffer skeletonStates,
+            Kernel kernel)
         {
             if (rootStates == null)
             {
@@ -150,7 +163,7 @@ namespace NetworkExample.Kernel.Presentation
             }
 
             RemoveStaleInstances();
-            ApplySkeletonStates(skeletonStates);
+            ApplySkeletonStates(skeletonStates, kernel);
         }
 
         public bool TryGetPresentationTransform(uint templateId, out Transform value)
@@ -248,7 +261,9 @@ namespace NetworkExample.Kernel.Presentation
             return instance;
         }
 
-        private void ApplySkeletonStates(SkeletonRenderStateBuffer buffer)
+        private void ApplySkeletonStates(
+            SkeletonRenderStateBuffer buffer,
+            Kernel kernel)
         {
             if (buffer == null)
             {
@@ -270,6 +285,7 @@ namespace NetworkExample.Kernel.Presentation
                 }
 
                 if (!instance.SkeletonApplicator.TryStagePose(
+                        kernel,
                         state,
                         buffer,
                         out string error) &&

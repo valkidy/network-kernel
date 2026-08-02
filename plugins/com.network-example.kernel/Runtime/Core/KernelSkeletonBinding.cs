@@ -6,69 +6,66 @@ namespace NetworkExample.Kernel
     [DisallowMultipleComponent]
     public sealed class KernelSkeletonBinding : MonoBehaviour
     {
-        public const uint MonsterSimV4SkeletonAssetId = 1;
-        public const ulong MonsterSimV4SkeletonContentHash =
-            0x1c171165d9bb479bUL;
+        public const uint DefaultSkeletonAssetId = 1;
+        public const ulong DefaultSkeletonContentHash =
+            0x128e575af29f0793UL;
 
-        private static readonly string[] MonsterSimV4BoneNames =
+        private static readonly string[] DefaultBoneNames =
         {
-            "SIM_Root",
-            "JNT_BodyRoot",
-            "LOC_FrontArc",
-            "LOC_Com",
-            "JNT_LegRearRight_Hip",
-            "GEO_LegRearRight_Upper_Node",
-            "JNT_LegRearRight_Knee",
-            "GEO_LegRearRight_Blade_Node",
-            "GEO_LegRearRight_Lower_Node",
-            "JNT_LegRearRight_Foot",
-            "JNT_LegFrontRight_Hip",
-            "GEO_LegFrontRight_Upper_Node",
-            "JNT_LegFrontRight_Knee",
-            "GEO_LegFrontRight_Blade_Node",
-            "GEO_LegFrontRight_Lower_Node",
-            "JNT_LegFrontRight_Foot",
-            "JNT_LegRearLeft_Hip",
-            "GEO_LegRearLeft_Upper_Node",
-            "JNT_LegRearLeft_Knee",
-            "GEO_LegRearLeft_Blade_Node",
-            "GEO_LegRearLeft_Lower_Node",
-            "JNT_LegRearLeft_Foot",
-            "JNT_LegFrontLeft_Hip",
-            "GEO_LegFrontLeft_Upper_Node",
-            "JNT_LegFrontLeft_Knee",
+            "GEO_BodyCore_Node",
+            "GEO_DorsalSpine_Node",
+            "GEO_Head_Node",
             "GEO_LegFrontLeft_Blade_Node",
             "GEO_LegFrontLeft_Lower_Node",
-            "JNT_LegFrontLeft_Foot",
-            "GEO_RootMovementBox_Node",
-            "JNT_TailBase",
-            "GEO_Tail_Node",
-            "JNT_TailTip",
-            "JNT_LowerThorax",
+            "GEO_LegFrontLeft_Upper_Node",
+            "GEO_LegFrontRight_Blade_Node",
+            "GEO_LegFrontRight_Lower_Node",
+            "GEO_LegFrontRight_Upper_Node",
+            "GEO_LegRearLeft_Blade_Node",
+            "GEO_LegRearLeft_Lower_Node",
+            "GEO_LegRearLeft_Upper_Node",
+            "GEO_LegRearRight_Blade_Node",
+            "GEO_LegRearRight_Lower_Node",
+            "GEO_LegRearRight_Upper_Node",
             "GEO_LowerThorax_Node",
-            "JNT_Head",
-            "LOC_Mouth",
-            "GEO_Head_Node",
-            "JNT_DorsalSpine",
-            "GEO_DorsalSpine_Node",
-            "GEO_BodyCore_Node",
+            "GEO_RootMovementBox_Node",
+            "GEO_Tail_Node",
+            "world",
             "SKIN_BindCarrier",
+            "SIM_Root",
+            "JNT_BodyRoot",
+            "JNT_DorsalSpine",
+            "JNT_Head",
+            "JNT_LegFrontLeft_Hip",
+            "JNT_LegFrontLeft_Knee",
+            "JNT_LegFrontLeft_Foot",
+            "JNT_LegFrontRight_Hip",
+            "JNT_LegFrontRight_Knee",
+            "JNT_LegFrontRight_Foot",
+            "JNT_LegRearLeft_Hip",
+            "JNT_LegRearLeft_Knee",
+            "JNT_LegRearLeft_Foot",
+            "JNT_LegRearRight_Hip",
+            "JNT_LegRearRight_Knee",
+            "JNT_LegRearRight_Foot",
+            "JNT_LowerThorax",
+            "JNT_TailBase",
+            "JNT_TailTip",
         };
 
-        private static readonly int[] MonsterSimV4ParentIndices =
+        private static readonly int[] DefaultParentIndices =
         {
-            -1, 0, 1, 1, 1, 4, 4, 6, 6, 6,
-            1, 10, 10, 12, 12, 12, 1, 16, 16, 18,
-            18, 18, 1, 22, 22, 24, 24, 24, 1, 1,
-            29, 29, 1, 32, 1, 34, 34, 1, 37, 1,
-            0,
+            -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+            -1, -1, -1, -1, -1, -1, -1, -1, -1, 18,
+            18, 20, 21, 21, 21, 24, 25, 21, 27, 28,
+            21, 30, 31, 21, 33, 34, 21, 21, 37,
         };
 
-        [Tooltip("Native skeleton asset ID. Defaults to simplified_monster_sim_v4.")]
-        public uint SkeletonAssetId = MonsterSimV4SkeletonAssetId;
+        [Tooltip("Native skeleton asset ID. Defaults to simplified_monster_quadruped_v5.")]
+        public uint SkeletonAssetId = DefaultSkeletonAssetId;
 
-        [Tooltip("Native skeleton content hash. Defaults to simplified_monster_sim_v4.")]
-        public ulong SkeletonContentHash = MonsterSimV4SkeletonContentHash;
+        [Tooltip("Native skeleton content hash. Defaults to simplified_monster_quadruped_v5.")]
+        public ulong SkeletonContentHash = DefaultSkeletonContentHash;
 
         [Tooltip("Optional hierarchy root. When empty, this component scans its GameObject.")]
         public Transform SkeletonRoot;
@@ -83,27 +80,27 @@ namespace NetworkExample.Kernel
 
         public Transform[] Bones = Array.Empty<Transform>();
 
-        public static string GetMonsterSimV4BoneName(int boneIndex)
+        public static string GetDefaultBoneName(int boneIndex)
         {
-            if (boneIndex < 0 || boneIndex >= MonsterSimV4BoneNames.Length)
+            if (boneIndex < 0 || boneIndex >= DefaultBoneNames.Length)
             {
                 throw new ArgumentOutOfRangeException(nameof(boneIndex));
             }
-            return MonsterSimV4BoneNames[boneIndex];
+            return DefaultBoneNames[boneIndex];
         }
 
-        public static int GetMonsterSimV4ParentBoneIndex(int boneIndex)
+        public static int GetDefaultParentBoneIndex(int boneIndex)
         {
-            if (boneIndex < 0 || boneIndex >= MonsterSimV4ParentIndices.Length)
+            if (boneIndex < 0 || boneIndex >= DefaultParentIndices.Length)
             {
                 throw new ArgumentOutOfRangeException(nameof(boneIndex));
             }
-            return MonsterSimV4ParentIndices[boneIndex];
+            return DefaultParentIndices[boneIndex];
         }
 
         public bool TryAutoMap(out string error)
         {
-            if (!IsMonsterSimV4)
+            if (!IsDefaultSkeleton)
             {
                 error =
                     $"No automatic bone profile for skeleton asset={SkeletonAssetId} " +
@@ -114,14 +111,14 @@ namespace NetworkExample.Kernel
             Transform searchRoot = SkeletonRoot != null ? SkeletonRoot : transform;
             Transform[] descendants =
                 searchRoot.GetComponentsInChildren<Transform>(true);
-            var mappedBones = new Transform[MonsterSimV4BoneNames.Length];
+            var mappedBones = new Transform[DefaultBoneNames.Length];
             for (int transformIndex = 0;
                  transformIndex < descendants.Length;
                  ++transformIndex)
             {
                 Transform candidate = descendants[transformIndex];
                 string candidateName = StripNamespace(candidate.name);
-                int boneIndex = FindMonsterSimV4BoneIndex(candidateName);
+                int boneIndex = FindDefaultBoneIndex(candidateName);
                 if (boneIndex < 0)
                 {
                     continue;
@@ -129,7 +126,7 @@ namespace NetworkExample.Kernel
                 if (mappedBones[boneIndex] != null)
                 {
                     error =
-                        $"Bone name '{MonsterSimV4BoneNames[boneIndex]}' is not unique " +
+                        $"Bone name '{DefaultBoneNames[boneIndex]}' is not unique " +
                         $"under '{searchRoot.name}'.";
                     return false;
                 }
@@ -141,19 +138,19 @@ namespace NetworkExample.Kernel
                 if (mappedBones[boneIndex] == null)
                 {
                     error =
-                        $"Missing bone '{MonsterSimV4BoneNames[boneIndex]}' " +
+                        $"Missing bone '{DefaultBoneNames[boneIndex]}' " +
                         $"under '{searchRoot.name}'. Disable Optimize Game Objects and " +
                         "preserve the complete FBX hierarchy.";
                     return false;
                 }
 
-                int parentIndex = MonsterSimV4ParentIndices[boneIndex];
+                int parentIndex = DefaultParentIndices[boneIndex];
                 if (parentIndex >= 0 &&
                     mappedBones[boneIndex].parent != mappedBones[parentIndex])
                 {
                     error =
-                        $"Bone '{MonsterSimV4BoneNames[boneIndex]}' must be a direct child " +
-                        $"of '{MonsterSimV4BoneNames[parentIndex]}'.";
+                        $"Bone '{DefaultBoneNames[boneIndex]}' must be a direct child " +
+                        $"of '{DefaultBoneNames[parentIndex]}'.";
                     return false;
                 }
             }
@@ -212,32 +209,32 @@ namespace NetworkExample.Kernel
                     }
                 }
             }
-            if (IsMonsterSimV4)
+            if (IsDefaultSkeleton)
             {
-                if (Bones.Length != MonsterSimV4BoneNames.Length)
+                if (Bones.Length != DefaultBoneNames.Length)
                 {
                     error =
-                        $"simplified_monster_sim_v4 requires " +
-                        $"{MonsterSimV4BoneNames.Length} bones, found {Bones.Length}.";
+                        $"simplified_monster_quadruped_v5 requires " +
+                        $"{DefaultBoneNames.Length} bones, found {Bones.Length}.";
                     return false;
                 }
                 for (int index = 0; index < Bones.Length; ++index)
                 {
                     if (StripNamespace(Bones[index].name) !=
-                        MonsterSimV4BoneNames[index])
+                        DefaultBoneNames[index])
                     {
                         error =
                             $"Bones[{index}] must map to " +
-                            $"'{MonsterSimV4BoneNames[index]}', found '{Bones[index].name}'.";
+                            $"'{DefaultBoneNames[index]}', found '{Bones[index].name}'.";
                         return false;
                     }
-                    int parentIndex = MonsterSimV4ParentIndices[index];
+                    int parentIndex = DefaultParentIndices[index];
                     if (parentIndex >= 0 &&
                         Bones[index].parent != Bones[parentIndex])
                     {
                         error =
                             $"Bones[{index}] has an unexpected parent for " +
-                            $"'{MonsterSimV4BoneNames[index]}'.";
+                            $"'{DefaultBoneNames[index]}'.";
                         return false;
                     }
                 }
@@ -278,9 +275,9 @@ namespace NetworkExample.Kernel
             return true;
         }
 
-        private bool IsMonsterSimV4 =>
-            SkeletonAssetId == MonsterSimV4SkeletonAssetId &&
-            SkeletonContentHash == MonsterSimV4SkeletonContentHash;
+        private bool IsDefaultSkeleton =>
+            SkeletonAssetId == DefaultSkeletonAssetId &&
+            SkeletonContentHash == DefaultSkeletonContentHash;
 
         private bool HasCompleteBoneArray()
         {
@@ -298,11 +295,11 @@ namespace NetworkExample.Kernel
             return true;
         }
 
-        private static int FindMonsterSimV4BoneIndex(string boneName)
+        private static int FindDefaultBoneIndex(string boneName)
         {
-            for (int index = 0; index < MonsterSimV4BoneNames.Length; ++index)
+            for (int index = 0; index < DefaultBoneNames.Length; ++index)
             {
-                if (MonsterSimV4BoneNames[index] == boneName)
+                if (DefaultBoneNames[index] == boneName)
                 {
                     return index;
                 }
@@ -320,8 +317,8 @@ namespace NetworkExample.Kernel
 
         private void Reset()
         {
-            SkeletonAssetId = MonsterSimV4SkeletonAssetId;
-            SkeletonContentHash = MonsterSimV4SkeletonContentHash;
+            SkeletonAssetId = DefaultSkeletonAssetId;
+            SkeletonContentHash = DefaultSkeletonContentHash;
             AutoMapKnownSkeleton = true;
             PreservePrefabBindPose = true;
             TryAutoMap(out string _);
@@ -330,7 +327,7 @@ namespace NetworkExample.Kernel
 #if UNITY_EDITOR
         private void OnValidate()
         {
-            if (AutoMapKnownSkeleton && IsMonsterSimV4)
+            if (AutoMapKnownSkeleton && IsDefaultSkeleton)
             {
                 TryAutoMap(out string _);
             }

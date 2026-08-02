@@ -149,7 +149,7 @@ public sealed class NetworkKernelMonsterObserverBehaviour : MonoBehaviour
     {
         if (state.template_id == MonsterTemplateId)
         {
-            return MonsterSimV4Proxy.Create();
+            return MonsterSimV5Proxy.Create();
         }
 
         GameObject proxy = GameObject.CreatePrimitive(PrimitiveType.Capsule);
@@ -232,50 +232,49 @@ public sealed class NetworkKernelMonsterObserverBehaviour : MonoBehaviour
         }
     }
 
-    private static class MonsterSimV4Proxy
+    private static class MonsterSimV5Proxy
     {
         private const uint SkeletonAssetId = 1;
-        private const ulong SkeletonContentHash = 0x1c171165d9bb479bUL;
+        private const ulong SkeletonContentHash = 0x128e575af29f0793UL;
 
         private static readonly int[] ParentBoneIndices =
         {
-            -1, 0, 1, 1, 1, 4, 4, 6, 6, 6,
-            1, 10, 10, 12, 12, 12, 1, 16, 16, 18,
-            18, 18, 1, 22, 22, 24, 24, 24, 1, 1,
-            29, 29, 1, 32, 1, 34, 34, 1, 37, 1,
-            0,
+            -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+            -1, -1, -1, -1, -1, -1, -1, -1, -1, 18,
+            18, 20, 21, 21, 21, 24, 25, 21, 27, 28,
+            21, 30, 31, 21, 33, 34, 21, 21, 37,
         };
 
         private static readonly ProxyBox[] Boxes =
         {
-            new ProxyBox(5, new Vector3(2.20f, -2.35f, -0.30f), new Vector3(5.63f, 5.94f, 2.25f)),
-            new ProxyBox(7, new Vector3(2.11f, -3.79f, 0.00f), new Vector3(4.91f, 8.93f, 0.86f)),
-            new ProxyBox(8, new Vector3(1.75f, -5.45f, -0.20f), new Vector3(4.84f, 11.38f, 2.01f)),
-            new ProxyBox(11, new Vector3(1.85f, -2.15f, 0.20f), new Vector3(4.96f, 5.45f, 2.04f)),
-            new ProxyBox(13, new Vector3(2.45f, -4.20f, 0.30f), new Vector3(5.56f, 9.84f, 0.86f)),
-            new ProxyBox(14, new Vector3(2.20f, -6.00f, 0.20f), new Vector3(5.72f, 12.53f, 2.01f)),
-            new ProxyBox(17, new Vector3(-2.20f, -2.40f, -0.25f), new Vector3(5.63f, 6.00f, 2.14f)),
-            new ProxyBox(19, new Vector3(-2.15f, -3.75f, -0.30f), new Vector3(4.98f, 8.88f, 0.86f)),
-            new ProxyBox(20, new Vector3(-1.80f, -5.40f, -0.20f), new Vector3(4.94f, 11.30f, 2.01f)),
-            new ProxyBox(23, new Vector3(-1.90f, -2.25f, 0.20f), new Vector3(5.06f, 5.64f, 2.04f)),
-            new ProxyBox(25, new Vector3(-2.60f, -4.13f, 0.08f), new Vector3(5.83f, 9.78f, 1.02f)),
-            new ProxyBox(26, new Vector3(-2.40f, -5.90f, 0.30f), new Vector3(6.11f, 12.40f, 2.21f)),
-            new ProxyBox(28, Vector3.zero, new Vector3(5.0f, 5.0f, 4.0f)),
-            new ProxyBox(30, new Vector3(-1.0f, -1.10f, -1.20f), new Vector3(2.72f, 3.01f, 3.07f)),
-            new ProxyBox(33, Vector3.zero, new Vector3(3.0f, 2.2f, 3.4f)),
-            new ProxyBox(36, Vector3.zero, new Vector3(3.6f, 2.8f, 3.2f)),
-            new ProxyBox(38, Vector3.zero, new Vector3(2.0f, 5.0f, 1.2f)),
-            new ProxyBox(39, Vector3.zero, new Vector3(9.0f, 5.0f, 6.0f)),
+            new ProxyBox(14, new Vector3(2.20f, -2.35f, -0.30f), new Vector3(5.63f, 5.94f, 2.25f)),
+            new ProxyBox(12, new Vector3(2.11f, -3.79f, 0.00f), new Vector3(4.91f, 8.93f, 0.86f)),
+            new ProxyBox(13, new Vector3(1.75f, -5.45f, -0.20f), new Vector3(4.84f, 11.38f, 2.01f)),
+            new ProxyBox(8, new Vector3(1.85f, -2.15f, 0.20f), new Vector3(4.96f, 5.45f, 2.04f)),
+            new ProxyBox(6, new Vector3(2.45f, -4.20f, 0.30f), new Vector3(5.56f, 9.84f, 0.86f)),
+            new ProxyBox(7, new Vector3(2.20f, -6.00f, 0.20f), new Vector3(5.72f, 12.53f, 2.01f)),
+            new ProxyBox(11, new Vector3(-2.20f, -2.40f, -0.25f), new Vector3(5.63f, 6.00f, 2.14f)),
+            new ProxyBox(9, new Vector3(-2.15f, -3.75f, -0.30f), new Vector3(4.98f, 8.88f, 0.86f)),
+            new ProxyBox(10, new Vector3(-1.80f, -5.40f, -0.20f), new Vector3(4.94f, 11.30f, 2.01f)),
+            new ProxyBox(5, new Vector3(-1.90f, -2.25f, 0.20f), new Vector3(5.06f, 5.64f, 2.04f)),
+            new ProxyBox(3, new Vector3(-2.60f, -4.13f, 0.08f), new Vector3(5.83f, 9.78f, 1.02f)),
+            new ProxyBox(4, new Vector3(-2.40f, -5.90f, 0.30f), new Vector3(6.11f, 12.40f, 2.21f)),
+            new ProxyBox(16, Vector3.zero, new Vector3(5.0f, 5.0f, 4.0f)),
+            new ProxyBox(17, new Vector3(-1.0f, -1.10f, -1.20f), new Vector3(2.72f, 3.01f, 3.07f)),
+            new ProxyBox(15, Vector3.zero, new Vector3(3.0f, 2.2f, 3.4f)),
+            new ProxyBox(2, Vector3.zero, new Vector3(3.6f, 2.8f, 3.2f)),
+            new ProxyBox(1, Vector3.zero, new Vector3(2.0f, 5.0f, 1.2f)),
+            new ProxyBox(0, Vector3.zero, new Vector3(9.0f, 5.0f, 6.0f)),
         };
 
         public static GameObject Create()
         {
-            var root = new GameObject("simplified_monster_sim_v4_proxy");
+            var root = new GameObject("simplified_monster_quadruped_v5_proxy");
             var bones = new Transform[ParentBoneIndices.Length];
             for (int index = 0; index < bones.Length; ++index)
             {
                 var boneObject = new GameObject(
-                    KernelSkeletonBinding.GetMonsterSimV4BoneName(index));
+                    KernelSkeletonBinding.GetDefaultBoneName(index));
                 Transform parent = ParentBoneIndices[index] < 0
                     ? root.transform
                     : bones[ParentBoneIndices[index]];

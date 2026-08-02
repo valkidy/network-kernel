@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 65;
+        public const uint AbiVersion = 66;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int GameplayCatalogEntryPathSize = 128;
@@ -100,6 +100,7 @@ namespace NetworkExample.Kernel
         public const ulong CapabilityActionIntents = 0x0000010000000000UL;
         public const ulong CapabilityItemPropSystem = 0x0000020000000000UL;
         public const ulong CapabilitySkeletonRenderStates = 0x0000040000000000UL;
+        public const ulong CapabilitySkeletonBindPose = 0x0000080000000000UL;
 
         public const uint SkeletonRenderStatusSuccess = 0;
         public const uint SkeletonRenderStatusInsufficientCapacity = 1;
@@ -2093,7 +2094,7 @@ namespace NetworkExample.Kernel
         public uint hip_bone_index;
         public uint knee_bone_index;
         public uint foot_bone_index;
-        public uint phase_offset_ticks;
+        public uint gait_group;
         public KernelVec3 pole_local;
         public float step_height_meters;
         public float max_reach_ratio;
@@ -2114,8 +2115,8 @@ namespace NetworkExample.Kernel
         public uint leg_count;
         public uint processing_order_count;
         public float input_deadzone;
-        public uint gait_cycle_ticks;
-        public uint gait_swing_ticks;
+        public float step_threshold_meters;
+        public uint step_duration_ticks;
         public uint max_swinging_legs;
         public KernelFootholdQueryType foothold_query_type;
         public byte reserved_foothold0;

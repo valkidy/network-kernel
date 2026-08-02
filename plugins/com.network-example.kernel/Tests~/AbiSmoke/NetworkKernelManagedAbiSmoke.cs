@@ -32,7 +32,7 @@ public static class NetworkKernelManagedAbiSmoke
         KernelAbiInfo info = KernelAbi.GetInfo();
         KernelBuildInfo buildInfo = KernelAbi.GetBuildInfo();
         GameServerAbiInfo gameServerInfo = GameServerAbi.GetInfo();
-        Require(KernelConstants.AbiVersion == 65, "Managed kernel ABI version was not v65.");
+        Require(KernelConstants.AbiVersion == 66, "Managed kernel ABI version was not v66.");
         Require(
             RenderEntityState.StructSize == 144,
             "Managed RenderEntityState layout was not 144 bytes.");
@@ -94,6 +94,10 @@ public static class NetworkKernelManagedAbiSmoke
             (info.capability_flags &
              KernelConstants.CapabilitySkeletonRenderStates) != 0,
             "Kernel skeleton render-state capability was missing.");
+        Require(
+            (info.capability_flags &
+             KernelConstants.CapabilitySkeletonBindPose) != 0,
+            "Kernel skeleton bind-pose capability was missing.");
         Require(
             (KernelConstants.VisualFlagHpUnknown & KernelConstants.VisualFlagDead) == 0,
             "Kernel HpUnknown visual flag overlapped Dead.");
@@ -546,17 +550,32 @@ public static class NetworkKernelManagedAbiSmoke
         Require(
             kernel.GetSkeletonRenderStates(buffer) == 1 &&
             buffer.StateCount == 1 &&
-            buffer.BoneTransformCount == 41,
+            buffer.BoneTransformCount == 39,
             "Kernel_GetSkeletonRenderStates did not resize and return a complete pose.");
         Require(
             buffer.States[0].entity_net_id == entityId &&
-            buffer.States[0].bone_count == 41 &&
+            buffer.States[0].bone_count == 39 &&
             (buffer.States[0].pose_flags &
              KernelConstants.SkeletonPoseFlagProcedural) != 0,
             "Skeleton render state identity or pose flags were invalid.");
         Require(
-            buffer.GetBoneTransforms(buffer.States[0]).Count == 41,
+            buffer.GetBoneTransforms(buffer.States[0]).Count == 39,
             "Skeleton render-state bone segment was incomplete.");
+
+        KernelSkeletonRenderState skeletonState = buffer.States[0];
+        var nativeBindPose = new KernelBoneLocalTransform[39];
+        Require(
+            kernel.GetSkeletonBindPose(
+                skeletonState.skeleton_asset_id,
+                skeletonState.skeleton_content_hash,
+                nativeBindPose) == 39,
+            "Kernel_GetSkeletonBindPose did not return the complete native bind pose.");
+        Require(
+            kernel.GetSkeletonBindPose(
+                skeletonState.skeleton_asset_id,
+                skeletonState.skeleton_content_hash ^ 1UL,
+                nativeBindPose) == 0,
+            "Kernel_GetSkeletonBindPose accepted a mismatched content hash.");
 
         KernelSkeletonRenderState[] reusedStates = buffer.States;
         KernelBoneLocalTransform[] reusedBones = buffer.BoneTransforms;

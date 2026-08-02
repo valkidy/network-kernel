@@ -22,7 +22,7 @@ namespace NetworkExample.Kernel.Editor
             KernelAbi.ValidateNativeAbi();
             GameServerAbi.ValidateNativeAbi();
             KernelAbiInfo info = KernelAbi.GetInfo();
-            Require(KernelConstants.AbiVersion == 65, "Managed kernel ABI version was not v65.");
+            Require(KernelConstants.AbiVersion == 66, "Managed kernel ABI version was not v66.");
             Require(
                 RenderEntityState.StructSize == 144,
                 "Managed RenderEntityState layout was not 144 bytes.");
@@ -301,7 +301,7 @@ namespace NetworkExample.Kernel.Editor
                     error.Contains("duplicates"),
                     "Duplicate KernelSkeletonBinding bones were not rejected.");
 
-                RequireMonsterSimV4AutoBinding();
+                RequireDefaultSkeletonAutoBinding();
             }
             finally
             {
@@ -309,18 +309,18 @@ namespace NetworkExample.Kernel.Editor
             }
         }
 
-        private static void RequireMonsterSimV4AutoBinding()
+        private static void RequireDefaultSkeletonAutoBinding()
         {
-            var root = new GameObject("MonsterSimV4AutoBindingSmoke");
+            var root = new GameObject("DefaultSkeletonAutoBindingSmoke");
             try
             {
-                var expectedBones = new Transform[41];
+                var expectedBones = new Transform[39];
                 for (int index = 0; index < expectedBones.Length; ++index)
                 {
                     var bone = new GameObject(
-                        KernelSkeletonBinding.GetMonsterSimV4BoneName(index));
+                        KernelSkeletonBinding.GetDefaultBoneName(index));
                     int parentIndex =
-                        KernelSkeletonBinding.GetMonsterSimV4ParentBoneIndex(index);
+                        KernelSkeletonBinding.GetDefaultParentBoneIndex(index);
                     bone.transform.SetParent(
                         parentIndex < 0 ? root.transform : expectedBones[parentIndex],
                         false);
@@ -331,15 +331,15 @@ namespace NetworkExample.Kernel.Editor
                     root.AddComponent<KernelSkeletonBinding>();
                 Require(
                     binding.TryAutoMap(out string error),
-                    $"Monster v4 automatic bone mapping failed: {error}");
+                    $"Default skeleton automatic bone mapping failed: {error}");
                 Require(
                     binding.Bones.Length == expectedBones.Length,
-                    "Monster v4 automatic bone mapping returned the wrong count.");
+                    "Default skeleton automatic bone mapping returned the wrong count.");
                 for (int index = 0; index < expectedBones.Length; ++index)
                 {
                     Require(
                         binding.Bones[index] == expectedBones[index],
-                        $"Monster v4 automatic bone mapping mismatched index {index}.");
+                        $"Default skeleton automatic bone mapping mismatched index {index}.");
                 }
             }
             finally
@@ -363,7 +363,7 @@ namespace NetworkExample.Kernel.Editor
                 bone.localScale = bindScale;
 
                 KernelSkeletonPoseApplicator applicator =
-                    CreateSkeletonPoseApplicator(root, bone);
+                    CreateSkeletonPoseApplicator(root, bone, false);
                 KernelSkeletonRenderState state = SkeletonState(
                     KernelConstants.SkeletonPoseFlagProcedural);
                 SkeletonRenderStateBuffer firstPose = SkeletonBuffer(
@@ -377,8 +377,8 @@ namespace NetworkExample.Kernel.Editor
                     $"First absolute skeleton pose was rejected: {error}");
                 RequireVectorApproximately(
                     bone.localPosition,
-                    new Vector3(-3.0f, 4.0f, 5.0f),
-                    "First procedural position was incorrectly used as its own reference.");
+                    new Vector3(3.0f, 4.0f, 5.0f),
+                    "Native absolute position was not applied in the root world frame.");
                 Require(
                     Quaternion.Angle(bone.localRotation, bindRotation) > 0.1f,
                     "First procedural rotation was incorrectly cancelled to the bind rotation.");
@@ -399,14 +399,12 @@ namespace NetworkExample.Kernel.Editor
                     $"Second absolute skeleton pose was rejected: {error}");
                 RequireVectorApproximately(
                     bone.localPosition,
-                    new Vector3(-4.0f, 6.0f, 8.0f),
-                    "Native position did not use the X-reflected bind basis.");
-                Quaternion reflectedYaw =
-                    new Quaternion(nativeYaw.x, -nativeYaw.y, -nativeYaw.z, nativeYaw.w);
+                    new Vector3(4.0f, 6.0f, 8.0f),
+                    "Native position was unexpectedly reflected across X.");
                 RequireQuaternionApproximately(
                     bone.localRotation,
-                    reflectedYaw,
-                    "Native rotation was not applied relative to the stable bind pose.");
+                    nativeYaw,
+                    "Native rotation was unexpectedly reflected across X.");
                 Require(
                     Quaternion.Angle(
                         bone.localRotation,
@@ -438,6 +436,15 @@ namespace NetworkExample.Kernel.Editor
                     CreateSkeletonPoseApplicator(root, bone);
                 KernelSkeletonRenderState state = SkeletonState(
                     KernelConstants.SkeletonPoseFlagProcedural);
+                KernelBoneLocalTransform nativeBind = BoneTransform(
+                    Vector3.zero,
+                    Quaternion.identity,
+                    new Vector3(5.0f, 6.0f, 4.0f));
+                Require(
+                    applicator.TrySetNativeBindPose(
+                        new[] { nativeBind },
+                        out string error),
+                    $"Native zero-scale bind pose was rejected: {error}");
                 Require(
                     applicator.TryApply(
                         state,
@@ -447,7 +454,7 @@ namespace NetworkExample.Kernel.Editor
                                 Vector3.zero,
                                 Quaternion.identity,
                                 new Vector3(5.0f, 6.0f, 4.0f))),
-                        out string error),
+                        out error),
                     $"Zero-scale skeleton reference was rejected: {error}");
                 Require(
                     applicator.TryApply(
@@ -462,7 +469,7 @@ namespace NetworkExample.Kernel.Editor
                     $"Skeleton pose after zero-scale reference was rejected: {error}");
                 RequireVectorApproximately(
                     bone.localScale,
-                    new Vector3(0.0f, 1.0e-10f, 8.0f),
+                    new Vector3(0.0f, 2.0e-10f, 4.0f),
                     "Zero or near-zero reference scale produced an unsafe ratio.");
             }
             finally
@@ -491,24 +498,32 @@ namespace NetworkExample.Kernel.Editor
                         CreateSkeletonPoseApplicator(root, bone);
                     KernelSkeletonRenderState state = SkeletonState(
                         KernelConstants.SkeletonPoseFlagProcedural);
+                    KernelBoneLocalTransform nativeBind = BoneTransform(
+                        nativeReferences[index],
+                        Quaternion.identity,
+                        Vector3.one);
+                    Require(
+                        applicator.TrySetNativeBindPose(
+                            new[] { nativeBind },
+                            out string error),
+                        $"Respawn native bind pose {index} was rejected: {error}");
+                    Vector3 nativePosePosition =
+                        nativeReferences[index] + new Vector3(1.0f, 2.0f, 3.0f);
                     Require(
                         applicator.TryApply(
                             state,
                             SkeletonBuffer(
                                 state,
                                 BoneTransform(
-                                    nativeReferences[index],
+                                    nativePosePosition,
                                     Quaternion.identity,
                                     Vector3.one)),
-                            out string error),
+                            out error),
                         $"Respawn reference pose {index} was rejected: {error}");
                     RequireVectorApproximately(
                         bone.localPosition,
-                        new Vector3(
-                            -nativeReferences[index].x,
-                            nativeReferences[index].y,
-                            nativeReferences[index].z),
-                        "A new skeleton instance did not use its stable bind reference.");
+                        bindPosition + new Vector3(1.0f, 2.0f, 3.0f),
+                        "A new skeleton instance did not use its native bind delta.");
                 }
                 finally
                 {
@@ -519,13 +534,14 @@ namespace NetworkExample.Kernel.Editor
 
         private static KernelSkeletonPoseApplicator CreateSkeletonPoseApplicator(
             GameObject root,
-            Transform bone)
+            Transform bone,
+            bool preservePrefabBindPose = true)
         {
             KernelSkeletonBinding binding = root.AddComponent<KernelSkeletonBinding>();
             binding.SkeletonAssetId = 7;
             binding.SkeletonContentHash = 0x1234UL;
             binding.AutoMapKnownSkeleton = false;
-            binding.PreservePrefabBindPose = true;
+            binding.PreservePrefabBindPose = preservePrefabBindPose;
             binding.Bones = new[] { bone };
             return root.AddComponent<KernelSkeletonPoseApplicator>();
         }

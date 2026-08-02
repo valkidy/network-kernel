@@ -204,6 +204,14 @@ namespace NetworkExample.Kernel
             ref KernelSkeletonRenderStateResult outResult);
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint Kernel_GetSkeletonBindPose(
+            IntPtr kernel,
+            uint skeletonAssetId,
+            ulong skeletonContentHash,
+            [Out] KernelBoneLocalTransform[] outBoneTransforms,
+            uint maxBoneTransforms);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern uint Kernel_PollEvents(
             IntPtr kernel,
             [Out] KernelEvent[] outEvents,

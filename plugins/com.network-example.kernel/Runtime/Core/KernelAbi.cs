@@ -163,6 +163,10 @@ namespace NetworkExample.Kernel
                 info,
                 KernelConstants.CapabilitySkeletonRenderStates,
                 "Kernel skeleton render-state capability is missing.");
+            RequireCapability(
+                info,
+                KernelConstants.CapabilitySkeletonBindPose,
+                "Kernel skeleton bind-pose capability is missing.");
 
             RequireSize(nameof(KernelAbiInfo), info.struct_size, Marshal.SizeOf<KernelAbiInfo>());
             RequireSize(nameof(KernelConfig), info.kernel_config_size, Marshal.SizeOf<KernelConfig>());
