@@ -8,6 +8,7 @@
 #include <Jolt/Core/StreamWrapper.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/Body.h>
+#include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/CollideShape.h>
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
@@ -954,12 +955,27 @@ std::vector<CollisionHit> PhysicsWorld::ray_cast_all(
             ++stats.defensive_post_filter_rejections;
             continue;
         }
+        const glm::vec3 hit_position =
+            request.origin + displacement * result.mFraction;
+        glm::vec3 hit_normal = -request.direction / direction_length;
+        JPH::BodyLockRead body_lock(
+            impl_->system_->GetBodyLockInterface(), result.mBodyID);
+        if (body_lock.Succeeded()) {
+            const JPH::Body& body = body_lock.GetBody();
+            const JPH::Vec3 local_hit_position = JPH::Vec3(
+                to_jolt_r(hit_position) - body.GetPosition());
+            hit_normal = from_jolt(
+                body.GetWorldTransform().Multiply3x3(
+                    body.GetShape()->GetSurfaceNormal(
+                        result.mSubShapeID2,
+                        local_hit_position)));
+        }
         hits.push_back(CollisionHit{
             object->identity,
             result.mFraction * request.max_distance,
             result.mFraction,
-            request.origin + displacement * result.mFraction,
-            -request.direction / direction_length,
+            hit_position,
+            hit_normal,
             result.mSubShapeID2.GetValue(),
         });
     }

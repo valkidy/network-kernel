@@ -30,6 +30,7 @@ struct LegLocomotionState {
     glm::vec3 landing_target_world{0.0f};
     glm::vec3 planted_foothold_world{0.0f};
     glm::vec3 foot_target_world{0.0f};
+    glm::vec3 solved_foot_world{0.0f};
     glm::vec3 ground_hit_position{0.0f};
     glm::vec3 ground_hit_normal{0.0f, 1.0f, 0.0f};
     std::uint32_t grounding_candidate_index = UINT32_MAX;
