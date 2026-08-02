@@ -151,6 +151,11 @@ public:
         KernelBoneLocalTransform* out_bone_transforms,
         std::uint32_t max_bone_transforms,
         KernelSkeletonRenderStateResult* out_result);
+    std::uint32_t get_skeleton_bind_pose(
+        std::uint32_t skeleton_asset_id,
+        std::uint64_t skeleton_content_hash,
+        KernelBoneLocalTransform* out_bone_transforms,
+        std::uint32_t max_bone_transforms);
     std::uint32_t poll_events(KernelEvent* out_events, std::uint32_t max_events);
     std::uint32_t poll_entity_lifecycle_events(
         KernelEntityLifecycleEvent* out_events,

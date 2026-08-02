@@ -216,6 +216,7 @@ cc_shared_library(
             "-Wl,-exported_symbol,_Kernel_GetRenderStatesAtTime",
             "-Wl,-exported_symbol,_Kernel_GetSkeletonRenderStates",
             "-Wl,-exported_symbol,_Kernel_GetSkeletonRenderStatesAtTime",
+            "-Wl,-exported_symbol,_Kernel_GetSkeletonBindPose",
             "-Wl,-exported_symbol,_Kernel_PollEvents",
         "-Wl,-exported_symbol,_Kernel_PollEntityLifecycleEvents",
         "-Wl,-exported_symbol,_Kernel_PollLocalActionResults",

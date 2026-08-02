@@ -78,7 +78,7 @@ struct SkeletonLegConfig {
     std::uint32_t hip_bone_index = 0;
     std::uint32_t knee_bone_index = 0;
     std::uint32_t foot_bone_index = 0;
-    std::uint32_t phase_offset_ticks = 0;
+    std::uint32_t gait_group = 0;
     KernelVec3 pole_local{};
     float step_height_meters = 0.0f;
     float max_reach_ratio = 0.0f;
@@ -98,8 +98,8 @@ struct SkeletonBindingConfig {
     std::string locomotion_type;
     std::string forward_axis;
     float input_deadzone = 0.0f;
-    std::uint32_t gait_cycle_ticks = 0;
-    std::uint32_t gait_swing_ticks = 0;
+    float step_threshold_meters = 0.0f;
+    std::uint32_t step_duration_ticks = 0;
     std::uint32_t max_swinging_legs = 0;
     std::uint8_t foothold_query_type = KernelFootholdQueryType_None;
     float foothold_query_start_height_meters = 0.0f;

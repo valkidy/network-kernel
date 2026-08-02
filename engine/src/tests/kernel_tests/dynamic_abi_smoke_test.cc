@@ -47,6 +47,13 @@ Signature* load_symbol(void* library, const char* name) {
     dlerror();
     void* symbol = dlsym(library, name);
     const char* error = dlerror();
+    if (error != nullptr || symbol == nullptr) {
+        std::fprintf(
+            stderr,
+            "failed to load dynamic ABI symbol %s: %s\n",
+            name,
+            error == nullptr ? "symbol is null" : error);
+    }
     assert(error == nullptr);
     assert(symbol != nullptr);
     return reinterpret_cast<Signature*>(symbol);
@@ -231,6 +238,13 @@ int main() {
             KernelSkeletonRenderStateResult*)>(
             library,
             "Kernel_GetSkeletonRenderStates");
+    auto* kernel_get_skeleton_bind_pose =
+        load_symbol<std::uint32_t(
+            KernelHandle*,
+            std::uint32_t,
+            std::uint64_t,
+            KernelBoneLocalTransform*,
+            std::uint32_t)>(library, "Kernel_GetSkeletonBindPose");
     [[maybe_unused]] auto* kernel_get_skeleton_render_states_at_time =
         load_symbol<std::uint32_t(
             KernelHandle*,
@@ -488,6 +502,10 @@ int main() {
            sizeof(KernelSkeletonLegDefinition));
     assert((abi_info.capability_flags &
             KERNEL_CAPABILITY_SKELETON_RENDER_STATES) != 0u);
+    assert((abi_info.capability_flags &
+            KERNEL_CAPABILITY_SKELETON_BIND_POSE) != 0u);
+    assert(kernel_get_skeleton_bind_pose(
+               nullptr, 1u, UINT64_C(1), nullptr, 0u) == 0u);
     KernelSkeletonRenderStateResult skeleton_result{};
     skeleton_result.struct_size = sizeof(skeleton_result);
     assert(kernel_get_skeleton_render_states(
@@ -639,6 +657,8 @@ int main() {
 
     KernelHandle* kernel = kernel_create(&config);
     assert(kernel != nullptr);
+    assert(kernel_get_skeleton_bind_pose(
+               kernel, 999u, UINT64_C(1), nullptr, 0u) == 0u);
     assert(kernel_start_listen_server(kernel, 7777));
     GameServerHandle* game_server = game_server_create(kernel);
     assert(game_server != nullptr);

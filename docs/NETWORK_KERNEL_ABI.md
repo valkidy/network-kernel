@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 65u`.
+`KERNEL_ABI_VERSION == 66u`.
 
 ## Ownership
 
@@ -44,6 +44,21 @@ complete local-pose presentation types, and the read-only
 `Kernel_GetSkeletonRenderStates` / `Kernel_GetSkeletonRenderStatesAtTime`
 queries. Skeleton pose buffers remain caller-owned and are not added to the
 snapshot or network packet schema.
+
+ABI version 66 replaces fixed-cycle leg phases with displacement-threshold
+gait authoring. Support feet remain anchored in world space until the grounded
+home derived from root movement exceeds `step_threshold_meters`; failed
+grounding queries preserve the previous anchor. It also adds the read-only
+`Kernel_GetSkeletonBindPose` query and
+`KERNEL_CAPABILITY_SKELETON_BIND_POSE`. The query returns the native Ozz bind
+pose for an asset id/content-hash pair in caller-owned storage.
+
+Entity root transforms crossing the ABI are native right-handed, Y-up world
+transforms. Skeleton bind and procedural transforms are native right-handed,
+Y-up bone-local transforms. The kernel performs no Unity-specific conversion.
+Consumers must separately map world transforms into their scene convention and
+bone-local transforms into the basis of the imported presentation skeleton;
+those two mappings need not be the same raw component operation.
 
 Reliable spawn metadata supplies the client projection without changing
 snapshot packets.

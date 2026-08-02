@@ -2509,9 +2509,9 @@ bool KernelEngine::load_gameplay_catalog(
                 !std::isfinite(skeleton.input_deadzone) ||
                 skeleton.input_deadzone < 0.0f ||
                 skeleton.input_deadzone >= 1.0f ||
-                skeleton.gait_cycle_ticks == 0u ||
-                skeleton.gait_swing_ticks == 0u ||
-                skeleton.gait_swing_ticks >= skeleton.gait_cycle_ticks ||
+                !std::isfinite(skeleton.step_threshold_meters) ||
+                skeleton.step_threshold_meters <= 0.0f ||
+                skeleton.step_duration_ticks == 0u ||
                 skeleton.max_swinging_legs == 0u ||
                 skeleton.max_swinging_legs > skeleton.leg_count ||
                 !std::isfinite(
@@ -2532,6 +2532,7 @@ bool KernelEngine::load_gameplay_catalog(
                     leg.hip_bone_index == leg.knee_bone_index ||
                     leg.hip_bone_index == leg.foot_bone_index ||
                     leg.knee_bone_index == leg.foot_bone_index ||
+                    leg.gait_group >= skeleton.leg_count ||
                     !std::isfinite(leg.pole_local.x) ||
                     !std::isfinite(leg.pole_local.y) ||
                     !std::isfinite(leg.pole_local.z) ||
@@ -3112,6 +3113,28 @@ std::uint32_t KernelEngine::get_skeleton_render_states_at_time(
         out_bone_transforms,
         max_bone_transforms,
         out_result);
+}
+
+std::uint32_t KernelEngine::get_skeleton_bind_pose(
+    std::uint32_t skeleton_asset_id,
+    std::uint64_t skeleton_content_hash,
+    KernelBoneLocalTransform* out_bone_transforms,
+    std::uint32_t max_bone_transforms) {
+    const RuntimeSkeletonAsset* asset =
+        find_skeleton_asset(skeleton_assets_, skeleton_asset_id);
+    if (asset == nullptr ||
+        asset->skeleton_content_hash != skeleton_content_hash) {
+        return 0u;
+    }
+    const std::uint32_t bone_count =
+        static_cast<std::uint32_t>(asset->bind_pose.size());
+    if (out_bone_transforms != nullptr && max_bone_transforms != 0u) {
+        std::copy_n(
+            asset->bind_pose.begin(),
+            std::min(bone_count, max_bone_transforms),
+            out_bone_transforms);
+    }
+    return bone_count;
 }
 
 std::uint32_t KernelEngine::poll_events(KernelEvent* out_events, std::uint32_t max_events) {
@@ -7868,7 +7891,6 @@ void KernelEngine::update_legged_locomotion(
             if (!initialize_locomotion_state(
                     entity_template->skeleton,
                     initial_yaw,
-                    tick_loop_.current_tick(),
                     &state->second)) {
                 locomotion_states_.erase(state);
                 continue;
@@ -7904,7 +7926,6 @@ void KernelEngine::update_legged_locomotion(
                 move_input,
                 entity_template->movement.max_yaw_degrees_per_second,
                 fixed_delta_seconds,
-                tick_loop_.current_tick(),
                 &state->second)) {
             continue;
         }
@@ -7919,10 +7940,6 @@ void KernelEngine::update_legged_locomotion(
             state->second.pose_valid = false;
             continue;
         }
-        const glm::vec3 root_velocity =
-            world_.registry().all_of<Velocity>(entity)
-            ? world_.registry().get<Velocity>(entity).linear
-            : glm::vec3{0.0f};
         const LocomotionGroundingQuery grounding_query =
             [this, net_id](
                 const glm::vec3& origin,
@@ -7962,7 +7979,6 @@ void KernelEngine::update_legged_locomotion(
                 skeleton_asset->bind_pose,
                 entity_template->skeleton,
                 transform.position,
-                root_velocity,
                 entity_template->movement.max_slope_degrees,
                 fixed_delta_seconds,
                 grounding_query,

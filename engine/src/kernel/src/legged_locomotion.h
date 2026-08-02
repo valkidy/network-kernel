@@ -22,7 +22,8 @@ struct LegLocomotionState {
     std::uint32_t hip_bone_index = 0;
     std::uint32_t knee_bone_index = 0;
     std::uint32_t foot_bone_index = 0;
-    std::uint32_t phase_tick = 0;
+    std::uint32_t gait_group = 0;
+    std::uint32_t swing_tick = 0;
     LegGaitState gait_state = LegGaitState::kSupport;
     bool entered_swing = false;
     bool entered_support = false;
@@ -45,8 +46,6 @@ struct LegLocomotionState {
 
 struct LocomotionState {
     float root_yaw_radians = 0.0f;
-    std::uint32_t gait_start_tick = 0;
-    std::uint32_t gait_phase_tick = 0;
     std::vector<LegLocomotionState> legs;
     std::vector<std::uint32_t> last_processing_order;
     std::vector<KernelBoneLocalTransform> local_pose;
@@ -71,7 +70,6 @@ bool validate_locomotion_definition(
 bool initialize_locomotion_state(
     const KernelSkeletonBindingDefinition& definition,
     float initial_root_yaw_radians,
-    std::uint32_t simulation_tick,
     LocomotionState* out_state);
 
 bool advance_locomotion_state(
@@ -79,7 +77,6 @@ bool advance_locomotion_state(
     const KernelVec2& move_input,
     float max_yaw_degrees_per_second,
     float fixed_delta_seconds,
-    std::uint32_t simulation_tick,
     LocomotionState* state);
 
 bool solve_legged_locomotion_pose(
@@ -87,7 +84,6 @@ bool solve_legged_locomotion_pose(
     std::span<const KernelBoneLocalTransform> bind_pose,
     const KernelSkeletonBindingDefinition& definition,
     const glm::vec3& root_position,
-    const glm::vec3& root_velocity,
     float max_slope_degrees,
     float fixed_delta_seconds,
     const LocomotionGroundingQuery& grounding_query,

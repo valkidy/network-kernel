@@ -34,6 +34,7 @@ EXPORTS
     Kernel_GetRenderStatesAtTime
     Kernel_GetSkeletonRenderStates
     Kernel_GetSkeletonRenderStatesAtTime
+    Kernel_GetSkeletonBindPose
     Kernel_PollEvents
     Kernel_PollEntityLifecycleEvents
     Kernel_PollLocalActionResults

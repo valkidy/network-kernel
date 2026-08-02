@@ -6,7 +6,7 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 65u,
+    KERNEL_ABI_VERSION == 66u,
     "skeleton asset ABI");
 _Static_assert(
     sizeof(KernelActionTriggerDefinition) == 296u,
@@ -45,6 +45,14 @@ _Static_assert(
     offsetof(KernelProjectileMechanicsDefinition, projectile_type) >
         offsetof(KernelProjectileMechanicsDefinition, struct_size),
     "projectile mechanics use projectile_type naming");
+_Static_assert(
+    offsetof(KernelSkeletonLegDefinition, gait_group) >
+        offsetof(KernelSkeletonLegDefinition, foot_bone_index),
+    "skeleton leg gait group follows the IK bone chain");
+_Static_assert(
+    offsetof(KernelSkeletonBindingDefinition, step_threshold_meters) >
+        offsetof(KernelSkeletonBindingDefinition, input_deadzone),
+    "displacement gait fields follow locomotion input settings");
 
 int main(void) {
     KernelAbiInfo abi_info;
@@ -132,7 +140,8 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 65u);
+    assert(KERNEL_ABI_VERSION == 66u);
+    assert(KERNEL_CAPABILITY_SKELETON_BIND_POSE != 0u);
     assert(sizeof(KernelBoneLocalTransform) > 0u);
     assert(sizeof(KernelSkeletonRenderState) > 0u);
     assert(sizeof(KernelSkeletonRenderStateResult) > 0u);

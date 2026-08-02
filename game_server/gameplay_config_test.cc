@@ -84,15 +84,14 @@ std::uint64_t quantized_locomotion_hash(
     hash_vec3(&hash, root_position);
     hash_vec3(&hash, root_velocity);
     hash_quantized_float(&hash, state.root_yaw_radians);
-    hash_u64(&hash, state.gait_start_tick);
-    hash_u64(&hash, state.gait_phase_tick);
     hash_u64(&hash, state.pose_valid ? 1u : 0u);
     hash_u64(&hash, state.legs.size());
     for (const network_example::LegLocomotionState& leg : state.legs) {
         hash_u64(&hash, leg.hip_bone_index);
         hash_u64(&hash, leg.knee_bone_index);
         hash_u64(&hash, leg.foot_bone_index);
-        hash_u64(&hash, leg.phase_tick);
+        hash_u64(&hash, leg.gait_group);
+        hash_u64(&hash, leg.swing_tick);
         hash_u64(&hash, static_cast<std::uint8_t>(leg.gait_state));
         hash_u64(&hash, leg.entered_swing ? 1u : 0u);
         hash_u64(&hash, leg.entered_support ? 1u : 0u);
@@ -320,15 +319,26 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
             : monster_actor_yaml});
     files.push_back({
         "skeleton_assets/generated/"
-        "simplified_monster_sim_v4.skeleton_manifest.json",
+        "simplified_monster_quadruped_v5.skeleton_manifest.json",
         read_text_file(
             "game_server/skeleton_assets/generated/"
-            "simplified_monster_sim_v4.skeleton_manifest.json")});
+            "simplified_monster_quadruped_v5.skeleton_manifest.json")});
     files.push_back({
-        "skeleton_assets/generated/simplified_monster_sim_v4.ozz",
+        "skeleton_assets/generated/simplified_monster_quadruped_v5.ozz",
         read_binary_string(
             "game_server/skeleton_assets/generated/"
-            "simplified_monster_sim_v4.ozz")});
+            "simplified_monster_quadruped_v5.ozz")});
+    files.push_back({
+        "skeleton_assets/generated/"
+        "rock_robot_biped_24u_v3.skeleton_manifest.json",
+        read_text_file(
+            "game_server/skeleton_assets/generated/"
+            "rock_robot_biped_24u_v3.skeleton_manifest.json")});
+    files.push_back({
+        "skeleton_assets/generated/rock_robot_biped_24u_v3.ozz",
+        read_binary_string(
+            "game_server/skeleton_assets/generated/"
+            "rock_robot_biped_24u_v3.ozz")});
 
     const std::vector<std::string> weapon_files = {
         "beam_rifle.yaml",
@@ -620,7 +630,7 @@ int main() {
         require(error.template_id == 20u);
         require(error.field == "skeleton");
         require(error.path.find("monster_sim_actor.yaml") != std::string::npos);
-        require(std::string(error.what()).find("simplified_monster_sim_v4") !=
+        require(std::string(error.what()).find("simplified_monster_quadruped_v5") !=
                 std::string::npos);
         require(std::string(error.what()).find("JNT_LegFrontLeft_Hip") !=
                 std::string::npos);
@@ -631,7 +641,7 @@ int main() {
             std::string::npos;
     }
     require(invalid_leg_hierarchy_rejected);
-    bool invalid_gait_schedule_rejected = false;
+    bool invalid_gait_threshold_rejected = false;
     try {
         const std::vector<std::uint8_t> invalid_gait_bundle =
             make_gameplay_bundle_zip(
@@ -641,18 +651,76 @@ int main() {
                 {},
                 replace_once(
                     production_monster_yaml,
-                    "max_swinging_legs: 2",
-                    "max_swinging_legs: 1"));
+                    "step_threshold_meters: 5.5",
+                    "step_threshold_meters: 0.0"));
         (void)network_example::game_server::load_gameplay_config_from_bundle_memory(
             invalid_gait_bundle.data(),
             static_cast<std::uint32_t>(invalid_gait_bundle.size()),
             "gameplay_catalog.yaml");
     } catch (const std::exception& error) {
-        invalid_gait_schedule_rejected =
-            std::string(error.what()).find("exceeds max_swinging_legs") !=
+        invalid_gait_threshold_rejected =
+            std::string(error.what()).find("invalid locomotion gait values") !=
             std::string::npos;
     }
-    require(invalid_gait_schedule_rejected);
+    require(invalid_gait_threshold_rejected);
+    bool fixed_walk_rejected = false;
+    try {
+        const std::vector<std::uint8_t> fixed_walk_bundle =
+            make_gameplay_bundle_zip(
+                production_sentry_yaml,
+                {},
+                {},
+                {},
+                replace_once(
+                    production_monster_yaml,
+                    "type: displacement_threshold",
+                    "type: fixed_walk"));
+        (void)network_example::game_server::load_gameplay_config_from_bundle_memory(
+            fixed_walk_bundle.data(),
+            static_cast<std::uint32_t>(fixed_walk_bundle.size()),
+            "gameplay_catalog.yaml");
+    } catch (const std::exception& error) {
+        fixed_walk_rejected =
+            std::string(error.what()).find(
+                "requires displacement_threshold parameters") !=
+            std::string::npos;
+    }
+    require(fixed_walk_rejected);
+    const auto rejects_monster_locomotion_yaml =
+        [&](const std::string& monster_yaml, const std::string& expected_error) {
+            try {
+                const std::vector<std::uint8_t> bundle =
+                    make_gameplay_bundle_zip(
+                        production_sentry_yaml, {}, {}, {}, monster_yaml);
+                (void)network_example::game_server::
+                    load_gameplay_config_from_bundle_memory(
+                        bundle.data(),
+                        static_cast<std::uint32_t>(bundle.size()),
+                        "gameplay_catalog.yaml");
+                return false;
+            } catch (const std::exception& error) {
+                return std::string(error.what()).find(expected_error) !=
+                    std::string::npos;
+            }
+        };
+    require(rejects_monster_locomotion_yaml(
+        replace_once(
+            production_monster_yaml,
+            "step_duration_ticks: 6",
+            "step_duration_ticks: 0"),
+        "invalid locomotion gait values"));
+    require(rejects_monster_locomotion_yaml(
+        replace_once(
+            production_monster_yaml,
+            "gait_group: 0",
+            "gait_group: 4"),
+        "gait_group is out of range"));
+    require(rejects_monster_locomotion_yaml(
+        replace_once(
+            production_monster_yaml,
+            "processing_order: [front_left, front_right, rear_left, rear_right]",
+            "processing_order: [front_left, front_left, rear_left, rear_right]"),
+        "processing_order repeats leg"));
     bool invalid_foothold_distance_rejected = false;
     try {
         const std::vector<std::uint8_t> invalid_foothold_bundle =
@@ -1020,9 +1088,23 @@ int main() {
     assert(config_enemy_template->vision.vision_collider_template_id == 9);
     const network_example::game_server::KernelGameplayCatalogStorage catalog =
         network_example::game_server::build_kernel_gameplay_catalog(config);
-    require(config.skeleton_assets.size() == 1u);
-    require(config.skeleton_assets[0].skeleton_asset_id == 1u);
-    require(config.skeleton_assets[0].bones.size() == 41u);
+    require(config.skeleton_assets.size() == 2u);
+    const auto quadruped_asset_config = std::find_if(
+        config.skeleton_assets.begin(),
+        config.skeleton_assets.end(),
+        [](const network_example::game_server::SkeletonAssetConfig& asset) {
+            return asset.skeleton_asset_id == 1u;
+        });
+    const auto biped_asset_config = std::find_if(
+        config.skeleton_assets.begin(),
+        config.skeleton_assets.end(),
+        [](const network_example::game_server::SkeletonAssetConfig& asset) {
+            return asset.skeleton_asset_id == 2u;
+        });
+    require(quadruped_asset_config != config.skeleton_assets.end());
+    require(quadruped_asset_config->bones.size() == 39u);
+    require(biped_asset_config != config.skeleton_assets.end());
+    require(biped_asset_config->bones.size() == 18u);
     const auto monster_template = std::find_if(
         config.entity_templates.begin(),
         config.entity_templates.end(),
@@ -1032,15 +1114,15 @@ int main() {
     require(monster_template != config.entity_templates.end());
     require(monster_template->skeleton.enabled);
     require(monster_template->sentry.passive_patrol);
-    require(monster_template->sentry.patrol_extent_x_meters == 8.0f);
+    require(monster_template->sentry.patrol_extent_x_meters == 30.0f);
     require(monster_template->sentry.patrol_input_magnitude == 0.6f);
     require(monster_template->movement_collider_template_id == 14u);
     require(monster_template->skeleton.legs.size() == 4u);
     require(monster_template->skeleton.processing_order.size() == 4u);
     require(monster_template->movement_max_yaw_degrees_per_second == 45.0f);
     require(monster_template->skeleton.input_deadzone == 0.01f);
-    require(monster_template->skeleton.gait_cycle_ticks == 60u);
-    require(monster_template->skeleton.gait_swing_ticks == 24u);
+    require(monster_template->skeleton.step_threshold_meters == 5.5f);
+    require(monster_template->skeleton.step_duration_ticks == 6u);
     require(monster_template->skeleton.max_swinging_legs == 2u);
     require(monster_template->skeleton.foothold_query_type ==
             KernelFootholdQueryType_Raycast);
@@ -1049,8 +1131,23 @@ int main() {
     require(monster_template->skeleton.foothold_query_distance_meters ==
             20.0f);
     require(monster_template->skeleton.foothold_candidate_offsets.size() == 5u);
-    require(catalog.definition.skeleton_asset_count == 1u);
-    require(catalog.skeleton_assets[0].bone_count == 41u);
+    require(catalog.definition.skeleton_asset_count == 2u);
+    const auto quadruped_asset = std::find_if(
+        catalog.skeleton_assets.begin(),
+        catalog.skeleton_assets.end(),
+        [](const KernelSkeletonAssetDefinition& asset) {
+            return asset.skeleton_asset_id == 1u;
+        });
+    const auto biped_asset = std::find_if(
+        catalog.skeleton_assets.begin(),
+        catalog.skeleton_assets.end(),
+        [](const KernelSkeletonAssetDefinition& asset) {
+            return asset.skeleton_asset_id == 2u;
+        });
+    require(quadruped_asset != catalog.skeleton_assets.end());
+    require(quadruped_asset->bone_count == 39u);
+    require(biped_asset != catalog.skeleton_assets.end());
+    require(biped_asset->bone_count == 18u);
     const auto monster_definition = std::find_if(
         catalog.entity_templates.begin(),
         catalog.entity_templates.end(),
@@ -1063,9 +1160,12 @@ int main() {
          KERNEL_ENTITY_COMPONENT_SKELETON) != 0u);
     require(monster_definition->skeleton.leg_count == 4u);
     require(monster_definition->movement.max_yaw_degrees_per_second == 45.0f);
-    require(monster_definition->skeleton.gait_cycle_ticks == 60u);
-    require(monster_definition->skeleton.gait_swing_ticks == 24u);
-    require(monster_definition->skeleton.legs[1].phase_offset_ticks == 15u);
+    require(monster_definition->skeleton.step_threshold_meters == 5.5f);
+    require(monster_definition->skeleton.step_duration_ticks == 6u);
+    require(monster_definition->skeleton.legs[0].gait_group == 0u);
+    require(monster_definition->skeleton.legs[1].gait_group == 0u);
+    require(monster_definition->skeleton.legs[2].gait_group == 1u);
+    require(monster_definition->skeleton.legs[3].gait_group == 1u);
     require(monster_definition->skeleton.foothold_query_start_height_meters ==
             2.0f);
     require(monster_definition->skeleton.foothold_query_distance_meters ==
@@ -1076,16 +1176,15 @@ int main() {
 
     network_example::RuntimeSkeletonAsset locomotion_asset;
     require(network_example::load_runtime_skeleton_asset(
-        catalog.skeleton_assets[0], &locomotion_asset));
+        *quadruped_asset, &locomotion_asset));
     network_example::LocomotionState grounded_locomotion;
     require(network_example::initialize_locomotion_state(
-        monster_definition->skeleton, 0.0f, 0u, &grounded_locomotion));
+        monster_definition->skeleton, 0.0f, &grounded_locomotion));
     require(network_example::advance_locomotion_state(
         monster_definition->skeleton,
         KernelVec2{0.0f, 1.0f},
         monster_definition->movement.max_yaw_degrees_per_second,
         1.0f / 30.0f,
-        0u,
         &grounded_locomotion));
     std::vector<glm::vec3> grounding_origins;
     const network_example::LocomotionGroundingQuery ordered_grounding =
@@ -1110,7 +1209,6 @@ int main() {
         locomotion_asset.bind_pose,
         monster_definition->skeleton,
         glm::vec3{0.0f},
-        glm::vec3{0.0f},
         monster_definition->movement.max_slope_degrees,
         1.0f / 30.0f,
         ordered_grounding,
@@ -1119,88 +1217,314 @@ int main() {
     require(std::abs(
         grounding_origins[1].x - grounding_origins[0].x - 0.2f) < 0.0001f);
     require(grounded_locomotion.pose_valid);
-    require(grounded_locomotion.local_pose.size() == 41u);
+    require(grounded_locomotion.local_pose.size() == 39u);
+    std::vector<glm::vec3> initial_grounded_anchors;
     for (const network_example::LegLocomotionState& leg :
          grounded_locomotion.legs) {
         require(leg.ground_hit_valid);
         require(leg.grounding_candidate_index == 1u);
         require(leg.supporting_entity_net_id == 77u);
         require(leg.supporting_collider_id == 9u);
+        initial_grounded_anchors.push_back(leg.planted_foothold_world);
     }
     require(network_example::advance_locomotion_state(
         monster_definition->skeleton,
         KernelVec2{0.0f, 1.0f},
         monster_definition->movement.max_yaw_degrees_per_second,
         1.0f / 30.0f,
-        1u,
         &grounded_locomotion));
     require(network_example::solve_legged_locomotion_pose(
         locomotion_asset.skeleton,
         locomotion_asset.bind_pose,
         monster_definition->skeleton,
         glm::vec3{1.0f, 0.0f, 0.0f},
-        glm::vec3{0.0f},
         monster_definition->movement.max_slope_degrees,
         1.0f / 30.0f,
         ordered_grounding,
         &grounded_locomotion));
     require(grounding_origins.size() > 8u);
-    for (const network_example::LegLocomotionState& leg :
-         grounded_locomotion.legs) {
-        if (leg.gait_state == network_example::LegGaitState::kSupport) {
-            require(leg.planted);
-            require(!leg.ik_reach_clamped);
-            require(glm::length(
-                leg.foot_target_world - leg.planted_foothold_world) <
-                0.0001f);
-            require(glm::length(
-                leg.solved_foot_world - leg.planted_foothold_world) <
-                0.005f);
-        }
+    for (std::size_t index = 0u;
+         index < grounded_locomotion.legs.size();
+         ++index) {
+        const network_example::LegLocomotionState& leg =
+            grounded_locomotion.legs[index];
+        require(leg.gait_state == network_example::LegGaitState::kSupport);
+        require(leg.planted);
+        require(glm::length(
+            leg.planted_foothold_world - initial_grounded_anchors[index]) <
+            0.0001f);
+        require(glm::length(
+            leg.foot_target_world - leg.planted_foothold_world) <
+            0.0001f);
     }
 
-    network_example::LocomotionState missed_locomotion;
+    const network_example::LocomotionGroundingQuery flat_grounding =
+        [](const glm::vec3& origin, float,
+           network_example::LocomotionGroundingHit* hit) {
+            hit->position = origin - glm::vec3{0.0f, 2.0f, 0.0f};
+            hit->normal = glm::vec3{0.0f, 1.0f, 0.0f};
+            return true;
+        };
+    network_example::LocomotionState idle_locomotion;
     require(network_example::initialize_locomotion_state(
-        monster_definition->skeleton, 0.0f, 0u, &missed_locomotion));
+        monster_definition->skeleton, 0.0f, &idle_locomotion));
     require(network_example::advance_locomotion_state(
         monster_definition->skeleton,
         KernelVec2{},
         monster_definition->movement.max_yaw_degrees_per_second,
         1.0f / 30.0f,
-        0u,
-        &missed_locomotion));
+        &idle_locomotion));
     require(network_example::solve_legged_locomotion_pose(
         locomotion_asset.skeleton,
         locomotion_asset.bind_pose,
         monster_definition->skeleton,
         glm::vec3{0.0f},
+        monster_definition->movement.max_slope_degrees,
+        1.0f / 30.0f,
+        flat_grounding,
+        &idle_locomotion));
+    std::vector<glm::vec3> idle_anchors;
+    for (const network_example::LegLocomotionState& leg :
+         idle_locomotion.legs) {
+        idle_anchors.push_back(leg.planted_foothold_world);
+    }
+    for (std::uint32_t tick = 0u; tick < 300u; ++tick) {
+        require(network_example::advance_locomotion_state(
+            monster_definition->skeleton,
+            KernelVec2{},
+            monster_definition->movement.max_yaw_degrees_per_second,
+            1.0f / 30.0f,
+            &idle_locomotion));
+        require(network_example::solve_legged_locomotion_pose(
+            locomotion_asset.skeleton,
+            locomotion_asset.bind_pose,
+            monster_definition->skeleton,
+            glm::vec3{0.0f},
+            monster_definition->movement.max_slope_degrees,
+            1.0f / 30.0f,
+            flat_grounding,
+            &idle_locomotion));
+        for (std::size_t index = 0u;
+             index < idle_locomotion.legs.size();
+             ++index) {
+            const network_example::LegLocomotionState& leg =
+                idle_locomotion.legs[index];
+            require(leg.gait_state ==
+                    network_example::LegGaitState::kSupport);
+            require(!leg.entered_swing);
+            require(glm::length(
+                leg.planted_foothold_world - idle_anchors[index]) < 0.0001f);
+        }
+    }
+
+    require(network_example::advance_locomotion_state(
+        monster_definition->skeleton,
+        KernelVec2{0.0f, 1.0f},
+        monster_definition->movement.max_yaw_degrees_per_second,
+        1.0f / 30.0f,
+        &idle_locomotion));
+    require(network_example::solve_legged_locomotion_pose(
+        locomotion_asset.skeleton,
+        locomotion_asset.bind_pose,
+        monster_definition->skeleton,
+        glm::vec3{6.0f, 0.0f, 0.0f},
+        monster_definition->movement.max_slope_degrees,
+        1.0f / 30.0f,
+        flat_grounding,
+        &idle_locomotion));
+    std::uint32_t group_zero_swing_count = 0u;
+    for (const network_example::LegLocomotionState& leg :
+         idle_locomotion.legs) {
+        if (leg.gait_group == 0u) {
+            require(leg.gait_state == network_example::LegGaitState::kSwing);
+            require(leg.entered_swing);
+            ++group_zero_swing_count;
+        } else {
+            require(leg.gait_state == network_example::LegGaitState::kSupport);
+        }
+    }
+    require(group_zero_swing_count == 2u);
+    std::vector<glm::vec3> previous_landing_targets;
+    for (const network_example::LegLocomotionState& leg :
+         idle_locomotion.legs) {
+        previous_landing_targets.push_back(leg.landing_target_world);
+    }
+    for (std::uint32_t swing_tick = 1u; swing_tick < 6u; ++swing_tick) {
+        require(network_example::advance_locomotion_state(
+            monster_definition->skeleton,
+            KernelVec2{0.0f, 1.0f},
+            monster_definition->movement.max_yaw_degrees_per_second,
+            1.0f / 30.0f,
+            &idle_locomotion));
+        require(network_example::solve_legged_locomotion_pose(
+            locomotion_asset.skeleton,
+            locomotion_asset.bind_pose,
+            monster_definition->skeleton,
+            glm::vec3{6.0f + 0.1f * static_cast<float>(swing_tick),
+                      0.0f,
+                      0.0f},
+            monster_definition->movement.max_slope_degrees,
+            1.0f / 30.0f,
+            flat_grounding,
+            &idle_locomotion));
+        for (std::size_t index = 0u;
+             index < idle_locomotion.legs.size();
+             ++index) {
+            const network_example::LegLocomotionState& leg =
+                idle_locomotion.legs[index];
+            if (leg.gait_group != 0u) {
+                require(leg.gait_state ==
+                        network_example::LegGaitState::kSupport);
+                continue;
+            }
+            require(leg.landing_target_world.x >
+                    previous_landing_targets[index].x);
+            previous_landing_targets[index] = leg.landing_target_world;
+            if (swing_tick < 5u) {
+                require(leg.gait_state ==
+                        network_example::LegGaitState::kSwing);
+            } else {
+                require(leg.gait_state ==
+                        network_example::LegGaitState::kSupport);
+                require(leg.entered_support);
+                require(glm::length(
+                    leg.planted_foothold_world - leg.landing_target_world) <
+                    0.0001f);
+            }
+        }
+    }
+
+    network_example::LocomotionState rotating_locomotion;
+    require(network_example::initialize_locomotion_state(
+        monster_definition->skeleton, 0.0f, &rotating_locomotion));
+    require(network_example::advance_locomotion_state(
+        monster_definition->skeleton,
+        KernelVec2{},
+        90.0f,
+        1.0f,
+        &rotating_locomotion));
+    require(network_example::solve_legged_locomotion_pose(
+        locomotion_asset.skeleton,
+        locomotion_asset.bind_pose,
+        monster_definition->skeleton,
+        glm::vec3{0.0f},
+        monster_definition->movement.max_slope_degrees,
+        1.0f / 30.0f,
+        flat_grounding,
+        &rotating_locomotion));
+    require(network_example::advance_locomotion_state(
+        monster_definition->skeleton,
+        KernelVec2{1.0f, 0.0f},
+        90.0f,
+        1.0f,
+        &rotating_locomotion));
+    require(network_example::solve_legged_locomotion_pose(
+        locomotion_asset.skeleton,
+        locomotion_asset.bind_pose,
+        monster_definition->skeleton,
+        glm::vec3{0.0f},
+        monster_definition->movement.max_slope_degrees,
+        1.0f / 30.0f,
+        flat_grounding,
+        &rotating_locomotion));
+    require(std::any_of(
+        rotating_locomotion.legs.begin(),
+        rotating_locomotion.legs.end(),
+        [](const network_example::LegLocomotionState& leg) {
+            return leg.entered_swing;
+        }));
+
+    network_example::LocomotionState missed_locomotion;
+    require(network_example::initialize_locomotion_state(
+        monster_definition->skeleton, 0.0f, &missed_locomotion));
+    require(network_example::advance_locomotion_state(
+        monster_definition->skeleton,
+        KernelVec2{},
+        monster_definition->movement.max_yaw_degrees_per_second,
+        1.0f / 30.0f,
+        &missed_locomotion));
+    require(network_example::solve_legged_locomotion_pose(
+        locomotion_asset.skeleton,
+        locomotion_asset.bind_pose,
+        monster_definition->skeleton,
         glm::vec3{0.0f},
         monster_definition->movement.max_slope_degrees,
         1.0f / 30.0f,
         [](const glm::vec3&, float,
            network_example::LocomotionGroundingHit*) { return false; },
         &missed_locomotion));
+    std::vector<glm::vec3> missed_anchors;
     for (const network_example::LegLocomotionState& leg :
          missed_locomotion.legs) {
         require(!leg.ground_hit_valid);
         require(!leg.planted);
+        missed_anchors.push_back(leg.planted_foothold_world);
     }
-
-    network_example::LocomotionState clamped_locomotion;
-    require(network_example::initialize_locomotion_state(
-        monster_definition->skeleton, 0.0f, 0u, &clamped_locomotion));
     require(network_example::advance_locomotion_state(
         monster_definition->skeleton,
         KernelVec2{},
         monster_definition->movement.max_yaw_degrees_per_second,
         1.0f / 30.0f,
-        0u,
+        &missed_locomotion));
+    require(network_example::solve_legged_locomotion_pose(
+        locomotion_asset.skeleton,
+        locomotion_asset.bind_pose,
+        monster_definition->skeleton,
+        glm::vec3{20.0f, 0.0f, 0.0f},
+        monster_definition->movement.max_slope_degrees,
+        1.0f / 30.0f,
+        [](const glm::vec3&, float,
+           network_example::LocomotionGroundingHit*) { return false; },
+        &missed_locomotion));
+    bool missed_anchor_reach_clamped = false;
+    for (std::size_t index = 0u;
+         index < missed_locomotion.legs.size();
+         ++index) {
+        const network_example::LegLocomotionState& leg =
+            missed_locomotion.legs[index];
+        require(leg.gait_state == network_example::LegGaitState::kSupport);
+        require(glm::length(
+            leg.planted_foothold_world - missed_anchors[index]) < 0.0001f);
+        require(glm::length(
+            leg.foot_target_world - missed_anchors[index]) < 0.0001f);
+        missed_anchor_reach_clamped |= leg.ik_reach_clamped;
+    }
+    require(missed_anchor_reach_clamped);
+    require(network_example::advance_locomotion_state(
+        monster_definition->skeleton,
+        KernelVec2{0.0f, 1.0f},
+        monster_definition->movement.max_yaw_degrees_per_second,
+        1.0f / 30.0f,
+        &missed_locomotion));
+    require(network_example::solve_legged_locomotion_pose(
+        locomotion_asset.skeleton,
+        locomotion_asset.bind_pose,
+        monster_definition->skeleton,
+        glm::vec3{20.0f, 0.0f, 0.0f},
+        monster_definition->movement.max_slope_degrees,
+        1.0f / 30.0f,
+        flat_grounding,
+        &missed_locomotion));
+    require(std::any_of(
+        missed_locomotion.legs.begin(),
+        missed_locomotion.legs.end(),
+        [](const network_example::LegLocomotionState& leg) {
+            return leg.entered_swing;
+        }));
+
+    network_example::LocomotionState clamped_locomotion;
+    require(network_example::initialize_locomotion_state(
+        monster_definition->skeleton, 0.0f, &clamped_locomotion));
+    require(network_example::advance_locomotion_state(
+        monster_definition->skeleton,
+        KernelVec2{},
+        monster_definition->movement.max_yaw_degrees_per_second,
+        1.0f / 30.0f,
         &clamped_locomotion));
     require(network_example::solve_legged_locomotion_pose(
         locomotion_asset.skeleton,
         locomotion_asset.bind_pose,
         monster_definition->skeleton,
-        glm::vec3{0.0f},
         glm::vec3{0.0f},
         monster_definition->movement.max_slope_degrees,
         1.0f / 30.0f,
@@ -1236,7 +1560,7 @@ int main() {
     const auto replay_locomotion = [&]() {
         network_example::LocomotionState state;
         require(network_example::initialize_locomotion_state(
-            monster_definition->skeleton, 0.0f, 0u, &state));
+            monster_definition->skeleton, 0.0f, &state));
         glm::vec3 root_position{0.0f};
         std::vector<std::uint64_t> hashes;
         hashes.reserve(90u);
@@ -1255,14 +1579,12 @@ int main() {
                 input,
                 monster_definition->movement.max_yaw_degrees_per_second,
                 1.0f / 30.0f,
-                tick,
                 &state));
             require(network_example::solve_legged_locomotion_pose(
                 locomotion_asset.skeleton,
                 locomotion_asset.bind_pose,
                 monster_definition->skeleton,
                 root_position,
-                root_velocity,
                 monster_definition->movement.max_slope_degrees,
                 1.0f / 30.0f,
                 [](const glm::vec3& origin, float,
@@ -1354,7 +1676,7 @@ int main() {
         config.weapons
             .projectile_sync_modes[network_example::game_server::kWeaponRocket] ==
         KernelProjectileSyncMode_ServerSnapshotOnly);
-    assert(config.colliders.templates.size() == 13);
+    assert(config.colliders.templates.size() == 14);
     assert(config.colliders.bindings.empty());
     assert(config.actor_templates.size() == 3);
     const network_example::game_server::ActorTemplateConfig& player_template =
@@ -2275,6 +2597,46 @@ int main() {
     require(network_example::game_server::load_kernel_gameplay_catalog(
         skeleton_kernel,
         config));
+    require(Kernel_GetSkeletonBindPose(
+                nullptr,
+                1u,
+                UINT64_C(0x128e575af29f0793),
+                nullptr,
+                0u) == 0u);
+    require(Kernel_GetSkeletonBindPose(
+                skeleton_kernel,
+                999u,
+                UINT64_C(0x128e575af29f0793),
+                nullptr,
+                0u) == 0u);
+    require(Kernel_GetSkeletonBindPose(
+                skeleton_kernel,
+                1u,
+                UINT64_C(0xdeadbeef),
+                nullptr,
+                0u) == 0u);
+    require(Kernel_GetSkeletonBindPose(
+                skeleton_kernel,
+                1u,
+                UINT64_C(0x128e575af29f0793),
+                nullptr,
+                0u) == 39u);
+    std::array<KernelBoneLocalTransform, 10> truncated_bind_pose{};
+    require(Kernel_GetSkeletonBindPose(
+                skeleton_kernel,
+                1u,
+                UINT64_C(0x128e575af29f0793),
+                truncated_bind_pose.data(),
+                truncated_bind_pose.size()) == 39u);
+    require(truncated_bind_pose[0].local_scale.x == 1.0f);
+    std::array<KernelBoneLocalTransform, 39> complete_bind_pose{};
+    require(Kernel_GetSkeletonBindPose(
+                skeleton_kernel,
+                1u,
+                UINT64_C(0x128e575af29f0793),
+                complete_bind_pose.data(),
+                complete_bind_pose.size()) == 39u);
+    require(complete_bind_pose.back().local_scale.z == 1.0f);
     require(Kernel_StartDedicatedServer(skeleton_kernel, 7900));
     KernelServerEntityCreateInfo skeleton_create{};
     skeleton_create.struct_size = sizeof(skeleton_create);
@@ -2305,9 +2667,9 @@ int main() {
     require(skeleton_result.status ==
            KERNEL_SKELETON_RENDER_STATUS_INSUFFICIENT_CAPACITY);
     require(skeleton_result.required_state_count == 1u);
-    require(skeleton_result.required_bone_transform_count == 41u);
+    require(skeleton_result.required_bone_transform_count == 39u);
     std::array<KernelSkeletonRenderState, 1> skeleton_states{};
-    std::array<KernelBoneLocalTransform, 41> bone_transforms{};
+    std::array<KernelBoneLocalTransform, 39> bone_transforms{};
     skeleton_result.struct_size = sizeof(skeleton_result);
     require(Kernel_GetSkeletonRenderStates(
                skeleton_kernel,
@@ -2329,7 +2691,7 @@ int main() {
     require(skeleton_result.status == KERNEL_SKELETON_RENDER_STATUS_SUCCESS);
     require(skeleton_states[0].entity_net_id == skeleton_entity_id);
     require(skeleton_states[0].skeleton_asset_id == 1u);
-    require(skeleton_states[0].bone_count == 41u);
+    require(skeleton_states[0].bone_count == 39u);
     require((skeleton_states[0].pose_flags &
             KERNEL_SKELETON_POSE_FLAG_PROCEDURAL) != 0u);
     require(bone_transforms[0].local_scale.x == 1.0f);
@@ -2388,7 +2750,7 @@ int main() {
     KernelVec3 observer_monster_last_position{};
     KernelVec3 observer_monster_last_velocity{};
     std::uint16_t observer_player_hp = 0u;
-    for (std::uint32_t frame = 0u; frame < 420u; ++frame) {
+    for (std::uint32_t frame = 0u; frame < 720u; ++frame) {
         Kernel_Update(observer_kernel, 1.0f / 30.0f);
 
         std::array<KernelEvent, 128> events{};
@@ -2437,8 +2799,8 @@ int main() {
                 observer_monster_moved_negative || state.velocity.x < -0.1f;
             observer_monster_last_position = state.position;
             observer_monster_last_velocity = state.velocity;
-            require(state.position.x >= -8.5f);
-            require(state.position.x <= 8.5f);
+            require(state.position.x >= -30.5f);
+            require(state.position.x <= 30.5f);
         }
         require(observer_agent_count <= 1u);
     }
@@ -2519,8 +2881,8 @@ int main() {
     require(observer_monster_skeleton_state->skeleton_asset_id == 1u);
     require(
         observer_monster_skeleton_state->skeleton_content_hash ==
-        UINT64_C(0x1c171165d9bb479b));
-    require(observer_monster_skeleton_state->bone_count == 41u);
+        UINT64_C(0x128e575af29f0793));
+    require(observer_monster_skeleton_state->bone_count == 39u);
     require(
         (observer_monster_skeleton_state->pose_flags &
          KERNEL_SKELETON_POSE_FLAG_PROCEDURAL) != 0u);
@@ -2542,6 +2904,30 @@ int main() {
         require(std::isfinite(transform.local_scale.y));
         require(std::isfinite(transform.local_scale.z));
     }
+    const auto patrol_velocity_from_synthetic_position =
+        [&](float position_x) {
+            KernelVec3 position{
+                position_x,
+                observer_monster_last_position.y,
+                observer_monster_last_position.z,
+            };
+            KernelQuat rotation{0.0f, 0.0f, 0.0f, 1.0f};
+            require(Kernel_ServerSetEntityTransform(
+                observer_kernel,
+                observer_monster_net_id,
+                &position,
+                &rotation));
+            Kernel_Update(observer_kernel, 1.0f / 30.0f);
+            observer_server.tick(1.0f / 30.0f);
+            Kernel_Update(observer_kernel, 1.0f / 30.0f);
+            KernelServerEntityState state{};
+            state.struct_size = sizeof(state);
+            require(Kernel_ServerGetEntityState(
+                observer_kernel, observer_monster_net_id, &state));
+            return state.velocity.x;
+        };
+    require(patrol_velocity_from_synthetic_position(30.0f) < -0.1f);
+    require(patrol_velocity_from_synthetic_position(-30.0f) > 0.1f);
     Kernel_Destroy(observer_kernel);
 
     KernelHandle* inventory_kernel = make_server_kernel();

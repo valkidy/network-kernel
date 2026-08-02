@@ -5,7 +5,13 @@ load(":skeleton_asset_rules.bzl", "skeleton_asset")
 package(default_visibility = ["//visibility:public"])
 
 skeleton_asset(
-    name = "simplified_monster_sim_v4",
-    src = "raw/simplified_monster_sim_v4.glb",
+    name = "simplified_monster_quadruped_v5",
+    src = "raw/simplified_monster_quadruped_v5.glb",
     asset_id = 1,
+)
+
+skeleton_asset(
+    name = "rock_robot_biped_24u_v3",
+    src = "raw/rock_robot_biped_24u_v3.glb",
+    asset_id = 2,
 )
