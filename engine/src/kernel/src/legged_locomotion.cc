@@ -154,10 +154,12 @@ void reset_leg_grounding(LocomotionState* state) {
         leg.ik_reach_clamped = false;
         leg.foot_target_valid = false;
         leg.previous_hip_world_valid = false;
+        leg.previous_nominal_home_world_valid = false;
         leg.grounding_candidate_index = UINT32_MAX;
         leg.supporting_entity_net_id = 0u;
         leg.supporting_collider_id = 0u;
     }
+    state->previous_pose_root_position_valid = false;
 }
 
 bool query_foothold(
@@ -356,6 +358,10 @@ bool solve_legged_locomotion_pose(
     }
     const glm::vec3 pose_root_position = root_position -
         glm::vec3{0.0f, bind_foot_height, 0.0f};
+    const glm::vec3 root_displacement =
+        state->previous_pose_root_position_valid
+        ? pose_root_position - state->previous_pose_root_position
+        : glm::vec3{0.0f};
     state->local_pose[definition.root_bone_index].local_position.y -=
         bind_foot_height;
     const float minimum_ground_normal_y =
@@ -364,7 +370,10 @@ bool solve_legged_locomotion_pose(
     std::array<glm::vec3, KERNEL_MAX_SKELETON_LEGS> bind_foot_models{};
     std::array<glm::vec3, KERNEL_MAX_SKELETON_LEGS> hip_models{};
     std::array<glm::vec3, KERNEL_MAX_SKELETON_LEGS> hip_worlds{};
+    std::array<glm::vec3, KERNEL_MAX_SKELETON_LEGS> hip_displacements{};
     std::array<glm::vec3, KERNEL_MAX_SKELETON_LEGS> nominal_homes{};
+    std::array<glm::vec3, KERNEL_MAX_SKELETON_LEGS>
+        nominal_home_displacements{};
     std::array<glm::vec3, KERNEL_MAX_SKELETON_LEGS> grounded_homes{};
     std::array<float, KERNEL_MAX_SKELETON_LEGS> maximum_reaches{};
     std::array<bool, KERNEL_MAX_SKELETON_LEGS> predicted_reach_exceeded{};
@@ -391,6 +400,14 @@ bool solve_legged_locomotion_pose(
         nominal_homes[leg_index] = nominal_world;
         hip_worlds[leg_index] = pose_root_position +
             root_rotation * hip_models[leg_index];
+        if (leg.previous_nominal_home_world_valid) {
+            nominal_home_displacements[leg_index] =
+                nominal_world - leg.previous_nominal_home_world;
+        }
+        if (leg.previous_hip_world_valid) {
+            hip_displacements[leg_index] =
+                hip_worlds[leg_index] - leg.previous_hip_world;
+        }
         grounded_home_valid[leg_index] = query_foothold(
             definition,
             nominal_world,
@@ -413,21 +430,25 @@ bool solve_legged_locomotion_pose(
         }
         if (leg.previous_hip_world_valid && leg.foot_target_valid &&
             maximum_reaches[leg_index] > 0.000001f) {
-            const glm::vec3 hip_displacement =
-                hip_worlds[leg_index] - leg.previous_hip_world;
+            const glm::vec3 rotational_hip_displacement =
+                hip_displacements[leg_index] - root_displacement;
             const float prediction_ticks = static_cast<float>(std::max(
                 1u, definition.step_duration_ticks - 1u));
             const glm::vec3 predicted_hip = hip_worlds[leg_index] +
-                hip_displacement * prediction_ticks;
+                rotational_hip_displacement * prediction_ticks;
             predicted_reach_exceeded[leg_index] =
-                glm::length(hip_displacement) > 0.000001f &&
+                glm::length(rotational_hip_displacement) > 0.000001f &&
                 glm::length(
                     predicted_hip - leg.planted_foothold_world) >
                     maximum_reaches[leg_index] * kReachSchedulingRatio;
         }
         leg.previous_hip_world = hip_worlds[leg_index];
         leg.previous_hip_world_valid = true;
+        leg.previous_nominal_home_world = nominal_world;
+        leg.previous_nominal_home_world_valid = true;
     }
+    state->previous_pose_root_position = pose_root_position;
+    state->previous_pose_root_position_valid = true;
     if (!root_grounded && !any_grounded_home_valid) {
         reset_leg_grounding(state);
         state->pose_valid = finite_pose(state->local_pose);
@@ -477,6 +498,32 @@ bool solve_legged_locomotion_pose(
             leg.swing_start_world = leg.foot_target_world;
             leg.landing_target_world = grounded_homes[leg_index];
             leg.landing_target_valid = true;
+            const float prediction_ticks = static_cast<float>(std::max(
+                1u, definition.step_duration_ticks - 1u));
+            const float maximum_observed_displacement =
+                definition.step_threshold_meters /
+                static_cast<float>(definition.step_duration_ticks);
+            if (glm::length(nominal_home_displacements[leg_index]) <=
+                maximum_observed_displacement) {
+                LegLocomotionState predicted_grounding = leg;
+                const glm::vec3 predicted_nominal_home =
+                    nominal_homes[leg_index] +
+                    nominal_home_displacements[leg_index] * prediction_ticks;
+                const glm::vec3 predicted_hip = hip_worlds[leg_index] +
+                    hip_displacements[leg_index] * prediction_ticks;
+                if (query_foothold(
+                        definition,
+                        predicted_nominal_home,
+                        predicted_hip,
+                        maximum_reaches[leg_index],
+                        root_rotation,
+                        minimum_ground_normal_y,
+                        grounding_query,
+                        &predicted_grounding)) {
+                    leg.landing_target_world =
+                        predicted_grounding.ground_hit_position;
+                }
+            }
             leg.planted = false;
             ++swinging_leg_count;
         }
