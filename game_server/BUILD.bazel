@@ -16,7 +16,7 @@ filegroup(
         "gameplay_catalog.yaml",
         "test_catalogs/monster_observer/gameplay_catalog.yaml",
         "//game_server/skeleton_assets:rock_robot_biped_24u_v3_assets",
-        "//game_server/skeleton_assets:simplified_monster_quadruped_v5_assets",
+        "//game_server/skeleton_assets:simplified_monster_sim_v4_assets",
     ],
 )
 
@@ -64,7 +64,7 @@ cc_test(
         "//game_server/gameplay_catalog_bundle:bundle",
         "gameplay_catalog.yaml",
         "//game_server/skeleton_assets:rock_robot_biped_24u_v3_assets",
-        "//game_server/skeleton_assets:simplified_monster_quadruped_v5_assets",
+        "//game_server/skeleton_assets:simplified_monster_sim_v4_assets",
     ],
     deps = [
         ":game_server",
@@ -87,7 +87,7 @@ cc_test(
     ]) + [
         "gameplay_catalog.yaml",
         "//game_server/skeleton_assets:rock_robot_biped_24u_v3_assets",
-        "//game_server/skeleton_assets:simplified_monster_quadruped_v5_assets",
+        "//game_server/skeleton_assets:simplified_monster_sim_v4_assets",
     ],
     deps = [
         ":game_server",
@@ -109,7 +109,7 @@ cc_test(
     ]) + [
         "gameplay_catalog.yaml",
         "//game_server/skeleton_assets:rock_robot_biped_24u_v3_assets",
-        "//game_server/skeleton_assets:simplified_monster_quadruped_v5_assets",
+        "//game_server/skeleton_assets:simplified_monster_sim_v4_assets",
     ],
     deps = [
         ":game_server",
@@ -168,7 +168,7 @@ cc_test(
     ]) + [
         "gameplay_catalog.yaml",
         "//game_server/skeleton_assets:rock_robot_biped_24u_v3_assets",
-        "//game_server/skeleton_assets:simplified_monster_quadruped_v5_assets",
+        "//game_server/skeleton_assets:simplified_monster_sim_v4_assets",
     ],
     deps = [
         ":game_server",
@@ -191,7 +191,7 @@ cc_test(
         "//game_server/gameplay_catalog_bundle:bundle",
         "gameplay_catalog.yaml",
         "//game_server/skeleton_assets:rock_robot_biped_24u_v3_assets",
-        "//game_server/skeleton_assets:simplified_monster_quadruped_v5_assets",
+        "//game_server/skeleton_assets:simplified_monster_sim_v4_assets",
     ],
     deps = [
         ":game_server_bridge",
