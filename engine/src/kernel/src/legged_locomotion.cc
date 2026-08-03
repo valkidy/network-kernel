@@ -140,6 +140,23 @@ bool finite_pose(std::span<const KernelBoneLocalTransform> pose) {
     return true;
 }
 
+void reset_leg_grounding(LocomotionState* state) {
+    for (LegLocomotionState& leg : state->legs) {
+        leg.gait_state = LegGaitState::kSupport;
+        leg.swing_tick = 0u;
+        leg.entered_swing = false;
+        leg.entered_support = false;
+        leg.landing_target_valid = false;
+        leg.planted = false;
+        leg.ground_hit_valid = false;
+        leg.ik_reach_clamped = false;
+        leg.foot_target_valid = false;
+        leg.grounding_candidate_index = UINT32_MAX;
+        leg.supporting_entity_net_id = 0u;
+        leg.supporting_collider_id = 0u;
+    }
+}
+
 bool query_foothold(
     const KernelSkeletonBindingDefinition& definition,
     const glm::vec3& nominal_world,
@@ -280,6 +297,8 @@ bool solve_legged_locomotion_pose(
     std::span<const KernelBoneLocalTransform> bind_pose,
     const KernelSkeletonBindingDefinition& definition,
     const glm::vec3& root_position,
+    bool root_grounded,
+    bool root_landed_this_tick,
     float max_slope_degrees,
     float fixed_delta_seconds,
     const LocomotionGroundingQuery& grounding_query,
@@ -297,6 +316,14 @@ bool solve_legged_locomotion_pose(
 
     state->pose_valid = false;
     state->local_pose.assign(bind_pose.begin(), bind_pose.end());
+    if (!root_grounded) {
+        reset_leg_grounding(state);
+        state->pose_valid = finite_pose(state->local_pose);
+        return state->pose_valid;
+    }
+    if (root_landed_this_tick) {
+        reset_leg_grounding(state);
+    }
     std::vector<ozz::math::SoaTransform> locals(
         skeleton.joint_rest_poses().begin(),
         skeleton.joint_rest_poses().end());
@@ -358,6 +385,7 @@ bool solve_legged_locomotion_pose(
                 ? grounded_homes[leg_index]
                 : nominal_world;
             leg.foot_target_world = leg.planted_foothold_world;
+            leg.root_position_at_plant = root_position;
             leg.foot_target_valid = true;
             leg.planted = grounded_home_valid[leg_index];
         }
@@ -379,8 +407,9 @@ bool solve_legged_locomotion_pose(
             const LegLocomotionState& leg = state->legs[leg_index];
             if (leg.gait_state == LegGaitState::kSupport &&
                 grounded_home_valid[leg_index] &&
-                glm::length(
-                    leg.planted_foothold_world - grounded_homes[leg_index]) >
+                glm::length(glm::vec2{
+                    root_position.x - leg.root_position_at_plant.x,
+                    root_position.z - leg.root_position_at_plant.z}) >
                     definition.step_threshold_meters) {
                 active_gait_group = leg.gait_group;
                 break;
@@ -438,6 +467,7 @@ bool solve_legged_locomotion_pose(
                 leg.entered_support = true;
                 leg.swing_tick = 0u;
                 leg.planted_foothold_world = landing_target;
+                leg.root_position_at_plant = root_position;
                 leg.foot_target_world = landing_target;
                 leg.planted = leg.landing_target_valid;
             } else {

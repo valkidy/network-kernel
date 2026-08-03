@@ -1211,6 +1211,8 @@ int main() {
         locomotion_asset.bind_pose,
         monster_definition->skeleton,
         glm::vec3{0.0f},
+        true,
+        false,
         monster_definition->movement.max_slope_degrees,
         1.0f / 30.0f,
         ordered_grounding,
@@ -1240,6 +1242,8 @@ int main() {
         locomotion_asset.bind_pose,
         monster_definition->skeleton,
         glm::vec3{1.0f, 0.0f, 0.0f},
+        true,
+        false,
         monster_definition->movement.max_slope_degrees,
         1.0f / 30.0f,
         ordered_grounding,
@@ -1267,6 +1271,74 @@ int main() {
             hit->normal = glm::vec3{0.0f, 1.0f, 0.0f};
             return true;
         };
+    network_example::LocomotionState landing_locomotion;
+    require(network_example::initialize_locomotion_state(
+        monster_definition->skeleton, 0.0f, &landing_locomotion));
+    require(network_example::advance_locomotion_state(
+        monster_definition->skeleton,
+        KernelVec2{0.0f, 1.0f},
+        monster_definition->movement.max_yaw_degrees_per_second,
+        1.0f / 30.0f,
+        &landing_locomotion));
+    std::uint32_t airborne_grounding_queries = 0u;
+    const network_example::LocomotionGroundingQuery counted_grounding =
+        [&airborne_grounding_queries](
+            const glm::vec3& origin,
+            float,
+            network_example::LocomotionGroundingHit* hit) {
+            ++airborne_grounding_queries;
+            hit->position = origin - glm::vec3{0.0f, 2.0f, 0.0f};
+            hit->normal = glm::vec3{0.0f, 1.0f, 0.0f};
+            return true;
+        };
+    require(network_example::solve_legged_locomotion_pose(
+        locomotion_asset.skeleton,
+        locomotion_asset.bind_pose,
+        monster_definition->skeleton,
+        glm::vec3{3.0f, 8.0f, 0.0f},
+        false,
+        false,
+        monster_definition->movement.max_slope_degrees,
+        1.0f / 30.0f,
+        counted_grounding,
+        &landing_locomotion));
+    require(airborne_grounding_queries == 0u);
+    for (const network_example::LegLocomotionState& leg :
+         landing_locomotion.legs) {
+        require(leg.gait_state == network_example::LegGaitState::kSupport);
+        require(!leg.foot_target_valid);
+        require(!leg.planted);
+        require(!leg.entered_swing);
+    }
+    require(network_example::advance_locomotion_state(
+        monster_definition->skeleton,
+        KernelVec2{1.0f, 0.0f},
+        90.0f,
+        1.0f,
+        &landing_locomotion));
+    const glm::vec3 landing_root{6.0f, 0.0f, 0.0f};
+    require(network_example::solve_legged_locomotion_pose(
+        locomotion_asset.skeleton,
+        locomotion_asset.bind_pose,
+        monster_definition->skeleton,
+        landing_root,
+        true,
+        true,
+        monster_definition->movement.max_slope_degrees,
+        1.0f / 30.0f,
+        counted_grounding,
+        &landing_locomotion));
+    require(airborne_grounding_queries > 0u);
+    for (const network_example::LegLocomotionState& leg :
+         landing_locomotion.legs) {
+        require(leg.gait_state == network_example::LegGaitState::kSupport);
+        require(leg.foot_target_valid);
+        require(leg.planted);
+        require(!leg.entered_swing);
+        require(glm::length(leg.root_position_at_plant - landing_root) <
+                0.0001f);
+    }
+
     network_example::LocomotionState idle_locomotion;
     require(network_example::initialize_locomotion_state(
         monster_definition->skeleton, 0.0f, &idle_locomotion));
@@ -1281,6 +1353,8 @@ int main() {
         locomotion_asset.bind_pose,
         monster_definition->skeleton,
         glm::vec3{0.0f},
+        true,
+        false,
         monster_definition->movement.max_slope_degrees,
         1.0f / 30.0f,
         flat_grounding,
@@ -1302,6 +1376,8 @@ int main() {
             locomotion_asset.bind_pose,
             monster_definition->skeleton,
             glm::vec3{0.0f},
+            true,
+            false,
             monster_definition->movement.max_slope_degrees,
             1.0f / 30.0f,
             flat_grounding,
@@ -1330,6 +1406,8 @@ int main() {
         locomotion_asset.bind_pose,
         monster_definition->skeleton,
         glm::vec3{6.0f, 0.0f, 0.0f},
+        true,
+        false,
         monster_definition->movement.max_slope_degrees,
         1.0f / 30.0f,
         flat_grounding,
@@ -1365,6 +1443,8 @@ int main() {
             glm::vec3{6.0f + 0.1f * static_cast<float>(swing_tick),
                       0.0f,
                       0.0f},
+            true,
+            false,
             monster_definition->movement.max_slope_degrees,
             1.0f / 30.0f,
             flat_grounding,
@@ -1410,6 +1490,8 @@ int main() {
         locomotion_asset.bind_pose,
         monster_definition->skeleton,
         glm::vec3{0.0f},
+        true,
+        false,
         monster_definition->movement.max_slope_degrees,
         1.0f / 30.0f,
         flat_grounding,
@@ -1425,11 +1507,13 @@ int main() {
         locomotion_asset.bind_pose,
         monster_definition->skeleton,
         glm::vec3{0.0f},
+        true,
+        false,
         monster_definition->movement.max_slope_degrees,
         1.0f / 30.0f,
         flat_grounding,
         &rotating_locomotion));
-    require(std::any_of(
+    require(std::none_of(
         rotating_locomotion.legs.begin(),
         rotating_locomotion.legs.end(),
         [](const network_example::LegLocomotionState& leg) {
@@ -1450,6 +1534,8 @@ int main() {
         locomotion_asset.bind_pose,
         monster_definition->skeleton,
         glm::vec3{0.0f},
+        true,
+        false,
         monster_definition->movement.max_slope_degrees,
         1.0f / 30.0f,
         [](const glm::vec3&, float,
@@ -1473,6 +1559,8 @@ int main() {
         locomotion_asset.bind_pose,
         monster_definition->skeleton,
         glm::vec3{20.0f, 0.0f, 0.0f},
+        true,
+        false,
         monster_definition->movement.max_slope_degrees,
         1.0f / 30.0f,
         [](const glm::vec3&, float,
@@ -1503,6 +1591,8 @@ int main() {
         locomotion_asset.bind_pose,
         monster_definition->skeleton,
         glm::vec3{20.0f, 0.0f, 0.0f},
+        true,
+        false,
         monster_definition->movement.max_slope_degrees,
         1.0f / 30.0f,
         flat_grounding,
@@ -1528,6 +1618,8 @@ int main() {
         locomotion_asset.bind_pose,
         monster_definition->skeleton,
         glm::vec3{0.0f},
+        true,
+        false,
         monster_definition->movement.max_slope_degrees,
         1.0f / 30.0f,
         [](const glm::vec3& origin, float,
@@ -1587,6 +1679,8 @@ int main() {
                 locomotion_asset.bind_pose,
                 monster_definition->skeleton,
                 root_position,
+                true,
+                false,
                 monster_definition->movement.max_slope_degrees,
                 1.0f / 30.0f,
                 [](const glm::vec3& origin, float,

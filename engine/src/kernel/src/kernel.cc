@@ -7974,11 +7974,19 @@ void KernelEngine::update_legged_locomotion(
                 out_hit->supporting_collider_id = hit.identity.collider_id;
                 return true;
             };
+        const MovementState* movement =
+            world_.registry().try_get<MovementState>(entity);
+        const bool root_grounded = movement != nullptr &&
+            movement->ground_state == MovementState::GroundState::kGrounded;
+        const bool root_landed_this_tick =
+            movement != nullptr && movement->landed_this_tick;
         if (!solve_legged_locomotion_pose(
                 skeleton_asset->skeleton,
                 skeleton_asset->bind_pose,
                 entity_template->skeleton,
                 transform.position,
+                root_grounded,
+                root_landed_this_tick,
                 entity_template->movement.max_slope_degrees,
                 fixed_delta_seconds,
                 grounding_query,

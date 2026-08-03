@@ -30,6 +30,7 @@ struct LegLocomotionState {
     glm::vec3 swing_start_world{0.0f};
     glm::vec3 landing_target_world{0.0f};
     glm::vec3 planted_foothold_world{0.0f};
+    glm::vec3 root_position_at_plant{0.0f};
     glm::vec3 foot_target_world{0.0f};
     glm::vec3 solved_foot_world{0.0f};
     glm::vec3 ground_hit_position{0.0f};
@@ -84,6 +85,8 @@ bool solve_legged_locomotion_pose(
     std::span<const KernelBoneLocalTransform> bind_pose,
     const KernelSkeletonBindingDefinition& definition,
     const glm::vec3& root_position,
+    bool root_grounded,
+    bool root_landed_this_tick,
     float max_slope_degrees,
     float fixed_delta_seconds,
     const LocomotionGroundingQuery& grounding_query,
