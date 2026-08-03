@@ -360,6 +360,7 @@ bool solve_legged_locomotion_pose(
 
     std::array<glm::vec3, KERNEL_MAX_SKELETON_LEGS> bind_foot_models{};
     std::array<glm::vec3, KERNEL_MAX_SKELETON_LEGS> hip_models{};
+    std::array<glm::vec3, KERNEL_MAX_SKELETON_LEGS> nominal_homes{};
     std::array<glm::vec3, KERNEL_MAX_SKELETON_LEGS> grounded_homes{};
     std::array<float, KERNEL_MAX_SKELETON_LEGS> maximum_reaches{};
     std::array<bool, KERNEL_MAX_SKELETON_LEGS> grounded_home_valid{};
@@ -382,6 +383,7 @@ bool solve_legged_locomotion_pose(
             definition_leg.max_reach_ratio;
         const glm::vec3 nominal_world = pose_root_position +
             root_rotation * bind_foot_models[leg_index];
+        nominal_homes[leg_index] = nominal_world;
         const glm::vec3 hip_world = pose_root_position +
             root_rotation * hip_models[leg_index];
         grounded_home_valid[leg_index] = query_foothold(
@@ -428,8 +430,10 @@ bool solve_legged_locomotion_pose(
             if (leg.gait_state == LegGaitState::kSupport &&
                 grounded_home_valid[leg_index] &&
                 glm::length(glm::vec2{
-                    root_position.x - leg.root_position_at_plant.x,
-                    root_position.z - leg.root_position_at_plant.z}) >
+                    nominal_homes[leg_index].x -
+                        leg.planted_foothold_world.x,
+                    nominal_homes[leg_index].z -
+                        leg.planted_foothold_world.z}) >
                     definition.step_threshold_meters) {
                 active_gait_group = leg.gait_group;
                 break;
