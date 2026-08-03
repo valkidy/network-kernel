@@ -32,6 +32,7 @@ struct LegLocomotionState {
     glm::vec3 planted_foothold_world{0.0f};
     glm::vec3 root_position_at_plant{0.0f};
     glm::vec3 previous_hip_world{0.0f};
+    glm::vec3 previous_nominal_home_world{0.0f};
     glm::vec3 foot_target_world{0.0f};
     glm::vec3 solved_foot_world{0.0f};
     glm::vec3 ground_hit_position{0.0f};
@@ -45,14 +46,17 @@ struct LegLocomotionState {
     bool ik_reach_clamped = false;
     bool foot_target_valid = false;
     bool previous_hip_world_valid = false;
+    bool previous_nominal_home_world_valid = false;
 };
 
 struct LocomotionState {
     float root_yaw_radians = 0.0f;
+    glm::vec3 previous_pose_root_position{0.0f};
     std::vector<LegLocomotionState> legs;
     std::vector<std::uint32_t> last_processing_order;
     std::vector<KernelBoneLocalTransform> local_pose;
     bool pose_valid = false;
+    bool previous_pose_root_position_valid = false;
 };
 
 struct LocomotionGroundingHit {

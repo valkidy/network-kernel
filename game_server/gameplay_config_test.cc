@@ -1249,21 +1249,14 @@ int main() {
         ordered_grounding,
         &grounded_locomotion));
     require(grounding_origins.size() > 8u);
-    std::uint32_t predicted_reach_swing_count = 0u;
     for (std::size_t index = 0u;
          index < grounded_locomotion.legs.size();
          ++index) {
         const network_example::LegLocomotionState& leg =
             grounded_locomotion.legs[index];
-        if (leg.gait_state == network_example::LegGaitState::kSwing) {
-            require(leg.entered_swing);
-            require(!leg.planted);
-            ++predicted_reach_swing_count;
-        } else {
-            require(leg.gait_state ==
-                    network_example::LegGaitState::kSupport);
-            require(leg.planted);
-        }
+        require(leg.gait_state == network_example::LegGaitState::kSupport);
+        require(!leg.entered_swing);
+        require(leg.planted);
         require(glm::length(
             leg.planted_foothold_world - initial_grounded_anchors[index]) <
             0.0001f);
@@ -1271,7 +1264,41 @@ int main() {
             leg.foot_target_world - leg.planted_foothold_world) <
             0.0001f);
     }
-    require(predicted_reach_swing_count == 2u);
+    bool forward_swing_started = false;
+    for (std::uint32_t movement_tick = 3u;
+         movement_tick <= 12u && !forward_swing_started;
+         ++movement_tick) {
+        require(network_example::advance_locomotion_state(
+            monster_definition->skeleton,
+            KernelVec2{0.0f, 1.0f},
+            monster_definition->movement.max_yaw_degrees_per_second,
+            1.0f / 30.0f,
+            &grounded_locomotion));
+        require(network_example::solve_legged_locomotion_pose(
+            locomotion_asset.skeleton,
+            locomotion_asset.bind_pose,
+            monster_definition->skeleton,
+            glm::vec3{
+                0.5f * static_cast<float>(movement_tick), 0.0f, 0.0f},
+            true,
+            false,
+            monster_definition->movement.max_slope_degrees,
+            1.0f / 30.0f,
+            ordered_grounding,
+            &grounded_locomotion));
+        for (const network_example::LegLocomotionState& leg :
+             grounded_locomotion.legs) {
+            if (!leg.entered_swing) {
+                continue;
+            }
+            const float predicted_landing_distance =
+                leg.landing_target_world.x - leg.ground_hit_position.x;
+            require(predicted_landing_distance > 2.4f);
+            require(predicted_landing_distance < 2.6f);
+            forward_swing_started = true;
+        }
+    }
+    require(forward_swing_started);
 
     const network_example::LocomotionGroundingQuery flat_grounding =
         [](const glm::vec3& origin, float,
