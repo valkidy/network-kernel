@@ -31,6 +31,7 @@ struct LegLocomotionState {
     glm::vec3 landing_target_world{0.0f};
     glm::vec3 planted_foothold_world{0.0f};
     glm::vec3 root_position_at_plant{0.0f};
+    glm::vec3 previous_hip_world{0.0f};
     glm::vec3 foot_target_world{0.0f};
     glm::vec3 solved_foot_world{0.0f};
     glm::vec3 ground_hit_position{0.0f};
@@ -43,6 +44,7 @@ struct LegLocomotionState {
     bool ground_hit_valid = false;
     bool ik_reach_clamped = false;
     bool foot_target_valid = false;
+    bool previous_hip_world_valid = false;
 };
 
 struct LocomotionState {

@@ -544,8 +544,12 @@ private:
     glm::vec3 predicted_local_render_position() const;
     void rebuild_render_states();
     void rebuild_render_states_at_time(std::uint64_t client_render_time_us);
+    void rebuild_skeleton_presentation();
     void rebuild_skeleton_presentation_at_time(
         std::uint64_t client_render_time_us);
+    void rebuild_skeleton_presentation_from_render_states(
+        std::uint64_t pose_time_us,
+        bool use_latest_pose);
     void rebuild_render_states_from_world();
     void rebuild_render_states_from_snapshot(std::uint64_t client_render_time_us);
     void report_render_state_overflow_if_needed();
@@ -749,6 +753,9 @@ private:
     std::vector<RemotePresentationDedup> remote_presentation_dedup_;
     std::vector<RenderEntityState> render_states_;
     std::vector<SkeletonPresentationPose> skeleton_presentation_poses_;
+    std::unordered_map<NetId, std::deque<SkeletonPresentationPose>>
+        skeleton_pose_history_;
+    std::uint64_t skeleton_presentation_time_us_ = 0;
     std::unordered_map<NetId, LocomotionState> locomotion_states_;
     WorldSnapshot latest_snapshot_;
     WorldSnapshot latest_client_snapshot_;
