@@ -1249,13 +1249,21 @@ int main() {
         ordered_grounding,
         &grounded_locomotion));
     require(grounding_origins.size() > 8u);
+    std::uint32_t predicted_reach_swing_count = 0u;
     for (std::size_t index = 0u;
          index < grounded_locomotion.legs.size();
          ++index) {
         const network_example::LegLocomotionState& leg =
             grounded_locomotion.legs[index];
-        require(leg.gait_state == network_example::LegGaitState::kSupport);
-        require(leg.planted);
+        if (leg.gait_state == network_example::LegGaitState::kSwing) {
+            require(leg.entered_swing);
+            require(!leg.planted);
+            ++predicted_reach_swing_count;
+        } else {
+            require(leg.gait_state ==
+                    network_example::LegGaitState::kSupport);
+            require(leg.planted);
+        }
         require(glm::length(
             leg.planted_foothold_world - initial_grounded_anchors[index]) <
             0.0001f);
@@ -1263,6 +1271,7 @@ int main() {
             leg.foot_target_world - leg.planted_foothold_world) <
             0.0001f);
     }
+    require(predicted_reach_swing_count == 2u);
 
     const network_example::LocomotionGroundingQuery flat_grounding =
         [](const glm::vec3& origin, float,
@@ -1485,9 +1494,9 @@ int main() {
                         network_example::LegGaitState::kSupport);
                 continue;
             }
-            require(leg.landing_target_world.x >
-                    previous_landing_targets[index].x);
-            previous_landing_targets[index] = leg.landing_target_world;
+            require(glm::length(
+                leg.landing_target_world -
+                previous_landing_targets[index]) < 0.0001f);
             if (swing_tick < 5u) {
                 require(leg.gait_state ==
                         network_example::LegGaitState::kSwing);
@@ -1539,12 +1548,22 @@ int main() {
         1.0f / 30.0f,
         flat_grounding,
         &rotating_locomotion));
-    require(std::none_of(
-        rotating_locomotion.legs.begin(),
-        rotating_locomotion.legs.end(),
-        [](const network_example::LegLocomotionState& leg) {
-            return leg.entered_swing;
-        }));
+    std::uint32_t rotating_group_zero_swing_count = 0u;
+    std::vector<glm::vec3> rotating_landing_targets;
+    for (const network_example::LegLocomotionState& leg :
+         rotating_locomotion.legs) {
+        rotating_landing_targets.push_back(leg.landing_target_world);
+        if (leg.gait_group == 0u) {
+            require(leg.gait_state == network_example::LegGaitState::kSwing);
+            require(leg.entered_swing);
+            ++rotating_group_zero_swing_count;
+        } else {
+            require(leg.gait_state ==
+                    network_example::LegGaitState::kSupport);
+            require(!leg.entered_swing);
+        }
+    }
+    require(rotating_group_zero_swing_count == 2u);
     require(network_example::advance_locomotion_state(
         monster_definition->skeleton,
         KernelVec2{1.0f, 0.0f},
@@ -1562,19 +1581,22 @@ int main() {
         1.0f / 30.0f,
         flat_grounding,
         &rotating_locomotion));
-    std::uint32_t rotating_group_zero_swing_count = 0u;
-    for (const network_example::LegLocomotionState& leg :
-         rotating_locomotion.legs) {
+    for (std::size_t index = 0u;
+         index < rotating_locomotion.legs.size();
+         ++index) {
+        const network_example::LegLocomotionState& leg =
+            rotating_locomotion.legs[index];
         if (leg.gait_group == 0u) {
             require(leg.gait_state == network_example::LegGaitState::kSwing);
-            require(leg.entered_swing);
-            ++rotating_group_zero_swing_count;
+            require(!leg.entered_swing);
+            require(glm::length(
+                leg.landing_target_world -
+                rotating_landing_targets[index]) < 0.0001f);
         } else {
             require(leg.gait_state == network_example::LegGaitState::kSupport);
             require(!leg.entered_swing);
         }
     }
-    require(rotating_group_zero_swing_count == 2u);
 
     network_example::LocomotionState missed_locomotion;
     require(network_example::initialize_locomotion_state(
@@ -2894,7 +2916,7 @@ int main() {
     KernelConfig observer_kernel_config{};
     observer_kernel_config.mode = KernelMode_ListenServer;
     observer_kernel_config.tick.server_tick_rate = 30;
-    observer_kernel_config.tick.snapshot_rate = 30;
+    observer_kernel_config.tick.snapshot_rate = 15;
     observer_kernel_config.max_events = 128;
     observer_kernel_config.max_render_states = 128;
     KernelHandle* observer_kernel = Kernel_Create(&observer_kernel_config);
@@ -2924,6 +2946,9 @@ int main() {
     KernelVec3 observer_monster_last_velocity{};
     KernelVec3 observer_monster_start_position{};
     KernelVec3 observer_monster_position_after_300_ticks{};
+    KernelVec3 observer_previous_render_position{};
+    bool observer_has_previous_render_position = false;
+    std::uint32_t observer_duplicate_render_frames = 0u;
     std::uint32_t observer_monster_observed_frames = 0u;
     std::uint16_t observer_player_hp = 0u;
     for (std::uint32_t frame = 0u; frame < 720u; ++frame) {
@@ -2975,6 +3000,33 @@ int main() {
                 observer_monster_moved_negative || state.velocity.x < -0.1f;
             observer_monster_last_position = state.position;
             observer_monster_last_velocity = state.velocity;
+            std::array<RenderEntityState, 8> live_render_states{};
+            const std::uint32_t live_render_count = Kernel_GetRenderStates(
+                observer_kernel,
+                live_render_states.data(),
+                static_cast<std::uint32_t>(live_render_states.size()));
+            const auto live_monster_render_state = std::find_if(
+                live_render_states.begin(),
+                live_render_states.begin() + live_render_count,
+                [observer_monster_net_id](const RenderEntityState& render) {
+                    return render.net_id == observer_monster_net_id;
+                });
+            require(
+                live_monster_render_state !=
+                live_render_states.begin() + live_render_count);
+            if (observer_has_previous_render_position &&
+                std::abs(state.velocity.x) > 0.1f &&
+                std::abs(
+                    live_monster_render_state->position.x -
+                    observer_previous_render_position.x) < 0.000001f &&
+                std::abs(
+                    live_monster_render_state->position.z -
+                    observer_previous_render_position.z) < 0.000001f) {
+                ++observer_duplicate_render_frames;
+            }
+            observer_previous_render_position =
+                live_monster_render_state->position;
+            observer_has_previous_render_position = true;
             if (observer_monster_observed_frames == 0u) {
                 observer_monster_start_position = state.position;
             } else if (observer_monster_observed_frames == 300u) {
@@ -3036,6 +3088,7 @@ int main() {
     require(observer_monster_max_x - observer_monster_min_x > 8.0f);
     require(observer_monster_moved_positive);
     require(observer_monster_moved_negative);
+    require(observer_duplicate_render_frames < 5u);
     require(observer_player_hp == 1000u);
     require(observer_server.agent_runtime_manager().agent_count() == 1u);
     require(
@@ -3109,6 +3162,50 @@ int main() {
         require(std::isfinite(transform.local_scale.y));
         require(std::isfinite(transform.local_scale.z));
     }
+    require(observer_monster_skeleton_state->pose_time_us > UINT64_C(100000));
+    const std::uint64_t historical_pose_request_us =
+        observer_monster_skeleton_state->pose_time_us - UINT64_C(100000);
+    std::array<KernelSkeletonRenderState, 4> historical_skeleton_states{};
+    std::array<KernelBoneLocalTransform, 164> historical_bone_transforms{};
+    KernelSkeletonRenderStateResult historical_skeleton_result{};
+    historical_skeleton_result.struct_size =
+        sizeof(historical_skeleton_result);
+    require(Kernel_GetSkeletonRenderStatesAtTime(
+                observer_kernel,
+                historical_pose_request_us,
+                historical_skeleton_states.data(),
+                static_cast<std::uint32_t>(
+                    historical_skeleton_states.size()),
+                historical_bone_transforms.data(),
+                static_cast<std::uint32_t>(
+                    historical_bone_transforms.size()),
+                &historical_skeleton_result) == 1u);
+    require(
+        historical_skeleton_result.requested_render_time_us ==
+        historical_pose_request_us);
+    const auto historical_monster_skeleton_state = std::find_if(
+        historical_skeleton_states.begin(),
+        historical_skeleton_states.begin() +
+            historical_skeleton_result.written_state_count,
+        [observer_monster_net_id](const KernelSkeletonRenderState& state) {
+            return state.entity_net_id == observer_monster_net_id;
+        });
+    require(
+        historical_monster_skeleton_state !=
+        historical_skeleton_states.begin() +
+            historical_skeleton_result.written_state_count);
+    require(
+        historical_skeleton_result.evaluated_render_time_us ==
+        historical_monster_skeleton_state->pose_time_us);
+    require(
+        historical_monster_skeleton_state->pose_time_us <
+        observer_monster_skeleton_state->pose_time_us);
+    require(
+        historical_monster_skeleton_state->pose_tick <
+        observer_monster_skeleton_state->pose_tick);
+    require(
+        (historical_monster_skeleton_state->pose_flags &
+         KERNEL_SKELETON_POSE_FLAG_PROCEDURAL) != 0u);
     const auto patrol_velocity_from_synthetic_position =
         [&](float position_x) {
             KernelVec3 position{
