@@ -319,15 +319,15 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
             : monster_actor_yaml});
     files.push_back({
         "skeleton_assets/generated/"
-        "simplified_monster_quadruped_v5.skeleton_manifest.json",
+        "simplified_monster_sim_v4.skeleton_manifest.json",
         read_text_file(
             "game_server/skeleton_assets/generated/"
-            "simplified_monster_quadruped_v5.skeleton_manifest.json")});
+            "simplified_monster_sim_v4.skeleton_manifest.json")});
     files.push_back({
-        "skeleton_assets/generated/simplified_monster_quadruped_v5.ozz",
+        "skeleton_assets/generated/simplified_monster_sim_v4.ozz",
         read_binary_string(
             "game_server/skeleton_assets/generated/"
-            "simplified_monster_quadruped_v5.ozz")});
+            "simplified_monster_sim_v4.ozz")});
     files.push_back({
         "skeleton_assets/generated/"
         "rock_robot_biped_24u_v3.skeleton_manifest.json",
@@ -630,7 +630,7 @@ int main() {
         require(error.template_id == 20u);
         require(error.field == "skeleton");
         require(error.path.find("monster_sim_actor.yaml") != std::string::npos);
-        require(std::string(error.what()).find("simplified_monster_quadruped_v5") !=
+        require(std::string(error.what()).find("simplified_monster_sim_v4") !=
                 std::string::npos);
         require(std::string(error.what()).find("JNT_LegFrontLeft_Hip") !=
                 std::string::npos);
@@ -1102,7 +1102,7 @@ int main() {
             return asset.skeleton_asset_id == 2u;
         });
     require(quadruped_asset_config != config.skeleton_assets.end());
-    require(quadruped_asset_config->bones.size() == 39u);
+    require(quadruped_asset_config->bones.size() == 41u);
     require(biped_asset_config != config.skeleton_assets.end());
     require(biped_asset_config->bones.size() == 18u);
     const auto monster_template = std::find_if(
@@ -1145,7 +1145,7 @@ int main() {
             return asset.skeleton_asset_id == 2u;
         });
     require(quadruped_asset != catalog.skeleton_assets.end());
-    require(quadruped_asset->bone_count == 39u);
+    require(quadruped_asset->bone_count == 41u);
     require(biped_asset != catalog.skeleton_assets.end());
     require(biped_asset->bone_count == 18u);
     const auto monster_definition = std::find_if(
@@ -1217,7 +1217,7 @@ int main() {
     require(std::abs(
         grounding_origins[1].x - grounding_origins[0].x - 0.2f) < 0.0001f);
     require(grounded_locomotion.pose_valid);
-    require(grounded_locomotion.local_pose.size() == 39u);
+    require(grounded_locomotion.local_pose.size() == 41u);
     std::vector<glm::vec3> initial_grounded_anchors;
     for (const network_example::LegLocomotionState& leg :
          grounded_locomotion.legs) {
@@ -2600,13 +2600,13 @@ int main() {
     require(Kernel_GetSkeletonBindPose(
                 nullptr,
                 1u,
-                UINT64_C(0x128e575af29f0793),
+                UINT64_C(0x1c171165d9bb479b),
                 nullptr,
                 0u) == 0u);
     require(Kernel_GetSkeletonBindPose(
                 skeleton_kernel,
                 999u,
-                UINT64_C(0x128e575af29f0793),
+                UINT64_C(0x1c171165d9bb479b),
                 nullptr,
                 0u) == 0u);
     require(Kernel_GetSkeletonBindPose(
@@ -2618,24 +2618,24 @@ int main() {
     require(Kernel_GetSkeletonBindPose(
                 skeleton_kernel,
                 1u,
-                UINT64_C(0x128e575af29f0793),
+                UINT64_C(0x1c171165d9bb479b),
                 nullptr,
-                0u) == 39u);
+                0u) == 41u);
     std::array<KernelBoneLocalTransform, 10> truncated_bind_pose{};
     require(Kernel_GetSkeletonBindPose(
                 skeleton_kernel,
                 1u,
-                UINT64_C(0x128e575af29f0793),
+                UINT64_C(0x1c171165d9bb479b),
                 truncated_bind_pose.data(),
-                truncated_bind_pose.size()) == 39u);
+                truncated_bind_pose.size()) == 41u);
     require(truncated_bind_pose[0].local_scale.x == 1.0f);
     std::array<KernelBoneLocalTransform, 39> complete_bind_pose{};
     require(Kernel_GetSkeletonBindPose(
                 skeleton_kernel,
                 1u,
-                UINT64_C(0x128e575af29f0793),
+                UINT64_C(0x1c171165d9bb479b),
                 complete_bind_pose.data(),
-                complete_bind_pose.size()) == 39u);
+                complete_bind_pose.size()) == 41u);
     require(complete_bind_pose.back().local_scale.z == 1.0f);
     require(Kernel_StartDedicatedServer(skeleton_kernel, 7900));
     KernelServerEntityCreateInfo skeleton_create{};
@@ -2667,9 +2667,9 @@ int main() {
     require(skeleton_result.status ==
            KERNEL_SKELETON_RENDER_STATUS_INSUFFICIENT_CAPACITY);
     require(skeleton_result.required_state_count == 1u);
-    require(skeleton_result.required_bone_transform_count == 39u);
+    require(skeleton_result.required_bone_transform_count == 41u);
     std::array<KernelSkeletonRenderState, 1> skeleton_states{};
-    std::array<KernelBoneLocalTransform, 39> bone_transforms{};
+    std::array<KernelBoneLocalTransform, 41> bone_transforms{};
     skeleton_result.struct_size = sizeof(skeleton_result);
     require(Kernel_GetSkeletonRenderStates(
                skeleton_kernel,
@@ -2691,7 +2691,7 @@ int main() {
     require(skeleton_result.status == KERNEL_SKELETON_RENDER_STATUS_SUCCESS);
     require(skeleton_states[0].entity_net_id == skeleton_entity_id);
     require(skeleton_states[0].skeleton_asset_id == 1u);
-    require(skeleton_states[0].bone_count == 39u);
+    require(skeleton_states[0].bone_count == 41u);
     require((skeleton_states[0].pose_flags &
             KERNEL_SKELETON_POSE_FLAG_PROCEDURAL) != 0u);
     require(bone_transforms[0].local_scale.x == 1.0f);
@@ -2881,8 +2881,8 @@ int main() {
     require(observer_monster_skeleton_state->skeleton_asset_id == 1u);
     require(
         observer_monster_skeleton_state->skeleton_content_hash ==
-        UINT64_C(0x128e575af29f0793));
-    require(observer_monster_skeleton_state->bone_count == 39u);
+        UINT64_C(0x1c171165d9bb479b));
+    require(observer_monster_skeleton_state->bone_count == 41u);
     require(
         (observer_monster_skeleton_state->pose_flags &
          KERNEL_SKELETON_POSE_FLAG_PROCEDURAL) != 0u);

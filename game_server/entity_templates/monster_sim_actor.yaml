@@ -43,8 +43,8 @@ animations:
   idle: 0
   chasing: 1
 skeleton:
-  runtime_asset: skeleton_assets/generated/simplified_monster_quadruped_v5.ozz
-  source_manifest: skeleton_assets/generated/simplified_monster_quadruped_v5.skeleton_manifest.json
+  runtime_asset: skeleton_assets/generated/simplified_monster_sim_v4.ozz
+  source_manifest: skeleton_assets/generated/simplified_monster_sim_v4.skeleton_manifest.json
   root_bone: SIM_Root
   body_bone: JNT_BodyRoot
 locomotion:
