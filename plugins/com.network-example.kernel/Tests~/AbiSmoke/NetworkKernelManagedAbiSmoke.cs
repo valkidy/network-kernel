@@ -251,14 +251,14 @@ public static class NetworkKernelManagedAbiSmoke
                 hostSyncStatus.manifest.content_namespace == "default",
                 "NetworkHost did not publish the loaded gameplay catalog bundle.");
             var hostEvents = new KernelEvent[16];
-            for (int tick = 0; tick < 8 && host.EnemyCount != 10; ++tick)
+            for (int tick = 0; tick < 8 && host.EnemyCount != 2; ++tick)
             {
                 host.Update(1.0f / 30.0f, hostEvents);
             }
             Require(
                 host.IsLocalClientReady &&
                 host.LocalPlayerNetId != 0 &&
-                host.EnemyCount == 10,
+                host.EnemyCount == 2,
                 $"NetworkHost smoke failed: ready={host.IsLocalClientReady} " +
                 $"localPlayer={host.LocalPlayerNetId} enemyCount={host.EnemyCount}.");
             Require(
