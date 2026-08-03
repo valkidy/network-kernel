@@ -1525,7 +1525,7 @@ int main() {
     require(network_example::advance_locomotion_state(
         monster_definition->skeleton,
         KernelVec2{1.0f, 0.0f},
-        90.0f,
+        5.0f,
         1.0f,
         &rotating_locomotion));
     require(network_example::solve_legged_locomotion_pose(
@@ -1545,6 +1545,36 @@ int main() {
         [](const network_example::LegLocomotionState& leg) {
             return leg.entered_swing;
         }));
+    require(network_example::advance_locomotion_state(
+        monster_definition->skeleton,
+        KernelVec2{1.0f, 0.0f},
+        90.0f,
+        1.0f,
+        &rotating_locomotion));
+    require(network_example::solve_legged_locomotion_pose(
+        locomotion_asset.skeleton,
+        locomotion_asset.bind_pose,
+        monster_definition->skeleton,
+        glm::vec3{0.0f},
+        true,
+        false,
+        monster_definition->movement.max_slope_degrees,
+        1.0f / 30.0f,
+        flat_grounding,
+        &rotating_locomotion));
+    std::uint32_t rotating_group_zero_swing_count = 0u;
+    for (const network_example::LegLocomotionState& leg :
+         rotating_locomotion.legs) {
+        if (leg.gait_group == 0u) {
+            require(leg.gait_state == network_example::LegGaitState::kSwing);
+            require(leg.entered_swing);
+            ++rotating_group_zero_swing_count;
+        } else {
+            require(leg.gait_state == network_example::LegGaitState::kSupport);
+            require(!leg.entered_swing);
+        }
+    }
+    require(rotating_group_zero_swing_count == 2u);
 
     network_example::LocomotionState missed_locomotion;
     require(network_example::initialize_locomotion_state(
