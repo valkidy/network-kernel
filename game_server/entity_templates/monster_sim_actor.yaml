@@ -8,7 +8,7 @@ health:
   hp: 500
   max_hp: 500
 movement:
-  controller: grounded
+  controller: character
   move_speed_meters_per_second: 2.5
   collider_template: monster_sim_movement_capsule
   gravity: {x: 0.0, y: -9.81, z: 0.0}
@@ -35,7 +35,7 @@ ai:
     patrol_rotation_max_degrees: 30.0
     passive_patrol: true
     patrol_extent_x_meters: 30.0
-    patrol_input_magnitude: 0.6
+    patrol_input_magnitude: 1.0
     weapon_id: 2
     animation_idle: idle
     animation_attack: chasing
