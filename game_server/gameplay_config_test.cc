@@ -1284,10 +1284,13 @@ int main() {
     const network_example::LocomotionGroundingQuery counted_grounding =
         [&airborne_grounding_queries](
             const glm::vec3& origin,
-            float,
+            float max_distance,
             network_example::LocomotionGroundingHit* hit) {
             ++airborne_grounding_queries;
-            hit->position = origin - glm::vec3{0.0f, 2.0f, 0.0f};
+            if (origin.y < 0.0f || origin.y > max_distance) {
+                return false;
+            }
+            hit->position = glm::vec3{origin.x, 0.0f, origin.z};
             hit->normal = glm::vec3{0.0f, 1.0f, 0.0f};
             return true;
         };
@@ -1302,7 +1305,7 @@ int main() {
         1.0f / 30.0f,
         counted_grounding,
         &landing_locomotion));
-    require(airborne_grounding_queries == 0u);
+    require(airborne_grounding_queries > 0u);
     for (const network_example::LegLocomotionState& leg :
          landing_locomotion.legs) {
         require(leg.gait_state == network_example::LegGaitState::kSupport);
@@ -1338,6 +1341,29 @@ int main() {
         require(glm::length(leg.root_position_at_plant - landing_root) <
                 0.0001f);
     }
+    require(network_example::advance_locomotion_state(
+        monster_definition->skeleton,
+        KernelVec2{1.0f, 0.0f},
+        90.0f,
+        1.0f / 30.0f,
+        &landing_locomotion));
+    require(network_example::solve_legged_locomotion_pose(
+        locomotion_asset.skeleton,
+        locomotion_asset.bind_pose,
+        monster_definition->skeleton,
+        landing_root + glm::vec3{6.0f, 0.0f, 0.0f},
+        false,
+        false,
+        monster_definition->movement.max_slope_degrees,
+        1.0f / 30.0f,
+        counted_grounding,
+        &landing_locomotion));
+    require(std::any_of(
+        landing_locomotion.legs.begin(),
+        landing_locomotion.legs.end(),
+        [](const network_example::LegLocomotionState& leg) {
+            return leg.entered_swing;
+        }));
 
     network_example::LocomotionState idle_locomotion;
     require(network_example::initialize_locomotion_state(
@@ -1541,12 +1567,12 @@ int main() {
         [](const glm::vec3&, float,
            network_example::LocomotionGroundingHit*) { return false; },
         &missed_locomotion));
-    std::vector<glm::vec3> missed_anchors;
     for (const network_example::LegLocomotionState& leg :
          missed_locomotion.legs) {
         require(!leg.ground_hit_valid);
         require(!leg.planted);
-        missed_anchors.push_back(leg.planted_foothold_world);
+        require(!leg.foot_target_valid);
+        require(!leg.ik_reach_clamped);
     }
     require(network_example::advance_locomotion_state(
         monster_definition->skeleton,
@@ -1566,20 +1592,12 @@ int main() {
         [](const glm::vec3&, float,
            network_example::LocomotionGroundingHit*) { return false; },
         &missed_locomotion));
-    bool missed_anchor_reach_clamped = false;
-    for (std::size_t index = 0u;
-         index < missed_locomotion.legs.size();
-         ++index) {
-        const network_example::LegLocomotionState& leg =
-            missed_locomotion.legs[index];
+    for (const network_example::LegLocomotionState& leg :
+         missed_locomotion.legs) {
         require(leg.gait_state == network_example::LegGaitState::kSupport);
-        require(glm::length(
-            leg.planted_foothold_world - missed_anchors[index]) < 0.0001f);
-        require(glm::length(
-            leg.foot_target_world - missed_anchors[index]) < 0.0001f);
-        missed_anchor_reach_clamped |= leg.ik_reach_clamped;
+        require(!leg.foot_target_valid);
+        require(!leg.ik_reach_clamped);
     }
-    require(missed_anchor_reach_clamped);
     require(network_example::advance_locomotion_state(
         monster_definition->skeleton,
         KernelVec2{0.0f, 1.0f},
@@ -1591,6 +1609,33 @@ int main() {
         locomotion_asset.bind_pose,
         monster_definition->skeleton,
         glm::vec3{20.0f, 0.0f, 0.0f},
+        true,
+        false,
+        monster_definition->movement.max_slope_degrees,
+        1.0f / 30.0f,
+        flat_grounding,
+        &missed_locomotion));
+    for (const network_example::LegLocomotionState& leg :
+         missed_locomotion.legs) {
+        require(leg.gait_state == network_example::LegGaitState::kSupport);
+        require(leg.foot_target_valid);
+        require(leg.planted);
+        require(!leg.entered_swing);
+        require(glm::length(
+            leg.root_position_at_plant - glm::vec3{20.0f, 0.0f, 0.0f}) <
+            0.0001f);
+    }
+    require(network_example::advance_locomotion_state(
+        monster_definition->skeleton,
+        KernelVec2{0.0f, 1.0f},
+        monster_definition->movement.max_yaw_degrees_per_second,
+        1.0f / 30.0f,
+        &missed_locomotion));
+    require(network_example::solve_legged_locomotion_pose(
+        locomotion_asset.skeleton,
+        locomotion_asset.bind_pose,
+        monster_definition->skeleton,
+        glm::vec3{26.0f, 0.0f, 0.0f},
         true,
         false,
         monster_definition->movement.max_slope_degrees,
@@ -1634,8 +1679,7 @@ int main() {
         require(!leg.ground_hit_valid);
         require(!leg.planted);
         require(!leg.ik_reach_clamped);
-        require(glm::length(
-            leg.solved_foot_world - leg.foot_target_world) < 0.005f);
+        require(!leg.foot_target_valid);
     }
     for (const KernelBoneLocalTransform& transform :
          clamped_locomotion.local_pose) {
