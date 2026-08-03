@@ -1115,7 +1115,9 @@ int main() {
     require(monster_template->skeleton.enabled);
     require(monster_template->sentry.passive_patrol);
     require(monster_template->sentry.patrol_extent_x_meters == 30.0f);
-    require(monster_template->sentry.patrol_input_magnitude == 0.6f);
+    require(monster_template->sentry.patrol_input_magnitude == 1.0f);
+    require(monster_template->movement_controller_type ==
+            KernelMovementControllerType_Character);
     require(monster_template->movement_collider_template_id == 14u);
     require(monster_template->skeleton.legs.size() == 4u);
     require(monster_template->skeleton.processing_order.size() == 4u);
@@ -2163,6 +2165,9 @@ int main() {
     require(monster_observer_actor != nullptr);
     require(monster_observer_actor->name == "monster_sim_actor");
     require(monster_observer_actor->sentry.passive_patrol);
+    require(monster_observer_actor->sentry.patrol_input_magnitude == 1.0f);
+    require(monster_observer_actor->movement_controller_type ==
+            KernelMovementControllerType_Character);
     require(
         monster_observer_config.weapons.catalog_hash !=
         generated_bundle_config.weapons.catalog_hash);
@@ -2749,6 +2754,9 @@ int main() {
     bool observer_monster_moved_negative = false;
     KernelVec3 observer_monster_last_position{};
     KernelVec3 observer_monster_last_velocity{};
+    KernelVec3 observer_monster_start_position{};
+    KernelVec3 observer_monster_position_after_300_ticks{};
+    std::uint32_t observer_monster_observed_frames = 0u;
     std::uint16_t observer_player_hp = 0u;
     for (std::uint32_t frame = 0u; frame < 720u; ++frame) {
         Kernel_Update(observer_kernel, 1.0f / 30.0f);
@@ -2799,6 +2807,12 @@ int main() {
                 observer_monster_moved_negative || state.velocity.x < -0.1f;
             observer_monster_last_position = state.position;
             observer_monster_last_velocity = state.velocity;
+            if (observer_monster_observed_frames == 0u) {
+                observer_monster_start_position = state.position;
+            } else if (observer_monster_observed_frames == 300u) {
+                observer_monster_position_after_300_ticks = state.position;
+            }
+            ++observer_monster_observed_frames;
             require(state.position.x >= -30.5f);
             require(state.position.x <= 30.5f);
         }
@@ -2806,6 +2820,29 @@ int main() {
     }
 
     require(observer_monster_net_id != 0u);
+    require(observer_monster_observed_frames > 300u);
+    const float observer_monster_300_tick_distance =
+        observer_monster_position_after_300_ticks.x -
+        observer_monster_start_position.x;
+    if (observer_monster_300_tick_distance <= 23.75f ||
+        observer_monster_300_tick_distance >= 25.5f) {
+        std::fprintf(
+            stderr,
+            "observer 300-tick diagnostic start=(%f,%f,%f) "
+            "end=(%f,%f,%f) distance_x=%f\n",
+            observer_monster_start_position.x,
+            observer_monster_start_position.y,
+            observer_monster_start_position.z,
+            observer_monster_position_after_300_ticks.x,
+            observer_monster_position_after_300_ticks.y,
+            observer_monster_position_after_300_ticks.z,
+            observer_monster_300_tick_distance);
+    }
+    require(observer_monster_300_tick_distance > 23.75f);
+    require(observer_monster_300_tick_distance < 25.5f);
+    require(std::abs(
+        observer_monster_position_after_300_ticks.z -
+        observer_monster_start_position.z) < 0.25f);
     if (observer_monster_max_x - observer_monster_min_x <= 8.0f ||
         !observer_monster_moved_positive ||
         !observer_monster_moved_negative) {

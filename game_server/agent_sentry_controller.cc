@@ -199,11 +199,6 @@ void AgentSentryController::tick(
                 entity_state.velocity.y,
                 0.0f,
             };
-            Kernel_ServerEnqueueEntityVelocity(
-                kernel,
-                KernelCommandSource_AI,
-                agent.net_id,
-                &agent.velocity);
             agent.sentry.target = 0;
             agent.target_player_net_id = 0;
             agent.sentry.state = AgentSentryState::kIdle;

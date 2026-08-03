@@ -254,19 +254,25 @@ void simulate_actor_movement(
 
         glm::vec3 desired_horizontal{
             current_velocity.linear.x, 0.0f, current_velocity.linear.z};
-        if (world.registry().all_of<PlayerTag>(entity)) {
-            const auto by_net_id = latest_input_by_net_id.find(identity.net_id);
+        const auto by_net_id = latest_input_by_net_id.find(identity.net_id);
+        const QueuedInput* movement_input =
+            by_net_id == latest_input_by_net_id.end()
+                ? nullptr
+                : by_net_id->second;
+        if (movement_input == nullptr &&
+            world.registry().all_of<PlayerTag>(entity)) {
             const auto by_owner = latest_input_by_owner.find(identity.owner_peer);
-            const QueuedInput* input = by_net_id != latest_input_by_net_id.end()
-                ? by_net_id->second
-                : by_owner != latest_input_by_owner.end()
-                    ? by_owner->second
-                    : nullptr;
-            desired_horizontal = input == nullptr
-                ? glm::vec3{0.0f}
-                : movement_solver::input_move_to_world(input->input) *
-                    next_movement.speed_meters_per_second;
+            movement_input = by_owner != latest_input_by_owner.end()
+                ? by_owner->second
+                : nullptr;
+        }
+        if (movement_input != nullptr) {
+            desired_horizontal =
+                movement_solver::input_move_to_world(movement_input->input) *
+                next_movement.speed_meters_per_second;
             desired_horizontal.y = 0.0f;
+        } else if (world.registry().all_of<PlayerTag>(entity)) {
+            desired_horizontal = glm::vec3{0.0f};
         }
 
         BufferedMovementResult result{};
