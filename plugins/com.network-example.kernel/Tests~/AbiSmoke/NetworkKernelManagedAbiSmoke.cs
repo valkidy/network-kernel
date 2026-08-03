@@ -32,6 +32,7 @@ public static class NetworkKernelManagedAbiSmoke
         KernelAbiInfo info = KernelAbi.GetInfo();
         KernelBuildInfo buildInfo = KernelAbi.GetBuildInfo();
         GameServerAbiInfo gameServerInfo = GameServerAbi.GetInfo();
+        RequireSkeletonBindingContract();
         Require(KernelConstants.AbiVersion == 66, "Managed kernel ABI version was not v66.");
         Require(
             RenderEntityState.StructSize == 144,
@@ -280,6 +281,81 @@ public static class NetworkKernelManagedAbiSmoke
             info.capability_flags,
             gameServerInfo.abi_version,
             gameServerInfo.capability_flags);
+    }
+
+    private static void RequireSkeletonBindingContract()
+    {
+        string[] expectedBoneNames =
+        {
+            "SIM_Root",
+            "JNT_BodyRoot",
+            "LOC_FrontArc",
+            "LOC_Com",
+            "JNT_LegRearRight_Hip",
+            "GEO_LegRearRight_Upper_Node",
+            "JNT_LegRearRight_Knee",
+            "GEO_LegRearRight_Blade_Node",
+            "GEO_LegRearRight_Lower_Node",
+            "JNT_LegRearRight_Foot",
+            "JNT_LegFrontRight_Hip",
+            "GEO_LegFrontRight_Upper_Node",
+            "JNT_LegFrontRight_Knee",
+            "GEO_LegFrontRight_Blade_Node",
+            "GEO_LegFrontRight_Lower_Node",
+            "JNT_LegFrontRight_Foot",
+            "JNT_LegRearLeft_Hip",
+            "GEO_LegRearLeft_Upper_Node",
+            "JNT_LegRearLeft_Knee",
+            "GEO_LegRearLeft_Blade_Node",
+            "GEO_LegRearLeft_Lower_Node",
+            "JNT_LegRearLeft_Foot",
+            "JNT_LegFrontLeft_Hip",
+            "GEO_LegFrontLeft_Upper_Node",
+            "JNT_LegFrontLeft_Knee",
+            "GEO_LegFrontLeft_Blade_Node",
+            "GEO_LegFrontLeft_Lower_Node",
+            "JNT_LegFrontLeft_Foot",
+            "GEO_RootMovementBox_Node",
+            "JNT_TailBase",
+            "GEO_Tail_Node",
+            "JNT_TailTip",
+            "JNT_LowerThorax",
+            "GEO_LowerThorax_Node",
+            "JNT_Head",
+            "LOC_Mouth",
+            "GEO_Head_Node",
+            "JNT_DorsalSpine",
+            "GEO_DorsalSpine_Node",
+            "GEO_BodyCore_Node",
+            "SKIN_BindCarrier",
+        };
+        int[] expectedParentIndices =
+        {
+            -1, 0, 1, 1, 1, 4, 4, 6, 6, 6,
+            1, 10, 10, 12, 12, 12, 1, 16, 16, 18,
+            18, 18, 1, 22, 22, 24, 24, 24, 1, 1,
+            29, 29, 1, 32, 1, 34, 34, 1, 37, 1,
+            0,
+        };
+
+        Require(
+            KernelSkeletonBinding.DefaultSkeletonAssetId == 1 &&
+            KernelSkeletonBinding.DefaultSkeletonContentHash ==
+                0x1c171165d9bb479bUL &&
+            KernelSkeletonBinding.DefaultBoneCount == expectedBoneNames.Length &&
+            expectedBoneNames.Length == expectedParentIndices.Length,
+            "Managed simplified_monster_sim_v4 skeleton metadata mismatch.");
+        for (int index = 0; index < expectedBoneNames.Length; ++index)
+        {
+            Require(
+                KernelSkeletonBinding.GetDefaultBoneName(index) ==
+                    expectedBoneNames[index],
+                $"Managed skeleton bone name mismatch at index {index}.");
+            Require(
+                KernelSkeletonBinding.GetDefaultParentBoneIndex(index) ==
+                    expectedParentIndices[index],
+                $"Managed skeleton parent mismatch at index {index}.");
+        }
     }
 
     private static void RequireControlPlaneRpc(Kernel kernel, uint enemyNetId)

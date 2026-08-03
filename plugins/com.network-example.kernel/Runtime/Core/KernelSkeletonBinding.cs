@@ -7,64 +7,68 @@ namespace NetworkExample.Kernel
     public sealed class KernelSkeletonBinding : MonoBehaviour
     {
         public const uint DefaultSkeletonAssetId = 1;
+        public const int DefaultBoneCount = 41;
         public const ulong DefaultSkeletonContentHash =
-            0x128e575af29f0793UL;
+            0x1c171165d9bb479bUL;
 
         private static readonly string[] DefaultBoneNames =
         {
-            "GEO_BodyCore_Node",
-            "GEO_DorsalSpine_Node",
-            "GEO_Head_Node",
-            "GEO_LegFrontLeft_Blade_Node",
-            "GEO_LegFrontLeft_Lower_Node",
-            "GEO_LegFrontLeft_Upper_Node",
-            "GEO_LegFrontRight_Blade_Node",
-            "GEO_LegFrontRight_Lower_Node",
-            "GEO_LegFrontRight_Upper_Node",
-            "GEO_LegRearLeft_Blade_Node",
-            "GEO_LegRearLeft_Lower_Node",
-            "GEO_LegRearLeft_Upper_Node",
-            "GEO_LegRearRight_Blade_Node",
-            "GEO_LegRearRight_Lower_Node",
-            "GEO_LegRearRight_Upper_Node",
-            "GEO_LowerThorax_Node",
-            "GEO_RootMovementBox_Node",
-            "GEO_Tail_Node",
-            "world",
-            "SKIN_BindCarrier",
             "SIM_Root",
             "JNT_BodyRoot",
-            "JNT_DorsalSpine",
-            "JNT_Head",
-            "JNT_LegFrontLeft_Hip",
-            "JNT_LegFrontLeft_Knee",
-            "JNT_LegFrontLeft_Foot",
+            "LOC_FrontArc",
+            "LOC_Com",
+            "JNT_LegRearRight_Hip",
+            "GEO_LegRearRight_Upper_Node",
+            "JNT_LegRearRight_Knee",
+            "GEO_LegRearRight_Blade_Node",
+            "GEO_LegRearRight_Lower_Node",
+            "JNT_LegRearRight_Foot",
             "JNT_LegFrontRight_Hip",
+            "GEO_LegFrontRight_Upper_Node",
             "JNT_LegFrontRight_Knee",
+            "GEO_LegFrontRight_Blade_Node",
+            "GEO_LegFrontRight_Lower_Node",
             "JNT_LegFrontRight_Foot",
             "JNT_LegRearLeft_Hip",
+            "GEO_LegRearLeft_Upper_Node",
             "JNT_LegRearLeft_Knee",
+            "GEO_LegRearLeft_Blade_Node",
+            "GEO_LegRearLeft_Lower_Node",
             "JNT_LegRearLeft_Foot",
-            "JNT_LegRearRight_Hip",
-            "JNT_LegRearRight_Knee",
-            "JNT_LegRearRight_Foot",
-            "JNT_LowerThorax",
+            "JNT_LegFrontLeft_Hip",
+            "GEO_LegFrontLeft_Upper_Node",
+            "JNT_LegFrontLeft_Knee",
+            "GEO_LegFrontLeft_Blade_Node",
+            "GEO_LegFrontLeft_Lower_Node",
+            "JNT_LegFrontLeft_Foot",
+            "GEO_RootMovementBox_Node",
             "JNT_TailBase",
+            "GEO_Tail_Node",
             "JNT_TailTip",
+            "JNT_LowerThorax",
+            "GEO_LowerThorax_Node",
+            "JNT_Head",
+            "LOC_Mouth",
+            "GEO_Head_Node",
+            "JNT_DorsalSpine",
+            "GEO_DorsalSpine_Node",
+            "GEO_BodyCore_Node",
+            "SKIN_BindCarrier",
         };
 
         private static readonly int[] DefaultParentIndices =
         {
-            -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-            -1, -1, -1, -1, -1, -1, -1, -1, -1, 18,
-            18, 20, 21, 21, 21, 24, 25, 21, 27, 28,
-            21, 30, 31, 21, 33, 34, 21, 21, 37,
+            -1, 0, 1, 1, 1, 4, 4, 6, 6, 6,
+            1, 10, 10, 12, 12, 12, 1, 16, 16, 18,
+            18, 18, 1, 22, 22, 24, 24, 24, 1, 1,
+            29, 29, 1, 32, 1, 34, 34, 1, 37, 1,
+            0,
         };
 
-        [Tooltip("Native skeleton asset ID. Defaults to simplified_monster_quadruped_v5.")]
+        [Tooltip("Native skeleton asset ID. Defaults to simplified_monster_sim_v4.")]
         public uint SkeletonAssetId = DefaultSkeletonAssetId;
 
-        [Tooltip("Native skeleton content hash. Defaults to simplified_monster_quadruped_v5.")]
+        [Tooltip("Native skeleton content hash. Defaults to simplified_monster_sim_v4.")]
         public ulong SkeletonContentHash = DefaultSkeletonContentHash;
 
         [Tooltip("Optional hierarchy root. When empty, this component scans its GameObject.")]
@@ -214,7 +218,7 @@ namespace NetworkExample.Kernel
                 if (Bones.Length != DefaultBoneNames.Length)
                 {
                     error =
-                        $"simplified_monster_quadruped_v5 requires " +
+                        $"simplified_monster_sim_v4 requires " +
                         $"{DefaultBoneNames.Length} bones, found {Bones.Length}.";
                     return false;
                 }
