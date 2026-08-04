@@ -52,7 +52,20 @@ struct LegLocomotionState {
     glm::vec3 foot_target_world{0.0f};
     bool foot_initialized = false;
 
-    // Swing interpolation endpoints (world space).
+    // Swing interpolation endpoints (world space). Both are frozen when the
+    // swing begins and held for the whole step, so a step is fully described by
+    // one event: (leg, start tick, start position, landing position). That is
+    // what lets a remote client reproduce the step from a small replicated
+    // message instead of re-deriving the landing spot every tick from a root
+    // position that lags the server's by the interpolation delay.
+    //
+    // The prototype re-aimed the landing spot every frame
+    // (ProceduralLeg.Tick: `stepTargetPos = grounded`). Freezing alone would
+    // land the foot behind the stance by however far the body travels during a
+    // swing -- a systematic backward bias, and one that grows with the gait's
+    // duty factor. It is cancelled by aiming the frozen target at where the
+    // stance will be at touchdown rather than where it is at lift-off, so the
+    // two agree whenever the body holds its velocity through the step.
     glm::vec3 swing_start_world{0.0f};
     glm::vec3 landing_target_world{0.0f};
 
@@ -80,6 +93,13 @@ struct LocomotionState {
     // this tick. Gates new step initiation so idle actors keep their feet planted.
     bool locomotion_active = false;
 
+    // Yaw travelled during the last advance. Kept because advance collapses
+    // last_advanced_yaw_radians onto root_yaw_radians before solve runs, and
+    // solve needs the rate to aim a step at the stance the body will hold when
+    // the foot lands (a turning body sweeps its stance by yaw_rate * reach,
+    // which is metres on a long-legged rig).
+    float last_yaw_delta_radians = 0.0f;
+
     std::vector<LegLocomotionState> legs;
     std::vector<std::uint32_t> last_processing_order;
     std::vector<KernelBoneLocalTransform> local_pose;
@@ -99,6 +119,14 @@ struct LocomotionState {
     // Applying it stays the caller's job: the character controller owns position.
     bool body_follow_valid = false;
     float body_follow_target_height = 0.0f;
+
+    // Root position handed to the previous solve. Its delta is the body's
+    // translation over one tick, which is how far the stance drifts per tick;
+    // solve extrapolates it over a swing to place the landing target. Derived
+    // here instead of taken as a parameter so the solve stays a function of the
+    // root positions it is already given.
+    glm::vec3 last_root_position{0.0f};
+    bool has_last_root_position = false;
 
     // Solver scratch, kept alive between ticks purely to stop the per-entity
     // pose solve from heap-allocating on every tick. Contents carry no meaning

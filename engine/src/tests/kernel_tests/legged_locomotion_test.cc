@@ -545,6 +545,130 @@ int main() {
         }
     }
 
+    // A step is a frozen, one-shot commitment: both swing endpoints are set at
+    // lift-off and never re-aimed, so the whole step is reproducible from the
+    // single event that started it (which is what lets a remote client replay a
+    // step it did not simulate). What stops freezing from landing the foot
+    // behind the body is aiming at the stance the body will hold at touchdown
+    // instead of the one under it now -- on flat ground at a constant velocity
+    // that prediction is exact, so the foot lands right where a per-tick
+    // retarget would have put it.
+    //
+    // The swing is stretched here so the drift a naive freeze would suffer is
+    // larger than the step threshold itself, i.e. bigger than the whole signal
+    // the gait runs on. Both cases are checked: translating, and turning in
+    // place (a turning body sweeps its stance without moving its root at all).
+    {
+        KernelSkeletonBindingDefinition long_swing = rig;
+        long_swing.step_duration_ticks = 12u;
+
+        const auto stance_under = [&](
+            const network_example::LocomotionState& state,
+            const glm::vec3& root,
+            std::uint32_t index) {
+            const glm::vec3 foot_model{
+                kLegLayout[index].hip_x, 0.0f, kLegLayout[index].hip_z};
+            const glm::vec3 world =
+                root + state.applied_root_rotation * foot_model;
+            return glm::vec3{world.x, 0.0f, world.z};  // ground_plane is y = 0
+        };
+
+        // Translating forward at a constant 1.5 m/s.
+        {
+            network_example::LocomotionState gait;
+            require(network_example::initialize_locomotion_state(
+                long_swing, 0.0f, &gait));
+            const float advance_per_tick = 1.5f * tick;
+            const float uncompensated_lag = advance_per_tick *
+                static_cast<float>(long_swing.step_duration_ticks - 1u);
+            require(uncompensated_lag > long_swing.step_threshold_meters);
+
+            glm::vec3 root{0.0f};
+            std::array<glm::vec3, 4> frozen{};
+            std::array<bool, 4> swinging{};
+            std::uint32_t landings = 0u;
+            for (std::uint32_t step = 0u; step < 240u; ++step) {
+                require(network_example::advance_locomotion_state(
+                    long_swing, forward_input, 90.0f, tick, &gait));
+                root.z += advance_per_tick;
+                require(network_example::solve_legged_locomotion_pose(
+                    *skeleton, bind_pose, long_swing, root, 50.0f, tick,
+                    ground_plane, &gait));
+                for (std::uint32_t index = 0u;
+                     index < long_swing.leg_count;
+                     ++index) {
+                    const network_example::LegLocomotionState& leg =
+                        gait.legs[index];
+                    if (leg.entered_swing) {
+                        frozen[index] = leg.landing_target_world;
+                        swinging[index] = true;
+                    } else if (swinging[index]) {
+                        require(leg.landing_target_world == frozen[index]);
+                    }
+                    if (leg.entered_support) {
+                        swinging[index] = false;
+                        ++landings;
+                        require(glm::length(
+                                    leg.foot_target_world -
+                                    stance_under(gait, root, index)) <
+                                uncompensated_lag * 0.02f);
+                    }
+                }
+            }
+            require(landings > 4u);
+        }
+
+        // Turning in place: the root never moves, but the stance sweeps around
+        // it, so the landing spot has to be extrapolated through the rotation.
+        {
+            network_example::LocomotionState gait;
+            require(network_example::initialize_locomotion_state(
+                long_swing, 0.0f, &gait));
+            const float yaw_per_tick = 0.05f;
+            const glm::vec3 root{0.0f};
+            // Arc a foot sweeps over one swing, at the rig's stance radius.
+            const float stance_radius = std::sqrt(
+                kLegLayout[0].hip_x * kLegLayout[0].hip_x +
+                kLegLayout[0].hip_z * kLegLayout[0].hip_z);
+            const float uncompensated_lag = yaw_per_tick * stance_radius *
+                static_cast<float>(long_swing.step_duration_ticks - 1u);
+            require(uncompensated_lag > long_swing.step_threshold_meters);
+
+            std::array<glm::vec3, 4> frozen{};
+            std::array<bool, 4> swinging{};
+            std::uint32_t landings = 0u;
+            for (std::uint32_t step = 0u; step < 240u; ++step) {
+                gait.root_yaw_radians += yaw_per_tick;
+                require(network_example::advance_locomotion_state(
+                    long_swing, KernelVec2{}, 90.0f, tick, &gait));
+                require(network_example::solve_legged_locomotion_pose(
+                    *skeleton, bind_pose, long_swing, root, 50.0f, tick,
+                    ground_plane, &gait));
+                for (std::uint32_t index = 0u;
+                     index < long_swing.leg_count;
+                     ++index) {
+                    const network_example::LegLocomotionState& leg =
+                        gait.legs[index];
+                    if (leg.entered_swing) {
+                        frozen[index] = leg.landing_target_world;
+                        swinging[index] = true;
+                    } else if (swinging[index]) {
+                        require(leg.landing_target_world == frozen[index]);
+                    }
+                    if (leg.entered_support) {
+                        swinging[index] = false;
+                        ++landings;
+                        require(glm::length(
+                                    leg.foot_target_world -
+                                    stance_under(gait, root, index)) <
+                                uncompensated_lag * 0.02f);
+                    }
+                }
+            }
+            require(landings > 4u);
+        }
+    }
+
     // Turning in place: no translation input at all, the heading is written
     // straight into the state between ticks. The legs must still notice.
     {

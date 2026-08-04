@@ -179,8 +179,23 @@ bool finite_pose(std::span<const KernelBoneLocalTransform> pose) {
 // stepping forever; ignoring reach entirely lets a leg commit to a foothold it
 // can only stretch at, leaving the foot visibly detached with no way back. So
 // the first candidate within reach wins, and if none are, the first valid hit is
-// taken anyway -- the caller learns which case it got from *out_within_reach and
-// can step again to recover.
+// taken anyway -- the caller learns which case it got from sample->within_reach
+// and can step again to recover.
+//
+// The result is reported through a standalone sample rather than written onto
+// the leg because the solve queries twice per stepping leg: once for the home
+// stance under the body right now, and once for the stance the body will have
+// when the foot lands. Only the first belongs on the leg.
+struct FootholdSample {
+    glm::vec3 position{0.0f};
+    glm::vec3 normal{0.0f, 1.0f, 0.0f};
+    std::uint32_t candidate_index = UINT32_MAX;
+    std::uint32_t supporting_entity_net_id = 0u;
+    std::uint32_t supporting_collider_id = 0u;
+    bool valid = false;
+    bool within_reach = false;
+};
+
 bool query_foothold(
     const KernelSkeletonBindingDefinition& definition,
     const glm::vec3& nominal_world,
@@ -189,13 +204,8 @@ bool query_foothold(
     const glm::quat& root_rotation,
     float minimum_ground_normal_y,
     const LocomotionGroundingQuery& grounding_query,
-    LegLocomotionState* leg,
-    bool* out_within_reach) {
-    leg->ground_hit_valid = false;
-    leg->grounding_candidate_index = UINT32_MAX;
-    leg->supporting_entity_net_id = 0u;
-    leg->supporting_collider_id = 0u;
-    *out_within_reach = false;
+    FootholdSample* sample) {
+    *sample = FootholdSample{};
     if (!grounding_query) {
         return false;
     }
@@ -232,19 +242,19 @@ bool query_foothold(
         if (have_fallback && !within_reach) {
             continue;  // Already holding an equally unreachable earlier hit.
         }
-        leg->ground_hit_valid = true;
-        leg->grounding_candidate_index = candidate;
-        leg->ground_hit_position = hit.position;
-        leg->ground_hit_normal = hit.normal;
-        leg->supporting_entity_net_id = hit.supporting_entity_net_id;
-        leg->supporting_collider_id = hit.supporting_collider_id;
-        *out_within_reach = within_reach;
+        sample->valid = true;
+        sample->candidate_index = candidate;
+        sample->position = hit.position;
+        sample->normal = hit.normal;
+        sample->supporting_entity_net_id = hit.supporting_entity_net_id;
+        sample->supporting_collider_id = hit.supporting_collider_id;
+        sample->within_reach = within_reach;
         if (within_reach) {
             return true;
         }
         have_fallback = true;
     }
-    return leg->ground_hit_valid;
+    return sample->valid;
 }
 
 }  // namespace
@@ -398,10 +408,14 @@ bool advance_locomotion_state(
     // behind, not against the value at entry, so a turn-in-place written to
     // root_yaw_radians between ticks -- which carries no translation input and
     // therefore no move_active -- still wakes the legs.
-    const bool yaw_changed = std::abs(shortest_angle_delta(
+    const float yaw_delta = shortest_angle_delta(
         state->last_advanced_yaw_radians,
-        state->root_yaw_radians)) > 1e-6f;
+        state->root_yaw_radians);
+    const bool yaw_changed = std::abs(yaw_delta) > 1e-6f;
     state->locomotion_active = move_active || yaw_changed;
+    // Published for the solve, which needs the turn rate after this function
+    // has collapsed the two yaw fields together.
+    state->last_yaw_delta_radians = yaw_delta;
     state->last_advanced_yaw_radians = state->root_yaw_radians;
 
     state->last_processing_order.clear();
@@ -530,6 +544,37 @@ bool solve_legged_locomotion_pose(
     const float minimum_ground_normal_y =
         std::cos(max_slope_degrees * std::numbers::pi_v<float> / 180.0f);
 
+    // How far a stance drifts per tick: the body's own translation, taken flat.
+    // Height is dropped because a landing spot's height comes from its raycast,
+    // never from extrapolation -- otherwise a body in freefall would aim its
+    // feet underground.
+    const glm::vec3 root_delta = state->has_last_root_position
+        ? root_position - state->last_root_position
+        : glm::vec3{0.0f};
+    const glm::vec3 root_delta_flat{root_delta.x, 0.0f, root_delta.z};
+    state->last_root_position = root_position;
+    state->has_last_root_position = true;
+    // Steps are aimed ahead only while the body is actually going somewhere, so
+    // a stationary or purely idle actor keeps placing feet exactly under its
+    // stance and spends no raycasts doing it.
+    const bool body_in_motion =
+        glm::dot(root_delta_flat, root_delta_flat) > 1e-10f ||
+        std::abs(state->last_yaw_delta_radians) > 1e-6f;
+    // Ticks of body travel between a step being triggered and the foot landing.
+    // The swing phase already counts the trigger tick as its first frame, so a
+    // step begun on tick T touches down on T + step_duration_ticks - 1, not on
+    // T + step_duration_ticks. (Zero is rejected by validation, so this cannot
+    // wrap; a one-tick step lands the tick it starts and extrapolates nothing.)
+    const float swing_ticks =
+        static_cast<float>(definition.step_duration_ticks - 1u);
+    const glm::vec3 predicted_root_position =
+        pose_root_position + root_delta_flat * swing_ticks;
+    const glm::quat predicted_root_rotation =
+        glm::angleAxis(
+            state->last_yaw_delta_radians * swing_ticks,
+            glm::vec3{0.0f, 1.0f, 0.0f}) *
+        root_rotation;
+
     std::array<glm::vec3, KERNEL_MAX_SKELETON_LEGS> hip_models{};
     std::array<glm::vec3, KERNEL_MAX_SKELETON_LEGS> bind_foot_models{};
     std::array<float, KERNEL_MAX_SKELETON_LEGS> maximum_reaches{};
@@ -561,6 +606,7 @@ bool solve_legged_locomotion_pose(
             pose_root_position + root_rotation * foot_model;
         const glm::vec3 hip_world =
             pose_root_position + root_rotation * hip_model;
+        FootholdSample home_sample;
         home_grounded[leg_index] = query_foothold(
             definition,
             nominal_world,
@@ -569,8 +615,18 @@ bool solve_legged_locomotion_pose(
             root_rotation,
             minimum_ground_normal_y,
             grounding_query,
-            &leg,
-            &home_within_reach[leg_index]);
+            &home_sample);
+        home_within_reach[leg_index] = home_sample.within_reach;
+        leg.ground_hit_valid = home_sample.valid;
+        leg.grounding_candidate_index = home_sample.candidate_index;
+        leg.supporting_entity_net_id = home_sample.supporting_entity_net_id;
+        leg.supporting_collider_id = home_sample.supporting_collider_id;
+        // A miss leaves the previous tick's hit in place rather than zeroing it,
+        // so a leg that momentarily loses the terrain keeps a usable normal.
+        if (home_sample.valid) {
+            leg.ground_hit_position = home_sample.position;
+            leg.ground_hit_normal = home_sample.normal;
+        }
         home_world[leg_index] =
             home_grounded[leg_index] ? leg.ground_hit_position : nominal_world;
 
@@ -634,7 +690,32 @@ bool solve_legged_locomotion_pose(
             leg.entered_swing = true;
             leg.swing_tick = 0u;
             leg.swing_start_world = leg.foot_target_world;
+            // Aim at the stance the body will hold when the foot lands, so the
+            // frozen target matches where a per-tick retarget would have ended
+            // up. Anything the extrapolation cannot stand on -- a foothold out
+            // of the hip's reach at touchdown, or no terrain there at all --
+            // falls back to the stance under the body now, which is always
+            // reachable because it is what triggered the step.
             leg.landing_target_world = home_world[leg_index];
+            if (body_in_motion) {
+                const glm::vec3 predicted_nominal = predicted_root_position +
+                    predicted_root_rotation * bind_foot_models[leg_index];
+                const glm::vec3 predicted_hip = predicted_root_position +
+                    predicted_root_rotation * hip_models[leg_index];
+                FootholdSample landing;
+                if (query_foothold(
+                        definition,
+                        predicted_nominal,
+                        predicted_hip,
+                        maximum_reaches[leg_index],
+                        predicted_root_rotation,
+                        minimum_ground_normal_y,
+                        grounding_query,
+                        &landing) &&
+                    landing.within_reach) {
+                    leg.landing_target_world = landing.position;
+                }
+            }
             ++swinging_leg_count;
             if (!group_swinging[leg.gait_group]) {
                 group_swinging[leg.gait_group] = true;
@@ -666,10 +747,7 @@ bool solve_legged_locomotion_pose(
         const float maximum_reach = maximum_reaches[leg_index];
 
         if (leg.gait_state == LegGaitState::kSwing) {
-            // Re-target the landing spot in case the body kept moving mid-step.
-            if (home_grounded[leg_index]) {
-                leg.landing_target_world = home_world[leg_index];
-            }
+            // Both endpoints were frozen at lift-off; nothing re-aims mid-step.
             // Phase advances on the tick the swing begins, so the whole step
             // spans step_duration_ticks ticks with no stalled first frame.
             const float swing_phase = std::min(

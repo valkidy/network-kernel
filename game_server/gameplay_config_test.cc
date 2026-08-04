@@ -1408,10 +1408,16 @@ int main() {
         }
     }
     require(group_zero_swing_count == 2u);
-    std::vector<glm::vec3> previous_landing_targets;
+    // The landing spot is committed once, at lift-off, and held for the rest of
+    // the swing -- a step is meant to be replayable from the single event that
+    // started it. Here the body jumps 4 m on the trigger tick and then crawls at
+    // 0.1 m/tick, so the extrapolation that normally aims a step ahead of the
+    // body lands out of the leg's reach and is rejected: this pins the frozen
+    // fallback, which is the stance under the body at lift-off.
+    std::vector<glm::vec3> committed_landing_targets;
     for (const network_example::LegLocomotionState& leg :
          idle_locomotion.legs) {
-        previous_landing_targets.push_back(leg.landing_target_world);
+        committed_landing_targets.push_back(leg.landing_target_world);
     }
     for (std::uint32_t swing_tick = 1u; swing_tick < 6u; ++swing_tick) {
         require(network_example::advance_locomotion_state(
@@ -1441,9 +1447,8 @@ int main() {
                         network_example::LegGaitState::kSupport);
                 continue;
             }
-            require(leg.landing_target_world.x >
-                    previous_landing_targets[index].x);
-            previous_landing_targets[index] = leg.landing_target_world;
+            require(leg.landing_target_world ==
+                    committed_landing_targets[index]);
             if (swing_tick < 5u) {
                 require(leg.gait_state ==
                         network_example::LegGaitState::kSwing);
