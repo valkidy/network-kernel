@@ -73,6 +73,13 @@ locomotion:
       - {x: -0.2, z: 0.0}
       - {x: 0.0, z: 0.2}
       - {x: 0.0, z: -0.2}
+  # LocomotionTest parity: LeggedLocomotion.cs authors bodyFollowSpeed = 10 and
+  # slopeAlignment = 0.6, with the same smoothing law (k = 1 - exp(-speed * dt)).
+  # Enabling this hands body height and tilt to the locomotion pass; the
+  # character controller no longer has sole ownership of the root.
+  body:
+    follow_speed: 10.0
+    slope_alignment: 0.6
   legs:
     - id: front_left
       hip_bone: JNT_LegFrontLeft_Hip
