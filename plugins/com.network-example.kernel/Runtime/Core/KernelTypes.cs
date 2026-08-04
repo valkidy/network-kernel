@@ -2096,6 +2096,7 @@ namespace NetworkExample.Kernel
         public uint foot_bone_index;
         public uint gait_group;
         public KernelVec3 pole_local;
+        public KernelVec3 mid_axis_local;
         public float step_height_meters;
         public float max_reach_ratio;
 
@@ -2118,6 +2119,8 @@ namespace NetworkExample.Kernel
         public float step_threshold_meters;
         public uint step_duration_ticks;
         public uint max_swinging_legs;
+        public float body_follow_speed;
+        public float slope_alignment;
         public KernelFootholdQueryType foothold_query_type;
         public byte reserved_foothold0;
         public ushort reserved_foothold1;

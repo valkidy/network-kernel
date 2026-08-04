@@ -88,8 +88,8 @@ public static class NetworkKernelManagedAbiSmoke
             KernelSkeletonRenderState.StructSize == 40 &&
             KernelSkeletonRenderStateResult.StructSize == 48 &&
             KernelSkeletonAssetDefinition.StructSize == 32 &&
-            KernelSkeletonLegDefinition.StructSize == 40 &&
-            KernelSkeletonBindingDefinition.StructSize == 488,
+            KernelSkeletonLegDefinition.StructSize == 52 &&
+            KernelSkeletonBindingDefinition.StructSize == 592,
             "Kernel skeleton ABI layout size mismatch.");
         Require(
             (info.capability_flags &

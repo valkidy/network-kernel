@@ -1,5 +1,10 @@
 0.6.9 release notes:
 
+- aligns Unity skeleton locomotion bindings with kernel ABI 66
+
+
+0.6.9 release notes:
+
 - aligns Unity skeleton poses with native bind-relative transforms and kernel ABI v66
 - updates quadruped v5 bindings and movement-driven locomotion catalog assets
 

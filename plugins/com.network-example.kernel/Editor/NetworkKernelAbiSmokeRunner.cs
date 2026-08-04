@@ -77,7 +77,7 @@ namespace NetworkExample.Kernel.Editor
                 KernelBoneLocalTransform.StructSize == 40 &&
                 KernelSkeletonRenderState.StructSize == 40 &&
                 KernelSkeletonRenderStateResult.StructSize == 48 &&
-                KernelSkeletonBindingDefinition.StructSize == 488,
+                KernelSkeletonBindingDefinition.StructSize == 592,
                 "Kernel skeleton ABI layout size mismatch.");
             Require(
                 (info.capability_flags &
