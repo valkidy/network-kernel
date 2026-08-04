@@ -1019,14 +1019,21 @@ bool apply_locomotion_step_event(
     if (state == nullptr || !valid_definition(definition) ||
         state->legs.size() != definition.leg_count ||
         event.leg_index >= definition.leg_count ||
-        !finite_vec3(event.landing_target_world) ||
-        current_tick < event.start_tick) {
+        !finite_vec3(event.landing_target_world)) {
+        return false;
+    }
+    // Tick counters wrap, so "before" is a signed delta and never a plain
+    // comparison. A baseline in particular arrives as a step deliberately older
+    // than any swing, which under unsigned arithmetic looks like the far future.
+    const std::int32_t elapsed_ticks =
+        static_cast<std::int32_t>(current_tick - event.start_tick);
+    if (elapsed_ticks < 0) {
         return false;
     }
     LegLocomotionState& leg = state->legs[event.leg_index];
     leg.landing_target_world = event.landing_target_world;
 
-    const std::uint32_t elapsed = current_tick - event.start_tick;
+    const std::uint32_t elapsed = static_cast<std::uint32_t>(elapsed_ticks);
     if (elapsed >= definition.step_duration_ticks) {
         // The swing is already over by the time this arrived. Land it rather
         // than animating a step that finished in the past; the foot ends up

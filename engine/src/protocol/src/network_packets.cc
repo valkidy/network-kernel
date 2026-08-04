@@ -1376,6 +1376,74 @@ bool decode_inventory_snapshot_page_packet(
     return true;
 }
 
+std::vector<std::uint8_t> encode_locomotion_step_batch_packet(
+    const LocomotionStepBatchPacket& packet,
+    std::uint32_t sequence) {
+    if (packet.records.empty() || packet.records.size() > UINT16_MAX) return {};
+    protocol_internal::PacketWriter payload;
+    payload.write_u32(packet.server_tick);
+    payload.write_u16(static_cast<std::uint16_t>(packet.records.size()));
+    for (const LocomotionStepRecord& record : packet.records) {
+        if (record.net_id == 0u ||
+            record.leg_index >= KERNEL_MAX_SKELETON_LEGS ||
+            !std::isfinite(record.landing_target_world.x) ||
+            !std::isfinite(record.landing_target_world.y) ||
+            !std::isfinite(record.landing_target_world.z)) {
+            return {};
+        }
+        payload.write_u32(record.net_id);
+        payload.write_u8(record.leg_index);
+        payload.write_u8(record.start_tick_delta);
+        payload.write_float(record.landing_target_world.x);
+        payload.write_float(record.landing_target_world.y);
+        payload.write_float(record.landing_target_world.z);
+    }
+    return protocol_internal::wrap_packet(
+        MessageType::kLocomotionStepBatch, payload.bytes(), sequence);
+}
+
+bool decode_locomotion_step_batch_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    LocomotionStepBatchPacket* out_packet) {
+    const std::uint8_t* payload = nullptr;
+    std::size_t payload_size = 0;
+    if (out_packet == nullptr ||
+        !protocol_internal::unwrap_packet(
+            data, size, MessageType::kLocomotionStepBatch,
+            &payload, &payload_size) || payload_size < 6u) {
+        return false;
+    }
+    LocomotionStepBatchPacket packet;
+    std::uint16_t count = 0;
+    protocol_internal::PacketReader reader(payload, payload_size);
+    if (!reader.read_u32(&packet.server_tick) || !reader.read_u16(&count) ||
+        count == 0u) {
+        return false;
+    }
+    packet.records.reserve(count);
+    for (std::uint16_t index = 0; index < count; ++index) {
+        LocomotionStepRecord record;
+        if (!reader.read_u32(&record.net_id) ||
+            !reader.read_u8(&record.leg_index) ||
+            !reader.read_u8(&record.start_tick_delta) ||
+            !reader.read_float(&record.landing_target_world.x) ||
+            !reader.read_float(&record.landing_target_world.y) ||
+            !reader.read_float(&record.landing_target_world.z) ||
+            record.net_id == 0u ||
+            record.leg_index >= KERNEL_MAX_SKELETON_LEGS ||
+            !std::isfinite(record.landing_target_world.x) ||
+            !std::isfinite(record.landing_target_world.y) ||
+            !std::isfinite(record.landing_target_world.z)) {
+            return false;
+        }
+        packet.records.push_back(record);
+    }
+    if (!reader.done()) return false;
+    *out_packet = std::move(packet);
+    return true;
+}
+
 std::vector<std::uint8_t> encode_prop_state_change_batch_packet(
     const PropStateChangeBatchPacket& packet,
     std::uint32_t sequence) {

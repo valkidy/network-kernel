@@ -49,6 +49,7 @@ struct InventoryDeltaBatchPacket;
 struct InventorySnapshotPagePacket;
 struct InventorySnapshotRequestPacket;
 struct LocalActionResultBatchPacket;
+struct LocomotionStepBatchPacket;
 struct ProjectileSpawnBatchPacket;
 struct RemoteActionPresentationBatchPacket;
 struct WelcomePacket;
@@ -701,6 +702,16 @@ private:
     bool make_prop_state_change_record(
         NetId net_id,
         PropStateChangeRecord* out_record) const;
+    // Flushes the steps this tick's solve committed to every session the
+    // stepping entity is relevant to, and seeds a session that has just started
+    // seeing an entity with where its feet currently are.
+    void flush_locomotion_steps();
+    void send_locomotion_steps(
+        PeerSession* session,
+        const LocomotionStepBatchPacket& packet);
+    void send_locomotion_baseline(PeerSession* session, NetId net_id);
+    void handle_client_locomotion_step_batch(
+        const LocomotionStepBatchPacket& packet);
     void send_prop_state_changes(
         PeerSession* session,
         const PropStateChangeBatchPacket& packet);

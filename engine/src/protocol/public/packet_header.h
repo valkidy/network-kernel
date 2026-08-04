@@ -42,6 +42,7 @@ enum class MessageType : std::uint16_t {
     kInventorySnapshotRequest = 25,
     kInventorySnapshotPage = 26,
     kPropStateChangeBatch = 27,
+    kLocomotionStepBatch = 28,
 };
 
 struct PacketHeader {

@@ -4955,6 +4955,17 @@ void KernelEngine::poll_transport() {
             transport_event.channel == ChannelId::kSnapshot &&
             config_.mode == KernelMode_Client) {
             record_received_packet_sequence(transport_event);
+            // The snapshot channel also carries replicated locomotion steps, so
+            // a payload that is not a snapshot is tried as one of those before
+            // it counts as a decode failure.
+            LocomotionStepBatchPacket locomotion_steps;
+            if (decode_locomotion_step_batch_packet(
+                    transport_event.payload.data(),
+                    transport_event.payload.size(),
+                    &locomotion_steps)) {
+                handle_client_locomotion_step_batch(locomotion_steps);
+                continue;
+            }
             WorldSnapshot snapshot;
             const auto decode_start = std::chrono::steady_clock::now();
             if (!decode_snapshot_packet(
@@ -6230,6 +6241,15 @@ void KernelEngine::poll_client_transport() {
             continue;
         }
         if (transport_event.channel != ChannelId::kSnapshot) {
+            continue;
+        }
+
+        LocomotionStepBatchPacket locomotion_steps;
+        if (decode_locomotion_step_batch_packet(
+                transport_event.payload.data(),
+                transport_event.payload.size(),
+                &locomotion_steps)) {
+            handle_client_locomotion_step_batch(locomotion_steps);
             continue;
         }
 
@@ -8515,6 +8535,7 @@ void KernelEngine::simulate_tick() {
     }
     flush_inventory_replication();
     flush_prop_state_changes();
+    flush_locomotion_steps();
     flush_network_gameplay_request_outcomes();
     send_due_clock_sync_pings(server_time_us);
     pending_inputs_.clear();
@@ -8890,6 +8911,11 @@ void KernelEngine::sync_session_relevance(
         if (session->relevant_entities.find(entity.net_id) ==
             session->relevant_entities.end()) {
             send_entity_spawn(session->peer, entity);
+            // Steps alone cannot tell a session where feet already are, so a
+            // session that has just started seeing an entity is handed them.
+            // Without this its legs would appear one at a time, each only once
+            // it happened to take its first step.
+            send_locomotion_baseline(session, entity.net_id);
             if (entity.type == EntityType::kProp &&
                 is_dormant_placed_prop(entity.net_id)) {
                 PropStateChangeBatchPacket prop_state{};
@@ -9058,6 +9084,117 @@ bool KernelEngine::make_prop_state_change_record(
     }
     *out_record = record;
     return true;
+}
+
+void KernelEngine::send_locomotion_steps(
+    PeerSession* session,
+    const LocomotionStepBatchPacket& packet) {
+    if (session == nullptr || packet.records.empty()) {
+        return;
+    }
+    const std::vector<std::uint8_t> encoded =
+        encode_locomotion_step_batch_packet(packet, next_packet_sequence_++);
+    // Sent unreliably, on the snapshot channel, on purpose: a lost step leaves
+    // one leg wrong until its next step because the landing position is
+    // absolute, whereas a reliable ordered channel could stall every leg behind
+    // one retransmit.
+    if (encoded.empty() || !transport_->Send(
+            session->peer,
+            encoded.data(),
+            static_cast<std::uint32_t>(encoded.size()),
+            SendMode::kUnreliable,
+            ChannelId::kSnapshot)) {
+        return;
+    }
+    record_sent_packet(
+        static_cast<std::uint32_t>(encoded.size()),
+        SendMode::kUnreliable,
+        ChannelId::kSnapshot);
+}
+
+void KernelEngine::send_locomotion_baseline(PeerSession* session, NetId net_id) {
+    if (session == nullptr) {
+        return;
+    }
+    const auto state = locomotion_states_.find(net_id);
+    if (state == locomotion_states_.end()) {
+        return;
+    }
+    // A baseline is expressed as steps that already finished: apply sees a
+    // swing whose whole duration is in the past and plants the foot outright.
+    // That reuses the receiving path exactly rather than adding a second one.
+    const std::uint32_t current_tick = tick_loop_.current_tick();
+    LocomotionStepBatchPacket batch{};
+    batch.server_tick = current_tick;
+    for (std::uint32_t leg_index = 0u;
+         leg_index < state->second.legs.size();
+         ++leg_index) {
+        const LegLocomotionState& leg = state->second.legs[leg_index];
+        if (!leg.foot_initialized) {
+            continue;
+        }
+        LocomotionStepRecord record{};
+        record.net_id = net_id;
+        record.leg_index = static_cast<std::uint8_t>(leg_index);
+        record.start_tick_delta = UINT8_MAX;
+        record.landing_target_world = leg.foot_target_world;
+        batch.records.push_back(record);
+    }
+    send_locomotion_steps(session, batch);
+}
+
+void KernelEngine::flush_locomotion_steps() {
+    if (outgoing_locomotion_steps_.empty()) {
+        return;
+    }
+    const std::uint32_t current_tick = tick_loop_.current_tick();
+    const auto send = [&](PeerSession* session) {
+        LocomotionStepBatchPacket batch{};
+        batch.server_tick = current_tick;
+        for (const PendingLocomotionStep& step : outgoing_locomotion_steps_) {
+            if (!session->relevant_entities.contains(step.net_id)) {
+                continue;
+            }
+            const std::int32_t age = static_cast<std::int32_t>(
+                current_tick - step.event.start_tick);
+            if (age < 0 || age >= static_cast<std::int32_t>(UINT8_MAX)) {
+                continue;
+            }
+            LocomotionStepRecord record{};
+            record.net_id = step.net_id;
+            record.leg_index = static_cast<std::uint8_t>(step.event.leg_index);
+            record.start_tick_delta = static_cast<std::uint8_t>(age);
+            record.landing_target_world = step.event.landing_target_world;
+            batch.records.push_back(record);
+        }
+        send_locomotion_steps(session, batch);
+    };
+    if (config_.mode == KernelMode_ListenServer &&
+        local_listen_session_.welcomed) {
+        send(&local_listen_session_);
+    }
+    for (PeerSession& session : peer_sessions_) {
+        if (session.welcomed) {
+            send(&session);
+        }
+    }
+    outgoing_locomotion_steps_.clear();
+}
+
+void KernelEngine::handle_client_locomotion_step_batch(
+    const LocomotionStepBatchPacket& packet) {
+    for (const LocomotionStepRecord& record : packet.records) {
+        LocomotionStepEvent event{};
+        event.leg_index = record.leg_index;
+        // A baseline arrives as a step older than any swing, which the follower
+        // resolves by planting the foot instead of animating a step that is
+        // already over.
+        event.start_tick =
+            packet.server_tick - static_cast<std::uint32_t>(
+                record.start_tick_delta);
+        event.landing_target_world = record.landing_target_world;
+        enqueue_replicated_locomotion_step(record.net_id, event);
+    }
 }
 
 void KernelEngine::send_prop_state_changes(

@@ -2891,12 +2891,24 @@ int main() {
         // One replicated step, for one leg, landing somewhere the authority
         // chose. The follower is told nothing else: no terrain, no lift-off
         // point, no gait.
+        // Routed through the real wire format rather than injected, so this
+        // covers the encode/decode the server will actually use.
         const glm::vec3 landing{1.25f, 0.0f, 9.5f};
-        network_example::LocomotionStepEvent step{};
-        step.leg_index = 0u;
-        step.start_tick = 104u;
-        step.landing_target_world = landing;
-        follower.enqueue_replicated_locomotion_step(kMonsterNetId, step);
+        network_example::LocomotionStepBatchPacket step_batch{};
+        step_batch.server_tick = 106u;
+        step_batch.records.push_back(network_example::LocomotionStepRecord{
+            kMonsterNetId, 0u, 2u, landing});
+        const std::vector<std::uint8_t> encoded_steps =
+            network_example::encode_locomotion_step_batch_packet(
+                step_batch, 1u);
+        require(!encoded_steps.empty());
+        network_example::LocomotionStepBatchPacket decoded_steps;
+        require(network_example::decode_locomotion_step_batch_packet(
+            encoded_steps.data(), encoded_steps.size(), &decoded_steps));
+        follower.handle_client_locomotion_step_batch(decoded_steps);
+        // server_tick 106 minus a 2 tick delta is the tick the swing began.
+        require(follower.pending_follower_steps_.size() == 1u);
+        require(follower.pending_follower_steps_[0].event.start_tick == 104u);
 
         // A step in the future is held, not applied early.
         follower.update_follower_locomotion();
@@ -2946,6 +2958,25 @@ int main() {
         require(presented != follower.skeleton_presentation_poses_.end());
         require(presented->pose_flags ==
                 KERNEL_SKELETON_POSE_FLAG_PROCEDURAL);
+
+        // A baseline is carried by the same record type: a step old enough that
+        // its whole swing is in the past, which the follower resolves by
+        // planting the foot outright. That is what stops a newly relevant
+        // entity's legs from appearing one at a time as each happens to step.
+        const glm::vec3 anchored{-3.0f, 0.0f, -7.5f};
+        network_example::LocomotionStepBatchPacket baseline{};
+        baseline.server_tick = 118u;
+        baseline.records.push_back(network_example::LocomotionStepRecord{
+            kMonsterNetId, 1u, UINT8_MAX, anchored});
+        follower.handle_client_locomotion_step_batch(baseline);
+        push_snapshot(118u, monster_x + 0.25f);
+        follower.update_follower_locomotion();
+        const network_example::LegLocomotionState& planted =
+            follower.follower_locomotion_states_[kMonsterNetId].legs[1];
+        require(planted.foot_initialized);
+        require(planted.gait_state ==
+                network_example::LegGaitState::kSupport);
+        require(glm::length(planted.foot_target_world - anchored) < 0.0001f);
     }
 
 
