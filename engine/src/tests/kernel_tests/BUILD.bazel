@@ -82,6 +82,16 @@ cc_test(
 #                    remaining samples; a bare axis never runs out.
 #   --spawn=x,y,z    subject spawn position. Default 0,10,0.
 #   --skip-plugin    only run the native capture (no plugin staging, no diff).
+#   --venv=DIR       virtualenv for the Python steps. Default capture/.venv.
+#   --recreate-venv  rebuild that virtualenv before running.
+#   --no-venv        use the host python3 as-is and install nothing (only works
+#                    if numpy and matplotlib already import there).
+#
+# Python environment: rendering needs numpy and matplotlib, and macOS/homebrew
+# interpreters are externally managed (PEP 668), so nothing is ever installed
+# into the host python. The first run creates capture/.venv and installs
+# tools/capture/requirements.txt into it (needs network once); later runs reuse
+# it. ffmpeg still has to come from the host -- `brew install ffmpeg`.
 #
 # Outputs, always written to capture/locomotion_tests/ in the source tree:
 #
@@ -89,17 +99,18 @@ cc_test(
 #   plugin_locomotion.mp4  plugin_raw_bones.csv  plugin_raw_root.csv
 #   report.txt             native <-> plugin parity + path acceptance
 #
-# The run fails (non-zero) when the Python environment is incomplete, when a
-# capture ends early, or when native and plugin disagree beyond tolerance.
+# The run fails (non-zero) when the Python environment cannot be provisioned,
+# when a capture ends early, or when native and plugin disagree beyond
+# tolerance.
 #
 # Why bazel run and not a genrule: the two runtime arguments (--sampling,
 # --path) cannot reach a genrule, whose command line is fixed at analysis time,
 # and a genrule can only write into bazel-out, while the deliverable has to
 # land in capture/locomotion_tests/ in the source tree. Both need the
 # BUILD_WORKSPACE_DIRECTORY that only `bazel run` provides. The rendering step
-# alone would fit a genrule, but it depends on host Python packages (numpy,
-# matplotlib) and ffmpeg, so it would not be hermetic either way; the
-# orchestrator preflights those instead and fails with an explicit error.
+# alone would fit a genrule, but it runs out of the capture venv against host
+# ffmpeg, so it would not be hermetic either way; the orchestrator preflights
+# that environment instead and fails with an explicit error.
 sh_binary(
     name = "locomotion_capture",
     srcs = ["//tools/capture:run_locomotion_capture.sh"],
@@ -108,18 +119,20 @@ sh_binary(
         "--dylib=$(location //engine/src/kernel:network_kernel_shared)",
         "--bundle=$(location //game_server/gameplay_catalog_bundle:bundle)",
         "--manifest=$(location //game_server/skeleton_assets:generated/simplified_monster_sim_v4.skeleton_manifest.json)",
-        "--preflight=$(location //tools/capture:capture_preflight)",
-        "--render=$(location //tools/capture:render_transforms)",
-        "--analyze=$(location //tools/capture:analyze_capture)",
+        "--preflight=$(location //tools/capture:capture_preflight.py)",
+        "--render=$(location //tools/capture:render_transforms.py)",
+        "--analyze=$(location //tools/capture:analyze_capture.py)",
+        "--requirements=$(location //tools/capture:requirements.txt)",
     ],
     data = [
         ":locomotion_capture_driver",
         "//engine/src/kernel:network_kernel_shared",
         "//game_server/gameplay_catalog_bundle:bundle",
         "//game_server/skeleton_assets:generated/simplified_monster_sim_v4.skeleton_manifest.json",
-        "//tools/capture:analyze_capture",
-        "//tools/capture:capture_preflight",
-        "//tools/capture:render_transforms",
+        "//tools/capture:analyze_capture.py",
+        "//tools/capture:capture_preflight.py",
+        "//tools/capture:render_transforms.py",
+        "//tools/capture:requirements.txt",
     ],
 )
 

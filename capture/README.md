@@ -23,6 +23,9 @@ The short version:
 | `--path=SCRIPT` | `+X` | Movement description, see below. |
 | `--spawn=x,y,z` | `0,10,0` | Subject spawn position. |
 | `--skip-plugin` | off | Native run only: no plugin staging, no parity gate. |
+| `--venv=DIR` | `capture/.venv` | Virtualenv the Python steps run in. |
+| `--recreate-venv` | off | Rebuild that virtualenv first. |
+| `--no-venv` | off | Use the host `python3` as-is and install nothing. |
 
 Path scripts are `;`-separated steps: an axis (`+X` `-X` `+Z` `-Z`),
 `forward <n>m`, `turn <n>` degrees (`+X` toward `+Z` is positive) and
@@ -78,19 +81,28 @@ Two failure modes are worth knowing about, both learned the hard way:
 
 ## Python prerequisites
 
-Rendering needs host-installed `numpy`, `matplotlib` and `ffmpeg` — this
-WORKSPACE has no pip toolchain, so the interpreter is whatever `python3`
-resolves to. The run preflights them first and stops before any simulation work
-if something is missing, writing `locomotion_tests/preflight_error.log` with the
-exact install command.
+Rendering needs `numpy` and `matplotlib`, and macOS/homebrew interpreters are
+externally managed (PEP 668), so **nothing is ever installed into the host
+python**. The preflight step provisions a project-local virtualenv instead:
 
-```bash
-python3 -m pip install numpy matplotlib
-```
+- first run creates `capture/.venv` and installs
+  [tools/capture/requirements.txt](../tools/capture/requirements.txt) into it
+  (this needs network once, and takes a minute);
+- later runs reuse it and only re-check that the imports resolve;
+- `--recreate-venv` rebuilds it, `--venv=DIR` puts it somewhere else, and
+  `--no-venv` runs against the host `python3` untouched (which then has to
+  already provide both packages).
+
+`ffmpeg` is the one thing the venv cannot supply — it comes from the host:
 
 ```bash
 brew install ffmpeg
 ```
+
+The preflight runs before any simulation work, so a missing piece costs a
+second, not two full capture runs. On failure it writes
+`locomotion_tests/preflight_error.log` naming exactly what is missing and what
+to run.
 
 ## Reusing this for other captures
 

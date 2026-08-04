@@ -15,6 +15,7 @@ manifest=""
 preflight=""
 render=""
 analyze=""
+requirements=""
 
 # --- Capture parameters (overridable after `--` on the bazel run command). ---
 sampling="300"
@@ -25,6 +26,9 @@ entry="monster_observer_gameplay_catalog.yaml"
 entity_template="20"
 port="7777"
 skip_plugin="0"
+venv=""
+no_venv="0"
+recreate_venv="0"
 
 for argument in "$@"; do
   case "${argument}" in
@@ -35,6 +39,7 @@ for argument in "$@"; do
     --preflight=*) preflight="${argument#*=}" ;;
     --render=*) render="${argument#*=}" ;;
     --analyze=*) analyze="${argument#*=}" ;;
+    --requirements=*) requirements="${argument#*=}" ;;
     --sampling=*) sampling="${argument#*=}" ;;
     --samples=*) sampling="${argument#*=}" ;;
     --tick-rate=*) tick_rate="${argument#*=}" ;;
@@ -44,10 +49,14 @@ for argument in "$@"; do
     --entity-template=*) entity_template="${argument#*=}" ;;
     --port=*) port="${argument#*=}" ;;
     --skip-plugin) skip_plugin="1" ;;
+    --venv=*) venv="${argument#*=}" ;;
+    --no-venv) no_venv="1" ;;
+    --recreate-venv) recreate_venv="1" ;;
     -h | --help)
       printf 'usage: bazel run //engine/src/tests/kernel_tests:locomotion_capture -- \\\n'
       printf '         [--sampling=300] [--tick-rate=30] [--path="+X"] \\\n'
-      printf '         [--spawn=0,10,0] [--skip-plugin]\n'
+      printf '         [--spawn=0,10,0] [--skip-plugin] \\\n'
+      printf '         [--venv=DIR] [--recreate-venv] [--no-venv]\n'
       exit 0
       ;;
     *)
@@ -76,9 +85,10 @@ manifest="$(absolute "${manifest}")"
 preflight="$(absolute "${preflight}")"
 render="$(absolute "${render}")"
 analyze="$(absolute "${analyze}")"
+requirements="$(absolute "${requirements}")"
 
 for tool in "${driver}" "${dylib}" "${bundle}" "${manifest}" "${preflight}" \
-  "${render}" "${analyze}"; do
+  "${render}" "${analyze}" "${requirements}"; do
   if [[ ! -e "${tool}" ]]; then
     printf 'error: missing input %s\n' "${tool}" >&2
     exit 1
@@ -88,6 +98,15 @@ done
 readonly workspace="${BUILD_WORKSPACE_DIRECTORY}"
 readonly output_dir="${workspace}/capture/locomotion_tests"
 mkdir -p "${output_dir}"
+if [[ -z "${venv}" ]]; then
+  venv="${workspace}/capture/.venv"
+fi
+
+host_python="$(command -v python3 || true)"
+if [[ -z "${host_python}" ]]; then
+  printf 'error: python3 is not on PATH (brew install python@3.12)\n' >&2
+  exit 1
+fi
 
 printf '=== locomotion capture ===\n'
 printf 'output:   %s\n' "${output_dir}"
@@ -95,15 +114,41 @@ printf 'sampling: %s samples @ %s Hz\n' "${sampling}" "${tick_rate}"
 printf 'path:     %s\n' "${path}"
 
 # --- 1. Environment preflight: stop before any expensive work. -------------
+# The host interpreter is externally managed (PEP 668), so the Python steps run
+# out of a project-local venv the preflight creates and populates on demand.
 printf '\n--- preflight ---\n'
-if ! "${preflight}" \
-  --output-dir="${output_dir}" \
-  --error-log="${output_dir}/preflight_error.log"; then
+readonly interpreter_file="${output_dir}/.capture_interpreter"
+rm -f "${interpreter_file}"
+
+preflight_args=(
+  --requirements="${requirements}"
+  --output-dir="${output_dir}"
+  --error-log="${output_dir}/preflight_error.log"
+  --write-interpreter="${interpreter_file}"
+)
+if [[ "${no_venv}" == "1" ]]; then
+  preflight_args+=(--no-venv)
+else
+  preflight_args+=(--venv="${venv}")
+  if [[ "${recreate_venv}" == "1" ]]; then
+    preflight_args+=(--recreate-venv)
+  fi
+fi
+
+if ! "${host_python}" "${preflight}" "${preflight_args[@]}"; then
   printf '\nerror: capture aborted, the Python tooling cannot run here.\n' >&2
   printf 'see %s/preflight_error.log\n' "${output_dir}" >&2
   exit 1
 fi
 rm -f "${output_dir}/preflight_error.log"
+
+python_bin="$(cat "${interpreter_file}")"
+rm -f "${interpreter_file}"
+if [[ ! -x "${python_bin}" ]]; then
+  printf 'error: preflight reported an unusable interpreter: %s\n' "${python_bin}" >&2
+  exit 1
+fi
+printf 'interpreter: %s\n' "${python_bin}"
 
 # --- 2. Stage the freshly built kernel into the Unity package. -------------
 readonly plugin_root="${workspace}/plugins/com.network-example.kernel"
@@ -172,14 +217,14 @@ fi
 
 # --- 4. Render. ------------------------------------------------------------
 printf '\n--- render ---\n'
-"${render}" \
+"${python_bin}" "${render}" \
   --csv="${output_dir}/native_raw_bones.csv" \
   --out="${output_dir}/native_locomotion.mp4" \
   --title="NATIVE  (built kernel via C ABI, path ${path})" \
   --color="#2b8cbe" \
   --fps="${tick_rate}"
 if [[ "${skip_plugin}" == "0" ]]; then
-  "${render}" \
+  "${python_bin}" "${render}" \
     --csv="${output_dir}/plugin_raw_bones.csv" \
     --out="${output_dir}/plugin_locomotion.mp4" \
     --title="PLUGIN  (shipped dylib via C ABI, path ${path})" \
@@ -199,7 +244,7 @@ analyze_args=(
 if [[ "${skip_plugin}" == "0" ]]; then
   analyze_args+=(--plugin-prefix="${output_dir}/plugin_raw")
 fi
-if ! "${analyze}" "${analyze_args[@]}"; then
+if ! "${python_bin}" "${analyze}" "${analyze_args[@]}"; then
   printf '\nerror: capture checks failed, see %s/report.txt\n' "${output_dir}" >&2
   exit 1
 fi
