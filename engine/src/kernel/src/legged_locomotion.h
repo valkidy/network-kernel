@@ -135,6 +135,22 @@ struct LocomotionState {
     std::vector<ozz::math::Float4x4> scratch_models;
 };
 
+// A step exactly as the authoritative solve committed it, and the whole of what
+// a follower needs to reproduce the swing. Both endpoints of a swing are frozen
+// at lift-off (see LegLocomotionState), so this is a complete description of the
+// step rather than a sample of one.
+//
+// The lift-off position is deliberately absent. A follower that is in sync
+// already holds it -- it is where that foot is planted -- and a follower that
+// is not converges anyway, because the landing position is absolute world
+// space rather than a delta. That is also why a lost step is self-healing: the
+// leg is wrong only until its next step, not forever.
+struct LocomotionStepEvent {
+    std::uint32_t leg_index = 0;
+    std::uint32_t start_tick = 0;
+    glm::vec3 landing_target_world{0.0f};
+};
+
 struct LocomotionGroundingHit {
     glm::vec3 position{0.0f};
     glm::vec3 normal{0.0f, 1.0f, 0.0f};
@@ -181,6 +197,64 @@ bool solve_legged_locomotion_pose(
     float max_slope_degrees,
     float fixed_delta_seconds,
     const LocomotionGroundingQuery& grounding_query,
+    LocomotionState* state);
+
+// ---------------------------------------------------------------------------
+// Follower path. A follower reproduces an authoritative actor's legs from its
+// replicated root plus the steps it is told about -- it never grounds itself
+// and never decides to step. That is what lets a remote client show the same
+// legs the server is using for collision without replicating 41 bones, and it
+// is strictly cheaper than the authoritative path: no foothold raycasts at all,
+// so no dependence on the client's terrain query agreeing with the server's.
+// ---------------------------------------------------------------------------
+
+// Reads out the steps the last authoritative solve committed, which are exactly
+// the legs whose entered_swing is set. Returns the number of steps found, which
+// may exceed out_events.size(); only the first out_events.size() are written.
+std::uint32_t collect_locomotion_step_events(
+    const LocomotionState& state,
+    std::uint32_t solve_tick,
+    std::span<LocomotionStepEvent> out_events);
+
+// Applies a replicated step to a follower state, to be called before the solve
+// for current_tick. A step that arrives late resumes mid-arc rather than
+// restarting, so a delayed event costs the beginning of one swing instead of
+// desynchronising the leg; one that arrives after its swing would have ended
+// lands the foot immediately.
+bool apply_locomotion_step_event(
+    const KernelSkeletonBindingDefinition& definition,
+    const LocomotionStepEvent& event,
+    std::uint32_t current_tick,
+    LocomotionState* state);
+
+// Plants a follower's foot without stepping it: the baseline a follower needs
+// when it first sees an actor, and the resync for the one case a lost step does
+// not heal on its own (a loss immediately before the actor goes idle, which
+// produces no further steps to correct it).
+bool set_locomotion_foot_anchor(
+    const KernelSkeletonBindingDefinition& definition,
+    std::uint32_t leg_index,
+    const glm::vec3& world_position,
+    LocomotionState* state);
+
+// Solves the pose from the follower's own leg state alone. The caller must have
+// written the replicated heading into state->root_yaw_radians first, since a
+// follower reads its heading off the replicated transform instead of deriving
+// it from movement input; there is no advance_locomotion_state on this path.
+//
+// entered_swing stays false here -- it marks steps this state decided, and a
+// follower decides none. entered_support still fires on touchdown.
+//
+// Body follow is not applied: its tilt needs the ground normals under the feet,
+// which a follower does not sample. It is disabled on the authoritative side
+// too (body_follow_speed 0), so today the two agree; re-enabling it would mean
+// replicating the normals or accepting a presentation-only divergence.
+bool solve_legged_locomotion_follower_pose(
+    const ozz::animation::Skeleton& skeleton,
+    std::span<const KernelBoneLocalTransform> bind_pose,
+    const KernelSkeletonBindingDefinition& definition,
+    const glm::vec3& root_position,
+    float fixed_delta_seconds,
     LocomotionState* state);
 
 }  // namespace network_example

@@ -234,6 +234,28 @@ network_example::LocomotionGroundingQuery sloped_ground(float slope_radians) {
     };
 }
 
+// Rolling terrain. The follower equivalence tests run on this rather than a
+// plane so that a follower cannot appear to agree merely because every foothold
+// has the same height.
+network_example::LocomotionGroundingQuery undulating_ground() {
+    return [](const glm::vec3& origin,
+              float,
+              network_example::LocomotionGroundingHit* hit) {
+        constexpr float kWaveNumber = 0.9f;
+        constexpr float kAmplitude = 0.3f;
+        hit->position = glm::vec3{
+            origin.x,
+            kAmplitude * (std::sin(origin.x * kWaveNumber) +
+                          std::cos(origin.z * kWaveNumber)),
+            origin.z};
+        hit->normal = glm::normalize(glm::vec3{
+            -kAmplitude * kWaveNumber * std::cos(origin.x * kWaveNumber),
+            1.0f,
+            kAmplitude * kWaveNumber * std::sin(origin.z * kWaveNumber)});
+        return true;
+    };
+}
+
 // Forward kinematics of a solved local pose into model space, mirroring how the
 // presentation layer composes bones (ozz orders parents before children).
 std::vector<glm::vec3> model_positions(
@@ -666,6 +688,207 @@ int main() {
                 }
             }
             require(landings > 4u);
+        }
+    }
+
+    // Follower equivalence. An actor told only where its steps land -- given no
+    // terrain query and no gait decision of its own -- must reproduce the
+    // authority's legs. This is the load-bearing assumption behind replicating
+    // steps to a remote client instead of replicating 41 bones, so it is checked
+    // against the real solve, on rolling terrain, along a curving path.
+    {
+        const network_example::LocomotionGroundingQuery ground =
+            undulating_ground();
+        constexpr std::uint32_t kTicks = 400u;
+        constexpr float kSpeed = 1.5f;
+        constexpr float kTurnRate = 0.35f;  // radians per second
+        constexpr std::uint32_t kNoDrop = 0xFFFFFFFFu;
+        constexpr float kEpsilon = 0.0001f;
+
+        struct PendingStep {
+            network_example::LocomotionStepEvent event;
+            std::uint32_t deliver_tick;
+        };
+        struct Trace {
+            std::uint32_t steps = 0u;
+            std::uint32_t compared_ticks = 0u;
+            std::uint32_t planted_comparisons = 0u;
+            float worst_planted_error = 0.0f;
+            float worst_any_error = 0.0f;
+            float worst_pose_error = 0.0f;
+            std::uint32_t drop_tick = 0u;
+            std::uint32_t heal_tick = 0u;
+            bool dropped = false;
+            bool healed = false;
+        };
+
+        const auto run = [&](std::uint32_t delay_ticks,
+                             std::uint32_t drop_step_index) {
+            Trace trace;
+            network_example::LocomotionState authority;
+            network_example::LocomotionState follower;
+            require(network_example::initialize_locomotion_state(
+                rig, 0.0f, &authority));
+            require(network_example::initialize_locomotion_state(
+                rig, 0.0f, &follower));
+            std::vector<PendingStep> pending;
+            glm::vec3 root{0.0f};
+            bool seeded = false;
+
+            for (std::uint32_t t = 0u; t < kTicks; ++t) {
+                const float heading =
+                    kTurnRate * static_cast<float>(t) * tick;
+                require(network_example::advance_locomotion_state(
+                    rig,
+                    KernelVec2{std::sin(heading), std::cos(heading)},
+                    90.0f,
+                    tick,
+                    &authority));
+                root += glm::vec3{
+                    std::sin(authority.root_yaw_radians),
+                    0.0f,
+                    std::cos(authority.root_yaw_radians)} * (kSpeed * tick);
+                require(network_example::solve_legged_locomotion_pose(
+                    *skeleton, bind_pose, rig, root, 50.0f, tick, ground,
+                    &authority));
+
+                std::array<network_example::LocomotionStepEvent, 4> emitted{};
+                const std::uint32_t emitted_count =
+                    network_example::collect_locomotion_step_events(
+                        authority, t, emitted);
+                require(emitted_count <= emitted.size());
+                for (std::uint32_t index = 0u; index < emitted_count; ++index) {
+                    const bool dropped = trace.steps == drop_step_index;
+                    ++trace.steps;
+                    if (dropped) {
+                        trace.drop_tick = t;
+                        trace.dropped = true;
+                        continue;
+                    }
+                    pending.push_back({emitted[index], t + delay_ticks});
+                }
+
+                // Relevance-enter baseline: the follower is handed the feet once
+                // and keeps up on steps alone from there.
+                if (!seeded) {
+                    bool all_planted = true;
+                    for (const network_example::LegLocomotionState& leg :
+                         authority.legs) {
+                        all_planted = all_planted && leg.foot_initialized;
+                    }
+                    if (!all_planted) {
+                        continue;
+                    }
+                    for (std::uint32_t index = 0u;
+                         index < rig.leg_count;
+                         ++index) {
+                        require(network_example::set_locomotion_foot_anchor(
+                            rig,
+                            index,
+                            authority.legs[index].foot_target_world,
+                            &follower));
+                    }
+                    seeded = true;
+                    continue;
+                }
+
+                // A follower reads its heading off the replicated transform
+                // rather than deriving it from input it does not have.
+                follower.root_yaw_radians = authority.root_yaw_radians;
+                for (std::size_t index = 0u; index < pending.size();) {
+                    if (pending[index].deliver_tick != t) {
+                        ++index;
+                        continue;
+                    }
+                    require(network_example::apply_locomotion_step_event(
+                        rig, pending[index].event, t, &follower));
+                    pending.erase(pending.begin() +
+                                  static_cast<std::ptrdiff_t>(index));
+                }
+                require(network_example::solve_legged_locomotion_follower_pose(
+                    *skeleton, bind_pose, rig, root, tick, &follower));
+                require(follower.pose_valid);
+                ++trace.compared_ticks;
+
+                bool all_agree = true;
+                for (std::uint32_t index = 0u; index < rig.leg_count; ++index) {
+                    const network_example::LegLocomotionState& mine =
+                        follower.legs[index];
+                    const network_example::LegLocomotionState& theirs =
+                        authority.legs[index];
+                    const float error = glm::length(
+                        mine.foot_target_world - theirs.foot_target_world);
+                    trace.worst_any_error =
+                        std::max(trace.worst_any_error, error);
+                    all_agree = all_agree && error <= kEpsilon;
+                    // A foot both sides consider planted is the case that has
+                    // to agree exactly: it is what a collider would sit on and
+                    // what the eye reads as "the foot is not sliding". Swing
+                    // windows are allowed to differ while a late step catches up.
+                    if (mine.gait_state ==
+                            network_example::LegGaitState::kSupport &&
+                        theirs.gait_state ==
+                            network_example::LegGaitState::kSupport) {
+                        ++trace.planted_comparisons;
+                        // For the dropped-step run the whole point is that the
+                        // follower is briefly wrong, so only the recovered
+                        // stretch is held to exact agreement.
+                        if (drop_step_index == kNoDrop || trace.healed) {
+                            trace.worst_planted_error =
+                                std::max(trace.worst_planted_error, error);
+                        }
+                    }
+                    trace.worst_pose_error = std::max(
+                        trace.worst_pose_error,
+                        glm::length(mine.solved_foot_world -
+                                    theirs.solved_foot_world));
+                }
+                if (trace.dropped && !trace.healed && t > trace.drop_tick &&
+                    all_agree) {
+                    trace.heal_tick = t;
+                    trace.healed = true;
+                }
+            }
+            return trace;
+        };
+
+        // In sync: every foot, every tick, bit-for-bit. Note the follower is
+        // never told where a step LIFTS OFF from -- it uses its own planted
+        // position -- so this also proves that half of the event is redundant
+        // and does not need replicating.
+        {
+            const Trace trace = run(0u, kNoDrop);
+            require(trace.steps > 20u);
+            require(trace.compared_ticks > kTicks / 2u);
+            require(trace.planted_comparisons > 100u);
+            require(trace.worst_any_error < kEpsilon);
+            require(trace.worst_pose_error < kEpsilon);
+        }
+
+        // Steps delivered three ticks late: the follower starts each swing
+        // behind and catches up mid-arc, so the airborne foot genuinely differs
+        // (asserted, so this case cannot pass vacuously) -- but every foot both
+        // sides consider planted still agrees exactly.
+        {
+            const Trace trace = run(3u, kNoDrop);
+            require(trace.steps > 20u);
+            require(trace.worst_any_error > 0.01f);
+            require(trace.worst_planted_error < kEpsilon);
+        }
+
+        // A step dropped outright. The landing position is absolute, not a
+        // delta, so the leg is wrong only until its next step rather than
+        // forever: the follower must converge again without any resync.
+        {
+            const Trace trace = run(0u, 8u);
+            require(trace.steps > 8u);
+            require(trace.dropped);
+            require(trace.healed);
+            require(trace.heal_tick > trace.drop_tick);
+            // Well inside one step cycle for this rig (~14 ticks).
+            require(trace.heal_tick - trace.drop_tick < 40u);
+            // And it stays converged for the rest of the run.
+            require(trace.worst_planted_error < kEpsilon);
         }
     }
 

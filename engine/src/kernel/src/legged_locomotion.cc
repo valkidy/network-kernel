@@ -429,7 +429,14 @@ bool advance_locomotion_state(
     return true;
 }
 
-bool solve_legged_locomotion_pose(
+namespace {
+
+// Shared body of both solve entry points. `follower` drops the two things a
+// follower has no business doing -- sampling the terrain for its own footholds,
+// and deciding when to step -- and leaves everything else (seating, the swing
+// arc, the IK, the pose write-out) byte-identical, which is what makes the two
+// paths agree.
+bool solve_locomotion_pose(
     const ozz::animation::Skeleton& skeleton,
     std::span<const KernelBoneLocalTransform> bind_pose,
     const KernelSkeletonBindingDefinition& definition,
@@ -437,15 +444,21 @@ bool solve_legged_locomotion_pose(
     float max_slope_degrees,
     float fixed_delta_seconds,
     const LocomotionGroundingQuery& grounding_query,
+    bool follower,
     LocomotionState* state) {
     if (state == nullptr || !valid_definition(definition) ||
         skeleton.num_joints() != static_cast<int>(bind_pose.size()) ||
         definition.bone_count != bind_pose.size() ||
         state->legs.size() != definition.leg_count ||
         !finite_vec3(root_position) ||
-        !std::isfinite(max_slope_degrees) || max_slope_degrees <= 0.0f ||
-        max_slope_degrees >= 90.0f ||
         !std::isfinite(fixed_delta_seconds) || fixed_delta_seconds <= 0.0f) {
+        return false;
+    }
+    // Only the grounding path reads the slope limit, so a follower is not asked
+    // to carry a value it cannot use.
+    if (!follower &&
+        (!std::isfinite(max_slope_degrees) || max_slope_degrees <= 0.0f ||
+         max_slope_degrees >= 90.0f)) {
         return false;
     }
     // Bone indices are dereferenced below; the kernel screens them at catalog
@@ -468,6 +481,20 @@ bool solve_legged_locomotion_pose(
     state->pose_valid = false;
     state->body_follow_valid = false;
     state->local_pose.assign(bind_pose.begin(), bind_pose.end());
+
+    // There is no advance_locomotion_state on the follower path -- a follower
+    // has no movement input to advance from -- so the per-tick bookkeeping that
+    // advance normally does happens here instead. entered_swing is left alone:
+    // it marks a step this state decided, and applying a replicated step is not
+    // deciding one.
+    if (follower) {
+        state->last_processing_order.clear();
+        for (std::uint32_t order = 0u; order < definition.leg_count; ++order) {
+            const std::uint32_t leg_index = definition.processing_order[order];
+            state->legs[leg_index].entered_support = false;
+            state->last_processing_order.push_back(leg_index);
+        }
+    }
 
     // Reuse the per-state scratch so a steady-state tick allocates nothing.
     std::vector<ozz::math::SoaTransform>& locals = state->scratch_locals;
@@ -541,8 +568,9 @@ bool solve_legged_locomotion_pose(
     root_local_position.x += root_offset.x;
     root_local_position.y += root_offset.y;
     root_local_position.z += root_offset.z;
-    const float minimum_ground_normal_y =
-        std::cos(max_slope_degrees * std::numbers::pi_v<float> / 180.0f);
+    const float minimum_ground_normal_y = follower
+        ? 0.0f
+        : std::cos(max_slope_degrees * std::numbers::pi_v<float> / 180.0f);
 
     // How far a stance drifts per tick: the body's own translation, taken flat.
     // Height is dropped because a landing spot's height comes from its raycast,
@@ -582,7 +610,10 @@ bool solve_legged_locomotion_pose(
     std::array<bool, KERNEL_MAX_SKELETON_LEGS> home_grounded{};
     std::array<bool, KERNEL_MAX_SKELETON_LEGS> home_within_reach{};
 
-    // Pass 1: sample each leg's home foothold and seed uninitialized feet.
+    // Pass 1: measure the limb in model space, then (authoritative only) sample
+    // each leg's home foothold and seed uninitialized feet. The measurements are
+    // needed on both paths -- the IK reach clamp in pass 3 runs off them -- so
+    // it is the raycasts that a follower skips, not the whole pass.
     for (const std::uint32_t leg_index : state->last_processing_order) {
         const KernelSkeletonLegDefinition& definition_leg =
             definition.legs[leg_index];
@@ -600,6 +631,10 @@ bool solve_legged_locomotion_pose(
             (glm::length(knee_model - hip_model) +
              glm::length(foot_model - knee_model)) *
             definition_leg.max_reach_ratio;
+
+        if (follower) {
+            continue;
+        }
 
         // Rest stance under the current body pose (ProceduralLeg.HomeWorld).
         const glm::vec3 nominal_world =
@@ -645,6 +680,9 @@ bool solve_legged_locomotion_pose(
     // moving, its home has drifted past the threshold, and no leg of a different
     // gait group is currently swinging (diagonal/alternating trot). Ongoing
     // swings always finish regardless of input.
+    // A follower steps only where it is told to, so it has no gait to
+    // coordinate: apply_locomotion_step_event has already put the legs the
+    // authority stepped into kSwing.
     std::array<bool, KERNEL_MAX_SKELETON_LEGS> group_swinging{};
     std::uint32_t swinging_group_count = 0u;
     std::uint32_t swinging_leg_count = 0u;
@@ -658,7 +696,7 @@ bool solve_legged_locomotion_pose(
             ++swinging_group_count;
         }
     }
-    if (state->locomotion_active) {
+    if (!follower && state->locomotion_active) {
         for (const std::uint32_t leg_index : state->last_processing_order) {
             LegLocomotionState& leg = state->legs[leg_index];
             if (!leg.foot_initialized ||
@@ -843,7 +881,9 @@ bool solve_legged_locomotion_pose(
     // smoothing actually converges (it would restart every tick if it were
     // re-derived from a pure-yaw transform rotation). Left disabled -- physics
     // owns the body, tilt stays identity -- when speed <= 0.
-    if (definition.body_follow_speed > 0.0f) {
+    // Skipped for a follower: the tilt is driven by the ground normals under the
+    // feet, and a follower never samples them.
+    if (!follower && definition.body_follow_speed > 0.0f) {
         float foot_y_sum = 0.0f;
         float bind_foot_y_sum = 0.0f;
         glm::vec3 normal_sum{0.0f};
@@ -902,6 +942,136 @@ bool solve_legged_locomotion_pose(
         state->local_pose.assign(bind_pose.begin(), bind_pose.end());
     }
     return state->pose_valid;
+}
+
+}  // namespace
+
+bool solve_legged_locomotion_pose(
+    const ozz::animation::Skeleton& skeleton,
+    std::span<const KernelBoneLocalTransform> bind_pose,
+    const KernelSkeletonBindingDefinition& definition,
+    const glm::vec3& root_position,
+    float max_slope_degrees,
+    float fixed_delta_seconds,
+    const LocomotionGroundingQuery& grounding_query,
+    LocomotionState* state) {
+    return solve_locomotion_pose(
+        skeleton,
+        bind_pose,
+        definition,
+        root_position,
+        max_slope_degrees,
+        fixed_delta_seconds,
+        grounding_query,
+        /*follower=*/false,
+        state);
+}
+
+bool solve_legged_locomotion_follower_pose(
+    const ozz::animation::Skeleton& skeleton,
+    std::span<const KernelBoneLocalTransform> bind_pose,
+    const KernelSkeletonBindingDefinition& definition,
+    const glm::vec3& root_position,
+    float fixed_delta_seconds,
+    LocomotionState* state) {
+    static const LocomotionGroundingQuery kNoGroundingQuery;
+    return solve_locomotion_pose(
+        skeleton,
+        bind_pose,
+        definition,
+        root_position,
+        /*max_slope_degrees=*/0.0f,  // unread on this path
+        fixed_delta_seconds,
+        kNoGroundingQuery,
+        /*follower=*/true,
+        state);
+}
+
+std::uint32_t collect_locomotion_step_events(
+    const LocomotionState& state,
+    std::uint32_t solve_tick,
+    std::span<LocomotionStepEvent> out_events) {
+    std::uint32_t found = 0u;
+    for (std::uint32_t leg_index = 0u;
+         leg_index < state.legs.size();
+         ++leg_index) {
+        const LegLocomotionState& leg = state.legs[leg_index];
+        if (!leg.entered_swing) {
+            continue;
+        }
+        if (found < out_events.size()) {
+            out_events[found] = LocomotionStepEvent{
+                leg_index,
+                solve_tick,
+                leg.landing_target_world,
+            };
+        }
+        ++found;
+    }
+    return found;
+}
+
+bool apply_locomotion_step_event(
+    const KernelSkeletonBindingDefinition& definition,
+    const LocomotionStepEvent& event,
+    std::uint32_t current_tick,
+    LocomotionState* state) {
+    if (state == nullptr || !valid_definition(definition) ||
+        state->legs.size() != definition.leg_count ||
+        event.leg_index >= definition.leg_count ||
+        !finite_vec3(event.landing_target_world) ||
+        current_tick < event.start_tick) {
+        return false;
+    }
+    LegLocomotionState& leg = state->legs[event.leg_index];
+    leg.landing_target_world = event.landing_target_world;
+
+    const std::uint32_t elapsed = current_tick - event.start_tick;
+    if (elapsed >= definition.step_duration_ticks) {
+        // The swing is already over by the time this arrived. Land it rather
+        // than animating a step that finished in the past; the foot ends up
+        // exactly where the authority put it, which is the point of shipping an
+        // absolute landing position.
+        leg.foot_target_world = event.landing_target_world;
+        leg.swing_start_world = event.landing_target_world;
+        leg.gait_state = LegGaitState::kSupport;
+        leg.swing_tick = 0u;
+        leg.foot_initialized = true;
+        return true;
+    }
+    // Lift off from wherever this foot actually is. A follower in sync has it
+    // planted exactly where the authority did; one that is not still lands on
+    // the right spot, one step later than it should have.
+    leg.swing_start_world = leg.foot_initialized
+        ? leg.foot_target_world
+        : event.landing_target_world;
+    leg.gait_state = LegGaitState::kSwing;
+    // Resume mid-arc for a late event, matching the phase the authority is
+    // already at, instead of restarting the swing behind it.
+    leg.swing_tick = elapsed;
+    leg.foot_initialized = true;
+    return true;
+}
+
+bool set_locomotion_foot_anchor(
+    const KernelSkeletonBindingDefinition& definition,
+    std::uint32_t leg_index,
+    const glm::vec3& world_position,
+    LocomotionState* state) {
+    if (state == nullptr || !valid_definition(definition) ||
+        state->legs.size() != definition.leg_count ||
+        leg_index >= definition.leg_count ||
+        !finite_vec3(world_position)) {
+        return false;
+    }
+    LegLocomotionState& leg = state->legs[leg_index];
+    leg.foot_target_world = world_position;
+    leg.swing_start_world = world_position;
+    leg.landing_target_world = world_position;
+    leg.gait_state = LegGaitState::kSupport;
+    leg.swing_tick = 0u;
+    leg.foot_initialized = true;
+    return true;
 }
 
 }  // namespace network_example
