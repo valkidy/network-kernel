@@ -101,6 +101,8 @@ struct SkeletonBindingConfig {
     float step_threshold_meters = 0.0f;
     std::uint32_t step_duration_ticks = 0;
     std::uint32_t max_swinging_legs = 0;
+    float body_follow_speed = 0.0f;
+    float slope_alignment = 0.0f;
     std::uint8_t foothold_query_type = KernelFootholdQueryType_None;
     float foothold_query_start_height_meters = 0.0f;
     float foothold_query_distance_meters = 0.0f;

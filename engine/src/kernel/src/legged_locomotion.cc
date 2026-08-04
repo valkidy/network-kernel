@@ -32,6 +32,11 @@ bool valid_definition(const KernelSkeletonBindingDefinition& definition) {
         !std::isfinite(definition.input_deadzone) ||
         definition.input_deadzone < 0.0f ||
         definition.input_deadzone >= 1.0f ||
+        !std::isfinite(definition.body_follow_speed) ||
+        definition.body_follow_speed < 0.0f ||
+        !std::isfinite(definition.slope_alignment) ||
+        definition.slope_alignment < 0.0f ||
+        definition.slope_alignment > 1.0f ||
         definition.foothold_query_type != KernelFootholdQueryType_Raycast ||
         !std::isfinite(definition.foothold_query_start_height_meters) ||
         definition.foothold_query_start_height_meters < 0.0f ||
@@ -140,28 +145,15 @@ bool finite_pose(std::span<const KernelBoneLocalTransform> pose) {
     return true;
 }
 
-void reset_leg_grounding(LocomotionState* state) {
-    for (LegLocomotionState& leg : state->legs) {
-        leg.gait_state = LegGaitState::kSupport;
-        leg.swing_tick = 0u;
-        leg.entered_swing = false;
-        leg.entered_support = false;
-        leg.landing_target_valid = false;
-        leg.planted = false;
-        leg.ground_hit_valid = false;
-        leg.ik_reach_clamped = false;
-        leg.foot_target_valid = false;
-        leg.grounding_candidate_index = UINT32_MAX;
-        leg.supporting_entity_net_id = 0u;
-        leg.supporting_collider_id = 0u;
-    }
-}
-
+// Raycast the terrain under a leg's home stance, trying each authored candidate
+// offset (rotated into the body heading) until one lands on a walkable slope.
+// Mirrors ProceduralLeg.SampleGround with extra fan-out. Reach is intentionally
+// NOT filtered here (LocomotionTest handles reach purely via IK clamping); a
+// foothold the leg cannot fully reach still steers the planted foot, and the IK
+// stage clamps the target so the leg stretches toward it without popping.
 bool query_foothold(
     const KernelSkeletonBindingDefinition& definition,
     const glm::vec3& nominal_world,
-    const glm::vec3& hip_world,
-    float maximum_reach,
     const glm::quat& root_rotation,
     float minimum_ground_normal_y,
     const LocomotionGroundingQuery& grounding_query,
@@ -198,9 +190,6 @@ bool query_foothold(
         }
         hit.normal /= normal_length;
         if (hit.normal.y < minimum_ground_normal_y) {
-            continue;
-        }
-        if (glm::length(hit.position - hip_world) > maximum_reach) {
             continue;
         }
         leg->ground_hit_valid = true;
@@ -265,21 +254,31 @@ bool advance_locomotion_state(
         return false;
     }
 
+    // Input movement is authored in the world-plane as (x, 0, y); heading is the
+    // yaw that faces that direction. Only meaningful input rotates the actor.
     const float move_magnitude_squared =
         move_input.x * move_input.x + move_input.y * move_input.y;
-    if (move_magnitude_squared >=
-        definition.input_deadzone * definition.input_deadzone) {
+    const bool move_active = move_magnitude_squared >=
+        definition.input_deadzone * definition.input_deadzone;
+    bool yaw_changed = false;
+    if (move_active) {
         const float target_yaw = std::atan2(move_input.x, move_input.y);
         const float max_yaw_step = max_yaw_degrees_per_second *
             std::numbers::pi_v<float> / 180.0f * fixed_delta_seconds;
-        state->root_yaw_radians += std::clamp(
+        const float yaw_step = std::clamp(
             shortest_angle_delta(state->root_yaw_radians, target_yaw),
             -max_yaw_step,
             max_yaw_step);
+        yaw_changed = std::abs(yaw_step) > 1e-6f;
+        state->root_yaw_radians += yaw_step;
         state->root_yaw_radians = std::remainder(
             state->root_yaw_radians,
             2.0f * std::numbers::pi_v<float>);
     }
+    // A leg only takes a new step when the actor intends to move or turn
+    // (LocomotionTest: legs change only when movement.sqrMagnitude > 0 or the
+    // heading changes). Idle actors keep their feet planted.
+    state->locomotion_active = move_active || yaw_changed;
 
     state->last_processing_order.clear();
     for (std::uint32_t order = 0u; order < definition.leg_count; ++order) {
@@ -297,8 +296,6 @@ bool solve_legged_locomotion_pose(
     std::span<const KernelBoneLocalTransform> bind_pose,
     const KernelSkeletonBindingDefinition& definition,
     const glm::vec3& root_position,
-    bool root_grounded,
-    bool root_landed_this_tick,
     float max_slope_degrees,
     float fixed_delta_seconds,
     const LocomotionGroundingQuery& grounding_query,
@@ -315,16 +312,9 @@ bool solve_legged_locomotion_pose(
     }
 
     state->pose_valid = false;
+    state->body_follow_valid = false;
     state->local_pose.assign(bind_pose.begin(), bind_pose.end());
-    const bool has_active_foothold = std::any_of(
-        state->legs.begin(),
-        state->legs.end(),
-        [](const LegLocomotionState& leg) {
-            return leg.foot_target_valid;
-        });
-    if (root_landed_this_tick && !has_active_foothold) {
-        reset_leg_grounding(state);
-    }
+
     std::vector<ozz::math::SoaTransform> locals(
         skeleton.joint_rest_poses().begin(),
         skeleton.joint_rest_poses().end());
@@ -341,6 +331,10 @@ bool solve_legged_locomotion_pose(
         state->root_yaw_radians,
         glm::vec3{0.0f, 1.0f, 0.0f});
     const glm::quat inverse_root_rotation = glm::inverse(root_rotation);
+
+    // Vertically seat the bind pose so the lowest foot rests on the ground plane
+    // when the root is at terrain height (presentation alignment; body follow,
+    // when enabled, adjusts the root height on top of this).
     float bind_foot_height = model_position(
         models[definition.legs[0].foot_bone_index]).y;
     for (std::uint32_t leg_index = 1u;
@@ -358,153 +352,153 @@ bool solve_legged_locomotion_pose(
     const float minimum_ground_normal_y =
         std::cos(max_slope_degrees * std::numbers::pi_v<float> / 180.0f);
 
-    std::array<glm::vec3, KERNEL_MAX_SKELETON_LEGS> bind_foot_models{};
     std::array<glm::vec3, KERNEL_MAX_SKELETON_LEGS> hip_models{};
-    std::array<glm::vec3, KERNEL_MAX_SKELETON_LEGS> grounded_homes{};
+    std::array<glm::vec3, KERNEL_MAX_SKELETON_LEGS> bind_foot_models{};
     std::array<float, KERNEL_MAX_SKELETON_LEGS> maximum_reaches{};
-    std::array<bool, KERNEL_MAX_SKELETON_LEGS> grounded_home_valid{};
-    bool any_grounded_home_valid = false;
+    std::array<glm::vec3, KERNEL_MAX_SKELETON_LEGS> home_world{};
+    std::array<bool, KERNEL_MAX_SKELETON_LEGS> home_grounded{};
+
+    // Pass 1: sample each leg's home foothold and seed uninitialized feet.
     for (const std::uint32_t leg_index : state->last_processing_order) {
         const KernelSkeletonLegDefinition& definition_leg =
             definition.legs[leg_index];
         LegLocomotionState& leg = state->legs[leg_index];
-        bind_foot_models[leg_index] =
-            model_position(models[definition_leg.foot_bone_index]);
-        hip_models[leg_index] =
+
+        const glm::vec3 hip_model =
             model_position(models[definition_leg.hip_bone_index]);
         const glm::vec3 knee_model =
             model_position(models[definition_leg.knee_bone_index]);
         const glm::vec3 foot_model =
             model_position(models[definition_leg.foot_bone_index]);
+        hip_models[leg_index] = hip_model;
+        bind_foot_models[leg_index] = foot_model;
         maximum_reaches[leg_index] =
-            (glm::length(knee_model - hip_models[leg_index]) +
+            (glm::length(knee_model - hip_model) +
              glm::length(foot_model - knee_model)) *
             definition_leg.max_reach_ratio;
-        const glm::vec3 nominal_world = pose_root_position +
-            root_rotation * bind_foot_models[leg_index];
-        const glm::vec3 hip_world = pose_root_position +
-            root_rotation * hip_models[leg_index];
-        grounded_home_valid[leg_index] = query_foothold(
+
+        // Rest stance under the current body pose (ProceduralLeg.HomeWorld).
+        const glm::vec3 nominal_world =
+            pose_root_position + root_rotation * foot_model;
+        home_grounded[leg_index] = query_foothold(
             definition,
             nominal_world,
-            hip_world,
-            maximum_reaches[leg_index],
             root_rotation,
             minimum_ground_normal_y,
             grounding_query,
             &leg);
-        if (grounded_home_valid[leg_index]) {
-            any_grounded_home_valid = true;
-            grounded_homes[leg_index] = leg.ground_hit_position;
+        home_world[leg_index] =
+            home_grounded[leg_index] ? leg.ground_hit_position : nominal_world;
+
+        // A foot commits to a world position only once it has a real foothold;
+        // until then the limb keeps its bind pose (ProceduralLeg.Initialize
+        // plants the foot on the ground before the leg is driven).
+        if (!leg.foot_initialized && home_grounded[leg_index]) {
+            leg.foot_target_world = home_world[leg_index];
+            leg.gait_state = LegGaitState::kSupport;
+            leg.swing_tick = 0u;
+            leg.foot_initialized = true;
         }
-        if (!leg.foot_target_valid && grounded_home_valid[leg_index]) {
-            leg.planted_foothold_world = grounded_homes[leg_index];
-            leg.foot_target_world = leg.planted_foothold_world;
-            leg.root_position_at_plant = root_position;
-            leg.foot_target_valid = true;
-            leg.planted = true;
-        }
-    }
-    if (!root_grounded && !any_grounded_home_valid) {
-        reset_leg_grounding(state);
-        state->pose_valid = finite_pose(state->local_pose);
-        return state->pose_valid;
     }
 
-    std::uint32_t active_gait_group = UINT32_MAX;
+    // Pass 2: gait coordination. A leg may only begin a step when the actor is
+    // moving, its home has drifted past the threshold, and no leg of a different
+    // gait group is currently swinging (diagonal/alternating trot). Ongoing
+    // swings always finish regardless of input.
+    std::array<bool, KERNEL_MAX_SKELETON_LEGS> group_swinging{};
+    std::uint32_t swinging_group_count = 0u;
     std::uint32_t swinging_leg_count = 0u;
     for (const LegLocomotionState& leg : state->legs) {
         if (leg.gait_state != LegGaitState::kSwing) {
             continue;
         }
-        if (active_gait_group == UINT32_MAX) {
-            active_gait_group = leg.gait_group;
-        }
         ++swinging_leg_count;
-    }
-    if (active_gait_group == UINT32_MAX) {
-        for (const std::uint32_t leg_index : state->last_processing_order) {
-            const LegLocomotionState& leg = state->legs[leg_index];
-            if (leg.gait_state == LegGaitState::kSupport &&
-                grounded_home_valid[leg_index] &&
-                glm::length(glm::vec2{
-                    root_position.x - leg.root_position_at_plant.x,
-                    root_position.z - leg.root_position_at_plant.z}) >
-                    definition.step_threshold_meters) {
-                active_gait_group = leg.gait_group;
-                break;
-            }
+        if (!group_swinging[leg.gait_group]) {
+            group_swinging[leg.gait_group] = true;
+            ++swinging_group_count;
         }
     }
-    if (active_gait_group != UINT32_MAX) {
+    if (state->locomotion_active) {
         for (const std::uint32_t leg_index : state->last_processing_order) {
             LegLocomotionState& leg = state->legs[leg_index];
-            if (swinging_leg_count >= definition.max_swinging_legs ||
+            if (!leg.foot_initialized ||
                 leg.gait_state != LegGaitState::kSupport ||
-                leg.gait_group != active_gait_group ||
-                !grounded_home_valid[leg_index]) {
+                !home_grounded[leg_index] ||
+                swinging_leg_count >= definition.max_swinging_legs) {
+                continue;
+            }
+            // Blocked if another group is mid-swing.
+            const bool other_group_swinging = swinging_group_count > 0u &&
+                !(swinging_group_count == 1u &&
+                  group_swinging[leg.gait_group]);
+            if (other_group_swinging) {
+                continue;
+            }
+            const float error =
+                glm::length(leg.foot_target_world - home_world[leg_index]);
+            if (error <= definition.step_threshold_meters) {
                 continue;
             }
             leg.gait_state = LegGaitState::kSwing;
             leg.entered_swing = true;
             leg.swing_tick = 0u;
             leg.swing_start_world = leg.foot_target_world;
-            leg.landing_target_world = grounded_homes[leg_index];
-            leg.landing_target_valid = true;
-            leg.planted = false;
+            leg.landing_target_world = home_world[leg_index];
             ++swinging_leg_count;
+            if (!group_swinging[leg.gait_group]) {
+                group_swinging[leg.gait_group] = true;
+                ++swinging_group_count;
+            }
         }
     }
 
+    // Pass 3: animate feet (swing arc / hold) and solve two-bone IK per leg.
     for (const std::uint32_t leg_index : state->last_processing_order) {
         const KernelSkeletonLegDefinition& definition_leg =
             definition.legs[leg_index];
         LegLocomotionState& leg = state->legs[leg_index];
-        if (!leg.foot_target_valid) {
-            leg.solved_foot_world = pose_root_position + root_rotation *
-                bind_foot_models[leg_index];
+        // Uninitialized legs (no foothold yet) keep their bind pose.
+        if (!leg.foot_initialized) {
+            leg.solved_foot_world = pose_root_position +
+                root_rotation * bind_foot_models[leg_index];
             continue;
         }
         const glm::vec3 hip_model = hip_models[leg_index];
         const float maximum_reach = maximum_reaches[leg_index];
+
         if (leg.gait_state == LegGaitState::kSwing) {
-            if (grounded_home_valid[leg_index]) {
-                leg.landing_target_world = grounded_homes[leg_index];
-                leg.landing_target_valid = true;
+            // Re-target the landing spot in case the body kept moving mid-step.
+            if (home_grounded[leg_index]) {
+                leg.landing_target_world = home_world[leg_index];
             }
             const float swing_phase = definition.step_duration_ticks <= 1u
                 ? 1.0f
                 : std::min(
                     1.0f,
                     static_cast<float>(leg.swing_tick) /
-                        static_cast<float>(definition.step_duration_ticks - 1u));
-            const glm::vec3 landing_target = leg.landing_target_valid
-                ? leg.landing_target_world
-                : leg.swing_start_world;
-            leg.foot_target_world = glm::mix(
+                        static_cast<float>(
+                            definition.step_duration_ticks - 1u));
+            const glm::vec3 flat = glm::mix(
                 leg.swing_start_world,
-                landing_target,
+                leg.landing_target_world,
                 swing_phase);
-            leg.foot_target_world.y += definition_leg.step_height_meters *
+            const float lift = definition_leg.step_height_meters *
                 std::sin(swing_phase * std::numbers::pi_v<float>);
+            leg.foot_target_world = flat + glm::vec3{0.0f, lift, 0.0f};
             if (swing_phase >= 1.0f) {
                 leg.gait_state = LegGaitState::kSupport;
                 leg.entered_support = true;
                 leg.swing_tick = 0u;
-                leg.planted_foothold_world = landing_target;
-                leg.root_position_at_plant = root_position;
-                leg.foot_target_world = landing_target;
-                leg.planted = leg.landing_target_valid;
+                leg.foot_target_world = leg.landing_target_world;
             } else {
                 ++leg.swing_tick;
             }
-        } else {
-            leg.foot_target_world = leg.planted_foothold_world;
         }
+        // Support legs simply hold foot_target_world in place.
 
         glm::vec3 target_model = inverse_root_rotation *
             (leg.foot_target_world - pose_root_position);
-        glm::vec3 hip_to_target = target_model - hip_model;
+        const glm::vec3 hip_to_target = target_model - hip_model;
         const float target_distance = glm::length(hip_to_target);
         leg.ik_reach_clamped = target_distance > maximum_reach &&
             maximum_reach > 0.000001f;
@@ -552,6 +546,42 @@ bool solve_legged_locomotion_pose(
         }
         leg.solved_foot_world = pose_root_position + root_rotation *
             model_position(models[definition_leg.foot_bone_index]);
+    }
+
+    // Body grounding follow (optional): expose the terrain-fit body height and
+    // tilt so the kernel can blend the transform toward them. Height sits above
+    // the average foothold by the rig's rest stance; tilt aims at the average
+    // ground normal. Left disabled (physics owns the body) when speed <= 0.
+    if (definition.body_follow_speed > 0.0f) {
+        float foot_y_sum = 0.0f;
+        float bind_foot_y_sum = 0.0f;
+        glm::vec3 normal_sum{0.0f};
+        std::uint32_t contributing = 0u;
+        for (const std::uint32_t leg_index : state->last_processing_order) {
+            const LegLocomotionState& leg = state->legs[leg_index];
+            if (!leg.foot_initialized) {
+                continue;
+            }
+            foot_y_sum += leg.foot_target_world.y;
+            bind_foot_y_sum += bind_foot_models[leg_index].y;
+            normal_sum += home_grounded[leg_index]
+                ? leg.ground_hit_normal
+                : glm::vec3{0.0f, 1.0f, 0.0f};
+            ++contributing;
+        }
+        if (contributing > 0u) {
+            const float count = static_cast<float>(contributing);
+            const float rest_body_height = -(bind_foot_y_sum / count);
+            state->body_follow_target_height =
+                foot_y_sum / count + rest_body_height;
+            state->body_follow_ground_normal =
+                glm::dot(normal_sum, normal_sum) > 0.000001f
+                    ? glm::normalize(normal_sum)
+                    : glm::vec3{0.0f, 1.0f, 0.0f};
+            state->body_follow_valid =
+                std::isfinite(state->body_follow_target_height) &&
+                finite_vec3(state->body_follow_ground_normal);
+        }
     }
 
     write_local_rotations(

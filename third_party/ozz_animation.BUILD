@@ -79,7 +79,7 @@ cc_library(
         "include",
         "src",
     ],
-    visibility = ["//visibility:private"],
+    visibility = ["//visibility:public"],
     deps = [":ozz_animation"],
 )
 

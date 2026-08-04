@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <numbers>
 #include <utility>
 
 #include <fmt/format.h>
@@ -7974,24 +7975,65 @@ void KernelEngine::update_legged_locomotion(
                 out_hit->supporting_collider_id = hit.identity.collider_id;
                 return true;
             };
-        const MovementState* movement =
-            world_.registry().try_get<MovementState>(entity);
-        const bool root_grounded = movement != nullptr &&
-            movement->ground_state == MovementState::GroundState::kGrounded;
-        const bool root_landed_this_tick =
-            movement != nullptr && movement->landed_this_tick;
+        // The leg solve is intentionally decoupled from the character/movement
+        // controller: it reads transform.position only as a world anchor for
+        // foot placement and never inspects the controller's grounded/landed
+        // state (the controller owns whether the body advances).
         if (!solve_legged_locomotion_pose(
                 skeleton_asset->skeleton,
                 skeleton_asset->bind_pose,
                 entity_template->skeleton,
                 transform.position,
-                root_grounded,
-                root_landed_this_tick,
                 entity_template->movement.max_slope_degrees,
                 fixed_delta_seconds,
                 grounding_query,
                 &state->second)) {
             state->second.pose_valid = false;
+        }
+
+        // Optional body grounding follow (body_follow_speed > 0): pull the body
+        // height toward the average foothold and tilt toward the average ground
+        // normal, smoothed frame-rate-independently. Disabled by default so the
+        // physics/character controller owns the body transform.
+        if (entity_template->skeleton.body_follow_speed > 0.0f &&
+            state->second.pose_valid && state->second.body_follow_valid) {
+            const float blend = 1.0f - std::exp(
+                -entity_template->skeleton.body_follow_speed *
+                fixed_delta_seconds);
+            transform.position.y = std::lerp(
+                transform.position.y,
+                state->second.body_follow_target_height,
+                blend);
+            const glm::quat upright = glm::angleAxis(
+                state->second.root_yaw_radians,
+                glm::vec3{0.0f, 1.0f, 0.0f});
+            // Rotation that takes world-up onto the average ground normal, built
+            // without glm's experimental gtx helpers.
+            const glm::vec3 up{0.0f, 1.0f, 0.0f};
+            const glm::vec3& normal = state->second.body_follow_ground_normal;
+            const float up_dot_normal = std::clamp(
+                glm::dot(up, normal), -1.0f, 1.0f);
+            glm::quat up_to_normal{1.0f, 0.0f, 0.0f, 0.0f};
+            if (up_dot_normal < 0.99999f) {
+                glm::vec3 axis = glm::cross(up, normal);
+                const float axis_length = glm::length(axis);
+                if (axis_length > 0.000001f) {
+                    axis /= axis_length;
+                    up_to_normal = glm::angleAxis(
+                        std::acos(up_dot_normal), axis);
+                } else {
+                    // Anti-parallel: flip about any horizontal axis.
+                    up_to_normal = glm::angleAxis(
+                        std::numbers::pi_v<float>, glm::vec3{1.0f, 0.0f, 0.0f});
+                }
+            }
+            const glm::quat aligned = up_to_normal * upright;
+            const glm::quat target_rotation = glm::slerp(
+                upright,
+                aligned,
+                entity_template->skeleton.slope_alignment);
+            transform.rotation = glm::slerp(
+                transform.rotation, target_rotation, blend);
         }
     }
     std::erase_if(

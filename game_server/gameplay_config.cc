@@ -332,6 +332,8 @@ void hash_actor_template(
         hash_float(hash, actor_template.skeleton.step_threshold_meters);
         hash_scalar(hash, actor_template.skeleton.step_duration_ticks);
         hash_scalar(hash, actor_template.skeleton.max_swinging_legs);
+        hash_float(hash, actor_template.skeleton.body_follow_speed);
+        hash_float(hash, actor_template.skeleton.slope_alignment);
         hash_scalar(hash, actor_template.skeleton.foothold_query_type);
         hash_float(
             hash,
@@ -2882,6 +2884,7 @@ ActorTemplateConfig actor_template_from_yaml(
                 "input_deadzone",
                 "gait",
                 "foothold",
+                "body",
                 "legs",
             },
             path,
@@ -3118,6 +3121,36 @@ ActorTemplateConfig actor_template_from_yaml(
                     actor_template.name);
             }
             binding.foothold_candidate_offsets.push_back(offset);
+        }
+
+        // Optional body grounding follow. Absent = 0 (physics owns body height
+        // and tilt; the legs read the resolved root only as a world anchor).
+        const YAML::Node body = locomotion["body"];
+        if (body) {
+            reject_unknown_keys(
+                body,
+                {
+                    "follow_speed",
+                    "slope_alignment",
+                },
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                actor_template.actor_template_id);
+            binding.body_follow_speed =
+                body["follow_speed"] ? body["follow_speed"].as<float>() : 0.0f;
+            binding.slope_alignment = body["slope_alignment"]
+                ? body["slope_alignment"].as<float>()
+                : 0.0f;
+            if (!std::isfinite(binding.body_follow_speed) ||
+                binding.body_follow_speed < 0.0f ||
+                !std::isfinite(binding.slope_alignment) ||
+                binding.slope_alignment < 0.0f ||
+                binding.slope_alignment > 1.0f) {
+                throw std::runtime_error(
+                    "invalid locomotion body follow values: " +
+                    actor_template.name);
+            }
         }
     }
     return actor_template;
@@ -6181,6 +6214,10 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
                 authored_template.skeleton.step_duration_ticks;
             entity_template.skeleton.max_swinging_legs =
                 authored_template.skeleton.max_swinging_legs;
+            entity_template.skeleton.body_follow_speed =
+                authored_template.skeleton.body_follow_speed;
+            entity_template.skeleton.slope_alignment =
+                authored_template.skeleton.slope_alignment;
             entity_template.skeleton.foothold_query_type =
                 authored_template.skeleton.foothold_query_type;
             entity_template.skeleton.foothold_query_start_height_meters =
