@@ -367,6 +367,13 @@ private:
         std::unordered_set<NetId> out_of_range_projectiles;
     };
 
+    // A step, addressed to the entity whose leg took it. The event itself is
+    // entity-agnostic, so replication has to carry the net id alongside it.
+    struct PendingLocomotionStep {
+        NetId net_id = 0;
+        LocomotionStepEvent event;
+    };
+
     struct ClientReplicatedEntity {
         NetId net_id = 0;
         EntityType type = EntityType::kUnknown;
@@ -524,6 +531,21 @@ private:
     void update_legged_locomotion(
         const std::vector<QueuedInput>& movement_inputs,
         float fixed_delta_seconds);
+    // Drives the legs of entities this kernel only ever sees through snapshots.
+    // It never grounds or gaits them: it replays the steps the authority took,
+    // which arrive through enqueue_replicated_locomotion_step. Stepping happens
+    // in server-tick space against roots read out of the snapshot buffer, so the
+    // poses it records line up with the roots presentation will compose them
+    // onto, exactly as they do on the authoritative side.
+    void update_follower_locomotion();
+    void step_follower_locomotion_tick(std::uint32_t server_tick);
+    // Hands a replicated step to the follower path. Steps whose tick has not
+    // been reached yet are held; ones already in the past are applied on the
+    // next stepped tick, which resumes the swing mid-arc rather than replaying
+    // it late.
+    void enqueue_replicated_locomotion_step(
+        NetId net_id,
+        const LocomotionStepEvent& event);
     void finalize_simulated_projectile_destructions(
         std::size_t first_event,
         std::size_t last_event,
@@ -756,6 +778,17 @@ private:
     std::vector<SkeletonPresentationPose> skeleton_presentation_poses_;
     std::unordered_map<NetId, LocomotionState> locomotion_states_;
     std::unordered_map<NetId, SkeletonPoseHistory> skeleton_pose_history_;
+    // Legs reconstructed from replicated steps, for entities this kernel does
+    // not simulate. Kept apart from locomotion_states_ so the authoritative
+    // entry always wins where both exist (a listen server has both).
+    std::unordered_map<NetId, LocomotionState> follower_locomotion_states_;
+    // Steps delivered but not yet reached in server-tick time, and steps this
+    // kernel's own solve committed this tick. The outbox is what a snapshot or
+    // event channel will carry; nothing drains it over the wire yet.
+    std::vector<PendingLocomotionStep> pending_follower_steps_;
+    std::vector<PendingLocomotionStep> outgoing_locomotion_steps_;
+    std::uint32_t follower_locomotion_tick_ = 0;
+    bool has_follower_locomotion_tick_ = false;
     WorldSnapshot latest_snapshot_;
     WorldSnapshot latest_client_snapshot_;
     std::vector<WorldSnapshot> client_snapshot_buffer_;

@@ -3041,6 +3041,8 @@ bool KernelEngine::load_gameplay_catalog(
     skeleton_assets_ = std::move(validated_skeleton_assets);
     locomotion_states_.clear();
     skeleton_pose_history_.clear();
+    follower_locomotion_states_.clear();
+    pending_follower_steps_.clear();
     if (!item_store_.set_templates(item_templates_, &item_validation_error)) {
         return false;
     }
@@ -4729,6 +4731,11 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     render_states_.clear();
     locomotion_states_.clear();
     skeleton_pose_history_.clear();
+    follower_locomotion_states_.clear();
+    pending_follower_steps_.clear();
+    outgoing_locomotion_steps_.clear();
+    follower_locomotion_tick_ = 0u;
+    has_follower_locomotion_tick_ = false;
     latest_snapshot_ = WorldSnapshot{};
     latest_client_snapshot_ = WorldSnapshot{};
     client_snapshot_buffer_.clear();
@@ -8093,6 +8100,23 @@ void KernelEngine::update_legged_locomotion(
                 skeleton_pose_history_capacity(),
                 &skeleton_pose_history_[net_id]);
         }
+
+        // Publish the steps this tick committed. Both swing endpoints are frozen
+        // at lift-off, so one of these fully describes a step and a follower can
+        // reproduce it without the terrain, the gait, or the 41 bones.
+        std::array<LocomotionStepEvent, KERNEL_MAX_SKELETON_LEGS> committed{};
+        const std::uint32_t committed_count = collect_locomotion_step_events(
+            state->second,
+            tick_loop_.current_tick(),
+            committed);
+        for (std::uint32_t index = 0u;
+             index < std::min<std::uint32_t>(
+                 committed_count,
+                 static_cast<std::uint32_t>(committed.size()));
+             ++index) {
+            outgoing_locomotion_steps_.push_back(
+                PendingLocomotionStep{net_id, committed[index]});
+        }
     }
     std::erase_if(
         skeleton_pose_history_,
@@ -8104,6 +8128,171 @@ void KernelEngine::update_legged_locomotion(
         [&active_locomotion_entities](const auto& entry) {
             return !active_locomotion_entities.contains(entry.first);
         });
+}
+
+void KernelEngine::enqueue_replicated_locomotion_step(
+    NetId net_id,
+    const LocomotionStepEvent& event) {
+    if (net_id == 0u) {
+        return;
+    }
+    pending_follower_steps_.push_back(PendingLocomotionStep{net_id, event});
+}
+
+void KernelEngine::update_follower_locomotion() {
+    if (!has_client_snapshot_ || client_snapshot_buffer_.empty()) {
+        follower_locomotion_states_.clear();
+        pending_follower_steps_.clear();
+        has_follower_locomotion_tick_ = false;
+        return;
+    }
+    // Followed legs live in the snapshot buffer's tick space, not this kernel's:
+    // a client's own tick counter is free-running, and the poses have to be
+    // stamped with the same ticks the roots are, or presentation would sample
+    // the two at different instants and slide every foot.
+    const std::uint32_t target_tick =
+        client_snapshot_buffer_.back().header.server_tick;
+    // A gap in delivery (or a first snapshot) must not turn into a long replay:
+    // there is nothing to reconstruct in the missing span anyway, since the
+    // steps that happened there were never received.
+    constexpr std::uint32_t kMaxCatchUpTicks = 8u;
+    if (!has_follower_locomotion_tick_ ||
+        static_cast<std::int32_t>(target_tick - follower_locomotion_tick_) >
+            static_cast<std::int32_t>(kMaxCatchUpTicks) ||
+        static_cast<std::int32_t>(target_tick - follower_locomotion_tick_) < 0) {
+        follower_locomotion_tick_ = target_tick > kMaxCatchUpTicks
+            ? target_tick - kMaxCatchUpTicks
+            : 0u;
+        has_follower_locomotion_tick_ = true;
+    }
+    while (static_cast<std::int32_t>(
+               target_tick - follower_locomotion_tick_) > 0) {
+        ++follower_locomotion_tick_;
+        step_follower_locomotion_tick(follower_locomotion_tick_);
+    }
+
+    // A step whose tick is long behind the follower will never be applied, so
+    // it is dropped rather than held forever. The window is generous: applying
+    // a stale step still lands the foot in the right place, so the only cost of
+    // keeping one a little too long is a snap the next step would fix anyway.
+    constexpr std::int32_t kStaleStepTicks = 64;
+    std::erase_if(
+        pending_follower_steps_,
+        [this](const PendingLocomotionStep& pending) {
+            return static_cast<std::int32_t>(
+                       follower_locomotion_tick_ - pending.event.start_tick) >
+                kStaleStepTicks;
+        });
+    std::erase_if(
+        follower_locomotion_states_,
+        [this](const auto& entry) {
+            return std::none_of(
+                client_replicated_entities_.begin(),
+                client_replicated_entities_.end(),
+                [&entry](const ClientReplicatedEntity& replicated) {
+                    return replicated.net_id == entry.first;
+                });
+        });
+}
+
+void KernelEngine::step_follower_locomotion_tick(std::uint32_t server_tick) {
+    const float fixed_delta_seconds = tick_loop_.fixed_delta_seconds();
+    const std::uint64_t server_time_us =
+        tick_time_us(server_tick, fixed_delta_seconds);
+    WorldSnapshot stepped_snapshot;
+    if (!build_interpolated_snapshot_for_server_time(
+            server_time_us,
+            &stepped_snapshot)) {
+        return;
+    }
+    for (const EntitySnapshot& entity : stepped_snapshot.entities) {
+        // An entity this kernel simulates already has authoritative legs; the
+        // follower must not shadow them.
+        if (locomotion_states_.contains(entity.net_id)) {
+            continue;
+        }
+        const auto replicated = std::find_if(
+            client_replicated_entities_.begin(),
+            client_replicated_entities_.end(),
+            [&entity](const ClientReplicatedEntity& candidate) {
+                return candidate.net_id == entity.net_id;
+            });
+        if (replicated == client_replicated_entities_.end()) {
+            continue;
+        }
+        const std::uint32_t template_id =
+            replicated->type == EntityType::kActor
+                ? replicated->actor_template_id
+                : replicated->entity_template_id;
+        const KernelEntityTemplateDefinition* entity_template =
+            find_entity_template(entity_templates_, template_id);
+        if (entity_template == nullptr ||
+            entity_template->skeleton.struct_size <
+                sizeof(KernelSkeletonBindingDefinition)) {
+            continue;
+        }
+        const RuntimeSkeletonAsset* skeleton_asset = find_skeleton_asset(
+            skeleton_assets_,
+            entity_template->skeleton.skeleton_asset_id);
+        if (skeleton_asset == nullptr) {
+            continue;
+        }
+
+        auto [state, inserted] =
+            follower_locomotion_states_.try_emplace(entity.net_id);
+        if (inserted) {
+            const glm::vec3 forward =
+                entity.rotation * glm::vec3{0.0f, 0.0f, 1.0f};
+            if (!initialize_locomotion_state(
+                    entity_template->skeleton,
+                    std::atan2(forward.x, forward.z),
+                    &state->second)) {
+                follower_locomotion_states_.erase(state);
+                continue;
+            }
+        }
+
+        // A follower reads its heading off the replicated transform: it has no
+        // movement input to derive one from, and advance_locomotion_state never
+        // runs on this path.
+        const glm::vec3 forward = entity.rotation * glm::vec3{0.0f, 0.0f, 1.0f};
+        state->second.root_yaw_radians = std::atan2(forward.x, forward.z);
+
+        for (std::size_t index = 0u; index < pending_follower_steps_.size();) {
+            const PendingLocomotionStep& pending = pending_follower_steps_[index];
+            if (pending.net_id != entity.net_id ||
+                static_cast<std::int32_t>(
+                    server_tick - pending.event.start_tick) < 0) {
+                ++index;
+                continue;
+            }
+            apply_locomotion_step_event(
+                entity_template->skeleton,
+                pending.event,
+                server_tick,
+                &state->second);
+            pending_follower_steps_.erase(
+                pending_follower_steps_.begin() +
+                static_cast<std::ptrdiff_t>(index));
+        }
+
+        if (!solve_legged_locomotion_follower_pose(
+                skeleton_asset->skeleton,
+                skeleton_asset->bind_pose,
+                entity_template->skeleton,
+                entity.position,
+                fixed_delta_seconds,
+                &state->second)) {
+            state->second.pose_valid = false;
+            continue;
+        }
+        record_skeleton_pose_sample(
+            server_tick,
+            server_time_us,
+            state->second.local_pose,
+            skeleton_pose_history_capacity(),
+            &skeleton_pose_history_[entity.net_id]);
+    }
 }
 
 void KernelEngine::simulate_tick() {
@@ -8154,6 +8343,10 @@ void KernelEngine::simulate_tick() {
         session_rules_.actor_blocking_mode,
         &physics_finalized_actor_net_ids);
     update_legged_locomotion(movement_inputs, fixed_delta);
+    // Entities that only arrive as snapshots get their legs from replayed steps
+    // rather than from the solve above, which never sees them: they are not in
+    // this kernel's registry.
+    update_follower_locomotion();
     acknowledge_simulated_movement_inputs(movement_inputs);
     benchmark_stats_.grounded_query_count +=
         movement_stats.grounded_query_count;
@@ -9175,12 +9368,23 @@ void KernelEngine::rebuild_skeleton_presentation_at_time(
         pose.skeleton_content_hash = asset->skeleton_content_hash;
         pose.pose_tick = tick_loop_.current_tick();
         pose.pose_time_us = client_render_time_us;
-        const auto locomotion = locomotion_states_.find(render_state.net_id);
-        if (locomotion != locomotion_states_.end() &&
-            locomotion->second.pose_valid &&
-            locomotion->second.local_pose.size() == asset->bind_pose.size()) {
+        // Legs this kernel simulated win; legs reconstructed from replicated
+        // steps stand in for entities it only ever saw through snapshots. A
+        // listen server holds both, and must keep showing the authoritative one.
+        const LocomotionState* solved = nullptr;
+        if (const auto locomotion =
+                locomotion_states_.find(render_state.net_id);
+            locomotion != locomotion_states_.end()) {
+            solved = &locomotion->second;
+        } else if (const auto follower =
+                       follower_locomotion_states_.find(render_state.net_id);
+                   follower != follower_locomotion_states_.end()) {
+            solved = &follower->second;
+        }
+        if (solved != nullptr && solved->pose_valid &&
+            solved->local_pose.size() == asset->bind_pose.size()) {
             pose.pose_flags = KERNEL_SKELETON_POSE_FLAG_PROCEDURAL;
-            pose.local_transforms = locomotion->second.local_pose;
+            pose.local_transforms = solved->local_pose;
             const auto history =
                 skeleton_pose_history_.find(render_state.net_id);
             std::uint32_t sampled_tick = 0u;
@@ -9194,7 +9398,7 @@ void KernelEngine::rebuild_skeleton_presentation_at_time(
                 pose.pose_tick = sampled_tick;
                 pose.pose_time_us = pose_evaluation_time_us;
             } else {
-                pose.local_transforms = locomotion->second.local_pose;
+                pose.local_transforms = solved->local_pose;
             }
         } else {
             pose.pose_flags = KERNEL_SKELETON_POSE_FLAG_BIND_POSE;

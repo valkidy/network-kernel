@@ -23,6 +23,28 @@
 #include "kernel/src/legged_locomotion.h"
 #include "kernel/src/skeleton_presentation.h"
 
+// The follower locomotion path is engine-internal: what will eventually drive
+// it is a replicated field rather than a call, so it has no C API surface to
+// test through yet. Every standard header the kernel pulls in is included ahead
+// of the access override, so the override only ever reaches kernel.h itself.
+#include <atomic>
+#include <chrono>
+#include <deque>
+#include <functional>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <random>
+#include <ranges>
+#include <span>
+#include <thread>
+#include <unordered_set>
+#include <variant>
+#include "protocol/public/network_packets.h"
+#define private public
+#include "kernel/src/kernel.h"
+#undef private
+
 namespace {
 
 constexpr std::uint16_t kMaxReserveMagazines =
@@ -2809,6 +2831,123 @@ int main() {
         locomotion_render_state->rotation.w -
         std::cos(expected_half_yaw_radians)) < 0.0001f);
     Kernel_Destroy(skeleton_kernel);
+
+    // The follower path end to end: a kernel that never simulates the monster --
+    // it is not in its registry, and no grounding query is ever made for it --
+    // reconstructs the monster's legs from replicated steps alone, and the
+    // presentation reports them as procedural rather than falling back to the
+    // bind pose. This is the client-side half of replicating steps instead of
+    // bones; only the transport that fills the step queue is still missing.
+    {
+        network_example::game_server::KernelGameplayCatalogStorage
+            follower_catalog =
+                network_example::game_server::build_kernel_gameplay_catalog(
+                    config);
+        KernelConfig follower_config{};
+        follower_config.mode = KernelMode_Client;
+        follower_config.tick.server_tick_rate = 30;
+        follower_config.tick.snapshot_rate = 15;
+        follower_config.max_render_states = 64;
+        follower_config.max_events = 128;
+        network_example::KernelEngine follower(follower_config);
+        follower.reset_runtime_state(KernelMode_Client);
+        require(follower.load_gameplay_catalog(follower_catalog.definition));
+
+        constexpr network_example::NetId kMonsterNetId = 4242u;
+        constexpr std::uint32_t kMonsterTemplateId = 20u;
+        network_example::EntitySpawnPacket spawn{};
+        spawn.net_id = kMonsterNetId;
+        spawn.entity_type = network_example::EntityType::kActor;
+        spawn.actor_type = network_example::ActorType::kAgent;
+        spawn.owner_peer = 0u;
+        spawn.actor_template_id = kMonsterTemplateId;
+        spawn.entity_template_id = kMonsterTemplateId;
+        follower.handle_client_spawn(spawn);
+
+        const auto push_snapshot = [&](std::uint32_t server_tick, float x) {
+            network_example::WorldSnapshot snapshot;
+            snapshot.header.server_tick = server_tick;
+            network_example::EntitySnapshot entity;
+            entity.net_id = kMonsterNetId;
+            entity.type = network_example::EntityType::kActor;
+            entity.actor_type = network_example::ActorType::kAgent;
+            entity.position = glm::vec3{x, 0.0f, 0.0f};
+            entity.rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+            snapshot.entities.push_back(entity);
+            follower.handle_client_snapshot(snapshot);
+        };
+
+        // Two snapshots so the buffer can interpolate between server ticks.
+        push_snapshot(100u, 0.0f);
+        push_snapshot(102u, 0.5f);
+        follower.update_follower_locomotion();
+        require(follower.follower_locomotion_states_.count(kMonsterNetId) == 1u);
+        // Nothing has stepped yet, so no foot has committed to a world position.
+        for (const network_example::LegLocomotionState& leg :
+             follower.follower_locomotion_states_[kMonsterNetId].legs) {
+            require(!leg.foot_initialized);
+        }
+
+        // One replicated step, for one leg, landing somewhere the authority
+        // chose. The follower is told nothing else: no terrain, no lift-off
+        // point, no gait.
+        const glm::vec3 landing{1.25f, 0.0f, 9.5f};
+        network_example::LocomotionStepEvent step{};
+        step.leg_index = 0u;
+        step.start_tick = 104u;
+        step.landing_target_world = landing;
+        follower.enqueue_replicated_locomotion_step(kMonsterNetId, step);
+
+        // A step in the future is held, not applied early.
+        follower.update_follower_locomotion();
+        require(!follower.follower_locomotion_states_[kMonsterNetId]
+                     .legs[0]
+                     .foot_initialized);
+        require(follower.pending_follower_steps_.size() == 1u);
+
+        // Walk the snapshot buffer past the step, then past its whole swing.
+        float monster_x = 0.5f;
+        for (std::uint32_t server_tick = 104u; server_tick <= 116u;
+             server_tick += 2u) {
+            monster_x += 0.25f;
+            push_snapshot(server_tick, monster_x);
+            follower.update_follower_locomotion();
+        }
+        require(follower.pending_follower_steps_.empty());
+
+        const network_example::LegLocomotionState& stepped =
+            follower.follower_locomotion_states_[kMonsterNetId].legs[0];
+        require(stepped.foot_initialized);
+        require(stepped.gait_state == network_example::LegGaitState::kSupport);
+        // Landed exactly where the authority said, with no resync and no
+        // knowledge of the terrain under it.
+        require(glm::length(stepped.foot_target_world - landing) < 0.0001f);
+        // Legs that were never told to step stay uncommitted rather than
+        // guessing a foothold of their own.
+        require(!follower.follower_locomotion_states_[kMonsterNetId]
+                     .legs[1]
+                     .foot_initialized);
+
+        // Poses were recorded per server tick, so presentation can sample them
+        // at the same instant it samples the roots.
+        require(follower.skeleton_pose_history_.count(kMonsterNetId) == 1u);
+        require(follower.skeleton_pose_history_[kMonsterNetId].size > 1u);
+
+        // And presentation reports procedural legs, not the bind-pose fallback
+        // a client used to be stuck with.
+        follower.rebuild_skeleton_presentation_at_time(
+            follower.client_local_time_us_);
+        const auto presented = std::find_if(
+            follower.skeleton_presentation_poses_.begin(),
+            follower.skeleton_presentation_poses_.end(),
+            [](const network_example::SkeletonPresentationPose& pose) {
+                return pose.entity_net_id == kMonsterNetId;
+            });
+        require(presented != follower.skeleton_presentation_poses_.end());
+        require(presented->pose_flags ==
+                KERNEL_SKELETON_POSE_FLAG_PROCEDURAL);
+    }
+
 
     KernelConfig observer_kernel_config{};
     observer_kernel_config.mode = KernelMode_ListenServer;
