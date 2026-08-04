@@ -648,7 +648,7 @@ int main() {
                 {},
                 replace_once(
                     production_monster_yaml,
-                    "step_threshold_meters: 5.5",
+                    "step_threshold_meters: 0.65",
                     "step_threshold_meters: 0.0"));
         (void)network_example::game_server::load_gameplay_config_from_bundle_memory(
             invalid_gait_bundle.data(),
@@ -1120,7 +1120,7 @@ int main() {
     require(monster_template->skeleton.processing_order.size() == 4u);
     require(monster_template->movement_max_yaw_degrees_per_second == 45.0f);
     require(monster_template->skeleton.input_deadzone == 0.01f);
-    require(monster_template->skeleton.step_threshold_meters == 5.5f);
+    require(monster_template->skeleton.step_threshold_meters == 0.65f);
     require(monster_template->skeleton.step_duration_ticks == 6u);
     require(monster_template->skeleton.max_swinging_legs == 2u);
     require(monster_template->skeleton.foothold_query_type ==
@@ -1159,7 +1159,7 @@ int main() {
          KERNEL_ENTITY_COMPONENT_SKELETON) != 0u);
     require(monster_definition->skeleton.leg_count == 4u);
     require(monster_definition->movement.max_yaw_degrees_per_second == 45.0f);
-    require(monster_definition->skeleton.step_threshold_meters == 5.5f);
+    require(monster_definition->skeleton.step_threshold_meters == 0.65f);
     require(monster_definition->skeleton.step_duration_ticks == 6u);
     require(monster_definition->skeleton.legs[0].gait_group == 0u);
     require(monster_definition->skeleton.legs[1].gait_group == 0u);
@@ -1235,7 +1235,8 @@ int main() {
         initial_grounded_anchors.push_back(leg.foot_target_world);
     }
     const std::size_t rays_after_first_solve = grounding_origins.size();
-    // A small root move (< step_threshold) keeps every foot planted where it is.
+    // A root move smaller than the authored step_threshold (0.65 m) keeps every
+    // foot planted where it is.
     require(network_example::advance_locomotion_state(
         monster_definition->skeleton,
         KernelVec2{0.0f, 1.0f},
@@ -1246,7 +1247,7 @@ int main() {
         locomotion_asset.skeleton,
         locomotion_asset.bind_pose,
         monster_definition->skeleton,
-        glm::vec3{1.0f, 0.0f, 0.0f},
+        glm::vec3{0.3f, 0.0f, 0.0f},
         monster_definition->movement.max_slope_degrees,
         1.0f / 30.0f,
         ordered_grounding,

@@ -53,7 +53,42 @@ locomotion:
   input_deadzone: 0.01
   gait:
     type: displacement_threshold
-    step_threshold_meters: 5.5
+    # Sized to move_speed, NOT to the rig. LocomotionTest scales its gait off
+    # leg length alone (stepThreshold = legLength * 0.30, stepHeight * 0.22)
+    # because it also scales moveSpeed the same way (LeggedLocomotion.cs:108,
+    # 109, 163: moveSpeed * legLength). We keep gameplay speed at 2.5 m/s while
+    # the rig measures 18.24 m per leg, so copying the rig-derived 5.47 m
+    # threshold gave a 2.2 s stance against a 0.2 s swing -- an 8% swing duty
+    # factor where the prototype runs 42%, with the foot travelling 11x the
+    # body's speed instead of 1.4x. That is the "stand still, then flick a leg
+    # 5.5 m" look, and it is a gait-tuning artefact, not a netcode one.
+    #
+    # The invariant worth porting is the prototype's timing, which is leg-length
+    # independent by construction: stance = stepThreshold / moveSpeed =
+    # 0.30L / 1.2L = 0.25 s. At 2.5 m/s that is 0.625 m. step_height keeps the
+    # prototype's height/stride ratio (0.22 / 0.30 = 0.73).
+    #
+    # Turning is the other driver of stance drift and it dominates here: at
+    # max_yaw 45 deg/s across a 16.08 m stance radius the stance sweeps at
+    # 12.6 m/s, five times the walk, which no threshold in this range can keep
+    # up with. Measured worst stance error over a 20 s run, flat ground:
+    #
+    #   threshold | walk duty | walk err | patrol err | sustained-spin err
+    #      5.50   |     7%    |  5.92 m  |   8.26 m   |      7.94 m
+    #      2.00   |    20%    |  2.42 m  |  10.29 m   |     32.26 m
+    #      1.20   |    32%    |  1.67 m  |  10.65 m   |     32.26 m
+    #      0.65   |    41%    |  1.08 m  |  10.19 m   |     32.26 m
+    #
+    # "patrol" slews the heading 30 deg once a second the way the sentry AI
+    # does; its error is set by the 45 deg/s slew, not by the threshold, so
+    # shrinking the stride costs ~2 m of turn lag to gain 6x the walk duty.
+    # "spin" holds max yaw rate indefinitely and saturates at 32.26 m, which is
+    # twice the stance radius -- feet diametrically opposite their home, fully
+    # decoupled. Sustained spinning is not what the sentry does, but if it ever
+    # matters the knob is max_yaw_degrees_per_second: the legs keep up to about
+    # 8-10 deg/s at this threshold (measured 1.05 m error at 8 deg/s, saturated
+    # by 12 deg/s), which is far slower than gameplay currently wants.
+    step_threshold_meters: 0.65
     step_duration_ticks: 6
     max_swinging_legs: 2
     processing_order: [front_left, front_right, rear_left, rear_right]
@@ -91,7 +126,7 @@ locomotion:
       foot_bone: JNT_LegFrontLeft_Foot
       gait_group: 0
       pole_local: {x: 0.0, y: 0.0, z: 1.0}
-      step_height_meters: 4.0
+      step_height_meters: 0.48
       max_reach_ratio: 0.999
     - id: rear_right
       hip_bone: JNT_LegRearRight_Hip
@@ -99,7 +134,7 @@ locomotion:
       foot_bone: JNT_LegRearRight_Foot
       gait_group: 0
       pole_local: {x: 0.0, y: 0.0, z: -1.0}
-      step_height_meters: 4.0
+      step_height_meters: 0.48
       max_reach_ratio: 0.999
     - id: front_right
       hip_bone: JNT_LegFrontRight_Hip
@@ -107,7 +142,7 @@ locomotion:
       foot_bone: JNT_LegFrontRight_Foot
       gait_group: 1
       pole_local: {x: 0.0, y: 0.0, z: 1.0}
-      step_height_meters: 4.0
+      step_height_meters: 0.48
       max_reach_ratio: 0.999
     - id: rear_left
       hip_bone: JNT_LegRearLeft_Hip
@@ -115,5 +150,5 @@ locomotion:
       foot_bone: JNT_LegRearLeft_Foot
       gait_group: 1
       pole_local: {x: 0.0, y: 0.0, z: -1.0}
-      step_height_meters: 4.0
+      step_height_meters: 0.48
       max_reach_ratio: 0.999
