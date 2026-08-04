@@ -73,12 +73,16 @@ locomotion:
       - {x: -0.2, z: 0.0}
       - {x: 0.0, z: 0.2}
       - {x: 0.0, z: -0.2}
-  # LocomotionTest parity: LeggedLocomotion.cs authors bodyFollowSpeed = 10 and
-  # slopeAlignment = 0.6, with the same smoothing law (k = 1 - exp(-speed * dt)).
-  # Enabling this hands body height and tilt to the locomotion pass; the
-  # character controller no longer has sole ownership of the root.
+  # LocomotionTest parity would be follow_speed 10 / slope_alignment 0.6
+  # (LeggedLocomotion.cs authors bodyFollowSpeed = 10, slopeAlignment = 0.6,
+  # under the same k = 1 - exp(-speed * dt) smoothing). Held at 0 until body
+  # follow stops overwriting the root: LocomotionTest has no character
+  # controller, so locomotion owns the transform outright, whereas here
+  # update_legged_locomotion writing position.y fights the CharacterVirtual
+  # solve from the same tick -- measured as a 23.1 m / 10 s patrol (band is
+  # 23.75-25.5) at 0.6, and a 9.0 m run with 9 m of yaw drift at 0.0.
   body:
-    follow_speed: 10.0
+    follow_speed: 0.0
     slope_alignment: 0.6
   legs:
     - id: front_left
