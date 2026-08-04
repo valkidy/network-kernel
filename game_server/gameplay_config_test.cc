@@ -2855,6 +2855,16 @@ int main() {
 
         constexpr network_example::NetId kMonsterNetId = 4242u;
         constexpr std::uint32_t kMonsterTemplateId = 20u;
+        // A baseline is sent beside the spawn packet, so it can reach the
+        // client before that entity's first snapshot. It must survive that.
+        network_example::LocomotionStepBatchPacket early_baseline{};
+        early_baseline.server_tick = 99u;
+        early_baseline.records.push_back(network_example::LocomotionStepRecord{
+            kMonsterNetId, 2u, UINT8_MAX, glm::vec3{5.0f, 0.0f, -5.0f}});
+        follower.handle_client_locomotion_step_batch(early_baseline);
+        follower.update_follower_locomotion();
+        require(follower.pending_follower_steps_.size() == 1u);
+
         network_example::EntitySpawnPacket spawn{};
         spawn.net_id = kMonsterNetId;
         spawn.entity_type = network_example::EntityType::kActor;
@@ -2882,10 +2892,16 @@ int main() {
         push_snapshot(102u, 0.5f);
         follower.update_follower_locomotion();
         require(follower.follower_locomotion_states_.count(kMonsterNetId) == 1u);
-        // Nothing has stepped yet, so no foot has committed to a world position.
-        for (const network_example::LegLocomotionState& leg :
-             follower.follower_locomotion_states_[kMonsterNetId].legs) {
-            require(!leg.foot_initialized);
+        // Only the leg the early baseline named has committed to a world
+        // position; nothing has stepped, so no other foot has.
+        for (std::size_t leg_index = 0u;
+             leg_index <
+                 follower.follower_locomotion_states_[kMonsterNetId].legs.size();
+             ++leg_index) {
+            const network_example::LegLocomotionState& leg =
+                follower.follower_locomotion_states_[kMonsterNetId]
+                    .legs[leg_index];
+            require(leg.foot_initialized == (leg_index == 2u));
         }
 
         // One replicated step, for one leg, landing somewhere the authority
@@ -2939,6 +2955,14 @@ int main() {
         require(!follower.follower_locomotion_states_[kMonsterNetId]
                      .legs[1]
                      .foot_initialized);
+        // The pre-snapshot baseline was kept and applied, so its leg is planted
+        // rather than waiting for a step of its own.
+        const network_example::LegLocomotionState& early_planted =
+            follower.follower_locomotion_states_[kMonsterNetId].legs[2];
+        require(early_planted.foot_initialized);
+        require(glm::length(
+                    early_planted.foot_target_world -
+                    glm::vec3{5.0f, 0.0f, -5.0f}) < 0.0001f);
 
         // Poses were recorded per server tick, so presentation can sample them
         // at the same instant it samples the roots.

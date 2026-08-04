@@ -8162,8 +8162,21 @@ void KernelEngine::enqueue_replicated_locomotion_step(
 void KernelEngine::update_follower_locomotion() {
     if (!has_client_snapshot_ || client_snapshot_buffer_.empty()) {
         follower_locomotion_states_.clear();
-        pending_follower_steps_.clear();
         has_follower_locomotion_tick_ = false;
+        // Held steps are deliberately NOT dropped here. A baseline is sent
+        // beside the spawn that makes an entity relevant, so it can arrive
+        // before that entity's first snapshot does -- discarding it would put
+        // back exactly the "legs appear one at a time" symptom the baseline
+        // exists to remove. Capped so a client that never receives a snapshot
+        // cannot grow the queue without bound.
+        constexpr std::size_t kMaxHeldSteps = 256u;
+        if (pending_follower_steps_.size() > kMaxHeldSteps) {
+            pending_follower_steps_.erase(
+                pending_follower_steps_.begin(),
+                pending_follower_steps_.begin() +
+                    static_cast<std::ptrdiff_t>(
+                        pending_follower_steps_.size() - kMaxHeldSteps));
+        }
         return;
     }
     // Followed legs live in the snapshot buffer's tick space, not this kernel's:
