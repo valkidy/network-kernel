@@ -7290,10 +7290,22 @@ bool KernelEngine::client_render_server_time_us(
         tick_time_us(
             tick_loop_.snapshot_interval_ticks() * 2u,
             fixed_delta_seconds);
+    // A listen server's client half shares the server's clock outright -- both
+    // advance off the same update() -- so the offset is exactly zero rather
+    // than an estimate. It never learns this the normal way: clock-sync pings
+    // only go to peer_sessions_, which excludes local_listen_session_, and the
+    // loopback poll drops everything that is not a snapshot, reliable event, or
+    // presentation packet -- ChannelId::kSession, which carries ping/pong,
+    // included. Without this the branch below quantises the render target to
+    // whole snapshot ticks, so the root (and now the pose that follows it) step
+    // instead of moving continuously.
+    const bool shares_server_clock =
+        config_.mode == KernelMode_ListenServer;
     std::uint64_t target_server_time_us = 0;
-    if (has_client_clock_sync_) {
-        const std::uint64_t server_now_us =
-            offset_time_us(client_render_time_us, client_clock_offset_us_);
+    if (has_client_clock_sync_ || shares_server_clock) {
+        const std::uint64_t server_now_us = shares_server_clock
+            ? client_render_time_us
+            : offset_time_us(client_render_time_us, client_clock_offset_us_);
         target_server_time_us =
             server_now_us > interpolation_delay_us
                 ? server_now_us - interpolation_delay_us

@@ -3029,11 +3029,6 @@ int main() {
     // Composing a pose built for tick N onto a root rendered at N-delay is what
     // made a planted foot drift with the body.
     //
-    // Note this does not assert that two render times inside one tick differ:
-    // without client clock sync the snapshot path pins the target to
-    // `newest_tick - delay` regardless of render time, so the root is
-    // snapshot-quantized too. The pose now follows it either way, which is the
-    // property under test.
     const auto observer_pose_at = [&](std::uint64_t render_time_us,
                                       std::vector<KernelBoneLocalTransform>* out,
                                       KernelSkeletonRenderState* out_state) {
@@ -3083,6 +3078,70 @@ int main() {
         require(std::isfinite(transform.local_rotation.w));
         require(std::isfinite(transform.local_position.y));
     }
+
+    // ... and it has to be *continuous* in render time, not quantised to the
+    // snapshot stream. A listen server shares the server's clock, so advancing
+    // the client clock by a fraction of a tick -- too little to simulate a new
+    // tick -- must still move the pose. It did not before the loopback was
+    // treated as clock-synced: the target was pinned to `newest_tick - delay`,
+    // so the body glided while the legs stepped 30 times a second.
+    const auto observer_live_pose = [&](std::vector<KernelBoneLocalTransform>* out,
+                                        KernelSkeletonRenderState* out_state) {
+        std::array<KernelSkeletonRenderState, 4> states{};
+        std::array<KernelBoneLocalTransform, 164> bones{};
+        KernelSkeletonRenderStateResult result{};
+        result.struct_size = sizeof(result);
+        require(Kernel_GetSkeletonRenderStates(
+                    observer_kernel,
+                    states.data(),
+                    static_cast<std::uint32_t>(states.size()),
+                    bones.data(),
+                    static_cast<std::uint32_t>(bones.size()),
+                    &result) == 1u);
+        const auto found = std::find_if(
+            states.begin(),
+            states.begin() + result.written_state_count,
+            [observer_monster_net_id](const KernelSkeletonRenderState& state) {
+                return state.entity_net_id == observer_monster_net_id;
+            });
+        require(found != states.begin() + result.written_state_count);
+        *out_state = *found;
+        out->assign(
+            bones.begin() + found->first_bone_transform,
+            bones.begin() + found->first_bone_transform + found->bone_count);
+    };
+    std::vector<KernelBoneLocalTransform> observer_pose_before_subtick;
+    std::vector<KernelBoneLocalTransform> observer_pose_after_subtick;
+    KernelSkeletonRenderState observer_state_before_subtick{};
+    KernelSkeletonRenderState observer_state_after_subtick{};
+    observer_live_pose(
+        &observer_pose_before_subtick, &observer_state_before_subtick);
+    // A third of a tick: advances the client clock without simulating a tick.
+    Kernel_Update(observer_kernel, 1.0f / 90.0f);
+    observer_live_pose(
+        &observer_pose_after_subtick, &observer_state_after_subtick);
+    require(
+        observer_state_after_subtick.pose_time_us >
+        observer_state_before_subtick.pose_time_us);
+    require(
+        observer_pose_before_subtick.size() ==
+        observer_pose_after_subtick.size());
+    bool observer_pose_moved_within_tick = false;
+    for (std::size_t bone = 0u; bone < observer_pose_before_subtick.size();
+         ++bone) {
+        const KernelQuat& before =
+            observer_pose_before_subtick[bone].local_rotation;
+        const KernelQuat& after =
+            observer_pose_after_subtick[bone].local_rotation;
+        if (std::abs(before.x - after.x) > 1e-7f ||
+            std::abs(before.y - after.y) > 1e-7f ||
+            std::abs(before.z - after.z) > 1e-7f ||
+            std::abs(before.w - after.w) > 1e-7f) {
+            observer_pose_moved_within_tick = true;
+            break;
+        }
+    }
+    require(observer_pose_moved_within_tick);
     const auto patrol_velocity_from_synthetic_position =
         [&](float position_x) {
             KernelVec3 position{
