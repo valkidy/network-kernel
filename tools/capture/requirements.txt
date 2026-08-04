@@ -1,0 +1,6 @@
+# Python packages the capture rendering/analysis steps need.
+# Installed into the capture venv by tools/capture/capture_preflight.py --
+# never into the host interpreter, which on macOS is externally managed
+# (PEP 668) and must not be pip-installed into.
+numpy>=1.24
+matplotlib>=3.7
