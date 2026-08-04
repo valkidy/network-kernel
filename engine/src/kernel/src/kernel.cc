@@ -3040,6 +3040,7 @@ bool KernelEngine::load_gameplay_catalog(
         std::move(validated_prop_population_rules);
     skeleton_assets_ = std::move(validated_skeleton_assets);
     locomotion_states_.clear();
+    skeleton_pose_history_.clear();
     if (!item_store_.set_templates(item_templates_, &item_validation_error)) {
         return false;
     }
@@ -4727,6 +4728,7 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     remote_presentation_dedup_.clear();
     render_states_.clear();
     locomotion_states_.clear();
+    skeleton_pose_history_.clear();
     latest_snapshot_ = WorldSnapshot{};
     latest_client_snapshot_ = WorldSnapshot{};
     client_snapshot_buffer_.clear();
@@ -7270,21 +7272,24 @@ std::uint64_t KernelEngine::compensated_action_time_us(
         received_server_time_us);
 }
 
-bool KernelEngine::build_interpolated_snapshot(
+bool KernelEngine::client_render_server_time_us(
     std::uint64_t client_render_time_us,
-    WorldSnapshot* out_snapshot) const {
-    if (out_snapshot == nullptr || client_snapshot_buffer_.empty()) {
+    std::uint64_t* out_server_time_us) const {
+    if (out_server_time_us == nullptr || client_snapshot_buffer_.empty()) {
         return false;
     }
+    const float fixed_delta_seconds = tick_loop_.fixed_delta_seconds();
     if (client_snapshot_buffer_.size() == 1) {
-        *out_snapshot = client_snapshot_buffer_.back();
+        *out_server_time_us = tick_time_us(
+            client_snapshot_buffer_.back().header.server_tick,
+            fixed_delta_seconds);
         return true;
     }
 
     const std::uint64_t interpolation_delay_us =
         tick_time_us(
             tick_loop_.snapshot_interval_ticks() * 2u,
-            tick_loop_.fixed_delta_seconds());
+            fixed_delta_seconds);
     std::uint64_t target_server_time_us = 0;
     if (has_client_clock_sync_) {
         const std::uint64_t server_now_us =
@@ -7303,7 +7308,39 @@ bool KernelEngine::build_interpolated_snapshot(
                 ? newest_tick - interpolation_delay_ticks
                 : client_snapshot_buffer_.front().header.server_tick;
         target_server_time_us =
-            tick_time_us(target_tick, tick_loop_.fixed_delta_seconds());
+            tick_time_us(target_tick, fixed_delta_seconds);
+    }
+    // Report the instant the snapshot interpolation will actually land on, ends
+    // included: build_interpolated_snapshot_for_server_time clamps to the
+    // buffer rather than extrapolating, and the skeleton pose has to be sampled
+    // at the same instant the root ends up at, not the one we asked for.
+    *out_server_time_us = std::clamp(
+        target_server_time_us,
+        tick_time_us(
+            client_snapshot_buffer_.front().header.server_tick,
+            fixed_delta_seconds),
+        tick_time_us(
+            client_snapshot_buffer_.back().header.server_tick,
+            fixed_delta_seconds));
+    return true;
+}
+
+bool KernelEngine::build_interpolated_snapshot(
+    std::uint64_t client_render_time_us,
+    WorldSnapshot* out_snapshot) const {
+    if (out_snapshot == nullptr || client_snapshot_buffer_.empty()) {
+        return false;
+    }
+    if (client_snapshot_buffer_.size() == 1) {
+        *out_snapshot = client_snapshot_buffer_.back();
+        return true;
+    }
+
+    std::uint64_t target_server_time_us = 0;
+    if (!client_render_server_time_us(
+            client_render_time_us,
+            &target_server_time_us)) {
+        return false;
     }
 
     return build_interpolated_snapshot_for_server_time(
@@ -8030,7 +8067,26 @@ void KernelEngine::update_legged_locomotion(
             state->second.pose_valid) {
             transform.rotation = state->second.applied_root_rotation;
         }
+
+        // Keep this tick's pose so presentation can evaluate the skeleton at a
+        // render time instead of snapping to the newest tick. Only the snapshot
+        // render path needs it, but recording is unconditional: whether a
+        // snapshot exists is a runtime property that can flip mid-session, and
+        // a history that starts empty at that moment would pop.
+        if (state->second.pose_valid) {
+            record_skeleton_pose_sample(
+                tick_loop_.current_tick(),
+                tick_time_us(tick_loop_.current_tick(), fixed_delta_seconds),
+                state->second.local_pose,
+                skeleton_pose_history_capacity(),
+                &skeleton_pose_history_[net_id]);
+        }
     }
+    std::erase_if(
+        skeleton_pose_history_,
+        [&active_locomotion_entities](const auto& entry) {
+            return !active_locomotion_entities.contains(entry.first);
+        });
     std::erase_if(
         locomotion_states_,
         [&active_locomotion_entities](const auto& entry) {
@@ -9041,11 +9097,15 @@ void KernelEngine::rebuild_render_states() {
     rebuild_render_states_at_time(client_local_time_us_);
 }
 
+bool KernelEngine::render_states_from_snapshot() const {
+    return config_.mode == KernelMode_Client ||
+        (config_.mode == KernelMode_ListenServer && has_client_snapshot_);
+}
+
 void KernelEngine::rebuild_render_states_at_time(
     std::uint64_t client_render_time_us) {
     const auto cost_start = std::chrono::steady_clock::now();
-    if (config_.mode == KernelMode_Client ||
-        (config_.mode == KernelMode_ListenServer && has_client_snapshot_)) {
+    if (render_states_from_snapshot()) {
         rebuild_render_states_from_snapshot(client_render_time_us);
         sync_client_render_colliders();
         report_render_state_overflow_if_needed();
@@ -9059,10 +9119,30 @@ void KernelEngine::rebuild_render_states_at_time(
         std::max<std::uint64_t>(1, elapsed_cost_us(cost_start));
 }
 
+std::size_t KernelEngine::skeleton_pose_history_capacity() const {
+    // Deep enough to cover the interpolation delay the root is rendered at
+    // (snapshot_interval_ticks * 2), with room for the snapshot buffer to run a
+    // little behind, and a floor so a degenerate tick config still keeps a
+    // usable window.
+    const std::size_t delay_ticks =
+        static_cast<std::size_t>(tick_loop_.snapshot_interval_ticks()) * 2u;
+    return std::max<std::size_t>(8u, delay_ticks * 3u);
+}
+
 void KernelEngine::rebuild_skeleton_presentation_at_time(
     std::uint64_t client_render_time_us) {
     rebuild_render_states_at_time(client_render_time_us);
     skeleton_presentation_poses_.clear();
+    // The root transforms just rebuilt are only a function of render time on
+    // the snapshot path; the direct-from-world path renders the live tick. The
+    // pose has to follow whichever one produced the roots it will be composed
+    // onto, so resolve the evaluation instant the same way and only sample the
+    // history when there is one.
+    std::uint64_t pose_evaluation_time_us = 0;
+    const bool interpolate_pose = render_states_from_snapshot() &&
+        client_render_server_time_us(
+            client_render_time_us,
+            &pose_evaluation_time_us);
     for (const RenderEntityState& render_state : render_states_) {
         const KernelEntityTemplateDefinition* entity_template =
             find_entity_template(entity_templates_, render_state.template_id);
@@ -9089,6 +9169,21 @@ void KernelEngine::rebuild_skeleton_presentation_at_time(
             locomotion->second.local_pose.size() == asset->bind_pose.size()) {
             pose.pose_flags = KERNEL_SKELETON_POSE_FLAG_PROCEDURAL;
             pose.local_transforms = locomotion->second.local_pose;
+            const auto history =
+                skeleton_pose_history_.find(render_state.net_id);
+            std::uint32_t sampled_tick = 0u;
+            if (interpolate_pose && history != skeleton_pose_history_.end() &&
+                sample_skeleton_pose_history(
+                    history->second,
+                    pose_evaluation_time_us,
+                    &pose.local_transforms,
+                    &sampled_tick) &&
+                pose.local_transforms.size() == asset->bind_pose.size()) {
+                pose.pose_tick = sampled_tick;
+                pose.pose_time_us = pose_evaluation_time_us;
+            } else {
+                pose.local_transforms = locomotion->second.local_pose;
+            }
         } else {
             pose.pose_flags = KERNEL_SKELETON_POSE_FLAG_BIND_POSE;
             pose.local_transforms = asset->bind_pose;

@@ -3022,6 +3022,67 @@ int main() {
         require(std::isfinite(transform.local_scale.y));
         require(std::isfinite(transform.local_scale.z));
     }
+    // The pose must be evaluated at the instant the root transform it will be
+    // composed onto was evaluated at -- the snapshot-derived time, which lags
+    // the newest simulated tick by the interpolation delay -- rather than being
+    // stamped with the caller's render time and snapped to the freshest solve.
+    // Composing a pose built for tick N onto a root rendered at N-delay is what
+    // made a planted foot drift with the body.
+    //
+    // Note this does not assert that two render times inside one tick differ:
+    // without client clock sync the snapshot path pins the target to
+    // `newest_tick - delay` regardless of render time, so the root is
+    // snapshot-quantized too. The pose now follows it either way, which is the
+    // property under test.
+    const auto observer_pose_at = [&](std::uint64_t render_time_us,
+                                      std::vector<KernelBoneLocalTransform>* out,
+                                      KernelSkeletonRenderState* out_state) {
+        std::array<KernelSkeletonRenderState, 4> states{};
+        std::array<KernelBoneLocalTransform, 164> bones{};
+        KernelSkeletonRenderStateResult result{};
+        result.struct_size = sizeof(result);
+        require(Kernel_GetSkeletonRenderStatesAtTime(
+                    observer_kernel,
+                    render_time_us,
+                    states.data(),
+                    static_cast<std::uint32_t>(states.size()),
+                    bones.data(),
+                    static_cast<std::uint32_t>(bones.size()),
+                    &result) == 1u);
+        const auto found = std::find_if(
+            states.begin(),
+            states.begin() + result.written_state_count,
+            [observer_monster_net_id](const KernelSkeletonRenderState& state) {
+                return state.entity_net_id == observer_monster_net_id;
+            });
+        require(found != states.begin() + result.written_state_count);
+        *out_state = *found;
+        out->assign(
+            bones.begin() + found->first_bone_transform,
+            bones.begin() + found->first_bone_transform + found->bone_count);
+    };
+    const std::uint64_t observer_tick_us =
+        static_cast<std::uint64_t>(1000000.0 / 30.0);
+    // Deliberately not tick-aligned, so a pose still stamped with the caller's
+    // render time is distinguishable from one stamped with the evaluated time.
+    const std::uint64_t observer_requested_render_time_us =
+        observer_monster_skeleton_state->pose_time_us + observer_tick_us + 7777u;
+    std::vector<KernelBoneLocalTransform> observer_pose_at_time;
+    KernelSkeletonRenderState observer_state_at_time{};
+    observer_pose_at(
+        observer_requested_render_time_us,
+        &observer_pose_at_time,
+        &observer_state_at_time);
+    require(observer_pose_at_time.size() == observer_monster_skeleton_state->bone_count);
+    require(
+        observer_state_at_time.pose_time_us !=
+        observer_requested_render_time_us);
+    require(
+        observer_state_at_time.pose_time_us < observer_requested_render_time_us);
+    for (const KernelBoneLocalTransform& transform : observer_pose_at_time) {
+        require(std::isfinite(transform.local_rotation.w));
+        require(std::isfinite(transform.local_position.y));
+    }
     const auto patrol_velocity_from_synthetic_position =
         [&](float position_x) {
             KernelVec3 position{

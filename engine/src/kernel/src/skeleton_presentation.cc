@@ -10,6 +10,9 @@
 #include <tuple>
 #include <unordered_set>
 
+#include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
+
 #include "ozz/animation/runtime/skeleton_utils.h"
 #include "ozz/base/io/archive.h"
 #include "ozz/base/io/stream.h"
@@ -122,6 +125,128 @@ bool load_runtime_skeleton_asset(
     asset.skeleton_asset_id = definition.skeleton_asset_id;
     asset.skeleton_content_hash = definition.skeleton_content_hash;
     *out_asset = std::move(asset);
+    return true;
+}
+
+void record_skeleton_pose_sample(
+    std::uint32_t tick,
+    std::uint64_t time_us,
+    std::span<const KernelBoneLocalTransform> local_transforms,
+    std::size_t capacity,
+    SkeletonPoseHistory* history) {
+    if (history == nullptr || capacity == 0u) {
+        return;
+    }
+    if (history->samples.size() != capacity) {
+        history->samples.assign(capacity, SkeletonPoseSample{});
+        history->next_index = 0u;
+        history->size = 0u;
+    }
+    // Re-recording the newest tick overwrites it instead of advancing, so the
+    // ring stays strictly increasing in time and the search below can rely on
+    // that ordering.
+    std::size_t slot = history->next_index;
+    if (history->size != 0u) {
+        const std::size_t newest =
+            (history->next_index + capacity - 1u) % capacity;
+        if (history->samples[newest].tick >= tick) {
+            slot = newest;
+        }
+    }
+    SkeletonPoseSample& sample = history->samples[slot];
+    sample.tick = tick;
+    sample.time_us = time_us;
+    sample.local_transforms.assign(
+        local_transforms.begin(),
+        local_transforms.end());
+    if (slot != history->next_index) {
+        return;
+    }
+    history->next_index = (history->next_index + 1u) % capacity;
+    history->size = std::min(history->size + 1u, capacity);
+}
+
+bool sample_skeleton_pose_history(
+    const SkeletonPoseHistory& history,
+    std::uint64_t time_us,
+    std::vector<KernelBoneLocalTransform>* out_local_transforms,
+    std::uint32_t* out_tick) {
+    if (out_local_transforms == nullptr || out_tick == nullptr ||
+        history.size == 0u || history.samples.empty()) {
+        return false;
+    }
+    const std::size_t capacity = history.samples.size();
+    const auto held = [&](std::size_t index) -> const SkeletonPoseSample& {
+        const std::size_t oldest =
+            (history.next_index + capacity - history.size) % capacity;
+        return history.samples[(oldest + index) % capacity];
+    };
+
+    const SkeletonPoseSample& oldest = held(0u);
+    const SkeletonPoseSample& newest = held(history.size - 1u);
+    if (history.size == 1u || time_us <= oldest.time_us) {
+        *out_local_transforms = oldest.local_transforms;
+        *out_tick = oldest.tick;
+        return true;
+    }
+    if (time_us >= newest.time_us) {
+        *out_local_transforms = newest.local_transforms;
+        *out_tick = newest.tick;
+        return true;
+    }
+
+    const SkeletonPoseSample* from = &oldest;
+    const SkeletonPoseSample* to = &newest;
+    for (std::size_t index = 1u; index < history.size; ++index) {
+        const SkeletonPoseSample& candidate = held(index);
+        if (candidate.time_us >= time_us) {
+            from = &held(index - 1u);
+            to = &candidate;
+            break;
+        }
+    }
+    if (to->time_us <= from->time_us ||
+        from->local_transforms.size() != to->local_transforms.size()) {
+        *out_local_transforms = to->local_transforms;
+        *out_tick = to->tick;
+        return true;
+    }
+
+    const float alpha = static_cast<float>(time_us - from->time_us) /
+        static_cast<float>(to->time_us - from->time_us);
+    out_local_transforms->resize(from->local_transforms.size());
+    for (std::size_t bone = 0u; bone < from->local_transforms.size(); ++bone) {
+        const KernelBoneLocalTransform& a = from->local_transforms[bone];
+        const KernelBoneLocalTransform& b = to->local_transforms[bone];
+        const glm::vec3 position = glm::mix(
+            glm::vec3{a.local_position.x, a.local_position.y, a.local_position.z},
+            glm::vec3{b.local_position.x, b.local_position.y, b.local_position.z},
+            alpha);
+        const glm::quat rotation = glm::normalize(glm::slerp(
+            glm::quat{
+                a.local_rotation.w,
+                a.local_rotation.x,
+                a.local_rotation.y,
+                a.local_rotation.z},
+            glm::quat{
+                b.local_rotation.w,
+                b.local_rotation.x,
+                b.local_rotation.y,
+                b.local_rotation.z},
+            alpha));
+        const glm::vec3 scale = glm::mix(
+            glm::vec3{a.local_scale.x, a.local_scale.y, a.local_scale.z},
+            glm::vec3{b.local_scale.x, b.local_scale.y, b.local_scale.z},
+            alpha);
+        (*out_local_transforms)[bone] = KernelBoneLocalTransform{
+            KernelVec3{position.x, position.y, position.z},
+            KernelQuat{rotation.x, rotation.y, rotation.z, rotation.w},
+            KernelVec3{scale.x, scale.y, scale.z},
+        };
+    }
+    // The pose is reported against the tick it was interpolated toward; the
+    // exact instant it was evaluated at travels separately as pose_time_us.
+    *out_tick = to->tick;
     return true;
 }
 

@@ -543,9 +543,11 @@ private:
         std::uint64_t client_time_us) const;
     glm::vec3 predicted_local_render_position() const;
     void rebuild_render_states();
+    bool render_states_from_snapshot() const;
     void rebuild_render_states_at_time(std::uint64_t client_render_time_us);
     void rebuild_skeleton_presentation_at_time(
         std::uint64_t client_render_time_us);
+    std::size_t skeleton_pose_history_capacity() const;
     void rebuild_render_states_from_world();
     void rebuild_render_states_from_snapshot(std::uint64_t client_render_time_us);
     void report_render_state_overflow_if_needed();
@@ -599,6 +601,9 @@ private:
         std::uint64_t action_server_time_us,
         std::uint64_t received_server_time_us) const;
     std::uint64_t compensated_action_time_us(const QueuedInput& queued_input) const;
+    bool client_render_server_time_us(
+        std::uint64_t client_render_time_us,
+        std::uint64_t* out_server_time_us) const;
     bool build_interpolated_snapshot(
         std::uint64_t client_render_time_us,
         WorldSnapshot* out_snapshot) const;
@@ -750,6 +755,7 @@ private:
     std::vector<RenderEntityState> render_states_;
     std::vector<SkeletonPresentationPose> skeleton_presentation_poses_;
     std::unordered_map<NetId, LocomotionState> locomotion_states_;
+    std::unordered_map<NetId, SkeletonPoseHistory> skeleton_pose_history_;
     WorldSnapshot latest_snapshot_;
     WorldSnapshot latest_client_snapshot_;
     std::vector<WorldSnapshot> client_snapshot_buffer_;
