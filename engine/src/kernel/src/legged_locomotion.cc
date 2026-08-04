@@ -68,6 +68,13 @@ bool valid_definition(const KernelSkeletonBindingDefinition& definition) {
         if (definition.legs[leg].gait_group >= definition.leg_count) {
             return false;
         }
+        const KernelVec3& mid_axis = definition.legs[leg].mid_axis_local;
+        if (!std::isfinite(mid_axis.x) || !std::isfinite(mid_axis.y) ||
+            !std::isfinite(mid_axis.z) ||
+            glm::length(glm::vec3{mid_axis.x, mid_axis.y, mid_axis.z}) <=
+                0.000001f) {
+            return false;
+        }
     }
     return true;
 }
@@ -81,6 +88,24 @@ float shortest_angle_delta(float from, float to) {
 bool finite_vec3(const glm::vec3& value) {
     return std::isfinite(value.x) && std::isfinite(value.y) &&
         std::isfinite(value.z);
+}
+
+// Shortest rotation taking world-up onto `normal`, built from core glm only
+// (glm's FromToRotation equivalent lives in the experimental gtx headers).
+glm::quat rotation_from_up(const glm::vec3& normal) {
+    const glm::vec3 up{0.0f, 1.0f, 0.0f};
+    const float alignment = std::clamp(glm::dot(up, normal), -1.0f, 1.0f);
+    if (alignment > 0.99999f) {
+        return glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+    }
+    if (alignment < -0.99999f) {
+        return glm::angleAxis(
+            std::numbers::pi_v<float>,
+            glm::vec3{1.0f, 0.0f, 0.0f});
+    }
+    return glm::angleAxis(
+        std::acos(alignment),
+        glm::normalize(glm::cross(up, normal)));
 }
 
 glm::vec3 model_position(const ozz::math::Float4x4& matrix) {
@@ -146,25 +171,35 @@ bool finite_pose(std::span<const KernelBoneLocalTransform> pose) {
 }
 
 // Raycast the terrain under a leg's home stance, trying each authored candidate
-// offset (rotated into the body heading) until one lands on a walkable slope.
-// Mirrors ProceduralLeg.SampleGround with extra fan-out. Reach is intentionally
-// NOT filtered here (LocomotionTest handles reach purely via IK clamping); a
-// foothold the leg cannot fully reach still steers the planted foot, and the IK
-// stage clamps the target so the leg stretches toward it without popping.
+// offset (rotated into the body heading). Mirrors ProceduralLeg.SampleGround
+// with extra fan-out.
+//
+// Reach is a preference, never a filter. Rejecting out-of-reach hits outright
+// makes a leg whose whole fan is beyond reach report "no ground" and stop
+// stepping forever; ignoring reach entirely lets a leg commit to a foothold it
+// can only stretch at, leaving the foot visibly detached with no way back. So
+// the first candidate within reach wins, and if none are, the first valid hit is
+// taken anyway -- the caller learns which case it got from *out_within_reach and
+// can step again to recover.
 bool query_foothold(
     const KernelSkeletonBindingDefinition& definition,
     const glm::vec3& nominal_world,
+    const glm::vec3& hip_world,
+    float maximum_reach,
     const glm::quat& root_rotation,
     float minimum_ground_normal_y,
     const LocomotionGroundingQuery& grounding_query,
-    LegLocomotionState* leg) {
+    LegLocomotionState* leg,
+    bool* out_within_reach) {
     leg->ground_hit_valid = false;
     leg->grounding_candidate_index = UINT32_MAX;
     leg->supporting_entity_net_id = 0u;
     leg->supporting_collider_id = 0u;
+    *out_within_reach = false;
     if (!grounding_query) {
         return false;
     }
+    bool have_fallback = false;
     for (std::uint32_t candidate = 0u;
          candidate < definition.foothold_candidate_count;
          ++candidate) {
@@ -192,15 +227,24 @@ bool query_foothold(
         if (hit.normal.y < minimum_ground_normal_y) {
             continue;
         }
+        const bool within_reach =
+            glm::length(hit.position - hip_world) <= maximum_reach;
+        if (have_fallback && !within_reach) {
+            continue;  // Already holding an equally unreachable earlier hit.
+        }
         leg->ground_hit_valid = true;
         leg->grounding_candidate_index = candidate;
         leg->ground_hit_position = hit.position;
         leg->ground_hit_normal = hit.normal;
         leg->supporting_entity_net_id = hit.supporting_entity_net_id;
         leg->supporting_collider_id = hit.supporting_collider_id;
-        return true;
+        *out_within_reach = within_reach;
+        if (within_reach) {
+            return true;
+        }
+        have_fallback = true;
     }
-    return false;
+    return leg->ground_hit_valid;
 }
 
 }  // namespace
@@ -208,6 +252,76 @@ bool query_foothold(
 bool validate_locomotion_definition(
     const KernelSkeletonBindingDefinition& definition) {
     return valid_definition(definition);
+}
+
+bool validate_locomotion_rig(
+    const ozz::animation::Skeleton& skeleton,
+    const KernelSkeletonBindingDefinition& definition,
+    std::uint32_t* out_invalid_leg_index) {
+    if (out_invalid_leg_index != nullptr) {
+        *out_invalid_leg_index = UINT32_MAX;
+    }
+    if (!valid_definition(definition) ||
+        definition.bone_count !=
+            static_cast<std::uint32_t>(skeleton.num_joints())) {
+        return false;
+    }
+    std::vector<ozz::math::SoaTransform> locals(
+        skeleton.joint_rest_poses().begin(),
+        skeleton.joint_rest_poses().end());
+    std::vector<ozz::math::Float4x4> models(skeleton.num_joints());
+    ozz::animation::LocalToModelJob local_to_model;
+    local_to_model.skeleton = &skeleton;
+    local_to_model.input = ozz::make_span(locals);
+    local_to_model.output = ozz::make_span(models);
+    if (!local_to_model.Run()) {
+        return false;
+    }
+    for (std::uint32_t leg_index = 0u;
+         leg_index < definition.leg_count;
+         ++leg_index) {
+        const KernelSkeletonLegDefinition& leg = definition.legs[leg_index];
+        if (leg.hip_bone_index >= definition.bone_count ||
+            leg.knee_bone_index >= definition.bone_count ||
+            leg.foot_bone_index >= definition.bone_count) {
+            if (out_invalid_leg_index != nullptr) {
+                *out_invalid_leg_index = leg_index;
+            }
+            return false;
+        }
+        const glm::vec3 hip = model_position(models[leg.hip_bone_index]);
+        const glm::vec3 knee = model_position(models[leg.knee_bone_index]);
+        const glm::vec3 foot = model_position(models[leg.foot_bone_index]);
+        const glm::vec3 hinge = glm::cross(knee - hip, foot - knee);
+        const glm::vec3 authored{
+            leg.mid_axis_local.x,
+            leg.mid_axis_local.y,
+            leg.mid_axis_local.z,
+        };
+        // A straight bind limb has no hinge plane at all, so the authored axis
+        // cannot be checked -- and the solve would have no stable bend either.
+        const float hinge_length = glm::length(hinge);
+        const float authored_length = glm::length(authored);
+        if (hinge_length <= 0.000001f || authored_length <= 0.000001f) {
+            if (out_invalid_leg_index != nullptr) {
+                *out_invalid_leg_index = leg_index;
+            }
+            return false;
+        }
+        // Sign is deliberately ignored: which way the knee folds is chosen by
+        // the pole vector, so an inverted-but-parallel axis is legitimate.
+        // 60 degrees of slack accommodates rigs whose bind limbs are splayed
+        // rather than planar, while still rejecting a perpendicular axis.
+        const float alignment = std::abs(
+            glm::dot(hinge / hinge_length, authored / authored_length));
+        if (alignment < 0.5f) {
+            if (out_invalid_leg_index != nullptr) {
+                *out_invalid_leg_index = leg_index;
+            }
+            return false;
+        }
+    }
+    return true;
 }
 
 bool initialize_locomotion_state(
@@ -220,6 +334,10 @@ bool initialize_locomotion_state(
     }
     LocomotionState state;
     state.root_yaw_radians = initial_root_yaw_radians;
+    state.last_advanced_yaw_radians = initial_root_yaw_radians;
+    state.applied_root_rotation = glm::angleAxis(
+        initial_root_yaw_radians,
+        glm::vec3{0.0f, 1.0f, 0.0f});
     state.legs.reserve(definition.leg_count);
     state.last_processing_order.reserve(definition.leg_count);
     for (std::uint32_t index = 0u; index < definition.leg_count; ++index) {
@@ -260,17 +378,14 @@ bool advance_locomotion_state(
         move_input.x * move_input.x + move_input.y * move_input.y;
     const bool move_active = move_magnitude_squared >=
         definition.input_deadzone * definition.input_deadzone;
-    bool yaw_changed = false;
     if (move_active) {
         const float target_yaw = std::atan2(move_input.x, move_input.y);
         const float max_yaw_step = max_yaw_degrees_per_second *
             std::numbers::pi_v<float> / 180.0f * fixed_delta_seconds;
-        const float yaw_step = std::clamp(
+        state->root_yaw_radians += std::clamp(
             shortest_angle_delta(state->root_yaw_radians, target_yaw),
             -max_yaw_step,
             max_yaw_step);
-        yaw_changed = std::abs(yaw_step) > 1e-6f;
-        state->root_yaw_radians += yaw_step;
         state->root_yaw_radians = std::remainder(
             state->root_yaw_radians,
             2.0f * std::numbers::pi_v<float>);
@@ -278,7 +393,16 @@ bool advance_locomotion_state(
     // A leg only takes a new step when the actor intends to move or turn
     // (LocomotionTest: legs change only when movement.sqrMagnitude > 0 or the
     // heading changes). Idle actors keep their feet planted.
+    //
+    // The heading delta is measured against the yaw this function last left
+    // behind, not against the value at entry, so a turn-in-place written to
+    // root_yaw_radians between ticks -- which carries no translation input and
+    // therefore no move_active -- still wakes the legs.
+    const bool yaw_changed = std::abs(shortest_angle_delta(
+        state->last_advanced_yaw_radians,
+        state->root_yaw_radians)) > 1e-6f;
     state->locomotion_active = move_active || yaw_changed;
+    state->last_advanced_yaw_radians = state->root_yaw_radians;
 
     state->last_processing_order.clear();
     for (std::uint32_t order = 0u; order < definition.leg_count; ++order) {
@@ -310,15 +434,34 @@ bool solve_legged_locomotion_pose(
         !std::isfinite(fixed_delta_seconds) || fixed_delta_seconds <= 0.0f) {
         return false;
     }
+    // Bone indices are dereferenced below; the kernel screens them at catalog
+    // load, but this entry point is also driven directly by tools and tests.
+    if (definition.root_bone_index >= definition.bone_count ||
+        definition.body_bone_index >= definition.bone_count) {
+        return false;
+    }
+    for (std::uint32_t leg_index = 0u;
+         leg_index < definition.leg_count;
+         ++leg_index) {
+        const KernelSkeletonLegDefinition& leg = definition.legs[leg_index];
+        if (leg.hip_bone_index >= definition.bone_count ||
+            leg.knee_bone_index >= definition.bone_count ||
+            leg.foot_bone_index >= definition.bone_count) {
+            return false;
+        }
+    }
 
     state->pose_valid = false;
     state->body_follow_valid = false;
     state->local_pose.assign(bind_pose.begin(), bind_pose.end());
 
-    std::vector<ozz::math::SoaTransform> locals(
+    // Reuse the per-state scratch so a steady-state tick allocates nothing.
+    std::vector<ozz::math::SoaTransform>& locals = state->scratch_locals;
+    std::vector<ozz::math::Float4x4>& models = state->scratch_models;
+    locals.assign(
         skeleton.joint_rest_poses().begin(),
         skeleton.joint_rest_poses().end());
-    std::vector<ozz::math::Float4x4> models(skeleton.num_joints());
+    models.resize(skeleton.num_joints());
     ozz::animation::LocalToModelJob local_to_model;
     local_to_model.skeleton = &skeleton;
     local_to_model.input = ozz::make_span(locals);
@@ -327,10 +470,16 @@ bool solve_legged_locomotion_pose(
         return false;
     }
 
-    const glm::quat root_rotation = glm::angleAxis(
+    // Heading, tilted by the body-follow state carried over from the previous
+    // tick (identity when body follow is off). Feet are placed with this exact
+    // rotation and it is published as applied_root_rotation for the caller to
+    // write onto the transform, so pose and presentation cannot disagree.
+    const glm::quat yaw_rotation = glm::angleAxis(
         state->root_yaw_radians,
         glm::vec3{0.0f, 1.0f, 0.0f});
+    const glm::quat root_rotation = state->body_tilt * yaw_rotation;
     const glm::quat inverse_root_rotation = glm::inverse(root_rotation);
+    state->applied_root_rotation = root_rotation;
 
     // Vertically seat the bind pose so the lowest foot rests on the ground plane
     // when the root is at terrain height (presentation alignment; body follow,
@@ -345,10 +494,39 @@ bool solve_legged_locomotion_pose(
             model_position(
                 models[definition.legs[leg_index].foot_bone_index]).y);
     }
-    const glm::vec3 pose_root_position = root_position -
-        glm::vec3{0.0f, bind_foot_height, 0.0f};
-    state->local_pose[definition.root_bone_index].local_position.y -=
-        bind_foot_height;
+    // Root offset baked into the pose, carrying two things at once.
+    //
+    //  * Seating: drop the rig so its lowest bind foot rests at root_position.
+    //  * Tilt pivot: the presentation composes world = position + rotation *
+    //    model, which would swing the body about the entity origin -- and that
+    //    origin sits down at foot level, so a tall rig would sweep sideways by
+    //    roughly bind_foot_height * sin(tilt) (metres, not millimetres, on a
+    //    long-legged quadruped). Offsetting the root by `root_offset` instead
+    //    pivots the tilt about the body bone, which is where LocomotionTest's
+    //    body transform sits, and leaves the entity position untouched so the
+    //    character controller keeps sole ownership of it.
+    //
+    // Derivation: we want world(bone) = P + tilt * (yaw_placement(bone) - P)
+    // with the pivot P = anchor + yaw * body_model. Expanding and matching
+    // against position + root_rotation * (model + root_offset) gives the offset
+    // below. With an identity tilt it collapses to -(0, bind_foot_height, 0),
+    // i.e. exactly the plain seating, so the body-follow-off path is unchanged.
+    //
+    // This assumes the root bone carries no local rotation of its own, which is
+    // the same assumption the plain vertical seating already relied on.
+    const glm::vec3 body_model =
+        model_position(models[definition.body_bone_index]);
+    const glm::vec3 seated_body = yaw_rotation *
+        (body_model - glm::vec3{0.0f, bind_foot_height, 0.0f});
+    const glm::vec3 root_offset =
+        inverse_root_rotation * seated_body - body_model;
+    const glm::vec3 pose_root_position =
+        root_position + root_rotation * root_offset;
+    KernelVec3& root_local_position =
+        state->local_pose[definition.root_bone_index].local_position;
+    root_local_position.x += root_offset.x;
+    root_local_position.y += root_offset.y;
+    root_local_position.z += root_offset.z;
     const float minimum_ground_normal_y =
         std::cos(max_slope_degrees * std::numbers::pi_v<float> / 180.0f);
 
@@ -357,6 +535,7 @@ bool solve_legged_locomotion_pose(
     std::array<float, KERNEL_MAX_SKELETON_LEGS> maximum_reaches{};
     std::array<glm::vec3, KERNEL_MAX_SKELETON_LEGS> home_world{};
     std::array<bool, KERNEL_MAX_SKELETON_LEGS> home_grounded{};
+    std::array<bool, KERNEL_MAX_SKELETON_LEGS> home_within_reach{};
 
     // Pass 1: sample each leg's home foothold and seed uninitialized feet.
     for (const std::uint32_t leg_index : state->last_processing_order) {
@@ -380,13 +559,18 @@ bool solve_legged_locomotion_pose(
         // Rest stance under the current body pose (ProceduralLeg.HomeWorld).
         const glm::vec3 nominal_world =
             pose_root_position + root_rotation * foot_model;
+        const glm::vec3 hip_world =
+            pose_root_position + root_rotation * hip_model;
         home_grounded[leg_index] = query_foothold(
             definition,
             nominal_world,
+            hip_world,
+            maximum_reaches[leg_index],
             root_rotation,
             minimum_ground_normal_y,
             grounding_query,
-            &leg);
+            &leg,
+            &home_within_reach[leg_index]);
         home_world[leg_index] =
             home_grounded[leg_index] ? leg.ground_hit_position : nominal_world;
 
@@ -434,9 +618,16 @@ bool solve_legged_locomotion_pose(
             if (other_group_swinging) {
                 continue;
             }
+            // Normally a leg steps once its planted foot has drifted too far
+            // from home. A foot that the IK could only stretch at also steps,
+            // provided home is somewhere it can actually stand -- otherwise a
+            // leg stranded beyond its reach would sit there detached, since the
+            // clamped foot stops tracking the drift that would trigger a step.
             const float error =
                 glm::length(leg.foot_target_world - home_world[leg_index]);
-            if (error <= definition.step_threshold_meters) {
+            const bool stranded =
+                leg.ik_reach_clamped && home_within_reach[leg_index];
+            if (error <= definition.step_threshold_meters && !stranded) {
                 continue;
             }
             leg.gait_state = LegGaitState::kSwing;
@@ -453,6 +644,14 @@ bool solve_legged_locomotion_pose(
     }
 
     // Pass 3: animate feet (swing arc / hold) and solve two-bone IK per leg.
+    //
+    // Every IK job reads the bind-pose `models` and writes only local-space
+    // corrections, so the model matrices are refreshed once after the loop
+    // instead of once per leg. That is safe because legs are disjoint limbs: no
+    // leg's hip is a descendant of another leg's chain, so one leg's correction
+    // can never move another leg's joints. (Validation rejects shared bones
+    // between the three joints of a leg; a rig that nested one leg inside
+    // another would break this and is not a supported skeleton.)
     for (const std::uint32_t leg_index : state->last_processing_order) {
         const KernelSkeletonLegDefinition& definition_leg =
             definition.legs[leg_index];
@@ -471,13 +670,12 @@ bool solve_legged_locomotion_pose(
             if (home_grounded[leg_index]) {
                 leg.landing_target_world = home_world[leg_index];
             }
-            const float swing_phase = definition.step_duration_ticks <= 1u
-                ? 1.0f
-                : std::min(
-                    1.0f,
-                    static_cast<float>(leg.swing_tick) /
-                        static_cast<float>(
-                            definition.step_duration_ticks - 1u));
+            // Phase advances on the tick the swing begins, so the whole step
+            // spans step_duration_ticks ticks with no stalled first frame.
+            const float swing_phase = std::min(
+                1.0f,
+                static_cast<float>(leg.swing_tick + 1u) /
+                    static_cast<float>(definition.step_duration_ticks));
             const glm::vec3 flat = glm::mix(
                 leg.swing_start_world,
                 leg.landing_target_world,
@@ -512,12 +710,20 @@ bool solve_legged_locomotion_pose(
             definition_leg.pole_local.y,
             definition_leg.pole_local.z,
         });
+        // Authored per leg: a rig whose knees hinge about something other than
+        // the engine's old hard-coded Z would silently fail to bend.
+        const glm::vec3 mid_axis = glm::normalize(glm::vec3{
+            definition_leg.mid_axis_local.x,
+            definition_leg.mid_axis_local.y,
+            definition_leg.mid_axis_local.z,
+        });
         ozz::animation::IKTwoBoneJob ik;
         ik.target = ozz::math::simd_float4::Load(
             target_model.x, target_model.y, target_model.z, 0.0f);
         ik.pole_vector = ozz::math::simd_float4::Load(
             pole.x, pole.y, pole.z, 0.0f);
-        ik.mid_axis = ozz::math::simd_float4::z_axis();
+        ik.mid_axis = ozz::math::simd_float4::Load(
+            mid_axis.x, mid_axis.y, mid_axis.z, 0.0f);
         ik.start_joint = &models[definition_leg.hip_bone_index];
         ik.mid_joint = &models[definition_leg.knee_bone_index];
         ik.end_joint = &models[definition_leg.foot_bone_index];
@@ -537,21 +743,28 @@ bool solve_legged_locomotion_pose(
             definition_leg.knee_bone_index,
             knee_correction,
             locals);
-        local_to_model.from =
-            static_cast<int>(definition_leg.hip_bone_index);
-        local_to_model.to = ozz::animation::Skeleton::kMaxJoints;
-        if (!local_to_model.Run()) {
-            state->local_pose.assign(bind_pose.begin(), bind_pose.end());
-            return false;
-        }
-        leg.solved_foot_world = pose_root_position + root_rotation *
-            model_position(models[definition_leg.foot_bone_index]);
     }
 
-    // Body grounding follow (optional): expose the terrain-fit body height and
-    // tilt so the kernel can blend the transform toward them. Height sits above
-    // the average foothold by the rig's rest stance; tilt aims at the average
-    // ground normal. Left disabled (physics owns the body) when speed <= 0.
+    // One model-space refresh for every leg correction applied above.
+    if (!local_to_model.Run()) {
+        state->local_pose.assign(bind_pose.begin(), bind_pose.end());
+        return false;
+    }
+    for (const std::uint32_t leg_index : state->last_processing_order) {
+        LegLocomotionState& leg = state->legs[leg_index];
+        if (!leg.foot_initialized) {
+            continue;
+        }
+        leg.solved_foot_world = pose_root_position + root_rotation *
+            model_position(models[definition.legs[leg_index].foot_bone_index]);
+    }
+
+    // Body grounding follow (optional). Height sits above the average foothold
+    // by the rig's rest stance and is handed to the caller to apply; tilt aims
+    // at the average ground normal and is accumulated here so the exponential
+    // smoothing actually converges (it would restart every tick if it were
+    // re-derived from a pure-yaw transform rotation). Left disabled -- physics
+    // owns the body, tilt stays identity -- when speed <= 0.
     if (definition.body_follow_speed > 0.0f) {
         float foot_y_sum = 0.0f;
         float bind_foot_y_sum = 0.0f;
@@ -571,16 +784,34 @@ bool solve_legged_locomotion_pose(
         }
         if (contributing > 0u) {
             const float count = static_cast<float>(contributing);
-            const float rest_body_height = -(bind_foot_y_sum / count);
+            // root_position is the height the rig's LOWEST bind foot rests at
+            // (solve seats the pose by subtracting bind_foot_height), so the
+            // target must be expressed in that same frame: the average foothold
+            // plus however far the average bind foot sits above the lowest one.
+            // Using the body-root-above-feet distance here instead would raise
+            // the body by a whole leg length and stretch every leg to its clamp.
+            const float rest_stance_height =
+                bind_foot_y_sum / count - bind_foot_height;
             state->body_follow_target_height =
-                foot_y_sum / count + rest_body_height;
-            state->body_follow_ground_normal =
+                foot_y_sum / count + rest_stance_height;
+            state->body_follow_valid =
+                std::isfinite(state->body_follow_target_height);
+
+            const glm::vec3 ground_normal =
                 glm::dot(normal_sum, normal_sum) > 0.000001f
                     ? glm::normalize(normal_sum)
                     : glm::vec3{0.0f, 1.0f, 0.0f};
-            state->body_follow_valid =
-                std::isfinite(state->body_follow_target_height) &&
-                finite_vec3(state->body_follow_ground_normal);
+            if (finite_vec3(ground_normal)) {
+                const glm::quat upright{1.0f, 0.0f, 0.0f, 0.0f};
+                const glm::quat target_tilt = glm::slerp(
+                    upright,
+                    rotation_from_up(ground_normal),
+                    definition.slope_alignment);
+                const float blend = 1.0f - std::exp(
+                    -definition.body_follow_speed * fixed_delta_seconds);
+                state->body_tilt = glm::normalize(
+                    glm::slerp(state->body_tilt, target_tilt, blend));
+            }
         }
     }
 

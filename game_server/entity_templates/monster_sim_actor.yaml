@@ -81,7 +81,7 @@ locomotion:
       gait_group: 0
       pole_local: {x: 0.0, y: 0.0, z: 1.0}
       step_height_meters: 4.0
-      max_reach_ratio: 0.99
+      max_reach_ratio: 0.999
     - id: rear_right
       hip_bone: JNT_LegRearRight_Hip
       knee_bone: JNT_LegRearRight_Knee
@@ -89,7 +89,7 @@ locomotion:
       gait_group: 0
       pole_local: {x: 0.0, y: 0.0, z: -1.0}
       step_height_meters: 4.0
-      max_reach_ratio: 0.99
+      max_reach_ratio: 0.999
     - id: front_right
       hip_bone: JNT_LegFrontRight_Hip
       knee_bone: JNT_LegFrontRight_Knee
@@ -97,7 +97,7 @@ locomotion:
       gait_group: 1
       pole_local: {x: 0.0, y: 0.0, z: 1.0}
       step_height_meters: 4.0
-      max_reach_ratio: 0.99
+      max_reach_ratio: 0.999
     - id: rear_left
       hip_bone: JNT_LegRearLeft_Hip
       knee_bone: JNT_LegRearLeft_Knee
@@ -105,4 +105,4 @@ locomotion:
       gait_group: 1
       pole_local: {x: 0.0, y: 0.0, z: -1.0}
       step_height_meters: 4.0
-      max_reach_ratio: 0.99
+      max_reach_ratio: 0.999

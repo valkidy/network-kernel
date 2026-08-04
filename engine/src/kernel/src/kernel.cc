@@ -10,7 +10,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
-#include <numbers>
 #include <utility>
 
 #include <fmt/format.h>
@@ -2554,6 +2553,20 @@ bool KernelEngine::load_gameplay_catalog(
                     return false;
                 }
                 ordered[ordered_leg] = true;
+            }
+            // Cross-check the authored legs against the rig's actual geometry,
+            // so a knee hinge axis that does not match the bind pose is caught
+            // here rather than quietly producing a limb that will not bend.
+            std::uint32_t invalid_leg = 0u;
+            if (!validate_locomotion_rig(
+                    asset->skeleton, skeleton, &invalid_leg)) {
+                spdlog::error(
+                    "entity template {} skeleton leg {} does not match the rig: "
+                    "mid_axis must be roughly parallel to the bind-pose knee "
+                    "hinge cross(knee - hip, foot - knee)",
+                    entity_template.entity_template_id,
+                    invalid_leg);
+                return false;
             }
         }
         for (const KernelActionTriggerDefinition* trigger : {
@@ -7975,6 +7988,23 @@ void KernelEngine::update_legged_locomotion(
                 out_hit->supporting_collider_id = hit.identity.collider_id;
                 return true;
             };
+        // Body grounding follow, part 1 of 2: settle the body onto the height
+        // fit the previous tick computed, BEFORE solving. Applying it after the
+        // solve would move the body out from under a pose that was built for the
+        // old height, shifting every foot off its foothold by the blend step.
+        // (The matching tilt is carried inside the locomotion state and applied
+        // by the solve itself, so both corrections lag exactly one tick.)
+        if (entity_template->skeleton.body_follow_speed > 0.0f &&
+            state->second.body_follow_valid) {
+            const float blend = 1.0f - std::exp(
+                -entity_template->skeleton.body_follow_speed *
+                fixed_delta_seconds);
+            transform.position.y = std::lerp(
+                transform.position.y,
+                state->second.body_follow_target_height,
+                blend);
+        }
+
         // The leg solve is intentionally decoupled from the character/movement
         // controller: it reads transform.position only as a world anchor for
         // foot placement and never inspects the controller's grounded/landed
@@ -7991,49 +8021,14 @@ void KernelEngine::update_legged_locomotion(
             state->second.pose_valid = false;
         }
 
-        // Optional body grounding follow (body_follow_speed > 0): pull the body
-        // height toward the average foothold and tilt toward the average ground
-        // normal, smoothed frame-rate-independently. Disabled by default so the
-        // physics/character controller owns the body transform.
+        // Body grounding follow, part 2 of 2: the solve tilted the root and
+        // placed the feet with that exact rotation, so the transform must carry
+        // it. Re-deriving a pure-yaw rotation here would both slide the feet and
+        // restart the tilt smoothing every tick. Disabled by default, in which
+        // case the tilt is identity and physics keeps the transform to itself.
         if (entity_template->skeleton.body_follow_speed > 0.0f &&
-            state->second.pose_valid && state->second.body_follow_valid) {
-            const float blend = 1.0f - std::exp(
-                -entity_template->skeleton.body_follow_speed *
-                fixed_delta_seconds);
-            transform.position.y = std::lerp(
-                transform.position.y,
-                state->second.body_follow_target_height,
-                blend);
-            const glm::quat upright = glm::angleAxis(
-                state->second.root_yaw_radians,
-                glm::vec3{0.0f, 1.0f, 0.0f});
-            // Rotation that takes world-up onto the average ground normal, built
-            // without glm's experimental gtx helpers.
-            const glm::vec3 up{0.0f, 1.0f, 0.0f};
-            const glm::vec3& normal = state->second.body_follow_ground_normal;
-            const float up_dot_normal = std::clamp(
-                glm::dot(up, normal), -1.0f, 1.0f);
-            glm::quat up_to_normal{1.0f, 0.0f, 0.0f, 0.0f};
-            if (up_dot_normal < 0.99999f) {
-                glm::vec3 axis = glm::cross(up, normal);
-                const float axis_length = glm::length(axis);
-                if (axis_length > 0.000001f) {
-                    axis /= axis_length;
-                    up_to_normal = glm::angleAxis(
-                        std::acos(up_dot_normal), axis);
-                } else {
-                    // Anti-parallel: flip about any horizontal axis.
-                    up_to_normal = glm::angleAxis(
-                        std::numbers::pi_v<float>, glm::vec3{1.0f, 0.0f, 0.0f});
-                }
-            }
-            const glm::quat aligned = up_to_normal * upright;
-            const glm::quat target_rotation = glm::slerp(
-                upright,
-                aligned,
-                entity_template->skeleton.slope_alignment);
-            transform.rotation = glm::slerp(
-                transform.rotation, target_rotation, blend);
+            state->second.pose_valid) {
+            transform.rotation = state->second.applied_root_rotation;
         }
     }
     std::erase_if(

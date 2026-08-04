@@ -1240,6 +1240,13 @@ typedef struct KernelSkeletonLegDefinition {
     uint32_t foot_bone_index;
     uint32_t gait_group;
     KernelVec3 pole_local;
+    // Hinge axis of the knee, in the rig's model space. Must be roughly
+    // parallel to the plane normal of the bind-pose limb, i.e.
+    // cross(knee - hip, foot - knee); a rig authored to bend about some other
+    // axis will not solve. Required (a zero vector is rejected) so that a rig
+    // whose knees hinge elsewhere fails loudly at load instead of silently
+    // producing a limb the IK cannot bend.
+    KernelVec3 mid_axis_local;
     float step_height_meters;
     float max_reach_ratio;
 } KernelSkeletonLegDefinition;

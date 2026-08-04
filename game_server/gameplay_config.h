@@ -80,6 +80,7 @@ struct SkeletonLegConfig {
     std::uint32_t foot_bone_index = 0;
     std::uint32_t gait_group = 0;
     KernelVec3 pole_local{};
+    KernelVec3 mid_axis_local{0.0f, 0.0f, 1.0f};
     float step_height_meters = 0.0f;
     float max_reach_ratio = 0.0f;
 };

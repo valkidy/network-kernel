@@ -1185,6 +1185,9 @@ int main() {
         monster_definition->movement.max_yaw_degrees_per_second,
         1.0f / 30.0f,
         &grounded_locomotion));
+    // Ground every foothold ray at the root plane. Keyed off the ray origin
+    // rather than a call counter so the expectations do not depend on how many
+    // candidates the fan-out ends up trying.
     std::vector<glm::vec3> grounding_origins;
     const network_example::LocomotionGroundingQuery ordered_grounding =
         [&grounding_origins](
@@ -1192,12 +1195,7 @@ int main() {
             float,
             network_example::LocomotionGroundingHit* hit) {
             grounding_origins.push_back(origin);
-            if ((grounding_origins.size() % 2u) == 1u) {
-                hit->position = origin - glm::vec3{0.0f, 2.0f, 0.0f};
-                hit->normal = glm::vec3{1.0f, 0.0f, 0.0f};
-                return true;
-            }
-            hit->position = origin - glm::vec3{0.2f, 2.0f, 0.0f};
+            hit->position = glm::vec3{origin.x, 0.0f, origin.z};
             hit->normal = glm::vec3{0.0f, 1.0f, 0.0f};
             hit->supporting_entity_net_id = 77u;
             hit->supporting_collider_id = 9u;
@@ -1212,24 +1210,31 @@ int main() {
         1.0f / 30.0f,
         ordered_grounding,
         &grounded_locomotion));
-    require(grounding_origins.size() == 8u);
-    require(std::abs(
-        grounding_origins[1].x - grounding_origins[0].x - 0.2f) < 0.0001f);
+    // Each leg casts at least one ray and at most one per authored candidate:
+    // the fan-out stops at the first walkable hit it can actually reach, and
+    // this rig's near-straight bind stance leaves some legs needing a candidate
+    // past the first.
+    require(grounding_origins.size() >= monster_definition->skeleton.leg_count);
+    require(grounding_origins.size() <=
+            monster_definition->skeleton.leg_count *
+                monster_definition->skeleton.foothold_candidate_count);
     require(grounded_locomotion.pose_valid);
     require(grounded_locomotion.local_pose.size() == 41u);
-    // Reach is no longer filtered during foothold selection; the walkable
-    // candidate (normal +Y) at index 1 is chosen and each foot seeds to it.
     std::vector<glm::vec3> initial_grounded_anchors;
     for (const network_example::LegLocomotionState& leg :
          grounded_locomotion.legs) {
         require(leg.ground_hit_valid);
-        require(leg.grounding_candidate_index == 1u);
+        require(leg.grounding_candidate_index <
+                monster_definition->skeleton.foothold_candidate_count);
+        // A reachable foothold was found, so nothing needed clamping.
+        require(!leg.ik_reach_clamped);
         require(leg.supporting_entity_net_id == 77u);
         require(leg.supporting_collider_id == 9u);
         require(leg.foot_initialized);
         require(leg.gait_state == network_example::LegGaitState::kSupport);
         initial_grounded_anchors.push_back(leg.foot_target_world);
     }
+    const std::size_t rays_after_first_solve = grounding_origins.size();
     // A small root move (< step_threshold) keeps every foot planted where it is.
     require(network_example::advance_locomotion_state(
         monster_definition->skeleton,
@@ -1246,7 +1251,9 @@ int main() {
         1.0f / 30.0f,
         ordered_grounding,
         &grounded_locomotion));
-    require(grounding_origins.size() > 8u);
+    // The second solve re-sampled every leg's home rather than reusing the old
+    // hit, so more rays went out.
+    require(grounding_origins.size() > rays_after_first_solve);
     for (std::size_t index = 0u;
          index < grounded_locomotion.legs.size();
          ++index) {

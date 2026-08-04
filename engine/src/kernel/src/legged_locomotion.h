@@ -7,9 +7,12 @@
 #include <vector>
 
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include "kernel/public/kernel_types.h"
 #include "ozz/animation/runtime/skeleton.h"
+#include "ozz/base/maths/simd_math.h"
+#include "ozz/base/maths/soa_transform.h"
 
 namespace network_example {
 
@@ -68,9 +71,13 @@ struct LegLocomotionState {
 
 struct LocomotionState {
     float root_yaw_radians = 0.0f;
-    // Set by advance_locomotion_state: whether the actor intends to move/turn
-    // this tick (move magnitude past the deadzone, or a yaw change was applied).
-    // Gates new step initiation so idle actors keep their feet planted.
+    // Yaw as of the end of the previous advance. advance compares it against
+    // root_yaw_radians so a heading change from ANY source counts as activity:
+    // this tick's move input, or an external write between ticks (AI facing, or
+    // a turn-in-place that carries no translation input).
+    float last_advanced_yaw_radians = 0.0f;
+    // Set by advance_locomotion_state: whether the actor intends to move or turn
+    // this tick. Gates new step initiation so idle actors keep their feet planted.
     bool locomotion_active = false;
 
     std::vector<LegLocomotionState> legs;
@@ -78,12 +85,26 @@ struct LocomotionState {
     std::vector<KernelBoneLocalTransform> local_pose;
     bool pose_valid = false;
 
-    // Body grounding follow output (populated by solve when body_follow_speed>0).
-    // The kernel blends the transform toward these each tick; when invalid or
-    // body follow is disabled the transform's height/tilt are left untouched.
+    // Smoothed tilt of the body onto the terrain, accumulated across ticks and
+    // identity while body follow is disabled. It lives here, not on the entity
+    // transform, because the leg solve and the presentation must agree on one
+    // root rotation: solve places the feet using applied_root_rotation, so the
+    // caller MUST write that same rotation to the transform or the feet slide by
+    // the tilt. (Re-deriving a pure-yaw rotation on the transform each tick also
+    // restarts the smoothing, so the tilt would never converge.)
+    glm::quat body_tilt{1.0f, 0.0f, 0.0f, 0.0f};
+    glm::quat applied_root_rotation{1.0f, 0.0f, 0.0f, 0.0f};
+
+    // Terrain-fit body height for this tick, valid only when body follow is on.
+    // Applying it stays the caller's job: the character controller owns position.
     bool body_follow_valid = false;
     float body_follow_target_height = 0.0f;
-    glm::vec3 body_follow_ground_normal{0.0f, 1.0f, 0.0f};
+
+    // Solver scratch, kept alive between ticks purely to stop the per-entity
+    // pose solve from heap-allocating on every tick. Contents carry no meaning
+    // across calls.
+    std::vector<ozz::math::SoaTransform> scratch_locals;
+    std::vector<ozz::math::Float4x4> scratch_models;
 };
 
 struct LocomotionGroundingHit {
@@ -100,6 +121,17 @@ using LocomotionGroundingQuery = std::function<bool(
 
 bool validate_locomotion_definition(
     const KernelSkeletonBindingDefinition& definition);
+
+// Cross-checks the authored legs against the rig they claim to drive: each
+// leg's mid_axis_local must be roughly parallel to the hinge axis its bind pose
+// actually implies, cross(knee - hip, foot - knee). Catches the failure that is
+// otherwise silent -- a rig whose knees bend about a different axis, where the
+// two-bone solve simply cannot reach its target. On failure the offending leg
+// index is written to out_invalid_leg_index when it is not null.
+bool validate_locomotion_rig(
+    const ozz::animation::Skeleton& skeleton,
+    const KernelSkeletonBindingDefinition& definition,
+    std::uint32_t* out_invalid_leg_index);
 
 bool initialize_locomotion_state(
     const KernelSkeletonBindingDefinition& definition,
