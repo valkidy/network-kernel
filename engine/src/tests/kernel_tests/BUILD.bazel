@@ -42,7 +42,106 @@ cc_test(
 cc_test(
     name = "legged_locomotion_test",
     srcs = ["legged_locomotion_test.cc"],
-    deps = ["//engine/src/kernel:legged_locomotion"],
+    deps = [
+        "//engine/src/kernel:legged_locomotion",
+        "@glm//:glm",
+        "@ozz_animation//:ozz_animation_offline",
+    ],
+)
+
+# =============================================================================
+# Locomotion capture
+# =============================================================================
+#
+# Records the monster's locomotion twice -- once against the freshly built
+# kernel ("native"), once against the dylib shipped in the Unity package
+# ("plugin") -- through the public Kernel/GameServer C ABI, in the same call
+# order the Unity plugin's NetworkHost.Start / NetworkHost.Update use. Then it
+# renders both captures to mp4 and diffs them.
+#
+# Usage:
+#
+#   bazel run --config=macos -c opt \
+#     //engine/src/tests/kernel_tests:locomotion_capture -- \
+#     --sampling=300 --path="+X"
+#
+# Arguments (all optional):
+#
+#   --sampling=N     samples to record. Default 300 = 10 s at 30 Hz.
+#   --tick-rate=HZ   simulation rate. Default 30. Duration = sampling/tick-rate.
+#   --path=SCRIPT    movement description. Default "+X" (walk +X forever).
+#                    Steps are separated by ';':
+#                      +X | -X | +Z | -Z   set the heading
+#                      forward <n>m        walk until n metres of XZ travel
+#                      turn <n>            rotate the heading n degrees
+#                                          (+X toward +Z is positive)
+#                      wait <n>s           stand still for n seconds
+#                    Chinese keywords work too (前進 / 旋轉 / 等待), e.g.
+#                      --path="+X前進10m; 旋轉45度; 前進5m"
+#                    When the script runs out the subject stands still for the
+#                    remaining samples; a bare axis never runs out.
+#   --spawn=x,y,z    subject spawn position. Default 0,10,0.
+#   --skip-plugin    only run the native capture (no plugin staging, no diff).
+#
+# Outputs, always written to capture/locomotion_tests/ in the source tree:
+#
+#   native_locomotion.mp4  native_raw_bones.csv  native_raw_root.csv
+#   plugin_locomotion.mp4  plugin_raw_bones.csv  plugin_raw_root.csv
+#   report.txt             native <-> plugin parity + path acceptance
+#
+# The run fails (non-zero) when the Python environment is incomplete, when a
+# capture ends early, or when native and plugin disagree beyond tolerance.
+#
+# Why bazel run and not a genrule: the two runtime arguments (--sampling,
+# --path) cannot reach a genrule, whose command line is fixed at analysis time,
+# and a genrule can only write into bazel-out, while the deliverable has to
+# land in capture/locomotion_tests/ in the source tree. Both need the
+# BUILD_WORKSPACE_DIRECTORY that only `bazel run` provides. The rendering step
+# alone would fit a genrule, but it depends on host Python packages (numpy,
+# matplotlib) and ffmpeg, so it would not be hermetic either way; the
+# orchestrator preflights those instead and fails with an explicit error.
+sh_binary(
+    name = "locomotion_capture",
+    srcs = ["//tools/capture:run_locomotion_capture.sh"],
+    args = [
+        "--driver=$(location :locomotion_capture_driver)",
+        "--dylib=$(location //engine/src/kernel:network_kernel_shared)",
+        "--bundle=$(location //game_server/gameplay_catalog_bundle:bundle)",
+        "--manifest=$(location //game_server/skeleton_assets:generated/simplified_monster_sim_v4.skeleton_manifest.json)",
+        "--preflight=$(location //tools/capture:capture_preflight)",
+        "--render=$(location //tools/capture:render_transforms)",
+        "--analyze=$(location //tools/capture:analyze_capture)",
+    ],
+    data = [
+        ":locomotion_capture_driver",
+        "//engine/src/kernel:network_kernel_shared",
+        "//game_server/gameplay_catalog_bundle:bundle",
+        "//game_server/skeleton_assets:generated/simplified_monster_sim_v4.skeleton_manifest.json",
+        "//tools/capture:analyze_capture",
+        "//tools/capture:capture_preflight",
+        "//tools/capture:render_transforms",
+    ],
+)
+
+cc_binary(
+    name = "locomotion_capture_driver",
+    srcs = ["locomotion_capture_driver.cc"],
+    deps = [
+        "//engine/src/kernel:kernel_api",
+        "//engine/src/tests/capture:transform_capture",
+        "//game_server:game_server_api",
+        "@glm//:glm",
+    ],
+)
+
+cc_binary(
+    name = "ik_solver_compare",
+    srcs = ["ik_solver_compare.cc"],
+    deps = [
+        "@glm//:glm",
+        "@ozz_animation//:ozz_animation",
+        "@ozz_animation//:ozz_animation_offline",
+    ],
 )
 
 cc_test(

@@ -79,7 +79,9 @@ cc_library(
         "include",
         "src",
     ],
-    visibility = ["//visibility:private"],
+    # The runtime kernel never builds skeletons; only the kernel tests do, to
+    # author synthetic rigs. Kept narrow so it cannot drift into shipping code.
+    visibility = ["@//engine/src/tests/kernel_tests:__pkg__"],
     deps = [":ozz_animation"],
 )
 

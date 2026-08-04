@@ -325,6 +325,7 @@ void hash_actor_template(
             hash_scalar(hash, leg.foot_bone_index);
             hash_scalar(hash, leg.gait_group);
             hash_vec3(hash, leg.pole_local);
+            hash_vec3(hash, leg.mid_axis_local);
             hash_float(hash, leg.step_height_meters);
             hash_float(hash, leg.max_reach_ratio);
         }
@@ -332,6 +333,8 @@ void hash_actor_template(
         hash_float(hash, actor_template.skeleton.step_threshold_meters);
         hash_scalar(hash, actor_template.skeleton.step_duration_ticks);
         hash_scalar(hash, actor_template.skeleton.max_swinging_legs);
+        hash_float(hash, actor_template.skeleton.body_follow_speed);
+        hash_float(hash, actor_template.skeleton.slope_alignment);
         hash_scalar(hash, actor_template.skeleton.foothold_query_type);
         hash_float(
             hash,
@@ -2882,6 +2885,7 @@ ActorTemplateConfig actor_template_from_yaml(
                 "input_deadzone",
                 "gait",
                 "foothold",
+                "body",
                 "legs",
             },
             path,
@@ -2925,6 +2929,7 @@ ActorTemplateConfig actor_template_from_yaml(
                     "foot_bone",
                     "gait_group",
                     "pole_local",
+                    "mid_axis_local",
                     "step_height_meters",
                     "max_reach_ratio",
                 },
@@ -2967,6 +2972,13 @@ ActorTemplateConfig actor_template_from_yaml(
                 ? leg_node["gait_group"].as<std::uint32_t>()
                 : 0u;
             leg.pole_local = vec3_from_yaml(leg_node["pole_local"]);
+            // Knee hinge axis. Defaults to +Z, which is what the engine assumed
+            // for every rig before this was authorable; the kernel cross-checks
+            // it against the bind pose at load, so a rig that hinges elsewhere
+            // is rejected instead of silently failing to bend.
+            leg.mid_axis_local = leg_node["mid_axis_local"]
+                ? vec3_from_yaml(leg_node["mid_axis_local"])
+                : KernelVec3{0.0f, 0.0f, 1.0f};
             leg.step_height_meters = leg_node["step_height_meters"]
                 ? leg_node["step_height_meters"].as<float>()
                 : 0.0f;
@@ -2977,12 +2989,20 @@ ActorTemplateConfig actor_template_from_yaml(
                 leg.pole_local.x * leg.pole_local.x +
                 leg.pole_local.y * leg.pole_local.y +
                 leg.pole_local.z * leg.pole_local.z;
+            const float mid_axis_length_squared =
+                leg.mid_axis_local.x * leg.mid_axis_local.x +
+                leg.mid_axis_local.y * leg.mid_axis_local.y +
+                leg.mid_axis_local.z * leg.mid_axis_local.z;
             if (!std::isfinite(leg.pole_local.x) ||
                 !std::isfinite(leg.pole_local.y) ||
                 !std::isfinite(leg.pole_local.z) ||
+                !std::isfinite(leg.mid_axis_local.x) ||
+                !std::isfinite(leg.mid_axis_local.y) ||
+                !std::isfinite(leg.mid_axis_local.z) ||
                 !std::isfinite(leg.step_height_meters) ||
                 !std::isfinite(leg.max_reach_ratio) ||
                 pole_length_squared <= 0.0f ||
+                mid_axis_length_squared <= 0.0f ||
                 leg.step_height_meters < 0.0f ||
                 leg.max_reach_ratio <= 0.0f ||
                 leg.max_reach_ratio > 1.0f) {
@@ -3118,6 +3138,36 @@ ActorTemplateConfig actor_template_from_yaml(
                     actor_template.name);
             }
             binding.foothold_candidate_offsets.push_back(offset);
+        }
+
+        // Optional body grounding follow. Absent = 0 (physics owns body height
+        // and tilt; the legs read the resolved root only as a world anchor).
+        const YAML::Node body = locomotion["body"];
+        if (body) {
+            reject_unknown_keys(
+                body,
+                {
+                    "follow_speed",
+                    "slope_alignment",
+                },
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                actor_template.actor_template_id);
+            binding.body_follow_speed =
+                body["follow_speed"] ? body["follow_speed"].as<float>() : 0.0f;
+            binding.slope_alignment = body["slope_alignment"]
+                ? body["slope_alignment"].as<float>()
+                : 0.0f;
+            if (!std::isfinite(binding.body_follow_speed) ||
+                binding.body_follow_speed < 0.0f ||
+                !std::isfinite(binding.slope_alignment) ||
+                binding.slope_alignment < 0.0f ||
+                binding.slope_alignment > 1.0f) {
+                throw std::runtime_error(
+                    "invalid locomotion body follow values: " +
+                    actor_template.name);
+            }
         }
     }
     return actor_template;
@@ -6181,6 +6231,10 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
                 authored_template.skeleton.step_duration_ticks;
             entity_template.skeleton.max_swinging_legs =
                 authored_template.skeleton.max_swinging_legs;
+            entity_template.skeleton.body_follow_speed =
+                authored_template.skeleton.body_follow_speed;
+            entity_template.skeleton.slope_alignment =
+                authored_template.skeleton.slope_alignment;
             entity_template.skeleton.foothold_query_type =
                 authored_template.skeleton.foothold_query_type;
             entity_template.skeleton.foothold_query_start_height_meters =
@@ -6213,6 +6267,7 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
                         leg.foot_bone_index,
                         leg.gait_group,
                         leg.pole_local,
+                        leg.mid_axis_local,
                         leg.step_height_meters,
                         leg.max_reach_ratio,
                     };

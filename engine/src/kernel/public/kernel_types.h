@@ -1240,6 +1240,13 @@ typedef struct KernelSkeletonLegDefinition {
     uint32_t foot_bone_index;
     uint32_t gait_group;
     KernelVec3 pole_local;
+    // Hinge axis of the knee, in the rig's model space. Must be roughly
+    // parallel to the plane normal of the bind-pose limb, i.e.
+    // cross(knee - hip, foot - knee); a rig authored to bend about some other
+    // axis will not solve. Required (a zero vector is rejected) so that a rig
+    // whose knees hinge elsewhere fails loudly at load instead of silently
+    // producing a limb the IK cannot bend.
+    KernelVec3 mid_axis_local;
     float step_height_meters;
     float max_reach_ratio;
 } KernelSkeletonLegDefinition;
@@ -1257,6 +1264,15 @@ typedef struct KernelSkeletonBindingDefinition {
     float step_threshold_meters;
     uint32_t step_duration_ticks;
     uint32_t max_swinging_legs;
+    // Body grounding follow (LocomotionTest parity). When body_follow_speed <= 0
+    // the physics/character controller owns body height and tilt (legs read the
+    // resolved root only as a world anchor). When > 0 the locomotion pass pulls
+    // the body height toward the average foothold and tilts toward the average
+    // ground normal each tick, smoothed by k = 1 - exp(-body_follow_speed * dt).
+    // slope_alignment in [0,1] blends between fully upright (0) and fully aligned
+    // with the ground slope (1).
+    float body_follow_speed;
+    float slope_alignment;
     uint8_t foothold_query_type;
     uint8_t reserved_foothold0;
     uint16_t reserved_foothold1;

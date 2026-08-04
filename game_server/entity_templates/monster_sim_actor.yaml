@@ -59,9 +59,14 @@ locomotion:
     processing_order: [front_left, front_right, rear_left, rear_right]
   foothold:
     query: raycast
-    # Covers the observed 0.99 m rise and 16.68 m drop around the nominal feet.
-    query_start_height_meters: 2.0
-    query_distance_meters: 20.0
+    # Ray coverage is scaled to the rig (legs ~18 m): the start height must clear
+    # any terrain that rises ahead of a foot's home stance, and the distance must
+    # reach any drop below it. LocomotionTest uses rayUp = legLength*3 and
+    # rayLength = legLength*30; these are the same order of magnitude, trimmed to
+    # the undulating terrain's amplitude. Too small a start height makes a foot's
+    # home ray start below rising terrain and miss, stalling that leg's steps.
+    query_start_height_meters: 30.0
+    query_distance_meters: 90.0
     candidate_offsets_meters:
       - {x: 0.0, z: 0.0}
       - {x: 0.2, z: 0.0}
@@ -76,7 +81,7 @@ locomotion:
       gait_group: 0
       pole_local: {x: 0.0, y: 0.0, z: 1.0}
       step_height_meters: 4.0
-      max_reach_ratio: 0.99
+      max_reach_ratio: 0.999
     - id: rear_right
       hip_bone: JNT_LegRearRight_Hip
       knee_bone: JNT_LegRearRight_Knee
@@ -84,7 +89,7 @@ locomotion:
       gait_group: 0
       pole_local: {x: 0.0, y: 0.0, z: -1.0}
       step_height_meters: 4.0
-      max_reach_ratio: 0.99
+      max_reach_ratio: 0.999
     - id: front_right
       hip_bone: JNT_LegFrontRight_Hip
       knee_bone: JNT_LegFrontRight_Knee
@@ -92,7 +97,7 @@ locomotion:
       gait_group: 1
       pole_local: {x: 0.0, y: 0.0, z: 1.0}
       step_height_meters: 4.0
-      max_reach_ratio: 0.99
+      max_reach_ratio: 0.999
     - id: rear_left
       hip_bone: JNT_LegRearLeft_Hip
       knee_bone: JNT_LegRearLeft_Knee
@@ -100,4 +105,4 @@ locomotion:
       gait_group: 1
       pole_local: {x: 0.0, y: 0.0, z: -1.0}
       step_height_meters: 4.0
-      max_reach_ratio: 0.99
+      max_reach_ratio: 0.999
