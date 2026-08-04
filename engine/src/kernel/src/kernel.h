@@ -568,7 +568,6 @@ private:
     void rebuild_render_states();
     bool render_states_from_snapshot() const;
     void rebuild_render_states_at_time(std::uint64_t client_render_time_us);
-    void rebuild_skeleton_presentation();
     void rebuild_skeleton_presentation_at_time(
         std::uint64_t client_render_time_us);
     std::size_t skeleton_pose_history_capacity() const;
@@ -788,9 +787,6 @@ private:
     std::vector<RemotePresentationDedup> remote_presentation_dedup_;
     std::vector<RenderEntityState> render_states_;
     std::vector<SkeletonPresentationPose> skeleton_presentation_poses_;
-    std::unordered_map<NetId, std::deque<SkeletonPresentationPose>>
-        skeleton_pose_history_;
-    std::uint64_t skeleton_presentation_time_us_ = 0;
     std::unordered_map<NetId, LocomotionState> locomotion_states_;
     std::unordered_map<NetId, SkeletonPoseHistory> skeleton_pose_history_;
     // Legs reconstructed from replicated steps, for entities this kernel does
