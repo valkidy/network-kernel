@@ -2,29 +2,29 @@ licenses(["notice"])
 
 package(default_visibility = ["//visibility:public"])
 
-# Python tooling shared by transform capture harnesses. These targets run on the
-# host interpreter (this WORKSPACE has no pip toolchain), so anything that
-# imports numpy/matplotlib must be gated on :capture_preflight first.
+# Python tooling shared by transform capture harnesses.
+#
+# These are plain sources rather than py_binary targets on purpose: numpy and
+# matplotlib cannot be installed into the host interpreter (macOS/homebrew
+# pythons are externally managed, PEP 668), so the render and analysis steps run
+# under the capture venv that capture_preflight.py provisions, not under Bazel's
+# autodetected host toolchain. The orchestrator resolves the interpreter first,
+# then runs these scripts with it.
 
-exports_files(["run_locomotion_capture.sh"])
+exports_files([
+    "analyze_capture.py",
+    "capture_preflight.py",
+    "render_transforms.py",
+    "requirements.txt",
+    "run_locomotion_capture.sh",
+])
 
-py_binary(
-    name = "capture_preflight",
-    srcs = ["capture_preflight.py"],
-    main = "capture_preflight.py",
-    python_version = "PY3",
-)
-
-py_binary(
-    name = "render_transforms",
-    srcs = ["render_transforms.py"],
-    main = "render_transforms.py",
-    python_version = "PY3",
-)
-
-py_binary(
-    name = "analyze_capture",
-    srcs = ["analyze_capture.py"],
-    main = "analyze_capture.py",
-    python_version = "PY3",
+filegroup(
+    name = "capture_tools",
+    srcs = [
+        "analyze_capture.py",
+        "capture_preflight.py",
+        "render_transforms.py",
+        "requirements.txt",
+    ],
 )
