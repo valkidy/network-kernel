@@ -3040,6 +3040,9 @@ bool KernelEngine::load_gameplay_catalog(
         std::move(validated_prop_population_rules);
     skeleton_assets_ = std::move(validated_skeleton_assets);
     locomotion_states_.clear();
+    skeleton_pose_history_.clear();
+    follower_locomotion_states_.clear();
+    pending_follower_steps_.clear();
     if (!item_store_.set_templates(item_templates_, &item_validation_error)) {
         return false;
     }
@@ -4727,6 +4730,12 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     remote_presentation_dedup_.clear();
     render_states_.clear();
     locomotion_states_.clear();
+    skeleton_pose_history_.clear();
+    follower_locomotion_states_.clear();
+    pending_follower_steps_.clear();
+    outgoing_locomotion_steps_.clear();
+    follower_locomotion_tick_ = 0u;
+    has_follower_locomotion_tick_ = false;
     latest_snapshot_ = WorldSnapshot{};
     latest_client_snapshot_ = WorldSnapshot{};
     client_snapshot_buffer_.clear();
@@ -4946,6 +4955,17 @@ void KernelEngine::poll_transport() {
             transport_event.channel == ChannelId::kSnapshot &&
             config_.mode == KernelMode_Client) {
             record_received_packet_sequence(transport_event);
+            // The snapshot channel also carries replicated locomotion steps, so
+            // a payload that is not a snapshot is tried as one of those before
+            // it counts as a decode failure.
+            LocomotionStepBatchPacket locomotion_steps;
+            if (decode_locomotion_step_batch_packet(
+                    transport_event.payload.data(),
+                    transport_event.payload.size(),
+                    &locomotion_steps)) {
+                handle_client_locomotion_step_batch(locomotion_steps);
+                continue;
+            }
             WorldSnapshot snapshot;
             const auto decode_start = std::chrono::steady_clock::now();
             if (!decode_snapshot_packet(
@@ -6224,6 +6244,15 @@ void KernelEngine::poll_client_transport() {
             continue;
         }
 
+        LocomotionStepBatchPacket locomotion_steps;
+        if (decode_locomotion_step_batch_packet(
+                transport_event.payload.data(),
+                transport_event.payload.size(),
+                &locomotion_steps)) {
+            handle_client_locomotion_step_batch(locomotion_steps);
+            continue;
+        }
+
         WorldSnapshot snapshot;
         const auto decode_start = std::chrono::steady_clock::now();
         if (!decode_snapshot_packet(
@@ -7270,25 +7299,40 @@ std::uint64_t KernelEngine::compensated_action_time_us(
         received_server_time_us);
 }
 
-bool KernelEngine::build_interpolated_snapshot(
+bool KernelEngine::client_render_server_time_us(
     std::uint64_t client_render_time_us,
-    WorldSnapshot* out_snapshot) const {
-    if (out_snapshot == nullptr || client_snapshot_buffer_.empty()) {
+    std::uint64_t* out_server_time_us) const {
+    if (out_server_time_us == nullptr || client_snapshot_buffer_.empty()) {
         return false;
     }
+    const float fixed_delta_seconds = tick_loop_.fixed_delta_seconds();
     if (client_snapshot_buffer_.size() == 1) {
-        *out_snapshot = client_snapshot_buffer_.back();
+        *out_server_time_us = tick_time_us(
+            client_snapshot_buffer_.back().header.server_tick,
+            fixed_delta_seconds);
         return true;
     }
 
     const std::uint64_t interpolation_delay_us =
         tick_time_us(
             tick_loop_.snapshot_interval_ticks() * 2u,
-            tick_loop_.fixed_delta_seconds());
+            fixed_delta_seconds);
+    // A listen server's client half shares the server's clock outright -- both
+    // advance off the same update() -- so the offset is exactly zero rather
+    // than an estimate. It never learns this the normal way: clock-sync pings
+    // only go to peer_sessions_, which excludes local_listen_session_, and the
+    // loopback poll drops everything that is not a snapshot, reliable event, or
+    // presentation packet -- ChannelId::kSession, which carries ping/pong,
+    // included. Without this the branch below quantises the render target to
+    // whole snapshot ticks, so the root (and now the pose that follows it) step
+    // instead of moving continuously.
+    const bool shares_server_clock =
+        config_.mode == KernelMode_ListenServer;
     std::uint64_t target_server_time_us = 0;
-    if (has_client_clock_sync_) {
-        const std::uint64_t server_now_us =
-            offset_time_us(client_render_time_us, client_clock_offset_us_);
+    if (has_client_clock_sync_ || shares_server_clock) {
+        const std::uint64_t server_now_us = shares_server_clock
+            ? client_render_time_us
+            : offset_time_us(client_render_time_us, client_clock_offset_us_);
         target_server_time_us =
             server_now_us > interpolation_delay_us
                 ? server_now_us - interpolation_delay_us
@@ -7303,7 +7347,39 @@ bool KernelEngine::build_interpolated_snapshot(
                 ? newest_tick - interpolation_delay_ticks
                 : client_snapshot_buffer_.front().header.server_tick;
         target_server_time_us =
-            tick_time_us(target_tick, tick_loop_.fixed_delta_seconds());
+            tick_time_us(target_tick, fixed_delta_seconds);
+    }
+    // Report the instant the snapshot interpolation will actually land on, ends
+    // included: build_interpolated_snapshot_for_server_time clamps to the
+    // buffer rather than extrapolating, and the skeleton pose has to be sampled
+    // at the same instant the root ends up at, not the one we asked for.
+    *out_server_time_us = std::clamp(
+        target_server_time_us,
+        tick_time_us(
+            client_snapshot_buffer_.front().header.server_tick,
+            fixed_delta_seconds),
+        tick_time_us(
+            client_snapshot_buffer_.back().header.server_tick,
+            fixed_delta_seconds));
+    return true;
+}
+
+bool KernelEngine::build_interpolated_snapshot(
+    std::uint64_t client_render_time_us,
+    WorldSnapshot* out_snapshot) const {
+    if (out_snapshot == nullptr || client_snapshot_buffer_.empty()) {
+        return false;
+    }
+    if (client_snapshot_buffer_.size() == 1) {
+        *out_snapshot = client_snapshot_buffer_.back();
+        return true;
+    }
+
+    std::uint64_t target_server_time_us = 0;
+    if (!client_render_server_time_us(
+            client_render_time_us,
+            &target_server_time_us)) {
+        return false;
     }
 
     return build_interpolated_snapshot_for_server_time(
@@ -8030,12 +8106,226 @@ void KernelEngine::update_legged_locomotion(
             state->second.pose_valid) {
             transform.rotation = state->second.applied_root_rotation;
         }
+
+        // Keep this tick's pose so presentation can evaluate the skeleton at a
+        // render time instead of snapping to the newest tick. Only the snapshot
+        // render path needs it, but recording is unconditional: whether a
+        // snapshot exists is a runtime property that can flip mid-session, and
+        // a history that starts empty at that moment would pop.
+        if (state->second.pose_valid) {
+            record_skeleton_pose_sample(
+                tick_loop_.current_tick(),
+                tick_time_us(tick_loop_.current_tick(), fixed_delta_seconds),
+                state->second.local_pose,
+                skeleton_pose_history_capacity(),
+                &skeleton_pose_history_[net_id]);
+        }
+
+        // Publish the steps this tick committed. Both swing endpoints are frozen
+        // at lift-off, so one of these fully describes a step and a follower can
+        // reproduce it without the terrain, the gait, or the 41 bones.
+        std::array<LocomotionStepEvent, KERNEL_MAX_SKELETON_LEGS> committed{};
+        const std::uint32_t committed_count = collect_locomotion_step_events(
+            state->second,
+            tick_loop_.current_tick(),
+            committed);
+        for (std::uint32_t index = 0u;
+             index < std::min<std::uint32_t>(
+                 committed_count,
+                 static_cast<std::uint32_t>(committed.size()));
+             ++index) {
+            outgoing_locomotion_steps_.push_back(
+                PendingLocomotionStep{net_id, committed[index]});
+        }
     }
+    std::erase_if(
+        skeleton_pose_history_,
+        [&active_locomotion_entities](const auto& entry) {
+            return !active_locomotion_entities.contains(entry.first);
+        });
     std::erase_if(
         locomotion_states_,
         [&active_locomotion_entities](const auto& entry) {
             return !active_locomotion_entities.contains(entry.first);
         });
+}
+
+void KernelEngine::enqueue_replicated_locomotion_step(
+    NetId net_id,
+    const LocomotionStepEvent& event) {
+    if (net_id == 0u) {
+        return;
+    }
+    pending_follower_steps_.push_back(PendingLocomotionStep{net_id, event});
+}
+
+void KernelEngine::update_follower_locomotion() {
+    if (!has_client_snapshot_ || client_snapshot_buffer_.empty()) {
+        follower_locomotion_states_.clear();
+        has_follower_locomotion_tick_ = false;
+        // Held steps are deliberately NOT dropped here. A baseline is sent
+        // beside the spawn that makes an entity relevant, so it can arrive
+        // before that entity's first snapshot does -- discarding it would put
+        // back exactly the "legs appear one at a time" symptom the baseline
+        // exists to remove. Capped so a client that never receives a snapshot
+        // cannot grow the queue without bound.
+        constexpr std::size_t kMaxHeldSteps = 256u;
+        if (pending_follower_steps_.size() > kMaxHeldSteps) {
+            pending_follower_steps_.erase(
+                pending_follower_steps_.begin(),
+                pending_follower_steps_.begin() +
+                    static_cast<std::ptrdiff_t>(
+                        pending_follower_steps_.size() - kMaxHeldSteps));
+        }
+        return;
+    }
+    // Followed legs live in the snapshot buffer's tick space, not this kernel's:
+    // a client's own tick counter is free-running, and the poses have to be
+    // stamped with the same ticks the roots are, or presentation would sample
+    // the two at different instants and slide every foot.
+    const std::uint32_t target_tick =
+        client_snapshot_buffer_.back().header.server_tick;
+    // A gap in delivery (or a first snapshot) must not turn into a long replay:
+    // there is nothing to reconstruct in the missing span anyway, since the
+    // steps that happened there were never received.
+    constexpr std::uint32_t kMaxCatchUpTicks = 8u;
+    if (!has_follower_locomotion_tick_ ||
+        static_cast<std::int32_t>(target_tick - follower_locomotion_tick_) >
+            static_cast<std::int32_t>(kMaxCatchUpTicks) ||
+        static_cast<std::int32_t>(target_tick - follower_locomotion_tick_) < 0) {
+        follower_locomotion_tick_ = target_tick > kMaxCatchUpTicks
+            ? target_tick - kMaxCatchUpTicks
+            : 0u;
+        has_follower_locomotion_tick_ = true;
+    }
+    while (static_cast<std::int32_t>(
+               target_tick - follower_locomotion_tick_) > 0) {
+        ++follower_locomotion_tick_;
+        step_follower_locomotion_tick(follower_locomotion_tick_);
+    }
+
+    // A step whose tick is long behind the follower will never be applied, so
+    // it is dropped rather than held forever. The window is generous: applying
+    // a stale step still lands the foot in the right place, so the only cost of
+    // keeping one a little too long is a snap the next step would fix anyway.
+    constexpr std::int32_t kStaleStepTicks = 64;
+    std::erase_if(
+        pending_follower_steps_,
+        [this](const PendingLocomotionStep& pending) {
+            return static_cast<std::int32_t>(
+                       follower_locomotion_tick_ - pending.event.start_tick) >
+                kStaleStepTicks;
+        });
+    std::erase_if(
+        follower_locomotion_states_,
+        [this](const auto& entry) {
+            return std::none_of(
+                client_replicated_entities_.begin(),
+                client_replicated_entities_.end(),
+                [&entry](const ClientReplicatedEntity& replicated) {
+                    return replicated.net_id == entry.first;
+                });
+        });
+}
+
+void KernelEngine::step_follower_locomotion_tick(std::uint32_t server_tick) {
+    const float fixed_delta_seconds = tick_loop_.fixed_delta_seconds();
+    const std::uint64_t server_time_us =
+        tick_time_us(server_tick, fixed_delta_seconds);
+    WorldSnapshot stepped_snapshot;
+    if (!build_interpolated_snapshot_for_server_time(
+            server_time_us,
+            &stepped_snapshot)) {
+        return;
+    }
+    for (const EntitySnapshot& entity : stepped_snapshot.entities) {
+        // An entity this kernel simulates already has authoritative legs; the
+        // follower must not shadow them.
+        if (locomotion_states_.contains(entity.net_id)) {
+            continue;
+        }
+        const auto replicated = std::find_if(
+            client_replicated_entities_.begin(),
+            client_replicated_entities_.end(),
+            [&entity](const ClientReplicatedEntity& candidate) {
+                return candidate.net_id == entity.net_id;
+            });
+        if (replicated == client_replicated_entities_.end()) {
+            continue;
+        }
+        const std::uint32_t template_id =
+            replicated->type == EntityType::kActor
+                ? replicated->actor_template_id
+                : replicated->entity_template_id;
+        const KernelEntityTemplateDefinition* entity_template =
+            find_entity_template(entity_templates_, template_id);
+        if (entity_template == nullptr ||
+            entity_template->skeleton.struct_size <
+                sizeof(KernelSkeletonBindingDefinition)) {
+            continue;
+        }
+        const RuntimeSkeletonAsset* skeleton_asset = find_skeleton_asset(
+            skeleton_assets_,
+            entity_template->skeleton.skeleton_asset_id);
+        if (skeleton_asset == nullptr) {
+            continue;
+        }
+
+        auto [state, inserted] =
+            follower_locomotion_states_.try_emplace(entity.net_id);
+        if (inserted) {
+            const glm::vec3 forward =
+                entity.rotation * glm::vec3{0.0f, 0.0f, 1.0f};
+            if (!initialize_locomotion_state(
+                    entity_template->skeleton,
+                    std::atan2(forward.x, forward.z),
+                    &state->second)) {
+                follower_locomotion_states_.erase(state);
+                continue;
+            }
+        }
+
+        // A follower reads its heading off the replicated transform: it has no
+        // movement input to derive one from, and advance_locomotion_state never
+        // runs on this path.
+        const glm::vec3 forward = entity.rotation * glm::vec3{0.0f, 0.0f, 1.0f};
+        state->second.root_yaw_radians = std::atan2(forward.x, forward.z);
+
+        for (std::size_t index = 0u; index < pending_follower_steps_.size();) {
+            const PendingLocomotionStep& pending = pending_follower_steps_[index];
+            if (pending.net_id != entity.net_id ||
+                static_cast<std::int32_t>(
+                    server_tick - pending.event.start_tick) < 0) {
+                ++index;
+                continue;
+            }
+            apply_locomotion_step_event(
+                entity_template->skeleton,
+                pending.event,
+                server_tick,
+                &state->second);
+            pending_follower_steps_.erase(
+                pending_follower_steps_.begin() +
+                static_cast<std::ptrdiff_t>(index));
+        }
+
+        if (!solve_legged_locomotion_follower_pose(
+                skeleton_asset->skeleton,
+                skeleton_asset->bind_pose,
+                entity_template->skeleton,
+                entity.position,
+                fixed_delta_seconds,
+                &state->second)) {
+            state->second.pose_valid = false;
+            continue;
+        }
+        record_skeleton_pose_sample(
+            server_tick,
+            server_time_us,
+            state->second.local_pose,
+            skeleton_pose_history_capacity(),
+            &skeleton_pose_history_[entity.net_id]);
+    }
 }
 
 void KernelEngine::simulate_tick() {
@@ -8086,6 +8376,10 @@ void KernelEngine::simulate_tick() {
         session_rules_.actor_blocking_mode,
         &physics_finalized_actor_net_ids);
     update_legged_locomotion(movement_inputs, fixed_delta);
+    // Entities that only arrive as snapshots get their legs from replayed steps
+    // rather than from the solve above, which never sees them: they are not in
+    // this kernel's registry.
+    update_follower_locomotion();
     acknowledge_simulated_movement_inputs(movement_inputs);
     benchmark_stats_.grounded_query_count +=
         movement_stats.grounded_query_count;
@@ -8254,6 +8548,7 @@ void KernelEngine::simulate_tick() {
     }
     flush_inventory_replication();
     flush_prop_state_changes();
+    flush_locomotion_steps();
     flush_network_gameplay_request_outcomes();
     send_due_clock_sync_pings(server_time_us);
     pending_inputs_.clear();
@@ -8629,6 +8924,11 @@ void KernelEngine::sync_session_relevance(
         if (session->relevant_entities.find(entity.net_id) ==
             session->relevant_entities.end()) {
             send_entity_spawn(session->peer, entity);
+            // Steps alone cannot tell a session where feet already are, so a
+            // session that has just started seeing an entity is handed them.
+            // Without this its legs would appear one at a time, each only once
+            // it happened to take its first step.
+            send_locomotion_baseline(session, entity.net_id);
             if (entity.type == EntityType::kProp &&
                 is_dormant_placed_prop(entity.net_id)) {
                 PropStateChangeBatchPacket prop_state{};
@@ -8797,6 +9097,117 @@ bool KernelEngine::make_prop_state_change_record(
     }
     *out_record = record;
     return true;
+}
+
+void KernelEngine::send_locomotion_steps(
+    PeerSession* session,
+    const LocomotionStepBatchPacket& packet) {
+    if (session == nullptr || packet.records.empty()) {
+        return;
+    }
+    const std::vector<std::uint8_t> encoded =
+        encode_locomotion_step_batch_packet(packet, next_packet_sequence_++);
+    // Sent unreliably, on the snapshot channel, on purpose: a lost step leaves
+    // one leg wrong until its next step because the landing position is
+    // absolute, whereas a reliable ordered channel could stall every leg behind
+    // one retransmit.
+    if (encoded.empty() || !transport_->Send(
+            session->peer,
+            encoded.data(),
+            static_cast<std::uint32_t>(encoded.size()),
+            SendMode::kUnreliable,
+            ChannelId::kSnapshot)) {
+        return;
+    }
+    record_sent_packet(
+        static_cast<std::uint32_t>(encoded.size()),
+        SendMode::kUnreliable,
+        ChannelId::kSnapshot);
+}
+
+void KernelEngine::send_locomotion_baseline(PeerSession* session, NetId net_id) {
+    if (session == nullptr) {
+        return;
+    }
+    const auto state = locomotion_states_.find(net_id);
+    if (state == locomotion_states_.end()) {
+        return;
+    }
+    // A baseline is expressed as steps that already finished: apply sees a
+    // swing whose whole duration is in the past and plants the foot outright.
+    // That reuses the receiving path exactly rather than adding a second one.
+    const std::uint32_t current_tick = tick_loop_.current_tick();
+    LocomotionStepBatchPacket batch{};
+    batch.server_tick = current_tick;
+    for (std::uint32_t leg_index = 0u;
+         leg_index < state->second.legs.size();
+         ++leg_index) {
+        const LegLocomotionState& leg = state->second.legs[leg_index];
+        if (!leg.foot_initialized) {
+            continue;
+        }
+        LocomotionStepRecord record{};
+        record.net_id = net_id;
+        record.leg_index = static_cast<std::uint8_t>(leg_index);
+        record.start_tick_delta = UINT8_MAX;
+        record.landing_target_world = leg.foot_target_world;
+        batch.records.push_back(record);
+    }
+    send_locomotion_steps(session, batch);
+}
+
+void KernelEngine::flush_locomotion_steps() {
+    if (outgoing_locomotion_steps_.empty()) {
+        return;
+    }
+    const std::uint32_t current_tick = tick_loop_.current_tick();
+    const auto send = [&](PeerSession* session) {
+        LocomotionStepBatchPacket batch{};
+        batch.server_tick = current_tick;
+        for (const PendingLocomotionStep& step : outgoing_locomotion_steps_) {
+            if (!session->relevant_entities.contains(step.net_id)) {
+                continue;
+            }
+            const std::int32_t age = static_cast<std::int32_t>(
+                current_tick - step.event.start_tick);
+            if (age < 0 || age >= static_cast<std::int32_t>(UINT8_MAX)) {
+                continue;
+            }
+            LocomotionStepRecord record{};
+            record.net_id = step.net_id;
+            record.leg_index = static_cast<std::uint8_t>(step.event.leg_index);
+            record.start_tick_delta = static_cast<std::uint8_t>(age);
+            record.landing_target_world = step.event.landing_target_world;
+            batch.records.push_back(record);
+        }
+        send_locomotion_steps(session, batch);
+    };
+    if (config_.mode == KernelMode_ListenServer &&
+        local_listen_session_.welcomed) {
+        send(&local_listen_session_);
+    }
+    for (PeerSession& session : peer_sessions_) {
+        if (session.welcomed) {
+            send(&session);
+        }
+    }
+    outgoing_locomotion_steps_.clear();
+}
+
+void KernelEngine::handle_client_locomotion_step_batch(
+    const LocomotionStepBatchPacket& packet) {
+    for (const LocomotionStepRecord& record : packet.records) {
+        LocomotionStepEvent event{};
+        event.leg_index = record.leg_index;
+        // A baseline arrives as a step older than any swing, which the follower
+        // resolves by planting the foot instead of animating a step that is
+        // already over.
+        event.start_tick =
+            packet.server_tick - static_cast<std::uint32_t>(
+                record.start_tick_delta);
+        event.landing_target_world = record.landing_target_world;
+        enqueue_replicated_locomotion_step(record.net_id, event);
+    }
 }
 
 void KernelEngine::send_prop_state_changes(
@@ -9041,11 +9452,15 @@ void KernelEngine::rebuild_render_states() {
     rebuild_render_states_at_time(client_local_time_us_);
 }
 
+bool KernelEngine::render_states_from_snapshot() const {
+    return config_.mode == KernelMode_Client ||
+        (config_.mode == KernelMode_ListenServer && has_client_snapshot_);
+}
+
 void KernelEngine::rebuild_render_states_at_time(
     std::uint64_t client_render_time_us) {
     const auto cost_start = std::chrono::steady_clock::now();
-    if (config_.mode == KernelMode_Client ||
-        (config_.mode == KernelMode_ListenServer && has_client_snapshot_)) {
+    if (render_states_from_snapshot()) {
         rebuild_render_states_from_snapshot(client_render_time_us);
         sync_client_render_colliders();
         report_render_state_overflow_if_needed();
@@ -9059,10 +9474,30 @@ void KernelEngine::rebuild_render_states_at_time(
         std::max<std::uint64_t>(1, elapsed_cost_us(cost_start));
 }
 
+std::size_t KernelEngine::skeleton_pose_history_capacity() const {
+    // Deep enough to cover the interpolation delay the root is rendered at
+    // (snapshot_interval_ticks * 2), with room for the snapshot buffer to run a
+    // little behind, and a floor so a degenerate tick config still keeps a
+    // usable window.
+    const std::size_t delay_ticks =
+        static_cast<std::size_t>(tick_loop_.snapshot_interval_ticks()) * 2u;
+    return std::max<std::size_t>(8u, delay_ticks * 3u);
+}
+
 void KernelEngine::rebuild_skeleton_presentation_at_time(
     std::uint64_t client_render_time_us) {
     rebuild_render_states_at_time(client_render_time_us);
     skeleton_presentation_poses_.clear();
+    // The root transforms just rebuilt are only a function of render time on
+    // the snapshot path; the direct-from-world path renders the live tick. The
+    // pose has to follow whichever one produced the roots it will be composed
+    // onto, so resolve the evaluation instant the same way and only sample the
+    // history when there is one.
+    std::uint64_t pose_evaluation_time_us = 0;
+    const bool interpolate_pose = render_states_from_snapshot() &&
+        client_render_server_time_us(
+            client_render_time_us,
+            &pose_evaluation_time_us);
     for (const RenderEntityState& render_state : render_states_) {
         const KernelEntityTemplateDefinition* entity_template =
             find_entity_template(entity_templates_, render_state.template_id);
@@ -9083,12 +9518,38 @@ void KernelEngine::rebuild_skeleton_presentation_at_time(
         pose.skeleton_content_hash = asset->skeleton_content_hash;
         pose.pose_tick = tick_loop_.current_tick();
         pose.pose_time_us = client_render_time_us;
-        const auto locomotion = locomotion_states_.find(render_state.net_id);
-        if (locomotion != locomotion_states_.end() &&
-            locomotion->second.pose_valid &&
-            locomotion->second.local_pose.size() == asset->bind_pose.size()) {
+        // Legs this kernel simulated win; legs reconstructed from replicated
+        // steps stand in for entities it only ever saw through snapshots. A
+        // listen server holds both, and must keep showing the authoritative one.
+        const LocomotionState* solved = nullptr;
+        if (const auto locomotion =
+                locomotion_states_.find(render_state.net_id);
+            locomotion != locomotion_states_.end()) {
+            solved = &locomotion->second;
+        } else if (const auto follower =
+                       follower_locomotion_states_.find(render_state.net_id);
+                   follower != follower_locomotion_states_.end()) {
+            solved = &follower->second;
+        }
+        if (solved != nullptr && solved->pose_valid &&
+            solved->local_pose.size() == asset->bind_pose.size()) {
             pose.pose_flags = KERNEL_SKELETON_POSE_FLAG_PROCEDURAL;
-            pose.local_transforms = locomotion->second.local_pose;
+            pose.local_transforms = solved->local_pose;
+            const auto history =
+                skeleton_pose_history_.find(render_state.net_id);
+            std::uint32_t sampled_tick = 0u;
+            if (interpolate_pose && history != skeleton_pose_history_.end() &&
+                sample_skeleton_pose_history(
+                    history->second,
+                    pose_evaluation_time_us,
+                    &pose.local_transforms,
+                    &sampled_tick) &&
+                pose.local_transforms.size() == asset->bind_pose.size()) {
+                pose.pose_tick = sampled_tick;
+                pose.pose_time_us = pose_evaluation_time_us;
+            } else {
+                pose.local_transforms = solved->local_pose;
+            }
         } else {
             pose.pose_flags = KERNEL_SKELETON_POSE_FLAG_BIND_POSE;
             pose.local_transforms = asset->bind_pose;

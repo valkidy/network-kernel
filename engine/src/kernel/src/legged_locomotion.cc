@@ -179,8 +179,23 @@ bool finite_pose(std::span<const KernelBoneLocalTransform> pose) {
 // stepping forever; ignoring reach entirely lets a leg commit to a foothold it
 // can only stretch at, leaving the foot visibly detached with no way back. So
 // the first candidate within reach wins, and if none are, the first valid hit is
-// taken anyway -- the caller learns which case it got from *out_within_reach and
-// can step again to recover.
+// taken anyway -- the caller learns which case it got from sample->within_reach
+// and can step again to recover.
+//
+// The result is reported through a standalone sample rather than written onto
+// the leg because the solve queries twice per stepping leg: once for the home
+// stance under the body right now, and once for the stance the body will have
+// when the foot lands. Only the first belongs on the leg.
+struct FootholdSample {
+    glm::vec3 position{0.0f};
+    glm::vec3 normal{0.0f, 1.0f, 0.0f};
+    std::uint32_t candidate_index = UINT32_MAX;
+    std::uint32_t supporting_entity_net_id = 0u;
+    std::uint32_t supporting_collider_id = 0u;
+    bool valid = false;
+    bool within_reach = false;
+};
+
 bool query_foothold(
     const KernelSkeletonBindingDefinition& definition,
     const glm::vec3& nominal_world,
@@ -189,13 +204,8 @@ bool query_foothold(
     const glm::quat& root_rotation,
     float minimum_ground_normal_y,
     const LocomotionGroundingQuery& grounding_query,
-    LegLocomotionState* leg,
-    bool* out_within_reach) {
-    leg->ground_hit_valid = false;
-    leg->grounding_candidate_index = UINT32_MAX;
-    leg->supporting_entity_net_id = 0u;
-    leg->supporting_collider_id = 0u;
-    *out_within_reach = false;
+    FootholdSample* sample) {
+    *sample = FootholdSample{};
     if (!grounding_query) {
         return false;
     }
@@ -232,19 +242,19 @@ bool query_foothold(
         if (have_fallback && !within_reach) {
             continue;  // Already holding an equally unreachable earlier hit.
         }
-        leg->ground_hit_valid = true;
-        leg->grounding_candidate_index = candidate;
-        leg->ground_hit_position = hit.position;
-        leg->ground_hit_normal = hit.normal;
-        leg->supporting_entity_net_id = hit.supporting_entity_net_id;
-        leg->supporting_collider_id = hit.supporting_collider_id;
-        *out_within_reach = within_reach;
+        sample->valid = true;
+        sample->candidate_index = candidate;
+        sample->position = hit.position;
+        sample->normal = hit.normal;
+        sample->supporting_entity_net_id = hit.supporting_entity_net_id;
+        sample->supporting_collider_id = hit.supporting_collider_id;
+        sample->within_reach = within_reach;
         if (within_reach) {
             return true;
         }
         have_fallback = true;
     }
-    return leg->ground_hit_valid;
+    return sample->valid;
 }
 
 }  // namespace
@@ -398,10 +408,14 @@ bool advance_locomotion_state(
     // behind, not against the value at entry, so a turn-in-place written to
     // root_yaw_radians between ticks -- which carries no translation input and
     // therefore no move_active -- still wakes the legs.
-    const bool yaw_changed = std::abs(shortest_angle_delta(
+    const float yaw_delta = shortest_angle_delta(
         state->last_advanced_yaw_radians,
-        state->root_yaw_radians)) > 1e-6f;
+        state->root_yaw_radians);
+    const bool yaw_changed = std::abs(yaw_delta) > 1e-6f;
     state->locomotion_active = move_active || yaw_changed;
+    // Published for the solve, which needs the turn rate after this function
+    // has collapsed the two yaw fields together.
+    state->last_yaw_delta_radians = yaw_delta;
     state->last_advanced_yaw_radians = state->root_yaw_radians;
 
     state->last_processing_order.clear();
@@ -415,7 +429,14 @@ bool advance_locomotion_state(
     return true;
 }
 
-bool solve_legged_locomotion_pose(
+namespace {
+
+// Shared body of both solve entry points. `follower` drops the two things a
+// follower has no business doing -- sampling the terrain for its own footholds,
+// and deciding when to step -- and leaves everything else (seating, the swing
+// arc, the IK, the pose write-out) byte-identical, which is what makes the two
+// paths agree.
+bool solve_locomotion_pose(
     const ozz::animation::Skeleton& skeleton,
     std::span<const KernelBoneLocalTransform> bind_pose,
     const KernelSkeletonBindingDefinition& definition,
@@ -423,15 +444,21 @@ bool solve_legged_locomotion_pose(
     float max_slope_degrees,
     float fixed_delta_seconds,
     const LocomotionGroundingQuery& grounding_query,
+    bool follower,
     LocomotionState* state) {
     if (state == nullptr || !valid_definition(definition) ||
         skeleton.num_joints() != static_cast<int>(bind_pose.size()) ||
         definition.bone_count != bind_pose.size() ||
         state->legs.size() != definition.leg_count ||
         !finite_vec3(root_position) ||
-        !std::isfinite(max_slope_degrees) || max_slope_degrees <= 0.0f ||
-        max_slope_degrees >= 90.0f ||
         !std::isfinite(fixed_delta_seconds) || fixed_delta_seconds <= 0.0f) {
+        return false;
+    }
+    // Only the grounding path reads the slope limit, so a follower is not asked
+    // to carry a value it cannot use.
+    if (!follower &&
+        (!std::isfinite(max_slope_degrees) || max_slope_degrees <= 0.0f ||
+         max_slope_degrees >= 90.0f)) {
         return false;
     }
     // Bone indices are dereferenced below; the kernel screens them at catalog
@@ -454,6 +481,20 @@ bool solve_legged_locomotion_pose(
     state->pose_valid = false;
     state->body_follow_valid = false;
     state->local_pose.assign(bind_pose.begin(), bind_pose.end());
+
+    // There is no advance_locomotion_state on the follower path -- a follower
+    // has no movement input to advance from -- so the per-tick bookkeeping that
+    // advance normally does happens here instead. entered_swing is left alone:
+    // it marks a step this state decided, and applying a replicated step is not
+    // deciding one.
+    if (follower) {
+        state->last_processing_order.clear();
+        for (std::uint32_t order = 0u; order < definition.leg_count; ++order) {
+            const std::uint32_t leg_index = definition.processing_order[order];
+            state->legs[leg_index].entered_support = false;
+            state->last_processing_order.push_back(leg_index);
+        }
+    }
 
     // Reuse the per-state scratch so a steady-state tick allocates nothing.
     std::vector<ozz::math::SoaTransform>& locals = state->scratch_locals;
@@ -527,8 +568,40 @@ bool solve_legged_locomotion_pose(
     root_local_position.x += root_offset.x;
     root_local_position.y += root_offset.y;
     root_local_position.z += root_offset.z;
-    const float minimum_ground_normal_y =
-        std::cos(max_slope_degrees * std::numbers::pi_v<float> / 180.0f);
+    const float minimum_ground_normal_y = follower
+        ? 0.0f
+        : std::cos(max_slope_degrees * std::numbers::pi_v<float> / 180.0f);
+
+    // How far a stance drifts per tick: the body's own translation, taken flat.
+    // Height is dropped because a landing spot's height comes from its raycast,
+    // never from extrapolation -- otherwise a body in freefall would aim its
+    // feet underground.
+    const glm::vec3 root_delta = state->has_last_root_position
+        ? root_position - state->last_root_position
+        : glm::vec3{0.0f};
+    const glm::vec3 root_delta_flat{root_delta.x, 0.0f, root_delta.z};
+    state->last_root_position = root_position;
+    state->has_last_root_position = true;
+    // Steps are aimed ahead only while the body is actually going somewhere, so
+    // a stationary or purely idle actor keeps placing feet exactly under its
+    // stance and spends no raycasts doing it.
+    const bool body_in_motion =
+        glm::dot(root_delta_flat, root_delta_flat) > 1e-10f ||
+        std::abs(state->last_yaw_delta_radians) > 1e-6f;
+    // Ticks of body travel between a step being triggered and the foot landing.
+    // The swing phase already counts the trigger tick as its first frame, so a
+    // step begun on tick T touches down on T + step_duration_ticks - 1, not on
+    // T + step_duration_ticks. (Zero is rejected by validation, so this cannot
+    // wrap; a one-tick step lands the tick it starts and extrapolates nothing.)
+    const float swing_ticks =
+        static_cast<float>(definition.step_duration_ticks - 1u);
+    const glm::vec3 predicted_root_position =
+        pose_root_position + root_delta_flat * swing_ticks;
+    const glm::quat predicted_root_rotation =
+        glm::angleAxis(
+            state->last_yaw_delta_radians * swing_ticks,
+            glm::vec3{0.0f, 1.0f, 0.0f}) *
+        root_rotation;
 
     std::array<glm::vec3, KERNEL_MAX_SKELETON_LEGS> hip_models{};
     std::array<glm::vec3, KERNEL_MAX_SKELETON_LEGS> bind_foot_models{};
@@ -537,7 +610,10 @@ bool solve_legged_locomotion_pose(
     std::array<bool, KERNEL_MAX_SKELETON_LEGS> home_grounded{};
     std::array<bool, KERNEL_MAX_SKELETON_LEGS> home_within_reach{};
 
-    // Pass 1: sample each leg's home foothold and seed uninitialized feet.
+    // Pass 1: measure the limb in model space, then (authoritative only) sample
+    // each leg's home foothold and seed uninitialized feet. The measurements are
+    // needed on both paths -- the IK reach clamp in pass 3 runs off them -- so
+    // it is the raycasts that a follower skips, not the whole pass.
     for (const std::uint32_t leg_index : state->last_processing_order) {
         const KernelSkeletonLegDefinition& definition_leg =
             definition.legs[leg_index];
@@ -556,11 +632,16 @@ bool solve_legged_locomotion_pose(
              glm::length(foot_model - knee_model)) *
             definition_leg.max_reach_ratio;
 
+        if (follower) {
+            continue;
+        }
+
         // Rest stance under the current body pose (ProceduralLeg.HomeWorld).
         const glm::vec3 nominal_world =
             pose_root_position + root_rotation * foot_model;
         const glm::vec3 hip_world =
             pose_root_position + root_rotation * hip_model;
+        FootholdSample home_sample;
         home_grounded[leg_index] = query_foothold(
             definition,
             nominal_world,
@@ -569,8 +650,18 @@ bool solve_legged_locomotion_pose(
             root_rotation,
             minimum_ground_normal_y,
             grounding_query,
-            &leg,
-            &home_within_reach[leg_index]);
+            &home_sample);
+        home_within_reach[leg_index] = home_sample.within_reach;
+        leg.ground_hit_valid = home_sample.valid;
+        leg.grounding_candidate_index = home_sample.candidate_index;
+        leg.supporting_entity_net_id = home_sample.supporting_entity_net_id;
+        leg.supporting_collider_id = home_sample.supporting_collider_id;
+        // A miss leaves the previous tick's hit in place rather than zeroing it,
+        // so a leg that momentarily loses the terrain keeps a usable normal.
+        if (home_sample.valid) {
+            leg.ground_hit_position = home_sample.position;
+            leg.ground_hit_normal = home_sample.normal;
+        }
         home_world[leg_index] =
             home_grounded[leg_index] ? leg.ground_hit_position : nominal_world;
 
@@ -589,6 +680,9 @@ bool solve_legged_locomotion_pose(
     // moving, its home has drifted past the threshold, and no leg of a different
     // gait group is currently swinging (diagonal/alternating trot). Ongoing
     // swings always finish regardless of input.
+    // A follower steps only where it is told to, so it has no gait to
+    // coordinate: apply_locomotion_step_event has already put the legs the
+    // authority stepped into kSwing.
     std::array<bool, KERNEL_MAX_SKELETON_LEGS> group_swinging{};
     std::uint32_t swinging_group_count = 0u;
     std::uint32_t swinging_leg_count = 0u;
@@ -602,7 +696,7 @@ bool solve_legged_locomotion_pose(
             ++swinging_group_count;
         }
     }
-    if (state->locomotion_active) {
+    if (!follower && state->locomotion_active) {
         for (const std::uint32_t leg_index : state->last_processing_order) {
             LegLocomotionState& leg = state->legs[leg_index];
             if (!leg.foot_initialized ||
@@ -634,7 +728,32 @@ bool solve_legged_locomotion_pose(
             leg.entered_swing = true;
             leg.swing_tick = 0u;
             leg.swing_start_world = leg.foot_target_world;
+            // Aim at the stance the body will hold when the foot lands, so the
+            // frozen target matches where a per-tick retarget would have ended
+            // up. Anything the extrapolation cannot stand on -- a foothold out
+            // of the hip's reach at touchdown, or no terrain there at all --
+            // falls back to the stance under the body now, which is always
+            // reachable because it is what triggered the step.
             leg.landing_target_world = home_world[leg_index];
+            if (body_in_motion) {
+                const glm::vec3 predicted_nominal = predicted_root_position +
+                    predicted_root_rotation * bind_foot_models[leg_index];
+                const glm::vec3 predicted_hip = predicted_root_position +
+                    predicted_root_rotation * hip_models[leg_index];
+                FootholdSample landing;
+                if (query_foothold(
+                        definition,
+                        predicted_nominal,
+                        predicted_hip,
+                        maximum_reaches[leg_index],
+                        predicted_root_rotation,
+                        minimum_ground_normal_y,
+                        grounding_query,
+                        &landing) &&
+                    landing.within_reach) {
+                    leg.landing_target_world = landing.position;
+                }
+            }
             ++swinging_leg_count;
             if (!group_swinging[leg.gait_group]) {
                 group_swinging[leg.gait_group] = true;
@@ -666,10 +785,7 @@ bool solve_legged_locomotion_pose(
         const float maximum_reach = maximum_reaches[leg_index];
 
         if (leg.gait_state == LegGaitState::kSwing) {
-            // Re-target the landing spot in case the body kept moving mid-step.
-            if (home_grounded[leg_index]) {
-                leg.landing_target_world = home_world[leg_index];
-            }
+            // Both endpoints were frozen at lift-off; nothing re-aims mid-step.
             // Phase advances on the tick the swing begins, so the whole step
             // spans step_duration_ticks ticks with no stalled first frame.
             const float swing_phase = std::min(
@@ -765,7 +881,9 @@ bool solve_legged_locomotion_pose(
     // smoothing actually converges (it would restart every tick if it were
     // re-derived from a pure-yaw transform rotation). Left disabled -- physics
     // owns the body, tilt stays identity -- when speed <= 0.
-    if (definition.body_follow_speed > 0.0f) {
+    // Skipped for a follower: the tilt is driven by the ground normals under the
+    // feet, and a follower never samples them.
+    if (!follower && definition.body_follow_speed > 0.0f) {
         float foot_y_sum = 0.0f;
         float bind_foot_y_sum = 0.0f;
         glm::vec3 normal_sum{0.0f};
@@ -824,6 +942,143 @@ bool solve_legged_locomotion_pose(
         state->local_pose.assign(bind_pose.begin(), bind_pose.end());
     }
     return state->pose_valid;
+}
+
+}  // namespace
+
+bool solve_legged_locomotion_pose(
+    const ozz::animation::Skeleton& skeleton,
+    std::span<const KernelBoneLocalTransform> bind_pose,
+    const KernelSkeletonBindingDefinition& definition,
+    const glm::vec3& root_position,
+    float max_slope_degrees,
+    float fixed_delta_seconds,
+    const LocomotionGroundingQuery& grounding_query,
+    LocomotionState* state) {
+    return solve_locomotion_pose(
+        skeleton,
+        bind_pose,
+        definition,
+        root_position,
+        max_slope_degrees,
+        fixed_delta_seconds,
+        grounding_query,
+        /*follower=*/false,
+        state);
+}
+
+bool solve_legged_locomotion_follower_pose(
+    const ozz::animation::Skeleton& skeleton,
+    std::span<const KernelBoneLocalTransform> bind_pose,
+    const KernelSkeletonBindingDefinition& definition,
+    const glm::vec3& root_position,
+    float fixed_delta_seconds,
+    LocomotionState* state) {
+    static const LocomotionGroundingQuery kNoGroundingQuery;
+    return solve_locomotion_pose(
+        skeleton,
+        bind_pose,
+        definition,
+        root_position,
+        /*max_slope_degrees=*/0.0f,  // unread on this path
+        fixed_delta_seconds,
+        kNoGroundingQuery,
+        /*follower=*/true,
+        state);
+}
+
+std::uint32_t collect_locomotion_step_events(
+    const LocomotionState& state,
+    std::uint32_t solve_tick,
+    std::span<LocomotionStepEvent> out_events) {
+    std::uint32_t found = 0u;
+    for (std::uint32_t leg_index = 0u;
+         leg_index < state.legs.size();
+         ++leg_index) {
+        const LegLocomotionState& leg = state.legs[leg_index];
+        if (!leg.entered_swing) {
+            continue;
+        }
+        if (found < out_events.size()) {
+            out_events[found] = LocomotionStepEvent{
+                leg_index,
+                solve_tick,
+                leg.landing_target_world,
+            };
+        }
+        ++found;
+    }
+    return found;
+}
+
+bool apply_locomotion_step_event(
+    const KernelSkeletonBindingDefinition& definition,
+    const LocomotionStepEvent& event,
+    std::uint32_t current_tick,
+    LocomotionState* state) {
+    if (state == nullptr || !valid_definition(definition) ||
+        state->legs.size() != definition.leg_count ||
+        event.leg_index >= definition.leg_count ||
+        !finite_vec3(event.landing_target_world)) {
+        return false;
+    }
+    // Tick counters wrap, so "before" is a signed delta and never a plain
+    // comparison. A baseline in particular arrives as a step deliberately older
+    // than any swing, which under unsigned arithmetic looks like the far future.
+    const std::int32_t elapsed_ticks =
+        static_cast<std::int32_t>(current_tick - event.start_tick);
+    if (elapsed_ticks < 0) {
+        return false;
+    }
+    LegLocomotionState& leg = state->legs[event.leg_index];
+    leg.landing_target_world = event.landing_target_world;
+
+    const std::uint32_t elapsed = static_cast<std::uint32_t>(elapsed_ticks);
+    if (elapsed >= definition.step_duration_ticks) {
+        // The swing is already over by the time this arrived. Land it rather
+        // than animating a step that finished in the past; the foot ends up
+        // exactly where the authority put it, which is the point of shipping an
+        // absolute landing position.
+        leg.foot_target_world = event.landing_target_world;
+        leg.swing_start_world = event.landing_target_world;
+        leg.gait_state = LegGaitState::kSupport;
+        leg.swing_tick = 0u;
+        leg.foot_initialized = true;
+        return true;
+    }
+    // Lift off from wherever this foot actually is. A follower in sync has it
+    // planted exactly where the authority did; one that is not still lands on
+    // the right spot, one step later than it should have.
+    leg.swing_start_world = leg.foot_initialized
+        ? leg.foot_target_world
+        : event.landing_target_world;
+    leg.gait_state = LegGaitState::kSwing;
+    // Resume mid-arc for a late event, matching the phase the authority is
+    // already at, instead of restarting the swing behind it.
+    leg.swing_tick = elapsed;
+    leg.foot_initialized = true;
+    return true;
+}
+
+bool set_locomotion_foot_anchor(
+    const KernelSkeletonBindingDefinition& definition,
+    std::uint32_t leg_index,
+    const glm::vec3& world_position,
+    LocomotionState* state) {
+    if (state == nullptr || !valid_definition(definition) ||
+        state->legs.size() != definition.leg_count ||
+        leg_index >= definition.leg_count ||
+        !finite_vec3(world_position)) {
+        return false;
+    }
+    LegLocomotionState& leg = state->legs[leg_index];
+    leg.foot_target_world = world_position;
+    leg.swing_start_world = world_position;
+    leg.landing_target_world = world_position;
+    leg.gait_state = LegGaitState::kSupport;
+    leg.swing_tick = 0u;
+    leg.foot_initialized = true;
+    return true;
 }
 
 }  // namespace network_example

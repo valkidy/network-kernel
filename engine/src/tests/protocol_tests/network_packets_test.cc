@@ -16,6 +16,53 @@ bool nearly_equal(float lhs, float rhs) {
 }  // namespace
 
 int main() {
+    // Replicated locomotion steps. A step is 22 bytes of payload: the entity,
+    // which leg, how many ticks ago the swing began, and where it lands. No
+    // lift-off point -- a receiver in sync already has it planted.
+    {
+        network_example::LocomotionStepBatchPacket steps;
+        steps.server_tick = 900;
+        steps.records.push_back(network_example::LocomotionStepRecord{
+            42u, 0u, 0u, glm::vec3{1.5f, -2.25f, 3.75f}});
+        steps.records.push_back(network_example::LocomotionStepRecord{
+            42u, 3u, 255u, glm::vec3{-4.0f, 0.5f, 8.125f}});
+        const std::vector<std::uint8_t> encoded =
+            network_example::encode_locomotion_step_batch_packet(steps, 12u);
+        assert(!encoded.empty());
+        network_example::LocomotionStepBatchPacket decoded;
+        assert(network_example::decode_locomotion_step_batch_packet(
+            encoded.data(), encoded.size(), &decoded));
+        assert(decoded.server_tick == steps.server_tick);
+        assert(decoded.records.size() == steps.records.size());
+        for (std::size_t index = 0; index < steps.records.size(); ++index) {
+            assert(decoded.records[index].net_id ==
+                   steps.records[index].net_id);
+            assert(decoded.records[index].leg_index ==
+                   steps.records[index].leg_index);
+            assert(decoded.records[index].start_tick_delta ==
+                   steps.records[index].start_tick_delta);
+            assert(decoded.records[index].landing_target_world ==
+                   steps.records[index].landing_target_world);
+        }
+        // An empty batch is never put on the wire, a leg outside the rig's
+        // limit is rejected rather than indexed with, and a truncated payload
+        // does not decode.
+        assert(network_example::encode_locomotion_step_batch_packet(
+                   network_example::LocomotionStepBatchPacket{}, 0u).empty());
+        network_example::LocomotionStepBatchPacket bad_leg;
+        bad_leg.server_tick = 1;
+        bad_leg.records.push_back(network_example::LocomotionStepRecord{
+            42u, KERNEL_MAX_SKELETON_LEGS, 0u, glm::vec3{0.0f}});
+        assert(network_example::encode_locomotion_step_batch_packet(
+                   bad_leg, 0u).empty());
+        network_example::LocomotionStepBatchPacket truncated;
+        assert(!network_example::decode_locomotion_step_batch_packet(
+            encoded.data(), encoded.size() - 1u, &truncated));
+        // And a snapshot must not be mistaken for one: they share a channel.
+        assert(!network_example::decode_snapshot_packet(
+            encoded.data(), encoded.size(), nullptr));
+    }
+
     KernelPlayerInput input{};
     input.input_seq = 7;
     input.client_action_time_us = 11000;

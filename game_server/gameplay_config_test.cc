@@ -23,6 +23,28 @@
 #include "kernel/src/legged_locomotion.h"
 #include "kernel/src/skeleton_presentation.h"
 
+// The follower locomotion path is engine-internal: what will eventually drive
+// it is a replicated field rather than a call, so it has no C API surface to
+// test through yet. Every standard header the kernel pulls in is included ahead
+// of the access override, so the override only ever reaches kernel.h itself.
+#include <atomic>
+#include <chrono>
+#include <deque>
+#include <functional>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <random>
+#include <ranges>
+#include <span>
+#include <thread>
+#include <unordered_set>
+#include <variant>
+#include "protocol/public/network_packets.h"
+#define private public
+#include "kernel/src/kernel.h"
+#undef private
+
 namespace {
 
 constexpr std::uint16_t kMaxReserveMagazines =
@@ -648,7 +670,7 @@ int main() {
                 {},
                 replace_once(
                     production_monster_yaml,
-                    "step_threshold_meters: 5.5",
+                    "step_threshold_meters: 0.65",
                     "step_threshold_meters: 0.0"));
         (void)network_example::game_server::load_gameplay_config_from_bundle_memory(
             invalid_gait_bundle.data(),
@@ -1120,7 +1142,7 @@ int main() {
     require(monster_template->skeleton.processing_order.size() == 4u);
     require(monster_template->movement_max_yaw_degrees_per_second == 45.0f);
     require(monster_template->skeleton.input_deadzone == 0.01f);
-    require(monster_template->skeleton.step_threshold_meters == 5.5f);
+    require(monster_template->skeleton.step_threshold_meters == 0.65f);
     require(monster_template->skeleton.step_duration_ticks == 6u);
     require(monster_template->skeleton.max_swinging_legs == 2u);
     require(monster_template->skeleton.foothold_query_type ==
@@ -1159,7 +1181,7 @@ int main() {
          KERNEL_ENTITY_COMPONENT_SKELETON) != 0u);
     require(monster_definition->skeleton.leg_count == 4u);
     require(monster_definition->movement.max_yaw_degrees_per_second == 45.0f);
-    require(monster_definition->skeleton.step_threshold_meters == 5.5f);
+    require(monster_definition->skeleton.step_threshold_meters == 0.65f);
     require(monster_definition->skeleton.step_duration_ticks == 6u);
     require(monster_definition->skeleton.legs[0].gait_group == 0u);
     require(monster_definition->skeleton.legs[1].gait_group == 0u);
@@ -1235,7 +1257,8 @@ int main() {
         initial_grounded_anchors.push_back(leg.foot_target_world);
     }
     const std::size_t rays_after_first_solve = grounding_origins.size();
-    // A small root move (< step_threshold) keeps every foot planted where it is.
+    // A root move smaller than the authored step_threshold (0.65 m) keeps every
+    // foot planted where it is.
     require(network_example::advance_locomotion_state(
         monster_definition->skeleton,
         KernelVec2{0.0f, 1.0f},
@@ -1246,7 +1269,7 @@ int main() {
         locomotion_asset.skeleton,
         locomotion_asset.bind_pose,
         monster_definition->skeleton,
-        glm::vec3{1.0f, 0.0f, 0.0f},
+        glm::vec3{0.3f, 0.0f, 0.0f},
         monster_definition->movement.max_slope_degrees,
         1.0f / 30.0f,
         ordered_grounding,
@@ -1408,10 +1431,16 @@ int main() {
         }
     }
     require(group_zero_swing_count == 2u);
-    std::vector<glm::vec3> previous_landing_targets;
+    // The landing spot is committed once, at lift-off, and held for the rest of
+    // the swing -- a step is meant to be replayable from the single event that
+    // started it. Here the body jumps 4 m on the trigger tick and then crawls at
+    // 0.1 m/tick, so the extrapolation that normally aims a step ahead of the
+    // body lands out of the leg's reach and is rejected: this pins the frozen
+    // fallback, which is the stance under the body at lift-off.
+    std::vector<glm::vec3> committed_landing_targets;
     for (const network_example::LegLocomotionState& leg :
          idle_locomotion.legs) {
-        previous_landing_targets.push_back(leg.landing_target_world);
+        committed_landing_targets.push_back(leg.landing_target_world);
     }
     for (std::uint32_t swing_tick = 1u; swing_tick < 6u; ++swing_tick) {
         require(network_example::advance_locomotion_state(
@@ -1441,9 +1470,8 @@ int main() {
                         network_example::LegGaitState::kSupport);
                 continue;
             }
-            require(leg.landing_target_world.x >
-                    previous_landing_targets[index].x);
-            previous_landing_targets[index] = leg.landing_target_world;
+            require(leg.landing_target_world ==
+                    committed_landing_targets[index]);
             if (swing_tick < 5u) {
                 require(leg.gait_state ==
                         network_example::LegGaitState::kSwing);
@@ -2804,6 +2832,178 @@ int main() {
         std::cos(expected_half_yaw_radians)) < 0.0001f);
     Kernel_Destroy(skeleton_kernel);
 
+    // The follower path end to end: a kernel that never simulates the monster --
+    // it is not in its registry, and no grounding query is ever made for it --
+    // reconstructs the monster's legs from replicated steps alone, and the
+    // presentation reports them as procedural rather than falling back to the
+    // bind pose. This is the client-side half of replicating steps instead of
+    // bones; only the transport that fills the step queue is still missing.
+    {
+        network_example::game_server::KernelGameplayCatalogStorage
+            follower_catalog =
+                network_example::game_server::build_kernel_gameplay_catalog(
+                    config);
+        KernelConfig follower_config{};
+        follower_config.mode = KernelMode_Client;
+        follower_config.tick.server_tick_rate = 30;
+        follower_config.tick.snapshot_rate = 15;
+        follower_config.max_render_states = 64;
+        follower_config.max_events = 128;
+        network_example::KernelEngine follower(follower_config);
+        follower.reset_runtime_state(KernelMode_Client);
+        require(follower.load_gameplay_catalog(follower_catalog.definition));
+
+        constexpr network_example::NetId kMonsterNetId = 4242u;
+        constexpr std::uint32_t kMonsterTemplateId = 20u;
+        // A baseline is sent beside the spawn packet, so it can reach the
+        // client before that entity's first snapshot. It must survive that.
+        network_example::LocomotionStepBatchPacket early_baseline{};
+        early_baseline.server_tick = 99u;
+        early_baseline.records.push_back(network_example::LocomotionStepRecord{
+            kMonsterNetId, 2u, UINT8_MAX, glm::vec3{5.0f, 0.0f, -5.0f}});
+        follower.handle_client_locomotion_step_batch(early_baseline);
+        follower.update_follower_locomotion();
+        require(follower.pending_follower_steps_.size() == 1u);
+
+        network_example::EntitySpawnPacket spawn{};
+        spawn.net_id = kMonsterNetId;
+        spawn.entity_type = network_example::EntityType::kActor;
+        spawn.actor_type = network_example::ActorType::kAgent;
+        spawn.owner_peer = 0u;
+        spawn.actor_template_id = kMonsterTemplateId;
+        spawn.entity_template_id = kMonsterTemplateId;
+        follower.handle_client_spawn(spawn);
+
+        const auto push_snapshot = [&](std::uint32_t server_tick, float x) {
+            network_example::WorldSnapshot snapshot;
+            snapshot.header.server_tick = server_tick;
+            network_example::EntitySnapshot entity;
+            entity.net_id = kMonsterNetId;
+            entity.type = network_example::EntityType::kActor;
+            entity.actor_type = network_example::ActorType::kAgent;
+            entity.position = glm::vec3{x, 0.0f, 0.0f};
+            entity.rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+            snapshot.entities.push_back(entity);
+            follower.handle_client_snapshot(snapshot);
+        };
+
+        // Two snapshots so the buffer can interpolate between server ticks.
+        push_snapshot(100u, 0.0f);
+        push_snapshot(102u, 0.5f);
+        follower.update_follower_locomotion();
+        require(follower.follower_locomotion_states_.count(kMonsterNetId) == 1u);
+        // Only the leg the early baseline named has committed to a world
+        // position; nothing has stepped, so no other foot has.
+        for (std::size_t leg_index = 0u;
+             leg_index <
+                 follower.follower_locomotion_states_[kMonsterNetId].legs.size();
+             ++leg_index) {
+            const network_example::LegLocomotionState& leg =
+                follower.follower_locomotion_states_[kMonsterNetId]
+                    .legs[leg_index];
+            require(leg.foot_initialized == (leg_index == 2u));
+        }
+
+        // One replicated step, for one leg, landing somewhere the authority
+        // chose. The follower is told nothing else: no terrain, no lift-off
+        // point, no gait.
+        // Routed through the real wire format rather than injected, so this
+        // covers the encode/decode the server will actually use.
+        const glm::vec3 landing{1.25f, 0.0f, 9.5f};
+        network_example::LocomotionStepBatchPacket step_batch{};
+        step_batch.server_tick = 106u;
+        step_batch.records.push_back(network_example::LocomotionStepRecord{
+            kMonsterNetId, 0u, 2u, landing});
+        const std::vector<std::uint8_t> encoded_steps =
+            network_example::encode_locomotion_step_batch_packet(
+                step_batch, 1u);
+        require(!encoded_steps.empty());
+        network_example::LocomotionStepBatchPacket decoded_steps;
+        require(network_example::decode_locomotion_step_batch_packet(
+            encoded_steps.data(), encoded_steps.size(), &decoded_steps));
+        follower.handle_client_locomotion_step_batch(decoded_steps);
+        // server_tick 106 minus a 2 tick delta is the tick the swing began.
+        require(follower.pending_follower_steps_.size() == 1u);
+        require(follower.pending_follower_steps_[0].event.start_tick == 104u);
+
+        // A step in the future is held, not applied early.
+        follower.update_follower_locomotion();
+        require(!follower.follower_locomotion_states_[kMonsterNetId]
+                     .legs[0]
+                     .foot_initialized);
+        require(follower.pending_follower_steps_.size() == 1u);
+
+        // Walk the snapshot buffer past the step, then past its whole swing.
+        float monster_x = 0.5f;
+        for (std::uint32_t server_tick = 104u; server_tick <= 116u;
+             server_tick += 2u) {
+            monster_x += 0.25f;
+            push_snapshot(server_tick, monster_x);
+            follower.update_follower_locomotion();
+        }
+        require(follower.pending_follower_steps_.empty());
+
+        const network_example::LegLocomotionState& stepped =
+            follower.follower_locomotion_states_[kMonsterNetId].legs[0];
+        require(stepped.foot_initialized);
+        require(stepped.gait_state == network_example::LegGaitState::kSupport);
+        // Landed exactly where the authority said, with no resync and no
+        // knowledge of the terrain under it.
+        require(glm::length(stepped.foot_target_world - landing) < 0.0001f);
+        // Legs that were never told to step stay uncommitted rather than
+        // guessing a foothold of their own.
+        require(!follower.follower_locomotion_states_[kMonsterNetId]
+                     .legs[1]
+                     .foot_initialized);
+        // The pre-snapshot baseline was kept and applied, so its leg is planted
+        // rather than waiting for a step of its own.
+        const network_example::LegLocomotionState& early_planted =
+            follower.follower_locomotion_states_[kMonsterNetId].legs[2];
+        require(early_planted.foot_initialized);
+        require(glm::length(
+                    early_planted.foot_target_world -
+                    glm::vec3{5.0f, 0.0f, -5.0f}) < 0.0001f);
+
+        // Poses were recorded per server tick, so presentation can sample them
+        // at the same instant it samples the roots.
+        require(follower.skeleton_pose_history_.count(kMonsterNetId) == 1u);
+        require(follower.skeleton_pose_history_[kMonsterNetId].size > 1u);
+
+        // And presentation reports procedural legs, not the bind-pose fallback
+        // a client used to be stuck with.
+        follower.rebuild_skeleton_presentation_at_time(
+            follower.client_local_time_us_);
+        const auto presented = std::find_if(
+            follower.skeleton_presentation_poses_.begin(),
+            follower.skeleton_presentation_poses_.end(),
+            [](const network_example::SkeletonPresentationPose& pose) {
+                return pose.entity_net_id == kMonsterNetId;
+            });
+        require(presented != follower.skeleton_presentation_poses_.end());
+        require(presented->pose_flags ==
+                KERNEL_SKELETON_POSE_FLAG_PROCEDURAL);
+
+        // A baseline is carried by the same record type: a step old enough that
+        // its whole swing is in the past, which the follower resolves by
+        // planting the foot outright. That is what stops a newly relevant
+        // entity's legs from appearing one at a time as each happens to step.
+        const glm::vec3 anchored{-3.0f, 0.0f, -7.5f};
+        network_example::LocomotionStepBatchPacket baseline{};
+        baseline.server_tick = 118u;
+        baseline.records.push_back(network_example::LocomotionStepRecord{
+            kMonsterNetId, 1u, UINT8_MAX, anchored});
+        follower.handle_client_locomotion_step_batch(baseline);
+        push_snapshot(118u, monster_x + 0.25f);
+        follower.update_follower_locomotion();
+        const network_example::LegLocomotionState& planted =
+            follower.follower_locomotion_states_[kMonsterNetId].legs[1];
+        require(planted.foot_initialized);
+        require(planted.gait_state ==
+                network_example::LegGaitState::kSupport);
+        require(glm::length(planted.foot_target_world - anchored) < 0.0001f);
+    }
+
+
     KernelConfig observer_kernel_config{};
     observer_kernel_config.mode = KernelMode_ListenServer;
     observer_kernel_config.tick.server_tick_rate = 30;
@@ -3022,6 +3222,126 @@ int main() {
         require(std::isfinite(transform.local_scale.y));
         require(std::isfinite(transform.local_scale.z));
     }
+    // The pose must be evaluated at the instant the root transform it will be
+    // composed onto was evaluated at -- the snapshot-derived time, which lags
+    // the newest simulated tick by the interpolation delay -- rather than being
+    // stamped with the caller's render time and snapped to the freshest solve.
+    // Composing a pose built for tick N onto a root rendered at N-delay is what
+    // made a planted foot drift with the body.
+    //
+    const auto observer_pose_at = [&](std::uint64_t render_time_us,
+                                      std::vector<KernelBoneLocalTransform>* out,
+                                      KernelSkeletonRenderState* out_state) {
+        std::array<KernelSkeletonRenderState, 4> states{};
+        std::array<KernelBoneLocalTransform, 164> bones{};
+        KernelSkeletonRenderStateResult result{};
+        result.struct_size = sizeof(result);
+        require(Kernel_GetSkeletonRenderStatesAtTime(
+                    observer_kernel,
+                    render_time_us,
+                    states.data(),
+                    static_cast<std::uint32_t>(states.size()),
+                    bones.data(),
+                    static_cast<std::uint32_t>(bones.size()),
+                    &result) == 1u);
+        const auto found = std::find_if(
+            states.begin(),
+            states.begin() + result.written_state_count,
+            [observer_monster_net_id](const KernelSkeletonRenderState& state) {
+                return state.entity_net_id == observer_monster_net_id;
+            });
+        require(found != states.begin() + result.written_state_count);
+        *out_state = *found;
+        out->assign(
+            bones.begin() + found->first_bone_transform,
+            bones.begin() + found->first_bone_transform + found->bone_count);
+    };
+    const std::uint64_t observer_tick_us =
+        static_cast<std::uint64_t>(1000000.0 / 30.0);
+    // Deliberately not tick-aligned, so a pose still stamped with the caller's
+    // render time is distinguishable from one stamped with the evaluated time.
+    const std::uint64_t observer_requested_render_time_us =
+        observer_monster_skeleton_state->pose_time_us + observer_tick_us + 7777u;
+    std::vector<KernelBoneLocalTransform> observer_pose_at_time;
+    KernelSkeletonRenderState observer_state_at_time{};
+    observer_pose_at(
+        observer_requested_render_time_us,
+        &observer_pose_at_time,
+        &observer_state_at_time);
+    require(observer_pose_at_time.size() == observer_monster_skeleton_state->bone_count);
+    require(
+        observer_state_at_time.pose_time_us !=
+        observer_requested_render_time_us);
+    require(
+        observer_state_at_time.pose_time_us < observer_requested_render_time_us);
+    for (const KernelBoneLocalTransform& transform : observer_pose_at_time) {
+        require(std::isfinite(transform.local_rotation.w));
+        require(std::isfinite(transform.local_position.y));
+    }
+
+    // ... and it has to be *continuous* in render time, not quantised to the
+    // snapshot stream. A listen server shares the server's clock, so advancing
+    // the client clock by a fraction of a tick -- too little to simulate a new
+    // tick -- must still move the pose. It did not before the loopback was
+    // treated as clock-synced: the target was pinned to `newest_tick - delay`,
+    // so the body glided while the legs stepped 30 times a second.
+    const auto observer_live_pose = [&](std::vector<KernelBoneLocalTransform>* out,
+                                        KernelSkeletonRenderState* out_state) {
+        std::array<KernelSkeletonRenderState, 4> states{};
+        std::array<KernelBoneLocalTransform, 164> bones{};
+        KernelSkeletonRenderStateResult result{};
+        result.struct_size = sizeof(result);
+        require(Kernel_GetSkeletonRenderStates(
+                    observer_kernel,
+                    states.data(),
+                    static_cast<std::uint32_t>(states.size()),
+                    bones.data(),
+                    static_cast<std::uint32_t>(bones.size()),
+                    &result) == 1u);
+        const auto found = std::find_if(
+            states.begin(),
+            states.begin() + result.written_state_count,
+            [observer_monster_net_id](const KernelSkeletonRenderState& state) {
+                return state.entity_net_id == observer_monster_net_id;
+            });
+        require(found != states.begin() + result.written_state_count);
+        *out_state = *found;
+        out->assign(
+            bones.begin() + found->first_bone_transform,
+            bones.begin() + found->first_bone_transform + found->bone_count);
+    };
+    std::vector<KernelBoneLocalTransform> observer_pose_before_subtick;
+    std::vector<KernelBoneLocalTransform> observer_pose_after_subtick;
+    KernelSkeletonRenderState observer_state_before_subtick{};
+    KernelSkeletonRenderState observer_state_after_subtick{};
+    observer_live_pose(
+        &observer_pose_before_subtick, &observer_state_before_subtick);
+    // A third of a tick: advances the client clock without simulating a tick.
+    Kernel_Update(observer_kernel, 1.0f / 90.0f);
+    observer_live_pose(
+        &observer_pose_after_subtick, &observer_state_after_subtick);
+    require(
+        observer_state_after_subtick.pose_time_us >
+        observer_state_before_subtick.pose_time_us);
+    require(
+        observer_pose_before_subtick.size() ==
+        observer_pose_after_subtick.size());
+    bool observer_pose_moved_within_tick = false;
+    for (std::size_t bone = 0u; bone < observer_pose_before_subtick.size();
+         ++bone) {
+        const KernelQuat& before =
+            observer_pose_before_subtick[bone].local_rotation;
+        const KernelQuat& after =
+            observer_pose_after_subtick[bone].local_rotation;
+        if (std::abs(before.x - after.x) > 1e-7f ||
+            std::abs(before.y - after.y) > 1e-7f ||
+            std::abs(before.z - after.z) > 1e-7f ||
+            std::abs(before.w - after.w) > 1e-7f) {
+            observer_pose_moved_within_tick = true;
+            break;
+        }
+    }
+    require(observer_pose_moved_within_tick);
     const auto patrol_velocity_from_synthetic_position =
         [&](float position_x) {
             KernelVec3 position{

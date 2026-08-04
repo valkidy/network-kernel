@@ -7,3 +7,14 @@ cc_test(
     data = ["//game_server/mesh_assets:generated/jolt/undulating.joltmesh"],
     deps = ["//engine/src/physics:physics"],
 )
+
+# Reports a timing, so it is a manual benchmark rather than a CI gate: asserting
+# a wall-clock bound would be flaky and host-dependent.
+cc_test(
+    name = "locomotion_foothold_bench",
+    srcs = ["locomotion_foothold_bench.cc"],
+    args = ["$(location //game_server/mesh_assets:generated/jolt/undulating.joltmesh)"],
+    data = ["//game_server/mesh_assets:generated/jolt/undulating.joltmesh"],
+    tags = ["manual"],
+    deps = ["//engine/src/physics:physics"],
+)

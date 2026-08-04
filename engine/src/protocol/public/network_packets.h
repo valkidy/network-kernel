@@ -144,6 +144,41 @@ struct PropStateChangeBatchPacket {
     std::vector<PropStateChangeRecord> records;
 };
 
+// One procedural step an authoritative actor's leg took, addressed to the
+// entity that took it. Both swing endpoints are frozen at lift-off, so this is
+// the whole of a step: a receiver reproduces the swing from it without the
+// terrain, the gait, or the actor's bones. The lift-off position is absent on
+// purpose -- a receiver in sync already has it as the foot's planted position.
+//
+// Deliberately unreliable. The landing position is absolute rather than a
+// delta, so a lost step leaves that leg wrong only until its next step, and a
+// baseline is sent when an entity first becomes relevant. Reliable ordered
+// delivery would instead risk head-of-line blocking freezing every leg for a
+// round trip, which is the worse failure.
+struct LocomotionStepRecord {
+    NetId net_id = 0;
+    std::uint8_t leg_index = 0;
+    // Ticks before the batch's server_tick that the swing began. Steps are
+    // collected as they are committed and flushed with the next snapshot, so
+    // this spans a snapshot interval, not a session.
+    std::uint8_t start_tick_delta = 0;
+    glm::vec3 landing_target_world{0.0f};
+};
+
+struct LocomotionStepBatchPacket {
+    std::uint32_t server_tick = 0;
+    std::vector<LocomotionStepRecord> records;
+};
+
+std::vector<std::uint8_t> encode_locomotion_step_batch_packet(
+    const LocomotionStepBatchPacket& packet,
+    std::uint32_t sequence = 0);
+
+bool decode_locomotion_step_batch_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    LocomotionStepBatchPacket* out_packet);
+
 std::vector<std::uint8_t> encode_player_input_packet(
     PeerId player_id,
     const KernelPlayerInput& input,

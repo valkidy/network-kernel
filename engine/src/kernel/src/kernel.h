@@ -49,6 +49,7 @@ struct InventoryDeltaBatchPacket;
 struct InventorySnapshotPagePacket;
 struct InventorySnapshotRequestPacket;
 struct LocalActionResultBatchPacket;
+struct LocomotionStepBatchPacket;
 struct ProjectileSpawnBatchPacket;
 struct RemoteActionPresentationBatchPacket;
 struct WelcomePacket;
@@ -367,6 +368,13 @@ private:
         std::unordered_set<NetId> out_of_range_projectiles;
     };
 
+    // A step, addressed to the entity whose leg took it. The event itself is
+    // entity-agnostic, so replication has to carry the net id alongside it.
+    struct PendingLocomotionStep {
+        NetId net_id = 0;
+        LocomotionStepEvent event;
+    };
+
     struct ClientReplicatedEntity {
         NetId net_id = 0;
         EntityType type = EntityType::kUnknown;
@@ -524,6 +532,21 @@ private:
     void update_legged_locomotion(
         const std::vector<QueuedInput>& movement_inputs,
         float fixed_delta_seconds);
+    // Drives the legs of entities this kernel only ever sees through snapshots.
+    // It never grounds or gaits them: it replays the steps the authority took,
+    // which arrive through enqueue_replicated_locomotion_step. Stepping happens
+    // in server-tick space against roots read out of the snapshot buffer, so the
+    // poses it records line up with the roots presentation will compose them
+    // onto, exactly as they do on the authoritative side.
+    void update_follower_locomotion();
+    void step_follower_locomotion_tick(std::uint32_t server_tick);
+    // Hands a replicated step to the follower path. Steps whose tick has not
+    // been reached yet are held; ones already in the past are applied on the
+    // next stepped tick, which resumes the swing mid-arc rather than replaying
+    // it late.
+    void enqueue_replicated_locomotion_step(
+        NetId net_id,
+        const LocomotionStepEvent& event);
     void finalize_simulated_projectile_destructions(
         std::size_t first_event,
         std::size_t last_event,
@@ -543,13 +566,12 @@ private:
         std::uint64_t client_time_us) const;
     glm::vec3 predicted_local_render_position() const;
     void rebuild_render_states();
+    bool render_states_from_snapshot() const;
     void rebuild_render_states_at_time(std::uint64_t client_render_time_us);
     void rebuild_skeleton_presentation();
     void rebuild_skeleton_presentation_at_time(
         std::uint64_t client_render_time_us);
-    void rebuild_skeleton_presentation_from_render_states(
-        std::uint64_t pose_time_us,
-        bool use_latest_pose);
+    std::size_t skeleton_pose_history_capacity() const;
     void rebuild_render_states_from_world();
     void rebuild_render_states_from_snapshot(std::uint64_t client_render_time_us);
     void report_render_state_overflow_if_needed();
@@ -603,6 +625,9 @@ private:
         std::uint64_t action_server_time_us,
         std::uint64_t received_server_time_us) const;
     std::uint64_t compensated_action_time_us(const QueuedInput& queued_input) const;
+    bool client_render_server_time_us(
+        std::uint64_t client_render_time_us,
+        std::uint64_t* out_server_time_us) const;
     bool build_interpolated_snapshot(
         std::uint64_t client_render_time_us,
         WorldSnapshot* out_snapshot) const;
@@ -678,6 +703,16 @@ private:
     bool make_prop_state_change_record(
         NetId net_id,
         PropStateChangeRecord* out_record) const;
+    // Flushes the steps this tick's solve committed to every session the
+    // stepping entity is relevant to, and seeds a session that has just started
+    // seeing an entity with where its feet currently are.
+    void flush_locomotion_steps();
+    void send_locomotion_steps(
+        PeerSession* session,
+        const LocomotionStepBatchPacket& packet);
+    void send_locomotion_baseline(PeerSession* session, NetId net_id);
+    void handle_client_locomotion_step_batch(
+        const LocomotionStepBatchPacket& packet);
     void send_prop_state_changes(
         PeerSession* session,
         const PropStateChangeBatchPacket& packet);
@@ -757,6 +792,18 @@ private:
         skeleton_pose_history_;
     std::uint64_t skeleton_presentation_time_us_ = 0;
     std::unordered_map<NetId, LocomotionState> locomotion_states_;
+    std::unordered_map<NetId, SkeletonPoseHistory> skeleton_pose_history_;
+    // Legs reconstructed from replicated steps, for entities this kernel does
+    // not simulate. Kept apart from locomotion_states_ so the authoritative
+    // entry always wins where both exist (a listen server has both).
+    std::unordered_map<NetId, LocomotionState> follower_locomotion_states_;
+    // Steps delivered but not yet reached in server-tick time, and steps this
+    // kernel's own solve committed this tick. The outbox is what a snapshot or
+    // event channel will carry; nothing drains it over the wire yet.
+    std::vector<PendingLocomotionStep> pending_follower_steps_;
+    std::vector<PendingLocomotionStep> outgoing_locomotion_steps_;
+    std::uint32_t follower_locomotion_tick_ = 0;
+    bool has_follower_locomotion_tick_ = false;
     WorldSnapshot latest_snapshot_;
     WorldSnapshot latest_client_snapshot_;
     std::vector<WorldSnapshot> client_snapshot_buffer_;
