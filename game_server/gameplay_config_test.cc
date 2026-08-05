@@ -2864,6 +2864,12 @@ int main() {
         follower.handle_client_locomotion_step_batch(early_baseline);
         follower.update_follower_locomotion();
         require(follower.pending_follower_steps_.size() == 1u);
+        // REPRO: the client ticks at 30 Hz but snapshots arrive at 15 Hz, so
+        // update_follower_locomotion is routinely called with no new tick to
+        // step. A held step must survive those calls.
+        follower.update_follower_locomotion();
+        follower.update_follower_locomotion();
+        require(follower.pending_follower_steps_.size() == 1u);
 
         network_example::EntitySpawnPacket spawn{};
         spawn.net_id = kMonsterNetId;
@@ -2995,6 +3001,27 @@ int main() {
         follower.handle_client_locomotion_step_batch(baseline);
         push_snapshot(118u, monster_x + 0.25f);
         follower.update_follower_locomotion();
+        // REPRO: a baseline that arrives while snapshots are already flowing --
+        // which is exactly when one is sent, on relevance enter -- and lands on
+        // an update that has no new tick to step. The client ticks at 30 Hz
+        // against 15 Hz snapshots, so that is about half of all updates.
+        network_example::LocomotionStepBatchPacket late_baseline{};
+        late_baseline.server_tick = 118u;
+        late_baseline.records.push_back(network_example::LocomotionStepRecord{
+            kMonsterNetId, 3u, UINT8_MAX, glm::vec3{2.0f, 0.0f, 2.0f}});
+        follower.handle_client_locomotion_step_batch(late_baseline);
+        follower.update_follower_locomotion();  // no new snapshot: steps 0 ticks
+        require(follower.pending_follower_steps_.size() == 1u);
+        // It survives until a tick is actually stepped, and then plants.
+        push_snapshot(120u, monster_x + 0.5f);
+        follower.update_follower_locomotion();
+        const network_example::LegLocomotionState& late_planted =
+            follower.follower_locomotion_states_[kMonsterNetId].legs[3];
+        require(late_planted.foot_initialized);
+        require(glm::length(
+                    late_planted.foot_target_world -
+                    glm::vec3{2.0f, 0.0f, 2.0f}) < 0.0001f);
+
         const network_example::LegLocomotionState& planted =
             follower.follower_locomotion_states_[kMonsterNetId].legs[1];
         require(planted.foot_initialized);
