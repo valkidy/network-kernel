@@ -1,5 +1,10 @@
 0.6.9 release notes:
 
+- revalidates Unity package artifacts against kernel ABI 66
+
+
+0.6.9 release notes:
+
 - updates native plugins and gameplay catalog bundle
 
 
