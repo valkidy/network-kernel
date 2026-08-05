@@ -238,6 +238,26 @@ int RunDedicatedServer(
     network_example::game_server::GameServer game_server(kernel, gameplay_config);
 
     constexpr float kDeltaSeconds = 1.0f / 30.0f;
+    // Paced against absolute deadlines on a steady clock, not a fixed sleep.
+    // The kernel is told 33.333 ms passed on every iteration, so if the loop
+    // actually takes longer than that in real time -- sleep_for(33ms) is a
+    // MINIMUM and the OS overshoots it, and the tick's own work lands on top --
+    // the simulated clock falls behind the wall clock and never catches up.
+    //
+    // That drift is not cosmetic. A client derives its render instant from its
+    // own real-time clock plus a smoothed constant offset, and a constant
+    // cannot absorb a rate difference: the target outruns the newest snapshot,
+    // client_render_server_time_us clamps to the buffer every frame, and the
+    // interpolation delay collapses to zero with the render instant quantised
+    // to whole ticks. Root and pose then step instead of moving continuously.
+    // Measured before this: 28.6 ticks/s against a nominal 30, i.e. 4.8% slow.
+    const auto tick_period =
+        std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+            std::chrono::duration<double>(kDeltaSeconds));
+    // Far enough behind that catching up tick-by-tick would only dig deeper, so
+    // the schedule is rebased instead of spiralling.
+    const auto resync_threshold = tick_period * 5;
+    auto next_tick_deadline = std::chrono::steady_clock::now();
     while (true) {
         Kernel_Update(kernel, kDeltaSeconds);
 
@@ -255,7 +275,14 @@ int RunDedicatedServer(
             game_server.handle_event(events[index]);
         }
         game_server.tick(kDeltaSeconds);
-        std::this_thread::sleep_for(std::chrono::milliseconds(33));
+
+        next_tick_deadline += tick_period;
+        const auto now = std::chrono::steady_clock::now();
+        if (now < next_tick_deadline) {
+            std::this_thread::sleep_until(next_tick_deadline);
+        } else if (now - next_tick_deadline > resync_threshold) {
+            next_tick_deadline = now;
+        }
     }
 
     Kernel_Destroy(kernel);
