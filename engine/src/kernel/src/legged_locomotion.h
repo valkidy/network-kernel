@@ -99,6 +99,12 @@ struct LocomotionState {
     // the foot lands (a turning body sweeps its stance by yaw_rate * reach,
     // which is metres on a long-legged rig).
     float last_yaw_delta_radians = 0.0f;
+    // Yaw still owed toward the heading advance is slewing to, and whether
+    // there is such a heading at all. A turn stops when it arrives, so the
+    // solve must not extrapolate rotation past it; a yaw written from outside
+    // has no destination to bound it, hence the flag.
+    float pending_yaw_radians = 0.0f;
+    bool has_pending_yaw_radians = false;
 
     std::vector<LegLocomotionState> legs;
     std::vector<std::uint32_t> last_processing_order;
