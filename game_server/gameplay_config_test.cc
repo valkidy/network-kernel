@@ -3026,6 +3026,43 @@ int main() {
         require(presented->pose_flags ==
                 KERNEL_SKELETON_POSE_FLAG_PROCEDURAL);
 
+        // And the pose survives the AT_TIME query, which is the one a renderer
+        // actually makes. It filters on pose_time_us <= requested time, so a
+        // pose stamped with the SERVER's clock while the request carries the
+        // client's is discarded outright -- a server that has been running
+        // longer than the client makes every pose look like the future, and the
+        // query returns nothing at all while the presentation list still holds
+        // one. Asserted through the public entry point rather than the internal
+        // list so the filter is actually exercised.
+        // Reproduce the ordinary deployment: the server has been running longer
+        // than the client, so its clock is ahead. The snapshots above sit around
+        // tick 125, i.e. ~4.2 s of server time, so a 2 s offset puts the client
+        // at ~2.5 s of its own clock for the same instant.
+        follower.client_clock_offset_us_ = 2000000;
+        follower.has_client_clock_sync_ = true;
+        follower.client_local_time_us_ = 2500000;
+        follower.rebuild_skeleton_presentation_at_time(
+            follower.client_local_time_us_);
+
+        std::array<KernelSkeletonRenderState, 8> at_time_states{};
+        std::array<KernelBoneLocalTransform, 512> at_time_bones{};
+        KernelSkeletonRenderStateResult at_time_result{};
+        at_time_result.struct_size = sizeof(at_time_result);
+        const std::uint32_t at_time_count =
+            follower.get_skeleton_render_states_at_time(
+                follower.client_local_time_us_,
+                at_time_states.data(),
+                static_cast<std::uint32_t>(at_time_states.size()),
+                at_time_bones.data(),
+                static_cast<std::uint32_t>(at_time_bones.size()),
+                &at_time_result);
+        require(at_time_count == 1u);
+        require(at_time_states[0].entity_net_id == kMonsterNetId);
+        require(at_time_states[0].pose_flags ==
+                KERNEL_SKELETON_POSE_FLAG_PROCEDURAL);
+        require(at_time_states[0].bone_count ==
+                static_cast<std::uint32_t>(presented->local_transforms.size()));
+
         // A baseline is carried by the same record type: a step old enough that
         // its whole swing is in the past, which the follower resolves by
         // planting the foot outright. That is what stops a newly relevant

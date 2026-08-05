@@ -9546,6 +9546,9 @@ void KernelEngine::rebuild_skeleton_presentation_at_time(
         client_render_server_time_us(
             client_render_time_us,
             &pose_evaluation_time_us);
+    // Mirrors client_render_server_time_us: a listen server's client half runs
+    // off the same clock as the server, so no conversion applies there.
+    const bool shares_server_clock = config_.mode == KernelMode_ListenServer;
     for (const RenderEntityState& render_state : render_states_) {
         const KernelEntityTemplateDefinition* entity_template =
             find_entity_template(entity_templates_, render_state.template_id);
@@ -9594,7 +9597,26 @@ void KernelEngine::rebuild_skeleton_presentation_at_time(
                     &sampled_tick) &&
                 pose.local_transforms.size() == asset->bind_pose.size()) {
                 pose.pose_tick = sampled_tick;
-                pose.pose_time_us = pose_evaluation_time_us;
+                // The evaluated instant, expressed in the CALLER's clock.
+                // pose_evaluation_time_us is a server time, while every
+                // consumer of pose_time_us works in client render time --
+                // get_skeleton_render_states_at_time filters on
+                // pose_time_us <= requested_render_time_us. Handing back the
+                // server instant compares two different clocks: a server that
+                // has been up longer than the client, which is the ordinary
+                // case, makes every pose look like it is from the future and
+                // the query returns nothing at all. A listen server never sees
+                // it because there the two clocks are the same value.
+                //
+                // Converting rather than just reporting the request keeps the
+                // information the field exists for: snapshot interpolation
+                // clamps to the buffer, so the pose really can be older than
+                // what was asked for, and the caller is entitled to know.
+                pose.pose_time_us = shares_server_clock
+                    ? pose_evaluation_time_us
+                    : offset_time_us(
+                          pose_evaluation_time_us,
+                          -client_clock_offset_us_);
             } else {
                 pose.local_transforms = solved->local_pose;
             }
