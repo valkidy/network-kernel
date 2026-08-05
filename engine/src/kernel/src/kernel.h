@@ -373,6 +373,12 @@ private:
     struct PendingLocomotionStep {
         NetId net_id = 0;
         LocomotionStepEvent event;
+        // Updates this step has waited without becoming applicable. Staleness
+        // is measured in how long it has been HELD, never in how old its tick
+        // is: a baseline is an already-finished step and is therefore ancient
+        // by construction, so a tick-age window would throw it away before the
+        // follower ever reached a tick on which to apply it.
+        std::uint32_t held_updates = 0;
     };
 
     struct ClientReplicatedEntity {

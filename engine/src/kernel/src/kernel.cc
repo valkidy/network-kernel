@@ -8204,17 +8204,22 @@ void KernelEngine::update_follower_locomotion() {
         step_follower_locomotion_tick(follower_locomotion_tick_);
     }
 
-    // A step whose tick is long behind the follower will never be applied, so
-    // it is dropped rather than held forever. The window is generous: applying
-    // a stale step still lands the foot in the right place, so the only cost of
-    // keeping one a little too long is a snap the next step would fix anyway.
-    constexpr std::int32_t kStaleStepTicks = 64;
+    // Steps that never became applicable are eventually dropped so the queue
+    // cannot grow without bound. The measure is how long a step has been held,
+    // NOT how old its tick is: a baseline is an already-finished step, so it
+    // arrives deliberately ancient, and a tick-age window discards it before
+    // the follower reaches a tick on which to apply it. Updates run at the
+    // client's tick rate while ticks are stepped only when snapshots arrive, so
+    // roughly half of all updates step nothing at all -- which is precisely
+    // when a tick-age sweep used to eat the baseline.
+    constexpr std::uint32_t kMaxHeldUpdates = 64u;
+    for (PendingLocomotionStep& pending : pending_follower_steps_) {
+        ++pending.held_updates;
+    }
     std::erase_if(
         pending_follower_steps_,
-        [this](const PendingLocomotionStep& pending) {
-            return static_cast<std::int32_t>(
-                       follower_locomotion_tick_ - pending.event.start_tick) >
-                kStaleStepTicks;
+        [](const PendingLocomotionStep& pending) {
+            return pending.held_updates > kMaxHeldUpdates;
         });
     std::erase_if(
         follower_locomotion_states_,
