@@ -8138,10 +8138,23 @@ void KernelEngine::update_legged_locomotion(
                 PendingLocomotionStep{net_id, committed[index]});
         }
     }
+    // Followed entities keep their history too. This function only knows the
+    // entities this kernel simulates, and on a client that set never contains a
+    // replicated actor -- so pruning on it alone wiped the follower's history
+    // every tick. update_follower_locomotion refills it only on ticks it
+    // actually steps, and it steps only when a snapshot advances the target
+    // tick, which at a client tick rate above the snapshot rate is roughly half
+    // of them. The other half found an empty history, fell back to the newest
+    // solved pose, and composed it onto a root interpolated at a different
+    // instant -- the exact root/pose time-base split f728035 exists to prevent,
+    // reappearing every other frame as feet that jump between two placements.
+    // Entries for entities that stop being replicated are dropped here on the
+    // tick after update_follower_locomotion releases their follower state.
     std::erase_if(
         skeleton_pose_history_,
-        [&active_locomotion_entities](const auto& entry) {
-            return !active_locomotion_entities.contains(entry.first);
+        [this, &active_locomotion_entities](const auto& entry) {
+            return !active_locomotion_entities.contains(entry.first) &&
+                !follower_locomotion_states_.contains(entry.first);
         });
     std::erase_if(
         locomotion_states_,

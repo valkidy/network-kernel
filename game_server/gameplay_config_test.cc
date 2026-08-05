@@ -2975,6 +2975,30 @@ int main() {
         require(follower.skeleton_pose_history_.count(kMonsterNetId) == 1u);
         require(follower.skeleton_pose_history_[kMonsterNetId].size > 1u);
 
+        // And they survive the authoritative pass. simulate_tick runs
+        // update_legged_locomotion first, which knows only the entities this
+        // kernel simulates -- on a client, none of the replicated ones. A tick
+        // that steps nothing (about half of them, since the client ticks faster
+        // than snapshots arrive) must still leave a history for presentation to
+        // sample, or the pose falls back to the newest solved tick while the
+        // root stays interpolated, and every foot jumps between two placements.
+        const std::size_t history_before =
+            follower.skeleton_pose_history_[kMonsterNetId].size;
+        follower.update_legged_locomotion({}, 1.0f / 30.0f);
+        follower.update_follower_locomotion();  // no new snapshot: steps 0 ticks
+        require(follower.skeleton_pose_history_.count(kMonsterNetId) == 1u);
+        require(follower.skeleton_pose_history_[kMonsterNetId].size ==
+                history_before);
+        std::vector<KernelBoneLocalTransform> sampled;
+        std::uint32_t sampled_tick = 0u;
+        require(network_example::sample_skeleton_pose_history(
+            follower.skeleton_pose_history_[kMonsterNetId],
+            follower.skeleton_pose_history_[kMonsterNetId]
+                .samples[0]
+                .time_us,
+            &sampled,
+            &sampled_tick));
+
         // And presentation reports procedural legs, not the bind-pose fallback
         // a client used to be stuck with.
         follower.rebuild_skeleton_presentation_at_time(
