@@ -1,5 +1,10 @@
 0.6.9 release notes:
 
+- refreshes Unity package artifacts after main merge
+
+
+0.6.9 release notes:
+
 - revalidates Unity package artifacts against kernel ABI 66
 
 
