@@ -806,6 +806,12 @@ private:
     std::vector<PendingLocomotionStep> outgoing_locomotion_steps_;
     std::uint32_t follower_locomotion_tick_ = 0;
     bool has_follower_locomotion_tick_ = false;
+    // Diagnostic counters, reset each time they are reported. They separate the
+    // two ways a follower ends up with bind-pose legs: no step was committed at
+    // all, or one was committed and never made it onto the wire.
+    std::uint32_t locomotion_steps_committed_ = 0;
+    std::uint32_t locomotion_steps_sent_ = 0;
+    std::uint32_t locomotion_steps_send_failed_ = 0;
     WorldSnapshot latest_snapshot_;
     WorldSnapshot latest_client_snapshot_;
     std::vector<WorldSnapshot> client_snapshot_buffer_;

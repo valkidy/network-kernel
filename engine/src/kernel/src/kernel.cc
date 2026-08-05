@@ -9135,8 +9135,15 @@ void KernelEngine::send_locomotion_steps(
             static_cast<std::uint32_t>(encoded.size()),
             SendMode::kUnreliable,
             ChannelId::kSnapshot)) {
+        // Reported rather than swallowed. A step that never leaves the server
+        // leaves that leg at its bind pose on every client -- not moving and
+        // not on the ground -- and the skeleton render state still reports the
+        // pose as PROCEDURAL, so nothing downstream reveals it.
+        ++locomotion_steps_send_failed_;
+        push_event(KernelEventType_Error, 0u, session->peer, 30u);
         return;
     }
+    locomotion_steps_sent_ += static_cast<std::uint32_t>(packet.records.size());
     record_sent_packet(
         static_cast<std::uint32_t>(encoded.size()),
         SendMode::kUnreliable,
@@ -9175,10 +9182,33 @@ void KernelEngine::send_locomotion_baseline(PeerSession* session, NetId net_id) 
 }
 
 void KernelEngine::flush_locomotion_steps() {
+    const std::uint32_t current_tick = tick_loop_.current_tick();
+    locomotion_steps_committed_ +=
+        static_cast<std::uint32_t>(outgoing_locomotion_steps_.size());
+    // Once a second, and only while something is happening. A follower's legs
+    // stay at the bind pose until a step reaches it, so "committed but not
+    // sent" and "sent but the client shows nothing" are different faults and
+    // need to be told apart from the server side alone.
+    const std::uint32_t log_interval =
+        std::max<std::uint32_t>(1u, config_.tick.server_tick_rate);
+    if (current_tick % log_interval == 0u &&
+        (locomotion_steps_committed_ != 0u ||
+         locomotion_steps_send_failed_ != 0u)) {
+        spdlog::info(
+            "[Locomotion] steps committed={} sent={} send_failed={} "
+            "sessions={} tick={}",
+            locomotion_steps_committed_,
+            locomotion_steps_sent_,
+            locomotion_steps_send_failed_,
+            peer_sessions_.size(),
+            current_tick);
+        locomotion_steps_committed_ = 0u;
+        locomotion_steps_sent_ = 0u;
+        locomotion_steps_send_failed_ = 0u;
+    }
     if (outgoing_locomotion_steps_.empty()) {
         return;
     }
-    const std::uint32_t current_tick = tick_loop_.current_tick();
     const auto send = [&](PeerSession* session) {
         LocomotionStepBatchPacket batch{};
         batch.server_tick = current_tick;
