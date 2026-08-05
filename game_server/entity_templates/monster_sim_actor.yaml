@@ -65,8 +65,27 @@ locomotion:
     #
     # The invariant worth porting is the prototype's timing, which is leg-length
     # independent by construction: stance = stepThreshold / moveSpeed =
-    # 0.30L / 1.2L = 0.25 s. At 2.5 m/s that is 0.625 m. step_height keeps the
-    # prototype's height/stride ratio (0.22 / 0.30 = 0.73).
+    # 0.30L / 1.2L = 0.25 s. At 2.5 m/s that is 0.625 m, and step_height keeps
+    # the prototype's height/stride ratio (0.22 / 0.30 = 0.73).
+    #
+    # Those timings are then scaled up together by 3x, because a stride sized
+    # purely by the clock reads as mincing on a rig with 18 m legs. Threshold
+    # and duration MUST move together: raising the threshold alone makes the
+    # foot cover three times the ground in the same 0.2 s swing, and the peak
+    # foot speed measured over a 30 s walk goes 3.7x the body's -> 10.0x at
+    # 1.95/6 and 13.0x at 2.60/6, which is the leg-flick this tuning existed to
+    # remove. Scaling both leaves it at 3.8x and the duty factor at 46%:
+    #
+    #   threshold | duration | stride  | duty | peak foot speed / body speed
+    #      0.65   |     6    | 1.17 m  | 41%  |  3.7x
+    #      1.95   |     6    | 2.50 m  | 21%  | 10.0x
+    #      2.60   |     6    | 3.17 m  | 15%  | 13.0x
+    #      1.95   |    18    | 3.50 m  | 46%  |  3.8x   <- authored
+    #      2.60   |    24    | 4.67 m  | 46%  |  3.8x
+    #
+    # Stride runs about 1.8x the threshold: a step triggers once drift exceeds
+    # it, and the landing target is then aimed ahead by the body's travel over
+    # the swing. The last row is the 4x variant if this still reads short.
     #
     # Turning is the other driver of stance drift and it dominates here: at
     # max_yaw 45 deg/s across a 16.08 m stance radius the stance sweeps at
@@ -88,8 +107,8 @@ locomotion:
     # matters the knob is max_yaw_degrees_per_second: the legs keep up to about
     # 8-10 deg/s at this threshold (measured 1.05 m error at 8 deg/s, saturated
     # by 12 deg/s), which is far slower than gameplay currently wants.
-    step_threshold_meters: 0.65
-    step_duration_ticks: 6
+    step_threshold_meters: 1.95
+    step_duration_ticks: 18
     max_swinging_legs: 2
     processing_order: [front_left, front_right, rear_left, rear_right]
   foothold:
@@ -126,7 +145,7 @@ locomotion:
       foot_bone: JNT_LegFrontLeft_Foot
       gait_group: 0
       pole_local: {x: 0.0, y: 0.0, z: 1.0}
-      step_height_meters: 0.48
+      step_height_meters: 1.44
       max_reach_ratio: 0.999
     - id: rear_right
       hip_bone: JNT_LegRearRight_Hip
@@ -134,7 +153,7 @@ locomotion:
       foot_bone: JNT_LegRearRight_Foot
       gait_group: 0
       pole_local: {x: 0.0, y: 0.0, z: -1.0}
-      step_height_meters: 0.48
+      step_height_meters: 1.44
       max_reach_ratio: 0.999
     - id: front_right
       hip_bone: JNT_LegFrontRight_Hip
@@ -142,7 +161,7 @@ locomotion:
       foot_bone: JNT_LegFrontRight_Foot
       gait_group: 1
       pole_local: {x: 0.0, y: 0.0, z: 1.0}
-      step_height_meters: 0.48
+      step_height_meters: 1.44
       max_reach_ratio: 0.999
     - id: rear_left
       hip_bone: JNT_LegRearLeft_Hip
@@ -150,5 +169,5 @@ locomotion:
       foot_bone: JNT_LegRearLeft_Foot
       gait_group: 1
       pole_local: {x: 0.0, y: 0.0, z: -1.0}
-      step_height_meters: 0.48
+      step_height_meters: 1.44
       max_reach_ratio: 0.999

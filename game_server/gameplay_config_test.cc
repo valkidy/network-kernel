@@ -670,7 +670,7 @@ int main() {
                 {},
                 replace_once(
                     production_monster_yaml,
-                    "step_threshold_meters: 0.65",
+                    "step_threshold_meters: 1.95",
                     "step_threshold_meters: 0.0"));
         (void)network_example::game_server::load_gameplay_config_from_bundle_memory(
             invalid_gait_bundle.data(),
@@ -725,7 +725,7 @@ int main() {
     require(rejects_monster_locomotion_yaml(
         replace_once(
             production_monster_yaml,
-            "step_duration_ticks: 6",
+            "step_duration_ticks: 18",
             "step_duration_ticks: 0"),
         "invalid locomotion gait values"));
     require(rejects_monster_locomotion_yaml(
@@ -1142,8 +1142,8 @@ int main() {
     require(monster_template->skeleton.processing_order.size() == 4u);
     require(monster_template->movement_max_yaw_degrees_per_second == 45.0f);
     require(monster_template->skeleton.input_deadzone == 0.01f);
-    require(monster_template->skeleton.step_threshold_meters == 0.65f);
-    require(monster_template->skeleton.step_duration_ticks == 6u);
+    require(monster_template->skeleton.step_threshold_meters == 1.95f);
+    require(monster_template->skeleton.step_duration_ticks == 18u);
     require(monster_template->skeleton.max_swinging_legs == 2u);
     require(monster_template->skeleton.foothold_query_type ==
             KernelFootholdQueryType_Raycast);
@@ -1181,8 +1181,8 @@ int main() {
          KERNEL_ENTITY_COMPONENT_SKELETON) != 0u);
     require(monster_definition->skeleton.leg_count == 4u);
     require(monster_definition->movement.max_yaw_degrees_per_second == 45.0f);
-    require(monster_definition->skeleton.step_threshold_meters == 0.65f);
-    require(monster_definition->skeleton.step_duration_ticks == 6u);
+    require(monster_definition->skeleton.step_threshold_meters == 1.95f);
+    require(monster_definition->skeleton.step_duration_ticks == 18u);
     require(monster_definition->skeleton.legs[0].gait_group == 0u);
     require(monster_definition->skeleton.legs[1].gait_group == 0u);
     require(monster_definition->skeleton.legs[2].gait_group == 1u);
@@ -1442,7 +1442,14 @@ int main() {
          idle_locomotion.legs) {
         committed_landing_targets.push_back(leg.landing_target_world);
     }
-    for (std::uint32_t swing_tick = 1u; swing_tick < 6u; ++swing_tick) {
+    // Derived from the authored gait rather than hard-coded: a step spans
+    // step_duration_ticks ticks counting the one that triggered it, so the foot
+    // lands on the last of them.
+    const std::uint32_t monster_swing_ticks =
+        monster_definition->skeleton.step_duration_ticks;
+    for (std::uint32_t swing_tick = 1u;
+         swing_tick < monster_swing_ticks;
+         ++swing_tick) {
         require(network_example::advance_locomotion_state(
             monster_definition->skeleton,
             KernelVec2{0.0f, 1.0f},
@@ -1472,7 +1479,7 @@ int main() {
             }
             require(leg.landing_target_world ==
                     committed_landing_targets[index]);
-            if (swing_tick < 5u) {
+            if (swing_tick < monster_swing_ticks - 1u) {
                 require(leg.gait_state ==
                         network_example::LegGaitState::kSwing);
             } else {
@@ -2940,8 +2947,14 @@ int main() {
         require(follower.pending_follower_steps_.size() == 1u);
 
         // Walk the snapshot buffer past the step, then past its whole swing.
+        // The end tick is derived from the authored gait: the swing begins on
+        // tick 104 and spans step_duration_ticks ticks counting that one, with
+        // a couple of spare ticks so the assertions below are not sitting on
+        // the exact touchdown tick.
+        const std::uint32_t swing_end_tick =
+            104u + monster_definition->skeleton.step_duration_ticks + 3u;
         float monster_x = 0.5f;
-        for (std::uint32_t server_tick = 104u; server_tick <= 116u;
+        for (std::uint32_t server_tick = 104u; server_tick <= swing_end_tick;
              server_tick += 2u) {
             monster_x += 0.25f;
             push_snapshot(server_tick, monster_x);
@@ -3019,25 +3032,25 @@ int main() {
         // entity's legs from appearing one at a time as each happens to step.
         const glm::vec3 anchored{-3.0f, 0.0f, -7.5f};
         network_example::LocomotionStepBatchPacket baseline{};
-        baseline.server_tick = 118u;
+        baseline.server_tick = swing_end_tick + 2u;
         baseline.records.push_back(network_example::LocomotionStepRecord{
             kMonsterNetId, 1u, UINT8_MAX, anchored});
         follower.handle_client_locomotion_step_batch(baseline);
-        push_snapshot(118u, monster_x + 0.25f);
+        push_snapshot(swing_end_tick + 2u, monster_x + 0.25f);
         follower.update_follower_locomotion();
         // REPRO: a baseline that arrives while snapshots are already flowing --
         // which is exactly when one is sent, on relevance enter -- and lands on
         // an update that has no new tick to step. The client ticks at 30 Hz
         // against 15 Hz snapshots, so that is about half of all updates.
         network_example::LocomotionStepBatchPacket late_baseline{};
-        late_baseline.server_tick = 118u;
+        late_baseline.server_tick = swing_end_tick + 2u;
         late_baseline.records.push_back(network_example::LocomotionStepRecord{
             kMonsterNetId, 3u, UINT8_MAX, glm::vec3{2.0f, 0.0f, 2.0f}});
         follower.handle_client_locomotion_step_batch(late_baseline);
         follower.update_follower_locomotion();  // no new snapshot: steps 0 ticks
         require(follower.pending_follower_steps_.size() == 1u);
         // It survives until a tick is actually stepped, and then plants.
-        push_snapshot(120u, monster_x + 0.5f);
+        push_snapshot(swing_end_tick + 4u, monster_x + 0.5f);
         follower.update_follower_locomotion();
         const network_example::LegLocomotionState& late_planted =
             follower.follower_locomotion_states_[kMonsterNetId].legs[3];
