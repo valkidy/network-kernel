@@ -11,8 +11,8 @@ ai:
 director:
   kind: world_rule
   spawn:
-    target_count: 2
-    entity_template: sentry_grunt
-    position: {x: 6.0, y: 10.0, z: 0.0}
+    target_count: 1
+    entity_template: monster_sim_actor
+    position: {x: 0.0, y: 10.0, z: 0.0}
     radius: 5.0
     seed: 4242
