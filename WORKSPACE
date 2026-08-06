@@ -230,3 +230,11 @@ http_archive(
     strip_prefix = "recastnavigation-1.6.0",
     urls = ["https://github.com/recastnavigation/recastnavigation/archive/refs/tags/v1.6.0.tar.gz"],
 )
+
+http_archive(
+    name = "ozz_animation",
+    build_file = "@//third_party:ozz_animation.BUILD",
+    sha256 = "a7a34322344e9d839eaf637bbc463404c6aed3f52583dea95c856fea580c2693",
+    strip_prefix = "ozz-animation-0.16.0",
+    urls = ["https://github.com/guillaumeblanc/ozz-animation/archive/refs/tags/0.16.0.tar.gz"],
+)

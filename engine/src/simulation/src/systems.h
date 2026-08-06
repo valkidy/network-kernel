@@ -2,6 +2,7 @@
 #define SIMULATION_SRC_SYSTEMS_H_
 
 #include <cstdint>
+#include <vector>
 
 #include "ai_intent.h"
 #include "kernel/public/kernel_types.h"
@@ -10,18 +11,63 @@
 namespace network_example {
 
 class KernelEngine;
+struct ActionGraphCommandBatch;
+
+bool execute_action_graph_command_batch(
+    KernelEngine& engine,
+    const ActionGraphCommandBatch& batch,
+    std::uint64_t server_time_us);
+struct ConfirmedDamage;
 
 class EntityLifecycleSystem {
 public:
     bool create_entity(
         KernelEngine& engine,
         const KernelServerEntityCreateInfo& create_info,
-        NetId* out_net_id) const;
+        NetId* out_net_id,
+        bool publish_snapshot = true) const;
 
     bool destroy_entity(
         KernelEngine& engine,
         NetId net_id,
         std::uint32_t reason) const;
+
+    void update_prop_lifetimes(KernelEngine& engine) const;
+
+    void process_health_depleted(
+        KernelEngine& engine,
+        const std::vector<ConfirmedDamage>& health_depleted,
+        std::uint64_t server_time_us) const;
+
+    void destroy_dead_entities(
+        KernelEngine& engine,
+        const std::vector<ConfirmedDamage>& health_depleted) const;
+
+private:
+    bool destroy_entity_with_context(
+        KernelEngine& engine,
+        NetId net_id,
+        std::uint32_t reason,
+        NetId instigator,
+        std::uint8_t source_code,
+        const glm::vec3* event_position,
+        bool execute_destroy_graph = true) const;
+
+    void enforce_prop_population_limit(
+        KernelEngine& engine,
+        std::uint32_t population_group_id) const;
+};
+
+class ActivationSystem {
+public:
+    bool activate_entity(
+        KernelEngine& engine,
+        const KernelServerEntityActivateInfo& activate_info) const;
+};
+
+class CollisionTriggerSystem {
+public:
+    void update(KernelEngine& engine, std::uint64_t server_time_us) const;
 };
 
 class EntityStateSystem {
@@ -48,10 +94,10 @@ public:
 
 class MovementSystem {
 public:
-    bool submit_input(
+    bool submit_player_input(
         KernelEngine& engine,
         NetId net_id,
-        const PlayerInput& input) const;
+        const KernelPlayerInput& input) const;
 };
 
 struct DirectorIntentExecutionResult {

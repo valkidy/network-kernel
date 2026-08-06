@@ -211,7 +211,7 @@ void beam_fire_spawns_or_refreshes_server_beam() {
     tuning.definitions[network_example::kWeaponId5].projectile_template_id = 55;
     world.set_projectile_templates({beam_template(55, network_example::kWeaponId5)});
 
-    PlayerInput input{};
+    KernelPlayerInput input{};
     input.buttons = InputButton_Fire;
     input.selected_weapon = network_example::kWeaponId5;
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};

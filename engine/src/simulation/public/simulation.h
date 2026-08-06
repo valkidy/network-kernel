@@ -15,7 +15,7 @@ class DamagePipeline;
 
 struct QueuedInput {
     PeerId owner_peer = 0;
-    PlayerInput input{};
+    KernelPlayerInput input{};
     std::uint32_t received_server_tick = 0;
     std::uint64_t action_server_time_us = 0;
     bool has_action_server_time = false;
@@ -70,6 +70,17 @@ glm::vec3 projectile_velocity_at(
     const glm::vec3& gravity,
     float elapsed_seconds);
 
+bool spawn_action_graph_projectile(
+    World& world,
+    std::uint32_t projectile_template_id,
+    PeerId owner_peer,
+    NetId instigator,
+    std::uint32_t action_instance_id,
+    const glm::vec3& position,
+    const glm::vec3& direction,
+    std::uint32_t current_tick,
+    float fixed_delta_seconds);
+
 std::vector<physics::CollisionHit> query_projectile_collision_hits(
     const physics::PhysicsWorld& collision_world,
     const ProjectileState& projectile,
@@ -85,7 +96,7 @@ public:
     void clear();
     void ingest_defensive_input(
         PeerId owner_peer,
-        const PlayerInput& input,
+        const KernelPlayerInput& input,
         std::uint64_t received_server_time_us,
         std::uint64_t action_server_time_us = 0,
         bool has_action_server_time = false);
@@ -284,12 +295,7 @@ void simulate_weapons(
     const WeaponSimulationContext& context,
     std::vector<KernelEvent>* events);
 
-void destroy_dead_entities(
-    World& world,
-    std::uint32_t current_tick,
-    std::vector<KernelEvent>* events);
-
-void apply_damage_applications(
+std::vector<ConfirmedDamage> apply_damage_applications(
     World& world,
     const std::vector<ConfirmedDamage>& damage_applications,
     std::uint32_t current_tick,

@@ -2,7 +2,7 @@
 
 namespace network_example::movement_solver {
 
-glm::vec3 input_move_to_world(const PlayerInput& input) {
+glm::vec3 input_move_to_world(const KernelPlayerInput& input) {
     glm::vec3 move{input.move.x, 0.0f, input.move.y};
     const float length = glm::length(move);
     if (length > 1.0f) {
@@ -13,7 +13,7 @@ glm::vec3 input_move_to_world(const PlayerInput& input) {
 
 void apply_player_input(
     EntitySnapshot& entity,
-    const PlayerInput& input,
+    const KernelPlayerInput& input,
     float fixed_delta_seconds,
     float move_speed_meters_per_second) {
     entity.velocity = input_move_to_world(input) * move_speed_meters_per_second;
@@ -54,9 +54,16 @@ bool step_character(
     }
 
     glm::vec3 velocity = desired_horizontal_velocity;
-    velocity.y = state->ground_state == physics::CharacterGroundState::kGrounded
-        ? 0.0f
-        : state->velocity.y + config.gravity.y * fixed_delta_seconds;
+    if (state->ground_state == physics::CharacterGroundState::kGrounded &&
+        state->ground_normal.y > 0.001f) {
+        // Keep authored X/Z speed when Jolt projects onto walkable ground.
+        const float ground_dot_horizontal =
+            state->ground_normal.x * velocity.x +
+            state->ground_normal.z * velocity.z;
+        velocity.y = -ground_dot_horizontal / state->ground_normal.y;
+    } else {
+        velocity.y = state->velocity.y + config.gravity.y * fixed_delta_seconds;
+    }
     physics::CharacterMoveRequest request{};
     request.character_id = config.character_id;
     request.current_position = state->position;

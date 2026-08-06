@@ -12,8 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 45u`. The current wire versions are protocol `1`, packet
-schema `17`, and snapshot schema `15`.
+`KERNEL_ABI_VERSION == 66u`.
 
 ## Ownership
 
@@ -31,6 +30,70 @@ failures return `NULL`, `false`, or `0`.
 Additive changes must prefer new `Kernel_*` functions or new capability flags.
 Breaking changes to public struct layout, enum semantics, buffer ownership, or
 function signatures require a `KERNEL_ABI_VERSION` bump.
+
+ABI version 61 replaces the specialized actor, projectile, item, and entity
+template fields in `RenderEntityState` with one `template_id`. Its namespace is
+derived from the render entity: Actors use the Actor Template ID, Projectiles
+use the Projectile Template ID, Item-backed Props use the Item Template ID, and
+pure Props or other entity-template-backed objects use the Entity Template ID.
+`collider_template_id` remains separate because it is resolved per rendered
+entity, while `item_instance_id` remains the stable runtime Item identity.
+
+ABI versions 62 through 65 add skeleton asset and locomotion definitions,
+complete local-pose presentation types, and the read-only
+`Kernel_GetSkeletonRenderStates` / `Kernel_GetSkeletonRenderStatesAtTime`
+queries. Skeleton pose buffers remain caller-owned and are not added to the
+snapshot or network packet schema.
+
+ABI version 66 replaces fixed-cycle leg phases with displacement-threshold
+gait authoring. Support feet remain anchored in world space until the grounded
+home derived from root movement exceeds `step_threshold_meters`; failed
+grounding queries preserve the previous anchor. It also adds the read-only
+`Kernel_GetSkeletonBindPose` query and
+`KERNEL_CAPABILITY_SKELETON_BIND_POSE`. The query returns the native Ozz bind
+pose for an asset id/content-hash pair in caller-owned storage.
+
+Entity root transforms crossing the ABI are native right-handed, Y-up world
+transforms. Skeleton bind and procedural transforms are native right-handed,
+Y-up bone-local transforms. The kernel performs no Unity-specific conversion.
+Consumers must separately map world transforms into their scene convention and
+bone-local transforms into the basis of the imported presentation skeleton;
+those two mappings need not be the same raw component operation.
+
+Reliable spawn metadata supplies the client projection without changing
+snapshot packets.
+
+ABI version 60 adds authoritative lifecycle and population policy for temporary
+pure Props. `KernelPropDefinition` carries `lifetime_ticks` and a resolved
+population group id; `KernelGameplayCatalogDefinition` carries
+`KernelPropPopulationRuleDefinition` entries. Gameplay catalog version 8
+authors rules with `prop_population_rules` and per-Prop `lifecycle` blocks.
+`ice_block` expires after 900 ticks and belongs to the
+`temporary_deployable` group, which is capped at 256 live entities. V1
+overflow is fixed to deterministic oldest-first eviction by spawn tick and
+NetId; no `overflow` authoring field is accepted. Expiry and capacity eviction
+publish authoritative despawns without executing `on_destroy_entity`.
+Packet schema 21, snapshot schema 17, and protocol 3 are unchanged.
+
+ABI version 59 replaces the Item throw speed with a trajectory Projectile
+Template reference and adds the same reference to pure Prop policy. Gameplay
+catalog version 7 rejects the removed `throw.speed` field. Identity-preserving
+Thrown Props inherit only movement model, speed, and gravity; packet schema 21,
+snapshot schema 17, and protocol 3 are unchanged.
+
+ABI version 58 replaces `KernelGameplayRequest::semantic_button` with the
+explicit `domain_action` contract, removes Item and Prop input mappings, and
+makes template capabilities the authoritative action allowlist.
+`KernelGameplayRequestStatus_NoAction` remains reserved but is not emitted.
+Packet schema 21 carries the direct domain action byte; gameplay catalog
+version 6 rejects the removed Item `input` and Prop tap/hold mapping fields.
+There is no ABI 57, packet 20, or catalog 5 adapter.
+
+ABI version 55 aligns the player-input naming contract with gameplay requests:
+`KernelPlayerInput`, `KernelActionIntent`, `KernelActionInput`, and
+`Kernel_SubmitPlayerInput` replace their unprefixed or abbreviated names. This
+is a source and dynamic-symbol breaking rename; the struct layouts and player
+input packet bytes remain unchanged.
 
 ABI version 45 decouples sparse `uint8_t` weapon catalog IDs from fixed actor
 inventory storage. `KERNEL_MAX_WEAPON_SLOTS == 4u` is the runtime inventory
@@ -69,15 +132,15 @@ the new configuration layout. Packet schema remains 16, snapshot schema remains
 14, and the owner-result and remote-presentation records remain 12 B and 20 B.
 
 ABI version 40 replaces discrete Fire/Reload button input with the 8-byte
-`ActionIntent` start contract and 8-byte `ActionInput` hold/release contract.
-`PlayerInput::action_intent` and `PlayerInput::action_input` are the only native
+`KernelActionIntent` start contract and 8-byte `KernelActionInput` hold/release contract.
+`KernelPlayerInput::action_intent` and `KernelPlayerInput::action_input` are the only native
 Fire/Reload entry points. `KernelAbiInfo` reports both struct sizes and
 `KERNEL_CAPABILITY_ACTION_INTENTS`; `KernelWeaponMechanicsDefinition` requires
 explicit Fire and Reload action template ids. Packet schema version 16 carries
 the new input fields, while snapshot schema remains 14. ABI 40 provides no ABI
 39 or packet 15 adapter.
 
-The client-side `Kernel_SubmitInput` contract is intent sampling rather than an
+The client-side `Kernel_SubmitPlayerInput` contract is intent sampling rather than an
 immediate simulation or transport step. Client and listen-local input sequence
 ids are native-owned; the kernel coalesces repeated submits and emits at most
 one prediction/input packet per fixed tick. Callers should submit intent before

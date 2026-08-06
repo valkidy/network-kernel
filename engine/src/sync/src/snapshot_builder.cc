@@ -102,6 +102,22 @@ WorldSnapshot build_world_snapshot(
             entity_snapshot.state = static_cast<std::uint16_t>(
                 world.registry().get<HomingState>(entity).phase);
         }
+        if (world.registry().all_of<ItemTemplateRef>(entity)) {
+            entity_snapshot.item_template_id =
+                world.registry().get<ItemTemplateRef>(entity).item_template_id;
+        }
+        if (world.registry().all_of<ItemInstanceRef>(entity)) {
+            entity_snapshot.item_instance_id =
+                world.registry().get<ItemInstanceRef>(entity).item_instance_id;
+        }
+        if (world.registry().all_of<PropWorldMode>(entity)) {
+            entity_snapshot.world_item_mode = static_cast<std::uint8_t>(
+                world.registry().get<PropWorldMode>(entity).mode);
+        }
+        if (world.registry().all_of<CarriedBy>(entity)) {
+            entity_snapshot.carrier_entity_id =
+                world.registry().get<CarriedBy>(entity).carrier_entity_id;
+        }
         snapshot.entities.push_back(entity_snapshot);
     }
 

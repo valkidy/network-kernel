@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 45u
+#define KERNEL_ABI_VERSION 66u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -26,6 +26,8 @@
 #define KERNEL_STATIC_COLLISION_LAYER_TERRAIN UINT32_C(1)
 
 #define KERNEL_MAX_WEAPON_SLOTS 4u
+#define KERNEL_MAX_SKELETON_LEGS 8u
+#define KERNEL_MAX_FOOTHOLD_CANDIDATES 8u
 
 #define KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED UINT32_C(0)
 #define KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS UINT32_C(1)
@@ -59,6 +61,7 @@
 #define KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR UINT32_C(4)
 #define KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_COLLIDER UINT32_C(5)
 #define KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTION UINT32_C(6)
+#define KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ITEM UINT32_C(7)
 
 #define KERNEL_CAPABILITY_CLIENT_MODE UINT64_C(0x0000000000000001)
 #define KERNEL_CAPABILITY_LISTEN_SERVER_MODE UINT64_C(0x0000000000000002)
@@ -99,16 +102,38 @@
 #define KERNEL_CAPABILITY_LOCAL_ACTION_RESULTS UINT64_C(0x0000004000000000)
 #define KERNEL_CAPABILITY_REMOTE_ACTION_PRESENTATION UINT64_C(0x0000008000000000)
 #define KERNEL_CAPABILITY_ACTION_INTENTS UINT64_C(0x0000010000000000)
+#define KERNEL_CAPABILITY_ITEM_PROP_SYSTEM UINT64_C(0x0000020000000000)
+#define KERNEL_CAPABILITY_SKELETON_RENDER_STATES UINT64_C(0x0000040000000000)
+#define KERNEL_CAPABILITY_SKELETON_BIND_POSE UINT64_C(0x0000080000000000)
+
+#define KERNEL_SKELETON_RENDER_STATUS_SUCCESS UINT32_C(0)
+#define KERNEL_SKELETON_RENDER_STATUS_INSUFFICIENT_CAPACITY UINT32_C(1)
+#define KERNEL_SKELETON_RENDER_STATUS_INVALID_ARGUMENT UINT32_C(2)
+
+#define KERNEL_SKELETON_POSE_FLAG_BIND_POSE UINT32_C(0x00000001)
+#define KERNEL_SKELETON_POSE_FLAG_PROCEDURAL UINT32_C(0x00000002)
+
+typedef enum KernelFootholdQueryType {
+    KernelFootholdQueryType_None = 0,
+    KernelFootholdQueryType_Raycast = 1,
+} KernelFootholdQueryType;
+#define KERNEL_SKELETON_RENDER_RESULT_FLAG_AT_TIME UINT32_C(0x00000001)
 
 #define KERNEL_COLLISION_LAYER_PLAYER_SIDE UINT32_C(0x00000001)
 #define KERNEL_COLLISION_LAYER_HOSTILE_SIDE UINT32_C(0x00000002)
 #define KERNEL_COLLISION_LAYER_PROJECTILE UINT32_C(0x00000004)
 #define KERNEL_COLLISION_LAYER_AGENT_VISION UINT32_C(0x00000010)
 #define KERNEL_COLLISION_LAYER_NEUTRAL UINT32_C(0x00000020)
+#define KERNEL_COLLISION_LAYER_TERRAIN UINT32_C(0x00000040)
+#define KERNEL_COLLISION_LAYER_STATIC_OBSTACLE UINT32_C(0x00000080)
 #define KERNEL_COLLISION_MASK_NONE UINT32_C(0x00000000)
 #define KERNEL_COLLISION_MASK_DAMAGEABLE \
     (KERNEL_COLLISION_LAYER_PLAYER_SIDE | KERNEL_COLLISION_LAYER_HOSTILE_SIDE | \
      KERNEL_COLLISION_LAYER_NEUTRAL)
+#define KERNEL_COLLISION_MASK_ACTOR KERNEL_COLLISION_MASK_DAMAGEABLE
+#define KERNEL_COLLISION_MASK_STATIC_WORLD \
+    (KERNEL_COLLISION_LAYER_TERRAIN | \
+     KERNEL_COLLISION_LAYER_STATIC_OBSTACLE)
 
 /*
  * Visual flags are composable presentation hints, never gameplay authority.
@@ -155,6 +180,7 @@
 #define KERNEL_ENTITY_COMPONENT_SENTRY_RUNTIME UINT32_C(0x00000040)
 #define KERNEL_ENTITY_COMPONENT_DIRECTOR_RUNTIME UINT32_C(0x00000080)
 #define KERNEL_ENTITY_COMPONENT_SERVER_ONLY UINT32_C(0x00000100)
+#define KERNEL_ENTITY_COMPONENT_SKELETON UINT32_C(0x00000200)
 
 #ifdef __cplusplus
 extern "C" {
@@ -182,6 +208,7 @@ typedef struct KernelAbiInfo {
     uint32_t lan_discovery_result_size;
     uint64_t capability_flags;
     uint32_t gameplay_catalog_definition_size;
+    uint32_t prop_population_rule_definition_size;
     uint32_t gameplay_catalog_load_result_size;
     uint32_t gameplay_catalog_load_options_size;
     uint32_t actor_template_definition_size;
@@ -208,6 +235,18 @@ typedef struct KernelAbiInfo {
     uint32_t remote_action_presentation_event_size;
     uint32_t action_intent_size;
     uint32_t action_input_size;
+    uint32_t item_template_definition_size;
+    uint32_t gameplay_request_size;
+    uint32_t gameplay_request_outcome_size;
+    uint32_t item_instance_view_size;
+    uint32_t inventory_container_view_size;
+    uint32_t inventory_delta_size;
+    uint32_t bone_local_transform_size;
+    uint32_t skeleton_render_state_size;
+    uint32_t skeleton_render_state_result_size;
+    uint32_t skeleton_asset_definition_size;
+    uint32_t skeleton_binding_definition_size;
+    uint32_t skeleton_leg_definition_size;
 } KernelAbiInfo;
 
 typedef struct KernelBuildInfo {
@@ -278,12 +317,15 @@ typedef enum KernelEventType {
     KernelEventType_MissionStateChanged = 10,
     KernelEventType_Error = 11,
     KernelEventType_ActorLanded = 12,
+    KernelEventType_HealthChanged = 13,
 } KernelEventType;
 
 typedef enum KernelDespawnReason {
     KernelDespawnReason_Destroyed = 0,
     KernelDespawnReason_OutOfRange = 1,
     KernelDespawnReason_Disconnected = 2,
+    KernelDespawnReason_Expired = 3,
+    KernelDespawnReason_CapacityEvicted = 4,
 } KernelDespawnReason;
 
 typedef enum RenderEntityStatus {
@@ -301,9 +343,237 @@ typedef enum KernelActorType {
 typedef enum KernelEntityType {
     KernelEntityType_Unknown = 0,
     KernelEntityType_Actor = 1,
+    KernelEntityType_Prop = 2,
     KernelEntityType_Projectile = 3,
     KernelEntityType_Director = 5,
 } KernelEntityType;
+
+typedef uint64_t KernelItemInstanceId;
+typedef uint64_t KernelInventoryContainerId;
+
+typedef enum KernelItemMode {
+    KernelItemMode_Fungible = 0,
+    KernelItemMode_Stateful = 1,
+} KernelItemMode;
+
+typedef enum KernelItemCapabilityFlag {
+    KernelItemCapability_Pickupable = 1u << 0,
+    KernelItemCapability_Deployable = 1u << 1,
+    KernelItemCapability_Carryable = 1u << 2,
+    KernelItemCapability_Consumable = 1u << 3,
+    KernelItemCapability_Throwable = 1u << 4,
+    KernelItemCapability_Interactable = 1u << 5,
+} KernelItemCapabilityFlag;
+
+typedef enum KernelDomainAction {
+    KernelDomainAction_None = 0,
+    KernelDomainAction_Consume = 1,
+    KernelDomainAction_Pickup = 2,
+    KernelDomainAction_Throw = 3,
+    KernelDomainAction_Place = 4,
+    KernelDomainAction_Carry = 5,
+    KernelDomainAction_Activate = 6,
+} KernelDomainAction;
+
+typedef enum KernelItemResidencyKind {
+    KernelItemResidency_None = 0,
+    KernelItemResidency_Inventory = 1,
+    KernelItemResidency_World = 2,
+    KernelItemResidency_Terminal = 3,
+} KernelItemResidencyKind;
+
+typedef enum KernelWorldItemMode {
+    KernelWorldItemMode_Placed = 0,
+    KernelWorldItemMode_Carrying = 1,
+    KernelWorldItemMode_InFlight = 2,
+} KernelWorldItemMode;
+
+typedef enum KernelItemThrowMode {
+    KernelItemThrowMode_None = 0,
+    KernelItemThrowMode_IdentityPreserving = 1,
+    KernelItemThrowMode_ConsumeAndSpawn = 2,
+} KernelItemThrowMode;
+
+typedef enum KernelPortableStateType {
+    KernelPortableStateType_Uint32 = 0,
+    KernelPortableStateType_Float = 1,
+    KernelPortableStateType_Bool = 2,
+} KernelPortableStateType;
+
+typedef enum KernelPortableStateProjection {
+    KernelPortableStateProjection_None = 0,
+    KernelPortableStateProjection_HealthCurrent = 1,
+} KernelPortableStateProjection;
+
+typedef enum KernelGameplayRequestStatus {
+    KernelGameplayRequestStatus_NoAction = 0,
+    KernelGameplayRequestStatus_Rejected = 1,
+    KernelGameplayRequestStatus_Committed = 2,
+} KernelGameplayRequestStatus;
+
+typedef enum KernelGameplayGraphOutcome {
+    KernelGameplayGraphOutcome_NotSubmitted = 0,
+    KernelGameplayGraphOutcome_Succeeded = 1,
+    KernelGameplayGraphOutcome_FailedAfterCommit = 2,
+} KernelGameplayGraphOutcome;
+
+typedef enum KernelGameplayRequestRejectionReason {
+    KernelGameplayRequestRejection_None = 0,
+    KernelGameplayRequestRejection_InvalidRequest = 1,
+    KernelGameplayRequestRejection_UnknownInstigator = 2,
+    KernelGameplayRequestRejection_UnknownTarget = 3,
+    KernelGameplayRequestRejection_UnknownItem = 4,
+    KernelGameplayRequestRejection_StaleReference = 5,
+    KernelGameplayRequestRejection_InvalidContext = 6,
+    KernelGameplayRequestRejection_MissingCapability = 7,
+    KernelGameplayRequestRejection_NotAuthorized = 8,
+    KernelGameplayRequestRejection_OutOfRange = 9,
+    KernelGameplayRequestRejection_LineOfSight = 10,
+    KernelGameplayRequestRejection_InventoryFull = 11,
+    KernelGameplayRequestRejection_InvalidQuantity = 12,
+    KernelGameplayRequestRejection_InvalidPlacement = 13,
+    KernelGameplayRequestRejection_Claimed = 14,
+    KernelGameplayRequestRejection_Cooldown = 15,
+    KernelGameplayRequestRejection_GraphRejected = 16,
+} KernelGameplayRequestRejectionReason;
+
+typedef enum KernelEntityTriggerActionType {
+    KernelEntityTriggerActionType_None = 0,
+    KernelEntityTriggerActionType_ApplyDamage = 1,
+    KernelEntityTriggerActionType_SpawnEntity = 2,
+    KernelEntityTriggerActionType_SpawnProjectile = 3,
+    KernelEntityTriggerActionType_ApplyHealthChange = 4,
+} KernelEntityTriggerActionType;
+
+typedef enum KernelEntityRefSource {
+    KernelEntityRefSource_Self = 0,
+    KernelEntityRefSource_EventSubject = 1,
+    KernelEntityRefSource_EventTarget = 2,
+    KernelEntityRefSource_EventInstigator = 3,
+} KernelEntityRefSource;
+
+typedef enum KernelEventVec3Source {
+    KernelEventVec3Source_Position = 0,
+    KernelEventVec3Source_Direction = 1,
+} KernelEventVec3Source;
+
+typedef enum KernelActionConditionType {
+    KernelActionConditionType_Always = 0,
+    KernelActionConditionType_EventHasTarget = 1,
+} KernelActionConditionType;
+
+#define KERNEL_MAX_ACTION_GRAPH_ACTIONS 8
+
+typedef struct KernelActionDefinition {
+    uint8_t action_type;
+    uint8_t target_source;
+    uint16_t damage_amount;
+    uint32_t spawn_entity_template_id;
+    uint32_t spawn_projectile_template_id;
+    uint8_t position_source;
+    uint8_t direction_source;
+    uint8_t owner_source;
+    uint8_t reserved;
+    uint32_t spawn_item_template_id;
+    uint32_t spawn_item_quantity;
+    int32_t health_change_amount;
+    uint32_t condition_type;
+} KernelActionDefinition;
+
+typedef struct KernelActionTriggerDefinition {
+    uint32_t struct_size;
+    /* Legacy first-action mirror. action_count/actions are authoritative when
+     * action_count is non-zero. */
+    uint8_t action_type;
+    uint8_t target_source;
+    uint16_t damage_amount;
+    uint32_t spawn_entity_template_id;
+    uint32_t spawn_projectile_template_id;
+    uint8_t position_source;
+    uint8_t direction_source;
+    uint8_t owner_source;
+    uint8_t reserved;
+    uint32_t spawn_item_template_id;
+    uint32_t spawn_item_quantity;
+    uint32_t action_count;
+    KernelActionDefinition actions[KERNEL_MAX_ACTION_GRAPH_ACTIONS];
+    int32_t health_change_amount;
+    uint32_t condition_type;
+} KernelActionTriggerDefinition;
+
+#define KERNEL_MAX_PORTABLE_STATE_FIELDS 8
+
+typedef struct KernelPortableStateFieldDefinition {
+    uint32_t field_id;
+    uint8_t type;
+    uint8_t world_projection;
+    uint16_t reserved0;
+    uint32_t uint32_default;
+    float float_default;
+    uint32_t bool_default;
+} KernelPortableStateFieldDefinition;
+
+typedef struct KernelItemThrowDefinition {
+    uint32_t struct_size;
+    uint8_t mode;
+    uint8_t reserved0;
+    uint16_t reserved1;
+    uint32_t trajectory_projectile_template_id;
+} KernelItemThrowDefinition;
+
+typedef struct KernelItemUseDefinition {
+    uint32_t struct_size;
+    uint32_t quantity_cost;
+    uint32_t charge_field_id;
+    uint32_t cooldown_ticks;
+    uint32_t destroy_when_empty;
+} KernelItemUseDefinition;
+
+typedef struct KernelItemTemplateDefinition {
+    uint32_t struct_size;
+    uint32_t item_template_id;
+    uint8_t item_mode;
+    uint8_t reserved0;
+    uint16_t max_stack;
+    uint32_t capability_flags;
+    uint32_t entity_template_id;
+    float interaction_range;
+    uint32_t line_of_sight_required;
+    uint32_t line_of_sight_blocking_mask;
+    KernelItemThrowDefinition throw_policy;
+    KernelItemUseDefinition use_policy;
+    uint32_t portable_state_field_count;
+    KernelPortableStateFieldDefinition
+        portable_state_fields[KERNEL_MAX_PORTABLE_STATE_FIELDS];
+    KernelActionTriggerDefinition item_used_trigger;
+} KernelItemTemplateDefinition;
+
+typedef struct KernelPropInteractionDefinition {
+    uint32_t struct_size;
+    uint32_t capability_flags;
+    uint8_t line_of_sight_required;
+    uint8_t reserved0;
+    uint16_t reserved1;
+    float interaction_range;
+    uint32_t line_of_sight_blocking_mask;
+} KernelPropInteractionDefinition;
+
+typedef struct KernelPropPopulationRuleDefinition {
+    uint32_t struct_size;
+    uint32_t population_group_id;
+    uint32_t max_alive;
+} KernelPropPopulationRuleDefinition;
+
+typedef struct KernelPropDefinition {
+    uint32_t struct_size;
+    KernelPropInteractionDefinition interaction;
+    float carry_offset_x;
+    float carry_offset_y;
+    float carry_offset_z;
+    uint32_t throw_trajectory_projectile_template_id;
+    uint32_t lifetime_ticks;
+    uint32_t population_group_id;
+} KernelPropDefinition;
 
 typedef enum KernelAiControllerType {
     KernelAiControllerType_None = 0,
@@ -418,6 +688,7 @@ typedef enum KernelProjectileHitResponse {
 
 typedef enum KernelProjectileDamageShape {
     KernelProjectileDamageShape_DirectHit = 0,
+    KernelProjectileDamageShape_None = 1,
     KernelProjectileDamageShape_PiercingSegment = 2,
 } KernelProjectileDamageShape;
 
@@ -548,21 +819,21 @@ typedef struct KernelGameplayCatalogLoadOptions {
     uint32_t* out_static_scene_rejected;
 } KernelGameplayCatalogLoadOptions;
 
-typedef struct ActionIntent {
+typedef struct KernelActionIntent {
     uint32_t action_instance_id;
     uint16_t binding_id;
     uint8_t flags;
     uint8_t reserved;
-} ActionIntent;
+} KernelActionIntent;
 
-typedef struct ActionInput {
+typedef struct KernelActionInput {
     uint32_t action_instance_id;
     uint8_t held;
     uint8_t flags;
     uint16_t reserved;
-} ActionInput;
+} KernelActionInput;
 
-typedef struct PlayerInput {
+typedef struct KernelPlayerInput {
     uint32_t input_seq;
     uint64_t client_action_time_us;
     KernelVec2 move;
@@ -570,9 +841,9 @@ typedef struct PlayerInput {
     KernelVec3 aim_dir;
     uint32_t buttons;
     uint8_t selected_weapon;
-    ActionIntent action_intent;
-    ActionInput action_input;
-} PlayerInput;
+    KernelActionIntent action_intent;
+    KernelActionInput action_input;
+} KernelPlayerInput;
 
 typedef struct KernelLocalActionResult {
     uint32_t action_instance_id;
@@ -620,12 +891,46 @@ typedef struct RenderEntityState {
     uint32_t spawn_tick;
     uint32_t action_instance_id;
     uint32_t status;
-    uint32_t projectile_template_id;
+    uint32_t template_id;
     uint32_t collider_template_id;
-    uint32_t actor_template_id;
     KernelActionRuntimeView action;
     KernelVec3 aim_direction;
+    KernelItemInstanceId item_instance_id;
+    uint8_t world_item_mode;
+    uint8_t reserved_item0;
+    uint16_t reserved_item1;
+    uint32_t carrier_entity_id;
 } RenderEntityState;
+
+typedef struct KernelBoneLocalTransform {
+    KernelVec3 local_position;
+    KernelQuat local_rotation;
+    KernelVec3 local_scale;
+} KernelBoneLocalTransform;
+
+typedef struct KernelSkeletonRenderState {
+    uint32_t entity_net_id;
+    uint32_t skeleton_asset_id;
+    uint64_t skeleton_content_hash;
+    uint32_t first_bone_transform;
+    uint32_t bone_count;
+    uint32_t pose_tick;
+    uint32_t pose_flags;
+    uint64_t pose_time_us;
+} KernelSkeletonRenderState;
+
+typedef struct KernelSkeletonRenderStateResult {
+    uint32_t struct_size;
+    uint32_t status;
+    uint32_t required_state_count;
+    uint32_t required_bone_transform_count;
+    uint32_t written_state_count;
+    uint32_t written_bone_transform_count;
+    uint32_t source_tick;
+    uint32_t flags;
+    uint64_t requested_render_time_us;
+    uint64_t evaluated_render_time_us;
+} KernelSkeletonRenderStateResult;
 
 KERNEL_RPC_STRUCT(R"json({"type":"KernelServerEntityCreateInfo"})json")
 typedef struct KernelServerEntityCreateInfo {
@@ -640,6 +945,110 @@ typedef struct KernelServerEntityCreateInfo {
     uint32_t actor_template_id;
     uint32_t entity_template_id;
 } KernelServerEntityCreateInfo;
+
+KERNEL_RPC_STRUCT(R"json({"type":"KernelServerEntityActivateInfo"})json")
+typedef struct KernelServerEntityActivateInfo {
+    uint32_t struct_size;
+    uint32_t subject_net_id;
+    uint32_t instigator_net_id;
+    uint32_t target_net_id;
+    uint32_t action_instance_id;
+    uint64_t request_id;
+} KernelServerEntityActivateInfo;
+
+typedef struct KernelGameplayRequest {
+    uint32_t struct_size;
+    uint32_t requester_peer;
+    uint64_t request_id;
+    uint32_t instigator_net_id;
+    uint8_t domain_action;
+    uint8_t reserved0;
+    uint16_t reserved1;
+    KernelItemInstanceId selected_item_instance_id;
+    uint32_t target_net_id;
+    uint32_t requested_quantity;
+    KernelVec3 placement_position;
+    KernelVec3 throw_direction;
+} KernelGameplayRequest;
+
+typedef struct KernelGameplayRequestOutcome {
+    uint32_t struct_size;
+    uint32_t requester_peer;
+    uint64_t request_id;
+    uint8_t status;
+    uint8_t graph_outcome;
+    uint8_t domain_action;
+    uint8_t rejection_reason;
+    KernelItemInstanceId item_instance_id;
+    uint32_t prop_entity_id;
+    uint32_t committed_quantity;
+} KernelGameplayRequestOutcome;
+
+typedef struct KernelItemInstanceView {
+    uint32_t struct_size;
+    KernelItemInstanceId item_instance_id;
+    uint32_t item_template_id;
+    uint32_t quantity;
+    uint8_t residency;
+    uint8_t world_mode;
+    uint16_t slot;
+    KernelInventoryContainerId inventory_container_id;
+    uint32_t prop_entity_id;
+    uint32_t carrier_entity_id;
+    uint32_t terminal;
+    uint32_t next_use_tick;
+    uint32_t portable_state_field_count;
+    KernelPortableStateFieldDefinition
+        portable_state_fields[KERNEL_MAX_PORTABLE_STATE_FIELDS];
+} KernelItemInstanceView;
+
+typedef struct KernelInventoryContainerView {
+    uint32_t struct_size;
+    KernelInventoryContainerId inventory_container_id;
+    uint32_t owner_entity_id;
+    uint32_t slot_capacity;
+    uint32_t occupied_slot_count;
+    uint64_t revision;
+    uint8_t sync_state;
+    uint8_t reserved0;
+    uint16_t reserved1;
+} KernelInventoryContainerView;
+
+typedef enum KernelInventorySyncState {
+    KernelInventorySyncState_NotAvailable = 0,
+    KernelInventorySyncState_Syncing = 1,
+    KernelInventorySyncState_Ready = 2,
+    KernelInventorySyncState_Desynced = 3,
+} KernelInventorySyncState;
+
+typedef enum KernelInventoryDeltaType {
+    KernelInventoryDeltaType_Add = 0,
+    KernelInventoryDeltaType_Update = 1,
+    KernelInventoryDeltaType_Remove = 2,
+    KernelInventoryDeltaType_Move = 3,
+} KernelInventoryDeltaType;
+
+typedef enum KernelInventoryChangeFlag {
+    KernelInventoryChange_Quantity = 1u << 0,
+    KernelInventoryChange_Cooldown = 1u << 1,
+    KernelInventoryChange_PortableState = 1u << 2,
+    KernelInventoryChange_All =
+        KernelInventoryChange_Quantity |
+        KernelInventoryChange_Cooldown |
+        KernelInventoryChange_PortableState,
+} KernelInventoryChangeFlag;
+
+typedef struct KernelInventoryDelta {
+    uint32_t struct_size;
+    KernelInventoryContainerId inventory_container_id;
+    uint64_t revision;
+    uint8_t type;
+    uint8_t reserved0;
+    uint16_t slot;
+    uint16_t previous_slot;
+    uint16_t changed_fields;
+    KernelItemInstanceView item;
+} KernelInventoryDelta;
 
 typedef struct KernelServerEntityState {
     uint32_t struct_size;
@@ -670,6 +1079,12 @@ typedef struct KernelServerEntityState {
     uint32_t reload_remaining_ticks;
     KernelActionRuntimeView action;
     KernelVec3 aim_direction;
+    uint32_t item_template_id;
+    KernelItemInstanceId item_instance_id;
+    uint8_t world_item_mode;
+    uint8_t reserved_item0;
+    uint16_t reserved_item1;
+    uint32_t carrier_entity_id;
 } KernelServerEntityState;
 
 typedef enum KernelColliderShapeType {
@@ -781,12 +1196,11 @@ typedef struct KernelProjectileMechanicsDefinition {
     uint32_t collider_template_id;
     uint32_t collision_mask;
     uint32_t max_hit_count;
-    uint32_t flags;
     KernelHomingMechanicsDefinition homing;
     KernelAreaEffectMechanicsDefinition area_effect;
     KernelBeamMechanicsDefinition beam;
-    uint32_t impact_spawn_projectile_template_id;
-    uint32_t expire_spawn_projectile_template_id;
+    KernelActionTriggerDefinition projectile_impact_trigger;
+    KernelActionTriggerDefinition expired_trigger;
     uint8_t collision_query_mode;
     uint8_t reserved0;
     uint16_t reserved1;
@@ -809,6 +1223,66 @@ typedef struct KernelActorTemplateDefinition {
     uint32_t collider_template_id;
     KernelAgentVisionConfig vision;
 } KernelActorTemplateDefinition;
+
+typedef struct KernelSkeletonAssetDefinition {
+    uint32_t struct_size;
+    uint32_t skeleton_asset_id;
+    uint64_t skeleton_content_hash;
+    const uint8_t* runtime_skeleton_data;
+    uint32_t runtime_skeleton_size;
+    uint32_t bone_count;
+} KernelSkeletonAssetDefinition;
+
+typedef struct KernelSkeletonLegDefinition {
+    uint32_t leg_id;
+    uint32_t hip_bone_index;
+    uint32_t knee_bone_index;
+    uint32_t foot_bone_index;
+    uint32_t gait_group;
+    KernelVec3 pole_local;
+    // Hinge axis of the knee, in the rig's model space. Must be roughly
+    // parallel to the plane normal of the bind-pose limb, i.e.
+    // cross(knee - hip, foot - knee); a rig authored to bend about some other
+    // axis will not solve. Required (a zero vector is rejected) so that a rig
+    // whose knees hinge elsewhere fails loudly at load instead of silently
+    // producing a limb the IK cannot bend.
+    KernelVec3 mid_axis_local;
+    float step_height_meters;
+    float max_reach_ratio;
+} KernelSkeletonLegDefinition;
+
+typedef struct KernelSkeletonBindingDefinition {
+    uint32_t struct_size;
+    uint32_t skeleton_asset_id;
+    uint64_t skeleton_content_hash;
+    uint32_t bone_count;
+    uint32_t root_bone_index;
+    uint32_t body_bone_index;
+    uint32_t leg_count;
+    uint32_t processing_order_count;
+    float input_deadzone;
+    float step_threshold_meters;
+    uint32_t step_duration_ticks;
+    uint32_t max_swinging_legs;
+    // Body grounding follow (LocomotionTest parity). When body_follow_speed <= 0
+    // the physics/character controller owns body height and tilt (legs read the
+    // resolved root only as a world anchor). When > 0 the locomotion pass pulls
+    // the body height toward the average foothold and tilts toward the average
+    // ground normal each tick, smoothed by k = 1 - exp(-body_follow_speed * dt).
+    // slope_alignment in [0,1] blends between fully upright (0) and fully aligned
+    // with the ground slope (1).
+    float body_follow_speed;
+    float slope_alignment;
+    uint8_t foothold_query_type;
+    uint8_t reserved_foothold0;
+    uint16_t reserved_foothold1;
+    float foothold_query_start_height_meters;
+    float foothold_query_distance_meters;
+    uint32_t foothold_candidate_count;
+    KernelVec2 foothold_candidate_offsets[KERNEL_MAX_FOOTHOLD_CANDIDATES];
+    KernelSkeletonLegDefinition legs[KERNEL_MAX_SKELETON_LEGS];
+    uint32_t processing_order[KERNEL_MAX_SKELETON_LEGS];
+} KernelSkeletonBindingDefinition;
 
 typedef struct KernelActionTemplateDefinition {
     /*
@@ -849,6 +1323,12 @@ typedef struct KernelGameplayCatalogDefinition {
     uint32_t entity_template_count;
     const KernelActionTemplateDefinition* action_templates;
     uint32_t action_template_count;
+    const KernelItemTemplateDefinition* item_templates;
+    uint32_t item_template_count;
+    const KernelPropPopulationRuleDefinition* prop_population_rules;
+    uint32_t prop_population_rule_count;
+    const KernelSkeletonAssetDefinition* skeleton_assets;
+    uint32_t skeleton_asset_count;
 } KernelGameplayCatalogDefinition;
 
 typedef struct KernelGameplayCatalogLoadResult {
@@ -1003,6 +1483,11 @@ typedef struct KernelNetworkStats {
     uint32_t max_remote_presentation_batch_size;
     uint64_t zero_action_instance_attempts;
     uint64_t action_instance_collisions;
+    uint64_t inventory_delta_bytes_sent;
+    uint64_t inventory_snapshot_bytes_sent;
+    uint64_t prop_state_bytes_sent;
+    uint64_t inventory_resync_request_count;
+    uint64_t inventory_revision_gap_count;
 } KernelNetworkStats;
 
 typedef struct KernelHitDebugInfo {
@@ -1191,6 +1676,7 @@ typedef struct KernelMovementDefinition {
     float step_height;
     float ground_probe_distance;
     float ground_snap_distance;
+    float max_yaw_degrees_per_second;
 } KernelMovementDefinition;
 
 struct KernelEntityAiDefinition {
@@ -1222,6 +1708,13 @@ struct KernelEntityTemplateDefinition {
     KernelAgentVisionConfig vision;
     KernelEntityAiDefinition ai;
     KernelMovementDefinition movement;
+    KernelActionTriggerDefinition activated_trigger;
+    KernelActionTriggerDefinition collision_trigger;
+    KernelActionTriggerDefinition health_depleted_trigger;
+    KernelActionTriggerDefinition destroy_entity_trigger;
+    KernelPropDefinition prop;
+    uint32_t collision_trigger_mask;
+    KernelSkeletonBindingDefinition skeleton;
 };
 
 typedef struct KernelEvent {
@@ -1232,6 +1725,7 @@ typedef struct KernelEvent {
     uint32_t code;
     uint64_t event_time_us;
     uint64_t presentation_time_us;
+    int32_t health_delta;
 } KernelEvent;
 
 typedef struct KernelEntityLifecycleEvent {
@@ -1247,8 +1741,8 @@ typedef struct KernelEntityLifecycleEvent {
 #ifdef __cplusplus
 }
 
-static_assert(sizeof(ActionIntent) == 8, "ActionIntent ABI must stay 8 bytes");
-static_assert(sizeof(ActionInput) == 8, "ActionInput ABI must stay 8 bytes");
+static_assert(sizeof(KernelActionIntent) == 8, "KernelActionIntent ABI must stay 8 bytes");
+static_assert(sizeof(KernelActionInput) == 8, "KernelActionInput ABI must stay 8 bytes");
 #endif
 
 #endif  // KERNEL_PUBLIC_KERNEL_TYPES_H_

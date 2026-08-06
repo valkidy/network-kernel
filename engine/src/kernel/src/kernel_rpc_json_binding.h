@@ -64,6 +64,8 @@ bool read_json(const Json& value, double* out_value);
 bool read_json(const Json& value, KernelVec3* out_value);
 bool read_json(const Json& value, KernelQuat* out_value);
 bool read_json(const Json& value, KernelServerEntityCreateInfo* out_value);
+bool read_json(const Json& value, KernelServerEntityActivateInfo* out_value);
+bool read_json(const Json& value, KernelGameplayRequest* out_value);
 
 template <typename T>
 bool read_param(const Json& object, const char* name, T* out_value) {

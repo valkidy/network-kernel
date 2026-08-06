@@ -15,12 +15,17 @@ enum class CommandId : std::uint8_t {
     kUnknown = 0,
     kCreateEntity,
     kDestroyEntity,
-    kSubmitInput,
+    kSubmitPlayerInput,
     kSetEntityTransform,
     kSetEntityVelocity,
     kSetEntityState,
     kSetEntityActorTemplate,
     kSetEntityHealth,
+    kActivateEntity,
+    kCreateInventoryContainer,
+    kCreateInventoryItem,
+    kCreateWorldItem,
+    kSubmitGameplayRequest,
 };
 
 enum class CommandSource : std::uint8_t {
@@ -40,9 +45,9 @@ struct DestroyEntity {
     std::uint32_t reason = 0;
 };
 
-struct SubmitInput {
+struct SubmitPlayerInput {
     NetId net_id = 0;
-    PlayerInput input{};
+    KernelPlayerInput input{};
 };
 
 struct SetEntityTransform {
@@ -67,22 +72,54 @@ struct SetEntityActorTemplate {
     std::uint32_t actor_template_id = 0;
 };
 
+struct ActivateEntity {
+    KernelServerEntityActivateInfo activate_info{};
+};
+
+struct CreateInventoryContainer {
+    std::uint32_t owner_entity_id = 0;
+    std::uint32_t slot_capacity = 0;
+};
+
+struct CreateInventoryItem {
+    std::uint32_t item_template_id = 0;
+    std::uint32_t quantity = 0;
+    KernelInventoryContainerId container_id = 0;
+};
+
+struct CreateWorldItem {
+    std::uint32_t item_template_id = 0;
+    std::uint32_t quantity = 0;
+    KernelVec3 position{};
+};
+
+struct SubmitGameplayRequest {
+    KernelGameplayRequest request{};
+};
+
 struct Command {
     CommandId id = CommandId::kUnknown;
     CommandSource source = CommandSource::kInternal;
     std::uint64_t completion_token = 0;
     CreateEntity create_entity{};
     DestroyEntity destroy_entity{};
-    SubmitInput submit_input{};
+    SubmitPlayerInput submit_player_input{};
     SetEntityTransform set_entity_transform{};
     SetEntityVelocity set_entity_velocity{};
     SetEntityState set_entity_state{};
     SetEntityActorTemplate set_entity_actor_template{};
+    ActivateEntity activate_entity{};
+    CreateInventoryContainer create_inventory_container{};
+    CreateInventoryItem create_inventory_item{};
+    CreateWorldItem create_world_item{};
+    SubmitGameplayRequest submit_gameplay_request{};
 };
 
 struct CommandResult {
     bool ok = false;
     NetId net_id = 0;
+    KernelInventoryContainerId inventory_container_id = 0;
+    KernelItemInstanceId item_instance_id = 0;
 };
 
 class CommandQueue {

@@ -1,0 +1,17 @@
+id: action_spawn_ice_and_damage_self_at_collision
+parameters:
+  template: null
+  position: null
+  direction: null
+  owner: null
+  source: null
+  self_damage: 1
+actions:
+  - type: spawn_entity
+    entity_template: params.template
+    position: params.position
+    direction: params.direction
+    owner: params.owner
+  - type: apply_damage
+    target: params.source
+    amount: params.self_damage

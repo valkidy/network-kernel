@@ -5,13 +5,18 @@ package(default_visibility = ["//visibility:public"])
 filegroup(
     name = "gameplay_catalog_bundle_sources",
     srcs = glob([
+        "action_graph_templates/*.yaml",
         "action_templates/*.yaml",
         "collider_templates/*.yaml",
         "entity_templates/*.yaml",
+        "item_templates/*.yaml",
         "projectile_templates/*.yaml",
         "weapon_templates/*.yaml",
     ]) + [
         "gameplay_catalog.yaml",
+        "test_catalogs/monster_observer/gameplay_catalog.yaml",
+        "//game_server/skeleton_assets:rock_robot_biped_24u_v3_assets",
+        "//game_server/skeleton_assets:simplified_monster_sim_v4_assets",
     ],
 )
 
@@ -48,14 +53,41 @@ cc_test(
     name = "gameplay_config_test",
     srcs = ["gameplay_config_test.cc"],
     data = glob([
+        "action_graph_templates/*.yaml",
         "action_templates/*.yaml",
         "collider_templates/*.yaml",
         "entity_templates/*.yaml",
+        "item_templates/*.yaml",
         "projectile_templates/*.yaml",
         "weapon_templates/*.yaml",
     ]) + [
         "//game_server/gameplay_catalog_bundle:bundle",
         "gameplay_catalog.yaml",
+        "//game_server/skeleton_assets:rock_robot_biped_24u_v3_assets",
+        "//game_server/skeleton_assets:simplified_monster_sim_v4_assets",
+    ],
+    deps = [
+        ":game_server",
+        ":game_server_bridge",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "activation_gameplay_config_test",
+    srcs = ["activation_gameplay_config_test.cc"],
+    data = glob([
+        "action_graph_templates/*.yaml",
+        "action_templates/*.yaml",
+        "collider_templates/*.yaml",
+        "entity_templates/*.yaml",
+        "item_templates/*.yaml",
+        "projectile_templates/*.yaml",
+        "weapon_templates/*.yaml",
+    ]) + [
+        "gameplay_catalog.yaml",
+        "//game_server/skeleton_assets:rock_robot_biped_24u_v3_assets",
+        "//game_server/skeleton_assets:simplified_monster_sim_v4_assets",
     ],
     deps = [
         ":game_server",
@@ -67,13 +99,17 @@ cc_test(
     name = "weapon_template_loader_test",
     srcs = ["weapon_template_loader_test.cc"],
     data = glob([
+        "action_graph_templates/*.yaml",
         "action_templates/*.yaml",
         "collider_templates/*.yaml",
         "entity_templates/*.yaml",
+        "item_templates/*.yaml",
         "projectile_templates/*.yaml",
         "weapon_templates/*.yaml",
     ]) + [
         "gameplay_catalog.yaml",
+        "//game_server/skeleton_assets:rock_robot_biped_24u_v3_assets",
+        "//game_server/skeleton_assets:simplified_monster_sim_v4_assets",
     ],
     deps = [
         ":game_server",
@@ -122,13 +158,17 @@ cc_test(
     name = "agent_runtime_manager_test",
     srcs = ["agent_runtime_manager_test.cc"],
     data = glob([
+        "action_graph_templates/*.yaml",
         "action_templates/*.yaml",
         "collider_templates/*.yaml",
         "entity_templates/*.yaml",
+        "item_templates/*.yaml",
         "projectile_templates/*.yaml",
         "weapon_templates/*.yaml",
     ]) + [
         "gameplay_catalog.yaml",
+        "//game_server/skeleton_assets:rock_robot_biped_24u_v3_assets",
+        "//game_server/skeleton_assets:simplified_monster_sim_v4_assets",
     ],
     deps = [
         ":game_server",
@@ -140,14 +180,18 @@ cc_test(
     name = "game_server_api_test",
     srcs = ["game_server_api_test.cc"],
     data = glob([
+        "action_graph_templates/*.yaml",
         "action_templates/*.yaml",
         "collider_templates/*.yaml",
         "entity_templates/*.yaml",
+        "item_templates/*.yaml",
         "projectile_templates/*.yaml",
         "weapon_templates/*.yaml",
     ]) + [
         "//game_server/gameplay_catalog_bundle:bundle",
         "gameplay_catalog.yaml",
+        "//game_server/skeleton_assets:rock_robot_biped_24u_v3_assets",
+        "//game_server/skeleton_assets:simplified_monster_sim_v4_assets",
     ],
     deps = [
         ":game_server_bridge",

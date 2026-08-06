@@ -1,16 +1,29 @@
 #include <cassert>
+#include <cstdio>
 #include <cstdlib>
+#include <optional>
+#include <source_location>
+#include <string>
 #include <vector>
 
 #include <glm/glm.hpp>
 
+#include "physics/public/physics_world.h"
+#include "simulation/public/action_graph.h"
 #include "simulation/public/simulation.h"
 #include "world/public/world.h"
 
 namespace {
 
-void require(bool condition) {
+void require(
+    bool condition,
+    const std::source_location& location = std::source_location::current()) {
     if (!condition) {
+        std::fprintf(
+            stderr,
+            "require failed at %s:%u\n",
+            location.file_name(),
+            location.line());
         std::abort();
     }
 }
@@ -357,10 +370,134 @@ void multiple_reactions_resolve_by_projectile_pair_order() {
     require(first_position.x < second_position.x);
 }
 
-void impact_response_spawns_area_effect_projectile_once() {
+void action_graph_binding_validation_is_typed_and_authoritative() {
+    network_example::CompiledActionGraphBinding binding =
+        network_example::compile_spawn_projectile_binding(
+            network_example::TriggerEventType::kProjectileImpact, 8);
+    std::string error;
+    require(network_example::validate_action_graph_binding(binding, &error));
+
+    network_example::CompiledActionGraphBinding undeclared = binding;
+    undeclared.parameters.push_back(network_example::ActionGraphParameterBinding{
+        "unknown",
+        network_example::ActionGraphParameterValue{1.0f},
+    });
+    require(!network_example::validate_action_graph_binding(undeclared, &error));
+
+    network_example::CompiledActionGraphBinding wrong_type = binding;
+    wrong_type.parameters[0].expression =
+        network_example::ActionGraphParameterValue{
+            network_example::EntityIdValue{8}};
+    require(!network_example::validate_action_graph_binding(wrong_type, &error));
+
+    const network_example::CompiledActionGraphBinding unavailable_event_field =
+        network_example::compile_apply_damage_binding(
+            network_example::TriggerEventType::kHealthDepleted,
+            network_example::EntityRefSource::kEventTarget,
+            1);
+    require(!network_example::validate_action_graph_binding(
+        unavailable_event_field, &error));
+
+    const network_example::TriggerEvent event{
+        network_example::TriggerEventType::kProjectileImpact,
+        10,
+        20,
+        30,
+        glm::vec3{1.0f, 2.0f, 3.0f},
+        glm::vec3{0.0f, 1.0f, 0.0f},
+        network_example::ProjectileImpactPayload{3, 40, 5, false},
+    };
+    network_example::ActionExecutionProvenance provenance;
+    provenance.request_id = 50;
+    provenance.action_instance_id = 40;
+    provenance.server_tick = 6;
+    provenance.instigator = 20;
+    provenance.owner_peer = 7;
+    provenance.source_weapon_id = 5;
+    provenance.authority_source =
+        network_example::ActionAuthoritySource::kClientPrediction;
+    std::vector<network_example::ActionGraphCommand> commands;
+    require(network_example::evaluate_action_graph(
+        binding, 10, event, provenance, &commands, &error));
+    require(commands.empty());
+
+    provenance.authority_source =
+        network_example::ActionAuthoritySource::kAuthoritativeSimulation;
+    require(network_example::evaluate_action_graph(
+        binding, 10, event, provenance, &commands, &error));
+    require(commands.size() == 1);
+    const auto* command =
+        std::get_if<network_example::ActionSpawnProjectileCommand>(
+        &commands[0]);
+    require(command != nullptr);
+    require(command->projectile_template_id == 8);
+    require(command->position == event.position);
+    require(command->direction == event.direction);
+    require(command->provenance.action_instance_id == 40);
+    require(command->provenance.instigator == 20);
+    require(command->provenance.owner_peer == 7);
+    require(command->provenance.source_weapon_id == 5);
+}
+
+void action_graph_dispatcher_orders_captured_trigger_snapshots() {
+    const network_example::CompiledActionGraphBinding binding =
+        network_example::compile_apply_damage_binding(
+            network_example::TriggerEventType::kCollision,
+            network_example::EntityRefSource::kEventTarget,
+            5);
+    const auto queued_trigger = [&](
+        network_example::NetId subject,
+        network_example::NetId target,
+        std::uint64_t request_id) {
+        network_example::ActionExecutionProvenance provenance;
+        provenance.request_id = request_id;
+        provenance.server_tick = 2;
+        return network_example::ActionGraphQueuedTrigger{
+            binding,
+            subject,
+            network_example::TriggerEvent{
+                network_example::TriggerEventType::kCollision,
+                subject,
+                0,
+                target,
+                glm::vec3{static_cast<float>(subject), 0.0f, 0.0f},
+                glm::vec3{1.0f, 0.0f, 0.0f},
+                std::nullopt,
+            },
+            provenance,
+            0,
+        };
+    };
+    std::vector<network_example::ActionGraphQueuedTrigger> queued{
+        queued_trigger(20, 200, 2),
+        queued_trigger(10, 100, 1),
+    };
+    std::vector<network_example::ActionGraphCommandBatch> batches;
+    std::string error;
+    require(network_example::dispatch_action_graph_triggers(
+        &queued, &batches, &error));
+    require(queued.empty());
+    require(batches.size() == 2);
+    require(batches[0].event.subject == 10);
+    require(batches[1].event.subject == 20);
+    const auto* first_damage =
+        std::get_if<network_example::ActionApplyDamageCommand>(
+            &batches[0].commands.at(0));
+    const auto* second_damage =
+        std::get_if<network_example::ActionApplyDamageCommand>(
+            &batches[1].commands.at(0));
+    require(first_damage != nullptr);
+    require(second_damage != nullptr);
+    require(first_damage->source == 10);
+    require(first_damage->target == 100);
+    require(second_damage->source == 20);
+    require(second_damage->target == 200);
+}
+
+void projectile_impact_trigger_spawns_area_effect_projectile_once() {
     network_example::World world;
     const network_example::NetId enemy =
-        world.spawn_enemy(glm::vec3{1.0f, 0.5f, 0.0f});
+        world.spawn_enemy(glm::vec3{1.0f, 0.2f, 0.0f});
     const auto enemy_entity = world.find_entity(enemy);
     require(enemy_entity.has_value());
     network_example::Health& health =
@@ -372,8 +509,9 @@ void impact_response_spawns_area_effect_projectile_once() {
     rocket_template.projectile_template_id = 3;
     rocket_template.weapon_id = 3;
     rocket_template.projectile_type = network_example::ProjectileType::kStandard;
-    rocket_template.impact_spawn_projectile_template_id = 8;
-    rocket_template.impact_destroy_self = 1u;
+    rocket_template.projectile_impact_binding =
+        network_example::compile_spawn_projectile_binding(
+            network_example::TriggerEventType::kProjectileImpact, 8);
 
     world.set_projectile_templates({
         rocket_template,
@@ -390,7 +528,7 @@ void impact_response_spawns_area_effect_projectile_once() {
     const network_example::NetId rocket = spawn_test_projectile(
         world,
         1,
-        glm::vec3{0.0f, 0.5f, 0.0f},
+        glm::vec3{0.0f, 0.2f, 0.0f},
         glm::vec3{20.0f, 0.0f, 0.0f},
         3,
         network_example::kCollisionLayerHostileSide);
@@ -400,6 +538,10 @@ void impact_response_spawns_area_effect_projectile_once() {
         world.registry().get<network_example::ProjectileState>(*rocket_entity);
     projectile.projectile_template_id = 3;
     projectile.shooter_net_id = rocket;
+    projectile.damage = 0;
+    projectile.damage_shape = network_example::ProjectileDamageShape::kNone;
+    world.registry().emplace<network_example::OnProjectileImpactTriggerTag>(
+        *rocket_entity);
 
     std::vector<KernelEvent> events;
     network_example::simulate_projectiles(world, 0.05f, 1, &events);
@@ -430,6 +572,259 @@ void impact_response_spawns_area_effect_projectile_once() {
     require(health.hp == 55);
 }
 
+void projectile_impact_trigger_is_additive_with_direct_hit_damage() {
+    network_example::World world;
+    const network_example::NetId enemy =
+        world.spawn_enemy(glm::vec3{1.0f, 0.5f, 0.0f});
+    const auto enemy_entity = world.find_entity(enemy);
+    require(enemy_entity.has_value());
+    network_example::Health& health =
+        world.registry().get<network_example::Health>(*enemy_entity);
+    health.hp = 100;
+    health.max_hp = 100;
+
+    network_example::RuntimeProjectileTemplate rocket_template;
+    rocket_template.projectile_template_id = 3;
+    rocket_template.projectile_impact_binding =
+        network_example::compile_spawn_projectile_binding(
+            network_example::TriggerEventType::kProjectileImpact, 8);
+    world.set_projectile_templates({
+        rocket_template,
+        area_effect_template(
+            8,
+            3,
+            2.5f,
+            45,
+            45,
+            45,
+            network_example::kCollisionLayerHostileSide),
+    });
+
+    const network_example::NetId rocket = spawn_test_projectile(
+        world,
+        1,
+        glm::vec3{0.0f, 0.5f, 0.0f},
+        glm::vec3{20.0f, 0.0f, 0.0f},
+        3,
+        network_example::kCollisionLayerHostileSide);
+    const auto rocket_entity = world.find_entity(rocket);
+    require(rocket_entity.has_value());
+    network_example::ProjectileState& projectile =
+        world.registry().get<network_example::ProjectileState>(*rocket_entity);
+    projectile.projectile_template_id = 3;
+    projectile.shooter_net_id = rocket;
+    projectile.damage = 45;
+    projectile.damage_shape =
+        network_example::ProjectileDamageShape::kDirectHit;
+    world.registry().emplace<network_example::OnProjectileImpactTriggerTag>(
+        *rocket_entity);
+
+    std::vector<KernelEvent> events;
+    network_example::simulate_projectiles(world, 0.05f, 1, &events);
+    require(health.hp == 55);
+
+    network_example::simulate_area_effects(world, 1, &events, nullptr);
+    require(health.hp == 10);
+}
+
+void static_impact_emits_projectile_trigger_once() {
+    network_example::World world;
+    network_example::physics::PhysicsWorld physics;
+    world.set_collision_world(&physics);
+
+    network_example::physics::CollisionObjectDescriptor obstacle;
+    obstacle.identity = network_example::physics::CollisionObjectIdentity{
+        0,
+        100,
+        0,
+        network_example::physics::CollisionObjectKind::kStaticObstacle,
+        network_example::physics::CollisionLayer::kStaticObstacle,
+    };
+    obstacle.shape.type = network_example::physics::CollisionShapeType::kBox;
+    obstacle.shape.half_extents = glm::vec3{0.1f, 1.0f, 1.0f};
+    obstacle.position = glm::vec3{1.0f, 0.5f, 0.0f};
+    std::string error;
+    require(physics.upsert_object(obstacle, &error));
+
+    network_example::RuntimeProjectileTemplate rocket_template;
+    rocket_template.projectile_template_id = 3;
+    rocket_template.projectile_impact_binding =
+        network_example::compile_spawn_projectile_binding(
+            network_example::TriggerEventType::kProjectileImpact, 8);
+    world.set_projectile_templates({
+        rocket_template,
+        area_effect_template(
+            8,
+            3,
+            2.5f,
+            45,
+            45,
+            45,
+            network_example::kCollisionLayerHostileSide),
+    });
+
+    const network_example::NetId rocket = spawn_test_projectile(
+        world,
+        1,
+        glm::vec3{0.0f, 0.5f, 0.0f},
+        glm::vec3{20.0f, 0.0f, 0.0f},
+        3,
+        network_example::kCollisionLayerStaticObstacle);
+    const auto rocket_entity = world.find_entity(rocket);
+    require(rocket_entity.has_value());
+    network_example::ProjectileState& projectile =
+        world.registry().get<network_example::ProjectileState>(*rocket_entity);
+    projectile.projectile_template_id = 3;
+    projectile.shooter_net_id = rocket;
+    world.registry().emplace<network_example::OnProjectileImpactTriggerTag>(
+        *rocket_entity);
+
+    std::vector<KernelEvent> events;
+    network_example::simulate_projectiles(world, 0.1f, 1, &events);
+
+    require(!world.find_entity(rocket).has_value());
+    require(count_events(events, KernelEventType_EntitySpawned) == 1);
+    require(count_events(events, KernelEventType_DamageApplied) == 0);
+}
+
+void historical_hit_emits_projectile_trigger_once() {
+    network_example::World world;
+    const network_example::NetId enemy =
+        world.spawn_enemy(glm::vec3{1.0f, 0.5f, 0.0f});
+    const auto enemy_entity = world.find_entity(enemy);
+    require(enemy_entity.has_value());
+    world.registry().get<network_example::Health>(*enemy_entity).hp = 100;
+    network_example::HistoryBuffer history(4);
+    history.write_frame(world, 1);
+
+    network_example::RuntimeProjectileTemplate rocket_template;
+    rocket_template.projectile_template_id = 3;
+    rocket_template.projectile_impact_binding =
+        network_example::compile_spawn_projectile_binding(
+            network_example::TriggerEventType::kProjectileImpact, 8);
+    world.set_projectile_templates({
+        rocket_template,
+        area_effect_template(
+            8,
+            3,
+            2.5f,
+            45,
+            45,
+            45,
+            network_example::kCollisionLayerHostileSide),
+    });
+
+    const network_example::NetId rocket = spawn_test_projectile(
+        world,
+        1,
+        glm::vec3{0.0f, 0.5f, 0.0f},
+        glm::vec3{20.0f, 0.0f, 0.0f},
+        3);
+    const auto rocket_entity = world.find_entity(rocket);
+    require(rocket_entity.has_value());
+    network_example::ProjectileState& projectile =
+        world.registry().get<network_example::ProjectileState>(*rocket_entity);
+    projectile.projectile_template_id = 3;
+    projectile.shooter_net_id = rocket;
+    world.registry().emplace<network_example::OnProjectileImpactTriggerTag>(
+        *rocket_entity);
+
+    const network_example::HistoryFrame* frame = history.find_frame(1);
+    require(frame != nullptr);
+    require(frame->volumes.size() == 1);
+    require(frame->volumes[0].net_id == enemy);
+    require(frame->volumes[0].alive != 0);
+    network_example::HistoricalHitResult historical_hit;
+    require(network_example::sweep_history_frame(
+        *frame,
+        glm::vec3{0.0f, 0.2f, 0.0f},
+        glm::vec3{2.0f, 0.2f, 0.0f},
+        rocket,
+        &historical_hit));
+
+    std::vector<KernelEvent> events;
+    require(network_example::resolve_projectile_historical_hit(
+        world,
+        history,
+        rocket,
+        rocket,
+        1,
+        projectile,
+        glm::vec3{0.0f, 0.2f, 0.0f},
+        glm::vec3{20.0f, 0.0f, 0.0f},
+        0,
+        1,
+        0.1f,
+        &events,
+        nullptr));
+
+    require(enemy != 0);
+    require(!world.find_entity(rocket).has_value());
+    require(count_events(events, KernelEventType_EntitySpawned) == 1);
+}
+
+void expired_trigger_does_not_reuse_impact_trigger() {
+    network_example::World world;
+    network_example::RuntimeProjectileTemplate projectile_template;
+    projectile_template.projectile_template_id = 3;
+    projectile_template.projectile_impact_binding =
+        network_example::compile_spawn_projectile_binding(
+            network_example::TriggerEventType::kProjectileImpact, 8);
+    projectile_template.expired_binding =
+        network_example::compile_spawn_projectile_binding(
+            network_example::TriggerEventType::kExpired, 9);
+    world.set_projectile_templates({
+        projectile_template,
+        area_effect_template(
+            8,
+            8,
+            1.0f,
+            1,
+            1,
+            2,
+            network_example::kCollisionMaskDamageable),
+        area_effect_template(
+            9,
+            9,
+            1.0f,
+            1,
+            1,
+            2,
+            network_example::kCollisionMaskDamageable),
+    });
+
+    const network_example::NetId source = spawn_test_projectile(
+        world,
+        1,
+        glm::vec3{0.0f},
+        glm::vec3{1.0f, 0.0f, 0.0f},
+        3);
+    const auto source_entity = world.find_entity(source);
+    require(source_entity.has_value());
+    network_example::ProjectileState& projectile =
+        world.registry().get<network_example::ProjectileState>(*source_entity);
+    projectile.projectile_template_id = 3;
+    projectile.max_lifetime_ticks = 1;
+    world.registry().emplace<network_example::OnExpiredTriggerTag>(
+        *source_entity);
+
+    std::vector<KernelEvent> events;
+    network_example::simulate_projectiles(world, 0.05f, 1, &events);
+
+    require(!world.find_entity(source).has_value());
+    require(count_events(events, KernelEventType_EntitySpawned) == 1);
+    for (const KernelEvent& event : events) {
+        if (event.type != KernelEventType_EntitySpawned) {
+            continue;
+        }
+        const auto spawned_entity = world.find_entity(event.net_id);
+        require(spawned_entity.has_value());
+        require(world.registry()
+                    .get<network_example::ProjectileState>(*spawned_entity)
+                    .projectile_template_id == 9);
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -439,6 +834,12 @@ int main() {
     interaction_uses_swept_projectile_collision_geometry();
     interaction_respects_masks_and_owner_peer_exclusion();
     multiple_reactions_resolve_by_projectile_pair_order();
-    impact_response_spawns_area_effect_projectile_once();
+    action_graph_binding_validation_is_typed_and_authoritative();
+    action_graph_dispatcher_orders_captured_trigger_snapshots();
+    projectile_impact_trigger_spawns_area_effect_projectile_once();
+    projectile_impact_trigger_is_additive_with_direct_hit_damage();
+    static_impact_emits_projectile_trigger_once();
+    historical_hit_emits_projectile_trigger_once();
+    expired_trigger_does_not_reuse_impact_trigger();
     return 0;
 }

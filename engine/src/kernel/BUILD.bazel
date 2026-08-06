@@ -64,6 +64,18 @@ cc_library(
     deps = [":kernel_types"],
 )
 
+cc_library(
+    name = "legged_locomotion",
+    srcs = ["src/legged_locomotion.cc"],
+    hdrs = ["src/legged_locomotion.h"],
+    includes = [".."],
+    deps = [
+        ":kernel_types",
+        "@glm//:glm",
+        "@ozz_animation//:ozz_animation",
+    ],
+)
+
 genrule(
     name = "build_info_macros",
     srcs = ["VERSION"],
@@ -102,7 +114,9 @@ cc_library(
         ":src/kernel_rpc_methods.generated.cc",
         "src/lan_discovery.cc",
         "src/render_state_builder.cc",
+        "src/skeleton_presentation.cc",
         "//engine/src/simulation:src/command_dispatcher.cc",
+        "//engine/src/simulation:src/item_gameplay_system.cc",
         "//engine/src/simulation:src/systems.cc",
     ],
     hdrs = [
@@ -117,13 +131,16 @@ cc_library(
         "src/kernel_rpc_world_handlers.h",
         "src/lan_discovery.h",
         "src/render_state_builder.h",
+        "src/skeleton_presentation.h",
         "//engine/src/simulation:src/command_dispatcher.h",
+        "//engine/src/simulation:src/item_gameplay_system.h",
         "//engine/src/simulation:src/systems.h",
     ],
     includes = [".."],
     deps = [
         ":kernel_api_internal",
         ":kernel_types",
+        ":legged_locomotion",
         ":tick_loop",
         "//engine/components/ai:ai_intent",
         "//engine/src/protocol:protocol",
@@ -136,6 +153,7 @@ cc_library(
         "@glm//:glm",
         "@com_github_nlohmann_json//:json",
         "@spdlog//:spdlog",
+        "@ozz_animation//:ozz_animation",
     ],
 )
 
@@ -191,11 +209,14 @@ cc_shared_library(
             "-Wl,-exported_symbol,_Kernel_CopyGameplayCatalogBundle",
             "-Wl,-exported_symbol,_Kernel_ContinueClientHandshake",
             "-Wl,-exported_symbol,_Kernel_Update",
-            "-Wl,-exported_symbol,_Kernel_SubmitInput",
+            "-Wl,-exported_symbol,_Kernel_SubmitPlayerInput",
             "-Wl,-exported_symbol,_Kernel_LoadGameplayCatalog",
             "-Wl,-exported_symbol,_Kernel_LoadGameplayCatalogFromMemory",
             "-Wl,-exported_symbol,_Kernel_GetRenderStates",
             "-Wl,-exported_symbol,_Kernel_GetRenderStatesAtTime",
+            "-Wl,-exported_symbol,_Kernel_GetSkeletonRenderStates",
+            "-Wl,-exported_symbol,_Kernel_GetSkeletonRenderStatesAtTime",
+            "-Wl,-exported_symbol,_Kernel_GetSkeletonBindPose",
             "-Wl,-exported_symbol,_Kernel_PollEvents",
         "-Wl,-exported_symbol,_Kernel_PollEntityLifecycleEvents",
         "-Wl,-exported_symbol,_Kernel_PollLocalActionResults",
@@ -211,6 +232,17 @@ cc_shared_library(
             "-Wl,-exported_symbol,_Kernel_GetColliderTemplates",
             "-Wl,-exported_symbol,_Kernel_GetColliderBindings",
             "-Wl,-exported_symbol,_Kernel_ServerCreateEntity",
+            "-Wl,-exported_symbol,_Kernel_ServerCreateInventoryContainer",
+            "-Wl,-exported_symbol,_Kernel_ServerCreateInventoryItem",
+            "-Wl,-exported_symbol,_Kernel_ServerCreateWorldItem",
+            "-Wl,-exported_symbol,_Kernel_ServerSubmitGameplayRequest",
+            "-Wl,-exported_symbol,_Kernel_SubmitGameplayRequest",
+            "-Wl,-exported_symbol,_Kernel_GetItemInstance",
+            "-Wl,-exported_symbol,_Kernel_GetInventoryContainer",
+            "-Wl,-exported_symbol,_Kernel_CopyOwnedInventoryContainers",
+            "-Wl,-exported_symbol,_Kernel_CopyInventorySlots",
+            "-Wl,-exported_symbol,_Kernel_PollGameplayRequestOutcomes",
+            "-Wl,-exported_symbol,_Kernel_PollInventoryDeltas",
             "-Wl,-exported_symbol,_Kernel_ServerDestroyEntity",
             "-Wl,-exported_symbol,_Kernel_ServerSetEntityTransform",
             "-Wl,-exported_symbol,_Kernel_ServerSetEntityVelocity",
@@ -268,12 +300,14 @@ macos_codesigned_artifact(
 
 cc_shared_library(
     name = "_network_kernel_shared_mingw_unstripped",
+    additional_linker_inputs = [":network_kernel_exports.def"],
     deps = [
         ":kernel",
         "//game_server:game_server_bridge",
     ],
     shared_lib_name = "network_kernel.unstripped.dll",
     user_link_flags = [
+        "$(location :network_kernel_exports.def)",
         "-lws2_32",
         "-lbcrypt",
         "-lcrypt32",

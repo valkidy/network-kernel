@@ -1,0 +1,10 @@
+id: action_spawn_projectile_at_impact
+parameters:
+  template: null
+  position: null
+  direction: null
+actions:
+  - type: spawn_projectile
+    projectile_template: params.template
+    position: params.position
+    direction: params.direction

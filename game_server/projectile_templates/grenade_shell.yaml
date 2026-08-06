@@ -1,20 +1,23 @@
 id: 7
 name: grenade_shell_projectile
-damage: 45
+damage: 0
 sync_mode: local_predicted_deterministic
 collider_template: projectile_sphere
 movement_model: parabolic
 hit_response: destroy
-damage_shape: direct_hit
+damage_shape: none
 speed: 24.0
 lifetime_ticks: 180
-collision_mask: damageable
+collision_mask: damageable | terrain | obstacle
 max_hit_count: 1
 gravity:
   x: 0.0
   y: -9.81
   z: 0.0
-impact_response:
-  action: spawn_projectile
-  projectile_template: rocket_explosion
-  destroy_self: true
+triggers:
+  on_projectile_impact:
+    action_graph: action_spawn_projectile_at_impact
+    parameters:
+      template: rocket_explosion
+      position: event.position
+      direction: event.direction

@@ -8,7 +8,7 @@
 namespace network_example {
 namespace {
 
-glm::vec3 normalized_aim(const PlayerInput& input) {
+glm::vec3 normalized_aim(const KernelPlayerInput& input) {
     const glm::vec3 aim{input.aim_dir.x, input.aim_dir.y, input.aim_dir.z};
     return glm::length(aim) > 0.0001f
                ? glm::normalize(aim)

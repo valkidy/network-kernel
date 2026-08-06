@@ -64,21 +64,21 @@ void dispatcher_routes_create_and_destroy_to_lifecycle_system() {
     assert(!engine.world_.find_entity(create_result.net_id).has_value());
 }
 
-void dispatcher_routes_submit_input_to_movement_system() {
+void dispatcher_routes_submit_player_input_to_movement_system() {
     network_example::KernelEngine engine(server_config());
     reset_running_server(&engine);
     std::uint32_t net_id = 0;
     assert(engine.server_create_entity(player_create_info(), &net_id));
 
-    PlayerInput input{};
+    KernelPlayerInput input{};
     input.input_seq = 3;
     input.move = KernelVec2{1.0f, 0.0f};
 
     network_example::simulation::Command command{};
-    command.id = network_example::simulation::CommandId::kSubmitInput;
+    command.id = network_example::simulation::CommandId::kSubmitPlayerInput;
     command.source = network_example::simulation::CommandSource::kTest;
-    command.submit_input.net_id = net_id;
-    command.submit_input.input = input;
+    command.submit_player_input.net_id = net_id;
+    command.submit_player_input.input = input;
 
     network_example::simulation::Dispatcher dispatcher;
     const network_example::simulation::CommandResult result =
@@ -93,6 +93,6 @@ void dispatcher_routes_submit_input_to_movement_system() {
 
 int main() {
     dispatcher_routes_create_and_destroy_to_lifecycle_system();
-    dispatcher_routes_submit_input_to_movement_system();
+    dispatcher_routes_submit_player_input_to_movement_system();
     return 0;
 }

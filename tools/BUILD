@@ -43,3 +43,43 @@ cc_binary(
         "//engine/src/geometry:mesh_bake",
     ],
 )
+
+cc_binary(
+    name = "ozz_dependency_smoke_driver",
+    srcs = ["ozz_dependency_smoke_test.cc"],
+    deps = ["@ozz_animation//:ozz_animation"],
+)
+
+cc_binary(
+    name = "ozz_skeleton_manifest",
+    srcs = ["ozz_skeleton_manifest.cc"],
+    deps = ["@ozz_animation//:ozz_animation"],
+)
+
+genrule(
+    name = "ozz_smoke_glb",
+    outs = ["ozz_smoke.glb"],
+    cmd = "$(location :ozz_dependency_smoke_driver) --make-glb=$@",
+    tools = [":ozz_dependency_smoke_driver"],
+)
+
+genrule(
+    name = "ozz_smoke_skeleton",
+    srcs = [":ozz_smoke_glb"],
+    outs = ["ozz_smoke.ozz"],
+    cmd = """
+$(location @ozz_animation//:gltf2ozz) \
+  --file=$(location :ozz_smoke_glb) \
+  --config='{\"skeleton\":{\"filename\":\"$@\",\"import\":{\"enable\":true}},\"animations\":[]}'
+""",
+    tools = ["@ozz_animation//:gltf2ozz"],
+)
+
+cc_test(
+    name = "ozz_dependency_smoke_test",
+    srcs = ["ozz_dependency_smoke_test.cc"],
+    args = ["--verify-skeleton=$(location :ozz_smoke_skeleton)"],
+    data = [":ozz_smoke_skeleton"],
+    size = "small",
+    deps = ["@ozz_animation//:ozz_animation"],
+)

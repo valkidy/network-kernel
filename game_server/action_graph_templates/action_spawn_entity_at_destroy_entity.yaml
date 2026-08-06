@@ -1,0 +1,10 @@
+id: action_spawn_entity_at_destroy_entity
+parameters:
+  template: null
+  position: null
+  owner: null
+actions:
+  - type: spawn_entity
+    entity_template: params.template
+    position: params.position
+    owner: params.owner

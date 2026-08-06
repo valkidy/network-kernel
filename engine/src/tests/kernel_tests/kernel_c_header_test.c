@@ -5,9 +5,30 @@
 
 #include "kernel/public/kernel_api.h"
 
-_Static_assert(KERNEL_ABI_VERSION == 45u, "sparse weapon IDs and fixed weapon slots ABI");
-_Static_assert(sizeof(ActionIntent) == 8u, "ActionIntent ABI size");
-_Static_assert(sizeof(ActionInput) == 8u, "ActionInput ABI size");
+_Static_assert(
+    KERNEL_ABI_VERSION == 66u,
+    "skeleton asset ABI");
+_Static_assert(
+    sizeof(KernelActionTriggerDefinition) == 296u,
+    "KernelActionTriggerDefinition ABI size");
+_Static_assert(
+    offsetof(KernelActionDefinition, health_change_amount) >
+        offsetof(KernelActionDefinition, spawn_item_quantity),
+    "health change amount is appended to action ABI");
+_Static_assert(
+    offsetof(KernelActionDefinition, condition_type) >
+        offsetof(KernelActionDefinition, health_change_amount),
+    "action condition is appended to action ABI");
+_Static_assert(
+    offsetof(KernelEntityTemplateDefinition, collision_trigger_mask) >
+        offsetof(KernelEntityTemplateDefinition, prop),
+    "collision trigger mask follows prop definition");
+_Static_assert(
+    offsetof(KernelEvent, health_delta) >
+        offsetof(KernelEvent, presentation_time_us),
+    "health delta is appended to event ABI");
+_Static_assert(sizeof(KernelActionIntent) == 8u, "KernelActionIntent ABI size");
+_Static_assert(sizeof(KernelActionInput) == 8u, "KernelActionInput ABI size");
 _Static_assert(
     offsetof(KernelWeaponMechanicsDefinition, reserve_magazines) >
         offsetof(KernelWeaponMechanicsDefinition, magazine_size),
@@ -24,6 +45,14 @@ _Static_assert(
     offsetof(KernelProjectileMechanicsDefinition, projectile_type) >
         offsetof(KernelProjectileMechanicsDefinition, struct_size),
     "projectile mechanics use projectile_type naming");
+_Static_assert(
+    offsetof(KernelSkeletonLegDefinition, gait_group) >
+        offsetof(KernelSkeletonLegDefinition, foot_bone_index),
+    "skeleton leg gait group follows the IK bone chain");
+_Static_assert(
+    offsetof(KernelSkeletonBindingDefinition, step_threshold_meters) >
+        offsetof(KernelSkeletonBindingDefinition, input_deadzone),
+    "displacement gait fields follow locomotion input settings");
 
 int main(void) {
     KernelAbiInfo abi_info;
@@ -34,8 +63,14 @@ int main(void) {
     KernelConfig config;
     KernelNetworkStatsConfig network_stats_config;
     KernelLocalPlayerInfo local_player_info;
-    PlayerInput input;
+    KernelPlayerInput input;
     RenderEntityState state;
+    KernelBoneLocalTransform bone_transform;
+    KernelSkeletonRenderState skeleton_state;
+    KernelSkeletonRenderStateResult skeleton_result;
+    KernelSkeletonAssetDefinition skeleton_asset;
+    KernelSkeletonBindingDefinition skeleton_binding;
+    KernelSkeletonLegDefinition skeleton_leg;
     KernelEvent event;
     KernelServerEntityCreateInfo create_info;
     KernelServerEntityState server_state;
@@ -72,6 +107,12 @@ int main(void) {
     (void)local_player_info;
     (void)input;
     (void)state;
+    (void)bone_transform;
+    (void)skeleton_state;
+    (void)skeleton_result;
+    (void)skeleton_asset;
+    (void)skeleton_binding;
+    (void)skeleton_leg;
     (void)event;
     (void)create_info;
     (void)server_state;
@@ -99,7 +140,14 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 45u);
+    assert(KERNEL_ABI_VERSION == 66u);
+    assert(KERNEL_CAPABILITY_SKELETON_BIND_POSE != 0u);
+    assert(sizeof(KernelBoneLocalTransform) > 0u);
+    assert(sizeof(KernelSkeletonRenderState) > 0u);
+    assert(sizeof(KernelSkeletonRenderStateResult) > 0u);
+    assert(sizeof(KernelSkeletonAssetDefinition) > 0u);
+    assert(sizeof(KernelSkeletonBindingDefinition) > 0u);
+    assert(sizeof(KernelSkeletonLegDefinition) > 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS == 1u);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNKNOWN_FIELD == 4u);
@@ -114,7 +162,7 @@ int main(void) {
     assert(sizeof(KernelLANDiscoveryResult) > 0u);
     assert(sizeof(KernelLocalPlayerInfo) > 0u);
     assert(sizeof(KernelConfig) > 0u);
-    assert(sizeof(PlayerInput) > 0u);
+    assert(sizeof(KernelPlayerInput) > 0u);
     assert(sizeof(RenderEntityState) > 0u);
     assert(sizeof(KernelEvent) > 0u);
     assert(sizeof(KernelServerEntityCreateInfo) > 0u);
@@ -160,7 +208,7 @@ int main(void) {
     assert(KernelProjectileCollisionQueryMode_Ray == 3);
     assert(offsetof(KernelProjectileMechanicsDefinition, collision_query_mode) >
            offsetof(KernelProjectileMechanicsDefinition,
-                    expire_spawn_projectile_template_id));
+                    expired_trigger));
     assert(offsetof(KernelProjectileMechanicsDefinition, lifetime_ticks) >
            offsetof(KernelProjectileMechanicsDefinition, speed));
     assert(offsetof(KernelHomingMechanicsDefinition, max_turn_degrees_per_tick) >
@@ -199,24 +247,33 @@ int main(void) {
     assert((KERNEL_VISUAL_FLAG_MOVING & KERNEL_VISUAL_FLAG_DEAD) == 0u);
     assert((InputButton_Dodge & InputButton_Parry) == 0u);
     assert(sizeof(abi_info.abi_version) == sizeof(uint32_t));
-    assert(offsetof(PlayerInput, client_action_time_us) > offsetof(PlayerInput, input_seq));
-    assert(offsetof(PlayerInput, action_intent) > offsetof(PlayerInput, selected_weapon));
-    assert(offsetof(PlayerInput, action_input) > offsetof(PlayerInput, action_intent));
+    assert(offsetof(KernelPlayerInput, client_action_time_us) > offsetof(KernelPlayerInput, input_seq));
+    assert(offsetof(KernelPlayerInput, action_intent) > offsetof(KernelPlayerInput, selected_weapon));
+    assert(offsetof(KernelPlayerInput, action_input) > offsetof(KernelPlayerInput, action_intent));
     assert(offsetof(RenderEntityState, entity_id) == 0u);
     assert(offsetof(RenderEntityState, hp) > offsetof(RenderEntityState, velocity));
     assert(offsetof(RenderEntityState, max_hp) > offsetof(RenderEntityState, hp));
     assert(offsetof(RenderEntityState, status) >
            offsetof(RenderEntityState, action_instance_id));
-    assert(offsetof(RenderEntityState, projectile_template_id) >
+    assert(offsetof(RenderEntityState, template_id) >
            offsetof(RenderEntityState, status));
     assert(offsetof(RenderEntityState, collider_template_id) >
-           offsetof(RenderEntityState, projectile_template_id));
+           offsetof(RenderEntityState, template_id));
+    assert(sizeof(RenderEntityState) == 144u);
     assert(offsetof(KernelCombatStateDefinition, collider_template_id) >
-           offsetof(KernelCombatStateDefinition, active_weapon_id));
+           offsetof(KernelCombatStateDefinition, active_weapon_slot));
     assert(offsetof(KernelServerEntityCreateInfo, entity_template_id) >
            offsetof(KernelServerEntityCreateInfo, actor_template_id));
     assert(offsetof(KernelEntityTemplateDefinition, ai) >
            offsetof(KernelEntityTemplateDefinition, vision));
+    assert(offsetof(KernelEntityTemplateDefinition, activated_trigger) >
+           offsetof(KernelEntityTemplateDefinition, movement));
+    assert(offsetof(KernelEntityTemplateDefinition, collision_trigger) >
+           offsetof(KernelEntityTemplateDefinition, activated_trigger));
+    assert(offsetof(KernelEntityTemplateDefinition, health_depleted_trigger) >
+           offsetof(KernelEntityTemplateDefinition, collision_trigger));
+    assert(offsetof(KernelEntityTemplateDefinition, destroy_entity_trigger) >
+           offsetof(KernelEntityTemplateDefinition, health_depleted_trigger));
     assert(RenderEntityStatus_Active == 0u);
     assert((KERNEL_VISUAL_FLAG_HP_UNKNOWN & KERNEL_VISUAL_FLAG_DEAD) == 0u);
     assert(sizeof(KernelEntityLifecycleEvent) > 0u);

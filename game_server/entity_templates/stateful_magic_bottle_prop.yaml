@@ -1,0 +1,19 @@
+id: 203
+name: stateful_magic_bottle_prop
+entity_type: prop
+health:
+  hp: 1
+  max_hp: 1
+physics:
+  collider_template: collision_damage_prop_hitbox
+triggers:
+  on_collision:
+    collision_mask: terrain
+    action_graph: action_spawn_ice_and_damage_self_at_collision
+    parameters:
+      template: ice_block
+      position: event.position
+      direction: event.direction
+      owner: self
+      source: self
+      self_damage: 1

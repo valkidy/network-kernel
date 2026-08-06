@@ -1,0 +1,17 @@
+id: 3002
+name: fungible_potion
+mode: fungible
+max_stack: 5
+capabilities: [consumable]
+throw:
+  mode: none
+use:
+  quantity_cost: 1
+  cooldown_ticks: 0
+  destroy_when_empty: true
+triggers:
+  on_item_used:
+    action_graph: action_apply_health_change_at_item_used
+    parameters:
+      target: event.target
+      amount: 30

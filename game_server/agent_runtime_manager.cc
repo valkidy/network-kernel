@@ -194,6 +194,7 @@ void AgentRuntimeManager::sync_agents_from_kernel() {
         agent.animation_state = state.animation_state;
         agent.sentry.self_id = state.net_id;
         if (discovered_agent) {
+            agent.patrol_anchor = state.position;
             apply_weapon_mechanics(state.net_id);
         }
         next_agents.push_back(agent);

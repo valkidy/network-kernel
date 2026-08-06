@@ -47,6 +47,13 @@ Signature* load_symbol(void* library, const char* name) {
     dlerror();
     void* symbol = dlsym(library, name);
     const char* error = dlerror();
+    if (error != nullptr || symbol == nullptr) {
+        std::fprintf(
+            stderr,
+            "failed to load dynamic ABI symbol %s: %s\n",
+            name,
+            error == nullptr ? "symbol is null" : error);
+    }
     assert(error == nullptr);
     assert(symbol != nullptr);
     return reinterpret_cast<Signature*>(symbol);
@@ -207,10 +214,10 @@ int main() {
             "Kernel_StartListenServer");
     auto* kernel_update =
         load_symbol<void(KernelHandle*, float)>(library, "Kernel_Update");
-    auto* kernel_submit_input =
-        load_symbol<void(KernelHandle*, std::uint32_t, const PlayerInput*)>(
+    auto* kernel_submit_player_input =
+        load_symbol<void(KernelHandle*, std::uint32_t, const KernelPlayerInput*)>(
             library,
-            "Kernel_SubmitInput");
+            "Kernel_SubmitPlayerInput");
     auto* kernel_get_render_states =
         load_symbol<std::uint32_t(KernelHandle*, RenderEntityState*, std::uint32_t)>(
             library,
@@ -221,6 +228,34 @@ int main() {
             std::uint64_t,
             RenderEntityState*,
             std::uint32_t)>(library, "Kernel_GetRenderStatesAtTime");
+    auto* kernel_get_skeleton_render_states =
+        load_symbol<std::uint32_t(
+            KernelHandle*,
+            KernelSkeletonRenderState*,
+            std::uint32_t,
+            KernelBoneLocalTransform*,
+            std::uint32_t,
+            KernelSkeletonRenderStateResult*)>(
+            library,
+            "Kernel_GetSkeletonRenderStates");
+    auto* kernel_get_skeleton_bind_pose =
+        load_symbol<std::uint32_t(
+            KernelHandle*,
+            std::uint32_t,
+            std::uint64_t,
+            KernelBoneLocalTransform*,
+            std::uint32_t)>(library, "Kernel_GetSkeletonBindPose");
+    [[maybe_unused]] auto* kernel_get_skeleton_render_states_at_time =
+        load_symbol<std::uint32_t(
+            KernelHandle*,
+            std::uint64_t,
+            KernelSkeletonRenderState*,
+            std::uint32_t,
+            KernelBoneLocalTransform*,
+            std::uint32_t,
+            KernelSkeletonRenderStateResult*)>(
+            library,
+            "Kernel_GetSkeletonRenderStatesAtTime");
     [[maybe_unused]] auto* kernel_get_projectile_templates =
         load_symbol<std::uint32_t(
             KernelHandle*,
@@ -332,7 +367,7 @@ int main() {
             library,
             "Kernel_ServerSetEntityHealth");
     [[maybe_unused]] auto* kernel_server_submit_entity_input =
-        load_symbol<bool(KernelHandle*, std::uint32_t, const PlayerInput*)>(
+        load_symbol<bool(KernelHandle*, std::uint32_t, const KernelPlayerInput*)>(
             library,
             "Kernel_ServerSubmitEntityInput");
     auto* kernel_server_set_entity_combat_state =
@@ -390,6 +425,32 @@ int main() {
             std::uint16_t,
             KernelServerEntityState*,
             std::uint32_t)>(library, "Kernel_ServerQueryEntities");
+    [[maybe_unused]] auto* kernel_submit_gameplay_request =
+        load_symbol<bool(KernelHandle*, const KernelGameplayRequest*)>(
+            library, "Kernel_SubmitGameplayRequest");
+    [[maybe_unused]] auto* kernel_server_submit_gameplay_request =
+        load_symbol<bool(KernelHandle*, const KernelGameplayRequest*)>(
+            library, "Kernel_ServerSubmitGameplayRequest");
+    [[maybe_unused]] auto* kernel_get_item_instance =
+        load_symbol<bool(
+            KernelHandle*, KernelItemInstanceId, KernelItemInstanceView*)>(
+            library, "Kernel_GetItemInstance");
+    [[maybe_unused]] auto* kernel_poll_gameplay_request_outcomes =
+        load_symbol<std::uint32_t(
+            KernelHandle*, KernelGameplayRequestOutcome*, std::uint32_t)>(
+            library, "Kernel_PollGameplayRequestOutcomes");
+    [[maybe_unused]] auto* kernel_poll_inventory_deltas =
+        load_symbol<std::uint32_t(
+            KernelHandle*,
+            KernelInventoryContainerId,
+            KernelInventoryDelta*,
+            std::uint32_t)>(library, "Kernel_PollInventoryDeltas");
+    [[maybe_unused]] auto* kernel_copy_owned_inventory_containers =
+        load_symbol<std::uint32_t(
+            KernelHandle*,
+            std::uint32_t,
+            KernelInventoryContainerView*,
+            std::uint32_t)>(library, "Kernel_CopyOwnedInventoryContainers");
     auto* game_server_get_abi_info =
         load_symbol<bool(GameServerAbiInfo*, std::uint32_t)>(
             library,
@@ -425,8 +486,32 @@ int main() {
     assert(kernel_get_abi_info(&abi_info, sizeof(abi_info)));
     assert(abi_info.abi_version == KERNEL_ABI_VERSION);
     assert(abi_info.kernel_config_size == sizeof(KernelConfig));
-    assert(abi_info.player_input_size == sizeof(PlayerInput));
+    assert(abi_info.player_input_size == sizeof(KernelPlayerInput));
     assert(abi_info.render_entity_state_size == sizeof(RenderEntityState));
+    assert(abi_info.bone_local_transform_size ==
+           sizeof(KernelBoneLocalTransform));
+    assert(abi_info.skeleton_render_state_size ==
+           sizeof(KernelSkeletonRenderState));
+    assert(abi_info.skeleton_render_state_result_size ==
+           sizeof(KernelSkeletonRenderStateResult));
+    assert(abi_info.skeleton_asset_definition_size ==
+           sizeof(KernelSkeletonAssetDefinition));
+    assert(abi_info.skeleton_binding_definition_size ==
+           sizeof(KernelSkeletonBindingDefinition));
+    assert(abi_info.skeleton_leg_definition_size ==
+           sizeof(KernelSkeletonLegDefinition));
+    assert((abi_info.capability_flags &
+            KERNEL_CAPABILITY_SKELETON_RENDER_STATES) != 0u);
+    assert((abi_info.capability_flags &
+            KERNEL_CAPABILITY_SKELETON_BIND_POSE) != 0u);
+    assert(kernel_get_skeleton_bind_pose(
+               nullptr, 1u, UINT64_C(1), nullptr, 0u) == 0u);
+    KernelSkeletonRenderStateResult skeleton_result{};
+    skeleton_result.struct_size = sizeof(skeleton_result);
+    assert(kernel_get_skeleton_render_states(
+               nullptr, nullptr, 0u, nullptr, 0u, &skeleton_result) == 0u);
+    assert(skeleton_result.status ==
+           KERNEL_SKELETON_RENDER_STATUS_INVALID_ARGUMENT);
     assert(abi_info.kernel_event_size == sizeof(KernelEvent));
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS) != 0);
     assert(kernel_poll_entity_lifecycle_events(nullptr, nullptr, 0) == 0);
@@ -436,6 +521,17 @@ int main() {
     assert(abi_info.server_entity_create_info_size ==
            sizeof(KernelServerEntityCreateInfo));
     assert(abi_info.server_entity_state_size == sizeof(KernelServerEntityState));
+    assert(abi_info.item_template_definition_size ==
+           sizeof(KernelItemTemplateDefinition));
+    assert(abi_info.gameplay_request_size == sizeof(KernelGameplayRequest));
+    assert(abi_info.gameplay_request_outcome_size ==
+           sizeof(KernelGameplayRequestOutcome));
+    assert(abi_info.item_instance_view_size == sizeof(KernelItemInstanceView));
+    assert(abi_info.inventory_container_view_size ==
+           sizeof(KernelInventoryContainerView));
+    assert(abi_info.inventory_delta_size == sizeof(KernelInventoryDelta));
+    assert((abi_info.capability_flags &
+            KERNEL_CAPABILITY_ITEM_PROP_SYSTEM) != 0u);
     assert(abi_info.weapon_mechanics_definition_size ==
            sizeof(KernelWeaponMechanicsDefinition));
     assert(abi_info.actor_template_definition_size ==
@@ -456,8 +552,8 @@ int main() {
     assert(
         (abi_info.capability_flags &
          KERNEL_CAPABILITY_REMOTE_ACTION_PRESENTATION) != 0);
-    assert(abi_info.action_intent_size == sizeof(ActionIntent));
-    assert(abi_info.action_input_size == sizeof(ActionInput));
+    assert(abi_info.action_intent_size == sizeof(KernelActionIntent));
+    assert(abi_info.action_input_size == sizeof(KernelActionInput));
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ACTION_INTENTS) != 0);
     assert(abi_info.projectile_mechanics_definition_size ==
            sizeof(KernelProjectileMechanicsDefinition));
@@ -518,9 +614,9 @@ int main() {
     require(std::string(build_info.module_name) == "network_kernel");
     require(build_info.module_file_name[0] != '\0');
     require(has_version_revision_suffix(build_info.module_version));
-    require(build_info.protocol_version != 0);
-    require(build_info.snapshot_schema_version != 0);
-    require(build_info.packet_schema_version != 0);
+    require(build_info.protocol_version == 3u);
+    require(build_info.snapshot_schema_version == 17u);
+    require(build_info.packet_schema_version == 21u);
     require(build_info.git_commit[0] != '\0');
     require(std::string(build_info.git_commit) != "unknown");
     require(std::string(build_info.module_version) != build_info.git_commit);
@@ -561,6 +657,8 @@ int main() {
 
     KernelHandle* kernel = kernel_create(&config);
     assert(kernel != nullptr);
+    assert(kernel_get_skeleton_bind_pose(
+               kernel, 999u, UINT64_C(1), nullptr, 0u) == 0u);
     assert(kernel_start_listen_server(kernel, 7777));
     GameServerHandle* game_server = game_server_create(kernel);
     assert(game_server != nullptr);
@@ -662,14 +760,14 @@ int main() {
         KernelDespawnReason_Destroyed));
     assert(!kernel_server_clear_entity_weapon_mechanics(kernel, enemy, 3));
 
-    PlayerInput input{};
+    KernelPlayerInput input{};
     input.input_seq = 1;
     input.client_action_time_us = 33333;
     input.move = KernelVec2{1.0f, 0.0f};
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
-    input.action_intent = ActionIntent{
+    input.action_intent = KernelActionIntent{
         1u, KernelActionBinding_PrimaryFire, 0u, 0u};
-    kernel_submit_input(kernel, 1, &input);
+    kernel_submit_player_input(kernel, 1, &input);
     kernel_update(kernel, 1.0f / 30.0f);
 
     std::array<RenderEntityState, 16> states{};
@@ -712,7 +810,7 @@ int main() {
         }
     }
     game_server_tick(game_server, 1.0f / 30.0f);
-    assert(game_server_get_enemy_count(game_server) == 10);
+    assert(game_server_get_enemy_count(game_server) == 2);
     game_server_despawn_all(game_server, KernelDespawnReason_Destroyed);
     game_server_tick(game_server, 1.0f / 30.0f);
     assert(game_server_get_enemy_count(game_server) == 0);

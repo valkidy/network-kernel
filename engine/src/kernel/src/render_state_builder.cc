@@ -55,13 +55,16 @@ RenderEntityState render_state_from_world_entity(
     std::uint32_t visual_flags = derived_visual_flags(world, entity);
     std::uint32_t spawn_tick = 0;
     std::uint32_t action_instance_id = 0;
-    std::uint32_t actor_template_id = 0;
-    std::uint32_t projectile_template_id = 0;
+    std::uint32_t template_id = 0;
     std::uint16_t hp = 0;
     std::uint16_t max_hp = 0;
     KernelActionRuntimeView action{};
     action.struct_size = sizeof(action);
     KernelVec3 aim_direction{1.0f, 0.0f, 0.0f};
+    std::uint32_t item_template_id = 0;
+    std::uint64_t item_instance_id = 0;
+    std::uint8_t world_item_mode = 0;
+    std::uint32_t carrier_entity_id = 0;
     if (world.registry().all_of<Velocity>(entity)) {
         velocity = to_kernel_vec3(world.registry().get<Velocity>(entity).linear);
     }
@@ -84,10 +87,10 @@ RenderEntityState render_state_from_world_entity(
             world.registry().get<ProjectileState>(entity);
         spawn_tick = projectile.spawn_tick;
         action_instance_id = projectile.action_instance_id;
-        projectile_template_id = projectile.projectile_template_id;
+        template_id = projectile.projectile_template_id;
     }
     if (world.registry().all_of<ActorTemplateRef>(entity)) {
-        actor_template_id =
+        template_id =
             world.registry().get<ActorTemplateRef>(entity).actor_template_id;
     }
     if (world.registry().all_of<ActionInputState>(entity)) {
@@ -110,6 +113,30 @@ RenderEntityState render_state_from_world_entity(
         animation_state = static_cast<std::uint16_t>(
             world.registry().get<HomingState>(entity).phase);
     }
+    if (world.registry().all_of<ItemTemplateRef>(entity)) {
+        item_template_id =
+            world.registry().get<ItemTemplateRef>(entity).item_template_id;
+    }
+    if (world.registry().all_of<ItemInstanceRef>(entity)) {
+        item_instance_id =
+            world.registry().get<ItemInstanceRef>(entity).item_instance_id;
+    }
+    if (world.registry().all_of<PropWorldMode>(entity)) {
+        world_item_mode = static_cast<std::uint8_t>(
+            world.registry().get<PropWorldMode>(entity).mode);
+    }
+    if (world.registry().all_of<CarriedBy>(entity)) {
+        carrier_entity_id =
+            world.registry().get<CarriedBy>(entity).carrier_entity_id;
+    }
+    if (kind.type == EntityType::kProp && item_instance_id != 0u &&
+        item_template_id != 0u) {
+        template_id = item_template_id;
+    } else if (template_id == 0u &&
+               world.registry().all_of<EntityTemplateRef>(entity)) {
+        template_id =
+            world.registry().get<EntityTemplateRef>(entity).entity_template_id;
+    }
     return RenderEntityState{
         entity_id,
         identity.net_id,
@@ -126,11 +153,15 @@ RenderEntityState render_state_from_world_entity(
         spawn_tick,
         action_instance_id,
         RenderEntityStatus_Active,
-        projectile_template_id,
+        template_id,
         0,
-        actor_template_id,
         action,
         aim_direction,
+        item_instance_id,
+        world_item_mode,
+        0,
+        0,
+        carrier_entity_id,
     };
 }
 
@@ -161,7 +192,6 @@ RenderEntityState render_state_from_snapshot_entity(
         RenderEntityStatus_Active,
         0,
         0,
-        0,
         KernelActionRuntimeView{
             sizeof(KernelActionRuntimeView),
             entity.action_template_id,
@@ -173,6 +203,11 @@ RenderEntityState render_state_from_snapshot_entity(
             entity.action_commit_count,
         },
         to_kernel_vec3(entity.aim_direction),
+        entity.item_instance_id,
+        entity.world_item_mode,
+        0,
+        0,
+        entity.carrier_entity_id,
     };
 }
 

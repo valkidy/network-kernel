@@ -38,8 +38,8 @@ KernelConfig default_config() {
     return config;
 }
 
-PlayerInput scripted_input(std::uint32_t sequence) {
-    PlayerInput input{};
+KernelPlayerInput scripted_input(std::uint32_t sequence) {
+    KernelPlayerInput input{};
     input.input_seq = sequence;
     input.client_action_time_us = static_cast<std::uint64_t>(sequence) * 33333u;
     input.move = KernelVec2{1.0f, 0.0f};
@@ -47,27 +47,27 @@ PlayerInput scripted_input(std::uint32_t sequence) {
     input.selected_weapon = 0;
 
     if (sequence == 2) {
-        input.action_intent = ActionIntent{
+        input.action_intent = KernelActionIntent{
             sequence, KernelActionBinding_PrimaryFire, 0u, 0u};
         input.selected_weapon = 0;
     } else if (sequence == 12) {
-        input.action_intent = ActionIntent{
+        input.action_intent = KernelActionIntent{
             sequence, KernelActionBinding_Reload, 0u, 0u};
         input.selected_weapon = 0;
     } else if (sequence == 36) {
-        input.action_intent = ActionIntent{
+        input.action_intent = KernelActionIntent{
             sequence, KernelActionBinding_PrimaryFire, 0u, 0u};
         input.selected_weapon = 1;
     } else if (sequence == 72) {
-        input.action_intent = ActionIntent{
+        input.action_intent = KernelActionIntent{
             sequence, KernelActionBinding_PrimaryFire, 0u, 0u};
-        input.action_input = ActionInput{sequence, 1u, 0u, 0u};
+        input.action_input = KernelActionInput{sequence, 1u, 0u, 0u};
         input.selected_weapon = 2;
     } else if (sequence > 72 && sequence < 96) {
-        input.action_input = ActionInput{72u, 1u, 0u, 0u};
+        input.action_input = KernelActionInput{72u, 1u, 0u, 0u};
         input.selected_weapon = 2;
     } else if (sequence == 96) {
-        input.action_input = ActionInput{72u, 0u, 0u, 0u};
+        input.action_input = KernelActionInput{72u, 0u, 0u, 0u};
         input.selected_weapon = 2;
     }
 
@@ -401,7 +401,7 @@ int RunClient(
         }
 
         if (ready_for_input) {
-            const PlayerInput input = scripted_input(sequence++);
+            const KernelPlayerInput input = scripted_input(sequence++);
             if (input.action_intent.action_instance_id != 0u ||
                 input.action_input.action_instance_id != 0u) {
                 ++combat_input_count;
@@ -414,7 +414,7 @@ int RunClient(
                     input.action_intent.binding_id,
                     static_cast<int>(input.selected_weapon));
             }
-            Kernel_SubmitInput(kernel, 0, &input);
+            Kernel_SubmitPlayerInput(kernel, 0, &input);
         }
 
         float sampled_player_x = 0.0f;

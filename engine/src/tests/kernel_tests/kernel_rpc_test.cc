@@ -60,6 +60,39 @@ void load_health_catalog(KernelHandle* kernel) {
     assert(Kernel_LoadGameplayCatalog(kernel, &catalog, nullptr));
 }
 
+void load_item_catalog(KernelHandle* kernel) {
+    KernelEntityTemplateDefinition prop{};
+    prop.struct_size = sizeof(prop);
+    prop.entity_template_id = 200;
+    prop.entity_type = KernelEntityType_Prop;
+    prop.component_flags = KERNEL_ENTITY_COMPONENT_TRANSFORM;
+    prop.ai.struct_size = sizeof(prop.ai);
+    prop.movement.struct_size = sizeof(prop.movement);
+    prop.prop.struct_size = sizeof(prop.prop);
+    prop.prop.interaction.struct_size = sizeof(prop.prop.interaction);
+    KernelItemTemplateDefinition item{};
+    item.struct_size = sizeof(item);
+    item.item_template_id = 10;
+    item.item_mode = KernelItemMode_Fungible;
+    item.max_stack = 10;
+    item.capability_flags = KernelItemCapability_Consumable;
+    item.entity_template_id = 200;
+    item.throw_policy.struct_size = sizeof(item.throw_policy);
+    item.throw_policy.mode = KernelItemThrowMode_None;
+    item.use_policy.struct_size = sizeof(item.use_policy);
+    item.use_policy.quantity_cost = 1;
+    item.item_used_trigger.struct_size = sizeof(item.item_used_trigger);
+    KernelGameplayCatalogDefinition catalog{};
+    catalog.struct_size = sizeof(catalog);
+    catalog.catalog_version = 5;
+    catalog.catalog_hash = 0x5001ull;
+    catalog.entity_templates = &prop;
+    catalog.entity_template_count = 1;
+    catalog.item_templates = &item;
+    catalog.item_template_count = 1;
+    assert(Kernel_LoadGameplayCatalog(kernel, &catalog, nullptr));
+}
+
 KernelRpcRequestId invoke(KernelHandle* kernel, const std::string& request) {
     KernelRpcRequestId request_id = 0;
     assert(Kernel_InvokeRpcCommand(
@@ -455,11 +488,82 @@ void query_and_mutation_phase_behavior() {
     Kernel_Destroy(kernel);
 }
 
+void item_inventory_rpc_contract() {
+    KernelConfig config = server_config();
+    KernelHandle* kernel = Kernel_Create(&config);
+    assert(kernel != nullptr);
+    load_item_catalog(kernel);
+    assert(Kernel_StartDedicatedServer(kernel, 7812));
+
+    KernelServerEntityCreateInfo actor_info{};
+    actor_info.struct_size = sizeof(actor_info);
+    actor_info.entity_type = KernelEntityType_Actor;
+    actor_info.actor_type = KernelActorType_Player;
+    actor_info.owner_peer = 7;
+    actor_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+    std::uint32_t actor = 0;
+    assert(Kernel_ServerCreateEntity(kernel, &actor_info, &actor));
+
+    const KernelRpcRequestId create_container = invoke(
+        kernel,
+        std::string(R"({"jsonrpc":"2.0","id":30,"method":"inventory.create_container","params":{"owner_entity_id":)") +
+            std::to_string(actor) + R"(,"slot_capacity":4}})" );
+    assert(!response_ready(kernel, create_container));
+    Kernel_Update(kernel, 1.0f / 30.0f);
+    const std::uint64_t container_id =
+        poll(kernel, create_container)["result"]["container_id"];
+    assert(container_id != 0u);
+
+    const KernelRpcRequestId create_item = invoke(
+        kernel,
+        std::string(R"({"jsonrpc":"2.0","id":31,"method":"inventory.create_item","params":{"item_template_id":10,"quantity":3,"container_id":)") +
+            std::to_string(container_id) + "}}");
+    Kernel_Update(kernel, 1.0f / 30.0f);
+    const std::uint64_t item_id =
+        poll(kernel, create_item)["result"]["item_instance_id"];
+    assert(item_id != 0u);
+
+    Json item = poll(kernel, invoke(
+        kernel,
+        std::string(R"({"jsonrpc":"2.0","id":32,"method":"item.get","params":{"item_instance_id":)") +
+            std::to_string(item_id) + "}}"));
+    assert(item["result"]["item"]["quantity"] == 3);
+
+    Json owned = poll(kernel, invoke(
+        kernel,
+        std::string(R"({"jsonrpc":"2.0","id":33,"method":"inventory.list_owned","params":{"owner_entity_id":)") +
+            std::to_string(actor) + "}}"));
+    assert(owned["result"]["containers"].size() == 1);
+    Json snapshot = poll(kernel, invoke(
+        kernel,
+        std::string(R"({"jsonrpc":"2.0","id":34,"method":"inventory.get_snapshot","params":{"container_id":)") +
+            std::to_string(container_id) + "}}"));
+    assert(snapshot["result"]["items"].size() == 1);
+
+    const KernelRpcRequestId submit = invoke(
+        kernel,
+        std::string(R"({"jsonrpc":"2.0","id":35,"method":"gameplay.submit_request","params":{"request":{"requester_peer":7,"request_id":900,"instigator_net_id":)") +
+            std::to_string(actor) +
+            R"(,"domain_action":1,"selected_item_instance_id":)" +
+            std::to_string(item_id) +
+            R"(,"target_net_id":0,"requested_quantity":1,"placement_position":{"x":0.0,"y":0.0,"z":0.0},"throw_direction":{"x":1.0,"y":0.0,"z":0.0}}}})" );
+    Kernel_Update(kernel, 1.0f / 30.0f);
+    assert(poll(kernel, submit)["result"]["ok"] == true);
+    Json outcome = poll(kernel, invoke(
+        kernel,
+        R"({"jsonrpc":"2.0","id":36,"method":"gameplay.get_request_outcome","params":{"requester_peer":7,"request_id":900}})"));
+    assert(outcome["result"]["outcome"]["status"] ==
+        KernelGameplayRequestStatus_Committed);
+    assert(outcome["result"]["outcome"]["committed_quantity"] == 1);
+    Kernel_Destroy(kernel);
+}
+
 }  // namespace
 
 int main() {
     dev_methods_and_protocol_errors();
     response_store_capacity_is_bounded();
     query_and_mutation_phase_behavior();
+    item_inventory_rpc_contract();
     return 0;
 }

@@ -1,0 +1,35 @@
+licenses(["notice"])
+
+package(default_visibility = ["//visibility:public"])
+
+# Reusable pieces for capture harnesses: transform -> CSV recording, skeleton
+# manifest loading, and the movement path script. Nothing here depends on the
+# kernel, so a new capture (entity paths, projectile traces, ...) can reuse the
+# same CSV schema and the same tools/capture Python renderer/analyzer.
+cc_library(
+    name = "transform_capture",
+    srcs = [
+        "path_script.cc",
+        "skeleton_manifest.cc",
+        "transform_capture.cc",
+    ],
+    hdrs = [
+        "path_script.h",
+        "skeleton_manifest.h",
+        "transform_capture.h",
+    ],
+    includes = [".."],
+    deps = [
+        "@com_github_nlohmann_json//:json",
+        "@glm//:glm",
+    ],
+)
+
+cc_test(
+    name = "path_script_test",
+    srcs = ["path_script_test.cc"],
+    deps = [
+        ":transform_capture",
+        "@glm//:glm",
+    ],
+)

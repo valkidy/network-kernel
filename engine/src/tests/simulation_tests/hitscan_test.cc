@@ -39,7 +39,7 @@ int main() {
     world.registry().get<network_example::Hitbox>(*enemy_entity) =
         network_example::Hitbox{{0.0f, 0.8f, 0.0f}, {0.4f, 0.8f, 0.4f}, 0};
 
-    PlayerInput input{};
+    KernelPlayerInput input{};
     input.input_seq = 1;
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     input.buttons = InputButton_Fire;

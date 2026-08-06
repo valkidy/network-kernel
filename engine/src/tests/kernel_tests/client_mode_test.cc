@@ -144,7 +144,6 @@ KernelProjectileTemplateDefinition projectile_template(
     projectile_template.mechanics.collider_template_id = 10;
     projectile_template.mechanics.collision_mask = KERNEL_COLLISION_MASK_DAMAGEABLE;
     projectile_template.mechanics.max_hit_count = 1;
-    projectile_template.mechanics.flags = 1u;
     return projectile_template;
 }
 
@@ -339,7 +338,7 @@ void client_query_collider_shapes_reports_render_colliders() {
     for (std::uint32_t index = 0; index < state_count; ++index) {
         if (states[index].net_id == 101) {
             saw_projectile = true;
-            require(states[index].projectile_template_id == 3);
+            require(states[index].template_id == 3);
             require(states[index].collider_template_id == 10);
         }
     }
@@ -408,9 +407,9 @@ void local_deterministic_prediction_query_uses_projectile_template_collider() {
 
     client.local_client_peer_id_ = 7;
     client.local_player_net_id_ = player_net_id;
-    PlayerInput input{};
+    KernelPlayerInput input{};
     input.input_seq = 1;
-    input.action_intent = ActionIntent{
+    input.action_intent = KernelActionIntent{
         1234u, KernelActionBinding_PrimaryFire, 0u, 0u};
     input.selected_weapon = 2;
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
@@ -427,7 +426,7 @@ void local_deterministic_prediction_query_uses_projectile_template_collider() {
     require(state_count == 1);
     require(states[0].net_id == 0);
     require(states[0].status == RenderEntityStatus_Predicted);
-    require(states[0].projectile_template_id == 3);
+    require(states[0].template_id == 3);
     require(states[0].collider_template_id == 10);
 
     std::array<KernelColliderShapeView, 4> shapes{};
@@ -544,7 +543,7 @@ void compensation_clamps_not_rejects_client_local_time() {
                180000,
                received_server_time_us) == 130000);
 
-    PlayerInput input{};
+    KernelPlayerInput input{};
     input.client_action_time_us = 180000;
     network_example::QueuedInput within_window{
         7,
@@ -1473,7 +1472,7 @@ void real_character_prediction_is_presented_smoothly_at_720_fps() {
         engine.client_local_time_us_ += static_cast<std::uint64_t>(
             static_cast<double>(kRenderDeltaSeconds) * 1000000.0);
         if (frame % 24u == 0u) {
-            PlayerInput input{};
+            KernelPlayerInput input{};
             input.move.x = frame < 96u ? 1.0f : 0.0f;
             require(engine.step_local_character_prediction(
                 input,
@@ -1558,9 +1557,9 @@ void owner_action_prediction_and_discrete_interpolation() {
         0,
     }});
 
-    PlayerInput input{};
+    KernelPlayerInput input{};
     input.input_seq = 1;
-    input.action_intent = ActionIntent{
+    input.action_intent = KernelActionIntent{
         7001u, KernelActionBinding_PrimaryFire, 0u, 0u};
     input.buttons = InputButton_Aim;
     input.selected_weapon = network_example::kWeaponSlot3;
@@ -2335,7 +2334,7 @@ void projectile_snapshot_waits_for_reliable_metadata_before_render() {
     require(count == 1);
     require(states[0].net_id == 101);
     require(states[0].status == RenderEntityStatus_Active);
-    require(states[0].projectile_template_id == 3);
+    require(states[0].template_id == 3);
     require(states[0].collider_template_id == 10);
     require(client.query_collider_shapes(nullptr, shapes.data(), shapes.size()) == 1);
     require(shapes[0].entity_net_id == 101);
@@ -2550,6 +2549,86 @@ void budget_omitted_projectile_snapshot_does_not_delete_bound_prediction() {
     require(client.predicted_projectiles_[0].net_id == 101);
 }
 
+void reliable_prop_state_overrides_older_snapshot_and_survives_omission() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+
+    network_example::EntitySpawnPacket spawn{};
+    spawn.net_id = 51;
+    spawn.entity_type = network_example::EntityType::kProp;
+    spawn.server_tick = 10;
+    spawn.position = glm::vec3{5.0f, 0.0f, 0.0f};
+    spawn.entity_template_id = 7;
+    spawn.item_template_id = 13;
+    spawn.item_instance_id = 1001;
+    spawn.world_item_mode = KernelWorldItemMode_InFlight;
+    client.handle_client_spawn(spawn);
+
+    network_example::WorldSnapshot flight;
+    flight.header.server_tick = 10;
+    network_example::EntitySnapshot prop;
+    prop.net_id = 51;
+    prop.type = network_example::EntityType::kProp;
+    prop.position = glm::vec3{5.0f, 0.0f, 0.0f};
+    prop.velocity = glm::vec3{8.0f, 0.0f, 0.0f};
+    prop.hp = 5;
+    prop.max_hp = 5;
+    flight.entities.push_back(prop);
+    client.handle_client_snapshot(flight);
+
+    network_example::PropStateChangeBatchPacket landed{};
+    landed.server_tick = 12;
+    network_example::PropStateChangeRecord landed_record{};
+    landed_record.net_id = 51;
+    landed_record.changed_fields = network_example::kPropStateChangeMode |
+        network_example::kPropStateChangeTransform |
+        network_example::kPropStateChangeVelocity |
+        network_example::kPropStateChangeHealth;
+    landed_record.world_mode = KernelWorldItemMode_Placed;
+    landed_record.position = glm::vec3{2.0f, 0.0f, 0.0f};
+    landed_record.rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+    landed_record.velocity = glm::vec3{0.0f};
+    landed_record.hp = 3;
+    landed_record.max_hp = 5;
+    landed.records.push_back(landed_record);
+    client.handle_client_prop_state_change_batch(landed);
+
+    std::array<RenderEntityState, 4> states{};
+    std::uint32_t count =
+        client.get_render_states_at_time(400000, states.data(), states.size());
+    require(count == 1);
+    require(states[0].net_id == 51);
+    require(states[0].template_id == 13);
+    require(states[0].item_instance_id == 1001);
+    require(states[0].position.x == 2.0f);
+    require(states[0].velocity.x == 0.0f);
+    require(states[0].world_item_mode == KernelWorldItemMode_Placed);
+    require(states[0].hp == 3);
+    require(states[0].max_hp == 5);
+
+    network_example::PropStateChangeBatchPacket stale = landed;
+    stale.server_tick = 11;
+    stale.records[0].position = glm::vec3{99.0f, 0.0f, 0.0f};
+    stale.records[0].hp = 1;
+    client.handle_client_prop_state_change_batch(stale);
+
+    network_example::WorldSnapshot omitted;
+    omitted.header.server_tick = 13;
+    client.handle_client_snapshot(omitted);
+    count = client.get_render_states_at_time(433333, states.data(), states.size());
+    require(count == 1);
+    require(states[0].net_id == 51);
+    require(states[0].template_id == 13);
+    require(states[0].item_instance_id == 1001);
+    require(states[0].position.x == 2.0f);
+    require(states[0].hp == 3);
+}
+
 void destroyed_tombstone_blocks_older_snapshot_render() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
@@ -2580,6 +2659,41 @@ void destroyed_tombstone_blocks_older_snapshot_render() {
     for (std::uint32_t index = 0; index < count; ++index) {
         require(states[index].net_id != 21);
     }
+}
+
+void pure_prop_render_uses_entity_template_as_template_id() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+
+    network_example::EntitySpawnPacket spawn{};
+    spawn.net_id = 52;
+    spawn.entity_type = network_example::EntityType::kProp;
+    spawn.server_tick = 10;
+    spawn.entity_template_id = 204;
+    spawn.position = glm::vec3{3.0f, 0.0f, 0.0f};
+    client.handle_client_spawn(spawn);
+
+    network_example::WorldSnapshot snapshot;
+    snapshot.header.server_tick = 10;
+    network_example::EntitySnapshot prop;
+    prop.net_id = 52;
+    prop.type = network_example::EntityType::kProp;
+    prop.position = spawn.position;
+    snapshot.entities.push_back(prop);
+    client.handle_client_snapshot(snapshot);
+
+    std::array<RenderEntityState, 2> states{};
+    const std::uint32_t count =
+        client.get_render_states_at_time(333333, states.data(), states.size());
+    require(count == 1);
+    require(states[0].net_id == 52);
+    require(states[0].template_id == 204);
+    require(states[0].item_instance_id == 0);
 }
 
 void out_of_range_tombstone_does_not_fail_client_prediction() {
@@ -2764,7 +2878,7 @@ void actor_template_update_rebinds_cached_snapshot_debug_metadata() {
     std::array<RenderEntityState, 2> states{};
     require(client.get_render_states_at_time(333333, states.data(), states.size()) == 1);
     require(states[0].net_id == 30);
-    require(states[0].actor_template_id == 2);
+    require(states[0].template_id == 2);
     require(states[0].collider_template_id == 20);
 
     std::array<KernelColliderShapeView, 2> shapes{};
@@ -2780,7 +2894,7 @@ void actor_template_update_rebinds_cached_snapshot_debug_metadata() {
 
     require(client.get_render_states_at_time(333333, states.data(), states.size()) == 1);
     require(states[0].net_id == 30);
-    require(states[0].actor_template_id == 4);
+    require(states[0].template_id == 4);
     require(states[0].collider_template_id == 21);
     require(client.query_collider_shapes(nullptr, shapes.data(), shapes.size()) == 1);
     require(shapes[0].entity_net_id == 30);
@@ -2879,10 +2993,10 @@ void predicted_local_render_state_uses_reliable_actor_template_metadata() {
     auto remote = find_state(20);
     require(local != states.end());
     require(local->status == RenderEntityStatus_Predicted);
-    require(local->actor_template_id == 1);
+    require(local->template_id == 1);
     require(local->collider_template_id == 20);
     require(remote != states.end());
-    require(remote->actor_template_id == 1);
+    require(remote->template_id == 1);
     require(remote->collider_template_id == 20);
 
     client.handle_client_template_update(network_example::EntityTemplateUpdatePacket{
@@ -2897,10 +3011,10 @@ void predicted_local_render_state_uses_reliable_actor_template_metadata() {
     remote = find_state(20);
     require(local != states.end());
     require(local->status == RenderEntityStatus_Predicted);
-    require(local->actor_template_id == 4);
+    require(local->template_id == 4);
     require(local->collider_template_id == 21);
     require(remote != states.end());
-    require(remote->actor_template_id == 1);
+    require(remote->template_id == 1);
     require(remote->collider_template_id == 20);
 }
 
@@ -3175,6 +3289,54 @@ void local_deterministic_sphere_projectile_hits_prediction_terrain() {
     require(client.get_benchmark_stats(&stats));
     require(stats.projectile_count == 0);
     require(stats.total_entity_count == 0);
+}
+
+void local_deterministic_projectile_hits_prediction_pure_prop() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+    load_projectile_collision_catalog(
+        &client, KernelProjectileSyncMode_LocalPredictedDeterministic);
+    install_prediction_terrain_box(
+        &client,
+        glm::vec3{100.0f, 0.0f, 0.0f},
+        glm::vec3{0.1f, 0.1f, 0.1f});
+
+    KernelColliderTemplateDefinition ice_block_collider{};
+    ice_block_collider.struct_size = sizeof(ice_block_collider);
+    ice_block_collider.template_id = 13;
+    ice_block_collider.shape_type = KernelColliderShapeType_OrientedBox;
+    ice_block_collider.center = KernelVec3{0.0f, 1.5f, 0.0f};
+    ice_block_collider.shape_params = KernelVec4{1.0f, 1.5f, 0.3f, 0.0f};
+    ice_block_collider.layer_mask = KERNEL_COLLISION_LAYER_NEUTRAL;
+    ice_block_collider.purpose_flags = KernelColliderPurpose_Hit;
+    client.collider_templates_.push_back(ice_block_collider);
+
+    RenderEntityState ice_block{};
+    ice_block.net_id = 204;
+    ice_block.entity_type =
+        static_cast<std::uint16_t>(network_example::EntityType::kProp);
+    ice_block.position = KernelVec3{2.0f, 0.0f, 0.0f};
+    ice_block.rotation.w = 1.0f;
+    ice_block.collider_template_id = ice_block_collider.template_id;
+    client.render_states_.push_back(ice_block);
+    client.sync_client_render_colliders();
+    require(client.prediction_obstacle_collider_ids_.contains(ice_block.net_id));
+
+    client.predicted_projectiles_.push_back(predicted_projectile(
+        KernelProjectileSyncMode_LocalPredictedDeterministic));
+    client.advance_predicted_projectiles(1.0f / 30.0f);
+
+    require(client.predicted_projectiles_.size() == 1);
+    require(client.predicted_projectiles_[0].locally_terminated);
+    require(client.predicted_projectiles_[0].position.x > 0.7f);
+    require(client.predicted_projectiles_[0].position.x < 2.1f);
+
+    client.render_states_.clear();
+    client.sync_client_render_colliders();
+    require(client.prediction_obstacle_collider_ids_.empty());
 }
 
 void local_deterministic_box_projectile_hits_prediction_terrain() {
@@ -3513,10 +3675,10 @@ void action_result_and_remote_presentation_queues_are_isolated() {
     network_example::KernelEngine client(config);
     client.reset_runtime_state(KernelMode_Client);
 
-    PlayerInput invalid_fire{};
-    invalid_fire.action_intent = ActionIntent{
+    KernelPlayerInput invalid_fire{};
+    invalid_fire.action_intent = KernelActionIntent{
         1u, KernelActionBinding_PrimaryFire, 1u, 0u};
-    const PlayerInput prepared = client.prepare_client_input(invalid_fire);
+    const KernelPlayerInput prepared = client.prepare_client_input(invalid_fire);
     require(prepared.action_intent.action_instance_id == 0u);
 
     client.outstanding_predicted_actions_.emplace(
@@ -3742,11 +3904,11 @@ void server_routes_fire_result_to_owner_and_presentation_to_observer() {
     server.peer_sessions_.push_back(owner);
     server.peer_sessions_.push_back(observer);
 
-    PlayerInput input{};
+    KernelPlayerInput input{};
     input.input_seq = 1;
-    input.action_intent = ActionIntent{
+    input.action_intent = KernelActionIntent{
         7001u, KernelActionBinding_PrimaryFire, 0u, 0u};
-    input.action_input = ActionInput{7001u, 1u, 0u, 0u};
+    input.action_input = KernelActionInput{7001u, 1u, 0u, 0u};
     input.selected_weapon = 0;
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
     auto* owner_session = server.find_session(1);
@@ -3807,7 +3969,7 @@ void server_routes_fire_result_to_owner_and_presentation_to_observer() {
     require(observer_presentation);
 
     owner_session = server.find_session(1);
-    PlayerInput duplicate_input = input;
+    KernelPlayerInput duplicate_input = input;
     server.prepare_server_action_intent(owner_session, &duplicate_input);
     require(duplicate_input.action_intent.action_instance_id == 0u);
     server.simulate_tick();
@@ -3816,7 +3978,7 @@ void server_routes_fire_result_to_owner_and_presentation_to_observer() {
             .get<network_example::WeaponState>(*owner_entity)
             .ammo[0] == ammo_after);
 
-    PlayerInput release_input{};
+    KernelPlayerInput release_input{};
     release_input.input_seq = 2;
     release_input.selected_weapon = 0;
     server.pending_inputs_.push_back(network_example::QueuedInput{
@@ -3842,9 +4004,9 @@ void server_routes_fire_result_to_owner_and_presentation_to_observer() {
         0,
     }});
     input.input_seq = 3;
-    input.action_intent = ActionIntent{
+    input.action_intent = KernelActionIntent{
         7002u, KernelActionBinding_PrimaryFire, 0u, 0u};
-    input.action_input = ActionInput{7002u, 1u, 0u, 0u};
+    input.action_input = KernelActionInput{7002u, 1u, 0u, 0u};
     owner_session = server.find_session(1);
     server.prepare_server_action_intent(owner_session, &input);
     require(input.action_intent.action_instance_id == 7002u);
@@ -3903,9 +4065,9 @@ void server_routes_fire_result_to_owner_and_presentation_to_observer() {
         3,
     }});
     input.input_seq = 5;
-    input.action_intent = ActionIntent{
+    input.action_intent = KernelActionIntent{
         7003u, KernelActionBinding_PrimaryFire, 0u, 0u};
-    input.action_input = ActionInput{7003u, 1u, 0u, 0u};
+    input.action_input = KernelActionInput{7003u, 1u, 0u, 0u};
     const std::uint16_t hold_ammo_before =
         server.world_.registry()
             .get<network_example::WeaponState>(*owner_entity)
@@ -3963,14 +4125,14 @@ void native_fixed_tick_coalesces_client_input_and_owns_sequence() {
     network_example::LoopbackTransport* loopback = transport.get();
     client.transport_ = std::move(transport);
 
-    PlayerInput first{};
+    KernelPlayerInput first{};
     first.input_seq = 900u;
     first.move = KernelVec2{0.25f, 0.0f};
-    client.submit_input(7u, first);
-    PlayerInput latest = first;
+    client.submit_player_input(7u, first);
+    KernelPlayerInput latest = first;
     latest.input_seq = 3u;
     latest.move = KernelVec2{1.0f, 0.0f};
-    client.submit_input(7u, latest);
+    client.submit_player_input(7u, latest);
 
     require(client.pending_prediction_inputs_.empty());
     require(client.next_client_input_seq_ == 1u);
@@ -3982,8 +4144,8 @@ void native_fixed_tick_coalesces_client_input_and_owns_sequence() {
     network_example::TransportEvent sent;
     require(loopback->PollClientEvent(sent));
     network_example::PeerId sent_player = 0u;
-    PlayerInput sent_input{};
-    require(network_example::decode_input_packet(
+    KernelPlayerInput sent_input{};
+    require(network_example::decode_player_input_packet(
         sent.payload.data(), sent.payload.size(), &sent_player, &sent_input));
     require(sent_player == 7u);
     require(sent_input.input_seq == 1u);
@@ -3991,13 +4153,13 @@ void native_fixed_tick_coalesces_client_input_and_owns_sequence() {
 
     latest.input_seq = 5000u;
     latest.move = KernelVec2{0.0f, 1.0f};
-    client.submit_input(7u, latest);
+    client.submit_player_input(7u, latest);
     client.update(1.0f / 30.0f);
     require(client.pending_prediction_inputs_.size() == 2u);
     require(client.pending_prediction_inputs_[1].input.input_seq == 2u);
     require(client.pending_prediction_inputs_[1].input.move.y == 1.0f);
     require(loopback->PollClientEvent(sent));
-    require(network_example::decode_input_packet(
+    require(network_example::decode_player_input_packet(
         sent.payload.data(), sent.payload.size(), &sent_player, &sent_input));
     require(sent_input.input_seq == 2u);
     require(sent_input.move.y == 1.0f);
@@ -4014,12 +4176,12 @@ std::size_t fixed_tick_command_count_for_submit_rate(std::uint32_t updates_per_s
     client.local_client_peer_id_ = 7u;
     client.local_player_net_id_ = 1u;
 
-    PlayerInput input{};
+    KernelPlayerInput input{};
     input.move = KernelVec2{1.0f, 0.0f};
     const float delta_seconds = 1.0f / static_cast<float>(updates_per_second);
     for (std::uint32_t update = 0; update < updates_per_second; ++update) {
         input.input_seq = 1000u + update;
-        client.submit_input(7u, input);
+        client.submit_player_input(7u, input);
         client.update(delta_seconds);
     }
     require(client.pending_prediction_inputs_.empty() ||
@@ -4053,11 +4215,11 @@ void native_action_intent_latch_and_server_movement_hold_are_bounded() {
     client.local_client_peer_id_ = 7u;
     client.local_player_net_id_ = 1u;
 
-    PlayerInput edge{};
-    edge.action_intent = ActionIntent{
+    KernelPlayerInput edge{};
+    edge.action_intent = KernelActionIntent{
         42u, KernelActionBinding_PrimaryFire, 0u, 0u};
-    client.submit_input(7u, edge);
-    client.submit_input(7u, edge);
+    client.submit_player_input(7u, edge);
+    client.submit_player_input(7u, edge);
     require(client.pending_client_action_intents_.size() == 1u);
     client.update(1.0f / 30.0f);
     require(client.pending_client_action_intents_.empty());
@@ -4066,7 +4228,7 @@ void native_action_intent_latch_and_server_movement_hold_are_bounded() {
 
     for (std::uint32_t index = 0; index < 33u; ++index) {
         edge.action_intent.action_instance_id = 100u + index;
-        client.submit_input(7u, edge);
+        client.submit_player_input(7u, edge);
     }
     require(client.pending_client_action_intents_.size() == 32u);
     bool saw_overflow = false;
@@ -4088,12 +4250,12 @@ void native_action_intent_latch_and_server_movement_hold_are_bounded() {
     session.welcomed = true;
     server.peer_sessions_.push_back(session);
 
-    PlayerInput movement{};
+    KernelPlayerInput movement{};
     movement.input_seq = 1u;
     movement.move = KernelVec2{1.0f, 0.0f};
-    movement.action_intent = ActionIntent{
+    movement.action_intent = KernelActionIntent{
         500u, KernelActionBinding_PrimaryFire, 0u, 0u};
-    movement.action_input = ActionInput{500u, 1u, 0u, 0u};
+    movement.action_input = KernelActionInput{500u, 1u, 0u, 0u};
     require(server.cache_server_movement_input(
         &server.peer_sessions_[0], movement, UINT64_C(100000)));
     require(!server.cache_server_movement_input(
@@ -4159,6 +4321,8 @@ int main() {
     client_despawn_removes_predicted_projectile();
     out_of_range_despawn_keeps_local_deterministic_predicted_projectile();
     budget_omitted_projectile_snapshot_does_not_delete_bound_prediction();
+    reliable_prop_state_overrides_older_snapshot_and_survives_omission();
+    pure_prop_render_uses_entity_template_as_template_id();
     destroyed_tombstone_blocks_older_snapshot_render();
     out_of_range_tombstone_does_not_fail_client_prediction();
     out_of_range_reentry_without_metadata_still_fails_prediction();
@@ -4169,6 +4333,7 @@ int main() {
     server_snapshot_send_set_carries_vision_debug_to_client();
     predicted_projectile_lifetime_cleanup_removes_batch_projectile();
     local_deterministic_sphere_projectile_hits_prediction_terrain();
+    local_deterministic_projectile_hits_prediction_pure_prop();
     local_deterministic_box_projectile_hits_prediction_terrain();
     local_projectile_miss_and_hybrid_remain_kinematic();
     local_projectile_missing_physics_falls_back_once();
@@ -4195,12 +4360,12 @@ int main() {
     assert(kernel != nullptr);
     assert(Kernel_StartClient(kernel, "127.0.0.1:9"));
 
-    PlayerInput input{};
+    KernelPlayerInput input{};
     input.input_seq = 1;
     input.client_action_time_us = 33333;
     input.move = KernelVec2{1.0f, 0.0f};
     input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
-    Kernel_SubmitInput(kernel, 0, &input);
+    Kernel_SubmitPlayerInput(kernel, 0, &input);
 
     std::array<KernelEvent, 8> events{};
     const std::uint32_t event_count =

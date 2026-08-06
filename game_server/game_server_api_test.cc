@@ -217,6 +217,8 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip() {
         "sentry_grunt_vision_cone.yaml",
         "sentry_grunt_hit_aabb.yaml",
         "area_effect_sphere.yaml",
+        "collision_damage_prop_hitbox.yaml",
+        "ice_block_hitbox.yaml",
         "player_hit_aabb.yaml",
         "player_movement_capsule.yaml",
         "rocket_aabb.yaml",
@@ -231,9 +233,15 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip() {
             read_text_file(root / "game_server" / "collider_templates" / file)});
     }
     const std::vector<std::string> entity_files = {
+        "activation_damage_prop.yaml",
+        "collision_damage_prop.yaml",
         "earth_mother.yaml",
+        "ice_block.yaml",
+        "interaction_terminal.yaml",
         "player.yaml",
         "sentry_grunt.yaml",
+        "stateful_magic_bottle_prop.yaml",
+        "stateful_potion_prop.yaml",
     };
     for (const std::string& file : entity_files) {
         files.push_back({
@@ -269,6 +277,34 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip() {
         files.push_back({
             "action_templates/" + file,
             read_text_file(root / "game_server" / "action_templates" / file)});
+    }
+    const std::vector<std::string> action_graph_files = {
+        "action_apply_damage_at_activated.yaml",
+        "action_apply_damage_at_collision.yaml",
+        "action_apply_damage_at_destroy_entity.yaml",
+        "action_apply_damage_at_health_depleted.yaml",
+        "action_apply_health_change_at_item_used.yaml",
+        "action_spawn_entity_at_destroy_entity.yaml",
+        "action_spawn_ice_and_damage_self_at_collision.yaml",
+        "action_spawn_projectile_at_impact.yaml",
+    };
+    for (const std::string& file : action_graph_files) {
+        files.push_back({
+            "action_graph_templates/" + file,
+            read_text_file(
+                root / "game_server" / "action_graph_templates" / file)});
+    }
+    const std::vector<std::string> item_files = {
+        "activation_token.yaml",
+        "fungible_potion.yaml",
+        "grenade_consumable.yaml",
+        "stateful_magic_bottle.yaml",
+        "stateful_potion.yaml",
+    };
+    for (const std::string& file : item_files) {
+        files.push_back({
+            "item_templates/" + file,
+            read_text_file(root / "game_server" / "item_templates" / file)});
     }
     const std::vector<std::string> projectile_files = {
         "beam_rifle_beam.yaml",
@@ -372,10 +408,10 @@ int main() {
     assert(loaded_catalog);
     assert(load_result.status == KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS);
     assert(load_result.error_code == KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_NONE);
-    assert(load_result.catalog_version == 2);
+    assert(load_result.catalog_version == 8);
     assert(load_result.catalog_hash != 0);
     assert(load_result.projectile_template_count > 0);
-    assert(load_result.collider_template_count == 11);
+    assert(load_result.collider_template_count == 14);
     assert(load_result.collider_binding_count == 0);
     KernelSessionRulesConfig session_rules{};
     session_rules.struct_size = sizeof(session_rules);
@@ -431,7 +467,6 @@ int main() {
     assert(local_player_info.has_welcome != 0u);
     assert(local_player_info.peer_id != 0u);
     assert(local_player_info.player_net_id != 0u);
-    Kernel_Destroy(catalog_client);
 
     GameServerHandle* game_server = GameServer_Create(kernel);
     assert(game_server != nullptr);
@@ -462,9 +497,58 @@ int main() {
     assert(template_info.fire_mode == KernelWeaponFireMode_Projectile);
     assert(template_info.mechanics.projectile_template_id == 6);
     handle_pending_events(kernel, game_server);
+    std::array<KernelInventoryContainerView, 2> inventory_containers{};
+    for (KernelInventoryContainerView& container : inventory_containers) {
+        container.struct_size = sizeof(KernelInventoryContainerView);
+    }
+    assert(Kernel_CopyOwnedInventoryContainers(
+               kernel,
+               local_player_info.player_net_id,
+               inventory_containers.data(),
+               static_cast<std::uint32_t>(inventory_containers.size())) == 1);
+    assert(inventory_containers[0].slot_capacity == 8);
+    assert(inventory_containers[0].occupied_slot_count == 3);
+    std::array<KernelItemInstanceView, 8> inventory_items{};
+    for (KernelItemInstanceView& item : inventory_items) {
+        item.struct_size = sizeof(KernelItemInstanceView);
+    }
+    assert(Kernel_CopyInventorySlots(
+               kernel,
+               inventory_containers[0].inventory_container_id,
+               inventory_items.data(),
+               static_cast<std::uint32_t>(inventory_items.size())) == 3);
+    assert(inventory_items[0].slot == 0);
+    assert(inventory_items[0].item_template_id == 3002);
+    assert(inventory_items[0].quantity == 5);
+    assert(inventory_items[1].slot == 1);
+    assert(inventory_items[1].item_template_id == 3003);
+    assert(inventory_items[1].quantity == 1);
+    assert(inventory_items[1].portable_state_field_count == 1);
+    assert(inventory_items[1].portable_state_fields[0].uint32_default == 3);
+    assert(inventory_items[2].slot == 2);
+    assert(inventory_items[2].item_template_id == 3004);
+    assert(inventory_items[2].quantity == 1);
+    assert(inventory_items[2].portable_state_field_count == 1);
+    assert(inventory_items[2].portable_state_fields[0].uint32_default == 1);
+
+    KernelEvent duplicate_player_joined{};
+    duplicate_player_joined.type = KernelEventType_PlayerJoined;
+    duplicate_player_joined.net_id = local_player_info.player_net_id;
+    GameServer_HandleEvent(game_server, &duplicate_player_joined);
+    assert(Kernel_CopyOwnedInventoryContainers(
+               kernel,
+               local_player_info.player_net_id,
+               inventory_containers.data(),
+               static_cast<std::uint32_t>(inventory_containers.size())) == 1);
+    assert(Kernel_CopyInventorySlots(
+               kernel,
+               inventory_containers[0].inventory_container_id,
+               inventory_items.data(),
+               static_cast<std::uint32_t>(inventory_items.size())) == 3);
+    Kernel_Destroy(catalog_client);
     run_game_server_frames(kernel, game_server, 3);
     assert(GameServer_GetEnemyCount(game_server) == 10);
-    assert(query_enemy_count(kernel) == 10);
+    assert(query_enemy_count(kernel) == 2);
 
     GameServer_DespawnAll(game_server, KernelDespawnReason_Destroyed);
     GameServer_Tick(game_server, 1.0f / 30.0f);

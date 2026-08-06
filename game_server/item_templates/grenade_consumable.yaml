@@ -1,0 +1,18 @@
+id: 3001
+name: grenade_consumable
+mode: fungible
+max_stack: 5
+capabilities: [throwable]
+throw:
+  mode: consume_and_spawn
+use:
+  quantity_cost: 1
+  cooldown_ticks: 15
+  destroy_when_empty: true
+triggers:
+  on_item_used:
+    action_graph: action_spawn_projectile_at_impact
+    parameters:
+      template: grenade_shell_projectile
+      position: event.position
+      direction: event.direction
