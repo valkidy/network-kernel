@@ -392,13 +392,24 @@ bool advance_locomotion_state(
         const float target_yaw = std::atan2(move_input.x, move_input.y);
         const float max_yaw_step = max_yaw_degrees_per_second *
             std::numbers::pi_v<float> / 180.0f * fixed_delta_seconds;
-        state->root_yaw_radians += std::clamp(
-            shortest_angle_delta(state->root_yaw_radians, target_yaw),
-            -max_yaw_step,
-            max_yaw_step);
+        const float remaining =
+            shortest_angle_delta(state->root_yaw_radians, target_yaw);
+        const float applied =
+            std::clamp(remaining, -max_yaw_step, max_yaw_step);
+        state->root_yaw_radians += applied;
         state->root_yaw_radians = std::remainder(
             state->root_yaw_radians,
             2.0f * std::numbers::pi_v<float>);
+        // How much of the turn is still owed after this tick. The solve caps
+        // its rotation lead with it so a step is never aimed past the heading
+        // the actor is actually turning to.
+        state->pending_yaw_radians = remaining - applied;
+        state->has_pending_yaw_radians = true;
+    } else {
+        // No target to arrive at: the heading may be driven from outside, so
+        // how far it will keep turning is genuinely unknown.
+        state->pending_yaw_radians = 0.0f;
+        state->has_pending_yaw_radians = false;
     }
     // A leg only takes a new step when the actor intends to move or turn
     // (LocomotionTest: legs change only when movement.sqrMagnitude > 0 or the
@@ -597,9 +608,27 @@ bool solve_locomotion_pose(
         static_cast<float>(definition.step_duration_ticks - 1u);
     const glm::vec3 predicted_root_position =
         pose_root_position + root_delta_flat * swing_ticks;
+    // Rotation is extrapolated only as far as the actor still intends to turn.
+    // Translation velocity persists -- an actor that is walking keeps walking --
+    // but a turn has a destination and stops on arrival, and a turn is the same
+    // order as a swing: a 30 degree patrol turn at 45 deg/s runs 20 ticks
+    // against an 18 tick swing. Extrapolating the turn rate across the whole
+    // swing therefore aims a step at rotation that has already finished, and
+    // across a 16 m stance radius that misses by 7 m -- twice the stride, so
+    // the foot is thrown further than the step was worth.
+    //
+    // pending_yaw_radians is what advance_locomotion_state has left to slew.
+    // When it is unknown (yaw written externally, with no target to arrive at)
+    // the rate is all there is to go on and the horizon is used unchanged.
+    float predicted_yaw_radians = state->last_yaw_delta_radians * swing_ticks;
+    if (state->has_pending_yaw_radians &&
+        std::abs(predicted_yaw_radians) >
+            std::abs(state->pending_yaw_radians)) {
+        predicted_yaw_radians = state->pending_yaw_radians;
+    }
     const glm::quat predicted_root_rotation =
         glm::angleAxis(
-            state->last_yaw_delta_radians * swing_ticks,
+            predicted_yaw_radians,
             glm::vec3{0.0f, 1.0f, 0.0f}) *
         root_rotation;
 

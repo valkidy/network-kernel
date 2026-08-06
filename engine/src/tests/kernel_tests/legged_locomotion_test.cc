@@ -892,6 +892,81 @@ int main() {
         }
     }
 
+    // A turn that finishes before the foot lands must not throw the step past
+    // where the actor was ever going. The extrapolation assumes the body holds
+    // its motion for the whole swing, which translation does and a turn does
+    // not: a turn stops on arrival, and a turn is the same order as a swing, so
+    // a step begun mid-turn would otherwise aim at rotation that is already
+    // over -- on a wide stance that lands the foot further away than the step
+    // was worth.
+    {
+        KernelSkeletonBindingDefinition long_swing = rig;
+        long_swing.step_duration_ticks = 18u;
+        network_example::LocomotionState turning;
+        require(network_example::initialize_locomotion_state(
+            long_swing, 0.0f, &turning));
+
+        // Walk straight until the legs are planted and stepping.
+        glm::vec3 root{0.0f};
+        for (std::uint32_t step = 0u; step < 40u; ++step) {
+            require(network_example::advance_locomotion_state(
+                long_swing, forward_input, 90.0f, tick, &turning));
+            root.z += 1.5f * tick;
+            require(network_example::solve_legged_locomotion_pose(
+                *skeleton, bind_pose, long_swing, root, 50.0f, tick,
+                ground_plane, &turning));
+        }
+
+        // Alternate the heading target by 20 degrees every 10 ticks. Each turn
+        // completes in about 7 ticks at 90 deg/s -- well inside an 18 tick
+        // swing -- and turns come often enough that steps reliably begin during
+        // one, which is the case that goes wrong. The heading itself never
+        // leaves a 20 degree band however long this runs.
+        const float turn_radians = 20.0f * degrees_to_radians;
+        float worst_overshoot = 0.0f;
+        for (std::uint32_t step = 0u; step < 240u; ++step) {
+            const float heading =
+                (step / 10u) % 2u == 0u ? turn_radians : 0.0f;
+            const KernelVec2 turned_input{
+                std::sin(heading), std::cos(heading)};
+            require(network_example::advance_locomotion_state(
+                long_swing, turned_input, 90.0f, tick, &turning));
+            root += glm::vec3{
+                std::sin(turning.root_yaw_radians),
+                0.0f,
+                std::cos(turning.root_yaw_radians)} * (1.5f * tick);
+            require(network_example::solve_legged_locomotion_pose(
+                *skeleton, bind_pose, long_swing, root, 50.0f, tick,
+                ground_plane, &turning));
+            for (std::uint32_t index = 0u;
+                 index < long_swing.leg_count;
+                 ++index) {
+                const network_example::LegLocomotionState& leg =
+                    turning.legs[index];
+                if (!leg.entered_swing || !leg.ground_hit_valid) {
+                    continue;
+                }
+                // ground_hit_position is this leg's stance under the body at
+                // lift-off, so this is exactly how far ahead the step is aimed.
+                const float lead = glm::length(
+                    leg.landing_target_world - leg.ground_hit_position);
+                worst_overshoot = std::max(worst_overshoot, lead);
+            }
+        }
+        // The heading only ever moves 20 degrees, so no step may be aimed
+        // further than the stance travels over one swing at that heading
+        // change plus the walk itself. Uncapped rotation extrapolation
+        // reaches well past this.
+        const float stance_radius = std::sqrt(
+            kLegLayout[0].hip_x * kLegLayout[0].hip_x +
+            kLegLayout[0].hip_z * kLegLayout[0].hip_z);
+        const float turn_arc = turn_radians * stance_radius;
+        const float walk_lead = 1.5f * tick *
+            static_cast<float>(long_swing.step_duration_ticks - 1u);
+        require(worst_overshoot > 0.0f);
+        require(worst_overshoot <= turn_arc + walk_lead + 0.001f);
+    }
+
     // Turning in place: no translation input at all, the heading is written
     // straight into the state between ticks. The legs must still notice.
     {
