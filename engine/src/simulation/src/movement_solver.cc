@@ -1,5 +1,6 @@
 #include "simulation/public/movement_solver.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include <spdlog/spdlog.h>
@@ -36,6 +37,33 @@ bool reset_character(
     return physics_world.upsert_character(descriptor, error);
 }
 
+glm::vec3 ground_following_velocity(
+    const glm::vec3& desired_horizontal_velocity,
+    physics::CharacterGroundState ground_state,
+    const glm::vec3& ground_normal,
+    float max_slope_degrees,
+    float previous_vertical_velocity,
+    float gravity_y,
+    float fixed_delta_seconds) {
+    glm::vec3 velocity = desired_horizontal_velocity;
+    // The slope limit, not a token epsilon. Below it the division's gain is
+    // unbounded, and the ground state alone does not keep the normal above it.
+    const float walkable_normal_y = std::cos(
+        std::clamp(max_slope_degrees, 0.0f, 89.9f) *
+        3.14159265358979323846f / 180.0f);
+    if (ground_state == physics::CharacterGroundState::kGrounded &&
+        ground_normal.y >= walkable_normal_y && walkable_normal_y > 0.0f) {
+        // Keep authored X/Z speed when Jolt projects onto walkable ground.
+        const float ground_dot_horizontal =
+            ground_normal.x * velocity.x + ground_normal.z * velocity.z;
+        velocity.y = -ground_dot_horizontal / ground_normal.y;
+    } else {
+        velocity.y = previous_vertical_velocity +
+            gravity_y * fixed_delta_seconds;
+    }
+    return velocity;
+}
+
 bool step_character(
     physics::PhysicsWorld& physics_world,
     const CharacterMovementConfig& config,
@@ -63,17 +91,14 @@ bool step_character(
         state->ground_state == physics::CharacterGroundState::kGrounded;
     const float request_ground_normal_y = state->ground_normal.y;
 
-    glm::vec3 velocity = desired_horizontal_velocity;
-    if (state->ground_state == physics::CharacterGroundState::kGrounded &&
-        state->ground_normal.y > 0.001f) {
-        // Keep authored X/Z speed when Jolt projects onto walkable ground.
-        const float ground_dot_horizontal =
-            state->ground_normal.x * velocity.x +
-            state->ground_normal.z * velocity.z;
-        velocity.y = -ground_dot_horizontal / state->ground_normal.y;
-    } else {
-        velocity.y = state->velocity.y + config.gravity.y * fixed_delta_seconds;
-    }
+    const glm::vec3 velocity = ground_following_velocity(
+        desired_horizontal_velocity,
+        state->ground_state,
+        state->ground_normal,
+        config.max_slope_degrees,
+        state->velocity.y,
+        config.gravity.y,
+        fixed_delta_seconds);
     physics::CharacterMoveRequest request{};
     request.character_id = config.character_id;
     request.current_position = state->position;
@@ -106,18 +131,19 @@ bool step_character(
     const float position_step_y = result.position.y - request.current_position.y;
     const bool jumped = std::abs(position_step_y) > 0.5f;
     const bool fast_vertical = std::abs(velocity.y) > 6.0f;
-    const bool inconsistent = entry_grounded &&
-        entry_normal_y < slope_limit_y - 0.01f;
-    if (jumped || fast_vertical || inconsistent) {
+    // A grounded state paired with an unwalkable normal is no longer reported:
+    // it happens routinely, and ground_following_velocity now handles it by
+    // believing the normal. What is still worth a line is the outcome it used
+    // to produce -- a launch, or a vertical speed no walk should reach.
+    if (jumped || fast_vertical) {
         spdlog::warn(
-            "[CharacterMove] net_id={} {}{}{} pos=({:.3f},{:.3f},{:.3f}) "
+            "[CharacterMove] net_id={} {}{}pos=({:.3f},{:.3f},{:.3f}) "
             "dy={:.3f} fed_vy={:.3f} out_vy={:.3f} "
             "in_ground={} in_ny={:.4f} out_ground={} out_ny={:.4f} "
             "slope_limit_ny={:.4f}",
             config.character_id,
             jumped ? "JUMP " : "",
             fast_vertical ? "FASTVY " : "",
-            inconsistent ? "INCONSISTENT " : "",
             request.current_position.x,
             request.current_position.y,
             request.current_position.z,
