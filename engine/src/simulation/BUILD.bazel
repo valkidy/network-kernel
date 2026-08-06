@@ -41,6 +41,5 @@ cc_library(
         "//engine/src/sync:sync",
         "//engine/src/world:world",
         "@glm//:glm",
-        "@spdlog//:spdlog",
     ],
 )

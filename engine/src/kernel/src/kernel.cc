@@ -8081,48 +8081,6 @@ void KernelEngine::update_legged_locomotion(
                 blend);
         }
 
-        // [LocomotionDrive] Diagnostic. A frozen landing target extrapolates
-        // the body's per-tick movement across the whole swing, which since the
-        // 3x gait is 17 ticks -- so a ONE TICK position spike is multiplied 17x
-        // into all four landing targets at once, and four legs re-aiming
-        // together reads as the whole leg set rotating about the body even
-        // though the body's yaw never moved. Reported alongside the yaw so the
-        // two can be told apart: a spike with a steady yaw means the legs are
-        // being driven by a position glitch, not by a turn.
-        constexpr float kRadiansToDegrees = 57.2957795130823f;
-        if (state->second.has_last_root_position) {
-            const glm::vec3 root_step =
-                transform.position - state->second.last_root_position;
-            const float flat_step = glm::length(
-                glm::vec3{root_step.x, 0.0f, root_step.z});
-            const float expected_step = std::max(
-                0.3f,
-                entity_template->combat.move_speed_meters_per_second *
-                    fixed_delta_seconds * 3.0f);
-            const std::uint32_t heartbeat =
-                std::max<std::uint32_t>(1u, config_.tick.server_tick_rate);
-            const bool spiked = flat_step > expected_step;
-            if (spiked || tick_loop_.current_tick() % heartbeat == 0u) {
-                spdlog::info(
-                    "[LocomotionDrive] net_id={} {}pos=({:.3f},{:.3f},{:.3f}) "
-                    "flat_step={:.4f} (expected<{:.4f}) step_y={:.4f} "
-                    "yaw={:.2f}deg yaw_delta={:.3f}deg pending={:.3f}deg "
-                    "tick={}",
-                    net_id,
-                    spiked ? "SPIKE " : "",
-                    transform.position.x,
-                    transform.position.y,
-                    transform.position.z,
-                    flat_step,
-                    expected_step,
-                    root_step.y,
-                    state->second.root_yaw_radians * kRadiansToDegrees,
-                    state->second.last_yaw_delta_radians * kRadiansToDegrees,
-                    state->second.pending_yaw_radians * kRadiansToDegrees,
-                    tick_loop_.current_tick());
-            }
-        }
-
         // The leg solve is intentionally decoupled from the character/movement
         // controller: it reads transform.position only as a world anchor for
         // foot placement and never inspects the controller's grounded/landed
@@ -9181,11 +9139,9 @@ void KernelEngine::send_locomotion_steps(
         // leaves that leg at its bind pose on every client -- not moving and
         // not on the ground -- and the skeleton render state still reports the
         // pose as PROCEDURAL, so nothing downstream reveals it.
-        ++locomotion_steps_send_failed_;
         push_event(KernelEventType_Error, 0u, session->peer, 30u);
         return;
     }
-    locomotion_steps_sent_ += static_cast<std::uint32_t>(packet.records.size());
     record_sent_packet(
         static_cast<std::uint32_t>(encoded.size()),
         SendMode::kUnreliable,
@@ -9225,29 +9181,6 @@ void KernelEngine::send_locomotion_baseline(PeerSession* session, NetId net_id) 
 
 void KernelEngine::flush_locomotion_steps() {
     const std::uint32_t current_tick = tick_loop_.current_tick();
-    locomotion_steps_committed_ +=
-        static_cast<std::uint32_t>(outgoing_locomotion_steps_.size());
-    // Once a second, and only while something is happening. A follower's legs
-    // stay at the bind pose until a step reaches it, so "committed but not
-    // sent" and "sent but the client shows nothing" are different faults and
-    // need to be told apart from the server side alone.
-    const std::uint32_t log_interval =
-        std::max<std::uint32_t>(1u, config_.tick.server_tick_rate);
-    if (current_tick % log_interval == 0u &&
-        (locomotion_steps_committed_ != 0u ||
-         locomotion_steps_send_failed_ != 0u)) {
-        spdlog::info(
-            "[Locomotion] steps committed={} sent={} send_failed={} "
-            "sessions={} tick={}",
-            locomotion_steps_committed_,
-            locomotion_steps_sent_,
-            locomotion_steps_send_failed_,
-            peer_sessions_.size(),
-            current_tick);
-        locomotion_steps_committed_ = 0u;
-        locomotion_steps_sent_ = 0u;
-        locomotion_steps_send_failed_ = 0u;
-    }
     if (outgoing_locomotion_steps_.empty()) {
         return;
     }
