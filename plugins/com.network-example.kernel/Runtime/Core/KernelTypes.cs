@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 66;
+        public const uint AbiVersion = 67;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int GameplayCatalogEntryPathSize = 128;
@@ -126,6 +126,12 @@ namespace NetworkExample.Kernel
         public const uint CollisionMaskActor = CollisionMaskDamageable;
         public const uint CollisionMaskStaticWorld =
             CollisionLayerTerrain | CollisionLayerStaticObstacle;
+
+        public const uint MovementLayerTerrain = 0x00000001U;
+        public const uint MovementLayerStaticObstacle = 0x00000002U;
+        public const uint MovementLayerActor = 0x00000008U;
+        public const uint MovementMaskDefault =
+            MovementLayerTerrain | MovementLayerStaticObstacle | MovementLayerActor;
 
         public const uint VisualFlagMoving = 0x00000001U;
         public const uint VisualFlagReloading = 0x00000002U;
@@ -2051,6 +2057,7 @@ namespace NetworkExample.Kernel
         public float ground_probe_distance;
         public float ground_snap_distance;
         public float max_yaw_degrees_per_second;
+        public uint movement_collision_mask;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelMovementDefinition>();
     }
@@ -2133,6 +2140,7 @@ namespace NetworkExample.Kernel
         public KernelSkeletonLegDefinition[] legs;
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = KernelConstants.MaxSkeletonLegs)]
         public uint[] processing_order;
+        public float stance_crouch_meters;
 
         public static uint StructSize =>
             (uint)Marshal.SizeOf<KernelSkeletonBindingDefinition>();

@@ -1,5 +1,10 @@
 0.6.9 release notes:
 
+- aligns Unity managed bindings with kernel ABI 67
+
+
+0.6.9 release notes:
+
 - updates Unity package artifacts for the latest kernel merge
 
 

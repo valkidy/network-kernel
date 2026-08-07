@@ -33,7 +33,7 @@ public static class NetworkKernelManagedAbiSmoke
         KernelBuildInfo buildInfo = KernelAbi.GetBuildInfo();
         GameServerAbiInfo gameServerInfo = GameServerAbi.GetInfo();
         RequireSkeletonBindingContract();
-        Require(KernelConstants.AbiVersion == 66, "Managed kernel ABI version was not v66.");
+        Require(KernelConstants.AbiVersion == 67, "Managed kernel ABI version was not v67.");
         Require(
             RenderEntityState.StructSize == 144,
             "Managed RenderEntityState layout was not 144 bytes.");
@@ -68,6 +68,12 @@ public static class NetworkKernelManagedAbiSmoke
             KernelConstants.CollisionLayerAgentVision == 0x00000010U,
             "Kernel agent vision collision layer mismatch.");
         Require(
+            KernelConstants.MovementLayerTerrain == 0x00000001U &&
+            KernelConstants.MovementLayerStaticObstacle == 0x00000002U &&
+            KernelConstants.MovementLayerActor == 0x00000008U &&
+            KernelConstants.MovementMaskDefault == 0x0000000bU,
+            "Kernel movement layer ABI mismatch.");
+        Require(
             KernelColliderShapeType.Cone == (KernelColliderShapeType)4,
             "Kernel cone collider shape type mismatch.");
         Require(
@@ -81,7 +87,7 @@ public static class NetworkKernelManagedAbiSmoke
             KernelSessionRulesConfig.StructSize == 8,
             "Kernel configuration layout size mismatch.");
         Require(
-            KernelMovementDefinition.StructSize == 44,
+            KernelMovementDefinition.StructSize == 48,
             "Kernel movement definition layout size mismatch.");
         Require(
             KernelBoneLocalTransform.StructSize == 40 &&

@@ -22,7 +22,7 @@ namespace NetworkExample.Kernel.Editor
             KernelAbi.ValidateNativeAbi();
             GameServerAbi.ValidateNativeAbi();
             KernelAbiInfo info = KernelAbi.GetInfo();
-            Require(KernelConstants.AbiVersion == 66, "Managed kernel ABI version was not v66.");
+            Require(KernelConstants.AbiVersion == 67, "Managed kernel ABI version was not v67.");
             Require(
                 RenderEntityState.StructSize == 144,
                 "Managed RenderEntityState layout was not 144 bytes.");
@@ -58,6 +58,12 @@ namespace NetworkExample.Kernel.Editor
                 KernelConstants.CollisionLayerAgentVision == 0x00000010U,
                 "Kernel agent vision collision layer mismatch.");
             Require(
+                KernelConstants.MovementLayerTerrain == 0x00000001U &&
+                KernelConstants.MovementLayerStaticObstacle == 0x00000002U &&
+                KernelConstants.MovementLayerActor == 0x00000008U &&
+                KernelConstants.MovementMaskDefault == 0x0000000bU,
+                "Kernel movement layer ABI mismatch.");
+            Require(
                 KernelColliderShapeType.Cone == (KernelColliderShapeType)4,
                 "Kernel cone collider shape type mismatch.");
             Require(
@@ -71,14 +77,17 @@ namespace NetworkExample.Kernel.Editor
                 KernelSessionRulesConfig.StructSize == 8,
                 "Kernel configuration layout size mismatch.");
             Require(
-                KernelMovementDefinition.StructSize == 44,
+                KernelMovementDefinition.StructSize == 48,
                 "Kernel movement definition layout size mismatch.");
             Require(
                 KernelBoneLocalTransform.StructSize == 40 &&
                 KernelSkeletonRenderState.StructSize == 40 &&
                 KernelSkeletonRenderStateResult.StructSize == 48 &&
                 KernelSkeletonBindingDefinition.StructSize == 592,
-                "Kernel skeleton ABI layout size mismatch.");
+                $"Kernel skeleton ABI layout size mismatch: bone={KernelBoneLocalTransform.StructSize} " +
+                $"state={KernelSkeletonRenderState.StructSize} " +
+                $"result={KernelSkeletonRenderStateResult.StructSize} " +
+                $"binding={KernelSkeletonBindingDefinition.StructSize}.");
             Require(
                 (info.capability_flags &
                  KernelConstants.CapabilitySkeletonRenderStates) != 0,
@@ -268,7 +277,7 @@ namespace NetworkExample.Kernel.Editor
 
             RequireExternalGameplayCatalogSyncIfConfigured();
 
-            Debug.Log("Network kernel ABI 65 smoke passed.");
+            Debug.Log("Network kernel ABI 67 smoke passed.");
         }
 
         private static void RequireSkeletonBindingValidation()
