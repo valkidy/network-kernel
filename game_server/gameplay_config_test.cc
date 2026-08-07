@@ -670,7 +670,7 @@ int main() {
                 {},
                 replace_once(
                     production_monster_yaml,
-                    "step_threshold_meters: 0.25",
+                    "step_threshold_meters: 1.95",
                     "step_threshold_meters: 0.0"));
         (void)network_example::game_server::load_gameplay_config_from_bundle_memory(
             invalid_gait_bundle.data(),
@@ -725,7 +725,7 @@ int main() {
     require(rejects_monster_locomotion_yaml(
         replace_once(
             production_monster_yaml,
-            "step_duration_ticks: 3",
+            "step_duration_ticks: 18",
             "step_duration_ticks: 0"),
         "invalid locomotion gait values"));
     require(rejects_monster_locomotion_yaml(
@@ -1142,8 +1142,8 @@ int main() {
     require(monster_template->skeleton.processing_order.size() == 4u);
     require(monster_template->movement_max_yaw_degrees_per_second == 45.0f);
     require(monster_template->skeleton.input_deadzone == 0.01f);
-    require(monster_template->skeleton.step_threshold_meters == 0.25f);
-    require(monster_template->skeleton.step_duration_ticks == 3u);
+    require(monster_template->skeleton.step_threshold_meters == 1.95f);
+    require(monster_template->skeleton.step_duration_ticks == 18u);
     require(monster_template->skeleton.max_swinging_legs == 2u);
     require(monster_template->skeleton.foothold_query_type ==
             KernelFootholdQueryType_Raycast);
@@ -1181,8 +1181,8 @@ int main() {
          KERNEL_ENTITY_COMPONENT_SKELETON) != 0u);
     require(monster_definition->skeleton.leg_count == 4u);
     require(monster_definition->movement.max_yaw_degrees_per_second == 45.0f);
-    require(monster_definition->skeleton.step_threshold_meters == 0.25f);
-    require(monster_definition->skeleton.step_duration_ticks == 3u);
+    require(monster_definition->skeleton.step_threshold_meters == 1.95f);
+    require(monster_definition->skeleton.step_duration_ticks == 18u);
     require(monster_definition->skeleton.legs[0].gait_group == 0u);
     require(monster_definition->skeleton.legs[1].gait_group == 0u);
     require(monster_definition->skeleton.legs[2].gait_group == 1u);

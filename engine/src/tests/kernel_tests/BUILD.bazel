@@ -241,3 +241,16 @@ cc_test(
     srcs = ["relevance_test.cc"],
     deps = ["//engine/src/kernel:kernel"],
 )
+
+# Diagnostic: how much of each leg's reach the bind pose already spends before
+# the gait asks for anything. Run against the monster rig with
+#   bazel run //engine/src/tests/kernel_tests:locomotion_reach_report -- \
+#     $(pwd)/bazel-bin/game_server/skeleton_assets/generated/simplified_monster_sim_v4.ozz
+cc_binary(
+    name = "locomotion_reach_report",
+    srcs = ["locomotion_reach_report.cc"],
+    deps = [
+        "@glm//:glm",
+        "@ozz_animation//:ozz_animation",
+    ],
+)
