@@ -37,6 +37,14 @@ network_example::game_server::GameServerGameplayConfig single_spawn_gameplay_con
     config.agent.spawn_count = 1;
     config.agent.spawn_radius = 0.0f;
     config.agent.spawn_position = KernelVec3{6.0f, 0.0f, 0.0f};
+    // These tests drive the sentry alert/attack state machine and the grunt's
+    // weapon loadout, so they pin the spawned agent to the sentry grunt rather
+    // than inheriting whatever the map currently populates itself with. The
+    // legged monster the catalog spawns today would disarm them outright: it
+    // patrols passively, which pins it to kIdle, and its vision cone is authored
+    // for a body an order of magnitude larger.
+    constexpr std::uint32_t kSentryGruntEntityTemplateId = 2u;
+    config.agent.actor_template_id = kSentryGruntEntityTemplateId;
     for (network_example::game_server::EntityTemplateConfig& entity_template :
          config.entity_templates) {
         if (entity_template.entity_type != KernelEntityType_Director) {
@@ -45,6 +53,9 @@ network_example::game_server::GameServerGameplayConfig single_spawn_gameplay_con
         entity_template.director_spawn_target_count = 1;
         entity_template.director_spawn_radius = 0.0f;
         entity_template.director_spawn_position = config.agent.spawn_position;
+        entity_template.director_spawn_entity_template_id =
+            kSentryGruntEntityTemplateId;
+        entity_template.director_spawn_entity_template_ref = "sentry_grunt";
     }
     return config;
 }

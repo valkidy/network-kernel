@@ -121,10 +121,20 @@ struct LocomotionState {
     glm::quat body_tilt{1.0f, 0.0f, 0.0f, 0.0f};
     glm::quat applied_root_rotation{1.0f, 0.0f, 0.0f, 0.0f};
 
-    // Terrain-fit body height for this tick, valid only when body follow is on.
-    // Applying it stays the caller's job: the character controller owns position.
+    // Terrain-fit body height for this tick, valid only when body follow is on
+    // and at least one foot is planted. Applying it stays the caller's job.
     bool body_follow_valid = false;
     float body_follow_target_height = 0.0f;
+
+    // The height the caller last actually applied, and whether it did. This is
+    // what the caller must smooth FROM, rather than from the transform: the
+    // movement controller writes its own answer into the transform earlier in
+    // the same tick, and blending against that would readmit the body-vs-feet
+    // mismatch that body follow exists to remove. Cleared whenever the
+    // controller takes height back, so the next hand-over starts from wherever
+    // the body actually is instead of from a stale value.
+    bool has_body_follow_applied_height = false;
+    float body_follow_applied_height = 0.0f;
 
     // Root position handed to the previous solve. Its delta is the body's
     // translation over one tick, which is how far the stance drifts per tick;

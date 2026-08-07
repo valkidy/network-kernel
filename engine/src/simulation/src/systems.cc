@@ -561,6 +561,10 @@ bool EntityLifecycleSystem::create_entity(
                 entity_template->movement.ground_probe_distance;
             movement.ground_snap_distance =
                 entity_template->movement.ground_snap_distance;
+            movement.movement_collision_mask =
+                entity_template->movement.movement_collision_mask;
+            movement.locomotion_owns_height =
+                entity_template->skeleton.body_follow_speed > 0.0f;
         }
         if ((entity_template->component_flags &
             KERNEL_ENTITY_COMPONENT_WEAPON_STATE) != 0u) {
@@ -1449,8 +1453,15 @@ bool EntityStateSystem::set_actor_template(
             authored_entity_template->movement.ground_probe_distance;
         movement.ground_snap_distance =
             authored_entity_template->movement.ground_snap_distance;
+        movement.movement_collision_mask =
+            authored_entity_template->movement.movement_collision_mask;
+        movement.locomotion_owns_height =
+            authored_entity_template->skeleton.body_follow_speed > 0.0f;
         movement.ground_state = MovementState::GroundState::kAirborne;
         movement.has_last_queried_position = false;
+        // Respawn moves the body without the controller; its remembered anchor
+        // belongs to the old position.
+        movement.has_controller_height = false;
         movement.landed_this_tick = false;
         if (engine.physics_world_ != nullptr) {
             engine.physics_world_->remove_character(net_id);
@@ -1498,6 +1509,13 @@ bool EntityStateSystem::set_transform(
     Transform& transform = engine.world_.registry().get<Transform>(*entity);
     transform.position = from_kernel_vec3(position);
     transform.rotation = from_kernel_quat(rotation);
+    // An authoritative teleport is the one mover the character controller does
+    // not perform itself, so its remembered vertical anchor now describes the
+    // position the entity just left. Drop it and let the next step re-resolve.
+    if (engine.world_.registry().all_of<MovementState>(*entity)) {
+        engine.world_.registry().get<MovementState>(*entity)
+            .has_controller_height = false;
+    }
     engine.sync_entity_colliders_from_world();
     if (engine.world_.registry().all_of<EntityKind>(*entity) &&
         engine.world_.registry().get<EntityKind>(*entity).type == EntityType::kProp) {

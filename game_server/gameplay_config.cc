@@ -234,6 +234,7 @@ void hash_actor_template(
     hash_float(hash, actor_template.movement_ground_probe_distance);
     hash_float(hash, actor_template.movement_ground_snap_distance);
     hash_float(hash, actor_template.movement_max_yaw_degrees_per_second);
+    hash_scalar(hash, actor_template.movement_collision_mask);
     hash_scalar(hash, actor_template.weapon_slot_count);
     for (std::uint8_t index = 0; index < actor_template.weapon_slot_count; ++index) {
         hash_scalar(hash, actor_template.weapon_ids[index]);
@@ -335,6 +336,7 @@ void hash_actor_template(
         hash_scalar(hash, actor_template.skeleton.max_swinging_legs);
         hash_float(hash, actor_template.skeleton.body_follow_speed);
         hash_float(hash, actor_template.skeleton.slope_alignment);
+        hash_float(hash, actor_template.skeleton.stance_crouch_meters);
         hash_scalar(hash, actor_template.skeleton.foothold_query_type);
         hash_float(
             hash,
@@ -598,6 +600,53 @@ std::uint32_t collision_mask_from_yaml(
             break;
         }
         start = separator + 1;
+    }
+    return mask;
+}
+
+// movement.collides_with names the geometry that stops a body, which is a
+// different axis from the gameplay categories collision_mask_from_yaml parses --
+// see the KERNEL_MOVEMENT_LAYER_* comment in kernel_types.h. Kept as its own
+// token set so the two cannot be confused: "hostile_side" is meaningless here
+// and must fail loudly rather than resolve to some unrelated bit.
+std::uint32_t movement_collision_layer_token_from_yaml(
+    const std::string& token) {
+    if (token == "terrain") {
+        return KERNEL_MOVEMENT_LAYER_TERRAIN;
+    }
+    if (token == "obstacle" || token == "static_obstacle") {
+        return KERNEL_MOVEMENT_LAYER_STATIC_OBSTACLE;
+    }
+    if (token == "actor") {
+        return KERNEL_MOVEMENT_LAYER_ACTOR;
+    }
+    throw std::runtime_error("unsupported movement collides_with: " + token);
+}
+
+std::uint32_t movement_collision_mask_from_yaml(const YAML::Node& node) {
+    const std::string value = node.as<std::string>();
+    std::uint32_t mask = 0u;
+    std::size_t start = 0;
+    while (start <= value.size()) {
+        const std::size_t separator = value.find('|', start);
+        const std::string token = trim_ascii(value.substr(
+            start,
+            separator == std::string::npos
+                ? std::string::npos
+                : separator - start));
+        if (token.empty()) {
+            throw std::runtime_error(
+                "empty movement collides_with token: " + value);
+        }
+        mask |= movement_collision_layer_token_from_yaml(token);
+        if (separator == std::string::npos) {
+            break;
+        }
+        start = separator + 1;
+    }
+    if (mask == 0u) {
+        throw std::runtime_error(
+            "movement collides_with must name at least one layer: " + value);
     }
     return mask;
 }
@@ -2609,6 +2658,7 @@ ActorTemplateConfig actor_template_from_yaml(
             "ground_probe_distance",
             "ground_snap_distance",
             "max_yaw_degrees_per_second",
+            "collides_with",
         },
         path,
         source_kind,
@@ -2642,6 +2692,10 @@ ActorTemplateConfig actor_template_from_yaml(
     if (movement["max_yaw_degrees_per_second"]) {
         actor_template.movement_max_yaw_degrees_per_second =
             movement["max_yaw_degrees_per_second"].as<float>();
+    }
+    if (movement["collides_with"]) {
+        actor_template.movement_collision_mask =
+            movement_collision_mask_from_yaml(movement["collides_with"]);
     }
 
     const YAML::Node hitbox = node["hitbox"];
@@ -3149,6 +3203,7 @@ ActorTemplateConfig actor_template_from_yaml(
                 {
                     "follow_speed",
                     "slope_alignment",
+                    "stance_crouch_meters",
                 },
                 path,
                 source_kind,
@@ -3159,11 +3214,16 @@ ActorTemplateConfig actor_template_from_yaml(
             binding.slope_alignment = body["slope_alignment"]
                 ? body["slope_alignment"].as<float>()
                 : 0.0f;
+            binding.stance_crouch_meters = body["stance_crouch_meters"]
+                ? body["stance_crouch_meters"].as<float>()
+                : 0.0f;
             if (!std::isfinite(binding.body_follow_speed) ||
                 binding.body_follow_speed < 0.0f ||
                 !std::isfinite(binding.slope_alignment) ||
                 binding.slope_alignment < 0.0f ||
-                binding.slope_alignment > 1.0f) {
+                binding.slope_alignment > 1.0f ||
+                !std::isfinite(binding.stance_crouch_meters) ||
+                binding.stance_crouch_meters < 0.0f) {
                 throw std::runtime_error(
                     "invalid locomotion body follow values: " +
                     actor_template.name);
@@ -6178,6 +6238,8 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             authored_template.movement_ground_snap_distance;
         entity_template.movement.max_yaw_degrees_per_second =
             authored_template.movement_max_yaw_degrees_per_second;
+        entity_template.movement.movement_collision_mask =
+            authored_template.movement_collision_mask;
         entity_template.activated_trigger = compile_action_trigger_binding(
             authored_template.activated_trigger,
             "on_activated",
@@ -6235,6 +6297,8 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
                 authored_template.skeleton.body_follow_speed;
             entity_template.skeleton.slope_alignment =
                 authored_template.skeleton.slope_alignment;
+            entity_template.skeleton.stance_crouch_meters =
+                authored_template.skeleton.stance_crouch_meters;
             entity_template.skeleton.foothold_query_type =
                 authored_template.skeleton.foothold_query_type;
             entity_template.skeleton.foothold_query_start_height_meters =

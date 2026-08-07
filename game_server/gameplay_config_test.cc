@@ -740,6 +740,21 @@ int main() {
             "processing_order: [front_left, front_right, rear_left, rear_right]",
             "processing_order: [front_left, front_left, rear_left, rear_right]"),
         "processing_order repeats leg"));
+    // movement.collides_with names geometry, never a gameplay side. A token
+    // borrowed from the other collision vocabulary has to fail rather than
+    // resolve to whatever bit happens to share its name.
+    require(rejects_monster_locomotion_yaml(
+        replace_once(
+            production_monster_yaml,
+            "collides_with: terrain",
+            "collides_with: hostile_side"),
+        "unsupported movement collides_with"));
+    require(rejects_monster_locomotion_yaml(
+        replace_once(
+            production_monster_yaml,
+            "stance_crouch_meters: 4.0",
+            "stance_crouch_meters: -1.0"),
+        "invalid locomotion body follow values"));
     bool invalid_foothold_distance_rejected = false;
     try {
         const std::vector<std::uint8_t> invalid_foothold_bundle =
@@ -1082,10 +1097,13 @@ int main() {
     assert(player_combat_state.move_speed_meters_per_second == 5.0f);
     assert(player_combat_state.collider_template_id == 1);
 
-    assert(config.agent.actor_template_id == 2);
-    assert(config.agent.spawn_position.x == 6.0f);
-    assert(config.agent.spawn_count == 2);
-    assert(config.agent.spawn_radius == 5.0f);
+    // earth_mother.yaml populates the map with the legged monster, not the
+    // sentry grunt; both carry the same combat block, so only the template id
+    // and the spawn shape differ.
+    assert(config.agent.actor_template_id == 20);
+    assert(config.agent.spawn_position.x == 0.0f);
+    assert(config.agent.spawn_count == 1);
+    assert(config.agent.spawn_radius == 10.0f);
     assert(config.agent.spawn_seed == 4242);
     const KernelCombatStateDefinition enemy_combat_state =
         network_example::game_server::make_agent_combat_state(config);
@@ -1145,6 +1163,14 @@ int main() {
     require(monster_template->skeleton.step_threshold_meters == 1.95f);
     require(monster_template->skeleton.step_duration_ticks == 18u);
     require(monster_template->skeleton.max_swinging_legs == 2u);
+    // Body height comes from the legs, seated 4 m below the bind pose, and the
+    // movement capsule sweeps terrain only so the open space under the belly
+    // does not block the walk.
+    require(monster_template->skeleton.body_follow_speed == 10.0f);
+    require(monster_template->skeleton.slope_alignment == 0.0f);
+    require(monster_template->skeleton.stance_crouch_meters == 4.0f);
+    require(monster_template->movement_collision_mask ==
+            KERNEL_MOVEMENT_LAYER_TERRAIN);
     require(monster_template->skeleton.foothold_query_type ==
             KernelFootholdQueryType_Raycast);
     require(monster_template->skeleton.foothold_query_start_height_meters ==
@@ -1183,6 +1209,18 @@ int main() {
     require(monster_definition->movement.max_yaw_degrees_per_second == 45.0f);
     require(monster_definition->skeleton.step_threshold_meters == 1.95f);
     require(monster_definition->skeleton.step_duration_ticks == 18u);
+    require(monster_definition->skeleton.stance_crouch_meters == 4.0f);
+    require(monster_definition->movement.movement_collision_mask ==
+            KERNEL_MOVEMENT_LAYER_TERRAIN);
+    // Everything else keeps the engine default, which zero selects.
+    const auto sentry_definition = std::find_if(
+        catalog.entity_templates.begin(),
+        catalog.entity_templates.end(),
+        [](const KernelEntityTemplateDefinition& entity) {
+            return entity.entity_template_id == 2u;
+        });
+    require(sentry_definition != catalog.entity_templates.end());
+    require(sentry_definition->movement.movement_collision_mask == 0u);
     require(monster_definition->skeleton.legs[0].gait_group == 0u);
     require(monster_definition->skeleton.legs[1].gait_group == 0u);
     require(monster_definition->skeleton.legs[2].gait_group == 1u);

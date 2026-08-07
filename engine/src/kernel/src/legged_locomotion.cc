@@ -37,6 +37,8 @@ bool valid_definition(const KernelSkeletonBindingDefinition& definition) {
         !std::isfinite(definition.slope_alignment) ||
         definition.slope_alignment < 0.0f ||
         definition.slope_alignment > 1.0f ||
+        !std::isfinite(definition.stance_crouch_meters) ||
+        definition.stance_crouch_meters < 0.0f ||
         definition.foothold_query_type != KernelFootholdQueryType_Raycast ||
         !std::isfinite(definition.foothold_query_start_height_meters) ||
         definition.foothold_query_start_height_meters < 0.0f ||
@@ -904,14 +906,22 @@ bool solve_locomotion_pose(
             model_position(models[definition.legs[leg_index].foot_bone_index]);
     }
 
-    // Body grounding follow (optional). Height sits above the average foothold
-    // by the rig's rest stance and is handed to the caller to apply; tilt aims
-    // at the average ground normal and is accumulated here so the exponential
-    // smoothing actually converges (it would restart every tick if it were
-    // re-derived from a pure-yaw transform rotation). Left disabled -- physics
-    // owns the body, tilt stays identity -- when speed <= 0.
-    // Skipped for a follower: the tilt is driven by the ground normals under the
-    // feet, and a follower never samples them.
+    // Body grounding follow (optional). When body_follow_speed > 0 the body's
+    // height stops being whatever the movement controller resolved and becomes a
+    // function of the feet: the average foothold, plus the rig's own rest
+    // stance, minus the authored crouch. The caller applies it -- the controller
+    // still owns x/z, and owns y outright whenever no foot is down.
+    //
+    // Why the feet and not the controller: a capsule a few metres wide samples
+    // the ground under the body's centre, while the legs stand on a footprint
+    // tens of metres across. Every metre of difference between those two is
+    // pumped straight into the knees, and on a long-legged rig that is the whole
+    // reach budget. Riding the feet removes the mismatch by construction.
+    //
+    // Skipped for a follower, which needs neither half: its root arrives
+    // already carrying the authority's leg-driven height, so recomputing would
+    // fight replication, and the tilt below reads ground normals it never
+    // samples.
     if (!follower && definition.body_follow_speed > 0.0f) {
         float foot_y_sum = 0.0f;
         float bind_foot_y_sum = 0.0f;
@@ -940,24 +950,31 @@ bool solve_locomotion_pose(
             const float rest_stance_height =
                 bind_foot_y_sum / count - bind_foot_height;
             state->body_follow_target_height =
-                foot_y_sum / count + rest_stance_height;
+                foot_y_sum / count + rest_stance_height -
+                definition.stance_crouch_meters;
             state->body_follow_valid =
                 std::isfinite(state->body_follow_target_height);
 
-            const glm::vec3 ground_normal =
-                glm::dot(normal_sum, normal_sum) > 0.000001f
-                    ? glm::normalize(normal_sum)
-                    : glm::vec3{0.0f, 1.0f, 0.0f};
-            if (finite_vec3(ground_normal)) {
-                const glm::quat upright{1.0f, 0.0f, 0.0f, 0.0f};
-                const glm::quat target_tilt = glm::slerp(
-                    upright,
-                    rotation_from_up(ground_normal),
-                    definition.slope_alignment);
-                const float blend = 1.0f - std::exp(
-                    -definition.body_follow_speed * fixed_delta_seconds);
-                state->body_tilt = glm::normalize(
-                    glm::slerp(state->body_tilt, target_tilt, blend));
+            // Tilt is a separate opt-in. It changes applied_root_rotation, which
+            // is where the feet are placed, so enabling it on the authority
+            // alone would desynchronise a follower's legs -- a follower holds an
+            // identity tilt because it has no ground normals to aim one at.
+            if (definition.slope_alignment > 0.0f) {
+                const glm::vec3 ground_normal =
+                    glm::dot(normal_sum, normal_sum) > 0.000001f
+                        ? glm::normalize(normal_sum)
+                        : glm::vec3{0.0f, 1.0f, 0.0f};
+                if (finite_vec3(ground_normal)) {
+                    const glm::quat upright{1.0f, 0.0f, 0.0f, 0.0f};
+                    const glm::quat target_tilt = glm::slerp(
+                        upright,
+                        rotation_from_up(ground_normal),
+                        definition.slope_alignment);
+                    const float blend = 1.0f - std::exp(
+                        -definition.body_follow_speed * fixed_delta_seconds);
+                    state->body_tilt = glm::normalize(
+                        glm::slerp(state->body_tilt, target_tilt, blend));
+                }
             }
         }
     }
