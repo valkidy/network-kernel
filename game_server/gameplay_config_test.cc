@@ -1257,8 +1257,9 @@ int main() {
         initial_grounded_anchors.push_back(leg.foot_target_world);
     }
     const std::size_t rays_after_first_solve = grounding_origins.size();
-    // A root move smaller than the authored step_threshold (0.65 m) keeps every
-    // foot planted where it is.
+    // A root move smaller than the authored step_threshold keeps every foot
+    // planted where it is. Derived from the threshold rather than fixed, so
+    // retuning the gait cannot silently turn this into a stepping test.
     require(network_example::advance_locomotion_state(
         monster_definition->skeleton,
         KernelVec2{0.0f, 1.0f},
@@ -1269,7 +1270,10 @@ int main() {
         locomotion_asset.skeleton,
         locomotion_asset.bind_pose,
         monster_definition->skeleton,
-        glm::vec3{0.3f, 0.0f, 0.0f},
+        glm::vec3{
+            monster_definition->skeleton.step_threshold_meters * 0.5f,
+            0.0f,
+            0.0f},
         monster_definition->movement.max_slope_degrees,
         1.0f / 30.0f,
         ordered_grounding,

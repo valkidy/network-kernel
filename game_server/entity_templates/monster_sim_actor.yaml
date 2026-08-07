@@ -87,6 +87,56 @@ locomotion:
     # it, and the landing target is then aimed ahead by the body's travel over
     # the swing. The last row is the 4x variant if this still reads short.
     #
+    # The 0.25/3 diagnostic that shrank the whole drift budget inside the reach
+    # is reverted here. It never actually ran: the Unity package tracks
+    # network-kernel@dev-latest, which was still on 1.95/18, so the [LegReach]
+    # session that was read as "the diagnostic changed nothing" was in fact
+    # another 1.95/18 run. What rules the gait out is the model below plus
+    # capture/locomotion_tests, whose authoritative 1.95/18 run reproduces that
+    # session's numbers exactly. Stride was never what spent the reach.
+    #
+    # What spends it is terrain relief. The rig's bind pose is a straight strut
+    # -- hips 13.76 m up and 12.5 m out over the feet, on 17.9-18.7 m of bone --
+    # so a leg rests at 98-99.5% of its own length and a foothold may sit only
+    # 0.10-0.47 m BELOW the plane the body stands on before the IK clamps:
+    #
+    #   leg          bones   rest%   max dip   max drift
+    #   FrontLeft    18.66   99.5%     0.10 m     0.11 m
+    #   FrontRight   18.47   98.8%     0.27 m     0.31 m
+    #   RearLeft     17.92   98.0%     0.47 m     0.52 m
+    #   RearRight    17.92   97.9%     0.47 m     0.52 m
+    #
+    # undulating.obj varies by 1.47 m (median) to 2.61 m across this rig's
+    # 16.1 m stance, which is 3x to 26x the dip budget. Sampling 2500 random
+    # positions and headings on that terrain, the share of poses with at least
+    # one clamped leg (and the mean number clamped, of 4):
+    #
+    #   body seated | threshold 1.95 | threshold 0 (standing still)
+    #      bind     |   84%  1.89    |   83%  1.87
+    #      -2 m     |   48%  0.85    |   44%  0.76
+    #      -4 m     |   20%  0.30    |   18%  0.28
+    #      -5 m     |   10%  0.15    |   10%  0.14
+    #
+    # The two columns are the same to within noise: the gait contributes almost
+    # nothing, and only the seat height moves the number. (The model is
+    # pessimistic in absolute terms -- it ignores the 5-candidate foothold fan
+    # and the reachable-landing fallback, both of which recover some clamps --
+    # so read the columns against each other, not as absolute rates. The
+    # measured rate is in capture/locomotion_tests.) So the fix buys reach
+    # rather than shortening the stride: monster_sim_movement_capsule now seats
+    # the body 4 m lower, bending the knees for ~2.8-3.1 m of slack.
+    #
+    # 20% of poses still clamp a leg, almost always a single one on the steepest
+    # ground. Closing that needs either a deeper crouch (-5 m halves it again,
+    # at 41% below the rig's own standing height), a stance-width parameter
+    # (0.8x stance at -4 m measures 8%, but no such parameter exists yet), or a
+    # rig whose bind pose leaves the knees bent.
+    #
+    # Numbers above are reproduced by
+    #   bazel run //engine/src/tests/kernel_tests:locomotion_reach_report -- \
+    #     $PWD/bazel-bin/game_server/skeleton_assets/generated/\
+    # simplified_monster_sim_v4.ozz
+    #
     # Turning is the other driver of stance drift and it dominates here: at
     # max_yaw 45 deg/s across a 16.08 m stance radius the stance sweeps at
     # 12.6 m/s, five times the walk, which no threshold in this range can keep
@@ -145,7 +195,7 @@ locomotion:
       foot_bone: JNT_LegFrontLeft_Foot
       gait_group: 0
       pole_local: {x: 0.0, y: 0.0, z: 1.0}
-      step_height_meters: 1.44
+      step_height_meters: 0.18
       max_reach_ratio: 0.999
     - id: rear_right
       hip_bone: JNT_LegRearRight_Hip
@@ -153,7 +203,7 @@ locomotion:
       foot_bone: JNT_LegRearRight_Foot
       gait_group: 0
       pole_local: {x: 0.0, y: 0.0, z: -1.0}
-      step_height_meters: 1.44
+      step_height_meters: 0.18
       max_reach_ratio: 0.999
     - id: front_right
       hip_bone: JNT_LegFrontRight_Hip
@@ -161,7 +211,7 @@ locomotion:
       foot_bone: JNT_LegFrontRight_Foot
       gait_group: 1
       pole_local: {x: 0.0, y: 0.0, z: 1.0}
-      step_height_meters: 1.44
+      step_height_meters: 0.18
       max_reach_ratio: 0.999
     - id: rear_left
       hip_bone: JNT_LegRearLeft_Hip
@@ -169,5 +219,5 @@ locomotion:
       foot_bone: JNT_LegRearLeft_Foot
       gait_group: 1
       pole_local: {x: 0.0, y: 0.0, z: -1.0}
-      step_height_meters: 1.44
+      step_height_meters: 0.18
       max_reach_ratio: 0.999

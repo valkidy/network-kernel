@@ -1,126 +1,97 @@
-# Game Server API Scaffold
+# Game Server API Scaffold — Historical Record
 
-This document records the C++ kernel surface that prepared the repository for
-Game Server v1. The follow-up implementation now lives in `game_server/`; see
-`docs/GAME_SERVER_V1.md` for current behavior.
+Status: **Implemented and superseded**
 
-## Status
+This file records the server-side API scaffold that preceded Game Server v1. It
+is retained because older tasks and commits reference this path. It is not the
+current game-server behavior or complete Kernel server API reference.
 
-M7 began as a handoff milestone. The kernel exposes the generic server-side API
-needed by an external game server layer, and the repository now contains the v1
-`game_server/` implementation plus a Unity-loadable `GameServer_*` native
-bridge.
+Use:
 
-## Boundary
+- `docs/GAME_SERVER_V1.md` for current game-server runtime behavior;
+- `docs/NETWORK_KERNEL_ABI.md` for the public ABI contract;
+- `engine/src/kernel/public/kernel_api.h` for the authoritative function list;
+- `docs/HYBRID_AI_TREE_FRAMEWORK_IMPLEMENTATION.md` for current AI integration.
 
-The game server layer should own gameplay policy:
+## Historical Contribution
 
-- enemy spawn rules
-- enemy despawn rules
-- target selection
-- AI state transitions
-- movement decisions
-
-The kernel owns authoritative world mutation, replication, transport, snapshots,
-and render/query data.
-
-Do not add enemy policy, AI decision trees, spawn pacing, or attack behavior to
-the kernel. Those belong in the next Game Server v1 task.
-
-## Prepared Kernel API
-
-The public C ABI now exposes generic server-side operations for a future game
-server layer:
-
-- create a server entity with `Kernel_ServerCreateEntity`
-- destroy a server entity with `Kernel_ServerDestroyEntity`
-- write authoritative transform with `Kernel_ServerSetEntityTransform`
-- write authoritative velocity with `Kernel_ServerSetEntityVelocity`
-- write persistent render/gameplay state with `Kernel_ServerSetEntityState`
-- query one entity with `Kernel_ServerGetEntityState`
-- query entities by type with `Kernel_ServerQueryEntities`
-
-These functions are server-only. They fail in client mode and use C ABI-safe
-structs only.
-
-## Intended Server Tick Flow
-
-The future dedicated server process should keep world mutation on one simulation
-thread:
+The scaffold established the boundary that still applies:
 
 ```text
-Kernel_Update()
-Kernel_PollEvents()
-EnemyManager::Tick()
-  -> query players/entities
-  -> create/destroy enemies
-  -> write enemy velocity/transform/state
+game_server owns gameplay policy and AI interpretation
+kernel/simulation owns world state, fixed-tick mutation, physics,
+combat, transport, replication, prediction, and render/query output
 ```
 
-The kernel publishes replicated snapshots and relevance updates from its own
-update path. The game server layer should not build snapshots or send network
-messages directly.
+It introduced generic server-only operations for:
 
-## API Mapping For Game Server v1
+- entity creation and destruction;
+- transform and velocity writes;
+- persistent entity-state writes;
+- single-entity and filtered entity queries.
 
-Use this mapping when implementing the follow-up task:
+These functions provided the first external gameplay layer without introducing
+enemy-specific types into the kernel ABI.
 
-| Game Server Need | Kernel API |
+## Current Server API Families
+
+The current ABI extends the original scaffold with:
+
+| Capability | Representative API |
 |---|---|
-| Spawn enemy | `Kernel_ServerCreateEntity` with `EntityType::kEnemy` |
-| Despawn enemy | `Kernel_ServerDestroyEntity` |
-| Move enemy by velocity | `Kernel_ServerSetEntityVelocity` |
-| Teleport/correct enemy transform | `Kernel_ServerSetEntityTransform` |
-| Set idle/chasing animation state | `Kernel_ServerSetEntityState` |
-| Find nearest player | `Kernel_ServerQueryEntities` with player type |
-| Read enemy/player state | `Kernel_ServerGetEntityState` |
+| Lifecycle | `Kernel_ServerCreateEntity`, `Kernel_ServerDestroyEntity` |
+| State/query | `Kernel_ServerGetEntityState`, `Kernel_ServerQueryEntities` |
+| Transform/movement | `Kernel_ServerSetEntityTransform`, `Kernel_ServerSetEntityVelocity` |
+| Health/combat | `Kernel_ServerSetEntityHealth`, `Kernel_ServerSetEntityCombatState` |
+| Actor metadata | `Kernel_ServerSetEntityActorTemplate` |
+| Perception | `Kernel_ServerSetEntityVisionConfig`, `Kernel_QueryVisionState` |
+| Weapons | `Kernel_ServerSetEntityWeaponMechanics`, `Kernel_ServerGetEntityWeaponMechanics` |
+| Server-owned actor control | `Kernel_ServerSubmitEntityInput` |
 
-`Kernel_ServerCreateEntity` currently supports enemy creation for this scaffold.
-Additional server-created entity types should be added only when a concrete game
-server feature needs them.
+All world mutation remains server-only, C ABI-safe, and single-owner. Gameplay
+code does not build snapshots or send replication packets directly.
 
-## Replication Behavior Already Provided
+## Current Game-Server Flow
 
-The game server layer gets these behaviors without owning replication logic:
+```text
+Kernel_Update
+  -> Kernel_PollEvents
+  -> AgentRuntimeManager / Director bootstrap
+  -> AiPerceptionAdapter
+  -> AgentSentryController
+  -> ActorIntentExecutor
+  -> Kernel_ServerSubmitEntityInput or validated server API
+```
 
-- authoritative entity lifecycle flows through reliable spawn/despawn
-- server-written transform, velocity, animation state, and visual flags are
-  exported through snapshots/render states
-- persistent state flags are replicated through `RenderEntityState`
-- per-client AOI filtering controls enemy/projectile relevance
-- out-of-range entities despawn with `KernelDespawnReason_OutOfRange`
+The game server now supports:
 
-## Implemented Game Server v1 Task
+- gameplay catalog v2 and pre-handshake bundle synchronization;
+- data-driven action, weapon, projectile, entity, and collider templates;
+- server-only Director entities and entity-template-driven spawn policy;
+- generic AI intents with game-server perception/execution adapters;
+- sentry attack/reload through the authoritative action/weapon path;
+- Jolt-based static collision, grounding, and character movement;
+- Unity-facing `GameServer_*` bridge packaging.
 
-Game Server v1 adds a `game_server` layer that calls the prepared kernel API:
+## Replication Contract
 
-- `EnemyManager` calls entity create/destroy.
-- `AgentSentryController` reads kernel vision state.
-- Agent sentry behavior writes stationary velocity, animation state, and fire
-  input requests back to the kernel.
-- Unity remains presentation-only and does not run AI or network tick logic.
+The game-server layer receives these kernel-owned behaviors:
 
-## Implemented Checklist
+- reliable entity lifecycle;
+- authoritative snapshot and render-state output;
+- per-client relevance filtering;
+- gameplay catalog synchronization;
+- owner prediction correction and remote action presentation;
+- entity-template and collider metadata synchronization;
+- out-of-range lifecycle handling that preserves the client session.
 
-- Add a server-side `EnemyManager` outside `engine/src/kernel`.
-- Keep `Enemy` as game-server-owned bookkeeping with `net_id`, target, and AI
-  state.
-- Spawn enemies through `Kernel_ServerCreateEntity`; store returned `net_id`.
-- Query players with `Kernel_ServerQueryEntities` each tick or from a cached
-  player list updated by kernel events.
-- Implement v1 AI states only: idle and chasing.
-- Write velocity through `Kernel_ServerSetEntityVelocity`; use transform writes
-  only for corrections or spawn placement.
-- Write animation state/visual flags through `Kernel_ServerSetEntityState`.
-- Despawn through `Kernel_ServerDestroyEntity`; remove local bookkeeping after
-  success.
-- Verify clients see enemy spawn/despawn/movement through existing render state
-  and snapshot replication.
+## Historical Limitations No Longer Current
 
-## Still Out Of Scope
+The original scaffold described Game Server v1 as future work and excluded
+attacks, damage, AI runtime, and navigation/physics integration. Those statements
+must be read only as historical scope. Current sentry agents use the native
+weapon path, generic AI adapters exist, Director entities are implemented, and
+Jolt/Recast artifacts are part of the gameplay bundle.
 
-- client-side enemy prediction
-- attacks, damage, or melee behavior
-- navigation mesh/pathfinding
-- new network transports
-- kernel-owned EnemyManager or EnemyAI classes
+Production pathfinding, encounter/mission directors, squad tactics, and
+client-side enemy prediction remain outside the current runtime.

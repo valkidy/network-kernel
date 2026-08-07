@@ -2,9 +2,16 @@
 """Summarizes a transform capture and diffs two captures of the same run.
 
 Section 1 describes the recorded path and checks the capture is well formed
-(no NaN/Inf, every sample carries every node, unit quaternions). Section 2 is
-the layer-1 parity gate: the native and plugin runs differ only by which dylib
-and bundle were loaded, so their raw output must agree within tolerance.
+(no NaN/Inf, every sample carries every node, unit quaternions) and that the
+legs are actually reaching the ground rather than hanging at their IK clamp.
+Section 2 is the layer-1 parity gate: the native and plugin runs differ only by
+which dylib and bundle were loaded, so their raw output must agree within
+tolerance.
+
+Note what section 2 does and does not buy. Bit-for-bit parity says the shipped
+plugin reproduces the native kernel; it says nothing about either being right,
+so both runs can agree perfectly on a rig whose feet are in the air. The leg
+reach check in section 1 is the one that looks at whether the pose is correct.
 
 Writes the report to --out and exits non-zero when a check fails.
 """
@@ -17,6 +24,25 @@ POSITION_TOLERANCE = 1e-5      # metres, local/root positions
 WORLD_TOLERANCE = 1e-3         # metres, FK composite positions
 SCALE_TOLERANCE = 1e-5
 QUATERNION_DOT_TOLERANCE = 1e-6  # 1 - |dot|
+
+# A two-bone IK solve clamps its target to max_reach_ratio of the limb's own
+# bone length, and a clamped leg is a leg whose foot has stopped tracking the
+# ground -- it hangs in the air with the knee straight until the gait happens to
+# step it. That is the only way this capture can see the failure without a
+# terrain query: a clamped leg reads back at exactly the ratio, so anything
+# within CLAMP_MARGIN of it is at the limit rather than merely extended.
+#
+# Everything else in this report can pass on a rig whose feet never touch the
+# ground -- finiteness, node counts, quaternion norms and native/plugin parity
+# are all indifferent to it -- which is how the straight-leg glitch survived
+# every green run of this capture. This check is what makes the capture able to
+# see it.
+MAX_REACH_RATIO = 0.999        # monster_sim_actor.yaml, every leg
+CLAMP_MARGIN = 1e-4
+# Budget, not a physical constant: the rig cannot reach zero on undulating
+# terrain (see the seat-height discussion in monster_sim_actor.yaml), but a leg
+# spending more than this at its limit is the glitch, not a graze.
+CLAMP_RATE_BUDGET = 0.10
 
 
 def load_root(path):
@@ -166,7 +192,100 @@ def describe_run(report, label, root_rows, node_rows, expected_samples):
         degenerate_quaternions == 0,
         f"{degenerate_quaternions} bad row(s)",
     )
+    check_leg_reach(report, label, node_rows)
     report.line()
+
+
+def check_leg_reach(report, label, node_rows):
+    """Reports how much of the run each leg spends clamped at its reach limit.
+
+    Legs are discovered by the rig's own naming, <prefix>_Hip / _Knee / _Foot,
+    which is the same convention the Unity client's [LegReach] overlay uses, so
+    the two are directly comparable. Nothing here needs the terrain.
+    """
+    world = {}
+    for (sample, _node), row in node_rows.items():
+        name = row.get("bone_name")
+        if not name:
+            continue
+        world[(sample, name)] = (
+            number(row, "world_px"),
+            number(row, "world_py"),
+            number(row, "world_pz"),
+        )
+
+    prefixes = sorted(
+        {
+            name[: -len("_Foot")]
+            for _sample, name in world
+            if name.endswith("_Foot")
+        }
+    )
+    if not prefixes:
+        return
+
+    samples = sorted({sample for sample, _name in world})
+    clamped_samples = {prefix: 0 for prefix in prefixes}
+    peak = {prefix: 0.0 for prefix in prefixes}
+    any_clamped = 0
+    total_clamped = 0
+    counted = 0
+    for sample in samples:
+        clamped_here = 0
+        measured = False
+        for prefix in prefixes:
+            joints = [
+                world.get((sample, f"{prefix}_{part}"))
+                for part in ("Hip", "Knee", "Foot")
+            ]
+            if any(joint is None for joint in joints):
+                continue
+            hip, knee, foot = joints
+            bones = distance(hip, knee) + distance(knee, foot)
+            if bones <= 1e-6:
+                continue
+            measured = True
+            extension = distance(hip, foot) / bones
+            peak[prefix] = max(peak[prefix], extension)
+            if extension >= MAX_REACH_RATIO - CLAMP_MARGIN:
+                clamped_samples[prefix] += 1
+                clamped_here += 1
+        if not measured:
+            continue
+        counted += 1
+        total_clamped += clamped_here
+        if clamped_here:
+            any_clamped += 1
+    if not counted:
+        return
+
+    report.line(
+        f"  leg reach (clamped = extension >= "
+        f"{MAX_REACH_RATIO - CLAMP_MARGIN:.4f} of bone length):"
+    )
+    for prefix in prefixes:
+        rate = clamped_samples[prefix] / counted
+        report.line(
+            f"    {prefix:<24} clamped {rate * 100:5.1f}% of samples, "
+            f"peak extension {peak[prefix] * 100:.2f}%"
+        )
+    report.line(
+        f"    mean clamped legs: {total_clamped / counted:.2f} of "
+        f"{len(prefixes)}; samples with at least one: "
+        f"{any_clamped / counted * 100:.0f}%"
+    )
+    worst_prefix = max(prefixes, key=lambda prefix: clamped_samples[prefix])
+    worst_rate = clamped_samples[worst_prefix] / counted
+    report.check(
+        f"{label} feet reach the ground",
+        worst_rate <= CLAMP_RATE_BUDGET,
+        f"worst leg {worst_prefix} clamped {worst_rate * 100:.1f}% of samples "
+        f"(budget {CLAMP_RATE_BUDGET * 100:.0f}%)",
+    )
+
+
+def distance(lhs, rhs):
+    return math.sqrt(sum((lhs[i] - rhs[i]) ** 2 for i in range(3)))
 
 
 def compare_runs(report, native_root, plugin_root, native_nodes, plugin_nodes):

@@ -95,6 +95,27 @@ ABI version 55 aligns the player-input naming contract with gameplay requests:
 is a source and dynamic-symbol breaking rename; the struct layouts and player
 input packet bytes remain unchanged.
 
+ABI version 45 decouples sparse `uint8_t` weapon catalog IDs from fixed actor
+inventory storage. `KERNEL_MAX_WEAPON_SLOTS == 4u` is the runtime inventory
+capacity; it is not a maximum catalog weapon ID. `KernelServerEntityState` and
+`KernelCombatStateDefinition` expose `active_weapon_slot`,
+`weapon_slot_count`, `weapon_ids[4]`, per-slot ammo, and per-slot reserve
+magazines. Callers must resolve catalog weapon metadata through each slot's
+`weapon_ids` entry instead of indexing state directly by weapon ID.
+
+ABI version 44 expands the authored weapon catalog for the grenade launcher and
+its projectile/action templates. This revision increased the then-dense weapon
+catalog capacity from seven to eight entries. ABI 45 immediately replaced that
+dense-capacity ABI model with sparse IDs and four runtime inventory slots.
+
+ABI version 43 adds `KernelGameplayCatalogLoadOptions` and reports its size
+through `KernelAbiInfo::gameplay_catalog_load_options_size`.
+`Kernel_LoadGameplayCatalog` now accepts optional load options so a catalog and
+its verified `KernelStaticCollisionSceneConfig` can be installed as one
+lifecycle operation. `out_static_scene_rejected` distinguishes catalog success
+from a rejected static-scene attachment. This revision is a breaking function
+signature and public-struct-layout change.
+
 ABI version 42 adds `KernelLocalActionResultReason_Cooldown = 12` for projected
 Primary Fire admission. Action result records and public struct sizes remain
 unchanged; packet schema remains 16 and snapshot schema remains 14.
@@ -392,33 +413,26 @@ External consumers must either run on a machine with those libraries available
 at those install names or package equivalent runtime dependencies with adjusted
 install names in a later packaging step.
 
-## Unity Prototype
+## Unity Package
 
-The Unity package lives at:
-
-```text
-plugins/com.network-example.kernel
-```
-
-The intended package provides handwritten C# P/Invoke declarations for the
-public `Kernel_*` surface, C# mirror structs for public ABI data, an
-`IDisposable` wrapper for `KernelHandle`, local player info helpers, an Editor
-ABI smoke runner, and minimal listen-server/client smoke samples.
-
-On macOS, the Unity package includes the built dylib at:
+The repository currently stores packed Unity UPM artifacts under
+`plugins/output`; it does not keep an expanded
+`plugins/com.network-example.kernel` source tree checked out. The latest
+artifact is:
 
 ```text
-plugins/com.network-example.kernel/Assets/Plugins/macOS/libnetwork_kernel.dylib
+plugins/output/com.network-example.kernel-0.6.9.tgz
 ```
 
-Unity resolves the C# import name `network_kernel` to `libnetwork_kernel.dylib`
-on macOS. The Editor smoke runner calls `Kernel_GetAbiInfo`, validates
-`Marshal.SizeOf<T>()` against native struct sizes, starts listen-server mode,
-checks `Kernel_GetLocalPlayerInfo`, updates the kernel, submits one input,
-polls events, reads render states, and destroys the handle.
+That package contains handwritten C# P/Invoke declarations, ABI layout
+validation, client/host/LAN samples, the gameplay catalog bundle, and native
+plugins for macOS and Windows x86_64. Its managed constants mirror
+`KERNEL_ABI_VERSION == 45u` and `KERNEL_MAX_WEAPON_SLOTS == 4u`.
 
-Current caveat: the workspace package source under
-`plugins/com.network-example.kernel` contains the minimal Vision v1 managed ABI
-mirror and layout checks, but the native dylib is not staged in the package in
-this branch. The old packaged artifact under `plugins/output` may contain
-managed bindings for an earlier ABI and should not be treated as authoritative.
+Unity resolves the C# import name `network_kernel` to
+`libnetwork_kernel.dylib` on macOS and `network_kernel.dll` on Windows. Package
+consumers must still call `Kernel_GetAbiInfo` and validate ABI version,
+capabilities, and public struct sizes before creating a kernel. The supported
+way to rebuild, stage, verify, and pack the expanded package is the repository's
+`unity-plugin-package-builder` workflow; generated staging content is
+intermediate output rather than the source of truth.

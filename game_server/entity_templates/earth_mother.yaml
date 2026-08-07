@@ -14,5 +14,5 @@ director:
     target_count: 1
     entity_template: monster_sim_actor
     position: {x: 0.0, y: 10.0, z: 0.0}
-    radius: 5.0
+    radius: 10.0
     seed: 4242

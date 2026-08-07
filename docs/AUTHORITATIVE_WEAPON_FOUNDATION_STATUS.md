@@ -1,75 +1,35 @@
-# Authoritative Weapon Foundation Status
+# Authoritative Weapon Foundation Status — Superseded
 
-This document separates remaining foundation work from feature expansion. Use it
-as the baseline for future weapon milestones.
+Status: **Superseded on 2026-07-23**
 
-## Foundation Complete
+This file described the weapon foundation at native ABI 17. It is retained as
+a compatibility pointer because older tasks and commits reference its path; it
+must not be used as the current weapon or Unity package status.
 
-- Server-authoritative damage path is unified through `DamagePipeline`.
-- Weapon mechanics are configurable through native structs and `game_server`
-  YAML templates for seven slots.
-- Runtime support exists for hitscan, shotgun, projectile explosion/direct hit,
-  piercing segment by `max_hit_count`, area effect, beam, and homing v1.
-- Collision query helpers provide deterministic hit/overlap collection with
-  collision layers, entity types, and best-effort normals.
-- Projectile hit processing has a dispatcher-style foundation for future hit
-  responses.
-- ProjectileInteractionSystem v1 exists as internal C++ rules stored on
-  `World`.
+Use these sources instead:
 
-## Foundation Still Needed
+- `docs/AUTHORITATIVE_WEAPON_CURRENT_IMPLEMENTATION.md` for implemented weapon,
+  projectile, damage, and interaction behavior.
+- `docs/NETWORK_KERNEL_ABI.md` for the current public ABI and compatibility
+  history.
+- `docs/NETCODE_SYNC_POLICY.md` for prediction, interpolation, and server
+  authority rules.
+- `plugins/output/com.network-example.kernel-0.6.9.tgz` for the current packed
+  Unity artifact.
 
-- Resync Unity package source and staged package with native ABI v17. Until
-  then, Unity verify/Editor smoke results do not represent current native
-  behavior.
-- Update Unity C# mirror structs, constants, capability flags, and smoke tests
-  for ABI v17 before treating Unity validation as required.
-- Keep ABI/status docs aligned with the current native header whenever
-  `KERNEL_ABI_VERSION`, public structs, or exported query functions change.
-- Document ProjectileInteractionSystem v1 as internal-only behavior. Its current
-  event surface is existing spawn/despawn events, not a dedicated
-  `ProjectileReactionEvent`.
-- Decide whether a dedicated gameplay event layer is required before exposing
-  projectile reactions beyond internal tests.
+## Historical Context
 
-## Pending Feature Expansions
+At the time of the original document, the implementation used a dense weapon
+array and the Unity package lagged behind native ABI 17. Those constraints no
+longer describe the repository:
 
-These are intentionally not foundation blockers:
+- The native kernel is ABI 45.
+- Weapon catalog IDs are sparse `uint8_t` values.
+- Actor inventories contain at most
+  `KERNEL_MAX_WEAPON_SLOTS == 4u` runtime slots.
+- Each runtime slot maps to a catalog ID through `weapon_ids`.
+- The current Unity 0.6.9 package mirrors ABI 45 and includes macOS and Windows
+  x86_64 native plugins.
 
-- YAML reaction catalog/loading.
-- GameServer/Kernel public reaction metadata query.
-- Bounce runtime using collision normals.
-- Attach runtime for target/surface sticking.
-- Material penetration budget and target thickness beyond current
-  `max_hit_count` piercing.
-- Advanced projectile reactions: spawn projectile/beam, convert projectile,
-  multi-result reactions.
-- Homing retarget, explicit lock-on input, and predictive guidance.
-- Beam oriented box/rectangle collision.
-- Friendly-fire and team policy expansion.
-- Unity gameplay-facing wrappers for weapon metadata beyond ABI smoke.
-
-## Validation Baseline
-
-For native weapon foundation changes, run:
-
-```text
-bazel test //engine/src/tests/simulation_tests:all
-bazel test //engine/src/tests/world_tests:all
-bazel test //engine/src/tests/sync_tests:all
-bazel test //engine/src/tests/kernel_tests:all
-bazel test //engine/src/tests/protocol_tests:all
-bazel test //game_server:all
-```
-
-For documentation-only changes, a narrower verification is acceptable:
-
-```text
-git diff --check
-rg -n "KERNEL_ABI_VERSION == [0-9]|AbiVersion = [0-9]|v[0-9]" docs plugins/output
-bazel test //engine/src/tests/kernel_tests:kernel_api_test //engine/src/tests/protocol_tests:all
-```
-
-Unity package builder verification is currently a known validation gap, not a
-required passing check, until the Unity package source is restored and aligned
-with ABI v17.
+Historical foundation details remain available in Git history before this
+superseding update.

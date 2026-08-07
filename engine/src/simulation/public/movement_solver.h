@@ -21,6 +21,32 @@ void apply_player_input(
     float fixed_delta_seconds,
     float move_speed_meters_per_second);
 
+// Vertical velocity for one character step.
+//
+// While standing on walkable ground this solves n . v = 0, so the character
+// follows the slope instead of leaving it. That division by ground_normal.y
+// has gain tan(slope) and DIVERGES as the ground approaches vertical, so it is
+// applied only when the normal is genuinely walkable, never merely because the
+// ground state says grounded.
+//
+// Those two disagree in practice: Jolt reports OnGround while handing back a
+// near-horizontal ground normal, measured live at ground_normal.y = 0.0095
+// against a 0.6428 limit. Guarding on the state alone (or on a token
+// ground_normal.y > 0.001) let that through at a gain of 105, turning a 2.5 m/s
+// walk into 146 m/s straight up and firing the actor 750 m into the air.
+//
+// When they disagree the normal is believed and the character falls instead.
+// That is the direction that cannot explode: the worst case is a frame of
+// gravity on ground it could not have walked on anyway.
+glm::vec3 ground_following_velocity(
+    const glm::vec3& desired_horizontal_velocity,
+    physics::CharacterGroundState ground_state,
+    const glm::vec3& ground_normal,
+    float max_slope_degrees,
+    float previous_vertical_velocity,
+    float gravity_y,
+    float fixed_delta_seconds);
+
 struct CharacterMovementConfig {
     std::uint32_t character_id = 0;
     physics::CollisionShapeDescriptor shape{};

@@ -1,5 +1,8 @@
 #include "simulation/public/movement_solver.h"
 
+#include <algorithm>
+#include <cmath>
+
 namespace network_example::movement_solver {
 
 glm::vec3 input_move_to_world(const KernelPlayerInput& input) {
@@ -32,6 +35,33 @@ bool reset_character(
     return physics_world.upsert_character(descriptor, error);
 }
 
+glm::vec3 ground_following_velocity(
+    const glm::vec3& desired_horizontal_velocity,
+    physics::CharacterGroundState ground_state,
+    const glm::vec3& ground_normal,
+    float max_slope_degrees,
+    float previous_vertical_velocity,
+    float gravity_y,
+    float fixed_delta_seconds) {
+    glm::vec3 velocity = desired_horizontal_velocity;
+    // The slope limit, not a token epsilon. Below it the division's gain is
+    // unbounded, and the ground state alone does not keep the normal above it.
+    const float walkable_normal_y = std::cos(
+        std::clamp(max_slope_degrees, 0.0f, 89.9f) *
+        3.14159265358979323846f / 180.0f);
+    if (ground_state == physics::CharacterGroundState::kGrounded &&
+        ground_normal.y >= walkable_normal_y && walkable_normal_y > 0.0f) {
+        // Keep authored X/Z speed when Jolt projects onto walkable ground.
+        const float ground_dot_horizontal =
+            ground_normal.x * velocity.x + ground_normal.z * velocity.z;
+        velocity.y = -ground_dot_horizontal / ground_normal.y;
+    } else {
+        velocity.y = previous_vertical_velocity +
+            gravity_y * fixed_delta_seconds;
+    }
+    return velocity;
+}
+
 bool step_character(
     physics::PhysicsWorld& physics_world,
     const CharacterMovementConfig& config,
@@ -53,17 +83,14 @@ bool step_character(
         return false;
     }
 
-    glm::vec3 velocity = desired_horizontal_velocity;
-    if (state->ground_state == physics::CharacterGroundState::kGrounded &&
-        state->ground_normal.y > 0.001f) {
-        // Keep authored X/Z speed when Jolt projects onto walkable ground.
-        const float ground_dot_horizontal =
-            state->ground_normal.x * velocity.x +
-            state->ground_normal.z * velocity.z;
-        velocity.y = -ground_dot_horizontal / state->ground_normal.y;
-    } else {
-        velocity.y = state->velocity.y + config.gravity.y * fixed_delta_seconds;
-    }
+    const glm::vec3 velocity = ground_following_velocity(
+        desired_horizontal_velocity,
+        state->ground_state,
+        state->ground_normal,
+        config.max_slope_degrees,
+        state->velocity.y,
+        config.gravity.y,
+        fixed_delta_seconds);
     physics::CharacterMoveRequest request{};
     request.character_id = config.character_id;
     request.current_position = state->position;

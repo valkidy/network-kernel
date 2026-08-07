@@ -1,8 +1,22 @@
 # Local Action Correction And Remote Presentation Specification
 
-Status: Proposed
+Status: Implemented in the native C++ runtime
 Scope: actor action state, local prediction correction, remote action presentation,
 Unity-facing render consumption, and runtime traffic policy
+
+Current baseline:
+
+```text
+kernel ABI: 45
+protocol: 1
+packet schema: 17
+snapshot schema: 15
+```
+
+The owner-correction, remote-presentation, generalized Fire/Reload, batching,
+traffic budget, and native metrics contracts are implemented. Unity
+Animator/VFX consumption, presentation profiles, production Skill/Casting
+producers, and Climb gameplay remain outside the completed native scope.
 
 ## 1. Objective
 
@@ -355,8 +369,8 @@ Current encoded sizes used by this policy are:
 | Packet header | 28 B |
 | Snapshot base | 60 B total including packet header |
 | Conditional actor action timeline | 20 B per active actor |
-| Proposed local result record | 12 B before batch framing |
-| Proposed remote presentation record | 20 B before batch framing |
+| Local result record | 12 B before batch framing |
+| Remote presentation record | 20 B before batch framing |
 
 At 10 commits per second, an owner receives approximately 120 B/s of result
 records before amortized batch framing. Because correction is owner-only, server
@@ -400,7 +414,7 @@ commit to a snapshot.
 
 ## 12. ABI And Protocol Surface
 
-The preferred additive public surface is:
+The implemented public surface is:
 
 ```text
 Kernel_PollLocalActionResults(...)
@@ -434,7 +448,7 @@ render-state APIs. They do not need to return every completed one-shot commit.
 
 ## 14. Metrics
 
-The implementation SHOULD expose at least:
+The implementation exposes native network statistics for:
 
 - owner action results sent, accepted, corrected, rejected, duplicated, and
   timed out;
@@ -484,9 +498,9 @@ The test suite MUST verify:
 5. Remote presentation may be budget-dropped while owner correction remains
    deliverable.
 
-## 16. Implementation Phases
+## 16. Implementation History
 
-### Phase 1: owner correctness
+### Phase 1: owner correctness — complete
 
 - Require non-zero action instance ids for predicted actions.
 - Add idempotent server action-result generation.
@@ -494,27 +508,28 @@ The test suite MUST verify:
 - Reconcile accepted, corrected, and rejected results in the client kernel.
 - Add owner correctness tests before remote presentation work.
 
-### Phase 2: remote best-effort presentation
+### Phase 2: remote best-effort presentation — native complete
 
 - Add compact unreliable sequenced presentation batches.
 - Add relevance filtering, expiry, deduplication, and traffic priority.
-- Add Unity/client consumption without treating events as authority.
+- Unity/client Animator and VFX consumption remains deferred and must not treat
+  events as authority.
 
-### Phase 3: generalized actions
+### Phase 3: generalized actions — Fire/Reload complete
 
 - Move Fire and Reload commit effects behind the generic action executor.
 - Keep Death as lifecycle authority; keep Climb locomotion as continuous state,
   with only optional ClimbStart admission modeled as an action.
-- Add presentation profiles and action-layer policy without Unity asset ids in
-  native data.
+- Presentation profiles and production Skill/Casting/Climb producers remain
+  deferred.
 - Preserve snapshots as the source of continuous action state.
 
-### Phase 4: measurement and tuning
+### Phase 4: measurement and tuning — native metrics complete
 
 - Measure packet rate, bytes per second, result latency, remote event drop rate,
   and batch occupancy.
-- Tune batch cadence, relevance radius, expiry, and remote event priority from
-  measured data.
+- Continue tuning batch cadence, relevance radius, expiry, and remote event
+  priority from measured data.
 
 ## 16.1 Implementation status
 
@@ -525,7 +540,7 @@ The test suite MUST verify:
 | ActionIntent/ActionInput public contract | Implemented in ABI 40 / packet 16 |
 | CastingCommit codec/poll surface | Implemented; production Skill/Casting producer deferred |
 | Presentation profiles | Deferred |
-| Public metrics and traffic tuning API | Deferred |
+| Public metrics and traffic tuning API | Implemented in ABI 41 |
 | Unity consumer and Animator/VFX mapping | Deferred |
 | Climbing snapshot state | Deferred |
 
