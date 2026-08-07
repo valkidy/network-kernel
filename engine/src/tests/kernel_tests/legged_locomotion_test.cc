@@ -1092,5 +1092,58 @@ int main() {
             }
         }
     }
+
+    // The authored crouch seats the body exactly that far below where body
+    // follow would otherwise settle it, and buys the knees that much reach.
+    // Measured on flat ground so the only difference between the two runs is
+    // the parameter.
+    {
+        const network_example::LocomotionGroundingQuery ground =
+            sloped_ground(0.0f);
+        const auto settle = [&](float crouch, float* out_height) {
+            KernelSkeletonBindingDefinition crouched = rig;
+            crouched.body_follow_speed = 10.0f;
+            crouched.slope_alignment = 0.0f;
+            crouched.stance_crouch_meters = crouch;
+            network_example::LocomotionState body;
+            require(network_example::initialize_locomotion_state(
+                crouched, 0.0f, &body));
+            glm::vec3 root{0.0f};
+            float longest = 0.0f;
+            for (std::uint32_t step = 0u; step < 240u; ++step) {
+                require(network_example::advance_locomotion_state(
+                    crouched, KernelVec2{}, 90.0f, tick, &body));
+                if (body.body_follow_valid) {
+                    root.y += (body.body_follow_target_height - root.y) *
+                        (1.0f - std::exp(-crouched.body_follow_speed * tick));
+                }
+                require(network_example::solve_legged_locomotion_pose(
+                    *skeleton, bind_pose, crouched, root, 50.0f, tick, ground,
+                    &body));
+            }
+            require(body.body_follow_valid);
+            *out_height = root.y;
+            const std::vector<glm::vec3> world =
+                world_positions(body, *skeleton, root);
+            for (std::uint32_t index = 0u; index < crouched.leg_count; ++index) {
+                const KernelSkeletonLegDefinition& leg = crouched.legs[index];
+                longest = std::max(
+                    longest,
+                    glm::length(
+                        world[leg.foot_bone_index] -
+                        world[leg.hip_bone_index]));
+            }
+            return longest;
+        };
+        float upright_height = 0.0f;
+        float crouched_height = 0.0f;
+        const float upright_reach = settle(0.0f, &upright_height);
+        const float crouched_reach = settle(1.5f, &crouched_height);
+        require(std::abs(
+            (upright_height - crouched_height) - 1.5f) < 0.01f);
+        // Crouching pulls the feet in toward the hips, which is the whole point:
+        // the slack it frees is what a foothold below the stance spends.
+        require(crouched_reach < upright_reach - 0.1f);
+    }
     return 0;
 }

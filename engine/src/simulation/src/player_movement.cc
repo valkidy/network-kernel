@@ -34,11 +34,38 @@ physics::CollisionShapeDescriptor movement_shape(
     return shape;
 }
 
+// The authored movement mask is carried across the ABI as KERNEL_MOVEMENT_LAYER_*
+// and consumed here as physics::CollisionLayer. They are the same bits by
+// construction, and this is where that is nailed down -- the two headers are
+// otherwise free to drift, and the failure mode is an actor that silently walks
+// through the wrong things.
+static_assert(
+    KERNEL_MOVEMENT_LAYER_TERRAIN ==
+        physics::collision_layer_bit(physics::CollisionLayer::kTerrain),
+    "movement layer bits must match physics::CollisionLayer");
+static_assert(
+    KERNEL_MOVEMENT_LAYER_STATIC_OBSTACLE ==
+        physics::collision_layer_bit(physics::CollisionLayer::kStaticObstacle),
+    "movement layer bits must match physics::CollisionLayer");
+static_assert(
+    KERNEL_MOVEMENT_LAYER_ACTOR ==
+        physics::collision_layer_bit(physics::CollisionLayer::kActorMovement),
+    "movement layer bits must match physics::CollisionLayer");
+static_assert(
+    KERNEL_MOVEMENT_MASK_DEFAULT == physics::kMovementCollisionMask,
+    "the default movement mask must match the engine default");
+
+// collision_mask is the authored MovementState::movement_collision_mask, where
+// zero means "whatever the engine has always used" -- terrain, static obstacles
+// and other actors.
 physics::CollisionQueryFilter movement_filter(
     NetId net_id,
-    std::uint32_t collider_id) {
+    std::uint32_t collider_id,
+    std::uint32_t collision_mask) {
     physics::CollisionQueryFilter filter{};
-    filter.collision_mask = physics::kMovementCollisionMask;
+    filter.collision_mask = collision_mask == 0u
+        ? physics::kMovementCollisionMask
+        : collision_mask;
     filter.ignored_entity_net_id = net_id;
     filter.ignored_collider_id = collider_id;
     return filter;
@@ -57,6 +84,7 @@ GroundProbe probe_ground(
     const glm::quat& rotation,
     float distance,
     float max_slope_degrees,
+    std::uint32_t collision_mask,
     bool initial_placement = false) {
     GroundProbe result{};
     if (distance <= 0.0f) {
@@ -68,9 +96,13 @@ GroundProbe probe_ground(
     request.rotation = rotation;
     request.displacement = glm::vec3{0.0f, -distance, 0.0f};
     request.filter = movement_filter(
-        collider.entity_net_id, collider.collider_id);
+        collider.entity_net_id, collider.collider_id, collision_mask);
     if (initial_placement) {
-        request.filter.collision_mask =
+        // Seating an actor for the first time only ever looks at the static
+        // world, but it still narrows to what the template authored rather than
+        // widening past it: an actor that does not collide with obstacles must
+        // not be placed on one either.
+        request.filter.collision_mask &=
             physics::collision_layer_bit(physics::CollisionLayer::kTerrain) |
             physics::collision_layer_bit(
                 physics::CollisionLayer::kStaticObstacle);
@@ -98,7 +130,8 @@ glm::vec3 move_kinematic_horizontal(
     const ColliderInstance& collider,
     const Transform& transform,
     const glm::vec3& displacement,
-    float max_slope_degrees) {
+    float max_slope_degrees,
+    std::uint32_t collision_mask) {
     if (glm::dot(displacement, displacement) <= 0.00000001f) {
         return transform.position;
     }
@@ -108,7 +141,7 @@ glm::vec3 move_kinematic_horizontal(
     request.rotation = transform.rotation;
     request.displacement = displacement;
     request.filter = movement_filter(
-        collider.entity_net_id, collider.collider_id);
+        collider.entity_net_id, collider.collider_id, collision_mask);
     const float walkable_normal_y =
         std::cos(glm::radians(max_slope_degrees));
     float safe_fraction = 1.0f;
@@ -296,7 +329,9 @@ void simulate_actor_movement(
             config.step_height = next_movement.step_height;
             config.ground_snap_distance = next_movement.ground_snap_distance;
             config.filter = movement_filter(
-                identity.net_id, collider->collider_id);
+                identity.net_id,
+                collider->collider_id,
+                next_movement.movement_collision_mask);
             if (actor_blocking_mode == KernelActorBlockingMode_Disabled) {
                 config.filter.collision_mask &=
                     ~physics::collision_layer_bit(
@@ -304,6 +339,19 @@ void simulate_actor_movement(
             }
             movement_solver::CharacterMovementState state{};
             state.position = transform.position;
+            // When procedural locomotion owns body height, the controller runs
+            // off its own vertical anchor rather than the transform's y. They
+            // are answers to different questions: the transform carries the
+            // body, seated on the average of footholds spread across the whole
+            // stance, while the capsule has to stay resting on the ground
+            // directly beneath it. Feeding the body's height back in buries the
+            // capsule by however far those two differ -- measured here as a
+            // 10 s patrol collapsing from ~24 m to 2.4 m of travel, the actor
+            // grinding against its own depenetration.
+            if (next_movement.locomotion_owns_height &&
+                next_movement.has_controller_height) {
+                state.position.y = next_movement.controller_height;
+            }
             state.rotation = transform.rotation;
             state.velocity = current_velocity.linear;
             state.ground_state = next_movement.ground_state ==
@@ -325,6 +373,12 @@ void simulate_actor_movement(
                 result.physics_finalized = true;
                 result.position = state.position;
                 result.velocity = state.velocity;
+                // Remember where the capsule ended up before anything else
+                // rewrites y, so the next tick resumes from the controller's own
+                // answer. Kept unconditionally: an entity that later turns body
+                // follow on then already has a usable anchor.
+                result.movement.controller_height = state.position.y;
+                result.movement.has_controller_height = true;
                 result.movement.ground_normal = state.ground_normal;
                 result.movement.supporting_entity_net_id =
                     state.supporting_identity.entity_net_id;
@@ -354,7 +408,8 @@ void simulate_actor_movement(
                     *collider,
                     transform,
                     desired_horizontal * fixed_delta_seconds,
-                    next_movement.max_slope_degrees)
+                    next_movement.max_slope_degrees,
+                    next_movement.movement_collision_mask)
                 : transform.position + desired_horizontal * fixed_delta_seconds;
             result.velocity.x = desired_horizontal.x;
             result.velocity.z = desired_horizontal.z;
@@ -371,6 +426,7 @@ void simulate_actor_movement(
                     transform.rotation,
                     kInitialGroundingSearchDistance * 2.0f,
                     next_movement.max_slope_degrees,
+                    next_movement.movement_collision_mask,
                     true);
                 if (stats != nullptr) {
                     ++stats->grounded_query_count;
@@ -420,7 +476,8 @@ void simulate_actor_movement(
                     result.position,
                     transform.rotation,
                     probe_distance,
-                    next_movement.max_slope_degrees);
+                    next_movement.max_slope_degrees,
+                    next_movement.movement_collision_mask);
                 result.movement.last_queried_position = result.position;
                 result.movement.has_last_queried_position = true;
                 if (stats != nullptr) {
@@ -460,7 +517,8 @@ void simulate_actor_movement(
                         result.position,
                         transform.rotation,
                         -vertical_displacement.y,
-                        next_movement.max_slope_degrees);
+                        next_movement.max_slope_degrees,
+                        next_movement.movement_collision_mask);
                     if (stats != nullptr) {
                         ++stats->grounded_query_count;
                         stats->grounded_query_cost_us +=

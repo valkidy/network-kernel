@@ -6,8 +6,16 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 66u,
+    KERNEL_ABI_VERSION == 67u,
     "skeleton asset ABI");
+_Static_assert(
+    offsetof(KernelMovementDefinition, movement_collision_mask) >
+        offsetof(KernelMovementDefinition, max_yaw_degrees_per_second),
+    "movement collision mask is appended to the movement ABI");
+_Static_assert(
+    offsetof(KernelSkeletonBindingDefinition, stance_crouch_meters) >
+        offsetof(KernelSkeletonBindingDefinition, processing_order),
+    "stance crouch is appended to the skeleton binding ABI");
 _Static_assert(
     sizeof(KernelActionTriggerDefinition) == 296u,
     "KernelActionTriggerDefinition ABI size");
@@ -140,7 +148,7 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 66u);
+    assert(KERNEL_ABI_VERSION == 67u);
     assert(KERNEL_CAPABILITY_SKELETON_BIND_POSE != 0u);
     assert(sizeof(KernelBoneLocalTransform) > 0u);
     assert(sizeof(KernelSkeletonRenderState) > 0u);

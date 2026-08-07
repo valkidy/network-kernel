@@ -728,6 +728,23 @@ struct MovementState {
     } ground_state = GroundState::kAirborne;
     std::uint32_t movement_collider_template_id = 0;
     std::uint32_t movement_collider_id = 0;
+    // Layers this actor's movement sweeps against. Zero means the engine
+    // default (physics::kMovementCollisionMask). Authored per template because
+    // the collision volume that carries a body is not always the shape that
+    // should stop it -- a legged actor's capsule rides metres above open ground.
+    std::uint32_t movement_collision_mask = 0;
+    // Set when procedural locomotion owns transform.position.y (body follow on).
+    // The controller then keeps its own vertical anchor below instead of reading
+    // the transform back, because the two answers are no longer the same height
+    // and feeding it the body's would bury the capsule.
+    bool locomotion_owns_height = false;
+    // The height the character controller last resolved for itself, and whether
+    // it holds one. Only consulted while locomotion_owns_height. Must be dropped
+    // whenever the entity is moved by anything other than the controller --
+    // a respawn or an authoritative teleport -- or the capsule resumes from
+    // wherever it used to be.
+    float controller_height = 0.0f;
+    bool has_controller_height = false;
     glm::vec3 gravity{0.0f, -9.81f, 0.0f};
     glm::vec3 ground_normal{0.0f, 1.0f, 0.0f};
     NetId supporting_entity_net_id = 0;

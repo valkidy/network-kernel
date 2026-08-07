@@ -1,25 +1,18 @@
 id: 14
 name: monster_sim_movement_capsule
 shape: capsule
-# The capsule's bottom is where the character controller stands the body, and
-# it sits at center.y - (half_height + radius) in the entity's own frame. So
-# raising center.y seats the entity origin -- and with it the whole rig, which
-# the leg solve drops onto that origin by its lowest bind foot -- that much
-# lower against the terrain, without moving the capsule in the world at all.
+# center.y - (half_height + radius) = 0, i.e. the capsule bottom is the entity
+# origin, which is the ordinary convention here.
 #
-# 12.0 puts the origin 4 m below the ground contact, which is a deliberate
-# crouch. The rig's bind pose is a straight strut (hips 13.76 m up and 12.5 m
-# out over feet on 17.9-18.7 m of bone, i.e. 98-99.5% extended), leaving each
-# leg only 0.10-0.47 m of downward reach before the two-bone IK clamps and the
-# foot stops tracking the ground. undulating.obj varies by 1.47 m (median) to
-# 2.61 m across this rig's 16.1 m stance, so at the bind height at least one
-# leg is clamped almost everywhere on the map, standing still. The crouch bends
-# the knees and buys 2.8-3.1 m of slack; see
-# //engine/src/tests/kernel_tests:locomotion_reach_report.
-#
-# Side effect, accepted for now: hitbox, vision cone and every other
-# origin-relative volume ride down with the body by the same 4 m.
-center: {x: 0.0, y: 12.0, z: 0.0}
+# It stays that way even though this actor's body is seated well below its own
+# footholds (locomotion.body.stance_crouch_meters). The capsule does not follow
+# the body down: while body follow is on, the character controller keeps its own
+# vertical anchor (MovementState::controller_height) and this offset is measured
+# against that, not against transform.position.y. Offsetting the capsule to
+# chase the crouch was tried and cannot work -- the gap between the two heights
+# is set by the terrain under the stance, so no fixed offset keeps the capsule
+# on the ground. Burying it collapsed a 10 s patrol from ~24 m to 2.4 m.
+center: {x: 0.0, y: 8.0, z: 0.0}
 half_height: 5.0
 radius: 3.0
 purpose: movement

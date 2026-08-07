@@ -4,7 +4,13 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KERNEL_ABI_VERSION 66u
+/*
+ * 67: KernelMovementDefinition gained movement_collision_mask and
+ *     KernelSkeletonBindingDefinition gained stance_crouch_meters. Both are
+ *     appended, but every managed mirror of these structs must add the same
+ *     field or the nested layout of KernelEntityTemplateDefinition shifts.
+ */
+#define KERNEL_ABI_VERSION 67u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -134,6 +140,25 @@ typedef enum KernelFootholdQueryType {
 #define KERNEL_COLLISION_MASK_STATIC_WORLD \
     (KERNEL_COLLISION_LAYER_TERRAIN | \
      KERNEL_COLLISION_LAYER_STATIC_OBSTACLE)
+
+/*
+ * Movement layers, for KernelMovementDefinition::movement_collision_mask.
+ *
+ * Deliberately a separate bit space from KERNEL_COLLISION_LAYER_* above. Those
+ * are gameplay categories -- which side something is on, and what may damage it
+ * -- and they are matched against a hit's gameplay_category. These say what kind
+ * of geometry blocks a body, and are matched against the physics layer a shape
+ * lives in. The two are filtered on different axes and their bits do not
+ * correspond; keeping them apart is what stops "hostile_side" from being written
+ * where "terrain" was meant and silently passing.
+ */
+#define KERNEL_MOVEMENT_LAYER_TERRAIN UINT32_C(0x00000001)
+#define KERNEL_MOVEMENT_LAYER_STATIC_OBSTACLE UINT32_C(0x00000002)
+#define KERNEL_MOVEMENT_LAYER_ACTOR UINT32_C(0x00000008)
+#define KERNEL_MOVEMENT_MASK_DEFAULT \
+    (KERNEL_MOVEMENT_LAYER_TERRAIN | \
+     KERNEL_MOVEMENT_LAYER_STATIC_OBSTACLE | \
+     KERNEL_MOVEMENT_LAYER_ACTOR)
 
 /*
  * Visual flags are composable presentation hints, never gameplay authority.
@@ -1282,6 +1307,20 @@ typedef struct KernelSkeletonBindingDefinition {
     KernelVec2 foothold_candidate_offsets[KERNEL_MAX_FOOTHOLD_CANDIDATES];
     KernelSkeletonLegDefinition legs[KERNEL_MAX_SKELETON_LEGS];
     uint32_t processing_order[KERNEL_MAX_SKELETON_LEGS];
+    /*
+     * How far below its own bind pose the body is seated, in metres. Zero
+     * reproduces the bind pose exactly.
+     *
+     * This is the knee-bend knob, and it exists because a rig authored with
+     * near-straight legs has no reach left to spend. The two-bone solve clamps
+     * its target at max_reach_ratio of the limb's own bone length, so a leg
+     * resting at 98% of that length can absorb only centimetres of terrain
+     * relief before the foot stops tracking the ground. Seating the body lower
+     * bends the knees and buys that reach back; it is only meaningful while
+     * body_follow_speed > 0, since otherwise the controller owns body height and
+     * this has nothing to act on.
+     */
+    float stance_crouch_meters;
 } KernelSkeletonBindingDefinition;
 
 typedef struct KernelActionTemplateDefinition {
@@ -1677,6 +1716,18 @@ typedef struct KernelMovementDefinition {
     float ground_probe_distance;
     float ground_snap_distance;
     float max_yaw_degrees_per_second;
+    /*
+     * Layers the movement controller sweeps against, as KERNEL_COLLISION_LAYER_*
+     * bits. Zero means "the engine default" (terrain, static obstacles and other
+     * actors), which is what every controller used before this field existed.
+     *
+     * It is authored because a body's collision volume is not always the shape
+     * that should stop it. A legged actor carries its mass on a capsule metres
+     * above the ground with open space underneath; anything that fits under the
+     * belly is something it steps over, not something it walks into. Narrowing
+     * this to terrain alone is how that is expressed.
+     */
+    uint32_t movement_collision_mask;
 } KernelMovementDefinition;
 
 struct KernelEntityAiDefinition {

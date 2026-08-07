@@ -2817,7 +2817,12 @@ bool KernelEngine::load_gameplay_catalog(
                 KernelMovementControllerType_Character ||
             (entity_template.entity_type == KernelEntityType_Actor &&
              entity_template.movement.controller_type ==
-                 KernelMovementControllerType_None)) {
+                 KernelMovementControllerType_None) ||
+            // Zero is "engine default"; anything else must name movement layers
+            // and nothing else. An unknown bit here would silently widen or
+            // narrow what stops the actor.
+            (entity_template.movement.movement_collision_mask &
+             ~KERNEL_MOVEMENT_MASK_DEFAULT) != 0u) {
             return false;
         }
         if (entity_template.movement.controller_type !=
@@ -8070,15 +8075,52 @@ void KernelEngine::update_legged_locomotion(
         // old height, shifting every foot off its foothold by the blend step.
         // (The matching tilt is carried inside the locomotion state and applied
         // by the solve itself, so both corrections lag exactly one tick.)
-        if (entity_template->skeleton.body_follow_speed > 0.0f &&
-            state->second.body_follow_valid) {
+        //
+        // While this is on, locomotion owns y outright. simulate_actor_movement
+        // ran earlier this tick and already wrote the controller's own answer
+        // into transform.position.y, so the smoothing deliberately starts from
+        // the height locomotion last applied instead: blending from the
+        // transform would let the controller's answer back in every single tick,
+        // and that answer -- terrain sampled under a capsule a few metres wide,
+        // for a body standing on a footprint tens of metres across -- is the
+        // mismatch this exists to remove. x and z stay the controller's.
+        //
+        // The controller gets y back the moment no foot is planted, which is
+        // what carries a spawn drop-in. Note what that does NOT cover: the
+        // foothold rays are long enough to find ground far below, so an actor
+        // walking off a ledge rides its feet down the drop rather than falling
+        // ballistically. That is the prototype's behaviour and is fine for a
+        // walker; anything that needs real airtime needs a grounded test here
+        // rather than a foot-planted one.
+        const bool locomotion_owns_height =
+            entity_template->skeleton.body_follow_speed > 0.0f &&
+            state->second.body_follow_valid;
+        if (locomotion_owns_height) {
             const float blend = 1.0f - std::exp(
                 -entity_template->skeleton.body_follow_speed *
                 fixed_delta_seconds);
-            transform.position.y = std::lerp(
-                transform.position.y,
+            const float previous = state->second.has_body_follow_applied_height
+                ? state->second.body_follow_applied_height
+                : transform.position.y;
+            const float settled = std::lerp(
+                previous,
                 state->second.body_follow_target_height,
                 blend);
+            if (std::isfinite(settled)) {
+                // Velocity is deliberately left alone. It is the controller's
+                // own vertical state, and the controller now runs on its own
+                // anchor, lands on terrain and integrates gravity there without
+                // help. Writing the body's rate into it instead couples two
+                // heights that are metres apart by design: the difference
+                // between them divided by a tick reads as a ~120 m/s dive, which
+                // Jolt duly applies and which slides the actor backwards down
+                // the nearest slope.
+                transform.position.y = settled;
+                state->second.body_follow_applied_height = settled;
+                state->second.has_body_follow_applied_height = true;
+            }
+        } else {
+            state->second.has_body_follow_applied_height = false;
         }
 
         // The leg solve is intentionally decoupled from the character/movement

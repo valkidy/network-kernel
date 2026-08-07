@@ -104,6 +104,7 @@ struct SkeletonBindingConfig {
     std::uint32_t max_swinging_legs = 0;
     float body_follow_speed = 0.0f;
     float slope_alignment = 0.0f;
+    float stance_crouch_meters = 0.0f;
     std::uint8_t foothold_query_type = KernelFootholdQueryType_None;
     float foothold_query_start_height_meters = 0.0f;
     float foothold_query_distance_meters = 0.0f;
@@ -132,6 +133,8 @@ struct ActorTemplateConfig {
     float movement_ground_probe_distance = 0.25f;
     float movement_ground_snap_distance = 0.5f;
     float movement_max_yaw_degrees_per_second = 0.0f;
+    // KERNEL_MOVEMENT_LAYER_* bits; 0 keeps the engine default.
+    std::uint32_t movement_collision_mask = 0u;
     std::array<std::uint32_t, KERNEL_MAX_WEAPON_SLOTS> weapon_ids{};
     std::uint8_t weapon_slot_count = 0;
     std::uint8_t active_weapon_slot = 0;
