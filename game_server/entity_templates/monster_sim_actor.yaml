@@ -87,6 +87,33 @@ locomotion:
     # it, and the landing target is then aimed ahead by the body's travel over
     # the swing. The last row is the 4x variant if this still reads short.
     #
+    # TEMPORARY -- DIAGNOSTIC VALUES, NOT A SHIPPABLE GAIT.
+    #
+    # The rig cannot afford any of the strides above. Its legs rest at 98% of
+    # their own bone length, so a planted foot has only 0.27-0.57 m of travel
+    # before the two-bone chain is straight; past that the IK target is clamped
+    # to the reach limit, the foot stops tracking the ground, and the limb
+    # swings about the hip-foot axis instead of bending. Measured live: legs
+    # locked in every sample, 2 to 4 of 4 at a time.
+    #
+    #   leg          reach    rest   locks after
+    #   FrontLeft    18.64   18.46      0.27 m
+    #   FrontRight   18.46   18.22      0.36 m
+    #   RearLeft     17.90   17.55      0.52 m
+    #   RearRight    17.90   17.51      0.57 m
+    #
+    # At threshold 1.95 the gait asks for 1.95 m of drift before a leg may
+    # step -- seven times the slack -- so a leg locks 3 ticks into a 23 tick
+    # stance and stays locked for 86% of it. These values instead put the whole
+    # drift budget inside the reach, purely to confirm that is the mechanism:
+    # threshold under the 0.27 m worst case, and duration cut to keep the swing
+    # no longer than the stance so the two gait groups can still interleave.
+    #
+    # The cost is the point being tested, not a design: a 0.45 m stride on an
+    # 18 m rig, and 20 steps/s/actor against 3.3. The real fix is either a
+    # stance-width parameter (which does not exist yet) or a rig whose bind
+    # pose leaves the knees bent.
+    #
     # Turning is the other driver of stance drift and it dominates here: at
     # max_yaw 45 deg/s across a 16.08 m stance radius the stance sweeps at
     # 12.6 m/s, five times the walk, which no threshold in this range can keep
@@ -107,8 +134,8 @@ locomotion:
     # matters the knob is max_yaw_degrees_per_second: the legs keep up to about
     # 8-10 deg/s at this threshold (measured 1.05 m error at 8 deg/s, saturated
     # by 12 deg/s), which is far slower than gameplay currently wants.
-    step_threshold_meters: 1.95
-    step_duration_ticks: 18
+    step_threshold_meters: 0.25
+    step_duration_ticks: 3
     max_swinging_legs: 2
     processing_order: [front_left, front_right, rear_left, rear_right]
   foothold:
@@ -145,7 +172,7 @@ locomotion:
       foot_bone: JNT_LegFrontLeft_Foot
       gait_group: 0
       pole_local: {x: 0.0, y: 0.0, z: 1.0}
-      step_height_meters: 1.44
+      step_height_meters: 0.18
       max_reach_ratio: 0.999
     - id: rear_right
       hip_bone: JNT_LegRearRight_Hip
@@ -153,7 +180,7 @@ locomotion:
       foot_bone: JNT_LegRearRight_Foot
       gait_group: 0
       pole_local: {x: 0.0, y: 0.0, z: -1.0}
-      step_height_meters: 1.44
+      step_height_meters: 0.18
       max_reach_ratio: 0.999
     - id: front_right
       hip_bone: JNT_LegFrontRight_Hip
@@ -161,7 +188,7 @@ locomotion:
       foot_bone: JNT_LegFrontRight_Foot
       gait_group: 1
       pole_local: {x: 0.0, y: 0.0, z: 1.0}
-      step_height_meters: 1.44
+      step_height_meters: 0.18
       max_reach_ratio: 0.999
     - id: rear_left
       hip_bone: JNT_LegRearLeft_Hip
@@ -169,5 +196,5 @@ locomotion:
       foot_bone: JNT_LegRearLeft_Foot
       gait_group: 1
       pole_local: {x: 0.0, y: 0.0, z: -1.0}
-      step_height_meters: 1.44
+      step_height_meters: 0.18
       max_reach_ratio: 0.999
