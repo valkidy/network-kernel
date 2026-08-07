@@ -1,5 +1,10 @@
 0.6.9 release notes:
 
+- updates Unity package artifacts for the latest kernel merge
+
+
+0.6.9 release notes:
+
 - syncs native plugins and gameplay bundle after latest main merge
 
 
