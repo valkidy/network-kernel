@@ -306,36 +306,37 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
             ? read_text_file("game_server/gameplay_catalog.yaml")
             : catalog_yaml});
     append_collider_template_files(&files);
-    files.push_back({
-        "entity_templates/player.yaml",
-        player_actor_yaml.empty()
-            ? read_text_file("game_server/entity_templates/player.yaml")
-            : player_actor_yaml});
-    files.push_back({
-        "entity_templates/sentry_grunt.yaml",
-        sentry_actor_yaml});
-    files.push_back({
-        "entity_templates/earth_mother.yaml",
-        read_text_file("game_server/entity_templates/earth_mother.yaml")});
-    const std::vector<std::string> additional_entity_files = {
-        "activation_damage_prop.yaml",
-        "collision_damage_prop.yaml",
-        "ice_block.yaml",
-        "interaction_terminal.yaml",
-        "stateful_magic_bottle_prop.yaml",
-        "stateful_potion_prop.yaml",
-    };
-    for (const std::string& file : additional_entity_files) {
-        files.push_back({
-            "entity_templates/" + file,
-            read_text_file("game_server/entity_templates/" + file)});
+    // Every entity template on disk, with the three the callers override
+    // substituted in place. Enumerating keeps the bundle's template set equal
+    // to the filesystem's, which the catalog-hash comparison below depends on;
+    // a hardcoded list silently drifts as templates are added.
+    {
+        const std::unordered_map<std::string, std::string> overrides = {
+            {"player.yaml", player_actor_yaml},
+            {"sentry_grunt.yaml", sentry_actor_yaml},
+            {"monster_sim_actor.yaml", monster_actor_yaml},
+        };
+        std::vector<std::filesystem::path> entity_files;
+        for (const std::filesystem::directory_entry& entry :
+             std::filesystem::directory_iterator(
+                 "game_server/entity_templates")) {
+            if (entry.is_regular_file() &&
+                entry.path().extension() == ".yaml") {
+                entity_files.push_back(entry.path());
+            }
+        }
+        std::sort(entity_files.begin(), entity_files.end());
+        for (const std::filesystem::path& entry : entity_files) {
+            const std::string name = entry.filename().string();
+            const auto override_entry = overrides.find(name);
+            const bool use_override = override_entry != overrides.end() &&
+                !override_entry->second.empty();
+            files.push_back({
+                "entity_templates/" + name,
+                use_override ? override_entry->second
+                             : read_text_file(entry.string())});
+        }
     }
-    files.push_back({
-        "entity_templates/monster_sim_actor.yaml",
-        monster_actor_yaml.empty()
-            ? read_text_file(
-                  "game_server/entity_templates/monster_sim_actor.yaml")
-            : monster_actor_yaml});
     // Enumerated, not listed: the catalog discovers skeletons by scanning this
     // directory, so a hardcoded subset here would make the bundle and the
     // filesystem disagree on the asset set -- and the two are compared by
@@ -1850,7 +1851,7 @@ int main() {
         KernelProjectileSyncMode_ServerSnapshotOnly);
     assert(config.colliders.templates.size() == 14);
     assert(config.colliders.bindings.empty());
-    assert(config.actor_templates.size() == 3);
+    assert(config.actor_templates.size() == 6);
     const network_example::game_server::ActorTemplateConfig& player_template =
         config.actor_templates[0];
     assert(player_template.actor_template_id == 1);
