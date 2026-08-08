@@ -2458,8 +2458,15 @@ std::vector<SkeletonAssetConfig> load_skeleton_assets_from_directory(
             manifest_path,
             source.source_kind(),
             KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
-        if (!manifest["manifest_version"] ||
-            manifest["manifest_version"].as<std::uint32_t>() != 1u ||
+        // 2 added a per-bone rest pose for clients that build their bone
+        // hierarchy from the manifest instead of importing the source mesh.
+        // The server ignores it -- it reads the rest pose out of the .ozz --
+        // so 1 remains loadable.
+        const std::uint32_t manifest_version =
+            manifest["manifest_version"]
+                ? manifest["manifest_version"].as<std::uint32_t>()
+                : 0u;
+        if ((manifest_version != 1u && manifest_version != 2u) ||
             !manifest["asset_id"] || !manifest["name"] ||
             !manifest["content_hash"] || !manifest["runtime_skeleton"] ||
             !manifest["bone_count"] || !manifest["bones"] ||
@@ -2509,7 +2516,15 @@ std::vector<SkeletonAssetConfig> load_skeleton_assets_from_directory(
             const YAML::Node bone = manifest["bones"][index];
             reject_unknown_keys(
                 bone,
-                {"index", "name", "parent_index"},
+                {
+                    "index",
+                    "name",
+                    "parent_index",
+                    // manifest_version 2, client-side only.
+                    "rest_translation",
+                    "rest_rotation",
+                    "rest_scale",
+                },
                 manifest_path,
                 source.source_kind(),
                 KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG,
