@@ -1531,6 +1531,25 @@ const WeaponMechanicsDefinition* entity_weapon_mechanics(
     return tuning.configured[index] ? &tuning.definitions[index] : nullptr;
 }
 
+// movement.collision_mask is symmetric, and this is the half that makes it so.
+// The mask filters the owner's own sweeps (see movement_filter in
+// player_movement.cc), but a query filter only ever says what stops *me*; it
+// says nothing about what I stop. Registering every movement capsule on the
+// actor layer regardless left the pair inconsistent: a legged actor authored
+// terrain-only walked through a player while the player, sweeping the engine
+// default, still walked into the 3 m x 16 m capsule carrying the belly -- the
+// exact wall the mask existed to remove.
+//
+// So an actor that does not name the actor layer is not on it either: its
+// movement capsule is left out of the physics world entirely. Nothing else
+// queries CollisionObjectKind::kActorMovement, and the actor's damage hitbox and
+// vision cone are separate colliders, so hits and perception are unaffected.
+// Zero is still "engine default", which includes actors.
+bool movement_capsule_blocks_other_actors(std::uint32_t movement_collision_mask) {
+    return movement_collision_mask == 0u ||
+        (movement_collision_mask & KERNEL_MOVEMENT_LAYER_ACTOR) != 0u;
+}
+
 }  // namespace
 
 KernelEngine::KernelEngine(KernelConfig config)
@@ -3755,12 +3774,24 @@ void KernelEngine::sync_entity_colliders_from_world() {
             collider.shape_type == ColliderShapeType::kCone) {
             continue;
         }
+        const bool movement_collider =
+            (collider.purpose_flags & KernelColliderPurpose_Movement) != 0u;
+        const std::optional<entt::entity> entity =
+            world_.find_entity(collider.entity_net_id);
+        if (movement_collider && entity.has_value() &&
+            world_.registry().all_of<MovementState>(*entity) &&
+            !movement_capsule_blocks_other_actors(
+                world_.registry()
+                    .get<MovementState>(*entity)
+                    .movement_collision_mask)) {
+            // Left out of current_collider_ids, so a capsule that was registered
+            // before the mask changed is removed by the sweep below.
+            continue;
+        }
         physics::CollisionObjectDescriptor object{};
         object.identity.entity_net_id = collider.entity_net_id;
         object.identity.collider_id = collider.collider_id;
         object.identity.hit_zone = collider.hit_zone;
-        const bool movement_collider =
-            (collider.purpose_flags & KernelColliderPurpose_Movement) != 0u;
         object.identity.kind = movement_collider
             ? physics::CollisionObjectKind::kActorMovement
             : collider.entity_type == EntityType::kActor
@@ -3783,8 +3814,6 @@ void KernelEngine::sync_entity_colliders_from_world() {
         object.position = collider.world_center;
         object.rotation = collider.world_rotation;
         object.enabled = collider.enabled;
-        const std::optional<entt::entity> entity =
-            world_.find_entity(collider.entity_net_id);
         if (entity.has_value() && world_.registry().all_of<Health>(*entity) &&
             world_.registry().get<Health>(*entity).hp == 0) {
             object.enabled = false;
@@ -6564,12 +6593,20 @@ bool KernelEngine::build_local_character_movement_config(
     config.step_height = entity_template->movement.step_height;
     config.ground_snap_distance =
         entity_template->movement.ground_snap_distance;
-    config.filter.collision_mask =
-        physics::collision_layer_bit(physics::CollisionLayer::kTerrain) |
-        physics::collision_layer_bit(physics::CollisionLayer::kStaticObstacle);
-    if (session_rules_.actor_blocking_mode ==
+    // Built the same way the server builds it in player_movement.cc: the
+    // authored mask, with zero meaning the engine default, then the actor layer
+    // struck out when the session does not block actors. This used to hardcode
+    // terrain|static_obstacle and ignore movement.collision_mask outright, which
+    // silently gave the predicted local player a different set of blockers from
+    // the authoritative one the moment a player template authored a mask.
+    const std::uint32_t authored_mask =
+        entity_template->movement.movement_collision_mask;
+    config.filter.collision_mask = authored_mask == 0u
+        ? physics::kMovementCollisionMask
+        : authored_mask;
+    if (session_rules_.actor_blocking_mode !=
         KernelActorBlockingMode_Predicted) {
-        config.filter.collision_mask |= physics::collision_layer_bit(
+        config.filter.collision_mask &= ~physics::collision_layer_bit(
             physics::CollisionLayer::kActorMovement);
     }
     config.filter.ignored_entity_net_id = local_player_net_id_;
@@ -6618,7 +6655,11 @@ bool KernelEngine::sync_prediction_actor_proxies(
             return false;
         }
         if (entity_template->movement.controller_type !=
-            KernelMovementControllerType_Character) {
+            KernelMovementControllerType_Character ||
+            // Same symmetry the server applies in sync_physics_colliders. Left
+            // out of current_proxies, so an existing proxy is retired below.
+            !movement_capsule_blocks_other_actors(
+                entity_template->movement.movement_collision_mask)) {
             continue;
         }
         const KernelColliderTemplateDefinition* collider = find_collider_template(

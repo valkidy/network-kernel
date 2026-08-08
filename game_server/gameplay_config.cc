@@ -604,11 +604,14 @@ std::uint32_t collision_mask_from_yaml(
     return mask;
 }
 
-// movement.collides_with names the geometry that stops a body, which is a
+// movement.collision_mask names the geometry that stops a body, which is a
 // different axis from the gameplay categories collision_mask_from_yaml parses --
-// see the KERNEL_MOVEMENT_LAYER_* comment in kernel_types.h. Kept as its own
-// token set so the two cannot be confused: "hostile_side" is meaningless here
-// and must fail loudly rather than resolve to some unrelated bit.
+// see the KERNEL_MOVEMENT_LAYER_* comment in kernel_types.h. It is spelled the
+// same way as a projectile's collision_mask (projectile_templates/rocket.yaml)
+// because it is authored the same way -- a '|' list of layer names -- but it is
+// kept as its own token set so the two vocabularies cannot be confused:
+// "hostile_side" is meaningless under movement and must fail loudly rather than
+// resolve to some unrelated bit.
 std::uint32_t movement_collision_layer_token_from_yaml(
     const std::string& token) {
     if (token == "terrain") {
@@ -620,7 +623,7 @@ std::uint32_t movement_collision_layer_token_from_yaml(
     if (token == "actor") {
         return KERNEL_MOVEMENT_LAYER_ACTOR;
     }
-    throw std::runtime_error("unsupported movement collides_with: " + token);
+    throw std::runtime_error("unsupported movement collision_mask: " + token);
 }
 
 std::uint32_t movement_collision_mask_from_yaml(const YAML::Node& node) {
@@ -636,7 +639,7 @@ std::uint32_t movement_collision_mask_from_yaml(const YAML::Node& node) {
                 : separator - start));
         if (token.empty()) {
             throw std::runtime_error(
-                "empty movement collides_with token: " + value);
+                "empty movement collision_mask token: " + value);
         }
         mask |= movement_collision_layer_token_from_yaml(token);
         if (separator == std::string::npos) {
@@ -646,7 +649,7 @@ std::uint32_t movement_collision_mask_from_yaml(const YAML::Node& node) {
     }
     if (mask == 0u) {
         throw std::runtime_error(
-            "movement collides_with must name at least one layer: " + value);
+            "movement collision_mask must name at least one layer: " + value);
     }
     return mask;
 }
@@ -2713,7 +2716,7 @@ ActorTemplateConfig actor_template_from_yaml(
             "ground_probe_distance",
             "ground_snap_distance",
             "max_yaw_degrees_per_second",
-            "collides_with",
+            "collision_mask",
         },
         path,
         source_kind,
@@ -2748,9 +2751,9 @@ ActorTemplateConfig actor_template_from_yaml(
         actor_template.movement_max_yaw_degrees_per_second =
             movement["max_yaw_degrees_per_second"].as<float>();
     }
-    if (movement["collides_with"]) {
+    if (movement["collision_mask"]) {
         actor_template.movement_collision_mask =
-            movement_collision_mask_from_yaml(movement["collides_with"]);
+            movement_collision_mask_from_yaml(movement["collision_mask"]);
     }
 
     const YAML::Node hitbox = node["hitbox"];

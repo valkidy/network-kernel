@@ -242,6 +242,13 @@ cc_test(
     deps = ["//engine/src/kernel:kernel"],
 )
 
+cc_test(
+    name = "movement_collision_mask_test",
+    srcs = ["movement_collision_mask_test.cc"],
+    data = ["//game_server/mesh_assets:cooked_mesh_assets"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
 # Diagnostic: how much of each leg's reach the bind pose already spends before
 # the gait asks for anything. Run against the monster rig with
 #   bazel run //engine/src/tests/kernel_tests:locomotion_reach_report -- \

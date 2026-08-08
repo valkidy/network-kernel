@@ -739,15 +739,24 @@ int main() {
             "processing_order: [front_left, front_right, rear_left, rear_right]",
             "processing_order: [front_left, front_left, rear_left, rear_right]"),
         "processing_order repeats leg"));
-    // movement.collides_with names geometry, never a gameplay side. A token
-    // borrowed from the other collision vocabulary has to fail rather than
-    // resolve to whatever bit happens to share its name.
+    // movement.collision_mask names geometry, never a gameplay side. It shares a
+    // key name with a projectile's collision_mask but not its vocabulary, so a
+    // token borrowed from the other one has to fail rather than resolve to
+    // whatever bit happens to share its name.
     require(rejects_monster_locomotion_yaml(
         replace_once(
             production_monster_yaml,
-            "collides_with: terrain",
-            "collides_with: hostile_side"),
-        "unsupported movement collides_with"));
+            "collision_mask: terrain | static_obstacle",
+            "collision_mask: terrain | hostile_side"),
+        "unsupported movement collision_mask"));
+    // The old key is gone rather than quietly tolerated: leaving it accepted
+    // would leave the capsule blocking players with nothing to show for it.
+    require(rejects_monster_locomotion_yaml(
+        replace_once(
+            production_monster_yaml,
+            "collision_mask: terrain | static_obstacle",
+            "collides_with: terrain | static_obstacle"),
+        "unknown field: collides_with"));
     require(rejects_monster_locomotion_yaml(
         replace_once(
             production_monster_yaml,
@@ -1177,13 +1186,14 @@ int main() {
     require(monster_template->skeleton.step_duration_ticks == 18u);
     require(monster_template->skeleton.max_swinging_legs == 2u);
     // Body height comes from the legs, seated 4 m below the bind pose, and the
-    // movement capsule sweeps terrain only so the open space under the belly
-    // does not block the walk.
+    // movement capsule sweeps the static world only -- terrain and props -- so
+    // the open space under the belly does not block the walk.
     require(monster_template->skeleton.body_follow_speed == 10.0f);
     require(monster_template->skeleton.slope_alignment == 0.0f);
     require(monster_template->skeleton.stance_crouch_meters == 4.0f);
     require(monster_template->movement_collision_mask ==
-            KERNEL_MOVEMENT_LAYER_TERRAIN);
+            (KERNEL_MOVEMENT_LAYER_TERRAIN |
+             KERNEL_MOVEMENT_LAYER_STATIC_OBSTACLE));
     require(monster_template->skeleton.foothold_query_type ==
             KernelFootholdQueryType_Raycast);
     require(monster_template->skeleton.foothold_query_start_height_meters ==
@@ -1224,7 +1234,8 @@ int main() {
     require(monster_definition->skeleton.step_duration_ticks == 18u);
     require(monster_definition->skeleton.stance_crouch_meters == 4.0f);
     require(monster_definition->movement.movement_collision_mask ==
-            KERNEL_MOVEMENT_LAYER_TERRAIN);
+            (KERNEL_MOVEMENT_LAYER_TERRAIN |
+             KERNEL_MOVEMENT_LAYER_STATIC_OBSTACLE));
     // Everything else keeps the engine default, which zero selects.
     const auto sentry_definition = std::find_if(
         catalog.entity_templates.begin(),
