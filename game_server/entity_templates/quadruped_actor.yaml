@@ -1,0 +1,137 @@
+id: 21
+name: quadruped_actor
+entity_type: actor
+actor_type: agent
+camp: enemy_side
+collider_template: sentry_grunt_hit_aabb
+health:
+  hp: 500
+  max_hp: 500
+movement:
+  controller: character
+  move_speed_meters_per_second: 2.5
+  collider_template: monster_sim_movement_capsule
+  gravity: {x: 0.0, y: -9.81, z: 0.0}
+  max_slope_degrees: 50.0
+  step_height: 0.4
+  ground_probe_distance: 0.25
+  ground_snap_distance: 0.5
+  max_yaw_degrees_per_second: 45.0
+  # Terrain only: everything between the legs is air a walker steps over, not
+  # geometry it should collide with. See monster_sim_actor.yaml.
+  collides_with: terrain
+hitbox:
+  center: {x: 0.0, y: 12.0, z: 0.0}
+  half_extents: {x: 12.0, y: 14.0, z: 12.0}
+weapon_slots: [2]
+active_weapon_slot: 0
+vision:
+  collider_template: sentry_grunt_vision_cone
+ai:
+  controller: sentry
+  profile: monster_sim
+  sentry:
+    alert_ticks: 90
+    forget_ticks: 150
+    patrol_rotation_interval_ticks: 30
+    patrol_rotation_min_degrees: 15.0
+    patrol_rotation_max_degrees: 30.0
+    passive_patrol: true
+    patrol_extent_x_meters: 30.0
+    patrol_input_magnitude: 1.0
+    weapon_id: 2
+    animation_idle: idle
+    animation_attack: chasing
+animations:
+  idle: 0
+  chasing: 1
+skeleton:
+  runtime_asset: skeleton_assets/generated/simplified_quadruped.ozz
+  source_manifest: skeleton_assets/generated/simplified_quadruped.skeleton_manifest.json
+  root_bone: SIM_Root
+  body_bone: JNT_Body
+locomotion:
+  type: procedural_legged
+  forward_axis: positive_z
+  input_deadzone: 0.01
+  gait:
+    type: displacement_threshold
+    # Carried over from monster_sim_actor unchanged, deliberately. The gait
+    # timing is set by move_speed, not by leg length: stance =
+    # step_threshold / move_speed. This rig walks at the same 2.5 m/s, so
+    # rescaling the threshold to its longer legs would stretch the stance and
+    # bring back the low-duty leg-flick that tuning removed. Threshold and
+    # duration must always move together; see monster_sim_actor.yaml for the
+    # duty-factor and peak-foot-speed table behind 1.95/18.
+    step_threshold_meters: 1.95
+    step_duration_ticks: 18
+    # Diagonal trot: {leg0, leg2} and {leg1, leg3} are the two diagonals, and
+    # only one gait group may swing at a time.
+    max_swinging_legs: 2
+    processing_order: [leg0, leg1, leg2, leg3]
+  foothold:
+    query: raycast
+    # Scaled to this rig the way monster_sim_actor's 30/90 is scaled to its
+    # ~18.2 m legs: these are 23.5 m, so 1.29x.
+    query_start_height_meters: 39.0
+    query_distance_meters: 117.0
+    candidate_offsets_meters:
+      - {x: 0.0, z: 0.0}
+      - {x: 0.2, z: 0.0}
+      - {x: -0.2, z: 0.0}
+      - {x: 0.0, z: 0.2}
+      - {x: 0.0, z: -0.2}
+  body:
+    follow_speed: 10.0
+    # Held at 0 for the same reason as monster_sim_actor: tilt moves where the
+    # feet are placed, and a follower holds an identity tilt because it never
+    # samples ground normals, so enabling it on the authority alone
+    # desynchronises replicated legs.
+    slope_alignment: 0.0
+    # Only 0.40 m, against monster_sim_actor's 4.0. That rig's bind pose is a
+    # near-straight strut resting at 97.7-98.9% of leg length, leaving 0.20-0.41 m
+    # of dip budget before the IK clamps, and the crouch existed to buy it back.
+    # This rig is authored bent: it rests at 88.9% with 2.61 m of slack already,
+    # so 0.40 m is all it takes to reach the same ~3 m the tuned monster has.
+    stance_crouch_meters: 0.40
+  legs:
+    # mid_axis_local is one value for the whole rig: it is read in the knee's
+    # own frame, and the four legs are copies of one limb with re-aimed hips.
+    # pole_local is model-space and therefore per leg -- it does NOT rotate with
+    # the hip. Both are measured from the bind pose.
+    - id: leg0
+      hip_bone: JNT_Leg0_Hip
+      knee_bone: JNT_Leg0_Knee
+      foot_bone: JNT_Leg0_Foot
+      gait_group: 0
+      pole_local: {x: 0.734, y: 0.305, z: 0.607}
+      mid_axis_local: {x: 0.460, y: 0.0, z: -0.888}
+      step_height_meters: 0.18
+      max_reach_ratio: 0.99
+    - id: leg1
+      hip_bone: JNT_Leg1_Hip
+      knee_bone: JNT_Leg1_Knee
+      foot_bone: JNT_Leg1_Foot
+      gait_group: 1
+      pole_local: {x: -0.607, y: 0.305, z: 0.734}
+      mid_axis_local: {x: 0.460, y: 0.0, z: -0.888}
+      step_height_meters: 0.18
+      max_reach_ratio: 0.99
+    - id: leg2
+      hip_bone: JNT_Leg2_Hip
+      knee_bone: JNT_Leg2_Knee
+      foot_bone: JNT_Leg2_Foot
+      gait_group: 0
+      pole_local: {x: -0.734, y: 0.305, z: -0.607}
+      mid_axis_local: {x: 0.460, y: 0.0, z: -0.888}
+      step_height_meters: 0.18
+      max_reach_ratio: 0.99
+    - id: leg3
+      hip_bone: JNT_Leg3_Hip
+      knee_bone: JNT_Leg3_Knee
+      foot_bone: JNT_Leg3_Foot
+      gait_group: 1
+      pole_local: {x: 0.607, y: 0.305, z: -0.734}
+      mid_axis_local: {x: 0.460, y: 0.0, z: -0.888}
+      step_height_meters: 0.18
+      max_reach_ratio: 0.99

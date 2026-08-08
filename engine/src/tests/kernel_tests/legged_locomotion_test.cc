@@ -146,6 +146,59 @@ ozz::unique_ptr<ozz::animation::Skeleton> build_quadruped() {
     return builder(raw);
 }
 
+// The same quadruped, bone-for-bone identical in model space, but with every
+// knee yawed 90 degrees about Y and its foot's local offset counter-rotated to
+// put the foot back where it was. The limbs therefore bend in exactly the same
+// plane as build_quadruped()'s, while the knee's own frame no longer coincides
+// with the rig's -- which is the only condition under which reading mid_axis in
+// the wrong frame produces a different answer.
+ozz::unique_ptr<ozz::animation::Skeleton> build_yawed_knee_quadruped() {
+    // Right-handed yaw of +90 deg about Y maps (x, y, z) -> (z, y, -x).
+    const ozz::math::Quaternion knee_yaw =
+        ozz::math::Quaternion::FromAxisAngle(
+            ozz::math::Float3(0.0f, 1.0f, 0.0f),
+            std::numbers::pi_v<float> / 2.0f);
+
+    ozz::animation::offline::RawSkeleton raw;
+    raw.roots.resize(1);
+    auto& root = raw.roots[0];
+    set_joint(&root, "root", 0.0f, 0.0f, 0.0f);
+    root.children.resize(1);
+    auto& body = root.children[0];
+    set_joint(&body, "body", 0.0f, 2.0f, 0.0f);
+    body.children.resize(kLegLayout.size());
+    for (std::size_t index = 0; index < kLegLayout.size(); ++index) {
+        const LegLayout& layout = kLegLayout[index];
+        auto& hip = body.children[index];
+        set_joint(
+            &hip,
+            (std::string(layout.id) + "_Hip").c_str(),
+            layout.hip_x,
+            0.0f,
+            layout.hip_z);
+        hip.children.resize(1);
+        auto& knee = hip.children[0];
+        set_joint(
+            &knee,
+            (std::string(layout.id) + "_Knee").c_str(),
+            kKneeOffsetX,
+            -kSegment,
+            0.0f);
+        knee.transform.rotation = knee_yaw;
+        knee.children.resize(1);
+        // Inverse yaw of the original (-kKneeOffsetX, -kSegment, 0):
+        // Ry(-90) maps (x, y, z) -> (-z, y, x).
+        set_joint(
+            &knee.children[0],
+            (std::string(layout.id) + "_Foot").c_str(),
+            0.0f,
+            -kSegment,
+            -kKneeOffsetX);
+    }
+    ozz::animation::offline::SkeletonBuilder builder;
+    return builder(raw);
+}
+
 std::vector<KernelBoneLocalTransform> make_bind_pose(
     const ozz::animation::Skeleton& skeleton) {
     std::vector<KernelBoneLocalTransform> pose;
@@ -422,6 +475,43 @@ int main() {
         KernelSkeletonBindingDefinition zero_axis = rig;
         zero_axis.legs[0].mid_axis_local = KernelVec3{0.0f, 0.0f, 0.0f};
         require(!network_example::validate_locomotion_definition(zero_axis));
+    }
+
+    // The axis is read in the knee's own frame, not the rig's. Every joint of
+    // build_quadruped() is identity-rotated, so the two frames coincide there
+    // and the distinction is invisible; a rig whose knees carry a real rotation
+    // is the only thing that pins it down. This is the shape of every rig built
+    // by authoring one limb and re-aiming duplicates: the legs are exact copies
+    // with one knee-local axis between them, while their model-space hinges
+    // fan out with the hips.
+    {
+        const ozz::unique_ptr<ozz::animation::Skeleton> yawed =
+            build_yawed_knee_quadruped();
+        require(yawed != nullptr);
+        KernelSkeletonBindingDefinition yawed_rig = make_rig_definition(*yawed);
+
+        // The limbs bend in the same plane as build_quadruped()'s, so the hinge
+        // is still model-space Z; yawing the knee 90 degrees about Y puts that
+        // same hinge on X in the knee's frame. One value covers the whole rig.
+        for (std::uint32_t index = 0u; index < yawed_rig.leg_count; ++index) {
+            yawed_rig.legs[index].mid_axis_local = KernelVec3{1.0f, 0.0f, 0.0f};
+        }
+        std::uint32_t invalid_leg = 0u;
+        require(network_example::validate_locomotion_rig(
+            *yawed, yawed_rig, &invalid_leg));
+        require(invalid_leg == UINT32_MAX);
+
+        // Model-space Z is what the old check demanded and what ozz would then
+        // have bent about in the wrong plane; it is now correctly rejected.
+        KernelSkeletonBindingDefinition model_space_axis = yawed_rig;
+        for (std::uint32_t index = 0u;
+             index < model_space_axis.leg_count;
+             ++index) {
+            model_space_axis.legs[index].mid_axis_local =
+                KernelVec3{0.0f, 0.0f, 1.0f};
+        }
+        require(!network_example::validate_locomotion_rig(
+            *yawed, model_space_axis, nullptr));
     }
 
     // Out-of-range bone indices are rejected rather than dereferenced.
