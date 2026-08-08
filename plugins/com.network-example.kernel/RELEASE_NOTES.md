@@ -1,5 +1,10 @@
 0.6.9 release notes:
 
+- adds Unity meta files for skeleton manifest sources
+
+
+0.6.9 release notes:
+
 - aligns Unity managed bindings with kernel ABI 67
 
 
