@@ -17,9 +17,10 @@ movement:
   ground_probe_distance: 0.25
   ground_snap_distance: 0.5
   max_yaw_degrees_per_second: 45.0
-  # Terrain only: everything between the legs is air a walker steps over, not
-  # geometry it should collide with. See monster_sim_actor.yaml.
-  collides_with: terrain
+  # The static world, but not other actors: everything between the legs is air a
+  # walker steps over, not geometry it should collide with. Props stay in
+  # through static_obstacle. See monster_sim_actor.yaml.
+  collision_mask: terrain | static_obstacle
 hitbox:
   center: {x: 0.0, y: 12.0, z: 0.0}
   half_extents: {x: 12.0, y: 14.0, z: 12.0}
