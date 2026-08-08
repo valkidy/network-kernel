@@ -181,11 +181,27 @@ namespace NetworkExample.Kernel.Client
                 identityDigest = sha256.ComputeHash(identityBytes);
             }
 
+            // The cached file is the bundle archive, so it is keyed by the bundle
+            // digest. catalog_hash only covers the parsed gameplay config, so archives
+            // that differ in bytes (rebuilt zip timestamps, template fields outside the
+            // hash) share one catalog_hash and would collide on a single cache path.
             return Path.Combine(
                 Path.GetFullPath(cacheDirectory),
                 ToHex(identityDigest),
-                manifest.catalog_hash.ToString("x16"),
+                BundleDigestKey(manifest),
                 "bundle.zip");
+        }
+
+        private static string BundleDigestKey(KernelGameplayCatalogManifest manifest)
+        {
+            if (manifest.bundle_sha256 == null ||
+                manifest.bundle_sha256.Length != KernelConstants.GameplayCatalogSha256Size)
+            {
+                throw new ArgumentException(
+                    "Gameplay catalog manifest SHA-256 was invalid.",
+                    nameof(manifest));
+            }
+            return ToHex(manifest.bundle_sha256);
         }
 
         private static string ToHex(byte[] bytes)
