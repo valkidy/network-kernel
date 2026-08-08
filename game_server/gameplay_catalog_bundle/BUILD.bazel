@@ -46,7 +46,11 @@ for src in $(SRCS); do
       ;;
   esac
 done
-(cd "$$bundle_root" && /usr/bin/zip -qr -X "$$out_path" gameplay_catalog.yaml monster_observer_gameplay_catalog.yaml action_templates action_graph_templates weapon_templates projectile_templates entity_templates item_templates collider_templates skeleton_assets)
+# Normalize entry timestamps and ordering so the archive is byte-reproducible:
+# clients key their catalog cache by the bundle SHA-256, so build-time mtimes
+# would invalidate every cached bundle on each rebuild.
+find "$$bundle_root" -exec touch -t 198001010000 {} +
+(cd "$$bundle_root" && find . -mindepth 1 | sed 's|^\\./||' | LC_ALL=C sort | /usr/bin/zip -q -X -@ "$$out_path")
 rm -rf "$$bundle_root"
 """,
 )
@@ -77,7 +81,8 @@ for src in $(SRCS); do
       ;;
   esac
 done
-(cd "$$bundle_root" && /usr/bin/zip -qr -X "$$out_path" .)
+find "$$bundle_root" -exec touch -t 198001010000 {} +
+(cd "$$bundle_root" && find . -mindepth 1 | sed 's|^\\./||' | LC_ALL=C sort | /usr/bin/zip -q -X -@ "$$out_path")
 rm -rf "$$bundle_root"
 """,
 )
