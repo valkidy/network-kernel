@@ -212,113 +212,55 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip() {
     files.push_back({
         "gameplay_catalog.yaml",
         read_text_file(root / "game_server" / "gameplay_catalog.yaml")});
-    const std::vector<std::string> collider_files = {
-        "beam_oriented_box.yaml",
-        "sentry_grunt_vision_cone.yaml",
-        "sentry_grunt_hit_aabb.yaml",
-        "area_effect_sphere.yaml",
-        "collision_damage_prop_hitbox.yaml",
-        "ice_block_hitbox.yaml",
-        "player_hit_aabb.yaml",
-        "player_movement_capsule.yaml",
-        "rocket_aabb.yaml",
-        "rifle_segment.yaml",
-        "sentry_grunt_movement_capsule.yaml",
-        "shotgun_segment.yaml",
-        "projectile_sphere.yaml",
+
+    // Enumerated rather than listed by hand. This fixture's whole point is a
+    // bundle complete except for the collision mesh, and hardcoded lists drift
+    // out of the real directories as templates are added -- which shows up as a
+    // load failing on the wrong thing, long after the fact.
+    const std::vector<std::string> template_dirs = {
+        "collider_templates",
+        "entity_templates",
+        "weapon_templates",
+        "action_templates",
+        "action_graph_templates",
+        "item_templates",
+        "projectile_templates",
     };
-    for (const std::string& file : collider_files) {
-        files.push_back({
-            "collider_templates/" + file,
-            read_text_file(root / "game_server" / "collider_templates" / file)});
+    for (const std::string& directory : template_dirs) {
+        const std::filesystem::path source = root / "game_server" / directory;
+        std::vector<std::filesystem::path> entries;
+        for (const std::filesystem::directory_entry& entry :
+             std::filesystem::directory_iterator(source)) {
+            if (entry.is_regular_file() &&
+                entry.path().extension() == ".yaml") {
+                entries.push_back(entry.path());
+            }
+        }
+        std::sort(entries.begin(), entries.end());
+        for (const std::filesystem::path& entry : entries) {
+            files.push_back({
+                directory + "/" + entry.filename().string(),
+                read_text_file(entry)});
+        }
     }
-    const std::vector<std::string> entity_files = {
-        "activation_damage_prop.yaml",
-        "collision_damage_prop.yaml",
-        "earth_mother.yaml",
-        "ice_block.yaml",
-        "interaction_terminal.yaml",
-        "player.yaml",
-        "sentry_grunt.yaml",
-        "stateful_magic_bottle_prop.yaml",
-        "stateful_potion_prop.yaml",
-    };
-    for (const std::string& file : entity_files) {
-        files.push_back({
-            "entity_templates/" + file,
-            read_text_file(root / "game_server" / "entity_templates" / file)});
+
+    // The catalog resolves its skeletons before its collision scene, so a
+    // bundle without these fails on a missing manifest and never reaches the
+    // missing joltmesh.
+    const std::filesystem::path generated =
+        root / "game_server" / "skeleton_assets" / "generated";
+    std::vector<std::filesystem::path> skeleton_entries;
+    for (const std::filesystem::directory_entry& entry :
+         std::filesystem::directory_iterator(generated)) {
+        if (entry.is_regular_file()) {
+            skeleton_entries.push_back(entry.path());
+        }
     }
-    const std::vector<std::string> weapon_files = {
-        "beam_rifle.yaml",
-        "fire_floor.yaml",
-        "homing_missile.yaml",
-        "rifle.yaml",
-        "rocket.yaml",
-        "shotgun.yaml",
-        "grenade_launcher.yaml",
-        "spammer.yaml",
-    };
-    for (const std::string& file : weapon_files) {
+    std::sort(skeleton_entries.begin(), skeleton_entries.end());
+    for (const std::filesystem::path& entry : skeleton_entries) {
         files.push_back({
-            "weapon_templates/" + file,
-            read_text_file(root / "game_server" / "weapon_templates" / file)});
-    }
-    const std::vector<std::string> action_files = {
-        "beam_rifle_fire.yaml",
-        "fire_floor_cast.yaml",
-        "homing_missile_fire.yaml",
-        "rifle_fire.yaml",
-        "rocket_fire.yaml",
-        "shotgun_fire.yaml",
-        "grenade_launcher_fire.yaml",
-        "spammer_fire.yaml",
-    };
-    for (const std::string& file : action_files) {
-        files.push_back({
-            "action_templates/" + file,
-            read_text_file(root / "game_server" / "action_templates" / file)});
-    }
-    const std::vector<std::string> action_graph_files = {
-        "action_apply_damage_at_activated.yaml",
-        "action_apply_damage_at_collision.yaml",
-        "action_apply_damage_at_destroy_entity.yaml",
-        "action_apply_damage_at_health_depleted.yaml",
-        "action_apply_health_change_at_item_used.yaml",
-        "action_spawn_entity_at_destroy_entity.yaml",
-        "action_spawn_ice_and_damage_self_at_collision.yaml",
-        "action_spawn_projectile_at_impact.yaml",
-    };
-    for (const std::string& file : action_graph_files) {
-        files.push_back({
-            "action_graph_templates/" + file,
-            read_text_file(
-                root / "game_server" / "action_graph_templates" / file)});
-    }
-    const std::vector<std::string> item_files = {
-        "activation_token.yaml",
-        "fungible_potion.yaml",
-        "grenade_consumable.yaml",
-        "stateful_magic_bottle.yaml",
-        "stateful_potion.yaml",
-    };
-    for (const std::string& file : item_files) {
-        files.push_back({
-            "item_templates/" + file,
-            read_text_file(root / "game_server" / "item_templates" / file)});
-    }
-    const std::vector<std::string> projectile_files = {
-        "beam_rifle_beam.yaml",
-        "fire_floor_area.yaml",
-        "homing_missile.yaml",
-        "rocket.yaml",
-        "rocket_explosion.yaml",
-        "grenade_shell.yaml",
-        "spammer.yaml",
-    };
-    for (const std::string& file : projectile_files) {
-        files.push_back({
-            "projectile_templates/" + file,
-            read_text_file(root / "game_server" / "projectile_templates" / file)});
+            "skeleton_assets/generated/" + entry.filename().string(),
+            read_text_file(entry)});
     }
     return make_store_zip(files);
 }
@@ -408,7 +350,7 @@ int main() {
     assert(loaded_catalog);
     assert(load_result.status == KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS);
     assert(load_result.error_code == KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_NONE);
-    assert(load_result.catalog_version == 8);
+    assert(load_result.catalog_version == 10);
     assert(load_result.catalog_hash != 0);
     assert(load_result.projectile_template_count > 0);
     assert(load_result.collider_template_count == 14);

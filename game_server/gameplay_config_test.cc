@@ -336,28 +336,26 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
             ? read_text_file(
                   "game_server/entity_templates/monster_sim_actor.yaml")
             : monster_actor_yaml});
-    files.push_back({
-        "skeleton_assets/generated/"
-        "simplified_monster_sim_v4.skeleton_manifest.json",
-        read_text_file(
-            "game_server/skeleton_assets/generated/"
-            "simplified_monster_sim_v4.skeleton_manifest.json")});
-    files.push_back({
-        "skeleton_assets/generated/simplified_monster_sim_v4.ozz",
-        read_binary_string(
-            "game_server/skeleton_assets/generated/"
-            "simplified_monster_sim_v4.ozz")});
-    files.push_back({
-        "skeleton_assets/generated/"
-        "rock_robot_biped_24u_v3.skeleton_manifest.json",
-        read_text_file(
-            "game_server/skeleton_assets/generated/"
-            "rock_robot_biped_24u_v3.skeleton_manifest.json")});
-    files.push_back({
-        "skeleton_assets/generated/rock_robot_biped_24u_v3.ozz",
-        read_binary_string(
-            "game_server/skeleton_assets/generated/"
-            "rock_robot_biped_24u_v3.ozz")});
+    // Enumerated, not listed: the catalog discovers skeletons by scanning this
+    // directory, so a hardcoded subset here would make the bundle and the
+    // filesystem disagree on the asset set -- and the two are compared by
+    // catalog hash further down.
+    {
+        std::vector<std::filesystem::path> generated;
+        for (const std::filesystem::directory_entry& entry :
+             std::filesystem::directory_iterator(
+                 "game_server/skeleton_assets/generated")) {
+            if (entry.is_regular_file()) {
+                generated.push_back(entry.path());
+            }
+        }
+        std::sort(generated.begin(), generated.end());
+        for (const std::filesystem::path& entry : generated) {
+            files.push_back({
+                "skeleton_assets/generated/" + entry.filename().string(),
+                read_binary_string(entry.string())});
+        }
+    }
 
     const std::vector<std::string> weapon_files = {
         "beam_rifle.yaml",
@@ -991,7 +989,7 @@ int main() {
     assert(
         config.static_collision_scene.collision_layer ==
         KERNEL_STATIC_COLLISION_LAYER_TERRAIN);
-    require(config.weapons.catalog_version == 8);
+    require(config.weapons.catalog_version == 10);
     require(config.prop_population_rules.size() == 1u);
     require(config.prop_population_rules[0].name == "temporary_deployable");
     require(
@@ -1125,7 +1123,21 @@ int main() {
     assert(config_enemy_template->vision.vision_collider_template_id == 9);
     const network_example::game_server::KernelGameplayCatalogStorage catalog =
         network_example::game_server::build_kernel_gameplay_catalog(config);
-    require(config.skeleton_assets.size() == 2u);
+    // Discovered by scanning skeleton_assets/generated, not by a list in the
+    // catalog: the three base locomotion rigs are present here only because
+    // their build targets are data deps of this test.
+    require(config.skeleton_assets.size() == 5u);
+    for (const std::uint32_t expected_asset_id : {1u, 2u, 3u, 4u, 5u}) {
+        require(
+            std::any_of(
+                config.skeleton_assets.begin(),
+                config.skeleton_assets.end(),
+                [expected_asset_id](
+                    const network_example::game_server::SkeletonAssetConfig&
+                        asset) {
+                    return asset.skeleton_asset_id == expected_asset_id;
+                }));
+    }
     const auto quadruped_asset_config = std::find_if(
         config.skeleton_assets.begin(),
         config.skeleton_assets.end(),
@@ -1178,7 +1190,7 @@ int main() {
     require(monster_template->skeleton.foothold_query_distance_meters ==
             90.0f);
     require(monster_template->skeleton.foothold_candidate_offsets.size() == 5u);
-    require(catalog.definition.skeleton_asset_count == 2u);
+    require(catalog.definition.skeleton_asset_count == 5u);
     const auto quadruped_asset = std::find_if(
         catalog.skeleton_assets.begin(),
         catalog.skeleton_assets.end(),
@@ -2307,7 +2319,7 @@ int main() {
                 generated_bundle.data(),
                 static_cast<std::uint32_t>(generated_bundle.size()),
                 "monster_observer_gameplay_catalog.yaml");
-    require(monster_observer_config.weapons.catalog_version == 9u);
+    require(monster_observer_config.weapons.catalog_version == 10u);
     require(monster_observer_config.agent.override_director_spawn);
     require(monster_observer_config.agent.actor_template_id == 20u);
     require(monster_observer_config.agent.spawn_count == 1u);
@@ -2401,6 +2413,54 @@ int main() {
             std::string(error.what()).find("unknown field") != std::string::npos;
     }
     assert(unknown_catalog_field_rejected);
+
+    // catalog_version 10 replaced the skeleton_manifests list with a directory
+    // scan. The old key is still in the allowlist purely so it can be reported
+    // as a migration rather than as an anonymous unknown field.
+    const std::vector<std::uint8_t> legacy_manifest_list_bundle = make_store_zip({
+        {"gameplay_catalog.yaml",
+         "catalog_version: 10\n"
+         "weapon_template_dir: weapon_templates\n"
+         "projectile_template_dir: projectile_templates\n"
+         "collider_template_dir: collider_templates\n"
+         "skeleton_manifests:\n"
+         "  - skeleton_assets/generated/simplified_monster_sim_v4"
+         ".skeleton_manifest.json\n"},
+    });
+    bool legacy_manifest_list_rejected = false;
+    try {
+        (void)network_example::game_server::load_gameplay_config_from_bundle_memory(
+            legacy_manifest_list_bundle.data(),
+            static_cast<std::uint32_t>(legacy_manifest_list_bundle.size()),
+            "gameplay_catalog.yaml");
+    } catch (const std::exception& error) {
+        legacy_manifest_list_rejected =
+            std::string(error.what()).find("skeleton_manifests_dir") !=
+            std::string::npos;
+    }
+    assert(legacy_manifest_list_rejected);
+
+    // A directory that exists but holds no manifests is a typo, not an empty
+    // rig set -- catalogs without skeletons omit the key entirely.
+    const std::vector<std::uint8_t> empty_manifest_dir_bundle = make_store_zip({
+        {"gameplay_catalog.yaml",
+         "catalog_version: 10\n"
+         "weapon_template_dir: weapon_templates\n"
+         "projectile_template_dir: projectile_templates\n"
+         "collider_template_dir: collider_templates\n"
+         "skeleton_manifests_dir: skeleton_assets/nowhere\n"},
+    });
+    bool empty_manifest_dir_rejected = false;
+    try {
+        (void)network_example::game_server::load_gameplay_config_from_bundle_memory(
+            empty_manifest_dir_bundle.data(),
+            static_cast<std::uint32_t>(empty_manifest_dir_bundle.size()),
+            "gameplay_catalog.yaml");
+    } catch (const std::exception& error) {
+        empty_manifest_dir_rejected =
+            std::string(error.what()).find("contains no") != std::string::npos;
+    }
+    assert(empty_manifest_dir_rejected);
 
     const std::string production_catalog =
         read_text_file("game_server/gameplay_catalog.yaml");

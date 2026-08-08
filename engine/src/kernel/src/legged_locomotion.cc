@@ -116,6 +116,20 @@ glm::vec3 model_position(const ozz::math::Float4x4& matrix) {
     return glm::vec3{values[0], values[1], values[2]};
 }
 
+// Rotation-only basis of a model matrix, with any bind scale divided out so the
+// columns are orthonormal and the transpose inverts the rotation.
+glm::mat3 model_rotation(const ozz::math::Float4x4& matrix) {
+    glm::mat3 basis;
+    for (int column = 0; column < 3; ++column) {
+        float values[4];
+        ozz::math::StorePtrU(matrix.cols[column], values);
+        glm::vec3 axis{values[0], values[1], values[2]};
+        const float length = glm::length(axis);
+        basis[column] = length > 0.000001f ? axis / length : glm::vec3{0.0f};
+    }
+    return basis;
+}
+
 void multiply_soa_rotation(
     std::uint32_t joint,
     const ozz::math::SimdQuaternion& correction,
@@ -304,7 +318,15 @@ bool validate_locomotion_rig(
         const glm::vec3 hip = model_position(models[leg.hip_bone_index]);
         const glm::vec3 knee = model_position(models[leg.knee_bone_index]);
         const glm::vec3 foot = model_position(models[leg.foot_bone_index]);
-        const glm::vec3 hinge = glm::cross(knee - hip, foot - knee);
+        // The bend plane comes out of model-space positions, but mid_axis is
+        // authored in the knee's own frame -- that is what IKTwoBoneJob reads,
+        // and it is the only frame in which the axis is a property of the limb
+        // rather than of where the hip happens to point. Rotate the hinge into
+        // the knee before comparing, or every leg of a radially symmetric rig
+        // measures differently despite being an exact copy.
+        const glm::vec3 hinge = glm::transpose(
+                                    model_rotation(models[leg.knee_bone_index])) *
+            glm::cross(knee - hip, foot - knee);
         const glm::vec3 authored{
             leg.mid_axis_local.x,
             leg.mid_axis_local.y,

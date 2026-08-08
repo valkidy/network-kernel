@@ -1,4 +1,4 @@
-catalog_version: 8
+catalog_version: 10
 prop_population_rules:
   - id: 1
     name: temporary_deployable
@@ -21,9 +21,7 @@ projectile_template_dir: projectile_templates
 entity_template_dir: entity_templates
 item_template_dir: item_templates
 collider_template_dir: collider_templates
-skeleton_manifests:
-  - skeleton_assets/generated/simplified_monster_sim_v4.skeleton_manifest.json
-  - skeleton_assets/generated/rock_robot_biped_24u_v3.skeleton_manifest.json
+skeleton_manifests_dir: skeleton_assets/generated
 static_collision_scene:
   entry_path: mesh_assets/jolt/undulating.joltmesh
   scene_id: 1

@@ -1264,13 +1264,23 @@ typedef struct KernelSkeletonLegDefinition {
     uint32_t knee_bone_index;
     uint32_t foot_bone_index;
     uint32_t gait_group;
+    // Direction the knee should point, in the rig's MODEL space -- despite the
+    // name, this is not a hip-local vector. It is handed to IKTwoBoneJob as
+    // pole_vector, which ozz documents as model-space. Because it does not
+    // rotate with the hip, every leg needs its own value: duplicating a limb
+    // and re-aiming its hip does not produce it.
     KernelVec3 pole_local;
-    // Hinge axis of the knee, in the rig's model space. Must be roughly
-    // parallel to the plane normal of the bind-pose limb, i.e.
-    // cross(knee - hip, foot - knee); a rig authored to bend about some other
-    // axis will not solve. Required (a zero vector is rejected) so that a rig
-    // whose knees hinge elsewhere fails loudly at load instead of silently
-    // producing a limb the IK cannot bend.
+    // Hinge axis of the knee, in the KNEE joint's own local space -- the frame
+    // IKTwoBoneJob::mid_axis is documented in. Must be roughly parallel to the
+    // bind-pose bend plane normal, cross(knee - hip, foot - knee), rotated into
+    // that same frame; a rig authored to bend about some other axis will not
+    // solve. Required (a zero vector is rejected) so that a rig whose knees
+    // hinge elsewhere fails loudly at load instead of silently producing a limb
+    // the IK cannot bend.
+    //
+    // Being knee-local makes this a property of the limb, not of its placement,
+    // so it is one value for the whole rig on any skeleton whose legs are
+    // copies of each other -- the opposite of pole_local above.
     KernelVec3 mid_axis_local;
     float step_height_meters;
     float max_reach_ratio;

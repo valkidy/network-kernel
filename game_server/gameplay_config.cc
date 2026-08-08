@@ -789,14 +789,36 @@ KernelVec3 vec3_from_yaml(const YAML::Node& node) {
         node["z"].as<float>()};
 }
 
+// Plain suffix match, deliberately not std::filesystem::path::extension(): the
+// interesting suffix here is ".skeleton_manifest.json", and extension() would
+// only ever see ".json".
+bool has_extension(std::string_view path, std::string_view extension) {
+    return path.size() >= extension.size() &&
+           path.compare(
+               path.size() - extension.size(),
+               extension.size(),
+               extension) == 0;
+}
+
 class GameplayConfigSource {
 public:
     virtual ~GameplayConfigSource() = default;
     virtual YAML::Node load_yaml(const std::string& path) const = 0;
     virtual std::vector<std::uint8_t> load_bytes(
         const std::string& path) const = 0;
-    virtual std::vector<std::string> list_yaml_files(
-        const std::string& directory) const = 0;
+    // Sorted, so a directory scan feeds templates to the loader in a stable
+    // order regardless of how the filesystem or the archive enumerates them.
+    virtual std::vector<std::string> list_files(
+        const std::string& directory,
+        std::string_view extension) const = 0;
+    std::vector<std::string> list_yaml_files(
+        const std::string& directory) const {
+        return list_files(directory, ".yaml");
+    }
+    std::vector<std::string> list_json_files(
+        const std::string& directory) const {
+        return list_files(directory, ".json");
+    }
     virtual std::string parent_path(const std::string& path) const = 0;
     virtual std::string resolve_path(
         const std::string& base_path,
@@ -840,15 +862,17 @@ public:
         return bytes;
     }
 
-    std::vector<std::string> list_yaml_files(
-        const std::string& directory) const override {
+    std::vector<std::string> list_files(
+        const std::string& directory,
+        std::string_view extension) const override {
         std::vector<std::string> files;
         if (!std::filesystem::exists(directory)) {
             return files;
         }
         for (const std::filesystem::directory_entry& entry :
              std::filesystem::directory_iterator(directory)) {
-            if (entry.is_regular_file() && entry.path().extension() == ".yaml") {
+            if (entry.is_regular_file() &&
+                has_extension(entry.path().filename().string(), extension)) {
                 files.push_back(entry.path().string());
             }
         }
@@ -968,21 +992,15 @@ std::string archive_join_path(
 }
 
 bool has_yaml_extension(const std::string& path) {
-    constexpr const char* kYamlSuffix = ".yaml";
-    return path.size() >= 5 &&
-           path.compare(path.size() - 5, 5, kYamlSuffix) == 0;
+    return has_extension(path, ".yaml");
 }
 
 bool has_json_extension(const std::string& path) {
-    constexpr const char* kJsonSuffix = ".json";
-    return path.size() >= 5 &&
-           path.compare(path.size() - 5, 5, kJsonSuffix) == 0;
+    return has_extension(path, ".json");
 }
 
 bool has_ozz_extension(const std::string& path) {
-    constexpr const char* kOzzSuffix = ".ozz";
-    return path.size() >= 4 &&
-           path.compare(path.size() - 4, 4, kOzzSuffix) == 0;
+    return has_extension(path, ".ozz");
 }
 
 class MemoryZipGameplayConfigSource final : public GameplayConfigSource {
@@ -1123,14 +1141,16 @@ public:
             found->second.end());
     }
 
-    std::vector<std::string> list_yaml_files(
-        const std::string& directory) const override {
+    std::vector<std::string> list_files(
+        const std::string& directory,
+        std::string_view extension) const override {
         const std::string normalized_directory = normalize_archive_path(directory);
         const std::string prefix = normalized_directory + "/";
         std::vector<std::string> files;
         for (const auto& entry : files_) {
             const std::string& path = entry.first;
-            if (!has_yaml_extension(path) || path.rfind(prefix, 0) != 0) {
+            if (!has_extension(path, extension) ||
+                path.rfind(prefix, 0) != 0) {
                 continue;
             }
             const std::string rest = path.substr(prefix.size());
@@ -2385,24 +2405,44 @@ std::uint64_t uint64_from_yaml(const YAML::Node& node) {
     return parsed;
 }
 
-std::vector<SkeletonAssetConfig> load_skeleton_assets_from_yaml(
+// Every *.skeleton_manifest.json in one directory, so adding a rig is a build
+// rule plus a file rather than a catalog edit. Listing is sorted, so asset order
+// -- and therefore the catalog hash -- does not depend on directory iteration
+// order.
+constexpr std::string_view kSkeletonManifestSuffix = ".skeleton_manifest.json";
+
+std::vector<SkeletonAssetConfig> load_skeleton_assets_from_directory(
     const GameplayConfigSource& source,
     const std::string& catalog_base_path,
-    const YAML::Node& manifests) {
-    if (!manifests || !manifests.IsSequence()) {
-        throw std::runtime_error("skeleton_manifests must be a sequence");
+    const YAML::Node& manifest_dir_node) {
+    if (!manifest_dir_node || !manifest_dir_node.IsScalar()) {
+        throw std::runtime_error("skeleton_manifests_dir must be a scalar");
     }
+    const std::string logical_directory =
+        manifest_dir_node.as<std::string>();
+    const std::string resolved_directory =
+        source.resolve_path(catalog_base_path, manifest_dir_node);
+    const std::vector<std::string> manifest_paths =
+        source.list_files(resolved_directory, kSkeletonManifestSuffix);
+    if (manifest_paths.empty()) {
+        throw std::runtime_error(
+            "skeleton_manifests_dir contains no *" +
+            std::string(kSkeletonManifestSuffix) + ": " + logical_directory);
+    }
+
     std::vector<SkeletonAssetConfig> assets;
-    for (const YAML::Node& reference_node : manifests) {
-        if (!reference_node.IsScalar()) {
-            throw std::runtime_error(
-                "skeleton manifest reference must be a scalar");
-        }
+    for (const std::string& manifest_path : manifest_paths) {
+        // The logical reference is rebuilt from the authored directory and the
+        // file's own name rather than from the resolved path, because the
+        // filesystem and archive sources resolve to different shapes and
+        // entity templates match this string against source_manifest.
+        const std::size_t separator = manifest_path.find_last_of("/\\");
+        const std::string basename = separator == std::string::npos
+            ? manifest_path
+            : manifest_path.substr(separator + 1);
         const std::string logical_manifest =
-            reference_node.as<std::string>();
-        const std::string manifest_path = source.resolve_path(
-            catalog_base_path,
-            reference_node);
+            logical_directory.empty() ? basename
+                                      : logical_directory + "/" + basename;
         const YAML::Node manifest = source.load_yaml(manifest_path);
         reject_unknown_keys(
             manifest,
@@ -3026,10 +3066,12 @@ ActorTemplateConfig actor_template_from_yaml(
                 ? leg_node["gait_group"].as<std::uint32_t>()
                 : 0u;
             leg.pole_local = vec3_from_yaml(leg_node["pole_local"]);
-            // Knee hinge axis. Defaults to +Z, which is what the engine assumed
-            // for every rig before this was authorable; the kernel cross-checks
-            // it against the bind pose at load, so a rig that hinges elsewhere
-            // is rejected instead of silently failing to bend.
+            // Knee hinge axis, in the knee joint's own local space (see
+            // KernelSkeletonLegDefinition). Defaults to +Z, which is what the
+            // engine assumed for every rig before this was authorable; the
+            // kernel cross-checks it against the bind pose at load, so a rig
+            // that hinges elsewhere is rejected instead of silently failing to
+            // bend. Rigs built by duplicating one limb share a single value.
             leg.mid_axis_local = leg_node["mid_axis_local"]
                 ? vec3_from_yaml(leg_node["mid_axis_local"])
                 : KernelVec3{0.0f, 0.0f, 1.0f};
@@ -5130,6 +5172,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             "prop_population_rules",
             "static_collision_scene",
             "skeleton_manifests",
+            "skeleton_manifests_dir",
             "player",
             "enemy",
         },
@@ -5170,7 +5213,12 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     const std::uint32_t catalog_version =
         document["catalog_version"] ? document["catalog_version"].as<std::uint32_t>()
                                     : 1u;
-    if (catalog_version != 8u && catalog_version != 9u) {
+    // 10 replaced the skeleton_manifests list with skeleton_manifests_dir. 8
+    // and 9 stay loadable because nothing else about them changed; a catalog
+    // that still carries the old key is caught below with a migration message
+    // rather than a bare unknown-key error.
+    if (catalog_version != 8u && catalog_version != 9u &&
+        catalog_version != 10u) {
         throw DataLoadError(
             KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNSUPPORTED_CATALOG_VERSION,
             "unsupported catalog_version: " + std::to_string(catalog_version),
@@ -5196,10 +5244,25 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
         source.resolve_path(base_path, document["weapon_template_dir"]);
     GameServerGameplayConfig config;
     if (document["skeleton_manifests"]) {
-        config.skeleton_assets = load_skeleton_assets_from_yaml(
+        throw DataLoadError(
+            KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_YAML,
+            "skeleton_manifests was replaced by skeleton_manifests_dir in "
+            "catalog_version 10: point it at the directory holding the "
+            "*.skeleton_manifest.json files instead of listing them",
+            path,
+            "skeleton_manifests",
+            source.source_kind(),
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG,
+            0,
+            0,
+            yaml_line(document["skeleton_manifests"]),
+            yaml_column(document["skeleton_manifests"]));
+    }
+    if (document["skeleton_manifests_dir"]) {
+        config.skeleton_assets = load_skeleton_assets_from_directory(
             source,
             base_path,
-            document["skeleton_manifests"]);
+            document["skeleton_manifests_dir"]);
     }
     if (document["prop_population_rules"]) {
         config.prop_population_rules = prop_population_rules_from_yaml(
