@@ -3,126 +3,98 @@ using UnityEngine;
 
 namespace NetworkExample.Kernel
 {
+    /// <summary>
+    /// Maps a skeleton's Native bone indices onto Unity transforms.
+    /// </summary>
+    /// <remarks>
+    /// The bone layout comes from the skeleton manifest in the gameplay catalog
+    /// bundle (see <see cref="KernelSkeletonManifestCatalog"/>), not from a
+    /// table compiled into this package. That is what lets a rig be changed, or
+    /// a new one added, without rebuilding the Unity package: the client reads
+    /// the same manifest the server loaded, which in client mode arrives over
+    /// the wire.
+    ///
+    /// Load the catalog before this component validates or auto-maps. With no
+    /// manifest loaded there is nothing to map against, and the component says
+    /// so rather than falling back to a guess.
+    /// </remarks>
     [DisallowMultipleComponent]
     public sealed class KernelSkeletonBinding : MonoBehaviour
     {
-        public const uint DefaultSkeletonAssetId = 1;
-        public const int DefaultBoneCount = 41;
-        public const ulong DefaultSkeletonContentHash =
-            0x1c171165d9bb479bUL;
+        [Tooltip("Native skeleton asset ID, as authored in the gameplay catalog.")]
+        public uint SkeletonAssetId = 1;
 
-        private static readonly string[] DefaultBoneNames =
-        {
-            "SIM_Root",
-            "JNT_BodyRoot",
-            "LOC_FrontArc",
-            "LOC_Com",
-            "JNT_LegRearRight_Hip",
-            "GEO_LegRearRight_Upper_Node",
-            "JNT_LegRearRight_Knee",
-            "GEO_LegRearRight_Blade_Node",
-            "GEO_LegRearRight_Lower_Node",
-            "JNT_LegRearRight_Foot",
-            "JNT_LegFrontRight_Hip",
-            "GEO_LegFrontRight_Upper_Node",
-            "JNT_LegFrontRight_Knee",
-            "GEO_LegFrontRight_Blade_Node",
-            "GEO_LegFrontRight_Lower_Node",
-            "JNT_LegFrontRight_Foot",
-            "JNT_LegRearLeft_Hip",
-            "GEO_LegRearLeft_Upper_Node",
-            "JNT_LegRearLeft_Knee",
-            "GEO_LegRearLeft_Blade_Node",
-            "GEO_LegRearLeft_Lower_Node",
-            "JNT_LegRearLeft_Foot",
-            "JNT_LegFrontLeft_Hip",
-            "GEO_LegFrontLeft_Upper_Node",
-            "JNT_LegFrontLeft_Knee",
-            "GEO_LegFrontLeft_Blade_Node",
-            "GEO_LegFrontLeft_Lower_Node",
-            "JNT_LegFrontLeft_Foot",
-            "GEO_RootMovementBox_Node",
-            "JNT_TailBase",
-            "GEO_Tail_Node",
-            "JNT_TailTip",
-            "JNT_LowerThorax",
-            "GEO_LowerThorax_Node",
-            "JNT_Head",
-            "LOC_Mouth",
-            "GEO_Head_Node",
-            "JNT_DorsalSpine",
-            "GEO_DorsalSpine_Node",
-            "GEO_BodyCore_Node",
-            "SKIN_BindCarrier",
-        };
-
-        private static readonly int[] DefaultParentIndices =
-        {
-            -1, 0, 1, 1, 1, 4, 4, 6, 6, 6,
-            1, 10, 10, 12, 12, 12, 1, 16, 16, 18,
-            18, 18, 1, 22, 22, 24, 24, 24, 1, 1,
-            29, 29, 1, 32, 1, 34, 34, 1, 37, 1,
-            0,
-        };
-
-        [Tooltip("Native skeleton asset ID. Defaults to simplified_monster_sim_v4.")]
-        public uint SkeletonAssetId = DefaultSkeletonAssetId;
-
-        [Tooltip("Native skeleton content hash. Defaults to simplified_monster_sim_v4.")]
-        public ulong SkeletonContentHash = DefaultSkeletonContentHash;
+        [Tooltip(
+            "Native skeleton content hash. Left at 0 this is resolved from the " +
+            "manifest; set non-zero it must match, which catches a scene still " +
+            "holding a rig that has since been rebuilt.")]
+        public ulong SkeletonContentHash;
 
         [Tooltip("Optional hierarchy root. When empty, this component scans its GameObject.")]
         public Transform SkeletonRoot;
 
-        [Tooltip("Automatically map known skeleton bones by unique FBX transform name.")]
+        [Tooltip("Automatically map manifest bones by unique transform name.")]
         public bool AutoMapKnownSkeleton = true;
 
         [Tooltip(
-            "Apply Native pose deltas on top of the imported FBX bind pose. " +
+            "Apply Native pose deltas on top of the imported bind pose. " +
             "Enabled by Reset when this component is attached in the Unity Editor.")]
         public bool PreservePrefabBindPose;
 
         public Transform[] Bones = Array.Empty<Transform>();
 
-        public static string GetDefaultBoneName(int boneIndex)
+        /// <summary>
+        /// The manifest this binding resolves to, or null when the gameplay
+        /// catalog has not been loaded or does not carry this asset.
+        /// </summary>
+        public KernelSkeletonManifest Manifest
         {
-            if (boneIndex < 0 || boneIndex >= DefaultBoneNames.Length)
+            get
             {
-                throw new ArgumentOutOfRangeException(nameof(boneIndex));
+                KernelSkeletonManifestCatalog.TryGet(
+                    SkeletonAssetId,
+                    SkeletonContentHash,
+                    out KernelSkeletonManifest manifest);
+                return manifest;
             }
-            return DefaultBoneNames[boneIndex];
         }
 
-        public static int GetDefaultParentBoneIndex(int boneIndex)
+        public bool TryGetManifest(out KernelSkeletonManifest manifest, out string error)
         {
-            if (boneIndex < 0 || boneIndex >= DefaultParentIndices.Length)
+            if (!KernelSkeletonManifestCatalog.TryGet(
+                    SkeletonAssetId,
+                    SkeletonContentHash,
+                    out manifest))
             {
-                throw new ArgumentOutOfRangeException(nameof(boneIndex));
+                error = KernelSkeletonManifestCatalog.Manifests.Count == 0
+                    ? "No skeleton manifests are loaded. Load the gameplay catalog " +
+                      "bundle with KernelSkeletonManifestCatalog.TryLoadFromBundle " +
+                      "before binding a skeleton."
+                    : $"No manifest for skeleton asset={SkeletonAssetId} " +
+                      $"hash=0x{SkeletonContentHash:x16}.";
+                return false;
             }
-            return DefaultParentIndices[boneIndex];
+            error = null;
+            return true;
         }
 
         public bool TryAutoMap(out string error)
         {
-            if (!IsDefaultSkeleton)
+            if (!TryGetManifest(out KernelSkeletonManifest manifest, out error))
             {
-                error =
-                    $"No automatic bone profile for skeleton asset={SkeletonAssetId} " +
-                    $"hash=0x{SkeletonContentHash:x16}.";
                 return false;
             }
 
             Transform searchRoot = SkeletonRoot != null ? SkeletonRoot : transform;
             Transform[] descendants =
                 searchRoot.GetComponentsInChildren<Transform>(true);
-            var mappedBones = new Transform[DefaultBoneNames.Length];
+            var mappedBones = new Transform[manifest.BoneCount];
             for (int transformIndex = 0;
                  transformIndex < descendants.Length;
                  ++transformIndex)
             {
                 Transform candidate = descendants[transformIndex];
-                string candidateName = StripNamespace(candidate.name);
-                int boneIndex = FindDefaultBoneIndex(candidateName);
+                int boneIndex = manifest.IndexOf(StripNamespace(candidate.name));
                 if (boneIndex < 0)
                 {
                     continue;
@@ -130,7 +102,7 @@ namespace NetworkExample.Kernel
                 if (mappedBones[boneIndex] != null)
                 {
                     error =
-                        $"Bone name '{DefaultBoneNames[boneIndex]}' is not unique " +
+                        $"Bone name '{manifest.Bones[boneIndex].Name}' is not unique " +
                         $"under '{searchRoot.name}'.";
                     return false;
                 }
@@ -142,30 +114,31 @@ namespace NetworkExample.Kernel
                 if (mappedBones[boneIndex] == null)
                 {
                     error =
-                        $"Missing bone '{DefaultBoneNames[boneIndex]}' " +
+                        $"Missing bone '{manifest.Bones[boneIndex].Name}' " +
                         $"under '{searchRoot.name}'. Disable Optimize Game Objects and " +
-                        "preserve the complete FBX hierarchy.";
+                        "preserve the complete imported hierarchy.";
                     return false;
                 }
 
-                int parentIndex = DefaultParentIndices[boneIndex];
+                int parentIndex = manifest.Bones[boneIndex].ParentIndex;
                 if (parentIndex >= 0 &&
                     mappedBones[boneIndex].parent != mappedBones[parentIndex])
                 {
                     error =
-                        $"Bone '{DefaultBoneNames[boneIndex]}' must be a direct child " +
-                        $"of '{DefaultBoneNames[parentIndex]}'.";
+                        $"Bone '{manifest.Bones[boneIndex].Name}' must be a direct child " +
+                        $"of '{manifest.Bones[parentIndex].Name}'.";
                     return false;
                 }
             }
 
             Bones = mappedBones;
+            SkeletonContentHash = manifest.ContentHash;
             error = null;
             return true;
         }
 
-        [ContextMenu("Auto Map Known Skeleton Bones")]
-        private void AutoMapKnownSkeletonBones()
+        [ContextMenu("Auto Map Skeleton Bones From Manifest")]
+        private void AutoMapSkeletonBones()
         {
             if (!TryAutoMap(out string error))
             {
@@ -180,9 +153,8 @@ namespace NetworkExample.Kernel
                 error = "SkeletonAssetId must be non-zero.";
                 return false;
             }
-            if (SkeletonContentHash == 0)
+            if (!TryGetManifest(out KernelSkeletonManifest manifest, out error))
             {
-                error = "SkeletonContentHash must be non-zero.";
                 return false;
             }
             if (AutoMapKnownSkeleton && !HasCompleteBoneArray())
@@ -213,34 +185,29 @@ namespace NetworkExample.Kernel
                     }
                 }
             }
-            if (IsDefaultSkeleton)
+            if (Bones.Length != manifest.BoneCount)
             {
-                if (Bones.Length != DefaultBoneNames.Length)
+                error =
+                    $"{manifest.Name} requires {manifest.BoneCount} bones, " +
+                    $"found {Bones.Length}.";
+                return false;
+            }
+            for (int index = 0; index < Bones.Length; ++index)
+            {
+                if (StripNamespace(Bones[index].name) != manifest.Bones[index].Name)
                 {
                     error =
-                        $"simplified_monster_sim_v4 requires " +
-                        $"{DefaultBoneNames.Length} bones, found {Bones.Length}.";
+                        $"Bones[{index}] must map to " +
+                        $"'{manifest.Bones[index].Name}', found '{Bones[index].name}'.";
                     return false;
                 }
-                for (int index = 0; index < Bones.Length; ++index)
+                int parentIndex = manifest.Bones[index].ParentIndex;
+                if (parentIndex >= 0 && Bones[index].parent != Bones[parentIndex])
                 {
-                    if (StripNamespace(Bones[index].name) !=
-                        DefaultBoneNames[index])
-                    {
-                        error =
-                            $"Bones[{index}] must map to " +
-                            $"'{DefaultBoneNames[index]}', found '{Bones[index].name}'.";
-                        return false;
-                    }
-                    int parentIndex = DefaultParentIndices[index];
-                    if (parentIndex >= 0 &&
-                        Bones[index].parent != Bones[parentIndex])
-                    {
-                        error =
-                            $"Bones[{index}] has an unexpected parent for " +
-                            $"'{DefaultBoneNames[index]}'.";
-                        return false;
-                    }
+                    error =
+                        $"Bones[{index}] has an unexpected parent for " +
+                        $"'{manifest.Bones[index].Name}'.";
+                    return false;
                 }
             }
 
@@ -279,10 +246,6 @@ namespace NetworkExample.Kernel
             return true;
         }
 
-        private bool IsDefaultSkeleton =>
-            SkeletonAssetId == DefaultSkeletonAssetId &&
-            SkeletonContentHash == DefaultSkeletonContentHash;
-
         private bool HasCompleteBoneArray()
         {
             if (Bones == null || Bones.Length == 0)
@@ -299,18 +262,10 @@ namespace NetworkExample.Kernel
             return true;
         }
 
-        private static int FindDefaultBoneIndex(string boneName)
-        {
-            for (int index = 0; index < DefaultBoneNames.Length; ++index)
-            {
-                if (DefaultBoneNames[index] == boneName)
-                {
-                    return index;
-                }
-            }
-            return -1;
-        }
-
+        /// <summary>
+        /// Drops an importer's namespace or path prefix, so "rig:JNT_Body" and
+        /// "Armature|JNT_Body" both match the manifest's "JNT_Body".
+        /// </summary>
         private static string StripNamespace(string value)
         {
             int colon = value.LastIndexOf(':');
@@ -321,8 +276,6 @@ namespace NetworkExample.Kernel
 
         private void Reset()
         {
-            SkeletonAssetId = DefaultSkeletonAssetId;
-            SkeletonContentHash = DefaultSkeletonContentHash;
             AutoMapKnownSkeleton = true;
             PreservePrefabBindPose = true;
             TryAutoMap(out string _);
@@ -331,7 +284,7 @@ namespace NetworkExample.Kernel
 #if UNITY_EDITOR
         private void OnValidate()
         {
-            if (AutoMapKnownSkeleton && IsDefaultSkeleton)
+            if (AutoMapKnownSkeleton && KernelSkeletonManifestCatalog.Manifests.Count > 0)
             {
                 TryAutoMap(out string _);
             }

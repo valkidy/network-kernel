@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -291,76 +292,68 @@ public static class NetworkKernelManagedAbiSmoke
 
     private static void RequireSkeletonBindingContract()
     {
-        string[] expectedBoneNames =
-        {
-            "SIM_Root",
-            "JNT_BodyRoot",
-            "LOC_FrontArc",
-            "LOC_Com",
-            "JNT_LegRearRight_Hip",
-            "GEO_LegRearRight_Upper_Node",
-            "JNT_LegRearRight_Knee",
-            "GEO_LegRearRight_Blade_Node",
-            "GEO_LegRearRight_Lower_Node",
-            "JNT_LegRearRight_Foot",
-            "JNT_LegFrontRight_Hip",
-            "GEO_LegFrontRight_Upper_Node",
-            "JNT_LegFrontRight_Knee",
-            "GEO_LegFrontRight_Blade_Node",
-            "GEO_LegFrontRight_Lower_Node",
-            "JNT_LegFrontRight_Foot",
-            "JNT_LegRearLeft_Hip",
-            "GEO_LegRearLeft_Upper_Node",
-            "JNT_LegRearLeft_Knee",
-            "GEO_LegRearLeft_Blade_Node",
-            "GEO_LegRearLeft_Lower_Node",
-            "JNT_LegRearLeft_Foot",
-            "JNT_LegFrontLeft_Hip",
-            "GEO_LegFrontLeft_Upper_Node",
-            "JNT_LegFrontLeft_Knee",
-            "GEO_LegFrontLeft_Blade_Node",
-            "GEO_LegFrontLeft_Lower_Node",
-            "JNT_LegFrontLeft_Foot",
-            "GEO_RootMovementBox_Node",
-            "JNT_TailBase",
-            "GEO_Tail_Node",
-            "JNT_TailTip",
-            "JNT_LowerThorax",
-            "GEO_LowerThorax_Node",
-            "JNT_Head",
-            "LOC_Mouth",
-            "GEO_Head_Node",
-            "JNT_DorsalSpine",
-            "GEO_DorsalSpine_Node",
-            "GEO_BodyCore_Node",
-            "SKIN_BindCarrier",
-        };
-        int[] expectedParentIndices =
-        {
-            -1, 0, 1, 1, 1, 4, 4, 6, 6, 6,
-            1, 10, 10, 12, 12, 12, 1, 16, 16, 18,
-            18, 18, 1, 22, 22, 24, 24, 24, 1, 1,
-            29, 29, 1, 32, 1, 34, 34, 1, 37, 1,
-            0,
-        };
-
+        // This used to be a second hand-copied 41-bone table checked against
+        // the one in KernelSkeletonBinding -- two transcriptions of the same
+        // manifest, which agreed with each other whether or not either agreed
+        // with the asset. Both are gone; the bone layout now comes from the
+        // bundle, so the only thing worth asserting is that the managed reader
+        // agrees with the bytes that ship.
+        byte[] bundle = LoadGameplayCatalogBundleBytes();
         Require(
-            KernelSkeletonBinding.DefaultSkeletonAssetId == 1 &&
-            KernelSkeletonBinding.DefaultSkeletonContentHash ==
-                0x1c171165d9bb479bUL &&
-            KernelSkeletonBinding.DefaultBoneCount == expectedBoneNames.Length &&
-            expectedBoneNames.Length == expectedParentIndices.Length,
-            "Managed simplified_monster_sim_v4 skeleton metadata mismatch.");
-        for (int index = 0; index < expectedBoneNames.Length; ++index)
+            KernelSkeletonManifestCatalog.TryLoadFromBundle(
+                bundle,
+                out string manifestError),
+            $"Managed skeleton manifests failed to load from the bundle: {manifestError}");
+        Require(
+            KernelSkeletonManifestCatalog.Manifests.Count > 0,
+            "Gameplay catalog bundle carried no skeleton manifests.");
+
+        foreach (KeyValuePair<uint, KernelSkeletonManifest> pair in
+                 KernelSkeletonManifestCatalog.Manifests)
+        {
+            KernelSkeletonManifest manifest = pair.Value;
+            Require(
+                manifest.AssetId == pair.Key && manifest.AssetId != 0u,
+                $"Skeleton manifest '{manifest.Name}' has an inconsistent asset id.");
+            Require(
+                manifest.ContentHash != 0ul,
+                $"Skeleton manifest '{manifest.Name}' has a zero content hash.");
+            Require(
+                manifest.BoneCount > 0,
+                $"Skeleton manifest '{manifest.Name}' has no bones.");
+            for (int index = 0; index < manifest.BoneCount; ++index)
+            {
+                KernelSkeletonManifestBone bone = manifest.Bones[index];
+                // A hierarchy rebuilt from this walks parents before children,
+                // so a forward or self reference would be unbuildable.
+                Require(
+                    bone.ParentIndex < index && bone.ParentIndex >= -1,
+                    $"'{manifest.Name}' bone {index} ('{bone.Name}') has parent " +
+                    $"{bone.ParentIndex}, which is not an earlier bone.");
+                Require(
+                    !string.IsNullOrEmpty(bone.Name) &&
+                    manifest.IndexOf(bone.Name) == index,
+                    $"'{manifest.Name}' bone {index} is not uniquely addressable by name.");
+            }
+            Require(
+                manifest.Bones[0].ParentIndex == -1,
+                $"'{manifest.Name}' does not start at a root bone.");
+        }
+
+        // The hash lookup is what stops a scene binding a rig that has since
+        // been rebuilt, so it has to actually discriminate.
+        foreach (KeyValuePair<uint, KernelSkeletonManifest> pair in
+                 KernelSkeletonManifestCatalog.Manifests)
         {
             Require(
-                KernelSkeletonBinding.GetDefaultBoneName(index) ==
-                    expectedBoneNames[index],
-                $"Managed skeleton bone name mismatch at index {index}.");
+                KernelSkeletonManifestCatalog.TryGet(
+                    pair.Key,
+                    pair.Value.ContentHash,
+                    out _),
+                $"Skeleton asset {pair.Key} did not resolve with its own content hash.");
             Require(
-                KernelSkeletonBinding.GetDefaultParentBoneIndex(index) ==
-                    expectedParentIndices[index],
-                $"Managed skeleton parent mismatch at index {index}.");
+                !KernelSkeletonManifestCatalog.TryGet(pair.Key, 0xdeadbeeful, out _),
+                $"Skeleton asset {pair.Key} resolved with a wrong content hash.");
         }
     }
 

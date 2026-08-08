@@ -33,6 +33,18 @@ public sealed class NetworkKernelMonsterObserverBehaviour : MonoBehaviour
     [SerializeField]
     private bool createReferenceGround = true;
 
+    // Which skeleton each templated rig uses. The bone layout itself comes from
+    // the manifest; this only says which manifest to ask for.
+    private static readonly System.Collections.Generic.Dictionary<uint, uint>
+        skeletonAssetIdByTemplateId =
+            new System.Collections.Generic.Dictionary<uint, uint>
+            {
+                { MonsterTemplateId, 1u },
+                { 21u, 4u },  // quadruped_actor
+                { 22u, 5u },  // tripod_actor
+                { 23u, 3u },  // biped_actor
+            };
+
     private readonly RenderEntityState[] rootStates = new RenderEntityState[128];
     private readonly KernelEvent[] events = new KernelEvent[64];
     private NetworkHost host;
@@ -65,6 +77,17 @@ public sealed class NetworkKernelMonsterObserverBehaviour : MonoBehaviour
             Fail(
                 "Monster Observer could not load gameplay catalog bundle resource '" +
                 DefaultBundleResourcePath + "'.");
+            return;
+        }
+
+        // Read the bone layouts out of the same bytes the host is about to load,
+        // so the rig the observer draws and the rig the kernel poses can never
+        // be two different versions of the skeleton.
+        if (!KernelSkeletonManifestCatalog.TryLoadFromBundle(
+                bundle.bytes,
+                out string manifestError))
+        {
+            Fail($"Monster Observer could not read skeleton manifests: {manifestError}");
             return;
         }
 
@@ -147,9 +170,22 @@ public sealed class NetworkKernelMonsterObserverBehaviour : MonoBehaviour
 
     private GameObject CreatePresentationProxy(RenderEntityState state)
     {
-        if (state.template_id == MonsterTemplateId)
+        // Any templated skeleton gets a rig built from its manifest, so adding
+        // a rig to the catalog is enough to see it -- no table here to update.
+        if (skeletonAssetIdByTemplateId.TryGetValue(
+                state.template_id,
+                out uint skeletonAssetId))
         {
-            return MonsterSimV4Proxy.Create();
+            GameObject rig = KernelSkeletonProxyFactory.TryCreate(
+                skeletonAssetId,
+                out string error);
+            if (rig != null)
+            {
+                return rig;
+            }
+            Debug.LogWarning(
+                $"Falling back to a capsule for template {state.template_id}: {error}",
+                this);
         }
 
         GameObject proxy = GameObject.CreatePrimitive(PrimitiveType.Capsule);
@@ -232,88 +268,4 @@ public sealed class NetworkKernelMonsterObserverBehaviour : MonoBehaviour
         }
     }
 
-    private static class MonsterSimV4Proxy
-    {
-        private static readonly ProxyBox[] Boxes =
-        {
-            new ProxyBox(5, new Vector3(2.20f, -2.35f, -0.30f), new Vector3(5.63f, 5.94f, 2.25f)),
-            new ProxyBox(7, new Vector3(2.11f, -3.79f, 0.00f), new Vector3(4.91f, 8.93f, 0.86f)),
-            new ProxyBox(8, new Vector3(1.75f, -5.45f, -0.20f), new Vector3(4.84f, 11.38f, 2.01f)),
-            new ProxyBox(11, new Vector3(1.85f, -2.15f, 0.20f), new Vector3(4.96f, 5.45f, 2.04f)),
-            new ProxyBox(13, new Vector3(2.45f, -4.20f, 0.30f), new Vector3(5.56f, 9.84f, 0.86f)),
-            new ProxyBox(14, new Vector3(2.20f, -6.00f, 0.20f), new Vector3(5.72f, 12.53f, 2.01f)),
-            new ProxyBox(17, new Vector3(-2.20f, -2.40f, -0.25f), new Vector3(5.63f, 6.00f, 2.14f)),
-            new ProxyBox(19, new Vector3(-2.15f, -3.75f, -0.30f), new Vector3(4.98f, 8.88f, 0.86f)),
-            new ProxyBox(20, new Vector3(-1.80f, -5.40f, -0.20f), new Vector3(4.94f, 11.30f, 2.01f)),
-            new ProxyBox(23, new Vector3(-1.90f, -2.25f, 0.20f), new Vector3(5.06f, 5.64f, 2.04f)),
-            new ProxyBox(25, new Vector3(-2.60f, -4.13f, 0.08f), new Vector3(5.83f, 9.78f, 1.02f)),
-            new ProxyBox(26, new Vector3(-2.40f, -5.90f, 0.30f), new Vector3(6.11f, 12.40f, 2.21f)),
-            new ProxyBox(28, Vector3.zero, new Vector3(5.0f, 5.0f, 4.0f)),
-            new ProxyBox(30, new Vector3(-1.0f, -1.10f, -1.20f), new Vector3(2.72f, 3.01f, 3.07f)),
-            new ProxyBox(33, Vector3.zero, new Vector3(3.0f, 2.2f, 3.4f)),
-            new ProxyBox(36, Vector3.zero, new Vector3(3.6f, 2.8f, 3.2f)),
-            new ProxyBox(38, Vector3.zero, new Vector3(2.0f, 5.0f, 1.2f)),
-            new ProxyBox(39, Vector3.zero, new Vector3(9.0f, 5.0f, 6.0f)),
-        };
-
-        public static GameObject Create()
-        {
-            var root = new GameObject("simplified_monster_sim_v4_proxy");
-            var bones = new Transform[KernelSkeletonBinding.DefaultBoneCount];
-            for (int index = 0; index < bones.Length; ++index)
-            {
-                var boneObject = new GameObject(
-                    KernelSkeletonBinding.GetDefaultBoneName(index));
-                int parentBoneIndex =
-                    KernelSkeletonBinding.GetDefaultParentBoneIndex(index);
-                Transform parent = parentBoneIndex < 0
-                    ? root.transform
-                    : bones[parentBoneIndex];
-                boneObject.transform.SetParent(parent, false);
-                bones[index] = boneObject.transform;
-            }
-
-            for (int index = 0; index < Boxes.Length; ++index)
-            {
-                ProxyBox definition = Boxes[index];
-                GameObject box = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                box.name = $"Geometry_{definition.BoneIndex:D2}";
-                box.transform.SetParent(bones[definition.BoneIndex], false);
-                box.transform.localPosition = definition.Center;
-                box.transform.localScale = definition.Size;
-                Collider collider = box.GetComponent<Collider>();
-                if (collider != null)
-                {
-                    UnityEngine.Object.Destroy(collider);
-                }
-                SetColor(
-                    box,
-                    definition.BoneIndex == 39
-                        ? new Color(0.12f, 0.48f, 0.62f, 1.0f)
-                        : new Color(0.2f, 0.7f, 0.78f, 1.0f));
-            }
-
-            var binding = root.AddComponent<KernelSkeletonBinding>();
-            binding.SkeletonAssetId = KernelSkeletonBinding.DefaultSkeletonAssetId;
-            binding.SkeletonContentHash =
-                KernelSkeletonBinding.DefaultSkeletonContentHash;
-            binding.Bones = bones;
-            root.AddComponent<KernelSkeletonPoseApplicator>();
-            return root;
-        }
-
-        private readonly struct ProxyBox
-        {
-            public ProxyBox(int boneIndex, Vector3 center, Vector3 size)
-            {
-                BoneIndex = boneIndex;
-                Center = center;
-                Size = size;
-            }
-
-            public int BoneIndex { get; }
-            public Vector3 Center { get; }
-            public Vector3 Size { get; }
-        }
-    }
 }

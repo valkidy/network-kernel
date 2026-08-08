@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -6,6 +7,7 @@ using System.Reflection;
 using System.Threading;
 using UnityEditor;
 using UnityEngine;
+using NetworkExample.Kernel;
 using NetworkExample.Kernel.Client;
 using NetworkExample.Kernel.Host;
 using NetworkExample.Kernel.Presentation;
@@ -320,41 +322,59 @@ namespace NetworkExample.Kernel.Editor
 
         private static void RequireDefaultSkeletonAutoBinding()
         {
-            var root = new GameObject("DefaultSkeletonAutoBindingSmoke");
-            try
+            // Builds the hierarchy the manifest describes, then checks the
+            // binding maps it back. The rig is whatever the bundle ships, not a
+            // layout compiled into the package, so this keeps working when the
+            // catalog's skeletons change.
+            Require(
+                KernelSkeletonManifestCatalog.TryLoadFromBundle(
+                    LoadGameplayCatalogBundleBytes(),
+                    out string manifestError),
+                $"Skeleton manifests failed to load from the bundle: {manifestError}");
+            foreach (KeyValuePair<uint, KernelSkeletonManifest> pair in
+                     KernelSkeletonManifestCatalog.Manifests)
             {
-                var expectedBones =
-                    new Transform[KernelSkeletonBinding.DefaultBoneCount];
-                for (int index = 0; index < expectedBones.Length; ++index)
+                KernelSkeletonManifest manifest = pair.Value;
+                var root = new GameObject($"AutoBindingSmoke_{manifest.Name}");
+                try
                 {
-                    var bone = new GameObject(
-                        KernelSkeletonBinding.GetDefaultBoneName(index));
-                    int parentIndex =
-                        KernelSkeletonBinding.GetDefaultParentBoneIndex(index);
-                    bone.transform.SetParent(
-                        parentIndex < 0 ? root.transform : expectedBones[parentIndex],
-                        false);
-                    expectedBones[index] = bone.transform;
-                }
+                    var expectedBones = new Transform[manifest.BoneCount];
+                    for (int index = 0; index < expectedBones.Length; ++index)
+                    {
+                        var bone = new GameObject(manifest.Bones[index].Name);
+                        int parentIndex = manifest.Bones[index].ParentIndex;
+                        bone.transform.SetParent(
+                            parentIndex < 0 ? root.transform : expectedBones[parentIndex],
+                            false);
+                        expectedBones[index] = bone.transform;
+                    }
 
-                KernelSkeletonBinding binding =
-                    root.AddComponent<KernelSkeletonBinding>();
-                Require(
-                    binding.TryAutoMap(out string error),
-                    $"Default skeleton automatic bone mapping failed: {error}");
-                Require(
-                    binding.Bones.Length == expectedBones.Length,
-                    "Default skeleton automatic bone mapping returned the wrong count.");
-                for (int index = 0; index < expectedBones.Length; ++index)
-                {
+                    KernelSkeletonBinding binding =
+                        root.AddComponent<KernelSkeletonBinding>();
+                    binding.SkeletonAssetId = manifest.AssetId;
                     Require(
-                        binding.Bones[index] == expectedBones[index],
-                        $"Default skeleton automatic bone mapping mismatched index {index}.");
+                        binding.TryAutoMap(out string error),
+                        $"{manifest.Name} automatic bone mapping failed: {error}");
+                    Require(
+                        binding.Bones.Length == expectedBones.Length,
+                        $"{manifest.Name} automatic bone mapping returned the wrong count.");
+                    Require(
+                        binding.SkeletonContentHash == manifest.ContentHash,
+                        $"{manifest.Name} automatic mapping did not adopt the manifest hash.");
+                    for (int index = 0; index < expectedBones.Length; ++index)
+                    {
+                        Require(
+                            binding.Bones[index] == expectedBones[index],
+                            $"{manifest.Name} automatic bone mapping mismatched index {index}.");
+                    }
+                    Require(
+                        binding.TryValidate(out string validationError),
+                        $"{manifest.Name} binding failed validation: {validationError}");
                 }
-            }
-            finally
-            {
-                UnityEngine.Object.DestroyImmediate(root);
+                finally
+                {
+                    UnityEngine.Object.DestroyImmediate(root);
+                }
             }
         }
 
