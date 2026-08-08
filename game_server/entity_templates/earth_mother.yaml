@@ -12,7 +12,7 @@ director:
   kind: world_rule
   spawn:
     target_count: 1
-    entity_template: monster_sim_actor
+    entity_template: tripod_actor
     position: {x: 0.0, y: 10.0, z: 0.0}
     radius: 10.0
     seed: 4242
