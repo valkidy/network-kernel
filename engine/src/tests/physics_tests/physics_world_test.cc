@@ -400,5 +400,71 @@ int main(int argc, char** argv) {
     assert(move_result.position.y > -0.01f);
     assert(movement_world.remove_character(7));
     assert(!movement_world.move_character(move, &move_result, &error));
+
+    // Broad phase node budget regression. Jolt sizes its quad tree node
+    // allocator from the max body count and only reclaims nodes during a tree
+    // rebuild, so a body that is destroyed and recreated costs one node for
+    // good. With a 4096 body limit that budget is roughly 5.4k nodes, and Jolt
+    // responds to exhaustion by calling std::abort() -- which used to take down
+    // the whole Unity editor after a few minutes of play. Both loops below run
+    // well past that budget, so a regression here aborts the test process.
+    PhysicsWorld churn_world;
+    assert(churn_world.valid());
+
+    // 1. Re-upserting unchanged shapes must move the bodies in place rather than
+    //    recreate them. This mirrors KernelEngine::sync_client_render_colliders,
+    //    which refreshes every tracked collider once per frame, and it
+    //    deliberately never calls optimize_broad_phase() so an in-place refresh
+    //    is the only way to survive the iteration count.
+    //
+    //    Several colliders are needed to expose the leak: while a single body
+    //    fits in a child slot of the current root, removing it frees exactly the
+    //    slot its re-add takes back. Once the root is full the removed bodies sit
+    //    in older nodes further down the chain, their freed slots are
+    //    unreachable, and each add has to allocate a fresh root instead.
+    constexpr std::uint32_t kChurnColliders = 8;
+    constexpr int kChurnFrames = 3000;
+    for (int frame = 0; frame < kChurnFrames; ++frame) {
+        for (std::uint32_t index = 0; index < kChurnColliders; ++index) {
+            assert(churn_world.upsert_object(actor(
+                200 + index,
+                800 + index,
+                glm::vec3(
+                    3.0f + static_cast<float>(index),
+                    2.0f,
+                    0.01f * static_cast<float>(frame % 100)),
+                network_example::physics::kGameplayCategoryNeutral), &error));
+        }
+    }
+    RayCastRequest churn_ray{};
+    churn_ray.origin = glm::vec3(0.0f, 2.0f, 0.99f);
+    churn_ray.direction = glm::vec3(1.0f, 0.0f, 0.0f);
+    churn_ray.max_distance = 20.0f;
+    assert(churn_world.ray_cast_closest(churn_ray, &closest));
+    assert(closest.identity.collider_id == 800);
+
+    // 2. Genuine spawn/despawn churn -- entities entering and leaving relevance --
+    //    does consume nodes, and optimize_broad_phase() is what hands them back.
+    //    Each wave uses fresh collider ids and adds several bodies before
+    //    releasing them, so the freed slots end up in nodes the next wave cannot
+    //    reach and the rebuild is the only thing keeping the allocator alive.
+    constexpr std::uint32_t kWaveSize = 8;
+    for (std::uint32_t wave = 0; wave < 4000; ++wave) {
+        const std::uint32_t first_id = 1000 + wave * kWaveSize;
+        for (std::uint32_t index = 0; index < kWaveSize; ++index) {
+            assert(churn_world.upsert_object(actor(
+                first_id + index,
+                first_id + index,
+                glm::vec3(-6.0f - static_cast<float>(index), 2.0f, 0.0f),
+                network_example::physics::kGameplayCategoryPlayerSide), &error));
+        }
+        for (std::uint32_t index = 0; index < kWaveSize; ++index) {
+            assert(churn_world.remove_object(first_id + index));
+        }
+        churn_world.optimize_broad_phase();
+    }
+    // The long-lived bodies are still where the first loop left them.
+    assert(churn_world.ray_cast_closest(churn_ray, &closest));
+    assert(closest.identity.collider_id == 800);
     return 0;
 }
