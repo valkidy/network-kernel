@@ -1,5 +1,10 @@
 0.6.9 release notes:
 
+- updates gameplay catalog bundle
+
+
+0.6.9 release notes:
+
 - updates native plugins and gameplay catalog bundle
 
 
