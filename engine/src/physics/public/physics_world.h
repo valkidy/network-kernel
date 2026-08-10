@@ -61,6 +61,18 @@ public:
         const glm::vec3& position,
         const glm::quat& rotation);
 
+    // Performs broad phase maintenance and must be called periodically -- once
+    // per tick after the world has been synced is the intended cadence.
+    //
+    // This world is query-only and never steps a simulation, so it never gets
+    // the tree rebuild that PhysicsSystem::Update would normally provide. Jolt
+    // reclaims broad phase nodes only during that rebuild, so without this call
+    // adding bodies drains the node allocator for good and Jolt aborts the
+    // process with "QuadTree: Out of nodes!" once it is empty. Cheap to call on
+    // a world whose bodies have not changed: it no-ops unless a body entered or
+    // left the broad phase since the last call.
+    void optimize_broad_phase();
+
     std::vector<CollisionHit> ray_cast_all(const RayCastRequest& request) const;
     std::vector<CollisionHit> shape_cast_all(const ShapeCastRequest& request) const;
     std::vector<CollisionHit> overlap_all(const OverlapRequest& request) const;

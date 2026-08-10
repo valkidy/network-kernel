@@ -3842,6 +3842,13 @@ void KernelEngine::sync_entity_colliders_from_world() {
         }
     }
     physics_entity_collider_ids_ = std::move(current_collider_ids);
+
+    // Entity spawns and despawns are the only broad phase churn here (existing
+    // colliders are moved in place above), but the authoritative world is just
+    // as query-only as the prediction world, so its tree still needs a rebuild
+    // to hand retired nodes back to Jolt's allocator. No-ops when nothing was
+    // added or removed this tick.
+    physics_world_->optimize_broad_phase();
 }
 
 std::uint32_t KernelEngine::collider_template_id_for_projectile_template(
@@ -3960,6 +3967,15 @@ void KernelEngine::sync_client_render_colliders() {
             prediction_physics_world_->remove_object(proxy->second);
         }
         proxy = prediction_obstacle_collider_ids_.erase(proxy);
+    }
+
+    // This runs once per rendered frame, so it is where the prediction world
+    // accumulates broad phase churn. Jolt only reclaims broad phase nodes during
+    // a tree rebuild, and a query-only world never gets one on its own -- see
+    // PhysicsWorld::optimize_broad_phase(). The call no-ops on frames where no
+    // proxy was added or removed.
+    if (prediction_physics_world_ != nullptr) {
+        prediction_physics_world_->optimize_broad_phase();
     }
 }
 
@@ -6721,6 +6737,10 @@ bool KernelEngine::sync_prediction_actor_proxies(
         prediction_physics_world_->remove_object(proxy->second);
         proxy = prediction_proxy_collider_ids_.erase(proxy);
     }
+
+    // Same reasoning as in sync_client_render_colliders(): actor proxies come
+    // and go as snapshots arrive, and nothing else rebuilds this world's tree.
+    prediction_physics_world_->optimize_broad_phase();
     return true;
 }
 

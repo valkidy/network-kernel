@@ -408,6 +408,18 @@ bool valid_shape(const CollisionShapeDescriptor& shape) {
            shape.half_extents.z > 0.0f;
 }
 
+// Two descriptors that produce an identical Jolt shape. Exact float comparison
+// is intentional: descriptors are copied verbatim from collider templates, so a
+// shape that did not change compares bit-identical and a shape that did change
+// must force the body to be recreated.
+bool same_shape(
+    const CollisionShapeDescriptor& lhs,
+    const CollisionShapeDescriptor& rhs) {
+    return lhs.type == rhs.type && lhs.local_center == rhs.local_center &&
+           lhs.half_extents == rhs.half_extents && lhs.radius == rhs.radius &&
+           lhs.capsule_half_height == rhs.capsule_half_height;
+}
+
 JPH::RefConst<JPH::Shape> make_shape(const CollisionShapeDescriptor& shape) {
     if (!valid_shape(shape)) {
         return nullptr;
@@ -501,6 +513,13 @@ public:
     struct StoredObject {
         CollisionObjectIdentity identity{};
         JPH::ObjectLayer object_layer = kOtherMovingObjectLayer;
+        // Shape the body was created from, so upsert_object can recognise an
+        // unchanged shape and refresh the body in place. Only bodies created
+        // through upsert_object carry one; load_static_scene restores a mesh
+        // shape that has no descriptor form and leaves shape_tracked false so it
+        // never takes the in-place path.
+        CollisionShapeDescriptor shape{};
+        bool shape_tracked = false;
     };
 
     struct StoredCharacter {
@@ -538,7 +557,8 @@ public:
         const glm::quat& rotation,
         JPH::EMotionType motion_type,
         JPH::ObjectLayer object_layer,
-        std::string* error) {
+        std::string* error,
+        const CollisionShapeDescriptor* tracked_shape = nullptr) {
         if (!valid() || identity.collider_id == 0 || shape == nullptr) {
             *error = "invalid collision object";
             return false;
@@ -558,12 +578,92 @@ public:
             return false;
         }
         bodies_by_collider_.emplace(identity.collider_id, body_id);
-        objects_by_body_.emplace(
-            body_key(body_id), StoredObject{identity, object_layer});
+        StoredObject stored{identity, object_layer};
+        if (tracked_shape != nullptr) {
+            stored.shape = *tracked_shape;
+            stored.shape_tracked = true;
+        }
+        objects_by_body_.emplace(body_key(body_id), stored);
         if (object_layer == kDamageableUnclassifiedObjectLayer) {
             ++unclassified_damageable_count_;
         }
+        // The body entered the broad phase, so the tree owes us a rebuild before
+        // its node allocator is exhausted. See optimize_broad_phase().
+        broad_phase_dirty_ = true;
         return true;
+    }
+
+    // Refreshes an existing body in place instead of destroying and recreating
+    // it. Returns false when the caller must fall back to a full recreate,
+    // i.e. when there is no such body yet or its shape / object layer changed.
+    //
+    // This exists because recreating a body permanently burns a Jolt broad phase
+    // node. QuadTree::RemoveBodies only clears the child slot the body occupied
+    // and never returns the node to the allocator, while
+    // QuadTree::AddBodiesFinalize probes just the four child slots of the
+    // *current root* before allocating a whole new root node. Nodes come back
+    // only via the tree rebuild in QuadTree::DiscardOldTree. So once a world
+    // holds enough bodies that the freed slots sit in nodes below the root --
+    // which is every real world -- remove+add churn drains the allocator at
+    // roughly one node per three adds until Jolt gives up and calls std::abort()
+    // with "QuadTree: Out of nodes!". KernelEngine::sync_client_render_colliders
+    // re-upserts every tracked collider every frame, which used to make that
+    // abort a matter of minutes.
+    bool refresh_object(
+        const CollisionObjectDescriptor& object,
+        const glm::vec3& world_position,
+        JPH::ObjectLayer object_layer) {
+        const auto found = bodies_by_collider_.find(object.identity.collider_id);
+        if (found == bodies_by_collider_.end()) {
+            return false;
+        }
+        const auto stored = objects_by_body_.find(body_key(found->second));
+        if (stored == objects_by_body_.end() || !stored->second.shape_tracked ||
+            stored->second.object_layer != object_layer ||
+            !same_shape(stored->second.shape, object.shape)) {
+            return false;
+        }
+        JPH::BodyInterface& bodies = system_->GetBodyInterface();
+        // Moving a body only widens broad phase bounds, it never allocates.
+        bodies.SetPositionAndRotation(
+            found->second,
+            to_jolt_r(world_position),
+            to_jolt(object.rotation),
+            JPH::EActivation::DontActivate);
+        // Toggling enabled does re-enter the broad phase and therefore does cost
+        // a node, but unlike the transform refresh above it only happens when
+        // the object actually changes state.
+        if (object.enabled && !bodies.IsAdded(found->second)) {
+            bodies.AddBody(found->second, JPH::EActivation::DontActivate);
+            broad_phase_dirty_ = true;
+        } else if (!object.enabled && bodies.IsAdded(found->second)) {
+            bodies.RemoveBody(found->second);
+            broad_phase_dirty_ = true;
+        }
+        // Identity fields (hit zone, gameplay category, ...) are pure query
+        // filter data and can be refreshed without touching the body.
+        stored->second.identity = object.identity;
+        return true;
+    }
+
+    // Rebuilds the broad phase tree and hands the retired nodes back to the
+    // allocator. A simulated world gets this for free from PhysicsSystem::Update,
+    // but this world is query-only and never steps, so without an explicit call
+    // the node allocator sized by the PhysicsSystem::Init above -- roughly
+    // 2 * (maxBodies / 2 + maxBodies / 6), about 5.4k nodes for the 4096 body
+    // limit -- only ever drains and Jolt eventually aborts the process.
+    //
+    // The dirty flag keeps this affordable: OptimizeBroadPhase() is a full tree
+    // rebuild, so we pay for it only on frames where bodies were added or
+    // removed, not on the far more common frames that just move existing bodies.
+    // Rebuilding also re-tightens node bounds, which SetPositionAndRotation only
+    // ever widens -- without it query cost degrades over a long session.
+    void optimize_broad_phase() {
+        if (!valid() || !broad_phase_dirty_) {
+            return;
+        }
+        system_->OptimizeBroadPhase();
+        broad_phase_dirty_ = false;
     }
 
     bool remove_object(std::uint32_t collider_id) {
@@ -583,6 +683,8 @@ public:
         bodies.RemoveBody(found->second);
         bodies.DestroyBody(found->second);
         bodies_by_collider_.erase(found);
+        // The vacated broad phase node stays allocated until the next rebuild.
+        broad_phase_dirty_ = true;
         return true;
     }
 
@@ -652,6 +754,9 @@ public:
     std::unordered_map<std::uint32_t, JPH::BodyID> bodies_by_collider_;
     std::unordered_map<std::uint32_t, StoredObject> objects_by_body_;
     std::size_t unclassified_damageable_count_ = 0;
+    // Set whenever a body enters or leaves the broad phase; cleared by
+    // optimize_broad_phase().
+    bool broad_phase_dirty_ = false;
     mutable std::mutex query_stats_mutex_;
     mutable CollisionQueryStats query_stats_{};
     mutable std::shared_mutex mutex_;
@@ -724,21 +829,36 @@ bool PhysicsWorld::upsert_object(
     std::string local_error;
     error = error == nullptr ? &local_error : error;
     std::unique_lock lock(impl_->mutex_);
-    JPH::RefConst<JPH::Shape> shape = make_shape(object.shape);
-    if (shape == nullptr) {
+    if (!valid_shape(object.shape)) {
         *error = "invalid collision shape dimensions";
         return false;
     }
     const glm::vec3 world_position =
         object.position + object.rotation * object.shape.local_center;
+    const JPH::ObjectLayer object_layer = object_layer_for(object.identity);
+    // Callers such as KernelEngine::sync_client_render_colliders re-upsert every
+    // tracked collider every frame. Recreating the body each time leaks a broad
+    // phase node per call, so move the existing body instead whenever its shape
+    // and object layer are unchanged. Validation above runs first so a bad
+    // descriptor is still rejected on this path, and the Jolt shape is only
+    // built when a real recreate is needed.
+    if (impl_->refresh_object(object, world_position, object_layer)) {
+        return true;
+    }
+    JPH::RefConst<JPH::Shape> shape = make_shape(object.shape);
+    if (shape == nullptr) {
+        *error = "invalid collision shape dimensions";
+        return false;
+    }
     if (!impl_->add_body(
             shape,
             object.identity,
             world_position,
             object.rotation,
             JPH::EMotionType::Kinematic,
-            object_layer_for(object.identity),
-            error)) {
+            object_layer,
+            error,
+            &object.shape)) {
         return false;
     }
     if (!object.enabled) {
@@ -765,10 +885,20 @@ bool PhysicsWorld::set_object_enabled(std::uint32_t collider_id, bool enabled) {
     JPH::BodyInterface& bodies = impl_->system_->GetBodyInterface();
     if (enabled && !bodies.IsAdded(found->second)) {
         bodies.AddBody(found->second, JPH::EActivation::DontActivate);
+        impl_->broad_phase_dirty_ = true;
     } else if (!enabled && bodies.IsAdded(found->second)) {
         bodies.RemoveBody(found->second);
+        impl_->broad_phase_dirty_ = true;
     }
     return true;
+}
+
+void PhysicsWorld::optimize_broad_phase() {
+    if (impl_ == nullptr) {
+        return;
+    }
+    std::unique_lock lock(impl_->mutex_);
+    impl_->optimize_broad_phase();
 }
 
 bool PhysicsWorld::set_object_transform(
