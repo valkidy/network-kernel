@@ -21,6 +21,13 @@ inline physics::CollisionQueryFilter collision_filter_from_mask(
             1u << static_cast<std::uint32_t>(
                 physics::CollisionObjectKind::kActorHitbox);
     }
+    if ((mask & KERNEL_COLLISION_MASK_PROP) != 0u) {
+        filter.collision_mask |= physics::collision_layer_bit(
+            physics::CollisionLayer::kStaticObstacle);
+        filter.object_kind_mask |=
+            1u << static_cast<std::uint32_t>(
+                physics::CollisionObjectKind::kStaticObstacle);
+    }
     if ((mask & KERNEL_COLLISION_LAYER_TERRAIN) != 0u) {
         filter.collision_mask |= physics::collision_layer_bit(
             physics::CollisionLayer::kTerrain);

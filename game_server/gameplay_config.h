@@ -133,6 +133,7 @@ struct ActorTemplateConfig {
     float movement_ground_probe_distance = 0.25f;
     float movement_ground_snap_distance = 0.5f;
     float movement_max_yaw_degrees_per_second = 0.0f;
+    float impulse_resistance = 0.0f;
     // KERNEL_MOVEMENT_LAYER_* bits; 0 keeps the engine default.
     std::uint32_t movement_collision_mask = 0u;
     std::array<std::uint32_t, KERNEL_MAX_WEAPON_SLOTS> weapon_ids{};
@@ -212,6 +213,8 @@ struct ActionGraphActionConfig {
     std::string owner_parameter;
     std::string target_parameter;
     std::string amount_parameter;
+    std::string strength_parameter;
+    std::uint32_t collision_mask = KERNEL_COLLISION_MASK_ACTOR;
     std::string item_template_ref;
     std::uint32_t quantity = 0;
     std::uint32_t condition_type = KernelActionConditionType_Always;

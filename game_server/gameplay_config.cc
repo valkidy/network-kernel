@@ -198,6 +198,11 @@ void hash_projectile_template(
             hash_scalar(hash, action.spawn_projectile_template_id);
             hash_scalar(hash, action.position_source);
             hash_scalar(hash, action.direction_source);
+            hash_scalar(hash, action.target_source);
+            hash_scalar(hash, action.damage_amount);
+            hash_scalar(hash, action.health_change_amount);
+            hash_scalar(hash, action.impulse_strength);
+            hash_scalar(hash, action.impulse_collision_mask);
             hash_scalar(hash, action.condition_type);
         }
     }
@@ -234,6 +239,7 @@ void hash_actor_template(
     hash_float(hash, actor_template.movement_ground_probe_distance);
     hash_float(hash, actor_template.movement_ground_snap_distance);
     hash_float(hash, actor_template.movement_max_yaw_degrees_per_second);
+    hash_float(hash, actor_template.impulse_resistance);
     hash_scalar(hash, actor_template.movement_collision_mask);
     hash_scalar(hash, actor_template.weapon_slot_count);
     for (std::uint8_t index = 0; index < actor_template.weapon_slot_count; ++index) {
@@ -574,6 +580,9 @@ std::uint32_t collision_mask_token_from_yaml(const std::string& token) {
     }
     if (token == "obstacle" || token == "static_obstacle") {
         return KERNEL_COLLISION_LAYER_STATIC_OBSTACLE;
+    }
+    if (token == "prop") {
+        return KERNEL_COLLISION_MASK_PROP;
     }
     throw std::runtime_error("unsupported collision_mask: " + token);
 }
@@ -1537,6 +1546,8 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 "owner",
                 "target",
                 "amount",
+                "strength",
+                "collision_mask",
                 "item_template",
                 "quantity",
                 "when",
@@ -1626,7 +1637,8 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
             if (action["projectile_template"] || action["position"] ||
                 action["direction"] || action["entity_template"] ||
                 action["owner"] || action["item_template"] ||
-                action["quantity"]) {
+                action["quantity"] || action["strength"] ||
+                action["collision_mask"]) {
                 throw std::runtime_error(
                     compiled_action.action_type +
                     " action has unsupported fields: " + path);
@@ -1638,6 +1650,35 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
             action_parameters = {
                 &compiled_action.target_parameter,
                 &compiled_action.amount_parameter,
+            };
+        } else if (compiled_action.action_type == "apply_impulse") {
+            if (action["projectile_template"] || action["position"] ||
+                action["owner"] || action["amount"] ||
+                action["entity_template"] || action["item_template"] ||
+                action["quantity"] || !action["direction"]) {
+                throw std::runtime_error(
+                    "apply_impulse requires target, strength, and direction only: " +
+                    path);
+            }
+            compiled_action.target_parameter =
+                parameter_reference_from_yaml(action["target"], "target");
+            compiled_action.strength_parameter =
+                parameter_reference_from_yaml(action["strength"], "strength");
+            compiled_action.direction_parameter =
+                parameter_reference_from_yaml(action["direction"], "direction");
+            compiled_action.collision_mask = collision_mask_from_yaml(
+                action["collision_mask"], KERNEL_COLLISION_MASK_ACTOR);
+            if ((compiled_action.collision_mask &
+                 ~(KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_MASK_PROP)) != 0u ||
+                compiled_action.collision_mask == KERNEL_COLLISION_MASK_NONE) {
+                throw std::runtime_error(
+                    "apply_impulse collision_mask must contain actor and/or prop: " +
+                    path);
+            }
+            action_parameters = {
+                &compiled_action.target_parameter,
+                &compiled_action.strength_parameter,
+                &compiled_action.direction_parameter,
             };
         } else {
             throw std::runtime_error(
@@ -2640,6 +2681,7 @@ ActorTemplateConfig actor_template_from_yaml(
             "camp",
             "collider_template",
             "health",
+            "impulse_resistance",
             "movement",
             "hitbox",
             "weapon_slots",
@@ -2680,6 +2722,10 @@ ActorTemplateConfig actor_template_from_yaml(
     }
     actor_template.collider_template_id =
         actor_collider_template_id_from_yaml(node["collider_template"], colliders);
+    if (node["impulse_resistance"]) {
+        actor_template.impulse_resistance =
+            node["impulse_resistance"].as<float>();
+    }
 
     const YAML::Node health = node["health"];
     if (!health) {
@@ -4301,9 +4347,9 @@ ProjectileTemplateConfig projectile_template_from_yaml(
         mechanics.projectile_type == KernelProjectileType_AreaEffect
             ? KERNEL_COLLISION_MASK_ACTOR
             : static_collision_mask);
-    const std::uint32_t supported_collision_mask =
-        mechanics.projectile_type == KernelProjectileType_AreaEffect
-            ? KERNEL_COLLISION_MASK_ACTOR
+        const std::uint32_t supported_collision_mask =
+            mechanics.projectile_type == KernelProjectileType_AreaEffect
+            ? KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_MASK_PROP
             : mechanics.projectile_type == KernelProjectileType_Beam
                 ? static_collision_mask
                 : static_collision_mask | KERNEL_COLLISION_LAYER_PROJECTILE;
@@ -4604,6 +4650,8 @@ void mirror_first_action(KernelActionTriggerDefinition* trigger) {
     trigger->spawn_item_quantity = action.spawn_item_quantity;
     trigger->health_change_amount = action.health_change_amount;
     trigger->condition_type = action.condition_type;
+    trigger->impulse_strength = action.impulse_strength;
+    trigger->impulse_collision_mask = action.impulse_collision_mask;
 }
 
 void compile_projectile_trigger_binding(
@@ -4634,6 +4682,15 @@ void compile_projectile_trigger_binding(
         }
         return *found;
     };
+    const auto entity_ref_source = [](const std::string& expression)
+        -> std::uint8_t {
+        if (expression == "self") return KernelEntityRefSource_Self;
+        if (expression == "event.subject") return KernelEntityRefSource_EventSubject;
+        if (expression == "event.target") return KernelEntityRefSource_EventTarget;
+        if (expression == "event.instigator") return KernelEntityRefSource_EventInstigator;
+        throw std::runtime_error(
+            "action parameter must be an entity reference expression");
+    };
     KernelActionTriggerDefinition& compiled =
         expired
         ? projectile_template->definition.mechanics
@@ -4644,6 +4701,57 @@ void compile_projectile_trigger_binding(
     compiled.action_count = static_cast<std::uint32_t>(graph->actions.size());
     for (std::size_t index = 0; index < graph->actions.size(); ++index) {
         const ActionGraphActionConfig& action = graph->actions[index];
+        KernelActionDefinition& compiled_action = compiled.actions[index];
+        compiled_action.condition_type = action.condition_type;
+        if (action.action_type == "apply_damage" ||
+            action.action_type == "apply_health_change" ||
+            action.action_type == "apply_impulse") {
+            const std::string target = trigger_parameter_value(
+                binding, graph_parameter(action.target_parameter));
+            compiled_action.target_source = entity_ref_source(target);
+            if (action.action_type == "apply_impulse") {
+                const std::string strength = trigger_parameter_value(
+                    binding, graph_parameter(action.strength_parameter));
+                const std::string direction = trigger_parameter_value(
+                    binding, graph_parameter(action.direction_parameter));
+                std::size_t parsed = 0;
+                const float parsed_strength = std::stof(strength, &parsed);
+                if (direction != "event.direction" ||
+                    parsed != strength.size() ||
+                    !std::isfinite(parsed_strength) || parsed_strength <= 0.0f) {
+                    throw std::runtime_error(
+                        "apply_impulse projectile trigger requires positive strength and event.direction");
+                }
+                compiled_action.action_type =
+                    KernelEntityTriggerActionType_ApplyImpulse;
+                compiled_action.direction_source =
+                    KernelEventVec3Source_Direction;
+                compiled_action.impulse_strength = parsed_strength;
+                compiled_action.impulse_collision_mask = action.collision_mask;
+            } else {
+                const std::string amount = trigger_parameter_value(
+                    binding, graph_parameter(action.amount_parameter));
+                std::size_t parsed = 0;
+                const long parsed_amount = std::stol(amount, &parsed);
+                if (parsed != amount.size() || parsed_amount <= 0 ||
+                    parsed_amount > std::numeric_limits<std::uint16_t>::max()) {
+                    throw std::runtime_error(
+                        "projectile damage action amount must be a positive uint16");
+                }
+                compiled_action.action_type = action.action_type == "apply_damage"
+                    ? KernelEntityTriggerActionType_ApplyDamage
+                    : KernelEntityTriggerActionType_ApplyHealthChange;
+                if (compiled_action.action_type ==
+                    KernelEntityTriggerActionType_ApplyDamage) {
+                    compiled_action.damage_amount =
+                        static_cast<std::uint16_t>(parsed_amount);
+                } else {
+                    compiled_action.health_change_amount =
+                        static_cast<std::int32_t>(parsed_amount);
+                }
+            }
+            continue;
+        }
         if (action.action_type != "spawn_projectile") {
             throw std::runtime_error(
                 "projectile trigger requires spawn_projectile actions: " +
@@ -4664,8 +4772,6 @@ void compile_projectile_trigger_binding(
         ProjectileTemplateConfig* spawned_projectile =
             projectile_template_from_ref(
                 YAML::Node(projectile_ref), projectile_templates);
-        KernelActionDefinition& compiled_action = compiled.actions[index];
-        compiled_action.condition_type = action.condition_type;
         compiled_action.action_type =
             KernelEntityTriggerActionType_SpawnProjectile;
         compiled_action.spawn_projectile_template_id =
@@ -4828,6 +4934,32 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
                     item->definition.item_template_id;
                 compiled_action.spawn_item_quantity = action.quantity;
             }
+            continue;
+        }
+        if (action.action_type == "apply_impulse") {
+            const std::string target = trigger_parameter_value(
+                binding, graph_parameter(action.target_parameter));
+            const std::string strength = trigger_parameter_value(
+                binding, graph_parameter(action.strength_parameter));
+            const std::string direction = trigger_parameter_value(
+                binding, graph_parameter(action.direction_parameter));
+            if (direction != "event.direction") {
+                throw std::runtime_error(
+                    "apply_impulse direction must bind to event.direction");
+            }
+            std::size_t parsed = 0;
+            const float parsed_strength = std::stof(strength, &parsed);
+            if (parsed != strength.size() || !std::isfinite(parsed_strength) ||
+                parsed_strength <= 0.0f) {
+                throw std::runtime_error(
+                    "apply_impulse strength must be a positive finite float");
+            }
+            compiled_action.action_type =
+                KernelEntityTriggerActionType_ApplyImpulse;
+            compiled_action.target_source = entity_ref_source(target);
+            compiled_action.direction_source = KernelEventVec3Source_Direction;
+            compiled_action.impulse_strength = parsed_strength;
+            compiled_action.impulse_collision_mask = action.collision_mask;
             continue;
         }
         if (action.action_type != "apply_damage" &&
@@ -5543,6 +5675,8 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_string(&hash, action.owner_parameter);
             hash_string(&hash, action.target_parameter);
             hash_string(&hash, action.amount_parameter);
+            hash_string(&hash, action.strength_parameter);
+            hash_scalar(&hash, action.collision_mask);
             hash_string(&hash, action.item_template_ref);
             hash_scalar(&hash, action.quantity);
             hash_scalar(&hash, action.condition_type);
@@ -5813,6 +5947,10 @@ std::vector<std::string> validate_gameplay_config(
     }
     for (const EntityTemplateConfig& entity_template :
          config.entity_templates) {
+        if (!std::isfinite(entity_template.impulse_resistance) ||
+            entity_template.impulse_resistance < 0.0f) {
+            errors.push_back("impulse_resistance must be finite and non-negative");
+        }
         if (entity_template.entity_type != KernelEntityType_Prop &&
             (entity_template.prop.lifetime_ticks != 0u ||
              entity_template.prop.population_group_id != 0u)) {
@@ -6321,6 +6459,8 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             authored_template.movement_max_yaw_degrees_per_second;
         entity_template.movement.movement_collision_mask =
             authored_template.movement_collision_mask;
+        entity_template.impulse_resistance =
+            authored_template.impulse_resistance;
         entity_template.activated_trigger = compile_action_trigger_binding(
             authored_template.activated_trigger,
             "on_activated",

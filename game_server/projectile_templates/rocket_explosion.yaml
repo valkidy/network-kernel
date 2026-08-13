@@ -8,4 +8,12 @@ damage_behavior:
   damage_per_interval: 45
   damage_interval_ticks: 45
   falloff: linear
-collision_mask: damageable
+collision_mask: damageable | prop
+triggers:
+  on_projectile_impact:
+    action_graph: action_rocket_explosion_at_target
+    parameters:
+      target: event.target
+      amount: 45
+      strength: 12.0
+      direction: event.direction

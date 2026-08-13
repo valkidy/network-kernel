@@ -146,7 +146,7 @@ bool execute_action_graph_commands(
             const std::optional<entt::entity> target =
                 world.find_entity(damage->target);
             if (damage->source == 0u || !target.has_value() ||
-                !world.registry().all_of<NetworkIdentity, Health>(*target)) {
+                !world.registry().all_of<NetworkIdentity>(*target)) {
                 return false;
             }
             continue;
@@ -156,8 +156,40 @@ bool execute_action_graph_commands(
             const std::optional<entt::entity> target =
                 world.find_entity(health_change->target);
             if (health_change->source == 0u || !target.has_value() ||
-                !world.registry().all_of<NetworkIdentity, Health>(*target)) {
+                !world.registry().all_of<NetworkIdentity>(*target)) {
                 return false;
+            }
+            continue;
+        }
+        if (const auto* impulse =
+                std::get_if<ActionApplyImpulseCommand>(&command)) {
+            const std::optional<entt::entity> target =
+                world.find_entity(impulse->target);
+            if (impulse->source == 0u || !target.has_value() ||
+                !std::isfinite(impulse->strength) || impulse->strength <= 0.0f ||
+                !std::isfinite(impulse->direction.x) ||
+                !std::isfinite(impulse->direction.y) ||
+                !std::isfinite(impulse->direction.z) ||
+                glm::dot(impulse->direction, impulse->direction) <= 0.0f) {
+                return false;
+            }
+            const EntityKind& kind = world.registry().get<EntityKind>(*target);
+            const bool actor_target = kind.type == EntityType::kActor &&
+                (impulse->collision_mask & KERNEL_COLLISION_MASK_ACTOR) != 0u;
+            const bool prop_target = kind.type == EntityType::kProp &&
+                (impulse->collision_mask & KERNEL_COLLISION_MASK_PROP) != 0u &&
+                world.registry().all_of<PropWorldMode>(*target) &&
+                world.registry().get<PropWorldMode>(*target).mode !=
+                    PropMode::kCarrying;
+            if (!actor_target && !prop_target) {
+                continue;
+            }
+            const ImpulseResistance* resistance =
+                world.registry().try_get<ImpulseResistance>(*target);
+            if (resistance != nullptr &&
+                (!std::isfinite(resistance->value) ||
+                 impulse->strength <= resistance->value)) {
+                continue;
             }
             continue;
         }
@@ -210,6 +242,12 @@ bool execute_action_graph_commands(
         const ActionGraphCommand& command = commands[index];
         if (const auto* damage =
                 std::get_if<ActionApplyDamageCommand>(&command)) {
+            const std::optional<entt::entity> target =
+                world.find_entity(damage->target);
+            if (!target.has_value() ||
+                !world.registry().all_of<Health>(*target)) {
+                continue;
+            }
             if (!damage_pipeline->submit_damage_request(DamageRequest{
                     damage->provenance.server_tick,
                     static_cast<std::uint32_t>(index),
@@ -227,6 +265,12 @@ bool execute_action_graph_commands(
         }
         if (const auto* health_change =
                 std::get_if<ActionApplyHealthChangeCommand>(&command)) {
+            const std::optional<entt::entity> target_entity =
+                world.find_entity(health_change->target);
+            if (!target_entity.has_value() ||
+                !world.registry().all_of<Health>(*target_entity)) {
+                continue;
+            }
             if (health_change->amount < 0) {
                 const std::uint16_t damage_amount =
                     static_cast<std::uint16_t>(-health_change->amount);
@@ -274,6 +318,63 @@ bool execute_action_graph_commands(
                     projectile->provenance.server_tick,
                     engine.fixed_delta_seconds())) {
                 return false;
+            }
+            continue;
+        }
+        if (const auto* impulse =
+                std::get_if<ActionApplyImpulseCommand>(&command)) {
+            const entt::entity target = *world.find_entity(impulse->target);
+            const glm::vec3 direction =
+                glm::normalize(impulse->direction);
+            const float resistance = world.registry().all_of<ImpulseResistance>(target)
+                ? world.registry().get<ImpulseResistance>(target).value
+                : 0.0f;
+            if (!std::isfinite(resistance) || impulse->strength <= resistance) {
+                continue;
+            }
+            Velocity& velocity = world.registry().get_or_emplace<Velocity>(target);
+            velocity.linear += direction * impulse->strength;
+            const EntityKind& kind = world.registry().get<EntityKind>(target);
+            if (kind.type == EntityType::kActor) {
+                MovementState& movement =
+                    world.registry().get_or_emplace<MovementState>(target);
+                movement.ground_state = MovementState::GroundState::kAirborne;
+                movement.ground_normal = glm::vec3{0.0f, 1.0f, 0.0f};
+                movement.supporting_entity_net_id = 0u;
+                movement.supporting_collider_id = 0u;
+                movement.has_controller_height = false;
+            } else if (kind.type == EntityType::kProp) {
+                PropWorldMode& mode =
+                    world.registry().get_or_emplace<PropWorldMode>(target);
+                mode.mode = PropMode::kInFlight;
+                world.registry().erase<CarriedBy>(target);
+                const Transform& transform = world.registry().get<Transform>(target);
+                world.registry().emplace_or_replace<ThrownPropMotion>(
+                    target,
+                    ThrownPropMotion{
+                        ProjectileMotionModel::kLinear,
+                        0u,
+                        transform.position,
+                        velocity.linear,
+                        glm::vec3{0.0f, -9.81f, 0.0f},
+                        transform.position,
+                    });
+                if (world.registry().all_of<ItemInstanceRef>(target)) {
+                    engine.item_store().set_world_mode(
+                        world.registry().get<ItemInstanceRef>(target).item_instance_id,
+                        KernelWorldItemMode_InFlight);
+                }
+                for (ColliderInstance& collider :
+                     world.collider_registry().mutable_instances()) {
+                    if (collider.entity_net_id == impulse->target) {
+                        collider.enabled = true;
+                        if (engine.mutable_physics_world() != nullptr) {
+                            engine.mutable_physics_world()->set_object_enabled(
+                                collider.collider_id, true);
+                        }
+                    }
+                }
+                engine.queue_prop_state_change(impulse->target);
             }
             continue;
         }
@@ -538,6 +639,9 @@ bool EntityLifecycleSystem::create_entity(
             0u) {
             registry.get_or_emplace<Velocity>(*entity);
         }
+        registry.emplace_or_replace<ImpulseResistance>(
+            *entity,
+            ImpulseResistance{entity_template->impulse_resistance});
         if ((entity_template->component_flags & KERNEL_ENTITY_COMPONENT_HEALTH) !=
             0u) {
             registry.emplace_or_replace<Health>(

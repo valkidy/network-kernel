@@ -123,6 +123,10 @@ struct Velocity {
     glm::vec3 linear{0.0f, 0.0f, 0.0f};
 };
 
+struct ImpulseResistance {
+    float value = 0.0f;
+};
+
 struct Health {
     std::uint16_t hp = 0;
     std::uint16_t max_hp = 0;
@@ -584,6 +588,14 @@ struct ActionApplyHealthChangeDefinition {
     ActionConditionType condition = ActionConditionType::kAlways;
 };
 
+struct ActionApplyImpulseDefinition {
+    std::string target_parameter;
+    std::string strength_parameter;
+    std::string direction_parameter;
+    std::uint32_t collision_mask = kCollisionMaskDamageable;
+    ActionConditionType condition = ActionConditionType::kAlways;
+};
+
 struct ActionSpawnEntityDefinition {
     std::string entity_template_parameter;
     std::string position_parameter;
@@ -598,6 +610,7 @@ using ActionGraphAction = std::variant<
     ActionSpawnProjectileDefinition,
     ActionApplyDamageDefinition,
     ActionApplyHealthChangeDefinition,
+    ActionApplyImpulseDefinition,
     ActionSpawnEntityDefinition>;
 
 struct ActionGraphTemplate {
@@ -689,6 +702,7 @@ struct ProjectileAreaEffectRuntime {
     std::uint32_t collision_mask = kCollisionMaskDamageable;
     ProjectileDamageFalloff damage_falloff = ProjectileDamageFalloff::kNone;
     std::unordered_map<NetId, std::uint32_t> next_damage_tick_by_target;
+    std::optional<CompiledActionGraphBinding> action_graph_binding;
 };
 
 struct ProjectileInteractionRule {

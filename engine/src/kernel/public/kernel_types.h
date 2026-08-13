@@ -5,12 +5,14 @@
 #include <stdint.h>
 
 /*
+ * 68: action graphs gained apply_impulse and entity templates gained
+ *     impulse_resistance. Both are appended to the public gameplay ABI.
  * 67: KernelMovementDefinition gained movement_collision_mask and
  *     KernelSkeletonBindingDefinition gained stance_crouch_meters. Both are
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 67u
+#define KERNEL_ABI_VERSION 68u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -132,11 +134,13 @@ typedef enum KernelFootholdQueryType {
 #define KERNEL_COLLISION_LAYER_NEUTRAL UINT32_C(0x00000020)
 #define KERNEL_COLLISION_LAYER_TERRAIN UINT32_C(0x00000040)
 #define KERNEL_COLLISION_LAYER_STATIC_OBSTACLE UINT32_C(0x00000080)
+#define KERNEL_COLLISION_LAYER_PROP UINT32_C(0x00000100)
 #define KERNEL_COLLISION_MASK_NONE UINT32_C(0x00000000)
 #define KERNEL_COLLISION_MASK_DAMAGEABLE \
     (KERNEL_COLLISION_LAYER_PLAYER_SIDE | KERNEL_COLLISION_LAYER_HOSTILE_SIDE | \
      KERNEL_COLLISION_LAYER_NEUTRAL)
 #define KERNEL_COLLISION_MASK_ACTOR KERNEL_COLLISION_MASK_DAMAGEABLE
+#define KERNEL_COLLISION_MASK_PROP KERNEL_COLLISION_LAYER_PROP
 #define KERNEL_COLLISION_MASK_STATIC_WORLD \
     (KERNEL_COLLISION_LAYER_TERRAIN | \
      KERNEL_COLLISION_LAYER_STATIC_OBSTACLE)
@@ -468,6 +472,7 @@ typedef enum KernelEntityTriggerActionType {
     KernelEntityTriggerActionType_SpawnEntity = 2,
     KernelEntityTriggerActionType_SpawnProjectile = 3,
     KernelEntityTriggerActionType_ApplyHealthChange = 4,
+    KernelEntityTriggerActionType_ApplyImpulse = 5,
 } KernelEntityTriggerActionType;
 
 typedef enum KernelEntityRefSource {
@@ -503,6 +508,8 @@ typedef struct KernelActionDefinition {
     uint32_t spawn_item_quantity;
     int32_t health_change_amount;
     uint32_t condition_type;
+    float impulse_strength;
+    uint32_t impulse_collision_mask;
 } KernelActionDefinition;
 
 typedef struct KernelActionTriggerDefinition {
@@ -524,6 +531,8 @@ typedef struct KernelActionTriggerDefinition {
     KernelActionDefinition actions[KERNEL_MAX_ACTION_GRAPH_ACTIONS];
     int32_t health_change_amount;
     uint32_t condition_type;
+    float impulse_strength;
+    uint32_t impulse_collision_mask;
 } KernelActionTriggerDefinition;
 
 #define KERNEL_MAX_PORTABLE_STATE_FIELDS 8
@@ -1776,6 +1785,7 @@ struct KernelEntityTemplateDefinition {
     KernelPropDefinition prop;
     uint32_t collision_trigger_mask;
     KernelSkeletonBindingDefinition skeleton;
+    float impulse_resistance;
 };
 
 typedef struct KernelEvent {

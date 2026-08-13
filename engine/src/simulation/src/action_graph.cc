@@ -326,12 +326,43 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
         const bool applies_health_change =
             action.action_type ==
             KernelEntityTriggerActionType_ApplyHealthChange;
-        if (!applies_damage && !applies_health_change) {
+        const bool applies_impulse =
+            action.action_type == KernelEntityTriggerActionType_ApplyImpulse;
+        if (!applies_damage && !applies_health_change && !applies_impulse) {
             return std::nullopt;
         }
         const std::string target_name = "target" + suffix;
         const std::string amount_name = "amount" + suffix;
         binding.graph.parameters.push_back({target_name, std::monostate{}});
+        if (applies_impulse) {
+            const std::string direction_name = "direction" + suffix;
+            binding.graph.parameters.push_back({
+                "strength" + suffix,
+                static_cast<float>(action.impulse_strength),
+            });
+            binding.graph.parameters.push_back({
+                direction_name,
+                std::monostate{},
+            });
+            binding.graph.actions.push_back(ActionApplyImpulseDefinition{
+                target_name,
+                "strength" + suffix,
+                direction_name,
+                action.impulse_collision_mask,
+                *condition,
+            });
+            binding.parameters.push_back({
+                target_name,
+                EntityRefExpression{static_cast<EntityRefSource>(
+                    action.target_source)},
+            });
+            binding.parameters.push_back({
+                direction_name,
+                EventVec3Expression{static_cast<EventVec3Source>(
+                    action.direction_source)},
+            });
+            continue;
+        }
         binding.graph.parameters.push_back({
             amount_name,
             applies_damage
@@ -556,12 +587,16 @@ bool validate_action_graph_binding(
         const auto* damage = std::get_if<ActionApplyDamageDefinition>(&action);
         const auto* health_change =
             std::get_if<ActionApplyHealthChangeDefinition>(&action);
+        const auto* impulse =
+            std::get_if<ActionApplyImpulseDefinition>(&action);
         const std::string* target_parameter = damage != nullptr
             ? &damage->target_parameter
-            : health_change != nullptr ? &health_change->target_parameter : nullptr;
+            : health_change != nullptr ? &health_change->target_parameter
+            : impulse != nullptr ? &impulse->target_parameter : nullptr;
         const std::string* amount_parameter = damage != nullptr
             ? &damage->amount_parameter
-            : health_change != nullptr ? &health_change->amount_parameter : nullptr;
+            : health_change != nullptr ? &health_change->amount_parameter
+            : impulse != nullptr ? &impulse->strength_parameter : nullptr;
         if (target_parameter == nullptr || amount_parameter == nullptr ||
             !validate_action_parameter(
                 binding,
@@ -572,6 +607,14 @@ bool validate_action_graph_binding(
                 binding,
                 *amount_parameter,
                 ParameterType::kNumber,
+                error)) {
+            return false;
+        }
+        if (impulse != nullptr &&
+            !validate_action_parameter(
+                binding,
+                impulse->direction_parameter,
+                ParameterType::kVec3,
                 error)) {
             return false;
         }
@@ -706,15 +749,19 @@ bool evaluate_action_graph(
         const auto* damage = std::get_if<ActionApplyDamageDefinition>(&action);
         const auto* health_change =
             std::get_if<ActionApplyHealthChangeDefinition>(&action);
-        if (damage == nullptr && health_change == nullptr) {
+        const auto* impulse =
+            std::get_if<ActionApplyImpulseDefinition>(&action);
+        if (damage == nullptr && health_change == nullptr && impulse == nullptr) {
             return fail(error, "unsupported action graph action");
         }
         const std::string& target_parameter = damage != nullptr
             ? damage->target_parameter
-            : health_change->target_parameter;
+            : health_change != nullptr ? health_change->target_parameter
+            : impulse->target_parameter;
         const std::string& amount_parameter = damage != nullptr
             ? damage->amount_parameter
-            : health_change->amount_parameter;
+            : health_change != nullptr ? health_change->amount_parameter
+            : impulse->strength_parameter;
         const ActionGraphParameterValue* target_value =
             find_resolved_parameter(parameters, target_parameter);
         const ActionGraphParameterValue* amount_value =
@@ -726,10 +773,46 @@ bool evaluate_action_graph(
                 error,
                 damage != nullptr
                     ? "apply_damage action input type mismatch"
-                    : "apply_health_change action input type mismatch");
+                    : health_change != nullptr
+                    ? "apply_health_change action input type mismatch"
+                    : "apply_impulse action input type mismatch");
         }
         const float amount = std::get<float>(*amount_value);
-        if (!std::isfinite(amount) || std::floor(amount) != amount) {
+        if (!std::isfinite(amount)) {
+            return fail(error, "health action amount must be a finite integer");
+        }
+        if (impulse != nullptr) {
+            const ActionGraphParameterValue* direction_value =
+                find_resolved_parameter(parameters, impulse->direction_parameter);
+            if (direction_value == nullptr ||
+                !std::holds_alternative<glm::vec3>(*direction_value)) {
+                return fail(error, "apply_impulse action input type mismatch");
+            }
+            const glm::vec3 direction = std::get<glm::vec3>(*direction_value);
+            const float direction_length = glm::length(direction);
+            if (amount <= 0.0f || direction_length <= 0.0f ||
+                !std::isfinite(direction.x) || !std::isfinite(direction.y) ||
+                !std::isfinite(direction.z)) {
+                return fail(error, "apply_impulse requires positive strength and a finite non-zero direction");
+            }
+            const NetId target = std::get<EntityIdValue>(*target_value).value;
+            if (target == 0u) {
+                return fail(error, "apply_impulse target must not be null");
+            }
+            const NetId source = event.type == TriggerEventType::kItemUsed && self == 0u
+                ? event.instigator
+                : self;
+            commands->push_back(ActionApplyImpulseCommand{
+                source,
+                target,
+                amount,
+                direction / direction_length,
+                impulse->collision_mask,
+                provenance,
+            });
+            continue;
+        }
+        if (std::floor(amount) != amount) {
             return fail(error, "health action amount must be a finite integer");
         }
         if (damage != nullptr &&
