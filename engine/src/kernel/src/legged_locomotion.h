@@ -261,10 +261,17 @@ bool set_locomotion_foot_anchor(
 // entered_swing stays false here -- it marks steps this state decided, and a
 // follower decides none. entered_support still fires on touchdown.
 //
-// Body follow is not applied: its tilt needs the ground normals under the feet,
-// which a follower does not sample. It is disabled on the authoritative side
-// too (body_follow_speed 0), so today the two agree; re-enabling it would mean
-// replicating the normals or accepting a presentation-only divergence.
+// Body follow is not applied here, and today that costs nothing even though the
+// authority runs it (every rig on this path authors body_follow_speed 10). Its
+// two halves replicate differently. The height is applied by the caller to the
+// entity transform, which IS replicated, so a follower inherits it through the
+// root instead of refitting it -- which it could not do anyway, having sampled
+// no footholds. The tilt is the half that would diverge, since it needs the
+// ground normals under the feet; but it is a separate opt-in gated on
+// slope_alignment > 0, and every rig here authors 0, so the tilt stays identity
+// on both sides. Raising slope_alignment would mean replicating the normals or
+// accepting a divergence worth the tilt times the stance radius -- metres on a
+// rig whose feet sit ten of them out from the body.
 bool solve_legged_locomotion_follower_pose(
     const ozz::animation::Skeleton& skeleton,
     std::span<const KernelBoneLocalTransform> bind_pose,

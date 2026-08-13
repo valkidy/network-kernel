@@ -3766,6 +3766,10 @@ void KernelEngine::sync_entity_colliders_from_world() {
         return;
     }
     std::unordered_set<std::uint32_t> current_collider_ids;
+    // Rebuilt from scratch on every call, and this runs twice per tick, so it is
+    // worth sizing up front. The loop below filters, so the instance count is an
+    // upper bound rather than the exact size -- which is what reserve wants.
+    current_collider_ids.reserve(world_.collider_registry().instances().size());
     for (const ColliderInstance& collider :
          world_.collider_registry().instances()) {
         if (collider.lifetime_ticks != 0 || collider.entity_net_id == 0 ||
