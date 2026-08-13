@@ -6,8 +6,8 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 71u,
-    "skeleton asset ABI");
+    KERNEL_ABI_VERSION == 72u,
+    "authoritative status state ABI");
 _Static_assert(
     offsetof(KernelMovementDefinition, movement_collision_mask) >
         offsetof(KernelMovementDefinition, max_yaw_degrees_per_second),
@@ -164,7 +164,8 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 71u);
+    assert(KERNEL_ABI_VERSION == 72u);
+    assert(sizeof(KernelStatusEffectView) == 28u);
     assert(KERNEL_CAPABILITY_SKELETON_BIND_POSE != 0u);
     assert(sizeof(KernelBoneLocalTransform) > 0u);
     assert(sizeof(KernelSkeletonRenderState) > 0u);

@@ -378,6 +378,22 @@ Consumers pass a `struct_size`-style byte size to `Kernel_GetAbiInfo`. The call
 returns `false` if the output pointer is null or the provided size is smaller
 than the current `KernelAbiInfo` layout.
 
+ABI version 72 adds `KernelStatusEffectView`, `Kernel_QueryStatusEffects`, and
+the `StatusRemoved` remote presentation event. Packet schema version 23 adds a
+reliable full-replacement status state packet for the owning player; snapshot
+schema remains version 17 because active statuses are not part of the
+high-frequency actor snapshot. The packet carries at most 32 records and is
+ordered by a monotonic state revision, so clients discard stale replacements
+without delta-gap recovery.
+
+Status queries are authoritative on dedicated/listen servers and for the local
+player on a pure client. Remote client entities are explicitly best effort:
+their cache is driven by relevance- and budget-limited `StatusApplied` /
+`StatusRemoved` presentation events and may locally expire an entry using its
+catalog duration. Status lifecycle authoring continues to expose
+`event.instigator`; the runtime stores both its NetId and peer attribution when
+the status is applied.
+
 ## Exported Symbols
 
 `libnetwork_kernel.dylib` exports only the public `Kernel_*` and

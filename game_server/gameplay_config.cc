@@ -4776,7 +4776,10 @@ bool event_expression_available(
             trigger_name == "on_health_depleted" ||
             trigger_name == "on_destroy_entity" ||
             trigger_name == "on_projectile_impact" ||
-            trigger_name == "on_expired";
+            trigger_name == "on_expired" ||
+            trigger_name == "on_apply" ||
+            trigger_name == "on_tick" ||
+            trigger_name == "on_expire";
     }
     if (expression == "event.direction") {
         return trigger_name == "on_activated" ||
@@ -7051,16 +7054,26 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             nullptr,
             &config.status_effect_templates);
         for (std::uint32_t index = 0u; index < trigger.action_count; ++index) {
-            const std::uint8_t action_type = trigger.actions[index].action_type;
-            if (action_type == KernelEntityTriggerActionType_ApplyStatus ||
-                action_type == KernelEntityTriggerActionType_RemoveStatus) {
+            const KernelActionDefinition& action = trigger.actions[index];
+            const std::uint8_t action_type = action.action_type;
+            const bool damage_or_health =
+                action_type == KernelEntityTriggerActionType_ApplyDamage ||
+                action_type == KernelEntityTriggerActionType_ApplyHealthChange;
+            const bool speed_modifier =
+                action_type == KernelEntityTriggerActionType_ApplySpeedModifier;
+            if (!damage_or_health && !speed_modifier) {
                 throw std::runtime_error(
-                    "status lifecycle action graph must not mutate status effects");
+                    "status lifecycle action graph only allows damage, health change, and on_apply speed modifiers");
             }
-            if (action_type == KernelEntityTriggerActionType_ApplySpeedModifier &&
-                std::string_view(trigger_name) != "on_apply") {
+            if (speed_modifier && std::string_view(trigger_name) != "on_apply") {
                 throw std::runtime_error(
                     "apply_speed_modifier is only allowed in status on_apply");
+            }
+            if (speed_modifier &&
+                action.target_source != KernelEntityRefSource_Self &&
+                action.target_source != KernelEntityRefSource_EventSubject) {
+                throw std::runtime_error(
+                    "status speed modifier target must be self or event.subject");
             }
         }
         return trigger;

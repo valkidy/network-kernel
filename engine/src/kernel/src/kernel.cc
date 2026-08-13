@@ -2518,10 +2518,32 @@ bool KernelEngine::load_gameplay_catalog(
                 return false;
             }
             for (const ActionGraphAction& action : binding->graph.actions) {
-                if (std::holds_alternative<ActionApplyStatusDefinition>(action) ||
-                    std::holds_alternative<ActionRemoveStatusDefinition>(action) ||
-                    (!allow_speed_modifier &&
-                     std::holds_alternative<ActionApplySpeedModifierDefinition>(action))) {
+                const bool damage_or_health =
+                    std::holds_alternative<ActionApplyDamageDefinition>(action) ||
+                    std::holds_alternative<ActionApplyHealthChangeDefinition>(action);
+                const bool speed_modifier =
+                    std::holds_alternative<ActionApplySpeedModifierDefinition>(action);
+                if (!damage_or_health && !(allow_speed_modifier && speed_modifier)) {
+                    return false;
+                }
+            }
+            const std::uint32_t action_count = std::min<std::uint32_t>(
+                trigger.action_count, KERNEL_MAX_ACTION_GRAPH_ACTIONS);
+            if (trigger.action_count == 0u &&
+                trigger.action_type ==
+                    KernelEntityTriggerActionType_ApplySpeedModifier &&
+                trigger.target_source != KernelEntityRefSource_Self &&
+                trigger.target_source != KernelEntityRefSource_EventSubject) {
+                return false;
+            }
+            for (std::uint32_t action_index = 0u;
+                 action_index < action_count;
+                 ++action_index) {
+                const KernelActionDefinition& action = trigger.actions[action_index];
+                if (action.action_type ==
+                        KernelEntityTriggerActionType_ApplySpeedModifier &&
+                    action.target_source != KernelEntityRefSource_Self &&
+                    action.target_source != KernelEntityRefSource_EventSubject) {
                     return false;
                 }
             }
@@ -3428,6 +3450,55 @@ std::uint32_t KernelEngine::poll_remote_action_presentation_events(
         remote_action_presentation_events_.begin(),
         remote_action_presentation_events_.begin() + count);
     return count;
+}
+
+std::uint32_t KernelEngine::query_status_effects(
+    NetId entity_net_id,
+    KernelStatusEffectView* out_effects,
+    std::uint32_t max_effects) const {
+    const StatusEffectState* state = nullptr;
+    if (is_server_mode(config_.mode)) {
+        const std::optional<entt::entity> entity = world_.find_entity(entity_net_id);
+        if (entity.has_value()) {
+            state = world_.registry().try_get<StatusEffectState>(*entity);
+        }
+    } else {
+        const auto found = client_status_effect_states_.find(entity_net_id);
+        if (found != client_status_effect_states_.end()) {
+            state = &found->second;
+        }
+    }
+    if (state == nullptr) {
+        return 0u;
+    }
+    std::vector<const ActiveStatusEffect*> sorted;
+    sorted.reserve(state->active.size());
+    for (const ActiveStatusEffect& active : state->active) {
+        sorted.push_back(&active);
+    }
+    std::sort(
+        sorted.begin(),
+        sorted.end(),
+        [](const ActiveStatusEffect* lhs, const ActiveStatusEffect* rhs) {
+            return lhs->instance_id < rhs->instance_id;
+        });
+    if (out_effects != nullptr) {
+        const std::uint32_t write_count = std::min<std::uint32_t>(
+            max_effects, static_cast<std::uint32_t>(sorted.size()));
+        for (std::uint32_t index = 0u; index < write_count; ++index) {
+            const ActiveStatusEffect& active = *sorted[index];
+            out_effects[index] = KernelStatusEffectView{
+                sizeof(KernelStatusEffectView),
+                active.status_effect_id,
+                active.instance_id,
+                active.channel_id,
+                active.source,
+                active.applied_tick,
+                active.expire_tick,
+            };
+        }
+    }
+    return static_cast<std::uint32_t>(sorted.size());
 }
 
 bool KernelEngine::get_benchmark_stats(KernelBenchmarkStats* out_stats) const {
@@ -5460,9 +5531,103 @@ void KernelEngine::handle_client_inventory_delta_batch(
         KernelInventorySyncState_Ready;
 }
 
+void KernelEngine::handle_client_status_effect_state(
+    const StatusEffectStatePacket& packet) {
+    if (packet.target_net_id == 0u || packet.target_net_id != local_player_net_id_) {
+        return;
+    }
+    const auto existing = client_status_effect_states_.find(packet.target_net_id);
+    if (existing != client_status_effect_states_.end() &&
+        static_cast<std::int32_t>(packet.revision - existing->second.revision) <= 0) {
+        return;
+    }
+    StatusEffectState next;
+    next.revision = packet.revision;
+    std::unordered_set<std::uint32_t> channels;
+    next.active.reserve(packet.records.size());
+    for (const StatusEffectStateRecord& record : packet.records) {
+        const RuntimeStatusEffectTemplate* status_template =
+            world_.find_status_effect_template(record.status_effect_id);
+        if (status_template == nullptr || status_template->channel_id == 0u ||
+            !channels.insert(status_template->channel_id).second) {
+            return;
+        }
+        next.active.push_back(ActiveStatusEffect{
+            record.status_instance_id,
+            record.status_effect_id,
+            status_template->channel_id,
+            record.instigator_net_id,
+            0u,
+            record.applied_tick,
+            record.expire_tick,
+            0u,
+        });
+    }
+    const StatusEffectState empty;
+    const StatusEffectState& old = existing == client_status_effect_states_.end()
+        ? empty
+        : existing->second;
+    const auto emit_transition = [&](const ActiveStatusEffect& active,
+                                     std::uint8_t event_type) {
+        const RuntimeStatusEffectTemplate* status_template =
+            world_.find_status_effect_template(active.status_effect_id);
+        if (status_template == nullptr) {
+            return;
+        }
+        remote_action_presentation_events_.push_back(
+            KernelRemoteActionPresentationEvent{
+                packet.target_net_id,
+                0u,
+                0u,
+                1u,
+                1u,
+                event_type,
+                0u,
+                0u,
+                active.status_effect_id,
+                active.instance_id,
+                active.channel_id,
+                status_template->duration_ticks,
+            });
+    };
+    for (const ActiveStatusEffect& active : old.active) {
+        if (std::none_of(
+                next.active.begin(),
+                next.active.end(),
+                [&](const ActiveStatusEffect& candidate) {
+                    return candidate.instance_id == active.instance_id;
+                })) {
+            emit_transition(
+                active, KernelRemoteActionPresentationEventType_StatusRemoved);
+        }
+    }
+    for (const ActiveStatusEffect& active : next.active) {
+        if (std::none_of(
+                old.active.begin(),
+                old.active.end(),
+                [&](const ActiveStatusEffect& candidate) {
+                    return candidate.instance_id == active.instance_id;
+                })) {
+            emit_transition(
+                active, KernelRemoteActionPresentationEventType_StatusApplied);
+        }
+    }
+    client_status_effect_states_[packet.target_net_id] = std::move(next);
+}
+
 void KernelEngine::handle_client_reliable_event(const TransportEvent& transport_event) {
-    PropStateChangeBatchPacket prop_state_batch;
+    StatusEffectStatePacket status_effect_state;
     auto decode_start = std::chrono::steady_clock::now();
+    if (decode_status_effect_state_packet(
+            transport_event.payload.data(),
+            transport_event.payload.size(),
+            &status_effect_state)) {
+        record_packet_deserialization_cost(elapsed_cost_us(decode_start));
+        handle_client_status_effect_state(status_effect_state);
+        return;
+    }
+    PropStateChangeBatchPacket prop_state_batch;
+    decode_start = std::chrono::steady_clock::now();
     if (decode_prop_state_change_batch_packet(
             transport_event.payload.data(),
             transport_event.payload.size(),
@@ -5814,8 +5979,10 @@ void KernelEngine::handle_client_remote_action_presentation(
         remote_presentation_dedup_.end());
 
     for (KernelRemoteActionPresentationEvent event : packet.records) {
-        if (event.event_type ==
-            KernelRemoteActionPresentationEventType_StatusApplied) {
+        const bool status_transition =
+            event.event_type == KernelRemoteActionPresentationEventType_StatusApplied ||
+            event.event_type == KernelRemoteActionPresentationEventType_StatusRemoved;
+        if (status_transition) {
             const RuntimeStatusEffectTemplate* status_template =
                 world_.find_status_effect_template(event.status_effect_id);
             if (status_template == nullptr || status_template->channel_id == 0u ||
@@ -5836,6 +6003,43 @@ void KernelEngine::handle_client_remote_action_presentation(
                     event.commit_count;
             }
             continue;
+        }
+        if (status_transition && event.actor_net_id != local_player_net_id_) {
+            StatusEffectState& state =
+                client_status_effect_states_[event.actor_net_id];
+            if (event.event_type ==
+                KernelRemoteActionPresentationEventType_StatusApplied) {
+                state.active.erase(
+                    std::remove_if(
+                        state.active.begin(),
+                        state.active.end(),
+                        [&](const ActiveStatusEffect& active) {
+                            return active.channel_id == event.status_channel_id ||
+                                active.instance_id == event.status_instance_id;
+                        }),
+                    state.active.end());
+                if (state.active.size() < kMaxActiveStatusEffects) {
+                    state.active.push_back(ActiveStatusEffect{
+                        event.status_instance_id,
+                        event.status_effect_id,
+                        event.status_channel_id,
+                        0u,
+                        0u,
+                        event_tick,
+                        event_tick + event.duration_ticks,
+                        0u,
+                    });
+                }
+            } else {
+                state.active.erase(
+                    std::remove_if(
+                        state.active.begin(),
+                        state.active.end(),
+                        [&](const ActiveStatusEffect& active) {
+                            return active.instance_id == event.status_instance_id;
+                        }),
+                    state.active.end());
+            }
         }
         KernelRemoteActionPresentationEvent unseen_range = event;
         unseen_range.commit_count = 0u;
@@ -6256,6 +6460,7 @@ void KernelEngine::handle_client_template_update(
 }
 
 void KernelEngine::handle_client_despawn(const EntityDespawnPacket& packet) {
+    client_status_effect_states_.erase(packet.net_id);
     client_despawned_entities_[packet.net_id] = ClientEntityTombstone{
         packet.server_tick,
         packet.reason,
@@ -6340,6 +6545,7 @@ void KernelEngine::clear_client_action_sync_state() {
     remote_action_presentation_events_.clear();
     pending_remote_action_presentation_events_.clear();
     remote_presentation_dedup_.clear();
+    client_status_effect_states_.clear();
     predicted_local_entity_.action_template_id = 0u;
     predicted_local_entity_.action_instance_id = 0u;
     predicted_local_entity_.action_start_tick = 0u;
@@ -6427,6 +6633,42 @@ void KernelEngine::release_presentable_events() {
 }
 
 void KernelEngine::release_remote_action_presentation_events() {
+    if (has_client_snapshot_) {
+        const std::uint32_t current_tick =
+            latest_client_snapshot_.header.server_tick;
+        for (auto& [net_id, state] : client_status_effect_states_) {
+            if (net_id == local_player_net_id_) {
+                continue;
+            }
+            for (std::size_t index = 0u; index < state.active.size();) {
+                const ActiveStatusEffect active = state.active[index];
+                if (current_tick < active.expire_tick) {
+                    ++index;
+                    continue;
+                }
+                const RuntimeStatusEffectTemplate* status_template =
+                    world_.find_status_effect_template(active.status_effect_id);
+                remote_action_presentation_events_.push_back(
+                    KernelRemoteActionPresentationEvent{
+                        net_id,
+                        0u,
+                        0u,
+                        1u,
+                        1u,
+                        KernelRemoteActionPresentationEventType_StatusRemoved,
+                        0u,
+                        0u,
+                        active.status_effect_id,
+                        active.instance_id,
+                        active.channel_id,
+                        status_template == nullptr
+                            ? 0u
+                            : status_template->duration_ticks,
+                    });
+                state.active.erase(state.active.begin() + index);
+            }
+        }
+    }
     if (pending_remote_action_presentation_events_.empty()) {
         return;
     }
@@ -9341,6 +9583,9 @@ void KernelEngine::sync_session_relevance(
             // Without this its legs would appear one at a time, each only once
             // it happened to take its first step.
             send_locomotion_baseline(session, entity.net_id);
+            if (entity.net_id == session->player) {
+                send_status_effect_state(session, entity.net_id);
+            }
             if (entity.type == EntityType::kProp &&
                 is_dormant_placed_prop(entity.net_id)) {
                 PropStateChangeBatchPacket prop_state{};
@@ -11171,9 +11416,12 @@ void KernelEngine::queue_server_remote_presentation(
 void KernelEngine::queue_status_effect_presentation(
     NetId target,
     std::uint32_t status_effect_id,
-    std::uint32_t status_instance_id) {
+    std::uint32_t status_instance_id,
+    std::uint8_t event_type) {
     if (!is_server_mode(config_.mode) || target == 0u ||
-        status_effect_id == 0u || status_instance_id == 0u) {
+        status_effect_id == 0u || status_instance_id == 0u ||
+        (event_type != KernelRemoteActionPresentationEventType_StatusApplied &&
+         event_type != KernelRemoteActionPresentationEventType_StatusRemoved)) {
         return;
     }
     queue_server_remote_presentation(KernelRemoteActionPresentationEvent{
@@ -11182,7 +11430,7 @@ void KernelEngine::queue_status_effect_presentation(
         0u,
         1u,
         1u,
-        KernelRemoteActionPresentationEventType_StatusApplied,
+        event_type,
         0u,
         0u,
         status_effect_id,
@@ -11190,6 +11438,83 @@ void KernelEngine::queue_status_effect_presentation(
         0u,
         0u,
     });
+}
+
+void KernelEngine::send_status_effect_state(PeerSession* session, NetId target) {
+    if (session == nullptr || !session->welcomed || session->player != target) {
+        return;
+    }
+    const std::optional<entt::entity> entity = world_.find_entity(target);
+    if (!entity.has_value()) {
+        return;
+    }
+    const StatusEffectState* state =
+        world_.registry().try_get<StatusEffectState>(*entity);
+    if (state == nullptr || state->revision == 0u ||
+        state->active.size() > kMaxActiveStatusEffects) {
+        return;
+    }
+    StatusEffectStatePacket packet;
+    packet.server_tick = tick_loop_.current_tick();
+    packet.target_net_id = target;
+    packet.revision = state->revision;
+    std::vector<const ActiveStatusEffect*> sorted;
+    sorted.reserve(state->active.size());
+    for (const ActiveStatusEffect& active : state->active) {
+        sorted.push_back(&active);
+    }
+    std::sort(
+        sorted.begin(),
+        sorted.end(),
+        [](const ActiveStatusEffect* lhs, const ActiveStatusEffect* rhs) {
+            return lhs->instance_id < rhs->instance_id;
+        });
+    for (const ActiveStatusEffect* active : sorted) {
+        packet.records.push_back(StatusEffectStateRecord{
+            active->status_effect_id,
+            active->instance_id,
+            active->source,
+            active->applied_tick,
+            active->expire_tick,
+        });
+    }
+    if (config_.mode == KernelMode_ListenServer &&
+        session == &local_listen_session_) {
+        handle_client_status_effect_state(packet);
+        return;
+    }
+    const std::vector<std::uint8_t> bytes =
+        encode_status_effect_state_packet(packet, next_packet_sequence_++);
+    if (bytes.empty() ||
+        !transport_->Send(
+            session->peer,
+            bytes.data(),
+            static_cast<std::uint32_t>(bytes.size()),
+            SendMode::kReliable,
+            ChannelId::kReliableEvent)) {
+        push_event(KernelEventType_Error, target, session->peer, 35);
+        return;
+    }
+    record_sent_packet(
+        static_cast<std::uint32_t>(bytes.size()),
+        SendMode::kReliable,
+        ChannelId::kReliableEvent);
+}
+
+void KernelEngine::publish_status_effect_state(NetId target) {
+    if (!is_server_mode(config_.mode) || target == 0u) {
+        return;
+    }
+    if (config_.mode == KernelMode_ListenServer &&
+        local_listen_session_.welcomed &&
+        local_listen_session_.player == target) {
+        send_status_effect_state(&local_listen_session_, target);
+    }
+    for (PeerSession& session : peer_sessions_) {
+        if (session.welcomed && session.player == target) {
+            send_status_effect_state(&session, target);
+        }
+    }
 }
 
 void KernelEngine::queue_remote_presentation_from_events(
@@ -11243,14 +11568,11 @@ void KernelEngine::flush_remote_action_presentation(
     std::vector<KernelRemoteActionPresentationEvent> relevant;
     relevant.reserve(events.size());
     for (const KernelRemoteActionPresentationEvent& event : events) {
-        const bool status_applied =
-            event.event_type == KernelRemoteActionPresentationEventType_StatusApplied;
         const bool is_local_target = event.actor_net_id == session->player;
         const bool target_relevant =
             session->relevant_entities.find(event.actor_net_id) !=
             session->relevant_entities.end();
-        if ((!status_applied && is_local_target) ||
-            (!is_local_target && !target_relevant)) {
+        if (is_local_target || !target_relevant) {
             if (network_stats_enabled()) {
                 network_stats_.remote_presentation_relevance_filtered +=
                     event.commit_count;

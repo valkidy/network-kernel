@@ -685,11 +685,14 @@ struct RuntimeStatusEffectTemplate {
     std::optional<CompiledActionGraphBinding> on_expire_binding;
 };
 
+inline constexpr std::size_t kMaxActiveStatusEffects = 32u;
+
 struct ActiveStatusEffect {
     std::uint32_t instance_id = 0;
     std::uint32_t status_effect_id = 0;
     std::uint32_t channel_id = 0;
     NetId source = 0;
+    PeerId source_peer = 0;
     std::uint32_t applied_tick = 0;
     std::uint32_t expire_tick = 0;
     std::uint32_t next_tick = 0;
@@ -704,6 +707,7 @@ struct SpeedModifier {
 struct StatusEffectState {
     std::vector<ActiveStatusEffect> active;
     std::vector<SpeedModifier> speed_modifiers;
+    std::uint32_t revision = 0;
 };
 
 struct RuntimeProjectileTemplate {

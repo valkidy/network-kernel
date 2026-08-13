@@ -3863,7 +3863,55 @@ void owner_action_correction_timeout_and_reset_converge() {
     require(client.remote_presentation_dedup_.empty());
 }
 
-void server_routes_status_presentation_to_local_and_observer() {
+void reliable_local_status_state_replaces_and_rejects_stale_revision() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+    client.local_player_net_id_ = 42u;
+    network_example::RuntimeStatusEffectTemplate status;
+    status.status_effect_id = 1001u;
+    status.channel_id = 9u;
+    status.duration_ticks = 30u;
+    client.world_.set_status_effect_templates({status});
+
+    network_example::StatusEffectStatePacket applied;
+    applied.server_tick = 10u;
+    applied.target_net_id = 42u;
+    applied.revision = 2u;
+    applied.records.push_back(network_example::StatusEffectStateRecord{
+        1001u, 7001u, 77u, 10u, 40u});
+    client.handle_client_status_effect_state(applied);
+    std::array<KernelStatusEffectView, 2> views{};
+    require(client.query_status_effects(42u, views.data(), views.size()) == 1u);
+    require(views[0].status_effect_id == 1001u);
+    require(views[0].status_instance_id == 7001u);
+    require(views[0].status_channel_id == 9u);
+    require(views[0].instigator_net_id == 77u);
+    std::array<KernelRemoteActionPresentationEvent, 2> events{};
+    require(client.poll_remote_action_presentation_events(
+                events.data(), events.size()) == 1u);
+    require(events[0].event_type ==
+            KernelRemoteActionPresentationEventType_StatusApplied);
+
+    network_example::StatusEffectStatePacket stale = applied;
+    stale.revision = 1u;
+    stale.records.clear();
+    client.handle_client_status_effect_state(stale);
+    require(client.query_status_effects(42u, nullptr, 0u) == 1u);
+
+    network_example::StatusEffectStatePacket removed = applied;
+    removed.revision = 3u;
+    removed.records.clear();
+    client.handle_client_status_effect_state(removed);
+    require(client.query_status_effects(42u, nullptr, 0u) == 0u);
+    require(client.poll_remote_action_presentation_events(
+                events.data(), events.size()) == 1u);
+    require(events[0].event_type ==
+            KernelRemoteActionPresentationEventType_StatusRemoved);
+}
+
+void server_routes_status_presentation_only_to_remote_observer() {
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;
     config.tick.server_tick_rate = 30u;
@@ -3919,7 +3967,7 @@ void server_routes_status_presentation_to_local_and_observer() {
         target_owner_received = target_owner_received || event.peer == 2u;
     }
     require(observer_received);
-    require(target_owner_received);
+    require(!target_owner_received);
 }
 
 void server_routes_fire_result_to_owner_and_presentation_to_observer() {
@@ -4442,7 +4490,8 @@ int main() {
     hit_debug_records_filter_and_drain();
     action_result_and_remote_presentation_queues_are_isolated();
     owner_action_correction_timeout_and_reset_converge();
-    server_routes_status_presentation_to_local_and_observer();
+    reliable_local_status_state_replaces_and_rejects_stale_revision();
+    server_routes_status_presentation_only_to_remote_observer();
     server_routes_fire_result_to_owner_and_presentation_to_observer();
     owner_action_prediction_and_discrete_interpolation();
     native_fixed_tick_coalesces_client_input_and_owns_sequence();

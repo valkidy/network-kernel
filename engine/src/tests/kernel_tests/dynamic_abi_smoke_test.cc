@@ -306,6 +306,12 @@ int main() {
             KernelHandle*,
             KernelRemoteActionPresentationEvent*,
             std::uint32_t)>(library, "Kernel_PollRemoteActionPresentationEvents");
+    auto* kernel_query_status_effects =
+        load_symbol<std::uint32_t(
+            KernelHandle*,
+            std::uint32_t,
+            KernelStatusEffectView*,
+            std::uint32_t)>(library, "Kernel_QueryStatusEffects");
     auto* kernel_get_local_player_info =
         load_symbol<bool(KernelHandle*, KernelLocalPlayerInfo*)>(
             library,
@@ -500,6 +506,7 @@ int main() {
            sizeof(KernelSkeletonBindingDefinition));
     assert(abi_info.skeleton_leg_definition_size ==
            sizeof(KernelSkeletonLegDefinition));
+    assert(abi_info.status_effect_view_size == sizeof(KernelStatusEffectView));
     assert((abi_info.capability_flags &
             KERNEL_CAPABILITY_SKELETON_RENDER_STATES) != 0u);
     assert((abi_info.capability_flags &
@@ -517,6 +524,7 @@ int main() {
     assert(kernel_poll_entity_lifecycle_events(nullptr, nullptr, 0) == 0);
     assert(kernel_poll_local_action_results(nullptr, nullptr, 0) == 0);
     assert(kernel_poll_remote_action_presentation_events(nullptr, nullptr, 0) == 0);
+    assert(kernel_query_status_effects(nullptr, 1u, nullptr, 0u) == 0u);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
     assert(abi_info.server_entity_create_info_size ==
            sizeof(KernelServerEntityCreateInfo));
@@ -616,7 +624,7 @@ int main() {
     require(has_version_revision_suffix(build_info.module_version));
     require(build_info.protocol_version == 3u);
     require(build_info.snapshot_schema_version == 17u);
-    require(build_info.packet_schema_version == 22u);
+    require(build_info.packet_schema_version == 23u);
     require(build_info.git_commit[0] != '\0');
     require(std::string(build_info.git_commit) != "unknown");
     require(std::string(build_info.module_version) != build_info.git_commit);

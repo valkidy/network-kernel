@@ -164,6 +164,12 @@ cc_test(
 )
 
 cc_test(
+    name = "status_effect_catalog_test",
+    srcs = ["status_effect_catalog_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
     name = "skeleton_presentation_test",
     srcs = ["skeleton_presentation_test.cc"],
     deps = ["//engine/src/kernel:kernel"],

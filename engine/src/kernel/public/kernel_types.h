@@ -5,6 +5,8 @@
 #include <stdint.h>
 
 /*
+ * 72: status effects gained authoritative state queries and status-removed
+ *     presentation events. All ABI fields are appended.
  * 71: remote action presentation events gained status-applied presentation
  *     metadata. All fields are appended to the public ABI.
  * 70: action graphs gained status actions and gameplay catalogs gained
@@ -18,7 +20,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 71u
+#define KERNEL_ABI_VERSION 72u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -282,6 +284,7 @@ typedef struct KernelAbiInfo {
     uint32_t skeleton_asset_definition_size;
     uint32_t skeleton_binding_definition_size;
     uint32_t skeleton_leg_definition_size;
+    uint32_t status_effect_view_size;
 } KernelAbiInfo;
 
 typedef struct KernelBuildInfo {
@@ -728,6 +731,7 @@ typedef enum KernelRemoteActionPresentationEventType {
     KernelRemoteActionPresentationEventType_HitReaction = 3,
     KernelRemoteActionPresentationEventType_DeathTrigger = 4,
     KernelRemoteActionPresentationEventType_StatusApplied = 5,
+    KernelRemoteActionPresentationEventType_StatusRemoved = 6,
 } KernelRemoteActionPresentationEventType;
 
 typedef enum KernelActionTemplateFlag {
@@ -948,6 +952,16 @@ typedef struct KernelRemoteActionPresentationEvent {
     uint32_t status_channel_id;
     uint32_t duration_ticks;
 } KernelRemoteActionPresentationEvent;
+
+typedef struct KernelStatusEffectView {
+    uint32_t struct_size;
+    uint32_t status_effect_id;
+    uint32_t status_instance_id;
+    uint32_t status_channel_id;
+    uint32_t instigator_net_id;
+    uint32_t applied_tick;
+    uint32_t expire_tick;
+} KernelStatusEffectView;
 
 typedef struct KernelActionRuntimeView {
     uint32_t struct_size;
