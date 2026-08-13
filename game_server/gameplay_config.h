@@ -3,6 +3,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -202,6 +203,7 @@ struct ActionGraphParameterConfig {
     std::string name;
     bool has_default = false;
     std::string default_value;
+    std::optional<KernelVec3> default_vec3;
 };
 
 struct ActionGraphActionConfig {

@@ -5,6 +5,8 @@
 #include <stdint.h>
 
 /*
+ * 69: action graphs gained optional literal impulse directions. The direction
+ *     vector is appended to the public gameplay ABI.
  * 68: action graphs gained apply_impulse and entity templates gained
  *     impulse_resistance. Both are appended to the public gameplay ABI.
  * 67: KernelMovementDefinition gained movement_collision_mask and
@@ -12,7 +14,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 68u
+#define KERNEL_ABI_VERSION 69u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -485,7 +487,15 @@ typedef enum KernelEntityRefSource {
 typedef enum KernelEventVec3Source {
     KernelEventVec3Source_Position = 0,
     KernelEventVec3Source_Direction = 1,
+    KernelEventVec3Source_Literal = 2,
 } KernelEventVec3Source;
+
+KERNEL_RPC_STRUCT(R"json({"type":"KernelVec3"})json")
+typedef struct KernelVec3 {
+    float x;
+    float y;
+    float z;
+} KernelVec3;
 
 typedef enum KernelActionConditionType {
     KernelActionConditionType_Always = 0,
@@ -510,6 +520,7 @@ typedef struct KernelActionDefinition {
     uint32_t condition_type;
     float impulse_strength;
     uint32_t impulse_collision_mask;
+    KernelVec3 impulse_direction;
 } KernelActionDefinition;
 
 typedef struct KernelActionTriggerDefinition {
@@ -533,6 +544,7 @@ typedef struct KernelActionTriggerDefinition {
     uint32_t condition_type;
     float impulse_strength;
     uint32_t impulse_collision_mask;
+    KernelVec3 impulse_direction;
 } KernelActionTriggerDefinition;
 
 #define KERNEL_MAX_PORTABLE_STATE_FIELDS 8
@@ -767,13 +779,6 @@ typedef struct KernelVec2 {
     float x;
     float y;
 } KernelVec2;
-
-KERNEL_RPC_STRUCT(R"json({"type":"KernelVec3"})json")
-typedef struct KernelVec3 {
-    float x;
-    float y;
-    float z;
-} KernelVec3;
 
 typedef struct KernelVec4 {
     float x;

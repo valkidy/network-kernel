@@ -266,7 +266,7 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 68u);
+    assert(KERNEL_ABI_VERSION == 69u);
     assert((abi_info.capability_flags &
             KERNEL_CAPABILITY_SKELETON_RENDER_STATES) != 0u);
     assert((abi_info.capability_flags &

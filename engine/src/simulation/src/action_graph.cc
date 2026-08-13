@@ -234,6 +234,9 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
             action.spawn_item_quantity = trigger.spawn_item_quantity;
             action.health_change_amount = trigger.health_change_amount;
             action.condition_type = trigger.condition_type;
+            action.impulse_strength = trigger.impulse_strength;
+            action.impulse_collision_mask = trigger.impulse_collision_mask;
+            action.impulse_direction = trigger.impulse_direction;
         } else {
             action = trigger.actions[index];
         }
@@ -349,6 +352,12 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
                 "strength" + suffix,
                 direction_name,
                 action.impulse_collision_mask,
+                action.direction_source == KernelEventVec3Source_Literal
+                    ? std::optional<glm::vec3>{glm::vec3{
+                          action.impulse_direction.x,
+                          action.impulse_direction.y,
+                          action.impulse_direction.z}}
+                    : std::nullopt,
                 *condition,
             });
             binding.parameters.push_back({
@@ -356,11 +365,13 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
                 EntityRefExpression{static_cast<EntityRefSource>(
                     action.target_source)},
             });
-            binding.parameters.push_back({
-                direction_name,
-                EventVec3Expression{static_cast<EventVec3Source>(
-                    action.direction_source)},
-            });
+            if (action.direction_source != KernelEventVec3Source_Literal) {
+                binding.parameters.push_back({
+                    direction_name,
+                    EventVec3Expression{static_cast<EventVec3Source>(
+                        action.direction_source)},
+                });
+            }
             continue;
         }
         binding.graph.parameters.push_back({

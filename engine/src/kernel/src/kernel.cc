@@ -1441,6 +1441,7 @@ bool validate_projectile_mechanics(
                 action.condition_type = trigger.condition_type;
                 action.impulse_strength = trigger.impulse_strength;
                 action.impulse_collision_mask = trigger.impulse_collision_mask;
+                action.impulse_direction = trigger.impulse_direction;
             } else {
                 action = trigger.actions[index];
             }
@@ -1457,7 +1458,15 @@ bool validate_projectile_mechanics(
                 if (action.target_source > KernelEntityRefSource_EventInstigator ||
                     !std::isfinite(action.impulse_strength) ||
                     action.impulse_strength <= 0.0f ||
-                    action.direction_source != KernelEventVec3Source_Direction ||
+                    (action.direction_source != KernelEventVec3Source_Direction &&
+                     action.direction_source != KernelEventVec3Source_Literal) ||
+                    (action.direction_source == KernelEventVec3Source_Literal &&
+                     (!std::isfinite(action.impulse_direction.x) ||
+                      !std::isfinite(action.impulse_direction.y) ||
+                      !std::isfinite(action.impulse_direction.z) ||
+                      (action.impulse_direction.x == 0.0f &&
+                       action.impulse_direction.y == 0.0f &&
+                       action.impulse_direction.z == 0.0f))) ||
                     (action.impulse_collision_mask &
                      (KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_MASK_PROP)) == 0u ||
                     (action.impulse_collision_mask &
@@ -2662,12 +2671,14 @@ bool KernelEngine::load_gameplay_catalog(
                     action.spawn_entity_template_id =
                         trigger->spawn_entity_template_id;
                     action.position_source = trigger->position_source;
+                    action.direction_source = trigger->direction_source;
                     action.owner_source = trigger->owner_source;
                     action.health_change_amount =
                         trigger->health_change_amount;
                     action.impulse_strength = trigger->impulse_strength;
                     action.impulse_collision_mask =
                         trigger->impulse_collision_mask;
+                    action.impulse_direction = trigger->impulse_direction;
                     action.condition_type = trigger->condition_type;
                 } else {
                     action = trigger->actions[action_index];
@@ -2706,8 +2717,18 @@ bool KernelEngine::load_gameplay_catalog(
                             KernelEntityRefSource_EventInstigator ||
                         !std::isfinite(action.impulse_strength) ||
                         action.impulse_strength <= 0.0f ||
-                        action.direction_source !=
-                            KernelEventVec3Source_Direction ||
+                        (action.direction_source !=
+                             KernelEventVec3Source_Direction &&
+                         action.direction_source !=
+                             KernelEventVec3Source_Literal) ||
+                        (action.direction_source ==
+                             KernelEventVec3Source_Literal &&
+                         (!std::isfinite(action.impulse_direction.x) ||
+                          !std::isfinite(action.impulse_direction.y) ||
+                          !std::isfinite(action.impulse_direction.z) ||
+                          (action.impulse_direction.x == 0.0f &&
+                           action.impulse_direction.y == 0.0f &&
+                           action.impulse_direction.z == 0.0f))) ||
                         (action.impulse_collision_mask &
                          (KERNEL_COLLISION_MASK_ACTOR |
                           KERNEL_COLLISION_MASK_PROP)) == 0u ||
@@ -7889,6 +7910,7 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
                                         action.direction_source = trigger.direction_source;
                                         action.impulse_strength = trigger.impulse_strength;
                                         action.impulse_collision_mask = trigger.impulse_collision_mask;
+                                        action.impulse_direction = trigger.impulse_direction;
                                     } else {
                                         action = trigger.actions[action_index];
                                     }
@@ -7902,7 +7924,16 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
                                         action.impulse_strength <= resistance) {
                                         continue;
                                     }
-                                    const glm::vec3 impulse = glm::normalize(radial) *
+                                    const glm::vec3 direction =
+                                        action.direction_source ==
+                                                KernelEventVec3Source_Literal
+                                            ? glm::vec3{
+                                                  action.impulse_direction.x,
+                                                  action.impulse_direction.y,
+                                                  action.impulse_direction.z}
+                                            : glm::normalize(radial);
+                                    const glm::vec3 impulse =
+                                        glm::normalize(direction) *
                                         action.impulse_strength;
                                     predicted_local_entity_.velocity += impulse;
                                     predicted_character_state_.velocity += impulse;

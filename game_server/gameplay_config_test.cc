@@ -2053,7 +2053,7 @@ int main() {
         "parameters:\n"
         "  target: null\n"
         "  strength: 4.5\n"
-        "  direction: null\n"
+        "  direction: {x: 1.0, y: 0.0, z: 0.0}\n"
         "actions:\n"
         "  - type: apply_impulse\n"
         "    target: params.target\n"
@@ -2074,8 +2074,7 @@ int main() {
         "    action_graph: action_apply_impulse_test\n"
         "    parameters:\n"
         "      target: event.target\n"
-        "      strength: 4.5\n"
-        "      direction: event.direction\n";
+        "      strength: 4.5\n";
     const auto impulse_bundle = make_gameplay_bundle_zip(
         read_text_file("game_server/entity_templates/sentry_grunt.yaml"),
         {{"action_graph_templates/action_apply_impulse_test.yaml", impulse_graph},
@@ -2098,6 +2097,14 @@ int main() {
     require(impulse_entity->collision_trigger.actions[0].impulse_collision_mask ==
             KERNEL_COLLISION_MASK_ACTOR);
     require(impulse_entity->collision_trigger.actions[0].impulse_strength == 4.5f);
+    require(impulse_entity->collision_trigger.actions[0].direction_source ==
+            KernelEventVec3Source_Literal);
+    require(impulse_entity->collision_trigger.actions[0].impulse_direction.x ==
+            1.0f);
+    require(impulse_entity->collision_trigger.actions[0].impulse_direction.y ==
+            0.0f);
+    require(impulse_entity->collision_trigger.actions[0].impulse_direction.z ==
+            0.0f);
 
     const std::vector<std::uint8_t> gameplay_bundle = make_gameplay_bundle_zip();
     const network_example::game_server::GameServerGameplayConfig bundle_config =

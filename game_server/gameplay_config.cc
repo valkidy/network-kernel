@@ -11,6 +11,7 @@
 #include <initializer_list>
 #include <limits>
 #include <memory>
+#include <cmath>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -801,6 +802,32 @@ KernelVec3 vec3_from_yaml(const YAML::Node& node) {
         node["z"].as<float>()};
 }
 
+std::optional<KernelVec3> optional_vec3_default_from_yaml(
+    const YAML::Node& node,
+    const std::string& parameter_name,
+    const std::string& path) {
+    if (!node || !node.IsMap()) {
+        return std::nullopt;
+    }
+    if (parameter_name != "direction" || node.size() != 3u ||
+        !node["x"] || !node["y"] || !node["z"] ||
+        !node["x"].IsScalar() || !node["y"].IsScalar() ||
+        !node["z"].IsScalar()) {
+        throw std::runtime_error(
+            "action graph vec3 default is only supported for parameters.direction: " +
+            path);
+    }
+    const KernelVec3 value = vec3_from_yaml(node);
+    if (!std::isfinite(value.x) || !std::isfinite(value.y) ||
+        !std::isfinite(value.z) ||
+        (value.x == 0.0f && value.y == 0.0f && value.z == 0.0f)) {
+        throw std::runtime_error(
+            "action graph parameters.direction must be a non-zero finite vec3: " +
+            path);
+    }
+    return value;
+}
+
 // Plain suffix match, deliberately not std::filesystem::path::extension(): the
 // interesting suffix here is ".skeleton_manifest.json", and extension() would
 // only ever see ".json".
@@ -1514,14 +1541,17 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 "action graph parameter name must be unique: " + path);
         }
         const bool has_default = !entry.second.IsNull();
+        const std::optional<KernelVec3> default_vec3 =
+            optional_vec3_default_from_yaml(entry.second, name, path);
         graph.parameters.push_back(ActionGraphParameterConfig{
             name,
             has_default,
             has_default
                 ? (entry.second.IsScalar()
                        ? entry.second.as<std::string>()
-                       : YAML::Dump(entry.second))
+                       : std::string{})
                 : std::string{},
+            default_vec3,
         });
     }
     const YAML::Node actions = node["actions"];
@@ -4625,6 +4655,13 @@ void validate_trigger_parameters(
         }
     }
     for (const ActionGraphParameterConfig& parameter : graph.parameters) {
+        if (parameter.default_vec3.has_value() &&
+            std::none_of(
+                binding.parameters.begin(),
+                binding.parameters.end(),
+                [&](const auto& value) { return value.first == parameter.name; })) {
+            continue;
+        }
         const std::string value = trigger_parameter_value(binding, parameter);
         if (!event_expression_available(trigger_name, value)) {
             throw std::runtime_error(
@@ -4652,6 +4689,7 @@ void mirror_first_action(KernelActionTriggerDefinition* trigger) {
     trigger->condition_type = action.condition_type;
     trigger->impulse_strength = action.impulse_strength;
     trigger->impulse_collision_mask = action.impulse_collision_mask;
+    trigger->impulse_direction = action.impulse_direction;
 }
 
 void compile_projectile_trigger_binding(
@@ -4712,20 +4750,39 @@ void compile_projectile_trigger_binding(
             if (action.action_type == "apply_impulse") {
                 const std::string strength = trigger_parameter_value(
                     binding, graph_parameter(action.strength_parameter));
-                const std::string direction = trigger_parameter_value(
-                    binding, graph_parameter(action.direction_parameter));
+                const ActionGraphParameterConfig& direction_parameter =
+                    graph_parameter(action.direction_parameter);
+                const auto direction_binding = std::find_if(
+                    binding.parameters.begin(),
+                    binding.parameters.end(),
+                    [&](const auto& value) {
+                        return value.first == direction_parameter.name;
+                    });
                 std::size_t parsed = 0;
                 const float parsed_strength = std::stof(strength, &parsed);
-                if (direction != "event.direction" ||
-                    parsed != strength.size() ||
+                if (parsed != strength.size() ||
                     !std::isfinite(parsed_strength) || parsed_strength <= 0.0f) {
                     throw std::runtime_error(
-                        "apply_impulse projectile trigger requires positive strength and event.direction");
+                        "apply_impulse projectile trigger requires positive strength");
                 }
                 compiled_action.action_type =
                     KernelEntityTriggerActionType_ApplyImpulse;
-                compiled_action.direction_source =
-                    KernelEventVec3Source_Direction;
+                if (direction_binding == binding.parameters.end() &&
+                    direction_parameter.default_vec3.has_value()) {
+                    compiled_action.direction_source =
+                        KernelEventVec3Source_Literal;
+                    compiled_action.impulse_direction =
+                        *direction_parameter.default_vec3;
+                } else {
+                    const std::string direction = trigger_parameter_value(
+                        binding, direction_parameter);
+                    if (direction != "event.direction") {
+                        throw std::runtime_error(
+                            "apply_impulse projectile trigger direction must be event.direction or a direction vec3 default");
+                    }
+                    compiled_action.direction_source =
+                        KernelEventVec3Source_Direction;
+                }
                 compiled_action.impulse_strength = parsed_strength;
                 compiled_action.impulse_collision_mask = action.collision_mask;
             } else {
@@ -4941,12 +4998,14 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
                 binding, graph_parameter(action.target_parameter));
             const std::string strength = trigger_parameter_value(
                 binding, graph_parameter(action.strength_parameter));
-            const std::string direction = trigger_parameter_value(
-                binding, graph_parameter(action.direction_parameter));
-            if (direction != "event.direction") {
-                throw std::runtime_error(
-                    "apply_impulse direction must bind to event.direction");
-            }
+            const ActionGraphParameterConfig& direction_parameter =
+                graph_parameter(action.direction_parameter);
+            const auto direction_binding = std::find_if(
+                binding.parameters.begin(),
+                binding.parameters.end(),
+                [&](const auto& value) {
+                    return value.first == direction_parameter.name;
+                });
             std::size_t parsed = 0;
             const float parsed_strength = std::stof(strength, &parsed);
             if (parsed != strength.size() || !std::isfinite(parsed_strength) ||
@@ -4957,7 +5016,22 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
             compiled_action.action_type =
                 KernelEntityTriggerActionType_ApplyImpulse;
             compiled_action.target_source = entity_ref_source(target);
-            compiled_action.direction_source = KernelEventVec3Source_Direction;
+            if (direction_binding == binding.parameters.end() &&
+                direction_parameter.default_vec3.has_value()) {
+                compiled_action.direction_source =
+                    KernelEventVec3Source_Literal;
+                compiled_action.impulse_direction =
+                    *direction_parameter.default_vec3;
+            } else {
+                const std::string direction = trigger_parameter_value(
+                    binding, direction_parameter);
+                if (direction != "event.direction") {
+                    throw std::runtime_error(
+                        "apply_impulse direction must be event.direction or a direction vec3 default");
+                }
+                compiled_action.direction_source =
+                    KernelEventVec3Source_Direction;
+            }
             compiled_action.impulse_strength = parsed_strength;
             compiled_action.impulse_collision_mask = action.collision_mask;
             continue;
@@ -5665,6 +5739,12 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_string(&hash, parameter.name);
             hash_scalar(&hash, parameter.has_default);
             hash_string(&hash, parameter.default_value);
+            hash_scalar(&hash, parameter.default_vec3.has_value());
+            if (parameter.default_vec3.has_value()) {
+                hash_scalar(&hash, parameter.default_vec3->x);
+                hash_scalar(&hash, parameter.default_vec3->y);
+                hash_scalar(&hash, parameter.default_vec3->z);
+            }
         }
         for (const ActionGraphActionConfig& action : graph.actions) {
             hash_string(&hash, action.action_type);

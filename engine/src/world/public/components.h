@@ -593,6 +593,7 @@ struct ActionApplyImpulseDefinition {
     std::string strength_parameter;
     std::string direction_parameter;
     std::uint32_t collision_mask = kCollisionMaskDamageable;
+    std::optional<glm::vec3> direction_literal;
     ActionConditionType condition = ActionConditionType::kAlways;
 };
 
