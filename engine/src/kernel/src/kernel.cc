@@ -1017,6 +1017,13 @@ std::uint32_t history_frame_count(const TickConfig& config) {
     return std::max(1u, (tick.server_tick_rate * tick.history_ms) / 1000u);
 }
 
+std::uint32_t action_graph_dedup_retention_ticks(const TickConfig& config) {
+    const std::uint64_t horizon = history_frame_count(config);
+    const std::uint64_t retention = horizon + 1u;
+    return static_cast<std::uint32_t>(std::min<std::uint64_t>(
+        retention, std::numeric_limits<std::uint32_t>::max() / 2u));
+}
+
 ProjectileMotionModel to_projectile_motion_model(std::uint8_t motion_model) {
     if (motion_model == KernelProjectileMotionModel_Homing) {
         return ProjectileMotionModel::kHoming;
@@ -1610,6 +1617,8 @@ KernelEngine::KernelEngine(KernelConfig config)
       history_buffer_(history_frame_count(config_.tick)),
       transport_(std::make_unique<NetworkSimulatorTransport>()),
       rpc_dispatcher_(&rpc_method_registry_, &rpc_response_store_) {
+    world_.set_action_graph_dedup_retention_ticks(
+        action_graph_dedup_retention_ticks(config_.tick));
     render_states_.reserve(config_.max_render_states);
     events_.reserve(config_.max_events);
 }
@@ -5090,6 +5099,8 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     config_.mode = mode;
     tick_loop_ = TickLoop(config_.tick);
     world_ = World{false};
+    world_.set_action_graph_dedup_retention_ticks(
+        action_graph_dedup_retention_ticks(config_.tick));
     item_store_ = ItemStore{};
     client_inventory_snapshot_assemblies_.clear();
     client_inventory_sync_states_.clear();
@@ -9134,6 +9145,7 @@ void KernelEngine::simulate_tick() {
     const std::uint64_t server_time_us =
         tick_time_us(tick_loop_.current_tick(), fixed_delta);
     const std::size_t first_tick_event = events_.size();
+    world_.prune_action_graph_batches(tick_loop_.current_tick());
     std::unordered_set<NetId> actors_before_tick;
     std::vector<ActionOutcome> action_outcomes;
     const auto actor_view = world_.registry().view<NetworkIdentity, EntityKind>();
@@ -12320,6 +12332,7 @@ const KernelEngine::PeerSession* KernelEngine::find_session(PeerId peer) const {
 }
 
 void KernelEngine::remove_session(PeerId peer) {
+    world_.clear_action_graph_batches_for_peer(peer);
     peer_sessions_.erase(
         std::remove_if(
             peer_sessions_.begin(),

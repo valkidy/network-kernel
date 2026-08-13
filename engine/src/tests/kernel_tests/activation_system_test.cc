@@ -132,14 +132,17 @@ void activated_prop_applies_damage_exactly_once() {
     require(engine.server_activate_entity(activation));
     require(engine.damage_pipeline_.pending_count() == 2);
     require(engine.world_.action_graph_batch_processed(
+        7u,
         activation.request_id,
         network_example::TriggerEventType::kActivated,
         0));
     require(!engine.world_.action_graph_batch_processed(
+        7u,
         activation.request_id,
         network_example::TriggerEventType::kCollision,
         0));
     require(!engine.world_.action_graph_batch_processed(
+        7u,
         activation.request_id,
         network_example::TriggerEventType::kActivated,
         1));

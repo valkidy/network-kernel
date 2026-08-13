@@ -119,6 +119,105 @@ std::uint32_t World::allocate_status_instance_id() {
     return instance_id == 0u ? next_status_instance_id_++ : instance_id;
 }
 
+World::ActionGraphDedupReservationResult
+World::reserve_action_graph_batch(const ActionGraphDedupKey& key) {
+    if (processed_action_graph_batches_.find(key) !=
+        processed_action_graph_batches_.end()) {
+        return ActionGraphDedupReservationResult::kDuplicate;
+    }
+    if (reserved_action_graph_capacity_ == 0u &&
+        processed_action_graph_batches_.size() >= kActionGraphDedupCapacity) {
+        return ActionGraphDedupReservationResult::kRejected;
+    }
+    if (reserved_action_graph_capacity_ > 0u) {
+        --reserved_action_graph_capacity_;
+    }
+    action_graph_dedup_order_.push_back(ActionGraphDedupEntry{key});
+    auto entry = action_graph_dedup_order_.end();
+    --entry;
+    processed_action_graph_batches_.emplace(key, entry);
+    ++reserved_action_graph_entry_count_;
+    return ActionGraphDedupReservationResult::kReserved;
+}
+
+bool World::commit_action_graph_batch(
+    const ActionGraphDedupKey& key,
+    std::uint32_t committed_tick) {
+    const auto found = processed_action_graph_batches_.find(key);
+    if (found == processed_action_graph_batches_.end() ||
+        !found->second->reserved) {
+        return false;
+    }
+    found->second->committed_tick = committed_tick;
+    found->second->reserved = false;
+    --reserved_action_graph_entry_count_;
+    return true;
+}
+
+void World::cancel_action_graph_batch(const ActionGraphDedupKey& key) {
+    const auto found = processed_action_graph_batches_.find(key);
+    if (found == processed_action_graph_batches_.end()) {
+        return;
+    }
+    if (found->second->reserved) {
+        --reserved_action_graph_entry_count_;
+    }
+    action_graph_dedup_order_.erase(found->second);
+    processed_action_graph_batches_.erase(found);
+}
+
+bool World::reserve_action_graph_batch_capacity(std::size_t count) {
+    const std::size_t used = processed_action_graph_batches_.size() +
+        reserved_action_graph_capacity_;
+    if (count > kActionGraphDedupCapacity - used) {
+        return false;
+    }
+    reserved_action_graph_capacity_ += count;
+    return true;
+}
+
+void World::release_action_graph_batch_capacity(std::size_t count) {
+    reserved_action_graph_capacity_ =
+        count >= reserved_action_graph_capacity_
+        ? 0u
+        : reserved_action_graph_capacity_ - count;
+}
+
+void World::prune_action_graph_batches(std::uint32_t current_tick) {
+    while (!action_graph_dedup_order_.empty()) {
+        const ActionGraphDedupEntry& entry = action_graph_dedup_order_.front();
+        if (entry.reserved ||
+            current_tick - entry.committed_tick <
+                action_graph_dedup_retention_ticks_) {
+            break;
+        }
+        processed_action_graph_batches_.erase(entry.key);
+        action_graph_dedup_order_.pop_front();
+    }
+}
+
+void World::clear_action_graph_batches_for_peer(PeerId requester_peer) {
+    for (auto entry = action_graph_dedup_order_.begin();
+         entry != action_graph_dedup_order_.end();) {
+        if (entry->key.requester_peer != requester_peer) {
+            ++entry;
+            continue;
+        }
+        if (entry->reserved) {
+            --reserved_action_graph_entry_count_;
+        }
+        processed_action_graph_batches_.erase(entry->key);
+        entry = action_graph_dedup_order_.erase(entry);
+    }
+}
+
+void World::set_action_graph_dedup_retention_ticks(
+    std::uint32_t retention_ticks) {
+    action_graph_dedup_retention_ticks_ = std::min(
+        std::max(1u, retention_ticks),
+        std::numeric_limits<std::uint32_t>::max() / 2u);
+}
+
 entt::registry& World::registry() {
     return registry_;
 }

@@ -65,6 +65,79 @@ std::uint64_t action_trigger_request_id(
     return hash;
 }
 
+World::ActionGraphDedupKey action_graph_dedup_key(
+    const ActionGraphCommandBatch& batch) {
+    return World::ActionGraphDedupKey{
+        batch.provenance.requester_peer != 0u
+            ? batch.provenance.requester_peer
+            : batch.provenance.owner_peer,
+        batch.provenance.request_id,
+        batch.event.type,
+        batch.sequence,
+    };
+}
+
+std::size_t action_graph_dedup_reservation_budget(
+    const std::vector<ActionGraphCommand>& commands) {
+    return 1u + commands.size() *
+        (static_cast<std::size_t>(kMaxActiveStatusEffects) + 1u);
+}
+
+class ActionGraphDedupTransaction {
+public:
+    ActionGraphDedupTransaction(World& world, std::size_t capacity_budget)
+        : world_(world), capacity_remaining_(capacity_budget) {
+        reservations_.reserve(capacity_budget);
+        initialized_ = world_.reserve_action_graph_batch_capacity(
+            capacity_budget);
+    }
+
+    ~ActionGraphDedupTransaction() {
+        if (!active_) {
+            return;
+        }
+        for (const World::ActionGraphDedupKey& key : reservations_) {
+            world_.cancel_action_graph_batch(key);
+        }
+        world_.release_action_graph_batch_capacity(capacity_remaining_);
+    }
+
+    bool initialized() const { return initialized_; }
+
+    bool reserve(const World::ActionGraphDedupKey& key) {
+        const World::ActionGraphDedupReservationResult result =
+            world_.reserve_action_graph_batch(key);
+        if (result == World::ActionGraphDedupReservationResult::kRejected) {
+            return false;
+        }
+        if (result == World::ActionGraphDedupReservationResult::kReserved) {
+            reservations_.push_back(key);
+            if (capacity_remaining_ > 0u) {
+                --capacity_remaining_;
+            }
+        }
+        return true;
+    }
+
+    bool commit(std::uint32_t committed_tick) {
+        for (const World::ActionGraphDedupKey& key : reservations_) {
+            if (!world_.commit_action_graph_batch(key, committed_tick)) {
+                return false;
+            }
+        }
+        world_.release_action_graph_batch_capacity(capacity_remaining_);
+        active_ = false;
+        return true;
+    }
+
+private:
+    World& world_;
+    std::vector<World::ActionGraphDedupKey> reservations_;
+    std::size_t capacity_remaining_ = 0u;
+    bool initialized_ = false;
+    bool active_ = true;
+};
+
 glm::vec3 from_kernel_vec3(const KernelVec3& value) {
     return glm::vec3{value.x, value.y, value.z};
 }
@@ -308,7 +381,8 @@ bool execute_action_graph_commands(
     DamagePipeline* damage_pipeline,
     const std::vector<KernelEntityTemplateDefinition>& entity_templates,
     const ActionGraphCommandBatch& batch,
-    std::uint64_t server_time_us) {
+    std::uint64_t server_time_us,
+    ActionGraphDedupTransaction* transaction = nullptr) {
     if (damage_pipeline == nullptr || batch.provenance.request_id == 0u) {
         return false;
     }
@@ -608,6 +682,20 @@ bool execute_action_graph_commands(
             return false;
         }
     }
+    const std::size_t reservation_budget =
+        action_graph_dedup_reservation_budget(commands);
+    std::optional<ActionGraphDedupTransaction> owned_transaction;
+    ActionGraphDedupTransaction* active_transaction = transaction;
+    if (active_transaction == nullptr) {
+        owned_transaction.emplace(world, reservation_budget);
+        if (!owned_transaction->initialized()) {
+            return false;
+        }
+        active_transaction = &*owned_transaction;
+    }
+    if (!active_transaction->reserve(action_graph_dedup_key(batch))) {
+        return false;
+    }
     for (std::size_t index = 0; index < commands.size(); ++index) {
         const ActionGraphCommand& command = commands[index];
         if (const auto* damage =
@@ -784,7 +872,8 @@ bool execute_action_graph_commands(
                         damage_pipeline,
                         entity_templates,
                         *prepared_stack.batch,
-                        server_time_us)) {
+                        server_time_us,
+                        active_transaction)) {
                     return false;
                 }
                 advance_status_revision(status_state);
@@ -856,6 +945,19 @@ bool execute_action_graph_commands(
                     &prepared_apply)) {
                 return false;
             }
+            for (PreparedStatusLifecycle& prepared : prepared_expire) {
+                if (prepared.batch.has_value() &&
+                    !execute_action_graph_commands(
+                        engine,
+                        world,
+                        damage_pipeline,
+                        entity_templates,
+                        *prepared.batch,
+                        server_time_us,
+                        active_transaction)) {
+                    return false;
+                }
+            }
             for (const ActiveStatusEffect& old_status : replaced) {
                 status_state.speed_modifiers.erase(
                     std::remove_if(
@@ -876,18 +978,6 @@ bool execute_action_graph_commands(
                     }),
                 status_state.active.end());
             recompute_speed(world, target);
-            for (PreparedStatusLifecycle& prepared : prepared_expire) {
-                if (prepared.batch.has_value() &&
-                    !execute_action_graph_commands(
-                        engine,
-                        world,
-                        damage_pipeline,
-                        entity_templates,
-                        *prepared.batch,
-                        server_time_us)) {
-                    return false;
-                }
-            }
             status_state.active.push_back(active);
             std::sort(
                 status_state.active.begin(), status_state.active.end(),
@@ -901,7 +991,8 @@ bool execute_action_graph_commands(
                     damage_pipeline,
                     entity_templates,
                     *prepared_apply.batch,
-                    server_time_us)) {
+                    server_time_us,
+                    active_transaction)) {
                 return false;
             }
             advance_status_revision(status_state);
@@ -988,7 +1079,8 @@ bool execute_action_graph_commands(
                         damage_pipeline,
                         entity_templates,
                         *prepared.batch,
-                        server_time_us)) {
+                        server_time_us,
+                        active_transaction)) {
                     return false;
                 }
             }
@@ -1148,13 +1240,10 @@ bool execute_action_graph_commands(
             engine.queue_prop_state_change(spawned_net_id);
         }
     }
-    world.mark_action_graph_batch_processed(
-        batch.provenance.requester_peer != 0u
-            ? batch.provenance.requester_peer
-            : batch.provenance.owner_peer,
-        batch.provenance.request_id,
-        batch.event.type,
-        batch.sequence);
+    if (transaction == nullptr &&
+        !owned_transaction->commit(engine.current_tick())) {
+        return false;
+    }
     return true;
 }
 

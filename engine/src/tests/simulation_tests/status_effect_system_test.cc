@@ -28,14 +28,17 @@ CompiledActionGraphBinding apply_status_binding(
     return binding;
 }
 
-CompiledActionGraphBinding lifecycle_damage_binding(EntityRefSource target_source) {
+CompiledActionGraphBinding lifecycle_damage_binding(
+    EntityRefSource target_source,
+    float damage_amount = 5.0f,
+    float health_amount = -2.0f) {
     CompiledActionGraphBinding binding;
     binding.event_type = TriggerEventType::kStatusTick;
     binding.graph.id = "lifecycle_damage";
     binding.graph.parameters = {
         {"target", std::monostate{}},
-        {"amount", 5.0f},
-        {"health_amount", -2.0f},
+        {"amount", damage_amount},
+        {"health_amount", health_amount},
     };
     binding.graph.actions = {
         ActionApplyDamageDefinition{"target", "amount"},
@@ -111,6 +114,25 @@ void require_at(bool condition, int line) {
 }
 
 #define require(condition) require_at((condition), __LINE__)
+
+World::ActionGraphDedupKey dedup_key(
+    PeerId requester_peer,
+    std::uint64_t request_id,
+    TriggerEventType event_type = TriggerEventType::kActivated,
+    std::uint32_t sequence = 0u) {
+    return World::ActionGraphDedupKey{
+        requester_peer, request_id, event_type, sequence};
+}
+
+void commit_dedup_key(
+    World& world,
+    const World::ActionGraphDedupKey& key,
+    std::uint32_t committed_tick) {
+    require(
+        world.reserve_action_graph_batch(key) ==
+        World::ActionGraphDedupReservationResult::kReserved);
+    require(world.commit_action_graph_batch(key, committed_tick));
+}
 
 void apply_and_remove_status_owns_speed_modifier() {
     KernelEngine engine(KernelConfig{});
@@ -501,6 +523,228 @@ void refresh_preserves_instance_stack_and_tick_cadence() {
     require(stack_state.active[0].source == source1);
 }
 
+void replace_orders_callbacks_and_preserves_failed_state() {
+    KernelEngine engine(KernelConfig{});
+    World& world = engine.simulation_world();
+    const NetId source = world.spawn_player(1u, glm::vec3{0.0f});
+    const NetId target = world.spawn_enemy(glm::vec3{0.0f});
+
+    RuntimeStatusEffectTemplate old_status;
+    old_status.status_effect_id = 1001u;
+    old_status.channel_id = 1u;
+    old_status.duration_ticks = 10u;
+    old_status.on_expire_binding = lifecycle_damage_binding(
+        EntityRefSource::kEventSubject, 5.0f, -2.0f);
+    old_status.on_expire_binding->event_type = TriggerEventType::kStatusExpired;
+    RuntimeStatusEffectTemplate new_status = old_status;
+    new_status.status_effect_id = 1002u;
+    new_status.on_expire_binding.reset();
+    new_status.on_apply_binding = lifecycle_damage_binding(
+        EntityRefSource::kEventSubject, 7.0f, -3.0f);
+    new_status.on_apply_binding->event_type = TriggerEventType::kStatusApplied;
+    world.set_status_effect_templates({old_status, new_status});
+
+    require(apply_status(engine, source, target, 1001u, 1u));
+    require(engine.damage_pipeline().drain_ready_damage(world, 0u).empty());
+    require(apply_status(engine, source, target, 1002u, 2u));
+    const std::vector<ConfirmedDamage> replacement_damage =
+        engine.damage_pipeline().drain_ready_damage(world, 0u);
+    require(replacement_damage.size() == 4u);
+    require(replacement_damage[0].damage == 5u);
+    require(replacement_damage[1].damage == 7u);
+    require(replacement_damage[2].damage == 2u);
+    require(replacement_damage[3].damage == 3u);
+
+    const entt::entity target_entity = *world.find_entity(target);
+    const StatusEffectState& state =
+        world.registry().get<StatusEffectState>(target_entity);
+    require(state.active.size() == 1u);
+    require(state.active[0].status_effect_id == 1002u);
+    require(state.revision == 2u);
+
+    RuntimeStatusEffectTemplate invalid_status = new_status;
+    invalid_status.status_effect_id = 1003u;
+    CompiledActionGraphBinding invalid_binding = speed_on_apply_binding();
+    invalid_binding.parameters[0].expression =
+        EntityRefExpression{EntityRefSource::kEventInstigator};
+    invalid_status.on_apply_binding = invalid_binding;
+    world.set_status_effect_templates({old_status, new_status, invalid_status});
+    const ActiveStatusEffect before_failure = state.active[0];
+    const std::uint32_t revision_before_failure = state.revision;
+    require(!apply_status(engine, source, target, 1003u, 3u));
+    require(engine.damage_pipeline().drain_ready_damage(world, 0u).empty());
+    require(state.active.size() == 1u);
+    require(state.active[0].status_effect_id == before_failure.status_effect_id);
+    require(state.active[0].instance_id == before_failure.instance_id);
+    require(state.revision == revision_before_failure);
+}
+
+void lifecycle_duplicate_is_a_noop() {
+    KernelEngine engine(KernelConfig{});
+    World& world = engine.simulation_world();
+    const NetId source = world.spawn_player(1u, glm::vec3{0.0f});
+    const NetId target = world.spawn_enemy(glm::vec3{0.0f});
+    const TriggerEvent event{
+        TriggerEventType::kStatusTick,
+        target,
+        source,
+        target,
+    };
+    ActionExecutionProvenance provenance;
+    provenance.request_id = 77u;
+    provenance.server_tick = engine.current_tick();
+    provenance.instigator = source;
+    provenance.owner_peer = 1u;
+    std::vector<ActionGraphCommand> commands;
+    require(evaluate_action_graph(
+        lifecycle_damage_binding(EntityRefSource::kEventSubject),
+        target,
+        event,
+        provenance,
+        &commands,
+        nullptr));
+    const ActionGraphCommandBatch batch{
+        event, provenance, 4u, std::move(commands)};
+    require(execute_action_graph_command_batch(engine, batch, 0u));
+    const std::vector<ConfirmedDamage> first =
+        engine.damage_pipeline().drain_ready_damage(world, 0u);
+    require(first.size() == 2u);
+    require(execute_action_graph_command_batch(engine, batch, 0u));
+    require(engine.damage_pipeline().drain_ready_damage(world, 0u).empty());
+}
+
+void cross_channel_modifiers_restore_independently() {
+    KernelEngine engine(KernelConfig{});
+    World& world = engine.simulation_world();
+    const NetId source = world.spawn_player(1u, glm::vec3{0.0f});
+    const NetId target = world.spawn_enemy(glm::vec3{0.0f});
+    const entt::entity target_entity = *world.find_entity(target);
+    MovementState& movement =
+        world.registry().get_or_emplace<MovementState>(target_entity);
+    movement.base_speed_meters_per_second = 10.0f;
+    movement.speed_meters_per_second = 10.0f;
+
+    RuntimeStatusEffectTemplate additive;
+    additive.status_effect_id = 1101u;
+    additive.channel_id = 1u;
+    additive.duration_ticks = 10u;
+    additive.on_apply_binding = speed_on_apply_binding(0.0f, 2.0f);
+    RuntimeStatusEffectTemplate multiplier = additive;
+    multiplier.status_effect_id = 1102u;
+    multiplier.channel_id = 2u;
+    multiplier.on_apply_binding = speed_on_apply_binding(1.0f, 0.5f);
+    world.set_status_effect_templates({additive, multiplier});
+
+    require(apply_status(engine, source, target, 1101u, 1u));
+    require(apply_status(engine, source, target, 1102u, 2u));
+    require(movement.speed_meters_per_second == 7.0f);
+
+    CompiledActionGraphBinding remove_binding = apply_status_binding(1101u);
+    remove_binding.graph.actions = {
+        ActionRemoveStatusDefinition{"target", "status"},
+    };
+    const TriggerEvent event{
+        TriggerEventType::kActivated, source, source, target};
+    std::vector<ActionGraphCommand> commands;
+    require(evaluate_action_graph(
+        remove_binding,
+        source,
+        event,
+        ActionExecutionProvenance{3u, 0u, 0u, source},
+        &commands,
+        nullptr));
+    require(execute_action_graph_command_batch(
+        engine,
+        ActionGraphCommandBatch{
+            event, ActionExecutionProvenance{3u, 0u, 0u, source}, 3u,
+            std::move(commands)},
+        0u));
+    require(movement.speed_meters_per_second == 5.0f);
+
+    StatusEffectState& state =
+        world.registry().get<StatusEffectState>(target_entity);
+    auto multiplier_status = std::find_if(
+        state.active.begin(), state.active.end(),
+        [](const ActiveStatusEffect& active) {
+            return active.status_effect_id == 1102u;
+        });
+    require(multiplier_status != state.active.end());
+    multiplier_status->expire_tick = 0u;
+    simulate_status_effects(engine, 0u);
+    require(state.active.empty());
+    require(state.speed_modifiers.empty());
+    require(movement.speed_meters_per_second == 10.0f);
+}
+
+void bounded_dedup_ledger_handles_retention_capacity_and_peers() {
+    World world;
+    world.set_action_graph_dedup_retention_ticks(4u);
+    const World::ActionGraphDedupKey wrap_key = dedup_key(1u, 1u);
+    commit_dedup_key(world, wrap_key, UINT32_MAX - 1u);
+    require(
+        world.reserve_action_graph_batch(wrap_key) ==
+        World::ActionGraphDedupReservationResult::kDuplicate);
+    world.prune_action_graph_batches(1u);
+    require(world.action_graph_batch_count() == 1u);
+    world.prune_action_graph_batches(2u);
+    require(world.action_graph_batch_count() == 0u);
+
+    commit_dedup_key(world, dedup_key(1u, 2u), 10u);
+    commit_dedup_key(world, dedup_key(2u, 2u), 10u);
+    require(world.action_graph_batch_count() == 2u);
+    world.clear_action_graph_batches_for_peer(1u);
+    require(world.action_graph_batch_count() == 1u);
+    commit_dedup_key(world, dedup_key(1u, 2u), 11u);
+    require(world.action_graph_batch_count() == 2u);
+
+    const World::ActionGraphDedupKey cancelled = dedup_key(3u, 3u);
+    require(
+        world.reserve_action_graph_batch(cancelled) ==
+        World::ActionGraphDedupReservationResult::kReserved);
+    require(world.action_graph_batch_reserved_count() == 1u);
+    world.cancel_action_graph_batch(cancelled);
+    require(world.action_graph_batch_reserved_count() == 0u);
+    require(world.action_graph_batch_count() == 2u);
+
+    world.prune_action_graph_batches(UINT32_MAX);
+    for (std::uint32_t tick = 0u; tick < 10000u; ++tick) {
+        commit_dedup_key(
+            world,
+            dedup_key(4u, 100u + tick, TriggerEventType::kStatusTick),
+            tick);
+        world.prune_action_graph_batches(tick);
+        require(world.action_graph_batch_count() <= 4u);
+    }
+}
+
+void capacity_rejection_happens_before_damage_submission() {
+    KernelEngine engine(KernelConfig{});
+    World& world = engine.simulation_world();
+    for (std::size_t index = 0u;
+         index < World::kActionGraphDedupCapacity;
+         ++index) {
+        commit_dedup_key(world, dedup_key(9u, index + 1u), 0u);
+    }
+    const NetId source = world.spawn_player(1u, glm::vec3{0.0f});
+    const NetId target = world.spawn_enemy(glm::vec3{0.0f});
+    const TriggerEvent event{
+        TriggerEventType::kActivated, source, source, target};
+    ActionExecutionProvenance provenance;
+    provenance.request_id = 9000u;
+    provenance.server_tick = 0u;
+    provenance.instigator = source;
+    provenance.owner_peer = 1u;
+    const ActionGraphCommandBatch batch{
+        event,
+        provenance,
+        0u,
+        {ActionApplyDamageCommand{source, target, 10u, provenance}},
+    };
+    require(!execute_action_graph_command_batch(engine, batch, 0u));
+    require(engine.damage_pipeline().pending_count() == 0u);
+    require(world.action_graph_batch_reserved_count() == 0u);
+}
+
 }  // namespace
 
 int main() {
@@ -510,5 +754,10 @@ int main() {
     tick_keeps_instigator_attribution_after_despawn();
     stack_scales_lifecycle_and_speed_and_keeps_latest_instigator();
     refresh_preserves_instance_stack_and_tick_cadence();
+    replace_orders_callbacks_and_preserves_failed_state();
+    lifecycle_duplicate_is_a_noop();
+    cross_channel_modifiers_restore_independently();
+    bounded_dedup_ledger_handles_retention_capacity_and_peers();
+    capacity_rejection_happens_before_damage_submission();
     return 0;
 }
