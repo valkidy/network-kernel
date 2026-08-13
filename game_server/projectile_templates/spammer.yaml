@@ -6,7 +6,7 @@ collider_template: projectile_sphere
 movement_model: linear
 hit_response: destroy
 damage_shape: direct_hit
-speed: 30.0
+speed: 5.0 # 30.0
 lifetime_ticks: 60
 collision_mask: terrain | obstacle
 max_hit_count: 1
