@@ -1099,6 +1099,15 @@ int main() {
     require(
         config.weapons.catalog_hash !=
         network_example::game_server::compute_gameplay_catalog_hash(changed_config));
+    require(!config.status_effect_templates.empty());
+    changed_config = config;
+    changed_config.status_effect_templates.front().replacement_policy =
+        KernelStatusEffectReplacementPolicy_Stack;
+    changed_config.status_effect_templates.front().max_stacks = 3u;
+    changed_config.status_effect_templates.front().refresh_on_stack = true;
+    require(
+        config.weapons.catalog_hash !=
+        network_example::game_server::compute_gameplay_catalog_hash(changed_config));
     const KernelCombatStateDefinition player_combat_state =
         network_example::game_server::make_player_combat_state(config);
     assert(player_combat_state.hp == 1000);
@@ -1134,6 +1143,15 @@ int main() {
     assert(config_enemy_template->vision.vision_collider_template_id == 9);
     const network_example::game_server::KernelGameplayCatalogStorage catalog =
         network_example::game_server::build_kernel_gameplay_catalog(config);
+    const network_example::game_server::KernelGameplayCatalogStorage
+        stack_catalog =
+            network_example::game_server::build_kernel_gameplay_catalog(
+                changed_config);
+    require(!stack_catalog.status_effects.empty());
+    require(stack_catalog.status_effects.front().replacement_policy ==
+            KernelStatusEffectReplacementPolicy_Stack);
+    require(stack_catalog.status_effects.front().max_stacks == 3u);
+    require(stack_catalog.status_effects.front().refresh_on_stack == 1u);
     // Discovered by scanning skeleton_assets/generated, not by a list in the
     // catalog: the three base locomotion rigs are present here only because
     // their build targets are data deps of this test.

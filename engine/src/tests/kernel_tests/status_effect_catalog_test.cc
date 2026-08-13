@@ -87,5 +87,44 @@ int main() {
         KernelEntityTriggerActionType_ApplySpeedModifier,
         KernelEntityRefSource_EventInstigator);
     assert(!load_status(status));
+
+    status = base_status();
+    status.replacement_policy = KernelStatusEffectReplacementPolicy_Refresh;
+    assert(load_status(status));
+
+    status = base_status();
+    status.replacement_policy = KernelStatusEffectReplacementPolicy_Stack;
+    status.max_stacks = 3u;
+    status.refresh_on_stack = 1u;
+    status.on_tick_trigger = trigger_with_action(
+        KernelEntityTriggerActionType_ApplyDamage);
+    assert(load_status(status));
+
+    status.max_stacks = 1u;
+    assert(!load_status(status));
+    status.max_stacks = 33u;
+    assert(!load_status(status));
+
+    status = base_status();
+    status.max_stacks = 2u;
+    assert(!load_status(status));
+
+    status = base_status();
+    status.replacement_policy = KernelStatusEffectReplacementPolicy_Stack;
+    status.max_stacks = 2u;
+    status.on_tick_trigger = trigger_with_action(
+        KernelEntityTriggerActionType_ApplyDamage);
+    status.on_tick_trigger.actions[0].damage_amount = 40000u;
+    assert(!load_status(status));
+
+    status = base_status();
+    status.replacement_policy = KernelStatusEffectReplacementPolicy_Stack;
+    status.max_stacks = 32u;
+    status.on_apply_trigger = trigger_with_action(
+        KernelEntityTriggerActionType_ApplySpeedModifier);
+    status.on_apply_trigger.actions[0].modifier_operation =
+        KernelStatModifierOperation_Multiplier;
+    status.on_apply_trigger.actions[0].modifier_value = 1.0e20f;
+    assert(!load_status(status));
     return 0;
 }

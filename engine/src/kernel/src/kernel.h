@@ -228,7 +228,8 @@ public:
         std::uint32_t status_effect_id,
         std::uint32_t status_instance_id,
         std::uint8_t event_type =
-            KernelRemoteActionPresentationEventType_StatusApplied);
+            KernelRemoteActionPresentationEventType_StatusApplied,
+        std::uint16_t stack_count = 1u);
     void publish_status_effect_state(NetId target);
     void queue_health_changed_event(
         NetId net_id,
@@ -493,8 +494,10 @@ private:
         std::uint32_t actor_net_id = 0;
         std::uint32_t action_instance_id = 0;
         std::uint32_t status_instance_id = 0;
+        std::uint16_t stack_count = 0;
         std::uint16_t commit_index = 0;
         std::uint8_t event_type = 0;
+        std::uint32_t event_tick = 0;
         std::uint32_t expire_tick = 0;
     };
 

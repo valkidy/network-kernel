@@ -5,6 +5,8 @@
 #include <stdint.h>
 
 /*
+ * 73: status effects gained stack/refresh policies, stack state, and
+ *     status-updated presentation events. All ABI fields are appended.
  * 72: status effects gained authoritative state queries and status-removed
  *     presentation events. All ABI fields are appended.
  * 71: remote action presentation events gained status-applied presentation
@@ -20,7 +22,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 72u
+#define KERNEL_ABI_VERSION 73u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -494,6 +496,8 @@ typedef enum KernelStatModifierOperation {
 
 typedef enum KernelStatusEffectReplacementPolicy {
     KernelStatusEffectReplacementPolicy_Replace = 0,
+    KernelStatusEffectReplacementPolicy_Refresh = 1,
+    KernelStatusEffectReplacementPolicy_Stack = 2,
 } KernelStatusEffectReplacementPolicy;
 
 typedef enum KernelEntityRefSource {
@@ -588,6 +592,9 @@ typedef struct KernelStatusEffectDefinition {
     KernelActionTriggerDefinition on_apply_trigger;
     KernelActionTriggerDefinition on_tick_trigger;
     KernelActionTriggerDefinition on_expire_trigger;
+    uint16_t max_stacks;
+    uint8_t refresh_on_stack;
+    uint8_t reserved2;
 } KernelStatusEffectDefinition;
 
 #define KERNEL_MAX_PORTABLE_STATE_FIELDS 8
@@ -732,6 +739,7 @@ typedef enum KernelRemoteActionPresentationEventType {
     KernelRemoteActionPresentationEventType_DeathTrigger = 4,
     KernelRemoteActionPresentationEventType_StatusApplied = 5,
     KernelRemoteActionPresentationEventType_StatusRemoved = 6,
+    KernelRemoteActionPresentationEventType_StatusUpdated = 7,
 } KernelRemoteActionPresentationEventType;
 
 typedef enum KernelActionTemplateFlag {
@@ -948,9 +956,11 @@ typedef struct KernelRemoteActionPresentationEvent {
     uint16_t server_tick_delta;
     uint32_t status_effect_id;
     uint32_t status_instance_id;
-    /* Derived from the client gameplay catalog for StatusApplied events. */
+    /* Derived from the client gameplay catalog for status events. */
     uint32_t status_channel_id;
     uint32_t duration_ticks;
+    uint16_t stack_count;
+    uint16_t reserved0;
 } KernelRemoteActionPresentationEvent;
 
 typedef struct KernelStatusEffectView {
@@ -961,6 +971,8 @@ typedef struct KernelStatusEffectView {
     uint32_t instigator_net_id;
     uint32_t applied_tick;
     uint32_t expire_tick;
+    uint16_t stack_count;
+    uint16_t max_stacks;
 } KernelStatusEffectView;
 
 typedef struct KernelActionRuntimeView {

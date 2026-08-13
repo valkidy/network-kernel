@@ -680,6 +680,8 @@ struct RuntimeStatusEffectTemplate {
     std::uint32_t duration_ticks = 0;
     std::uint32_t interval_ticks = 0;
     std::uint8_t replacement_policy = 0;
+    std::uint16_t max_stacks = 1u;
+    bool refresh_on_stack = false;
     std::optional<CompiledActionGraphBinding> on_apply_binding;
     std::optional<CompiledActionGraphBinding> on_tick_binding;
     std::optional<CompiledActionGraphBinding> on_expire_binding;
@@ -696,6 +698,7 @@ struct ActiveStatusEffect {
     std::uint32_t applied_tick = 0;
     std::uint32_t expire_tick = 0;
     std::uint32_t next_tick = 0;
+    std::uint16_t stack_count = 1u;
 };
 
 struct SpeedModifier {

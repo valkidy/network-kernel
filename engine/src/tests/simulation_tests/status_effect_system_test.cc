@@ -35,9 +35,11 @@ CompiledActionGraphBinding lifecycle_damage_binding(EntityRefSource target_sourc
     binding.graph.parameters = {
         {"target", std::monostate{}},
         {"amount", 5.0f},
+        {"health_amount", -2.0f},
     };
     binding.graph.actions = {
         ActionApplyDamageDefinition{"target", "amount"},
+        ActionApplyHealthChangeDefinition{"target", "health_amount"},
     };
     binding.parameters = {
         {"target", EntityRefExpression{target_source}},
@@ -263,6 +265,8 @@ void failed_lifecycle_prepare_leaves_status_state_unchanged() {
     status.status_effect_id = 1001u;
     status.channel_id = 1u;
     status.duration_ticks = 10u;
+    status.replacement_policy = KernelStatusEffectReplacementPolicy_Stack;
+    status.max_stacks = 3u;
     CompiledActionGraphBinding invalid = speed_on_apply_binding();
     invalid.parameters[0].expression =
         EntityRefExpression{EntityRefSource::kEventInstigator};
@@ -287,6 +291,19 @@ void failed_lifecycle_prepare_leaves_status_state_unchanged() {
     require(state == nullptr ||
             (state->active.empty() && state->speed_modifiers.empty() &&
              state->revision == 0u));
+    require(engine.damage_pipeline().pending_count() == 0u);
+
+    StatusEffectState& active_state =
+        world.registry().get_or_emplace<StatusEffectState>(target_entity);
+    active_state.active.push_back(ActiveStatusEffect{
+        77u, 1001u, 1u, source, 1u, 0u, 10u, 2u, 1u});
+    active_state.revision = 4u;
+    require(!apply_status(engine, source, target, 1001u, 2u));
+    require(active_state.active.size() == 1u);
+    require(active_state.active[0].stack_count == 1u);
+    require(active_state.active[0].source == source);
+    require(active_state.revision == 4u);
+    require(active_state.speed_modifiers.empty());
     require(engine.damage_pipeline().pending_count() == 0u);
 }
 
@@ -314,11 +331,174 @@ void tick_keeps_instigator_attribution_after_despawn() {
     simulate_status_effects(engine, 0u);
     const std::vector<ConfirmedDamage> damage =
         engine.damage_pipeline().drain_ready_damage(world, 0u);
-    require(damage.size() == 1u);
+    require(damage.size() == 2u);
     require(damage[0].source_net_id == source);
     require(damage[0].source_peer == 7u);
     require(damage[0].target_net_id == target);
     require(damage[0].damage == 5u);
+    require(damage[1].damage == 2u);
+}
+
+void stack_scales_lifecycle_and_speed_and_keeps_latest_instigator() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    KernelEngine engine(config);
+    World& world = engine.simulation_world();
+    const NetId source1 = world.spawn_player(1u, glm::vec3{0.0f});
+    const NetId source2 = world.spawn_player(2u, glm::vec3{0.0f});
+    const NetId source3 = world.spawn_player(3u, glm::vec3{0.0f});
+    const NetId target = world.spawn_enemy(glm::vec3{0.0f});
+    const entt::entity target_entity = *world.find_entity(target);
+    MovementState& movement =
+        world.registry().get_or_emplace<MovementState>(target_entity);
+    movement.base_speed_meters_per_second = 10.0f;
+    movement.speed_meters_per_second = 10.0f;
+
+    RuntimeStatusEffectTemplate status;
+    status.status_effect_id = 1001u;
+    status.channel_id = 1u;
+    status.duration_ticks = 10u;
+    status.interval_ticks = 1u;
+    status.replacement_policy = KernelStatusEffectReplacementPolicy_Stack;
+    status.max_stacks = 3u;
+    status.refresh_on_stack = false;
+    status.on_apply_binding = speed_on_apply_binding(0.0f, 2.0f);
+    status.on_tick_binding =
+        lifecycle_damage_binding(EntityRefSource::kEventSubject);
+    status.on_expire_binding =
+        lifecycle_damage_binding(EntityRefSource::kEventSubject);
+    status.on_expire_binding->event_type = TriggerEventType::kStatusExpired;
+    RuntimeStatusEffectTemplate multiplier_status = status;
+    multiplier_status.status_effect_id = 1002u;
+    multiplier_status.channel_id = 2u;
+    multiplier_status.max_stacks = 2u;
+    multiplier_status.interval_ticks = 0u;
+    multiplier_status.on_apply_binding = speed_on_apply_binding(1.0f, 0.5f);
+    multiplier_status.on_tick_binding.reset();
+    world.set_status_effect_templates({status, multiplier_status});
+
+    require(apply_status(engine, source1, target, 1001u, 1u));
+    StatusEffectState& state =
+        world.registry().get<StatusEffectState>(target_entity);
+    const std::uint32_t instance_id = state.active[0].instance_id;
+    const std::uint32_t applied_tick = state.active[0].applied_tick;
+    const std::uint32_t expire_tick = state.active[0].expire_tick;
+    const std::uint32_t next_tick = state.active[0].next_tick;
+    require(state.active[0].stack_count == 1u);
+    require(movement.speed_meters_per_second == 12.0f);
+
+    require(apply_status(engine, source2, target, 1001u, 2u));
+    require(state.active[0].instance_id == instance_id);
+    require(state.active[0].stack_count == 2u);
+    require(state.active[0].applied_tick == applied_tick);
+    require(state.active[0].expire_tick == expire_tick);
+    require(state.active[0].next_tick == next_tick);
+    require(movement.speed_meters_per_second == 14.0f);
+
+    require(apply_status(engine, source3, target, 1001u, 3u));
+    require(state.active[0].stack_count == 3u);
+    require(state.active[0].source == source3);
+    require(state.active[0].source_peer == 3u);
+    require(movement.speed_meters_per_second == 16.0f);
+    const std::uint32_t revision_at_max = state.revision;
+    require(apply_status(engine, source1, target, 1001u, 4u));
+    require(state.revision == revision_at_max);
+    require(state.active[0].source == source3);
+
+    KernelStatusEffectView view{};
+    require(engine.query_status_effects(target, &view, 1u) == 1u);
+    require(view.stack_count == 3u);
+    require(view.max_stacks == 3u);
+
+    state.active[0].next_tick = 0u;
+    require(world.destroy(source3));
+    simulate_status_effects(engine, 0u);
+    const std::vector<ConfirmedDamage> damage =
+        engine.damage_pipeline().drain_ready_damage(world, 0u);
+    require(damage.size() == 2u);
+    require(damage[0].damage == 15u);
+    require(damage[1].damage == 6u);
+    require(damage[0].source_net_id == source3);
+    require(damage[0].source_peer == 3u);
+
+    state.active[0].expire_tick = 0u;
+    simulate_status_effects(engine, 0u);
+    const std::vector<ConfirmedDamage> expire_damage =
+        engine.damage_pipeline().drain_ready_damage(world, 0u);
+    require(expire_damage.size() == 2u);
+    require(expire_damage[0].damage == 15u);
+    require(expire_damage[1].damage == 6u);
+    require(state.active.empty());
+    require(state.speed_modifiers.empty());
+    require(world.registry()
+                .get<MovementState>(target_entity)
+                .speed_meters_per_second == 10.0f);
+
+    const NetId multiplier_target = world.spawn_enemy(glm::vec3{0.0f});
+    MovementState& multiplier_movement =
+        world.registry().get_or_emplace<MovementState>(
+            *world.find_entity(multiplier_target));
+    multiplier_movement.base_speed_meters_per_second = 10.0f;
+    multiplier_movement.speed_meters_per_second = 10.0f;
+    require(apply_status(
+        engine, source1, multiplier_target, 1002u, 10u));
+    require(multiplier_movement.speed_meters_per_second == 5.0f);
+    require(apply_status(
+        engine, source2, multiplier_target, 1002u, 11u));
+    require(multiplier_movement.speed_meters_per_second == 2.5f);
+}
+
+void refresh_preserves_instance_stack_and_tick_cadence() {
+    KernelEngine engine(KernelConfig{});
+    World& world = engine.simulation_world();
+    const NetId source1 = world.spawn_player(1u, glm::vec3{0.0f});
+    const NetId source2 = world.spawn_player(2u, glm::vec3{0.0f});
+    const NetId target = world.spawn_enemy(glm::vec3{0.0f});
+    RuntimeStatusEffectTemplate status;
+    status.status_effect_id = 1001u;
+    status.channel_id = 1u;
+    status.duration_ticks = 10u;
+    status.interval_ticks = 2u;
+    status.replacement_policy = KernelStatusEffectReplacementPolicy_Refresh;
+    RuntimeStatusEffectTemplate stack_status = status;
+    stack_status.status_effect_id = 1002u;
+    stack_status.channel_id = 2u;
+    stack_status.replacement_policy =
+        KernelStatusEffectReplacementPolicy_Stack;
+    stack_status.max_stacks = 2u;
+    stack_status.refresh_on_stack = true;
+    world.set_status_effect_templates({status, stack_status});
+
+    require(apply_status(engine, source1, target, 1001u, 1u));
+    StatusEffectState& state = world.registry().get<StatusEffectState>(
+        *world.find_entity(target));
+    const ActiveStatusEffect before = state.active[0];
+    state.active[0].expire_tick = 1u;
+    const std::uint32_t revision = state.revision;
+    require(apply_status(engine, source2, target, 1001u, 2u));
+    require(state.revision == revision + 1u);
+    require(state.active[0].instance_id == before.instance_id);
+    require(state.active[0].applied_tick == before.applied_tick);
+    require(state.active[0].next_tick == before.next_tick);
+    require(state.active[0].stack_count == before.stack_count);
+    require(state.active[0].expire_tick == 10u);
+    require(state.active[0].source == source2);
+    require(state.active[0].source_peer == 2u);
+
+    const NetId stack_target = world.spawn_enemy(glm::vec3{0.0f});
+    require(apply_status(engine, source1, stack_target, 1002u, 3u));
+    require(apply_status(engine, source2, stack_target, 1002u, 4u));
+    StatusEffectState& stack_state = world.registry().get<StatusEffectState>(
+        *world.find_entity(stack_target));
+    stack_state.active[0].expire_tick = 1u;
+    const std::uint32_t stack_next_tick = stack_state.active[0].next_tick;
+    const std::uint32_t stack_revision = stack_state.revision;
+    require(apply_status(engine, source1, stack_target, 1002u, 5u));
+    require(stack_state.revision == stack_revision + 1u);
+    require(stack_state.active[0].stack_count == 2u);
+    require(stack_state.active[0].expire_tick == 10u);
+    require(stack_state.active[0].next_tick == stack_next_tick);
+    require(stack_state.active[0].source == source1);
 }
 
 }  // namespace
@@ -328,5 +508,7 @@ int main() {
     status_capacity_and_same_channel_replacement_are_atomic();
     failed_lifecycle_prepare_leaves_status_state_unchanged();
     tick_keeps_instigator_attribution_after_despawn();
+    stack_scales_lifecycle_and_speed_and_keeps_latest_instigator();
+    refresh_preserves_instance_stack_and_tick_cadence();
     return 0;
 }

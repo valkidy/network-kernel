@@ -18,6 +18,7 @@ int main() {
             3u,
             80u,
             120u + index,
+            static_cast<std::uint16_t>(1u + index),
         });
     }
     const std::vector<std::uint8_t> encoded =
@@ -31,6 +32,7 @@ int main() {
     assert(decoded.revision == packet.revision);
     assert(decoded.records.size() == kMaxActiveStatusEffects);
     assert(decoded.records.back().status_instance_id == 2031u);
+    assert(decoded.records.back().stack_count == 32u);
 
     packet.records.push_back(StatusEffectStateRecord{
         2000u, 3000u, 3u, 80u, 140u});
@@ -60,5 +62,16 @@ int main() {
     assert(decode_status_effect_state_packet(
         empty_bytes.data(), empty_bytes.size(), &decoded));
     assert(decoded.records.empty());
+
+    StatusEffectStatePacket invalid_stack;
+    invalid_stack.server_tick = 12u;
+    invalid_stack.target_net_id = 7u;
+    invalid_stack.revision = 3u;
+    invalid_stack.records = {
+        StatusEffectStateRecord{1u, 6u, 3u, 1u, 2u, 0u},
+    };
+    assert(encode_status_effect_state_packet(invalid_stack).empty());
+    invalid_stack.records[0].stack_count = 33u;
+    assert(encode_status_effect_state_packet(invalid_stack).empty());
     return 0;
 }

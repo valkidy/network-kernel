@@ -240,6 +240,8 @@ struct StatusEffectTemplateConfig {
     std::uint32_t interval_ticks = 0;
     std::uint8_t replacement_policy =
         KernelStatusEffectReplacementPolicy_Replace;
+    std::uint16_t max_stacks = 1u;
+    bool refresh_on_stack = false;
     TriggerBindingConfig on_apply_trigger;
     TriggerBindingConfig on_tick_trigger;
     TriggerBindingConfig on_expire_trigger;

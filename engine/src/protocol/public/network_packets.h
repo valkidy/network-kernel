@@ -78,6 +78,7 @@ struct StatusEffectStateRecord {
     NetId instigator_net_id = 0;
     std::uint32_t applied_tick = 0;
     std::uint32_t expire_tick = 0;
+    std::uint16_t stack_count = 1u;
 };
 
 struct StatusEffectStatePacket {

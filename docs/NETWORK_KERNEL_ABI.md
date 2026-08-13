@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 66u`.
+`KERNEL_ABI_VERSION == 73u`.
 
 ## Ownership
 
@@ -30,6 +30,19 @@ failures return `NULL`, `false`, or `0`.
 Additive changes must prefer new `Kernel_*` functions or new capability flags.
 Breaking changes to public struct layout, enum semantics, buffer ownership, or
 function signatures require a `KERNEL_ABI_VERSION` bump.
+
+ABI version 73 extends status-effect reapplication with `refresh` and `stack`
+replacement policies. Stack authoring appends `max_stacks` and
+`refresh_on_stack` to `KernelStatusEffectDefinition`; status queries and remote
+presentation append stack counts, and `StatusUpdated` represents an in-place
+stack, expiry, or attribution change. Packet schema 24 appends stack count to
+the reliable full-state record and best-effort remote status event. Snapshot
+schema remains 17.
+
+ABI version 72 introduced the authoritative status lifecycle, stored
+instigator attribution, reliable owner full-state query/synchronization, and
+best-effort remote applied/removed events. Packet schema 23 added the dedicated
+status state packet without changing snapshot schema 17.
 
 ABI version 61 replaces the specialized actor, projectile, item, and entity
 template fields in `RenderEntityState` with one `template_id`. Its namespace is

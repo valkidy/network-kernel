@@ -6,8 +6,20 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 72u,
-    "authoritative status state ABI");
+    KERNEL_ABI_VERSION == 73u,
+    "status stack and refresh ABI");
+_Static_assert(
+    offsetof(KernelStatusEffectDefinition, max_stacks) >
+        offsetof(KernelStatusEffectDefinition, on_expire_trigger),
+    "status stack authoring fields are appended");
+_Static_assert(
+    offsetof(KernelStatusEffectView, stack_count) >
+        offsetof(KernelStatusEffectView, expire_tick),
+    "status stack query fields are appended");
+_Static_assert(
+    offsetof(KernelRemoteActionPresentationEvent, stack_count) >
+        offsetof(KernelRemoteActionPresentationEvent, duration_ticks),
+    "status stack presentation fields are appended");
 _Static_assert(
     offsetof(KernelMovementDefinition, movement_collision_mask) >
         offsetof(KernelMovementDefinition, max_yaw_degrees_per_second),

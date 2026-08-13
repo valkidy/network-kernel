@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <optional>
 #include <tuple>
 #include <unordered_map>
@@ -25,6 +26,7 @@ bool execute_status_lifecycle_trigger(
     NetId source,
     PeerId source_peer,
     std::uint32_t status_instance_id,
+    std::uint16_t stack_count,
     TriggerEventType event_type,
     const std::optional<CompiledActionGraphBinding>& binding,
     std::uint64_t server_time_us);
@@ -47,7 +49,8 @@ std::uint64_t action_trigger_request_id(
     TriggerEventType event_type,
     NetId subject,
     NetId related_entity,
-    std::uint32_t sequence) {
+    std::uint32_t sequence,
+    std::uint32_t discriminator = 0u) {
     std::uint64_t hash = 1469598103934665603ull;
     const auto mix = [&hash](std::uint32_t value) {
         hash ^= value;
@@ -57,6 +60,7 @@ std::uint64_t action_trigger_request_id(
     mix(subject);
     mix(related_entity);
     mix(sequence);
+    mix(discriminator);
     mix(static_cast<std::uint32_t>(event_type));
     return hash;
 }
@@ -168,11 +172,12 @@ bool prepare_status_lifecycle_trigger(
     NetId source,
     PeerId source_peer,
     std::uint32_t status_instance_id,
+    std::uint16_t stack_count,
     TriggerEventType event_type,
     const std::optional<CompiledActionGraphBinding>& binding,
     PreparedStatusLifecycle* out_prepared) {
     if (out_prepared == nullptr || target == 0u || source == 0u ||
-        status_instance_id == 0u) {
+        status_instance_id == 0u || stack_count == 0u || stack_count > 32u) {
         return false;
     }
     out_prepared->batch.reset();
@@ -186,7 +191,12 @@ bool prepare_status_lifecycle_trigger(
     event.target = target;
     ActionExecutionProvenance provenance;
     provenance.request_id = action_trigger_request_id(
-        engine.current_tick(), event_type, target, source, status_instance_id);
+        engine.current_tick(),
+        event_type,
+        target,
+        source,
+        status_instance_id,
+        stack_count);
     provenance.action_instance_id = status_instance_id;
     provenance.status_instance_id = status_instance_id;
     provenance.server_tick = engine.current_tick();
@@ -239,6 +249,41 @@ bool prepare_status_lifecycle_trigger(
                     !world.registry().all_of<NetworkIdentity>(*entity);
             }),
         batch.commands.end());
+    const bool scale_amount =
+        event_type == TriggerEventType::kStatusTick ||
+        event_type == TriggerEventType::kStatusExpired;
+    for (ActionGraphCommand& command : batch.commands) {
+        if (auto* damage = std::get_if<ActionApplyDamageCommand>(&command);
+            damage != nullptr && scale_amount) {
+            const std::uint32_t scaled =
+                static_cast<std::uint32_t>(damage->amount) * stack_count;
+            if (scaled > UINT16_MAX) {
+                return false;
+            }
+            damage->amount = static_cast<std::uint16_t>(scaled);
+        } else if (auto* health =
+                       std::get_if<ActionApplyHealthChangeCommand>(&command);
+                   health != nullptr && scale_amount) {
+            const std::int64_t scaled =
+                static_cast<std::int64_t>(health->amount) * stack_count;
+            if (scaled < INT32_MIN || scaled > INT32_MAX) {
+                return false;
+            }
+            health->amount = static_cast<std::int32_t>(scaled);
+        } else if (auto* modifier =
+                       std::get_if<ActionApplySpeedModifierCommand>(&command)) {
+            const double scaled =
+                modifier->operation == KernelStatModifierOperation_Additive
+                    ? static_cast<double>(modifier->value) * stack_count
+                    : std::pow(
+                          static_cast<double>(modifier->value), stack_count);
+            if (!std::isfinite(scaled) ||
+                std::abs(scaled) > std::numeric_limits<float>::max()) {
+                return false;
+            }
+            modifier->value = static_cast<float>(scaled);
+        }
+    }
     for (const ActionGraphCommand& command : batch.commands) {
         if (!std::holds_alternative<ActionApplyDamageCommand>(command) &&
             !std::holds_alternative<ActionApplyHealthChangeCommand>(command) &&
@@ -400,6 +445,53 @@ bool execute_action_graph_commands(
             }
             const StatusEffectState* state =
                 world.registry().try_get<StatusEffectState>(*target);
+            const ActiveStatusEffect* same_status = nullptr;
+            if (state != nullptr) {
+                const auto found = std::find_if(
+                    state->active.begin(),
+                    state->active.end(),
+                    [&](const ActiveStatusEffect& active) {
+                        return active.channel_id == status_template->channel_id &&
+                            active.status_effect_id ==
+                                status_template->status_effect_id;
+                    });
+                same_status = found == state->active.end() ? nullptr : &*found;
+            }
+            PeerId source_peer = apply_status->provenance.owner_peer;
+            const std::optional<entt::entity> source_entity =
+                world.find_entity(apply_status->source);
+            if (source_entity.has_value() &&
+                world.registry().all_of<NetworkIdentity>(*source_entity)) {
+                source_peer =
+                    world.registry().get<NetworkIdentity>(*source_entity).owner_peer;
+            }
+            if (same_status != nullptr &&
+                status_template->replacement_policy ==
+                    KernelStatusEffectReplacementPolicy_Refresh) {
+                continue;
+            }
+            if (same_status != nullptr &&
+                status_template->replacement_policy ==
+                    KernelStatusEffectReplacementPolicy_Stack) {
+                if (same_status->stack_count >= status_template->max_stacks) {
+                    continue;
+                }
+                PreparedStatusLifecycle prepared_stack;
+                if (!prepare_status_lifecycle_trigger(
+                        engine,
+                        apply_status->target,
+                        apply_status->source,
+                        source_peer,
+                        same_status->instance_id,
+                        static_cast<std::uint16_t>(
+                            same_status->stack_count + 1u),
+                        TriggerEventType::kStatusApplied,
+                        status_template->on_apply_binding,
+                        &prepared_stack)) {
+                    return false;
+                }
+                continue;
+            }
             if (state != nullptr) {
                 for (const ActiveStatusEffect& active : state->active) {
                     if (active.channel_id != status_template->channel_id) {
@@ -415,20 +507,13 @@ bool execute_action_graph_commands(
                             active.source,
                             active.source_peer,
                             active.instance_id,
+                            active.stack_count,
                             TriggerEventType::kStatusExpired,
                             old_template->on_expire_binding,
                             &prepared)) {
                         return false;
                     }
                 }
-            }
-            PeerId source_peer = apply_status->provenance.owner_peer;
-            const std::optional<entt::entity> source_entity =
-                world.find_entity(apply_status->source);
-            if (source_entity.has_value() &&
-                world.registry().all_of<NetworkIdentity>(*source_entity)) {
-                source_peer =
-                    world.registry().get<NetworkIdentity>(*source_entity).owner_peer;
             }
             PreparedStatusLifecycle prepared_apply;
             if (!prepare_status_lifecycle_trigger(
@@ -437,6 +522,7 @@ bool execute_action_graph_commands(
                     apply_status->source,
                     source_peer,
                     UINT32_MAX,
+                    1u,
                     TriggerEventType::kStatusApplied,
                     status_template->on_apply_binding,
                     &prepared_apply)) {
@@ -469,6 +555,7 @@ bool execute_action_graph_commands(
                             active.source,
                             active.source_peer,
                             active.instance_id,
+                            active.stack_count,
                             TriggerEventType::kStatusExpired,
                             status_template->on_expire_binding,
                             &prepared)) {
@@ -614,6 +701,102 @@ bool execute_action_graph_commands(
             if (status_template == nullptr) {
                 return false;
             }
+            PeerId source_peer = apply_status->provenance.owner_peer;
+            const std::optional<entt::entity> source_entity =
+                world.find_entity(apply_status->source);
+            if (source_entity.has_value() &&
+                world.registry().all_of<NetworkIdentity>(*source_entity)) {
+                source_peer =
+                    world.registry().get<NetworkIdentity>(*source_entity).owner_peer;
+            }
+            auto same_status = std::find_if(
+                status_state.active.begin(),
+                status_state.active.end(),
+                [&](const ActiveStatusEffect& active) {
+                    return active.channel_id == status_template->channel_id &&
+                        active.status_effect_id ==
+                            status_template->status_effect_id;
+                });
+            if (same_status != status_state.active.end() &&
+                status_template->replacement_policy ==
+                    KernelStatusEffectReplacementPolicy_Refresh) {
+                same_status->source = apply_status->source;
+                same_status->source_peer = source_peer;
+                same_status->expire_tick =
+                    engine.current_tick() + status_template->duration_ticks;
+                advance_status_revision(status_state);
+                engine.queue_status_effect_presentation(
+                    apply_status->target,
+                    same_status->status_effect_id,
+                    same_status->instance_id,
+                    KernelRemoteActionPresentationEventType_StatusUpdated,
+                    same_status->stack_count);
+                engine.publish_status_effect_state(apply_status->target);
+                continue;
+            }
+            if (same_status != status_state.active.end() &&
+                status_template->replacement_policy ==
+                    KernelStatusEffectReplacementPolicy_Stack) {
+                if (same_status->stack_count >= status_template->max_stacks) {
+                    if (!status_template->refresh_on_stack) {
+                        continue;
+                    }
+                    same_status->source = apply_status->source;
+                    same_status->source_peer = source_peer;
+                    same_status->expire_tick =
+                        engine.current_tick() + status_template->duration_ticks;
+                    advance_status_revision(status_state);
+                    engine.queue_status_effect_presentation(
+                        apply_status->target,
+                        same_status->status_effect_id,
+                        same_status->instance_id,
+                        KernelRemoteActionPresentationEventType_StatusUpdated,
+                        same_status->stack_count);
+                    engine.publish_status_effect_state(apply_status->target);
+                    continue;
+                }
+                const std::uint16_t next_stack_count =
+                    static_cast<std::uint16_t>(same_status->stack_count + 1u);
+                PreparedStatusLifecycle prepared_stack;
+                if (!prepare_status_lifecycle_trigger(
+                        engine,
+                        apply_status->target,
+                        apply_status->source,
+                        source_peer,
+                        same_status->instance_id,
+                        next_stack_count,
+                        TriggerEventType::kStatusApplied,
+                        status_template->on_apply_binding,
+                        &prepared_stack)) {
+                    return false;
+                }
+                same_status->source = apply_status->source;
+                same_status->source_peer = source_peer;
+                same_status->stack_count = next_stack_count;
+                if (status_template->refresh_on_stack) {
+                    same_status->expire_tick =
+                        engine.current_tick() + status_template->duration_ticks;
+                }
+                if (prepared_stack.batch.has_value() &&
+                    !execute_action_graph_commands(
+                        engine,
+                        world,
+                        damage_pipeline,
+                        entity_templates,
+                        *prepared_stack.batch,
+                        server_time_us)) {
+                    return false;
+                }
+                advance_status_revision(status_state);
+                engine.queue_status_effect_presentation(
+                    apply_status->target,
+                    same_status->status_effect_id,
+                    same_status->instance_id,
+                    KernelRemoteActionPresentationEventType_StatusUpdated,
+                    same_status->stack_count);
+                engine.publish_status_effect_state(apply_status->target);
+                continue;
+            }
             std::vector<ActiveStatusEffect> replaced;
             for (const ActiveStatusEffect& old_status : status_state.active) {
                 if (old_status.channel_id == status_template->channel_id) {
@@ -638,6 +821,7 @@ bool execute_action_graph_commands(
                         old_status.source,
                         old_status.source_peer,
                         old_status.instance_id,
+                        old_status.stack_count,
                         TriggerEventType::kStatusExpired,
                         old_template->on_expire_binding,
                         &prepared_expire[replaced_index])) {
@@ -646,14 +830,6 @@ bool execute_action_graph_commands(
             }
             const std::uint32_t applied_tick = engine.current_tick();
             const std::uint32_t instance_id = world.allocate_status_instance_id();
-            PeerId source_peer = apply_status->provenance.owner_peer;
-            const std::optional<entt::entity> source_entity =
-                world.find_entity(apply_status->source);
-            if (source_entity.has_value() &&
-                world.registry().all_of<NetworkIdentity>(*source_entity)) {
-                source_peer =
-                    world.registry().get<NetworkIdentity>(*source_entity).owner_peer;
-            }
             const ActiveStatusEffect active{
                 instance_id,
                 status_template->status_effect_id,
@@ -665,6 +841,7 @@ bool execute_action_graph_commands(
                 status_template->interval_ticks == 0u
                     ? 0u
                     : applied_tick + status_template->interval_ticks,
+                1u,
             };
             PreparedStatusLifecycle prepared_apply;
             if (!prepare_status_lifecycle_trigger(
@@ -673,6 +850,7 @@ bool execute_action_graph_commands(
                     apply_status->source,
                     source_peer,
                     instance_id,
+                    1u,
                     TriggerEventType::kStatusApplied,
                     status_template->on_apply_binding,
                     &prepared_apply)) {
@@ -732,13 +910,15 @@ bool execute_action_graph_commands(
                     apply_status->target,
                     old_status.status_effect_id,
                     old_status.instance_id,
-                    KernelRemoteActionPresentationEventType_StatusRemoved);
+                    KernelRemoteActionPresentationEventType_StatusRemoved,
+                    old_status.stack_count);
             }
             engine.queue_status_effect_presentation(
                 apply_status->target,
                 active.status_effect_id,
                 active.instance_id,
-                KernelRemoteActionPresentationEventType_StatusApplied);
+                KernelRemoteActionPresentationEventType_StatusApplied,
+                active.stack_count);
             engine.publish_status_effect_state(apply_status->target);
             continue;
         }
@@ -770,6 +950,7 @@ bool execute_action_graph_commands(
                         active.source,
                         active.source_peer,
                         active.instance_id,
+                        active.stack_count,
                         TriggerEventType::kStatusExpired,
                         status_template->on_expire_binding,
                         &prepared_expire[removed_index])) {
@@ -817,7 +998,8 @@ bool execute_action_graph_commands(
                     remove_status->target,
                     active.status_effect_id,
                     active.instance_id,
-                    KernelRemoteActionPresentationEventType_StatusRemoved);
+                    KernelRemoteActionPresentationEventType_StatusRemoved,
+                    active.stack_count);
             }
             engine.publish_status_effect_state(remove_status->target);
             continue;
@@ -1112,6 +1294,7 @@ bool execute_status_lifecycle_trigger(
     NetId source,
     PeerId source_peer,
     std::uint32_t status_instance_id,
+    std::uint16_t stack_count,
     TriggerEventType event_type,
     const std::optional<CompiledActionGraphBinding>& binding,
     std::uint64_t server_time_us) {
@@ -1122,6 +1305,7 @@ bool execute_status_lifecycle_trigger(
             source,
             source_peer,
             status_instance_id,
+            stack_count,
             event_type,
             binding,
             &prepared)) {
@@ -1180,7 +1364,8 @@ void simulate_status_effects(KernelEngine& engine, std::uint64_t server_time_us)
                     target_id,
                     active.status_effect_id,
                     active.instance_id,
-                    KernelRemoteActionPresentationEventType_StatusRemoved);
+                    KernelRemoteActionPresentationEventType_StatusRemoved,
+                    active.stack_count);
                 continue;
             }
             if (current_tick >= active.expire_tick) {
@@ -1191,6 +1376,7 @@ void simulate_status_effects(KernelEngine& engine, std::uint64_t server_time_us)
                         active.source,
                         active.source_peer,
                         active.instance_id,
+                        active.stack_count,
                         TriggerEventType::kStatusExpired,
                         status_template->on_expire_binding,
                         &prepared_expire)) {
@@ -1222,7 +1408,8 @@ void simulate_status_effects(KernelEngine& engine, std::uint64_t server_time_us)
                     target_id,
                     active.status_effect_id,
                     active.instance_id,
-                    KernelRemoteActionPresentationEventType_StatusRemoved);
+                    KernelRemoteActionPresentationEventType_StatusRemoved,
+                    active.stack_count);
                 continue;
             }
             if (status_template->interval_ticks != 0u &&
@@ -1233,6 +1420,7 @@ void simulate_status_effects(KernelEngine& engine, std::uint64_t server_time_us)
                         active.source,
                         active.source_peer,
                         active.instance_id,
+                        active.stack_count,
                         TriggerEventType::kStatusTick,
                         status_template->on_tick_binding,
                         server_time_us)) {

@@ -46,7 +46,7 @@ constexpr std::uint32_t kDefaultRemotePresentationClientBudgetBytesPerSecond = 8
 constexpr std::uint32_t kDefaultRemotePresentationServerBudgetBytesPerSecond = 262144;
 constexpr std::size_t kActionBatchFixedBytes = 36;
 constexpr std::size_t kLocalActionResultRecordBytes = 12;
-constexpr std::size_t kRemotePresentationRecordBytes = 28;
+constexpr std::size_t kRemotePresentationRecordBytes = 32;
 constexpr std::size_t kRemotePresentationDedupCapacity = 256;
 constexpr std::size_t kRecentActionResultCapacity = 256;
 constexpr std::size_t kMaxPendingClientActionIntents = 32;
@@ -2498,14 +2498,66 @@ bool KernelEngine::load_gameplay_catalog(
         };
     for (std::uint32_t index = 0; index < catalog.status_effect_count; ++index) {
         const KernelStatusEffectDefinition& status = catalog.status_effects[index];
+        const bool is_stack = status.replacement_policy ==
+            KernelStatusEffectReplacementPolicy_Stack;
         if (status.struct_size < sizeof(KernelStatusEffectDefinition) ||
             status.status_effect_id == 0u || status.channel_id == 0u ||
             status.duration_ticks == 0u ||
             status.interval_ticks > status.duration_ticks ||
-            status.replacement_policy != KernelStatusEffectReplacementPolicy_Replace ||
+            status.replacement_policy >
+                KernelStatusEffectReplacementPolicy_Stack ||
+            (is_stack &&
+             (status.max_stacks < 2u || status.max_stacks > 32u ||
+              status.refresh_on_stack > 1u)) ||
+            (!is_stack &&
+             (status.max_stacks != 0u || status.refresh_on_stack != 0u)) ||
+            status.reserved0 != 0u || status.reserved1 != 0u ||
+            status.reserved2 != 0u ||
             status_id_in_use(status.status_effect_id)) {
             return false;
         }
+        const std::uint32_t stack_scale = is_stack ? status.max_stacks : 1u;
+        const auto validate_scaled_action =
+            [&](std::uint8_t action_type,
+                std::uint16_t damage_amount,
+                std::int32_t health_change_amount,
+                std::uint8_t modifier_operation,
+                float modifier_value,
+                bool scale_amount) {
+                if (scale_amount &&
+                    action_type ==
+                        KernelEntityTriggerActionType_ApplyDamage &&
+                    static_cast<std::uint64_t>(damage_amount) * stack_scale >
+                        UINT16_MAX) {
+                    return false;
+                }
+                if (scale_amount &&
+                    action_type ==
+                        KernelEntityTriggerActionType_ApplyHealthChange) {
+                    const std::int64_t scaled =
+                        static_cast<std::int64_t>(health_change_amount) *
+                        stack_scale;
+                    if (scaled < INT32_MIN || scaled > INT32_MAX) {
+                        return false;
+                    }
+                }
+                if (action_type ==
+                    KernelEntityTriggerActionType_ApplySpeedModifier) {
+                    const double scaled =
+                        modifier_operation ==
+                                KernelStatModifierOperation_Additive
+                            ? static_cast<double>(modifier_value) * stack_scale
+                            : std::pow(
+                                  static_cast<double>(modifier_value),
+                                  stack_scale);
+                    if (!std::isfinite(scaled) ||
+                        std::abs(scaled) >
+                            std::numeric_limits<float>::max()) {
+                        return false;
+                    }
+                }
+                return true;
+            };
         const auto validate_status_trigger = [&](const KernelActionTriggerDefinition& trigger,
                                                  TriggerEventType event_type,
                                                  bool allow_speed_modifier) {
@@ -2529,6 +2581,19 @@ bool KernelEngine::load_gameplay_catalog(
             }
             const std::uint32_t action_count = std::min<std::uint32_t>(
                 trigger.action_count, KERNEL_MAX_ACTION_GRAPH_ACTIONS);
+            const bool scale_amount =
+                event_type == TriggerEventType::kStatusTick ||
+                event_type == TriggerEventType::kStatusExpired;
+            if (trigger.action_count == 0u &&
+                !validate_scaled_action(
+                    trigger.action_type,
+                    trigger.damage_amount,
+                    trigger.health_change_amount,
+                    trigger.modifier_operation,
+                    trigger.modifier_value,
+                    scale_amount)) {
+                return false;
+            }
             if (trigger.action_count == 0u &&
                 trigger.action_type ==
                     KernelEntityTriggerActionType_ApplySpeedModifier &&
@@ -2540,6 +2605,15 @@ bool KernelEngine::load_gameplay_catalog(
                  action_index < action_count;
                  ++action_index) {
                 const KernelActionDefinition& action = trigger.actions[action_index];
+                if (!validate_scaled_action(
+                        action.action_type,
+                        action.damage_amount,
+                        action.health_change_amount,
+                        action.modifier_operation,
+                        action.modifier_value,
+                        scale_amount)) {
+                    return false;
+                }
                 if (action.action_type ==
                         KernelEntityTriggerActionType_ApplySpeedModifier &&
                     action.target_source != KernelEntityRefSource_Self &&
@@ -3246,6 +3320,12 @@ bool KernelEngine::load_gameplay_catalog(
         runtime_status.duration_ticks = status.duration_ticks;
         runtime_status.interval_ticks = status.interval_ticks;
         runtime_status.replacement_policy = status.replacement_policy;
+        runtime_status.max_stacks =
+            status.replacement_policy ==
+                    KernelStatusEffectReplacementPolicy_Stack
+                ? status.max_stacks
+                : 1u;
+        runtime_status.refresh_on_stack = status.refresh_on_stack != 0u;
         if (status.on_apply_trigger.struct_size != 0u) {
             runtime_status.on_apply_binding = compile_action_trigger_definition(
                 TriggerEventType::kStatusApplied, status.on_apply_trigger);
@@ -3495,6 +3575,11 @@ std::uint32_t KernelEngine::query_status_effects(
                 active.source,
                 active.applied_tick,
                 active.expire_tick,
+                active.stack_count,
+                static_cast<std::uint16_t>(
+                    world_.find_status_effect_template(active.status_effect_id) != nullptr
+                        ? world_.find_status_effect_template(active.status_effect_id)->max_stacks
+                        : 1u),
             };
         }
     }
@@ -5549,6 +5634,8 @@ void KernelEngine::handle_client_status_effect_state(
         const RuntimeStatusEffectTemplate* status_template =
             world_.find_status_effect_template(record.status_effect_id);
         if (status_template == nullptr || status_template->channel_id == 0u ||
+            record.stack_count == 0u ||
+            record.stack_count > status_template->max_stacks ||
             !channels.insert(status_template->channel_id).second) {
             return;
         }
@@ -5561,6 +5648,7 @@ void KernelEngine::handle_client_status_effect_state(
             record.applied_tick,
             record.expire_tick,
             0u,
+            record.stack_count,
         });
     }
     const StatusEffectState empty;
@@ -5588,6 +5676,8 @@ void KernelEngine::handle_client_status_effect_state(
                 active.instance_id,
                 active.channel_id,
                 status_template->duration_ticks,
+                active.stack_count,
+                0u,
             });
     };
     for (const ActiveStatusEffect& active : old.active) {
@@ -5602,14 +5692,20 @@ void KernelEngine::handle_client_status_effect_state(
         }
     }
     for (const ActiveStatusEffect& active : next.active) {
-        if (std::none_of(
-                old.active.begin(),
-                old.active.end(),
-                [&](const ActiveStatusEffect& candidate) {
-                    return candidate.instance_id == active.instance_id;
-                })) {
+        const auto previous = std::find_if(
+            old.active.begin(),
+            old.active.end(),
+            [&](const ActiveStatusEffect& candidate) {
+                return candidate.instance_id == active.instance_id;
+            });
+        if (previous == old.active.end()) {
             emit_transition(
                 active, KernelRemoteActionPresentationEventType_StatusApplied);
+        } else if (previous->stack_count != active.stack_count ||
+                   previous->expire_tick != active.expire_tick ||
+                   previous->source != active.source) {
+            emit_transition(
+                active, KernelRemoteActionPresentationEventType_StatusUpdated);
         }
     }
     client_status_effect_states_[packet.target_net_id] = std::move(next);
@@ -5979,14 +6075,18 @@ void KernelEngine::handle_client_remote_action_presentation(
         remote_presentation_dedup_.end());
 
     for (KernelRemoteActionPresentationEvent event : packet.records) {
+        const RuntimeStatusEffectTemplate* status_template = nullptr;
         const bool status_transition =
             event.event_type == KernelRemoteActionPresentationEventType_StatusApplied ||
-            event.event_type == KernelRemoteActionPresentationEventType_StatusRemoved;
+            event.event_type == KernelRemoteActionPresentationEventType_StatusRemoved ||
+            event.event_type == KernelRemoteActionPresentationEventType_StatusUpdated;
         if (status_transition) {
-            const RuntimeStatusEffectTemplate* status_template =
+            status_template =
                 world_.find_status_effect_template(event.status_effect_id);
             if (status_template == nullptr || status_template->channel_id == 0u ||
-                status_template->duration_ticks == 0u) {
+                status_template->duration_ticks == 0u ||
+                event.stack_count == 0u ||
+                event.stack_count > status_template->max_stacks) {
                 continue;
             }
             event.status_channel_id = status_template->channel_id;
@@ -6008,7 +6108,17 @@ void KernelEngine::handle_client_remote_action_presentation(
             StatusEffectState& state =
                 client_status_effect_states_[event.actor_net_id];
             if (event.event_type ==
-                KernelRemoteActionPresentationEventType_StatusApplied) {
+                KernelRemoteActionPresentationEventType_StatusRemoved) {
+                state.active.erase(
+                    std::remove_if(
+                        state.active.begin(),
+                        state.active.end(),
+                        [&](const ActiveStatusEffect& active) {
+                            return active.instance_id == event.status_instance_id;
+                        }),
+                    state.active.end());
+            } else if (event.event_type ==
+                       KernelRemoteActionPresentationEventType_StatusApplied) {
                 state.active.erase(
                     std::remove_if(
                         state.active.begin(),
@@ -6028,17 +6138,52 @@ void KernelEngine::handle_client_remote_action_presentation(
                         event_tick,
                         event_tick + event.duration_ticks,
                         0u,
+                        event.stack_count,
                     });
                 }
             } else {
-                state.active.erase(
-                    std::remove_if(
-                        state.active.begin(),
-                        state.active.end(),
-                        [&](const ActiveStatusEffect& active) {
-                            return active.instance_id == event.status_instance_id;
-                        }),
-                    state.active.end());
+                auto active = std::find_if(
+                    state.active.begin(),
+                    state.active.end(),
+                    [&](const ActiveStatusEffect& candidate) {
+                        return candidate.instance_id == event.status_instance_id;
+                    });
+                if (active == state.active.end()) {
+                    state.active.erase(
+                        std::remove_if(
+                            state.active.begin(),
+                            state.active.end(),
+                            [&](const ActiveStatusEffect& candidate) {
+                                return candidate.channel_id ==
+                                    event.status_channel_id;
+                            }),
+                        state.active.end());
+                    if (state.active.size() < kMaxActiveStatusEffects) {
+                        state.active.push_back(ActiveStatusEffect{
+                            event.status_instance_id,
+                            event.status_effect_id,
+                            event.status_channel_id,
+                            0u,
+                            0u,
+                            event_tick,
+                            event_tick + event.duration_ticks,
+                            0u,
+                            event.stack_count,
+                        });
+                    }
+                } else {
+                    active->status_effect_id = event.status_effect_id;
+                    active->channel_id = event.status_channel_id;
+                    active->stack_count = event.stack_count;
+                    if (status_template->replacement_policy ==
+                            KernelStatusEffectReplacementPolicy_Refresh ||
+                        (status_template->replacement_policy ==
+                             KernelStatusEffectReplacementPolicy_Stack &&
+                         status_template->refresh_on_stack)) {
+                        active->expire_tick =
+                            event_tick + event.duration_ticks;
+                    }
+                }
             }
         }
         KernelRemoteActionPresentationEvent unseen_range = event;
@@ -6059,12 +6204,15 @@ void KernelEngine::handle_client_remote_action_presentation(
             const auto found = std::find_if(
                 remote_presentation_dedup_.begin(),
                 remote_presentation_dedup_.end(),
-                [&event, commit_index](const RemotePresentationDedup& entry) {
+                [&event, commit_index, event_tick](
+                    const RemotePresentationDedup& entry) {
                     return entry.actor_net_id == event.actor_net_id &&
                            entry.action_instance_id == event.action_instance_id &&
                            entry.status_instance_id == event.status_instance_id &&
+                           entry.stack_count == event.stack_count &&
                            entry.commit_index == commit_index &&
-                           entry.event_type == event.event_type;
+                           entry.event_type == event.event_type &&
+                           entry.event_tick == event_tick;
                 });
             if (found != remote_presentation_dedup_.end()) {
                 if (network_stats_enabled()) {
@@ -6089,8 +6237,10 @@ void KernelEngine::handle_client_remote_action_presentation(
                 event.actor_net_id,
                 event.action_instance_id,
                 event.status_instance_id,
+                event.stack_count,
                 commit_index,
                 event.event_type,
+                event_tick,
                 event_tick + expiry_ticks,
             });
         }
@@ -6664,6 +6814,8 @@ void KernelEngine::release_remote_action_presentation_events() {
                         status_template == nullptr
                             ? 0u
                             : status_template->duration_ticks,
+                        active.stack_count,
+                        0u,
                     });
                 state.active.erase(state.active.begin() + index);
             }
@@ -11417,11 +11569,14 @@ void KernelEngine::queue_status_effect_presentation(
     NetId target,
     std::uint32_t status_effect_id,
     std::uint32_t status_instance_id,
-    std::uint8_t event_type) {
+    std::uint8_t event_type,
+    std::uint16_t stack_count) {
     if (!is_server_mode(config_.mode) || target == 0u ||
         status_effect_id == 0u || status_instance_id == 0u ||
+        stack_count == 0u || stack_count > 32u ||
         (event_type != KernelRemoteActionPresentationEventType_StatusApplied &&
-         event_type != KernelRemoteActionPresentationEventType_StatusRemoved)) {
+         event_type != KernelRemoteActionPresentationEventType_StatusRemoved &&
+         event_type != KernelRemoteActionPresentationEventType_StatusUpdated)) {
         return;
     }
     queue_server_remote_presentation(KernelRemoteActionPresentationEvent{
@@ -11436,6 +11591,8 @@ void KernelEngine::queue_status_effect_presentation(
         status_effect_id,
         status_instance_id,
         0u,
+        0u,
+        stack_count,
         0u,
     });
 }
@@ -11476,6 +11633,7 @@ void KernelEngine::send_status_effect_state(PeerSession* session, NetId target) 
             active->source,
             active->applied_tick,
             active->expire_tick,
+            active->stack_count,
         });
     }
     if (config_.mode == KernelMode_ListenServer &&

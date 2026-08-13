@@ -3759,10 +3759,17 @@ void action_result_and_remote_presentation_queues_are_isolated() {
         9001u,
         7u,
         30u,
+        1u,
+        0u,
     });
-    client.world_.set_status_effect_templates({
-        network_example::RuntimeStatusEffectTemplate{1001u, 7u, 30u},
-    });
+    network_example::RuntimeStatusEffectTemplate remote_status;
+    remote_status.status_effect_id = 1001u;
+    remote_status.channel_id = 7u;
+    remote_status.duration_ticks = 30u;
+    remote_status.replacement_policy =
+        KernelStatusEffectReplacementPolicy_Stack;
+    remote_status.max_stacks = 3u;
+    client.world_.set_status_effect_templates({remote_status});
     event.payload =
         network_example::encode_remote_action_presentation_batch_packet(
             status_batch,
@@ -3777,10 +3784,30 @@ void action_result_and_remote_presentation_queues_are_isolated() {
     require(remote_events[0].status_instance_id == 9001u);
     require(remote_events[0].status_channel_id == 7u);
     require(remote_events[0].duration_ticks == 30u);
+    require(remote_events[0].stack_count == 1u);
     client.handle_client_remote_action_presentation(event);
     require(client.poll_remote_action_presentation_events(
                 remote_events.data(),
                 static_cast<std::uint32_t>(remote_events.size())) == 0u);
+
+    status_batch.records[0].event_type =
+        KernelRemoteActionPresentationEventType_StatusUpdated;
+    status_batch.records[0].stack_count = 2u;
+    event.payload =
+        network_example::encode_remote_action_presentation_batch_packet(
+            status_batch,
+            7u);
+    client.handle_client_remote_action_presentation(event);
+    require(client.poll_remote_action_presentation_events(
+                remote_events.data(),
+                static_cast<std::uint32_t>(remote_events.size())) == 1u);
+    require(remote_events[0].event_type ==
+            KernelRemoteActionPresentationEventType_StatusUpdated);
+    require(remote_events[0].stack_count == 2u);
+    KernelStatusEffectView status_view{};
+    require(client.query_status_effects(42u, &status_view, 1u) == 1u);
+    require(status_view.stack_count == 2u);
+    require(status_view.max_stacks == 3u);
 }
 
 void owner_action_correction_timeout_and_reset_converge() {
@@ -3873,6 +3900,8 @@ void reliable_local_status_state_replaces_and_rejects_stale_revision() {
     status.status_effect_id = 1001u;
     status.channel_id = 9u;
     status.duration_ticks = 30u;
+    status.replacement_policy = KernelStatusEffectReplacementPolicy_Stack;
+    status.max_stacks = 3u;
     client.world_.set_status_effect_templates({status});
 
     network_example::StatusEffectStatePacket applied;
@@ -3880,7 +3909,7 @@ void reliable_local_status_state_replaces_and_rejects_stale_revision() {
     applied.target_net_id = 42u;
     applied.revision = 2u;
     applied.records.push_back(network_example::StatusEffectStateRecord{
-        1001u, 7001u, 77u, 10u, 40u});
+        1001u, 7001u, 77u, 10u, 40u, 1u});
     client.handle_client_status_effect_state(applied);
     std::array<KernelStatusEffectView, 2> views{};
     require(client.query_status_effects(42u, views.data(), views.size()) == 1u);
@@ -3888,20 +3917,48 @@ void reliable_local_status_state_replaces_and_rejects_stale_revision() {
     require(views[0].status_instance_id == 7001u);
     require(views[0].status_channel_id == 9u);
     require(views[0].instigator_net_id == 77u);
+    require(views[0].stack_count == 1u);
+    require(views[0].max_stacks == 3u);
     std::array<KernelRemoteActionPresentationEvent, 2> events{};
     require(client.poll_remote_action_presentation_events(
                 events.data(), events.size()) == 1u);
     require(events[0].event_type ==
             KernelRemoteActionPresentationEventType_StatusApplied);
+    require(events[0].stack_count == 1u);
+
+    network_example::StatusEffectStatePacket updated = applied;
+    updated.revision = 3u;
+    updated.records[0].instigator_net_id = 88u;
+    updated.records[0].expire_tick = 50u;
+    updated.records[0].stack_count = 2u;
+    client.handle_client_status_effect_state(updated);
+    require(client.query_status_effects(42u, views.data(), views.size()) == 1u);
+    require(views[0].instigator_net_id == 88u);
+    require(views[0].expire_tick == 50u);
+    require(views[0].stack_count == 2u);
+    require(client.poll_remote_action_presentation_events(
+                events.data(), events.size()) == 1u);
+    require(events[0].event_type ==
+            KernelRemoteActionPresentationEventType_StatusUpdated);
+    require(events[0].stack_count == 2u);
 
     network_example::StatusEffectStatePacket stale = applied;
-    stale.revision = 1u;
+    stale.revision = 2u;
     stale.records.clear();
     client.handle_client_status_effect_state(stale);
     require(client.query_status_effects(42u, nullptr, 0u) == 1u);
 
+    network_example::StatusEffectStatePacket invalid = updated;
+    invalid.revision = 4u;
+    invalid.records[0].stack_count = 4u;
+    client.handle_client_status_effect_state(invalid);
+    require(client.query_status_effects(42u, views.data(), views.size()) == 1u);
+    require(views[0].stack_count == 2u);
+    require(client.poll_remote_action_presentation_events(
+                events.data(), events.size()) == 0u);
+
     network_example::StatusEffectStatePacket removed = applied;
-    removed.revision = 3u;
+    removed.revision = 5u;
     removed.records.clear();
     client.handle_client_status_effect_state(removed);
     require(client.query_status_effects(42u, nullptr, 0u) == 0u);

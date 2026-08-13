@@ -1819,7 +1819,8 @@ StatusEffectTemplateConfig status_effect_template_from_yaml(
     reject_unknown_keys(
         node,
         {"id", "name", "kind", "channel", "duration_ticks",
-         "interval_ticks", "replace_policy", "triggers"},
+         "interval_ticks", "replace_policy", "max_stacks",
+         "refresh_on_stack", "triggers"},
         path,
         source_kind,
         KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_UNKNOWN);
@@ -1836,8 +1837,38 @@ StatusEffectTemplateConfig status_effect_template_from_yaml(
     status.channel_id = stable_channel_id(status.channel_name);
     status.duration_ticks = node["duration_ticks"].as<std::uint32_t>();
     status.interval_ticks = node["interval_ticks"].as<std::uint32_t>();
-    if (node["replace_policy"].as<std::string>() != "replace") {
-        throw std::runtime_error("status effect only supports replace policy: " + path);
+    const std::string replacement_policy =
+        node["replace_policy"].as<std::string>();
+    if (replacement_policy == "replace") {
+        status.replacement_policy =
+            KernelStatusEffectReplacementPolicy_Replace;
+    } else if (replacement_policy == "refresh") {
+        status.replacement_policy =
+            KernelStatusEffectReplacementPolicy_Refresh;
+    } else if (replacement_policy == "stack") {
+        status.replacement_policy =
+            KernelStatusEffectReplacementPolicy_Stack;
+    } else {
+        throw std::runtime_error(
+            "status effect replace_policy must be replace, refresh, or stack: " +
+            path);
+    }
+    if (status.replacement_policy ==
+        KernelStatusEffectReplacementPolicy_Stack) {
+        if (!node["max_stacks"] || !node["refresh_on_stack"]) {
+            throw std::runtime_error(
+                "stack status requires max_stacks and refresh_on_stack: " + path);
+        }
+        status.max_stacks = node["max_stacks"].as<std::uint16_t>();
+        status.refresh_on_stack = node["refresh_on_stack"].as<bool>();
+        if (status.max_stacks < 2u || status.max_stacks > 32u) {
+            throw std::runtime_error(
+                "stack status max_stacks must be between 2 and 32: " + path);
+        }
+    } else if (node["max_stacks"] || node["refresh_on_stack"]) {
+        throw std::runtime_error(
+            "max_stacks and refresh_on_stack are only valid for stack status: " +
+            path);
     }
     const YAML::Node triggers = node["triggers"];
     reject_unknown_keys(
@@ -6016,6 +6047,8 @@ std::uint64_t compute_gameplay_catalog_hash(
         hash_scalar(&hash, status.duration_ticks);
         hash_scalar(&hash, status.interval_ticks);
         hash_scalar(&hash, status.replacement_policy);
+        hash_scalar(&hash, status.max_stacks);
+        hash_scalar(&hash, status.refresh_on_stack);
         const auto hash_trigger = [&](const TriggerBindingConfig& trigger) {
             hash_string(&hash, trigger.action_graph_ref);
             for (const auto& parameter : trigger.parameters) {
@@ -7093,6 +7126,68 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             authored_status.on_tick_trigger, "on_tick");
         status.on_expire_trigger = compile_status_trigger(
             authored_status.on_expire_trigger, "on_expire");
+        status.max_stacks = authored_status.replacement_policy ==
+                KernelStatusEffectReplacementPolicy_Stack
+            ? authored_status.max_stacks
+            : 0u;
+        status.refresh_on_stack = authored_status.refresh_on_stack ? 1u : 0u;
+
+        const std::uint32_t stack_scale =
+            std::max<std::uint32_t>(1u, authored_status.max_stacks);
+        const auto validate_scaled_trigger =
+            [&](const KernelActionTriggerDefinition& trigger,
+                const char* trigger_name) {
+                for (std::uint32_t index = 0u;
+                     index < trigger.action_count;
+                     ++index) {
+                    const KernelActionDefinition& action =
+                        trigger.actions[index];
+                    const bool scale_amount =
+                        std::string_view(trigger_name) != "on_apply";
+                    if (scale_amount &&
+                        action.action_type ==
+                            KernelEntityTriggerActionType_ApplyDamage &&
+                        static_cast<std::uint64_t>(action.damage_amount) *
+                                stack_scale >
+                            UINT16_MAX) {
+                        throw std::runtime_error(
+                            "stacked status damage overflows uint16");
+                    }
+                    if (scale_amount &&
+                        action.action_type ==
+                            KernelEntityTriggerActionType_ApplyHealthChange) {
+                        const std::int64_t scaled =
+                            static_cast<std::int64_t>(
+                                action.health_change_amount) *
+                            stack_scale;
+                        if (scaled < INT32_MIN || scaled > INT32_MAX) {
+                            throw std::runtime_error(
+                                "stacked status health change overflows int32");
+                        }
+                    }
+                    if (action.action_type ==
+                        KernelEntityTriggerActionType_ApplySpeedModifier) {
+                        const double scaled =
+                            action.modifier_operation ==
+                                    KernelStatModifierOperation_Additive
+                                ? static_cast<double>(action.modifier_value) *
+                                    stack_scale
+                                : std::pow(
+                                      static_cast<double>(
+                                          action.modifier_value),
+                                      stack_scale);
+                        if (!std::isfinite(scaled) ||
+                            std::abs(scaled) >
+                                std::numeric_limits<float>::max()) {
+                            throw std::runtime_error(
+                                "stacked status speed modifier is not finite");
+                        }
+                    }
+                }
+            };
+        validate_scaled_trigger(status.on_apply_trigger, "on_apply");
+        validate_scaled_trigger(status.on_tick_trigger, "on_tick");
+        validate_scaled_trigger(status.on_expire_trigger, "on_expire");
         storage.status_effects.push_back(status);
     }
     for (const PropPopulationRuleConfig& authored_rule :
