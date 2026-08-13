@@ -2041,12 +2041,12 @@ int main() {
     assert(found_fire_floor_area);
     assert(found_beam_rifle_beam);
 
-    const auto player_template = std::find_if(
+    const auto player_entity_template = std::find_if(
         config.entity_templates.begin(),
         config.entity_templates.end(),
         [](const auto& entity) { return entity.name == "player"; });
-    require(player_template != config.entity_templates.end());
-    require(player_template->impulse_resistance == 0.0f);
+    require(player_entity_template != config.entity_templates.end());
+    require(player_entity_template->impulse_resistance == 0.0f);
 
     const std::string impulse_graph =
         "id: action_apply_impulse_test\n"

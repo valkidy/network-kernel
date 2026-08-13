@@ -58,6 +58,11 @@ public:
         const std::vector<RuntimeActionTemplate>& action_templates);
     const RuntimeActionTemplate* find_action_template(
         std::uint32_t action_template_id) const;
+    void set_status_effect_templates(
+        const std::vector<RuntimeStatusEffectTemplate>& status_effect_templates);
+    const RuntimeStatusEffectTemplate* find_status_effect_template(
+        std::uint32_t status_effect_id) const;
+    std::uint32_t allocate_status_instance_id();
     bool action_graph_batch_processed(
         std::uint64_t request_id,
         TriggerEventType event_type,
@@ -132,6 +137,7 @@ private:
     std::vector<ProjectileInteractionRule> projectile_interaction_rules_;
     std::vector<RuntimeProjectileTemplate> projectile_templates_;
     std::vector<RuntimeActionTemplate> action_templates_;
+    std::vector<RuntimeStatusEffectTemplate> status_effect_templates_;
     std::set<std::tuple<
         PeerId, std::uint64_t, TriggerEventType, std::uint32_t>>
         processed_action_graph_batches_;
@@ -140,6 +146,7 @@ private:
     bool allow_standalone_collision_ = true;
     std::unique_ptr<physics::PhysicsWorld> standalone_collision_world_;
     NetId next_net_id_ = 1;
+    std::uint32_t next_status_instance_id_ = 1;
 };
 
 }  // namespace network_example

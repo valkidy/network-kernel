@@ -216,6 +216,9 @@ struct ActionGraphActionConfig {
     std::string target_parameter;
     std::string amount_parameter;
     std::string strength_parameter;
+    std::string status_parameter;
+    std::string operation_parameter;
+    std::string value_parameter;
     std::uint32_t collision_mask = KERNEL_COLLISION_MASK_ACTOR;
     std::string item_template_ref;
     std::uint32_t quantity = 0;
@@ -226,6 +229,20 @@ struct ActionGraphTemplateConfig {
     std::string id;
     std::vector<ActionGraphParameterConfig> parameters;
     std::vector<ActionGraphActionConfig> actions;
+};
+
+struct StatusEffectTemplateConfig {
+    std::uint32_t status_effect_id = 0;
+    std::string name;
+    std::uint32_t channel_id = 0;
+    std::string channel_name;
+    std::uint32_t duration_ticks = 0;
+    std::uint32_t interval_ticks = 0;
+    std::uint8_t replacement_policy =
+        KernelStatusEffectReplacementPolicy_Replace;
+    TriggerBindingConfig on_apply_trigger;
+    TriggerBindingConfig on_tick_trigger;
+    TriggerBindingConfig on_expire_trigger;
 };
 
 struct ItemTemplateConfig {
@@ -266,6 +283,7 @@ struct GameServerGameplayConfig {
     std::vector<ActorTemplateConfig> actor_templates;
     ColliderCatalogConfig colliders;
     std::vector<ActionGraphTemplateConfig> action_graph_templates;
+    std::vector<StatusEffectTemplateConfig> status_effect_templates;
     std::vector<ItemTemplateConfig> item_templates;
     std::vector<ProjectileTemplateConfig> projectile_templates;
     std::vector<PropPopulationRuleConfig> prop_population_rules;
@@ -282,6 +300,7 @@ struct KernelGameplayCatalogStorage {
     std::vector<KernelActionTemplateDefinition> action_templates;
     std::vector<KernelItemTemplateDefinition> item_templates;
     std::vector<KernelPropPopulationRuleDefinition> prop_population_rules;
+    std::vector<KernelStatusEffectDefinition> status_effects;
     std::vector<std::vector<std::uint8_t>> skeleton_asset_bytes;
     std::vector<KernelSkeletonAssetDefinition> skeleton_assets;
     KernelGameplayCatalogDefinition definition{};

@@ -42,6 +42,29 @@ struct ActionApplyImpulseCommand {
     ActionExecutionProvenance provenance;
 };
 
+struct ActionApplyStatusCommand {
+    NetId source = 0;
+    NetId target = 0;
+    std::uint32_t status_effect_id = 0;
+    ActionExecutionProvenance provenance;
+};
+
+struct ActionRemoveStatusCommand {
+    NetId source = 0;
+    NetId target = 0;
+    std::uint32_t status_effect_id = 0;
+    ActionExecutionProvenance provenance;
+};
+
+struct ActionApplySpeedModifierCommand {
+    NetId source = 0;
+    NetId target = 0;
+    std::uint32_t status_instance_id = 0;
+    std::uint8_t operation = KernelStatModifierOperation_Additive;
+    float value = 0.0f;
+    ActionExecutionProvenance provenance;
+};
+
 struct ActionSpawnEntityCommand {
     std::uint32_t entity_template_id = 0;
     glm::vec3 position{0.0f};
@@ -57,6 +80,9 @@ using ActionGraphCommand = std::variant<
     ActionApplyDamageCommand,
     ActionApplyHealthChangeCommand,
     ActionApplyImpulseCommand,
+    ActionApplyStatusCommand,
+    ActionRemoveStatusCommand,
+    ActionApplySpeedModifierCommand,
     ActionSpawnEntityCommand>;
 
 struct ActionGraphQueuedTrigger {

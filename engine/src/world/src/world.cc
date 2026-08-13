@@ -99,6 +99,26 @@ const RuntimeActionTemplate* World::find_action_template(
     return found == action_templates_.end() ? nullptr : &*found;
 }
 
+void World::set_status_effect_templates(
+    const std::vector<RuntimeStatusEffectTemplate>& status_effect_templates) {
+    status_effect_templates_ = status_effect_templates;
+}
+
+const RuntimeStatusEffectTemplate* World::find_status_effect_template(
+    std::uint32_t status_effect_id) const {
+    const auto found = std::find_if(
+        status_effect_templates_.begin(), status_effect_templates_.end(),
+        [status_effect_id](const RuntimeStatusEffectTemplate& status) {
+            return status.status_effect_id == status_effect_id;
+        });
+    return found == status_effect_templates_.end() ? nullptr : &*found;
+}
+
+std::uint32_t World::allocate_status_instance_id() {
+    const std::uint32_t instance_id = next_status_instance_id_++;
+    return instance_id == 0u ? next_status_instance_id_++ : instance_id;
+}
+
 entt::registry& World::registry() {
     return registry_;
 }

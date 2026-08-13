@@ -9,12 +9,14 @@
  *     vector is appended to the public gameplay ABI.
  * 68: action graphs gained apply_impulse and entity templates gained
  *     impulse_resistance. Both are appended to the public gameplay ABI.
+ * 70: action graphs gained status actions and gameplay catalogs gained
+ *     status effect definitions. All fields are appended to the public ABI.
  * 67: KernelMovementDefinition gained movement_collision_mask and
  *     KernelSkeletonBindingDefinition gained stance_crouch_meters. Both are
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 69u
+#define KERNEL_ABI_VERSION 70u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -475,7 +477,19 @@ typedef enum KernelEntityTriggerActionType {
     KernelEntityTriggerActionType_SpawnProjectile = 3,
     KernelEntityTriggerActionType_ApplyHealthChange = 4,
     KernelEntityTriggerActionType_ApplyImpulse = 5,
+    KernelEntityTriggerActionType_ApplyStatus = 6,
+    KernelEntityTriggerActionType_RemoveStatus = 7,
+    KernelEntityTriggerActionType_ApplySpeedModifier = 8,
 } KernelEntityTriggerActionType;
+
+typedef enum KernelStatModifierOperation {
+    KernelStatModifierOperation_Additive = 0,
+    KernelStatModifierOperation_Multiplier = 1,
+} KernelStatModifierOperation;
+
+typedef enum KernelStatusEffectReplacementPolicy {
+    KernelStatusEffectReplacementPolicy_Replace = 0,
+} KernelStatusEffectReplacementPolicy;
 
 typedef enum KernelEntityRefSource {
     KernelEntityRefSource_Self = 0,
@@ -521,6 +535,11 @@ typedef struct KernelActionDefinition {
     float impulse_strength;
     uint32_t impulse_collision_mask;
     KernelVec3 impulse_direction;
+    uint32_t status_effect_id;
+    uint8_t modifier_operation;
+    uint8_t reserved1;
+    uint16_t reserved2;
+    float modifier_value;
 } KernelActionDefinition;
 
 typedef struct KernelActionTriggerDefinition {
@@ -545,7 +564,26 @@ typedef struct KernelActionTriggerDefinition {
     float impulse_strength;
     uint32_t impulse_collision_mask;
     KernelVec3 impulse_direction;
+    uint32_t status_effect_id;
+    uint8_t modifier_operation;
+    uint8_t reserved1;
+    uint16_t reserved2;
+    float modifier_value;
 } KernelActionTriggerDefinition;
+
+typedef struct KernelStatusEffectDefinition {
+    uint32_t struct_size;
+    uint32_t status_effect_id;
+    uint32_t channel_id;
+    uint32_t duration_ticks;
+    uint32_t interval_ticks;
+    uint8_t replacement_policy;
+    uint8_t reserved0;
+    uint16_t reserved1;
+    KernelActionTriggerDefinition on_apply_trigger;
+    KernelActionTriggerDefinition on_tick_trigger;
+    KernelActionTriggerDefinition on_expire_trigger;
+} KernelStatusEffectDefinition;
 
 #define KERNEL_MAX_PORTABLE_STATE_FIELDS 8
 
@@ -1392,6 +1430,8 @@ typedef struct KernelGameplayCatalogDefinition {
     uint32_t prop_population_rule_count;
     const KernelSkeletonAssetDefinition* skeleton_assets;
     uint32_t skeleton_asset_count;
+    const KernelStatusEffectDefinition* status_effects;
+    uint32_t status_effect_count;
 } KernelGameplayCatalogDefinition;
 
 typedef struct KernelGameplayCatalogLoadResult {

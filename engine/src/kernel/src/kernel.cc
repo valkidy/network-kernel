@@ -2416,6 +2416,8 @@ bool KernelEngine::load_gameplay_catalog(
          catalog.prop_population_rules == nullptr) ||
         (catalog.skeleton_asset_count != 0 &&
          catalog.skeleton_assets == nullptr) ||
+        (catalog.status_effect_count != 0 &&
+         catalog.status_effects == nullptr) ||
         (catalog.entity_template_count != 0 &&
          catalog.entity_templates == nullptr) ||
         catalog.collider_binding_count != 0) {
@@ -2484,6 +2486,58 @@ bool KernelEngine::load_gameplay_catalog(
     validated_collider_templates.reserve(catalog.collider_template_count);
     std::vector<KernelItemTemplateDefinition> validated_item_templates;
     validated_item_templates.reserve(catalog.item_template_count);
+    std::vector<KernelStatusEffectDefinition> validated_status_effects;
+    validated_status_effects.reserve(catalog.status_effect_count);
+    const auto status_id_in_use =
+        [&validated_status_effects](std::uint32_t status_effect_id) {
+            return std::any_of(
+                validated_status_effects.begin(), validated_status_effects.end(),
+                [status_effect_id](const KernelStatusEffectDefinition& existing) {
+                    return existing.status_effect_id == status_effect_id;
+                });
+        };
+    for (std::uint32_t index = 0; index < catalog.status_effect_count; ++index) {
+        const KernelStatusEffectDefinition& status = catalog.status_effects[index];
+        if (status.struct_size < sizeof(KernelStatusEffectDefinition) ||
+            status.status_effect_id == 0u || status.channel_id == 0u ||
+            status.duration_ticks == 0u ||
+            status.interval_ticks > status.duration_ticks ||
+            status.replacement_policy != KernelStatusEffectReplacementPolicy_Replace ||
+            status_id_in_use(status.status_effect_id)) {
+            return false;
+        }
+        const auto validate_status_trigger = [&](const KernelActionTriggerDefinition& trigger,
+                                                 TriggerEventType event_type,
+                                                 bool allow_speed_modifier) {
+            if (trigger.struct_size == 0u) {
+                return true;
+            }
+            const std::optional<CompiledActionGraphBinding> binding =
+                compile_action_trigger_definition(event_type, trigger);
+            if (!binding.has_value()) {
+                return false;
+            }
+            for (const ActionGraphAction& action : binding->graph.actions) {
+                if (std::holds_alternative<ActionApplyStatusDefinition>(action) ||
+                    std::holds_alternative<ActionRemoveStatusDefinition>(action) ||
+                    (!allow_speed_modifier &&
+                     std::holds_alternative<ActionApplySpeedModifierDefinition>(action))) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        if (!validate_status_trigger(
+                status.on_apply_trigger, TriggerEventType::kStatusApplied, true) ||
+            !validate_status_trigger(
+                status.on_tick_trigger, TriggerEventType::kStatusTick, false) ||
+            !validate_status_trigger(
+                status.on_expire_trigger, TriggerEventType::kStatusExpired, false) ||
+            (status.interval_ticks == 0u && status.on_tick_trigger.struct_size != 0u)) {
+            return false;
+        }
+        validated_status_effects.push_back(status);
+    }
     std::vector<KernelPropPopulationRuleDefinition>
         validated_prop_population_rules;
     validated_prop_population_rules.reserve(
@@ -2735,6 +2789,28 @@ bool KernelEngine::load_gameplay_catalog(
                         (action.impulse_collision_mask &
                          ~(KERNEL_COLLISION_MASK_ACTOR |
                            KERNEL_COLLISION_MASK_PROP)) != 0u) {
+                        return false;
+                    }
+                    continue;
+                }
+                if (action.action_type ==
+                        KernelEntityTriggerActionType_ApplyStatus ||
+                    action.action_type ==
+                        KernelEntityTriggerActionType_RemoveStatus) {
+                    if (action.target_source >
+                            KernelEntityRefSource_EventInstigator ||
+                        !status_id_in_use(action.status_effect_id)) {
+                        return false;
+                    }
+                    continue;
+                }
+                if (action.action_type ==
+                    KernelEntityTriggerActionType_ApplySpeedModifier) {
+                    if (action.target_source >
+                            KernelEntityRefSource_EventInstigator ||
+                        action.modifier_operation >
+                            KernelStatModifierOperation_Multiplier ||
+                        !std::isfinite(action.modifier_value)) {
                         return false;
                     }
                     continue;
@@ -3139,6 +3215,29 @@ bool KernelEngine::load_gameplay_catalog(
             action_template.hold_input_timeout_ticks,
         });
     }
+    std::vector<RuntimeStatusEffectTemplate> runtime_status_effect_templates;
+    runtime_status_effect_templates.reserve(validated_status_effects.size());
+    for (const KernelStatusEffectDefinition& status : validated_status_effects) {
+        RuntimeStatusEffectTemplate runtime_status;
+        runtime_status.status_effect_id = status.status_effect_id;
+        runtime_status.channel_id = status.channel_id;
+        runtime_status.duration_ticks = status.duration_ticks;
+        runtime_status.interval_ticks = status.interval_ticks;
+        runtime_status.replacement_policy = status.replacement_policy;
+        if (status.on_apply_trigger.struct_size != 0u) {
+            runtime_status.on_apply_binding = compile_action_trigger_definition(
+                TriggerEventType::kStatusApplied, status.on_apply_trigger);
+        }
+        if (status.on_tick_trigger.struct_size != 0u) {
+            runtime_status.on_tick_binding = compile_action_trigger_definition(
+                TriggerEventType::kStatusTick, status.on_tick_trigger);
+        }
+        if (status.on_expire_trigger.struct_size != 0u) {
+            runtime_status.on_expire_binding = compile_action_trigger_definition(
+                TriggerEventType::kStatusExpired, status.on_expire_trigger);
+        }
+        runtime_status_effect_templates.push_back(std::move(runtime_status));
+    }
     entity_templates_ = std::move(validated_entity_templates);
     actor_templates_ = std::move(validated_actor_templates);
     projectile_templates_ = std::move(validated_projectile_templates);
@@ -3157,6 +3256,7 @@ bool KernelEngine::load_gameplay_catalog(
     }
     world_.set_projectile_templates(runtime_projectile_templates);
     world_.set_action_templates(runtime_action_templates);
+    world_.set_status_effect_templates(runtime_status_effect_templates);
     if (running_ &&
         (catalog_version_ != catalog.catalog_version ||
          catalog_hash_ != catalog.catalog_hash)) {
@@ -4548,6 +4648,7 @@ bool KernelEngine::server_set_entity_combat_state(
     hitbox.collider_template_id = combat_state.collider_template_id;
 
     MovementState& movement = world_.registry().get_or_emplace<MovementState>(*entity);
+    movement.base_speed_meters_per_second = combat_state.move_speed_meters_per_second;
     movement.speed_meters_per_second = combat_state.move_speed_meters_per_second;
 
     WeaponState& weapon = world_.registry().get_or_emplace<WeaponState>(*entity);
@@ -8654,6 +8755,7 @@ void KernelEngine::simulate_tick() {
             true);
     }
     sync_entity_colliders_from_world();
+    simulate_status_effects(*this, server_time_us);
     MovementSimulationStats movement_stats{};
     std::vector<QueuedInput> movement_inputs =
         build_effective_movement_inputs(server_time_us);

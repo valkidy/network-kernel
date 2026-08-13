@@ -15,6 +15,7 @@ enum class ParameterType : std::uint8_t {
     kEntityId,
     kProjectileTemplateId,
     kEntityTemplateId,
+    kStatusEffectId,
     kItemInstanceId,
     kVec3,
     kNumber,
@@ -36,6 +37,9 @@ ParameterType value_type(const ActionGraphParameterValue& value) {
     }
     if (std::holds_alternative<EntityTemplateIdValue>(value)) {
         return ParameterType::kEntityTemplateId;
+    }
+    if (std::holds_alternative<StatusEffectIdValue>(value)) {
+        return ParameterType::kStatusEffectId;
     }
     if (std::holds_alternative<ItemInstanceIdValue>(value)) {
         return ParameterType::kItemInstanceId;
@@ -72,7 +76,10 @@ bool expression_available_for_event(
             return event_type == TriggerEventType::kActivated ||
                 event_type == TriggerEventType::kItemUsed ||
                 event_type == TriggerEventType::kCollision ||
-                event_type == TriggerEventType::kProjectileImpact;
+                event_type == TriggerEventType::kProjectileImpact ||
+                event_type == TriggerEventType::kStatusApplied ||
+                event_type == TriggerEventType::kStatusTick ||
+                event_type == TriggerEventType::kStatusExpired;
         }
         if (entity_ref->source == EntityRefSource::kEventInstigator) {
             return event_type != TriggerEventType::kCollision;
@@ -234,6 +241,9 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
             action.spawn_item_quantity = trigger.spawn_item_quantity;
             action.health_change_amount = trigger.health_change_amount;
             action.condition_type = trigger.condition_type;
+            action.status_effect_id = trigger.status_effect_id;
+            action.modifier_operation = trigger.modifier_operation;
+            action.modifier_value = trigger.modifier_value;
             action.impulse_strength = trigger.impulse_strength;
             action.impulse_collision_mask = trigger.impulse_collision_mask;
             action.impulse_direction = trigger.impulse_direction;
@@ -331,8 +341,54 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
             KernelEntityTriggerActionType_ApplyHealthChange;
         const bool applies_impulse =
             action.action_type == KernelEntityTriggerActionType_ApplyImpulse;
-        if (!applies_damage && !applies_health_change && !applies_impulse) {
+        const bool applies_status =
+            action.action_type == KernelEntityTriggerActionType_ApplyStatus;
+        const bool removes_status =
+            action.action_type == KernelEntityTriggerActionType_RemoveStatus;
+        const bool applies_speed_modifier =
+            action.action_type ==
+            KernelEntityTriggerActionType_ApplySpeedModifier;
+        if (!applies_damage && !applies_health_change && !applies_impulse &&
+            !applies_status && !removes_status && !applies_speed_modifier) {
             return std::nullopt;
+        }
+        if (applies_status || removes_status) {
+            const std::string target_name = "target" + suffix;
+            const std::string status_name = "status" + suffix;
+            binding.graph.parameters.push_back({target_name, std::monostate{}});
+            binding.graph.parameters.push_back({
+                status_name,
+                StatusEffectIdValue{action.status_effect_id},
+            });
+            binding.graph.actions.push_back(
+                applies_status
+                    ? ActionGraphAction{ActionApplyStatusDefinition{
+                          target_name, status_name, *condition}}
+                    : ActionGraphAction{ActionRemoveStatusDefinition{
+                          target_name, status_name, *condition}});
+            binding.parameters.push_back({
+                target_name,
+                EntityRefExpression{static_cast<EntityRefSource>(
+                    action.target_source)},
+            });
+            continue;
+        }
+        if (applies_speed_modifier) {
+            const std::string target_name = "target" + suffix;
+            const std::string operation_name = "operation" + suffix;
+            const std::string value_name = "value" + suffix;
+            binding.graph.parameters.push_back({target_name, std::monostate{}});
+            binding.graph.parameters.push_back({operation_name, static_cast<float>(
+                action.modifier_operation)});
+            binding.graph.parameters.push_back({value_name, action.modifier_value});
+            binding.graph.actions.push_back(ActionApplySpeedModifierDefinition{
+                target_name, operation_name, value_name, *condition});
+            binding.parameters.push_back({
+                target_name,
+                EntityRefExpression{static_cast<EntityRefSource>(
+                    action.target_source)},
+            });
+            continue;
         }
         const std::string target_name = "target" + suffix;
         const std::string amount_name = "amount" + suffix;
@@ -600,6 +656,41 @@ bool validate_action_graph_binding(
             std::get_if<ActionApplyHealthChangeDefinition>(&action);
         const auto* impulse =
             std::get_if<ActionApplyImpulseDefinition>(&action);
+        const auto* apply_status =
+            std::get_if<ActionApplyStatusDefinition>(&action);
+        const auto* remove_status =
+            std::get_if<ActionRemoveStatusDefinition>(&action);
+        const auto* speed_modifier =
+            std::get_if<ActionApplySpeedModifierDefinition>(&action);
+        if (apply_status != nullptr || remove_status != nullptr) {
+            const std::string& target_parameter = apply_status != nullptr
+                ? apply_status->target_parameter
+                : remove_status->target_parameter;
+            const std::string& status_parameter = apply_status != nullptr
+                ? apply_status->status_parameter
+                : remove_status->status_parameter;
+            if (!validate_action_parameter(
+                    binding, target_parameter, ParameterType::kEntityId, error) ||
+                !validate_action_parameter(
+                    binding, status_parameter, ParameterType::kStatusEffectId, error)) {
+                return false;
+            }
+            continue;
+        }
+        if (speed_modifier != nullptr) {
+            if (!validate_action_parameter(
+                    binding, speed_modifier->target_parameter,
+                    ParameterType::kEntityId, error) ||
+                !validate_action_parameter(
+                    binding, speed_modifier->operation_parameter,
+                    ParameterType::kNumber, error) ||
+                !validate_action_parameter(
+                    binding, speed_modifier->value_parameter,
+                    ParameterType::kNumber, error)) {
+                return false;
+            }
+            continue;
+        }
         const std::string* target_parameter = damage != nullptr
             ? &damage->target_parameter
             : health_change != nullptr ? &health_change->target_parameter
@@ -762,6 +853,93 @@ bool evaluate_action_graph(
             std::get_if<ActionApplyHealthChangeDefinition>(&action);
         const auto* impulse =
             std::get_if<ActionApplyImpulseDefinition>(&action);
+        const auto* apply_status =
+            std::get_if<ActionApplyStatusDefinition>(&action);
+        const auto* remove_status =
+            std::get_if<ActionRemoveStatusDefinition>(&action);
+        const auto* speed_modifier =
+            std::get_if<ActionApplySpeedModifierDefinition>(&action);
+        if (apply_status != nullptr || remove_status != nullptr) {
+            const std::string& target_parameter = apply_status != nullptr
+                ? apply_status->target_parameter
+                : remove_status->target_parameter;
+            const std::string& status_parameter = apply_status != nullptr
+                ? apply_status->status_parameter
+                : remove_status->status_parameter;
+            const ActionGraphParameterValue* target_value =
+                find_resolved_parameter(parameters, target_parameter);
+            const ActionGraphParameterValue* status_value =
+                find_resolved_parameter(parameters, status_parameter);
+            if (target_value == nullptr || status_value == nullptr ||
+                !std::holds_alternative<EntityIdValue>(*target_value) ||
+                !std::holds_alternative<StatusEffectIdValue>(*status_value)) {
+                return fail(error, "status action input type mismatch");
+            }
+            const NetId target = std::get<EntityIdValue>(*target_value).value;
+            const std::uint32_t status_id =
+                std::get<StatusEffectIdValue>(*status_value).value;
+            if (target == 0u || status_id == 0u) {
+                return fail(error, "status action requires target and status");
+            }
+            const NetId source =
+                (event.type == TriggerEventType::kItemUsed ||
+                 event.type == TriggerEventType::kStatusApplied ||
+                 event.type == TriggerEventType::kStatusTick ||
+                 event.type == TriggerEventType::kStatusExpired) && self == 0u
+                ? event.instigator
+                : self;
+            if (apply_status != nullptr) {
+                commands->push_back(ActionApplyStatusCommand{
+                    source, target, status_id, provenance});
+            } else {
+                commands->push_back(ActionRemoveStatusCommand{
+                    source, target, status_id, provenance});
+            }
+            continue;
+        }
+        if (speed_modifier != nullptr) {
+            const ActionGraphParameterValue* target_value =
+                find_resolved_parameter(parameters, speed_modifier->target_parameter);
+            const ActionGraphParameterValue* operation_value =
+                find_resolved_parameter(parameters, speed_modifier->operation_parameter);
+            const ActionGraphParameterValue* value_value =
+                find_resolved_parameter(parameters, speed_modifier->value_parameter);
+            if (target_value == nullptr || operation_value == nullptr ||
+                value_value == nullptr ||
+                !std::holds_alternative<EntityIdValue>(*target_value) ||
+                !std::holds_alternative<float>(*operation_value) ||
+                !std::holds_alternative<float>(*value_value)) {
+                return fail(error, "apply_speed_modifier action input type mismatch");
+            }
+            const float operation = std::get<float>(*operation_value);
+            const float value = std::get<float>(*value_value);
+            if (!std::isfinite(operation) || !std::isfinite(value) ||
+                std::floor(operation) != operation || operation < 0.0f ||
+                operation > 1.0f || !std::isfinite(value)) {
+                return fail(error, "apply_speed_modifier requires valid operation and value");
+            }
+            const NetId target = std::get<EntityIdValue>(*target_value).value;
+            if (target == 0u) {
+                return fail(error, "apply_speed_modifier target must not be null");
+            }
+            ActionExecutionProvenance modifier_provenance = provenance;
+            const NetId source =
+                (event.type == TriggerEventType::kStatusApplied ||
+                 event.type == TriggerEventType::kStatusTick ||
+                 event.type == TriggerEventType::kStatusExpired) && self == 0u
+                ? event.instigator
+                : self;
+            modifier_provenance.instigator = source;
+            commands->push_back(ActionApplySpeedModifierCommand{
+                source,
+                target,
+                provenance.status_instance_id,
+                static_cast<std::uint8_t>(operation),
+                value,
+                modifier_provenance,
+            });
+            continue;
+        }
         if (damage == nullptr && health_change == nullptr && impulse == nullptr) {
             return fail(error, "unsupported action graph action");
         }
@@ -846,7 +1024,10 @@ bool evaluate_action_graph(
         if (target == 0u) {
             return fail(error, "health action target must not be null");
         }
-        const NetId source = event.type == TriggerEventType::kItemUsed && self == 0u
+        const NetId source = (event.type == TriggerEventType::kItemUsed ||
+            event.type == TriggerEventType::kStatusApplied ||
+            event.type == TriggerEventType::kStatusTick ||
+            event.type == TriggerEventType::kStatusExpired) && self == 0u
             ? event.instigator
             : self;
         if (damage != nullptr) {
