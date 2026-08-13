@@ -1402,7 +1402,8 @@ bool validate_area_effect_mechanics(
            area_effect.damage_per_interval > 0 &&
            area_effect.damage_interval_ticks > 0 &&
            area_effect.lifetime_ticks > 0 &&
-           (area_effect.collision_mask & ~KERNEL_COLLISION_MASK_ACTOR) == 0u;
+           (area_effect.collision_mask &
+            ~(KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_MASK_PROP)) == 0u;
 }
 
 bool validate_beam_mechanics(const KernelBeamMechanicsDefinition& beam) {
@@ -1419,13 +1420,64 @@ bool validate_beam_mechanics(const KernelBeamMechanicsDefinition& beam) {
 bool validate_projectile_mechanics(
     const KernelProjectileMechanicsDefinition& mechanics) {
     const auto valid_trigger = [](const KernelActionTriggerDefinition& trigger) {
-        return trigger.struct_size == 0u ||
-            (trigger.struct_size >= sizeof(KernelActionTriggerDefinition) &&
-             trigger.action_type ==
-                 KernelEntityTriggerActionType_SpawnProjectile &&
-             trigger.spawn_projectile_template_id != 0u &&
-             trigger.position_source == KernelEventVec3Source_Position &&
-             trigger.direction_source == KernelEventVec3Source_Direction);
+        if (trigger.struct_size == 0u) return true;
+        if (trigger.struct_size < sizeof(KernelActionTriggerDefinition)) return false;
+        const std::uint32_t count = trigger.action_count == 0u ? 1u : trigger.action_count;
+        if (count > KERNEL_MAX_ACTION_GRAPH_ACTIONS) return false;
+        for (std::uint32_t index = 0; index < count; ++index) {
+            KernelActionDefinition action{};
+            if (trigger.action_count == 0u) {
+                action.action_type = trigger.action_type;
+                action.target_source = trigger.target_source;
+                action.damage_amount = trigger.damage_amount;
+                action.spawn_entity_template_id = trigger.spawn_entity_template_id;
+                action.spawn_projectile_template_id = trigger.spawn_projectile_template_id;
+                action.position_source = trigger.position_source;
+                action.direction_source = trigger.direction_source;
+                action.owner_source = trigger.owner_source;
+                action.spawn_item_template_id = trigger.spawn_item_template_id;
+                action.spawn_item_quantity = trigger.spawn_item_quantity;
+                action.health_change_amount = trigger.health_change_amount;
+                action.condition_type = trigger.condition_type;
+                action.impulse_strength = trigger.impulse_strength;
+                action.impulse_collision_mask = trigger.impulse_collision_mask;
+                action.impulse_direction = trigger.impulse_direction;
+            } else {
+                action = trigger.actions[index];
+            }
+            if (action.action_type == KernelEntityTriggerActionType_SpawnProjectile) {
+                if (action.spawn_projectile_template_id == 0u ||
+                    action.position_source != KernelEventVec3Source_Position ||
+                    action.direction_source != KernelEventVec3Source_Direction) {
+                    return false;
+                }
+            } else if (action.action_type == KernelEntityTriggerActionType_ApplyDamage) {
+                if (action.target_source > KernelEntityRefSource_EventInstigator ||
+                    action.damage_amount == 0u) return false;
+            } else if (action.action_type == KernelEntityTriggerActionType_ApplyImpulse) {
+                if (action.target_source > KernelEntityRefSource_EventInstigator ||
+                    !std::isfinite(action.impulse_strength) ||
+                    action.impulse_strength <= 0.0f ||
+                    (action.direction_source != KernelEventVec3Source_Direction &&
+                     action.direction_source != KernelEventVec3Source_Literal) ||
+                    (action.direction_source == KernelEventVec3Source_Literal &&
+                     (!std::isfinite(action.impulse_direction.x) ||
+                      !std::isfinite(action.impulse_direction.y) ||
+                      !std::isfinite(action.impulse_direction.z) ||
+                      (action.impulse_direction.x == 0.0f &&
+                       action.impulse_direction.y == 0.0f &&
+                       action.impulse_direction.z == 0.0f))) ||
+                    (action.impulse_collision_mask &
+                     (KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_MASK_PROP)) == 0u ||
+                    (action.impulse_collision_mask &
+                     ~(KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_MASK_PROP)) != 0u) {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        }
+        return true;
     };
     if (mechanics.struct_size < sizeof(KernelProjectileMechanicsDefinition) ||
         mechanics.projectile_type > KernelProjectileType_Beam ||
@@ -1448,7 +1500,7 @@ bool validate_projectile_mechanics(
     }
     const std::uint32_t supported_collision_mask =
         mechanics.projectile_type == KernelProjectileType_AreaEffect
-            ? KERNEL_COLLISION_MASK_ACTOR
+            ? KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_MASK_PROP
             : mechanics.projectile_type == KernelProjectileType_Beam
                 ? KERNEL_COLLISION_MASK_ACTOR |
                     KERNEL_COLLISION_MASK_STATIC_WORLD
@@ -2364,6 +2416,8 @@ bool KernelEngine::load_gameplay_catalog(
          catalog.prop_population_rules == nullptr) ||
         (catalog.skeleton_asset_count != 0 &&
          catalog.skeleton_assets == nullptr) ||
+        (catalog.status_effect_count != 0 &&
+         catalog.status_effects == nullptr) ||
         (catalog.entity_template_count != 0 &&
          catalog.entity_templates == nullptr) ||
         catalog.collider_binding_count != 0) {
@@ -2432,6 +2486,58 @@ bool KernelEngine::load_gameplay_catalog(
     validated_collider_templates.reserve(catalog.collider_template_count);
     std::vector<KernelItemTemplateDefinition> validated_item_templates;
     validated_item_templates.reserve(catalog.item_template_count);
+    std::vector<KernelStatusEffectDefinition> validated_status_effects;
+    validated_status_effects.reserve(catalog.status_effect_count);
+    const auto status_id_in_use =
+        [&validated_status_effects](std::uint32_t status_effect_id) {
+            return std::any_of(
+                validated_status_effects.begin(), validated_status_effects.end(),
+                [status_effect_id](const KernelStatusEffectDefinition& existing) {
+                    return existing.status_effect_id == status_effect_id;
+                });
+        };
+    for (std::uint32_t index = 0; index < catalog.status_effect_count; ++index) {
+        const KernelStatusEffectDefinition& status = catalog.status_effects[index];
+        if (status.struct_size < sizeof(KernelStatusEffectDefinition) ||
+            status.status_effect_id == 0u || status.channel_id == 0u ||
+            status.duration_ticks == 0u ||
+            status.interval_ticks > status.duration_ticks ||
+            status.replacement_policy != KernelStatusEffectReplacementPolicy_Replace ||
+            status_id_in_use(status.status_effect_id)) {
+            return false;
+        }
+        const auto validate_status_trigger = [&](const KernelActionTriggerDefinition& trigger,
+                                                 TriggerEventType event_type,
+                                                 bool allow_speed_modifier) {
+            if (trigger.struct_size == 0u) {
+                return true;
+            }
+            const std::optional<CompiledActionGraphBinding> binding =
+                compile_action_trigger_definition(event_type, trigger);
+            if (!binding.has_value()) {
+                return false;
+            }
+            for (const ActionGraphAction& action : binding->graph.actions) {
+                if (std::holds_alternative<ActionApplyStatusDefinition>(action) ||
+                    std::holds_alternative<ActionRemoveStatusDefinition>(action) ||
+                    (!allow_speed_modifier &&
+                     std::holds_alternative<ActionApplySpeedModifierDefinition>(action))) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        if (!validate_status_trigger(
+                status.on_apply_trigger, TriggerEventType::kStatusApplied, true) ||
+            !validate_status_trigger(
+                status.on_tick_trigger, TriggerEventType::kStatusTick, false) ||
+            !validate_status_trigger(
+                status.on_expire_trigger, TriggerEventType::kStatusExpired, false) ||
+            (status.interval_ticks == 0u && status.on_tick_trigger.struct_size != 0u)) {
+            return false;
+        }
+        validated_status_effects.push_back(status);
+    }
     std::vector<KernelPropPopulationRuleDefinition>
         validated_prop_population_rules;
     validated_prop_population_rules.reserve(
@@ -2619,9 +2725,14 @@ bool KernelEngine::load_gameplay_catalog(
                     action.spawn_entity_template_id =
                         trigger->spawn_entity_template_id;
                     action.position_source = trigger->position_source;
+                    action.direction_source = trigger->direction_source;
                     action.owner_source = trigger->owner_source;
                     action.health_change_amount =
                         trigger->health_change_amount;
+                    action.impulse_strength = trigger->impulse_strength;
+                    action.impulse_collision_mask =
+                        trigger->impulse_collision_mask;
+                    action.impulse_direction = trigger->impulse_direction;
                     action.condition_type = trigger->condition_type;
                 } else {
                     action = trigger->actions[action_index];
@@ -2650,6 +2761,56 @@ bool KernelEngine::load_gameplay_catalog(
                         action.health_change_amount >
                             static_cast<std::int32_t>(
                                 std::numeric_limits<std::uint16_t>::max())) {
+                        return false;
+                    }
+                    continue;
+                }
+                if (action.action_type ==
+                    KernelEntityTriggerActionType_ApplyImpulse) {
+                    if (action.target_source >
+                            KernelEntityRefSource_EventInstigator ||
+                        !std::isfinite(action.impulse_strength) ||
+                        action.impulse_strength <= 0.0f ||
+                        (action.direction_source !=
+                             KernelEventVec3Source_Direction &&
+                         action.direction_source !=
+                             KernelEventVec3Source_Literal) ||
+                        (action.direction_source ==
+                             KernelEventVec3Source_Literal &&
+                         (!std::isfinite(action.impulse_direction.x) ||
+                          !std::isfinite(action.impulse_direction.y) ||
+                          !std::isfinite(action.impulse_direction.z) ||
+                          (action.impulse_direction.x == 0.0f &&
+                           action.impulse_direction.y == 0.0f &&
+                           action.impulse_direction.z == 0.0f))) ||
+                        (action.impulse_collision_mask &
+                         (KERNEL_COLLISION_MASK_ACTOR |
+                          KERNEL_COLLISION_MASK_PROP)) == 0u ||
+                        (action.impulse_collision_mask &
+                         ~(KERNEL_COLLISION_MASK_ACTOR |
+                           KERNEL_COLLISION_MASK_PROP)) != 0u) {
+                        return false;
+                    }
+                    continue;
+                }
+                if (action.action_type ==
+                        KernelEntityTriggerActionType_ApplyStatus ||
+                    action.action_type ==
+                        KernelEntityTriggerActionType_RemoveStatus) {
+                    if (action.target_source >
+                            KernelEntityRefSource_EventInstigator ||
+                        !status_id_in_use(action.status_effect_id)) {
+                        return false;
+                    }
+                    continue;
+                }
+                if (action.action_type ==
+                    KernelEntityTriggerActionType_ApplySpeedModifier) {
+                    if (action.target_source >
+                            KernelEntityRefSource_EventInstigator ||
+                        action.modifier_operation >
+                            KernelStatModifierOperation_Multiplier ||
+                        !std::isfinite(action.modifier_value)) {
                         return false;
                     }
                     continue;
@@ -3054,6 +3215,29 @@ bool KernelEngine::load_gameplay_catalog(
             action_template.hold_input_timeout_ticks,
         });
     }
+    std::vector<RuntimeStatusEffectTemplate> runtime_status_effect_templates;
+    runtime_status_effect_templates.reserve(validated_status_effects.size());
+    for (const KernelStatusEffectDefinition& status : validated_status_effects) {
+        RuntimeStatusEffectTemplate runtime_status;
+        runtime_status.status_effect_id = status.status_effect_id;
+        runtime_status.channel_id = status.channel_id;
+        runtime_status.duration_ticks = status.duration_ticks;
+        runtime_status.interval_ticks = status.interval_ticks;
+        runtime_status.replacement_policy = status.replacement_policy;
+        if (status.on_apply_trigger.struct_size != 0u) {
+            runtime_status.on_apply_binding = compile_action_trigger_definition(
+                TriggerEventType::kStatusApplied, status.on_apply_trigger);
+        }
+        if (status.on_tick_trigger.struct_size != 0u) {
+            runtime_status.on_tick_binding = compile_action_trigger_definition(
+                TriggerEventType::kStatusTick, status.on_tick_trigger);
+        }
+        if (status.on_expire_trigger.struct_size != 0u) {
+            runtime_status.on_expire_binding = compile_action_trigger_definition(
+                TriggerEventType::kStatusExpired, status.on_expire_trigger);
+        }
+        runtime_status_effect_templates.push_back(std::move(runtime_status));
+    }
     entity_templates_ = std::move(validated_entity_templates);
     actor_templates_ = std::move(validated_actor_templates);
     projectile_templates_ = std::move(validated_projectile_templates);
@@ -3072,6 +3256,7 @@ bool KernelEngine::load_gameplay_catalog(
     }
     world_.set_projectile_templates(runtime_projectile_templates);
     world_.set_action_templates(runtime_action_templates);
+    world_.set_status_effect_templates(runtime_status_effect_templates);
     if (running_ &&
         (catalog_version_ != catalog.catalog_version ||
          catalog_hash_ != catalog.catalog_hash)) {
@@ -4467,6 +4652,7 @@ bool KernelEngine::server_set_entity_combat_state(
     hitbox.collider_template_id = combat_state.collider_template_id;
 
     MovementState& movement = world_.registry().get_or_emplace<MovementState>(*entity);
+    movement.base_speed_meters_per_second = combat_state.move_speed_meters_per_second;
     movement.speed_meters_per_second = combat_state.move_speed_meters_per_second;
 
     WeaponState& weapon = world_.registry().get_or_emplace<WeaponState>(*entity);
@@ -7777,6 +7963,92 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
                             next_position,
                             filter);
                     if (!hits.empty()) {
+                        if (projectile_template->mechanics.projectile_type ==
+                                KernelProjectileType_AreaEffect &&
+                            projectile_template->mechanics.projectile_impact_trigger
+                                    .struct_size >=
+                                sizeof(KernelActionTriggerDefinition)) {
+                            const glm::vec3 local_actor_position =
+                                predicted_local_entity_.position;
+                            const glm::vec3 radial = local_actor_position -
+                                hits.front().position;
+                            const float radial_length = glm::length(radial);
+                            const float area_radius =
+                                projectile_template->mechanics.area_effect.radius;
+                            const std::uint32_t action_count =
+                                projectile_template->mechanics.projectile_impact_trigger
+                                    .action_count;
+                            if (radial_length > 0.0001f &&
+                                radial_length <= area_radius) {
+                                const auto replicated = std::find_if(
+                                    client_replicated_entities_.begin(),
+                                    client_replicated_entities_.end(),
+                                    [this](const ClientReplicatedEntity& candidate) {
+                                        return candidate.net_id == local_player_net_id_;
+                                    });
+                                const KernelEntityTemplateDefinition* local_template =
+                                    nullptr;
+                                if (replicated != client_replicated_entities_.end()) {
+                                    const auto found_local_template = std::find_if(
+                                        entity_templates_.begin(),
+                                        entity_templates_.end(),
+                                        [replicated](const KernelEntityTemplateDefinition& candidate) {
+                                            return candidate.actor_template_id ==
+                                                replicated->actor_template_id;
+                                        });
+                                    if (found_local_template != entity_templates_.end()) {
+                                        local_template = &*found_local_template;
+                                    }
+                                }
+                                const float resistance = local_template == nullptr
+                                    ? 0.0f
+                                    : local_template->impulse_resistance;
+                                for (std::uint32_t action_index = 0u;
+                                     action_index < (action_count == 0u ? 1u : action_count);
+                                     ++action_index) {
+                                    KernelActionDefinition action{};
+                                    const KernelActionTriggerDefinition& trigger =
+                                        projectile_template->mechanics.projectile_impact_trigger;
+                                    if (action_count == 0u) {
+                                        action.action_type = trigger.action_type;
+                                        action.target_source = trigger.target_source;
+                                        action.direction_source = trigger.direction_source;
+                                        action.impulse_strength = trigger.impulse_strength;
+                                        action.impulse_collision_mask = trigger.impulse_collision_mask;
+                                        action.impulse_direction = trigger.impulse_direction;
+                                    } else {
+                                        action = trigger.actions[action_index];
+                                    }
+                                    if (action.action_type !=
+                                            KernelEntityTriggerActionType_ApplyImpulse ||
+                                        action.target_source !=
+                                            KernelEntityRefSource_EventTarget ||
+                                        (action.impulse_collision_mask &
+                                         KERNEL_COLLISION_MASK_ACTOR) == 0u ||
+                                        !std::isfinite(action.impulse_strength) ||
+                                        action.impulse_strength <= resistance) {
+                                        continue;
+                                    }
+                                    const glm::vec3 direction =
+                                        action.direction_source ==
+                                                KernelEventVec3Source_Literal
+                                            ? glm::vec3{
+                                                  action.impulse_direction.x,
+                                                  action.impulse_direction.y,
+                                                  action.impulse_direction.z}
+                                            : glm::normalize(radial);
+                                    const glm::vec3 impulse =
+                                        glm::normalize(direction) *
+                                        action.impulse_strength;
+                                    predicted_local_entity_.velocity += impulse;
+                                    predicted_character_state_.velocity += impulse;
+                                    predicted_character_state_.ground_state =
+                                        physics::CharacterGroundState::kAirborne;
+                                    predicted_character_state_.supporting_identity = {};
+                                    break;
+                                }
+                            }
+                        }
                         projectile.position = hits.front().position;
                         projectile.velocity = glm::vec3{0.0f, 0.0f, 0.0f};
                         projectile.locally_terminated = true;
@@ -8487,6 +8759,7 @@ void KernelEngine::simulate_tick() {
             true);
     }
     sync_entity_colliders_from_world();
+    simulate_status_effects(*this, server_time_us);
     MovementSimulationStats movement_stats{};
     std::vector<QueuedInput> movement_inputs =
         build_effective_movement_inputs(server_time_us);
@@ -8590,6 +8863,7 @@ void KernelEngine::simulate_tick() {
             &action_outcomes},
         &events_);
     const std::size_t first_projectile_simulation_event = events_.size();
+    std::vector<ActionGraphCommandBatch> area_action_graph_batches;
     simulate_projectiles(
         world_,
         fixed_delta,
@@ -8601,7 +8875,11 @@ void KernelEngine::simulate_tick() {
         tick_loop_.current_tick(),
         server_time_us,
         &events_,
-        &damage_pipeline_);
+        &damage_pipeline_,
+        &area_action_graph_batches);
+    for (const ActionGraphCommandBatch& batch : area_action_graph_batches) {
+        (void)execute_action_graph_command_batch(*this, batch, server_time_us);
+    }
     simulate_beams(
         world_,
         tick_loop_.current_tick(),

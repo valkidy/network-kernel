@@ -1,0 +1,14 @@
+id: 1003
+name: speed_up
+kind: status_effect
+channel: movement_speed
+duration_ticks: 120
+interval_ticks: 0
+replace_policy: replace
+triggers:
+  on_apply:
+    action_graph: action_status_speed_modifier
+    parameters:
+      target: event.subject
+      operation: additive
+      value: 2.0

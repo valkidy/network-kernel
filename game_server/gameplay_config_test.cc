@@ -397,6 +397,7 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
         "action_spawn_entity_at_destroy_entity.yaml",
         "action_spawn_ice_and_damage_self_at_collision.yaml",
         "action_spawn_projectile_at_impact.yaml",
+        "action_rocket_explosion_at_target.yaml",
     };
     for (const std::string& file : action_graph_files) {
         files.push_back({
@@ -2005,6 +2006,14 @@ int main() {
             assert(projectile.definition.mechanics.area_effect.lifetime_ticks == 45);
             assert(projectile.definition.mechanics.damage_falloff ==
                    KernelProjectileDamageFalloff_Linear);
+            assert(projectile.definition.mechanics.area_effect.collision_mask &
+                   KERNEL_COLLISION_MASK_PROP);
+            assert(projectile.definition.mechanics.projectile_impact_trigger.action_count ==
+                   2u);
+            assert(projectile.definition.mechanics.projectile_impact_trigger.actions[1].action_type ==
+                   KernelEntityTriggerActionType_ApplyImpulse);
+            assert(projectile.definition.mechanics.projectile_impact_trigger.actions[1].impulse_strength ==
+                   12.0f);
         }
         if (projectile.name == "homing_missile_projectile") {
             found_homing_projectile = true;
@@ -2031,6 +2040,71 @@ int main() {
     assert(found_homing_projectile);
     assert(found_fire_floor_area);
     assert(found_beam_rifle_beam);
+
+    const auto player_entity_template = std::find_if(
+        config.entity_templates.begin(),
+        config.entity_templates.end(),
+        [](const auto& entity) { return entity.name == "player"; });
+    require(player_entity_template != config.entity_templates.end());
+    require(player_entity_template->impulse_resistance == 0.0f);
+
+    const std::string impulse_graph =
+        "id: action_apply_impulse_test\n"
+        "parameters:\n"
+        "  target: null\n"
+        "  strength: 4.5\n"
+        "  direction: {x: 1.0, y: 0.0, z: 0.0}\n"
+        "actions:\n"
+        "  - type: apply_impulse\n"
+        "    target: params.target\n"
+        "    strength: params.strength\n"
+        "    direction: params.direction\n";
+    const std::string impulse_prop =
+        "id: 302\n"
+        "name: impulse_prop\n"
+        "entity_type: prop\n"
+        "impulse_resistance: 9.0\n"
+        "health:\n"
+        "  hp: 3\n"
+        "  max_hp: 3\n"
+        "physics:\n"
+        "  collider_template: rocket_aabb\n"
+        "triggers:\n"
+        "  on_collision:\n"
+        "    action_graph: action_apply_impulse_test\n"
+        "    parameters:\n"
+        "      target: event.target\n"
+        "      strength: 4.5\n";
+    const auto impulse_bundle = make_gameplay_bundle_zip(
+        read_text_file("game_server/entity_templates/sentry_grunt.yaml"),
+        {{"action_graph_templates/action_apply_impulse_test.yaml", impulse_graph},
+         {"entity_templates/impulse_prop.yaml", impulse_prop}});
+    const auto impulse_config =
+        network_example::game_server::load_gameplay_config_from_bundle_memory(
+            impulse_bundle.data(),
+            static_cast<std::uint32_t>(impulse_bundle.size()),
+            "gameplay_catalog.yaml");
+    const auto impulse_catalog =
+        network_example::game_server::build_kernel_gameplay_catalog(impulse_config);
+    const auto impulse_entity = std::find_if(
+        impulse_catalog.entity_templates.begin(),
+        impulse_catalog.entity_templates.end(),
+        [](const auto& entity) { return entity.entity_template_id == 302u; });
+    require(impulse_entity != impulse_catalog.entity_templates.end());
+    require(impulse_entity->impulse_resistance == 9.0f);
+    require(impulse_entity->collision_trigger.actions[0].action_type ==
+            KernelEntityTriggerActionType_ApplyImpulse);
+    require(impulse_entity->collision_trigger.actions[0].impulse_collision_mask ==
+            KERNEL_COLLISION_MASK_ACTOR);
+    require(impulse_entity->collision_trigger.actions[0].impulse_strength == 4.5f);
+    require(impulse_entity->collision_trigger.actions[0].direction_source ==
+            KernelEventVec3Source_Literal);
+    require(impulse_entity->collision_trigger.actions[0].impulse_direction.x ==
+            1.0f);
+    require(impulse_entity->collision_trigger.actions[0].impulse_direction.y ==
+            0.0f);
+    require(impulse_entity->collision_trigger.actions[0].impulse_direction.z ==
+            0.0f);
 
     const std::vector<std::uint8_t> gameplay_bundle = make_gameplay_bundle_zip();
     const network_example::game_server::GameServerGameplayConfig bundle_config =

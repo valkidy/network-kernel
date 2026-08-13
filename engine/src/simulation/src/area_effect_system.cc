@@ -2,9 +2,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
+#include <unordered_set>
 #include <vector>
 
 #include "physics/public/physics_world.h"
+#include "simulation/public/action_graph.h"
 #include "simulation/public/collision_filter.h"
 
 namespace network_example {
@@ -30,7 +33,8 @@ void simulate_area_effects(
     std::uint32_t current_tick,
     std::vector<KernelEvent>* events,
     DamagePipeline* damage_pipeline) {
-    simulate_area_effects(world, current_tick, current_tick, events, damage_pipeline);
+    simulate_area_effects(
+        world, current_tick, current_tick, events, damage_pipeline, nullptr);
 }
 
 void simulate_area_effects(
@@ -39,6 +43,22 @@ void simulate_area_effects(
     std::uint64_t server_time_us,
     std::vector<KernelEvent>* events,
     DamagePipeline* damage_pipeline) {
+    simulate_area_effects(
+        world,
+        current_tick,
+        server_time_us,
+        events,
+        damage_pipeline,
+        nullptr);
+}
+
+void simulate_area_effects(
+    World& world,
+    std::uint32_t current_tick,
+    std::uint64_t server_time_us,
+    std::vector<KernelEvent>* events,
+    DamagePipeline* damage_pipeline,
+    std::vector<ActionGraphCommandBatch>* action_graph_batches) {
     DamagePipeline local_damage_pipeline;
     DamagePipeline* active_damage_pipeline = damage_pipeline;
     if (active_damage_pipeline == nullptr) {
@@ -63,7 +83,9 @@ void simulate_area_effects(
             area_effects_to_destroy.push_back(identity.net_id);
             continue;
         }
-        if (area_effect.radius <= 0.0f || area_effect.damage_per_interval == 0) {
+        if (area_effect.radius <= 0.0f ||
+            (area_effect.damage_per_interval == 0 &&
+             !area_effect.action_graph_binding.has_value())) {
             continue;
         }
 
@@ -84,14 +106,55 @@ void simulate_area_effects(
             hits.end(),
             [](const physics::CollisionHit& lhs,
                const physics::CollisionHit& rhs) {
-                return lhs.identity.entity_net_id < rhs.identity.entity_net_id;
+                if (lhs.identity.entity_net_id != rhs.identity.entity_net_id) {
+                    return lhs.identity.entity_net_id < rhs.identity.entity_net_id;
+                }
+                if (lhs.identity.collider_id != rhs.identity.collider_id) {
+                    return lhs.identity.collider_id < rhs.identity.collider_id;
+                }
+                if (lhs.subshape_id != rhs.subshape_id) {
+                    return lhs.subshape_id < rhs.subshape_id;
+                }
+                return lhs.distance < rhs.distance;
             });
 
         std::uint32_t sequence_id = 0;
+        std::unordered_set<NetId> seen_targets;
+        std::vector<ActionGraphQueuedTrigger> queued_triggers;
         for (const physics::CollisionHit& hit : hits) {
             const NetId target_net_id = hit.identity.entity_net_id;
+            const std::optional<entt::entity> target_entity =
+                world.find_entity(target_net_id);
+            if (!target_entity.has_value() ||
+                !seen_targets.insert(target_net_id).second) {
+                continue;
+            }
+            const EntityKind& target_kind =
+                world.registry().get<EntityKind>(*target_entity);
+            if (target_kind.type != EntityType::kActor &&
+                target_kind.type != EntityType::kProp) {
+                continue;
+            }
+            if (target_kind.type == EntityType::kProp &&
+                (!world.registry().all_of<PropWorldMode>(*target_entity) ||
+                 world.registry().get<PropWorldMode>(*target_entity).mode ==
+                     PropMode::kCarrying)) {
+                continue;
+            }
+            if (target_kind.type == EntityType::kActor &&
+                (area_effect.collision_mask & KERNEL_COLLISION_MASK_ACTOR) == 0u) {
+                continue;
+            }
+            if (target_kind.type == EntityType::kProp &&
+                (area_effect.collision_mask & KERNEL_COLLISION_MASK_PROP) == 0u) {
+                continue;
+            }
             const auto next_damage_tick =
                 area_effect.next_damage_tick_by_target.find(target_net_id);
+            if (area_effect.action_graph_binding.has_value() &&
+                area_effect.damage_interval_ticks == 0u) {
+                continue;
+            }
             if (next_damage_tick != area_effect.next_damage_tick_by_target.end() &&
                 current_tick < next_damage_tick->second) {
                 continue;
@@ -106,19 +169,66 @@ void simulate_area_effects(
                     std::max(1.0f, std::round(area_effect.damage_per_interval * falloff)));
             }
 
-            active_damage_pipeline->submit_damage_request(DamageRequest{
-                current_tick,
-                sequence_id++,
-                identity.net_id,
-                target_net_id,
-                identity.owner_peer,
-                area_effect.source_code,
-                damage,
-                server_time_us,
-                hit.position,
-            });
+            const std::uint32_t target_sequence = sequence_id++;
+            if (area_effect.action_graph_binding.has_value()) {
+                const glm::vec3 radial = hit.position - transform.position;
+                const glm::vec3 direction = glm::length(radial) > 0.0001f
+                    ? glm::normalize(radial)
+                    : glm::vec3{0.0f, 1.0f, 0.0f};
+                queued_triggers.push_back(ActionGraphQueuedTrigger{
+                    *area_effect.action_graph_binding,
+                    identity.net_id,
+                    TriggerEvent{
+                        TriggerEventType::kProjectileImpact,
+                        identity.net_id,
+                        projectile.shooter_net_id,
+                        target_net_id,
+                        hit.position,
+                        direction,
+                        ProjectileImpactPayload{
+                            projectile.projectile_template_id,
+                            projectile.action_instance_id,
+                            projectile.weapon_id,
+                            false},
+                        std::nullopt},
+                    ActionExecutionProvenance{
+                        (static_cast<std::uint64_t>(current_tick) << 32u) ^
+                            (static_cast<std::uint64_t>(identity.net_id) << 1u) ^
+                            target_sequence,
+                        projectile.action_instance_id,
+                        current_tick,
+                        projectile.shooter_net_id,
+                        identity.owner_peer,
+                        projectile.weapon_id,
+                        ActionAuthoritySource::kAuthoritativeSimulation,
+                        0u},
+                    target_sequence,
+                });
+            } else {
+                active_damage_pipeline->submit_damage_request(DamageRequest{
+                    current_tick,
+                    target_sequence,
+                    identity.net_id,
+                    target_net_id,
+                    identity.owner_peer,
+                    area_effect.source_code,
+                    damage,
+                    server_time_us,
+                    hit.position,
+                });
+            }
             area_effect.next_damage_tick_by_target[target_net_id] =
                 current_tick + std::max(1u, area_effect.damage_interval_ticks);
+        }
+        if (action_graph_batches != nullptr && !queued_triggers.empty()) {
+            std::vector<ActionGraphCommandBatch> batches;
+            if (dispatch_action_graph_triggers(
+                    &queued_triggers, &batches, nullptr)) {
+                action_graph_batches->insert(
+                    action_graph_batches->end(),
+                    std::make_move_iterator(batches.begin()),
+                    std::make_move_iterator(batches.end()));
+            }
         }
     }
 

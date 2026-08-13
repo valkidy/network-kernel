@@ -123,6 +123,10 @@ struct Velocity {
     glm::vec3 linear{0.0f, 0.0f, 0.0f};
 };
 
+struct ImpulseResistance {
+    float value = 0.0f;
+};
+
 struct Health {
     std::uint16_t hp = 0;
     std::uint16_t max_hp = 0;
@@ -446,6 +450,9 @@ enum class TriggerEventType : std::uint8_t {
     kHealthDepleted,
     kDestroyEntity,
     kExpired,
+    kStatusApplied,
+    kStatusTick,
+    kStatusExpired,
 };
 
 struct OnCollisionTriggerTag {};
@@ -495,6 +502,7 @@ struct ActionExecutionProvenance {
     ActionAuthoritySource authority_source =
         ActionAuthoritySource::kAuthoritativeSimulation;
     PeerId requester_peer = 0;
+    std::uint32_t status_instance_id = 0;
 };
 
 struct EntityIdValue {
@@ -509,6 +517,10 @@ struct EntityTemplateIdValue {
     std::uint32_t value = 0;
 };
 
+struct StatusEffectIdValue {
+    std::uint32_t value = 0;
+};
+
 struct ItemInstanceIdValue {
     std::uint64_t value = 0;
 };
@@ -518,6 +530,7 @@ using ActionGraphParameterValue = std::variant<
     EntityIdValue,
     ProjectileTemplateIdValue,
     EntityTemplateIdValue,
+    StatusEffectIdValue,
     ItemInstanceIdValue,
     glm::vec3,
     float>;
@@ -584,6 +597,34 @@ struct ActionApplyHealthChangeDefinition {
     ActionConditionType condition = ActionConditionType::kAlways;
 };
 
+struct ActionApplyImpulseDefinition {
+    std::string target_parameter;
+    std::string strength_parameter;
+    std::string direction_parameter;
+    std::uint32_t collision_mask = kCollisionMaskDamageable;
+    std::optional<glm::vec3> direction_literal;
+    ActionConditionType condition = ActionConditionType::kAlways;
+};
+
+struct ActionApplyStatusDefinition {
+    std::string target_parameter;
+    std::string status_parameter;
+    ActionConditionType condition = ActionConditionType::kAlways;
+};
+
+struct ActionRemoveStatusDefinition {
+    std::string target_parameter;
+    std::string status_parameter;
+    ActionConditionType condition = ActionConditionType::kAlways;
+};
+
+struct ActionApplySpeedModifierDefinition {
+    std::string target_parameter;
+    std::string operation_parameter;
+    std::string value_parameter;
+    ActionConditionType condition = ActionConditionType::kAlways;
+};
+
 struct ActionSpawnEntityDefinition {
     std::string entity_template_parameter;
     std::string position_parameter;
@@ -598,6 +639,10 @@ using ActionGraphAction = std::variant<
     ActionSpawnProjectileDefinition,
     ActionApplyDamageDefinition,
     ActionApplyHealthChangeDefinition,
+    ActionApplyImpulseDefinition,
+    ActionApplyStatusDefinition,
+    ActionRemoveStatusDefinition,
+    ActionApplySpeedModifierDefinition,
     ActionSpawnEntityDefinition>;
 
 struct ActionGraphTemplate {
@@ -627,6 +672,38 @@ struct ActionGraphHealthDepletedBinding {
 
 struct ActionGraphDestroyEntityBinding {
     CompiledActionGraphBinding binding;
+};
+
+struct RuntimeStatusEffectTemplate {
+    std::uint32_t status_effect_id = 0;
+    std::uint32_t channel_id = 0;
+    std::uint32_t duration_ticks = 0;
+    std::uint32_t interval_ticks = 0;
+    std::uint8_t replacement_policy = 0;
+    std::optional<CompiledActionGraphBinding> on_apply_binding;
+    std::optional<CompiledActionGraphBinding> on_tick_binding;
+    std::optional<CompiledActionGraphBinding> on_expire_binding;
+};
+
+struct ActiveStatusEffect {
+    std::uint32_t instance_id = 0;
+    std::uint32_t status_effect_id = 0;
+    std::uint32_t channel_id = 0;
+    NetId source = 0;
+    std::uint32_t applied_tick = 0;
+    std::uint32_t expire_tick = 0;
+    std::uint32_t next_tick = 0;
+};
+
+struct SpeedModifier {
+    std::uint32_t status_instance_id = 0;
+    float additive = 0.0f;
+    float multiplier = 1.0f;
+};
+
+struct StatusEffectState {
+    std::vector<ActiveStatusEffect> active;
+    std::vector<SpeedModifier> speed_modifiers;
 };
 
 struct RuntimeProjectileTemplate {
@@ -689,6 +766,7 @@ struct ProjectileAreaEffectRuntime {
     std::uint32_t collision_mask = kCollisionMaskDamageable;
     ProjectileDamageFalloff damage_falloff = ProjectileDamageFalloff::kNone;
     std::unordered_map<NetId, std::uint32_t> next_damage_tick_by_target;
+    std::optional<CompiledActionGraphBinding> action_graph_binding;
 };
 
 struct ProjectileInteractionRule {
@@ -714,6 +792,7 @@ struct ProjectileBeamRuntime {
 };
 
 struct MovementState {
+    float base_speed_meters_per_second = 0.0f;
     float speed_meters_per_second = 0.0f;
     enum class ControllerType : std::uint8_t {
         kNone = 0,

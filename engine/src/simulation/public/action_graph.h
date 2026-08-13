@@ -33,6 +33,38 @@ struct ActionApplyHealthChangeCommand {
     ActionExecutionProvenance provenance;
 };
 
+struct ActionApplyImpulseCommand {
+    NetId source = 0;
+    NetId target = 0;
+    float strength = 0.0f;
+    glm::vec3 direction{0.0f};
+    std::uint32_t collision_mask = KERNEL_COLLISION_MASK_ACTOR;
+    ActionExecutionProvenance provenance;
+};
+
+struct ActionApplyStatusCommand {
+    NetId source = 0;
+    NetId target = 0;
+    std::uint32_t status_effect_id = 0;
+    ActionExecutionProvenance provenance;
+};
+
+struct ActionRemoveStatusCommand {
+    NetId source = 0;
+    NetId target = 0;
+    std::uint32_t status_effect_id = 0;
+    ActionExecutionProvenance provenance;
+};
+
+struct ActionApplySpeedModifierCommand {
+    NetId source = 0;
+    NetId target = 0;
+    std::uint32_t status_instance_id = 0;
+    std::uint8_t operation = KernelStatModifierOperation_Additive;
+    float value = 0.0f;
+    ActionExecutionProvenance provenance;
+};
+
 struct ActionSpawnEntityCommand {
     std::uint32_t entity_template_id = 0;
     glm::vec3 position{0.0f};
@@ -47,6 +79,10 @@ using ActionGraphCommand = std::variant<
     ActionSpawnProjectileCommand,
     ActionApplyDamageCommand,
     ActionApplyHealthChangeCommand,
+    ActionApplyImpulseCommand,
+    ActionApplyStatusCommand,
+    ActionRemoveStatusCommand,
+    ActionApplySpeedModifierCommand,
     ActionSpawnEntityCommand>;
 
 struct ActionGraphQueuedTrigger {

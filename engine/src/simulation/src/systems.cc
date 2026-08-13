@@ -17,6 +17,16 @@
 #include "simulation/src/item_gameplay_system.h"
 
 namespace network_example {
+
+bool execute_status_lifecycle_trigger(
+    KernelEngine& engine,
+    NetId target,
+    NetId source,
+    std::uint32_t status_instance_id,
+    TriggerEventType event_type,
+    const std::optional<CompiledActionGraphBinding>& binding,
+    std::uint64_t server_time_us);
+
 namespace {
 
 constexpr PeerId kLocalListenPeerId = 1;
@@ -120,6 +130,25 @@ std::optional<CompiledActionGraphBinding> compile_entity_trigger_binding(
     return compile_action_trigger_definition(event_type, trigger);
 }
 
+void recompute_speed(World& world, entt::entity entity) {
+    if (!world.registry().all_of<MovementState>(entity)) {
+        return;
+    }
+    MovementState& movement = world.registry().get<MovementState>(entity);
+    const StatusEffectState* status =
+        world.registry().try_get<StatusEffectState>(entity);
+    float multiplier = 1.0f;
+    float additive = 0.0f;
+    if (status != nullptr) {
+        for (const SpeedModifier& modifier : status->speed_modifiers) {
+            multiplier *= modifier.multiplier;
+            additive += modifier.additive;
+        }
+    }
+    movement.speed_meters_per_second =
+        movement.base_speed_meters_per_second * multiplier + additive;
+}
+
 bool execute_action_graph_commands(
     KernelEngine& engine,
     World& world,
@@ -146,7 +175,7 @@ bool execute_action_graph_commands(
             const std::optional<entt::entity> target =
                 world.find_entity(damage->target);
             if (damage->source == 0u || !target.has_value() ||
-                !world.registry().all_of<NetworkIdentity, Health>(*target)) {
+                !world.registry().all_of<NetworkIdentity>(*target)) {
                 return false;
             }
             continue;
@@ -156,8 +185,40 @@ bool execute_action_graph_commands(
             const std::optional<entt::entity> target =
                 world.find_entity(health_change->target);
             if (health_change->source == 0u || !target.has_value() ||
-                !world.registry().all_of<NetworkIdentity, Health>(*target)) {
+                !world.registry().all_of<NetworkIdentity>(*target)) {
                 return false;
+            }
+            continue;
+        }
+        if (const auto* impulse =
+                std::get_if<ActionApplyImpulseCommand>(&command)) {
+            const std::optional<entt::entity> target =
+                world.find_entity(impulse->target);
+            if (impulse->source == 0u || !target.has_value() ||
+                !std::isfinite(impulse->strength) || impulse->strength <= 0.0f ||
+                !std::isfinite(impulse->direction.x) ||
+                !std::isfinite(impulse->direction.y) ||
+                !std::isfinite(impulse->direction.z) ||
+                glm::dot(impulse->direction, impulse->direction) <= 0.0f) {
+                return false;
+            }
+            const EntityKind& kind = world.registry().get<EntityKind>(*target);
+            const bool actor_target = kind.type == EntityType::kActor &&
+                (impulse->collision_mask & KERNEL_COLLISION_MASK_ACTOR) != 0u;
+            const bool prop_target = kind.type == EntityType::kProp &&
+                (impulse->collision_mask & KERNEL_COLLISION_MASK_PROP) != 0u &&
+                world.registry().all_of<PropWorldMode>(*target) &&
+                world.registry().get<PropWorldMode>(*target).mode !=
+                    PropMode::kCarrying;
+            if (!actor_target && !prop_target) {
+                continue;
+            }
+            const ImpulseResistance* resistance =
+                world.registry().try_get<ImpulseResistance>(*target);
+            if (resistance != nullptr &&
+                (!std::isfinite(resistance->value) ||
+                 impulse->strength <= resistance->value)) {
+                continue;
             }
             continue;
         }
@@ -172,6 +233,39 @@ bool execute_action_graph_commands(
                 !std::isfinite(projectile->direction.y) ||
                 !std::isfinite(projectile->direction.z) ||
                 glm::dot(projectile->direction, projectile->direction) == 0.0f) {
+                return false;
+            }
+            continue;
+        }
+        if (const auto* apply_status =
+                std::get_if<ActionApplyStatusCommand>(&command)) {
+            const std::optional<entt::entity> target =
+                world.find_entity(apply_status->target);
+            if (apply_status->source == 0u || !target.has_value() ||
+                world.find_status_effect_template(apply_status->status_effect_id) == nullptr) {
+                return false;
+            }
+            continue;
+        }
+        if (const auto* remove_status =
+                std::get_if<ActionRemoveStatusCommand>(&command)) {
+            const std::optional<entt::entity> target =
+                world.find_entity(remove_status->target);
+            if (remove_status->source == 0u || !target.has_value() ||
+                world.find_status_effect_template(remove_status->status_effect_id) == nullptr) {
+                return false;
+            }
+            continue;
+        }
+        if (const auto* modifier =
+                std::get_if<ActionApplySpeedModifierCommand>(&command)) {
+            const std::optional<entt::entity> target =
+                world.find_entity(modifier->target);
+            if (modifier->source == 0u || !target.has_value() ||
+                modifier->status_instance_id == 0u ||
+                (modifier->operation != KernelStatModifierOperation_Additive &&
+                 modifier->operation != KernelStatModifierOperation_Multiplier) ||
+                !std::isfinite(modifier->value)) {
                 return false;
             }
             continue;
@@ -210,6 +304,12 @@ bool execute_action_graph_commands(
         const ActionGraphCommand& command = commands[index];
         if (const auto* damage =
                 std::get_if<ActionApplyDamageCommand>(&command)) {
+            const std::optional<entt::entity> target =
+                world.find_entity(damage->target);
+            if (!target.has_value() ||
+                !world.registry().all_of<Health>(*target)) {
+                continue;
+            }
             if (!damage_pipeline->submit_damage_request(DamageRequest{
                     damage->provenance.server_tick,
                     static_cast<std::uint32_t>(index),
@@ -227,6 +327,12 @@ bool execute_action_graph_commands(
         }
         if (const auto* health_change =
                 std::get_if<ActionApplyHealthChangeCommand>(&command)) {
+            const std::optional<entt::entity> target_entity =
+                world.find_entity(health_change->target);
+            if (!target_entity.has_value() ||
+                !world.registry().all_of<Health>(*target_entity)) {
+                continue;
+            }
             if (health_change->amount < 0) {
                 const std::uint16_t damage_amount =
                     static_cast<std::uint16_t>(-health_change->amount);
@@ -274,6 +380,221 @@ bool execute_action_graph_commands(
                     projectile->provenance.server_tick,
                     engine.fixed_delta_seconds())) {
                 return false;
+            }
+            continue;
+        }
+        if (const auto* apply_status =
+                std::get_if<ActionApplyStatusCommand>(&command)) {
+            const entt::entity target = *world.find_entity(apply_status->target);
+            StatusEffectState& status_state =
+                world.registry().get_or_emplace<StatusEffectState>(target);
+            const RuntimeStatusEffectTemplate* status_template =
+                world.find_status_effect_template(apply_status->status_effect_id);
+            if (status_template == nullptr) {
+                return false;
+            }
+            for (std::size_t status_index = 0u;
+                 status_index < status_state.active.size();) {
+                const ActiveStatusEffect old_status =
+                    status_state.active[status_index];
+                if (old_status.channel_id != status_template->channel_id) {
+                    ++status_index;
+                    continue;
+                }
+                status_state.speed_modifiers.erase(
+                    std::remove_if(
+                        status_state.speed_modifiers.begin(),
+                        status_state.speed_modifiers.end(),
+                        [&](const SpeedModifier& modifier) {
+                            return modifier.status_instance_id ==
+                                old_status.instance_id;
+                        }),
+                    status_state.speed_modifiers.end());
+                status_state.active.erase(
+                    status_state.active.begin() + status_index);
+                recompute_speed(world, target);
+                const RuntimeStatusEffectTemplate* old_template =
+                    world.find_status_effect_template(old_status.status_effect_id);
+                if (old_template != nullptr &&
+                    !execute_status_lifecycle_trigger(
+                        engine,
+                        apply_status->target,
+                        old_status.source,
+                        old_status.instance_id,
+                        TriggerEventType::kStatusExpired,
+                        old_template->on_expire_binding,
+                        server_time_us)) {
+                    return false;
+                }
+            }
+            const std::uint32_t applied_tick = engine.current_tick();
+            const std::uint32_t instance_id = world.allocate_status_instance_id();
+            const ActiveStatusEffect active{
+                instance_id,
+                status_template->status_effect_id,
+                status_template->channel_id,
+                apply_status->source,
+                applied_tick,
+                applied_tick + status_template->duration_ticks,
+                status_template->interval_ticks == 0u
+                    ? 0u
+                    : applied_tick + status_template->interval_ticks,
+            };
+            status_state.active.push_back(active);
+            std::sort(
+                status_state.active.begin(), status_state.active.end(),
+                [](const ActiveStatusEffect& lhs, const ActiveStatusEffect& rhs) {
+                    return lhs.instance_id < rhs.instance_id;
+                });
+            if (!execute_status_lifecycle_trigger(
+                    engine,
+                    apply_status->target,
+                    apply_status->source,
+                    instance_id,
+                    TriggerEventType::kStatusApplied,
+                    status_template->on_apply_binding,
+                    server_time_us)) {
+                return false;
+            }
+            continue;
+        }
+        if (const auto* remove_status =
+                std::get_if<ActionRemoveStatusCommand>(&command)) {
+            const entt::entity target = *world.find_entity(remove_status->target);
+            StatusEffectState* status_state =
+                world.registry().try_get<StatusEffectState>(target);
+            if (status_state == nullptr) {
+                continue;
+            }
+            for (std::size_t status_index = 0u;
+                 status_index < status_state->active.size();) {
+                const ActiveStatusEffect active = status_state->active[status_index];
+                if (active.status_effect_id != remove_status->status_effect_id) {
+                    ++status_index;
+                    continue;
+                }
+                const RuntimeStatusEffectTemplate* status_template =
+                    world.find_status_effect_template(active.status_effect_id);
+                status_state->speed_modifiers.erase(
+                    std::remove_if(
+                        status_state->speed_modifiers.begin(),
+                        status_state->speed_modifiers.end(),
+                        [&](const SpeedModifier& modifier) {
+                            return modifier.status_instance_id == active.instance_id;
+                        }),
+                    status_state->speed_modifiers.end());
+                status_state->active.erase(
+                    status_state->active.begin() + status_index);
+                recompute_speed(world, target);
+                if (status_template != nullptr &&
+                    !execute_status_lifecycle_trigger(
+                        engine,
+                        remove_status->target,
+                        active.source,
+                        active.instance_id,
+                        TriggerEventType::kStatusExpired,
+                        status_template->on_expire_binding,
+                        server_time_us)) {
+                    return false;
+                }
+            }
+            continue;
+        }
+        if (const auto* modifier =
+                std::get_if<ActionApplySpeedModifierCommand>(&command)) {
+            const entt::entity target = *world.find_entity(modifier->target);
+            if (!world.registry().all_of<EntityKind, MovementState>(target) ||
+                world.registry().get<EntityKind>(target).type != EntityType::kActor) {
+                continue;
+            }
+            StatusEffectState& status_state =
+                world.registry().get_or_emplace<StatusEffectState>(target);
+            if (std::none_of(
+                    status_state.active.begin(),
+                    status_state.active.end(),
+                    [&](const ActiveStatusEffect& active) {
+                        return active.instance_id == modifier->status_instance_id;
+                    })) {
+                return false;
+            }
+            auto found = std::find_if(
+                status_state.speed_modifiers.begin(),
+                status_state.speed_modifiers.end(),
+                [&](const SpeedModifier& existing) {
+                    return existing.status_instance_id == modifier->status_instance_id;
+                });
+            if (found == status_state.speed_modifiers.end()) {
+                status_state.speed_modifiers.push_back(SpeedModifier{
+                    modifier->status_instance_id,
+                    modifier->operation == KernelStatModifierOperation_Additive
+                        ? modifier->value : 0.0f,
+                    modifier->operation == KernelStatModifierOperation_Multiplier
+                        ? modifier->value : 1.0f,
+                });
+            } else if (modifier->operation == KernelStatModifierOperation_Additive) {
+                found->additive = modifier->value;
+                found->multiplier = 1.0f;
+            } else {
+                found->additive = 0.0f;
+                found->multiplier = modifier->value;
+            }
+            recompute_speed(world, target);
+            continue;
+        }
+        if (const auto* impulse =
+                std::get_if<ActionApplyImpulseCommand>(&command)) {
+            const entt::entity target = *world.find_entity(impulse->target);
+            const glm::vec3 direction =
+                glm::normalize(impulse->direction);
+            const float resistance = world.registry().all_of<ImpulseResistance>(target)
+                ? world.registry().get<ImpulseResistance>(target).value
+                : 0.0f;
+            if (!std::isfinite(resistance) || impulse->strength <= resistance) {
+                continue;
+            }
+            Velocity& velocity = world.registry().get_or_emplace<Velocity>(target);
+            velocity.linear += direction * impulse->strength;
+            const EntityKind& kind = world.registry().get<EntityKind>(target);
+            if (kind.type == EntityType::kActor) {
+                MovementState& movement =
+                    world.registry().get_or_emplace<MovementState>(target);
+                movement.ground_state = MovementState::GroundState::kAirborne;
+                movement.ground_normal = glm::vec3{0.0f, 1.0f, 0.0f};
+                movement.supporting_entity_net_id = 0u;
+                movement.supporting_collider_id = 0u;
+                movement.has_controller_height = false;
+            } else if (kind.type == EntityType::kProp) {
+                PropWorldMode& mode =
+                    world.registry().get_or_emplace<PropWorldMode>(target);
+                mode.mode = PropMode::kInFlight;
+                world.registry().erase<CarriedBy>(target);
+                const Transform& transform = world.registry().get<Transform>(target);
+                world.registry().emplace_or_replace<ThrownPropMotion>(
+                    target,
+                    ThrownPropMotion{
+                        ProjectileMotionModel::kLinear,
+                        0u,
+                        transform.position,
+                        velocity.linear,
+                        glm::vec3{0.0f, -9.81f, 0.0f},
+                        transform.position,
+                    });
+                if (world.registry().all_of<ItemInstanceRef>(target)) {
+                    engine.item_store().set_world_mode(
+                        world.registry().get<ItemInstanceRef>(target).item_instance_id,
+                        KernelWorldItemMode_InFlight);
+                }
+                for (ColliderInstance& collider :
+                     world.collider_registry().mutable_instances()) {
+                    if (collider.entity_net_id == impulse->target) {
+                        collider.enabled = true;
+                        if (engine.mutable_physics_world() != nullptr) {
+                            engine.mutable_physics_world()->set_object_enabled(
+                                collider.collider_id, true);
+                        }
+                    }
+                }
+                engine.queue_prop_state_change(impulse->target);
             }
             continue;
         }
@@ -463,6 +784,125 @@ bool execute_action_graph_command_batch(
         server_time_us);
 }
 
+bool execute_status_lifecycle_trigger(
+    KernelEngine& engine,
+    NetId target,
+    NetId source,
+    std::uint32_t status_instance_id,
+    TriggerEventType event_type,
+    const std::optional<CompiledActionGraphBinding>& binding,
+    std::uint64_t server_time_us) {
+    if (!binding.has_value()) {
+        return true;
+    }
+    TriggerEvent event;
+    event.type = event_type;
+    event.subject = target;
+    event.instigator = source;
+    event.target = target;
+    ActionExecutionProvenance provenance;
+    provenance.request_id = action_trigger_request_id(
+        engine.current_tick(), event_type, target, source, status_instance_id);
+    provenance.action_instance_id = status_instance_id;
+    provenance.status_instance_id = status_instance_id;
+    provenance.server_tick = engine.current_tick();
+    provenance.instigator = source;
+    provenance.authority_source =
+        ActionAuthoritySource::kAuthoritativeSimulation;
+    ActionGraphCommandBatch batch{
+        event, provenance, status_instance_id, {}};
+    std::string error;
+    if (!evaluate_action_graph(
+            *binding,
+            0u,
+            event,
+            provenance,
+            &batch.commands,
+            &error)) {
+        return false;
+    }
+    return execute_action_graph_commands(
+        engine,
+        engine.simulation_world(),
+        &engine.damage_pipeline(),
+        engine.authored_entity_templates(),
+        batch,
+        server_time_us);
+}
+
+void simulate_status_effects(KernelEngine& engine, std::uint64_t server_time_us) {
+    World& world = engine.simulation_world();
+    std::vector<NetId> target_ids;
+    const auto view = world.registry().view<NetworkIdentity, StatusEffectState>();
+    target_ids.reserve(view.size_hint());
+    for (const entt::entity entity : view) {
+        target_ids.push_back(view.get<NetworkIdentity>(entity).net_id);
+    }
+    std::sort(target_ids.begin(), target_ids.end());
+    const std::uint32_t current_tick = engine.current_tick();
+    for (const NetId target_id : target_ids) {
+        const std::optional<entt::entity> entity = world.find_entity(target_id);
+        if (!entity.has_value()) {
+            continue;
+        }
+        StatusEffectState& state = world.registry().get<StatusEffectState>(*entity);
+        std::sort(
+            state.active.begin(), state.active.end(),
+            [](const ActiveStatusEffect& lhs, const ActiveStatusEffect& rhs) {
+                return lhs.instance_id < rhs.instance_id;
+            });
+        for (std::size_t index = 0u; index < state.active.size();) {
+            const ActiveStatusEffect active = state.active[index];
+            const RuntimeStatusEffectTemplate* status_template =
+                world.find_status_effect_template(active.status_effect_id);
+            if (status_template == nullptr) {
+                state.active.erase(state.active.begin() + index);
+                continue;
+            }
+            if (current_tick >= active.expire_tick) {
+                state.speed_modifiers.erase(
+                    std::remove_if(
+                        state.speed_modifiers.begin(),
+                        state.speed_modifiers.end(),
+                        [&](const SpeedModifier& modifier) {
+                            return modifier.status_instance_id == active.instance_id;
+                        }),
+                    state.speed_modifiers.end());
+                state.active.erase(state.active.begin() + index);
+                recompute_speed(world, *entity);
+                if (!execute_status_lifecycle_trigger(
+                        engine,
+                        target_id,
+                        active.source,
+                        active.instance_id,
+                        TriggerEventType::kStatusExpired,
+                        status_template->on_expire_binding,
+                        server_time_us)) {
+                    return;
+                }
+                continue;
+            }
+            if (status_template->interval_ticks != 0u &&
+                current_tick >= active.next_tick) {
+                state.active[index].next_tick =
+                    active.next_tick + status_template->interval_ticks;
+                if (!execute_status_lifecycle_trigger(
+                        engine,
+                        target_id,
+                        active.source,
+                        active.instance_id,
+                        TriggerEventType::kStatusTick,
+                        status_template->on_tick_binding,
+                        server_time_us)) {
+                    return;
+                }
+            }
+            ++index;
+        }
+        recompute_speed(world, *entity);
+    }
+}
+
 bool EntityLifecycleSystem::create_entity(
     KernelEngine& engine,
     const KernelServerEntityCreateInfo& create_info,
@@ -538,6 +978,9 @@ bool EntityLifecycleSystem::create_entity(
             0u) {
             registry.get_or_emplace<Velocity>(*entity);
         }
+        registry.emplace_or_replace<ImpulseResistance>(
+            *entity,
+            ImpulseResistance{entity_template->impulse_resistance});
         if ((entity_template->component_flags & KERNEL_ENTITY_COMPONENT_HEALTH) !=
             0u) {
             registry.emplace_or_replace<Health>(
@@ -547,6 +990,8 @@ bool EntityLifecycleSystem::create_entity(
                     entity_template->combat.max_hp,
                 });
             MovementState& movement = registry.get_or_emplace<MovementState>(*entity);
+            movement.base_speed_meters_per_second =
+                entity_template->combat.move_speed_meters_per_second;
             movement.speed_meters_per_second =
                 entity_template->combat.move_speed_meters_per_second;
             movement.controller_type = static_cast<MovementState::ControllerType>(

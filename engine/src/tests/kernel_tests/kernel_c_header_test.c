@@ -6,7 +6,7 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 67u,
+    KERNEL_ABI_VERSION == 70u,
     "skeleton asset ABI");
 _Static_assert(
     offsetof(KernelMovementDefinition, movement_collision_mask) >
@@ -17,7 +17,7 @@ _Static_assert(
         offsetof(KernelSkeletonBindingDefinition, processing_order),
     "stance crouch is appended to the skeleton binding ABI");
 _Static_assert(
-    sizeof(KernelActionTriggerDefinition) == 296u,
+    sizeof(KernelActionTriggerDefinition) == 584u,
     "KernelActionTriggerDefinition ABI size");
 _Static_assert(
     offsetof(KernelActionDefinition, health_change_amount) >
@@ -28,9 +28,25 @@ _Static_assert(
         offsetof(KernelActionDefinition, health_change_amount),
     "action condition is appended to action ABI");
 _Static_assert(
+    offsetof(KernelActionDefinition, impulse_strength) >
+        offsetof(KernelActionDefinition, condition_type),
+    "impulse strength is appended to action ABI");
+_Static_assert(
+    offsetof(KernelActionDefinition, impulse_collision_mask) >
+        offsetof(KernelActionDefinition, impulse_strength),
+    "impulse collision mask is appended to action ABI");
+_Static_assert(
+    offsetof(KernelActionDefinition, impulse_direction) >
+        offsetof(KernelActionDefinition, impulse_collision_mask),
+    "impulse direction is appended to action ABI");
+_Static_assert(
     offsetof(KernelEntityTemplateDefinition, collision_trigger_mask) >
         offsetof(KernelEntityTemplateDefinition, prop),
     "collision trigger mask follows prop definition");
+_Static_assert(
+    offsetof(KernelEntityTemplateDefinition, impulse_resistance) >
+        offsetof(KernelEntityTemplateDefinition, skeleton),
+    "impulse resistance is appended to entity template ABI");
 _Static_assert(
     offsetof(KernelEvent, health_delta) >
         offsetof(KernelEvent, presentation_time_us),
@@ -148,7 +164,7 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 67u);
+    assert(KERNEL_ABI_VERSION == 70u);
     assert(KERNEL_CAPABILITY_SKELETON_BIND_POSE != 0u);
     assert(sizeof(KernelBoneLocalTransform) > 0u);
     assert(sizeof(KernelSkeletonRenderState) > 0u);
