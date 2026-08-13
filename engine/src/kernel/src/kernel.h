@@ -218,6 +218,10 @@ public:
         KernelItemInstanceId* out_item_instance_id,
         std::uint32_t* out_prop_entity_id);
     bool server_submit_gameplay_request(const KernelGameplayRequest& request);
+    void queue_status_effect_presentation(
+        NetId target,
+        std::uint32_t status_effect_id,
+        std::uint32_t status_instance_id);
     void queue_health_changed_event(
         NetId net_id,
         PeerId source_peer,
@@ -480,6 +484,7 @@ private:
     struct RemotePresentationDedup {
         std::uint32_t actor_net_id = 0;
         std::uint32_t action_instance_id = 0;
+        std::uint32_t status_instance_id = 0;
         std::uint16_t commit_index = 0;
         std::uint8_t event_type = 0;
         std::uint32_t expire_tick = 0;

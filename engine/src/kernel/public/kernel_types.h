@@ -5,18 +5,20 @@
 #include <stdint.h>
 
 /*
+ * 71: remote action presentation events gained status-applied presentation
+ *     metadata. All fields are appended to the public ABI.
+ * 70: action graphs gained status actions and gameplay catalogs gained
+ *     status effect definitions. All fields are appended to the public ABI.
  * 69: action graphs gained optional literal impulse directions. The direction
  *     vector is appended to the public gameplay ABI.
  * 68: action graphs gained apply_impulse and entity templates gained
  *     impulse_resistance. Both are appended to the public gameplay ABI.
- * 70: action graphs gained status actions and gameplay catalogs gained
- *     status effect definitions. All fields are appended to the public ABI.
  * 67: KernelMovementDefinition gained movement_collision_mask and
  *     KernelSkeletonBindingDefinition gained stance_crouch_meters. Both are
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 70u
+#define KERNEL_ABI_VERSION 71u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -725,6 +727,7 @@ typedef enum KernelRemoteActionPresentationEventType {
     KernelRemoteActionPresentationEventType_ReloadCommit = 2,
     KernelRemoteActionPresentationEventType_HitReaction = 3,
     KernelRemoteActionPresentationEventType_DeathTrigger = 4,
+    KernelRemoteActionPresentationEventType_StatusApplied = 5,
 } KernelRemoteActionPresentationEventType;
 
 typedef enum KernelActionTemplateFlag {
@@ -939,6 +942,11 @@ typedef struct KernelRemoteActionPresentationEvent {
     uint8_t event_type;
     uint8_t flags;
     uint16_t server_tick_delta;
+    uint32_t status_effect_id;
+    uint32_t status_instance_id;
+    /* Derived from the client gameplay catalog for StatusApplied events. */
+    uint32_t status_channel_id;
+    uint32_t duration_ticks;
 } KernelRemoteActionPresentationEvent;
 
 typedef struct KernelActionRuntimeView {

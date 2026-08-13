@@ -35,7 +35,7 @@ constexpr std::size_t kProjectileSpawnGroupHeaderPayloadSize = 8;
 constexpr std::size_t kProjectileSpawnRecordPayloadSize = 40;
 constexpr std::size_t kActionBatchHeaderPayloadSize = 8;
 constexpr std::size_t kLocalActionResultPayloadSize = 12;
-constexpr std::size_t kRemoteActionPresentationPayloadSize = 20;
+constexpr std::size_t kRemoteActionPresentationPayloadSize = 28;
 constexpr std::size_t kGameplayRequestPayloadSize = 60;
 constexpr std::size_t kGameplayRequestOutcomePayloadSize = 32;
 constexpr std::size_t kInventorySnapshotRequestPayloadSize = 16;
@@ -999,6 +999,8 @@ std::vector<std::uint8_t> encode_remote_action_presentation_batch_packet(
         payload.write_u8(record.event_type);
         payload.write_u8(record.flags);
         payload.write_u16(record.server_tick_delta);
+        payload.write_u32(record.status_effect_id);
+        payload.write_u32(record.status_instance_id);
     }
     return protocol_internal::wrap_packet(
         MessageType::kRemoteActionPresentationBatch,
@@ -1045,13 +1047,28 @@ bool decode_remote_action_presentation_batch_packet(
             !reader.read_u8(&record.event_type) ||
             !reader.read_u8(&record.flags) ||
             !reader.read_u16(&record.server_tick_delta) ||
-            record.actor_net_id == 0u || record.action_instance_id == 0u ||
+            !reader.read_u32(&record.status_effect_id) ||
+            !reader.read_u32(&record.status_instance_id) ||
+            record.actor_net_id == 0u ||
             record.first_commit_index == 0u || record.commit_count == 0u ||
             static_cast<std::uint32_t>(record.first_commit_index) +
                     static_cast<std::uint32_t>(record.commit_count) - 1u >
                 UINT16_MAX ||
             record.event_type >
-                KernelRemoteActionPresentationEventType_DeathTrigger) {
+                KernelRemoteActionPresentationEventType_StatusApplied ||
+            (record.event_type == KernelRemoteActionPresentationEventType_StatusApplied &&
+             (record.action_template_id != 0u ||
+              record.action_instance_id != 0u ||
+              record.status_effect_id == 0u ||
+              record.status_instance_id == 0u ||
+              record.first_commit_index != 1u ||
+              record.commit_count != 1u)) ||
+            (record.event_type != KernelRemoteActionPresentationEventType_StatusApplied &&
+             (record.action_instance_id == 0u ||
+              record.status_effect_id != 0u ||
+              record.status_instance_id != 0u ||
+              record.status_channel_id != 0u ||
+              record.duration_ticks != 0u))) {
             return false;
         }
         packet.records.push_back(record);

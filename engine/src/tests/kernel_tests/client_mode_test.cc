@@ -3743,6 +3743,44 @@ void action_result_and_remote_presentation_queues_are_isolated() {
     require(client.poll_remote_action_presentation_events(
                 remote_events.data(),
                 static_cast<std::uint32_t>(remote_events.size())) == 0u);
+
+    network_example::RemoteActionPresentationBatchPacket status_batch{};
+    status_batch.server_tick = 16u;
+    status_batch.records.push_back(KernelRemoteActionPresentationEvent{
+        42u,
+        0u,
+        0u,
+        1u,
+        1u,
+        KernelRemoteActionPresentationEventType_StatusApplied,
+        0u,
+        0u,
+        1001u,
+        9001u,
+        7u,
+        30u,
+    });
+    client.world_.set_status_effect_templates({
+        network_example::RuntimeStatusEffectTemplate{1001u, 7u, 30u},
+    });
+    event.payload =
+        network_example::encode_remote_action_presentation_batch_packet(
+            status_batch,
+            6u);
+    client.handle_client_remote_action_presentation(event);
+    require(client.poll_remote_action_presentation_events(
+                remote_events.data(),
+                static_cast<std::uint32_t>(remote_events.size())) == 1u);
+    require(remote_events[0].event_type ==
+            KernelRemoteActionPresentationEventType_StatusApplied);
+    require(remote_events[0].status_effect_id == 1001u);
+    require(remote_events[0].status_instance_id == 9001u);
+    require(remote_events[0].status_channel_id == 7u);
+    require(remote_events[0].duration_ticks == 30u);
+    client.handle_client_remote_action_presentation(event);
+    require(client.poll_remote_action_presentation_events(
+                remote_events.data(),
+                static_cast<std::uint32_t>(remote_events.size())) == 0u);
 }
 
 void owner_action_correction_timeout_and_reset_converge() {
@@ -3823,6 +3861,65 @@ void owner_action_correction_timeout_and_reset_converge() {
     require(client.outstanding_predicted_actions_.empty());
     require(client.pending_remote_action_presentation_events_.empty());
     require(client.remote_presentation_dedup_.empty());
+}
+
+void server_routes_status_presentation_to_local_and_observer() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30u;
+    config.tick.snapshot_rate = 15u;
+    network_example::KernelEngine server(config);
+    server.reset_runtime_state(KernelMode_DedicatedServer);
+
+    auto loopback = std::make_unique<network_example::LoopbackTransport>();
+    require(loopback->StartServer(7782));
+    auto* loopback_transport = loopback.get();
+    server.transport_ = std::move(loopback);
+
+    const network_example::NetId observer_target =
+        server.world_.spawn_player(2u, glm::vec3{5.0f, 0.0f, 0.0f});
+    const network_example::NetId local_target =
+        server.world_.spawn_player(1u, glm::vec3{0.0f, 0.0f, 0.0f});
+    network_example::KernelEngine::PeerSession observer{};
+    observer.peer = 1u;
+    observer.player = local_target;
+    observer.welcomed = true;
+    observer.relevant_entities.insert(observer_target);
+    network_example::KernelEngine::PeerSession target_owner{};
+    target_owner.peer = 2u;
+    target_owner.player = observer_target;
+    target_owner.welcomed = true;
+    server.peer_sessions_.push_back(observer);
+    server.peer_sessions_.push_back(target_owner);
+
+    server.queue_status_effect_presentation(observer_target, 1001u, 9001u);
+    server.flush_remote_action_presentation(
+        &server.peer_sessions_[0], server.pending_server_remote_presentations_);
+    server.flush_remote_action_presentation(
+        &server.peer_sessions_[1], server.pending_server_remote_presentations_);
+
+    bool observer_received = false;
+    bool target_owner_received = false;
+    network_example::TransportEvent event{};
+    while (loopback_transport->PollClientEvent(event)) {
+        network_example::RemoteActionPresentationBatchPacket packet{};
+        if (!network_example::decode_remote_action_presentation_batch_packet(
+                event.payload.data(), event.payload.size(), &packet)) {
+            continue;
+        }
+        require(packet.records.size() == 1u);
+        require(packet.records[0].event_type ==
+                KernelRemoteActionPresentationEventType_StatusApplied);
+        require(packet.records[0].actor_net_id == observer_target);
+        require(packet.records[0].status_effect_id == 1001u);
+        require(packet.records[0].status_instance_id == 9001u);
+        require(packet.records[0].status_channel_id == 0u);
+        require(packet.records[0].duration_ticks == 0u);
+        observer_received = observer_received || event.peer == 1u;
+        target_owner_received = target_owner_received || event.peer == 2u;
+    }
+    require(observer_received);
+    require(target_owner_received);
 }
 
 void server_routes_fire_result_to_owner_and_presentation_to_observer() {
@@ -4345,6 +4442,7 @@ int main() {
     hit_debug_records_filter_and_drain();
     action_result_and_remote_presentation_queues_are_isolated();
     owner_action_correction_timeout_and_reset_converge();
+    server_routes_status_presentation_to_local_and_observer();
     server_routes_fire_result_to_owner_and_presentation_to_observer();
     owner_action_prediction_and_discrete_interpolation();
     native_fixed_tick_coalesces_client_input_and_owns_sequence();

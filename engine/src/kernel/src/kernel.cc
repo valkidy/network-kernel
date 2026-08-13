@@ -46,7 +46,7 @@ constexpr std::uint32_t kDefaultRemotePresentationClientBudgetBytesPerSecond = 8
 constexpr std::uint32_t kDefaultRemotePresentationServerBudgetBytesPerSecond = 262144;
 constexpr std::size_t kActionBatchFixedBytes = 36;
 constexpr std::size_t kLocalActionResultRecordBytes = 12;
-constexpr std::size_t kRemotePresentationRecordBytes = 20;
+constexpr std::size_t kRemotePresentationRecordBytes = 28;
 constexpr std::size_t kRemotePresentationDedupCapacity = 256;
 constexpr std::size_t kRecentActionResultCapacity = 256;
 constexpr std::size_t kMaxPendingClientActionIntents = 32;
@@ -5813,7 +5813,18 @@ void KernelEngine::handle_client_remote_action_presentation(
             }),
         remote_presentation_dedup_.end());
 
-    for (const KernelRemoteActionPresentationEvent& event : packet.records) {
+    for (KernelRemoteActionPresentationEvent event : packet.records) {
+        if (event.event_type ==
+            KernelRemoteActionPresentationEventType_StatusApplied) {
+            const RuntimeStatusEffectTemplate* status_template =
+                world_.find_status_effect_template(event.status_effect_id);
+            if (status_template == nullptr || status_template->channel_id == 0u ||
+                status_template->duration_ticks == 0u) {
+                continue;
+            }
+            event.status_channel_id = status_template->channel_id;
+            event.duration_ticks = status_template->duration_ticks;
+        }
         const std::uint32_t event_tick =
             packet.server_tick >= event.server_tick_delta
                 ? packet.server_tick - event.server_tick_delta
@@ -5847,6 +5858,7 @@ void KernelEngine::handle_client_remote_action_presentation(
                 [&event, commit_index](const RemotePresentationDedup& entry) {
                     return entry.actor_net_id == event.actor_net_id &&
                            entry.action_instance_id == event.action_instance_id &&
+                           entry.status_instance_id == event.status_instance_id &&
                            entry.commit_index == commit_index &&
                            entry.event_type == event.event_type;
                 });
@@ -5872,6 +5884,7 @@ void KernelEngine::handle_client_remote_action_presentation(
             remote_presentation_dedup_.push_back(RemotePresentationDedup{
                 event.actor_net_id,
                 event.action_instance_id,
+                event.status_instance_id,
                 commit_index,
                 event.event_type,
                 event_tick + expiry_ticks,
@@ -11155,6 +11168,30 @@ void KernelEngine::queue_server_remote_presentation(
     }
 }
 
+void KernelEngine::queue_status_effect_presentation(
+    NetId target,
+    std::uint32_t status_effect_id,
+    std::uint32_t status_instance_id) {
+    if (!is_server_mode(config_.mode) || target == 0u ||
+        status_effect_id == 0u || status_instance_id == 0u) {
+        return;
+    }
+    queue_server_remote_presentation(KernelRemoteActionPresentationEvent{
+        target,
+        0u,
+        0u,
+        1u,
+        1u,
+        KernelRemoteActionPresentationEventType_StatusApplied,
+        0u,
+        0u,
+        status_effect_id,
+        status_instance_id,
+        0u,
+        0u,
+    });
+}
+
 void KernelEngine::queue_remote_presentation_from_events(
     std::size_t first_event,
     std::size_t last_event,
@@ -11206,9 +11243,14 @@ void KernelEngine::flush_remote_action_presentation(
     std::vector<KernelRemoteActionPresentationEvent> relevant;
     relevant.reserve(events.size());
     for (const KernelRemoteActionPresentationEvent& event : events) {
-        if (event.actor_net_id == session->player ||
-            session->relevant_entities.find(event.actor_net_id) ==
-                session->relevant_entities.end()) {
+        const bool status_applied =
+            event.event_type == KernelRemoteActionPresentationEventType_StatusApplied;
+        const bool is_local_target = event.actor_net_id == session->player;
+        const bool target_relevant =
+            session->relevant_entities.find(event.actor_net_id) !=
+            session->relevant_entities.end();
+        if ((!status_applied && is_local_target) ||
+            (!is_local_target && !target_relevant)) {
             if (network_stats_enabled()) {
                 network_stats_.remote_presentation_relevance_filtered +=
                     event.commit_count;

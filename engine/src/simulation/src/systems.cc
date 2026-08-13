@@ -456,6 +456,10 @@ bool execute_action_graph_commands(
                     server_time_us)) {
                 return false;
             }
+            engine.queue_status_effect_presentation(
+                apply_status->target,
+                active.status_effect_id,
+                active.instance_id);
             continue;
         }
         if (const auto* remove_status =
