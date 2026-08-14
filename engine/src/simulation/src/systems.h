@@ -17,6 +17,7 @@ bool execute_action_graph_command_batch(
     KernelEngine& engine,
     const ActionGraphCommandBatch& batch,
     std::uint64_t server_time_us);
+void simulate_status_effects(KernelEngine& engine, std::uint64_t server_time_us);
 struct ConfirmedDamage;
 
 class EntityLifecycleSystem {

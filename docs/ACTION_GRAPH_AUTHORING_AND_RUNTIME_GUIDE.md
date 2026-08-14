@@ -91,6 +91,11 @@ params.*          = binding/default 解析後的 graph parameters
 
 `self` 與 `event.subject` 常相同，但語意不同，不應在 compiler 中合併。
 
+Status lifecycle trigger 的 runtime context 另有固定語意：`self` 是受影響的
+target，`event.instigator` 是儲存的最新成功 source。Refresh、stack 或 replace
+更新 source 時，後續 lifecycle event 使用該最新成功 source；source entity 即使
+despawn，provenance 仍保留原本的 net id 與 owner peer。
+
 ---
 
 ## 3. 已支援的 Trigger Events
@@ -106,6 +111,9 @@ schema 的欄位會在載入階段被拒絕。
 | `on_destroy_entity` | `subject`, `instigator`, `position` | 銷毀時生成 entity |
 | `on_projectile_impact` | `subject`, `instigator`, `target`, `position`, `direction` | 命中後生成爆炸物 |
 | `on_expired` | `subject`, `instigator`, `position`, `direction` | projectile 到期後生成效果 |
+| `on_apply` | `subject`, `instigator`, `target` | status 建立或 stack apply |
+| `on_tick` | `subject`, `instigator`, `target` | status interval tick |
+| `on_expire` | `subject`, `instigator`, `target` | status natural expire 或 remove |
 
 注意事項：
 
@@ -174,6 +182,17 @@ schema 的欄位會在載入階段被拒絕。
   自動向下傳遞，不應重複出現在 YAML parameters。
 
 目前 projectile-backed triggers 只接受 `spawn_projectile` actions。
+
+Status lifecycle 目前支援的 actions 為 `apply_damage`、health change、status
+apply/remove 與 speed modifier。Lifecycle safety contract 僅允許 `on_apply` 使用
+damage、health change、speed modifier；`on_tick` 與 `on_expire` 不提交 speed
+modifier，lifecycle callback 也不允許任意 nested status mutation。
+
+Status replacement semantics：same-channel replace 依序執行 old `on_expire`、移除
+old modifier、建立 new instance、執行 new `on_apply`。Refresh 保留 instance 與
+stack count，只更新 latest source、owner peer 與 expiry。Stack 保留 instance 與
+applied tick、增加 stack count；達到 max stack 時依 `refresh_on_stack` 決定是否只
+更新 expiry。這些語意不由 Action Graph YAML 重新定義。
 
 ---
 
@@ -325,16 +344,26 @@ action schema，但 graph ID、trigger binding 與 exactly-once key 應清楚反
 ### 7.2 Deduplication Key
 
 ```text
-(request_id, trigger event type, sequence)
+(requester peer, request_id, trigger event type, sequence)
 ```
 
+- `requester peer` 將不同 peer 的 request namespace 分離。
 - `request_id` 識別外部 request 或內部 deterministic event request。
 - `trigger event type` 避免同一 request 的不同 gameplay fact 互相誤判。
 - `sequence` 區分同一 request/tick 內的多個 event occurrence。
 
-成功 commit 後才將 key 寫入 World-level ledger。Duplicate 的處理結果是 idempotent
-success/no-op：不重新執行 commands，也不回報錯誤。失敗 batch 不寫入 ledger，可在
-條件修正後重試。
+World-level ledger 使用 bounded retention，且以 authoritative simulation tick 作為
+唯一時間單位。`history_ms` 只在 server tick config 初始化時換算成
+`ceil(server_tick_rate * history_ms / 1000)` 個 ticks，再加一個 tick 作為 boundary
+allowance；client presentation 的毫秒內插不參與 ledger retention。因此
+exactly-once 只保證在此合法 replay window 內。
+Lookup 使用 hash index，retention 使用獨立的 commit-tick ordering。每個 simulation
+tick 集中 prune 一次，且使用 wrap-safe tick distance。
+
+Batch 必須先完成 dedup reservation 才能提交 side effects。Duplicate 的處理結果是
+idempotent success/no-op：不重新執行 commands，也不回報錯誤。Capacity 滿時不驅逐
+仍在 window 內的 entry；reservation 失敗時不執行 side effect。失敗 batch 取消
+reservation，成功 batch 才轉為 committed entry。
 
 ### 7.3 Deterministic Ordering
 
@@ -356,7 +385,8 @@ sequence 代表多個不同 collision/impact occurrences。
 
 ## 8. Kernel ABI 與 Compiled Representation
 
-目前 Kernel ABI version 為 52。
+目前 Kernel ABI version 為 73；packet schema version 為 24，snapshot schema
+version 為 17。
 
 ```text
 KernelActionTriggerDefinition
@@ -435,6 +465,10 @@ Runtime protection 包含：
 
 ---
 
+Owner peer 的 status full-state 使用 reliable delivery；remote action presentation
+events 是 best-effort，遺失時由後續 reliable full-state 修正 owner state。Remote
+presentation dedup 不改變 authoritative status ledger 的 exactly-once contract。
+
 ## 11. 新 Use Case 整合流程
 
 1. 確認需求代表已發生的 gameplay fact，而不是 input command 或 state transition。
@@ -460,7 +494,17 @@ Review checklist：
 
 ---
 
-## 12. 延後項目：Item System Integration
+## 12. Pending Status Semantics
+
+- Resistance — pending
+- Immunity — pending
+- Dispel — pending
+
+Pending 項目不是 authoring contract：不接受對應 YAML key、不保留 ABI 欄位、不建立
+runtime 或 gameplay behavior tests。它們在未來定義前不影響目前 catalog、packet、
+snapshot 或 status lifecycle semantics。
+
+## 13. 延後項目：Item System Integration
 
 以下項目尚未納入目前 Action Graph contract：
 

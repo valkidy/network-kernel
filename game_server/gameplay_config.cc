@@ -11,6 +11,7 @@
 #include <initializer_list>
 #include <limits>
 #include <memory>
+#include <cmath>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -99,6 +100,15 @@ void hash_string(std::uint64_t* hash, const std::string& value) {
     const auto size = static_cast<std::uint32_t>(value.size());
     hash_scalar(hash, size);
     hash_bytes(hash, value.data(), value.size());
+}
+
+std::uint32_t stable_channel_id(std::string_view value) {
+    std::uint32_t hash = 2166136261u;
+    for (const unsigned char byte : value) {
+        hash ^= byte;
+        hash *= 16777619u;
+    }
+    return hash == 0u ? 1u : hash;
 }
 
 void hash_weapon(std::uint64_t* hash, const KernelWeaponMechanicsDefinition& weapon) {
@@ -198,6 +208,11 @@ void hash_projectile_template(
             hash_scalar(hash, action.spawn_projectile_template_id);
             hash_scalar(hash, action.position_source);
             hash_scalar(hash, action.direction_source);
+            hash_scalar(hash, action.target_source);
+            hash_scalar(hash, action.damage_amount);
+            hash_scalar(hash, action.health_change_amount);
+            hash_scalar(hash, action.impulse_strength);
+            hash_scalar(hash, action.impulse_collision_mask);
             hash_scalar(hash, action.condition_type);
         }
     }
@@ -234,6 +249,7 @@ void hash_actor_template(
     hash_float(hash, actor_template.movement_ground_probe_distance);
     hash_float(hash, actor_template.movement_ground_snap_distance);
     hash_float(hash, actor_template.movement_max_yaw_degrees_per_second);
+    hash_float(hash, actor_template.impulse_resistance);
     hash_scalar(hash, actor_template.movement_collision_mask);
     hash_scalar(hash, actor_template.weapon_slot_count);
     for (std::uint8_t index = 0; index < actor_template.weapon_slot_count; ++index) {
@@ -575,6 +591,9 @@ std::uint32_t collision_mask_token_from_yaml(const std::string& token) {
     if (token == "obstacle" || token == "static_obstacle") {
         return KERNEL_COLLISION_LAYER_STATIC_OBSTACLE;
     }
+    if (token == "prop") {
+        return KERNEL_COLLISION_MASK_PROP;
+    }
     throw std::runtime_error("unsupported collision_mask: " + token);
 }
 
@@ -790,6 +809,32 @@ KernelVec3 vec3_from_yaml(const YAML::Node& node) {
         node["x"].as<float>(),
         node["y"].as<float>(),
         node["z"].as<float>()};
+}
+
+std::optional<KernelVec3> optional_vec3_default_from_yaml(
+    const YAML::Node& node,
+    const std::string& parameter_name,
+    const std::string& path) {
+    if (!node || !node.IsMap()) {
+        return std::nullopt;
+    }
+    if (parameter_name != "direction" || node.size() != 3u ||
+        !node["x"] || !node["y"] || !node["z"] ||
+        !node["x"].IsScalar() || !node["y"].IsScalar() ||
+        !node["z"].IsScalar()) {
+        throw std::runtime_error(
+            "action graph vec3 default is only supported for parameters.direction: " +
+            path);
+    }
+    const KernelVec3 value = vec3_from_yaml(node);
+    if (!std::isfinite(value.x) || !std::isfinite(value.y) ||
+        !std::isfinite(value.z) ||
+        (value.x == 0.0f && value.y == 0.0f && value.z == 0.0f)) {
+        throw std::runtime_error(
+            "action graph parameters.direction must be a non-zero finite vec3: " +
+            path);
+    }
+    return value;
 }
 
 // Plain suffix match, deliberately not std::filesystem::path::extension(): the
@@ -1505,14 +1550,17 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 "action graph parameter name must be unique: " + path);
         }
         const bool has_default = !entry.second.IsNull();
+        const std::optional<KernelVec3> default_vec3 =
+            optional_vec3_default_from_yaml(entry.second, name, path);
         graph.parameters.push_back(ActionGraphParameterConfig{
             name,
             has_default,
             has_default
                 ? (entry.second.IsScalar()
                        ? entry.second.as<std::string>()
-                       : YAML::Dump(entry.second))
+                       : std::string{})
                 : std::string{},
+            default_vec3,
         });
     }
     const YAML::Node actions = node["actions"];
@@ -1537,6 +1585,11 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 "owner",
                 "target",
                 "amount",
+                "strength",
+                "status",
+                "operation",
+                "value",
+                "collision_mask",
                 "item_template",
                 "quantity",
                 "when",
@@ -1626,7 +1679,8 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
             if (action["projectile_template"] || action["position"] ||
                 action["direction"] || action["entity_template"] ||
                 action["owner"] || action["item_template"] ||
-                action["quantity"]) {
+                action["quantity"] || action["strength"] ||
+                action["collision_mask"]) {
                 throw std::runtime_error(
                     compiled_action.action_type +
                     " action has unsupported fields: " + path);
@@ -1638,6 +1692,75 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
             action_parameters = {
                 &compiled_action.target_parameter,
                 &compiled_action.amount_parameter,
+            };
+        } else if (compiled_action.action_type == "apply_impulse") {
+            if (action["projectile_template"] || action["position"] ||
+                action["owner"] || action["amount"] ||
+                action["entity_template"] || action["item_template"] ||
+                action["quantity"] || !action["direction"]) {
+                throw std::runtime_error(
+                    "apply_impulse requires target, strength, and direction only: " +
+                    path);
+            }
+            compiled_action.target_parameter =
+                parameter_reference_from_yaml(action["target"], "target");
+            compiled_action.strength_parameter =
+                parameter_reference_from_yaml(action["strength"], "strength");
+            compiled_action.direction_parameter =
+                parameter_reference_from_yaml(action["direction"], "direction");
+            compiled_action.collision_mask = collision_mask_from_yaml(
+                action["collision_mask"], KERNEL_COLLISION_MASK_ACTOR);
+            if ((compiled_action.collision_mask &
+                 ~(KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_MASK_PROP)) != 0u ||
+                compiled_action.collision_mask == KERNEL_COLLISION_MASK_NONE) {
+                throw std::runtime_error(
+                    "apply_impulse collision_mask must contain actor and/or prop: " +
+                    path);
+            }
+            action_parameters = {
+                &compiled_action.target_parameter,
+                &compiled_action.strength_parameter,
+                &compiled_action.direction_parameter,
+            };
+        } else if (compiled_action.action_type == "apply_status" ||
+                   compiled_action.action_type == "remove_status") {
+            if (action["projectile_template"] || action["position"] ||
+                action["direction"] || action["owner"] || action["amount"] ||
+                action["strength"] || action["operation"] || action["value"] ||
+                action["entity_template"] || action["item_template"] ||
+                action["quantity"] || action["collision_mask"]) {
+                throw std::runtime_error(
+                    compiled_action.action_type +
+                    " action has unsupported fields: " + path);
+            }
+            compiled_action.target_parameter =
+                parameter_reference_from_yaml(action["target"], "target");
+            compiled_action.status_parameter =
+                parameter_reference_from_yaml(action["status"], "status");
+            action_parameters = {
+                &compiled_action.target_parameter,
+                &compiled_action.status_parameter,
+            };
+        } else if (compiled_action.action_type == "apply_speed_modifier") {
+            if (action["projectile_template"] || action["position"] ||
+                action["direction"] || action["owner"] || action["amount"] ||
+                action["strength"] || action["status"] ||
+                action["entity_template"] || action["item_template"] ||
+                action["quantity"] || action["collision_mask"]) {
+                throw std::runtime_error(
+                    "apply_speed_modifier action has unsupported fields: " +
+                    path);
+            }
+            compiled_action.target_parameter =
+                parameter_reference_from_yaml(action["target"], "target");
+            compiled_action.operation_parameter =
+                parameter_reference_from_yaml(action["operation"], "operation");
+            compiled_action.value_parameter =
+                parameter_reference_from_yaml(action["value"], "value");
+            action_parameters = {
+                &compiled_action.target_parameter,
+                &compiled_action.operation_parameter,
+                &compiled_action.value_parameter,
             };
         } else {
             throw std::runtime_error(
@@ -1687,6 +1810,142 @@ std::vector<ActionGraphTemplateConfig> load_action_graph_templates_from_source(
             return lhs.id < rhs.id;
         });
     return graphs;
+}
+
+StatusEffectTemplateConfig status_effect_template_from_yaml(
+    const YAML::Node& node,
+    const std::string& path,
+    std::uint32_t source_kind) {
+    reject_unknown_keys(
+        node,
+        {"id", "name", "kind", "channel", "duration_ticks",
+         "interval_ticks", "replace_policy", "max_stacks",
+         "refresh_on_stack", "triggers"},
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_UNKNOWN);
+    if (!node["id"] || !node["name"] || !node["channel"] ||
+        !node["duration_ticks"] || !node["interval_ticks"] ||
+        !node["replace_policy"] || !node["triggers"] || !node["kind"] ||
+        node["kind"].as<std::string>("status_effect") != "status_effect") {
+        throw std::runtime_error("status effect requires id, name, kind, channel, duration_ticks, interval_ticks, replace_policy, and triggers: " + path);
+    }
+    StatusEffectTemplateConfig status;
+    status.status_effect_id = node["id"].as<std::uint32_t>();
+    status.name = node["name"].as<std::string>();
+    status.channel_name = node["channel"].as<std::string>();
+    status.channel_id = stable_channel_id(status.channel_name);
+    status.duration_ticks = node["duration_ticks"].as<std::uint32_t>();
+    status.interval_ticks = node["interval_ticks"].as<std::uint32_t>();
+    const std::string replacement_policy =
+        node["replace_policy"].as<std::string>();
+    if (replacement_policy == "replace") {
+        status.replacement_policy =
+            KernelStatusEffectReplacementPolicy_Replace;
+    } else if (replacement_policy == "refresh") {
+        status.replacement_policy =
+            KernelStatusEffectReplacementPolicy_Refresh;
+    } else if (replacement_policy == "stack") {
+        status.replacement_policy =
+            KernelStatusEffectReplacementPolicy_Stack;
+    } else {
+        throw std::runtime_error(
+            "status effect replace_policy must be replace, refresh, or stack: " +
+            path);
+    }
+    if (status.replacement_policy ==
+        KernelStatusEffectReplacementPolicy_Stack) {
+        if (!node["max_stacks"] || !node["refresh_on_stack"]) {
+            throw std::runtime_error(
+                "stack status requires max_stacks and refresh_on_stack: " + path);
+        }
+        status.max_stacks = node["max_stacks"].as<std::uint16_t>();
+        status.refresh_on_stack = node["refresh_on_stack"].as<bool>();
+        if (status.max_stacks < 2u || status.max_stacks > 32u) {
+            throw std::runtime_error(
+                "stack status max_stacks must be between 2 and 32: " + path);
+        }
+    } else if (node["max_stacks"] || node["refresh_on_stack"]) {
+        throw std::runtime_error(
+            "max_stacks and refresh_on_stack are only valid for stack status: " +
+            path);
+    }
+    const YAML::Node triggers = node["triggers"];
+    reject_unknown_keys(
+        triggers,
+        {"on_apply", "on_tick", "on_expire"},
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_UNKNOWN);
+    const auto parse_trigger = [&](const char* name) {
+        TriggerBindingConfig binding;
+        const YAML::Node trigger = triggers[name];
+        if (!trigger) {
+            return binding;
+        }
+        reject_unknown_keys(
+            trigger,
+            {"action_graph", "parameters"},
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_UNKNOWN);
+        binding.action_graph_ref = trigger["action_graph"].as<std::string>();
+        if (trigger["parameters"]) {
+            if (!trigger["parameters"].IsMap()) {
+                throw std::runtime_error("status trigger parameters must be a map: " + path);
+            }
+            for (const auto& entry : trigger["parameters"]) {
+                binding.parameters.emplace_back(
+                    entry.first.as<std::string>(), entry.second.as<std::string>());
+            }
+        }
+        return binding;
+    };
+    status.on_apply_trigger = parse_trigger("on_apply");
+    status.on_tick_trigger = parse_trigger("on_tick");
+    status.on_expire_trigger = parse_trigger("on_expire");
+    if (status.status_effect_id == 0u || status.name.empty() ||
+        status.channel_name.empty() || status.duration_ticks == 0u ||
+        status.interval_ticks > status.duration_ticks ||
+        (status.interval_ticks == 0u &&
+         !status.on_tick_trigger.action_graph_ref.empty())) {
+        throw std::runtime_error("invalid status effect timing or identity: " + path);
+    }
+    return status;
+}
+
+std::vector<StatusEffectTemplateConfig> load_status_effect_templates_from_source(
+    const GameplayConfigSource& source,
+    const std::string& directory) {
+    std::vector<StatusEffectTemplateConfig> statuses;
+    for (const std::string& file : source.list_yaml_files(directory)) {
+        StatusEffectTemplateConfig status = status_effect_template_from_yaml(
+            source.load_yaml(file), file, source.source_kind());
+        if (std::any_of(
+                statuses.begin(), statuses.end(),
+                [&](const StatusEffectTemplateConfig& existing) {
+                    return existing.status_effect_id == status.status_effect_id ||
+                        existing.name == status.name;
+                })) {
+            throw std::runtime_error("duplicate status effect id or name: " + status.name);
+        }
+        if (std::any_of(
+                statuses.begin(), statuses.end(),
+                [&](const StatusEffectTemplateConfig& existing) {
+                    return existing.channel_id == status.channel_id &&
+                        existing.channel_name != status.channel_name;
+                })) {
+            throw std::runtime_error("status channel hash collision: " + status.channel_name);
+        }
+        statuses.push_back(std::move(status));
+    }
+    std::sort(
+        statuses.begin(), statuses.end(),
+        [](const StatusEffectTemplateConfig& lhs,
+           const StatusEffectTemplateConfig& rhs) {
+            return lhs.status_effect_id < rhs.status_effect_id;
+        });
+    return statuses;
 }
 
 const ActionGraphTemplateConfig* action_graph_template_from_ref(
@@ -2640,6 +2899,7 @@ ActorTemplateConfig actor_template_from_yaml(
             "camp",
             "collider_template",
             "health",
+            "impulse_resistance",
             "movement",
             "hitbox",
             "weapon_slots",
@@ -2680,6 +2940,10 @@ ActorTemplateConfig actor_template_from_yaml(
     }
     actor_template.collider_template_id =
         actor_collider_template_id_from_yaml(node["collider_template"], colliders);
+    if (node["impulse_resistance"]) {
+        actor_template.impulse_resistance =
+            node["impulse_resistance"].as<float>();
+    }
 
     const YAML::Node health = node["health"];
     if (!health) {
@@ -4301,9 +4565,9 @@ ProjectileTemplateConfig projectile_template_from_yaml(
         mechanics.projectile_type == KernelProjectileType_AreaEffect
             ? KERNEL_COLLISION_MASK_ACTOR
             : static_collision_mask);
-    const std::uint32_t supported_collision_mask =
-        mechanics.projectile_type == KernelProjectileType_AreaEffect
-            ? KERNEL_COLLISION_MASK_ACTOR
+        const std::uint32_t supported_collision_mask =
+            mechanics.projectile_type == KernelProjectileType_AreaEffect
+            ? KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_MASK_PROP
             : mechanics.projectile_type == KernelProjectileType_Beam
                 ? static_collision_mask
                 : static_collision_mask | KERNEL_COLLISION_LAYER_PROJECTILE;
@@ -4543,7 +4807,10 @@ bool event_expression_available(
             trigger_name == "on_health_depleted" ||
             trigger_name == "on_destroy_entity" ||
             trigger_name == "on_projectile_impact" ||
-            trigger_name == "on_expired";
+            trigger_name == "on_expired" ||
+            trigger_name == "on_apply" ||
+            trigger_name == "on_tick" ||
+            trigger_name == "on_expire";
     }
     if (expression == "event.direction") {
         return trigger_name == "on_activated" ||
@@ -4579,6 +4846,13 @@ void validate_trigger_parameters(
         }
     }
     for (const ActionGraphParameterConfig& parameter : graph.parameters) {
+        if (parameter.default_vec3.has_value() &&
+            std::none_of(
+                binding.parameters.begin(),
+                binding.parameters.end(),
+                [&](const auto& value) { return value.first == parameter.name; })) {
+            continue;
+        }
         const std::string value = trigger_parameter_value(binding, parameter);
         if (!event_expression_available(trigger_name, value)) {
             throw std::runtime_error(
@@ -4604,6 +4878,12 @@ void mirror_first_action(KernelActionTriggerDefinition* trigger) {
     trigger->spawn_item_quantity = action.spawn_item_quantity;
     trigger->health_change_amount = action.health_change_amount;
     trigger->condition_type = action.condition_type;
+    trigger->impulse_strength = action.impulse_strength;
+    trigger->impulse_collision_mask = action.impulse_collision_mask;
+    trigger->impulse_direction = action.impulse_direction;
+    trigger->status_effect_id = action.status_effect_id;
+    trigger->modifier_operation = action.modifier_operation;
+    trigger->modifier_value = action.modifier_value;
 }
 
 void compile_projectile_trigger_binding(
@@ -4634,6 +4914,15 @@ void compile_projectile_trigger_binding(
         }
         return *found;
     };
+    const auto entity_ref_source = [](const std::string& expression)
+        -> std::uint8_t {
+        if (expression == "self") return KernelEntityRefSource_Self;
+        if (expression == "event.subject") return KernelEntityRefSource_EventSubject;
+        if (expression == "event.target") return KernelEntityRefSource_EventTarget;
+        if (expression == "event.instigator") return KernelEntityRefSource_EventInstigator;
+        throw std::runtime_error(
+            "action parameter must be an entity reference expression");
+    };
     KernelActionTriggerDefinition& compiled =
         expired
         ? projectile_template->definition.mechanics
@@ -4644,6 +4933,76 @@ void compile_projectile_trigger_binding(
     compiled.action_count = static_cast<std::uint32_t>(graph->actions.size());
     for (std::size_t index = 0; index < graph->actions.size(); ++index) {
         const ActionGraphActionConfig& action = graph->actions[index];
+        KernelActionDefinition& compiled_action = compiled.actions[index];
+        compiled_action.condition_type = action.condition_type;
+        if (action.action_type == "apply_damage" ||
+            action.action_type == "apply_health_change" ||
+            action.action_type == "apply_impulse") {
+            const std::string target = trigger_parameter_value(
+                binding, graph_parameter(action.target_parameter));
+            compiled_action.target_source = entity_ref_source(target);
+            if (action.action_type == "apply_impulse") {
+                const std::string strength = trigger_parameter_value(
+                    binding, graph_parameter(action.strength_parameter));
+                const ActionGraphParameterConfig& direction_parameter =
+                    graph_parameter(action.direction_parameter);
+                const auto direction_binding = std::find_if(
+                    binding.parameters.begin(),
+                    binding.parameters.end(),
+                    [&](const auto& value) {
+                        return value.first == direction_parameter.name;
+                    });
+                std::size_t parsed = 0;
+                const float parsed_strength = std::stof(strength, &parsed);
+                if (parsed != strength.size() ||
+                    !std::isfinite(parsed_strength) || parsed_strength <= 0.0f) {
+                    throw std::runtime_error(
+                        "apply_impulse projectile trigger requires positive strength");
+                }
+                compiled_action.action_type =
+                    KernelEntityTriggerActionType_ApplyImpulse;
+                if (direction_binding == binding.parameters.end() &&
+                    direction_parameter.default_vec3.has_value()) {
+                    compiled_action.direction_source =
+                        KernelEventVec3Source_Literal;
+                    compiled_action.impulse_direction =
+                        *direction_parameter.default_vec3;
+                } else {
+                    const std::string direction = trigger_parameter_value(
+                        binding, direction_parameter);
+                    if (direction != "event.direction") {
+                        throw std::runtime_error(
+                            "apply_impulse projectile trigger direction must be event.direction or a direction vec3 default");
+                    }
+                    compiled_action.direction_source =
+                        KernelEventVec3Source_Direction;
+                }
+                compiled_action.impulse_strength = parsed_strength;
+                compiled_action.impulse_collision_mask = action.collision_mask;
+            } else {
+                const std::string amount = trigger_parameter_value(
+                    binding, graph_parameter(action.amount_parameter));
+                std::size_t parsed = 0;
+                const long parsed_amount = std::stol(amount, &parsed);
+                if (parsed != amount.size() || parsed_amount <= 0 ||
+                    parsed_amount > std::numeric_limits<std::uint16_t>::max()) {
+                    throw std::runtime_error(
+                        "projectile damage action amount must be a positive uint16");
+                }
+                compiled_action.action_type = action.action_type == "apply_damage"
+                    ? KernelEntityTriggerActionType_ApplyDamage
+                    : KernelEntityTriggerActionType_ApplyHealthChange;
+                if (compiled_action.action_type ==
+                    KernelEntityTriggerActionType_ApplyDamage) {
+                    compiled_action.damage_amount =
+                        static_cast<std::uint16_t>(parsed_amount);
+                } else {
+                    compiled_action.health_change_amount =
+                        static_cast<std::int32_t>(parsed_amount);
+                }
+            }
+            continue;
+        }
         if (action.action_type != "spawn_projectile") {
             throw std::runtime_error(
                 "projectile trigger requires spawn_projectile actions: " +
@@ -4664,8 +5023,6 @@ void compile_projectile_trigger_binding(
         ProjectileTemplateConfig* spawned_projectile =
             projectile_template_from_ref(
                 YAML::Node(projectile_ref), projectile_templates);
-        KernelActionDefinition& compiled_action = compiled.actions[index];
-        compiled_action.condition_type = action.condition_type;
         compiled_action.action_type =
             KernelEntityTriggerActionType_SpawnProjectile;
         compiled_action.spawn_projectile_template_id =
@@ -4682,7 +5039,8 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
     const std::vector<ActionGraphTemplateConfig>& action_graph_templates,
     const std::vector<EntityTemplateConfig>& entity_templates,
     const std::vector<ProjectileTemplateConfig>* projectile_templates = nullptr,
-    const std::vector<ItemTemplateConfig>* item_templates = nullptr) {
+    const std::vector<ItemTemplateConfig>* item_templates = nullptr,
+    const std::vector<StatusEffectTemplateConfig>* status_effect_templates = nullptr) {
     KernelActionTriggerDefinition compiled{};
     if (binding.action_graph_ref.empty()) {
         return compiled;
@@ -4720,6 +5078,22 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
         }
         throw std::runtime_error(
             "action parameter must be an entity reference expression");
+    };
+    const auto status_ref = [&](const std::string& expression) {
+        if (status_effect_templates == nullptr) {
+            throw std::runtime_error(
+                std::string(trigger_name) + " cannot reference status effects in this context");
+        }
+        const auto found = std::find_if(
+            status_effect_templates->begin(), status_effect_templates->end(),
+            [&](const StatusEffectTemplateConfig& status) {
+                return status.name == expression ||
+                    std::to_string(status.status_effect_id) == expression;
+            });
+        if (found == status_effect_templates->end()) {
+            throw std::runtime_error("unknown status effect: " + expression);
+        }
+        return found->status_effect_id;
     };
     compiled.struct_size = sizeof(KernelActionTriggerDefinition);
     compiled.action_count = static_cast<std::uint32_t>(graph->actions.size());
@@ -4828,6 +5202,96 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
                     item->definition.item_template_id;
                 compiled_action.spawn_item_quantity = action.quantity;
             }
+            continue;
+        }
+        if (action.action_type == "apply_impulse") {
+            const std::string target = trigger_parameter_value(
+                binding, graph_parameter(action.target_parameter));
+            const std::string strength = trigger_parameter_value(
+                binding, graph_parameter(action.strength_parameter));
+            const ActionGraphParameterConfig& direction_parameter =
+                graph_parameter(action.direction_parameter);
+            const auto direction_binding = std::find_if(
+                binding.parameters.begin(),
+                binding.parameters.end(),
+                [&](const auto& value) {
+                    return value.first == direction_parameter.name;
+                });
+            std::size_t parsed = 0;
+            const float parsed_strength = std::stof(strength, &parsed);
+            if (parsed != strength.size() || !std::isfinite(parsed_strength) ||
+                parsed_strength <= 0.0f) {
+                throw std::runtime_error(
+                    "apply_impulse strength must be a positive finite float");
+            }
+            compiled_action.action_type =
+                KernelEntityTriggerActionType_ApplyImpulse;
+            compiled_action.target_source = entity_ref_source(target);
+            if (direction_binding == binding.parameters.end() &&
+                direction_parameter.default_vec3.has_value()) {
+                compiled_action.direction_source =
+                    KernelEventVec3Source_Literal;
+                compiled_action.impulse_direction =
+                    *direction_parameter.default_vec3;
+            } else {
+                const std::string direction = trigger_parameter_value(
+                    binding, direction_parameter);
+                if (direction != "event.direction") {
+                    throw std::runtime_error(
+                        "apply_impulse direction must be event.direction or a direction vec3 default");
+                }
+                compiled_action.direction_source =
+                    KernelEventVec3Source_Direction;
+            }
+            compiled_action.impulse_strength = parsed_strength;
+            compiled_action.impulse_collision_mask = action.collision_mask;
+            continue;
+        }
+        if (action.action_type == "apply_status" ||
+            action.action_type == "remove_status") {
+            const std::string target = trigger_parameter_value(
+                binding, graph_parameter(action.target_parameter));
+            const std::string status = trigger_parameter_value(
+                binding, graph_parameter(action.status_parameter));
+            compiled_action.action_type = action.action_type == "apply_status"
+                ? KernelEntityTriggerActionType_ApplyStatus
+                : KernelEntityTriggerActionType_RemoveStatus;
+            compiled_action.target_source = entity_ref_source(target);
+            compiled_action.status_effect_id = status_ref(status);
+            continue;
+        }
+        if (action.action_type == "apply_speed_modifier") {
+            if (trigger_name != "on_apply") {
+                throw std::runtime_error(
+                    "apply_speed_modifier is only valid in status on_apply");
+            }
+            const std::string target = trigger_parameter_value(
+                binding, graph_parameter(action.target_parameter));
+            const std::string operation = trigger_parameter_value(
+                binding, graph_parameter(action.operation_parameter));
+            const std::string value = trigger_parameter_value(
+                binding, graph_parameter(action.value_parameter));
+            std::size_t operation_parsed = 0;
+            const float modifier_value = std::stof(value, &operation_parsed);
+            if (operation_parsed != value.size() ||
+                !std::isfinite(modifier_value)) {
+                throw std::runtime_error(
+                    "apply_speed_modifier value must be a finite float");
+            }
+            if (operation == "additive") {
+                compiled_action.modifier_operation =
+                    KernelStatModifierOperation_Additive;
+            } else if (operation == "multiplier") {
+                compiled_action.modifier_operation =
+                    KernelStatModifierOperation_Multiplier;
+            } else {
+                throw std::runtime_error(
+                    "apply_speed_modifier operation must be additive or multiplier");
+            }
+            compiled_action.action_type =
+                KernelEntityTriggerActionType_ApplySpeedModifier;
+            compiled_action.target_source = entity_ref_source(target);
+            compiled_action.modifier_value = modifier_value;
             continue;
         }
         if (action.action_type != "apply_damage" &&
@@ -5180,6 +5644,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             "catalog_version",
             "action_template_dir",
             "action_graph_template_dir",
+            "status_effect_template_dir",
             "reload_action_template",
             "weapon_template_dir",
             "projectile_template_dir",
@@ -5336,6 +5801,13 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             source.resolve_path(base_path, document["action_graph_template_dir"]);
         config.action_graph_templates = load_action_graph_templates_from_source(
             source, action_graph_template_dir);
+    }
+    if (document["status_effect_template_dir"]) {
+        const std::string status_effect_template_dir =
+            source.resolve_path(base_path, document["status_effect_template_dir"]);
+        config.status_effect_templates =
+            load_status_effect_templates_from_source(
+                source, status_effect_template_dir);
     }
     config.projectile_templates = load_projectile_templates_from_source(
         source,
@@ -5533,6 +6005,12 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_string(&hash, parameter.name);
             hash_scalar(&hash, parameter.has_default);
             hash_string(&hash, parameter.default_value);
+            hash_scalar(&hash, parameter.default_vec3.has_value());
+            if (parameter.default_vec3.has_value()) {
+                hash_scalar(&hash, parameter.default_vec3->x);
+                hash_scalar(&hash, parameter.default_vec3->y);
+                hash_scalar(&hash, parameter.default_vec3->z);
+            }
         }
         for (const ActionGraphActionConfig& action : graph.actions) {
             hash_string(&hash, action.action_type);
@@ -5543,10 +6021,44 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_string(&hash, action.owner_parameter);
             hash_string(&hash, action.target_parameter);
             hash_string(&hash, action.amount_parameter);
+            hash_string(&hash, action.strength_parameter);
+            hash_string(&hash, action.status_parameter);
+            hash_string(&hash, action.operation_parameter);
+            hash_string(&hash, action.value_parameter);
+            hash_scalar(&hash, action.collision_mask);
             hash_string(&hash, action.item_template_ref);
             hash_scalar(&hash, action.quantity);
             hash_scalar(&hash, action.condition_type);
         }
+    }
+    std::vector<StatusEffectTemplateConfig> status_effect_templates =
+        config.status_effect_templates;
+    std::sort(
+        status_effect_templates.begin(), status_effect_templates.end(),
+        [](const StatusEffectTemplateConfig& lhs,
+           const StatusEffectTemplateConfig& rhs) {
+            return lhs.status_effect_id < rhs.status_effect_id;
+        });
+    for (const StatusEffectTemplateConfig& status : status_effect_templates) {
+        hash_scalar(&hash, status.status_effect_id);
+        hash_string(&hash, status.name);
+        hash_scalar(&hash, status.channel_id);
+        hash_string(&hash, status.channel_name);
+        hash_scalar(&hash, status.duration_ticks);
+        hash_scalar(&hash, status.interval_ticks);
+        hash_scalar(&hash, status.replacement_policy);
+        hash_scalar(&hash, status.max_stacks);
+        hash_scalar(&hash, status.refresh_on_stack);
+        const auto hash_trigger = [&](const TriggerBindingConfig& trigger) {
+            hash_string(&hash, trigger.action_graph_ref);
+            for (const auto& parameter : trigger.parameters) {
+                hash_string(&hash, parameter.first);
+                hash_string(&hash, parameter.second);
+            }
+        };
+        hash_trigger(status.on_apply_trigger);
+        hash_trigger(status.on_tick_trigger);
+        hash_trigger(status.on_expire_trigger);
     }
     std::vector<ActionTemplateConfig> action_templates = config.action_templates;
     std::sort(
@@ -5813,6 +6325,10 @@ std::vector<std::string> validate_gameplay_config(
     }
     for (const EntityTemplateConfig& entity_template :
          config.entity_templates) {
+        if (!std::isfinite(entity_template.impulse_resistance) ||
+            entity_template.impulse_resistance < 0.0f) {
+            errors.push_back("impulse_resistance must be finite and non-negative");
+        }
         if (entity_template.entity_type != KernelEntityType_Prop &&
             (entity_template.prop.lifetime_ticks != 0u ||
              entity_template.prop.population_group_id != 0u)) {
@@ -6321,18 +6837,24 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             authored_template.movement_max_yaw_degrees_per_second;
         entity_template.movement.movement_collision_mask =
             authored_template.movement_collision_mask;
+        entity_template.impulse_resistance =
+            authored_template.impulse_resistance;
         entity_template.activated_trigger = compile_action_trigger_binding(
             authored_template.activated_trigger,
             "on_activated",
             config.action_graph_templates,
             config.entity_templates,
-            &config.projectile_templates);
+            &config.projectile_templates,
+            nullptr,
+            &config.status_effect_templates);
         entity_template.collision_trigger = compile_action_trigger_binding(
             authored_template.collision_trigger,
             "on_collision",
             config.action_graph_templates,
             config.entity_templates,
-            &config.projectile_templates);
+            &config.projectile_templates,
+            nullptr,
+            &config.status_effect_templates);
         entity_template.collision_trigger_mask =
             authored_template.collision_trigger_mask;
         entity_template.health_depleted_trigger = compile_action_trigger_binding(
@@ -6340,13 +6862,17 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             "on_health_depleted",
             config.action_graph_templates,
             config.entity_templates,
-            &config.projectile_templates);
+            &config.projectile_templates,
+            nullptr,
+            &config.status_effect_templates);
         entity_template.destroy_entity_trigger = compile_action_trigger_binding(
             authored_template.destroy_entity_trigger,
             "on_destroy_entity",
             config.action_graph_templates,
             config.entity_templates,
-            &config.projectile_templates);
+            &config.projectile_templates,
+            nullptr,
+            &config.status_effect_templates);
         if (authored_template.skeleton.enabled) {
             entity_template.skeleton.struct_size =
                 sizeof(KernelSkeletonBindingDefinition);
@@ -6546,8 +7072,123 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
             config.action_graph_templates,
             config.entity_templates,
             &config.projectile_templates,
-            &config.item_templates);
+            &config.item_templates,
+            &config.status_effect_templates);
         storage.item_templates.push_back(item);
+    }
+    const auto compile_status_trigger = [&](const TriggerBindingConfig& binding,
+                                            const char* trigger_name) {
+        KernelActionTriggerDefinition trigger = compile_action_trigger_binding(
+            binding,
+            trigger_name,
+            config.action_graph_templates,
+            config.entity_templates,
+            nullptr,
+            nullptr,
+            &config.status_effect_templates);
+        for (std::uint32_t index = 0u; index < trigger.action_count; ++index) {
+            const KernelActionDefinition& action = trigger.actions[index];
+            const std::uint8_t action_type = action.action_type;
+            const bool damage_or_health =
+                action_type == KernelEntityTriggerActionType_ApplyDamage ||
+                action_type == KernelEntityTriggerActionType_ApplyHealthChange;
+            const bool speed_modifier =
+                action_type == KernelEntityTriggerActionType_ApplySpeedModifier;
+            if (!damage_or_health && !speed_modifier) {
+                throw std::runtime_error(
+                    "status lifecycle action graph only allows damage, health change, and on_apply speed modifiers");
+            }
+            if (speed_modifier && std::string_view(trigger_name) != "on_apply") {
+                throw std::runtime_error(
+                    "apply_speed_modifier is only allowed in status on_apply");
+            }
+            if (speed_modifier &&
+                action.target_source != KernelEntityRefSource_Self &&
+                action.target_source != KernelEntityRefSource_EventSubject) {
+                throw std::runtime_error(
+                    "status speed modifier target must be self or event.subject");
+            }
+        }
+        return trigger;
+    };
+    for (const StatusEffectTemplateConfig& authored_status :
+         config.status_effect_templates) {
+        KernelStatusEffectDefinition status{};
+        status.struct_size = sizeof(KernelStatusEffectDefinition);
+        status.status_effect_id = authored_status.status_effect_id;
+        status.channel_id = authored_status.channel_id;
+        status.duration_ticks = authored_status.duration_ticks;
+        status.interval_ticks = authored_status.interval_ticks;
+        status.replacement_policy = authored_status.replacement_policy;
+        status.on_apply_trigger = compile_status_trigger(
+            authored_status.on_apply_trigger, "on_apply");
+        status.on_tick_trigger = compile_status_trigger(
+            authored_status.on_tick_trigger, "on_tick");
+        status.on_expire_trigger = compile_status_trigger(
+            authored_status.on_expire_trigger, "on_expire");
+        status.max_stacks = authored_status.replacement_policy ==
+                KernelStatusEffectReplacementPolicy_Stack
+            ? authored_status.max_stacks
+            : 0u;
+        status.refresh_on_stack = authored_status.refresh_on_stack ? 1u : 0u;
+
+        const std::uint32_t stack_scale =
+            std::max<std::uint32_t>(1u, authored_status.max_stacks);
+        const auto validate_scaled_trigger =
+            [&](const KernelActionTriggerDefinition& trigger,
+                const char* trigger_name) {
+                for (std::uint32_t index = 0u;
+                     index < trigger.action_count;
+                     ++index) {
+                    const KernelActionDefinition& action =
+                        trigger.actions[index];
+                    const bool scale_amount =
+                        std::string_view(trigger_name) != "on_apply";
+                    if (scale_amount &&
+                        action.action_type ==
+                            KernelEntityTriggerActionType_ApplyDamage &&
+                        static_cast<std::uint64_t>(action.damage_amount) *
+                                stack_scale >
+                            UINT16_MAX) {
+                        throw std::runtime_error(
+                            "stacked status damage overflows uint16");
+                    }
+                    if (scale_amount &&
+                        action.action_type ==
+                            KernelEntityTriggerActionType_ApplyHealthChange) {
+                        const std::int64_t scaled =
+                            static_cast<std::int64_t>(
+                                action.health_change_amount) *
+                            stack_scale;
+                        if (scaled < INT32_MIN || scaled > INT32_MAX) {
+                            throw std::runtime_error(
+                                "stacked status health change overflows int32");
+                        }
+                    }
+                    if (action.action_type ==
+                        KernelEntityTriggerActionType_ApplySpeedModifier) {
+                        const double scaled =
+                            action.modifier_operation ==
+                                    KernelStatModifierOperation_Additive
+                                ? static_cast<double>(action.modifier_value) *
+                                    stack_scale
+                                : std::pow(
+                                      static_cast<double>(
+                                          action.modifier_value),
+                                      stack_scale);
+                        if (!std::isfinite(scaled) ||
+                            std::abs(scaled) >
+                                std::numeric_limits<float>::max()) {
+                            throw std::runtime_error(
+                                "stacked status speed modifier is not finite");
+                        }
+                    }
+                }
+            };
+        validate_scaled_trigger(status.on_apply_trigger, "on_apply");
+        validate_scaled_trigger(status.on_tick_trigger, "on_tick");
+        validate_scaled_trigger(status.on_expire_trigger, "on_expire");
+        storage.status_effects.push_back(status);
     }
     for (const PropPopulationRuleConfig& authored_rule :
          config.prop_population_rules) {
@@ -6579,6 +7220,9 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
         storage.prop_population_rules.data();
     storage.definition.prop_population_rule_count =
         static_cast<std::uint32_t>(storage.prop_population_rules.size());
+    storage.definition.status_effects = storage.status_effects.data();
+    storage.definition.status_effect_count =
+        static_cast<std::uint32_t>(storage.status_effects.size());
     storage.definition.skeleton_assets = storage.skeleton_assets.data();
     storage.definition.skeleton_asset_count =
         static_cast<std::uint32_t>(storage.skeleton_assets.size());

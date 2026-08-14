@@ -12,6 +12,7 @@
 namespace network_example {
 
 class DamagePipeline;
+struct ActionGraphCommandBatch;
 
 struct QueuedInput {
     PeerId owner_peer = 0;
@@ -199,6 +200,13 @@ void simulate_area_effects(
     std::uint32_t current_tick,
     std::vector<KernelEvent>* events,
     DamagePipeline* damage_pipeline);
+void simulate_area_effects(
+    World& world,
+    std::uint32_t current_tick,
+    std::uint64_t server_time_us,
+    std::vector<KernelEvent>* events,
+    DamagePipeline* damage_pipeline,
+    std::vector<ActionGraphCommandBatch>* action_graph_batches);
 void simulate_area_effects(
     World& world,
     std::uint32_t current_tick,

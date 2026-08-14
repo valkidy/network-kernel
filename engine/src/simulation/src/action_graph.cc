@@ -15,6 +15,7 @@ enum class ParameterType : std::uint8_t {
     kEntityId,
     kProjectileTemplateId,
     kEntityTemplateId,
+    kStatusEffectId,
     kItemInstanceId,
     kVec3,
     kNumber,
@@ -27,6 +28,21 @@ bool fail(std::string* error, std::string message) {
     return false;
 }
 
+bool is_status_lifecycle_event(TriggerEventType event_type) {
+    return event_type == TriggerEventType::kStatusApplied ||
+        event_type == TriggerEventType::kStatusTick ||
+        event_type == TriggerEventType::kStatusExpired;
+}
+
+NetId action_source(NetId self, const TriggerEvent& event) {
+    if (is_status_lifecycle_event(event.type)) {
+        return event.instigator;
+    }
+    return event.type == TriggerEventType::kItemUsed && self == 0u
+        ? event.instigator
+        : self;
+}
+
 ParameterType value_type(const ActionGraphParameterValue& value) {
     if (std::holds_alternative<EntityIdValue>(value)) {
         return ParameterType::kEntityId;
@@ -36,6 +52,9 @@ ParameterType value_type(const ActionGraphParameterValue& value) {
     }
     if (std::holds_alternative<EntityTemplateIdValue>(value)) {
         return ParameterType::kEntityTemplateId;
+    }
+    if (std::holds_alternative<StatusEffectIdValue>(value)) {
+        return ParameterType::kStatusEffectId;
     }
     if (std::holds_alternative<ItemInstanceIdValue>(value)) {
         return ParameterType::kItemInstanceId;
@@ -72,7 +91,10 @@ bool expression_available_for_event(
             return event_type == TriggerEventType::kActivated ||
                 event_type == TriggerEventType::kItemUsed ||
                 event_type == TriggerEventType::kCollision ||
-                event_type == TriggerEventType::kProjectileImpact;
+                event_type == TriggerEventType::kProjectileImpact ||
+                event_type == TriggerEventType::kStatusApplied ||
+                event_type == TriggerEventType::kStatusTick ||
+                event_type == TriggerEventType::kStatusExpired;
         }
         if (entity_ref->source == EntityRefSource::kEventInstigator) {
             return event_type != TriggerEventType::kCollision;
@@ -234,6 +256,12 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
             action.spawn_item_quantity = trigger.spawn_item_quantity;
             action.health_change_amount = trigger.health_change_amount;
             action.condition_type = trigger.condition_type;
+            action.status_effect_id = trigger.status_effect_id;
+            action.modifier_operation = trigger.modifier_operation;
+            action.modifier_value = trigger.modifier_value;
+            action.impulse_strength = trigger.impulse_strength;
+            action.impulse_collision_mask = trigger.impulse_collision_mask;
+            action.impulse_direction = trigger.impulse_direction;
         } else {
             action = trigger.actions[index];
         }
@@ -326,12 +354,97 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
         const bool applies_health_change =
             action.action_type ==
             KernelEntityTriggerActionType_ApplyHealthChange;
-        if (!applies_damage && !applies_health_change) {
+        const bool applies_impulse =
+            action.action_type == KernelEntityTriggerActionType_ApplyImpulse;
+        const bool applies_status =
+            action.action_type == KernelEntityTriggerActionType_ApplyStatus;
+        const bool removes_status =
+            action.action_type == KernelEntityTriggerActionType_RemoveStatus;
+        const bool applies_speed_modifier =
+            action.action_type ==
+            KernelEntityTriggerActionType_ApplySpeedModifier;
+        if (!applies_damage && !applies_health_change && !applies_impulse &&
+            !applies_status && !removes_status && !applies_speed_modifier) {
             return std::nullopt;
+        }
+        if (applies_status || removes_status) {
+            const std::string target_name = "target" + suffix;
+            const std::string status_name = "status" + suffix;
+            binding.graph.parameters.push_back({target_name, std::monostate{}});
+            binding.graph.parameters.push_back({
+                status_name,
+                StatusEffectIdValue{action.status_effect_id},
+            });
+            binding.graph.actions.push_back(
+                applies_status
+                    ? ActionGraphAction{ActionApplyStatusDefinition{
+                          target_name, status_name, *condition}}
+                    : ActionGraphAction{ActionRemoveStatusDefinition{
+                          target_name, status_name, *condition}});
+            binding.parameters.push_back({
+                target_name,
+                EntityRefExpression{static_cast<EntityRefSource>(
+                    action.target_source)},
+            });
+            continue;
+        }
+        if (applies_speed_modifier) {
+            const std::string target_name = "target" + suffix;
+            const std::string operation_name = "operation" + suffix;
+            const std::string value_name = "value" + suffix;
+            binding.graph.parameters.push_back({target_name, std::monostate{}});
+            binding.graph.parameters.push_back({operation_name, static_cast<float>(
+                action.modifier_operation)});
+            binding.graph.parameters.push_back({value_name, action.modifier_value});
+            binding.graph.actions.push_back(ActionApplySpeedModifierDefinition{
+                target_name, operation_name, value_name, *condition});
+            binding.parameters.push_back({
+                target_name,
+                EntityRefExpression{static_cast<EntityRefSource>(
+                    action.target_source)},
+            });
+            continue;
         }
         const std::string target_name = "target" + suffix;
         const std::string amount_name = "amount" + suffix;
         binding.graph.parameters.push_back({target_name, std::monostate{}});
+        if (applies_impulse) {
+            const std::string direction_name = "direction" + suffix;
+            binding.graph.parameters.push_back({
+                "strength" + suffix,
+                static_cast<float>(action.impulse_strength),
+            });
+            binding.graph.parameters.push_back({
+                direction_name,
+                std::monostate{},
+            });
+            binding.graph.actions.push_back(ActionApplyImpulseDefinition{
+                target_name,
+                "strength" + suffix,
+                direction_name,
+                action.impulse_collision_mask,
+                action.direction_source == KernelEventVec3Source_Literal
+                    ? std::optional<glm::vec3>{glm::vec3{
+                          action.impulse_direction.x,
+                          action.impulse_direction.y,
+                          action.impulse_direction.z}}
+                    : std::nullopt,
+                *condition,
+            });
+            binding.parameters.push_back({
+                target_name,
+                EntityRefExpression{static_cast<EntityRefSource>(
+                    action.target_source)},
+            });
+            if (action.direction_source != KernelEventVec3Source_Literal) {
+                binding.parameters.push_back({
+                    direction_name,
+                    EventVec3Expression{static_cast<EventVec3Source>(
+                        action.direction_source)},
+                });
+            }
+            continue;
+        }
         binding.graph.parameters.push_back({
             amount_name,
             applies_damage
@@ -556,12 +669,51 @@ bool validate_action_graph_binding(
         const auto* damage = std::get_if<ActionApplyDamageDefinition>(&action);
         const auto* health_change =
             std::get_if<ActionApplyHealthChangeDefinition>(&action);
+        const auto* impulse =
+            std::get_if<ActionApplyImpulseDefinition>(&action);
+        const auto* apply_status =
+            std::get_if<ActionApplyStatusDefinition>(&action);
+        const auto* remove_status =
+            std::get_if<ActionRemoveStatusDefinition>(&action);
+        const auto* speed_modifier =
+            std::get_if<ActionApplySpeedModifierDefinition>(&action);
+        if (apply_status != nullptr || remove_status != nullptr) {
+            const std::string& target_parameter = apply_status != nullptr
+                ? apply_status->target_parameter
+                : remove_status->target_parameter;
+            const std::string& status_parameter = apply_status != nullptr
+                ? apply_status->status_parameter
+                : remove_status->status_parameter;
+            if (!validate_action_parameter(
+                    binding, target_parameter, ParameterType::kEntityId, error) ||
+                !validate_action_parameter(
+                    binding, status_parameter, ParameterType::kStatusEffectId, error)) {
+                return false;
+            }
+            continue;
+        }
+        if (speed_modifier != nullptr) {
+            if (!validate_action_parameter(
+                    binding, speed_modifier->target_parameter,
+                    ParameterType::kEntityId, error) ||
+                !validate_action_parameter(
+                    binding, speed_modifier->operation_parameter,
+                    ParameterType::kNumber, error) ||
+                !validate_action_parameter(
+                    binding, speed_modifier->value_parameter,
+                    ParameterType::kNumber, error)) {
+                return false;
+            }
+            continue;
+        }
         const std::string* target_parameter = damage != nullptr
             ? &damage->target_parameter
-            : health_change != nullptr ? &health_change->target_parameter : nullptr;
+            : health_change != nullptr ? &health_change->target_parameter
+            : impulse != nullptr ? &impulse->target_parameter : nullptr;
         const std::string* amount_parameter = damage != nullptr
             ? &damage->amount_parameter
-            : health_change != nullptr ? &health_change->amount_parameter : nullptr;
+            : health_change != nullptr ? &health_change->amount_parameter
+            : impulse != nullptr ? &impulse->strength_parameter : nullptr;
         if (target_parameter == nullptr || amount_parameter == nullptr ||
             !validate_action_parameter(
                 binding,
@@ -572,6 +724,14 @@ bool validate_action_graph_binding(
                 binding,
                 *amount_parameter,
                 ParameterType::kNumber,
+                error)) {
+            return false;
+        }
+        if (impulse != nullptr &&
+            !validate_action_parameter(
+                binding,
+                impulse->direction_parameter,
+                ParameterType::kVec3,
                 error)) {
             return false;
         }
@@ -706,15 +866,95 @@ bool evaluate_action_graph(
         const auto* damage = std::get_if<ActionApplyDamageDefinition>(&action);
         const auto* health_change =
             std::get_if<ActionApplyHealthChangeDefinition>(&action);
-        if (damage == nullptr && health_change == nullptr) {
+        const auto* impulse =
+            std::get_if<ActionApplyImpulseDefinition>(&action);
+        const auto* apply_status =
+            std::get_if<ActionApplyStatusDefinition>(&action);
+        const auto* remove_status =
+            std::get_if<ActionRemoveStatusDefinition>(&action);
+        const auto* speed_modifier =
+            std::get_if<ActionApplySpeedModifierDefinition>(&action);
+        if (apply_status != nullptr || remove_status != nullptr) {
+            const std::string& target_parameter = apply_status != nullptr
+                ? apply_status->target_parameter
+                : remove_status->target_parameter;
+            const std::string& status_parameter = apply_status != nullptr
+                ? apply_status->status_parameter
+                : remove_status->status_parameter;
+            const ActionGraphParameterValue* target_value =
+                find_resolved_parameter(parameters, target_parameter);
+            const ActionGraphParameterValue* status_value =
+                find_resolved_parameter(parameters, status_parameter);
+            if (target_value == nullptr || status_value == nullptr ||
+                !std::holds_alternative<EntityIdValue>(*target_value) ||
+                !std::holds_alternative<StatusEffectIdValue>(*status_value)) {
+                return fail(error, "status action input type mismatch");
+            }
+            const NetId target = std::get<EntityIdValue>(*target_value).value;
+            const std::uint32_t status_id =
+                std::get<StatusEffectIdValue>(*status_value).value;
+            if (target == 0u || status_id == 0u) {
+                return fail(error, "status action requires target and status");
+            }
+            const NetId source = action_source(self, event);
+            if (apply_status != nullptr) {
+                commands->push_back(ActionApplyStatusCommand{
+                    source, target, status_id, provenance});
+            } else {
+                commands->push_back(ActionRemoveStatusCommand{
+                    source, target, status_id, provenance});
+            }
+            continue;
+        }
+        if (speed_modifier != nullptr) {
+            const ActionGraphParameterValue* target_value =
+                find_resolved_parameter(parameters, speed_modifier->target_parameter);
+            const ActionGraphParameterValue* operation_value =
+                find_resolved_parameter(parameters, speed_modifier->operation_parameter);
+            const ActionGraphParameterValue* value_value =
+                find_resolved_parameter(parameters, speed_modifier->value_parameter);
+            if (target_value == nullptr || operation_value == nullptr ||
+                value_value == nullptr ||
+                !std::holds_alternative<EntityIdValue>(*target_value) ||
+                !std::holds_alternative<float>(*operation_value) ||
+                !std::holds_alternative<float>(*value_value)) {
+                return fail(error, "apply_speed_modifier action input type mismatch");
+            }
+            const float operation = std::get<float>(*operation_value);
+            const float value = std::get<float>(*value_value);
+            if (!std::isfinite(operation) || !std::isfinite(value) ||
+                std::floor(operation) != operation || operation < 0.0f ||
+                operation > 1.0f || !std::isfinite(value)) {
+                return fail(error, "apply_speed_modifier requires valid operation and value");
+            }
+            const NetId target = std::get<EntityIdValue>(*target_value).value;
+            if (target == 0u) {
+                return fail(error, "apply_speed_modifier target must not be null");
+            }
+            ActionExecutionProvenance modifier_provenance = provenance;
+            const NetId source = action_source(self, event);
+            modifier_provenance.instigator = source;
+            commands->push_back(ActionApplySpeedModifierCommand{
+                source,
+                target,
+                provenance.status_instance_id,
+                static_cast<std::uint8_t>(operation),
+                value,
+                modifier_provenance,
+            });
+            continue;
+        }
+        if (damage == nullptr && health_change == nullptr && impulse == nullptr) {
             return fail(error, "unsupported action graph action");
         }
         const std::string& target_parameter = damage != nullptr
             ? damage->target_parameter
-            : health_change->target_parameter;
+            : health_change != nullptr ? health_change->target_parameter
+            : impulse->target_parameter;
         const std::string& amount_parameter = damage != nullptr
             ? damage->amount_parameter
-            : health_change->amount_parameter;
+            : health_change != nullptr ? health_change->amount_parameter
+            : impulse->strength_parameter;
         const ActionGraphParameterValue* target_value =
             find_resolved_parameter(parameters, target_parameter);
         const ActionGraphParameterValue* amount_value =
@@ -726,10 +966,46 @@ bool evaluate_action_graph(
                 error,
                 damage != nullptr
                     ? "apply_damage action input type mismatch"
-                    : "apply_health_change action input type mismatch");
+                    : health_change != nullptr
+                    ? "apply_health_change action input type mismatch"
+                    : "apply_impulse action input type mismatch");
         }
         const float amount = std::get<float>(*amount_value);
-        if (!std::isfinite(amount) || std::floor(amount) != amount) {
+        if (!std::isfinite(amount)) {
+            return fail(error, "health action amount must be a finite integer");
+        }
+        if (impulse != nullptr) {
+            const ActionGraphParameterValue* direction_value =
+                find_resolved_parameter(parameters, impulse->direction_parameter);
+            if (direction_value == nullptr ||
+                !std::holds_alternative<glm::vec3>(*direction_value)) {
+                return fail(error, "apply_impulse action input type mismatch");
+            }
+            const glm::vec3 direction = std::get<glm::vec3>(*direction_value);
+            const float direction_length = glm::length(direction);
+            if (amount <= 0.0f || direction_length <= 0.0f ||
+                !std::isfinite(direction.x) || !std::isfinite(direction.y) ||
+                !std::isfinite(direction.z)) {
+                return fail(error, "apply_impulse requires positive strength and a finite non-zero direction");
+            }
+            const NetId target = std::get<EntityIdValue>(*target_value).value;
+            if (target == 0u) {
+                return fail(error, "apply_impulse target must not be null");
+            }
+            const NetId source = event.type == TriggerEventType::kItemUsed && self == 0u
+                ? event.instigator
+                : self;
+            commands->push_back(ActionApplyImpulseCommand{
+                source,
+                target,
+                amount,
+                direction / direction_length,
+                impulse->collision_mask,
+                provenance,
+            });
+            continue;
+        }
+        if (std::floor(amount) != amount) {
             return fail(error, "health action amount must be a finite integer");
         }
         if (damage != nullptr &&
@@ -752,9 +1028,7 @@ bool evaluate_action_graph(
         if (target == 0u) {
             return fail(error, "health action target must not be null");
         }
-        const NetId source = event.type == TriggerEventType::kItemUsed && self == 0u
-            ? event.instigator
-            : self;
+        const NetId source = action_source(self, event);
         if (damage != nullptr) {
             commands->push_back(ActionApplyDamageCommand{
                 source,

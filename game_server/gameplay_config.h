@@ -3,6 +3,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -133,6 +134,7 @@ struct ActorTemplateConfig {
     float movement_ground_probe_distance = 0.25f;
     float movement_ground_snap_distance = 0.5f;
     float movement_max_yaw_degrees_per_second = 0.0f;
+    float impulse_resistance = 0.0f;
     // KERNEL_MOVEMENT_LAYER_* bits; 0 keeps the engine default.
     std::uint32_t movement_collision_mask = 0u;
     std::array<std::uint32_t, KERNEL_MAX_WEAPON_SLOTS> weapon_ids{};
@@ -201,6 +203,7 @@ struct ActionGraphParameterConfig {
     std::string name;
     bool has_default = false;
     std::string default_value;
+    std::optional<KernelVec3> default_vec3;
 };
 
 struct ActionGraphActionConfig {
@@ -212,6 +215,11 @@ struct ActionGraphActionConfig {
     std::string owner_parameter;
     std::string target_parameter;
     std::string amount_parameter;
+    std::string strength_parameter;
+    std::string status_parameter;
+    std::string operation_parameter;
+    std::string value_parameter;
+    std::uint32_t collision_mask = KERNEL_COLLISION_MASK_ACTOR;
     std::string item_template_ref;
     std::uint32_t quantity = 0;
     std::uint32_t condition_type = KernelActionConditionType_Always;
@@ -221,6 +229,22 @@ struct ActionGraphTemplateConfig {
     std::string id;
     std::vector<ActionGraphParameterConfig> parameters;
     std::vector<ActionGraphActionConfig> actions;
+};
+
+struct StatusEffectTemplateConfig {
+    std::uint32_t status_effect_id = 0;
+    std::string name;
+    std::uint32_t channel_id = 0;
+    std::string channel_name;
+    std::uint32_t duration_ticks = 0;
+    std::uint32_t interval_ticks = 0;
+    std::uint8_t replacement_policy =
+        KernelStatusEffectReplacementPolicy_Replace;
+    std::uint16_t max_stacks = 1u;
+    bool refresh_on_stack = false;
+    TriggerBindingConfig on_apply_trigger;
+    TriggerBindingConfig on_tick_trigger;
+    TriggerBindingConfig on_expire_trigger;
 };
 
 struct ItemTemplateConfig {
@@ -261,6 +285,7 @@ struct GameServerGameplayConfig {
     std::vector<ActorTemplateConfig> actor_templates;
     ColliderCatalogConfig colliders;
     std::vector<ActionGraphTemplateConfig> action_graph_templates;
+    std::vector<StatusEffectTemplateConfig> status_effect_templates;
     std::vector<ItemTemplateConfig> item_templates;
     std::vector<ProjectileTemplateConfig> projectile_templates;
     std::vector<PropPopulationRuleConfig> prop_population_rules;
@@ -277,6 +302,7 @@ struct KernelGameplayCatalogStorage {
     std::vector<KernelActionTemplateDefinition> action_templates;
     std::vector<KernelItemTemplateDefinition> item_templates;
     std::vector<KernelPropPopulationRuleDefinition> prop_population_rules;
+    std::vector<KernelStatusEffectDefinition> status_effects;
     std::vector<std::vector<std::uint8_t>> skeleton_asset_bytes;
     std::vector<KernelSkeletonAssetDefinition> skeleton_assets;
     KernelGameplayCatalogDefinition definition{};

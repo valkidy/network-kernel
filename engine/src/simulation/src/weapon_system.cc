@@ -355,6 +355,7 @@ NetId fire_projectile(
                     projectile_template.collision_mask,
                     projectile_template.damage_falloff,
                     {},
+                    projectile_template.projectile_impact_binding,
                 });
         }
         if (projectile_template.projectile_type == ProjectileType::kBeam) {

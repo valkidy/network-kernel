@@ -35,7 +35,9 @@ constexpr std::size_t kProjectileSpawnGroupHeaderPayloadSize = 8;
 constexpr std::size_t kProjectileSpawnRecordPayloadSize = 40;
 constexpr std::size_t kActionBatchHeaderPayloadSize = 8;
 constexpr std::size_t kLocalActionResultPayloadSize = 12;
-constexpr std::size_t kRemoteActionPresentationPayloadSize = 20;
+constexpr std::size_t kRemoteActionPresentationPayloadSize = 32;
+constexpr std::size_t kStatusEffectStateHeaderPayloadSize = 16;
+constexpr std::size_t kStatusEffectStateRecordPayloadSize = 24;
 constexpr std::size_t kGameplayRequestPayloadSize = 60;
 constexpr std::size_t kGameplayRequestOutcomePayloadSize = 32;
 constexpr std::size_t kInventorySnapshotRequestPayloadSize = 16;
@@ -991,6 +993,16 @@ std::vector<std::uint8_t> encode_remote_action_presentation_batch_packet(
     payload.write_u16(static_cast<std::uint16_t>(packet.records.size()));
     payload.write_u16(0u);
     for (const KernelRemoteActionPresentationEvent& record : packet.records) {
+        const bool is_status_event =
+            record.event_type == KernelRemoteActionPresentationEventType_StatusApplied ||
+            record.event_type == KernelRemoteActionPresentationEventType_StatusRemoved ||
+            record.event_type == KernelRemoteActionPresentationEventType_StatusUpdated;
+        if ((is_status_event &&
+             (record.stack_count == 0u ||
+              record.stack_count > kMaxActiveStatusEffects)) ||
+            (!is_status_event && record.stack_count != 0u)) {
+            return {};
+        }
         payload.write_u32(record.actor_net_id);
         payload.write_u32(record.action_template_id);
         payload.write_u32(record.action_instance_id);
@@ -999,6 +1011,10 @@ std::vector<std::uint8_t> encode_remote_action_presentation_batch_packet(
         payload.write_u8(record.event_type);
         payload.write_u8(record.flags);
         payload.write_u16(record.server_tick_delta);
+        payload.write_u32(record.status_effect_id);
+        payload.write_u32(record.status_instance_id);
+        payload.write_u16(record.stack_count);
+        payload.write_u16(0u);
     }
     return protocol_internal::wrap_packet(
         MessageType::kRemoteActionPresentationBatch,
@@ -1037,6 +1053,7 @@ bool decode_remote_action_presentation_batch_packet(
     packet.records.reserve(record_count);
     for (std::uint16_t index = 0; index < record_count; ++index) {
         KernelRemoteActionPresentationEvent record{};
+        std::uint16_t reserved1 = 0u;
         if (!reader.read_u32(&record.actor_net_id) ||
             !reader.read_u32(&record.action_template_id) ||
             !reader.read_u32(&record.action_instance_id) ||
@@ -1045,13 +1062,139 @@ bool decode_remote_action_presentation_batch_packet(
             !reader.read_u8(&record.event_type) ||
             !reader.read_u8(&record.flags) ||
             !reader.read_u16(&record.server_tick_delta) ||
-            record.actor_net_id == 0u || record.action_instance_id == 0u ||
+            !reader.read_u32(&record.status_effect_id) ||
+            !reader.read_u32(&record.status_instance_id) ||
+            !reader.read_u16(&record.stack_count) ||
+            !reader.read_u16(&reserved1) || reserved1 != 0u ||
+            record.actor_net_id == 0u ||
             record.first_commit_index == 0u || record.commit_count == 0u ||
             static_cast<std::uint32_t>(record.first_commit_index) +
                     static_cast<std::uint32_t>(record.commit_count) - 1u >
                 UINT16_MAX ||
             record.event_type >
-                KernelRemoteActionPresentationEventType_DeathTrigger) {
+                KernelRemoteActionPresentationEventType_StatusUpdated ||
+            ((record.event_type == KernelRemoteActionPresentationEventType_StatusApplied ||
+              record.event_type == KernelRemoteActionPresentationEventType_StatusRemoved ||
+              record.event_type == KernelRemoteActionPresentationEventType_StatusUpdated) &&
+             (record.action_template_id != 0u ||
+              record.action_instance_id != 0u ||
+              record.status_effect_id == 0u ||
+              record.status_instance_id == 0u ||
+              record.stack_count == 0u ||
+              record.stack_count > kMaxActiveStatusEffects ||
+              record.first_commit_index != 1u ||
+              record.commit_count != 1u)) ||
+            (record.event_type != KernelRemoteActionPresentationEventType_StatusApplied &&
+             record.event_type != KernelRemoteActionPresentationEventType_StatusRemoved &&
+             record.event_type != KernelRemoteActionPresentationEventType_StatusUpdated &&
+             (record.action_instance_id == 0u ||
+              record.status_effect_id != 0u ||
+              record.status_instance_id != 0u ||
+              record.stack_count != 0u ||
+              record.status_channel_id != 0u ||
+              record.duration_ticks != 0u))) {
+            return false;
+        }
+        packet.records.push_back(record);
+    }
+    if (!reader.done()) {
+        return false;
+    }
+    *out_packet = std::move(packet);
+    return true;
+}
+
+std::vector<std::uint8_t> encode_status_effect_state_packet(
+    const StatusEffectStatePacket& packet,
+    std::uint32_t sequence) {
+    if (packet.target_net_id == 0u || packet.revision == 0u ||
+        packet.records.size() > kMaxActiveStatusEffects) {
+        return {};
+    }
+    protocol_internal::PacketWriter payload;
+    payload.reserve(
+        kStatusEffectStateHeaderPayloadSize +
+        packet.records.size() * kStatusEffectStateRecordPayloadSize);
+    payload.write_u32(packet.server_tick);
+    payload.write_u32(packet.target_net_id);
+    payload.write_u32(packet.revision);
+    payload.write_u16(static_cast<std::uint16_t>(packet.records.size()));
+    payload.write_u16(0u);
+    for (const StatusEffectStateRecord& record : packet.records) {
+        if (record.status_effect_id == 0u || record.status_instance_id == 0u ||
+            record.instigator_net_id == 0u ||
+            record.stack_count == 0u ||
+            record.stack_count > kMaxActiveStatusEffects ||
+            record.expire_tick <= record.applied_tick) {
+            return {};
+        }
+        payload.write_u32(record.status_effect_id);
+        payload.write_u32(record.status_instance_id);
+        payload.write_u32(record.instigator_net_id);
+        payload.write_u32(record.applied_tick);
+        payload.write_u32(record.expire_tick);
+        payload.write_u16(record.stack_count);
+        payload.write_u16(0u);
+    }
+    return protocol_internal::wrap_packet(
+        MessageType::kStatusEffectState, payload.bytes(), sequence);
+}
+
+bool decode_status_effect_state_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    StatusEffectStatePacket* out_packet) {
+    const std::uint8_t* payload = nullptr;
+    std::size_t payload_size = 0;
+    if (out_packet == nullptr ||
+        !protocol_internal::unwrap_packet(
+            data,
+            size,
+            MessageType::kStatusEffectState,
+            &payload,
+            &payload_size) ||
+        payload_size < kStatusEffectStateHeaderPayloadSize) {
+        return false;
+    }
+    StatusEffectStatePacket packet;
+    std::uint16_t record_count = 0;
+    std::uint16_t reserved = 0;
+    protocol_internal::PacketReader reader(payload, payload_size);
+    if (!reader.read_u32(&packet.server_tick) ||
+        !reader.read_u32(&packet.target_net_id) ||
+        !reader.read_u32(&packet.revision) ||
+        !reader.read_u16(&record_count) ||
+        !reader.read_u16(&reserved) ||
+        packet.target_net_id == 0u || packet.revision == 0u ||
+        reserved != 0u || record_count > kMaxActiveStatusEffects ||
+        payload_size != kStatusEffectStateHeaderPayloadSize +
+                            static_cast<std::size_t>(record_count) *
+                                kStatusEffectStateRecordPayloadSize) {
+        return false;
+    }
+    packet.records.reserve(record_count);
+    for (std::uint16_t index = 0u; index < record_count; ++index) {
+        StatusEffectStateRecord record;
+        std::uint16_t reserved_record = 0u;
+        if (!reader.read_u32(&record.status_effect_id) ||
+            !reader.read_u32(&record.status_instance_id) ||
+            !reader.read_u32(&record.instigator_net_id) ||
+            !reader.read_u32(&record.applied_tick) ||
+            !reader.read_u32(&record.expire_tick) ||
+            !reader.read_u16(&record.stack_count) ||
+            !reader.read_u16(&reserved_record) || reserved_record != 0u ||
+            record.status_effect_id == 0u || record.status_instance_id == 0u ||
+            record.instigator_net_id == 0u ||
+            record.stack_count == 0u ||
+            record.stack_count > kMaxActiveStatusEffects ||
+            record.expire_tick <= record.applied_tick ||
+            std::any_of(
+                packet.records.begin(),
+                packet.records.end(),
+                [&](const StatusEffectStateRecord& existing) {
+                    return existing.status_instance_id ==
+                        record.status_instance_id;
+                })) {
             return false;
         }
         packet.records.push_back(record);

@@ -1,0 +1,10 @@
+id: action_status_speed_modifier
+parameters:
+  target: null
+  operation: additive
+  value: 0.0
+actions:
+  - type: apply_speed_modifier
+    target: params.target
+    operation: params.operation
+    value: params.value

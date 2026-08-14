@@ -39,6 +39,7 @@ EXPORTS
     Kernel_PollEntityLifecycleEvents
     Kernel_PollLocalActionResults
     Kernel_PollRemoteActionPresentationEvents
+    Kernel_QueryStatusEffects
     Kernel_GetBenchmarkStats
     Kernel_GetNetworkStats
     Kernel_PollDebugRecords

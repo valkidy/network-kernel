@@ -6,6 +6,7 @@ filegroup(
     name = "gameplay_catalog_bundle_sources",
     srcs = glob([
         "action_graph_templates/*.yaml",
+        "status_effect_templates/*.yaml",
         "action_templates/*.yaml",
         "collider_templates/*.yaml",
         "entity_templates/*.yaml",
@@ -57,6 +58,7 @@ cc_test(
     srcs = ["gameplay_config_test.cc"],
     data = glob([
         "action_graph_templates/*.yaml",
+        "status_effect_templates/*.yaml",
         "action_templates/*.yaml",
         "collider_templates/*.yaml",
         "entity_templates/*.yaml",

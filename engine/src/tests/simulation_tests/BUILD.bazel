@@ -37,6 +37,12 @@ cc_test(
 )
 
 cc_test(
+    name = "status_effect_system_test",
+    srcs = ["status_effect_system_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
     name = "collision_query_test",
     srcs = ["collision_query_test.cc"],
     deps = ["//engine/src/simulation:simulation"],
