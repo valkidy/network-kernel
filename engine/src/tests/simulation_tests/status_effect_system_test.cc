@@ -533,6 +533,7 @@ void replace_orders_callbacks_and_preserves_failed_state() {
     old_status.status_effect_id = 1001u;
     old_status.channel_id = 1u;
     old_status.duration_ticks = 10u;
+    old_status.on_apply_binding = speed_on_apply_binding(0.0f, 2.0f);
     old_status.on_expire_binding = lifecycle_damage_binding(
         EntityRefSource::kEventSubject, 5.0f, -2.0f);
     old_status.on_expire_binding->event_type = TriggerEventType::kStatusExpired;
@@ -544,8 +545,14 @@ void replace_orders_callbacks_and_preserves_failed_state() {
     new_status.on_apply_binding->event_type = TriggerEventType::kStatusApplied;
     world.set_status_effect_templates({old_status, new_status});
 
+    const entt::entity target_entity = *world.find_entity(target);
+    MovementState& movement =
+        world.registry().get_or_emplace<MovementState>(target_entity);
+    movement.base_speed_meters_per_second = 10.0f;
+    movement.speed_meters_per_second = 10.0f;
     require(apply_status(engine, source, target, 1001u, 1u));
     require(engine.damage_pipeline().drain_ready_damage(world, 0u).empty());
+    require(movement.speed_meters_per_second == 12.0f);
     require(apply_status(engine, source, target, 1002u, 2u));
     const std::vector<ConfirmedDamage> replacement_damage =
         engine.damage_pipeline().drain_ready_damage(world, 0u);
@@ -555,28 +562,54 @@ void replace_orders_callbacks_and_preserves_failed_state() {
     require(replacement_damage[2].damage == 2u);
     require(replacement_damage[3].damage == 3u);
 
-    const entt::entity target_entity = *world.find_entity(target);
     const StatusEffectState& state =
         world.registry().get<StatusEffectState>(target_entity);
     require(state.active.size() == 1u);
     require(state.active[0].status_effect_id == 1002u);
     require(state.revision == 2u);
 
-    RuntimeStatusEffectTemplate invalid_status = new_status;
-    invalid_status.status_effect_id = 1003u;
+    KernelEngine failure_engine(KernelConfig{});
+    World& failure_world = failure_engine.simulation_world();
+    const NetId failure_source =
+        failure_world.spawn_player(1u, glm::vec3{0.0f});
+    const NetId failure_target =
+        failure_world.spawn_enemy(glm::vec3{0.0f});
+    const entt::entity failure_target_entity =
+        *failure_world.find_entity(failure_target);
+    MovementState& failure_movement =
+        failure_world.registry().get_or_emplace<MovementState>(
+            failure_target_entity);
+    failure_movement.base_speed_meters_per_second = 10.0f;
+    failure_movement.speed_meters_per_second = 10.0f;
+    RuntimeStatusEffectTemplate failure_old = old_status;
+    failure_old.status_effect_id = 2001u;
+    RuntimeStatusEffectTemplate invalid_status = failure_old;
+    invalid_status.status_effect_id = 2002u;
+    invalid_status.on_expire_binding.reset();
     CompiledActionGraphBinding invalid_binding = speed_on_apply_binding();
     invalid_binding.parameters[0].expression =
         EntityRefExpression{EntityRefSource::kEventInstigator};
     invalid_status.on_apply_binding = invalid_binding;
-    world.set_status_effect_templates({old_status, new_status, invalid_status});
-    const ActiveStatusEffect before_failure = state.active[0];
-    const std::uint32_t revision_before_failure = state.revision;
-    require(!apply_status(engine, source, target, 1003u, 3u));
-    require(engine.damage_pipeline().drain_ready_damage(world, 0u).empty());
-    require(state.active.size() == 1u);
-    require(state.active[0].status_effect_id == before_failure.status_effect_id);
-    require(state.active[0].instance_id == before_failure.instance_id);
-    require(state.revision == revision_before_failure);
+    failure_world.set_status_effect_templates({failure_old, invalid_status});
+    require(apply_status(
+        failure_engine, failure_source, failure_target, 2001u, 10u));
+    const StatusEffectState& failure_state =
+        failure_world.registry().get<StatusEffectState>(
+            failure_target_entity);
+    const ActiveStatusEffect before_failure = failure_state.active[0];
+    const std::uint32_t revision_before_failure = failure_state.revision;
+    require(failure_movement.speed_meters_per_second == 12.0f);
+    require(!apply_status(
+        failure_engine, failure_source, failure_target, 2002u, 11u));
+    require(failure_engine.damage_pipeline().drain_ready_damage(
+                failure_world, 0u).empty());
+    require(failure_movement.speed_meters_per_second == 12.0f);
+    require(failure_state.speed_modifiers.size() == 1u);
+    require(failure_state.active.size() == 1u);
+    require(failure_state.active[0].status_effect_id ==
+            before_failure.status_effect_id);
+    require(failure_state.active[0].instance_id == before_failure.instance_id);
+    require(failure_state.revision == revision_before_failure);
 }
 
 void lifecycle_duplicate_is_a_noop() {
@@ -706,15 +739,89 @@ void bounded_dedup_ledger_handles_retention_capacity_and_peers() {
     require(world.action_graph_batch_reserved_count() == 0u);
     require(world.action_graph_batch_count() == 2u);
 
-    world.prune_action_graph_batches(UINT32_MAX);
+}
+
+void long_running_status_ticks_bound_ledger() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30u;
+    config.tick.snapshot_rate = 15u;
+    config.tick.history_ms = 501u;
+    KernelEngine engine(config);
+    require(engine.start_dedicated_server(19001u));
+    World& world = engine.simulation_world();
+    const NetId source = world.spawn_player(1u, glm::vec3{0.0f});
+    const NetId target = world.spawn_enemy(glm::vec3{0.0f});
+    RuntimeStatusEffectTemplate status;
+    status.status_effect_id = 1201u;
+    status.channel_id = 1u;
+    status.duration_ticks = 20000u;
+    status.interval_ticks = 1u;
+    status.on_tick_binding =
+        lifecycle_damage_binding(EntityRefSource::kEventSubject);
+    world.set_status_effect_templates({status});
+
+    require(apply_status(engine, source, target, 1201u, 1u));
+    require(world.action_graph_dedup_retention_ticks() == 17u);
     for (std::uint32_t tick = 0u; tick < 10000u; ++tick) {
+        engine.update(1.0f / 30.0f);
+        require(world.action_graph_batch_count() <= 17u);
+    }
+    require(world.action_graph_batch_count() <=
+            world.action_graph_dedup_retention_ticks());
+    require(world.action_graph_batch_count() <
+            World::kActionGraphDedupCapacity);
+}
+
+void lifecycle_capacity_rejection_preserves_replace_state() {
+    KernelEngine engine(KernelConfig{});
+    World& world = engine.simulation_world();
+    const NetId source = world.spawn_player(1u, glm::vec3{0.0f});
+    const NetId target = world.spawn_enemy(glm::vec3{0.0f});
+    const entt::entity target_entity = *world.find_entity(target);
+    MovementState& movement =
+        world.registry().get_or_emplace<MovementState>(target_entity);
+    movement.base_speed_meters_per_second = 10.0f;
+    movement.speed_meters_per_second = 10.0f;
+
+    RuntimeStatusEffectTemplate old_status;
+    old_status.status_effect_id = 1301u;
+    old_status.channel_id = 1u;
+    old_status.duration_ticks = 100u;
+    old_status.on_apply_binding = speed_on_apply_binding(0.0f, 2.0f);
+    old_status.on_expire_binding = lifecycle_damage_binding(
+        EntityRefSource::kEventSubject);
+    old_status.on_expire_binding->event_type = TriggerEventType::kStatusExpired;
+    RuntimeStatusEffectTemplate new_status = old_status;
+    new_status.status_effect_id = 1302u;
+    new_status.on_expire_binding.reset();
+    new_status.on_apply_binding = lifecycle_damage_binding(
+        EntityRefSource::kEventSubject, 7.0f, -3.0f);
+    new_status.on_apply_binding->event_type = TriggerEventType::kStatusApplied;
+    world.set_status_effect_templates({old_status, new_status});
+
+    require(apply_status(engine, source, target, 1301u, 1u));
+    require(movement.speed_meters_per_second == 12.0f);
+    const StatusEffectState& state =
+        world.registry().get<StatusEffectState>(target_entity);
+    const std::uint32_t revision = state.revision;
+    while (world.action_graph_batch_count() + 2u <
+           World::kActionGraphDedupCapacity) {
         commit_dedup_key(
             world,
-            dedup_key(4u, 100u + tick, TriggerEventType::kStatusTick),
-            tick);
-        world.prune_action_graph_batches(tick);
-        require(world.action_graph_batch_count() <= 4u);
+            dedup_key(
+                9u,
+                static_cast<std::uint64_t>(world.action_graph_batch_count()) +
+                    10000u),
+            0u);
     }
+    require(!apply_status(engine, source, target, 1302u, 2u));
+    require(engine.damage_pipeline().pending_count() == 0u);
+    require(world.action_graph_batch_reserved_count() == 0u);
+    require(movement.speed_meters_per_second == 12.0f);
+    require(state.active.size() == 1u);
+    require(state.active[0].status_effect_id == 1301u);
+    require(state.revision == revision);
 }
 
 void capacity_rejection_happens_before_damage_submission() {
@@ -758,6 +865,8 @@ int main() {
     lifecycle_duplicate_is_a_noop();
     cross_channel_modifiers_restore_independently();
     bounded_dedup_ledger_handles_retention_capacity_and_peers();
+    long_running_status_ticks_bound_ledger();
+    lifecycle_capacity_rejection_preserves_replace_state();
     capacity_rejection_happens_before_damage_submission();
     return 0;
 }

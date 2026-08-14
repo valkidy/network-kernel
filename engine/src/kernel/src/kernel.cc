@@ -1014,7 +1014,11 @@ bool write_server_entity_state(
 
 std::uint32_t history_frame_count(const TickConfig& config) {
     const TickConfig tick = with_tick_defaults(config);
-    return std::max(1u, (tick.server_tick_rate * tick.history_ms) / 1000u);
+    const std::uint64_t history_tick_numerator =
+        static_cast<std::uint64_t>(tick.server_tick_rate) * tick.history_ms;
+    const std::uint64_t history_ticks =
+        (history_tick_numerator + 999u) / 1000u;
+    return static_cast<std::uint32_t>(std::max<std::uint64_t>(1u, history_ticks));
 }
 
 std::uint32_t action_graph_dedup_retention_ticks(const TickConfig& config) {

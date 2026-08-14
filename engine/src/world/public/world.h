@@ -110,10 +110,11 @@ public:
         std::uint64_t request_id,
         TriggerEventType event_type,
         std::uint32_t sequence) const {
-        return processed_action_graph_batches_.find(
-                   ActionGraphDedupKey{
-                       requester_peer, request_id, event_type, sequence}) !=
-            processed_action_graph_batches_.end();
+        const auto found = processed_action_graph_batches_.find(
+            ActionGraphDedupKey{
+                requester_peer, request_id, event_type, sequence});
+        return found != processed_action_graph_batches_.end() &&
+            !found->second->reserved;
     }
 
     entt::registry& registry();

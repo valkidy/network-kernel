@@ -352,9 +352,11 @@ action schema，但 graph ID、trigger binding 與 exactly-once key 應清楚反
 - `trigger event type` 避免同一 request 的不同 gameplay fact 互相誤判。
 - `sequence` 區分同一 request/tick 內的多個 event occurrence。
 
-World-level ledger 使用 bounded retention。Retention 使用既有
-`server_tick_rate * history_ms` replay/delayed-dispatch horizon，再加一個 tick
-作為 boundary allowance；因此 exactly-once 只保證在此合法 replay window 內。
+World-level ledger 使用 bounded retention，且以 authoritative simulation tick 作為
+唯一時間單位。`history_ms` 只在 server tick config 初始化時換算成
+`ceil(server_tick_rate * history_ms / 1000)` 個 ticks，再加一個 tick 作為 boundary
+allowance；client presentation 的毫秒內插不參與 ledger retention。因此
+exactly-once 只保證在此合法 replay window 內。
 Lookup 使用 hash index，retention 使用獨立的 commit-tick ordering。每個 simulation
 tick 集中 prune 一次，且使用 wrap-safe tick distance。
 
