@@ -1,0 +1,13 @@
+id: 1001
+name: burn
+kind: status_effect
+channel: damage_over_time_fire
+duration_ticks: 120
+interval_ticks: 15
+replace_policy: replace
+triggers:
+  on_tick:
+    action_graph: action_status_damage_tick
+    parameters:
+      target: event.subject
+      amount: 5

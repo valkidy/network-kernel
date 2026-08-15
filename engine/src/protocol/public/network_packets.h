@@ -72,6 +72,22 @@ struct RemoteActionPresentationBatchPacket {
     std::vector<KernelRemoteActionPresentationEvent> records;
 };
 
+struct StatusEffectStateRecord {
+    std::uint32_t status_effect_id = 0;
+    std::uint32_t status_instance_id = 0;
+    NetId instigator_net_id = 0;
+    std::uint32_t applied_tick = 0;
+    std::uint32_t expire_tick = 0;
+    std::uint16_t stack_count = 1u;
+};
+
+struct StatusEffectStatePacket {
+    std::uint32_t server_tick = 0;
+    NetId target_net_id = 0;
+    std::uint32_t revision = 0;
+    std::vector<StatusEffectStateRecord> records;
+};
+
 inline constexpr std::uint16_t kInventoryChangeQuantity = 1u << 0;
 inline constexpr std::uint16_t kInventoryChangeCooldown = 1u << 1;
 inline constexpr std::uint16_t kInventoryChangePortableState = 1u << 2;
@@ -266,6 +282,15 @@ bool decode_remote_action_presentation_batch_packet(
     const std::uint8_t* data,
     std::size_t size,
     RemoteActionPresentationBatchPacket* out_packet);
+
+std::vector<std::uint8_t> encode_status_effect_state_packet(
+    const StatusEffectStatePacket& packet,
+    std::uint32_t sequence = 0);
+
+bool decode_status_effect_state_packet(
+    const std::uint8_t* data,
+    std::size_t size,
+    StatusEffectStatePacket* out_packet);
 
 std::vector<std::uint8_t> encode_gameplay_request_packet(
     const KernelGameplayRequest& request,

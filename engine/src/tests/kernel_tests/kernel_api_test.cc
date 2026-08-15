@@ -165,6 +165,7 @@ int main() {
            sizeof(KernelSkeletonBindingDefinition));
     assert(abi_info.skeleton_leg_definition_size ==
            sizeof(KernelSkeletonLegDefinition));
+    assert(abi_info.status_effect_view_size == sizeof(KernelStatusEffectView));
     assert((abi_info.capability_flags &
             KERNEL_CAPABILITY_ITEM_PROP_SYSTEM) != 0u);
     assert(abi_info.weapon_mechanics_definition_size ==
@@ -266,7 +267,8 @@ int main() {
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_NETWORK_STATS) != 0);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_VISION_STATE_QUERY) != 0);
     assert(abi_info.local_player_info_size == sizeof(KernelLocalPlayerInfo));
-    assert(KERNEL_ABI_VERSION == 69u);
+    assert(KERNEL_ABI_VERSION == 72u);
+    assert(Kernel_QueryStatusEffects(nullptr, 1u, nullptr, 0u) == 0u);
     assert((abi_info.capability_flags &
             KERNEL_CAPABILITY_SKELETON_RENDER_STATES) != 0u);
     assert((abi_info.capability_flags &
@@ -283,7 +285,7 @@ int main() {
     assert(sizeof(KernelActionIntent) == 8u);
     assert(sizeof(KernelActionInput) == 8u);
     assert(sizeof(KernelLocalActionResult) == 12u);
-    assert(sizeof(KernelRemoteActionPresentationEvent) == 20u);
+    assert(sizeof(KernelRemoteActionPresentationEvent) == 36u);
     assert(sizeof(KernelVec4) == 16u);
     assert((abi_info.capability_flags & KERNEL_CAPABILITY_ENTITY_LIFECYCLE_EVENTS) != 0);
     assert(KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED == 0u);
@@ -367,7 +369,7 @@ int main() {
     require(has_version_revision_suffix(build_info.module_version));
     require(build_info.protocol_version == 3u);
     require(build_info.snapshot_schema_version == 17u);
-    require(build_info.packet_schema_version == 21u);
+    require(build_info.packet_schema_version == 23u);
     require(build_info.git_commit[0] != '\0');
     require(std::strcmp(build_info.git_commit, "unknown") != 0);
     require(std::strcmp(build_info.module_version, build_info.git_commit) != 0);

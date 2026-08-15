@@ -6,8 +6,20 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 69u,
-    "skeleton asset ABI");
+    KERNEL_ABI_VERSION == 73u,
+    "status stack and refresh ABI");
+_Static_assert(
+    offsetof(KernelStatusEffectDefinition, max_stacks) >
+        offsetof(KernelStatusEffectDefinition, on_expire_trigger),
+    "status stack authoring fields are appended");
+_Static_assert(
+    offsetof(KernelStatusEffectView, stack_count) >
+        offsetof(KernelStatusEffectView, expire_tick),
+    "status stack query fields are appended");
+_Static_assert(
+    offsetof(KernelRemoteActionPresentationEvent, stack_count) >
+        offsetof(KernelRemoteActionPresentationEvent, duration_ticks),
+    "status stack presentation fields are appended");
 _Static_assert(
     offsetof(KernelMovementDefinition, movement_collision_mask) >
         offsetof(KernelMovementDefinition, max_yaw_degrees_per_second),
@@ -17,7 +29,7 @@ _Static_assert(
         offsetof(KernelSkeletonBindingDefinition, processing_order),
     "stance crouch is appended to the skeleton binding ABI");
 _Static_assert(
-    sizeof(KernelActionTriggerDefinition) == 476u,
+    sizeof(KernelActionTriggerDefinition) == 584u,
     "KernelActionTriggerDefinition ABI size");
 _Static_assert(
     offsetof(KernelActionDefinition, health_change_amount) >
@@ -164,7 +176,8 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 69u);
+    assert(KERNEL_ABI_VERSION == 72u);
+    assert(sizeof(KernelStatusEffectView) == 28u);
     assert(KERNEL_CAPABILITY_SKELETON_BIND_POSE != 0u);
     assert(sizeof(KernelBoneLocalTransform) > 0u);
     assert(sizeof(KernelSkeletonRenderState) > 0u);

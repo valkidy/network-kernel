@@ -186,6 +186,17 @@ uint32_t Kernel_PollRemoteActionPresentationEvents(
     KernelRemoteActionPresentationEvent* out_events,
     uint32_t max_events);
 
+/*
+ * Returns the complete active-status count while writing at most max_effects
+ * entries. Server/listen results are authoritative; a pure client's local
+ * player is reliable and remote entities are best effort.
+ */
+uint32_t Kernel_QueryStatusEffects(
+    KernelHandle* kernel,
+    uint32_t entity_net_id,
+    KernelStatusEffectView* out_effects,
+    uint32_t max_effects);
+
 bool Kernel_GetBenchmarkStats(
     KernelHandle* kernel,
     KernelBenchmarkStats* out_stats);

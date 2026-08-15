@@ -177,8 +177,8 @@ void owner_results_bypass_drop_and_remote_budget_prefers_priority() {
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;
     config.network_stats.action_packet_budget_bytes = 56u;
-    config.network_stats.remote_presentation_client_budget_bytes_per_second = 56u;
-    config.network_stats.remote_presentation_server_budget_bytes_per_second = 56u;
+    config.network_stats.remote_presentation_client_budget_bytes_per_second = 64u;
+    config.network_stats.remote_presentation_server_budget_bytes_per_second = 64u;
     network_example::KernelEngine server(config);
     server.reset_runtime_state(KernelMode_DedicatedServer);
     auto loopback = std::make_unique<network_example::LoopbackTransport>();
@@ -392,9 +392,9 @@ TrafficRow simulate_traffic(
                     std::min(client_tokens[peer], server_tokens);
                 const std::uint32_t budget_records = available <= 36u
                     ? 0u
-                    : static_cast<std::uint32_t>((available - 36u) / 20u);
+                    : static_cast<std::uint32_t>((available - 36u) / 28u);
                 const std::uint32_t sent_records = std::min(
-                    58u,
+                    32u,
                     std::min(records_per_observer, budget_records));
                 dropped_records += records_per_observer - sent_records;
                 if (sent_records == 0u) {
@@ -466,7 +466,7 @@ void write_traffic_report(
            << build_info.build_config << "\n";
     report << "- Input packet: 85 B\n";
     report << "- Owner result batch: `36 + 12N` B (97 records at 1,200 B)\n";
-    report << "- Remote presentation batch: `36 + 20N` B (58 records at 1,196 B)\n";
+    report << "- Remote presentation batch: `36 + 28N` B (32 records at 932 B)\n";
     report << "- Snapshot configured upper-bound: 18,000 B/s per client\n";
     report << "- Stats Off/Basic/Detailed alter counters only; wire bytes are identical\n\n";
     report << "| Peers | Commits/s | Relevance | Remote demand B/s | Delivered B/s | kbit/s | Dropped records | Packets | Avg packet B | Max packet B | Avg records/batch |\n";

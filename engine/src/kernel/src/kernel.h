@@ -43,6 +43,7 @@ class MovementSystem;
 struct EntityDespawnPacket;
 struct EntitySpawnPacket;
 struct PropStateChangeBatchPacket;
+struct StatusEffectStatePacket;
 struct PropStateChangeRecord;
 struct EntityTemplateUpdatePacket;
 struct InventoryDeltaBatchPacket;
@@ -167,6 +168,10 @@ public:
     std::uint32_t poll_remote_action_presentation_events(
         KernelRemoteActionPresentationEvent* out_events,
         std::uint32_t max_events);
+    std::uint32_t query_status_effects(
+        NetId entity_net_id,
+        KernelStatusEffectView* out_effects,
+        std::uint32_t max_effects) const;
     bool get_benchmark_stats(KernelBenchmarkStats* out_stats) const;
     bool get_network_stats(KernelNetworkStats* out_stats) const;
     std::uint32_t poll_debug_records(
@@ -218,6 +223,14 @@ public:
         KernelItemInstanceId* out_item_instance_id,
         std::uint32_t* out_prop_entity_id);
     bool server_submit_gameplay_request(const KernelGameplayRequest& request);
+    void queue_status_effect_presentation(
+        NetId target,
+        std::uint32_t status_effect_id,
+        std::uint32_t status_instance_id,
+        std::uint8_t event_type =
+            KernelRemoteActionPresentationEventType_StatusApplied,
+        std::uint16_t stack_count = 1u);
+    void publish_status_effect_state(NetId target);
     void queue_health_changed_event(
         NetId net_id,
         PeerId source_peer,
@@ -480,8 +493,11 @@ private:
     struct RemotePresentationDedup {
         std::uint32_t actor_net_id = 0;
         std::uint32_t action_instance_id = 0;
+        std::uint32_t status_instance_id = 0;
+        std::uint16_t stack_count = 0;
         std::uint16_t commit_index = 0;
         std::uint8_t event_type = 0;
+        std::uint32_t event_tick = 0;
         std::uint32_t expire_tick = 0;
     };
 
@@ -520,6 +536,8 @@ private:
     void handle_server_disconnect(const TransportEvent& transport_event);
     void handle_client_disconnect(PeerId peer);
     void handle_client_reliable_event(const TransportEvent& transport_event);
+    void handle_client_status_effect_state(
+        const StatusEffectStatePacket& packet);
     void handle_client_local_action_results(
         const LocalActionResultBatchPacket& packet);
     void handle_client_remote_action_presentation(
@@ -682,6 +700,7 @@ private:
         std::uint64_t server_time_us);
     void send_due_clock_sync_pings(std::uint64_t server_time_us);
     void send_reliable_event(PeerId peer, const KernelEvent& event);
+    void send_status_effect_state(PeerSession* session, NetId target);
     void send_gameplay_request_outcome(
         PeerId peer,
         const KernelGameplayRequestOutcome& outcome);
@@ -852,6 +871,7 @@ private:
         client_inventory_sync_states_;
     std::unordered_set<KernelInventoryContainerId>
         client_inventory_resync_pending_;
+    std::unordered_map<NetId, StatusEffectState> client_status_effect_states_;
     std::vector<NetId> pending_prop_state_changes_;
     std::unordered_set<KernelItemInstanceId> claimed_item_instances_;
     std::unordered_set<NetId> claimed_prop_entities_;
