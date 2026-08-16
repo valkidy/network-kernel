@@ -153,9 +153,19 @@ struct AgentRuntime {
 
 struct AgentSentryRuntime {};
 
+enum class DirectorKind : std::uint32_t {
+    kNone = 0,
+    kWorldRule = 1,
+    kGameRule = 2,
+};
+
 struct DirectorRuntime {
+    DirectorKind kind = DirectorKind::kNone;
     std::uint32_t tick_interval = 1;
     std::uint32_t next_tick = 0;
+};
+
+struct WorldRuleRuntime {
     std::uint32_t spawn_target_count = 0;
     std::uint32_t spawn_entity_template_id = 0;
     std::uint32_t spawn_actor_template_id = 0;
@@ -163,6 +173,40 @@ struct DirectorRuntime {
     float spawn_radius = 0.0f;
     std::uint32_t spawn_seed = 1;
     std::uint32_t spawn_cursor = 0;
+};
+
+enum class GameRuleStatus : std::uint8_t {
+    kRunning,
+    kCompleted,
+    kFailed,
+};
+
+enum class GameRuleNodeState : std::uint8_t {
+    kInactive,
+    kActive,
+    kCompleted,
+};
+
+struct GameRuleGroupRuntime {
+    std::uint32_t group_id = 0;
+    std::uint32_t pending_spawn_count = 0;
+    std::uint32_t alive_count = 0;
+    bool sealed = false;
+    bool failed = false;
+};
+
+struct GameRuleRuntime {
+    std::uint32_t definition_id = 0;
+    GameRuleStatus status = GameRuleStatus::kRunning;
+    bool initialized = false;
+    std::vector<GameRuleNodeState> node_states;
+    std::vector<GameRuleGroupRuntime> groups;
+};
+
+struct GameplayGroupMembership {
+    NetId director_net_id = 0;
+    std::uint32_t group_id = 0;
+    std::uint32_t spawn_batch_id = 0;
 };
 
 inline constexpr std::size_t kWeaponSlotCount = 4;
@@ -680,19 +724,25 @@ struct RuntimeStatusEffectTemplate {
     std::uint32_t duration_ticks = 0;
     std::uint32_t interval_ticks = 0;
     std::uint8_t replacement_policy = 0;
+    std::uint16_t max_stacks = 1u;
+    bool refresh_on_stack = false;
     std::optional<CompiledActionGraphBinding> on_apply_binding;
     std::optional<CompiledActionGraphBinding> on_tick_binding;
     std::optional<CompiledActionGraphBinding> on_expire_binding;
 };
+
+inline constexpr std::size_t kMaxActiveStatusEffects = 32u;
 
 struct ActiveStatusEffect {
     std::uint32_t instance_id = 0;
     std::uint32_t status_effect_id = 0;
     std::uint32_t channel_id = 0;
     NetId source = 0;
+    PeerId source_peer = 0;
     std::uint32_t applied_tick = 0;
     std::uint32_t expire_tick = 0;
     std::uint32_t next_tick = 0;
+    std::uint16_t stack_count = 1u;
 };
 
 struct SpeedModifier {
@@ -704,6 +754,7 @@ struct SpeedModifier {
 struct StatusEffectState {
     std::vector<ActiveStatusEffect> active;
     std::vector<SpeedModifier> speed_modifiers;
+    std::uint32_t revision = 0;
 };
 
 struct RuntimeProjectileTemplate {

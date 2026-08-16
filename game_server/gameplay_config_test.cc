@@ -284,6 +284,7 @@ void append_collider_template_files(
         "rifle_segment.yaml",
         "shotgun_segment.yaml",
         "projectile_sphere.yaml",
+        "grenade_sentry_vision_cone.yaml",
         "sentry_grunt_movement_capsule.yaml",
     };
     for (const std::string& file : collider_files) {
@@ -456,8 +457,84 @@ std::string replace_once(
     return text;
 }
 
+std::string world_rule_director_yaml() {
+    return
+        "id: 100\n"
+        "name: earth_mother\n"
+        "entity_type: director\n"
+        "server_only: true\n"
+        "transform:\n"
+        "  position: {x: 0.0, y: 0.0, z: 0.0}\n"
+        "ai:\n"
+        "  controller: director\n"
+        "  profile: earth_mother\n"
+        "  tick_interval: 10\n"
+        "director:\n"
+        "  kind: world_rule\n"
+        "  spawn:\n"
+        "    target_count: 10\n"
+        "    entity_template: sentry_grunt\n"
+        "    radius: 5.0\n"
+        "    seed: 4242\n";
+}
+
+std::string game_rule_director_yaml() {
+    return
+        "id: 100\n"
+        "name: earth_mother\n"
+        "entity_type: director\n"
+        "server_only: true\n"
+        "transform:\n"
+        "  position: {x: 0.0, y: 0.0, z: 0.0}\n"
+        "ai:\n"
+        "  controller: director\n"
+        "  profile: earth_mother\n"
+        "  tick_interval: 10\n"
+        "director:\n"
+        "  kind: game_rule\n"
+        "  graph:\n"
+        "    nodes:\n"
+        "      - id: wait_for_player\n"
+        "        condition:\n"
+        "          type: player_count_at_least\n"
+        "          count: 1\n"
+        "        next: [wave_1]\n"
+        "      - id: wave_1\n"
+        "        on_activate:\n"
+        "          - type: spawn_group\n"
+        "            group: wave_1\n"
+        "            count: 2\n"
+        "            entity_template: sentry_grunt\n"
+        "            position: {x: 1.0, y: 2.0, z: 3.0}\n"
+        "            radius: 4.0\n"
+        "            seed: 99\n"
+        "        condition:\n"
+        "          type: group_eliminated\n"
+        "          group: wave_1\n"
+        "        next: [wave_2, wave_3]\n"
+        "      - id: wave_2\n"
+        "        on_activate:\n"
+        "          - type: spawn_group\n"
+        "            group: wave_2\n"
+        "            count: 1\n"
+        "            entity_template: sentry_grunt\n"
+        "        condition:\n"
+        "          type: group_eliminated\n"
+        "          group: wave_2\n"
+        "      - id: wave_3\n"
+        "        on_activate:\n"
+        "          - type: spawn_group\n"
+        "            group: wave_3\n"
+        "            count: 1\n"
+        "            entity_template: sentry_grunt\n"
+        "        condition:\n"
+        "          type: group_eliminated\n"
+        "          group: wave_3\n";
+}
+
 std::vector<std::uint8_t> make_entity_template_bundle_zip(
-    const std::string& sentry_template_yaml) {
+    const std::string& sentry_template_yaml,
+    const std::string& director_template_yaml = {}) {
     std::vector<std::pair<std::string, std::string>> files;
     files.push_back({
         "gameplay_catalog.yaml",
@@ -512,23 +589,9 @@ std::vector<std::uint8_t> make_entity_template_bundle_zip(
         sentry_template_yaml});
     files.push_back({
         "entity_templates/earth_mother.yaml",
-        "id: 100\n"
-        "name: earth_mother\n"
-        "entity_type: director\n"
-        "server_only: true\n"
-        "transform:\n"
-        "  position: {x: 0.0, y: 0.0, z: 0.0}\n"
-        "ai:\n"
-        "  controller: director\n"
-        "  profile: earth_mother\n"
-        "  tick_interval: 10\n"
-        "director:\n"
-        "  kind: world_rule\n"
-        "  spawn:\n"
-        "    target_count: 10\n"
-        "    entity_template: sentry_grunt\n"
-        "    radius: 5.0\n"
-        "    seed: 4242\n"});
+        director_template_yaml.empty()
+            ? world_rule_director_yaml()
+            : director_template_yaml});
 
     const std::vector<std::string> weapon_files = {
         "beam_rifle.yaml",
@@ -623,6 +686,35 @@ int main() {
     const std::vector<std::string> errors =
         network_example::game_server::validate_gameplay_config(config);
     assert(errors.empty());
+    require(config.preload_director_template_ids.size() == 1u);
+    require(config.preload_director_template_ids[0] == 101u);
+
+    auto no_preload_config = config;
+    no_preload_config.preload_director_template_ids.clear();
+    require(
+        network_example::game_server::compute_gameplay_catalog_hash(config) !=
+        network_example::game_server::compute_gameplay_catalog_hash(
+            no_preload_config));
+
+    auto no_director_config = no_preload_config;
+    no_director_config.entity_templates.erase(
+        std::remove_if(
+            no_director_config.entity_templates.begin(),
+            no_director_config.entity_templates.end(),
+            [](const network_example::game_server::EntityTemplateConfig& entity) {
+                return entity.entity_type == KernelEntityType_Director;
+            }),
+        no_director_config.entity_templates.end());
+    const network_example::game_server::KernelGameplayCatalogStorage
+        no_director_catalog =
+            network_example::game_server::build_kernel_gameplay_catalog(
+                no_director_config);
+    require(std::none_of(
+        no_director_catalog.entity_templates.begin(),
+        no_director_catalog.entity_templates.end(),
+        [](const KernelEntityTemplateDefinition& entity) {
+            return entity.entity_type == KernelEntityType_Director;
+        }));
 
     const std::string production_player_yaml =
         read_text_file("game_server/entity_templates/player.yaml");
@@ -630,6 +722,46 @@ int main() {
         read_text_file("game_server/entity_templates/sentry_grunt.yaml");
     const std::string production_monster_yaml =
         read_text_file("game_server/entity_templates/monster_sim_actor.yaml");
+    const std::string production_catalog_yaml =
+        read_text_file("game_server/gameplay_catalog.yaml");
+    const auto load_with_catalog = [&](const std::string& catalog_yaml) {
+        const std::vector<std::uint8_t> bundle = make_gameplay_bundle_zip(
+            production_sentry_yaml,
+            {},
+            {},
+            catalog_yaml);
+        return network_example::game_server::load_gameplay_config_from_bundle_memory(
+            bundle.data(),
+            static_cast<std::uint32_t>(bundle.size()),
+            "gameplay_catalog.yaml");
+    };
+    const auto rejects_preload_catalog = [&](const std::string& catalog_yaml) {
+        try {
+            (void)load_with_catalog(catalog_yaml);
+            return false;
+        } catch (const std::exception&) {
+            return true;
+        }
+    };
+    const auto numeric_preload_config = load_with_catalog(replace_once(
+        production_catalog_yaml,
+        "  - game_flow_director\n",
+        "  - 101\n"));
+    require(numeric_preload_config.preload_director_template_ids.size() == 1u);
+    require(numeric_preload_config.preload_director_template_ids[0] == 101u);
+    require(rejects_preload_catalog(replace_once(
+        production_catalog_yaml,
+        "  - game_flow_director\n",
+        "  - player\n")));
+    require(rejects_preload_catalog(replace_once(
+        production_catalog_yaml,
+        "  - game_flow_director\n",
+        "  - game_flow_director\n  - game_flow_director\n")));
+    const auto empty_preload_config = load_with_catalog(replace_once(
+        production_catalog_yaml,
+        "preload_directors:\n  - game_flow_director\n",
+        ""));
+    require(empty_preload_config.preload_director_template_ids.empty());
     const std::string production_monster_rig =
         read_text_file(
             "game_server/skeleton_assets/generated/"
@@ -912,8 +1044,137 @@ int main() {
         entity_catalog.entity_templates[2].ai.controller_type ==
         KernelAiControllerType_Director);
     assert(entity_catalog.entity_templates[2].ai.tick_interval == 10);
+    assert(
+        entity_catalog.entity_templates[2].ai.director_kind ==
+        KernelDirectorKind_WorldRule);
     assert(entity_catalog.entity_templates[2].ai.spawn_target_count == 10);
     assert(entity_catalog.entity_templates[2].ai.spawn_entity_template_id == 2);
+    assert(entity_catalog.definition.game_rule_count == 0u);
+
+    const std::string valid_game_rule_yaml = game_rule_director_yaml();
+    const std::vector<std::uint8_t> game_rule_bundle =
+        make_entity_template_bundle_zip(
+            sentry_grunt_entity_template_yaml("actor"),
+            valid_game_rule_yaml);
+    const network_example::game_server::GameServerGameplayConfig game_rule_config =
+        network_example::game_server::load_gameplay_config_from_bundle_memory(
+            game_rule_bundle.data(),
+            static_cast<std::uint32_t>(game_rule_bundle.size()),
+            "gameplay_catalog.yaml");
+    const network_example::game_server::KernelGameplayCatalogStorage
+        game_rule_catalog =
+            network_example::game_server::build_kernel_gameplay_catalog(
+                game_rule_config);
+    require(game_rule_catalog.definition.game_rule_count == 1u);
+    require(game_rule_catalog.definition.game_rule_node_count == 4u);
+    require(game_rule_catalog.definition.game_rule_edge_count == 3u);
+    require(game_rule_catalog.definition.game_rule_effect_count == 3u);
+    require(
+        game_rule_catalog.entity_templates[2].ai.director_kind ==
+        KernelDirectorKind_GameRule);
+    require(
+        game_rule_catalog.entity_templates[2].ai.game_rule_definition_id ==
+        game_rule_catalog.entity_templates[2].entity_template_id);
+    require(game_rule_catalog.game_rule_nodes[0].node_id == 1u);
+    require(game_rule_catalog.game_rule_nodes[1].node_id == 2u);
+    require(
+        game_rule_catalog.game_rule_nodes[0].condition_type ==
+        KernelGameRuleConditionType_PlayerCountAtLeast);
+    require(game_rule_catalog.game_rule_nodes[0].condition_count == 1u);
+    require(game_rule_catalog.game_rule_nodes[0].condition_group_id == 0u);
+    require(game_rule_catalog.game_rule_edges[0].source_node_id == 1u);
+    require(game_rule_catalog.game_rule_edges[0].target_node_id == 2u);
+    require(game_rule_catalog.game_rule_edges[1].source_node_id == 2u);
+    require(game_rule_catalog.game_rule_edges[1].target_node_id == 3u);
+    require(game_rule_catalog.game_rule_edges[2].target_node_id == 4u);
+    require(game_rule_catalog.game_rule_effects[0].node_id == 2u);
+    require(game_rule_catalog.game_rule_effects[0].count == 2u);
+    require(game_rule_catalog.game_rule_effects[0].entity_template_id == 2u);
+    require(game_rule_catalog.game_rule_effects[0].radius == 4.0f);
+    require(game_rule_catalog.game_rule_effects[1].radius == 0.0f);
+    require(game_rule_catalog.game_rule_effects[1].seed == 1u);
+    const network_example::game_server::KernelGameplayCatalogStorage
+        repeated_game_rule_catalog =
+            network_example::game_server::build_kernel_gameplay_catalog(
+                game_rule_config);
+    require(
+        repeated_game_rule_catalog.definition.catalog_hash ==
+        game_rule_catalog.definition.catalog_hash);
+
+    const auto rejects_game_rule = [&](const std::string& director_yaml) {
+        try {
+            const std::vector<std::uint8_t> bundle =
+                make_entity_template_bundle_zip(
+                    sentry_grunt_entity_template_yaml("actor"),
+                    director_yaml);
+            (void)network_example::game_server::
+                load_gameplay_config_from_bundle_memory(
+                    bundle.data(),
+                    static_cast<std::uint32_t>(bundle.size()),
+                    "gameplay_catalog.yaml");
+        } catch (const std::exception&) {
+            return true;
+        }
+        return false;
+    };
+    require(rejects_game_rule(replace_once(
+        valid_game_rule_yaml, "kind: game_rule", "kind: unknown_rule")));
+    require(rejects_game_rule(replace_once(
+        valid_game_rule_yaml,
+        "type: player_count_at_least\n          count: 1",
+        "type: player_count_at_least\n          count: 0")));
+    require(rejects_game_rule(replace_once(
+        valid_game_rule_yaml,
+        "  graph:\n",
+        "  spawn:\n"
+        "    target_count: 1\n"
+        "    entity_template: sentry_grunt\n"
+        "  graph:\n")));
+    require(rejects_game_rule(replace_once(
+        valid_game_rule_yaml, "id: wave_2", "id: wave_1")));
+    require(rejects_game_rule(replace_once(
+        valid_game_rule_yaml, "next: [wave_2, wave_3]", "next: [missing]")));
+    require(rejects_game_rule(replace_once(
+        valid_game_rule_yaml,
+        "          group: wave_2\n      - id: wave_3",
+        "          group: wave_2\n"
+        "        next: [wave_1]\n"
+        "      - id: wave_3")));
+    require(rejects_game_rule(replace_once(
+        valid_game_rule_yaml, "count: 2", "count: 0")));
+    require(rejects_game_rule(replace_once(
+        valid_game_rule_yaml,
+        "entity_template: sentry_grunt",
+        "entity_template: player")));
+
+    std::string oversized_game_rule =
+        "id: 100\n"
+        "name: earth_mother\n"
+        "entity_type: director\n"
+        "server_only: true\n"
+        "ai:\n"
+        "  controller: director\n"
+        "  tick_interval: 1\n"
+        "director:\n"
+        "  kind: game_rule\n"
+        "  graph:\n"
+        "    nodes:\n";
+    for (std::uint32_t index = 0u;
+         index <= KERNEL_MAX_GAME_RULE_NODES;
+         ++index) {
+        const std::string suffix = std::to_string(index);
+        oversized_game_rule +=
+            "      - id: wave_" + suffix + "\n"
+            "        on_activate:\n"
+            "          - type: spawn_group\n"
+            "            group: group_" + suffix + "\n"
+            "            count: 1\n"
+            "            entity_template: sentry_grunt\n"
+            "        condition:\n"
+            "          type: group_eliminated\n"
+            "          group: group_" + suffix + "\n";
+    }
+    require(rejects_game_rule(oversized_game_rule));
 
     const std::string data_driven_sentry_yaml =
         sentry_grunt_entity_template_yaml("actor") +
@@ -1071,7 +1332,8 @@ int main() {
         config.weapons.catalog_hash !=
         network_example::game_server::compute_gameplay_catalog_hash(changed_config));
     changed_config = config;
-    changed_config.agent.override_director_spawn = true;
+    changed_config.agent.override_director_spawn =
+        !changed_config.agent.override_director_spawn;
     require(
         config.weapons.catalog_hash !=
         network_example::game_server::compute_gameplay_catalog_hash(changed_config));
@@ -1103,6 +1365,15 @@ int main() {
     changed_config.item_templates.front()
         .definition.portable_state_fields[0]
         .uint32_default += 1u;
+    require(
+        config.weapons.catalog_hash !=
+        network_example::game_server::compute_gameplay_catalog_hash(changed_config));
+    require(!config.status_effect_templates.empty());
+    changed_config = config;
+    changed_config.status_effect_templates.front().replacement_policy =
+        KernelStatusEffectReplacementPolicy_Stack;
+    changed_config.status_effect_templates.front().max_stacks = 3u;
+    changed_config.status_effect_templates.front().refresh_on_stack = true;
     require(
         config.weapons.catalog_hash !=
         network_example::game_server::compute_gameplay_catalog_hash(changed_config));
@@ -1143,6 +1414,15 @@ int main() {
     assert(config_enemy_template->vision.vision_collider_template_id == 9);
     const network_example::game_server::KernelGameplayCatalogStorage catalog =
         network_example::game_server::build_kernel_gameplay_catalog(config);
+    const network_example::game_server::KernelGameplayCatalogStorage
+        stack_catalog =
+            network_example::game_server::build_kernel_gameplay_catalog(
+                changed_config);
+    require(!stack_catalog.status_effects.empty());
+    require(stack_catalog.status_effects.front().replacement_policy ==
+            KernelStatusEffectReplacementPolicy_Stack);
+    require(stack_catalog.status_effects.front().max_stacks == 3u);
+    require(stack_catalog.status_effects.front().refresh_on_stack == 1u);
     // Discovered by scanning skeleton_assets/generated, not by a list in the
     // catalog: the three base locomotion rigs are present here only because
     // their build targets are data deps of this test.
@@ -1951,9 +2231,9 @@ int main() {
         config.weapons
             .projectile_sync_modes[network_example::game_server::kWeaponRocket] ==
         KernelProjectileSyncMode_ServerSnapshotOnly);
-    assert(config.colliders.templates.size() == 14);
+    assert(config.colliders.templates.size() == 15);
     assert(config.colliders.bindings.empty());
-    assert(config.actor_templates.size() == 6);
+    assert(config.actor_templates.size() == 7);
     const network_example::game_server::ActorTemplateConfig& player_template =
         config.actor_templates[0];
     assert(player_template.actor_template_id == 1);
@@ -1991,6 +2271,22 @@ int main() {
     assert(enemy_template.movement_controller_type ==
            KernelMovementControllerType_Grounded);
     assert(enemy_template.movement_collider_template_id == 11);
+    const auto grenade_sentry = std::find_if(
+        config.actor_templates.begin(),
+        config.actor_templates.end(),
+        [](const network_example::game_server::ActorTemplateConfig& actor) {
+            return actor.name == "grenade_sentry";
+        });
+    assert(grenade_sentry != config.actor_templates.end());
+    assert(grenade_sentry->actor_template_id == 24);
+    assert(grenade_sentry->weapon_slot_count == 1);
+    assert(
+        grenade_sentry->weapon_ids[0] ==
+        network_example::game_server::kWeaponGrenade);
+    assert(grenade_sentry->sentry.weapon_id ==
+           network_example::game_server::kWeaponGrenade);
+    assert(grenade_sentry->sentry.ballistic_retry_cooldown_ticks == 30);
+    assert(config.agent.actor_template_id == grenade_sentry->actor_template_id);
 
     const KernelWeaponMechanicsDefinition& fire_floor =
         config.weapons.definitions[network_example::game_server::kWeaponFireFloor];

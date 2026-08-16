@@ -28,6 +28,21 @@ bool fail(std::string* error, std::string message) {
     return false;
 }
 
+bool is_status_lifecycle_event(TriggerEventType event_type) {
+    return event_type == TriggerEventType::kStatusApplied ||
+        event_type == TriggerEventType::kStatusTick ||
+        event_type == TriggerEventType::kStatusExpired;
+}
+
+NetId action_source(NetId self, const TriggerEvent& event) {
+    if (is_status_lifecycle_event(event.type)) {
+        return event.instigator;
+    }
+    return event.type == TriggerEventType::kItemUsed && self == 0u
+        ? event.instigator
+        : self;
+}
+
 ParameterType value_type(const ActionGraphParameterValue& value) {
     if (std::holds_alternative<EntityIdValue>(value)) {
         return ParameterType::kEntityId;
@@ -881,13 +896,7 @@ bool evaluate_action_graph(
             if (target == 0u || status_id == 0u) {
                 return fail(error, "status action requires target and status");
             }
-            const NetId source =
-                (event.type == TriggerEventType::kItemUsed ||
-                 event.type == TriggerEventType::kStatusApplied ||
-                 event.type == TriggerEventType::kStatusTick ||
-                 event.type == TriggerEventType::kStatusExpired) && self == 0u
-                ? event.instigator
-                : self;
+            const NetId source = action_source(self, event);
             if (apply_status != nullptr) {
                 commands->push_back(ActionApplyStatusCommand{
                     source, target, status_id, provenance});
@@ -923,12 +932,7 @@ bool evaluate_action_graph(
                 return fail(error, "apply_speed_modifier target must not be null");
             }
             ActionExecutionProvenance modifier_provenance = provenance;
-            const NetId source =
-                (event.type == TriggerEventType::kStatusApplied ||
-                 event.type == TriggerEventType::kStatusTick ||
-                 event.type == TriggerEventType::kStatusExpired) && self == 0u
-                ? event.instigator
-                : self;
+            const NetId source = action_source(self, event);
             modifier_provenance.instigator = source;
             commands->push_back(ActionApplySpeedModifierCommand{
                 source,
@@ -1024,12 +1028,7 @@ bool evaluate_action_graph(
         if (target == 0u) {
             return fail(error, "health action target must not be null");
         }
-        const NetId source = (event.type == TriggerEventType::kItemUsed ||
-            event.type == TriggerEventType::kStatusApplied ||
-            event.type == TriggerEventType::kStatusTick ||
-            event.type == TriggerEventType::kStatusExpired) && self == 0u
-            ? event.instigator
-            : self;
+        const NetId source = action_source(self, event);
         if (damage != nullptr) {
             commands->push_back(ActionApplyDamageCommand{
                 source,

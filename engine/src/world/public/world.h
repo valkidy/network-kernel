@@ -2,10 +2,13 @@
 #define WORLD_PUBLIC_WORLD_H_
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <list>
+#include <limits>
 #include <optional>
 #include <memory>
-#include <set>
-#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -63,34 +66,55 @@ public:
     const RuntimeStatusEffectTemplate* find_status_effect_template(
         std::uint32_t status_effect_id) const;
     std::uint32_t allocate_status_instance_id();
-    bool action_graph_batch_processed(
-        std::uint64_t request_id,
-        TriggerEventType event_type,
-        std::uint32_t sequence) const {
-        return std::any_of(
-            processed_action_graph_batches_.begin(),
-            processed_action_graph_batches_.end(),
-            [request_id, event_type, sequence](const auto& key) {
-                return std::get<1>(key) == request_id &&
-                    std::get<2>(key) == event_type &&
-                    std::get<3>(key) == sequence;
-            });
+
+    static constexpr std::size_t kActionGraphDedupCapacity = 4096u;
+
+    struct ActionGraphDedupKey {
+        PeerId requester_peer = 0;
+        std::uint64_t request_id = 0;
+        TriggerEventType event_type = TriggerEventType::kActivated;
+        std::uint32_t sequence = 0;
+
+        bool operator==(const ActionGraphDedupKey&) const = default;
+    };
+
+    enum class ActionGraphDedupReservationResult {
+        kDuplicate,
+        kReserved,
+        kRejected,
+    };
+
+    ActionGraphDedupReservationResult reserve_action_graph_batch(
+        const ActionGraphDedupKey& key);
+    bool commit_action_graph_batch(
+        const ActionGraphDedupKey& key,
+        std::uint32_t committed_tick);
+    void cancel_action_graph_batch(const ActionGraphDedupKey& key);
+    bool reserve_action_graph_batch_capacity(std::size_t count);
+    void release_action_graph_batch_capacity(std::size_t count);
+    void prune_action_graph_batches(std::uint32_t current_tick);
+    void clear_action_graph_batches_for_peer(PeerId requester_peer);
+    void set_action_graph_dedup_retention_ticks(std::uint32_t retention_ticks);
+    std::uint32_t action_graph_dedup_retention_ticks() const {
+        return action_graph_dedup_retention_ticks_;
     }
+    std::size_t action_graph_batch_count() const {
+        return processed_action_graph_batches_.size();
+    }
+    std::size_t action_graph_batch_reserved_count() const {
+        return reserved_action_graph_entry_count_;
+    }
+
     bool action_graph_batch_processed(
         PeerId requester_peer,
         std::uint64_t request_id,
         TriggerEventType event_type,
         std::uint32_t sequence) const {
-        return processed_action_graph_batches_.contains(
-            {requester_peer, request_id, event_type, sequence});
-    }
-    void mark_action_graph_batch_processed(
-        PeerId requester_peer,
-        std::uint64_t request_id,
-        TriggerEventType event_type,
-        std::uint32_t sequence) {
-        processed_action_graph_batches_.insert(
-            {requester_peer, request_id, event_type, sequence});
+        const auto found = processed_action_graph_batches_.find(
+            ActionGraphDedupKey{
+                requester_peer, request_id, event_type, sequence});
+        return found != processed_action_graph_batches_.end() &&
+            !found->second->reserved;
     }
 
     entt::registry& registry();
@@ -138,9 +162,35 @@ private:
     std::vector<RuntimeProjectileTemplate> projectile_templates_;
     std::vector<RuntimeActionTemplate> action_templates_;
     std::vector<RuntimeStatusEffectTemplate> status_effect_templates_;
-    std::set<std::tuple<
-        PeerId, std::uint64_t, TriggerEventType, std::uint32_t>>
+    struct ActionGraphDedupKeyHash {
+        std::size_t operator()(const ActionGraphDedupKey& key) const noexcept {
+            std::size_t hash = std::hash<PeerId>{}(key.requester_peer);
+            hash ^= std::hash<std::uint64_t>{}(key.request_id) +
+                0x9e3779b9u + (hash << 6u) + (hash >> 2u);
+            hash ^= std::hash<std::uint32_t>{}(
+                        static_cast<std::uint32_t>(key.event_type)) +
+                0x9e3779b9u + (hash << 6u) + (hash >> 2u);
+            hash ^= std::hash<std::uint32_t>{}(key.sequence) +
+                0x9e3779b9u + (hash << 6u) + (hash >> 2u);
+            return hash;
+        }
+    };
+    struct ActionGraphDedupEntry {
+        ActionGraphDedupKey key;
+        std::uint32_t committed_tick = 0;
+        bool reserved = true;
+    };
+    using ActionGraphDedupOrder = std::list<ActionGraphDedupEntry>;
+    using ActionGraphDedupIterator = ActionGraphDedupOrder::iterator;
+    std::unordered_map<
+        ActionGraphDedupKey,
+        ActionGraphDedupIterator,
+        ActionGraphDedupKeyHash>
         processed_action_graph_batches_;
+    ActionGraphDedupOrder action_graph_dedup_order_;
+    std::uint32_t action_graph_dedup_retention_ticks_ = 1u;
+    std::size_t reserved_action_graph_capacity_ = 0u;
+    std::size_t reserved_action_graph_entry_count_ = 0u;
     ColliderRegistry collider_registry_;
     physics::PhysicsWorld* collision_world_ = nullptr;
     bool allow_standalone_collision_ = true;

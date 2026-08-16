@@ -25,8 +25,6 @@ inline constexpr std::uint8_t kWeaponBeamRifle = 5;
 inline constexpr std::uint8_t kWeaponHomingMissile = 6;
 inline constexpr std::uint8_t kWeaponGrenade = 7;
 inline constexpr std::size_t kWeaponIdCount = 256;
-inline constexpr std::uint32_t kDefaultDirectorEntityTemplateId = 100;
-
 struct EntityHealthDefinition {
     std::uint16_t hp = 0;
     std::uint16_t max_hp = 0;
@@ -194,6 +192,7 @@ struct ActorTemplateConfig {
     KernelAgentVisionConfig vision{};
     std::uint32_t ai_controller_type = KernelAiControllerType_None;
     std::uint32_t ai_tick_interval = 1;
+    std::uint32_t director_kind = KernelDirectorKind_None;
     std::uint32_t director_spawn_target_count = 0;
     std::uint32_t director_spawn_entity_template_id = 0;
     std::uint32_t director_spawn_actor_template_id = 0;
@@ -201,6 +200,24 @@ struct ActorTemplateConfig {
     KernelVec3 director_spawn_position{};
     float director_spawn_radius = 0.0f;
     std::uint32_t director_spawn_seed = 1;
+    struct GameRuleNodeConfig {
+        std::uint32_t node_id = 0;
+        std::string id;
+        std::uint32_t condition_type = 0;
+        std::uint32_t condition_count = 0;
+        std::uint32_t group_id = 0;
+        std::string group;
+        bool has_spawn_effect = false;
+        std::uint32_t spawn_count = 0;
+        std::string spawn_entity_template_ref;
+        std::uint32_t spawn_entity_template_id = 0;
+        KernelVec3 spawn_position{};
+        float spawn_radius = 0.0f;
+        std::uint32_t spawn_seed = 1;
+        std::vector<std::string> next_refs;
+        std::vector<std::uint32_t> next_node_ids;
+    };
+    std::vector<GameRuleNodeConfig> game_rule_nodes;
     TriggerBindingConfig activated_trigger;
     TriggerBindingConfig collision_trigger;
     std::uint32_t collision_trigger_mask = KERNEL_COLLISION_MASK_NONE;
@@ -286,6 +303,8 @@ struct StatusEffectTemplateConfig {
     std::uint32_t interval_ticks = 0;
     std::uint8_t replacement_policy =
         KernelStatusEffectReplacementPolicy_Replace;
+    std::uint16_t max_stacks = 1u;
+    bool refresh_on_stack = false;
     TriggerBindingConfig on_apply_trigger;
     TriggerBindingConfig on_tick_trigger;
     TriggerBindingConfig on_expire_trigger;
@@ -325,6 +344,7 @@ struct GameServerGameplayConfig {
     std::vector<ActionTemplateConfig> action_templates;
     PlayerGameplayDefinition player;
     AgentSpawnDefinition agent;
+    std::vector<std::uint32_t> preload_director_template_ids;
     std::vector<EntityTemplateConfig> entity_templates;
     std::vector<ActorTemplateConfig> actor_templates;
     ColliderCatalogConfig colliders;
@@ -347,6 +367,10 @@ struct KernelGameplayCatalogStorage {
     std::vector<KernelItemTemplateDefinition> item_templates;
     std::vector<KernelPropPopulationRuleDefinition> prop_population_rules;
     std::vector<KernelStatusEffectDefinition> status_effects;
+    std::vector<KernelGameRuleDefinition> game_rules;
+    std::vector<KernelGameRuleNodeDefinition> game_rule_nodes;
+    std::vector<KernelGameRuleEdgeDefinition> game_rule_edges;
+    std::vector<KernelGameRuleSpawnGroupEffectDefinition> game_rule_effects;
     std::vector<std::vector<std::uint8_t>> skeleton_asset_bytes;
     std::vector<KernelSkeletonAssetDefinition> skeleton_assets;
     KernelGameplayCatalogDefinition definition{};

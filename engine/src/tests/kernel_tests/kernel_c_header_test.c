@@ -6,8 +6,20 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 72u,
-    "skeleton asset ABI");
+    KERNEL_ABI_VERSION == 74u,
+    "skeleton collider ABI");
+_Static_assert(
+    offsetof(KernelStatusEffectDefinition, max_stacks) >
+        offsetof(KernelStatusEffectDefinition, on_expire_trigger),
+    "status stack authoring fields are appended");
+_Static_assert(
+    offsetof(KernelStatusEffectView, stack_count) >
+        offsetof(KernelStatusEffectView, expire_tick),
+    "status stack query fields are appended");
+_Static_assert(
+    offsetof(KernelRemoteActionPresentationEvent, stack_count) >
+        offsetof(KernelRemoteActionPresentationEvent, duration_ticks),
+    "status stack presentation fields are appended");
 _Static_assert(
     offsetof(KernelSkeletonBindingDefinition, colliders) >
         offsetof(KernelSkeletonBindingDefinition, stance_crouch_meters),
@@ -168,10 +180,11 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 72u);
+    assert(KERNEL_ABI_VERSION == 74u);
     assert(sizeof(KernelSkeletonColliderDefinition) > 0u);
     assert(KERNEL_MAX_SKELETON_COLLIDERS > 0u);
     assert(KernelColliderPurpose_Limb == (1u << 5));
+    assert(sizeof(KernelStatusEffectView) == 28u);
     assert(KERNEL_CAPABILITY_SKELETON_BIND_POSE != 0u);
     assert(sizeof(KernelBoneLocalTransform) > 0u);
     assert(sizeof(KernelSkeletonRenderState) > 0u);

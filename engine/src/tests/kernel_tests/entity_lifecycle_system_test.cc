@@ -182,6 +182,7 @@ void lifecycle_system_materializes_server_only_director_template() {
     assert(engine.world_.registry().all_of<network_example::ServerOnly>(*entity));
     assert(engine.world_.registry().all_of<network_example::AgentRuntime>(*entity));
     assert(engine.world_.registry().all_of<network_example::DirectorRuntime>(*entity));
+    assert(engine.world_.registry().all_of<network_example::WorldRuleRuntime>(*entity));
     const network_example::EntityKind& kind =
         engine.world_.registry().get<network_example::EntityKind>(*entity);
     assert(kind.type == network_example::EntityType::kDirector);
@@ -233,7 +234,10 @@ void director_ai_emits_spawn_intent_without_enqueueing_create_command() {
     const network_example::DirectorRuntime& director_runtime =
         engine.world_.registry().get<network_example::DirectorRuntime>(
             *director_entity);
-    assert(director_runtime.spawn_cursor == 0);
+    const network_example::WorldRuleRuntime& world_rule_runtime =
+        engine.world_.registry().get<network_example::WorldRuleRuntime>(
+            *director_entity);
+    assert(world_rule_runtime.spawn_cursor == 0);
     assert(director_runtime.next_tick == 0);
 }
 
@@ -264,8 +268,13 @@ void director_ai_ignores_non_director_entity_sources() {
     registry.emplace_or_replace<network_example::DirectorRuntime>(
         *agent_entity,
         network_example::DirectorRuntime{
+            network_example::DirectorKind::kWorldRule,
             1u,
             0u,
+        });
+    registry.emplace_or_replace<network_example::WorldRuleRuntime>(
+        *agent_entity,
+        network_example::WorldRuleRuntime{
             3u,
             200u,
             2u,
@@ -376,7 +385,10 @@ void director_intent_executor_does_not_commit_when_enqueue_fails() {
     const network_example::DirectorRuntime& director_runtime =
         engine.world_.registry().get<network_example::DirectorRuntime>(
             *director_entity);
-    assert(director_runtime.spawn_cursor == 0);
+    const network_example::WorldRuleRuntime& world_rule_runtime =
+        engine.world_.registry().get<network_example::WorldRuleRuntime>(
+            *director_entity);
+    assert(world_rule_runtime.spawn_cursor == 0);
     assert(director_runtime.next_tick == 0);
 }
 
@@ -411,7 +423,10 @@ void director_runtime_spawns_agents_until_target_count() {
     const network_example::DirectorRuntime& director_runtime =
         engine.world_.registry().get<network_example::DirectorRuntime>(
             *director_entity);
-    assert(director_runtime.spawn_cursor == 3);
+    const network_example::WorldRuleRuntime& world_rule_runtime =
+        engine.world_.registry().get<network_example::WorldRuleRuntime>(
+            *director_entity);
+    assert(world_rule_runtime.spawn_cursor == 3);
     assert(director_runtime.next_tick == 2);
     engine.update(1.0f / 30.0f);
     assert(engine.last_simulation_command_processed_count_ == 3);

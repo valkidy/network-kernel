@@ -1,5 +1,5 @@
-id: 2
-name: sentry_grunt
+id: 24
+name: grenade_sentry
 entity_type: actor
 actor_type: agent
 camp: enemy_side
@@ -20,23 +20,23 @@ hitbox:
   center: {x: 0.0, y: 0.8, z: 0.0}
   half_extents: {x: 0.4, y: 0.8, z: 0.4}
 weapon_slots:
-  - 2
+  - 7
 active_weapon_slot: 0
 animations:
   idle: 0
   chasing: 1
 vision:
-  collider_template: sentry_grunt_vision_cone
-# Linear-projectile sentry. See grenade_sentry.yaml for ballistic aiming.
+  collider_template: grenade_sentry_vision_cone
 ai:
   controller: sentry
-  profile: default
+  profile: grenade_artillery
   sentry:
     alert_ticks: 90
     forget_ticks: 150
+    ballistic_retry_cooldown_ticks: 30
     patrol_rotation_interval_ticks: 30
     patrol_rotation_min_degrees: 15.0
     patrol_rotation_max_degrees: 30.0
-    weapon_id: 2
+    weapon_id: 7
     animation_idle: idle
     animation_attack: chasing

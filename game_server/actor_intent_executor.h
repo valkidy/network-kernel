@@ -7,18 +7,21 @@
 #include "capability_registry.h"
 #include "game_server/ai_perception_adapter.h"
 #include "game_server/agent_runtime.h"
+#include "game_server/ballistic_aim.h"
 #include "kernel/src/kernel_api_internal.h"
 
 namespace network_example::game_server {
 
 struct ActorIntentExecutorConfig {
     std::uint16_t weapon_id = UINT16_MAX;
+    BallisticAimProfile ballistic_aim;
 };
 
 struct ActorIntentExecutionResult {
     ai::IntentStatus status = ai::IntentStatus::kFailed;
     ai::CapabilityReport report;
     bool submitted_input = false;
+    bool ballistic_solution_unavailable = false;
 };
 
 class ActorIntentExecutor {

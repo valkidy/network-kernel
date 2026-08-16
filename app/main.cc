@@ -1,4 +1,6 @@
+#include <cerrno>
 #include <charconv>
+#include <cmath>
 #include <cstdlib>
 #include <cstdint>
 #include <filesystem>
@@ -35,6 +37,7 @@ struct Options {
     std::uint32_t physics_simulation = 0;
     std::uint32_t physics_workers = 0;
     std::uint32_t actor_blocking = KernelActorBlockingMode_Predicted;
+    float aim_pitch_degrees = 0.0f;
     bool actor_blocking_explicit = false;
     bool gameplay_catalog_explicit = false;
 };
@@ -49,6 +52,7 @@ void print_usage() {
         "[--catalog-content-namespace=default] "
         "[--catalog-cache-dir=path] [--host-frames=12] "
         "[--network-stats=off|basic|detailed] "
+        "[--aim-pitch-degrees=-89..89] "
         "[--physics_simulation=0|1] [--physics-workers=0|N] "
         "[--actor-blocking=0|1] "
         "(0=disabled, 1=predicted; server default=1; predicted clients "
@@ -88,6 +92,19 @@ bool parse_u32_allow_zero(
     const char* end = begin + text.size();
     const auto result = std::from_chars(begin, end, value);
     if (result.ec != std::errc{} || result.ptr != end || begin == end) {
+        return false;
+    }
+    *out_value = value;
+    return true;
+}
+
+bool parse_float(std::string_view text, float* out_value) {
+    const std::string owned(text);
+    char* end = nullptr;
+    errno = 0;
+    const float value = std::strtof(owned.c_str(), &end);
+    if (errno == ERANGE || end == owned.c_str() || end == nullptr ||
+        *end != '\0' || !std::isfinite(value)) {
         return false;
     }
     *out_value = value;
@@ -224,6 +241,15 @@ bool parse_args(int argc, char** argv, Options* options) {
             }
             continue;
         }
+        if (read_value(arg, "--aim-pitch-degrees", &index, argc, argv, &value)) {
+            if (!parse_float(value, &options->aim_pitch_degrees) ||
+                options->aim_pitch_degrees < -89.0f ||
+                options->aim_pitch_degrees > 89.0f) {
+                spdlog::error("invalid aim pitch degrees: {}", value);
+                return false;
+            }
+            continue;
+        }
         if (read_value(arg, "--physics_simulation", &index, argc, argv, &value)) {
             if (!parse_u32_allow_zero(value, &options->physics_simulation) ||
                 options->physics_simulation > 1) {
@@ -275,6 +301,7 @@ int main(int argc, char** argv) {
         return 2;
     }
     SetAppNetworkStatsMode(options.network_stats_mode);
+    SetAppAimPitchDegrees(options.aim_pitch_degrees);
 
     if (options.mode == "dedicated_server") {
         std::string gameplay_catalog_bundle = options.gameplay_catalog_bundle;

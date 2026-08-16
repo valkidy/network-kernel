@@ -43,7 +43,7 @@ KernelPlayerInput scripted_input(std::uint32_t sequence) {
     input.input_seq = sequence;
     input.client_action_time_us = static_cast<std::uint64_t>(sequence) * 33333u;
     input.move = KernelVec2{1.0f, 0.0f};
-    input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
+    input.aim_dir = GetAppAimDirection();
     input.selected_weapon = 0;
 
     if (sequence == 2) {

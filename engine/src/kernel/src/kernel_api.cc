@@ -241,6 +241,7 @@ bool Kernel_GetAbiInfo(KernelAbiInfo* out_info, uint32_t out_info_size) {
             sizeof(KernelSkeletonBindingDefinition);
         out_info->skeleton_leg_definition_size =
             sizeof(KernelSkeletonLegDefinition);
+        out_info->status_effect_view_size = sizeof(KernelStatusEffectView);
         out_info->capability_flags =
             KERNEL_CAPABILITY_CLIENT_MODE |
             KERNEL_CAPABILITY_LISTEN_SERVER_MODE |
@@ -676,6 +677,20 @@ uint32_t Kernel_PollRemoteActionPresentationEvents(
                 out_events,
                 max_events);
         });
+}
+
+uint32_t Kernel_QueryStatusEffects(
+    KernelHandle* kernel,
+    uint32_t entity_net_id,
+    KernelStatusEffectView* out_effects,
+    uint32_t max_effects) {
+    return abi_call("Kernel_QueryStatusEffects", 0u, [&]() -> std::uint32_t {
+        if (kernel == nullptr || entity_net_id == 0u) {
+            return 0u;
+        }
+        return kernel->engine->query_status_effects(
+            entity_net_id, out_effects, max_effects);
+    });
 }
 
 bool Kernel_GetBenchmarkStats(
@@ -1216,6 +1231,37 @@ bool Kernel_ServerGetEntityState(
     return abi_call("Kernel_ServerGetEntityState", false, [&]() {
         return kernel != nullptr &&
                kernel->engine->server_get_entity_state(net_id, out_state);
+    });
+}
+
+float Kernel_GetFixedDeltaSeconds(KernelHandle* kernel) {
+    return abi_call("Kernel_GetFixedDeltaSeconds", 0.0f, [&]() {
+        return kernel == nullptr ? 0.0f
+                                 : kernel->engine->fixed_delta_seconds();
+    });
+}
+
+bool Kernel_ServerGetProjectileLaunchPosition(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    KernelVec3* out_position) {
+    return abi_call("Kernel_ServerGetProjectileLaunchPosition", false, [&]() {
+        return kernel != nullptr &&
+               kernel->engine->server_get_projectile_launch_position(
+                   net_id,
+                   out_position);
+    });
+}
+
+bool Kernel_ServerGetEntityAimPoint(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    KernelVec3* out_position) {
+    return abi_call("Kernel_ServerGetEntityAimPoint", false, [&]() {
+        return kernel != nullptr &&
+               kernel->engine->server_get_entity_aim_point(
+                   net_id,
+                   out_position);
     });
 }
 

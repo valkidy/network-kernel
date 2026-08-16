@@ -50,7 +50,7 @@ KernelPlayerInput scripted_input(std::uint32_t sequence) {
     input.input_seq = sequence;
     input.client_action_time_us = static_cast<std::uint64_t>(sequence) * 33333u;
     input.move = KernelVec2{0.0f, 0.0f};
-    input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
+    input.aim_dir = GetAppAimDirection();
     if (sequence == 2) {
         input.action_intent = KernelActionIntent{
             sequence, KernelActionBinding_PrimaryFire, 0u, 0u};
@@ -220,6 +220,11 @@ int RunHostServer(
     }
 
     network_example::game_server::GameServer game_server(kernel, gameplay_config);
+    if (!game_server.preload_directors()) {
+        spdlog::error("failed to preload host server directors");
+        Kernel_Destroy(kernel);
+        return 1;
+    }
     std::uint32_t sequence = 1;
     bool observed_agent_render = false;
     constexpr float kDeltaSeconds = 1.0f / 30.0f;

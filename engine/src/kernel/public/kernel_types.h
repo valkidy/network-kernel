@@ -5,21 +5,27 @@
 #include <stdint.h>
 
 /*
- * 71: KernelSkeletonBindingDefinition gained collider_count and
+ * 74: KernelSkeletonBindingDefinition gained collider_count and
  *     colliders. Appended, but every managed mirror must add the same
  *     fields or the nested layout of KernelEntityTemplateDefinition shifts.
+ * 73: status effects gained stack/refresh policies, stack state, and
+ *     status-updated presentation events. All ABI fields are appended.
+ * 72: status effects gained authoritative state queries and status-removed
+ *     presentation events. All ABI fields are appended.
+ * 71: remote action presentation events gained status-applied presentation
+ *     metadata. All fields are appended to the public ABI.
+ * 70: action graphs gained status actions and gameplay catalogs gained
+ *     status effect definitions. All fields are appended to the public ABI.
  * 69: action graphs gained optional literal impulse directions. The direction
  *     vector is appended to the public gameplay ABI.
  * 68: action graphs gained apply_impulse and entity templates gained
  *     impulse_resistance. Both are appended to the public gameplay ABI.
- * 70: action graphs gained status actions and gameplay catalogs gained
- *     status effect definitions. All fields are appended to the public ABI.
  * 67: KernelMovementDefinition gained movement_collision_mask and
  *     KernelSkeletonBindingDefinition gained stance_crouch_meters. Both are
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 72u
+#define KERNEL_ABI_VERSION 74u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -84,6 +90,7 @@
 #define KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_COLLIDER UINT32_C(5)
 #define KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTION UINT32_C(6)
 #define KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ITEM UINT32_C(7)
+#define KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_GAME_RULE UINT32_C(8)
 
 #define KERNEL_CAPABILITY_CLIENT_MODE UINT64_C(0x0000000000000001)
 #define KERNEL_CAPABILITY_LISTEN_SERVER_MODE UINT64_C(0x0000000000000002)
@@ -290,6 +297,7 @@ typedef struct KernelAbiInfo {
     uint32_t skeleton_asset_definition_size;
     uint32_t skeleton_binding_definition_size;
     uint32_t skeleton_leg_definition_size;
+    uint32_t status_effect_view_size;
 } KernelAbiInfo;
 
 typedef struct KernelBuildInfo {
@@ -499,6 +507,8 @@ typedef enum KernelStatModifierOperation {
 
 typedef enum KernelStatusEffectReplacementPolicy {
     KernelStatusEffectReplacementPolicy_Replace = 0,
+    KernelStatusEffectReplacementPolicy_Refresh = 1,
+    KernelStatusEffectReplacementPolicy_Stack = 2,
 } KernelStatusEffectReplacementPolicy;
 
 typedef enum KernelEntityRefSource {
@@ -593,6 +603,9 @@ typedef struct KernelStatusEffectDefinition {
     KernelActionTriggerDefinition on_apply_trigger;
     KernelActionTriggerDefinition on_tick_trigger;
     KernelActionTriggerDefinition on_expire_trigger;
+    uint16_t max_stacks;
+    uint8_t refresh_on_stack;
+    uint8_t reserved2;
 } KernelStatusEffectDefinition;
 
 #define KERNEL_MAX_PORTABLE_STATE_FIELDS 8
@@ -735,6 +748,9 @@ typedef enum KernelRemoteActionPresentationEventType {
     KernelRemoteActionPresentationEventType_ReloadCommit = 2,
     KernelRemoteActionPresentationEventType_HitReaction = 3,
     KernelRemoteActionPresentationEventType_DeathTrigger = 4,
+    KernelRemoteActionPresentationEventType_StatusApplied = 5,
+    KernelRemoteActionPresentationEventType_StatusRemoved = 6,
+    KernelRemoteActionPresentationEventType_StatusUpdated = 7,
 } KernelRemoteActionPresentationEventType;
 
 typedef enum KernelActionTemplateFlag {
@@ -949,7 +965,26 @@ typedef struct KernelRemoteActionPresentationEvent {
     uint8_t event_type;
     uint8_t flags;
     uint16_t server_tick_delta;
+    uint32_t status_effect_id;
+    uint32_t status_instance_id;
+    /* Derived from the client gameplay catalog for status events. */
+    uint32_t status_channel_id;
+    uint32_t duration_ticks;
+    uint16_t stack_count;
+    uint16_t reserved0;
 } KernelRemoteActionPresentationEvent;
+
+typedef struct KernelStatusEffectView {
+    uint32_t struct_size;
+    uint32_t status_effect_id;
+    uint32_t status_instance_id;
+    uint32_t status_channel_id;
+    uint32_t instigator_net_id;
+    uint32_t applied_tick;
+    uint32_t expire_tick;
+    uint16_t stack_count;
+    uint16_t max_stacks;
+} KernelStatusEffectView;
 
 typedef struct KernelActionRuntimeView {
     uint32_t struct_size;
@@ -1451,6 +1486,62 @@ typedef struct KernelActionTemplateDefinition {
     uint32_t hold_input_timeout_ticks;
 } KernelActionTemplateDefinition;
 
+#define KERNEL_MAX_GAME_RULE_NODES 64
+#define KERNEL_MAX_GAME_RULE_EDGES 256
+#define KERNEL_MAX_GAME_RULE_EFFECTS 64
+
+typedef enum KernelDirectorKind {
+    KernelDirectorKind_None = 0,
+    KernelDirectorKind_WorldRule = 1,
+    KernelDirectorKind_GameRule = 2,
+} KernelDirectorKind;
+
+typedef enum KernelGameRuleConditionType {
+    KernelGameRuleConditionType_GroupEliminated = 1,
+    KernelGameRuleConditionType_PlayerCountAtLeast = 2,
+} KernelGameRuleConditionType;
+
+typedef enum KernelGameRuleEffectType {
+    KernelGameRuleEffectType_SpawnGroup = 1,
+} KernelGameRuleEffectType;
+
+typedef struct KernelGameRuleDefinition {
+    uint32_t struct_size;
+    uint32_t game_rule_definition_id;
+    uint32_t first_node;
+    uint32_t node_count;
+    uint32_t first_edge;
+    uint32_t edge_count;
+    uint32_t first_effect;
+    uint32_t effect_count;
+} KernelGameRuleDefinition;
+
+typedef struct KernelGameRuleNodeDefinition {
+    uint32_t struct_size;
+    uint32_t node_id;
+    uint32_t condition_type;
+    uint32_t condition_group_id;
+    uint32_t condition_count;
+} KernelGameRuleNodeDefinition;
+
+typedef struct KernelGameRuleEdgeDefinition {
+    uint32_t struct_size;
+    uint32_t source_node_id;
+    uint32_t target_node_id;
+} KernelGameRuleEdgeDefinition;
+
+typedef struct KernelGameRuleSpawnGroupEffectDefinition {
+    uint32_t struct_size;
+    uint32_t effect_type;
+    uint32_t node_id;
+    uint32_t group_id;
+    uint32_t count;
+    uint32_t entity_template_id;
+    KernelVec3 position;
+    float radius;
+    uint32_t seed;
+} KernelGameRuleSpawnGroupEffectDefinition;
+
 typedef struct KernelEntityAiDefinition KernelEntityAiDefinition;
 typedef struct KernelEntityTemplateDefinition KernelEntityTemplateDefinition;
 
@@ -1478,6 +1569,14 @@ typedef struct KernelGameplayCatalogDefinition {
     uint32_t skeleton_asset_count;
     const KernelStatusEffectDefinition* status_effects;
     uint32_t status_effect_count;
+    const KernelGameRuleDefinition* game_rules;
+    uint32_t game_rule_count;
+    const KernelGameRuleNodeDefinition* game_rule_nodes;
+    uint32_t game_rule_node_count;
+    const KernelGameRuleEdgeDefinition* game_rule_edges;
+    uint32_t game_rule_edge_count;
+    const KernelGameRuleSpawnGroupEffectDefinition* game_rule_effects;
+    uint32_t game_rule_effect_count;
 } KernelGameplayCatalogDefinition;
 
 typedef struct KernelGameplayCatalogLoadResult {
@@ -1852,6 +1951,8 @@ struct KernelEntityAiDefinition {
     KernelVec3 spawn_position;
     float spawn_radius;
     uint32_t spawn_seed;
+    uint32_t director_kind;
+    uint32_t game_rule_definition_id;
 };
 
 struct KernelEntityTemplateDefinition {

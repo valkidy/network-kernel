@@ -1,0 +1,31 @@
+id: 101
+name: game_flow_director
+entity_type: director
+server_only: true
+transform:
+  position: {x: 0.0, y: 0.0, z: 0.0}
+ai:
+  controller: director
+  profile: game_flow
+  tick_interval: 1
+director:
+  kind: game_rule
+  graph:
+    nodes:
+      - id: wait_for_player
+        condition:
+          type: player_count_at_least
+          count: 1
+        next: [wave_1]
+      - id: wave_1
+        on_activate:
+          - type: spawn_group
+            group: wave_1
+            count: 1
+            entity_template: grenade_sentry
+            position: {x: 1.0, y: 1.0, z: 0.0}
+            radius: 0.0
+            seed: 4242
+        condition:
+          type: group_eliminated
+          group: wave_1

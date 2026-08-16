@@ -724,14 +724,20 @@ void execute_queued_trigger_events(
         return;
     }
     for (const ActionGraphCommandBatch& batch : command_batches) {
+        const World::ActionGraphDedupKey dedup_key{
+            batch.provenance.requester_peer != 0u
+                ? batch.provenance.requester_peer
+                : batch.provenance.owner_peer,
+            batch.provenance.request_id,
+            batch.event.type,
+            batch.sequence,
+        };
         if (batch.provenance.request_id == 0u ||
             world.action_graph_batch_processed(
-                batch.provenance.requester_peer != 0u
-                    ? batch.provenance.requester_peer
-                    : batch.provenance.owner_peer,
-                batch.provenance.request_id,
-                batch.event.type,
-                batch.sequence)) {
+                dedup_key.requester_peer,
+                dedup_key.request_id,
+                dedup_key.event_type,
+                dedup_key.sequence)) {
             continue;
         }
         const bool valid = std::all_of(
@@ -745,6 +751,15 @@ void execute_queued_trigger_events(
                         command->projectile_template_id) != nullptr;
             });
         if (!valid) {
+            continue;
+        }
+        if (!world.reserve_action_graph_batch_capacity(1u)) {
+            continue;
+        }
+        const World::ActionGraphDedupReservationResult reservation =
+            world.reserve_action_graph_batch(dedup_key);
+        if (reservation != World::ActionGraphDedupReservationResult::kReserved) {
+            world.release_action_graph_batch_capacity(1u);
             continue;
         }
         bool committed = true;
@@ -771,13 +786,10 @@ void execute_queued_trigger_events(
             }
         }
         if (committed) {
-            world.mark_action_graph_batch_processed(
-                batch.provenance.requester_peer != 0u
-                    ? batch.provenance.requester_peer
-                    : batch.provenance.owner_peer,
-                batch.provenance.request_id,
-                batch.event.type,
-                batch.sequence);
+            world.commit_action_graph_batch(
+                dedup_key, batch.provenance.server_tick);
+        } else {
+            world.cancel_action_graph_batch(dedup_key);
         }
     }
 }

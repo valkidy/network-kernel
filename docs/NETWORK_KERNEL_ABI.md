@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 66u`.
+`KERNEL_ABI_VERSION == 74u`.
 
 ## Ownership
 
@@ -30,6 +30,27 @@ failures return `NULL`, `false`, or `0`.
 Additive changes must prefer new `Kernel_*` functions or new capability flags.
 Breaking changes to public struct layout, enum semantics, buffer ownership, or
 function signatures require a `KERNEL_ABI_VERSION` bump.
+
+ABI version 74 appends `collider_count` and `colliders` to
+`KernelSkeletonBindingDefinition`, describing colliders carried by a skeleton's
+bones rather than by the entity root. The definitions carry no dimensions: a
+collider is sized from its bone's rest scale in the skeleton itself, so the size
+has one source and cannot drift from the rig. `KernelColliderPurpose_Limb`
+marks a bone-carried collider. Both packet and snapshot schemas are unchanged --
+the data reaches clients in the gameplay catalog, not on the wire.
+
+ABI version 73 extends status-effect reapplication with `refresh` and `stack`
+replacement policies. Stack authoring appends `max_stacks` and
+`refresh_on_stack` to `KernelStatusEffectDefinition`; status queries and remote
+presentation append stack counts, and `StatusUpdated` represents an in-place
+stack, expiry, or attribution change. Packet schema 24 appends stack count to
+the reliable full-state record and best-effort remote status event. Snapshot
+schema remains 17.
+
+ABI version 72 introduced the authoritative status lifecycle, stored
+instigator attribution, reliable owner full-state query/synchronization, and
+best-effort remote applied/removed events. Packet schema 23 added the dedicated
+status state packet without changing snapshot schema 17.
 
 ABI version 61 replaces the specialized actor, projectile, item, and entity
 template fields in `RenderEntityState` with one `template_id`. Its namespace is
@@ -377,6 +398,22 @@ does not require an ABI version bump beyond v12.
 Consumers pass a `struct_size`-style byte size to `Kernel_GetAbiInfo`. The call
 returns `false` if the output pointer is null or the provided size is smaller
 than the current `KernelAbiInfo` layout.
+
+ABI version 72 adds `KernelStatusEffectView`, `Kernel_QueryStatusEffects`, and
+the `StatusRemoved` remote presentation event. Packet schema version 23 adds a
+reliable full-replacement status state packet for the owning player; snapshot
+schema remains version 17 because active statuses are not part of the
+high-frequency actor snapshot. The packet carries at most 32 records and is
+ordered by a monotonic state revision, so clients discard stale replacements
+without delta-gap recovery.
+
+Status queries are authoritative on dedicated/listen servers and for the local
+player on a pure client. Remote client entities are explicitly best effort:
+their cache is driven by relevance- and budget-limited `StatusApplied` /
+`StatusRemoved` presentation events and may locally expire an entry using its
+catalog duration. Status lifecycle authoring continues to expose
+`event.instigator`; the runtime stores both its NetId and peer attribution when
+the status is applied.
 
 ## Exported Symbols
 

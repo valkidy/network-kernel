@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <optional>
 #include <tuple>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -22,7 +24,9 @@ bool execute_status_lifecycle_trigger(
     KernelEngine& engine,
     NetId target,
     NetId source,
+    PeerId source_peer,
     std::uint32_t status_instance_id,
+    std::uint16_t stack_count,
     TriggerEventType event_type,
     const std::optional<CompiledActionGraphBinding>& binding,
     std::uint64_t server_time_us);
@@ -45,7 +49,8 @@ std::uint64_t action_trigger_request_id(
     TriggerEventType event_type,
     NetId subject,
     NetId related_entity,
-    std::uint32_t sequence) {
+    std::uint32_t sequence,
+    std::uint32_t discriminator = 0u) {
     std::uint64_t hash = 1469598103934665603ull;
     const auto mix = [&hash](std::uint32_t value) {
         hash ^= value;
@@ -55,9 +60,108 @@ std::uint64_t action_trigger_request_id(
     mix(subject);
     mix(related_entity);
     mix(sequence);
+    mix(discriminator);
     mix(static_cast<std::uint32_t>(event_type));
     return hash;
 }
+
+World::ActionGraphDedupKey action_graph_dedup_key(
+    const ActionGraphCommandBatch& batch) {
+    return World::ActionGraphDedupKey{
+        batch.provenance.requester_peer != 0u
+            ? batch.provenance.requester_peer
+            : batch.provenance.owner_peer,
+        batch.provenance.request_id,
+        batch.event.type,
+        batch.sequence,
+    };
+}
+
+class ActionGraphDedupTransaction {
+public:
+    explicit ActionGraphDedupTransaction(World& world) : world_(world) {}
+
+    ~ActionGraphDedupTransaction() {
+        if (!active_) {
+            return;
+        }
+        for (const World::ActionGraphDedupKey& key : reservations_) {
+            world_.cancel_action_graph_batch(key);
+        }
+        world_.release_action_graph_batch_capacity(capacity_remaining_);
+    }
+
+    bool is_reserved(const World::ActionGraphDedupKey& key) const {
+        return std::find(reservations_.begin(), reservations_.end(), key) !=
+            reservations_.end();
+    }
+
+    bool reserve_all(
+        const std::vector<const ActionGraphCommandBatch*>& batches) {
+        std::vector<World::ActionGraphDedupKey> new_keys;
+        new_keys.reserve(batches.size());
+        for (const ActionGraphCommandBatch* batch : batches) {
+            if (batch == nullptr) {
+                return false;
+            }
+            const World::ActionGraphDedupKey key =
+                action_graph_dedup_key(*batch);
+            if (world_.action_graph_batch_processed(
+                    key.requester_peer,
+                    key.request_id,
+                    key.event_type,
+                    key.sequence) ||
+                is_reserved(key) ||
+                std::find(new_keys.begin(), new_keys.end(), key) !=
+                    new_keys.end()) {
+                continue;
+            }
+            new_keys.push_back(key);
+        }
+        if (!world_.reserve_action_graph_batch_capacity(new_keys.size())) {
+            return false;
+        }
+        capacity_remaining_ += new_keys.size();
+        for (const ActionGraphCommandBatch* batch : batches) {
+            if (!reserve(action_graph_dedup_key(*batch))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool reserve(const World::ActionGraphDedupKey& key) {
+        const World::ActionGraphDedupReservationResult result =
+            world_.reserve_action_graph_batch(key);
+        if (result == World::ActionGraphDedupReservationResult::kRejected) {
+            return false;
+        }
+        if (result == World::ActionGraphDedupReservationResult::kReserved) {
+            reservations_.push_back(key);
+            if (capacity_remaining_ > 0u) {
+                --capacity_remaining_;
+            }
+        }
+        return true;
+    }
+
+    bool commit(std::uint32_t committed_tick) {
+        for (const World::ActionGraphDedupKey& key : reservations_) {
+            if (!world_.commit_action_graph_batch(key, committed_tick)) {
+                return false;
+            }
+        }
+        world_.release_action_graph_batch_capacity(capacity_remaining_);
+        active_ = false;
+        return true;
+    }
+
+private:
+    World& world_;
+    std::vector<World::ActionGraphDedupKey> reservations_;
+    std::size_t capacity_remaining_ = 0u;
+    bool active_ = true;
+};
 
 glm::vec3 from_kernel_vec3(const KernelVec3& value) {
     return glm::vec3{value.x, value.y, value.z};
@@ -149,13 +253,161 @@ void recompute_speed(World& world, entt::entity entity) {
         movement.base_speed_meters_per_second * multiplier + additive;
 }
 
+void advance_status_revision(StatusEffectState& state) {
+    ++state.revision;
+    if (state.revision == 0u) {
+        ++state.revision;
+    }
+}
+
+struct PreparedStatusLifecycle {
+    std::optional<ActionGraphCommandBatch> batch;
+};
+
+bool prepare_status_lifecycle_trigger(
+    KernelEngine& engine,
+    NetId target,
+    NetId source,
+    PeerId source_peer,
+    std::uint32_t status_instance_id,
+    std::uint16_t stack_count,
+    TriggerEventType event_type,
+    const std::optional<CompiledActionGraphBinding>& binding,
+    PreparedStatusLifecycle* out_prepared) {
+    if (out_prepared == nullptr || target == 0u || source == 0u ||
+        status_instance_id == 0u || stack_count == 0u || stack_count > 32u) {
+        return false;
+    }
+    out_prepared->batch.reset();
+    if (!binding.has_value()) {
+        return true;
+    }
+    TriggerEvent event;
+    event.type = event_type;
+    event.subject = target;
+    event.instigator = source;
+    event.target = target;
+    ActionExecutionProvenance provenance;
+    provenance.request_id = action_trigger_request_id(
+        engine.current_tick(),
+        event_type,
+        target,
+        source,
+        status_instance_id,
+        stack_count);
+    provenance.action_instance_id = status_instance_id;
+    provenance.status_instance_id = status_instance_id;
+    provenance.server_tick = engine.current_tick();
+    provenance.instigator = source;
+    provenance.owner_peer = source_peer;
+    provenance.authority_source =
+        ActionAuthoritySource::kAuthoritativeSimulation;
+    ActionGraphCommandBatch batch{
+        event, provenance, status_instance_id, {}};
+    std::string error;
+    if (!evaluate_action_graph(
+            *binding,
+            target,
+            event,
+            provenance,
+            &batch.commands,
+            &error)) {
+        return false;
+    }
+    World& world = engine.simulation_world();
+    batch.commands.erase(
+        std::remove_if(
+            batch.commands.begin(),
+            batch.commands.end(),
+            [&](const ActionGraphCommand& command) {
+                NetId side_effect_target = 0u;
+                if (const auto* damage =
+                        std::get_if<ActionApplyDamageCommand>(&command)) {
+                    side_effect_target = damage->target;
+                } else if (const auto* health =
+                               std::get_if<ActionApplyHealthChangeCommand>(&command)) {
+                    side_effect_target = health->target;
+                } else if (const auto* modifier =
+                               std::get_if<ActionApplySpeedModifierCommand>(&command)) {
+                    if (event_type != TriggerEventType::kStatusApplied ||
+                        modifier->target != target) {
+                        side_effect_target = 0u;
+                    } else {
+                        side_effect_target = modifier->target;
+                    }
+                } else {
+                    side_effect_target = 0u;
+                }
+                if (side_effect_target == 0u) {
+                    return false;
+                }
+                const std::optional<entt::entity> entity =
+                    world.find_entity(side_effect_target);
+                return !entity.has_value() ||
+                    !world.registry().all_of<NetworkIdentity>(*entity);
+            }),
+        batch.commands.end());
+    const bool scale_amount =
+        event_type == TriggerEventType::kStatusTick ||
+        event_type == TriggerEventType::kStatusExpired;
+    for (ActionGraphCommand& command : batch.commands) {
+        if (auto* damage = std::get_if<ActionApplyDamageCommand>(&command);
+            damage != nullptr && scale_amount) {
+            const std::uint32_t scaled =
+                static_cast<std::uint32_t>(damage->amount) * stack_count;
+            if (scaled > UINT16_MAX) {
+                return false;
+            }
+            damage->amount = static_cast<std::uint16_t>(scaled);
+        } else if (auto* health =
+                       std::get_if<ActionApplyHealthChangeCommand>(&command);
+                   health != nullptr && scale_amount) {
+            const std::int64_t scaled =
+                static_cast<std::int64_t>(health->amount) * stack_count;
+            if (scaled < INT32_MIN || scaled > INT32_MAX) {
+                return false;
+            }
+            health->amount = static_cast<std::int32_t>(scaled);
+        } else if (auto* modifier =
+                       std::get_if<ActionApplySpeedModifierCommand>(&command)) {
+            const double scaled =
+                modifier->operation == KernelStatModifierOperation_Additive
+                    ? static_cast<double>(modifier->value) * stack_count
+                    : std::pow(
+                          static_cast<double>(modifier->value), stack_count);
+            if (!std::isfinite(scaled) ||
+                std::abs(scaled) > std::numeric_limits<float>::max()) {
+                return false;
+            }
+            modifier->value = static_cast<float>(scaled);
+        }
+    }
+    for (const ActionGraphCommand& command : batch.commands) {
+        if (!std::holds_alternative<ActionApplyDamageCommand>(command) &&
+            !std::holds_alternative<ActionApplyHealthChangeCommand>(command) &&
+            !std::holds_alternative<ActionApplySpeedModifierCommand>(command)) {
+            return false;
+        }
+        if (const auto* modifier =
+                std::get_if<ActionApplySpeedModifierCommand>(&command);
+            modifier != nullptr &&
+            (event_type != TriggerEventType::kStatusApplied ||
+             modifier->target != target)) {
+            return false;
+        }
+    }
+    out_prepared->batch = std::move(batch);
+    return true;
+}
+
 bool execute_action_graph_commands(
     KernelEngine& engine,
     World& world,
     DamagePipeline* damage_pipeline,
     const std::vector<KernelEntityTemplateDefinition>& entity_templates,
     const ActionGraphCommandBatch& batch,
-    std::uint64_t server_time_us) {
+    std::uint64_t server_time_us,
+    ActionGraphDedupTransaction* transaction = nullptr) {
     if (damage_pipeline == nullptr || batch.provenance.request_id == 0u) {
         return false;
     }
@@ -169,7 +421,56 @@ bool execute_action_graph_commands(
         return true;
     }
     const std::vector<ActionGraphCommand>& commands = batch.commands;
-    for (const ActionGraphCommand& command : commands) {
+    std::vector<ActionGraphCommandBatch> lifecycle_batches;
+    lifecycle_batches.reserve(commands.size());
+    std::vector<std::uint32_t> planned_status_instance_ids(
+        commands.size(), 0u);
+    std::unordered_map<
+        NetId,
+        std::unordered_map<std::uint32_t, std::uint32_t>> projected_statuses;
+    const auto projected_for = [&](NetId target)
+        -> std::unordered_map<std::uint32_t, std::uint32_t>& {
+        auto [found, inserted] = projected_statuses.try_emplace(target);
+        if (inserted) {
+            const std::optional<entt::entity> entity = world.find_entity(target);
+            const StatusEffectState* state = entity.has_value()
+                ? world.registry().try_get<StatusEffectState>(*entity)
+                : nullptr;
+            if (state != nullptr) {
+                for (const ActiveStatusEffect& active : state->active) {
+                    found->second[active.channel_id] = active.status_effect_id;
+                }
+            }
+        }
+        return found->second;
+    };
+    for (std::size_t index = 0; index < commands.size(); ++index) {
+        const ActionGraphCommand& command = commands[index];
+        if (const auto* apply_status =
+                std::get_if<ActionApplyStatusCommand>(&command)) {
+            const RuntimeStatusEffectTemplate* status_template =
+                world.find_status_effect_template(apply_status->status_effect_id);
+            if (status_template == nullptr) {
+                return false;
+            }
+            auto& projected = projected_for(apply_status->target);
+            projected[status_template->channel_id] =
+                status_template->status_effect_id;
+            if (projected.size() > kMaxActiveStatusEffects) {
+                return false;
+            }
+        } else if (const auto* remove_status =
+                       std::get_if<ActionRemoveStatusCommand>(&command)) {
+            auto& projected = projected_for(remove_status->target);
+            std::erase_if(
+                projected,
+                [&](const auto& entry) {
+                    return entry.second == remove_status->status_effect_id;
+                });
+        }
+    }
+    for (std::size_t index = 0; index < commands.size(); ++index) {
+        const ActionGraphCommand& command = commands[index];
         if (const auto* damage =
                 std::get_if<ActionApplyDamageCommand>(&command)) {
             const std::optional<entt::entity> target =
@@ -241,9 +542,108 @@ bool execute_action_graph_commands(
                 std::get_if<ActionApplyStatusCommand>(&command)) {
             const std::optional<entt::entity> target =
                 world.find_entity(apply_status->target);
+            const RuntimeStatusEffectTemplate* status_template =
+                world.find_status_effect_template(apply_status->status_effect_id);
             if (apply_status->source == 0u || !target.has_value() ||
-                world.find_status_effect_template(apply_status->status_effect_id) == nullptr) {
+                status_template == nullptr) {
                 return false;
+            }
+            const StatusEffectState* state =
+                world.registry().try_get<StatusEffectState>(*target);
+            const ActiveStatusEffect* same_status = nullptr;
+            if (state != nullptr) {
+                const auto found = std::find_if(
+                    state->active.begin(),
+                    state->active.end(),
+                    [&](const ActiveStatusEffect& active) {
+                        return active.channel_id == status_template->channel_id &&
+                            active.status_effect_id ==
+                                status_template->status_effect_id;
+                    });
+                same_status = found == state->active.end() ? nullptr : &*found;
+            }
+            PeerId source_peer = apply_status->provenance.owner_peer;
+            const std::optional<entt::entity> source_entity =
+                world.find_entity(apply_status->source);
+            if (source_entity.has_value() &&
+                world.registry().all_of<NetworkIdentity>(*source_entity)) {
+                source_peer =
+                    world.registry().get<NetworkIdentity>(*source_entity).owner_peer;
+            }
+            if (same_status != nullptr &&
+                status_template->replacement_policy ==
+                    KernelStatusEffectReplacementPolicy_Refresh) {
+                continue;
+            }
+            if (same_status != nullptr &&
+                status_template->replacement_policy ==
+                    KernelStatusEffectReplacementPolicy_Stack) {
+                if (same_status->stack_count >= status_template->max_stacks) {
+                    continue;
+                }
+                PreparedStatusLifecycle prepared_stack;
+                if (!prepare_status_lifecycle_trigger(
+                        engine,
+                        apply_status->target,
+                        apply_status->source,
+                        source_peer,
+                        same_status->instance_id,
+                        static_cast<std::uint16_t>(
+                            same_status->stack_count + 1u),
+                        TriggerEventType::kStatusApplied,
+                        status_template->on_apply_binding,
+                        &prepared_stack)) {
+                    return false;
+                }
+                if (prepared_stack.batch.has_value()) {
+                    lifecycle_batches.push_back(std::move(*prepared_stack.batch));
+                }
+                continue;
+            }
+            if (state != nullptr) {
+                for (const ActiveStatusEffect& active : state->active) {
+                    if (active.channel_id != status_template->channel_id) {
+                        continue;
+                    }
+                    const RuntimeStatusEffectTemplate* old_template =
+                        world.find_status_effect_template(active.status_effect_id);
+                    PreparedStatusLifecycle prepared;
+                    if (old_template != nullptr &&
+                        !prepare_status_lifecycle_trigger(
+                            engine,
+                            apply_status->target,
+                            active.source,
+                            active.source_peer,
+                            active.instance_id,
+                            active.stack_count,
+                            TriggerEventType::kStatusExpired,
+                            old_template->on_expire_binding,
+                            &prepared)) {
+                        return false;
+                    }
+                    if (prepared.batch.has_value()) {
+                        lifecycle_batches.push_back(std::move(*prepared.batch));
+                    }
+                }
+            }
+            const std::uint32_t planned_instance_id =
+                world.allocate_status_instance_id();
+            planned_status_instance_ids[index] = planned_instance_id;
+            PreparedStatusLifecycle prepared_apply;
+            if (!prepare_status_lifecycle_trigger(
+                    engine,
+                    apply_status->target,
+                    apply_status->source,
+                    source_peer,
+                    planned_instance_id,
+                    1u,
+                    TriggerEventType::kStatusApplied,
+                    status_template->on_apply_binding,
+                    &prepared_apply)) {
+                return false;
+            }
+            if (prepared_apply.batch.has_value()) {
+                lifecycle_batches.push_back(std::move(*prepared_apply.batch));
             }
             continue;
         }
@@ -254,6 +654,34 @@ bool execute_action_graph_commands(
             if (remove_status->source == 0u || !target.has_value() ||
                 world.find_status_effect_template(remove_status->status_effect_id) == nullptr) {
                 return false;
+            }
+            const StatusEffectState* state =
+                world.registry().try_get<StatusEffectState>(*target);
+            if (state != nullptr) {
+                for (const ActiveStatusEffect& active : state->active) {
+                    if (active.status_effect_id != remove_status->status_effect_id) {
+                        continue;
+                    }
+                    const RuntimeStatusEffectTemplate* status_template =
+                        world.find_status_effect_template(active.status_effect_id);
+                    PreparedStatusLifecycle prepared;
+                    if (status_template != nullptr &&
+                        !prepare_status_lifecycle_trigger(
+                            engine,
+                            remove_status->target,
+                            active.source,
+                            active.source_peer,
+                            active.instance_id,
+                            active.stack_count,
+                            TriggerEventType::kStatusExpired,
+                            status_template->on_expire_binding,
+                            &prepared)) {
+                        return false;
+                    }
+                    if (prepared.batch.has_value()) {
+                        lifecycle_batches.push_back(std::move(*prepared.batch));
+                    }
+                }
             }
             continue;
         }
@@ -299,6 +727,21 @@ bool execute_action_graph_commands(
         } else if (spawn->quantity != 0u) {
             return false;
         }
+    }
+    std::optional<ActionGraphDedupTransaction> owned_transaction;
+    ActionGraphDedupTransaction* active_transaction = transaction;
+    if (active_transaction == nullptr) {
+        owned_transaction.emplace(world);
+        active_transaction = &*owned_transaction;
+    }
+    std::vector<const ActionGraphCommandBatch*> batches_to_reserve;
+    batches_to_reserve.reserve(1u + lifecycle_batches.size());
+    batches_to_reserve.push_back(&batch);
+    for (const ActionGraphCommandBatch& lifecycle_batch : lifecycle_batches) {
+        batches_to_reserve.push_back(&lifecycle_batch);
+    }
+    if (!active_transaction->reserve_all(batches_to_reserve)) {
+        return false;
     }
     for (std::size_t index = 0; index < commands.size(); ++index) {
         const ActionGraphCommand& command = commands[index];
@@ -393,14 +836,176 @@ bool execute_action_graph_commands(
             if (status_template == nullptr) {
                 return false;
             }
-            for (std::size_t status_index = 0u;
-                 status_index < status_state.active.size();) {
-                const ActiveStatusEffect old_status =
-                    status_state.active[status_index];
-                if (old_status.channel_id != status_template->channel_id) {
-                    ++status_index;
+            PeerId source_peer = apply_status->provenance.owner_peer;
+            const std::optional<entt::entity> source_entity =
+                world.find_entity(apply_status->source);
+            if (source_entity.has_value() &&
+                world.registry().all_of<NetworkIdentity>(*source_entity)) {
+                source_peer =
+                    world.registry().get<NetworkIdentity>(*source_entity).owner_peer;
+            }
+            auto same_status = std::find_if(
+                status_state.active.begin(),
+                status_state.active.end(),
+                [&](const ActiveStatusEffect& active) {
+                    return active.channel_id == status_template->channel_id &&
+                        active.status_effect_id ==
+                            status_template->status_effect_id;
+                });
+            if (same_status != status_state.active.end() &&
+                status_template->replacement_policy ==
+                    KernelStatusEffectReplacementPolicy_Refresh) {
+                same_status->source = apply_status->source;
+                same_status->source_peer = source_peer;
+                same_status->expire_tick =
+                    engine.current_tick() + status_template->duration_ticks;
+                advance_status_revision(status_state);
+                engine.queue_status_effect_presentation(
+                    apply_status->target,
+                    same_status->status_effect_id,
+                    same_status->instance_id,
+                    KernelRemoteActionPresentationEventType_StatusUpdated,
+                    same_status->stack_count);
+                engine.publish_status_effect_state(apply_status->target);
+                continue;
+            }
+            if (same_status != status_state.active.end() &&
+                status_template->replacement_policy ==
+                    KernelStatusEffectReplacementPolicy_Stack) {
+                if (same_status->stack_count >= status_template->max_stacks) {
+                    if (!status_template->refresh_on_stack) {
+                        continue;
+                    }
+                    same_status->source = apply_status->source;
+                    same_status->source_peer = source_peer;
+                    same_status->expire_tick =
+                        engine.current_tick() + status_template->duration_ticks;
+                    advance_status_revision(status_state);
+                    engine.queue_status_effect_presentation(
+                        apply_status->target,
+                        same_status->status_effect_id,
+                        same_status->instance_id,
+                        KernelRemoteActionPresentationEventType_StatusUpdated,
+                        same_status->stack_count);
+                    engine.publish_status_effect_state(apply_status->target);
                     continue;
                 }
+                const std::uint16_t next_stack_count =
+                    static_cast<std::uint16_t>(same_status->stack_count + 1u);
+                PreparedStatusLifecycle prepared_stack;
+                if (!prepare_status_lifecycle_trigger(
+                        engine,
+                        apply_status->target,
+                        apply_status->source,
+                        source_peer,
+                        same_status->instance_id,
+                        next_stack_count,
+                        TriggerEventType::kStatusApplied,
+                        status_template->on_apply_binding,
+                        &prepared_stack)) {
+                    return false;
+                }
+                same_status->source = apply_status->source;
+                same_status->source_peer = source_peer;
+                same_status->stack_count = next_stack_count;
+                if (status_template->refresh_on_stack) {
+                    same_status->expire_tick =
+                        engine.current_tick() + status_template->duration_ticks;
+                }
+                if (prepared_stack.batch.has_value() &&
+                    !execute_action_graph_commands(
+                        engine,
+                        world,
+                        damage_pipeline,
+                        entity_templates,
+                        *prepared_stack.batch,
+                        server_time_us,
+                        active_transaction)) {
+                    return false;
+                }
+                advance_status_revision(status_state);
+                engine.queue_status_effect_presentation(
+                    apply_status->target,
+                    same_status->status_effect_id,
+                    same_status->instance_id,
+                    KernelRemoteActionPresentationEventType_StatusUpdated,
+                    same_status->stack_count);
+                engine.publish_status_effect_state(apply_status->target);
+                continue;
+            }
+            std::vector<ActiveStatusEffect> replaced;
+            for (const ActiveStatusEffect& old_status : status_state.active) {
+                if (old_status.channel_id == status_template->channel_id) {
+                    replaced.push_back(old_status);
+                }
+            }
+            if (status_state.active.size() - replaced.size() + 1u >
+                kMaxActiveStatusEffects) {
+                return false;
+            }
+            std::vector<PreparedStatusLifecycle> prepared_expire(replaced.size());
+            for (std::size_t replaced_index = 0u;
+                 replaced_index < replaced.size();
+                 ++replaced_index) {
+                const ActiveStatusEffect& old_status = replaced[replaced_index];
+                const RuntimeStatusEffectTemplate* old_template =
+                    world.find_status_effect_template(old_status.status_effect_id);
+                if (old_template != nullptr &&
+                    !prepare_status_lifecycle_trigger(
+                        engine,
+                        apply_status->target,
+                        old_status.source,
+                        old_status.source_peer,
+                        old_status.instance_id,
+                        old_status.stack_count,
+                        TriggerEventType::kStatusExpired,
+                        old_template->on_expire_binding,
+                        &prepared_expire[replaced_index])) {
+                    return false;
+                }
+            }
+            const std::uint32_t applied_tick = engine.current_tick();
+            const std::uint32_t instance_id = planned_status_instance_ids[index];
+            const ActiveStatusEffect active{
+                instance_id,
+                status_template->status_effect_id,
+                status_template->channel_id,
+                apply_status->source,
+                source_peer,
+                applied_tick,
+                applied_tick + status_template->duration_ticks,
+                status_template->interval_ticks == 0u
+                    ? 0u
+                    : applied_tick + status_template->interval_ticks,
+                1u,
+            };
+            PreparedStatusLifecycle prepared_apply;
+            if (!prepare_status_lifecycle_trigger(
+                    engine,
+                    apply_status->target,
+                    apply_status->source,
+                    source_peer,
+                    instance_id,
+                    1u,
+                    TriggerEventType::kStatusApplied,
+                    status_template->on_apply_binding,
+                    &prepared_apply)) {
+                return false;
+            }
+            for (PreparedStatusLifecycle& prepared : prepared_expire) {
+                if (prepared.batch.has_value() &&
+                    !execute_action_graph_commands(
+                        engine,
+                        world,
+                        damage_pipeline,
+                        entity_templates,
+                        *prepared.batch,
+                        server_time_us,
+                        active_transaction)) {
+                    return false;
+                }
+            }
+            for (const ActiveStatusEffect& old_status : replaced) {
                 status_state.speed_modifiers.erase(
                     std::remove_if(
                         status_state.speed_modifiers.begin(),
@@ -410,52 +1015,49 @@ bool execute_action_graph_commands(
                                 old_status.instance_id;
                         }),
                     status_state.speed_modifiers.end());
-                status_state.active.erase(
-                    status_state.active.begin() + status_index);
-                recompute_speed(world, target);
-                const RuntimeStatusEffectTemplate* old_template =
-                    world.find_status_effect_template(old_status.status_effect_id);
-                if (old_template != nullptr &&
-                    !execute_status_lifecycle_trigger(
-                        engine,
-                        apply_status->target,
-                        old_status.source,
-                        old_status.instance_id,
-                        TriggerEventType::kStatusExpired,
-                        old_template->on_expire_binding,
-                        server_time_us)) {
-                    return false;
-                }
             }
-            const std::uint32_t applied_tick = engine.current_tick();
-            const std::uint32_t instance_id = world.allocate_status_instance_id();
-            const ActiveStatusEffect active{
-                instance_id,
-                status_template->status_effect_id,
-                status_template->channel_id,
-                apply_status->source,
-                applied_tick,
-                applied_tick + status_template->duration_ticks,
-                status_template->interval_ticks == 0u
-                    ? 0u
-                    : applied_tick + status_template->interval_ticks,
-            };
+            status_state.active.erase(
+                std::remove_if(
+                    status_state.active.begin(),
+                    status_state.active.end(),
+                    [&](const ActiveStatusEffect& old_status) {
+                        return old_status.channel_id == status_template->channel_id;
+                    }),
+                status_state.active.end());
+            recompute_speed(world, target);
             status_state.active.push_back(active);
             std::sort(
                 status_state.active.begin(), status_state.active.end(),
                 [](const ActiveStatusEffect& lhs, const ActiveStatusEffect& rhs) {
                     return lhs.instance_id < rhs.instance_id;
                 });
-            if (!execute_status_lifecycle_trigger(
+            if (prepared_apply.batch.has_value() &&
+                !execute_action_graph_commands(
                     engine,
-                    apply_status->target,
-                    apply_status->source,
-                    instance_id,
-                    TriggerEventType::kStatusApplied,
-                    status_template->on_apply_binding,
-                    server_time_us)) {
+                    world,
+                    damage_pipeline,
+                    entity_templates,
+                    *prepared_apply.batch,
+                    server_time_us,
+                    active_transaction)) {
                 return false;
             }
+            advance_status_revision(status_state);
+            for (const ActiveStatusEffect& old_status : replaced) {
+                engine.queue_status_effect_presentation(
+                    apply_status->target,
+                    old_status.status_effect_id,
+                    old_status.instance_id,
+                    KernelRemoteActionPresentationEventType_StatusRemoved,
+                    old_status.stack_count);
+            }
+            engine.queue_status_effect_presentation(
+                apply_status->target,
+                active.status_effect_id,
+                active.instance_id,
+                KernelRemoteActionPresentationEventType_StatusApplied,
+                active.stack_count);
+            engine.publish_status_effect_state(apply_status->target);
             continue;
         }
         if (const auto* remove_status =
@@ -466,15 +1068,37 @@ bool execute_action_graph_commands(
             if (status_state == nullptr) {
                 continue;
             }
-            for (std::size_t status_index = 0u;
-                 status_index < status_state->active.size();) {
-                const ActiveStatusEffect active = status_state->active[status_index];
-                if (active.status_effect_id != remove_status->status_effect_id) {
-                    ++status_index;
-                    continue;
+            std::vector<ActiveStatusEffect> removed;
+            for (const ActiveStatusEffect& active : status_state->active) {
+                if (active.status_effect_id == remove_status->status_effect_id) {
+                    removed.push_back(active);
                 }
+            }
+            std::vector<PreparedStatusLifecycle> prepared_expire(removed.size());
+            for (std::size_t removed_index = 0u;
+                 removed_index < removed.size();
+                 ++removed_index) {
+                const ActiveStatusEffect& active = removed[removed_index];
                 const RuntimeStatusEffectTemplate* status_template =
                     world.find_status_effect_template(active.status_effect_id);
+                if (status_template != nullptr &&
+                    !prepare_status_lifecycle_trigger(
+                        engine,
+                        remove_status->target,
+                        active.source,
+                        active.source_peer,
+                        active.instance_id,
+                        active.stack_count,
+                        TriggerEventType::kStatusExpired,
+                        status_template->on_expire_binding,
+                        &prepared_expire[removed_index])) {
+                    return false;
+                }
+            }
+            if (removed.empty()) {
+                continue;
+            }
+            for (const ActiveStatusEffect& active : removed) {
                 status_state->speed_modifiers.erase(
                     std::remove_if(
                         status_state->speed_modifiers.begin(),
@@ -483,21 +1107,40 @@ bool execute_action_graph_commands(
                             return modifier.status_instance_id == active.instance_id;
                         }),
                     status_state->speed_modifiers.end());
-                status_state->active.erase(
-                    status_state->active.begin() + status_index);
-                recompute_speed(world, target);
-                if (status_template != nullptr &&
-                    !execute_status_lifecycle_trigger(
+            }
+            status_state->active.erase(
+                std::remove_if(
+                    status_state->active.begin(),
+                    status_state->active.end(),
+                    [&](const ActiveStatusEffect& active) {
+                        return active.status_effect_id ==
+                            remove_status->status_effect_id;
+                    }),
+                status_state->active.end());
+            recompute_speed(world, target);
+            for (PreparedStatusLifecycle& prepared : prepared_expire) {
+                if (prepared.batch.has_value() &&
+                    !execute_action_graph_commands(
                         engine,
-                        remove_status->target,
-                        active.source,
-                        active.instance_id,
-                        TriggerEventType::kStatusExpired,
-                        status_template->on_expire_binding,
-                        server_time_us)) {
+                        world,
+                        damage_pipeline,
+                        entity_templates,
+                        *prepared.batch,
+                        server_time_us,
+                        active_transaction)) {
                     return false;
                 }
             }
+            advance_status_revision(*status_state);
+            for (const ActiveStatusEffect& active : removed) {
+                engine.queue_status_effect_presentation(
+                    remove_status->target,
+                    active.status_effect_id,
+                    active.instance_id,
+                    KernelRemoteActionPresentationEventType_StatusRemoved,
+                    active.stack_count);
+            }
+            engine.publish_status_effect_state(remove_status->target);
             continue;
         }
         if (const auto* modifier =
@@ -644,13 +1287,10 @@ bool execute_action_graph_commands(
             engine.queue_prop_state_change(spawned_net_id);
         }
     }
-    world.mark_action_graph_batch_processed(
-        batch.provenance.requester_peer != 0u
-            ? batch.provenance.requester_peer
-            : batch.provenance.owner_peer,
-        batch.provenance.request_id,
-        batch.event.type,
-        batch.sequence);
+    if (transaction == nullptr &&
+        !owned_transaction->commit(engine.current_tick())) {
+        return false;
+    }
     return true;
 }
 
@@ -674,6 +1314,43 @@ std::uint32_t live_agent_count(World& world) {
         }
     }
     return count;
+}
+
+std::uint32_t live_player_count(World& world) {
+    std::uint32_t count = 0u;
+    auto view = world.registry().view<const EntityKind>();
+    for (const entt::entity entity : view) {
+        const EntityKind& kind = view.get<const EntityKind>(entity);
+        if (kind.type == EntityType::kActor &&
+            kind.actor_type == ActorType::kPlayer) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+GameRuleGroupRuntime* find_game_rule_group(
+    GameRuleRuntime& runtime,
+    std::uint32_t group_id) {
+    const auto found = std::find_if(
+        runtime.groups.begin(),
+        runtime.groups.end(),
+        [group_id](const GameRuleGroupRuntime& group) {
+            return group.group_id == group_id;
+        });
+    return found == runtime.groups.end() ? nullptr : &*found;
+}
+
+const KernelGameRuleDefinition* find_game_rule_definition(
+    const std::vector<KernelGameRuleDefinition>& definitions,
+    std::uint32_t definition_id) {
+    const auto found = std::find_if(
+        definitions.begin(),
+        definitions.end(),
+        [definition_id](const KernelGameRuleDefinition& definition) {
+            return definition.game_rule_definition_id == definition_id;
+        });
+    return found == definitions.end() ? nullptr : &*found;
 }
 
 const ai::AIValue* intent_param(
@@ -743,11 +1420,25 @@ void materialize_director_runtime(
     if (ai.controller_type != KernelAiControllerType_Director) {
         return;
     }
+    const DirectorKind kind = ai.director_kind == KernelDirectorKind_GameRule
+        ? DirectorKind::kGameRule
+        : DirectorKind::kWorldRule;
     registry.emplace_or_replace<DirectorRuntime>(
         entity,
         DirectorRuntime{
+            kind,
             ai.tick_interval == 0u ? 1u : ai.tick_interval,
             0u,
+        });
+    if (kind == DirectorKind::kGameRule) {
+        registry.emplace_or_replace<GameRuleRuntime>(
+            entity,
+            GameRuleRuntime{ai.game_rule_definition_id});
+        return;
+    }
+    registry.emplace_or_replace<WorldRuleRuntime>(
+        entity,
+        WorldRuleRuntime{
             ai.spawn_target_count,
             ai.spawn_entity_template_id,
             ai.spawn_actor_template_id,
@@ -788,45 +1479,34 @@ bool execute_status_lifecycle_trigger(
     KernelEngine& engine,
     NetId target,
     NetId source,
+    PeerId source_peer,
     std::uint32_t status_instance_id,
+    std::uint16_t stack_count,
     TriggerEventType event_type,
     const std::optional<CompiledActionGraphBinding>& binding,
     std::uint64_t server_time_us) {
-    if (!binding.has_value()) {
-        return true;
-    }
-    TriggerEvent event;
-    event.type = event_type;
-    event.subject = target;
-    event.instigator = source;
-    event.target = target;
-    ActionExecutionProvenance provenance;
-    provenance.request_id = action_trigger_request_id(
-        engine.current_tick(), event_type, target, source, status_instance_id);
-    provenance.action_instance_id = status_instance_id;
-    provenance.status_instance_id = status_instance_id;
-    provenance.server_tick = engine.current_tick();
-    provenance.instigator = source;
-    provenance.authority_source =
-        ActionAuthoritySource::kAuthoritativeSimulation;
-    ActionGraphCommandBatch batch{
-        event, provenance, status_instance_id, {}};
-    std::string error;
-    if (!evaluate_action_graph(
-            *binding,
-            0u,
-            event,
-            provenance,
-            &batch.commands,
-            &error)) {
+    PreparedStatusLifecycle prepared;
+    if (!prepare_status_lifecycle_trigger(
+            engine,
+            target,
+            source,
+            source_peer,
+            status_instance_id,
+            stack_count,
+            event_type,
+            binding,
+            &prepared)) {
         return false;
+    }
+    if (!prepared.batch.has_value()) {
+        return true;
     }
     return execute_action_graph_commands(
         engine,
         engine.simulation_world(),
         &engine.damage_pipeline(),
         engine.authored_entity_templates(),
-        batch,
+        *prepared.batch,
         server_time_us);
 }
 
@@ -851,15 +1531,45 @@ void simulate_status_effects(KernelEngine& engine, std::uint64_t server_time_us)
             [](const ActiveStatusEffect& lhs, const ActiveStatusEffect& rhs) {
                 return lhs.instance_id < rhs.instance_id;
             });
+        bool active_set_changed = false;
         for (std::size_t index = 0u; index < state.active.size();) {
             const ActiveStatusEffect active = state.active[index];
             const RuntimeStatusEffectTemplate* status_template =
                 world.find_status_effect_template(active.status_effect_id);
             if (status_template == nullptr) {
                 state.active.erase(state.active.begin() + index);
+                state.speed_modifiers.erase(
+                    std::remove_if(
+                        state.speed_modifiers.begin(),
+                        state.speed_modifiers.end(),
+                        [&](const SpeedModifier& modifier) {
+                            return modifier.status_instance_id == active.instance_id;
+                        }),
+                    state.speed_modifiers.end());
+                active_set_changed = true;
+                engine.queue_status_effect_presentation(
+                    target_id,
+                    active.status_effect_id,
+                    active.instance_id,
+                    KernelRemoteActionPresentationEventType_StatusRemoved,
+                    active.stack_count);
                 continue;
             }
             if (current_tick >= active.expire_tick) {
+                PreparedStatusLifecycle prepared_expire;
+                if (!prepare_status_lifecycle_trigger(
+                        engine,
+                        target_id,
+                        active.source,
+                        active.source_peer,
+                        active.instance_id,
+                        active.stack_count,
+                        TriggerEventType::kStatusExpired,
+                        status_template->on_expire_binding,
+                        &prepared_expire)) {
+                    ++index;
+                    continue;
+                }
                 state.speed_modifiers.erase(
                     std::remove_if(
                         state.speed_modifiers.begin(),
@@ -870,36 +1580,49 @@ void simulate_status_effects(KernelEngine& engine, std::uint64_t server_time_us)
                     state.speed_modifiers.end());
                 state.active.erase(state.active.begin() + index);
                 recompute_speed(world, *entity);
-                if (!execute_status_lifecycle_trigger(
+                if (prepared_expire.batch.has_value() &&
+                    !execute_action_graph_commands(
                         engine,
-                        target_id,
-                        active.source,
-                        active.instance_id,
-                        TriggerEventType::kStatusExpired,
-                        status_template->on_expire_binding,
+                        world,
+                        &engine.damage_pipeline(),
+                        engine.authored_entity_templates(),
+                        *prepared_expire.batch,
                         server_time_us)) {
                     return;
                 }
+                active_set_changed = true;
+                engine.queue_status_effect_presentation(
+                    target_id,
+                    active.status_effect_id,
+                    active.instance_id,
+                    KernelRemoteActionPresentationEventType_StatusRemoved,
+                    active.stack_count);
                 continue;
             }
             if (status_template->interval_ticks != 0u &&
                 current_tick >= active.next_tick) {
-                state.active[index].next_tick =
-                    active.next_tick + status_template->interval_ticks;
                 if (!execute_status_lifecycle_trigger(
                         engine,
                         target_id,
                         active.source,
+                        active.source_peer,
                         active.instance_id,
+                        active.stack_count,
                         TriggerEventType::kStatusTick,
                         status_template->on_tick_binding,
                         server_time_us)) {
                     return;
                 }
+                state.active[index].next_tick =
+                    active.next_tick + status_template->interval_ticks;
             }
             ++index;
         }
         recompute_speed(world, *entity);
+        if (active_set_changed) {
+            advance_status_revision(state);
+            engine.publish_status_effect_state(target_id);
+        }
     }
 }
 
@@ -1771,6 +2494,11 @@ bool EntityLifecycleSystem::destroy_entity_with_context(
             world_item_id = candidate;
         }
     }
+    std::optional<GameplayGroupMembership> group_membership;
+    if (engine.world_.registry().all_of<GameplayGroupMembership>(*entity)) {
+        group_membership =
+            engine.world_.registry().get<GameplayGroupMembership>(*entity);
+    }
     std::vector<ActionGraphQueuedTrigger> queued_triggers;
     if (execute_destroy_graph &&
         engine.world_.registry().all_of<
@@ -1812,6 +2540,20 @@ bool EntityLifecycleSystem::destroy_entity_with_context(
     }
     if (!engine.world_.destroy(net_id)) {
         return false;
+    }
+    if (group_membership.has_value()) {
+        const std::optional<entt::entity> director =
+            engine.world_.find_entity(group_membership->director_net_id);
+        if (director.has_value() &&
+            engine.world_.registry().all_of<GameRuleRuntime>(*director)) {
+            GameRuleRuntime& runtime =
+                engine.world_.registry().get<GameRuleRuntime>(*director);
+            GameRuleGroupRuntime* group = find_game_rule_group(
+                runtime, group_membership->group_id);
+            if (group != nullptr && group->alive_count > 0u) {
+                --group->alive_count;
+            }
+        }
     }
     if (world_item_id != 0u) {
         (void)engine.item_store_.terminate(world_item_id);
@@ -2038,8 +2780,108 @@ DirectorIntentExecutionResult DirectorIntentExecutor::execute(
     KernelEngine& engine,
     const ai::ScopedIntent& intent) const {
     DirectorIntentExecutionResult result;
-    if (intent.scope != ai::IntentScope::kDirector ||
-        intent.type != "SpawnAgent") {
+    if (intent.scope != ai::IntentScope::kDirector) {
+        result.status = ai::IntentStatus::kFailed;
+        result.unsupported = true;
+        return result;
+    }
+    if (intent.type == "SpawnGroup") {
+        const std::optional<std::uint32_t> node_id =
+            uint32_param(intent, "node_id");
+        const std::optional<std::uint32_t> group_id =
+            uint32_param(intent, "group_id");
+        const std::optional<std::uint32_t> spawn_count =
+            uint32_param(intent, "count");
+        const std::optional<std::uint32_t> entity_template_id =
+            uint32_param(intent, "entity_template_id");
+        const std::optional<float> position_x =
+            float_param(intent, "position_x");
+        const std::optional<float> position_y =
+            float_param(intent, "position_y");
+        const std::optional<float> position_z =
+            float_param(intent, "position_z");
+        const std::optional<float> radius = float_param(intent, "radius");
+        const std::optional<std::uint32_t> seed = uint32_param(intent, "seed");
+        if (!node_id.has_value() || !group_id.has_value() ||
+            !spawn_count.has_value() || !entity_template_id.has_value() ||
+            !position_x.has_value() || !position_y.has_value() ||
+            !position_z.has_value() || !radius.has_value() || !seed.has_value() ||
+            *spawn_count == 0u || intent.subject == 0u || !engine.running_ ||
+            !is_server_mode(engine.config_.mode)) {
+            return result;
+        }
+        const std::optional<entt::entity> entity =
+            engine.world_.find_entity(intent.subject);
+        if (!entity.has_value() ||
+            !engine.world_.registry().all_of<
+                DirectorRuntime,
+                GameRuleRuntime,
+                ServerOnly,
+                EntityKind>(*entity)) {
+            return result;
+        }
+        DirectorRuntime& director =
+            engine.world_.registry().get<DirectorRuntime>(*entity);
+        GameRuleRuntime& runtime =
+            engine.world_.registry().get<GameRuleRuntime>(*entity);
+        GameRuleGroupRuntime* group = find_game_rule_group(runtime, *group_id);
+        const KernelGameRuleDefinition* definition = find_game_rule_definition(
+            engine.game_rule_definitions_, runtime.definition_id);
+        if (director.kind != DirectorKind::kGameRule || definition == nullptr ||
+            runtime.status != GameRuleStatus::kRunning || group == nullptr ||
+            group->pending_spawn_count != 0u || group->sealed) {
+            return result;
+        }
+        const auto effect = std::find_if(
+            engine.game_rule_effects_.begin() + definition->first_effect,
+            engine.game_rule_effects_.begin() + definition->first_effect +
+                definition->effect_count,
+            [&](const KernelGameRuleSpawnGroupEffectDefinition& candidate) {
+                return candidate.node_id == *node_id &&
+                    candidate.group_id == *group_id &&
+                    candidate.count == *spawn_count &&
+                    candidate.entity_template_id == *entity_template_id;
+            });
+        if (effect == engine.game_rule_effects_.begin() +
+                          definition->first_effect + definition->effect_count ||
+            effect->position.x != *position_x || effect->position.y != *position_y ||
+            effect->position.z != *position_z || effect->radius != *radius ||
+            effect->seed != *seed) {
+            return result;
+        }
+        group->pending_spawn_count = *spawn_count;
+        for (std::uint32_t index = 0u; index < *spawn_count; ++index) {
+            const float angle =
+                static_cast<float>(*seed + index) * 2.39996323f;
+            KernelServerEntityCreateInfo create_info{};
+            create_info.struct_size = sizeof(create_info);
+            create_info.owner_peer = 0u;
+            create_info.entity_template_id = *entity_template_id;
+            create_info.position = KernelVec3{
+                *position_x + std::cos(angle) * *radius,
+                *position_y,
+                *position_z + std::sin(angle) * *radius,
+            };
+            create_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+            simulation::Command command{};
+            command.id = simulation::CommandId::kCreateEntity;
+            command.source = simulation::CommandSource::kAi;
+            command.create_entity.create_info = create_info;
+            command.create_entity.director_net_id = intent.subject;
+            command.create_entity.gameplay_group_id = *group_id;
+            command.create_entity.spawn_batch_id = *group_id;
+            if (!engine.enqueue_simulation_command(command)) {
+                group->failed = true;
+                runtime.status = GameRuleStatus::kFailed;
+                result.status = ai::IntentStatus::kFailed;
+                return result;
+            }
+            ++result.created_count;
+        }
+        result.status = ai::IntentStatus::kSucceeded;
+        return result;
+    }
+    if (intent.type != "SpawnAgent") {
         result.status = ai::IntentStatus::kFailed;
         result.unsupported = true;
         return result;
@@ -2085,6 +2927,7 @@ DirectorIntentExecutionResult DirectorIntentExecutor::execute(
         !engine.world_.registry().all_of<
             AgentRuntime,
             DirectorRuntime,
+            WorldRuleRuntime,
             Transform,
             ServerOnly,
             EntityKind>(*entity)) {
@@ -2094,9 +2937,11 @@ DirectorIntentExecutionResult DirectorIntentExecutor::execute(
     auto& registry = engine.world_.registry();
     const EntityKind& kind = registry.get<EntityKind>(*entity);
     const AgentRuntime& agent = registry.get<AgentRuntime>(*entity);
-    DirectorRuntime& director = registry.get<DirectorRuntime>(*entity);
+    DirectorRuntime& director_common = registry.get<DirectorRuntime>(*entity);
+    WorldRuleRuntime& director = registry.get<WorldRuleRuntime>(*entity);
     if (kind.type != EntityType::kDirector ||
         agent.controller_type != AiControllerType::kDirector ||
+        director_common.kind != DirectorKind::kWorldRule ||
         *spawn_target_count != director.spawn_target_count ||
         *spawn_entity_template_id != director.spawn_entity_template_id ||
         *spawn_actor_template_id != director.spawn_actor_template_id ||
@@ -2162,9 +3007,9 @@ DirectorIntentExecutionResult DirectorIntentExecutor::execute(
         if (!engine.enqueue_simulation_command(command)) {
             if (result.created_count > 0) {
                 director.spawn_cursor += result.created_count;
-                director.next_tick =
+                director_common.next_tick =
                     engine.tick_loop_.current_tick() +
-                    std::max<std::uint32_t>(1u, director.tick_interval);
+                    std::max<std::uint32_t>(1u, director_common.tick_interval);
             }
             result.status = ai::IntentStatus::kFailed;
             return result;
@@ -2172,9 +3017,9 @@ DirectorIntentExecutionResult DirectorIntentExecutor::execute(
         ++result.created_count;
     }
     director.spawn_cursor += result.created_count;
-    director.next_tick =
+    director_common.next_tick =
         engine.tick_loop_.current_tick() +
-        std::max<std::uint32_t>(1u, director.tick_interval);
+        std::max<std::uint32_t>(1u, director_common.tick_interval);
     result.status = ai::IntentStatus::kSucceeded;
     return result;
 }
@@ -2206,46 +3051,220 @@ void DirectorAISystem::update(KernelEngine& engine) const {
 
     std::uint32_t live_count = live_agent_count(engine.world_);
 
-    auto director_view =
+    auto world_rule_view =
         engine.world_.registry()
             .view<
                 EntityKind,
                 NetworkIdentity,
                 AgentRuntime,
                 DirectorRuntime,
+                WorldRuleRuntime,
                 Transform,
                 ServerOnly>();
-    for (const entt::entity entity : director_view) {
-        const EntityKind& kind = director_view.get<EntityKind>(entity);
-        const NetworkIdentity& identity = director_view.get<NetworkIdentity>(entity);
-        AgentRuntime& agent = director_view.get<AgentRuntime>(entity);
-        DirectorRuntime& director = director_view.get<DirectorRuntime>(entity);
+    for (const entt::entity entity : world_rule_view) {
+        const EntityKind& kind = world_rule_view.get<EntityKind>(entity);
+        const NetworkIdentity& identity =
+            world_rule_view.get<NetworkIdentity>(entity);
+        AgentRuntime& agent = world_rule_view.get<AgentRuntime>(entity);
+        DirectorRuntime& director = world_rule_view.get<DirectorRuntime>(entity);
+        WorldRuleRuntime& world_rule =
+            world_rule_view.get<WorldRuleRuntime>(entity);
         if (kind.type != EntityType::kDirector ||
             agent.controller_type != AiControllerType::kDirector ||
-            director.spawn_target_count <= live_count ||
+            director.kind != DirectorKind::kWorldRule ||
+            world_rule.spawn_target_count <= live_count ||
             engine.tick_loop_.current_tick() < director.next_tick) {
             continue;
         }
 
         const std::uint32_t missing_count =
-            director.spawn_target_count - live_count;
+            world_rule.spawn_target_count - live_count;
         ai::ScopedIntent intent;
         intent.scope = ai::IntentScope::kDirector;
         intent.type = "SpawnAgent";
         intent.subject = identity.net_id;
         intent.params["count"] = missing_count;
-        intent.params["spawn_target_count"] = director.spawn_target_count;
+        intent.params["spawn_target_count"] = world_rule.spawn_target_count;
         intent.params["spawn_entity_template_id"] =
-            director.spawn_entity_template_id;
+            world_rule.spawn_entity_template_id;
         intent.params["spawn_actor_template_id"] =
-            director.spawn_actor_template_id;
-        intent.params["spawn_position_x"] = director.spawn_position.x;
-        intent.params["spawn_position_y"] = director.spawn_position.y;
-        intent.params["spawn_position_z"] = director.spawn_position.z;
-        intent.params["spawn_radius"] = director.spawn_radius;
-        intent.params["base_spawn_cursor"] = director.spawn_cursor;
+            world_rule.spawn_actor_template_id;
+        intent.params["spawn_position_x"] = world_rule.spawn_position.x;
+        intent.params["spawn_position_y"] = world_rule.spawn_position.y;
+        intent.params["spawn_position_z"] = world_rule.spawn_position.z;
+        intent.params["spawn_radius"] = world_rule.spawn_radius;
+        intent.params["base_spawn_cursor"] = world_rule.spawn_cursor;
         engine.pending_director_intents_.push_back(std::move(intent));
         live_count += missing_count;
+    }
+
+    auto game_rule_view =
+        engine.world_.registry()
+            .view<
+                EntityKind,
+                NetworkIdentity,
+                DirectorRuntime,
+                GameRuleRuntime,
+                ServerOnly>();
+    for (const entt::entity entity : game_rule_view) {
+        const EntityKind& kind = game_rule_view.get<EntityKind>(entity);
+        const NetworkIdentity& identity =
+            game_rule_view.get<NetworkIdentity>(entity);
+        DirectorRuntime& director = game_rule_view.get<DirectorRuntime>(entity);
+        GameRuleRuntime& runtime = game_rule_view.get<GameRuleRuntime>(entity);
+        if (kind.type != EntityType::kDirector ||
+            director.kind != DirectorKind::kGameRule ||
+            runtime.status != GameRuleStatus::kRunning ||
+            engine.tick_loop_.current_tick() < director.next_tick) {
+            continue;
+        }
+        const KernelGameRuleDefinition* definition = find_game_rule_definition(
+            engine.game_rule_definitions_, runtime.definition_id);
+        if (definition == nullptr) {
+            runtime.status = GameRuleStatus::kFailed;
+            continue;
+        }
+        const auto node_begin =
+            engine.game_rule_nodes_.begin() + definition->first_node;
+        const auto edge_begin =
+            engine.game_rule_edges_.begin() + definition->first_edge;
+        const auto effect_begin =
+            engine.game_rule_effects_.begin() + definition->first_effect;
+        const std::uint32_t player_count = live_player_count(engine.world_);
+        const auto node_offset = [&](std::uint32_t node_id)
+            -> std::optional<std::size_t> {
+            const auto found = std::find_if(
+                node_begin,
+                node_begin + definition->node_count,
+                [node_id](const KernelGameRuleNodeDefinition& node) {
+                    return node.node_id == node_id;
+                });
+            if (found == node_begin + definition->node_count) {
+                return std::nullopt;
+            }
+            return static_cast<std::size_t>(found - node_begin);
+        };
+        const auto activate = [&](std::size_t offset) {
+            runtime.node_states[offset] = GameRuleNodeState::kActive;
+            const KernelGameRuleNodeDefinition& node = node_begin[offset];
+            const auto effect = std::find_if(
+                effect_begin,
+                effect_begin + definition->effect_count,
+                [&](const KernelGameRuleSpawnGroupEffectDefinition& candidate) {
+                    return candidate.node_id == node.node_id;
+                });
+            if (effect == effect_begin + definition->effect_count) {
+                if (node.condition_type !=
+                    KernelGameRuleConditionType_PlayerCountAtLeast) {
+                    runtime.status = GameRuleStatus::kFailed;
+                }
+                return;
+            }
+            ai::ScopedIntent intent;
+            intent.scope = ai::IntentScope::kDirector;
+            intent.type = "SpawnGroup";
+            intent.subject = identity.net_id;
+            intent.params["node_id"] = effect->node_id;
+            intent.params["group_id"] = effect->group_id;
+            intent.params["count"] = effect->count;
+            intent.params["entity_template_id"] = effect->entity_template_id;
+            intent.params["position_x"] = effect->position.x;
+            intent.params["position_y"] = effect->position.y;
+            intent.params["position_z"] = effect->position.z;
+            intent.params["radius"] = effect->radius;
+            intent.params["seed"] = effect->seed;
+            engine.pending_director_intents_.push_back(std::move(intent));
+        };
+        if (!runtime.initialized) {
+            runtime.node_states.assign(
+                definition->node_count, GameRuleNodeState::kInactive);
+            runtime.groups.clear();
+            runtime.groups.reserve(definition->node_count);
+            for (std::uint32_t offset = 0u; offset < definition->node_count;
+                 ++offset) {
+                if (node_begin[offset].condition_type ==
+                    KernelGameRuleConditionType_GroupEliminated) {
+                    runtime.groups.push_back(GameRuleGroupRuntime{
+                        node_begin[offset].condition_group_id});
+                }
+            }
+            runtime.initialized = true;
+            for (std::uint32_t offset = 0u; offset < definition->node_count;
+                 ++offset) {
+                const std::uint32_t node_id = node_begin[offset].node_id;
+                const bool has_predecessor = std::any_of(
+                    edge_begin,
+                    edge_begin + definition->edge_count,
+                    [node_id](const KernelGameRuleEdgeDefinition& edge) {
+                        return edge.target_node_id == node_id;
+                    });
+                if (!has_predecessor) {
+                    activate(offset);
+                }
+            }
+        } else {
+            for (std::uint32_t offset = 0u; offset < definition->node_count;
+                 ++offset) {
+                if (runtime.node_states[offset] != GameRuleNodeState::kActive) {
+                    continue;
+                }
+                const KernelGameRuleNodeDefinition& node = node_begin[offset];
+                bool completed = false;
+                if (node.condition_type ==
+                    KernelGameRuleConditionType_GroupEliminated) {
+                    GameRuleGroupRuntime* group = find_game_rule_group(
+                        runtime, node.condition_group_id);
+                    completed = group != nullptr && group->sealed &&
+                        !group->failed && group->alive_count == 0u;
+                } else if (node.condition_type ==
+                           KernelGameRuleConditionType_PlayerCountAtLeast) {
+                    completed = player_count >= node.condition_count;
+                }
+                if (completed) {
+                    runtime.node_states[offset] = GameRuleNodeState::kCompleted;
+                }
+            }
+            for (std::uint32_t offset = 0u; offset < definition->node_count;
+                 ++offset) {
+                if (runtime.node_states[offset] != GameRuleNodeState::kInactive) {
+                    continue;
+                }
+                const std::uint32_t node_id = node_begin[offset].node_id;
+                bool has_predecessor = false;
+                bool all_completed = true;
+                for (std::uint32_t edge_offset = 0u;
+                     edge_offset < definition->edge_count;
+                     ++edge_offset) {
+                    const KernelGameRuleEdgeDefinition& edge =
+                        edge_begin[edge_offset];
+                    if (edge.target_node_id != node_id) {
+                        continue;
+                    }
+                    has_predecessor = true;
+                    const std::optional<std::size_t> predecessor =
+                        node_offset(edge.source_node_id);
+                    if (!predecessor.has_value() ||
+                        runtime.node_states[*predecessor] !=
+                            GameRuleNodeState::kCompleted) {
+                        all_completed = false;
+                    }
+                }
+                if (has_predecessor && all_completed) {
+                    activate(offset);
+                }
+            }
+        }
+        if (runtime.status == GameRuleStatus::kRunning &&
+            std::all_of(
+                runtime.node_states.begin(),
+                runtime.node_states.end(),
+                [](GameRuleNodeState state) {
+                    return state == GameRuleNodeState::kCompleted;
+                })) {
+            runtime.status = GameRuleStatus::kCompleted;
+        }
+        director.next_tick = engine.tick_loop_.current_tick() +
+            std::max<std::uint32_t>(1u, director.tick_interval);
     }
 }
 

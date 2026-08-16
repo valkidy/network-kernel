@@ -161,6 +161,18 @@ bool Kernel_ServerEnqueueEntityInput(
     uint32_t net_id,
     const KernelPlayerInput* input);
 
+float Kernel_GetFixedDeltaSeconds(KernelHandle* kernel);
+
+bool Kernel_ServerGetProjectileLaunchPosition(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    KernelVec3* out_position);
+
+bool Kernel_ServerGetEntityAimPoint(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    KernelVec3* out_position);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif
