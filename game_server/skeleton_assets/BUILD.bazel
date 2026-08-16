@@ -7,6 +7,7 @@ package(default_visibility = ["//visibility:public"])
 skeleton_asset(
     name = "simplified_monster_sim_v4",
     src = "raw/simplified_monster_sim_v4.glb",
+    rig = "raw/simplified_monster_sim_v4.rig.yaml",
     asset_id = 1,
 )
 

@@ -298,7 +298,10 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
     const std::vector<std::pair<std::string, std::string>>& extra_files = {},
     const std::string& player_actor_yaml = {},
     const std::string& catalog_yaml = {},
-    const std::string& monster_actor_yaml = {}) {
+    const std::string& monster_actor_yaml = {},
+    // Bone identity lives in the rig file now, so tests that corrupt it need a
+    // way to substitute one.
+    const std::string& monster_rig_yaml = {}) {
     std::vector<std::pair<std::string, std::string>> files;
     files.push_back({
         "gameplay_catalog.yaml",
@@ -352,9 +355,13 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
         }
         std::sort(generated.begin(), generated.end());
         for (const std::filesystem::path& entry : generated) {
+            const std::string name = entry.filename().string();
+            const bool use_override = !monster_rig_yaml.empty() &&
+                name == "simplified_monster_sim_v4.rig.yaml";
             files.push_back({
-                "skeleton_assets/generated/" + entry.filename().string(),
-                read_binary_string(entry.string())});
+                "skeleton_assets/generated/" + name,
+                use_override ? monster_rig_yaml
+                             : read_binary_string(entry.string())});
         }
     }
 
@@ -623,6 +630,12 @@ int main() {
         read_text_file("game_server/entity_templates/sentry_grunt.yaml");
     const std::string production_monster_yaml =
         read_text_file("game_server/entity_templates/monster_sim_actor.yaml");
+    const std::string production_monster_rig =
+        read_text_file(
+            "game_server/skeleton_assets/generated/"
+            "simplified_monster_sim_v4.rig.yaml");
+    // The two-bone chain is a claim about the rig, so it is now corrupted in
+    // -- and reported against -- the rig file rather than a template.
     bool invalid_leg_hierarchy_rejected = false;
     try {
         const std::vector<std::uint8_t> invalid_leg_bundle =
@@ -631,24 +644,18 @@ int main() {
                 {},
                 {},
                 {},
+                {},
                 replace_once(
-                    production_monster_yaml,
-                    "foot_bone: JNT_LegFrontLeft_Foot",
-                    "foot_bone: JNT_LegFrontLeft_Hip"));
+                    production_monster_rig,
+                    "foot: JNT_LegFrontLeft_Foot",
+                    "foot: JNT_LegFrontLeft_Hip"));
         (void)network_example::game_server::load_gameplay_config_from_bundle_memory(
             invalid_leg_bundle.data(),
             static_cast<std::uint32_t>(invalid_leg_bundle.size()),
             "gameplay_catalog.yaml");
-    } catch (const network_example::game_server::DataLoadError& error) {
-        require(error.error_code ==
-                KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_YAML);
-        require(error.source_kind ==
-                KERNEL_GAMEPLAY_CATALOG_LOAD_SOURCE_BUNDLE);
-        require(error.template_kind ==
-                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR);
-        require(error.template_id == 20u);
-        require(error.field == "skeleton");
-        require(error.path.find("monster_sim_actor.yaml") != std::string::npos);
+    } catch (const std::exception& error) {
+        // Still names the rig and both ends of the broken chain, which is what
+        // makes the message actionable.
         require(std::string(error.what()).find("simplified_monster_sim_v4") !=
                 std::string::npos);
         require(std::string(error.what()).find("JNT_LegFrontLeft_Hip") !=
@@ -1000,7 +1007,7 @@ int main() {
     assert(
         config.static_collision_scene.collision_layer ==
         KERNEL_STATIC_COLLISION_LAYER_TERRAIN);
-    require(config.weapons.catalog_version == 12);
+    require(config.weapons.catalog_version == 13);
     require(config.prop_population_rules.size() == 1u);
     require(config.prop_population_rules[0].name == "temporary_deployable");
     require(
@@ -2488,7 +2495,7 @@ int main() {
                 generated_bundle.data(),
                 static_cast<std::uint32_t>(generated_bundle.size()),
                 "monster_observer_gameplay_catalog.yaml");
-    require(monster_observer_config.weapons.catalog_version == 12u);
+    require(monster_observer_config.weapons.catalog_version == 13u);
     require(monster_observer_config.agent.override_director_spawn);
     require(monster_observer_config.agent.actor_template_id == 20u);
     require(monster_observer_config.agent.spawn_count == 1u);

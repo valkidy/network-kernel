@@ -49,15 +49,12 @@ animations:
 skeleton:
   runtime_asset: skeleton_assets/generated/simplified_quadruped.ozz
   source_manifest: skeleton_assets/generated/simplified_quadruped.skeleton_manifest.json
-  root_bone: SIM_Root
-  body_bone: JNT_Body
   # What this actor's rig colliders mean. The rig file says which bones carry
   # them and what shape they are; this says whose side they are on. The same rig
   # could be a friendly actor with a different layer here.
   collision_flags: {purpose: limb | hit, layer: hostile_side}
 locomotion:
   type: procedural_legged
-  forward_axis: positive_z
   input_deadzone: 0.01
   gait:
     type: displacement_threshold
@@ -99,44 +96,19 @@ locomotion:
     # This rig is authored bent: it rests at 88.9% with 2.61 m of slack already,
     # so 0.40 m is all it takes to reach the same ~3 m the tuned monster has.
     stance_crouch_meters: 0.40
+  # One value for every leg on all four rigs, so it is a default rather than
+  # something repeated per leg.
+  leg_defaults:
+    step_height_meters: 0.18
+    max_reach_ratio: 0.99
+  # Only the gait grouping differs per leg; the bones and bend geometry are in
+  # the rig file.
   legs:
-    # mid_axis_local is one value for the whole rig: it is read in the knee's
-    # own frame, and the four legs are copies of one limb with re-aimed hips.
-    # pole_local is model-space and therefore per leg -- it does NOT rotate with
-    # the hip. Both are measured from the bind pose.
     - id: leg0
-      hip_bone: JNT_Leg0_Hip
-      knee_bone: JNT_Leg0_Knee
-      foot_bone: JNT_Leg0_Foot
       gait_group: 0
-      pole_local: {x: 0.734, y: 0.305, z: 0.607}
-      mid_axis_local: {x: 0.460, y: 0.0, z: -0.888}
-      step_height_meters: 0.18
-      max_reach_ratio: 0.99
     - id: leg1
-      hip_bone: JNT_Leg1_Hip
-      knee_bone: JNT_Leg1_Knee
-      foot_bone: JNT_Leg1_Foot
       gait_group: 1
-      pole_local: {x: -0.607, y: 0.305, z: 0.734}
-      mid_axis_local: {x: 0.460, y: 0.0, z: -0.888}
-      step_height_meters: 0.18
-      max_reach_ratio: 0.99
     - id: leg2
-      hip_bone: JNT_Leg2_Hip
-      knee_bone: JNT_Leg2_Knee
-      foot_bone: JNT_Leg2_Foot
       gait_group: 0
-      pole_local: {x: -0.734, y: 0.305, z: -0.607}
-      mid_axis_local: {x: 0.460, y: 0.0, z: -0.888}
-      step_height_meters: 0.18
-      max_reach_ratio: 0.99
     - id: leg3
-      hip_bone: JNT_Leg3_Hip
-      knee_bone: JNT_Leg3_Knee
-      foot_bone: JNT_Leg3_Foot
       gait_group: 1
-      pole_local: {x: 0.607, y: 0.305, z: -0.734}
-      mid_axis_local: {x: 0.460, y: 0.0, z: -0.888}
-      step_height_meters: 0.18
-      max_reach_ratio: 0.99

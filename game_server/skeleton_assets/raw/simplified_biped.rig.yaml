@@ -1,16 +1,31 @@
 # What this rig IS, as opposed to how any particular actor walks it. Paired with
-# simplified_biped.ozz and simplified_biped.skeleton_manifest.json by name. See
-# simplified_tripod.rig.yaml for why colliders carry neither dimensions nor a
-# layer.
+# simplified_biped.ozz and simplified_biped.skeleton_manifest.json by name.
 #
-# The arms name no leg: they are limbs of the rig, but not part of any gait.
-rig_version: 1
+# Bone identity, the limb's bend geometry, and which bones carry colliders. What
+# is NOT here is anything that changes when the same skeleton is put to a
+# different use: gait timing (tuned against move_speed, which is combat data),
+# gait grouping (the same rig can walk, trot or pace), step height, reach ratio,
+# crouch and body follow all stay on the entity template.
+rig_version: 2
 skeleton: simplified_biped
+forward_axis: positive_z
+root_bone: SIM_Root
+body_bone: JNT_Body
+# One value for the whole rig: mid_axis is read in the knee's OWN frame, and
+# these legs are copies of a single limb with re-aimed hips. pole_local below is
+# model-space and therefore genuinely per leg -- it does not rotate with the hip.
+knee_hinge_local: {x: 0.0, y: 0.0, z: -1.0}
+legs:
+  - {id: leg0, hip: JNT_Leg0_Hip, knee: JNT_Leg0_Knee, foot: JNT_Leg0_Foot,
+     pole_local: {x: 0.981, y: 0.194, z: 0.0}}
+  - {id: leg1, hip: JNT_Leg1_Hip, knee: JNT_Leg1_Knee, foot: JNT_Leg1_Foot,
+     pole_local: {x: -0.981, y: 0.194, z: 0.0}}
 colliders:
   - {bone: GEO_Leg0_Upper, leg: leg0}
   - {bone: GEO_Leg0_Lower, leg: leg0}
   - {bone: GEO_Leg1_Upper, leg: leg1}
   - {bone: GEO_Leg1_Lower, leg: leg1}
+  # The arms name no leg: they are limbs of the rig, but not part of any gait.
   - {bone: GEO_Arm0_Upper}
   - {bone: GEO_Arm0_Lower}
   - {bone: GEO_Arm1_Upper}
