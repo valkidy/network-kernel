@@ -194,6 +194,7 @@ int main() {
     network_example::game_server::GameServer unstarted_game_server(
         unstarted_kernel,
         single_spawn_gameplay_config());
+    assert(!unstarted_game_server.preload_directors());
     unstarted_game_server.tick(1.0f / 30.0f);
     assert(unstarted_game_server.agent_runtime_manager().agent_count() == 0);
     Kernel_Destroy(unstarted_kernel);
@@ -208,6 +209,8 @@ int main() {
     gameplay_config.actor_templates[1].sentry.alert_ticks = 3;
     gameplay_config.actor_templates[1].sentry.forget_ticks = 3;
     network_example::game_server::GameServer game_server(kernel, gameplay_config);
+    require(game_server.preload_directors());
+    require(game_server.preload_directors());
     handle_pending_events(kernel, &game_server);
     run_server_frames(kernel, &game_server, 3);
     require(game_server.agent_runtime_manager().agent_count() == 1);
@@ -407,6 +410,7 @@ int main() {
     network_example::game_server::GameServer host_game_server(
         host_kernel,
         single_spawn_gameplay_config());
+    require(host_game_server.preload_directors());
     for (std::uint32_t frame = 1; frame <= 12; ++frame) {
         const KernelPlayerInput input = stationary_input(frame);
         Kernel_SubmitPlayerInput(host_kernel, 1, &input);
@@ -430,6 +434,7 @@ int main() {
     network_example::game_server::GameServer player_death_game_server(
         player_death_kernel,
         single_spawn_gameplay_config());
+    require(player_death_game_server.preload_directors());
     handle_pending_events(player_death_kernel, &player_death_game_server);
     player_death_game_server.tick(1.0f / 30.0f);
     run_server_frames(player_death_kernel, &player_death_game_server, 60);
@@ -448,14 +453,7 @@ int main() {
     network_example::game_server::GameServer dedicated_game_server(
         dedicated_kernel,
         single_spawn_gameplay_config());
-    dedicated_game_server.tick(1.0f / 30.0f);
-    agent_count = query_enemies(dedicated_kernel, &enemy_states);
-    require(agent_count == 0);
-
-    KernelEvent player_joined{};
-    player_joined.type = KernelEventType_PlayerJoined;
-    player_joined.peer_id = 1;
-    dedicated_game_server.handle_event(player_joined);
+    require(dedicated_game_server.preload_directors());
     run_server_frames(dedicated_kernel, &dedicated_game_server, 3);
     agent_count = query_enemies(dedicated_kernel, &enemy_states);
     require(agent_count == 1);
@@ -466,6 +464,47 @@ int main() {
     require(enemy_states[0].velocity.z == 0.0f);
 
     Kernel_Destroy(dedicated_kernel);
+
+    KernelConfig multiple_director_config = dedicated_server_config();
+    KernelHandle* multiple_director_kernel =
+        Kernel_Create(&multiple_director_config);
+    require(multiple_director_kernel != nullptr);
+    require(Kernel_StartDedicatedServer(multiple_director_kernel, 7784));
+
+    network_example::game_server::GameServerGameplayConfig
+        multiple_director_gameplay_config = single_spawn_gameplay_config();
+    const auto authored_director = std::find_if(
+        multiple_director_gameplay_config.entity_templates.begin(),
+        multiple_director_gameplay_config.entity_templates.end(),
+        [](const network_example::game_server::EntityTemplateConfig& entity) {
+            return entity.entity_type == KernelEntityType_Director;
+        });
+    require(
+        authored_director !=
+        multiple_director_gameplay_config.entity_templates.end());
+    auto second_director = *authored_director;
+    const std::uint32_t first_director_template_id =
+        authored_director->actor_template_id;
+    second_director.actor_template_id = 101u;
+    second_director.name = "earth_mother_two";
+    second_director.transform_position.x += 1.0f;
+    multiple_director_gameplay_config.entity_templates.push_back(
+        second_director);
+    multiple_director_gameplay_config.preload_director_template_ids = {
+        first_director_template_id,
+        second_director.actor_template_id,
+    };
+
+    network_example::game_server::GameServer multiple_director_game_server(
+        multiple_director_kernel,
+        multiple_director_gameplay_config);
+    require(multiple_director_game_server.preload_directors());
+    require(query_directors(multiple_director_kernel, &director_states) == 2u);
+    multiple_director_game_server.agent_runtime_manager().despawn_all(
+        KernelDespawnReason_Destroyed);
+    Kernel_Update(multiple_director_kernel, 1.0f / 30.0f);
+    require(query_directors(multiple_director_kernel, &director_states) == 0u);
+    Kernel_Destroy(multiple_director_kernel);
 
     return 0;
 }

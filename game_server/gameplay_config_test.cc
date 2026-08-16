@@ -673,6 +673,35 @@ int main() {
     const std::vector<std::string> errors =
         network_example::game_server::validate_gameplay_config(config);
     assert(errors.empty());
+    require(config.preload_director_template_ids.size() == 1u);
+    require(config.preload_director_template_ids[0] == 100u);
+
+    auto no_preload_config = config;
+    no_preload_config.preload_director_template_ids.clear();
+    require(
+        network_example::game_server::compute_gameplay_catalog_hash(config) !=
+        network_example::game_server::compute_gameplay_catalog_hash(
+            no_preload_config));
+
+    auto no_director_config = no_preload_config;
+    no_director_config.entity_templates.erase(
+        std::remove_if(
+            no_director_config.entity_templates.begin(),
+            no_director_config.entity_templates.end(),
+            [](const network_example::game_server::EntityTemplateConfig& entity) {
+                return entity.entity_type == KernelEntityType_Director;
+            }),
+        no_director_config.entity_templates.end());
+    const network_example::game_server::KernelGameplayCatalogStorage
+        no_director_catalog =
+            network_example::game_server::build_kernel_gameplay_catalog(
+                no_director_config);
+    require(std::none_of(
+        no_director_catalog.entity_templates.begin(),
+        no_director_catalog.entity_templates.end(),
+        [](const KernelEntityTemplateDefinition& entity) {
+            return entity.entity_type == KernelEntityType_Director;
+        }));
 
     const std::string production_player_yaml =
         read_text_file("game_server/entity_templates/player.yaml");
@@ -680,6 +709,46 @@ int main() {
         read_text_file("game_server/entity_templates/sentry_grunt.yaml");
     const std::string production_monster_yaml =
         read_text_file("game_server/entity_templates/monster_sim_actor.yaml");
+    const std::string production_catalog_yaml =
+        read_text_file("game_server/gameplay_catalog.yaml");
+    const auto load_with_catalog = [&](const std::string& catalog_yaml) {
+        const std::vector<std::uint8_t> bundle = make_gameplay_bundle_zip(
+            production_sentry_yaml,
+            {},
+            {},
+            catalog_yaml);
+        return network_example::game_server::load_gameplay_config_from_bundle_memory(
+            bundle.data(),
+            static_cast<std::uint32_t>(bundle.size()),
+            "gameplay_catalog.yaml");
+    };
+    const auto rejects_preload_catalog = [&](const std::string& catalog_yaml) {
+        try {
+            (void)load_with_catalog(catalog_yaml);
+            return false;
+        } catch (const std::exception&) {
+            return true;
+        }
+    };
+    const auto numeric_preload_config = load_with_catalog(replace_once(
+        production_catalog_yaml,
+        "  - earth_mother\n",
+        "  - 100\n"));
+    require(numeric_preload_config.preload_director_template_ids.size() == 1u);
+    require(numeric_preload_config.preload_director_template_ids[0] == 100u);
+    require(rejects_preload_catalog(replace_once(
+        production_catalog_yaml,
+        "  - earth_mother\n",
+        "  - player\n")));
+    require(rejects_preload_catalog(replace_once(
+        production_catalog_yaml,
+        "  - earth_mother\n",
+        "  - earth_mother\n  - earth_mother\n")));
+    const auto empty_preload_config = load_with_catalog(replace_once(
+        production_catalog_yaml,
+        "preload_directors:\n  - earth_mother\n",
+        ""));
+    require(empty_preload_config.preload_director_template_ids.empty());
     bool invalid_leg_hierarchy_rejected = false;
     try {
         const std::vector<std::uint8_t> invalid_leg_bundle =

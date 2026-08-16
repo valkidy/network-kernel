@@ -48,6 +48,7 @@ cc_library(
         "//engine/components/ai:ai",
         "//engine/src/kernel:kernel_api",
         "//engine/src/kernel:kernel_api_internal",
+        "@spdlog//:spdlog",
         "@zip_archive//:zip",
         "@yaml-cpp//:yaml-cpp",
     ],

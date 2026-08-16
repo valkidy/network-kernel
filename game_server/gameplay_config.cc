@@ -2332,6 +2332,9 @@ void apply_default_non_weapon_config(GameServerGameplayConfig* config);
 void apply_catalog_player_config(
     const YAML::Node& document,
     GameServerGameplayConfig* config);
+void apply_catalog_director_preload_config(
+    const YAML::Node& document,
+    GameServerGameplayConfig* config);
 void apply_catalog_agent_config(
     const YAML::Node& document,
     GameServerGameplayConfig* config);
@@ -5858,6 +5861,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             "skeleton_manifests_dir",
             "player",
             "enemy",
+            "preload_directors",
         },
         path,
         source.source_kind(),
@@ -6070,6 +6074,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
         actor_templates_from_entity_templates(config.entity_templates);
 
     apply_catalog_player_config(document, &config);
+    apply_catalog_director_preload_config(document, &config);
     apply_catalog_agent_config(document, &config);
 
     const std::vector<std::string> errors = validate_gameplay_config(config);
@@ -6100,6 +6105,41 @@ void apply_catalog_player_config(
     if (player["entity_template"]) {
         config->player.actor_template_id =
             entity_template_ref_from_yaml(player["entity_template"], config->entity_templates);
+    }
+}
+
+void apply_catalog_director_preload_config(
+    const YAML::Node& document,
+    GameServerGameplayConfig* config) {
+    const YAML::Node preload_directors = document["preload_directors"];
+    if (!preload_directors) {
+        return;
+    }
+    if (!preload_directors.IsSequence()) {
+        throw std::runtime_error("preload_directors must be a sequence");
+    }
+
+    std::unordered_set<std::uint32_t> configured_template_ids;
+    for (const YAML::Node& ref : preload_directors) {
+        const std::uint32_t template_id =
+            entity_template_ref_from_yaml(ref, config->entity_templates);
+        const auto entity_template = std::find_if(
+            config->entity_templates.begin(),
+            config->entity_templates.end(),
+            [template_id](const EntityTemplateConfig& candidate) {
+                return candidate.actor_template_id == template_id;
+            });
+        if (entity_template == config->entity_templates.end() ||
+            entity_template->entity_type != KernelEntityType_Director) {
+            throw std::runtime_error(
+                "preload_directors must reference director entity templates");
+        }
+        if (!configured_template_ids.insert(template_id).second) {
+            throw std::runtime_error(
+                "duplicate preload_directors entity template: " +
+                std::to_string(template_id));
+        }
+        config->preload_director_template_ids.push_back(template_id);
     }
 }
 
@@ -6327,6 +6367,14 @@ std::uint64_t compute_gameplay_catalog_hash(
     hash_float(&hash, config.agent.spawn_radius);
     hash_scalar(&hash, config.agent.spawn_seed);
     hash_scalar(&hash, config.agent.override_director_spawn);
+    hash_scalar(
+        &hash,
+        static_cast<std::uint32_t>(
+            config.preload_director_template_ids.size()));
+    for (const std::uint32_t template_id :
+         config.preload_director_template_ids) {
+        hash_scalar(&hash, template_id);
+    }
     hash_string(&hash, config.static_collision_scene.entry_path);
     hash_scalar(&hash, config.static_collision_scene.scene_id);
     hash_scalar(&hash, config.static_collision_scene.collider_id);
@@ -7006,7 +7054,6 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
         storage.actor_templates.push_back(definition);
     }
 
-    bool has_director_template = false;
     const std::vector<EntityTemplateConfig>& entity_templates =
         config.entity_templates.empty() ? config.actor_templates : config.entity_templates;
     for (const EntityTemplateConfig& authored_template : entity_templates) {
@@ -7175,7 +7222,6 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
                         : authored_template.ai_tick_interval;
             }
         } else if (authored_template.entity_type == KernelEntityType_Director) {
-            has_director_template = true;
             entity_template.component_flags =
                 KERNEL_ENTITY_COMPONENT_TRANSFORM |
                 KERNEL_ENTITY_COMPONENT_AGENT_RUNTIME |
@@ -7288,28 +7334,6 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
                 KERNEL_ENTITY_COMPONENT_SKELETON;
         }
         storage.entity_templates.push_back(entity_template);
-    }
-    if (!has_director_template) {
-        KernelEntityTemplateDefinition director_template{};
-        director_template.struct_size = sizeof(KernelEntityTemplateDefinition);
-        director_template.entity_template_id = kDefaultDirectorEntityTemplateId;
-        director_template.entity_type = KernelEntityType_Director;
-        director_template.component_flags =
-            KERNEL_ENTITY_COMPONENT_TRANSFORM |
-            KERNEL_ENTITY_COMPONENT_SERVER_ONLY |
-            KERNEL_ENTITY_COMPONENT_AGENT_RUNTIME |
-            KERNEL_ENTITY_COMPONENT_DIRECTOR_RUNTIME;
-        director_template.ai.struct_size = sizeof(KernelEntityAiDefinition);
-        director_template.ai.controller_type = KernelAiControllerType_Director;
-        director_template.ai.director_kind = KernelDirectorKind_WorldRule;
-        director_template.ai.tick_interval = 1;
-        director_template.ai.spawn_target_count = config.agent.spawn_count;
-        director_template.ai.spawn_entity_template_id = config.agent.actor_template_id;
-        director_template.ai.spawn_actor_template_id = config.agent.actor_template_id;
-        director_template.ai.spawn_position = config.agent.spawn_position;
-        director_template.ai.spawn_radius = config.agent.spawn_radius;
-        director_template.ai.spawn_seed = config.agent.spawn_seed;
-        storage.entity_templates.push_back(director_template);
     }
     for (const ProjectileTemplateConfig& projectile_template :
          config.projectile_templates) {

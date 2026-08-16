@@ -25,8 +25,6 @@ inline constexpr std::uint8_t kWeaponBeamRifle = 5;
 inline constexpr std::uint8_t kWeaponHomingMissile = 6;
 inline constexpr std::uint8_t kWeaponGrenade = 7;
 inline constexpr std::size_t kWeaponIdCount = 256;
-inline constexpr std::uint32_t kDefaultDirectorEntityTemplateId = 100;
-
 struct EntityHealthDefinition {
     std::uint16_t hp = 0;
     std::uint16_t max_hp = 0;
@@ -297,6 +295,7 @@ struct GameServerGameplayConfig {
     std::vector<ActionTemplateConfig> action_templates;
     PlayerGameplayDefinition player;
     AgentSpawnDefinition agent;
+    std::vector<std::uint32_t> preload_director_template_ids;
     std::vector<EntityTemplateConfig> entity_templates;
     std::vector<ActorTemplateConfig> actor_templates;
     ColliderCatalogConfig colliders;

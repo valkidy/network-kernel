@@ -20,6 +20,8 @@ reload_action_template:
 weapon_template_dir: weapon_templates
 projectile_template_dir: projectile_templates
 entity_template_dir: entity_templates
+preload_directors:
+  - earth_mother
 item_template_dir: item_templates
 collider_template_dir: collider_templates
 skeleton_manifests_dir: skeleton_assets/generated
