@@ -236,6 +236,13 @@ namespace NetworkExample.Kernel
             uint maxEvents);
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint Kernel_QueryStatusEffects(
+            IntPtr kernel,
+            uint entityNetId,
+            [Out] KernelStatusEffectView[] outEffects,
+            uint maxEffects);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)]
         internal static extern bool Kernel_GetBenchmarkStats(
             IntPtr kernel,

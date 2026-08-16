@@ -1,5 +1,10 @@
 0.6.9 release notes:
 
+- adds managed status-effect query bindings
+
+
+0.6.9 release notes:
+
 - aligns Unity plugin API with kernel ABI 73
 
 

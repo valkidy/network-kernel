@@ -480,6 +480,23 @@ namespace NetworkExample.Kernel
                 (uint)events.Length);
         }
 
+        public uint QueryStatusEffects(
+            uint entityNetId,
+            KernelStatusEffectView[] effects)
+        {
+            ThrowIfDisposed();
+            if (effects == null || effects.Length == 0)
+            {
+                return 0;
+            }
+
+            return KernelNative.Kernel_QueryStatusEffects(
+                handle,
+                entityNetId,
+                effects,
+                (uint)effects.Length);
+        }
+
         public bool TryGetBenchmarkStats(out KernelBenchmarkStats stats)
         {
             ThrowIfDisposed();

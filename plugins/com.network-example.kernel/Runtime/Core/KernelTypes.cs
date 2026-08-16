@@ -1115,6 +1115,22 @@ namespace NetworkExample.Kernel
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    public struct KernelStatusEffectView
+    {
+        public uint struct_size;
+        public uint status_effect_id;
+        public uint status_instance_id;
+        public uint status_channel_id;
+        public uint instigator_net_id;
+        public uint applied_tick;
+        public uint expire_tick;
+        public ushort stack_count;
+        public ushort max_stacks;
+
+        public static uint StructSize => (uint)Marshal.SizeOf<KernelStatusEffectView>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     public struct KernelActionRuntimeView
     {
         public uint struct_size;
