@@ -1,9 +1,8 @@
 # Artillery turret design note:
 # - Projectile templates do not have a launch_angle field. Initial velocity is
 #   normalized actor aim_dir multiplied by the projectile speed.
-# - A turret controller should solve the ballistic firing direction and submit an
-#   aim_dir with a positive Y component. A direct line-of-sight sentry aim is not
-#   gravity compensated and will land short.
+# - Parabolic AI controllers solve a low ballistic firing direction and submit
+#   an aim_dir with a positive Y component when the target is reachable.
 # - Tune projectile speed and gravity together; keep the same normalized aim_dir
 #   as the authoritative action input so client prediction follows the same arc.
 id: 7

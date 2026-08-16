@@ -2,6 +2,8 @@
 
 #include <cmath>
 
+#include "kernel/src/kernel_api_internal.h"
+
 namespace network_example::game_server {
 namespace {
 
@@ -28,20 +30,14 @@ bool query_vision_state(
            out_state->valid != 0u;
 }
 
-bool get_entity_position(
+bool get_entity_aim_point(
     KernelHandle* kernel,
     std::uint32_t net_id,
     KernelVec3* out_position) {
     if (kernel == nullptr || out_position == nullptr || net_id == 0) {
         return false;
     }
-    KernelServerEntityState state{};
-    state.struct_size = sizeof(state);
-    if (!Kernel_ServerGetEntityState(kernel, net_id, &state) || state.valid == 0u) {
-        return false;
-    }
-    *out_position = state.position;
-    return true;
+    return Kernel_ServerGetEntityAimPoint(kernel, net_id, out_position);
 }
 
 }  // namespace
@@ -72,7 +68,10 @@ SentryPerceptionSnapshot AiPerceptionAdapter::build_sentry_snapshot(
     snapshot.target_id = vision_state.current_target_candidate;
     if (snapshot.target_id != 0) {
         snapshot.target_position = vision_state.last_known_target_position;
-        get_entity_position(kernel, snapshot.target_id, &snapshot.target_position);
+        get_entity_aim_point(
+            kernel,
+            snapshot.target_id,
+            &snapshot.target_position);
         snapshot.has_target_position = true;
     }
     return snapshot;

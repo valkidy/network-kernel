@@ -6,6 +6,11 @@
 #include "physics/public/physics_world.h"
 
 namespace network_example {
+
+glm::vec3 projectile_launch_position(const Transform& transform) {
+    return transform.position + glm::vec3{0.0f, 1.0f, 0.0f};
+}
+
 namespace {
 
 const WeaponMechanicsDefinition* weapon_definition_for_entity(
@@ -588,8 +593,10 @@ void simulate_weapons(
                 queued_input.owner_peer,
                 definition->id);
 
-            const Transform& player_transform = player_view.get<Transform>(player_entity);
-            const glm::vec3 origin = player_transform.position + glm::vec3{0.0f, 1.0f, 0.0f};
+            const Transform& player_transform =
+                player_view.get<Transform>(player_entity);
+            const glm::vec3 origin =
+                projectile_launch_position(player_transform);
             const glm::vec3 direction = input_aim_to_world(queued_input.input);
             const std::uint64_t hit_time_us = context.action_time_us;
 

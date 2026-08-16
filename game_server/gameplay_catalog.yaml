@@ -32,3 +32,5 @@ static_collision_scene:
   collision_layer: 1
 player:
   entity_template: player
+enemy:
+  entity_template: grenade_sentry

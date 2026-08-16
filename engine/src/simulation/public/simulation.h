@@ -58,6 +58,8 @@ struct ConfirmedDamage {
     glm::vec3 hit_position{0.0f, 0.0f, 0.0f};
 };
 
+glm::vec3 projectile_launch_position(const Transform& transform);
+
 glm::vec3 projectile_position_at(
     const glm::vec3& origin,
     const glm::vec3& initial_velocity,

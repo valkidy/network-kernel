@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cassert>
+#include <cmath>
 #include <cstdint>
 
 #include "ai_intent.h"
@@ -144,6 +145,41 @@ network_example::game_server::SentryPerceptionSnapshot perception(
 }  // namespace
 
 int main() {
+    const KernelVec3 gravity{0.0f, -9.81f, 0.0f};
+    const auto low_arc =
+        network_example::game_server::solve_low_ballistic_aim(
+            {0.0f, 0.0f, 0.0f},
+            {20.0f, 0.0f, 0.0f},
+            24.0f,
+            gravity,
+            3.0f);
+    assert(low_arc.has_value());
+    assert(low_arc->aim_direction.y > 0.0f);
+    const float flight_seconds = low_arc->flight_seconds;
+    const KernelVec3 solved_position{
+        low_arc->aim_direction.x * 24.0f * flight_seconds,
+        low_arc->aim_direction.y * 24.0f * flight_seconds +
+            0.5f * gravity.y * flight_seconds * flight_seconds,
+        low_arc->aim_direction.z * 24.0f * flight_seconds,
+    };
+    assert(std::fabs(solved_position.x - 20.0f) < 0.001f);
+    assert(std::fabs(solved_position.y) < 0.001f);
+    assert(std::fabs(solved_position.z) < 0.001f);
+    assert(!network_example::game_server::solve_low_ballistic_aim(
+                {0.0f, 0.0f, 0.0f},
+                {100.0f, 0.0f, 0.0f},
+                24.0f,
+                gravity,
+                3.0f)
+                .has_value());
+    assert(!network_example::game_server::solve_low_ballistic_aim(
+                {0.0f, 0.0f, 0.0f},
+                {58.0f, 0.0f, 0.0f},
+                24.0f,
+                gravity,
+                3.0f)
+                .has_value());
+
     KernelConfig config = server_config();
     KernelHandle* kernel = Kernel_Create(&config);
     assert(kernel != nullptr);
@@ -153,6 +189,22 @@ int main() {
     const std::uint32_t actor = create_actor(kernel, {0.0f, 0.0f, 0.0f});
     const std::uint32_t target = create_actor(kernel, {5.0f, 0.0f, 0.0f});
     set_weapon(kernel, actor);
+
+    assert(std::fabs(Kernel_GetFixedDeltaSeconds(kernel) - 1.0f / 30.0f) <
+           0.0001f);
+    KernelVec3 launch_position{};
+    assert(Kernel_ServerGetProjectileLaunchPosition(
+        kernel,
+        actor,
+        &launch_position));
+    assert(std::fabs(launch_position.x) < 0.0001f);
+    assert(std::fabs(launch_position.y - 1.0f) < 0.0001f);
+    assert(std::fabs(launch_position.z) < 0.0001f);
+    KernelVec3 target_aim_point{};
+    assert(Kernel_ServerGetEntityAimPoint(kernel, target, &target_aim_point));
+    assert(std::fabs(target_aim_point.x - 5.0f) < 0.0001f);
+    assert(std::fabs(target_aim_point.y - 0.8f) < 0.0001f);
+    assert(std::fabs(target_aim_point.z) < 0.0001f);
 
     network_example::game_server::AgentRuntimeState enemy;
     enemy.net_id = actor;
@@ -228,6 +280,53 @@ int main() {
     state = query_state(kernel, empty_actor);
     assert(state.ammo[0] == 0);
     assert(state.reserve_magazines[0] == 0);
+
+    network_example::game_server::ActorIntentExecutorConfig ballistic_config;
+    ballistic_config.weapon_id =
+        network_example::game_server::kAgentSpammerWeaponId;
+    ballistic_config.ballistic_aim.enabled = true;
+    ballistic_config.ballistic_aim.speed = 24.0f;
+    ballistic_config.ballistic_aim.gravity = gravity;
+    ballistic_config.ballistic_aim.lifetime_ticks = 90;
+    network_example::game_server::ActorIntentExecutor ballistic_executor(
+        ballistic_config);
+
+    const std::uint32_t ballistic_actor =
+        create_actor(kernel, {0.0f, 0.0f, 0.0f});
+    set_weapon(kernel, ballistic_actor);
+    set_combat(kernel, ballistic_actor, 2, 0);
+    network_example::game_server::AgentRuntimeState ballistic_enemy;
+    ballistic_enemy.net_id = ballistic_actor;
+    result = ballistic_executor.execute(
+        kernel,
+        &ballistic_enemy,
+        actor_intent("AttackTarget", ballistic_actor),
+        perception(kernel, ballistic_actor, target, {20.0f, 0.0f, 0.0f}));
+    assert(result.status == network_example::ai::IntentStatus::kRunning);
+    assert(result.submitted_input);
+    Kernel_Update(kernel, 1.0f / 30.0f);
+    state = query_state(kernel, ballistic_actor);
+    assert(state.ammo[0] == 1);
+
+    const std::uint32_t unreachable_actor =
+        create_actor(kernel, {0.0f, 0.0f, 0.0f});
+    set_weapon(kernel, unreachable_actor);
+    set_combat(kernel, unreachable_actor, 2, 0);
+    network_example::game_server::AgentRuntimeState unreachable_enemy;
+    unreachable_enemy.net_id = unreachable_actor;
+    result = ballistic_executor.execute(
+        kernel,
+        &unreachable_enemy,
+        actor_intent("AttackTarget", unreachable_actor),
+        perception(kernel, unreachable_actor, target, {100.0f, 0.0f, 0.0f}));
+    assert(result.status == network_example::ai::IntentStatus::kFailed);
+    assert(!result.submitted_input);
+    assert(result.ballistic_solution_unavailable);
+    assert(result.report.missing_data.size() == 1);
+    assert(result.report.missing_data[0] == "Data.BallisticAimSolution");
+    Kernel_Update(kernel, 1.0f / 30.0f);
+    state = query_state(kernel, unreachable_actor);
+    assert(state.ammo[0] == 2);
 
     Kernel_Destroy(kernel);
     return 0;

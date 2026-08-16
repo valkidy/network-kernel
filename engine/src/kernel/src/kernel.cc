@@ -5201,6 +5201,46 @@ bool KernelEngine::server_get_entity_state(
         out_state);
 }
 
+bool KernelEngine::server_get_projectile_launch_position(
+    NetId net_id,
+    KernelVec3* out_position) const {
+    if (!running_ || !is_server_mode(config_.mode) || out_position == nullptr) {
+        return false;
+    }
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value() ||
+        !world_.registry().all_of<Transform>(*entity)) {
+        return false;
+    }
+    const glm::vec3 position = projectile_launch_position(
+        world_.registry().get<const Transform>(*entity));
+    *out_position = KernelVec3{position.x, position.y, position.z};
+    return true;
+}
+
+bool KernelEngine::server_get_entity_aim_point(
+    NetId net_id,
+    KernelVec3* out_position) const {
+    if (!running_ || !is_server_mode(config_.mode) || out_position == nullptr) {
+        return false;
+    }
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value() ||
+        !world_.registry().all_of<Transform>(*entity)) {
+        return false;
+    }
+    glm::vec3 position =
+        world_.registry().get<const Transform>(*entity).position;
+    if (world_.registry().all_of<Hitbox>(*entity)) {
+        const Transform& transform =
+            world_.registry().get<const Transform>(*entity);
+        position +=
+            transform.rotation * world_.registry().get<const Hitbox>(*entity).center;
+    }
+    *out_position = KernelVec3{position.x, position.y, position.z};
+    return true;
+}
+
 std::uint32_t KernelEngine::server_query_entities(
     EntityType entity_type_filter,
     KernelServerEntityState* out_states,

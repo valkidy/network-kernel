@@ -268,6 +268,7 @@ void hash_actor_template(
     hash_scalar(hash, actor_template.animation_chasing);
     hash_scalar(hash, actor_template.sentry.alert_ticks);
     hash_scalar(hash, actor_template.sentry.forget_ticks);
+    hash_scalar(hash, actor_template.sentry.ballistic_retry_cooldown_ticks);
     hash_scalar(hash, actor_template.sentry.patrol_rotation_interval_ticks);
     hash_float(hash, actor_template.sentry.patrol_rotation_min_degrees);
     hash_float(hash, actor_template.sentry.patrol_rotation_max_degrees);
@@ -2537,6 +2538,7 @@ AgentSentryConfig sentry_config_from_yaml(
             {
                 "alert_ticks",
                 "forget_ticks",
+                "ballistic_retry_cooldown_ticks",
                 "patrol_rotation_interval_ticks",
                 "patrol_rotation_min_degrees",
                 "patrol_rotation_max_degrees",
@@ -2556,6 +2558,11 @@ AgentSentryConfig sentry_config_from_yaml(
         }
         if (sentry_node["forget_ticks"]) {
             sentry.forget_ticks = sentry_node["forget_ticks"].as<std::uint32_t>();
+        }
+        if (sentry_node["ballistic_retry_cooldown_ticks"]) {
+            sentry.ballistic_retry_cooldown_ticks =
+                sentry_node["ballistic_retry_cooldown_ticks"]
+                    .as<std::uint32_t>();
         }
         if (sentry_node["patrol_rotation_interval_ticks"]) {
             sentry.patrol_rotation_interval_ticks =
@@ -6809,6 +6816,7 @@ std::vector<std::string> validate_gameplay_config(
                      actor_template.sentry.weapon_id)) ||
              actor_template.sentry.alert_ticks == 0 ||
              actor_template.sentry.forget_ticks == 0 ||
+             actor_template.sentry.ballistic_retry_cooldown_ticks == 0 ||
              actor_template.sentry.patrol_rotation_interval_ticks == 0 ||
              actor_template.sentry.patrol_rotation_min_degrees <= 0.0f ||
              actor_template.sentry.patrol_rotation_max_degrees <

@@ -1234,6 +1234,37 @@ bool Kernel_ServerGetEntityState(
     });
 }
 
+float Kernel_GetFixedDeltaSeconds(KernelHandle* kernel) {
+    return abi_call("Kernel_GetFixedDeltaSeconds", 0.0f, [&]() {
+        return kernel == nullptr ? 0.0f
+                                 : kernel->engine->fixed_delta_seconds();
+    });
+}
+
+bool Kernel_ServerGetProjectileLaunchPosition(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    KernelVec3* out_position) {
+    return abi_call("Kernel_ServerGetProjectileLaunchPosition", false, [&]() {
+        return kernel != nullptr &&
+               kernel->engine->server_get_projectile_launch_position(
+                   net_id,
+                   out_position);
+    });
+}
+
+bool Kernel_ServerGetEntityAimPoint(
+    KernelHandle* kernel,
+    uint32_t net_id,
+    KernelVec3* out_position) {
+    return abi_call("Kernel_ServerGetEntityAimPoint", false, [&]() {
+        return kernel != nullptr &&
+               kernel->engine->server_get_entity_aim_point(
+                   net_id,
+                   out_position);
+    });
+}
+
 uint32_t Kernel_ServerQueryEntities(
     KernelHandle* kernel,
     uint16_t entity_type_filter,
