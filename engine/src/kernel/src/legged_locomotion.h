@@ -193,6 +193,26 @@ bool validate_locomotion_rig(
     const KernelSkeletonBindingDefinition& definition,
     std::uint32_t* out_invalid_leg_index);
 
+// Cross-checks the authored limb colliders against the rig they hang on. The
+// load-bearing check is that a limb's bone does not rest at unit scale: these
+// rigs express a limb's dimensions AS the bone's rest scale, so a unit-scaled
+// bone means the geometry lives in mesh vertices instead, where this derivation
+// cannot see it -- and the collider would silently become a 1m cube rather than
+// fail. On failure the offending index is written to out_invalid_limb_index
+// when it is not null.
+bool validate_locomotion_limb_colliders(
+    std::span<const KernelBoneLocalTransform> bind_pose,
+    const KernelSkeletonBindingDefinition& definition,
+    std::uint32_t* out_invalid_limb_index);
+
+// The half extents a limb collider takes from its bone, i.e. half the bone's
+// rest scale. Spheres use the x component as a radius. Kept beside the
+// validation so the runtime and the check cannot disagree about what the
+// authored bone means.
+glm::vec3 locomotion_limb_half_extents(
+    std::span<const KernelBoneLocalTransform> bind_pose,
+    const KernelSkeletonLimbColliderDefinition& limb);
+
 bool initialize_locomotion_state(
     const KernelSkeletonBindingDefinition& definition,
     float initial_root_yaw_radians,

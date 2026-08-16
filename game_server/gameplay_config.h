@@ -86,6 +86,20 @@ struct SkeletonLegConfig {
     float max_reach_ratio = 0.0f;
 };
 
+// One authored per-bone collider. Carries gameplay semantics only; the shape's
+// dimensions come from the named bone's rest scale in the skeleton itself, so
+// there is no size to author here and no second copy to drift.
+struct LimbColliderConfig {
+    std::string bone;
+    std::string leg_id;
+    std::uint32_t bone_index = 0;
+    std::uint32_t leg_index = KERNEL_MAX_SKELETON_LEGS;
+    std::uint8_t shape_type = KernelColliderShapeType_OrientedBox;
+    std::uint16_t hit_zone = 0;
+    std::uint32_t purpose_flags = 0;
+    std::uint32_t layer_mask = 0;
+};
+
 struct SkeletonBindingConfig {
     bool enabled = false;
     std::uint32_t skeleton_asset_id = 0;
@@ -112,6 +126,7 @@ struct SkeletonBindingConfig {
     std::vector<KernelVec2> foothold_candidate_offsets;
     std::vector<SkeletonLegConfig> legs;
     std::vector<std::uint32_t> processing_order;
+    std::vector<LimbColliderConfig> limb_colliders;
 };
 
 struct ActorTemplateConfig {

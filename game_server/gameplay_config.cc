@@ -372,6 +372,20 @@ void hash_actor_template(
              actor_template.skeleton.processing_order) {
             hash_scalar(hash, leg_index);
         }
+        hash_scalar(
+            hash,
+            static_cast<std::uint32_t>(
+                actor_template.skeleton.limb_colliders.size()));
+        for (const LimbColliderConfig& limb :
+             actor_template.skeleton.limb_colliders) {
+            hash_string(hash, limb.bone);
+            hash_scalar(hash, limb.bone_index);
+            hash_scalar(hash, limb.leg_index);
+            hash_scalar(hash, limb.shape_type);
+            hash_scalar(hash, limb.hit_zone);
+            hash_scalar(hash, limb.purpose_flags);
+            hash_scalar(hash, limb.layer_mask);
+        }
     }
 }
 
@@ -2233,6 +2247,69 @@ std::uint32_t collider_layer_from_yaml(const YAML::Node& node) {
     return collision_mask_from_yaml(node);
 }
 
+std::uint32_t limb_collider_purpose_token_from_yaml(const std::string& token) {
+    if (token == "limb") {
+        return KernelColliderPurpose_Limb;
+    }
+    if (token == "hit") {
+        return KernelColliderPurpose_Hit;
+    }
+    if (token == "damage") {
+        return KernelColliderPurpose_Damage;
+    }
+    if (token == "trigger") {
+        return KernelColliderPurpose_Trigger;
+    }
+    // Deliberately no "movement" and no "vision": a bone-carried collider is
+    // never the character controller's capsule, and vision is a root-anchored
+    // cone. Both would be silently ignored downstream, so reject them here.
+    throw std::runtime_error("unsupported limb collider purpose: " + token);
+}
+
+// A '|' list, unlike collider templates' single-valued purpose: a limb is
+// usually several things at once (a limb that also blocks and can be shot).
+std::uint32_t limb_collider_purpose_from_yaml(const YAML::Node& node) {
+    if (!node) {
+        return KernelColliderPurpose_Limb;
+    }
+    const std::string value = node.as<std::string>();
+    std::uint32_t flags = 0;
+    std::size_t start = 0;
+    while (start <= value.size()) {
+        const std::size_t separator = value.find('|', start);
+        const std::string token = trim_ascii(value.substr(
+            start,
+            separator == std::string::npos ? std::string::npos
+                                           : separator - start));
+        if (token.empty()) {
+            throw std::runtime_error(
+                "empty limb collider purpose token: " + value);
+        }
+        flags |= limb_collider_purpose_token_from_yaml(token);
+        if (separator == std::string::npos) {
+            break;
+        }
+        start = separator + 1;
+    }
+    // Carried by a bone whatever else it is, so the runtime can tell limbs from
+    // root-anchored colliders without consulting the bone index.
+    return flags | KernelColliderPurpose_Limb;
+}
+
+std::uint8_t limb_collider_shape_from_yaml(const YAML::Node& node) {
+    if (!node) {
+        return KernelColliderShapeType_OrientedBox;
+    }
+    const std::string value = node.as<std::string>();
+    if (value == "oriented_box" || value == "box") {
+        return KernelColliderShapeType_OrientedBox;
+    }
+    if (value == "sphere") {
+        return KernelColliderShapeType_Sphere;
+    }
+    throw std::runtime_error("unsupported limb collider shape: " + value);
+}
+
 KernelVec4 collider_shape_params_from_yaml(
     std::uint8_t shape_type,
     const YAML::Node& node) {
@@ -3168,6 +3245,7 @@ ActorTemplateConfig actor_template_from_yaml(
                 "content_hash",
                 "root_bone",
                 "body_bone",
+                "limb_colliders",
             },
             path,
             source_kind,
@@ -3520,6 +3598,96 @@ ActorTemplateConfig actor_template_from_yaml(
                 throw std::runtime_error(
                     "invalid locomotion body follow values: " +
                     actor_template.name);
+            }
+        }
+
+        // Parsed here rather than beside the rest of the skeleton block because
+        // a limb may name the leg it belongs to, and the legs only exist once
+        // locomotion above has been read.
+        if (skeleton["limb_colliders"]) {
+            const YAML::Node limb_colliders = skeleton["limb_colliders"];
+            if (!limb_colliders.IsSequence()) {
+                throw std::runtime_error(
+                    "skeleton limb_colliders must be a sequence: " +
+                    actor_template.name);
+            }
+            if (limb_colliders.size() > KERNEL_MAX_SKELETON_LIMB_COLLIDERS) {
+                throw std::runtime_error(
+                    "skeleton limb_colliders exceeds " +
+                    std::to_string(KERNEL_MAX_SKELETON_LIMB_COLLIDERS) + ": " +
+                    actor_template.name);
+            }
+            std::unordered_set<std::uint32_t> limb_bone_indices;
+            for (const YAML::Node& limb_node : limb_colliders) {
+                reject_unknown_keys(
+                    limb_node,
+                    {
+                        "bone",
+                        "leg",
+                        "shape",
+                        "purpose",
+                        "layer",
+                        "hit_zone",
+                    },
+                    path,
+                    source_kind,
+                    KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                    actor_template.actor_template_id);
+                if (!limb_node["bone"]) {
+                    throw std::runtime_error(
+                        "skeleton limb collider requires bone: " +
+                        actor_template.name);
+                }
+                LimbColliderConfig limb;
+                limb.bone = limb_node["bone"].as<std::string>();
+                limb.bone_index = skeleton_bone_index(
+                    *asset, limb.bone, "limb_colliders.bone");
+                // One collider per bone. Two would share a bone frame and so
+                // occupy the same space, and the runtime keys them by bone.
+                if (!limb_bone_indices.insert(limb.bone_index).second) {
+                    throw std::runtime_error(
+                        "duplicate limb collider bone: " + limb.bone);
+                }
+                if (limb_node["leg"]) {
+                    limb.leg_id = limb_node["leg"].as<std::string>();
+                    const auto leg = std::find_if(
+                        binding.legs.begin(),
+                        binding.legs.end(),
+                        [&limb](const SkeletonLegConfig& candidate) {
+                            return candidate.id == limb.leg_id;
+                        });
+                    if (leg == binding.legs.end()) {
+                        throw std::runtime_error(
+                            "limb collider references undefined leg: " +
+                            limb.leg_id);
+                    }
+                    limb.leg_index = static_cast<std::uint32_t>(
+                        std::distance(binding.legs.begin(), leg));
+                }
+                limb.shape_type =
+                    limb_collider_shape_from_yaml(limb_node["shape"]);
+                limb.purpose_flags =
+                    limb_collider_purpose_from_yaml(limb_node["purpose"]);
+                limb.layer_mask = collider_layer_from_yaml(limb_node["layer"]);
+                limb.hit_zone = limb_node["hit_zone"]
+                    ? limb_node["hit_zone"].as<std::uint16_t>()
+                    : 0u;
+                if (limb.layer_mask == 0u) {
+                    throw std::runtime_error(
+                        "limb collider requires a non-empty layer: " +
+                        limb.bone);
+                }
+                binding.limb_colliders.push_back(limb);
+            }
+            // The tilt a follower cannot reproduce moves a foot by the tilt
+            // times the stance radius, which is metres on these rigs -- so a
+            // rig that puts colliders on its bones may not also opt into it.
+            // See solve_legged_locomotion_follower_pose.
+            if (!binding.limb_colliders.empty() &&
+                binding.slope_alignment > 0.0f) {
+                throw std::runtime_error(
+                    "limb colliders require slope_alignment 0, since a "
+                    "follower holds an identity tilt: " + actor_template.name);
             }
         }
     }
@@ -5662,12 +5830,15 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     const std::uint32_t catalog_version =
         document["catalog_version"] ? document["catalog_version"].as<std::uint32_t>()
                                     : 1u;
-    // 10 replaced the skeleton_manifests list with skeleton_manifests_dir. 8
-    // and 9 stay loadable because nothing else about them changed; a catalog
-    // that still carries the old key is caught below with a migration message
-    // rather than a bare unknown-key error.
+    // 11 added the optional skeleton.limb_colliders block. 10 replaced the
+    // skeleton_manifests list with skeleton_manifests_dir. 8, 9 and 10 stay
+    // loadable because nothing else about them changed; a catalog that still
+    // carries the old key is caught below with a migration message rather than
+    // a bare unknown-key error. The bump exists because this loader rejects
+    // unknown keys, so a catalog carrying limb_colliders would otherwise fail
+    // an older kernel with a bare field error instead of a version one.
     if (catalog_version != 8u && catalog_version != 9u &&
-        catalog_version != 10u) {
+        catalog_version != 10u && catalog_version != 11u) {
         throw DataLoadError(
             KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNSUPPORTED_CATALOG_VERSION,
             "unsupported catalog_version: " + std::to_string(catalog_version),
@@ -6908,6 +7079,25 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
                     };
                 entity_template.skeleton.processing_order[leg_index] =
                     authored_template.skeleton.processing_order[leg_index];
+            }
+            entity_template.skeleton.limb_collider_count =
+                static_cast<std::uint32_t>(
+                    authored_template.skeleton.limb_colliders.size());
+            for (std::uint32_t limb_index = 0u;
+                 limb_index < entity_template.skeleton.limb_collider_count;
+                 ++limb_index) {
+                const LimbColliderConfig& limb =
+                    authored_template.skeleton.limb_colliders[limb_index];
+                entity_template.skeleton.limb_colliders[limb_index] =
+                    KernelSkeletonLimbColliderDefinition{
+                        limb.bone_index,
+                        limb.leg_index,
+                        limb.shape_type,
+                        0u,
+                        limb.hit_zone,
+                        limb.purpose_flags,
+                        limb.layer_mask,
+                    };
             }
         }
 

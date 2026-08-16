@@ -5,6 +5,9 @@
 #include <stdint.h>
 
 /*
+ * 71: KernelSkeletonBindingDefinition gained limb_collider_count and
+ *     limb_colliders. Appended, but every managed mirror must add the same
+ *     fields or the nested layout of KernelEntityTemplateDefinition shifts.
  * 69: action graphs gained optional literal impulse directions. The direction
  *     vector is appended to the public gameplay ABI.
  * 68: action graphs gained apply_impulse and entity templates gained
@@ -16,7 +19,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 70u
+#define KERNEL_ABI_VERSION 71u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -40,6 +43,13 @@
 #define KERNEL_MAX_WEAPON_SLOTS 4u
 #define KERNEL_MAX_SKELETON_LEGS 8u
 #define KERNEL_MAX_FOOTHOLD_CANDIDATES 8u
+/*
+ * Per-bone colliders on one rig. The three base rigs carry 12 (biped), 9
+ * (quadruped) and 7 (tripod), so this leaves room without letting a rig register
+ * an unbounded number of physics bodies: every one of these becomes a Jolt body
+ * per actor, refreshed twice per tick by sync_entity_colliders_from_world.
+ */
+#define KERNEL_MAX_SKELETON_LIMB_COLLIDERS 16u
 
 #define KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED UINT32_C(0)
 #define KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS UINT32_C(1)
@@ -1179,6 +1189,11 @@ typedef enum KernelColliderPurpose {
     KernelColliderPurpose_Trigger = 1u << 2,
     KernelColliderPurpose_Vision = 1u << 3,
     KernelColliderPurpose_Movement = 1u << 4,
+    // A collider carried by a skeleton bone rather than by the entity root. Kept
+    // distinct from _Hit so that adding limbs to a rig does not silently turn
+    // every limb into a weapon target: a limb is a hitbox only when the author
+    // also sets _Hit on it.
+    KernelColliderPurpose_Limb = 1u << 5,
 } KernelColliderPurpose;
 
 typedef enum KernelDebugRecordType {
@@ -1338,6 +1353,34 @@ typedef struct KernelSkeletonLegDefinition {
     float max_reach_ratio;
 } KernelSkeletonLegDefinition;
 
+/*
+ * One collider carried by a bone, in the frame of that bone.
+ *
+ * Deliberately carries no dimensions. The rigs author their geometry as the
+ * bone's own rest scale -- a GEO_ bone whose rest scale is (5, 18, 5) IS a
+ * 5x18x5 box -- so the size is already in the skeleton the solve runs on, and
+ * repeating it here would create a second copy that can disagree with the rig.
+ * The kernel reads it from the bind pose when it materialises the collider.
+ *
+ * The consequence is that a bone whose dimensions are baked into mesh vertices
+ * instead of its scale cannot be described this way; such a bone rests at unit
+ * scale and is rejected at load rather than silently registered as a 1m cube.
+ */
+typedef struct KernelSkeletonLimbColliderDefinition {
+    uint32_t bone_index;
+    // Which leg this limb belongs to, or KERNEL_MAX_SKELETON_LEGS for a limb
+    // that is not part of a leg at all (torso, head, arm).
+    uint32_t leg_index;
+    // KernelColliderShapeType. Only _OrientedBox and _Sphere are meaningful:
+    // the box takes the bone's rest scale as its full extents, and the sphere
+    // takes half of it as a radius and requires that scale to be uniform.
+    uint8_t shape_type;
+    uint8_t reserved0;
+    uint16_t hit_zone;
+    uint32_t purpose_flags;
+    uint32_t layer_mask;
+} KernelSkeletonLimbColliderDefinition;
+
 typedef struct KernelSkeletonBindingDefinition {
     uint32_t struct_size;
     uint32_t skeleton_asset_id;
@@ -1383,6 +1426,9 @@ typedef struct KernelSkeletonBindingDefinition {
      * this has nothing to act on.
      */
     float stance_crouch_meters;
+    uint32_t limb_collider_count;
+    KernelSkeletonLimbColliderDefinition
+        limb_colliders[KERNEL_MAX_SKELETON_LIMB_COLLIDERS];
 } KernelSkeletonBindingDefinition;
 
 typedef struct KernelActionTemplateDefinition {

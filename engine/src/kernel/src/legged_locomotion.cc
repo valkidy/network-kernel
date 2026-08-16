@@ -280,6 +280,91 @@ bool validate_locomotion_definition(
     return valid_definition(definition);
 }
 
+glm::vec3 locomotion_limb_half_extents(
+    std::span<const KernelBoneLocalTransform> bind_pose,
+    const KernelSkeletonLimbColliderDefinition& limb) {
+    if (limb.bone_index >= bind_pose.size()) {
+        return glm::vec3{0.0f};
+    }
+    const KernelVec3& scale = bind_pose[limb.bone_index].local_scale;
+    // The source primitive is a unit cube spanning [-0.5, 0.5], so the bone's
+    // rest scale is the box's FULL extents and half of it is the half extent.
+    return glm::vec3{scale.x, scale.y, scale.z} * 0.5f;
+}
+
+bool validate_locomotion_limb_colliders(
+    std::span<const KernelBoneLocalTransform> bind_pose,
+    const KernelSkeletonBindingDefinition& definition,
+    std::uint32_t* out_invalid_limb_index) {
+    if (out_invalid_limb_index != nullptr) {
+        *out_invalid_limb_index = UINT32_MAX;
+    }
+    if (definition.limb_collider_count > KERNEL_MAX_SKELETON_LIMB_COLLIDERS) {
+        return false;
+    }
+    std::vector<std::uint32_t> seen_bones;
+    seen_bones.reserve(definition.limb_collider_count);
+    for (std::uint32_t limb_index = 0u;
+         limb_index < definition.limb_collider_count;
+         ++limb_index) {
+        const KernelSkeletonLimbColliderDefinition& limb =
+            definition.limb_colliders[limb_index];
+        const auto fail = [&]() {
+            if (out_invalid_limb_index != nullptr) {
+                *out_invalid_limb_index = limb_index;
+            }
+            return false;
+        };
+        if (limb.bone_index >= definition.bone_count ||
+            limb.bone_index >= bind_pose.size()) {
+            return fail();
+        }
+        // KERNEL_MAX_SKELETON_LEGS means "not part of a leg"; anything else
+        // must name a leg this rig actually has.
+        if (limb.leg_index != KERNEL_MAX_SKELETON_LEGS &&
+            limb.leg_index >= definition.leg_count) {
+            return fail();
+        }
+        if (std::find(seen_bones.begin(), seen_bones.end(), limb.bone_index) !=
+            seen_bones.end()) {
+            return fail();
+        }
+        seen_bones.push_back(limb.bone_index);
+        if ((limb.purpose_flags & KernelColliderPurpose_Limb) == 0u ||
+            limb.layer_mask == 0u) {
+            return fail();
+        }
+        if (limb.shape_type != KernelColliderShapeType_OrientedBox &&
+            limb.shape_type != KernelColliderShapeType_Sphere) {
+            return fail();
+        }
+        const glm::vec3 half_extents =
+            locomotion_limb_half_extents(bind_pose, limb);
+        if (!finite_vec3(half_extents) || half_extents.x <= 0.0f ||
+            half_extents.y <= 0.0f || half_extents.z <= 0.0f) {
+            return fail();
+        }
+        // A bone resting at unit scale carries no dimensions of its own: the
+        // rig baked them into mesh vertices, which never reach the kernel. Such
+        // a bone would register a 1m cube that looks plausible and is wrong, so
+        // it is rejected rather than approximated.
+        const KernelVec3& scale = bind_pose[limb.bone_index].local_scale;
+        if (std::abs(scale.x - 1.0f) <= 0.000001f &&
+            std::abs(scale.y - 1.0f) <= 0.000001f &&
+            std::abs(scale.z - 1.0f) <= 0.000001f) {
+            return fail();
+        }
+        // A sphere has one radius, so it cannot represent a bone scaled
+        // unevenly -- picking an axis would silently resize it.
+        if (limb.shape_type == KernelColliderShapeType_Sphere &&
+            (std::abs(half_extents.x - half_extents.y) > 0.000001f ||
+             std::abs(half_extents.x - half_extents.z) > 0.000001f)) {
+            return fail();
+        }
+    }
+    return true;
+}
+
 bool validate_locomotion_rig(
     const ozz::animation::Skeleton& skeleton,
     const KernelSkeletonBindingDefinition& definition,

@@ -48,6 +48,23 @@ skeleton:
   source_manifest: skeleton_assets/generated/simplified_biped.skeleton_manifest.json
   root_bone: SIM_Root
   body_bone: JNT_Body
+  # Per-bone colliders. No dimensions here on purpose: each GEO_ bone's rest
+  # scale IS its box (the rig authors its geometry as scaled unit primitives),
+  # so the size comes from the skeleton and cannot drift from what is drawn.
+  # The arms carry no leg: they are limbs, but not part of any gait.
+  limb_colliders:
+    - {bone: GEO_Leg0_Upper, leg: leg0, purpose: limb | hit, layer: hostile_side}
+    - {bone: GEO_Leg0_Lower, leg: leg0, purpose: limb | hit, layer: hostile_side}
+    - {bone: GEO_Leg1_Upper, leg: leg1, purpose: limb | hit, layer: hostile_side}
+    - {bone: GEO_Leg1_Lower, leg: leg1, purpose: limb | hit, layer: hostile_side}
+    - {bone: GEO_Arm0_Upper, purpose: limb | hit, layer: hostile_side}
+    - {bone: GEO_Arm0_Lower, purpose: limb | hit, layer: hostile_side}
+    - {bone: GEO_Arm1_Upper, purpose: limb | hit, layer: hostile_side}
+    - {bone: GEO_Arm1_Lower, purpose: limb | hit, layer: hostile_side}
+    - {bone: GEO_Hip, purpose: limb | hit, layer: hostile_side}
+    - {bone: GEO_Torso, purpose: limb | hit, layer: hostile_side}
+    - {bone: GEO_Body, purpose: limb | hit, layer: hostile_side}
+    - {bone: GEO_Head, purpose: limb | hit, layer: hostile_side}
 locomotion:
   type: procedural_legged
   forward_axis: positive_z

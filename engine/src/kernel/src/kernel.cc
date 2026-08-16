@@ -2693,6 +2693,20 @@ bool KernelEngine::load_gameplay_catalog(
                     invalid_leg);
                 return false;
             }
+            // Limb colliders take their size from the bone's rest scale, so the
+            // rig is the only place that can say whether an authored bone
+            // actually carries one.
+            std::uint32_t invalid_limb = 0u;
+            if (!validate_locomotion_limb_colliders(
+                    asset->bind_pose, skeleton, &invalid_limb)) {
+                spdlog::error(
+                    "entity template {} skeleton limb collider {} does not "
+                    "match the rig: the bone must exist, be named once, and "
+                    "carry its size as a non-unit rest scale",
+                    entity_template.entity_template_id,
+                    invalid_limb);
+                return false;
+            }
         }
         for (const KernelActionTriggerDefinition* trigger : {
                  &entity_template.activated_trigger,

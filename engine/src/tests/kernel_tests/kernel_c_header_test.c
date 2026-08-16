@@ -6,8 +6,12 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 70u,
+    KERNEL_ABI_VERSION == 71u,
     "skeleton asset ABI");
+_Static_assert(
+    offsetof(KernelSkeletonBindingDefinition, limb_colliders) >
+        offsetof(KernelSkeletonBindingDefinition, stance_crouch_meters),
+    "limb colliders are appended to the skeleton binding ABI");
 _Static_assert(
     offsetof(KernelMovementDefinition, movement_collision_mask) >
         offsetof(KernelMovementDefinition, max_yaw_degrees_per_second),
@@ -164,7 +168,10 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 70u);
+    assert(KERNEL_ABI_VERSION == 71u);
+    assert(sizeof(KernelSkeletonLimbColliderDefinition) > 0u);
+    assert(KERNEL_MAX_SKELETON_LIMB_COLLIDERS > 0u);
+    assert(KernelColliderPurpose_Limb == (1u << 5));
     assert(KERNEL_CAPABILITY_SKELETON_BIND_POSE != 0u);
     assert(sizeof(KernelBoneLocalTransform) > 0u);
     assert(sizeof(KernelSkeletonRenderState) > 0u);

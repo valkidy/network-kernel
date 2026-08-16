@@ -1235,5 +1235,95 @@ int main() {
         // the slack it frees is what a foothold below the stance spends.
         require(crouched_reach < upright_reach - 0.1f);
     }
+
+    {
+        // Limb colliders take their size from the bone's rest scale, which is
+        // the only place the rigs record it. Everything here is about that one
+        // derivation and the ways it must refuse to guess.
+        const auto make_bind_pose = [](const KernelVec3& limb_scale) {
+            std::vector<KernelBoneLocalTransform> bind_pose(4u);
+            for (KernelBoneLocalTransform& bone : bind_pose) {
+                bone.local_rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+                bone.local_scale = KernelVec3{1.0f, 1.0f, 1.0f};
+            }
+            bind_pose[3].local_scale = limb_scale;
+            return bind_pose;
+        };
+        const auto make_definition = [](std::uint8_t shape_type) {
+            KernelSkeletonBindingDefinition definition = make_fixture(1u);
+            definition.bone_count = 4u;
+            definition.limb_collider_count = 1u;
+            definition.limb_colliders[0].bone_index = 3u;
+            definition.limb_colliders[0].leg_index = 0u;
+            definition.limb_colliders[0].shape_type = shape_type;
+            definition.limb_colliders[0].purpose_flags =
+                KernelColliderPurpose_Limb | KernelColliderPurpose_Hit;
+            definition.limb_colliders[0].layer_mask =
+                KERNEL_COLLISION_LAYER_HOSTILE_SIDE;
+            return definition;
+        };
+
+        // The rigs author a limb as a unit primitive scaled by the bone, so the
+        // rest scale is the box's FULL extents -- half of it is the half extent.
+        // This is the number quadruped_actor's GEO_Leg0_Lower actually carries.
+        const std::vector<KernelBoneLocalTransform> bind_pose =
+            make_bind_pose(KernelVec3{1.5f, 19.0f, 1.5f});
+        const KernelSkeletonBindingDefinition definition =
+            make_definition(KernelColliderShapeType_OrientedBox);
+        std::uint32_t invalid_limb = 0u;
+        require(network_example::validate_locomotion_limb_colliders(
+            bind_pose, definition, &invalid_limb));
+        require(invalid_limb == UINT32_MAX);
+        const glm::vec3 half_extents = network_example::locomotion_limb_half_extents(
+            bind_pose, definition.limb_colliders[0]);
+        require(near(half_extents.x, 0.75f));
+        require(near(half_extents.y, 9.5f));
+        require(near(half_extents.z, 0.75f));
+
+        // A bone at unit scale carries no dimensions: the rig baked them into
+        // mesh vertices, which never reach the kernel. Accepting it would
+        // register a plausible-looking 1m cube, so it must fail instead.
+        const std::vector<KernelBoneLocalTransform> unit_pose =
+            make_bind_pose(KernelVec3{1.0f, 1.0f, 1.0f});
+        require(!network_example::validate_locomotion_limb_colliders(
+            unit_pose, definition, &invalid_limb));
+        require(invalid_limb == 0u);
+
+        // A sphere has one radius, so an unevenly scaled bone cannot be one --
+        // picking an axis would silently resize it.
+        const KernelSkeletonBindingDefinition sphere_definition =
+            make_definition(KernelColliderShapeType_Sphere);
+        require(!network_example::validate_locomotion_limb_colliders(
+            bind_pose, sphere_definition, &invalid_limb));
+        const std::vector<KernelBoneLocalTransform> uniform_pose =
+            make_bind_pose(KernelVec3{8.0f, 8.0f, 8.0f});
+        require(network_example::validate_locomotion_limb_colliders(
+            uniform_pose, sphere_definition, &invalid_limb));
+
+        // Out-of-range bone, and a leg this rig does not have.
+        KernelSkeletonBindingDefinition bad_bone = definition;
+        bad_bone.limb_colliders[0].bone_index = 9u;
+        require(!network_example::validate_locomotion_limb_colliders(
+            bind_pose, bad_bone, &invalid_limb));
+        KernelSkeletonBindingDefinition bad_leg = definition;
+        bad_leg.limb_colliders[0].leg_index = 5u;
+        require(!network_example::validate_locomotion_limb_colliders(
+            bind_pose, bad_leg, &invalid_limb));
+        // KERNEL_MAX_SKELETON_LEGS is the sentinel for "not part of a leg",
+        // which the biped's arms rely on, so it must stay legal.
+        KernelSkeletonBindingDefinition no_leg = definition;
+        no_leg.limb_colliders[0].leg_index = KERNEL_MAX_SKELETON_LEGS;
+        require(network_example::validate_locomotion_limb_colliders(
+            bind_pose, no_leg, &invalid_limb));
+
+        // Two colliders on one bone would occupy the same frame, and the
+        // runtime keys them by bone.
+        KernelSkeletonBindingDefinition duplicate = definition;
+        duplicate.limb_collider_count = 2u;
+        duplicate.limb_colliders[1] = duplicate.limb_colliders[0];
+        require(!network_example::validate_locomotion_limb_colliders(
+            bind_pose, duplicate, &invalid_limb));
+        require(invalid_limb == 1u);
+    }
     return 0;
 }
