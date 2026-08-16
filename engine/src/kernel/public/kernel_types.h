@@ -80,6 +80,7 @@
 #define KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_COLLIDER UINT32_C(5)
 #define KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTION UINT32_C(6)
 #define KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ITEM UINT32_C(7)
+#define KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_GAME_RULE UINT32_C(8)
 
 #define KERNEL_CAPABILITY_CLIENT_MODE UINT64_C(0x0000000000000001)
 #define KERNEL_CAPABILITY_LISTEN_SERVER_MODE UINT64_C(0x0000000000000002)
@@ -1439,6 +1440,60 @@ typedef struct KernelActionTemplateDefinition {
     uint32_t hold_input_timeout_ticks;
 } KernelActionTemplateDefinition;
 
+#define KERNEL_MAX_GAME_RULE_NODES 64
+#define KERNEL_MAX_GAME_RULE_EDGES 256
+#define KERNEL_MAX_GAME_RULE_EFFECTS 64
+
+typedef enum KernelDirectorKind {
+    KernelDirectorKind_None = 0,
+    KernelDirectorKind_WorldRule = 1,
+    KernelDirectorKind_GameRule = 2,
+} KernelDirectorKind;
+
+typedef enum KernelGameRuleConditionType {
+    KernelGameRuleConditionType_GroupEliminated = 1,
+} KernelGameRuleConditionType;
+
+typedef enum KernelGameRuleEffectType {
+    KernelGameRuleEffectType_SpawnGroup = 1,
+} KernelGameRuleEffectType;
+
+typedef struct KernelGameRuleDefinition {
+    uint32_t struct_size;
+    uint32_t game_rule_definition_id;
+    uint32_t first_node;
+    uint32_t node_count;
+    uint32_t first_edge;
+    uint32_t edge_count;
+    uint32_t first_effect;
+    uint32_t effect_count;
+} KernelGameRuleDefinition;
+
+typedef struct KernelGameRuleNodeDefinition {
+    uint32_t struct_size;
+    uint32_t node_id;
+    uint32_t condition_type;
+    uint32_t condition_group_id;
+} KernelGameRuleNodeDefinition;
+
+typedef struct KernelGameRuleEdgeDefinition {
+    uint32_t struct_size;
+    uint32_t source_node_id;
+    uint32_t target_node_id;
+} KernelGameRuleEdgeDefinition;
+
+typedef struct KernelGameRuleSpawnGroupEffectDefinition {
+    uint32_t struct_size;
+    uint32_t effect_type;
+    uint32_t node_id;
+    uint32_t group_id;
+    uint32_t count;
+    uint32_t entity_template_id;
+    KernelVec3 position;
+    float radius;
+    uint32_t seed;
+} KernelGameRuleSpawnGroupEffectDefinition;
+
 typedef struct KernelEntityAiDefinition KernelEntityAiDefinition;
 typedef struct KernelEntityTemplateDefinition KernelEntityTemplateDefinition;
 
@@ -1466,6 +1521,14 @@ typedef struct KernelGameplayCatalogDefinition {
     uint32_t skeleton_asset_count;
     const KernelStatusEffectDefinition* status_effects;
     uint32_t status_effect_count;
+    const KernelGameRuleDefinition* game_rules;
+    uint32_t game_rule_count;
+    const KernelGameRuleNodeDefinition* game_rule_nodes;
+    uint32_t game_rule_node_count;
+    const KernelGameRuleEdgeDefinition* game_rule_edges;
+    uint32_t game_rule_edge_count;
+    const KernelGameRuleSpawnGroupEffectDefinition* game_rule_effects;
+    uint32_t game_rule_effect_count;
 } KernelGameplayCatalogDefinition;
 
 typedef struct KernelGameplayCatalogLoadResult {
@@ -1840,6 +1903,8 @@ struct KernelEntityAiDefinition {
     KernelVec3 spawn_position;
     float spawn_radius;
     uint32_t spawn_seed;
+    uint32_t director_kind;
+    uint32_t game_rule_definition_id;
 };
 
 struct KernelEntityTemplateDefinition {

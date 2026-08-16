@@ -153,9 +153,19 @@ struct AgentRuntime {
 
 struct AgentSentryRuntime {};
 
+enum class DirectorKind : std::uint32_t {
+    kNone = 0,
+    kWorldRule = 1,
+    kGameRule = 2,
+};
+
 struct DirectorRuntime {
+    DirectorKind kind = DirectorKind::kNone;
     std::uint32_t tick_interval = 1;
     std::uint32_t next_tick = 0;
+};
+
+struct WorldRuleRuntime {
     std::uint32_t spawn_target_count = 0;
     std::uint32_t spawn_entity_template_id = 0;
     std::uint32_t spawn_actor_template_id = 0;
@@ -163,6 +173,40 @@ struct DirectorRuntime {
     float spawn_radius = 0.0f;
     std::uint32_t spawn_seed = 1;
     std::uint32_t spawn_cursor = 0;
+};
+
+enum class GameRuleStatus : std::uint8_t {
+    kRunning,
+    kCompleted,
+    kFailed,
+};
+
+enum class GameRuleNodeState : std::uint8_t {
+    kInactive,
+    kActive,
+    kCompleted,
+};
+
+struct GameRuleGroupRuntime {
+    std::uint32_t group_id = 0;
+    std::uint32_t pending_spawn_count = 0;
+    std::uint32_t alive_count = 0;
+    bool sealed = false;
+    bool failed = false;
+};
+
+struct GameRuleRuntime {
+    std::uint32_t definition_id = 0;
+    GameRuleStatus status = GameRuleStatus::kRunning;
+    bool initialized = false;
+    std::vector<GameRuleNodeState> node_states;
+    std::vector<GameRuleGroupRuntime> groups;
+};
+
+struct GameplayGroupMembership {
+    NetId director_net_id = 0;
+    std::uint32_t group_id = 0;
+    std::uint32_t spawn_batch_id = 0;
 };
 
 inline constexpr std::size_t kWeaponSlotCount = 4;
