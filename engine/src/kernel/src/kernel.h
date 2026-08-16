@@ -321,6 +321,12 @@ public:
     bool server_get_entity_state(
         NetId net_id,
         KernelServerEntityState* out_state) const;
+    bool server_get_projectile_launch_position(
+        NetId net_id,
+        KernelVec3* out_position) const;
+    bool server_get_entity_aim_point(
+        NetId net_id,
+        KernelVec3* out_position) const;
     std::uint32_t server_query_entities(
         EntityType entity_type_filter,
         KernelServerEntityState* out_states,

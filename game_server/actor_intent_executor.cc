@@ -129,21 +129,28 @@ ActorIntentExecutionResult ActorIntentExecutor::execute(
         binding_id = KernelActionBinding_Reload;
     }
 
+    KernelVec3 launch_position = perception.self_state.position;
+    Kernel_ServerGetProjectileLaunchPosition(
+        kernel,
+        actor->net_id,
+        &launch_position);
     KernelVec3 aim_direction =
-        normalized_direction(perception.self_state.position, target_position);
+        normalized_direction(launch_position, target_position);
     if (intent.type == "AttackTarget" && config_.ballistic_aim.enabled) {
+        const float fixed_delta_seconds = Kernel_GetFixedDeltaSeconds(kernel);
         const float max_flight_seconds =
             static_cast<float>(config_.ballistic_aim.lifetime_ticks) *
-            config_.fixed_delta_seconds;
+            fixed_delta_seconds;
         const std::optional<BallisticAimSolution> ballistic_solution =
             solve_low_ballistic_aim(
-                perception.self_state.position,
+                launch_position,
                 target_position,
                 config_.ballistic_aim.speed,
                 config_.ballistic_aim.gravity,
                 max_flight_seconds);
         if (!ballistic_solution.has_value()) {
             add_missing(&result.report, "data", "Data.BallisticAimSolution");
+            result.ballistic_solution_unavailable = true;
             return result;
         }
         aim_direction = ballistic_solution->aim_direction;

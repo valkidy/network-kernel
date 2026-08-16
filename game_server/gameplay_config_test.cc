@@ -284,6 +284,7 @@ void append_collider_template_files(
         "rifle_segment.yaml",
         "shotgun_segment.yaml",
         "projectile_sphere.yaml",
+        "grenade_sentry_vision_cone.yaml",
         "sentry_grunt_movement_capsule.yaml",
     };
     for (const std::string& file : collider_files) {
@@ -1324,7 +1325,8 @@ int main() {
         config.weapons.catalog_hash !=
         network_example::game_server::compute_gameplay_catalog_hash(changed_config));
     changed_config = config;
-    changed_config.agent.override_director_spawn = true;
+    changed_config.agent.override_director_spawn =
+        !changed_config.agent.override_director_spawn;
     require(
         config.weapons.catalog_hash !=
         network_example::game_server::compute_gameplay_catalog_hash(changed_config));
@@ -2139,9 +2141,9 @@ int main() {
         config.weapons
             .projectile_sync_modes[network_example::game_server::kWeaponRocket] ==
         KernelProjectileSyncMode_ServerSnapshotOnly);
-    assert(config.colliders.templates.size() == 14);
+    assert(config.colliders.templates.size() == 15);
     assert(config.colliders.bindings.empty());
-    assert(config.actor_templates.size() == 6);
+    assert(config.actor_templates.size() == 7);
     const network_example::game_server::ActorTemplateConfig& player_template =
         config.actor_templates[0];
     assert(player_template.actor_template_id == 1);
@@ -2179,6 +2181,22 @@ int main() {
     assert(enemy_template.movement_controller_type ==
            KernelMovementControllerType_Grounded);
     assert(enemy_template.movement_collider_template_id == 11);
+    const auto grenade_sentry = std::find_if(
+        config.actor_templates.begin(),
+        config.actor_templates.end(),
+        [](const network_example::game_server::ActorTemplateConfig& actor) {
+            return actor.name == "grenade_sentry";
+        });
+    assert(grenade_sentry != config.actor_templates.end());
+    assert(grenade_sentry->actor_template_id == 24);
+    assert(grenade_sentry->weapon_slot_count == 1);
+    assert(
+        grenade_sentry->weapon_ids[0] ==
+        network_example::game_server::kWeaponGrenade);
+    assert(grenade_sentry->sentry.weapon_id ==
+           network_example::game_server::kWeaponGrenade);
+    assert(grenade_sentry->sentry.ballistic_retry_cooldown_ticks == 30);
+    assert(config.agent.actor_template_id == grenade_sentry->actor_template_id);
 
     const KernelWeaponMechanicsDefinition& fire_floor =
         config.weapons.definitions[network_example::game_server::kWeaponFireFloor];

@@ -1,0 +1,8 @@
+id: 15
+name: grenade_sentry_vision_cone
+shape: cone
+center: {x: 0.0, y: 0.0, z: 0.0}
+range: 60.0
+fov_degrees: 90.0
+purpose: vision
+layer: agent_vision

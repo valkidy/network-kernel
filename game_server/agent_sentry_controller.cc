@@ -153,7 +153,7 @@ AgentSentryController::AgentSentryController(AgentSentryConfig config)
 void AgentSentryController::tick(
     KernelHandle* kernel,
     std::vector<AgentRuntimeState>* agents,
-    float delta_seconds) const {
+    float) const {
     if (kernel == nullptr || agents == nullptr) {
         return;
     }
@@ -161,7 +161,6 @@ void AgentSentryController::tick(
     ActorIntentExecutorConfig executor_config;
     executor_config.weapon_id = config_.weapon_id;
     executor_config.ballistic_aim = config_.ballistic_aim;
-    executor_config.fixed_delta_seconds = delta_seconds;
     const ActorIntentExecutor actor_executor(executor_config);
 
     for (AgentRuntimeState& agent : *agents) {
@@ -221,6 +220,9 @@ void AgentSentryController::tick(
         const bool has_visible_target = perception.has_visible_target;
 
         if (has_visible_target) {
+            if (agent.sentry.target != perception.target_id) {
+                agent.sentry.ballistic_retry_ticks = 0;
+            }
             agent.sentry.target = perception.target_id;
             agent.sentry.lost_target_ticks = 0;
         } else {
@@ -277,7 +279,20 @@ void AgentSentryController::tick(
                 intent.type = "AttackTarget";
                 intent.subject = agent.net_id;
                 intent.params["target_id"] = agent.sentry.target;
-                actor_executor.execute(kernel, &agent, intent, perception);
+                if (agent.sentry.ballistic_retry_ticks > 0) {
+                    --agent.sentry.ballistic_retry_ticks;
+                } else {
+                    const ActorIntentExecutionResult execution =
+                        actor_executor.execute(
+                            kernel,
+                            &agent,
+                            intent,
+                            perception);
+                    if (execution.ballistic_solution_unavailable) {
+                        agent.sentry.ballistic_retry_ticks =
+                            config_.ballistic_retry_cooldown_ticks;
+                    }
+                }
             } else if (agent.sentry.lost_target_ticks >= config_.forget_ticks) {
                 transition_to(&agent, AgentSentryState::kAlert);
             }

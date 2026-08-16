@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <vector>
 
+#include "game_server/ai_perception_adapter.h"
 #include "game_server/gameplay_config.h"
 
 namespace {
@@ -47,6 +48,17 @@ KernelColliderTemplateDefinition vision_collider_template() {
     return collider;
 }
 
+KernelColliderTemplateDefinition projectile_collider_template() {
+    KernelColliderTemplateDefinition collider{};
+    collider.struct_size = sizeof(collider);
+    collider.template_id = 3;
+    collider.shape_type = KernelColliderShapeType_Sphere;
+    collider.shape_params = KernelVec4{0.2f, 0.0f, 0.0f, 0.0f};
+    collider.purpose_flags = KernelColliderPurpose_Hit;
+    collider.layer_mask = KERNEL_COLLISION_LAYER_PROJECTILE;
+    return collider;
+}
+
 KernelProjectileTemplateDefinition projectile_template() {
     KernelProjectileTemplateDefinition projectile{};
     projectile.struct_size = sizeof(projectile);
@@ -54,15 +66,16 @@ KernelProjectileTemplateDefinition projectile_template() {
     projectile.weapon_id = network_example::game_server::kAgentSpammerWeaponId;
     projectile.mechanics.struct_size = sizeof(KernelProjectileMechanicsDefinition);
     projectile.mechanics.projectile_type = KernelProjectileType_Standard;
-    projectile.mechanics.motion_model = KernelProjectileMotionModel_Linear;
+    projectile.mechanics.motion_model = KernelProjectileMotionModel_Parabolic;
     projectile.mechanics.sync_mode = KernelProjectileSyncMode_ServerSnapshotOnly;
     projectile.mechanics.hit_response = KernelProjectileHitResponse_Destroy;
     projectile.mechanics.damage_shape = KernelProjectileDamageShape_DirectHit;
     projectile.mechanics.damage = 1;
-    projectile.mechanics.speed = 30.0f;
-    projectile.mechanics.lifetime_ticks = 30;
-    projectile.mechanics.collider_template_id = 1;
-    projectile.mechanics.collision_mask = KERNEL_COLLISION_MASK_NONE;
+    projectile.mechanics.speed = 24.0f;
+    projectile.mechanics.lifetime_ticks = 90;
+    projectile.mechanics.gravity = KernelVec3{0.0f, -9.81f, 0.0f};
+    projectile.mechanics.collider_template_id = 3;
+    projectile.mechanics.collision_mask = KERNEL_COLLISION_MASK_DAMAGEABLE;
     projectile.mechanics.max_hit_count = 1;
     return projectile;
 }
@@ -88,9 +101,10 @@ KernelActionTemplateDefinition reload_action_template(std::uint32_t reload_ticks
 }
 
 void load_catalog(KernelHandle* kernel) {
-    const std::array<KernelColliderTemplateDefinition, 2> colliders = {
+    const std::array<KernelColliderTemplateDefinition, 3> colliders = {
         collider_template(),
         vision_collider_template(),
+        projectile_collider_template(),
     };
     const KernelProjectileTemplateDefinition projectile = projectile_template();
     const std::array<KernelActionTemplateDefinition, 2> actions = {
@@ -201,6 +215,20 @@ KernelServerEntityState query_state(KernelHandle* kernel, std::uint32_t net_id) 
     return state;
 }
 
+KernelServerEntityState query_first_projectile(KernelHandle* kernel) {
+    std::array<KernelServerEntityState, 8> states{};
+    for (KernelServerEntityState& state : states) {
+        state.struct_size = sizeof(state);
+    }
+    const std::uint32_t count = Kernel_ServerQueryEntities(
+        kernel,
+        KernelEntityType_Projectile,
+        states.data(),
+        static_cast<std::uint32_t>(states.size()));
+    assert(count > 0);
+    return states[0];
+}
+
 bool almost_equal(float lhs, float rhs, float tolerance = 0.001f) {
     return std::fabs(lhs - rhs) <= tolerance;
 }
@@ -250,6 +278,11 @@ int main() {
     sentry_config.patrol_rotation_min_degrees = 15.0f;
     sentry_config.patrol_rotation_max_degrees = 30.0f;
     sentry_config.weapon_id = network_example::game_server::kAgentSpammerWeaponId;
+    sentry_config.ballistic_aim.enabled = true;
+    sentry_config.ballistic_aim.speed = 24.0f;
+    sentry_config.ballistic_aim.gravity = KernelVec3{0.0f, -9.81f, 0.0f};
+    sentry_config.ballistic_aim.lifetime_ticks = 90;
+    sentry_config.ballistic_retry_cooldown_ticks = 3;
     network_example::game_server::AgentSentryController controller(sentry_config);
 
     run_frame(kernel, controller, &enemies);
@@ -274,6 +307,14 @@ int main() {
     Kernel_Update(kernel, 1.0f / 30.0f);
     run_frame(kernel, controller, &enemies);
     assert(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kAlert);
+    const auto perception =
+        network_example::game_server::AiPerceptionAdapter::build_sentry_snapshot(
+            kernel,
+            enemy_net_id);
+    assert(perception.has_target_position);
+    assert(almost_equal(perception.target_position.x, player_position.x));
+    assert(almost_equal(perception.target_position.y, player_position.y + 0.8f));
+    assert(almost_equal(perception.target_position.z, player_position.z));
     rotation = query_rotation(kernel, enemy_net_id);
     assert_rotation_faces(rotation, 5.0f, 2.0f);
     KernelServerEntityState state = query_state(kernel, enemy_net_id);
@@ -283,6 +324,15 @@ int main() {
     assert(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kAttack);
     state = query_state(kernel, enemy_net_id);
     assert(state.ammo[0] == 1);
+    const KernelServerEntityState projectile = query_first_projectile(kernel);
+    assert(almost_equal(projectile.position.y, 1.0f));
+    assert(projectile.velocity.y > 0.0f);
+    KernelServerEntityState player_state = query_state(kernel, player_net_id);
+    for (int tick = 0; tick < 30 && player_state.hp == 100; ++tick) {
+        Kernel_Update(kernel, 1.0f / 30.0f);
+        player_state = query_state(kernel, player_net_id);
+    }
+    assert(player_state.hp == 99);
 
     run_frame(kernel, controller, &enemies);
     state = query_state(kernel, enemy_net_id);
@@ -299,6 +349,31 @@ int main() {
     assert(state.is_reloading == 0u);
     assert(state.ammo[0] == 2);
     assert(state.reserve_magazines[0] == 3);
+
+    network_example::game_server::AgentSentryConfig cooldown_config =
+        sentry_config;
+    cooldown_config.ballistic_aim.speed = 1.0f;
+    cooldown_config.ballistic_aim.lifetime_ticks = 1;
+    network_example::game_server::AgentSentryController cooldown_controller(
+        cooldown_config);
+    run_frame(kernel, cooldown_controller, &enemies);
+    state = query_state(kernel, enemy_net_id);
+    assert(state.ammo[0] == 2);
+    assert(enemies[0].sentry.ballistic_retry_ticks == 3);
+    for (int expected = 2; expected >= 0; --expected) {
+        run_frame(kernel, cooldown_controller, &enemies);
+        state = query_state(kernel, enemy_net_id);
+        assert(state.ammo[0] == 2);
+        assert(
+            enemies[0].sentry.ballistic_retry_ticks ==
+            static_cast<std::uint32_t>(expected));
+        assert(enemies[0].velocity.x == 0.0f);
+        assert(enemies[0].velocity.z == 0.0f);
+    }
+    run_frame(kernel, cooldown_controller, &enemies);
+    state = query_state(kernel, enemy_net_id);
+    assert(state.ammo[0] == 2);
+    assert(enemies[0].sentry.ballistic_retry_ticks == 3);
 
     assert(Kernel_ServerSetEntityTransform(kernel, player_net_id, &out_of_range, &identity));
     Kernel_Update(kernel, 1.0f / 30.0f);

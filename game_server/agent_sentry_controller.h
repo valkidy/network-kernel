@@ -13,6 +13,7 @@ namespace network_example::game_server {
 struct AgentSentryConfig {
     std::uint32_t alert_ticks = 90;
     std::uint32_t forget_ticks = 150;
+    std::uint32_t ballistic_retry_cooldown_ticks = 30;
     std::uint32_t patrol_rotation_interval_ticks = 30;
     float patrol_rotation_min_degrees = 15.0f;
     float patrol_rotation_max_degrees = 30.0f;

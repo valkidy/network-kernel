@@ -15,13 +15,13 @@ namespace network_example::game_server {
 struct ActorIntentExecutorConfig {
     std::uint16_t weapon_id = UINT16_MAX;
     BallisticAimProfile ballistic_aim;
-    float fixed_delta_seconds = 1.0f / 60.0f;
 };
 
 struct ActorIntentExecutionResult {
     ai::IntentStatus status = ai::IntentStatus::kFailed;
     ai::CapabilityReport report;
     bool submitted_input = false;
+    bool ballistic_solution_unavailable = false;
 };
 
 class ActorIntentExecutor {

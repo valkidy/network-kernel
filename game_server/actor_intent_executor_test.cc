@@ -190,6 +190,22 @@ int main() {
     const std::uint32_t target = create_actor(kernel, {5.0f, 0.0f, 0.0f});
     set_weapon(kernel, actor);
 
+    assert(std::fabs(Kernel_GetFixedDeltaSeconds(kernel) - 1.0f / 30.0f) <
+           0.0001f);
+    KernelVec3 launch_position{};
+    assert(Kernel_ServerGetProjectileLaunchPosition(
+        kernel,
+        actor,
+        &launch_position));
+    assert(std::fabs(launch_position.x) < 0.0001f);
+    assert(std::fabs(launch_position.y - 1.0f) < 0.0001f);
+    assert(std::fabs(launch_position.z) < 0.0001f);
+    KernelVec3 target_aim_point{};
+    assert(Kernel_ServerGetEntityAimPoint(kernel, target, &target_aim_point));
+    assert(std::fabs(target_aim_point.x - 5.0f) < 0.0001f);
+    assert(std::fabs(target_aim_point.y - 0.8f) < 0.0001f);
+    assert(std::fabs(target_aim_point.z) < 0.0001f);
+
     network_example::game_server::AgentRuntimeState enemy;
     enemy.net_id = actor;
     network_example::game_server::ActorIntentExecutor executor(
@@ -272,7 +288,6 @@ int main() {
     ballistic_config.ballistic_aim.speed = 24.0f;
     ballistic_config.ballistic_aim.gravity = gravity;
     ballistic_config.ballistic_aim.lifetime_ticks = 90;
-    ballistic_config.fixed_delta_seconds = 1.0f / 30.0f;
     network_example::game_server::ActorIntentExecutor ballistic_executor(
         ballistic_config);
 
@@ -306,6 +321,7 @@ int main() {
         perception(kernel, unreachable_actor, target, {100.0f, 0.0f, 0.0f}));
     assert(result.status == network_example::ai::IntentStatus::kFailed);
     assert(!result.submitted_input);
+    assert(result.ballistic_solution_unavailable);
     assert(result.report.missing_data.size() == 1);
     assert(result.report.missing_data[0] == "Data.BallisticAimSolution");
     Kernel_Update(kernel, 1.0f / 30.0f);

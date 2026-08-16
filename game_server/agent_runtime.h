@@ -27,6 +27,7 @@ struct AgentSentryRuntimeState {
     std::uint32_t lost_target_ticks = 0;
     std::uint32_t patrol_rotation_tick = 0;
     std::uint32_t patrol_rotation_step = 0;
+    std::uint32_t ballistic_retry_ticks = 0;
     std::uint32_t target = 0;
 };
 
