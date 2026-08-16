@@ -16,6 +16,7 @@ public:
 
     void handle_event(const KernelEvent& event);
     void tick(float delta_seconds);
+    bool preload_directors();
 
     AgentRuntimeManager& agent_runtime_manager();
     const AgentRuntimeManager& agent_runtime_manager() const;

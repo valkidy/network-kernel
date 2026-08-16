@@ -23,6 +23,10 @@ void GameServer::tick(float delta_seconds) {
     agent_runtime_manager_.tick(delta_seconds);
 }
 
+bool GameServer::preload_directors() {
+    return agent_runtime_manager_.preload_directors();
+}
+
 AgentRuntimeManager& GameServer::agent_runtime_manager() {
     return agent_runtime_manager_;
 }

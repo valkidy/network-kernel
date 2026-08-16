@@ -4,6 +4,8 @@
 #include <array>
 #include <utility>
 
+#include <spdlog/spdlog.h>
+
 #include "kernel/src/kernel_api_internal.h"
 
 namespace network_example::game_server {
@@ -28,17 +30,13 @@ AgentRuntimeManager::AgentRuntimeManager(
       sentry_(agent_sentry_config(config_)) {}
 
 void AgentRuntimeManager::handle_event(const KernelEvent& event) {
-    if (event.type == KernelEventType_PlayerJoined) {
-        has_seen_player_ = true;
-        return;
-    }
-
     if (event.type != KernelEventType_EntityDestroyed) {
         return;
     }
-    if (event.net_id == director_net_id_) {
-        director_net_id_ = 0;
-    }
+    director_net_ids_.erase(
+        std::remove(
+            director_net_ids_.begin(), director_net_ids_.end(), event.net_id),
+        director_net_ids_.end());
     agents_.erase(
         std::remove_if(
             agents_.begin(),
@@ -62,10 +60,6 @@ void AgentRuntimeManager::tick(float delta_seconds) {
     }
 
     sync_agents_from_kernel();
-    if (has_seen_player_ && !has_bootstrapped_director_) {
-        bootstrap_directors();
-    }
-    sync_agents_from_kernel();
     sentry_.tick(kernel_, &agents_, delta_seconds);
 }
 
@@ -86,18 +80,18 @@ void AgentRuntimeManager::despawn_all(std::uint32_t reason) {
             KernelCommandSource_Internal,
             &command);
     }
-    if (director_net_id_ != 0) {
+    for (const std::uint32_t director_net_id : director_net_ids_) {
         KernelEntityLifecycleCommand command{};
         command.struct_size = sizeof(command);
         command.command_type = KernelEntityLifecycleCommandType_Destroy;
-        command.net_id = director_net_id_;
+        command.net_id = director_net_id;
         command.reason = reason;
         Kernel_ServerEnqueueEntityLifecycle(
             kernel_,
             KernelCommandSource_Internal,
             &command);
-        director_net_id_ = 0;
     }
+    director_net_ids_.clear();
     agents_.clear();
     despawn_pending_ = true;
 }
@@ -110,31 +104,41 @@ const std::vector<AgentRuntimeState>& AgentRuntimeManager::agents() const {
     return agents_;
 }
 
-void AgentRuntimeManager::bootstrap_directors() {
-    bool spawned_director = false;
-    for (const EntityTemplateConfig& entity_template : config_.entity_templates) {
-        if (entity_template.entity_type != KernelEntityType_Director) {
-            continue;
+bool AgentRuntimeManager::preload_directors() {
+    if (director_preload_attempted_) {
+        return director_preload_succeeded_;
+    }
+    director_preload_attempted_ = true;
+
+    for (const std::uint32_t template_id :
+         config_.preload_director_template_ids) {
+        const auto entity_template = std::find_if(
+            config_.entity_templates.begin(),
+            config_.entity_templates.end(),
+            [template_id](const EntityTemplateConfig& candidate) {
+                return candidate.actor_template_id == template_id;
+            });
+        if (entity_template == config_.entity_templates.end() ||
+            entity_template->entity_type != KernelEntityType_Director) {
+            spdlog::error(
+                "director preload failed template_id={} reason=invalid_template",
+                template_id);
+            return false;
         }
-        spawned_director = spawn_director(entity_template) || spawned_director;
+        if (!spawn_director(*entity_template)) {
+            return false;
+        }
     }
-    if (!spawned_director) {
-        EntityTemplateConfig default_director{};
-        default_director.actor_template_id = kDefaultDirectorEntityTemplateId;
-        default_director.entity_type = KernelEntityType_Director;
-        default_director.server_only = true;
-        default_director.transform_position = config_.agent.spawn_position;
-        spawn_director(default_director);
-    }
-    has_bootstrapped_director_ = true;
+
+    director_preload_succeeded_ = true;
+    spdlog::info(
+        "director preload complete count={}",
+        director_net_ids_.size());
+    return true;
 }
 
 bool AgentRuntimeManager::spawn_director(
     const EntityTemplateConfig& director_template) {
-    if (director_net_id_ != 0) {
-        return true;
-    }
-
     KernelServerEntityCreateInfo create_info{};
     create_info.struct_size = sizeof(KernelServerEntityCreateInfo);
     create_info.entity_type = KernelEntityType_Director;
@@ -145,21 +149,36 @@ bool AgentRuntimeManager::spawn_director(
 
     std::uint32_t net_id = 0;
     if (!Kernel_ServerCreateEntity(kernel_, &create_info, &net_id) || net_id == 0) {
+        spdlog::error(
+            "director preload failed name={} template_id={} reason=create_entity",
+            director_template.name,
+            director_template.actor_template_id);
         return false;
     }
-    director_net_id_ = net_id;
+    director_net_ids_.push_back(net_id);
+    spdlog::info(
+        "director preloaded name={} template_id={} net_id={} position=({}, {}, {})",
+        director_template.name,
+        director_template.actor_template_id,
+        net_id,
+        director_template.transform_position.x,
+        director_template.transform_position.y,
+        director_template.transform_position.z);
     return true;
 }
 
 void AgentRuntimeManager::sync_agents_from_kernel() {
-    if (director_net_id_ != 0) {
-        KernelServerEntityState state{};
-        state.struct_size = sizeof(KernelServerEntityState);
-        if (!Kernel_ServerGetEntityState(kernel_, director_net_id_, &state) ||
-            state.valid == 0u) {
-            director_net_id_ = 0;
-        }
-    }
+    director_net_ids_.erase(
+        std::remove_if(
+            director_net_ids_.begin(),
+            director_net_ids_.end(),
+            [this](std::uint32_t net_id) {
+                KernelServerEntityState state{};
+                state.struct_size = sizeof(KernelServerEntityState);
+                return !Kernel_ServerGetEntityState(kernel_, net_id, &state) ||
+                    state.valid == 0u;
+            }),
+        director_net_ids_.end());
 
     std::array<KernelServerEntityState, kMaxQueriedAgents> states{};
     for (KernelServerEntityState& state : states) {
@@ -219,10 +238,10 @@ bool AgentRuntimeManager::apply_weapon_mechanics(std::uint32_t net_id) const {
 }
 
 bool AgentRuntimeManager::has_live_agent_or_director() const {
-    if (director_net_id_ != 0) {
+    for (const std::uint32_t director_net_id : director_net_ids_) {
         KernelServerEntityState state{};
         state.struct_size = sizeof(KernelServerEntityState);
-        if (Kernel_ServerGetEntityState(kernel_, director_net_id_, &state) &&
+        if (Kernel_ServerGetEntityState(kernel_, director_net_id, &state) &&
             state.valid != 0u) {
             return true;
         }

@@ -20,13 +20,13 @@ public:
 
     void handle_event(const KernelEvent& event);
     void tick(float delta_seconds);
+    bool preload_directors();
     void despawn_all(std::uint32_t reason);
 
     std::size_t agent_count() const;
     const std::vector<AgentRuntimeState>& agents() const;
 
 private:
-    void bootstrap_directors();
     bool spawn_director(const EntityTemplateConfig& director_template);
     void sync_agents_from_kernel();
     bool apply_weapon_mechanics(std::uint32_t net_id) const;
@@ -36,9 +36,9 @@ private:
     GameServerGameplayConfig config_;
     AgentSentryController sentry_;
     std::vector<AgentRuntimeState> agents_;
-    std::uint32_t director_net_id_ = 0;
-    bool has_seen_player_ = false;
-    bool has_bootstrapped_director_ = false;
+    std::vector<std::uint32_t> director_net_ids_;
+    bool director_preload_attempted_ = false;
+    bool director_preload_succeeded_ = false;
     bool despawn_pending_ = false;
 };
 
