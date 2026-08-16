@@ -17,7 +17,39 @@ constexpr std::uint32_t kMaxQueriedAgents = 128;
 AgentSentryConfig agent_sentry_config(const GameServerGameplayConfig& config) {
     const ActorTemplateConfig* actor_template =
         find_actor_template(config, config.agent.actor_template_id);
-    return actor_template == nullptr ? AgentSentryConfig{} : actor_template->sentry;
+    if (actor_template == nullptr) {
+        return AgentSentryConfig{};
+    }
+
+    AgentSentryConfig sentry = actor_template->sentry;
+    if (sentry.weapon_id > UINT8_MAX) {
+        return sentry;
+    }
+    const auto weapon_id = static_cast<std::uint8_t>(sentry.weapon_id);
+    if (!config.weapons.configured[weapon_id]) {
+        return sentry;
+    }
+    const std::uint32_t projectile_template_id =
+        config.weapons.definitions[weapon_id].projectile_template_id;
+    const auto projectile = std::find_if(
+        config.projectile_templates.begin(),
+        config.projectile_templates.end(),
+        [projectile_template_id](const ProjectileTemplateConfig& candidate) {
+            return candidate.definition.projectile_template_id ==
+                   projectile_template_id;
+        });
+    if (projectile == config.projectile_templates.end() ||
+        projectile->definition.mechanics.motion_model !=
+            KernelProjectileMotionModel_Parabolic) {
+        return sentry;
+    }
+
+    sentry.ballistic_aim.enabled = true;
+    sentry.ballistic_aim.speed = projectile->definition.mechanics.speed;
+    sentry.ballistic_aim.gravity = projectile->definition.mechanics.gravity;
+    sentry.ballistic_aim.lifetime_ticks =
+        projectile->definition.mechanics.lifetime_ticks;
+    return sentry;
 }
 
 }  // namespace

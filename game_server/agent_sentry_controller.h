@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "game_server/agent_runtime.h"
+#include "game_server/ballistic_aim.h"
 #include "kernel/public/kernel_api.h"
 
 namespace network_example::game_server {
@@ -20,6 +21,7 @@ struct AgentSentryConfig {
     float patrol_input_magnitude = 0.0f;
     float move_speed_meters_per_second = 0.0f;
     std::uint16_t weapon_id = UINT16_MAX;
+    BallisticAimProfile ballistic_aim;
     std::uint16_t animation_idle = 0;
     std::uint16_t animation_attack = 0;
 };

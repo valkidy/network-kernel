@@ -7,12 +7,15 @@
 #include "capability_registry.h"
 #include "game_server/ai_perception_adapter.h"
 #include "game_server/agent_runtime.h"
+#include "game_server/ballistic_aim.h"
 #include "kernel/src/kernel_api_internal.h"
 
 namespace network_example::game_server {
 
 struct ActorIntentExecutorConfig {
     std::uint16_t weapon_id = UINT16_MAX;
+    BallisticAimProfile ballistic_aim;
+    float fixed_delta_seconds = 1.0f / 60.0f;
 };
 
 struct ActorIntentExecutionResult {

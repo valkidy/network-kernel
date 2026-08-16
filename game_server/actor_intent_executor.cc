@@ -1,6 +1,7 @@
 #include "game_server/actor_intent_executor.h"
 
 #include <cmath>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -128,6 +129,26 @@ ActorIntentExecutionResult ActorIntentExecutor::execute(
         binding_id = KernelActionBinding_Reload;
     }
 
+    KernelVec3 aim_direction =
+        normalized_direction(perception.self_state.position, target_position);
+    if (intent.type == "AttackTarget" && config_.ballistic_aim.enabled) {
+        const float max_flight_seconds =
+            static_cast<float>(config_.ballistic_aim.lifetime_ticks) *
+            config_.fixed_delta_seconds;
+        const std::optional<BallisticAimSolution> ballistic_solution =
+            solve_low_ballistic_aim(
+                perception.self_state.position,
+                target_position,
+                config_.ballistic_aim.speed,
+                config_.ballistic_aim.gravity,
+                max_flight_seconds);
+        if (!ballistic_solution.has_value()) {
+            add_missing(&result.report, "data", "Data.BallisticAimSolution");
+            return result;
+        }
+        aim_direction = ballistic_solution->aim_direction;
+    }
+
     KernelPlayerInput input{};
     input.input_seq = actor->next_input_seq++;
     input.selected_weapon = static_cast<std::uint8_t>(config_.weapon_id);
@@ -148,7 +169,7 @@ ActorIntentExecutionResult ActorIntentExecutor::execute(
             action_instance_id, binding_id, 0u, 0u};
         input.action_input = KernelActionInput{action_instance_id, 1u, 0u, 0u};
     }
-    input.aim_dir = normalized_direction(perception.self_state.position, target_position);
+    input.aim_dir = aim_direction;
     result.submitted_input =
         Kernel_ServerEnqueueEntityInput(
             kernel,

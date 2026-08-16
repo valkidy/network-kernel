@@ -153,13 +153,16 @@ AgentSentryController::AgentSentryController(AgentSentryConfig config)
 void AgentSentryController::tick(
     KernelHandle* kernel,
     std::vector<AgentRuntimeState>* agents,
-    float) const {
+    float delta_seconds) const {
     if (kernel == nullptr || agents == nullptr) {
         return;
     }
 
-    const ActorIntentExecutor actor_executor(
-        ActorIntentExecutorConfig{config_.weapon_id});
+    ActorIntentExecutorConfig executor_config;
+    executor_config.weapon_id = config_.weapon_id;
+    executor_config.ballistic_aim = config_.ballistic_aim;
+    executor_config.fixed_delta_seconds = delta_seconds;
+    const ActorIntentExecutor actor_executor(executor_config);
 
     for (AgentRuntimeState& agent : *agents) {
         const SentryPerceptionSnapshot perception =
