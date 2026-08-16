@@ -1316,6 +1316,19 @@ std::uint32_t live_agent_count(World& world) {
     return count;
 }
 
+std::uint32_t live_player_count(World& world) {
+    std::uint32_t count = 0u;
+    auto view = world.registry().view<const EntityKind>();
+    for (const entt::entity entity : view) {
+        const EntityKind& kind = view.get<const EntityKind>(entity);
+        if (kind.type == EntityType::kActor &&
+            kind.actor_type == ActorType::kPlayer) {
+            ++count;
+        }
+    }
+    return count;
+}
+
 GameRuleGroupRuntime* find_game_rule_group(
     GameRuleRuntime& runtime,
     std::uint32_t group_id) {
@@ -3117,6 +3130,7 @@ void DirectorAISystem::update(KernelEngine& engine) const {
             engine.game_rule_edges_.begin() + definition->first_edge;
         const auto effect_begin =
             engine.game_rule_effects_.begin() + definition->first_effect;
+        const std::uint32_t player_count = live_player_count(engine.world_);
         const auto node_offset = [&](std::uint32_t node_id)
             -> std::optional<std::size_t> {
             const auto found = std::find_if(
@@ -3140,7 +3154,10 @@ void DirectorAISystem::update(KernelEngine& engine) const {
                     return candidate.node_id == node.node_id;
                 });
             if (effect == effect_begin + definition->effect_count) {
-                runtime.status = GameRuleStatus::kFailed;
+                if (node.condition_type !=
+                    KernelGameRuleConditionType_PlayerCountAtLeast) {
+                    runtime.status = GameRuleStatus::kFailed;
+                }
                 return;
             }
             ai::ScopedIntent intent;
@@ -3165,8 +3182,11 @@ void DirectorAISystem::update(KernelEngine& engine) const {
             runtime.groups.reserve(definition->node_count);
             for (std::uint32_t offset = 0u; offset < definition->node_count;
                  ++offset) {
-                runtime.groups.push_back(GameRuleGroupRuntime{
-                    node_begin[offset].condition_group_id});
+                if (node_begin[offset].condition_type ==
+                    KernelGameRuleConditionType_GroupEliminated) {
+                    runtime.groups.push_back(GameRuleGroupRuntime{
+                        node_begin[offset].condition_group_id});
+                }
             }
             runtime.initialized = true;
             for (std::uint32_t offset = 0u; offset < definition->node_count;
@@ -3188,10 +3208,19 @@ void DirectorAISystem::update(KernelEngine& engine) const {
                 if (runtime.node_states[offset] != GameRuleNodeState::kActive) {
                     continue;
                 }
-                GameRuleGroupRuntime* group = find_game_rule_group(
-                    runtime, node_begin[offset].condition_group_id);
-                if (group != nullptr && group->sealed && !group->failed &&
-                    group->alive_count == 0u) {
+                const KernelGameRuleNodeDefinition& node = node_begin[offset];
+                bool completed = false;
+                if (node.condition_type ==
+                    KernelGameRuleConditionType_GroupEliminated) {
+                    GameRuleGroupRuntime* group = find_game_rule_group(
+                        runtime, node.condition_group_id);
+                    completed = group != nullptr && group->sealed &&
+                        !group->failed && group->alive_count == 0u;
+                } else if (node.condition_type ==
+                           KernelGameRuleConditionType_PlayerCountAtLeast) {
+                    completed = player_count >= node.condition_count;
+                }
+                if (completed) {
                     runtime.node_states[offset] = GameRuleNodeState::kCompleted;
                 }
             }

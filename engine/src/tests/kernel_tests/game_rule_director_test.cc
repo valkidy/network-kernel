@@ -179,6 +179,58 @@ struct CatalogFixture {
     }
 };
 
+struct PlayerGateCatalogFixture {
+    std::array<KernelColliderTemplateDefinition, 2> colliders = {
+        hit_collider_template(),
+        movement_collider_template(),
+    };
+    std::array<KernelActorTemplateDefinition, 1> actors = {
+        agent_actor_template(),
+    };
+    std::array<KernelEntityTemplateDefinition, 2> entities = {
+        game_rule_director_template(),
+        agent_entity_template(),
+    };
+    std::array<KernelGameRuleNodeDefinition, 2> nodes = {{
+        {sizeof(KernelGameRuleNodeDefinition), 1u,
+         KernelGameRuleConditionType_PlayerCountAtLeast, 0u, 1u},
+        {sizeof(KernelGameRuleNodeDefinition), 2u,
+         KernelGameRuleConditionType_GroupEliminated, 2u, 0u},
+    }};
+    std::array<KernelGameRuleEdgeDefinition, 1> edges = {{
+        {sizeof(KernelGameRuleEdgeDefinition), 1u, 2u},
+    }};
+    std::array<KernelGameRuleSpawnGroupEffectDefinition, 1> effects = {{
+        {sizeof(KernelGameRuleSpawnGroupEffectDefinition),
+         KernelGameRuleEffectType_SpawnGroup, 2u, 2u, 1u, 200u,
+         KernelVec3{2.0f, 0.0f, 0.0f}, 0.0f, 22u},
+    }};
+    KernelGameRuleDefinition rule{
+        sizeof(KernelGameRuleDefinition), 100u, 0u, 2u, 0u, 1u, 0u, 1u};
+
+    bool load(network_example::KernelEngine& engine) const {
+        KernelGameplayCatalogDefinition catalog{};
+        catalog.struct_size = sizeof(catalog);
+        catalog.catalog_version = 1u;
+        catalog.catalog_hash = 1u;
+        catalog.collider_templates = colliders.data();
+        catalog.collider_template_count = colliders.size();
+        catalog.actor_templates = actors.data();
+        catalog.actor_template_count = actors.size();
+        catalog.entity_templates = entities.data();
+        catalog.entity_template_count = entities.size();
+        catalog.game_rules = &rule;
+        catalog.game_rule_count = 1u;
+        catalog.game_rule_nodes = nodes.data();
+        catalog.game_rule_node_count = nodes.size();
+        catalog.game_rule_edges = edges.data();
+        catalog.game_rule_edge_count = edges.size();
+        catalog.game_rule_effects = effects.data();
+        catalog.game_rule_effect_count = effects.size();
+        return engine.load_gameplay_catalog(catalog);
+    }
+};
+
 KernelConfig dedicated_config() {
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;
@@ -190,6 +242,12 @@ KernelConfig dedicated_config() {
 void initialize_engine(network_example::KernelEngine& engine) {
     engine.reset_runtime_state(KernelMode_DedicatedServer);
     const CatalogFixture fixture;
+    assert(fixture.load(engine));
+}
+
+void initialize_player_gate_engine(network_example::KernelEngine& engine) {
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+    const PlayerGateCatalogFixture fixture;
     assert(fixture.load(engine));
 }
 
@@ -300,6 +358,42 @@ void world_rule_still_maintains_target_count() {
     update(engine);
     agents = live_agents(engine);
     assert(agents.size() == 1u);
+}
+
+void game_rule_waits_for_player_before_spawning_wave() {
+    const KernelConfig config = dedicated_config();
+    network_example::KernelEngine engine(config);
+    initialize_player_gate_engine(engine);
+    const network_example::NetId director = create_director(engine);
+
+    update(engine);
+    network_example::GameRuleRuntime& runtime = runtime_for(engine, director);
+    assert(runtime.node_states[0] == network_example::GameRuleNodeState::kActive);
+    assert(runtime.node_states[1] == network_example::GameRuleNodeState::kInactive);
+    assert(runtime.groups.size() == 1u);
+    assert(runtime.groups[0].group_id == 2u);
+    assert(engine.command_queue_.size() == 0u);
+
+    update(engine);
+    assert(runtime.node_states[0] == network_example::GameRuleNodeState::kActive);
+    assert(runtime.node_states[1] == network_example::GameRuleNodeState::kInactive);
+
+    KernelServerEntityCreateInfo player_create{};
+    player_create.struct_size = sizeof(player_create);
+    player_create.entity_type = KernelEntityType_Actor;
+    player_create.actor_type = KernelActorType_Player;
+    player_create.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+    network_example::NetId player = 0u;
+    assert(engine.server_create_entity(player_create, &player));
+    assert(player != 0u);
+
+    update(engine);
+    assert(runtime.node_states[0] == network_example::GameRuleNodeState::kCompleted);
+    assert(runtime.node_states[1] == network_example::GameRuleNodeState::kActive);
+    assert(engine.command_queue_.size() == 1u);
+    update(engine);
+    assert(runtime.groups[0].sealed);
+    assert(runtime.groups[0].alive_count == 1u);
 }
 
 void game_rule_advances_branch_and_join_deterministically() {
@@ -415,6 +509,7 @@ void spawn_execution_failure_fails_game_rule() {
 
 int main() {
     world_rule_still_maintains_target_count();
+    game_rule_waits_for_player_before_spawning_wave();
     game_rule_advances_branch_and_join_deterministically();
     spawn_enqueue_failure_fails_game_rule();
     spawn_execution_failure_fails_game_rule();

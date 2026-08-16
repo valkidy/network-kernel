@@ -157,8 +157,11 @@ struct ActorTemplateConfig {
     struct GameRuleNodeConfig {
         std::uint32_t node_id = 0;
         std::string id;
+        std::uint32_t condition_type = 0;
+        std::uint32_t condition_count = 0;
         std::uint32_t group_id = 0;
         std::string group;
+        bool has_spawn_effect = false;
         std::uint32_t spawn_count = 0;
         std::string spawn_entity_template_ref;
         std::uint32_t spawn_entity_template_id = 0;

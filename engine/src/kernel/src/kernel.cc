@@ -3055,7 +3055,6 @@ bool KernelEngine::load_gameplay_catalog(
             rule.game_rule_definition_id == 0u || rule.node_count == 0u ||
             rule.node_count > KERNEL_MAX_GAME_RULE_NODES ||
             rule.edge_count > KERNEL_MAX_GAME_RULE_EDGES ||
-            rule.effect_count != rule.node_count ||
             rule.effect_count > KERNEL_MAX_GAME_RULE_EFFECTS ||
             rule.first_node > catalog.game_rule_node_count ||
             rule.node_count > catalog.game_rule_node_count - rule.first_node ||
@@ -3075,17 +3074,31 @@ bool KernelEngine::load_gameplay_catalog(
         }
         std::unordered_set<std::uint32_t> node_ids;
         std::unordered_set<std::uint32_t> group_ids;
+        std::uint32_t group_condition_count = 0u;
         for (std::uint32_t offset = 0u; offset < rule.node_count; ++offset) {
             const KernelGameRuleNodeDefinition& node =
                 catalog.game_rule_nodes[rule.first_node + offset];
+            const bool group_condition =
+                node.condition_type ==
+                KernelGameRuleConditionType_GroupEliminated;
+            const bool player_count_condition =
+                node.condition_type ==
+                KernelGameRuleConditionType_PlayerCountAtLeast;
             if (node.struct_size < sizeof(KernelGameRuleNodeDefinition) ||
                 node.node_id == 0u ||
-                node.condition_type !=
-                    KernelGameRuleConditionType_GroupEliminated ||
-                node.condition_group_id == 0u ||
                 !node_ids.insert(node.node_id).second ||
-                !group_ids.insert(node.condition_group_id).second) {
+                (!group_condition && !player_count_condition) ||
+                (group_condition &&
+                 (node.condition_group_id == 0u ||
+                  node.condition_count != 0u ||
+                  !group_ids.insert(node.condition_group_id).second)) ||
+                (player_count_condition &&
+                 (node.condition_group_id != 0u ||
+                  node.condition_count == 0u))) {
                 return false;
+            }
+            if (group_condition) {
+                ++group_condition_count;
             }
         }
         std::unordered_set<std::uint64_t> edge_keys;
@@ -3154,6 +3167,8 @@ bool KernelEngine::load_gameplay_catalog(
                 !effect_node_ids.insert(effect.node_id).second ||
                 !effect_group_ids.insert(effect.group_id).second || node ==
                     catalog.game_rule_nodes + rule.first_node + rule.node_count ||
+                node->condition_type !=
+                    KernelGameRuleConditionType_GroupEliminated ||
                 effect.group_id != node->condition_group_id ||
                 entity == validated_entity_templates.end() ||
                 entity->entity_type != KernelEntityType_Actor ||
@@ -3164,6 +3179,9 @@ bool KernelEngine::load_gameplay_catalog(
                 !std::isfinite(effect.radius) || effect.radius < 0.0f) {
                 return false;
             }
+        }
+        if (effect_node_ids.size() != group_condition_count) {
+            return false;
         }
         validated_game_rules.push_back(rule);
     }

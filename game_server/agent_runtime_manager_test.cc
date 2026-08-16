@@ -45,9 +45,11 @@ network_example::game_server::GameServerGameplayConfig single_spawn_gameplay_con
     // for a body an order of magnitude larger.
     constexpr std::uint32_t kSentryGruntEntityTemplateId = 2u;
     config.agent.actor_template_id = kSentryGruntEntityTemplateId;
+    config.preload_director_template_ids.clear();
     for (network_example::game_server::EntityTemplateConfig& entity_template :
          config.entity_templates) {
-        if (entity_template.entity_type != KernelEntityType_Director) {
+        if (entity_template.entity_type != KernelEntityType_Director ||
+            entity_template.director_kind != KernelDirectorKind_WorldRule) {
             continue;
         }
         entity_template.director_spawn_target_count = 1;
@@ -56,6 +58,8 @@ network_example::game_server::GameServerGameplayConfig single_spawn_gameplay_con
         entity_template.director_spawn_entity_template_id =
             kSentryGruntEntityTemplateId;
         entity_template.director_spawn_entity_template_ref = "sentry_grunt";
+        config.preload_director_template_ids.push_back(
+            entity_template.actor_template_id);
     }
     return config;
 }

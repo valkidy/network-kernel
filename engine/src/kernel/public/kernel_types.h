@@ -1452,6 +1452,7 @@ typedef enum KernelDirectorKind {
 
 typedef enum KernelGameRuleConditionType {
     KernelGameRuleConditionType_GroupEliminated = 1,
+    KernelGameRuleConditionType_PlayerCountAtLeast = 2,
 } KernelGameRuleConditionType;
 
 typedef enum KernelGameRuleEffectType {
@@ -1474,6 +1475,7 @@ typedef struct KernelGameRuleNodeDefinition {
     uint32_t node_id;
     uint32_t condition_type;
     uint32_t condition_group_id;
+    uint32_t condition_count;
 } KernelGameRuleNodeDefinition;
 
 typedef struct KernelGameRuleEdgeDefinition {

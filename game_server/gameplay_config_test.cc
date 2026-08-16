@@ -486,6 +486,11 @@ std::string game_rule_director_yaml() {
         "  kind: game_rule\n"
         "  graph:\n"
         "    nodes:\n"
+        "      - id: wait_for_player\n"
+        "        condition:\n"
+        "          type: player_count_at_least\n"
+        "          count: 1\n"
+        "        next: [wave_1]\n"
         "      - id: wave_1\n"
         "        on_activate:\n"
         "          - type: spawn_group\n"
@@ -674,7 +679,7 @@ int main() {
         network_example::game_server::validate_gameplay_config(config);
     assert(errors.empty());
     require(config.preload_director_template_ids.size() == 1u);
-    require(config.preload_director_template_ids[0] == 100u);
+    require(config.preload_director_template_ids[0] == 101u);
 
     auto no_preload_config = config;
     no_preload_config.preload_director_template_ids.clear();
@@ -732,21 +737,21 @@ int main() {
     };
     const auto numeric_preload_config = load_with_catalog(replace_once(
         production_catalog_yaml,
-        "  - earth_mother\n",
-        "  - 100\n"));
+        "  - game_flow_director\n",
+        "  - 101\n"));
     require(numeric_preload_config.preload_director_template_ids.size() == 1u);
-    require(numeric_preload_config.preload_director_template_ids[0] == 100u);
+    require(numeric_preload_config.preload_director_template_ids[0] == 101u);
     require(rejects_preload_catalog(replace_once(
         production_catalog_yaml,
-        "  - earth_mother\n",
+        "  - game_flow_director\n",
         "  - player\n")));
     require(rejects_preload_catalog(replace_once(
         production_catalog_yaml,
-        "  - earth_mother\n",
-        "  - earth_mother\n  - earth_mother\n")));
+        "  - game_flow_director\n",
+        "  - game_flow_director\n  - game_flow_director\n")));
     const auto empty_preload_config = load_with_catalog(replace_once(
         production_catalog_yaml,
-        "preload_directors:\n  - earth_mother\n",
+        "preload_directors:\n  - game_flow_director\n",
         ""));
     require(empty_preload_config.preload_director_template_ids.empty());
     bool invalid_leg_hierarchy_rejected = false;
@@ -1053,8 +1058,8 @@ int main() {
             network_example::game_server::build_kernel_gameplay_catalog(
                 game_rule_config);
     require(game_rule_catalog.definition.game_rule_count == 1u);
-    require(game_rule_catalog.definition.game_rule_node_count == 3u);
-    require(game_rule_catalog.definition.game_rule_edge_count == 2u);
+    require(game_rule_catalog.definition.game_rule_node_count == 4u);
+    require(game_rule_catalog.definition.game_rule_edge_count == 3u);
     require(game_rule_catalog.definition.game_rule_effect_count == 3u);
     require(
         game_rule_catalog.entity_templates[2].ai.director_kind ==
@@ -1064,9 +1069,17 @@ int main() {
         game_rule_catalog.entity_templates[2].entity_template_id);
     require(game_rule_catalog.game_rule_nodes[0].node_id == 1u);
     require(game_rule_catalog.game_rule_nodes[1].node_id == 2u);
+    require(
+        game_rule_catalog.game_rule_nodes[0].condition_type ==
+        KernelGameRuleConditionType_PlayerCountAtLeast);
+    require(game_rule_catalog.game_rule_nodes[0].condition_count == 1u);
+    require(game_rule_catalog.game_rule_nodes[0].condition_group_id == 0u);
     require(game_rule_catalog.game_rule_edges[0].source_node_id == 1u);
     require(game_rule_catalog.game_rule_edges[0].target_node_id == 2u);
+    require(game_rule_catalog.game_rule_edges[1].source_node_id == 2u);
     require(game_rule_catalog.game_rule_edges[1].target_node_id == 3u);
+    require(game_rule_catalog.game_rule_edges[2].target_node_id == 4u);
+    require(game_rule_catalog.game_rule_effects[0].node_id == 2u);
     require(game_rule_catalog.game_rule_effects[0].count == 2u);
     require(game_rule_catalog.game_rule_effects[0].entity_template_id == 2u);
     require(game_rule_catalog.game_rule_effects[0].radius == 4.0f);
@@ -1098,6 +1111,10 @@ int main() {
     };
     require(rejects_game_rule(replace_once(
         valid_game_rule_yaml, "kind: game_rule", "kind: unknown_rule")));
+    require(rejects_game_rule(replace_once(
+        valid_game_rule_yaml,
+        "type: player_count_at_least\n          count: 1",
+        "type: player_count_at_least\n          count: 0")));
     require(rejects_game_rule(replace_once(
         valid_game_rule_yaml,
         "  graph:\n",
@@ -1361,7 +1378,7 @@ int main() {
     // earth_mother.yaml populates the map with the legged monster, not the
     // sentry grunt; both carry the same combat block, so only the template id
     // and the spawn shape differ.
-    assert(config.agent.actor_template_id == 20);
+    assert(config.agent.actor_template_id == 22);
     assert(config.agent.spawn_position.x == 0.0f);
     assert(config.agent.spawn_count == 1);
     assert(config.agent.spawn_radius == 10.0f);
