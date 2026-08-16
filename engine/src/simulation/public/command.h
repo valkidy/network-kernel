@@ -38,6 +38,9 @@ enum class CommandSource : std::uint8_t {
 
 struct CreateEntity {
     KernelServerEntityCreateInfo create_info{};
+    NetId director_net_id = 0;
+    std::uint32_t gameplay_group_id = 0;
+    std::uint32_t spawn_batch_id = 0;
 };
 
 struct DestroyEntity {

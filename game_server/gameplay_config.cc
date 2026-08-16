@@ -284,6 +284,7 @@ void hash_actor_template(
     hash_vec3(hash, actor_template.vision.local_forward);
     hash_scalar(hash, actor_template.ai_controller_type);
     hash_scalar(hash, actor_template.ai_tick_interval);
+    hash_scalar(hash, actor_template.director_kind);
     hash_scalar(hash, actor_template.director_spawn_target_count);
     hash_scalar(hash, actor_template.director_spawn_entity_template_id);
     hash_scalar(hash, actor_template.director_spawn_actor_template_id);
@@ -291,6 +292,25 @@ void hash_actor_template(
     hash_vec3(hash, actor_template.director_spawn_position);
     hash_float(hash, actor_template.director_spawn_radius);
     hash_scalar(hash, actor_template.director_spawn_seed);
+    for (const ActorTemplateConfig::GameRuleNodeConfig& node :
+         actor_template.game_rule_nodes) {
+        hash_scalar(hash, node.node_id);
+        hash_string(hash, node.id);
+        hash_scalar(hash, node.condition_type);
+        hash_scalar(hash, node.condition_count);
+        hash_scalar(hash, node.group_id);
+        hash_string(hash, node.group);
+        hash_scalar(hash, node.has_spawn_effect);
+        hash_scalar(hash, node.spawn_count);
+        hash_string(hash, node.spawn_entity_template_ref);
+        hash_scalar(hash, node.spawn_entity_template_id);
+        hash_vec3(hash, node.spawn_position);
+        hash_float(hash, node.spawn_radius);
+        hash_scalar(hash, node.spawn_seed);
+        for (const std::uint32_t next_node_id : node.next_node_ids) {
+            hash_scalar(hash, next_node_id);
+        }
+    }
     hash_string(hash, actor_template.activated_trigger.action_graph_ref);
     for (const auto& parameter : actor_template.activated_trigger.parameters) {
         hash_string(hash, parameter.first);
@@ -2315,6 +2335,9 @@ void apply_default_non_weapon_config(GameServerGameplayConfig* config);
 void apply_catalog_player_config(
     const YAML::Node& document,
     GameServerGameplayConfig* config);
+void apply_catalog_director_preload_config(
+    const YAML::Node& document,
+    GameServerGameplayConfig* config);
 void apply_catalog_agent_config(
     const YAML::Node& document,
     GameServerGameplayConfig* config);
@@ -3903,15 +3926,214 @@ EntityTemplateConfig entity_template_from_yaml(
     }
     reject_unknown_keys(
         director,
-        {"kind", "spawn"},
+        {"kind", "spawn", "graph"},
         path,
         source_kind,
         KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
         entity_template.actor_template_id);
     const std::string kind =
         director["kind"] ? director["kind"].as<std::string>() : std::string{};
-    if (kind != "world_rule") {
+    if (kind != "world_rule" && kind != "game_rule") {
         throw std::runtime_error("unsupported director.kind: " + kind);
+    }
+    entity_template.director_kind = kind == "world_rule"
+        ? KernelDirectorKind_WorldRule
+        : KernelDirectorKind_GameRule;
+    if (kind == "game_rule") {
+        if (director["spawn"] || !director["graph"]) {
+            throw std::runtime_error(
+                "game_rule director requires graph and must not define spawn: " +
+                entity_template.name);
+        }
+        const YAML::Node graph = director["graph"];
+        reject_unknown_keys(
+            graph,
+            {"nodes"},
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_GAME_RULE,
+            entity_template.actor_template_id);
+        const YAML::Node nodes = graph["nodes"];
+        if (!nodes || !nodes.IsSequence() || nodes.size() == 0u ||
+            nodes.size() > KERNEL_MAX_GAME_RULE_NODES) {
+            throw std::runtime_error(
+                "game_rule graph requires 1..64 nodes: " + entity_template.name);
+        }
+        std::unordered_map<std::string, std::uint32_t> node_ids;
+        std::unordered_set<std::string> groups;
+        for (std::size_t index = 0u; index < nodes.size(); ++index) {
+            const YAML::Node authored = nodes[index];
+            reject_unknown_keys(
+                authored,
+                {"id", "on_activate", "condition", "next"},
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_GAME_RULE,
+                entity_template.actor_template_id);
+            if (!authored["id"] || !authored["condition"] ||
+                (authored["on_activate"] &&
+                 (!authored["on_activate"].IsSequence() ||
+                  authored["on_activate"].size() != 1u))) {
+                throw std::runtime_error(
+                    "game_rule node requires id, condition, and at most one on_activate effect");
+            }
+            ActorTemplateConfig::GameRuleNodeConfig node_config;
+            node_config.node_id = static_cast<std::uint32_t>(index + 1u);
+            node_config.id = authored["id"].as<std::string>();
+            if (node_config.id.empty() ||
+                !node_ids.emplace(node_config.id, node_config.node_id).second) {
+                throw std::runtime_error("duplicate or empty game_rule node id");
+            }
+            const YAML::Node condition = authored["condition"];
+            reject_unknown_keys(
+                condition,
+                {"type", "group", "count"},
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_GAME_RULE,
+                entity_template.actor_template_id);
+            if (!condition["type"]) {
+                throw std::runtime_error(
+                    "game_rule condition requires type");
+            }
+            const std::string condition_type =
+                condition["type"].as<std::string>();
+            if (condition_type == "group_eliminated") {
+                if (!condition["group"] || condition["count"]) {
+                    throw std::runtime_error(
+                        "group_eliminated requires group and must not define count");
+                }
+                node_config.condition_type =
+                    KernelGameRuleConditionType_GroupEliminated;
+                node_config.group = condition["group"].as<std::string>();
+                node_config.group_id = node_config.node_id;
+                if (node_config.group.empty() ||
+                    !groups.insert(node_config.group).second) {
+                    throw std::runtime_error(
+                        "duplicate or empty game_rule group");
+                }
+            } else if (condition_type == "player_count_at_least") {
+                if (!condition["count"] || condition["group"]) {
+                    throw std::runtime_error(
+                        "player_count_at_least requires count and must not define group");
+                }
+                node_config.condition_type =
+                    KernelGameRuleConditionType_PlayerCountAtLeast;
+                node_config.condition_count =
+                    condition["count"].as<std::uint32_t>();
+                if (node_config.condition_count == 0u) {
+                    throw std::runtime_error(
+                        "player_count_at_least count must be greater than zero");
+                }
+            } else {
+                throw std::runtime_error(
+                    "unsupported game_rule condition: " + condition_type);
+            }
+            if (authored["on_activate"]) {
+                if (node_config.condition_type !=
+                    KernelGameRuleConditionType_GroupEliminated) {
+                    throw std::runtime_error(
+                        "player_count_at_least node must not define on_activate");
+                }
+                const YAML::Node effect = authored["on_activate"][0];
+                reject_unknown_keys(
+                    effect,
+                    {"type", "group", "count", "entity_template", "position", "radius", "seed"},
+                    path,
+                    source_kind,
+                    KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_GAME_RULE,
+                    entity_template.actor_template_id);
+                if (!effect["type"] ||
+                    effect["type"].as<std::string>() != "spawn_group" ||
+                    !effect["group"] ||
+                    effect["group"].as<std::string>() != node_config.group ||
+                    !effect["count"] || !effect["entity_template"]) {
+                    throw std::runtime_error(
+                        "game_rule node requires one matching spawn_group effect");
+                }
+                node_config.has_spawn_effect = true;
+                node_config.spawn_count = effect["count"].as<std::uint32_t>();
+                node_config.spawn_entity_template_ref =
+                    effect["entity_template"].as<std::string>();
+                node_config.spawn_position = effect["position"]
+                    ? vec3_from_yaml(effect["position"])
+                    : entity_template.transform_position;
+                node_config.spawn_radius =
+                    effect["radius"] ? effect["radius"].as<float>() : 0.0f;
+                node_config.spawn_seed =
+                    effect["seed"] ? effect["seed"].as<std::uint32_t>() : 1u;
+                if (node_config.spawn_count == 0u ||
+                    node_config.spawn_entity_template_ref.empty() ||
+                    !std::isfinite(node_config.spawn_position.x) ||
+                    !std::isfinite(node_config.spawn_position.y) ||
+                    !std::isfinite(node_config.spawn_position.z) ||
+                    !std::isfinite(node_config.spawn_radius) ||
+                    node_config.spawn_radius < 0.0f) {
+                    throw std::runtime_error(
+                        "invalid game_rule spawn_group values");
+                }
+            } else if (node_config.condition_type ==
+                       KernelGameRuleConditionType_GroupEliminated) {
+                throw std::runtime_error(
+                    "group_eliminated node requires a matching spawn_group effect");
+            }
+            if (authored["next"]) {
+                if (!authored["next"].IsSequence()) {
+                    throw std::runtime_error("game_rule node.next must be a sequence");
+                }
+                for (const YAML::Node& next : authored["next"]) {
+                    node_config.next_refs.push_back(next.as<std::string>());
+                }
+            }
+            entity_template.game_rule_nodes.push_back(std::move(node_config));
+        }
+        std::size_t edge_count = 0u;
+        for (ActorTemplateConfig::GameRuleNodeConfig& node_config :
+             entity_template.game_rule_nodes) {
+            std::unordered_set<std::uint32_t> targets;
+            for (const std::string& next_ref : node_config.next_refs) {
+                const auto found = node_ids.find(next_ref);
+                if (found == node_ids.end() || found->second == node_config.node_id ||
+                    !targets.insert(found->second).second) {
+                    throw std::runtime_error("invalid game_rule edge: " + next_ref);
+                }
+                node_config.next_node_ids.push_back(found->second);
+                ++edge_count;
+            }
+        }
+        if (edge_count > KERNEL_MAX_GAME_RULE_EDGES) {
+            throw std::runtime_error("game_rule graph exceeds 256 edges");
+        }
+        std::vector<std::uint8_t> visit(entity_template.game_rule_nodes.size(), 0u);
+        const std::function<bool(std::uint32_t)> has_cycle =
+            [&](std::uint32_t node_id) {
+                std::uint8_t& state = visit[node_id - 1u];
+                if (state == 1u) {
+                    return true;
+                }
+                if (state == 2u) {
+                    return false;
+                }
+                state = 1u;
+                for (const std::uint32_t next_id :
+                     entity_template.game_rule_nodes[node_id - 1u].next_node_ids) {
+                    if (has_cycle(next_id)) {
+                        return true;
+                    }
+                }
+                state = 2u;
+                return false;
+            };
+        for (const ActorTemplateConfig::GameRuleNodeConfig& node_config :
+             entity_template.game_rule_nodes) {
+            if (has_cycle(node_config.node_id)) {
+                throw std::runtime_error("game_rule graph must be acyclic");
+            }
+        }
+        return entity_template;
+    }
+    if (director["graph"]) {
+        throw std::runtime_error("world_rule director must not define graph");
     }
     const YAML::Node spawn = director["spawn"];
     if (!spawn) {
@@ -4122,28 +4344,54 @@ std::vector<EntityTemplateConfig> load_entity_templates_from_source(
             return lhs.actor_template_id < rhs.actor_template_id;
         });
     for (EntityTemplateConfig& entity_template : entity_templates) {
-        if (entity_template.entity_type != KernelEntityType_Director ||
-            entity_template.director_spawn_entity_template_ref.empty()) {
+        if (entity_template.entity_type != KernelEntityType_Director) {
             continue;
         }
-        const YAML::Node ref(entity_template.director_spawn_entity_template_ref);
-        entity_template.director_spawn_entity_template_id =
-            entity_template_ref_from_yaml(ref, entity_templates);
-        const auto actor_match = std::find_if(
-            entity_templates.begin(),
-            entity_templates.end(),
-            [&](const EntityTemplateConfig& candidate) {
-                return candidate.actor_template_id ==
-                           entity_template.director_spawn_entity_template_id &&
-                       candidate.entity_type == kEntityTypeActor;
-            });
-        if (actor_match == entity_templates.end()) {
-            throw std::runtime_error(
-                "director.spawn entity_template must reference an actor: " +
-                entity_template.name);
+        if (entity_template.director_kind == KernelDirectorKind_WorldRule) {
+            const YAML::Node ref(
+                entity_template.director_spawn_entity_template_ref);
+            entity_template.director_spawn_entity_template_id =
+                entity_template_ref_from_yaml(ref, entity_templates);
+            const auto actor_match = std::find_if(
+                entity_templates.begin(),
+                entity_templates.end(),
+                [&](const EntityTemplateConfig& candidate) {
+                    return candidate.actor_template_id ==
+                               entity_template.director_spawn_entity_template_id &&
+                           candidate.entity_type == kEntityTypeActor;
+                });
+            if (actor_match == entity_templates.end()) {
+                throw std::runtime_error(
+                    "director.spawn entity_template must reference an actor: " +
+                    entity_template.name);
+            }
+            entity_template.director_spawn_actor_template_id =
+                entity_template.director_spawn_entity_template_id;
+            continue;
         }
-        entity_template.director_spawn_actor_template_id =
-            entity_template.director_spawn_entity_template_id;
+        for (ActorTemplateConfig::GameRuleNodeConfig& node :
+             entity_template.game_rule_nodes) {
+            if (!node.has_spawn_effect) {
+                continue;
+            }
+            const YAML::Node ref(node.spawn_entity_template_ref);
+            node.spawn_entity_template_id =
+                entity_template_ref_from_yaml(ref, entity_templates);
+            const auto actor_match = std::find_if(
+                entity_templates.begin(),
+                entity_templates.end(),
+                [&](const EntityTemplateConfig& candidate) {
+                    return candidate.actor_template_id ==
+                               node.spawn_entity_template_id &&
+                           candidate.entity_type == KernelEntityType_Actor &&
+                           candidate.actor_type == KernelActorType_Agent;
+                });
+            if (actor_match == entity_templates.end()) {
+                throw std::runtime_error(
+                    "game_rule spawn_group entity_template must reference an agent actor: " +
+                    entity_template.name);
+            }
+        }
     }
     return entity_templates;
 }
@@ -5658,6 +5906,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             "skeleton_manifests_dir",
             "player",
             "enemy",
+            "preload_directors",
         },
         path,
         source.source_kind(),
@@ -5870,6 +6119,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
         actor_templates_from_entity_templates(config.entity_templates);
 
     apply_catalog_player_config(document, &config);
+    apply_catalog_director_preload_config(document, &config);
     apply_catalog_agent_config(document, &config);
 
     const std::vector<std::string> errors = validate_gameplay_config(config);
@@ -5903,6 +6153,41 @@ void apply_catalog_player_config(
     }
 }
 
+void apply_catalog_director_preload_config(
+    const YAML::Node& document,
+    GameServerGameplayConfig* config) {
+    const YAML::Node preload_directors = document["preload_directors"];
+    if (!preload_directors) {
+        return;
+    }
+    if (!preload_directors.IsSequence()) {
+        throw std::runtime_error("preload_directors must be a sequence");
+    }
+
+    std::unordered_set<std::uint32_t> configured_template_ids;
+    for (const YAML::Node& ref : preload_directors) {
+        const std::uint32_t template_id =
+            entity_template_ref_from_yaml(ref, config->entity_templates);
+        const auto entity_template = std::find_if(
+            config->entity_templates.begin(),
+            config->entity_templates.end(),
+            [template_id](const EntityTemplateConfig& candidate) {
+                return candidate.actor_template_id == template_id;
+            });
+        if (entity_template == config->entity_templates.end() ||
+            entity_template->entity_type != KernelEntityType_Director) {
+            throw std::runtime_error(
+                "preload_directors must reference director entity templates");
+        }
+        if (!configured_template_ids.insert(template_id).second) {
+            throw std::runtime_error(
+                "duplicate preload_directors entity template: " +
+                std::to_string(template_id));
+        }
+        config->preload_director_template_ids.push_back(template_id);
+    }
+}
+
 void apply_catalog_agent_config(
     const YAML::Node& document,
     GameServerGameplayConfig* config) {
@@ -5913,6 +6198,8 @@ void apply_catalog_agent_config(
             config->entity_templates.end(),
             [](const EntityTemplateConfig& entity_template) {
                 return entity_template.entity_type == KernelEntityType_Director &&
+                       entity_template.director_kind ==
+                           KernelDirectorKind_WorldRule &&
                        entity_template.director_spawn_actor_template_id != 0u;
             });
         if (director != config->entity_templates.end()) {
@@ -6125,6 +6412,14 @@ std::uint64_t compute_gameplay_catalog_hash(
     hash_float(&hash, config.agent.spawn_radius);
     hash_scalar(&hash, config.agent.spawn_seed);
     hash_scalar(&hash, config.agent.override_director_spawn);
+    hash_scalar(
+        &hash,
+        static_cast<std::uint32_t>(
+            config.preload_director_template_ids.size()));
+    for (const std::uint32_t template_id :
+         config.preload_director_template_ids) {
+        hash_scalar(&hash, template_id);
+    }
     hash_string(&hash, config.static_collision_scene.entry_path);
     hash_scalar(&hash, config.static_collision_scene.scene_id);
     hash_scalar(&hash, config.static_collision_scene.collider_id);
@@ -6804,7 +7099,6 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
         storage.actor_templates.push_back(definition);
     }
 
-    bool has_director_template = false;
     const std::vector<EntityTemplateConfig>& entity_templates =
         config.entity_templates.empty() ? config.actor_templates : config.entity_templates;
     for (const EntityTemplateConfig& authored_template : entity_templates) {
@@ -6973,7 +7267,6 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
                         : authored_template.ai_tick_interval;
             }
         } else if (authored_template.entity_type == KernelEntityType_Director) {
-            has_director_template = true;
             entity_template.component_flags =
                 KERNEL_ENTITY_COMPONENT_TRANSFORM |
                 KERNEL_ENTITY_COMPONENT_AGENT_RUNTIME |
@@ -6982,11 +7275,69 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
                 entity_template.component_flags |= KERNEL_ENTITY_COMPONENT_SERVER_ONLY;
             }
             entity_template.ai.controller_type = KernelAiControllerType_Director;
+            entity_template.ai.director_kind = authored_template.director_kind;
+            entity_template.ai.game_rule_definition_id =
+                authored_template.director_kind == KernelDirectorKind_GameRule
+                    ? authored_template.actor_template_id
+                    : 0u;
             entity_template.ai.tick_interval =
                 authored_template.ai_tick_interval == 0u
                     ? 1u
                     : authored_template.ai_tick_interval;
-            if (config.agent.override_director_spawn) {
+            if (authored_template.director_kind == KernelDirectorKind_GameRule) {
+                const std::uint32_t first_node =
+                    static_cast<std::uint32_t>(storage.game_rule_nodes.size());
+                const std::uint32_t first_edge =
+                    static_cast<std::uint32_t>(storage.game_rule_edges.size());
+                const std::uint32_t first_effect =
+                    static_cast<std::uint32_t>(storage.game_rule_effects.size());
+                for (const ActorTemplateConfig::GameRuleNodeConfig& node :
+                     authored_template.game_rule_nodes) {
+                    storage.game_rule_nodes.push_back(KernelGameRuleNodeDefinition{
+                        sizeof(KernelGameRuleNodeDefinition),
+                        node.node_id,
+                        node.condition_type,
+                        node.group_id,
+                        node.condition_count,
+                    });
+                    if (node.has_spawn_effect) {
+                        storage.game_rule_effects.push_back(
+                            KernelGameRuleSpawnGroupEffectDefinition{
+                                sizeof(KernelGameRuleSpawnGroupEffectDefinition),
+                                KernelGameRuleEffectType_SpawnGroup,
+                                node.node_id,
+                                node.group_id,
+                                node.spawn_count,
+                                node.spawn_entity_template_id,
+                                node.spawn_position,
+                                node.spawn_radius,
+                                node.spawn_seed,
+                            });
+                    }
+                    for (const std::uint32_t next_node_id :
+                         node.next_node_ids) {
+                        storage.game_rule_edges.push_back(
+                            KernelGameRuleEdgeDefinition{
+                                sizeof(KernelGameRuleEdgeDefinition),
+                                node.node_id,
+                                next_node_id,
+                            });
+                    }
+                }
+                storage.game_rules.push_back(KernelGameRuleDefinition{
+                    sizeof(KernelGameRuleDefinition),
+                    authored_template.actor_template_id,
+                    first_node,
+                    static_cast<std::uint32_t>(
+                        authored_template.game_rule_nodes.size()),
+                    first_edge,
+                    static_cast<std::uint32_t>(
+                        storage.game_rule_edges.size() - first_edge),
+                    first_effect,
+                    static_cast<std::uint32_t>(
+                        storage.game_rule_effects.size() - first_effect),
+                });
+            } else if (config.agent.override_director_spawn) {
                 entity_template.ai.spawn_target_count = config.agent.spawn_count;
                 entity_template.ai.spawn_entity_template_id =
                     config.agent.actor_template_id;
@@ -7031,27 +7382,6 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
                 KERNEL_ENTITY_COMPONENT_SKELETON;
         }
         storage.entity_templates.push_back(entity_template);
-    }
-    if (!has_director_template) {
-        KernelEntityTemplateDefinition director_template{};
-        director_template.struct_size = sizeof(KernelEntityTemplateDefinition);
-        director_template.entity_template_id = kDefaultDirectorEntityTemplateId;
-        director_template.entity_type = KernelEntityType_Director;
-        director_template.component_flags =
-            KERNEL_ENTITY_COMPONENT_TRANSFORM |
-            KERNEL_ENTITY_COMPONENT_SERVER_ONLY |
-            KERNEL_ENTITY_COMPONENT_AGENT_RUNTIME |
-            KERNEL_ENTITY_COMPONENT_DIRECTOR_RUNTIME;
-        director_template.ai.struct_size = sizeof(KernelEntityAiDefinition);
-        director_template.ai.controller_type = KernelAiControllerType_Director;
-        director_template.ai.tick_interval = 1;
-        director_template.ai.spawn_target_count = config.agent.spawn_count;
-        director_template.ai.spawn_entity_template_id = config.agent.actor_template_id;
-        director_template.ai.spawn_actor_template_id = config.agent.actor_template_id;
-        director_template.ai.spawn_position = config.agent.spawn_position;
-        director_template.ai.spawn_radius = config.agent.spawn_radius;
-        director_template.ai.spawn_seed = config.agent.spawn_seed;
-        storage.entity_templates.push_back(director_template);
     }
     for (const ProjectileTemplateConfig& projectile_template :
          config.projectile_templates) {
@@ -7226,6 +7556,18 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
     storage.definition.skeleton_assets = storage.skeleton_assets.data();
     storage.definition.skeleton_asset_count =
         static_cast<std::uint32_t>(storage.skeleton_assets.size());
+    storage.definition.game_rules = storage.game_rules.data();
+    storage.definition.game_rule_count =
+        static_cast<std::uint32_t>(storage.game_rules.size());
+    storage.definition.game_rule_nodes = storage.game_rule_nodes.data();
+    storage.definition.game_rule_node_count =
+        static_cast<std::uint32_t>(storage.game_rule_nodes.size());
+    storage.definition.game_rule_edges = storage.game_rule_edges.data();
+    storage.definition.game_rule_edge_count =
+        static_cast<std::uint32_t>(storage.game_rule_edges.size());
+    storage.definition.game_rule_effects = storage.game_rule_effects.data();
+    storage.definition.game_rule_effect_count =
+        static_cast<std::uint32_t>(storage.game_rule_effects.size());
     return storage;
 }
 
