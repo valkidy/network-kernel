@@ -2697,7 +2697,7 @@ bool KernelEngine::load_gameplay_catalog(
             // rig is the only place that can say whether an authored bone
             // actually carries one.
             std::uint32_t invalid_limb = 0u;
-            if (!validate_locomotion_limb_colliders(
+            if (!validate_locomotion_colliders(
                     asset->bind_pose, skeleton, &invalid_limb)) {
                 spdlog::error(
                     "entity template {} skeleton limb collider {} does not "

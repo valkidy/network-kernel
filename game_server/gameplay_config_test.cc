@@ -1000,7 +1000,7 @@ int main() {
     assert(
         config.static_collision_scene.collision_layer ==
         KERNEL_STATIC_COLLISION_LAYER_TERRAIN);
-    require(config.weapons.catalog_version == 11);
+    require(config.weapons.catalog_version == 12);
     require(config.prop_population_rules.size() == 1u);
     require(config.prop_population_rules[0].name == "temporary_deployable");
     require(
@@ -1205,25 +1205,68 @@ int main() {
             90.0f);
     require(monster_template->skeleton.foothold_candidate_offsets.size() == 5u);
 
-    // Limb colliders: one per GEO_ bone the rig carries, and the count is a
-    // property of the rig rather than of this template, so it is worth pinning.
-    // monster_sim_actor authors none, which is what keeps this opt-in.
-    require(monster_template->skeleton.limb_colliders.empty());
-    const auto limb_collider_count =
-        [&config](const std::string& template_name) -> std::size_t {
+    // Per-bone colliders now live on the RIG, not the template: the count is a
+    // property of the skeleton, so it is asserted against the asset. The rig
+    // file is optional, and simplified_monster_sim_v4 has none -- which is what
+    // keeps per-bone collision opt-in.
+    const auto rig_collider_count =
+        [&config](const std::string& asset_name) -> std::size_t {
         const auto found = std::find_if(
-            config.entity_templates.begin(),
-            config.entity_templates.end(),
-            [&template_name](
-                const network_example::game_server::EntityTemplateConfig&
-                    entity) { return entity.name == template_name; });
-        require(found != config.entity_templates.end());
-        return found->skeleton.limb_colliders.size();
+            config.skeleton_assets.begin(),
+            config.skeleton_assets.end(),
+            [&asset_name](
+                const network_example::game_server::SkeletonAssetConfig& asset) {
+                return asset.name == asset_name;
+            });
+        require(found != config.skeleton_assets.end());
+        return found->colliders.size();
     };
-    require(limb_collider_count("biped_actor") == 12u);
-    require(limb_collider_count("quadruped_actor") == 9u);
-    require(limb_collider_count("tripod_actor") == 7u);
+    require(rig_collider_count("simplified_biped") == 12u);
+    require(rig_collider_count("simplified_quadruped") == 9u);
+    require(rig_collider_count("simplified_tripod") == 7u);
+    require(rig_collider_count("simplified_monster_sim_v4") == 0u);
 
+    const auto tripod_asset_rig = std::find_if(
+        config.skeleton_assets.begin(),
+        config.skeleton_assets.end(),
+        [](const network_example::game_server::SkeletonAssetConfig& asset) {
+            return asset.name == "simplified_tripod";
+        });
+    require(tripod_asset_rig != config.skeleton_assets.end());
+    for (const network_example::game_server::RigColliderConfig& collider :
+         tripod_asset_rig->colliders) {
+        // Bone names resolve to real indices, never the 0 a failed lookup would
+        // leave behind -- GEO_ bones are never the root.
+        require(collider.bone_index != 0u);
+        const bool is_body = collider.bone == "GEO_Body";
+        // The body is the rig's one sphere; everything else is a box. A leg
+        // collider names its leg, the body belongs to none.
+        require(
+            collider.shape_type ==
+            (is_body ? KernelColliderShapeType_Sphere
+                     : KernelColliderShapeType_OrientedBox));
+        require(collider.leg_id.empty() == is_body);
+    }
+    // The biped's arms are colliders that belong to no leg, so leg membership
+    // must be optional rather than implied by carrying a collider.
+    const auto biped_asset_rig = std::find_if(
+        config.skeleton_assets.begin(),
+        config.skeleton_assets.end(),
+        [](const network_example::game_server::SkeletonAssetConfig& asset) {
+            return asset.name == "simplified_biped";
+        });
+    require(biped_asset_rig != config.skeleton_assets.end());
+    require(
+        std::count_if(
+            biped_asset_rig->colliders.begin(),
+            biped_asset_rig->colliders.end(),
+            [](const network_example::game_server::RigColliderConfig& collider) {
+                return collider.leg_id.empty();
+            }) == 8);
+
+    // The template supplies only what the colliders MEAN. monster_sim_actor
+    // sets none, so it stays out of per-bone collision entirely.
+    require(!monster_template->skeleton.has_collision_flags);
     const auto tripod_template = std::find_if(
         config.entity_templates.begin(),
         config.entity_templates.end(),
@@ -1231,41 +1274,16 @@ int main() {
             return entity.name == "tripod_actor";
         });
     require(tripod_template != config.entity_templates.end());
-    for (const network_example::game_server::LimbColliderConfig& limb :
-         tripod_template->skeleton.limb_colliders) {
-        require(
-            (limb.purpose_flags & KernelColliderPurpose_Limb) != 0u);
-        require((limb.purpose_flags & KernelColliderPurpose_Hit) != 0u);
-        require(limb.layer_mask == KERNEL_COLLISION_LAYER_HOSTILE_SIDE);
-        // Bone names resolve to real indices, never the 0 a failed lookup would
-        // leave behind -- GEO_ bones are never the root.
-        require(limb.bone_index != 0u);
-        const bool is_body = limb.bone == "GEO_Body";
-        // The body is the rig's one sphere; everything else is a box. A leg
-        // limb names its leg, the body does not belong to one.
-        require(
-            limb.shape_type ==
-            (is_body ? KernelColliderShapeType_Sphere
-                     : KernelColliderShapeType_OrientedBox));
-        require(
-            (limb.leg_index == KERNEL_MAX_SKELETON_LEGS) == is_body);
-    }
-    // The biped's arms are limbs that belong to no leg, so leg membership must
-    // be optional rather than implied by being a limb.
-    const auto biped_template = std::find_if(
-        config.entity_templates.begin(),
-        config.entity_templates.end(),
-        [](const network_example::game_server::EntityTemplateConfig& entity) {
-            return entity.name == "biped_actor";
-        });
-    require(biped_template != config.entity_templates.end());
+    require(tripod_template->skeleton.has_collision_flags);
     require(
-        std::count_if(
-            biped_template->skeleton.limb_colliders.begin(),
-            biped_template->skeleton.limb_colliders.end(),
-            [](const network_example::game_server::LimbColliderConfig& limb) {
-                return limb.leg_index == KERNEL_MAX_SKELETON_LEGS;
-            }) == 8);
+        (tripod_template->skeleton.collision_flags.purpose_flags &
+         KernelColliderPurpose_Limb) != 0u);
+    require(
+        (tripod_template->skeleton.collision_flags.purpose_flags &
+         KernelColliderPurpose_Hit) != 0u);
+    require(
+        tripod_template->skeleton.collision_flags.layer_mask ==
+        KERNEL_COLLISION_LAYER_HOSTILE_SIDE);
 
     require(catalog.definition.skeleton_asset_count == 5u);
     const auto quadruped_asset = std::find_if(
@@ -2470,7 +2488,7 @@ int main() {
                 generated_bundle.data(),
                 static_cast<std::uint32_t>(generated_bundle.size()),
                 "monster_observer_gameplay_catalog.yaml");
-    require(monster_observer_config.weapons.catalog_version == 11u);
+    require(monster_observer_config.weapons.catalog_version == 12u);
     require(monster_observer_config.agent.override_director_spawn);
     require(monster_observer_config.agent.actor_template_id == 20u);
     require(monster_observer_config.agent.spawn_count == 1u);

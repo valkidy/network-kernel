@@ -41,7 +41,7 @@ for src in $(SRCS); do
     */collider_templates/*.yaml)
       cp "$$src" "$$bundle_root/collider_templates/$$(basename "$$src")"
       ;;
-    */skeleton_assets/generated/*.ozz|*/skeleton_assets/generated/*.skeleton_manifest.json)
+    */skeleton_assets/generated/*.ozz|*/skeleton_assets/generated/*.skeleton_manifest.json|*/skeleton_assets/generated/*.rig.yaml)
       cp "$$src" "$$bundle_root/skeleton_assets/generated/$$(basename "$$src")"
       ;;
   esac

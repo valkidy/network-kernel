@@ -200,7 +200,7 @@ bool validate_locomotion_rig(
 // cannot see it -- and the collider would silently become a 1m cube rather than
 // fail. On failure the offending index is written to out_invalid_limb_index
 // when it is not null.
-bool validate_locomotion_limb_colliders(
+bool validate_locomotion_colliders(
     std::span<const KernelBoneLocalTransform> bind_pose,
     const KernelSkeletonBindingDefinition& definition,
     std::uint32_t* out_invalid_limb_index);
@@ -209,9 +209,9 @@ bool validate_locomotion_limb_colliders(
 // rest scale. Spheres use the x component as a radius. Kept beside the
 // validation so the runtime and the check cannot disagree about what the
 // authored bone means.
-glm::vec3 locomotion_limb_half_extents(
+glm::vec3 locomotion_collider_half_extents(
     std::span<const KernelBoneLocalTransform> bind_pose,
-    const KernelSkeletonLimbColliderDefinition& limb);
+    const KernelSkeletonColliderDefinition& limb);
 
 bool initialize_locomotion_state(
     const KernelSkeletonBindingDefinition& definition,

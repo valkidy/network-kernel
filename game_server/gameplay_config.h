@@ -61,6 +61,17 @@ struct SkeletonManifestBoneConfig {
     std::int32_t parent_index = -1;
 };
 
+// One per-bone collider as the RIG declares it, in <name>.rig.yaml. Geometry
+// only: the dimensions come from the bone's own rest scale, and whose side the
+// actor is on is a property of the actor, not of the skeleton -- that lives on
+// the entity template as SkeletonCollisionFlagsConfig.
+struct RigColliderConfig {
+    std::string bone;
+    std::string leg_id;
+    std::uint32_t bone_index = 0;
+    std::uint8_t shape_type = KernelColliderShapeType_OrientedBox;
+};
+
 struct SkeletonAssetConfig {
     std::uint32_t skeleton_asset_id = 0;
     std::string name;
@@ -69,6 +80,9 @@ struct SkeletonAssetConfig {
     std::string runtime_reference;
     std::vector<std::uint8_t> runtime_skeleton;
     std::vector<SkeletonManifestBoneConfig> bones;
+    // From the authored <name>.rig.yaml beside the generated files. Empty when
+    // the rig declares none, which is what keeps per-bone collision opt-in.
+    std::vector<RigColliderConfig> colliders;
 };
 
 struct SkeletonLegConfig {
@@ -86,15 +100,10 @@ struct SkeletonLegConfig {
     float max_reach_ratio = 0.0f;
 };
 
-// One authored per-bone collider. Carries gameplay semantics only; the shape's
-// dimensions come from the named bone's rest scale in the skeleton itself, so
-// there is no size to author here and no second copy to drift.
-struct LimbColliderConfig {
-    std::string bone;
-    std::string leg_id;
-    std::uint32_t bone_index = 0;
-    std::uint32_t leg_index = KERNEL_MAX_SKELETON_LEGS;
-    std::uint8_t shape_type = KernelColliderShapeType_OrientedBox;
+// The gameplay meaning an entity template gives to every collider on its rig.
+// One setting for the whole rig, because the thing it answers -- whom these
+// colliders belong to and what may hit them -- is the same for every bone.
+struct SkeletonCollisionFlagsConfig {
     std::uint16_t hit_zone = 0;
     std::uint32_t purpose_flags = 0;
     std::uint32_t layer_mask = 0;
@@ -126,7 +135,10 @@ struct SkeletonBindingConfig {
     std::vector<KernelVec2> foothold_candidate_offsets;
     std::vector<SkeletonLegConfig> legs;
     std::vector<std::uint32_t> processing_order;
-    std::vector<LimbColliderConfig> limb_colliders;
+    // Applied to every collider the rig declares. Absent means the actor takes
+    // no part in per-bone collision even if its rig describes some.
+    bool has_collision_flags = false;
+    SkeletonCollisionFlagsConfig collision_flags;
 };
 
 struct ActorTemplateConfig {

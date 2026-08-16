@@ -5,8 +5,8 @@
 #include <stdint.h>
 
 /*
- * 71: KernelSkeletonBindingDefinition gained limb_collider_count and
- *     limb_colliders. Appended, but every managed mirror must add the same
+ * 71: KernelSkeletonBindingDefinition gained collider_count and
+ *     colliders. Appended, but every managed mirror must add the same
  *     fields or the nested layout of KernelEntityTemplateDefinition shifts.
  * 69: action graphs gained optional literal impulse directions. The direction
  *     vector is appended to the public gameplay ABI.
@@ -19,7 +19,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 71u
+#define KERNEL_ABI_VERSION 72u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -49,7 +49,7 @@
  * an unbounded number of physics bodies: every one of these becomes a Jolt body
  * per actor, refreshed twice per tick by sync_entity_colliders_from_world.
  */
-#define KERNEL_MAX_SKELETON_LIMB_COLLIDERS 16u
+#define KERNEL_MAX_SKELETON_COLLIDERS 16u
 
 #define KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_FAILED UINT32_C(0)
 #define KERNEL_GAMEPLAY_CATALOG_LOAD_STATUS_SUCCESS UINT32_C(1)
@@ -1366,7 +1366,7 @@ typedef struct KernelSkeletonLegDefinition {
  * instead of its scale cannot be described this way; such a bone rests at unit
  * scale and is rejected at load rather than silently registered as a 1m cube.
  */
-typedef struct KernelSkeletonLimbColliderDefinition {
+typedef struct KernelSkeletonColliderDefinition {
     uint32_t bone_index;
     // Which leg this limb belongs to, or KERNEL_MAX_SKELETON_LEGS for a limb
     // that is not part of a leg at all (torso, head, arm).
@@ -1379,7 +1379,7 @@ typedef struct KernelSkeletonLimbColliderDefinition {
     uint16_t hit_zone;
     uint32_t purpose_flags;
     uint32_t layer_mask;
-} KernelSkeletonLimbColliderDefinition;
+} KernelSkeletonColliderDefinition;
 
 typedef struct KernelSkeletonBindingDefinition {
     uint32_t struct_size;
@@ -1426,9 +1426,9 @@ typedef struct KernelSkeletonBindingDefinition {
      * this has nothing to act on.
      */
     float stance_crouch_meters;
-    uint32_t limb_collider_count;
-    KernelSkeletonLimbColliderDefinition
-        limb_colliders[KERNEL_MAX_SKELETON_LIMB_COLLIDERS];
+    uint32_t collider_count;
+    KernelSkeletonColliderDefinition
+        colliders[KERNEL_MAX_SKELETON_COLLIDERS];
 } KernelSkeletonBindingDefinition;
 
 typedef struct KernelActionTemplateDefinition {

@@ -1,0 +1,20 @@
+# What this rig IS, as opposed to how any particular actor walks it. Paired with
+# simplified_tripod.ozz and simplified_tripod.skeleton_manifest.json by name.
+#
+# Colliders carry no dimensions: this rig authors its geometry as scaled unit
+# primitives, so a GEO_ bone's rest scale IS its box and the size comes from the
+# skeleton itself. Nor do they carry a purpose or a layer -- those say whose side
+# the actor is on, which is a property of the actor, not of the skeleton. They
+# live on the entity template as skeleton.collision_flags.
+rig_version: 1
+skeleton: simplified_tripod
+colliders:
+  - {bone: GEO_Leg0_Upper, leg: leg0}
+  - {bone: GEO_Leg0_Lower, leg: leg0}
+  - {bone: GEO_Leg1_Upper, leg: leg1}
+  - {bone: GEO_Leg1_Lower, leg: leg1}
+  - {bone: GEO_Leg2_Upper, leg: leg2}
+  - {bone: GEO_Leg2_Lower, leg: leg2}
+  # The one sphere: its source primitive is a LowPolySphere, and calling it a box
+  # would inflate its volume by 1.91x.
+  - {bone: GEO_Body, shape: sphere}

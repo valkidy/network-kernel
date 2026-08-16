@@ -280,9 +280,9 @@ bool validate_locomotion_definition(
     return valid_definition(definition);
 }
 
-glm::vec3 locomotion_limb_half_extents(
+glm::vec3 locomotion_collider_half_extents(
     std::span<const KernelBoneLocalTransform> bind_pose,
-    const KernelSkeletonLimbColliderDefinition& limb) {
+    const KernelSkeletonColliderDefinition& limb) {
     if (limb.bone_index >= bind_pose.size()) {
         return glm::vec3{0.0f};
     }
@@ -292,23 +292,23 @@ glm::vec3 locomotion_limb_half_extents(
     return glm::vec3{scale.x, scale.y, scale.z} * 0.5f;
 }
 
-bool validate_locomotion_limb_colliders(
+bool validate_locomotion_colliders(
     std::span<const KernelBoneLocalTransform> bind_pose,
     const KernelSkeletonBindingDefinition& definition,
     std::uint32_t* out_invalid_limb_index) {
     if (out_invalid_limb_index != nullptr) {
         *out_invalid_limb_index = UINT32_MAX;
     }
-    if (definition.limb_collider_count > KERNEL_MAX_SKELETON_LIMB_COLLIDERS) {
+    if (definition.collider_count > KERNEL_MAX_SKELETON_COLLIDERS) {
         return false;
     }
     std::vector<std::uint32_t> seen_bones;
-    seen_bones.reserve(definition.limb_collider_count);
+    seen_bones.reserve(definition.collider_count);
     for (std::uint32_t limb_index = 0u;
-         limb_index < definition.limb_collider_count;
+         limb_index < definition.collider_count;
          ++limb_index) {
-        const KernelSkeletonLimbColliderDefinition& limb =
-            definition.limb_colliders[limb_index];
+        const KernelSkeletonColliderDefinition& limb =
+            definition.colliders[limb_index];
         const auto fail = [&]() {
             if (out_invalid_limb_index != nullptr) {
                 *out_invalid_limb_index = limb_index;
@@ -339,7 +339,7 @@ bool validate_locomotion_limb_colliders(
             return fail();
         }
         const glm::vec3 half_extents =
-            locomotion_limb_half_extents(bind_pose, limb);
+            locomotion_collider_half_extents(bind_pose, limb);
         if (!finite_vec3(half_extents) || half_extents.x <= 0.0f ||
             half_extents.y <= 0.0f || half_extents.z <= 0.0f) {
             return fail();

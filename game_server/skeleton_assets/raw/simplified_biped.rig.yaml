@@ -1,0 +1,21 @@
+# What this rig IS, as opposed to how any particular actor walks it. Paired with
+# simplified_biped.ozz and simplified_biped.skeleton_manifest.json by name. See
+# simplified_tripod.rig.yaml for why colliders carry neither dimensions nor a
+# layer.
+#
+# The arms name no leg: they are limbs of the rig, but not part of any gait.
+rig_version: 1
+skeleton: simplified_biped
+colliders:
+  - {bone: GEO_Leg0_Upper, leg: leg0}
+  - {bone: GEO_Leg0_Lower, leg: leg0}
+  - {bone: GEO_Leg1_Upper, leg: leg1}
+  - {bone: GEO_Leg1_Lower, leg: leg1}
+  - {bone: GEO_Arm0_Upper}
+  - {bone: GEO_Arm0_Lower}
+  - {bone: GEO_Arm1_Upper}
+  - {bone: GEO_Arm1_Lower}
+  - {bone: GEO_Hip}
+  - {bone: GEO_Torso}
+  - {bone: GEO_Body}
+  - {bone: GEO_Head}

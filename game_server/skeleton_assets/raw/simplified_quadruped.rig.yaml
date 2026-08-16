@@ -1,0 +1,16 @@
+# What this rig IS, as opposed to how any particular actor walks it. Paired with
+# simplified_quadruped.ozz and simplified_quadruped.skeleton_manifest.json by name.
+# See simplified_tripod.rig.yaml for why colliders carry neither dimensions nor
+# a layer.
+rig_version: 1
+skeleton: simplified_quadruped
+colliders:
+  - {bone: GEO_Leg0_Upper, leg: leg0}
+  - {bone: GEO_Leg0_Lower, leg: leg0}
+  - {bone: GEO_Leg1_Upper, leg: leg1}
+  - {bone: GEO_Leg1_Lower, leg: leg1}
+  - {bone: GEO_Leg2_Upper, leg: leg2}
+  - {bone: GEO_Leg2_Lower, leg: leg2}
+  - {bone: GEO_Leg3_Upper, leg: leg3}
+  - {bone: GEO_Leg3_Lower, leg: leg3}
+  - {bone: GEO_Body}

@@ -51,19 +51,10 @@ skeleton:
   source_manifest: skeleton_assets/generated/simplified_quadruped.skeleton_manifest.json
   root_bone: SIM_Root
   body_bone: JNT_Body
-  # Per-bone colliders. No dimensions here on purpose: each GEO_ bone's rest
-  # scale IS its box (the rig authors its geometry as scaled unit primitives),
-  # so the size comes from the skeleton and cannot drift from what is drawn.
-  limb_colliders:
-    - {bone: GEO_Leg0_Upper, leg: leg0, purpose: limb | hit, layer: hostile_side}
-    - {bone: GEO_Leg0_Lower, leg: leg0, purpose: limb | hit, layer: hostile_side}
-    - {bone: GEO_Leg1_Upper, leg: leg1, purpose: limb | hit, layer: hostile_side}
-    - {bone: GEO_Leg1_Lower, leg: leg1, purpose: limb | hit, layer: hostile_side}
-    - {bone: GEO_Leg2_Upper, leg: leg2, purpose: limb | hit, layer: hostile_side}
-    - {bone: GEO_Leg2_Lower, leg: leg2, purpose: limb | hit, layer: hostile_side}
-    - {bone: GEO_Leg3_Upper, leg: leg3, purpose: limb | hit, layer: hostile_side}
-    - {bone: GEO_Leg3_Lower, leg: leg3, purpose: limb | hit, layer: hostile_side}
-    - {bone: GEO_Body, purpose: limb | hit, layer: hostile_side}
+  # What this actor's rig colliders mean. The rig file says which bones carry
+  # them and what shape they are; this says whose side they are on. The same rig
+  # could be a friendly actor with a different layer here.
+  collision_flags: {purpose: limb | hit, layer: hostile_side}
 locomotion:
   type: procedural_legged
   forward_axis: positive_z
