@@ -391,6 +391,10 @@ namespace NetworkExample.Kernel
                 nameof(KernelSkeletonLegDefinition),
                 info.skeleton_leg_definition_size,
                 Marshal.SizeOf<KernelSkeletonLegDefinition>());
+            RequireSize(
+                nameof(KernelStatusEffectView),
+                info.status_effect_view_size,
+                Marshal.SizeOf<KernelStatusEffectView>());
         }
 
         private static void RequireCapability(

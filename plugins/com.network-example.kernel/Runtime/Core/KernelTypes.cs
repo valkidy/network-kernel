@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 73;
+        public const uint AbiVersion = 74;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int GameplayCatalogEntryPathSize = 128;
@@ -656,6 +656,7 @@ namespace NetworkExample.Kernel
         public uint skeleton_asset_definition_size;
         public uint skeleton_binding_definition_size;
         public uint skeleton_leg_definition_size;
+        public uint status_effect_view_size;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]

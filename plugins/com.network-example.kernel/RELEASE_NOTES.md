@@ -1,5 +1,11 @@
 0.6.9 release notes:
 
+- adds tripod sphere presentation proxy
+- aligns Unity plugin API with kernel ABI 74
+
+
+0.6.9 release notes:
+
 - adds managed status-effect query bindings
 
 

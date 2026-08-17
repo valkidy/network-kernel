@@ -15,12 +15,14 @@ package. `skeletonAssetIdByTemplateId` in the behaviour only says which skeleton
 each entity template uses; anything not listed there falls back to a capsule.
 
 Geometry is whatever the rig carries in its bone scales. Rigs authored as scaled
-primitives -- `simplified_biped`, `simplified_quadruped`, `simplified_tripod` --
-put each `GEO_` bone's box dimensions in its rest scale, so the proxy reproduces
-their shape exactly. `simplified_monster_sim_v4` bakes its dimensions into mesh
-vertices instead, and its `GEO_` bones have unit scale, so it renders as joint
-markers rather than as its silhouette. Root movement, root yaw and procedural
-bone poses are visible either way, which is what the observer is for.
+box primitives -- `simplified_biped` and `simplified_quadruped`, plus the
+limbs of `simplified_tripod` -- put each `GEO_` bone's dimensions in its rest
+scale, so the proxy reproduces their shape exactly. The tripod's `GEO_Body` is
+the rig's authored sphere and is rendered as a sphere proxy. `simplified_monster_sim_v4`
+bakes its dimensions into mesh vertices instead, and its `GEO_` bones have unit
+scale, so it renders as joint markers rather than as its silhouette. Root
+movement, root yaw and procedural bone poses are visible either way, which is
+what the observer is for.
 
 ## Using the real art
 

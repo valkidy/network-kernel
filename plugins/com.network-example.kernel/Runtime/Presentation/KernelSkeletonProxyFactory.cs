@@ -15,15 +15,20 @@ namespace NetworkExample.Kernel.Presentation
     /// these transforms are the ones the kernel solves against. An importer that
     /// converts handedness, as the common glTF ones do, would break that.
     ///
-    /// Geometry is whatever the rig carries in its bone scales. On rigs authored
-    /// as scaled primitives, a GEO_ bone's rest scale is exactly its box, so the
-    /// proxy reproduces the shape. On rigs that bake dimensions into mesh
-    /// vertices instead, those bones have unit scale and render as small
-    /// markers, because the manifest does not carry mesh bounds.
+    /// Geometry is whatever the rig carries in its bone scales. On rigs
+    /// authored as scaled box primitives, a GEO_ bone's rest scale is exactly
+    /// its box, so the proxy reproduces the shape. The tripod body is the
+    /// current explicit sphere exception; the manifest carries no authored
+    /// collider-shape field, so it is recognized by its rig and bone identity.
+    /// On rigs that bake dimensions into mesh vertices instead, those bones have
+    /// unit scale and render as small markers, because the manifest does not
+    /// carry mesh bounds.
     /// </remarks>
     public static class KernelSkeletonProxyFactory
     {
         private const string GeometryPrefix = "GEO_";
+        private const string TripodSkeletonName = "simplified_tripod";
+        private const string TripodBodyGeometryBoneName = "GEO_Body";
 
         /// <summary>Joint marker edge, as a fraction of the rig's height.</summary>
         private const float JointMarkerScale = 0.02f;
@@ -96,9 +101,19 @@ namespace NetworkExample.Kernel.Presentation
 
                 if (isGeometry && carriesShape)
                 {
-                    // The bone's own scale is the box, so a unit cube parented
-                    // to it inherits the authored dimensions exactly.
-                    AttachPrimitive(bones[index], Vector3.one, GeometryColor, "Shape");
+                    // The skeleton manifest carries rest scale but not the
+                    // authored rig collider shape. Preserve the one sphere
+                    // declared by simplified_tripod.rig.yaml; other scaled
+                    // geometry bones use the existing box proxy.
+                    PrimitiveType primitiveType = IsSphereGeometry(manifest, bone)
+                        ? PrimitiveType.Sphere
+                        : PrimitiveType.Cube;
+                    AttachPrimitive(
+                        bones[index],
+                        Vector3.one,
+                        GeometryColor,
+                        "Shape",
+                        primitiveType);
                     continue;
                 }
                 // Everything else gets a marker sized to the rig rather than to
@@ -150,13 +165,22 @@ namespace NetworkExample.Kernel.Presentation
             return Mathf.Abs(divisor) > 0.0001f ? value / divisor : value;
         }
 
+        private static bool IsSphereGeometry(
+            KernelSkeletonManifest manifest,
+            KernelSkeletonManifestBone bone)
+        {
+            return manifest.Name == TripodSkeletonName &&
+                   bone.Name == TripodBodyGeometryBoneName;
+        }
+
         private static void AttachPrimitive(
             Transform parent,
             Vector3 localScale,
             Color color,
-            string name)
+            string name,
+            PrimitiveType primitiveType = PrimitiveType.Cube)
         {
-            GameObject primitive = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            GameObject primitive = GameObject.CreatePrimitive(primitiveType);
             primitive.name = name;
             primitive.transform.SetParent(parent, false);
             primitive.transform.localPosition = Vector3.zero;
