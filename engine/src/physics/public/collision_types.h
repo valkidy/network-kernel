@@ -14,12 +14,22 @@ enum class CollisionLayer : std::uint32_t {
     kStaticObstacle = 1u << 1u,
     kDamageable = 1u << 2u,
     kActorMovement = 1u << 3u,
+    // The per-bone colliders a legged rig hangs on its own skeleton. Separate
+    // from kDamageable because a limb is not the actor's damage hitbox -- that
+    // stays one coarse volume -- and separate from kActorMovement because the
+    // movement capsule is one body per actor while a rig contributes a dozen.
+    // A query that does not ask for limbs must be able to skip all of them, and
+    // it can: they are the only occupants of their own broad phase layer.
+    kActorLimb = 1u << 4u,
 };
 
 constexpr std::uint32_t collision_layer_bit(CollisionLayer layer) {
     return static_cast<std::uint32_t>(layer);
 }
 
+// Deliberately excludes kActorLimb, as does kMovementCollisionMask below. Limbs
+// are opt-in: every existing query keeps its current cost and its current
+// results, and only a caller that names the layer pays for them.
 inline constexpr std::uint32_t kCollisionMaskAll =
     collision_layer_bit(CollisionLayer::kTerrain) |
     collision_layer_bit(CollisionLayer::kStaticObstacle) |
@@ -42,6 +52,8 @@ enum class CollisionObjectKind : std::uint8_t {
     kStaticObstacle,
     kActorHitbox,
     kActorMovement,
+    // Appended, and must stay appended: object_kind_mask is a bit per kind.
+    kActorLimb,
 };
 
 enum class CollisionShapeType : std::uint8_t {

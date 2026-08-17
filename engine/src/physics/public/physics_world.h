@@ -24,11 +24,16 @@ struct CollisionQueryStats {
     std::uint64_t broadphase_layer_filter_checks = 0;
     std::uint64_t broadphase_layers_accepted = 0;
     std::uint64_t damageable_actor_broadphase_layers_accepted = 0;
+    // Per-bone limb colliders. Kept separate from the damageable counters so a
+    // benchmark can show that a query which does not ask for limbs pays nothing
+    // for them however many rigs are in the world.
+    std::uint64_t actor_limb_broadphase_layers_accepted = 0;
     std::uint64_t object_layer_filter_checks = 0;
     std::uint64_t object_layers_accepted = 0;
     std::uint64_t player_object_layers_accepted = 0;
     std::uint64_t hostile_object_layers_accepted = 0;
     std::uint64_t neutral_object_layers_accepted = 0;
+    std::uint64_t actor_limb_object_layers_accepted = 0;
     std::uint64_t raw_jolt_hits_collected = 0;
     std::uint64_t final_hits_accepted = 0;
     std::uint64_t defensive_post_filter_rejections = 0;
