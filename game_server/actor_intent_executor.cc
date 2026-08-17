@@ -75,7 +75,8 @@ ActorIntentExecutionResult ActorIntentExecutor::execute(
     KernelHandle* kernel,
     AgentRuntimeState* actor,
     const ai::ScopedIntent& intent,
-    const SentryPerceptionSnapshot& perception) const {
+    const SentryPerceptionSnapshot& perception,
+    KernelVec2 move) const {
     ActorIntentExecutionResult result;
     if (kernel == nullptr || actor == nullptr ||
         intent.scope != ai::IntentScope::kActor || intent.subject != actor->net_id) {
@@ -158,6 +159,7 @@ ActorIntentExecutionResult ActorIntentExecutor::execute(
 
     KernelPlayerInput input{};
     input.input_seq = actor->next_input_seq++;
+    input.move = move;
     input.selected_weapon = static_cast<std::uint8_t>(config_.weapon_id);
     if (perception.self_state.action.phase != KernelActionPhase_None) {
         if (intent.type != "AttackTarget" ||

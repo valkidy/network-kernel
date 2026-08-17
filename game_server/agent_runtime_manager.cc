@@ -14,9 +14,9 @@ namespace {
 constexpr KernelQuat kIdentityRotation{0.0f, 0.0f, 0.0f, 1.0f};
 constexpr std::uint32_t kMaxQueriedAgents = 128;
 
-AgentSentryConfig agent_sentry_config(const GameServerGameplayConfig& config) {
-    const ActorTemplateConfig* actor_template =
-        find_actor_template(config, config.agent.actor_template_id);
+AgentSentryConfig agent_sentry_config(
+    const GameServerGameplayConfig& config,
+    const ActorTemplateConfig* actor_template) {
     if (actor_template == nullptr) {
         return AgentSentryConfig{};
     }
@@ -57,9 +57,92 @@ AgentSentryConfig agent_sentry_config(const GameServerGameplayConfig& config) {
 AgentRuntimeManager::AgentRuntimeManager(
     KernelHandle* kernel,
     GameServerGameplayConfig config)
-    : kernel_(kernel),
-      config_(std::move(config)),
-      sentry_(agent_sentry_config(config_)) {}
+    : kernel_(kernel), config_(std::move(config)) {
+    build_controllers();
+}
+
+void AgentRuntimeManager::build_controllers() {
+    controllers_.clear();
+    for (const ActorTemplateConfig& actor_template : config_.actor_templates) {
+        if (actor_template.actor_type != kActorTypeAgent) {
+            continue;
+        }
+        AgentControllerBinding binding;
+        binding.actor_template_id = actor_template.actor_template_id;
+        binding.ai_controller_type = actor_template.ai_controller_type;
+        const AgentSentryConfig sentry =
+            agent_sentry_config(config_, &actor_template);
+        if (actor_template.ai_controller_type ==
+            KernelAiControllerType_Chaser) {
+            AgentChaserConfig chaser;
+            chaser.sentry = sentry;
+            chaser.chase = actor_template.chaser;
+            binding.chaser = AgentChaserController(chaser);
+        } else {
+            binding.sentry = AgentSentryController(sentry);
+        }
+        controllers_.push_back(std::move(binding));
+    }
+
+    fallback_controller_index_ = controllers_.size();
+    for (std::size_t index = 0; index < controllers_.size(); ++index) {
+        if (controllers_[index].actor_template_id ==
+            config_.agent.actor_template_id) {
+            fallback_controller_index_ = index;
+            break;
+        }
+    }
+}
+
+AgentRuntimeManager::AgentControllerBinding* AgentRuntimeManager::binding_for(
+    std::uint32_t actor_template_id) {
+    for (AgentControllerBinding& binding : controllers_) {
+        if (binding.actor_template_id == actor_template_id) {
+            return &binding;
+        }
+    }
+    return fallback_controller_index_ < controllers_.size()
+        ? &controllers_[fallback_controller_index_]
+        : nullptr;
+}
+
+void AgentRuntimeManager::dispatch_controllers(float delta_seconds) {
+    for (AgentControllerBinding& binding : controllers_) {
+        binding.batch.clear();
+    }
+    for (const AgentRuntimeState& agent : agents_) {
+        AgentControllerBinding* binding = binding_for(agent.actor_template_id);
+        if (binding == nullptr) {
+            continue;
+        }
+        binding->batch.push_back(agent);
+    }
+    for (AgentControllerBinding& binding : controllers_) {
+        if (binding.batch.empty()) {
+            continue;
+        }
+        if (binding.ai_controller_type == KernelAiControllerType_Chaser) {
+            binding.chaser.tick(kernel_, &binding.batch, delta_seconds);
+        } else {
+            binding.sentry.tick(kernel_, &binding.batch, delta_seconds);
+        }
+    }
+    // Controllers never add or drop agents, so the batches only carry updates
+    // back to the entries they were copied from.
+    for (const AgentControllerBinding& binding : controllers_) {
+        for (const AgentRuntimeState& updated : binding.batch) {
+            const auto existing = std::find_if(
+                agents_.begin(),
+                agents_.end(),
+                [&updated](const AgentRuntimeState& agent) {
+                    return agent.net_id == updated.net_id;
+                });
+            if (existing != agents_.end()) {
+                *existing = updated;
+            }
+        }
+    }
+}
 
 void AgentRuntimeManager::handle_event(const KernelEvent& event) {
     if (event.type != KernelEventType_EntityDestroyed) {
@@ -92,7 +175,7 @@ void AgentRuntimeManager::tick(float delta_seconds) {
     }
 
     sync_agents_from_kernel();
-    sentry_.tick(kernel_, &agents_, delta_seconds);
+    dispatch_controllers(delta_seconds);
 }
 
 void AgentRuntimeManager::despawn_all(std::uint32_t reason) {
@@ -239,6 +322,7 @@ void AgentRuntimeManager::sync_agents_from_kernel() {
             existing == agents_.end() ? AgentRuntimeState{} : *existing;
         const bool discovered_agent = existing == agents_.end();
         agent.net_id = state.net_id;
+        agent.actor_template_id = state.actor_template_id;
         agent.position = state.position;
         agent.hp = state.hp;
         agent.max_hp = state.max_hp;
@@ -246,16 +330,22 @@ void AgentRuntimeManager::sync_agents_from_kernel() {
         agent.sentry.self_id = state.net_id;
         if (discovered_agent) {
             agent.patrol_anchor = state.position;
-            apply_weapon_mechanics(state.net_id);
+            apply_weapon_mechanics(state.net_id, state.actor_template_id);
         }
         next_agents.push_back(agent);
     }
     agents_ = std::move(next_agents);
 }
 
-bool AgentRuntimeManager::apply_weapon_mechanics(std::uint32_t net_id) const {
+bool AgentRuntimeManager::apply_weapon_mechanics(
+    std::uint32_t net_id,
+    std::uint32_t actor_template_id) const {
     const ActorTemplateConfig* actor_template =
-        find_actor_template(config_, config_.agent.actor_template_id);
+        find_actor_template(config_, actor_template_id);
+    if (actor_template == nullptr) {
+        actor_template =
+            find_actor_template(config_, config_.agent.actor_template_id);
+    }
     if (actor_template == nullptr) {
         return false;
     }

@@ -28,11 +28,15 @@ class ActorIntentExecutor {
 public:
     explicit ActorIntentExecutor(ActorIntentExecutorConfig config = {});
 
+    // `move` rides along on the same input the action is submitted with. A
+    // second movement-only input in the same tick would overwrite the velocity
+    // this one asks for, so callers that both move and act must pass it here.
     ActorIntentExecutionResult execute(
         KernelHandle* kernel,
         AgentRuntimeState* actor,
         const ai::ScopedIntent& intent,
-        const SentryPerceptionSnapshot& perception) const;
+        const SentryPerceptionSnapshot& perception,
+        KernelVec2 move = KernelVec2{0.0f, 0.0f}) const;
 
 private:
     ActorIntentExecutorConfig config_;

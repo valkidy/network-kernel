@@ -276,6 +276,9 @@ void hash_actor_template(
     hash_float(hash, actor_template.sentry.patrol_extent_x_meters);
     hash_float(hash, actor_template.sentry.patrol_input_magnitude);
     hash_scalar(hash, actor_template.sentry.weapon_id);
+    hash_float(hash, actor_template.chaser.stop_distance_meters);
+    hash_float(hash, actor_template.chaser.resume_distance_meters);
+    hash_float(hash, actor_template.chaser.input_magnitude);
     hash_scalar(hash, actor_template.vision.camp);
     hash_scalar(hash, actor_template.vision.vision_collider_template_id);
     hash_scalar(hash, actor_template.vision.max_visible_hostiles);
@@ -2699,6 +2702,41 @@ AgentSentryConfig sentry_config_from_yaml(
     return sentry;
 }
 
+AgentChaseTuning chaser_config_from_yaml(
+    const YAML::Node& node,
+    const ActorTemplateConfig& actor_template,
+    const std::string& path,
+    std::uint32_t source_kind) {
+    AgentChaseTuning chaser = actor_template.chaser;
+    const YAML::Node chaser_node = node ? node["chaser"] : YAML::Node{};
+    if (!chaser_node) {
+        return chaser;
+    }
+    reject_unknown_keys(
+        chaser_node,
+        {
+            "stop_distance_meters",
+            "resume_distance_meters",
+            "input_magnitude",
+        },
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+        actor_template.actor_template_id);
+    if (chaser_node["stop_distance_meters"]) {
+        chaser.stop_distance_meters =
+            chaser_node["stop_distance_meters"].as<float>();
+    }
+    if (chaser_node["resume_distance_meters"]) {
+        chaser.resume_distance_meters =
+            chaser_node["resume_distance_meters"].as<float>();
+    }
+    if (chaser_node["input_magnitude"]) {
+        chaser.input_magnitude = chaser_node["input_magnitude"].as<float>();
+    }
+    return chaser;
+}
+
 KernelAgentVisionConfig vision_config_from_yaml(
     const YAML::Node& node,
     const ActorTemplateConfig& actor_template,
@@ -3452,6 +3490,7 @@ ActorTemplateConfig actor_template_from_yaml(
                 "profile",
                 "tick_interval",
                 "sentry",
+                "chaser",
             },
             path,
             source_kind,
@@ -3462,6 +3501,8 @@ ActorTemplateConfig actor_template_from_yaml(
                 node["ai"]["controller"].as<std::string>();
             if (controller == "sentry") {
                 actor_template.ai_controller_type = KernelAiControllerType_Sentry;
+            } else if (controller == "chaser") {
+                actor_template.ai_controller_type = KernelAiControllerType_Chaser;
             } else if (controller == "director") {
                 actor_template.ai_controller_type = KernelAiControllerType_Director;
             } else {
@@ -3475,6 +3516,8 @@ ActorTemplateConfig actor_template_from_yaml(
     }
     actor_template.sentry =
         sentry_config_from_yaml(node["ai"], actor_template, weapons, path, source_kind);
+    actor_template.chaser =
+        chaser_config_from_yaml(node["ai"], actor_template, path, source_kind);
     actor_template.vision = vision_config_from_yaml(
         node["vision"],
         actor_template,
@@ -7171,6 +7214,23 @@ std::vector<std::string> validate_gameplay_config(
               (actor_template.sentry.patrol_extent_x_meters != 0.0f ||
                actor_template.sentry.patrol_input_magnitude != 0.0f)))) {
             errors.push_back("agent sentry actor template must be valid");
+        }
+        if (actor_template.actor_type == kActorTypeAgent &&
+            actor_template.ai_controller_type == KernelAiControllerType_Chaser &&
+            (!std::isfinite(actor_template.chaser.stop_distance_meters) ||
+             !std::isfinite(actor_template.chaser.resume_distance_meters) ||
+             !std::isfinite(actor_template.chaser.input_magnitude) ||
+             actor_template.chaser.stop_distance_meters < 0.0f ||
+             // Equal thresholds make the agent start and stop on alternating
+             // ticks once it arrives.
+             actor_template.chaser.resume_distance_meters <=
+                 actor_template.chaser.stop_distance_meters ||
+             actor_template.chaser.input_magnitude <= 0.0f ||
+             actor_template.chaser.input_magnitude > 1.0f ||
+             actor_template.sentry.passive_patrol ||
+             !std::isfinite(actor_template.sentry.move_speed_meters_per_second) ||
+             actor_template.sentry.move_speed_meters_per_second <= 0.0f)) {
+            errors.push_back("agent chaser actor template must be valid");
         }
         if (actor_template.vision.struct_size < sizeof(KernelAgentVisionConfig) ||
             actor_template.vision.camp > KernelAgentCamp_Neutral) {

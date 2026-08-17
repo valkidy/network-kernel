@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "game_server/agent_chaser_controller.h"
 #include "game_server/agent_sentry_controller.h"
 #include "kernel/public/kernel_types.h"
 
@@ -189,6 +190,9 @@ struct ActorTemplateConfig {
     std::uint16_t animation_idle = 0;
     std::uint16_t animation_chasing = 0;
     AgentSentryConfig sentry{};
+    // Only read when ai_controller_type is Chaser; the perception and attack
+    // half of a chaser comes from `sentry`.
+    AgentChaseTuning chaser{};
     KernelAgentVisionConfig vision{};
     std::uint32_t ai_controller_type = KernelAiControllerType_None;
     std::uint32_t ai_tick_interval = 1;

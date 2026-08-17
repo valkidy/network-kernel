@@ -244,6 +244,7 @@ int main(void) {
     assert(KernelEntityType_Director == 5);
     assert(KernelAiControllerType_Sentry == 1);
     assert(KernelAiControllerType_Director == 2);
+    assert(KernelAiControllerType_Chaser == 3);
     assert((KERNEL_ENTITY_COMPONENT_SERVER_ONLY &
             KERNEL_ENTITY_COMPONENT_DIRECTOR_RUNTIME) == 0u);
     assert(KernelProjectileCollisionQueryMode_Auto == 0);
