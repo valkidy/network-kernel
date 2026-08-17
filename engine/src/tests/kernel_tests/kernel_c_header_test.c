@@ -184,7 +184,7 @@ int main(void) {
     assert(sizeof(KernelSkeletonColliderDefinition) > 0u);
     assert(KERNEL_MAX_SKELETON_COLLIDERS > 0u);
     assert(KernelColliderPurpose_Limb == (1u << 5));
-    assert(sizeof(KernelStatusEffectView) == 28u);
+    assert(sizeof(KernelStatusEffectView) == 32u);
     assert(KERNEL_CAPABILITY_SKELETON_BIND_POSE != 0u);
     assert(sizeof(KernelBoneLocalTransform) > 0u);
     assert(sizeof(KernelSkeletonRenderState) > 0u);
