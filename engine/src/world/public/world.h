@@ -129,6 +129,16 @@ public:
             NetId entity_net_id,
             std::uint32_t collider_template_id,
             const ColliderInstance& collider);
+        // Per-bone variant. A rig's colliders take their geometry from the bone
+        // rather than from a collider template, so they all carry the same
+        // template id and only the bone tells them apart -- keying on the pair
+        // alone would collapse a whole skeleton into one instance.
+        ColliderInstance& upsert_bone_collider(
+            NetId entity_net_id,
+            std::uint32_t collider_template_id,
+            std::uint32_t bone_index,
+            const ColliderInstance& collider);
+        void remove_bone_colliders(NetId entity_net_id);
         ColliderInstance& add_ephemeral_collider(const ColliderInstance& collider);
         void remove_entity_colliders(NetId entity_net_id);
         void expire_tick_lifetimes();

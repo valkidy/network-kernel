@@ -601,6 +601,9 @@ bool solve_locomotion_pose(
     state->pose_valid = false;
     state->body_follow_valid = false;
     state->local_pose.assign(bind_pose.begin(), bind_pose.end());
+    // Emptied here rather than on each failure return, so every path out of
+    // this function that is not the successful one leaves no limb behind.
+    state->solved_collider_poses.clear();
 
     // There is no advance_locomotion_state on the follower path -- a follower
     // has no movement input to advance from -- so the per-tick bookkeeping that
@@ -1093,8 +1096,27 @@ bool solve_locomotion_pose(
     state->pose_valid = finite_pose(state->local_pose);
     if (!state->pose_valid) {
         state->local_pose.assign(bind_pose.begin(), bind_pose.end());
+        state->solved_collider_poses.clear();
+        return false;
     }
-    return state->pose_valid;
+
+    // Per-bone collider frames, read out of the same models[] the feet came
+    // from. root_offset is what the solve seated the pose by, so folding it in
+    // here is what makes these relative to the caller's transform rather than
+    // to the skeleton root. See SolvedColliderPose.
+    state->solved_collider_poses.resize(definition.collider_count);
+    for (std::uint32_t index = 0u; index < definition.collider_count; ++index) {
+        const std::uint32_t bone = definition.colliders[index].bone_index;
+        if (bone >= static_cast<std::uint32_t>(models.size())) {
+            state->solved_collider_poses.clear();
+            break;
+        }
+        state->solved_collider_poses[index] = SolvedColliderPose{
+            root_offset + model_position(models[bone]),
+            glm::normalize(glm::quat_cast(model_rotation(models[bone]))),
+        };
+    }
+    return true;
 }
 
 }  // namespace

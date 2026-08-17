@@ -82,6 +82,27 @@ struct LegLocomotionState {
     bool ik_reach_clamped = false;
 };
 
+// Where one of the rig's per-bone colliders sits after a solve, expressed
+// relative to the ROOT TRANSFORM the caller passed in -- not relative to the
+// skeleton root, which the solve seats vertically by an offset of its own. So
+// the world box is exactly
+//
+//     world_position = transform.position + transform.rotation * local_position
+//     world_rotation = transform.rotation * local_rotation
+//
+// and nothing else has to know how the pose was seated. This holds only while
+// transform.rotation is the rotation the solve was given, which is why a rig
+// carrying colliders is refused slope_alignment > 0 at catalog load: tilt makes
+// those two rotations differ on the authority and not on a follower.
+//
+// local_rotation is orthonormal. ozz composes each bone's rest scale into its
+// model matrix, and on a GEO_ bone that scale IS the box's size -- so it must
+// be divided out here and taken from the bind pose as half extents instead.
+struct SolvedColliderPose {
+    glm::vec3 local_position{0.0f};
+    glm::quat local_rotation{1.0f, 0.0f, 0.0f, 0.0f};
+};
+
 struct LocomotionState {
     float root_yaw_radians = 0.0f;
     // Yaw as of the end of the previous advance. advance compares it against
@@ -110,6 +131,13 @@ struct LocomotionState {
     std::vector<std::uint32_t> last_processing_order;
     std::vector<KernelBoneLocalTransform> local_pose;
     bool pose_valid = false;
+
+    // One entry per KernelSkeletonBindingDefinition::colliders, in that order.
+    // Empty for a rig that declares none, and emptied whenever a solve fails,
+    // so a caller that materialises physics bodies from it can never publish a
+    // stale limb. Filled by the same model-space refresh the feet are read from,
+    // which costs nothing extra.
+    std::vector<SolvedColliderPose> solved_collider_poses;
 
     // Smoothed tilt of the body onto the terrain, accumulated across ticks and
     // identity while body follow is disabled. It lives here, not on the entity

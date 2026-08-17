@@ -58,6 +58,11 @@ struct ColliderInstance {
     std::uint32_t purpose_flags = 0;
     std::uint32_t layer_mask = 0;
     std::uint32_t hit_zone = 0;
+    // Which skeleton bone carries this collider, or UINT32_MAX for the whole
+    // entity's own collider. A rig contributes one instance per bone and they
+    // all share a template id (none, in fact), so this is the third of the three
+    // things that identify a collider inside an entity.
+    std::uint32_t bone_index = UINT32_MAX;
     glm::vec3 local_center{0.0f, 0.0f, 0.0f};
     glm::quat local_rotation{1.0f, 0.0f, 0.0f, 0.0f};
     glm::vec3 world_center{0.0f, 0.0f, 0.0f};

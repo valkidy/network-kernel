@@ -108,7 +108,20 @@ void set_joint(
     joint->transform.scale = ozz::math::Float3(1.0f, 1.0f, 1.0f);
 }
 
-ozz::unique_ptr<ozz::animation::Skeleton> build_quadruped() {
+// Scale of the optional GEO_ bone below. Chosen to match quadruped_actor's real
+// GEO_Leg0_Lower, so the half extents the solve hands out are the rig's own
+// numbers rather than round ones.
+constexpr float kGeoScaleX = 1.5f;
+constexpr float kGeoScaleY = 19.0f;
+
+// with_geometry_bones appends one scaled, zero-offset child to every foot,
+// standing in for the GEO_ bones the real rigs carry colliders on. Zero offset
+// is what makes the collider's solved position directly comparable to the
+// foot's, and the non-unit scale is what makes the scale-divided-out rotation
+// observable: a matrix whose columns are 1.5 / 19 / 1.5 long does not cast to a
+// unit quaternion unless the scale really was removed first.
+ozz::unique_ptr<ozz::animation::Skeleton> build_quadruped(
+    bool with_geometry_bones = false) {
     ozz::animation::offline::RawSkeleton raw;
     raw.roots.resize(1);
     auto& root = raw.roots[0];
@@ -135,12 +148,26 @@ ozz::unique_ptr<ozz::animation::Skeleton> build_quadruped() {
             -kSegment,
             0.0f);
         knee.children.resize(1);
+        auto& foot = knee.children[0];
         set_joint(
-            &knee.children[0],
+            &foot,
             (std::string(layout.id) + "_Foot").c_str(),
             -kKneeOffsetX,
             -kSegment,
             0.0f);
+        if (!with_geometry_bones) {
+            continue;
+        }
+        foot.children.resize(1);
+        auto& geometry = foot.children[0];
+        set_joint(
+            &geometry,
+            (std::string("GEO_") + layout.id).c_str(),
+            0.0f,
+            0.0f,
+            0.0f);
+        geometry.transform.scale =
+            ozz::math::Float3(kGeoScaleX, kGeoScaleY, kGeoScaleX);
     }
     ozz::animation::offline::SkeletonBuilder builder;
     return builder(raw);
@@ -982,6 +1009,231 @@ int main() {
         }
     }
 
+    // The same equivalence, but for the thing that actually goes into the
+    // physics world: the per-bone collider frames. Feet agreeing is necessary
+    // and not sufficient -- a collider also carries an orientation, and that
+    // one comes out of the IK'd knee and foot basis rather than out of the
+    // replicated landing position. If the two sides can disagree anywhere, it
+    // is there.
+    //
+    // This is the whole argument for spending zero snapshot bytes on limbs, so
+    // it is measured under packet loss rather than only in the clean case.
+    {
+        const ozz::unique_ptr<ozz::animation::Skeleton> geometry_skeleton =
+            build_quadruped(/*with_geometry_bones=*/true);
+        require(geometry_skeleton != nullptr);
+        const std::vector<KernelBoneLocalTransform> geometry_bind_pose =
+            make_bind_pose(*geometry_skeleton);
+        const auto geometry_lookup = bone_indices(*geometry_skeleton);
+        KernelSkeletonBindingDefinition geometry_rig =
+            make_rig_definition(*geometry_skeleton);
+        geometry_rig.collider_count = geometry_rig.leg_count;
+        for (std::uint32_t index = 0u; index < geometry_rig.leg_count; ++index) {
+            KernelSkeletonColliderDefinition& collider =
+                geometry_rig.colliders[index];
+            collider.bone_index =
+                geometry_lookup.at(std::string("GEO_") + kLegLayout[index].id);
+            collider.leg_index = index;
+            collider.shape_type = KernelColliderShapeType_OrientedBox;
+            collider.purpose_flags = KernelColliderPurpose_Limb;
+            collider.layer_mask = KERNEL_COLLISION_LAYER_HOSTILE_SIDE;
+        }
+
+        const network_example::LocomotionGroundingQuery ground =
+            undulating_ground();
+        constexpr std::uint32_t kTicks = 400u;
+        constexpr float kSpeed = 1.5f;
+        constexpr float kTurnRate = 0.35f;
+        constexpr float kEpsilon = 0.0001f;
+
+        // Exactly how the kernel composes a limb collider: the root the solve
+        // published, not the entity's current transform. See make_limb_collider.
+        const auto limb_world = [](const network_example::LocomotionState& state,
+                                   std::uint32_t index) {
+            return state.last_root_position +
+                state.applied_root_rotation *
+                    state.solved_collider_poses[index].local_position;
+        };
+        const auto limb_rotation =
+            [](const network_example::LocomotionState& state,
+               std::uint32_t index) {
+                return state.applied_root_rotation *
+                    state.solved_collider_poses[index].local_rotation;
+            };
+
+        struct LimbTrace {
+            std::uint32_t steps = 0u;
+            std::uint32_t dropped_steps = 0u;
+            std::uint32_t compared_ticks = 0u;
+            std::uint32_t agreeing_ticks = 0u;
+            float worst_position_error = 0.0f;
+            float worst_rotation_chord = 0.0f;
+        };
+
+        // Deterministic loss, so a failure is reproducible rather than a story
+        // about one unlucky run.
+        const auto run = [&](std::uint32_t loss_per_thousand) {
+            LimbTrace trace;
+            std::uint32_t rng = 0x9e3779b9u;
+            network_example::LocomotionState authority;
+            network_example::LocomotionState follower;
+            require(network_example::initialize_locomotion_state(
+                geometry_rig, 0.0f, &authority));
+            require(network_example::initialize_locomotion_state(
+                geometry_rig, 0.0f, &follower));
+            std::vector<network_example::LocomotionStepEvent> pending;
+            glm::vec3 root{0.0f};
+            bool seeded = false;
+
+            for (std::uint32_t t = 0u; t < kTicks; ++t) {
+                const float heading = kTurnRate * static_cast<float>(t) * tick;
+                require(network_example::advance_locomotion_state(
+                    geometry_rig,
+                    KernelVec2{std::sin(heading), std::cos(heading)},
+                    90.0f,
+                    tick,
+                    &authority));
+                root += glm::vec3{
+                    std::sin(authority.root_yaw_radians),
+                    0.0f,
+                    std::cos(authority.root_yaw_radians)} * (kSpeed * tick);
+                require(network_example::solve_legged_locomotion_pose(
+                    *geometry_skeleton, geometry_bind_pose, geometry_rig, root,
+                    50.0f, tick, ground, &authority));
+
+                std::array<network_example::LocomotionStepEvent, 4> emitted{};
+                const std::uint32_t emitted_count =
+                    network_example::collect_locomotion_step_events(
+                        authority, t, emitted);
+                for (std::uint32_t index = 0u; index < emitted_count; ++index) {
+                    ++trace.steps;
+                    rng = rng * 1664525u + 1013904223u;
+                    if ((rng >> 16u) % 1000u < loss_per_thousand) {
+                        ++trace.dropped_steps;
+                        continue;
+                    }
+                    pending.push_back(emitted[index]);
+                }
+
+                if (!seeded) {
+                    bool all_planted = true;
+                    for (const network_example::LegLocomotionState& leg :
+                         authority.legs) {
+                        all_planted = all_planted && leg.foot_initialized;
+                    }
+                    if (!all_planted) {
+                        continue;
+                    }
+                    for (std::uint32_t index = 0u;
+                         index < geometry_rig.leg_count;
+                         ++index) {
+                        require(network_example::set_locomotion_foot_anchor(
+                            geometry_rig,
+                            index,
+                            authority.legs[index].foot_target_world,
+                            &follower));
+                    }
+                    seeded = true;
+                    continue;
+                }
+
+                follower.root_yaw_radians = authority.root_yaw_radians;
+                for (const network_example::LocomotionStepEvent& event :
+                     pending) {
+                    require(network_example::apply_locomotion_step_event(
+                        geometry_rig, event, t, &follower));
+                }
+                pending.clear();
+                require(network_example::solve_legged_locomotion_follower_pose(
+                    *geometry_skeleton, geometry_bind_pose, geometry_rig, root,
+                    tick, &follower));
+                require(follower.pose_valid);
+
+                // Both sides must publish a full set, or there is nothing to
+                // compare and the comparison would pass by being empty.
+                require(authority.solved_collider_poses.size() ==
+                        geometry_rig.collider_count);
+                require(follower.solved_collider_poses.size() ==
+                        geometry_rig.collider_count);
+                ++trace.compared_ticks;
+
+                float tick_position_error = 0.0f;
+                float tick_rotation_chord = 0.0f;
+                for (std::uint32_t index = 0u;
+                     index < geometry_rig.collider_count;
+                     ++index) {
+                    tick_position_error = std::max(
+                        tick_position_error,
+                        glm::length(
+                            limb_world(follower, index) -
+                            limb_world(authority, index)));
+                    // Chord distance between the two orientations, taken the
+                    // short way round because q and -q are the same rotation.
+                    // Deliberately not acos(dot): near dot = 1 that turns the
+                    // last bit of a float into a milliradian, and these
+                    // quaternions agree to the bit.
+                    const glm::quat mine = limb_rotation(follower, index);
+                    const glm::quat theirs = limb_rotation(authority, index);
+                    const float chord = std::min(
+                        glm::length(mine - theirs), glm::length(mine + theirs));
+                    tick_rotation_chord =
+                        std::max(tick_rotation_chord, chord);
+                }
+                trace.worst_position_error = std::max(
+                    trace.worst_position_error, tick_position_error);
+                trace.worst_rotation_chord = std::max(
+                    trace.worst_rotation_chord, tick_rotation_chord);
+                if (tick_position_error < kEpsilon &&
+                    tick_rotation_chord < kEpsilon) {
+                    ++trace.agreeing_ticks;
+                }
+            }
+            return trace;
+        };
+
+        // Lossless: the client's limbs ARE the server's limbs. Position and
+        // orientation, every collider, every tick. This is the assertion the
+        // "0 bytes" answer rests on.
+        {
+            const LimbTrace trace = run(0u);
+            require(trace.steps > 20u);
+            require(trace.dropped_steps == 0u);
+            require(trace.compared_ticks > kTicks / 2u);
+            require(trace.agreeing_ticks == trace.compared_ticks);
+            require(trace.worst_position_error < kEpsilon);
+            require(trace.worst_rotation_chord < kEpsilon);
+        }
+
+        // Under loss the limbs go wrong, but only on the legs whose step was
+        // lost and only until those legs step again. Both rates assert a real
+        // divergence as well as a bound, so neither can pass by the loss having
+        // quietly done nothing.
+        //
+        // 5% is the pessimistic end of what this prototype's unreliable step
+        // channel should ever see; 20% is there to show the shape of the curve.
+        const LimbTrace light_loss = run(50u);
+        const LimbTrace heavy_loss = run(200u);
+        require(light_loss.dropped_steps > 0u);
+        require(heavy_loss.dropped_steps > light_loss.dropped_steps * 2u);
+        require(light_loss.worst_position_error > kEpsilon);
+        // Bounded by roughly one stride, because a leg that missed its step
+        // stays at its old plant rather than drifting: the landing target is
+        // absolute world space, not a delta.
+        require(light_loss.worst_position_error < 2.0f * kSpeed);
+        require(heavy_loss.worst_position_error < 2.0f * kSpeed);
+        // The load-bearing property: four times the losses does NOT mean four
+        // times the error. Nothing accumulates, so the worst case is set by how
+        // far one leg can be behind, not by how many steps went missing.
+        require(heavy_loss.worst_position_error <
+                light_loss.worst_position_error * 3.0f);
+        // And most ticks are still exact even while legs are missing steps,
+        // because only the legs that lost one are wrong.
+        require(light_loss.agreeing_ticks * 10u >
+                light_loss.compared_ticks * 7u);
+        require(heavy_loss.agreeing_ticks * 10u >
+                heavy_loss.compared_ticks * 3u);
+    }
+
     // A turn that finishes before the foot lands must not throw the step past
     // where the actor was ever going. The extrapolation assumes the body holds
     // its motion for the whole swing, which translation does and a turn does
@@ -1324,6 +1576,120 @@ int main() {
         require(!network_example::validate_locomotion_colliders(
             bind_pose, duplicate, &invalid_limb));
         require(invalid_limb == 1u);
+    }
+
+    // ---------------------------------------------------------------------
+    // What the solve publishes for those colliders.
+    // ---------------------------------------------------------------------
+    {
+        const ozz::unique_ptr<ozz::animation::Skeleton> geometry_skeleton =
+            build_quadruped(/*with_geometry_bones=*/true);
+        require(geometry_skeleton != nullptr);
+        const std::vector<KernelBoneLocalTransform> geometry_bind_pose =
+            make_bind_pose(*geometry_skeleton);
+        const auto geometry_lookup = bone_indices(*geometry_skeleton);
+        KernelSkeletonBindingDefinition geometry_rig =
+            make_rig_definition(*geometry_skeleton);
+        geometry_rig.collider_count = geometry_rig.leg_count;
+        for (std::uint32_t index = 0u; index < geometry_rig.leg_count; ++index) {
+            KernelSkeletonColliderDefinition& collider =
+                geometry_rig.colliders[index];
+            collider.bone_index =
+                geometry_lookup.at(std::string("GEO_") + kLegLayout[index].id);
+            collider.leg_index = index;
+            collider.shape_type = KernelColliderShapeType_OrientedBox;
+            collider.purpose_flags = KernelColliderPurpose_Limb;
+            collider.layer_mask = KERNEL_COLLISION_LAYER_HOSTILE_SIDE;
+        }
+        std::uint32_t invalid_limb = 0u;
+        require(network_example::validate_locomotion_colliders(
+            geometry_bind_pose, geometry_rig, &invalid_limb));
+
+        // Walk far enough that the IK is actually bending the limbs, so the
+        // collider frames below are not just the bind pose read back.
+        const glm::vec3 root{3.0f, 0.0f, -2.0f};
+        network_example::LocomotionState geometry_state;
+        require(network_example::initialize_locomotion_state(
+            geometry_rig, 0.7f, &geometry_state));
+        for (std::uint32_t step = 0u; step < 12u; ++step) {
+            require(network_example::advance_locomotion_state(
+                geometry_rig, forward_input, 90.0f, tick, &geometry_state));
+            require(network_example::solve_legged_locomotion_pose(
+                *geometry_skeleton, geometry_bind_pose, geometry_rig, root,
+                50.0f, tick, ground_plane, &geometry_state));
+        }
+        require(geometry_state.pose_valid);
+
+        // One entry per declared collider, in the declared order.
+        require(geometry_state.solved_collider_poses.size() ==
+                geometry_rig.collider_count);
+
+        const glm::quat root_rotation = glm::angleAxis(
+            geometry_state.root_yaw_radians, glm::vec3{0.0f, 1.0f, 0.0f});
+        for (std::uint32_t index = 0u; index < geometry_rig.leg_count; ++index) {
+            const network_example::SolvedColliderPose& pose =
+                geometry_state.solved_collider_poses[index];
+
+            // The GEO_ bone sits exactly on its foot, so composing the
+            // collider onto the root transform must land on the foot position
+            // the solve computed independently. This is the assertion that
+            // pins the seating offset: the pose is seated vertically inside the
+            // solve, and a collider frame that forgot that offset would be off
+            // by a whole leg length while still looking plausible.
+            const glm::vec3 world =
+                root + root_rotation * pose.local_position;
+            const glm::vec3& foot = geometry_state.legs[index].solved_foot_world;
+            require(near(world.x, foot.x));
+            require(near(world.y, foot.y));
+            require(near(world.z, foot.z));
+
+            // The bone's rest scale is 1.5 x 19 x 1.5, and it must be in the
+            // half extents rather than in the rotation. An unnormalised cast of
+            // that model matrix is nowhere near a unit quaternion.
+            require(near(glm::length(pose.local_rotation), 1.0f));
+            const glm::vec3 half_extents =
+                network_example::locomotion_collider_half_extents(
+                    geometry_bind_pose, geometry_rig.colliders[index]);
+            require(near(half_extents.x, kGeoScaleX * 0.5f));
+            require(near(half_extents.y, kGeoScaleY * 0.5f));
+            require(near(half_extents.z, kGeoScaleX * 0.5f));
+        }
+
+        // A collider naming a bone the skeleton does not have publishes no
+        // limbs at all, rather than the ones before it in the list. A partial
+        // rig would put some segments in the world and leave the rest wherever
+        // the previous tick left them.
+        KernelSkeletonBindingDefinition broken_geometry = geometry_rig;
+        broken_geometry.colliders[1].bone_index = broken_geometry.bone_count;
+        require(network_example::advance_locomotion_state(
+            broken_geometry, forward_input, 90.0f, tick, &geometry_state));
+        require(network_example::solve_legged_locomotion_pose(
+            *geometry_skeleton, geometry_bind_pose, broken_geometry, root,
+            50.0f, tick, ground_plane, &geometry_state));
+        require(geometry_state.solved_collider_poses.empty());
+
+        // Arguments rejected at the door leave the whole state untouched, which
+        // is this function's existing contract -- it is a refused call, not a
+        // failed solve, and pose_valid is likewise left alone.
+        KernelSkeletonBindingDefinition refused = geometry_rig;
+        refused.body_bone_index = refused.bone_count;
+        require(!network_example::solve_legged_locomotion_pose(
+            *geometry_skeleton, geometry_bind_pose, refused, root, 50.0f, tick,
+            ground_plane, &geometry_state));
+
+        // A rig that declares none publishes none, which is what keeps per-bone
+        // collision opt-in all the way down to the solve.
+        KernelSkeletonBindingDefinition bare = geometry_rig;
+        bare.collider_count = 0u;
+        network_example::LocomotionState bare_state;
+        require(network_example::initialize_locomotion_state(
+            bare, 0.0f, &bare_state));
+        require(network_example::advance_locomotion_state(
+            bare, forward_input, 90.0f, tick, &bare_state));
+        require(network_example::solve_legged_locomotion_pose(
+            *geometry_skeleton, geometry_bind_pose, bare, root, 50.0f, tick,
+            ground_plane, &bare_state));
+        require(bare_state.solved_collider_poses.empty());
     }
     return 0;
 }

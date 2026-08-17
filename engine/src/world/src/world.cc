@@ -299,6 +299,7 @@ ColliderInstance& World::ColliderRegistry::upsert_entity_collider(
         [entity_net_id, collider_template_id](const ColliderInstance& instance) {
             return instance.entity_net_id == entity_net_id &&
                    instance.collider_template_id == collider_template_id &&
+                   instance.bone_index == UINT32_MAX &&
                    instance.lifetime_ticks == 0;
         });
     if (found != instances_.end()) {
@@ -316,6 +317,52 @@ ColliderInstance& World::ColliderRegistry::upsert_entity_collider(
     instance.collider_template_id = collider_template_id;
     instances_.push_back(instance);
     return instances_.back();
+}
+
+ColliderInstance& World::ColliderRegistry::upsert_bone_collider(
+    NetId entity_net_id,
+    std::uint32_t collider_template_id,
+    std::uint32_t bone_index,
+    const ColliderInstance& collider) {
+    auto found = std::find_if(
+        instances_.begin(),
+        instances_.end(),
+        [entity_net_id, collider_template_id, bone_index](
+            const ColliderInstance& instance) {
+            return instance.entity_net_id == entity_net_id &&
+                   instance.collider_template_id == collider_template_id &&
+                   instance.bone_index == bone_index &&
+                   instance.lifetime_ticks == 0;
+        });
+    if (found != instances_.end()) {
+        const std::uint32_t collider_id = found->collider_id;
+        *found = collider;
+        found->collider_id = collider_id;
+        found->entity_net_id = entity_net_id;
+        found->collider_template_id = collider_template_id;
+        found->bone_index = bone_index;
+        return *found;
+    }
+
+    ColliderInstance instance = collider;
+    instance.collider_id = allocate_collider_id();
+    instance.entity_net_id = entity_net_id;
+    instance.collider_template_id = collider_template_id;
+    instance.bone_index = bone_index;
+    instances_.push_back(instance);
+    return instances_.back();
+}
+
+void World::ColliderRegistry::remove_bone_colliders(NetId entity_net_id) {
+    instances_.erase(
+        std::remove_if(
+            instances_.begin(),
+            instances_.end(),
+            [entity_net_id](const ColliderInstance& instance) {
+                return instance.entity_net_id == entity_net_id &&
+                       instance.bone_index != UINT32_MAX;
+            }),
+        instances_.end());
 }
 
 ColliderInstance& World::ColliderRegistry::add_ephemeral_collider(
