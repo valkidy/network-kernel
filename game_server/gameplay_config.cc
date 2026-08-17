@@ -356,14 +356,11 @@ void hash_actor_template(
             hash,
             static_cast<std::uint32_t>(
                 actor_template.skeleton.legs.size()));
+        // Tuning only: the legs' bones and bend geometry belong to the rig and
+        // are hashed with the skeleton asset instead.
         for (const SkeletonLegConfig& leg : actor_template.skeleton.legs) {
             hash_string(hash, leg.id);
-            hash_scalar(hash, leg.hip_bone_index);
-            hash_scalar(hash, leg.knee_bone_index);
-            hash_scalar(hash, leg.foot_bone_index);
             hash_scalar(hash, leg.gait_group);
-            hash_vec3(hash, leg.pole_local);
-            hash_vec3(hash, leg.mid_axis_local);
             hash_float(hash, leg.step_height_meters);
             hash_float(hash, leg.max_reach_ratio);
         }
@@ -393,6 +390,16 @@ void hash_actor_template(
              actor_template.skeleton.processing_order) {
             hash_scalar(hash, leg_index);
         }
+        // Only the meaning: the geometry these apply to belongs to the rig and
+        // is hashed with the skeleton asset instead.
+        hash_scalar(
+            hash,
+            static_cast<std::uint32_t>(
+                actor_template.skeleton.has_collision_flags ? 1u : 0u));
+        hash_scalar(hash, actor_template.skeleton.collision_flags.hit_zone);
+        hash_scalar(
+            hash, actor_template.skeleton.collision_flags.purpose_flags);
+        hash_scalar(hash, actor_template.skeleton.collision_flags.layer_mask);
     }
 }
 
@@ -830,6 +837,15 @@ KernelVec3 vec3_from_yaml(const YAML::Node& node) {
         node["x"].as<float>(),
         node["y"].as<float>(),
         node["z"].as<float>()};
+}
+
+bool finite_vec3_value(const KernelVec3& value) {
+    return std::isfinite(value.x) && std::isfinite(value.y) &&
+        std::isfinite(value.z);
+}
+
+float vec3_length_squared(const KernelVec3& value) {
+    return value.x * value.x + value.y * value.y + value.z * value.z;
 }
 
 std::optional<KernelVec3> optional_vec3_default_from_yaml(
@@ -2285,6 +2301,69 @@ std::uint32_t collider_layer_from_yaml(const YAML::Node& node) {
     return collision_mask_from_yaml(node);
 }
 
+std::uint32_t skeleton_collision_purpose_token_from_yaml(const std::string& token) {
+    if (token == "limb") {
+        return KernelColliderPurpose_Limb;
+    }
+    if (token == "hit") {
+        return KernelColliderPurpose_Hit;
+    }
+    if (token == "damage") {
+        return KernelColliderPurpose_Damage;
+    }
+    if (token == "trigger") {
+        return KernelColliderPurpose_Trigger;
+    }
+    // Deliberately no "movement" and no "vision": a bone-carried collider is
+    // never the character controller's capsule, and vision is a root-anchored
+    // cone. Both would be silently ignored downstream, so reject them here.
+    throw std::runtime_error("unsupported limb collider purpose: " + token);
+}
+
+// A '|' list, unlike collider templates' single-valued purpose: a limb is
+// usually several things at once (a limb that also blocks and can be shot).
+std::uint32_t skeleton_collision_purpose_from_yaml(const YAML::Node& node) {
+    if (!node) {
+        return KernelColliderPurpose_Limb;
+    }
+    const std::string value = node.as<std::string>();
+    std::uint32_t flags = 0;
+    std::size_t start = 0;
+    while (start <= value.size()) {
+        const std::size_t separator = value.find('|', start);
+        const std::string token = trim_ascii(value.substr(
+            start,
+            separator == std::string::npos ? std::string::npos
+                                           : separator - start));
+        if (token.empty()) {
+            throw std::runtime_error(
+                "empty limb collider purpose token: " + value);
+        }
+        flags |= skeleton_collision_purpose_token_from_yaml(token);
+        if (separator == std::string::npos) {
+            break;
+        }
+        start = separator + 1;
+    }
+    // Carried by a bone whatever else it is, so the runtime can tell limbs from
+    // root-anchored colliders without consulting the bone index.
+    return flags | KernelColliderPurpose_Limb;
+}
+
+std::uint8_t skeleton_collider_shape_from_yaml(const YAML::Node& node) {
+    if (!node) {
+        return KernelColliderShapeType_OrientedBox;
+    }
+    const std::string value = node.as<std::string>();
+    if (value == "oriented_box" || value == "box") {
+        return KernelColliderShapeType_OrientedBox;
+    }
+    if (value == "sphere") {
+        return KernelColliderShapeType_Sphere;
+    }
+    throw std::runtime_error("unsupported limb collider shape: " + value);
+}
+
 KernelVec4 collider_shape_params_from_yaml(
     std::uint8_t shape_type,
     const YAML::Node& node) {
@@ -2702,6 +2781,172 @@ std::uint64_t uint64_from_yaml(const YAML::Node& node) {
 // -- and therefore the catalog hash -- does not depend on directory iteration
 // order.
 constexpr std::string_view kSkeletonManifestSuffix = ".skeleton_manifest.json";
+constexpr std::string_view kSkeletonRigSuffix = ".rig.yaml";
+
+std::uint32_t skeleton_bone_index(
+    const SkeletonAssetConfig& asset,
+    const std::string& name,
+    const std::string& field);
+
+// Reads <name>.rig.yaml, the hand-authored half of a rig's description. It says
+// what the rig IS -- today, which bones carry colliders and what shape they are.
+// Sizes are absent by design: the rigs express a collider's dimensions as the
+// bone's own rest scale, so repeating them here would create a second copy that
+// can disagree with the skeleton. Gameplay meaning is absent too, because whose
+// side an actor is on is not a property of its skeleton.
+void load_skeleton_rig(
+    const GameplayConfigSource& source,
+    const std::string& rig_path,
+    SkeletonAssetConfig* asset) {
+    const YAML::Node rig = source.load_yaml(rig_path);
+    reject_unknown_keys(
+        rig,
+        {
+            "rig_version",
+            "skeleton",
+            "forward_axis",
+            "root_bone",
+            "body_bone",
+            "knee_hinge_local",
+            "legs",
+            "colliders",
+        },
+        rig_path,
+        source.source_kind(),
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG,
+        asset->skeleton_asset_id);
+    const std::uint32_t rig_version = rig["rig_version"]
+        ? rig["rig_version"].as<std::uint32_t>()
+        : 0u;
+    if (rig_version != 2u) {
+        throw std::runtime_error("unsupported rig_version: " + rig_path);
+    }
+    // The file names the rig it describes, so a mis-copied file is caught here
+    // rather than silently attaching one rig's colliders to another's bones.
+    if (!rig["skeleton"] ||
+        rig["skeleton"].as<std::string>() != asset->name) {
+        throw std::runtime_error(
+            "rig file does not name skeleton " + asset->name + ": " + rig_path);
+    }
+    if (!rig["forward_axis"] || !rig["root_bone"] || !rig["body_bone"] ||
+        !rig["legs"] || !rig["legs"].IsSequence()) {
+        throw std::runtime_error(
+            "rig requires forward_axis, root_bone, body_bone and legs: " +
+            rig_path);
+    }
+    asset->forward_axis = rig["forward_axis"].as<std::string>();
+    if (asset->forward_axis != "positive_z") {
+        throw std::runtime_error("unsupported rig forward_axis: " + rig_path);
+    }
+    asset->root_bone = rig["root_bone"].as<std::string>();
+    asset->body_bone = rig["body_bone"].as<std::string>();
+    asset->root_bone_index =
+        skeleton_bone_index(*asset, asset->root_bone, "root_bone");
+    asset->body_bone_index =
+        skeleton_bone_index(*asset, asset->body_bone, "body_bone");
+    asset->knee_hinge_local = rig["knee_hinge_local"]
+        ? vec3_from_yaml(rig["knee_hinge_local"])
+        : KernelVec3{0.0f, 0.0f, 1.0f};
+    if (!finite_vec3_value(asset->knee_hinge_local) ||
+        vec3_length_squared(asset->knee_hinge_local) <= 0.0f) {
+        throw std::runtime_error("invalid rig knee_hinge_local: " + rig_path);
+    }
+    if (rig["legs"].size() == 0u ||
+        rig["legs"].size() > KERNEL_MAX_SKELETON_LEGS) {
+        throw std::runtime_error("invalid rig leg count: " + rig_path);
+    }
+    std::unordered_set<std::string> rig_leg_ids;
+    for (const YAML::Node& leg_node : rig["legs"]) {
+        reject_unknown_keys(
+            leg_node,
+            {"id", "hip", "knee", "foot", "pole_local"},
+            rig_path,
+            source.source_kind(),
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG,
+            asset->skeleton_asset_id);
+        if (!leg_node["id"] || !leg_node["hip"] || !leg_node["knee"] ||
+            !leg_node["foot"]) {
+            throw std::runtime_error(
+                "rig leg requires id and hip/knee/foot bones: " + rig_path);
+        }
+        RigLegConfig leg;
+        leg.id = leg_node["id"].as<std::string>();
+        if (!rig_leg_ids.insert(leg.id).second) {
+            throw std::runtime_error("duplicate rig leg id: " + leg.id);
+        }
+        leg.hip_bone = leg_node["hip"].as<std::string>();
+        leg.knee_bone = leg_node["knee"].as<std::string>();
+        leg.foot_bone = leg_node["foot"].as<std::string>();
+        leg.hip_bone_index =
+            skeleton_bone_index(*asset, leg.hip_bone, leg.id + ".hip");
+        leg.knee_bone_index =
+            skeleton_bone_index(*asset, leg.knee_bone, leg.id + ".knee");
+        leg.foot_bone_index =
+            skeleton_bone_index(*asset, leg.foot_bone, leg.id + ".foot");
+        // The two-bone chain has to actually be a chain in this skeleton. This
+        // is now checkable where the claim is made, instead of once per
+        // template that happens to use the rig.
+        if (asset->bones[leg.knee_bone_index].parent_index !=
+                static_cast<std::int32_t>(leg.hip_bone_index) ||
+            asset->bones[leg.foot_bone_index].parent_index !=
+                static_cast<std::int32_t>(leg.knee_bone_index)) {
+            throw std::runtime_error(
+                "rig " + asset->name + " leg " + leg.id + " bones " +
+                leg.hip_bone + " -> " + leg.knee_bone + " -> " +
+                leg.foot_bone + " has invalid two-bone hierarchy");
+        }
+        leg.pole_local = vec3_from_yaml(leg_node["pole_local"]);
+        if (!finite_vec3_value(leg.pole_local) ||
+            vec3_length_squared(leg.pole_local) <= 0.0f) {
+            throw std::runtime_error(
+                "invalid rig pole_local for leg " + leg.id + ": " + rig_path);
+        }
+        asset->legs.push_back(std::move(leg));
+    }
+    if (!rig["colliders"]) {
+        return;
+    }
+    if (!rig["colliders"].IsSequence()) {
+        throw std::runtime_error("rig colliders must be a sequence: " + rig_path);
+    }
+    if (rig["colliders"].size() > KERNEL_MAX_SKELETON_COLLIDERS) {
+        throw std::runtime_error(
+            "rig colliders exceeds " +
+            std::to_string(KERNEL_MAX_SKELETON_COLLIDERS) + ": " + rig_path);
+    }
+    std::unordered_set<std::uint32_t> bone_indices;
+    for (const YAML::Node& collider_node : rig["colliders"]) {
+        reject_unknown_keys(
+            collider_node,
+            {"bone", "leg", "shape"},
+            rig_path,
+            source.source_kind(),
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG,
+            asset->skeleton_asset_id);
+        if (!collider_node["bone"]) {
+            throw std::runtime_error(
+                "rig collider requires bone: " + rig_path);
+        }
+        RigColliderConfig collider;
+        collider.bone = collider_node["bone"].as<std::string>();
+        collider.bone_index =
+            skeleton_bone_index(*asset, collider.bone, "colliders.bone");
+        // One collider per bone: two would share a bone frame and so occupy the
+        // same space, and the runtime keys them by bone.
+        if (!bone_indices.insert(collider.bone_index).second) {
+            throw std::runtime_error(
+                "duplicate rig collider bone: " + collider.bone);
+        }
+        collider.shape_type =
+            skeleton_collider_shape_from_yaml(collider_node["shape"]);
+        // Resolved against the entity template's legs when the two are merged:
+        // leg indices are template-scoped until the legs themselves move here.
+        if (collider_node["leg"]) {
+            collider.leg_id = collider_node["leg"].as<std::string>();
+        }
+        asset->colliders.push_back(std::move(collider));
+    }
+}
 
 std::vector<SkeletonAssetConfig> load_skeleton_assets_from_directory(
     const GameplayConfigSource& source,
@@ -2720,6 +2965,21 @@ std::vector<SkeletonAssetConfig> load_skeleton_assets_from_directory(
         throw std::runtime_error(
             "skeleton_manifests_dir contains no *" +
             std::string(kSkeletonManifestSuffix) + ": " + logical_directory);
+    }
+
+    // Authored rig files live beside the generated ones and are keyed by the
+    // basename all three of a rig's files share, so the same scan finds them.
+    std::unordered_map<std::string, std::string> rig_paths;
+    for (const std::string& rig_path :
+         source.list_files(resolved_directory, kSkeletonRigSuffix)) {
+        const std::size_t rig_separator = rig_path.find_last_of("/\\");
+        const std::string rig_basename = rig_separator == std::string::npos
+            ? rig_path
+            : rig_path.substr(rig_separator + 1);
+        rig_paths.emplace(
+            rig_basename.substr(
+                0, rig_basename.size() - kSkeletonRigSuffix.size()),
+            rig_path);
     }
 
     std::vector<SkeletonAssetConfig> assets;
@@ -2846,6 +3106,13 @@ std::vector<SkeletonAssetConfig> load_skeleton_assets_from_directory(
                 })) {
             throw std::runtime_error(
                 "duplicate or invalid skeleton asset: " + manifest_path);
+        }
+        // The authored companion to this generated manifest, matched by the
+        // basename they share. Optional: a rig that declares no colliders
+        // simply has no file.
+        const auto rig_entry = rig_paths.find(asset.name);
+        if (rig_entry != rig_paths.end()) {
+            load_skeleton_rig(source, rig_entry->second, &asset);
         }
         assets.push_back(std::move(asset));
     }
@@ -3227,19 +3494,17 @@ ActorTemplateConfig actor_template_from_yaml(
                 "runtime_asset",
                 "source_manifest",
                 "content_hash",
-                "root_bone",
-                "body_bone",
+                "collision_flags",
             },
             path,
             source_kind,
             KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
             actor_template.actor_template_id);
         if (!skeleton["runtime_asset"] || !skeleton["source_manifest"] ||
-            !skeleton["root_bone"] || !skeleton["body_bone"] ||
             !node["locomotion"]) {
             throw std::runtime_error(
-                "skeleton requires runtime_asset, source_manifest, root_bone, "
-                "body_bone, and locomotion: " + actor_template.name);
+                "skeleton requires runtime_asset, source_manifest and "
+                "locomotion: " + actor_template.name);
         }
         SkeletonBindingConfig& binding = actor_template.skeleton;
         binding.runtime_asset =
@@ -3271,43 +3536,46 @@ ActorTemplateConfig actor_template_from_yaml(
         binding.content_hash = asset->content_hash;
         binding.bone_count =
             static_cast<std::uint32_t>(asset->bones.size());
-        binding.root_bone = skeleton["root_bone"].as<std::string>();
-        binding.body_bone = skeleton["body_bone"].as<std::string>();
-        binding.root_bone_index = skeleton_bone_index(
-            *asset,
-            binding.root_bone,
-            "root_bone");
-        binding.body_bone_index = skeleton_bone_index(
-            *asset,
-            binding.body_bone,
-            "body_bone");
+        // Bone identity is a fact about the rig, so it is read off the asset
+        // rather than re-authored per template. A rig with no .rig.yaml has no
+        // legs to walk and is rejected below.
+        binding.root_bone = asset->root_bone;
+        binding.body_bone = asset->body_bone;
+        binding.root_bone_index = asset->root_bone_index;
+        binding.body_bone_index = asset->body_bone_index;
 
         const YAML::Node locomotion = node["locomotion"];
         reject_unknown_keys(
             locomotion,
             {
                 "type",
-                "forward_axis",
                 "input_deadzone",
                 "gait",
                 "foothold",
                 "body",
+                "leg_defaults",
                 "legs",
             },
             path,
             source_kind,
             KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
             actor_template.actor_template_id);
-        if (!locomotion["type"] || !locomotion["forward_axis"] ||
-            !locomotion["gait"] || !locomotion["foothold"] ||
-            !locomotion["legs"] ||
+        if (!locomotion["type"] || !locomotion["gait"] ||
+            !locomotion["foothold"] || !locomotion["legs"] ||
             !locomotion["legs"].IsSequence()) {
             throw std::runtime_error(
-                "locomotion requires type, forward_axis, gait, and legs: " +
+                "locomotion requires type, gait, and legs: " +
+                actor_template.name);
+        }
+        if (asset->legs.empty()) {
+            throw std::runtime_error(
+                "skeleton asset " + asset->name +
+                " declares no legs; it needs a .rig.yaml to be walked: " +
                 actor_template.name);
         }
         binding.locomotion_type = locomotion["type"].as<std::string>();
-        binding.forward_axis = locomotion["forward_axis"].as<std::string>();
+        // Which way the model faces is a fact about the rig.
+        binding.forward_axis = asset->forward_axis;
         binding.input_deadzone = locomotion["input_deadzone"]
             ? locomotion["input_deadzone"].as<float>()
             : 0.01f;
@@ -3324,18 +3592,43 @@ ActorTemplateConfig actor_template_from_yaml(
                 "unsupported or invalid skeleton locomotion: " +
                 actor_template.name);
         }
-        std::unordered_set<std::string> leg_ids;
+        // Per-leg tuning laid over the rig's legs. Defaults first, because all
+        // three base rigs use one step height and reach ratio for every leg.
+        float default_step_height = 0.0f;
+        float default_max_reach_ratio = 0.95f;
+        if (locomotion["leg_defaults"]) {
+            const YAML::Node leg_defaults = locomotion["leg_defaults"];
+            reject_unknown_keys(
+                leg_defaults,
+                {"step_height_meters", "max_reach_ratio"},
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                actor_template.actor_template_id);
+            default_step_height = leg_defaults["step_height_meters"]
+                ? leg_defaults["step_height_meters"].as<float>()
+                : default_step_height;
+            default_max_reach_ratio = leg_defaults["max_reach_ratio"]
+                ? leg_defaults["max_reach_ratio"].as<float>()
+                : default_max_reach_ratio;
+        }
+        // The rig fixes the leg order, so leg indices are the same for every
+        // template that walks it. Entries here name a rig leg and may appear in
+        // any order; every leg must be tuned exactly once.
+        binding.legs.assign(asset->legs.size(), SkeletonLegConfig{});
+        for (std::size_t rig_leg = 0u; rig_leg < asset->legs.size();
+             ++rig_leg) {
+            binding.legs[rig_leg].id = asset->legs[rig_leg].id;
+            binding.legs[rig_leg].step_height_meters = default_step_height;
+            binding.legs[rig_leg].max_reach_ratio = default_max_reach_ratio;
+        }
+        std::vector<bool> leg_tuned(asset->legs.size(), false);
         for (const YAML::Node& leg_node : locomotion["legs"]) {
             reject_unknown_keys(
                 leg_node,
                 {
                     "id",
-                    "hip_bone",
-                    "knee_bone",
-                    "foot_bone",
                     "gait_group",
-                    "pole_local",
-                    "mid_axis_local",
                     "step_height_meters",
                     "max_reach_ratio",
                 },
@@ -3343,84 +3636,52 @@ ActorTemplateConfig actor_template_from_yaml(
                 source_kind,
                 KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
                 actor_template.actor_template_id);
-            if (!leg_node["id"] || !leg_node["hip_bone"] ||
-                !leg_node["knee_bone"] || !leg_node["foot_bone"]) {
+            if (!leg_node["id"]) {
                 throw std::runtime_error(
-                    "locomotion leg requires id and hip/knee/foot bones: " +
-                    actor_template.name);
+                    "locomotion leg requires id: " + actor_template.name);
             }
-            SkeletonLegConfig leg;
-            leg.id = leg_node["id"].as<std::string>();
-            leg.hip_bone = leg_node["hip_bone"].as<std::string>();
-            leg.knee_bone = leg_node["knee_bone"].as<std::string>();
-            leg.foot_bone = leg_node["foot_bone"].as<std::string>();
-            if (!leg_ids.insert(leg.id).second) {
+            const std::string leg_id = leg_node["id"].as<std::string>();
+            const auto rig_leg = std::find_if(
+                asset->legs.begin(),
+                asset->legs.end(),
+                [&leg_id](const RigLegConfig& candidate) {
+                    return candidate.id == leg_id;
+                });
+            if (rig_leg == asset->legs.end()) {
                 throw std::runtime_error(
-                    "duplicate locomotion leg id: " + leg.id);
+                    "locomotion leg " + leg_id + " is not a leg of rig " +
+                    asset->name + ": " + actor_template.name);
             }
-            leg.hip_bone_index = skeleton_bone_index(
-                *asset, leg.hip_bone, leg.id + ".hip_bone");
-            leg.knee_bone_index = skeleton_bone_index(
-                *asset, leg.knee_bone, leg.id + ".knee_bone");
-            leg.foot_bone_index = skeleton_bone_index(
-                *asset, leg.foot_bone, leg.id + ".foot_bone");
-            if (asset->bones[leg.knee_bone_index].parent_index !=
-                    static_cast<std::int32_t>(leg.hip_bone_index) ||
-                asset->bones[leg.foot_bone_index].parent_index !=
-                    static_cast<std::int32_t>(leg.knee_bone_index)) {
+            const std::size_t leg_index = static_cast<std::size_t>(
+                std::distance(asset->legs.begin(), rig_leg));
+            if (leg_tuned[leg_index]) {
                 throw std::runtime_error(
-                    "skeleton asset " + asset->name + " leg " + leg.id +
-                    " bones " + leg.hip_bone + " -> " + leg.knee_bone +
-                    " -> " + leg.foot_bone +
-                    " has invalid two-bone hierarchy");
+                    "duplicate locomotion leg id: " + leg_id);
             }
+            leg_tuned[leg_index] = true;
+            SkeletonLegConfig& leg = binding.legs[leg_index];
             leg.gait_group = leg_node["gait_group"]
                 ? leg_node["gait_group"].as<std::uint32_t>()
                 : 0u;
-            leg.pole_local = vec3_from_yaml(leg_node["pole_local"]);
-            // Knee hinge axis, in the knee joint's own local space (see
-            // KernelSkeletonLegDefinition). Defaults to +Z, which is what the
-            // engine assumed for every rig before this was authorable; the
-            // kernel cross-checks it against the bind pose at load, so a rig
-            // that hinges elsewhere is rejected instead of silently failing to
-            // bend. Rigs built by duplicating one limb share a single value.
-            leg.mid_axis_local = leg_node["mid_axis_local"]
-                ? vec3_from_yaml(leg_node["mid_axis_local"])
-                : KernelVec3{0.0f, 0.0f, 1.0f};
             leg.step_height_meters = leg_node["step_height_meters"]
                 ? leg_node["step_height_meters"].as<float>()
-                : 0.0f;
+                : default_step_height;
             leg.max_reach_ratio = leg_node["max_reach_ratio"]
                 ? leg_node["max_reach_ratio"].as<float>()
-                : 0.95f;
-            const float pole_length_squared =
-                leg.pole_local.x * leg.pole_local.x +
-                leg.pole_local.y * leg.pole_local.y +
-                leg.pole_local.z * leg.pole_local.z;
-            const float mid_axis_length_squared =
-                leg.mid_axis_local.x * leg.mid_axis_local.x +
-                leg.mid_axis_local.y * leg.mid_axis_local.y +
-                leg.mid_axis_local.z * leg.mid_axis_local.z;
-            if (!std::isfinite(leg.pole_local.x) ||
-                !std::isfinite(leg.pole_local.y) ||
-                !std::isfinite(leg.pole_local.z) ||
-                !std::isfinite(leg.mid_axis_local.x) ||
-                !std::isfinite(leg.mid_axis_local.y) ||
-                !std::isfinite(leg.mid_axis_local.z) ||
-                !std::isfinite(leg.step_height_meters) ||
+                : default_max_reach_ratio;
+            if (!std::isfinite(leg.step_height_meters) ||
                 !std::isfinite(leg.max_reach_ratio) ||
-                pole_length_squared <= 0.0f ||
-                mid_axis_length_squared <= 0.0f ||
                 leg.step_height_meters < 0.0f ||
-                leg.max_reach_ratio <= 0.0f ||
-                leg.max_reach_ratio > 1.0f) {
+                leg.max_reach_ratio <= 0.0f || leg.max_reach_ratio > 1.0f) {
                 throw std::runtime_error(
-                    "skeleton asset " + asset->name + " leg " + leg.id +
-                    " bones " + leg.hip_bone + " -> " + leg.knee_bone +
-                    " -> " + leg.foot_bone +
-                    " has invalid locomotion parameters");
+                    "invalid locomotion leg tuning: " + leg_id);
             }
-            binding.legs.push_back(std::move(leg));
+        }
+        if (std::find(leg_tuned.begin(), leg_tuned.end(), false) !=
+            leg_tuned.end()) {
+            throw std::runtime_error(
+                "locomotion does not tune every leg of rig " + asset->name +
+                ": " + actor_template.name);
         }
 
         const YAML::Node gait = locomotion["gait"];
@@ -3581,6 +3842,54 @@ ActorTemplateConfig actor_template_from_yaml(
                 throw std::runtime_error(
                     "invalid locomotion body follow values: " +
                     actor_template.name);
+            }
+        }
+
+        // What this actor's rig colliders MEAN. The rig file says which bones
+        // carry colliders and what shape they are; this says whose side they
+        // are on and what may hit them, which is a property of the actor rather
+        // than of the skeleton -- the same rig can be a hostile monster or a
+        // friendly one. Absent means the actor takes no part in per-bone
+        // collision even if its rig describes some.
+        if (skeleton["collision_flags"]) {
+            const YAML::Node flags = skeleton["collision_flags"];
+            reject_unknown_keys(
+                flags,
+                {"purpose", "layer", "hit_zone"},
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+                actor_template.actor_template_id);
+            // layer is required rather than defaulted: this block exists to
+            // state whose side these colliders are on, and collider_layer_from_yaml
+            // would otherwise quietly answer "damageable" for an author who
+            // simply forgot.
+            if (!flags["layer"]) {
+                throw std::runtime_error(
+                    "skeleton collision_flags requires a layer: " +
+                    actor_template.name);
+            }
+            binding.has_collision_flags = true;
+            binding.collision_flags.purpose_flags =
+                skeleton_collision_purpose_from_yaml(flags["purpose"]);
+            binding.collision_flags.layer_mask =
+                collider_layer_from_yaml(flags["layer"]);
+            binding.collision_flags.hit_zone = flags["hit_zone"]
+                ? flags["hit_zone"].as<std::uint16_t>()
+                : 0u;
+            if (asset->colliders.empty()) {
+                throw std::runtime_error(
+                    "skeleton collision_flags set but rig " + asset->name +
+                    " declares no colliders: " + actor_template.name);
+            }
+            // The tilt a follower cannot reproduce moves a foot by the tilt
+            // times the stance radius, which is metres on these rigs -- so an
+            // actor that puts colliders on its bones may not also opt into it.
+            // See solve_legged_locomotion_follower_pose.
+            if (binding.slope_alignment > 0.0f) {
+                throw std::runtime_error(
+                    "skeleton colliders require slope_alignment 0, since a "
+                    "follower holds an identity tilt: " + actor_template.name);
             }
         }
     }
@@ -5952,12 +6261,16 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     const std::uint32_t catalog_version =
         document["catalog_version"] ? document["catalog_version"].as<std::uint32_t>()
                                     : 1u;
-    // 10 replaced the skeleton_manifests list with skeleton_manifests_dir. 8
-    // and 9 stay loadable because nothing else about them changed; a catalog
-    // that still carries the old key is caught below with a migration message
-    // rather than a bare unknown-key error.
+    // 11 added the optional skeleton.colliders block. 10 replaced the
+    // skeleton_manifests list with skeleton_manifests_dir. 8, 9 and 10 stay
+    // loadable because nothing else about them changed; a catalog that still
+    // carries the old key is caught below with a migration message rather than
+    // a bare unknown-key error. The bump exists because this loader rejects
+    // unknown keys, so a catalog carrying colliders would otherwise fail
+    // an older kernel with a bare field error instead of a version one.
     if (catalog_version != 8u && catalog_version != 9u &&
-        catalog_version != 10u) {
+        catalog_version != 10u && catalog_version != 11u &&
+        catalog_version != 12u && catalog_version != 13u) {
         throw DataLoadError(
             KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNSUPPORTED_CATALOG_VERSION,
             "unsupported catalog_version: " + std::to_string(catalog_version),
@@ -6444,6 +6757,30 @@ std::uint64_t compute_gameplay_catalog_hash(
         hash_scalar(
             &hash,
             static_cast<std::uint32_t>(asset.bones.size()));
+        // The authored .rig.yaml is not covered by content_hash, which is the
+        // .ozz bytes alone, so it has to be folded in here or a rig edit would
+        // reuse a cached bundle.
+        hash_string(&hash, asset.forward_axis);
+        hash_string(&hash, asset.root_bone);
+        hash_string(&hash, asset.body_bone);
+        hash_vec3(&hash, asset.knee_hinge_local);
+        hash_scalar(&hash, static_cast<std::uint32_t>(asset.legs.size()));
+        for (const RigLegConfig& leg : asset.legs) {
+            hash_string(&hash, leg.id);
+            hash_scalar(&hash, leg.hip_bone_index);
+            hash_scalar(&hash, leg.knee_bone_index);
+            hash_scalar(&hash, leg.foot_bone_index);
+            hash_vec3(&hash, leg.pole_local);
+        }
+        hash_scalar(
+            &hash,
+            static_cast<std::uint32_t>(asset.colliders.size()));
+        for (const RigColliderConfig& collider : asset.colliders) {
+            hash_string(&hash, collider.bone);
+            hash_string(&hash, collider.leg_id);
+            hash_scalar(&hash, collider.bone_index);
+            hash_scalar(&hash, collider.shape_type);
+        }
     }
     std::vector<ActorTemplateConfig> actor_templates = config.actor_templates;
     std::sort(
@@ -7227,25 +7564,85 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
                     authored_template.skeleton
                         .foothold_candidate_offsets[candidate];
             }
+            // Merge point: bones and bend geometry come from the rig, gait
+            // grouping and step tuning from the template. The rig fixes the leg
+            // order, so leg_index means the same thing on both sides.
+            const auto rig_asset = std::find_if(
+                config.skeleton_assets.begin(),
+                config.skeleton_assets.end(),
+                [&authored_template](const SkeletonAssetConfig& candidate) {
+                    return candidate.skeleton_asset_id ==
+                        authored_template.skeleton.skeleton_asset_id;
+                });
             for (std::uint32_t leg_index = 0u;
-                 leg_index < entity_template.skeleton.leg_count;
+                 rig_asset != config.skeleton_assets.end() &&
+                 leg_index < entity_template.skeleton.leg_count &&
+                 leg_index < rig_asset->legs.size();
                  ++leg_index) {
                 const SkeletonLegConfig& leg =
                     authored_template.skeleton.legs[leg_index];
+                const RigLegConfig& rig_leg = rig_asset->legs[leg_index];
                 entity_template.skeleton.legs[leg_index] =
                     KernelSkeletonLegDefinition{
                         leg_index,
-                        leg.hip_bone_index,
-                        leg.knee_bone_index,
-                        leg.foot_bone_index,
+                        rig_leg.hip_bone_index,
+                        rig_leg.knee_bone_index,
+                        rig_leg.foot_bone_index,
                         leg.gait_group,
-                        leg.pole_local,
-                        leg.mid_axis_local,
+                        rig_leg.pole_local,
+                        // One rig value fanned out: the ABI keeps mid_axis per
+                        // leg, but it is read in the knee's own frame and these
+                        // legs are copies of one limb.
+                        rig_asset->knee_hinge_local,
                         leg.step_height_meters,
                         leg.max_reach_ratio,
                     };
                 entity_template.skeleton.processing_order[leg_index] =
                     authored_template.skeleton.processing_order[leg_index];
+            }
+            // Merge point: the rig says WHICH bones carry colliders and what
+            // shape they are, the template says what they MEAN. Neither half
+            // can be authored without the other, so a template that sets
+            // collision_flags on a rig with no colliders was rejected at parse.
+            if (authored_template.skeleton.has_collision_flags) {
+                if (rig_asset != config.skeleton_assets.end()) {
+                    const SkeletonCollisionFlagsConfig& flags =
+                        authored_template.skeleton.collision_flags;
+                    entity_template.skeleton.collider_count =
+                        static_cast<std::uint32_t>(rig_asset->colliders.size());
+                    for (std::uint32_t collider_index = 0u;
+                         collider_index <
+                             entity_template.skeleton.collider_count;
+                         ++collider_index) {
+                        const RigColliderConfig& collider =
+                            rig_asset->colliders[collider_index];
+                        // Resolved inside the rig: it owns both the collider's
+                        // leg reference and the leg order that indexes it.
+                        std::uint32_t leg_index = KERNEL_MAX_SKELETON_LEGS;
+                        if (!collider.leg_id.empty()) {
+                            const auto leg = std::find_if(
+                                rig_asset->legs.begin(),
+                                rig_asset->legs.end(),
+                                [&collider](const RigLegConfig& candidate) {
+                                    return candidate.id == collider.leg_id;
+                                });
+                            if (leg != rig_asset->legs.end()) {
+                                leg_index = static_cast<std::uint32_t>(
+                                    std::distance(rig_asset->legs.begin(), leg));
+                            }
+                        }
+                        entity_template.skeleton.colliders[collider_index] =
+                            KernelSkeletonColliderDefinition{
+                                collider.bone_index,
+                                leg_index,
+                                collider.shape_type,
+                                0u,
+                                flags.hit_zone,
+                                flags.purpose_flags,
+                                flags.layer_mask,
+                            };
+                    }
+                }
             }
         }
 

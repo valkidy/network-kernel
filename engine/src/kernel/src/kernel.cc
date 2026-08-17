@@ -850,6 +850,59 @@ std::uint8_t to_kernel_collider_shape_type(ColliderShapeType shape_type) {
     }
 }
 
+ColliderWorldBounds collider_world_bounds(const ColliderInstance& collider);
+
+// The one rule that turns a solved bone frame into a collider, shared verbatim
+// by the authoritative path and the client's follower path.
+//
+// It is deliberately a free function taking the root explicitly, rather than
+// two methods reading two different transforms. The whole argument for spending
+// zero snapshot bytes on limbs is that both sides derive them the same way from
+// the same inputs; if the derivation lived twice, that would be a claim about
+// two pieces of code staying in step rather than a property of one.
+//
+// The root to pass is the one the solve itself used and published --
+// last_root_position and applied_root_rotation -- not the entity's current
+// transform. They are equal today on both sides, but the published pair is what
+// the feet were actually placed with, so it cannot drift out from under the
+// colliders.
+ColliderInstance make_limb_collider(
+    NetId entity_net_id,
+    EntityType entity_type,
+    ActorType actor_type,
+    const KernelSkeletonColliderDefinition& limb,
+    const SolvedColliderPose& pose,
+    std::span<const KernelBoneLocalTransform> bind_pose,
+    const glm::vec3& root_position,
+    const glm::quat& root_rotation) {
+    // Half the bone's own rest scale, which is where the size lives; the solved
+    // rotation had that scale divided out, so it has to come back in here or
+    // the box would be a unit cube in the right place.
+    const glm::vec3 half_extents =
+        locomotion_collider_half_extents(bind_pose, limb);
+    ColliderInstance collider{};
+    collider.collider_template_id = 0u;
+    collider.owner_net_id = entity_net_id;
+    collider.entity_net_id = entity_net_id;
+    collider.entity_type = entity_type;
+    collider.actor_type = actor_type;
+    collider.shape_type = to_collider_shape_type(limb.shape_type);
+    collider.purpose_flags = limb.purpose_flags;
+    collider.layer_mask = limb.layer_mask;
+    collider.hit_zone = limb.hit_zone;
+    collider.local_center = pose.local_position;
+    collider.local_rotation = pose.local_rotation;
+    collider.world_rotation = root_rotation * collider.local_rotation;
+    collider.world_center =
+        root_position + root_rotation * collider.local_center;
+    collider.half_extents = half_extents;
+    // A sphere limb is validated uniform at catalog load, so any axis is the
+    // radius.
+    collider.radius = half_extents.x;
+    collider.world_bounds = collider_world_bounds(collider);
+    return collider;
+}
+
 ColliderWorldBounds collider_world_bounds(const ColliderInstance& collider) {
     if (collider.shape_type == ColliderShapeType::kSegment) {
         const glm::vec3 min_corner =
@@ -2815,6 +2868,20 @@ bool KernelEngine::load_gameplay_catalog(
                     invalid_leg);
                 return false;
             }
+            // Limb colliders take their size from the bone's rest scale, so the
+            // rig is the only place that can say whether an authored bone
+            // actually carries one.
+            std::uint32_t invalid_limb = 0u;
+            if (!validate_locomotion_colliders(
+                    asset->bind_pose, skeleton, &invalid_limb)) {
+                spdlog::error(
+                    "entity template {} skeleton limb collider {} does not "
+                    "match the rig: the bone must exist, be named once, and "
+                    "carry its size as a non-unit rest scale",
+                    entity_template.entity_template_id,
+                    invalid_limb);
+                return false;
+            }
         }
         for (const KernelActionTriggerDefinition* trigger : {
                  &entity_template.activated_trigger,
@@ -4230,6 +4297,47 @@ void KernelEngine::materialize_entity_movement_collider(NetId net_id) {
     movement.movement_collider_id = stored.collider_id;
 }
 
+void KernelEngine::materialize_entity_limb_colliders(
+    NetId net_id,
+    const KernelSkeletonBindingDefinition& skeleton,
+    const RuntimeSkeletonAsset& skeleton_asset,
+    const LocomotionState& locomotion_state) {
+    // A rig that declares no colliders, or a tick whose solve failed, leaves
+    // whatever was registered before in place for exactly one tick and then
+    // loses it below -- there is no half-posed limb to publish.
+    if (skeleton.collider_count == 0u ||
+        locomotion_state.solved_collider_poses.size() !=
+            skeleton.collider_count) {
+        world_.collider_registry().remove_bone_colliders(net_id);
+        return;
+    }
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value() ||
+        !world_.registry().all_of<NetworkIdentity, EntityKind>(*entity)) {
+        world_.collider_registry().remove_bone_colliders(net_id);
+        return;
+    }
+    const NetworkIdentity& identity =
+        world_.registry().get<NetworkIdentity>(*entity);
+    const EntityKind& kind = world_.registry().get<EntityKind>(*entity);
+
+    for (std::uint32_t index = 0u; index < skeleton.collider_count; ++index) {
+        world_.collider_registry().upsert_bone_collider(
+            identity.net_id,
+            /*collider_template_id=*/0u,
+            skeleton.colliders[index].bone_index,
+            make_limb_collider(
+                identity.net_id,
+                kind.type,
+                kind.actor_type,
+                skeleton.colliders[index],
+                locomotion_state.solved_collider_poses[index],
+                skeleton_asset.bind_pose,
+                locomotion_state.last_root_position,
+                locomotion_state.applied_root_rotation));
+    }
+}
+
 void KernelEngine::materialize_projectile_collider(NetId net_id) {
     const std::optional<entt::entity> entity = world_.find_entity(net_id);
     if (!entity.has_value() ||
@@ -4316,6 +4424,10 @@ void KernelEngine::sync_entity_colliders_from_world() {
         return;
     }
     std::unordered_set<std::uint32_t> current_collider_ids;
+    // Rebuilt from scratch on every call, and this runs twice per tick, so it is
+    // worth sizing up front. The loop below filters, so the instance count is an
+    // upper bound rather than the exact size -- which is what reserve wants.
+    current_collider_ids.reserve(world_.collider_registry().instances().size());
     for (const ColliderInstance& collider :
          world_.collider_registry().instances()) {
         if (collider.lifetime_ticks != 0 || collider.entity_net_id == 0 ||
@@ -4326,6 +4438,13 @@ void KernelEngine::sync_entity_colliders_from_world() {
         }
         const bool movement_collider =
             (collider.purpose_flags & KernelColliderPurpose_Movement) != 0u;
+        // A rig's per-bone collider. Kept out of the actor-hitbox mapping below
+        // deliberately: routing a leg segment through kActorHitbox would make it
+        // a damage volume for every existing weapon query, on a world AABB that
+        // does not contain the rotated box. Its own kind and layer keep it
+        // invisible to those queries until something asks for limbs.
+        const bool limb_collider =
+            (collider.purpose_flags & KernelColliderPurpose_Limb) != 0u;
         const std::optional<entt::entity> entity =
             world_.find_entity(collider.entity_net_id);
         if (movement_collider && entity.has_value() &&
@@ -4342,16 +4461,20 @@ void KernelEngine::sync_entity_colliders_from_world() {
         object.identity.entity_net_id = collider.entity_net_id;
         object.identity.collider_id = collider.collider_id;
         object.identity.hit_zone = collider.hit_zone;
-        object.identity.kind = movement_collider
-            ? physics::CollisionObjectKind::kActorMovement
-            : collider.entity_type == EntityType::kActor
-                ? physics::CollisionObjectKind::kActorHitbox
-                : physics::CollisionObjectKind::kStaticObstacle;
-        object.identity.layer = movement_collider
-            ? physics::CollisionLayer::kActorMovement
-            : collider.entity_type == EntityType::kActor
-                ? physics::CollisionLayer::kDamageable
-                : physics::CollisionLayer::kStaticObstacle;
+        object.identity.kind = limb_collider
+            ? physics::CollisionObjectKind::kActorLimb
+            : movement_collider
+                ? physics::CollisionObjectKind::kActorMovement
+                : collider.entity_type == EntityType::kActor
+                    ? physics::CollisionObjectKind::kActorHitbox
+                    : physics::CollisionObjectKind::kStaticObstacle;
+        object.identity.layer = limb_collider
+            ? physics::CollisionLayer::kActorLimb
+            : movement_collider
+                ? physics::CollisionLayer::kActorMovement
+                : collider.entity_type == EntityType::kActor
+                    ? physics::CollisionLayer::kDamageable
+                    : physics::CollisionLayer::kStaticObstacle;
         object.identity.gameplay_category = collider.layer_mask;
         object.shape.type = collider.shape_type == ColliderShapeType::kSphere
             ? physics::CollisionShapeType::kSphere
@@ -4408,6 +4531,65 @@ std::uint32_t KernelEngine::collider_template_id_for_projectile_template(
     return projectile_template == nullptr
                ? 0u
                : projectile_template->mechanics.collider_template_id;
+}
+
+void KernelEngine::sync_client_follower_limb_colliders() {
+    for (const auto& [net_id, state] : follower_locomotion_states_) {
+        if (!state.pose_valid || state.solved_collider_poses.empty()) {
+            continue;
+        }
+        const auto replicated = std::find_if(
+            client_replicated_entities_.begin(),
+            client_replicated_entities_.end(),
+            [net_id = net_id](const ClientReplicatedEntity& candidate) {
+                return candidate.net_id == net_id;
+            });
+        if (replicated == client_replicated_entities_.end()) {
+            continue;
+        }
+        const KernelEntityTemplateDefinition* entity_template =
+            find_entity_template(
+                entity_templates_,
+                replicated->type == EntityType::kActor
+                    ? replicated->actor_template_id
+                    : replicated->entity_template_id);
+        if (entity_template == nullptr ||
+            entity_template->skeleton.struct_size <
+                sizeof(KernelSkeletonBindingDefinition) ||
+            entity_template->skeleton.collider_count !=
+                state.solved_collider_poses.size()) {
+            continue;
+        }
+        const RuntimeSkeletonAsset* skeleton_asset = find_skeleton_asset(
+            skeleton_assets_,
+            entity_template->skeleton.skeleton_asset_id);
+        if (skeleton_asset == nullptr) {
+            continue;
+        }
+        for (std::uint32_t index = 0u;
+             index < entity_template->skeleton.collider_count;
+             ++index) {
+            // The root is the follower's own, in the snapshot tick space the
+            // follower solve ran in -- deliberately NOT the render-time
+            // transform these render colliders otherwise use. Composing a pose
+            // solved at one instant onto a root interpolated at another is the
+            // time-base split that slides feet; the limbs must ride the root
+            // their own solve was given.
+            world_.collider_registry().upsert_bone_collider(
+                net_id,
+                /*collider_template_id=*/0u,
+                entity_template->skeleton.colliders[index].bone_index,
+                make_limb_collider(
+                    net_id,
+                    replicated->type,
+                    replicated->actor_type,
+                    entity_template->skeleton.colliders[index],
+                    state.solved_collider_poses[index],
+                    skeleton_asset->bind_pose,
+                    state.last_root_position,
+                    state.applied_root_rotation));
+        }
+    }
 }
 
 void KernelEngine::sync_client_render_colliders() {
@@ -4518,6 +4700,12 @@ void KernelEngine::sync_client_render_colliders() {
         }
         proxy = prediction_obstacle_collider_ids_.erase(proxy);
     }
+
+    // After the render pass, because that pass clears the registry: a rig's
+    // per-bone colliders have no collider template and so are not reachable
+    // from render_states_ at all. They are rebuilt from the follower solve
+    // instead, which is the point -- nothing about them travels on the wire.
+    sync_client_follower_limb_colliders();
 
     // This runs once per rendered frame, so it is where the prediction world
     // accumulates broad phase churn. Jolt only reclaims broad phase nodes during
@@ -9013,6 +9201,10 @@ void KernelEngine::update_legged_locomotion(
                 entity_template->movement.max_yaw_degrees_per_second,
                 fixed_delta_seconds,
                 &state->second)) {
+            // No pose this tick, so nothing to hang limbs on. See
+            // materialize_entity_limb_colliders: a stale limb is worse than no
+            // limb, because it keeps blocking where the actor no longer is.
+            world_.collider_registry().remove_bone_colliders(net_id);
             continue;
         }
         transform.rotation = glm::angleAxis(
@@ -9024,6 +9216,7 @@ void KernelEngine::update_legged_locomotion(
             entity_template->skeleton.skeleton_asset_id);
         if (skeleton_asset == nullptr) {
             state->second.pose_valid = false;
+            world_.collider_registry().remove_bone_colliders(net_id);
             continue;
         }
         const LocomotionGroundingQuery grounding_query =
@@ -9139,6 +9332,17 @@ void KernelEngine::update_legged_locomotion(
             state->second.pose_valid) {
             transform.rotation = state->second.applied_root_rotation;
         }
+
+        // The rig's own colliders, refreshed from the pose that was just solved
+        // and composed onto the transform that solve was given -- including the
+        // body-follow height applied above and the rotation written back. The
+        // next sync_entity_colliders_from_world() is what pushes them into the
+        // physics world; this only says where they are.
+        materialize_entity_limb_colliders(
+            net_id,
+            entity_template->skeleton,
+            *skeleton_asset,
+            state->second);
 
         // Keep this tick's pose so presentation can evaluate the skeleton at a
         // render time instead of snapping to the newest tick. Only the snapshot

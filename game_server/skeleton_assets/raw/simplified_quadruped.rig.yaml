@@ -1,0 +1,36 @@
+# What this rig IS, as opposed to how any particular actor walks it. Paired with
+# simplified_quadruped.ozz and simplified_quadruped.skeleton_manifest.json by name.
+#
+# Bone identity, the limb's bend geometry, and which bones carry colliders. What
+# is NOT here is anything that changes when the same skeleton is put to a
+# different use: gait timing (tuned against move_speed, which is combat data),
+# gait grouping (the same rig can walk, trot or pace), step height, reach ratio,
+# crouch and body follow all stay on the entity template.
+rig_version: 2
+skeleton: simplified_quadruped
+forward_axis: positive_z
+root_bone: SIM_Root
+body_bone: JNT_Body
+# One value for the whole rig: mid_axis is read in the knee's OWN frame, and
+# these legs are copies of a single limb with re-aimed hips. pole_local below is
+# model-space and therefore genuinely per leg -- it does not rotate with the hip.
+knee_hinge_local: {x: 0.460, y: 0.0, z: -0.888}
+legs:
+  - {id: leg0, hip: JNT_Leg0_Hip, knee: JNT_Leg0_Knee, foot: JNT_Leg0_Foot,
+     pole_local: {x: 0.734, y: 0.305, z: 0.607}}
+  - {id: leg1, hip: JNT_Leg1_Hip, knee: JNT_Leg1_Knee, foot: JNT_Leg1_Foot,
+     pole_local: {x: -0.607, y: 0.305, z: 0.734}}
+  - {id: leg2, hip: JNT_Leg2_Hip, knee: JNT_Leg2_Knee, foot: JNT_Leg2_Foot,
+     pole_local: {x: -0.734, y: 0.305, z: -0.607}}
+  - {id: leg3, hip: JNT_Leg3_Hip, knee: JNT_Leg3_Knee, foot: JNT_Leg3_Foot,
+     pole_local: {x: 0.607, y: 0.305, z: -0.734}}
+colliders:
+  - {bone: GEO_Leg0_Upper, leg: leg0}
+  - {bone: GEO_Leg0_Lower, leg: leg0}
+  - {bone: GEO_Leg1_Upper, leg: leg1}
+  - {bone: GEO_Leg1_Lower, leg: leg1}
+  - {bone: GEO_Leg2_Upper, leg: leg2}
+  - {bone: GEO_Leg2_Lower, leg: leg2}
+  - {bone: GEO_Leg3_Upper, leg: leg3}
+  - {bone: GEO_Leg3_Lower, leg: leg3}
+  - {bone: GEO_Body}

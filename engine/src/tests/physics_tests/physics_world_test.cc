@@ -57,6 +57,43 @@ CollisionObjectDescriptor actor(
     return object;
 }
 
+// One per-bone collider of a legged rig, shaped like the slender leg segments
+// the rigs actually carry rather than the cube the hitbox helper builds.
+CollisionObjectDescriptor limb(
+    std::uint32_t entity_net_id,
+    std::uint32_t collider_id,
+    const glm::vec3& position) {
+    CollisionObjectDescriptor object{};
+    object.identity = CollisionObjectIdentity{
+        entity_net_id,
+        collider_id,
+        0,
+        CollisionObjectKind::kActorLimb,
+        CollisionLayer::kActorLimb,
+        0,
+        0,
+    };
+    object.shape.type = CollisionShapeType::kBox;
+    object.shape.half_extents = glm::vec3(0.375f, 4.75f, 0.375f);
+    object.position = position;
+    return object;
+}
+
+CollisionObjectDescriptor plain(
+    std::uint32_t entity_net_id,
+    std::uint32_t collider_id,
+    const glm::vec3& position,
+    CollisionObjectKind kind,
+    CollisionLayer layer) {
+    CollisionObjectDescriptor object{};
+    object.identity = CollisionObjectIdentity{
+        entity_net_id, collider_id, 0, kind, layer, 0, 0};
+    object.shape.type = CollisionShapeType::kBox;
+    object.shape.half_extents = glm::vec3(0.5f);
+    object.position = position;
+    return object;
+}
+
 void populate(PhysicsWorld* world) {
     std::string error;
     assert(world->upsert_object(actor(
@@ -466,5 +503,106 @@ int main(int argc, char** argv) {
     // The long-lived bodies are still where the first loop left them.
     assert(churn_world.ray_cast_closest(churn_ray, &closest));
     assert(closest.identity.collider_id == 800);
+
+    // Per-bone limb colliders occupy a layer of their own, in both the object
+    // and the broad phase sense. The matrix below is the whole point of that
+    // separation: a query written before limbs existed must return exactly what
+    // it returned before, and must not walk the limb subtree to do so.
+    PhysicsWorld limb_world(PhysicsWorldConfig{0, true});
+    assert(limb_world.valid());
+    constexpr float kLimbY = 200.0f;
+    for (std::uint32_t index = 0; index < 3; ++index) {
+        assert(limb_world.upsert_object(
+            limb(
+                9,
+                900 + index,
+                glm::vec3(2.0f + static_cast<float>(index), kLimbY, 0.0f)),
+            &error));
+    }
+    assert(limb_world.upsert_object(actor(
+        9,
+        910,
+        glm::vec3(6.0f, kLimbY, 0.0f),
+        network_example::physics::kGameplayCategoryHostileSide), &error));
+    assert(limb_world.upsert_object(
+        plain(
+            9,
+            911,
+            glm::vec3(8.0f, kLimbY, 0.0f),
+            CollisionObjectKind::kActorMovement,
+            CollisionLayer::kActorMovement),
+        &error));
+    assert(limb_world.upsert_object(
+        plain(
+            0,
+            912,
+            glm::vec3(10.0f, kLimbY, 0.0f),
+            CollisionObjectKind::kStaticObstacle,
+            CollisionLayer::kStaticObstacle),
+        &error));
+
+    RayCastRequest limb_ray{};
+    limb_ray.origin = glm::vec3(0.0f, kLimbY, 0.0f);
+    limb_ray.direction = glm::vec3(1.0f, 0.0f, 0.0f);
+    limb_ray.max_distance = 30.0f;
+
+    const std::uint32_t limb_bit =
+        network_example::physics::collision_layer_bit(CollisionLayer::kActorLimb);
+
+    // 1. The default mask is unchanged, so it still means "hitbox plus static
+    //    world" and sees none of the three limbs standing in front of them.
+    limb_world.reset_query_stats();
+    const std::vector<CollisionHit> default_hits =
+        limb_world.ray_cast_all(limb_ray);
+    assert(default_hits.size() == 2);
+    assert(default_hits[0].identity.collider_id == 910);
+    assert(default_hits[1].identity.collider_id == 912);
+    CollisionQueryStats limb_stats = limb_world.query_stats();
+    assert(limb_stats.actor_limb_broadphase_layers_accepted == 0);
+    assert(limb_stats.actor_limb_object_layers_accepted == 0);
+
+    // 2. The movement mask likewise: terrain, static obstacles and other
+    //    movement capsules, but never a limb. A walker steps over legs.
+    limb_ray.filter.collision_mask =
+        network_example::physics::kMovementCollisionMask;
+    limb_world.reset_query_stats();
+    const std::vector<CollisionHit> movement_hits =
+        limb_world.ray_cast_all(limb_ray);
+    assert(movement_hits.size() == 2);
+    assert(movement_hits[0].identity.collider_id == 911);
+    assert(movement_hits[1].identity.collider_id == 912);
+    limb_stats = limb_world.query_stats();
+    assert(limb_stats.actor_limb_broadphase_layers_accepted == 0);
+    assert(limb_stats.actor_limb_object_layers_accepted == 0);
+
+    // 3. Naming the layer is what buys the limbs, and it buys only the limbs.
+    limb_ray.filter.collision_mask = limb_bit;
+    limb_world.reset_query_stats();
+    const std::vector<CollisionHit> limb_hits = limb_world.ray_cast_all(limb_ray);
+    assert(limb_hits.size() == 3);
+    for (std::size_t index = 0; index < limb_hits.size(); ++index) {
+        assert(limb_hits[index].identity.kind == CollisionObjectKind::kActorLimb);
+        assert(limb_hits[index].identity.collider_id == 900 + index);
+    }
+    limb_stats = limb_world.query_stats();
+    assert(limb_stats.actor_limb_broadphase_layers_accepted > 0);
+    assert(limb_stats.actor_limb_object_layers_accepted > 0);
+    assert(limb_stats.damageable_actor_broadphase_layers_accepted == 0);
+
+    // 4. The mask and the kind gate independently: a caller that names the layer
+    //    but masks the kind out gets nothing, which is what keeps the kernel's
+    //    foothold ray triple-excluded.
+    limb_ray.filter.object_kind_mask =
+        ~(1u << static_cast<std::uint32_t>(CollisionObjectKind::kActorLimb));
+    limb_world.reset_query_stats();
+    assert(limb_world.ray_cast_all(limb_ray).empty());
+    limb_stats = limb_world.query_stats();
+    assert(limb_stats.actor_limb_broadphase_layers_accepted == 0);
+
+    // 5. Opting in is additive, not exclusive.
+    limb_ray.filter.object_kind_mask = 0xffffffffu;
+    limb_ray.filter.collision_mask =
+        network_example::physics::kCollisionMaskAll | limb_bit;
+    assert(limb_world.ray_cast_all(limb_ray).size() == 5);
     return 0;
 }

@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 73u`.
+`KERNEL_ABI_VERSION == 74u`.
 
 ## Ownership
 
@@ -30,6 +30,14 @@ failures return `NULL`, `false`, or `0`.
 Additive changes must prefer new `Kernel_*` functions or new capability flags.
 Breaking changes to public struct layout, enum semantics, buffer ownership, or
 function signatures require a `KERNEL_ABI_VERSION` bump.
+
+ABI version 74 appends `collider_count` and `colliders` to
+`KernelSkeletonBindingDefinition`, describing colliders carried by a skeleton's
+bones rather than by the entity root. The definitions carry no dimensions: a
+collider is sized from its bone's rest scale in the skeleton itself, so the size
+has one source and cannot drift from the rig. `KernelColliderPurpose_Limb`
+marks a bone-carried collider. Both packet and snapshot schemas are unchanged --
+the data reaches clients in the gameplay catalog, not on the wire.
 
 ABI version 73 extends status-effect reapplication with `refresh` and `stack`
 replacement policies. Stack authoring appends `max_stacks` and

@@ -299,7 +299,10 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
     const std::vector<std::pair<std::string, std::string>>& extra_files = {},
     const std::string& player_actor_yaml = {},
     const std::string& catalog_yaml = {},
-    const std::string& monster_actor_yaml = {}) {
+    const std::string& monster_actor_yaml = {},
+    // Bone identity lives in the rig file now, so tests that corrupt it need a
+    // way to substitute one.
+    const std::string& monster_rig_yaml = {}) {
     std::vector<std::pair<std::string, std::string>> files;
     files.push_back({
         "gameplay_catalog.yaml",
@@ -353,9 +356,13 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
         }
         std::sort(generated.begin(), generated.end());
         for (const std::filesystem::path& entry : generated) {
+            const std::string name = entry.filename().string();
+            const bool use_override = !monster_rig_yaml.empty() &&
+                name == "simplified_monster_sim_v4.rig.yaml";
             files.push_back({
-                "skeleton_assets/generated/" + entry.filename().string(),
-                read_binary_string(entry.string())});
+                "skeleton_assets/generated/" + name,
+                use_override ? monster_rig_yaml
+                             : read_binary_string(entry.string())});
         }
     }
 
@@ -755,6 +762,12 @@ int main() {
         "preload_directors:\n  - game_flow_director\n",
         ""));
     require(empty_preload_config.preload_director_template_ids.empty());
+    const std::string production_monster_rig =
+        read_text_file(
+            "game_server/skeleton_assets/generated/"
+            "simplified_monster_sim_v4.rig.yaml");
+    // The two-bone chain is a claim about the rig, so it is now corrupted in
+    // -- and reported against -- the rig file rather than a template.
     bool invalid_leg_hierarchy_rejected = false;
     try {
         const std::vector<std::uint8_t> invalid_leg_bundle =
@@ -763,24 +776,18 @@ int main() {
                 {},
                 {},
                 {},
+                {},
                 replace_once(
-                    production_monster_yaml,
-                    "foot_bone: JNT_LegFrontLeft_Foot",
-                    "foot_bone: JNT_LegFrontLeft_Hip"));
+                    production_monster_rig,
+                    "foot: JNT_LegFrontLeft_Foot",
+                    "foot: JNT_LegFrontLeft_Hip"));
         (void)network_example::game_server::load_gameplay_config_from_bundle_memory(
             invalid_leg_bundle.data(),
             static_cast<std::uint32_t>(invalid_leg_bundle.size()),
             "gameplay_catalog.yaml");
-    } catch (const network_example::game_server::DataLoadError& error) {
-        require(error.error_code ==
-                KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_YAML);
-        require(error.source_kind ==
-                KERNEL_GAMEPLAY_CATALOG_LOAD_SOURCE_BUNDLE);
-        require(error.template_kind ==
-                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR);
-        require(error.template_id == 20u);
-        require(error.field == "skeleton");
-        require(error.path.find("monster_sim_actor.yaml") != std::string::npos);
+    } catch (const std::exception& error) {
+        // Still names the rig and both ends of the broken chain, which is what
+        // makes the message actionable.
         require(std::string(error.what()).find("simplified_monster_sim_v4") !=
                 std::string::npos);
         require(std::string(error.what()).find("JNT_LegFrontLeft_Hip") !=
@@ -1261,7 +1268,7 @@ int main() {
     assert(
         config.static_collision_scene.collision_layer ==
         KERNEL_STATIC_COLLISION_LAYER_TERRAIN);
-    require(config.weapons.catalog_version == 10);
+    require(config.weapons.catalog_version == 13);
     require(config.prop_population_rules.size() == 1u);
     require(config.prop_population_rules[0].name == "temporary_deployable");
     require(
@@ -1377,9 +1384,11 @@ int main() {
     assert(player_combat_state.move_speed_meters_per_second == 5.0f);
     assert(player_combat_state.collider_template_id == 1);
 
-    // earth_mother.yaml populates the map with the legged monster, not the
-    // sentry grunt; both carry the same combat block, so only the template id
-    // and the spawn shape differ.
+    // earth_mother.yaml populates the map with a legged rig, not the sentry
+    // grunt; they carry the same combat block, so only the template id and the
+    // spawn shape differ. Which rig is a deliberate choice in that file, so this
+    // id tracks it: monster_sim_actor (20) until f280528 made tripod_actor (22)
+    // the default test model.
     assert(config.agent.actor_template_id == 22);
     assert(config.agent.spawn_position.x == 0.0f);
     assert(config.agent.spawn_count == 1);
@@ -1482,6 +1491,87 @@ int main() {
     require(monster_template->skeleton.foothold_query_distance_meters ==
             90.0f);
     require(monster_template->skeleton.foothold_candidate_offsets.size() == 5u);
+
+    // Per-bone colliders now live on the RIG, not the template: the count is a
+    // property of the skeleton, so it is asserted against the asset. The rig
+    // file is optional, and simplified_monster_sim_v4 has none -- which is what
+    // keeps per-bone collision opt-in.
+    const auto rig_collider_count =
+        [&config](const std::string& asset_name) -> std::size_t {
+        const auto found = std::find_if(
+            config.skeleton_assets.begin(),
+            config.skeleton_assets.end(),
+            [&asset_name](
+                const network_example::game_server::SkeletonAssetConfig& asset) {
+                return asset.name == asset_name;
+            });
+        require(found != config.skeleton_assets.end());
+        return found->colliders.size();
+    };
+    require(rig_collider_count("simplified_biped") == 12u);
+    require(rig_collider_count("simplified_quadruped") == 9u);
+    require(rig_collider_count("simplified_tripod") == 7u);
+    require(rig_collider_count("simplified_monster_sim_v4") == 0u);
+
+    const auto tripod_asset_rig = std::find_if(
+        config.skeleton_assets.begin(),
+        config.skeleton_assets.end(),
+        [](const network_example::game_server::SkeletonAssetConfig& asset) {
+            return asset.name == "simplified_tripod";
+        });
+    require(tripod_asset_rig != config.skeleton_assets.end());
+    for (const network_example::game_server::RigColliderConfig& collider :
+         tripod_asset_rig->colliders) {
+        // Bone names resolve to real indices, never the 0 a failed lookup would
+        // leave behind -- GEO_ bones are never the root.
+        require(collider.bone_index != 0u);
+        const bool is_body = collider.bone == "GEO_Body";
+        // The body is the rig's one sphere; everything else is a box. A leg
+        // collider names its leg, the body belongs to none.
+        require(
+            collider.shape_type ==
+            (is_body ? KernelColliderShapeType_Sphere
+                     : KernelColliderShapeType_OrientedBox));
+        require(collider.leg_id.empty() == is_body);
+    }
+    // The biped's arms are colliders that belong to no leg, so leg membership
+    // must be optional rather than implied by carrying a collider.
+    const auto biped_asset_rig = std::find_if(
+        config.skeleton_assets.begin(),
+        config.skeleton_assets.end(),
+        [](const network_example::game_server::SkeletonAssetConfig& asset) {
+            return asset.name == "simplified_biped";
+        });
+    require(biped_asset_rig != config.skeleton_assets.end());
+    require(
+        std::count_if(
+            biped_asset_rig->colliders.begin(),
+            biped_asset_rig->colliders.end(),
+            [](const network_example::game_server::RigColliderConfig& collider) {
+                return collider.leg_id.empty();
+            }) == 8);
+
+    // The template supplies only what the colliders MEAN. monster_sim_actor
+    // sets none, so it stays out of per-bone collision entirely.
+    require(!monster_template->skeleton.has_collision_flags);
+    const auto tripod_template = std::find_if(
+        config.entity_templates.begin(),
+        config.entity_templates.end(),
+        [](const network_example::game_server::EntityTemplateConfig& entity) {
+            return entity.name == "tripod_actor";
+        });
+    require(tripod_template != config.entity_templates.end());
+    require(tripod_template->skeleton.has_collision_flags);
+    require(
+        (tripod_template->skeleton.collision_flags.purpose_flags &
+         KernelColliderPurpose_Limb) != 0u);
+    require(
+        (tripod_template->skeleton.collision_flags.purpose_flags &
+         KernelColliderPurpose_Hit) != 0u);
+    require(
+        tripod_template->skeleton.collision_flags.layer_mask ==
+        KERNEL_COLLISION_LAYER_HOSTILE_SIDE);
+
     require(catalog.definition.skeleton_asset_count == 5u);
     const auto quadruped_asset = std::find_if(
         catalog.skeleton_assets.begin(),
@@ -2701,7 +2791,7 @@ int main() {
                 generated_bundle.data(),
                 static_cast<std::uint32_t>(generated_bundle.size()),
                 "monster_observer_gameplay_catalog.yaml");
-    require(monster_observer_config.weapons.catalog_version == 10u);
+    require(monster_observer_config.weapons.catalog_version == 13u);
     require(monster_observer_config.agent.override_director_spawn);
     require(monster_observer_config.agent.actor_template_id == 20u);
     require(monster_observer_config.agent.spawn_count == 1u);

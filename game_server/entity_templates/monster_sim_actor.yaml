@@ -62,11 +62,8 @@ animations:
 skeleton:
   runtime_asset: skeleton_assets/generated/simplified_monster_sim_v4.ozz
   source_manifest: skeleton_assets/generated/simplified_monster_sim_v4.skeleton_manifest.json
-  root_bone: SIM_Root
-  body_bone: JNT_BodyRoot
 locomotion:
   type: procedural_legged
-  forward_axis: positive_z
   input_deadzone: 0.01
   gait:
     type: displacement_threshold
@@ -241,36 +238,19 @@ locomotion:
     follow_speed: 10.0
     slope_alignment: 0.0
     stance_crouch_meters: 4.0
+  # One value for every leg on all four rigs, so it is a default rather than
+  # something repeated per leg.
+  leg_defaults:
+    step_height_meters: 0.18
+    max_reach_ratio: 0.999
+  # Only the gait grouping differs per leg; the bones and bend geometry are in
+  # the rig file.
   legs:
     - id: front_left
-      hip_bone: JNT_LegFrontLeft_Hip
-      knee_bone: JNT_LegFrontLeft_Knee
-      foot_bone: JNT_LegFrontLeft_Foot
       gait_group: 0
-      pole_local: {x: 0.0, y: 0.0, z: 1.0}
-      step_height_meters: 0.18
-      max_reach_ratio: 0.999
     - id: rear_right
-      hip_bone: JNT_LegRearRight_Hip
-      knee_bone: JNT_LegRearRight_Knee
-      foot_bone: JNT_LegRearRight_Foot
       gait_group: 0
-      pole_local: {x: 0.0, y: 0.0, z: -1.0}
-      step_height_meters: 0.18
-      max_reach_ratio: 0.999
     - id: front_right
-      hip_bone: JNT_LegFrontRight_Hip
-      knee_bone: JNT_LegFrontRight_Knee
-      foot_bone: JNT_LegFrontRight_Foot
       gait_group: 1
-      pole_local: {x: 0.0, y: 0.0, z: 1.0}
-      step_height_meters: 0.18
-      max_reach_ratio: 0.999
     - id: rear_left
-      hip_bone: JNT_LegRearLeft_Hip
-      knee_bone: JNT_LegRearLeft_Knee
-      foot_bone: JNT_LegRearLeft_Foot
       gait_group: 1
-      pole_local: {x: 0.0, y: 0.0, z: -1.0}
-      step_height_meters: 0.18
-      max_reach_ratio: 0.999

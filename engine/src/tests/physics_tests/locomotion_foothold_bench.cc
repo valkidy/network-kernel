@@ -110,6 +110,47 @@ int sample_actor_tick(PhysicsWorld* world, const glm::vec3& body, int* out_hits)
     return rays;
 }
 
+// A crowd of legged rigs, as per-bone colliders in the world the foothold rays
+// are fired through. 15 actors is one snapshot packet's worth and 12 boxes is
+// the biped's rig, so this is the realistic worst case: 180 bodies standing in
+// exactly the space the rays traverse.
+//
+// The point is that they cost nothing. Limbs occupy a broad phase layer of
+// their own and the foothold filter does not name it, so the ray skips the
+// whole subtree on one ShouldCollide -- but that is a claim about a filter, and
+// the only honest way to check it is to put the bodies there and measure.
+constexpr int kLimbActors = 15;
+constexpr int kLimbsPerActor = 12;
+
+void populate_limbs(PhysicsWorld* world) {
+    std::string error;
+    std::uint32_t collider_id = 1000;
+    for (int actor = 0; actor < kLimbActors; ++actor) {
+        // Spread across the same strip the body walks, at leg height, so the
+        // boxes genuinely overlap the rays rather than sitting off to one side.
+        const float x = -20.0f + static_cast<float>(actor) * 2.6f;
+        for (int limb = 0; limb < kLimbsPerActor; ++limb) {
+            network_example::physics::CollisionObjectDescriptor object{};
+            object.identity.entity_net_id =
+                static_cast<std::uint32_t>(actor) + 1u;
+            object.identity.collider_id = ++collider_id;
+            object.identity.kind = CollisionObjectKind::kActorLimb;
+            object.identity.layer = CollisionLayer::kActorLimb;
+            object.shape.type = network_example::physics::CollisionShapeType::kBox;
+            // GEO_Leg0_Lower's real half extents on the quadruped rig.
+            object.shape.half_extents = glm::vec3(0.375f, 4.75f, 0.375f);
+            object.position = glm::vec3(
+                x + static_cast<float>(limb % 4) * 0.6f,
+                6.0f,
+                static_cast<float>(limb / 4) * 9.0f - 9.0f);
+            require(
+                world->upsert_object(object, &error),
+                "failed to add a limb collider");
+        }
+    }
+    world->optimize_broad_phase();
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -177,5 +218,49 @@ int main(int argc, char** argv) {
         "actors_per_1pct_of_60fps_frame=%.1f\n",
         333.33 / per_actor_tick_us,
         166.67 / per_actor_tick_us);
+
+    // Same walk again, with a crowd of per-bone limb colliders in the world.
+    populate_limbs(&world);
+
+    // First, that they are really there and really invisible: a ray that names
+    // the limb layer finds one, and the foothold ray still hits only terrain.
+    RayCastRequest limb_probe = foothold_ray(glm::vec3(-20.0f, 6.0f, -9.0f));
+    limb_probe.filter.collision_mask =
+        network_example::physics::collision_layer_bit(CollisionLayer::kActorLimb);
+    limb_probe.filter.object_kind_mask =
+        1u << static_cast<std::uint32_t>(CollisionObjectKind::kActorLimb);
+    CollisionHit limb_hit{};
+    require(
+        world.ray_cast_closest(limb_probe, &limb_hit),
+        "the limb crowd is not where the rays go");
+    require(
+        limb_hit.identity.kind == CollisionObjectKind::kActorLimb,
+        "limb probe hit something that is not a limb");
+
+    int limb_hits = 0;
+    for (int tick = 0; tick < kWarmupTicks; ++tick) {
+        sample_actor_tick(&world, body_at(tick), &limb_hits);
+    }
+    limb_hits = 0;
+    int limb_rays = 0;
+    const auto limb_start = std::chrono::steady_clock::now();
+    for (int tick = 0; tick < kMeasuredTicks; ++tick) {
+        limb_rays += sample_actor_tick(&world, body_at(tick), &limb_hits);
+    }
+    const double limb_total_us = std::chrono::duration<double, std::micro>(
+        std::chrono::steady_clock::now() - limb_start).count();
+    // Not a timing assertion -- this one is about results. The foothold query
+    // must still find terrain under every ray and nothing else, however many
+    // legs are standing in the way.
+    require(limb_hits == limb_rays, "limb colliders changed the foothold hits");
+
+    const double limb_per_ray_us =
+        limb_total_us / static_cast<double>(limb_rays);
+    std::printf(
+        "locomotion foothold with limbs: bodies=%d per_ray_us=%.4f "
+        "ratio_vs_bare=%.3f\n",
+        kLimbActors * kLimbsPerActor,
+        limb_per_ray_us,
+        limb_per_ray_us / per_ray_us);
     return 0;
 }

@@ -59,6 +59,31 @@ struct SkeletonManifestBoneConfig {
     std::int32_t parent_index = -1;
 };
 
+// One per-bone collider as the RIG declares it, in <name>.rig.yaml. Geometry
+// only: the dimensions come from the bone's own rest scale, and whose side the
+// actor is on is a property of the actor, not of the skeleton -- that lives on
+// the entity template as SkeletonCollisionFlagsConfig.
+// One leg as the RIG declares it: which bones form the two-bone chain, and the
+// model-space direction its knee points. Gait grouping and step tuning are not
+// here -- the same rig can walk, trot or pace.
+struct RigLegConfig {
+    std::string id;
+    std::string hip_bone;
+    std::string knee_bone;
+    std::string foot_bone;
+    std::uint32_t hip_bone_index = 0;
+    std::uint32_t knee_bone_index = 0;
+    std::uint32_t foot_bone_index = 0;
+    KernelVec3 pole_local{};
+};
+
+struct RigColliderConfig {
+    std::string bone;
+    std::string leg_id;
+    std::uint32_t bone_index = 0;
+    std::uint8_t shape_type = KernelColliderShapeType_OrientedBox;
+};
+
 struct SkeletonAssetConfig {
     std::uint32_t skeleton_asset_id = 0;
     std::string name;
@@ -67,21 +92,38 @@ struct SkeletonAssetConfig {
     std::string runtime_reference;
     std::vector<std::uint8_t> runtime_skeleton;
     std::vector<SkeletonManifestBoneConfig> bones;
+    // Everything below comes from the authored <name>.rig.yaml beside the
+    // generated files, and describes what the rig IS. Colliders are empty when
+    // the rig declares none, which is what keeps per-bone collision opt-in.
+    std::string forward_axis;
+    std::string root_bone;
+    std::string body_bone;
+    std::uint32_t root_bone_index = 0;
+    std::uint32_t body_bone_index = 0;
+    // Knee hinge axis in the knee's own frame, one value for the whole rig.
+    KernelVec3 knee_hinge_local{0.0f, 0.0f, 1.0f};
+    std::vector<RigLegConfig> legs;
+    std::vector<RigColliderConfig> colliders;
 };
 
+// How an actor walks one of its rig's legs. The leg's bones and bend geometry
+// come from the rig; this is the tuning laid over them, keyed by the rig's leg
+// id. gait_group is here because grouping is a gait choice, not a fact about
+// the skeleton.
 struct SkeletonLegConfig {
     std::string id;
-    std::string hip_bone;
-    std::string knee_bone;
-    std::string foot_bone;
-    std::uint32_t hip_bone_index = 0;
-    std::uint32_t knee_bone_index = 0;
-    std::uint32_t foot_bone_index = 0;
     std::uint32_t gait_group = 0;
-    KernelVec3 pole_local{};
-    KernelVec3 mid_axis_local{0.0f, 0.0f, 1.0f};
     float step_height_meters = 0.0f;
     float max_reach_ratio = 0.0f;
+};
+
+// The gameplay meaning an entity template gives to every collider on its rig.
+// One setting for the whole rig, because the thing it answers -- whom these
+// colliders belong to and what may hit them -- is the same for every bone.
+struct SkeletonCollisionFlagsConfig {
+    std::uint16_t hit_zone = 0;
+    std::uint32_t purpose_flags = 0;
+    std::uint32_t layer_mask = 0;
 };
 
 struct SkeletonBindingConfig {
@@ -110,6 +152,10 @@ struct SkeletonBindingConfig {
     std::vector<KernelVec2> foothold_candidate_offsets;
     std::vector<SkeletonLegConfig> legs;
     std::vector<std::uint32_t> processing_order;
+    // Applied to every collider the rig declares. Absent means the actor takes
+    // no part in per-bone collision even if its rig describes some.
+    bool has_collision_flags = false;
+    SkeletonCollisionFlagsConfig collision_flags;
 };
 
 struct ActorTemplateConfig {

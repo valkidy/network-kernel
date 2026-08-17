@@ -785,6 +785,18 @@ private:
     void remove_session(PeerId peer);
     void materialize_entity_collider(NetId net_id);
     void materialize_entity_movement_collider(NetId net_id);
+    // Registers (or refreshes) one collider per bone the rig declares, from the
+    // pose the solve just produced. Best-effort by contract: an actor whose
+    // skeleton, template or solve is unavailable simply contributes no limbs.
+    void materialize_entity_limb_colliders(
+        NetId net_id,
+        const KernelSkeletonBindingDefinition& skeleton,
+        const RuntimeSkeletonAsset& skeleton_asset,
+        const LocomotionState& locomotion_state);
+    // The same colliders on a client, for actors it only follows. Rebuilt from
+    // follower_locomotion_states_ rather than carried in the snapshot: the
+    // follower solve already produced the frames, so this costs no wire bytes.
+    void sync_client_follower_limb_colliders();
     void materialize_projectile_collider(NetId net_id);
     void sync_entity_colliders_from_world();
     std::uint32_t collider_template_id_for_projectile_template(

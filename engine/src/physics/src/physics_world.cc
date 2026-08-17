@@ -50,9 +50,15 @@ constexpr JPH::ObjectLayer kDamageableHostileObjectLayer = 3;
 constexpr JPH::ObjectLayer kDamageableNeutralObjectLayer = 4;
 constexpr JPH::ObjectLayer kDamageableUnclassifiedObjectLayer = 5;
 constexpr JPH::ObjectLayer kOtherMovingObjectLayer = 6;
+constexpr JPH::ObjectLayer kActorLimbObjectLayer = 7;
 constexpr JPH::BroadPhaseLayer kStaticWorldBroadPhaseLayer(0);
 constexpr JPH::BroadPhaseLayer kDamageableActorBroadPhaseLayer(1);
 constexpr JPH::BroadPhaseLayer kOtherMovingBroadPhaseLayer(2);
+// Limbs get a broad phase layer to themselves rather than joining the other
+// moving bodies. A legged rig contributes a dozen bodies against one movement
+// capsule, so folding them in would make every foothold ray and every movement
+// sweep walk that subtree; alone, they cost one ShouldCollide to skip entirely.
+constexpr JPH::BroadPhaseLayer kActorLimbBroadPhaseLayer(3);
 
 std::uint64_t jolt_version_id() {
     using JPH::uint64;
@@ -61,7 +67,7 @@ std::uint64_t jolt_version_id() {
 
 class BroadPhaseLayers final : public JPH::BroadPhaseLayerInterface {
 public:
-    std::uint32_t GetNumBroadPhaseLayers() const override { return 3; }
+    std::uint32_t GetNumBroadPhaseLayers() const override { return 4; }
 
     JPH::BroadPhaseLayer GetBroadPhaseLayer(JPH::ObjectLayer layer) const override {
         if (layer == kTerrainObjectLayer) {
@@ -71,6 +77,9 @@ public:
             layer == kDamageableHostileObjectLayer ||
             layer == kDamageableNeutralObjectLayer) {
             return kDamageableActorBroadPhaseLayer;
+        }
+        if (layer == kActorLimbObjectLayer) {
+            return kActorLimbBroadPhaseLayer;
         }
         return kOtherMovingBroadPhaseLayer;
     }
@@ -142,11 +151,18 @@ public:
                  collision_layer_bit(CollisionLayer::kActorMovement)) != 0 &&
                 kind_enabled(filter_, CollisionObjectKind::kActorMovement);
             accepted = accepts_static || accepts_unclassified || accepts_movement;
+        } else if (layer == kActorLimbBroadPhaseLayer) {
+            accepted =
+                (filter_.collision_mask &
+                 collision_layer_bit(CollisionLayer::kActorLimb)) != 0 &&
+                kind_enabled(filter_, CollisionObjectKind::kActorLimb);
         }
         if (stats_ != nullptr && accepted) {
             ++stats_->broadphase_layers_accepted;
             if (layer == kDamageableActorBroadPhaseLayer) {
                 ++stats_->damageable_actor_broadphase_layers_accepted;
+            } else if (layer == kActorLimbBroadPhaseLayer) {
+                ++stats_->actor_limb_broadphase_layers_accepted;
             }
         }
         return accepted;
@@ -191,6 +207,9 @@ public:
             accepted = accepts_physical(
                 CollisionLayer::kActorMovement,
                 CollisionObjectKind::kActorMovement);
+        } else if (layer == kActorLimbObjectLayer) {
+            accepted = accepts_physical(
+                CollisionLayer::kActorLimb, CollisionObjectKind::kActorLimb);
         }
         if (stats_ != nullptr && accepted) {
             ++stats_->object_layers_accepted;
@@ -200,6 +219,8 @@ public:
                 ++stats_->hostile_object_layers_accepted;
             } else if (layer == kDamageableNeutralObjectLayer) {
                 ++stats_->neutral_object_layers_accepted;
+            } else if (layer == kActorLimbObjectLayer) {
+                ++stats_->actor_limb_object_layers_accepted;
             }
         }
         return accepted;
@@ -230,6 +251,9 @@ JPH::ObjectLayer object_layer_for(const CollisionObjectIdentity& identity) {
     }
     if (identity.layer == CollisionLayer::kStaticObstacle) {
         return kStaticObstacleObjectLayer;
+    }
+    if (identity.layer == CollisionLayer::kActorLimb) {
+        return kActorLimbObjectLayer;
     }
     if (identity.layer != CollisionLayer::kDamageable) {
         return kOtherMovingObjectLayer;
@@ -715,6 +739,8 @@ public:
             delta.broadphase_layers_accepted;
         query_stats_.damageable_actor_broadphase_layers_accepted +=
             delta.damageable_actor_broadphase_layers_accepted;
+        query_stats_.actor_limb_broadphase_layers_accepted +=
+            delta.actor_limb_broadphase_layers_accepted;
         query_stats_.object_layer_filter_checks +=
             delta.object_layer_filter_checks;
         query_stats_.object_layers_accepted += delta.object_layers_accepted;
@@ -724,6 +750,8 @@ public:
             delta.hostile_object_layers_accepted;
         query_stats_.neutral_object_layers_accepted +=
             delta.neutral_object_layers_accepted;
+        query_stats_.actor_limb_object_layers_accepted +=
+            delta.actor_limb_object_layers_accepted;
         query_stats_.raw_jolt_hits_collected +=
             delta.raw_jolt_hits_collected;
         query_stats_.final_hits_accepted += delta.final_hits_accepted;

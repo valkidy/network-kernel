@@ -7,6 +7,7 @@ package(default_visibility = ["//visibility:public"])
 skeleton_asset(
     name = "simplified_monster_sim_v4",
     src = "raw/simplified_monster_sim_v4.glb",
+    rig = "raw/simplified_monster_sim_v4.rig.yaml",
     asset_id = 1,
 )
 
@@ -23,17 +24,20 @@ skeleton_asset(
 skeleton_asset(
     name = "simplified_biped",
     src = "raw/simplified_biped.glb",
+    rig = "raw/simplified_biped.rig.yaml",
     asset_id = 3,
 )
 
 skeleton_asset(
     name = "simplified_quadruped",
     src = "raw/simplified_quadruped.glb",
+    rig = "raw/simplified_quadruped.rig.yaml",
     asset_id = 4,
 )
 
 skeleton_asset(
     name = "simplified_tripod",
     src = "raw/simplified_tripod.glb",
+    rig = "raw/simplified_tripod.rig.yaml",
     asset_id = 5,
 )

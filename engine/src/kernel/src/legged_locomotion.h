@@ -82,6 +82,27 @@ struct LegLocomotionState {
     bool ik_reach_clamped = false;
 };
 
+// Where one of the rig's per-bone colliders sits after a solve, expressed
+// relative to the ROOT TRANSFORM the caller passed in -- not relative to the
+// skeleton root, which the solve seats vertically by an offset of its own. So
+// the world box is exactly
+//
+//     world_position = transform.position + transform.rotation * local_position
+//     world_rotation = transform.rotation * local_rotation
+//
+// and nothing else has to know how the pose was seated. This holds only while
+// transform.rotation is the rotation the solve was given, which is why a rig
+// carrying colliders is refused slope_alignment > 0 at catalog load: tilt makes
+// those two rotations differ on the authority and not on a follower.
+//
+// local_rotation is orthonormal. ozz composes each bone's rest scale into its
+// model matrix, and on a GEO_ bone that scale IS the box's size -- so it must
+// be divided out here and taken from the bind pose as half extents instead.
+struct SolvedColliderPose {
+    glm::vec3 local_position{0.0f};
+    glm::quat local_rotation{1.0f, 0.0f, 0.0f, 0.0f};
+};
+
 struct LocomotionState {
     float root_yaw_radians = 0.0f;
     // Yaw as of the end of the previous advance. advance compares it against
@@ -110,6 +131,13 @@ struct LocomotionState {
     std::vector<std::uint32_t> last_processing_order;
     std::vector<KernelBoneLocalTransform> local_pose;
     bool pose_valid = false;
+
+    // One entry per KernelSkeletonBindingDefinition::colliders, in that order.
+    // Empty for a rig that declares none, and emptied whenever a solve fails,
+    // so a caller that materialises physics bodies from it can never publish a
+    // stale limb. Filled by the same model-space refresh the feet are read from,
+    // which costs nothing extra.
+    std::vector<SolvedColliderPose> solved_collider_poses;
 
     // Smoothed tilt of the body onto the terrain, accumulated across ticks and
     // identity while body follow is disabled. It lives here, not on the entity
@@ -193,6 +221,26 @@ bool validate_locomotion_rig(
     const KernelSkeletonBindingDefinition& definition,
     std::uint32_t* out_invalid_leg_index);
 
+// Cross-checks the authored limb colliders against the rig they hang on. The
+// load-bearing check is that a limb's bone does not rest at unit scale: these
+// rigs express a limb's dimensions AS the bone's rest scale, so a unit-scaled
+// bone means the geometry lives in mesh vertices instead, where this derivation
+// cannot see it -- and the collider would silently become a 1m cube rather than
+// fail. On failure the offending index is written to out_invalid_limb_index
+// when it is not null.
+bool validate_locomotion_colliders(
+    std::span<const KernelBoneLocalTransform> bind_pose,
+    const KernelSkeletonBindingDefinition& definition,
+    std::uint32_t* out_invalid_limb_index);
+
+// The half extents a limb collider takes from its bone, i.e. half the bone's
+// rest scale. Spheres use the x component as a radius. Kept beside the
+// validation so the runtime and the check cannot disagree about what the
+// authored bone means.
+glm::vec3 locomotion_collider_half_extents(
+    std::span<const KernelBoneLocalTransform> bind_pose,
+    const KernelSkeletonColliderDefinition& limb);
+
 bool initialize_locomotion_state(
     const KernelSkeletonBindingDefinition& definition,
     float initial_root_yaw_radians,
@@ -261,10 +309,17 @@ bool set_locomotion_foot_anchor(
 // entered_swing stays false here -- it marks steps this state decided, and a
 // follower decides none. entered_support still fires on touchdown.
 //
-// Body follow is not applied: its tilt needs the ground normals under the feet,
-// which a follower does not sample. It is disabled on the authoritative side
-// too (body_follow_speed 0), so today the two agree; re-enabling it would mean
-// replicating the normals or accepting a presentation-only divergence.
+// Body follow is not applied here, and today that costs nothing even though the
+// authority runs it (every rig on this path authors body_follow_speed 10). Its
+// two halves replicate differently. The height is applied by the caller to the
+// entity transform, which IS replicated, so a follower inherits it through the
+// root instead of refitting it -- which it could not do anyway, having sampled
+// no footholds. The tilt is the half that would diverge, since it needs the
+// ground normals under the feet; but it is a separate opt-in gated on
+// slope_alignment > 0, and every rig here authors 0, so the tilt stays identity
+// on both sides. Raising slope_alignment would mean replicating the normals or
+// accepting a divergence worth the tilt times the stance radius -- metres on a
+// rig whose feet sit ten of them out from the body.
 bool solve_legged_locomotion_follower_pose(
     const ozz::animation::Skeleton& skeleton,
     std::span<const KernelBoneLocalTransform> bind_pose,

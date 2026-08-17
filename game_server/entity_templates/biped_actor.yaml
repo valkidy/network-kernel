@@ -46,11 +46,12 @@ animations:
 skeleton:
   runtime_asset: skeleton_assets/generated/simplified_biped.ozz
   source_manifest: skeleton_assets/generated/simplified_biped.skeleton_manifest.json
-  root_bone: SIM_Root
-  body_bone: JNT_Body
+  # What this actor's rig colliders mean. The rig file says which bones carry
+  # them and what shape they are; this says whose side they are on. The same rig
+  # could be a friendly actor with a different layer here.
+  collision_flags: {purpose: limb | hit, layer: hostile_side}
 locomotion:
   type: procedural_legged
-  forward_axis: positive_z
   input_deadzone: 0.01
   gait:
     type: displacement_threshold
@@ -82,24 +83,15 @@ locomotion:
     # straight down (93.2% rest extension, 1.46 m slack) where the quadruped's
     # splay out to 88.9%. The crouch buys the same ~3 m dip budget.
     stance_crouch_meters: 1.57
+  # One value for every leg on all four rigs, so it is a default rather than
+  # something repeated per leg.
+  leg_defaults:
+    step_height_meters: 0.18
+    max_reach_ratio: 0.99
+  # Only the gait grouping differs per leg; the bones and bend geometry are in
+  # the rig file.
   legs:
-    # The limbs lie in the XZ-symmetric plane, so the knee hinges cleanly about
-    # the knee's own -Z and the two poles are mirrored on X.
     - id: leg0
-      hip_bone: JNT_Leg0_Hip
-      knee_bone: JNT_Leg0_Knee
-      foot_bone: JNT_Leg0_Foot
       gait_group: 0
-      pole_local: {x: 0.981, y: 0.194, z: 0.0}
-      mid_axis_local: {x: 0.0, y: 0.0, z: -1.0}
-      step_height_meters: 0.18
-      max_reach_ratio: 0.99
     - id: leg1
-      hip_bone: JNT_Leg1_Hip
-      knee_bone: JNT_Leg1_Knee
-      foot_bone: JNT_Leg1_Foot
       gait_group: 1
-      pole_local: {x: -0.981, y: 0.194, z: 0.0}
-      mid_axis_local: {x: 0.0, y: 0.0, z: -1.0}
-      step_height_meters: 0.18
-      max_reach_ratio: 0.99
