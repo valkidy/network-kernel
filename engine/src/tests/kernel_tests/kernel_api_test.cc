@@ -369,7 +369,7 @@ int main() {
     require(has_version_revision_suffix(build_info.module_version));
     require(build_info.protocol_version == 3u);
     require(build_info.snapshot_schema_version == 17u);
-    require(build_info.packet_schema_version == 23u);
+    require(build_info.packet_schema_version == 24u);
     require(build_info.git_commit[0] != '\0');
     require(std::strcmp(build_info.git_commit, "unknown") != 0);
     require(std::strcmp(build_info.module_version, build_info.git_commit) != 0);
