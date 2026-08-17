@@ -24,7 +24,7 @@ namespace NetworkExample.Kernel.Editor
             KernelAbi.ValidateNativeAbi();
             GameServerAbi.ValidateNativeAbi();
             KernelAbiInfo info = KernelAbi.GetInfo();
-            Require(KernelConstants.AbiVersion == 67, "Managed kernel ABI version was not v67.");
+            Require(KernelConstants.AbiVersion == 74, "Managed kernel ABI version was not v74.");
             Require(
                 RenderEntityState.StructSize == 144,
                 "Managed RenderEntityState layout was not 144 bytes.");
@@ -85,7 +85,7 @@ namespace NetworkExample.Kernel.Editor
                 KernelBoneLocalTransform.StructSize == 40 &&
                 KernelSkeletonRenderState.StructSize == 40 &&
                 KernelSkeletonRenderStateResult.StructSize == 48 &&
-                KernelSkeletonBindingDefinition.StructSize == 592,
+                KernelSkeletonBindingDefinition.StructSize == 920,
                 $"Kernel skeleton ABI layout size mismatch: bone={KernelBoneLocalTransform.StructSize} " +
                 $"state={KernelSkeletonRenderState.StructSize} " +
                 $"result={KernelSkeletonRenderStateResult.StructSize} " +
@@ -279,7 +279,7 @@ namespace NetworkExample.Kernel.Editor
 
             RequireExternalGameplayCatalogSyncIfConfigured();
 
-            Debug.Log("Network kernel ABI 67 smoke passed.");
+            Debug.Log("Network kernel ABI 74 smoke passed.");
         }
 
         private static void RequireSkeletonBindingValidation()

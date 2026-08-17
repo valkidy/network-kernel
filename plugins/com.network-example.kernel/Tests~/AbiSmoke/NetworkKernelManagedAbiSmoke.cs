@@ -34,7 +34,7 @@ public static class NetworkKernelManagedAbiSmoke
         KernelBuildInfo buildInfo = KernelAbi.GetBuildInfo();
         GameServerAbiInfo gameServerInfo = GameServerAbi.GetInfo();
         RequireSkeletonBindingContract();
-        Require(KernelConstants.AbiVersion == 67, "Managed kernel ABI version was not v67.");
+        Require(KernelConstants.AbiVersion == 74, "Managed kernel ABI version was not v74.");
         Require(
             RenderEntityState.StructSize == 144,
             "Managed RenderEntityState layout was not 144 bytes.");
@@ -96,7 +96,7 @@ public static class NetworkKernelManagedAbiSmoke
             KernelSkeletonRenderStateResult.StructSize == 48 &&
             KernelSkeletonAssetDefinition.StructSize == 32 &&
             KernelSkeletonLegDefinition.StructSize == 52 &&
-            KernelSkeletonBindingDefinition.StructSize == 592,
+            KernelSkeletonBindingDefinition.StructSize == 920,
             "Kernel skeleton ABI layout size mismatch.");
         Require(
             (info.capability_flags &

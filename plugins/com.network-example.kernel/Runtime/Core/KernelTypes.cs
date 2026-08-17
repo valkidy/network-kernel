@@ -24,6 +24,7 @@ namespace NetworkExample.Kernel
         public const int MaxWeaponSlots = 4;
         public const int MaxSkeletonLegs = 8;
         public const int MaxFootholdCandidates = 8;
+        public const int MaxSkeletonColliders = 16;
         public const int MaxActionGraphActions = 8;
         public const int MaxPortableStateFields = 8;
         public const byte DebugWildcardU8 = 0xff;
@@ -910,6 +911,14 @@ namespace NetworkExample.Kernel
         public uint spawn_item_quantity;
         public int health_change_amount;
         public uint condition_type;
+        public float impulse_strength;
+        public uint impulse_collision_mask;
+        public KernelVec3 impulse_direction;
+        public uint status_effect_id;
+        public byte modifier_operation;
+        public byte reserved1;
+        public ushort reserved2;
+        public float modifier_value;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelActionDefinition>();
     }
@@ -934,6 +943,14 @@ namespace NetworkExample.Kernel
         public KernelActionDefinition[] actions;
         public int health_change_amount;
         public uint condition_type;
+        public float impulse_strength;
+        public uint impulse_collision_mask;
+        public KernelVec3 impulse_direction;
+        public uint status_effect_id;
+        public byte modifier_operation;
+        public byte reserved1;
+        public ushort reserved2;
+        public float modifier_value;
 
         public static uint StructSize =>
             (uint)Marshal.SizeOf<KernelActionTriggerDefinition>();
@@ -1110,6 +1127,12 @@ namespace NetworkExample.Kernel
         public KernelRemoteActionPresentationEventType event_type;
         public byte flags;
         public ushort server_tick_delta;
+        public uint status_effect_id;
+        public uint status_instance_id;
+        public uint status_channel_id;
+        public uint duration_ticks;
+        public ushort stack_count;
+        public ushort reserved0;
 
         public static uint StructSize =>
             (uint)Marshal.SizeOf<KernelRemoteActionPresentationEvent>();
@@ -1637,6 +1660,16 @@ namespace NetworkExample.Kernel
         public uint prop_population_rule_count;
         public IntPtr skeleton_assets;
         public uint skeleton_asset_count;
+        public IntPtr status_effects;
+        public uint status_effect_count;
+        public IntPtr game_rules;
+        public uint game_rule_count;
+        public IntPtr game_rule_nodes;
+        public uint game_rule_node_count;
+        public IntPtr game_rule_edges;
+        public uint game_rule_edge_count;
+        public IntPtr game_rule_effects;
+        public uint game_rule_effect_count;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelGameplayCatalogDefinition>();
     }
@@ -2093,6 +2126,8 @@ namespace NetworkExample.Kernel
         public KernelVec3 spawn_position;
         public float spawn_radius;
         public uint spawn_seed;
+        public uint director_kind;
+        public uint game_rule_definition_id;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelEntityAiDefinition>();
     }
@@ -2129,6 +2164,21 @@ namespace NetworkExample.Kernel
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    public struct KernelSkeletonColliderDefinition
+    {
+        public uint bone_index;
+        public uint leg_index;
+        public byte shape_type;
+        public byte reserved0;
+        public ushort hit_zone;
+        public uint purpose_flags;
+        public uint layer_mask;
+
+        public static uint StructSize =>
+            (uint)Marshal.SizeOf<KernelSkeletonColliderDefinition>();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     public struct KernelSkeletonBindingDefinition
     {
         public uint struct_size;
@@ -2158,6 +2208,9 @@ namespace NetworkExample.Kernel
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = KernelConstants.MaxSkeletonLegs)]
         public uint[] processing_order;
         public float stance_crouch_meters;
+        public uint collider_count;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = KernelConstants.MaxSkeletonColliders)]
+        public KernelSkeletonColliderDefinition[] colliders;
 
         public static uint StructSize =>
             (uint)Marshal.SizeOf<KernelSkeletonBindingDefinition>();
@@ -2171,6 +2224,7 @@ namespace NetworkExample.Kernel
                     new KernelVec2[KernelConstants.MaxFootholdCandidates],
                 legs = new KernelSkeletonLegDefinition[KernelConstants.MaxSkeletonLegs],
                 processing_order = new uint[KernelConstants.MaxSkeletonLegs],
+                colliders = new KernelSkeletonColliderDefinition[KernelConstants.MaxSkeletonColliders],
             };
         }
     }
@@ -2199,6 +2253,7 @@ namespace NetworkExample.Kernel
         public KernelPropDefinition prop;
         public uint collision_trigger_mask;
         public KernelSkeletonBindingDefinition skeleton;
+        public float impulse_resistance;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelEntityTemplateDefinition>();
     }
