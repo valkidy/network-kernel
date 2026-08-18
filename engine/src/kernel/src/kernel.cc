@@ -4674,6 +4674,27 @@ void KernelEngine::sync_client_render_colliders() {
         collider.radius = collider_template_radius(*collider_template);
         collider.lifetime_ticks = collider_template->lifetime_ticks;
         collider.remaining_ticks = collider_template->lifetime_ticks;
+        // A beam's replicated endpoint is the whole shape. Without this the
+        // client rebuilds the authored oriented box instead, centred on the
+        // muzzle and aligned to the world axes -- half of it behind the shooter
+        // and pointing nowhere near the aim. Mirrors what
+        // apply_beam_collider_geometry does on a server.
+        if (entity_type == EntityType::kProjectile &&
+            (state.beam_end.x != 0.0f || state.beam_end.y != 0.0f ||
+             state.beam_end.z != 0.0f)) {
+            collider.shape_type = ColliderShapeType::kSegment;
+            collider.segment_start = from_kernel_vec3(state.position);
+            collider.segment_end = from_kernel_vec3(state.beam_end);
+            collider.radius = std::max(
+                collider.half_extents.x,
+                collider.half_extents.y);
+            collider.half_extents = glm::vec3{0.0f, 0.0f, 0.0f};
+            collider.local_center = glm::vec3{0.0f, 0.0f, 0.0f};
+            collider.local_rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+            collider.world_rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+            collider.world_center =
+                (collider.segment_start + collider.segment_end) * 0.5f;
+        }
         collider.world_bounds = collider_world_bounds(collider);
         if (state.net_id == 0) {
             world_.collider_registry().add_ephemeral_collider(collider);

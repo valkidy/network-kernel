@@ -139,6 +139,10 @@ void simulate_beams(
 
         transform.position = beam.origin;
         transform.rotation = beam_rotation(beam.direction);
+        // Narrowed below if something stops the beam short. Reset every tick:
+        // the beam is re-aimed every tick it is refreshed, so last tick's reach
+        // says nothing about this one.
+        beam.effective_length = beam.length;
         physics::PhysicsWorld* collision_world = world.collision_world();
         if (collision_world == nullptr) {
             continue;
@@ -163,6 +167,9 @@ void simulate_beams(
             // beam runs into. A destructible blocker still takes this tick's
             // damage on the way to stopping the beam; everything past it is out
             // of reach either way.
+            if (blocks) {
+                beam.effective_length = std::min(beam.length, hit.distance);
+            }
             if (blocks && !beam_may_damage(world, beam, target_net_id)) {
                 break;
             }

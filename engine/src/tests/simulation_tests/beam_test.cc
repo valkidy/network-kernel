@@ -616,6 +616,75 @@ void beam_damages_cover_without_a_side() {
     require(health(world, scenery).hp == 99);
 }
 
+void beam_effective_length_stops_at_cover() {
+    // What the client is told the beam reaches. Without the clip the endpoint
+    // would be the authored length and presentation would draw a beam running
+    // through the wall that stopped it.
+    network_example::World world;
+    network_example::physics::PhysicsWorld physics;
+    world.set_collision_world(&physics);
+    const network_example::NetId shooter =
+        world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+    spawn_cover_prop(
+        world,
+        physics,
+        glm::vec3{2.0f, 0.5f, 0.0f},
+        network_example::kCollisionLayerHostileSide,
+        920);
+    const network_example::NetId beam = spawn_projectile_beam(
+        world,
+        1,
+        shooter,
+        glm::vec3{0.0f, 0.5f, 0.0f},
+        glm::vec3{1.0f, 0.0f, 0.0f},
+        8.0f,
+        0.25f,
+        1,
+        10,
+        5,
+        network_example::kCollisionLayerHostileSide |
+            network_example::kCollisionLayerStaticObstacle);
+
+    std::vector<KernelEvent> events;
+    network_example::simulate_beams(world, 1, 1.0f / 30.0f, 33333, &events, nullptr);
+    const auto entity = world.find_entity(beam);
+    assert(entity.has_value());
+    const network_example::ProjectileBeamRuntime& state =
+        world.registry().get<network_example::ProjectileBeamRuntime>(*entity);
+    // Cover spans x in [1.7, 2.3] and the sphere cast has radius 0.25, so
+    // contact lands near 1.45 -- well short of the authored 8.
+    require(state.effective_length < 2.0f);
+    require(state.effective_length > 1.0f);
+
+    // Nothing in the way means the beam keeps its authored reach.
+    network_example::World open_world;
+    network_example::physics::PhysicsWorld open_physics;
+    open_world.set_collision_world(&open_physics);
+    const network_example::NetId open_shooter =
+        open_world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+    const network_example::NetId open_beam = spawn_projectile_beam(
+        open_world,
+        1,
+        open_shooter,
+        glm::vec3{0.0f, 0.5f, 0.0f},
+        glm::vec3{1.0f, 0.0f, 0.0f},
+        8.0f,
+        0.25f,
+        1,
+        10,
+        5,
+        network_example::kCollisionLayerHostileSide |
+            network_example::kCollisionLayerStaticObstacle);
+    std::vector<KernelEvent> open_events;
+    network_example::simulate_beams(
+        open_world, 1, 1.0f / 30.0f, 33333, &open_events, nullptr);
+    require(
+        open_world.registry()
+            .get<network_example::ProjectileBeamRuntime>(
+                *open_world.find_entity(open_beam))
+            .effective_length == 8.0f);
+}
+
 }  // namespace
 
 int main() {
@@ -628,5 +697,6 @@ int main() {
     beam_is_blocked_by_cover_regardless_of_side();
     beam_damages_only_cover_on_a_side_it_attacks();
     beam_damages_cover_without_a_side();
+    beam_effective_length_stops_at_cover();
     return 0;
 }

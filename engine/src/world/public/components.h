@@ -855,6 +855,12 @@ struct ProjectileBeamRuntime {
     std::uint8_t source_code = 0;
     std::uint32_t collision_mask = kCollisionMaskDamageable;
     std::unordered_map<NetId, std::uint32_t> damage_remainder_by_target;
+    // How far the beam actually reached this tick: `length`, or the distance to
+    // whatever stopped it first. Recomputed every tick by simulate_beams and
+    // replicated as the beam's far endpoint, so presentation draws a beam that
+    // ends at the wall instead of through it. Deliberately last in the struct so
+    // the positional initialisers at the two spawn sites keep working.
+    float effective_length = 0.0f;
 };
 
 struct MovementState {
