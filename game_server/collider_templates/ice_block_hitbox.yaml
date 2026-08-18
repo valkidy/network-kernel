@@ -1,3 +1,20 @@
+# Deployable cover. Which side the block belongs to is decided at spawn from the
+# deployer (GameplaySide on the entity), not here -- both sides throw the same
+# block, so the template cannot name a side.
+#
+# `layer: damageable` is load-bearing. The layer becomes the collider's
+# gameplay_category, and collision_filter_from_mask only ever puts ACTOR bits
+# into a query's gameplay_category_mask. Naming a single side here would make the
+# block solid to projectiles authored to attack that side and let every other one
+# pass straight through it -- which is exactly the bug `layer: neutral` caused,
+# since no beam carries `neutral`. Covering all three sides makes it solid to
+# anything that attacks any side, while the entity's GameplaySide still decides
+# who may damage it.
+#
+# Known gap: a projectile that names no side at all (`spammer`, terrain|obstacle)
+# has an empty gameplay_category_mask and still passes through. Side-agnostic
+# projectiles would need `layer_mask == 0` to be blocked, which the catalog
+# validator rejects outright (gameplay_config.cc:7219).
 id: 13
 name: ice_block_hitbox
 shape: oriented_box
@@ -5,4 +22,4 @@ center: {x: 0.0, y: 2, z: 0.0}
 half_extents: {x: 2.0, y: 2, z: 0.3}
 radius: 0.0
 purpose: hit
-layer: neutral
+layer: damageable

@@ -1,9 +1,11 @@
 #include <cassert>
 #include <cstdlib>
+#include <string>
 #include <vector>
 
 #include <glm/glm.hpp>
 
+#include "physics/public/physics_world.h"
 #include "simulation/public/simulation.h"
 
 namespace {
@@ -373,6 +375,245 @@ void beam_transform_rotation_follows_aim() {
                   glm::vec3{0.0f, 1.0f, 0.0f}));
 }
 
+// A destructible blocker: a prop carrying Health and a side, standing in the
+// beam's path. Registered the way the kernel registers a prop -- kind and layer
+// kStaticObstacle -- and carrying the gameplay_category ice_block_hitbox.yaml
+// authors, `damageable`. That category covers all three sides on purpose, so
+// blocking never depends on which side the block belongs to; only the entity's
+// GameplaySide does, and only for damage.
+network_example::NetId spawn_cover_prop(
+    network_example::World& world,
+    network_example::physics::PhysicsWorld& physics,
+    const glm::vec3& position,
+    std::uint32_t side,
+    std::uint32_t collider_id) {
+    const network_example::NetId net_id = world.spawn_entity(
+        network_example::EntityType::kProp,
+        network_example::ActorType::kUnknown,
+        0,
+        position);
+    const auto entity = world.find_entity(net_id);
+    assert(entity.has_value());
+    world.registry().emplace_or_replace<network_example::Health>(
+        *entity, network_example::Health{100, 100});
+    world.registry().emplace_or_replace<network_example::GameplaySide>(
+        *entity, network_example::GameplaySide{side});
+
+    network_example::physics::CollisionObjectDescriptor object;
+    object.identity = network_example::physics::CollisionObjectIdentity{
+        net_id,
+        collider_id,
+        0,
+        network_example::physics::CollisionObjectKind::kStaticObstacle,
+        network_example::physics::CollisionLayer::kStaticObstacle,
+    };
+    object.identity.gameplay_category = network_example::kCollisionMaskDamageable;
+    object.shape.type = network_example::physics::CollisionShapeType::kBox;
+    object.shape.half_extents = glm::vec3{0.3f, 1.0f, 1.0f};
+    object.position = position;
+    std::string error;
+    require(physics.upsert_object(object, &error));
+    return net_id;
+}
+
+// World only auto-registers actor hitboxes into the standalone collision world
+// it builds for itself. A test that supplies its own world has to place them.
+void register_actor_hitbox(
+    network_example::World& world,
+    network_example::physics::PhysicsWorld& physics,
+    network_example::NetId net_id,
+    std::uint32_t side,
+    std::uint32_t collider_id) {
+    const auto entity = world.find_entity(net_id);
+    assert(entity.has_value());
+    const network_example::Transform& transform =
+        world.registry().get<network_example::Transform>(*entity);
+    const network_example::Hitbox& hitbox =
+        world.registry().get<network_example::Hitbox>(*entity);
+
+    network_example::physics::CollisionObjectDescriptor object;
+    object.identity = network_example::physics::CollisionObjectIdentity{
+        net_id,
+        collider_id,
+        0,
+        network_example::physics::CollisionObjectKind::kActorHitbox,
+        network_example::physics::CollisionLayer::kDamageable,
+    };
+    object.identity.gameplay_category = side;
+    object.shape.type = network_example::physics::CollisionShapeType::kBox;
+    object.shape.half_extents = hitbox.half_extents;
+    object.position = transform.position + transform.rotation * hitbox.center;
+    std::string error;
+    require(physics.upsert_object(object, &error));
+}
+
+void beam_is_blocked_by_cover_regardless_of_side() {
+    // Blocking does not consult the side. A beam authored to attack hostiles is
+    // stopped by friendly cover just the same, and the actor sheltering behind
+    // it takes nothing.
+    for (const std::uint32_t cover_side :
+         {network_example::kCollisionLayerPlayerSide,
+          network_example::kCollisionLayerHostileSide}) {
+        network_example::World world;
+        network_example::physics::PhysicsWorld physics;
+        world.set_collision_world(&physics);
+        const network_example::NetId shooter =
+            world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+        const network_example::NetId sheltered =
+            spawn_enemy(world, glm::vec3{4.0f, 0.5f, 0.0f});
+        register_actor_hitbox(
+            world,
+            physics,
+            sheltered,
+            network_example::kCollisionLayerHostileSide,
+            910);
+        // Control: without the cover this beam reaches the enemy, so a pass
+        // below means the cover stopped it rather than the beam missing.
+        {
+            network_example::World control_world;
+            network_example::physics::PhysicsWorld control_physics;
+            control_world.set_collision_world(&control_physics);
+            const network_example::NetId control_shooter =
+                control_world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+            const network_example::NetId reachable =
+                spawn_enemy(control_world, glm::vec3{4.0f, 0.5f, 0.0f});
+            register_actor_hitbox(
+                control_world,
+                control_physics,
+                reachable,
+                network_example::kCollisionLayerHostileSide,
+                911);
+            spawn_projectile_beam(
+                control_world,
+                1,
+                control_shooter,
+                glm::vec3{0.0f, 0.5f, 0.0f},
+                glm::vec3{1.0f, 0.0f, 0.0f},
+                8.0f,
+                0.25f,
+                1,
+                10,
+                5,
+                network_example::kCollisionLayerHostileSide |
+                    network_example::kCollisionLayerStaticObstacle);
+            network_example::DamagePipeline control_pipeline;
+            std::vector<KernelEvent> control_events;
+            network_example::simulate_beams(
+                control_world, 1, 1.0f / 30.0f, 33333, &control_events,
+                &control_pipeline);
+            const std::vector<network_example::ConfirmedDamage> control_ready =
+                control_pipeline.drain_ready_damage(control_world, 33333);
+            network_example::apply_damage_applications(
+                control_world, control_ready, 1, &control_events);
+            require(health(control_world, reachable).hp == 99);
+        }
+
+        spawn_cover_prop(
+            world, physics, glm::vec3{2.0f, 0.5f, 0.0f}, cover_side, 900);
+
+        spawn_projectile_beam(
+            world,
+            1,
+            shooter,
+            glm::vec3{0.0f, 0.5f, 0.0f},
+            glm::vec3{1.0f, 0.0f, 0.0f},
+            8.0f,
+            0.25f,
+            1,
+            10,
+            5,
+            network_example::kCollisionLayerHostileSide |
+                network_example::kCollisionLayerStaticObstacle);
+
+        network_example::DamagePipeline pipeline;
+        std::vector<KernelEvent> events;
+        network_example::simulate_beams(
+            world, 1, 1.0f / 30.0f, 33333, &events, &pipeline);
+        const std::vector<network_example::ConfirmedDamage> ready =
+            pipeline.drain_ready_damage(world, 33333);
+        network_example::apply_damage_applications(world, ready, 1, &events);
+        require(health(world, sheltered).hp == 100);
+    }
+}
+
+void beam_damages_only_cover_on_a_side_it_attacks() {
+    const auto cover_hp_after_one_tick = [](std::uint32_t cover_side) {
+        network_example::World world;
+        network_example::physics::PhysicsWorld physics;
+        world.set_collision_world(&physics);
+        const network_example::NetId shooter =
+            world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+        const network_example::NetId cover = spawn_cover_prop(
+            world, physics, glm::vec3{2.0f, 0.5f, 0.0f}, cover_side, 901);
+
+        spawn_projectile_beam(
+            world,
+            1,
+            shooter,
+            glm::vec3{0.0f, 0.5f, 0.0f},
+            glm::vec3{1.0f, 0.0f, 0.0f},
+            8.0f,
+            0.25f,
+            1,
+            10,
+            5,
+            network_example::kCollisionLayerHostileSide |
+                network_example::kCollisionLayerStaticObstacle);
+
+        network_example::DamagePipeline pipeline;
+        std::vector<KernelEvent> events;
+        network_example::simulate_beams(
+            world, 1, 1.0f / 30.0f, 33333, &events, &pipeline);
+        const std::vector<network_example::ConfirmedDamage> ready =
+            pipeline.drain_ready_damage(world, 33333);
+        network_example::apply_damage_applications(world, ready, 1, &events);
+        return health(world, cover).hp;
+    };
+
+    // The beam attacks hostile_side, so hostile cover burns down and the
+    // shooter's own cover does not.
+    require(cover_hp_after_one_tick(
+                network_example::kCollisionLayerHostileSide) == 99);
+    require(cover_hp_after_one_tick(
+                network_example::kCollisionLayerPlayerSide) == 100);
+}
+
+void beam_ignores_cover_without_a_side() {
+    // Scenery with no owner is indestructible rather than free to shoot away.
+    network_example::World world;
+    network_example::physics::PhysicsWorld physics;
+    world.set_collision_world(&physics);
+    const network_example::NetId shooter =
+        world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+    const network_example::NetId scenery = spawn_cover_prop(
+        world, physics, glm::vec3{2.0f, 0.5f, 0.0f}, 0, 902);
+    world.registry().remove<network_example::GameplaySide>(
+        *world.find_entity(scenery));
+
+    spawn_projectile_beam(
+        world,
+        1,
+        shooter,
+        glm::vec3{0.0f, 0.5f, 0.0f},
+        glm::vec3{1.0f, 0.0f, 0.0f},
+        8.0f,
+        0.25f,
+        1,
+        10,
+        5,
+        network_example::kCollisionLayerHostileSide |
+            network_example::kCollisionLayerStaticObstacle);
+
+    network_example::DamagePipeline pipeline;
+    std::vector<KernelEvent> events;
+    network_example::simulate_beams(
+        world, 1, 1.0f / 30.0f, 33333, &events, &pipeline);
+    const std::vector<network_example::ConfirmedDamage> ready =
+        pipeline.drain_ready_damage(world, 33333);
+    network_example::apply_damage_applications(world, ready, 1, &events);
+    require(health(world, scenery).hp == 100);
+}
+
 }  // namespace
 
 int main() {
@@ -382,5 +623,8 @@ int main() {
     beam_fire_spawns_or_refreshes_server_beam();
     beam_survives_continuous_refresh();
     beam_transform_rotation_follows_aim();
+    beam_is_blocked_by_cover_regardless_of_side();
+    beam_damages_only_cover_on_a_side_it_attacks();
+    beam_ignores_cover_without_a_side();
     return 0;
 }
