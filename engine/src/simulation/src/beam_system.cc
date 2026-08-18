@@ -74,8 +74,17 @@ std::uint16_t accumulate_tick_damage(
 // deliberately not the same question: the collider stops every beam regardless
 // of side, and only this decides whether the tick's damage lands. Both sides
 // deploy the same cover, so neither can cut down its own -- the prop's own
-// lifetime is what removes it. No side at all reads as indestructible, which is
-// what terrain and un-owned scenery want.
+// lifetime is what removes it.
+//
+// Carrying no side at all means anything may damage it, which is the same
+// polarity the rest of the engine already gives an absent category:
+// filter_accepts treats gameplay_category 0 as visible to every query, and
+// homing_target_is_valid treats it as lockable by every missile. It is also the
+// only polarity this check can be lifted into the shared damage path under --
+// actors carry no GameplaySide, so reading absence as immunity would make every
+// player and agent invulnerable the moment anything but a beam consulted it.
+// Indestructible is spelled by having no Health, the way interaction_terminal
+// already spells it, not by withholding a side.
 bool beam_may_damage(
     const World& world,
     const ProjectileBeamRuntime& beam,
@@ -84,12 +93,11 @@ bool beam_may_damage(
         return false;
     }
     const std::optional<entt::entity> target = world.find_entity(target_net_id);
-    if (!target.has_value() ||
-        !world.registry().all_of<Health, GameplaySide>(*target)) {
+    if (!target.has_value() || !world.registry().all_of<Health>(*target)) {
         return false;
     }
-    return (beam.collision_mask &
-            world.registry().get<GameplaySide>(*target).category) != 0u;
+    const GameplaySide* side = world.registry().try_get<GameplaySide>(*target);
+    return side == nullptr || (beam.collision_mask & side->category) != 0u;
 }
 
 }  // namespace

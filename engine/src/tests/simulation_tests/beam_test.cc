@@ -578,8 +578,10 @@ void beam_damages_only_cover_on_a_side_it_attacks() {
                 network_example::kCollisionLayerPlayerSide) == 100);
 }
 
-void beam_ignores_cover_without_a_side() {
-    // Scenery with no owner is indestructible rather than free to shoot away.
+void beam_damages_cover_without_a_side() {
+    // Un-owned destructible scenery: no side means no side is spared, matching
+    // how the engine reads an absent category everywhere else. Indestructible is
+    // spelled by carrying no Health at all, not by withholding a side.
     network_example::World world;
     network_example::physics::PhysicsWorld physics;
     world.set_collision_world(&physics);
@@ -611,7 +613,7 @@ void beam_ignores_cover_without_a_side() {
     const std::vector<network_example::ConfirmedDamage> ready =
         pipeline.drain_ready_damage(world, 33333);
     network_example::apply_damage_applications(world, ready, 1, &events);
-    require(health(world, scenery).hp == 100);
+    require(health(world, scenery).hp == 99);
 }
 
 }  // namespace
@@ -625,6 +627,6 @@ int main() {
     beam_transform_rotation_follows_aim();
     beam_is_blocked_by_cover_regardless_of_side();
     beam_damages_only_cover_on_a_side_it_attacks();
-    beam_ignores_cover_without_a_side();
+    beam_damages_cover_without_a_side();
     return 0;
 }
