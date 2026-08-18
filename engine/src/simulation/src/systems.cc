@@ -1680,6 +1680,17 @@ bool EntityLifecycleSystem::create_entity(
             registry.emplace_or_replace<PropWorldMode>(
                 *entity,
                 PropWorldMode{PropMode::kPlaced});
+            // A deployable's side is whoever deployed it, not its template: the
+            // same ice block is cover for a player and cover for an agent.
+            // owner_peer survives every hop of a spawn chain -- a thrown bottle
+            // hands its own to the block it spawns on impact -- and is zero for
+            // exactly the server-driven agents, which have no peer.
+            registry.emplace_or_replace<GameplaySide>(
+                *entity,
+                GameplaySide{
+                    create_info.owner_peer != 0u
+                        ? kCollisionLayerPlayerSide
+                        : kCollisionLayerHostileSide});
             if (entity_template->prop.lifetime_ticks != 0u ||
                 entity_template->prop.population_group_id != 0u) {
                 registry.emplace_or_replace<PropLifecycle>(

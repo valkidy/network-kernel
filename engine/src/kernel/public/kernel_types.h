@@ -25,7 +25,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 74u
+#define KERNEL_ABI_VERSION 75u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -1023,6 +1023,15 @@ typedef struct RenderEntityState {
     uint8_t reserved_item0;
     uint16_t reserved_item1;
     uint32_t carrier_entity_id;
+    /*
+     * Beams only: the far end of the beam in world space, already cut short at
+     * whatever stopped it. `position` is the near end, so the pair gives both
+     * the direction to orient a beam by and the length to scale it to. Zero for
+     * every other entity -- a beam is the only projectile that has an extent
+     * rather than a point, and the only one whose rotation cannot be recovered
+     * from its velocity, because it has none.
+     */
+    KernelVec3 beam_end;
 } RenderEntityState;
 
 typedef struct KernelBoneLocalTransform {

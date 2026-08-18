@@ -837,6 +837,10 @@ ProjectileHitOutcome process_projectile_hit_records(
                 outcome.destroy_projectile = true;
                 return outcome;
             }
+            if (!damage_source_may_damage(
+                    world, projectile.collision_mask, record.target_net_id)) {
+                continue;
+            }
             damage_pipeline->submit_damage_request(DamageRequest{
                 current_tick,
                 record.sequence_id,
@@ -876,10 +880,16 @@ ProjectileHitOutcome process_projectile_hit_records(
         false,
         trigger_events);
 
+    // No-op while only actors are reachable here -- they carry no GameplaySide,
+    // so the rule admits every one of them. It is in place so that widening what
+    // a direct hit can touch cannot silently reintroduce a weapon that levels
+    // its own side's cover.
     if (projectile.damage_shape == ProjectileDamageShape::kDirectHit &&
         projectile.damage > 0 &&
         records.front().hit.identity.kind ==
-            physics::CollisionObjectKind::kActorHitbox) {
+            physics::CollisionObjectKind::kActorHitbox &&
+        damage_source_may_damage(
+            world, projectile.collision_mask, records.front().target_net_id)) {
         damage_pipeline->submit_damage_request(DamageRequest{
             current_tick,
             0,
@@ -1221,6 +1231,21 @@ void simulate_projectiles(
 
     auto view = world.registry().view<NetworkIdentity, Transform, Velocity, ProjectileState, ProjectileTag>();
     for (const entt::entity entity : view) {
+        // Beams carry ProjectileState so they replicate like any other
+        // projectile, but simulate_beams owns their lifetime and their
+        // transform. Ageing them here expires them on max_lifetime_ticks --
+        // which apply_projectile_mechanics sets from beam.lifetime_ticks --
+        // while the weapon is still refreshing them, and the refresh never
+        // reset age_ticks. The beam was destroyed and respawned under a new
+        // net_id every other tick.
+        //
+        // Area effects are the same story with a different owner:
+        // simulate_area_effects expires them on their runtime's expire_tick,
+        // and they do not travel, so there is nothing here to advance.
+        if (world.registry().all_of<ProjectileBeamRuntime>(entity) ||
+            world.registry().all_of<ProjectileAreaEffectRuntime>(entity)) {
+            continue;
+        }
         const NetworkIdentity& identity = view.get<NetworkIdentity>(entity);
         Transform& transform = view.get<Transform>(entity);
         Velocity& velocity = view.get<Velocity>(entity);
@@ -1266,6 +1291,21 @@ void simulate_projectiles(
 
     auto hit_view = world.registry().view<NetworkIdentity, Transform, ProjectileState, ProjectileTag>();
     for (const entt::entity entity : hit_view) {
+        // See the ageing loop above: simulate_beams resolves beam hits and
+        // beam expiry. A beam is also the wrong shape for this loop -- it does
+        // not travel, so the swept query degenerates -- and any hit it did
+        // report would destroy it outright, which is not how a held beam that
+        // rests against a wall should behave.
+        //
+        // The same is true of an area effect, and it is no longer hypothetical:
+        // now that fire_projectile copies collision geometry, a weapon-fired
+        // field (fire_floor) arrives here with a real overlap volume instead of
+        // a degenerate ray, and hit_response kDestroy would kill it on the tick
+        // it lands. simulate_area_effects is what resolves its hits.
+        if (world.registry().all_of<ProjectileBeamRuntime>(entity) ||
+            world.registry().all_of<ProjectileAreaEffectRuntime>(entity)) {
+            continue;
+        }
         const NetworkIdentity& identity = hit_view.get<NetworkIdentity>(entity);
         if (contains_net_id(projectiles_to_destroy, identity.net_id)) {
             continue;

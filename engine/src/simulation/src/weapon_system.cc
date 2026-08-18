@@ -305,6 +305,17 @@ NetId fire_projectile(
         projectile_state.hit_response = projectile_template.hit_response;
         projectile_state.damage_shape = projectile_template.damage_shape;
         projectile_state.collision_mask = projectile_template.collision_mask;
+        // Without these a weapon-fired projectile falls back to a thin segment
+        // between its previous and current position, ignoring the volume its
+        // collider template authors -- a rocket with a 0.1 m box swept a ray.
+        // spawn_projectile_from_template, the action-graph spawn path, has
+        // always copied them, so the same template behaved differently
+        // depending on which path created it.
+        projectile_state.collision_geometry = projectile_template.collision_geometry;
+        projectile_state.has_collision_geometry =
+            projectile_template.has_collision_geometry;
+        projectile_state.collision_query_mode =
+            projectile_template.collision_query_mode;
         projectile_state.max_hit_count =
             std::max(1u, projectile_template.max_hit_count);
         projectile_state.hit_count = 0;

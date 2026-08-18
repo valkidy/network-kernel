@@ -29,3 +29,16 @@ director:
         condition:
           type: group_eliminated
           group: wave_1
+        next: [wave_2]
+      - id: wave_2
+        on_activate:
+          - type: spawn_group
+            group: wave_2
+            count: 1
+            entity_template: tripod_actor
+            position: {x: 0.0, y: 10.0, z: 0.0}
+            radius: 10.0
+            seed: 4242
+        condition:
+          type: group_eliminated
+          group: wave_2

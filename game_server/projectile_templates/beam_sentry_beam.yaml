@@ -1,0 +1,47 @@
+# Agent-side twin of beam_rifle_beam. It exists as its own template rather than
+# being shared with the player's beam rifle for two reasons:
+#
+# 1. collision_mask. `hostile_side` is an absolute category, not a category
+#    relative to the shooter: world.cc:272 tags player actors `player_side` and
+#    every other actor -- including this sentry -- `hostile_side`. A beam an
+#    agent fires with the player weapon's mask would sweep past players and
+#    damage its own allies. `player_side` is the mirror image of what the
+#    player's beam carries.
+# 2. apply_weapon_template_references stamps `weapon_id` onto the projectile
+#    template it resolves (gameplay_config.cc:6078), so one projectile template
+#    belongs to exactly one weapon. Sharing is not available even if the mask
+#    were right.
+#
+# The mask is repeated inside `beam:` on purpose. beam_system reads only the
+# beam block's copy, and a non-zero beam mask overwrites the top-level one
+# (kernel.cc:1350) -- setting one without the other silently keeps the default.
+id: 9
+name: beam_sentry_beam
+type: beam
+# Inert: overwritten by beam.damage_per_tick below (kernel.cc:1345). Kept equal
+# to it so the file does not read as if it applied 30 damage a tick.
+damage: 2
+sync_mode: server_snapshot_only
+collider_template: beam_sentry_beam_box
+movement_model: linear
+hit_response: destroy
+damage_shape: direct_hit
+speed: 0.0
+lifetime_ticks: 0
+collision_mask: player_side | terrain | obstacle
+# Also inert for beams: beam_system stops at the first non-actor hit (terrain,
+# obstacle) but never counts actor hits, so the beam always passes through every
+# player along its length. Left at 1 to match the other templates.
+max_hit_count: 1
+gravity: {x: 0.0, y: 0.0, z: 0.0}
+beam:
+  # Documented here, decided in beam_sentry_beam_box.yaml.
+  length: 14.0
+  radius: 0.3
+  # 2 per tick at 30 Hz = 60 dps while the beam is up, and 90 damage per
+  # 45-round magazine against a 1000 HP player.
+  damage_per_tick: 2
+  # Two ticks of grace against a one-tick commit interval: the beam survives to
+  # the tick that refreshes it, and expires two ticks after the sentry stops.
+  lifetime_ticks: 2
+  collision_mask: player_side | terrain | obstacle

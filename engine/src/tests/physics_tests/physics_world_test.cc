@@ -174,6 +174,110 @@ void require_equal(const std::vector<CollisionHit>& lhs, const std::vector<Colli
     }
 }
 
+void closest_shape_cast_matches_the_all_hit_front() {
+    // shape_cast_closest had no callers and was a wrapper that ran the full
+    // all-hit cast and took the front. Now it shrinks the cast as it goes, so it
+    // has to reject inside the collector: the per-object half of the filter is
+    // not expressible as a Jolt layer filter, and a stock closest collector
+    // would latch onto the nearest raw hit and report nothing when the caller
+    // had excluded it.
+    PhysicsWorld world;
+    const auto place = [&world](std::uint32_t net_id, float x) {
+        CollisionObjectDescriptor object;
+        object.identity = CollisionObjectIdentity{
+            net_id, net_id, 0,
+            CollisionObjectKind::kStaticObstacle,
+            CollisionLayer::kStaticObstacle,
+        };
+        object.shape.type = CollisionShapeType::kBox;
+        object.shape.half_extents = glm::vec3{0.25f, 0.5f, 0.5f};
+        object.position = glm::vec3{x, 0.0f, 0.0f};
+        std::string error;
+        assert(world.upsert_object(object, &error));
+    };
+    place(11, 2.0f);
+    place(12, 5.0f);
+
+    ShapeCastRequest request;
+    request.shape.type = CollisionShapeType::kSphere;
+    request.shape.radius = 0.25f;
+    request.start = glm::vec3{0.0f, 0.0f, 0.0f};
+    request.displacement = glm::vec3{10.0f, 0.0f, 0.0f};
+    request.filter.collision_mask =
+        collision_layer_bit(CollisionLayer::kStaticObstacle);
+    request.filter.object_kind_mask =
+        1u << static_cast<std::uint32_t>(CollisionObjectKind::kStaticObstacle);
+
+    CollisionHit closest{};
+    assert(world.shape_cast_closest(request, &closest));
+    const std::vector<CollisionHit> all = world.shape_cast_all(request);
+    assert(all.size() == 2);
+    assert(closest.identity.entity_net_id == all.front().identity.entity_net_id);
+    assert(closest.identity.entity_net_id == 11);
+
+    // The nearest object is excluded, so the answer is the one behind it -- not
+    // "no hit", which is what a collector that filtered afterwards would say.
+    request.filter.ignored_entity_net_id = 11;
+    CollisionHit skipped{};
+    assert(world.shape_cast_closest(request, &skipped));
+    assert(skipped.identity.entity_net_id == 12);
+    const std::vector<CollisionHit> filtered = world.shape_cast_all(request);
+    assert(filtered.size() == 1);
+    assert(skipped.identity.entity_net_id ==
+           filtered.front().identity.entity_net_id);
+
+    // Nothing left to hit at all.
+    request.filter.ignored_entity_net_id = 0;
+    request.filter.gameplay_category_mask =
+        network_example::physics::kGameplayCategoryPlayerSide;
+    CollisionHit unused{};
+    request.filter.collision_mask = 0;
+    assert(!world.shape_cast_closest(request, &unused));
+}
+
+void side_less_query_reaches_categorised_objects() {
+    // collision_filter_from_mask only forwards ACTOR bits into a query's
+    // gameplay_category_mask, so a projectile authored as terrain|obstacle
+    // arrives here naming no category at all. It must still be stopped by a
+    // prop that declares one, or deployable cover would be solid to everything
+    // that names a side and transparent to everything that does not.
+    PhysicsWorld world;
+
+    CollisionObjectDescriptor cover;
+    cover.identity = CollisionObjectIdentity{
+        7, 1, 0,
+        CollisionObjectKind::kStaticObstacle,
+        CollisionLayer::kStaticObstacle,
+    };
+    cover.identity.gameplay_category =
+        network_example::physics::kGameplayCategoryHostileSide;
+    cover.shape.type = CollisionShapeType::kBox;
+    cover.shape.half_extents = glm::vec3{0.5f, 0.5f, 0.5f};
+    cover.position = glm::vec3{2.0f, 0.0f, 0.0f};
+    std::string error;
+    assert(world.upsert_object(cover, &error));
+
+    RayCastRequest ray;
+    ray.origin = glm::vec3{0.0f, 0.0f, 0.0f};
+    ray.direction = glm::vec3{1.0f, 0.0f, 0.0f};
+    ray.max_distance = 10.0f;
+    ray.filter.collision_mask =
+        collision_layer_bit(CollisionLayer::kTerrain) |
+        collision_layer_bit(CollisionLayer::kStaticObstacle);
+    ray.filter.object_kind_mask =
+        (1u << static_cast<std::uint32_t>(CollisionObjectKind::kTerrain)) |
+        (1u << static_cast<std::uint32_t>(CollisionObjectKind::kStaticObstacle));
+    ray.filter.gameplay_category_mask = 0;
+    assert(world.ray_cast_all(ray).size() == 1);
+
+    // Naming a category the object does not carry still excludes it: an empty
+    // mask means "unconstrained", not "match anything I ask for". player_side
+    // and hostile_side are disjoint, so this must not reach the cover.
+    ray.filter.gameplay_category_mask =
+        network_example::physics::kGameplayCategoryPlayerSide;
+    assert(world.ray_cast_all(ray).empty());
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -604,5 +708,8 @@ int main(int argc, char** argv) {
     limb_ray.filter.collision_mask =
         network_example::physics::kCollisionMaskAll | limb_bit;
     assert(limb_world.ray_cast_all(limb_ray).size() == 5);
+
+    side_less_query_reaches_categorised_objects();
+    closest_shape_cast_matches_the_all_hit_front();
     return 0;
 }

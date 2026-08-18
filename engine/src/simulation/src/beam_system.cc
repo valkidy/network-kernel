@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <vector>
 
 #include "physics/public/physics_world.h"
@@ -25,12 +26,50 @@ void push_event(
     events->push_back(KernelEvent{type, tick, net_id, peer_id, code});
 }
 
+// Maps the collider's local +Z -- the axis beam_oriented_box's half_extents.z
+// runs along, and the axis the presentation prefabs are built on -- onto the
+// beam's aim. Nothing else writes a projectile's rotation: World::spawn_projectile
+// leaves it identity and the weapon refresh only moves the origin, so without
+// this a beam's replicated transform never turns with the shooter.
+glm::quat beam_rotation(const glm::vec3& direction) {
+    const float length = glm::length(direction);
+    if (length <= 0.0001f) {
+        return glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+    }
+    const glm::vec3 from{0.0f, 0.0f, 1.0f};
+    const glm::vec3 to = direction / length;
+    const float dot = std::clamp(glm::dot(from, to), -1.0f, 1.0f);
+    if (dot > 0.999f) {
+        return glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+    }
+    if (dot < -0.999f) {
+        // Antiparallel: cross() is degenerate, so name the half turn outright.
+        return glm::quat{0.0f, 0.0f, 1.0f, 0.0f};
+    }
+    const glm::vec3 axis = glm::normalize(glm::cross(from, to));
+    return glm::angleAxis(std::acos(dot), axis);
+}
+
 std::uint32_t tick_damage_units(const ProjectileBeamRuntime& beam) {
     const double units =
         static_cast<double>(beam.damage_per_tick) *
         static_cast<double>(kDamageScale);
     return static_cast<std::uint32_t>(std::max(0.0, std::round(units)));
 }
+
+// Turns the fractional per-tick damage into whole points without drift. Keyed by
+// target so a beam covering several bodies keeps a separate remainder for each.
+std::uint16_t accumulate_tick_damage(
+    ProjectileBeamRuntime& beam,
+    NetId target_net_id,
+    std::uint32_t damage_units) {
+    std::uint32_t& remainder = beam.damage_remainder_by_target[target_net_id];
+    const std::uint64_t accumulated =
+        static_cast<std::uint64_t>(remainder) + damage_units;
+    remainder = static_cast<std::uint32_t>(accumulated % kDamageScale);
+    return static_cast<std::uint16_t>(accumulated / kDamageScale);
+}
+
 
 }  // namespace
 
@@ -70,6 +109,11 @@ void simulate_beams(
         }
 
         transform.position = beam.origin;
+        transform.rotation = beam_rotation(beam.direction);
+        // Narrowed below if something stops the beam short. Reset every tick:
+        // the beam is re-aimed every tick it is refreshed, so last tick's reach
+        // says nothing about this one.
+        beam.effective_length = beam.length;
         physics::PhysicsWorld* collision_world = world.collision_world();
         if (collision_world == nullptr) {
             continue;
@@ -81,37 +125,78 @@ void simulate_beams(
         request.displacement = beam.direction * beam.length;
         request.filter = collision_filter_from_mask(beam.collision_mask);
         request.filter.ignored_entity_net_id = beam.shooter_net_id;
-        const std::vector<physics::CollisionHit> hits =
-            collision_world->shape_cast_all(request);
+
+        // Pass 1: what stops the beam. Restricted to the non-actor kinds so the
+        // closest-hit cast can shrink itself to the first wall instead of
+        // gathering every actor along the authored length first.
+        physics::ShapeCastRequest blocker_request = request;
+        blocker_request.filter.collision_mask &=
+            ~physics::collision_layer_bit(physics::CollisionLayer::kDamageable);
+        blocker_request.filter.object_kind_mask &=
+            ~(1u << static_cast<std::uint32_t>(
+                  physics::CollisionObjectKind::kActorHitbox));
+        physics::CollisionHit blocker{};
+        const bool blocked =
+            collision_world->shape_cast_closest(blocker_request, &blocker);
+        beam.effective_length =
+            blocked ? std::min(beam.length, blocker.distance) : beam.length;
 
         const std::uint32_t damage_units = tick_damage_units(beam);
         std::uint32_t sequence_id = 0;
-        for (const physics::CollisionHit& hit : hits) {
-            if (hit.identity.kind != physics::CollisionObjectKind::kActorHitbox) {
-                break;
+
+        // Pass 2: actors, and only as far as the beam actually reaches. A beam
+        // resting against a wall a metre away no longer pays to sweep its whole
+        // authored length. Skipped outright when the blocker is at the muzzle,
+        // where a zero displacement would turn the cast into an overlap.
+        if (beam.effective_length > 0.0001f) {
+            physics::ShapeCastRequest actor_request = request;
+            actor_request.displacement = beam.direction * beam.effective_length;
+            actor_request.filter.collision_mask &=
+                physics::collision_layer_bit(physics::CollisionLayer::kDamageable);
+            actor_request.filter.object_kind_mask &=
+                1u << static_cast<std::uint32_t>(
+                    physics::CollisionObjectKind::kActorHitbox);
+            for (const physics::CollisionHit& hit :
+                 collision_world->shape_cast_all(actor_request)) {
+                const std::uint16_t damage = accumulate_tick_damage(
+                    beam, hit.identity.entity_net_id, damage_units);
+                if (damage == 0) {
+                    continue;
+                }
+                active_damage_pipeline->submit_damage_request(DamageRequest{
+                    current_tick,
+                    sequence_id++,
+                    identity.net_id,
+                    hit.identity.entity_net_id,
+                    identity.owner_peer,
+                    beam.source_code,
+                    damage,
+                    server_time_us,
+                    hit.position,
+                });
             }
-            const NetId target_net_id = hit.identity.entity_net_id;
-            std::uint32_t& remainder =
-                beam.damage_remainder_by_target[target_net_id];
-            const std::uint64_t accumulated =
-                static_cast<std::uint64_t>(remainder) + damage_units;
-            const auto damage =
-                static_cast<std::uint16_t>(accumulated / kDamageScale);
-            remainder = static_cast<std::uint32_t>(accumulated % kDamageScale);
-            if (damage == 0) {
-                continue;
+        }
+
+        // The blocker itself takes this tick's damage last, after everything it
+        // shelters, so damage ordering matches the old single-pass sweep.
+        if (blocked &&
+            damage_source_may_damage(
+                world, beam.collision_mask, blocker.identity.entity_net_id)) {
+            const std::uint16_t damage = accumulate_tick_damage(
+                beam, blocker.identity.entity_net_id, damage_units);
+            if (damage != 0) {
+                active_damage_pipeline->submit_damage_request(DamageRequest{
+                    current_tick,
+                    sequence_id++,
+                    identity.net_id,
+                    blocker.identity.entity_net_id,
+                    identity.owner_peer,
+                    beam.source_code,
+                    damage,
+                    server_time_us,
+                    blocker.position,
+                });
             }
-            active_damage_pipeline->submit_damage_request(DamageRequest{
-                current_tick,
-                sequence_id++,
-                identity.net_id,
-                target_net_id,
-                identity.owner_peer,
-                beam.source_code,
-                damage,
-                server_time_us,
-                hit.position,
-            });
         }
     }
 

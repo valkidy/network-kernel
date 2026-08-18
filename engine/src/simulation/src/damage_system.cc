@@ -4,6 +4,21 @@
 
 namespace network_example {
 
+bool damage_source_may_damage(
+    const World& world,
+    std::uint32_t attacker_collision_mask,
+    NetId target_net_id) {
+    if (target_net_id == 0) {
+        return false;
+    }
+    const std::optional<entt::entity> target = world.find_entity(target_net_id);
+    if (!target.has_value() || !world.registry().all_of<Health>(*target)) {
+        return false;
+    }
+    const GameplaySide* side = world.registry().try_get<GameplaySide>(*target);
+    return side == nullptr || (attacker_collision_mask & side->category) != 0u;
+}
+
 std::vector<ConfirmedDamage> apply_damage_applications(
     World& world,
     const std::vector<ConfirmedDamage>& damage_applications,

@@ -12,9 +12,6 @@
 
 namespace network_example::game_server {
 
-AgentSentryController::AgentSentryController(AgentSentryConfig config)
-    : config_(config) {}
-
 void AgentSentryController::tick(
     KernelHandle* kernel,
     std::vector<AgentRuntimeState>* agents,
@@ -23,12 +20,16 @@ void AgentSentryController::tick(
         return;
     }
 
-    ActorIntentExecutorConfig executor_config;
-    executor_config.weapon_id = config_.weapon_id;
-    executor_config.ballistic_aim = config_.ballistic_aim;
-    const ActorIntentExecutor actor_executor(executor_config);
-
     for (AgentRuntimeState& agent : *agents) {
+        // Per agent, not per controller: the weapon and the ballistic profile
+        // belong to this agent's own actor template, so the executor is built
+        // inside the loop.
+        const AgentSentryConfig& config = agent.sentry_config;
+        ActorIntentExecutorConfig executor_config;
+        executor_config.weapon_id = config.weapon_id;
+        executor_config.ballistic_aim = config.ballistic_aim;
+        const ActorIntentExecutor actor_executor(executor_config);
+
         const SentryPerceptionSnapshot perception =
             AiPerceptionAdapter::build_sentry_snapshot(kernel, agent.net_id);
         if (!perception.has_self_state) {
@@ -42,12 +43,12 @@ void AgentSentryController::tick(
         agent.animation_state = 0;
         agent.sentry.self_id = agent.net_id;
 
-        if (config_.passive_patrol) {
+        if (config.passive_patrol) {
             if (entity_state.position.x >=
-                agent.patrol_anchor.x + config_.patrol_extent_x_meters) {
+                agent.patrol_anchor.x + config.patrol_extent_x_meters) {
                 agent.patrol_direction = -1;
             } else if (entity_state.position.x <=
-                       agent.patrol_anchor.x - config_.patrol_extent_x_meters) {
+                       agent.patrol_anchor.x - config.patrol_extent_x_meters) {
                 agent.patrol_direction = 1;
             }
 
@@ -55,21 +56,21 @@ void AgentSentryController::tick(
             input.input_seq = agent.next_input_seq;
             input.move = KernelVec2{
                 static_cast<float>(agent.patrol_direction) *
-                    config_.patrol_input_magnitude,
+                    config.patrol_input_magnitude,
                 0.0f,
             };
             if (Kernel_ServerSubmitEntityInput(kernel, agent.net_id, &input)) {
                 ++agent.next_input_seq;
             }
             agent.velocity = KernelVec3{
-                input.move.x * config_.move_speed_meters_per_second,
+                input.move.x * config.move_speed_meters_per_second,
                 entity_state.velocity.y,
                 0.0f,
             };
             agent.sentry.target = 0;
             agent.target_player_net_id = 0;
             agent.sentry.state = AgentSentryState::kIdle;
-            agent.animation_state = config_.animation_idle;
+            agent.animation_state = config.animation_idle;
             Kernel_ServerEnqueueEntityState(
                 kernel,
                 KernelCommandSource_AI,
@@ -99,9 +100,9 @@ void AgentSentryController::tick(
                 agent_steering::transition_to(&agent, AgentSentryState::kAlert);
             } else {
                 should_update_rotation = agent_steering::update_patrol_facing(
-                    config_.patrol_rotation_interval_ticks,
-                    config_.patrol_rotation_min_degrees,
-                    config_.patrol_rotation_max_degrees,
+                    config.patrol_rotation_interval_ticks,
+                    config.patrol_rotation_min_degrees,
+                    config.patrol_rotation_max_degrees,
                     &agent,
                     entity_state.rotation,
                     &desired_rotation);
@@ -120,11 +121,11 @@ void AgentSentryController::tick(
                         &desired_rotation) ||
                     should_update_rotation;
                 ++agent.sentry.state_ticks;
-                if (agent.sentry.state_ticks >= config_.alert_ticks) {
+                if (agent.sentry.state_ticks >= config.alert_ticks) {
                     agent_steering::transition_to(
                         &agent, AgentSentryState::kAttack);
                 }
-            } else if (agent.sentry.lost_target_ticks >= config_.forget_ticks) {
+            } else if (agent.sentry.lost_target_ticks >= config.forget_ticks) {
                 agent.sentry.target = 0;
                 agent_steering::transition_to(&agent, AgentSentryState::kIdle);
             }
@@ -158,10 +159,10 @@ void AgentSentryController::tick(
                             perception);
                     if (execution.ballistic_solution_unavailable) {
                         agent.sentry.ballistic_retry_ticks =
-                            config_.ballistic_retry_cooldown_ticks;
+                            config.ballistic_retry_cooldown_ticks;
                     }
                 }
-            } else if (agent.sentry.lost_target_ticks >= config_.forget_ticks) {
+            } else if (agent.sentry.lost_target_ticks >= config.forget_ticks) {
                 agent_steering::transition_to(&agent, AgentSentryState::kAlert);
             }
         }

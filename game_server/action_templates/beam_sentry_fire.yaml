@@ -1,0 +1,27 @@
+# Hold-to-sustain, same shape as beam_rifle_fire. The AI drives this without any
+# special casing: ActorIntentExecutor re-sends action_input.held = 1 for the
+# in-flight instance every tick the target stays visible
+# (actor_intent_executor.cc:163), which is exactly what a hold action wants.
+id: 4104
+name: beam_sentry_fire
+trigger_mode: hold
+flags: [cancel_on_release, cancel_on_death, cancel_on_weapon_change, cancel_before_first_commit]
+ammo_cost_per_commit: 1
+# 0.3 s of telegraph before the first tick of damage, against the player weapon's
+# 5. The sentry commits to a firing line the moment it sees a target, so this is
+# the window a player has to break line of sight -- lose visibility during
+# windup and the executor stops submitting, hold_input_timeout_ticks trips, and
+# the action cancels without ever having fired.
+commit_offset_ticks: 9
+# Must stay at 1, and must stay under beam.lifetime_ticks. The commit is what
+# pushes the beam's expire_tick forward (weapon_system.cc:658); a commit
+# interval that reaches or exceeds the lifetime lets the beam die between
+# refreshes and respawn as a new entity every cycle.
+commit_interval_ticks: 1
+# Unbounded: the magazine is what ends the burst, not a commit count.
+max_commit_count: 0
+recovery_ticks: 12
+# Six ticks without input cancels. The sentry ticks every frame while it has a
+# target (ai_tick_interval 1), so this only fires when the target is genuinely
+# gone.
+hold_input_timeout_ticks: 6

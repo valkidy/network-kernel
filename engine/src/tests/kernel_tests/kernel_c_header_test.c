@@ -6,8 +6,12 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 74u,
-    "skeleton collider ABI");
+    KERNEL_ABI_VERSION == 75u,
+    "beam endpoint ABI");
+_Static_assert(
+    offsetof(RenderEntityState, beam_end) >
+        offsetof(RenderEntityState, carrier_entity_id),
+    "beam endpoint is appended");
 _Static_assert(
     offsetof(KernelStatusEffectDefinition, max_stacks) >
         offsetof(KernelStatusEffectDefinition, on_expire_trigger),
@@ -180,7 +184,7 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 74u);
+    assert(KERNEL_ABI_VERSION == 75u);
     assert(sizeof(KernelSkeletonColliderDefinition) > 0u);
     assert(KERNEL_MAX_SKELETON_COLLIDERS > 0u);
     assert(KernelColliderPurpose_Limb == (1u << 5));
@@ -304,7 +308,7 @@ int main(void) {
            offsetof(RenderEntityState, status));
     assert(offsetof(RenderEntityState, collider_template_id) >
            offsetof(RenderEntityState, template_id));
-    assert(sizeof(RenderEntityState) == 144u);
+    assert(sizeof(RenderEntityState) == 160u);
     assert(offsetof(KernelCombatStateDefinition, collider_template_id) >
            offsetof(KernelCombatStateDefinition, active_weapon_slot));
     assert(offsetof(KernelServerEntityCreateInfo, entity_template_id) >

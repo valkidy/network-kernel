@@ -208,6 +208,7 @@ RenderEntityState render_state_from_snapshot_entity(
         0,
         0,
         entity.carrier_entity_id,
+        to_kernel_vec3(entity.beam_end),
     };
 }
 
@@ -219,6 +220,11 @@ EntitySnapshot interpolate_snapshot_entity(
     entity.position = from.position + (to.position - from.position) * alpha;
     entity.rotation = glm::slerp(from.rotation, to.rotation, alpha);
     entity.velocity = from.velocity + (to.velocity - from.velocity) * alpha;
+    // A beam sweeps as its owner turns and its reach jumps whenever what blocks
+    // it changes, so the far end has to travel with the near one. Left alone it
+    // would hold the newer snapshot's endpoint against an interpolated origin
+    // and the beam would visibly stretch and snap between snapshots.
+    entity.beam_end = from.beam_end + (to.beam_end - from.beam_end) * alpha;
     return entity;
 }
 
