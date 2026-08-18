@@ -1221,6 +1221,16 @@ void simulate_projectiles(
 
     auto view = world.registry().view<NetworkIdentity, Transform, Velocity, ProjectileState, ProjectileTag>();
     for (const entt::entity entity : view) {
+        // Beams carry ProjectileState so they replicate like any other
+        // projectile, but simulate_beams owns their lifetime and their
+        // transform. Ageing them here expires them on max_lifetime_ticks --
+        // which apply_projectile_mechanics sets from beam.lifetime_ticks --
+        // while the weapon is still refreshing them, and the refresh never
+        // reset age_ticks. The beam was destroyed and respawned under a new
+        // net_id every other tick.
+        if (world.registry().all_of<ProjectileBeamRuntime>(entity)) {
+            continue;
+        }
         const NetworkIdentity& identity = view.get<NetworkIdentity>(entity);
         Transform& transform = view.get<Transform>(entity);
         Velocity& velocity = view.get<Velocity>(entity);
@@ -1266,6 +1276,14 @@ void simulate_projectiles(
 
     auto hit_view = world.registry().view<NetworkIdentity, Transform, ProjectileState, ProjectileTag>();
     for (const entt::entity entity : hit_view) {
+        // See the ageing loop above: simulate_beams resolves beam hits and
+        // beam expiry. A beam is also the wrong shape for this loop -- it does
+        // not travel, so the swept query degenerates -- and any hit it did
+        // report would destroy it outright, which is not how a held beam that
+        // rests against a wall should behave.
+        if (world.registry().all_of<ProjectileBeamRuntime>(entity)) {
+            continue;
+        }
         const NetworkIdentity& identity = hit_view.get<NetworkIdentity>(entity);
         if (contains_net_id(projectiles_to_destroy, identity.net_id)) {
             continue;

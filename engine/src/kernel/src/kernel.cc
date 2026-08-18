@@ -935,6 +935,32 @@ ColliderWorldBounds collider_world_bounds(const ColliderInstance& collider) {
     };
 }
 
+// What a beam actually occupies. simulate_beams sweeps a sphere from the beam
+// origin along the aim, so the shape that describes it is a segment carrying a
+// radius -- a capsule -- not the oriented box the template authors it as. The
+// box stays the authority on how long and how wide (apply_projectile_mechanics
+// converts its half_extents into beam length/radius); it is simply not where
+// the beam is. Placed as authored it would sit centred on the muzzle, half of
+// it behind the shooter, and world-axis aligned, because a projectile's
+// transform rotation is only written for beams and only by simulate_beams.
+void apply_beam_collider_geometry(
+    const ProjectileBeamRuntime& beam,
+    ColliderInstance* collider) {
+    collider->shape_type = ColliderShapeType::kSegment;
+    collider->segment_start = beam.origin;
+    collider->segment_end = beam.origin + beam.direction * beam.length;
+    collider->radius = beam.radius;
+    collider->half_extents = glm::vec3{0.0f, 0.0f, 0.0f};
+    collider->local_center = glm::vec3{0.0f, 0.0f, 0.0f};
+    collider->local_rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+    // Endpoints are world space, so the segment needs no orientation of its
+    // own. Leaving a stale rotation here would not move it, but it would be a
+    // lie for anything that reads world_rotation back.
+    collider->world_rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+    collider->world_center =
+        (collider->segment_start + collider->segment_end) * 0.5f;
+}
+
 const EntitySnapshot* find_snapshot_entity(
     const WorldSnapshot& snapshot,
     NetId net_id) {
@@ -4386,6 +4412,11 @@ void KernelEngine::materialize_projectile_collider(NetId net_id) {
     collider.world_center = transform.position + collider.local_center;
     collider.half_extents = collider_template_half_extents(*collider_template);
     collider.radius = collider_template_radius(*collider_template);
+    if (world_.registry().all_of<ProjectileBeamRuntime>(*entity)) {
+        apply_beam_collider_geometry(
+            world_.registry().get<ProjectileBeamRuntime>(*entity),
+            &collider);
+    }
     collider.world_bounds = collider_world_bounds(collider);
     world_.collider_registry().upsert_entity_collider(
         identity.net_id,
@@ -4411,6 +4442,15 @@ void KernelEngine::sync_entity_colliders_from_world() {
             world_.find_entity(collider.entity_net_id);
         if (!entity.has_value() ||
             !world_.registry().all_of<Transform>(*entity)) {
+            continue;
+        }
+        // A beam is re-aimed every tick it is refreshed, and its endpoints do
+        // not follow from the transform the way a rigid offset does.
+        if (world_.registry().all_of<ProjectileBeamRuntime>(*entity)) {
+            apply_beam_collider_geometry(
+                world_.registry().get<ProjectileBeamRuntime>(*entity),
+                &collider);
+            collider.world_bounds = collider_world_bounds(collider);
             continue;
         }
         const Transform& transform = world_.registry().get<Transform>(*entity);

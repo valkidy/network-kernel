@@ -239,6 +239,140 @@ void beam_fire_spawns_or_refreshes_server_beam() {
     require(state.expire_tick == 3);
 }
 
+void beam_survives_continuous_refresh() {
+    // A held beam is one entity refreshed every tick, not a new entity every
+    // tick. simulate_projectiles used to age it against max_lifetime_ticks --
+    // which apply_projectile_mechanics sets from beam.lifetime_ticks -- and the
+    // weapon refresh never reset age_ticks, so the beam was destroyed and
+    // respawned under a fresh net_id on a two-tick cycle. At a 15 Hz snapshot
+    // rate against a 30 Hz tick that reaches the client as a strobe.
+    network_example::World world;
+    const network_example::NetId player =
+        world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+    const auto player_entity = world.find_entity(player);
+    assert(player_entity.has_value());
+    health(world, player) = network_example::Health{100, 100};
+    network_example::WeaponState& weapon =
+        world.registry().get<network_example::WeaponState>(*player_entity);
+    weapon.weapon_slot_count = 1;
+    weapon.weapon_ids[0] = network_example::kWeaponId5;
+    weapon.ammo[0] = 60;
+    network_example::WeaponTuning& tuning =
+        world.registry().get<network_example::WeaponTuning>(*player_entity);
+    tuning.configured[network_example::kWeaponId5] = true;
+    tuning.definitions[network_example::kWeaponId5] =
+        network_example::WeaponMechanicsDefinition{
+            network_example::kWeaponId5,
+            network_example::WeaponFireMode::kProjectile,
+            60,
+            20,
+            1,
+            10,
+        };
+    tuning.definitions[network_example::kWeaponId5].projectile_template_id = 55;
+    world.set_projectile_templates({beam_template(55, network_example::kWeaponId5)});
+
+    KernelPlayerInput input{};
+    input.buttons = InputButton_Fire;
+    input.selected_weapon = network_example::kWeaponId5;
+    input.aim_dir = KernelVec3{1.0f, 0.0f, 0.0f};
+
+    network_example::NetId first_beam = 0;
+    int spawn_count = 0;
+    int destroy_count = 0;
+    for (std::uint32_t tick = 1; tick <= 12; ++tick) {
+        std::vector<KernelEvent> events;
+        const std::vector<network_example::QueuedInput> inputs{
+            network_example::QueuedInput{1, input, 0, 0, false, 0}};
+        // The kernel's own order: weapons, then projectiles, then beams.
+        network_example::simulate_weapons(world, inputs, tick, &events);
+        network_example::simulate_projectiles(world, 1.0f / 30.0f, tick, &events);
+        network_example::simulate_beams(
+            world, tick, 1.0f / 30.0f, tick * 33333ull, &events, nullptr);
+
+        for (const KernelEvent& event : events) {
+            if (event.type == KernelEventType_EntitySpawned &&
+                event.code == static_cast<std::uint32_t>(
+                                  network_example::EntityType::kProjectile)) {
+                ++spawn_count;
+                if (first_beam == 0) {
+                    first_beam = event.net_id;
+                }
+            }
+            if (event.type == KernelEventType_EntityDestroyed) {
+                ++destroy_count;
+            }
+        }
+
+        // Exactly one live beam, and it is still the one spawned on tick 1.
+        int live_beams = 0;
+        auto view = world.registry().view<network_example::ProjectileBeamRuntime>();
+        for (const entt::entity entity : view) {
+            ++live_beams;
+            require(
+                world.registry().get<network_example::NetworkIdentity>(entity)
+                    .net_id == first_beam);
+            // Untouched by the ageing loop, which is what stops the expiry.
+            require(
+                world.registry().get<network_example::ProjectileState>(entity)
+                    .age_ticks == 0);
+        }
+        require(live_beams == 1);
+    }
+    require(first_beam != 0);
+    require(spawn_count == 1);
+    require(destroy_count == 0);
+    require(
+        world.registry().get<network_example::WeaponState>(*player_entity)
+            .active_effect_net_id == first_beam);
+}
+
+void beam_transform_rotation_follows_aim() {
+    // The collider template runs its length along local +Z and the presentation
+    // prefabs are built on the same axis, so the replicated transform has to
+    // carry that mapping. Nothing else writes it.
+    const auto rotated_forward = [](const glm::vec3& direction) {
+        network_example::World world;
+        const network_example::NetId shooter =
+            world.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+        const network_example::NetId beam = spawn_projectile_beam(
+            world,
+            1,
+            shooter,
+            glm::vec3{0.0f, 0.5f, 0.0f},
+            direction,
+            5.0f,
+            0.25f,
+            1,
+            10,
+            5,
+            network_example::kCollisionLayerHostileSide);
+        std::vector<KernelEvent> events;
+        network_example::simulate_beams(
+            world, 1, 1.0f / 30.0f, 33333, &events, nullptr);
+        const auto entity = world.find_entity(beam);
+        assert(entity.has_value());
+        const network_example::Transform& transform =
+            world.registry().get<network_example::Transform>(*entity);
+        return transform.rotation * glm::vec3{0.0f, 0.0f, 1.0f};
+    };
+
+    const auto close = [](const glm::vec3& lhs, const glm::vec3& rhs) {
+        return glm::length(lhs - rhs) < 0.001f;
+    };
+
+    require(close(rotated_forward(glm::vec3{1.0f, 0.0f, 0.0f}),
+                  glm::vec3{1.0f, 0.0f, 0.0f}));
+    require(close(rotated_forward(glm::vec3{0.0f, 0.0f, 1.0f}),
+                  glm::vec3{0.0f, 0.0f, 1.0f}));
+    // Antiparallel and straight up are the two degenerate axes for a
+    // cross-product construction; both must still produce a finite rotation.
+    require(close(rotated_forward(glm::vec3{0.0f, 0.0f, -1.0f}),
+                  glm::vec3{0.0f, 0.0f, -1.0f}));
+    require(close(rotated_forward(glm::vec3{0.0f, 1.0f, 0.0f}),
+                  glm::vec3{0.0f, 1.0f, 0.0f}));
+}
+
 }  // namespace
 
 int main() {
@@ -246,5 +380,7 @@ int main() {
     beam_respects_range_radius_and_collision_mask();
     beam_expires_when_not_refreshed();
     beam_fire_spawns_or_refreshes_server_beam();
+    beam_survives_continuous_refresh();
+    beam_transform_rotation_follows_aim();
     return 0;
 }

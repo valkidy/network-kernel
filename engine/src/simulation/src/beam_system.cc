@@ -25,6 +25,30 @@ void push_event(
     events->push_back(KernelEvent{type, tick, net_id, peer_id, code});
 }
 
+// Maps the collider's local +Z -- the axis beam_oriented_box's half_extents.z
+// runs along, and the axis the presentation prefabs are built on -- onto the
+// beam's aim. Nothing else writes a projectile's rotation: World::spawn_projectile
+// leaves it identity and the weapon refresh only moves the origin, so without
+// this a beam's replicated transform never turns with the shooter.
+glm::quat beam_rotation(const glm::vec3& direction) {
+    const float length = glm::length(direction);
+    if (length <= 0.0001f) {
+        return glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+    }
+    const glm::vec3 from{0.0f, 0.0f, 1.0f};
+    const glm::vec3 to = direction / length;
+    const float dot = std::clamp(glm::dot(from, to), -1.0f, 1.0f);
+    if (dot > 0.999f) {
+        return glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+    }
+    if (dot < -0.999f) {
+        // Antiparallel: cross() is degenerate, so name the half turn outright.
+        return glm::quat{0.0f, 0.0f, 1.0f, 0.0f};
+    }
+    const glm::vec3 axis = glm::normalize(glm::cross(from, to));
+    return glm::angleAxis(std::acos(dot), axis);
+}
+
 std::uint32_t tick_damage_units(const ProjectileBeamRuntime& beam) {
     const double units =
         static_cast<double>(beam.damage_per_tick) *
@@ -70,6 +94,7 @@ void simulate_beams(
         }
 
         transform.position = beam.origin;
+        transform.rotation = beam_rotation(beam.direction);
         physics::PhysicsWorld* collision_world = world.collision_world();
         if (collision_world == nullptr) {
             continue;
