@@ -2,7 +2,7 @@ id: 7
 name: projectile_sphere
 shape: sphere
 center: {x: 0.0, y: 0.0, z: 0.0}
-half_extents: {x: 0.2, y: 0.2, z: 0.2}
-radius: 0.2
+half_extents: {x: 0.5, y: 0.5, z: 0.5}
+radius: 0.5
 purpose: damage
 layer: projectile
