@@ -1296,11 +1296,112 @@ bool PhysicsWorld::ray_cast_closest(
 bool PhysicsWorld::shape_cast_closest(
     const ShapeCastRequest& request,
     CollisionHit* hit) const {
-    const std::vector<CollisionHit> hits = shape_cast_all(request);
-    if (hits.empty() || hit == nullptr) {
+    std::shared_lock lock(impl_->mutex_);
+    CollisionQueryStats stats{};
+    stats.shape_cast_query_count = 1;
+    if (!valid() || hit == nullptr) {
+        impl_->record_stats(stats);
         return false;
     }
-    *hit = hits.front();
+    JPH::RefConst<JPH::Shape> shape = make_shape(request.shape);
+    if (shape == nullptr) {
+        impl_->record_stats(stats);
+        return false;
+    }
+    const glm::vec3 start = request.start + request.rotation * request.shape.local_center;
+    const JPH::RShapeCast cast = JPH::RShapeCast::sFromWorldTransform(
+        shape,
+        JPH::Vec3::sReplicate(1.0f),
+        JPH::RMat44::sRotationTranslation(
+            to_jolt(request.rotation), to_jolt_r(start)),
+        to_jolt(request.displacement));
+    QueryBroadPhaseLayerFilter broadphase_filter(
+        request.filter,
+        impl_->unclassified_damageable_count_ != 0,
+        impl_->local_stats(&stats));
+    QueryObjectLayerFilter object_layer_filter(
+        request.filter, impl_->local_stats(&stats));
+
+    // Filters during collection rather than after it. The per-object half of the
+    // filter -- ignored_entity_net_id, ignored_collider_id, gameplay_category --
+    // is not expressible as a Jolt layer filter, so a stock
+    // ClosestHitCollisionCollector would lock onto the nearest raw hit, and
+    // report nothing at all when that hit is one the caller excluded. Rejecting
+    // inside AddHit also means the early-out fraction only ever shrinks to hits
+    // the caller would actually accept, which is where the saving comes from:
+    // the cast stops reaching past the first real blocker.
+    class ClosestAcceptedCollector final : public JPH::CastShapeCollector {
+    public:
+        ClosestAcceptedCollector(
+            const Impl& impl,
+            const CollisionQueryFilter& filter,
+            CollisionQueryStats* stats)
+            : impl_(impl), filter_(filter), stats_(stats) {}
+
+        void AddHit(const JPH::ShapeCastResult& result) override {
+            if (stats_ != nullptr) {
+                ++stats_->raw_jolt_hits_collected;
+            }
+            if (result.mFraction >= GetEarlyOutFraction()) {
+                return;
+            }
+            const Impl::StoredObject* object = impl_.find(result.mBodyID2);
+            if (object == nullptr) {
+                return;
+            }
+            if (!filter_accepts(object->identity, filter_)) {
+                if (stats_ != nullptr) {
+                    ++stats_->defensive_post_filter_rejections;
+                }
+                return;
+            }
+            best_ = result;
+            best_identity_ = object->identity;
+            has_hit_ = true;
+            UpdateEarlyOutFraction(result.mFraction);
+        }
+
+        bool has_hit() const { return has_hit_; }
+        const JPH::ShapeCastResult& best() const { return best_; }
+        const CollisionObjectIdentity& best_identity() const {
+            return best_identity_;
+        }
+
+    private:
+        const Impl& impl_;
+        const CollisionQueryFilter& filter_;
+        CollisionQueryStats* stats_;
+        JPH::ShapeCastResult best_{};
+        CollisionObjectIdentity best_identity_{};
+        bool has_hit_ = false;
+    };
+
+    ClosestAcceptedCollector collector(
+        *impl_, request.filter, impl_->local_stats(&stats));
+    impl_->system_->GetNarrowPhaseQuery().CastShape(
+        cast,
+        JPH::ShapeCastSettings{},
+        JPH::RVec3::sZero(),
+        collector,
+        broadphase_filter,
+        object_layer_filter);
+
+    if (!collector.has_hit()) {
+        impl_->record_stats(stats);
+        return false;
+    }
+    const float cast_length = glm::length(request.displacement);
+    const JPH::ShapeCastResult& result = collector.best();
+    *hit = CollisionHit{
+        collector.best_identity(),
+        result.mFraction * cast_length,
+        result.mFraction,
+        from_jolt(result.mContactPointOn2),
+        from_jolt(-result.mPenetrationAxis.NormalizedOr(JPH::Vec3::sAxisY())),
+        result.mSubShapeID2.GetValue(),
+    };
+    stats.final_hits_accepted = 1;
+    impl_->record_stats(stats);
     return true;
 }
 
