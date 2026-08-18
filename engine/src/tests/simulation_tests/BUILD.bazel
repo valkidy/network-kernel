@@ -83,3 +83,9 @@ cc_binary(
     srcs = ["beam_occlusion_benchmark.cc"],
     deps = ["//engine/src/simulation:simulation"],
 )
+
+cc_binary(
+    name = "projectile_query_benchmark",
+    srcs = ["projectile_query_benchmark.cc"],
+    deps = ["//engine/src/simulation:simulation"],
+)
