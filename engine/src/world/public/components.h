@@ -119,6 +119,16 @@ struct CarriedBy {
     NetId carrier_entity_id = 0;
 };
 
+// Which side an entity fights for, as a KERNEL_COLLISION_LAYER_* category bit.
+// Deliberately runtime rather than authored: a deployable belongs to whoever
+// deployed it, and both sides deploy from the same template -- the ice block a
+// player throws is cover for the player, the identical one an agent drops is
+// cover for the agent. Absent means "no side", which reads as not damageable by
+// anything that checks this.
+struct GameplaySide {
+    std::uint32_t category = 0;
+};
+
 struct Transform {
     glm::vec3 position{0.0f, 0.0f, 0.0f};
     glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
@@ -845,6 +855,12 @@ struct ProjectileBeamRuntime {
     std::uint8_t source_code = 0;
     std::uint32_t collision_mask = kCollisionMaskDamageable;
     std::unordered_map<NetId, std::uint32_t> damage_remainder_by_target;
+    // How far the beam actually reached this tick: `length`, or the distance to
+    // whatever stopped it first. Recomputed every tick by simulate_beams and
+    // replicated as the beam's far endpoint, so presentation draws a beam that
+    // ends at the wall instead of through it. Deliberately last in the struct so
+    // the positional initialisers at the two spawn sites keep working.
+    float effective_length = 0.0f;
 };
 
 struct MovementState {

@@ -13,6 +13,12 @@ namespace network_example {
 
 inline constexpr std::uint32_t kSnapshotStateFlagHpUnknown = 1u << 0;
 inline constexpr std::uint32_t kSnapshotStateFlagProjectileHybridCorrection = 1u << 1;
+// A beam projectile. Beams replicate their far endpoint instead of a velocity:
+// they do not move, so the compact projectile section -- which reconstructs a
+// projectile's rotation from its velocity -- can only ever hand a beam the
+// identity rotation, leaving the client no idea where it points or how far it
+// reaches once something stops it.
+inline constexpr std::uint32_t kSnapshotStateFlagProjectileBeam = 1u << 2;
 
 struct SnapshotHeader {
     std::uint32_t server_tick = 0;
@@ -36,6 +42,11 @@ struct EntitySnapshot {
     std::uint32_t spawn_tick = 0;
     std::uint32_t action_instance_id = 0;
     glm::vec3 aim_direction{1.0f, 0.0f, 0.0f};
+    // Beams only. The far end of the swept volume in world space, already cut
+    // short at whatever stopped the beam, so position..beam_end is exactly what
+    // the beam covers this tick. Meaningless unless
+    // kSnapshotStateFlagProjectileBeam is set.
+    glm::vec3 beam_end{0.0f, 0.0f, 0.0f};
     std::uint32_t action_template_id = 0;
     std::uint32_t action_start_tick = 0;
     std::uint32_t action_commit_count = 0;

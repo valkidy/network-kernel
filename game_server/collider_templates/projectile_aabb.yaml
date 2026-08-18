@@ -1,0 +1,8 @@
+id: 16
+name: projectile_aabb
+shape: aabb
+center: {x: 0.0, y: 0.0, z: 0.0}
+half_extents: {x: 0.2, y: 0.25, z: 0.2}
+radius: 0.0
+purpose: damage
+layer: projectile

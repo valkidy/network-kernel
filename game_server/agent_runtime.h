@@ -3,6 +3,7 @@
 
 #include <cstdint>
 
+#include "game_server/ballistic_aim.h"
 #include "kernel/public/kernel_types.h"
 
 namespace network_example::game_server {
@@ -31,6 +32,29 @@ struct AgentSentryRuntimeState {
     std::uint32_t target = 0;
 };
 
+// The sentry knobs an agent runs on. These are authored per actor template
+// (`ai.sentry` in an entity template), so they live on the agent rather than on
+// the controller: one server ticks agents from several templates at once -- a
+// patrolling walker and a stationary artillery sentry in the same wave -- and a
+// single controller-wide config would silently give all of them whichever
+// template the catalog's `enemy:` entry happens to name.
+struct AgentSentryConfig {
+    std::uint32_t alert_ticks = 90;
+    std::uint32_t forget_ticks = 150;
+    std::uint32_t ballistic_retry_cooldown_ticks = 30;
+    std::uint32_t patrol_rotation_interval_ticks = 30;
+    float patrol_rotation_min_degrees = 15.0f;
+    float patrol_rotation_max_degrees = 30.0f;
+    bool passive_patrol = false;
+    float patrol_extent_x_meters = 0.0f;
+    float patrol_input_magnitude = 0.0f;
+    float move_speed_meters_per_second = 0.0f;
+    std::uint16_t weapon_id = UINT16_MAX;
+    BallisticAimProfile ballistic_aim;
+    std::uint16_t animation_idle = 0;
+    std::uint16_t animation_attack = 0;
+};
+
 struct AgentRuntimeState {
     std::uint32_t net_id = 0;
     KernelVec3 position{0.0f, 0.0f, 0.0f};
@@ -44,6 +68,9 @@ struct AgentRuntimeState {
     std::uint32_t next_input_seq = 1;
     std::uint32_t next_action_instance_id = 1;
     AgentSentryRuntimeState sentry{};
+    // Resolved once from this agent's own actor template when the runtime first
+    // discovers it; see AgentRuntimeManager::sync_agents_from_kernel.
+    AgentSentryConfig sentry_config{};
     int patrol_direction = 1;
 };
 

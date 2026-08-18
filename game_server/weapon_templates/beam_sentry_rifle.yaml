@@ -1,0 +1,20 @@
+# Agent-only. Nothing puts weapon 8 in a player loadout; it exists so
+# beam_sentry.yaml has something to point weapon_slots at.
+id: 8
+name: Sentry Beam Emitter
+weapon_type: beam
+# 45 ticks = 1.5 s of continuous beam per magazine at 30 Hz, since the fire
+# action spends one round per tick.
+magazine_size: 45
+# The sentry has no ammo economy and no way to scavenge; running it dry would
+# just park it in a permanent reload. Same choice as spammer.yaml.
+reserve_magazines: 65535
+# Inert on both counts, kept for symmetry with the other weapon templates:
+# apply_weapon_template_references overwrites `damage` from the projectile
+# template (gameplay_config.cc:6081), and beam_weapon() discards `reload_ticks`
+# (gameplay_config.cc:546) because every weapon reloads through the catalog's
+# shared_reload action -- 30 ticks, set in gameplay_catalog.yaml.
+damage: 2
+reload_ticks: 30
+fire_action_template: beam_sentry_fire
+projectile_template: beam_sentry_beam

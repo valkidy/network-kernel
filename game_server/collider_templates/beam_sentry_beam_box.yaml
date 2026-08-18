@@ -1,0 +1,19 @@
+# The beam's reach, not just its hitbox. kernel.cc:1336 overwrites
+# KernelBeamMechanicsDefinition::length/radius from an oriented_box collider
+# (length = half_extents.z * 2, radius = max(half_extents.x, y)), so this file
+# is the authority and `beam.length` in the projectile template only documents
+# it. Editing the projectile's length alone changes nothing.
+#
+# 14 m against the 12 m sentry_grunt_vision_cone. The sentry has no range check
+# of its own -- agent_sentry_controller.cc fires every tick the target is
+# visible -- so a beam shorter than the cone burns a whole magazine on a target
+# it cannot touch. The 2 m margin covers the offset between the actor origin the
+# cone measures from and the launch position the beam starts at.
+id: 17
+name: beam_sentry_beam_box
+shape: oriented_box
+center: {x: 0.0, y: 0.0, z: 0.0}
+half_extents: {x: 0.3, y: 0.3, z: 7.0}
+radius: 0.0
+purpose: damage
+layer: projectile

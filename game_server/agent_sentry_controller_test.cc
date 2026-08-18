@@ -283,7 +283,9 @@ int main() {
     sentry_config.ballistic_aim.gravity = KernelVec3{0.0f, -9.81f, 0.0f};
     sentry_config.ballistic_aim.lifetime_ticks = 90;
     sentry_config.ballistic_retry_cooldown_ticks = 3;
-    network_example::game_server::AgentSentryController controller(sentry_config);
+    // The controller is stateless; the knobs ride on the agent.
+    enemies[0].sentry_config = sentry_config;
+    const network_example::game_server::AgentSentryController controller;
 
     run_frame(kernel, controller, &enemies);
     assert(enemies[0].sentry.state == network_example::game_server::AgentSentryState::kIdle);
@@ -354,8 +356,9 @@ int main() {
         sentry_config;
     cooldown_config.ballistic_aim.speed = 1.0f;
     cooldown_config.ballistic_aim.lifetime_ticks = 1;
-    network_example::game_server::AgentSentryController cooldown_controller(
-        cooldown_config);
+    enemies[0].sentry_config = cooldown_config;
+    const network_example::game_server::AgentSentryController& cooldown_controller =
+        controller;
     run_frame(kernel, cooldown_controller, &enemies);
     state = query_state(kernel, enemy_net_id);
     assert(state.ammo[0] == 2);

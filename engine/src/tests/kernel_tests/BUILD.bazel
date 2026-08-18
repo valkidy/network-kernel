@@ -164,6 +164,12 @@ cc_binary(
 )
 
 cc_test(
+    name = "beam_collider_test",
+    srcs = ["beam_collider_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
     name = "kernel_api_test",
     srcs = ["kernel_api_test.cc"],
     deps = ["//engine/src/kernel:kernel"],

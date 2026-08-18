@@ -23,6 +23,9 @@ constexpr std::size_t kActorRotationPayloadSize = 16;
 constexpr std::size_t kActorHealthPayloadSize = 4;
 constexpr std::size_t kActorMovementPayloadSize = 22;
 constexpr std::size_t kProjectileCompactSnapshotPayloadSize = 34;
+// net_id 4 + position 12 + beam_end 12 + state 2 + flags 4. No velocity: a beam
+// does not move, and the endpoint is what the client actually needs.
+constexpr std::size_t kProjectileBeamSnapshotPayloadSize = 34;
 constexpr std::size_t kProjectileHybridCorrectionSnapshotPayloadSize = 46;
 constexpr std::size_t kGenericSnapshotPayloadSize = 44;
 constexpr std::size_t kGenericHealthPayloadSize = 4;
@@ -107,6 +110,7 @@ enum class SnapshotSectionType : std::uint16_t {
     kProjectileCompact = 2,
     kProjectileHybridCorrection = 3,
     kGeneric = 4,
+    kProjectileBeam = 5,
 };
 
 enum ActorSnapshotRecordFlag : std::uint16_t {
@@ -162,6 +166,29 @@ glm::quat projectile_rotation_from_velocity(const glm::vec3& velocity) {
     return glm::angleAxis(std::acos(dot), axis);
 }
 
+// Beams run along local +Z, not the +X that projectile_rotation_from_velocity
+// uses. The axis is not arbitrary on either side: an oriented-box collider
+// template states a beam's reach in half_extents.z, and the presentation prefabs
+// are built along the same axis, so this is the mapping both ends already agree
+// on. Kept in step with beam_rotation() in beam_system.cc.
+glm::quat beam_rotation_from_span(const glm::vec3& start, const glm::vec3& end) {
+    const glm::vec3 span = end - start;
+    const float length = glm::length(span);
+    if (length <= 0.0001f) {
+        return glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+    }
+    const glm::vec3 from{0.0f, 0.0f, 1.0f};
+    const glm::vec3 to = span / length;
+    const float dot = std::clamp(glm::dot(from, to), -1.0f, 1.0f);
+    if (dot > 0.999f) {
+        return glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+    }
+    if (dot < -0.999f) {
+        return glm::quat{0.0f, 0.0f, 1.0f, 0.0f};
+    }
+    return glm::angleAxis(std::acos(dot), glm::normalize(glm::cross(from, to)));
+}
+
 SnapshotSectionType snapshot_section_type(EntityType type) {
     if (is_actor_entity_type(type)) {
         return SnapshotSectionType::kActor;
@@ -178,6 +205,10 @@ SnapshotSectionType snapshot_section_type(const EntitySnapshot& entity) {
     }
     if (is_hybrid_correction_projectile(entity)) {
         return SnapshotSectionType::kProjectileHybridCorrection;
+    }
+    if (entity.type == EntityType::kProjectile &&
+        (entity.state_flags & kSnapshotStateFlagProjectileBeam) != 0u) {
+        return SnapshotSectionType::kProjectileBeam;
     }
     if (entity.type == EntityType::kProjectile) {
         return SnapshotSectionType::kProjectileCompact;
@@ -282,15 +313,25 @@ std::vector<std::uint8_t> encode_snapshot_packet(
     payload.write_u32(snapshot.header.server_tick);
     payload.write_u32(snapshot.header.server_time_ms);
     payload.write_u32(snapshot.header.last_processed_input_seq);
-    payload.write_u16(4);
+    // Beams are rare, so their section is written only when one exists rather
+    // than costing every snapshot in every game an empty 4-byte header. The
+    // reader is driven by this count, so a variable number of sections is fine.
+    const bool has_beam_section =
+        !section_entities(snapshot, SnapshotSectionType::kProjectileBeam).empty();
+    payload.write_u16(has_beam_section ? 5 : 4);
     payload.write_u16(0);
 
     for (const SnapshotSectionType section_type : {
              SnapshotSectionType::kActor,
              SnapshotSectionType::kProjectileCompact,
              SnapshotSectionType::kProjectileHybridCorrection,
+             SnapshotSectionType::kProjectileBeam,
              SnapshotSectionType::kGeneric,
          }) {
+        if (section_type == SnapshotSectionType::kProjectileBeam &&
+            !has_beam_section) {
+            continue;
+        }
         const std::vector<const EntitySnapshot*> entities =
             section_entities(snapshot, section_type);
         payload.write_u16(static_cast<std::uint16_t>(section_type));
@@ -337,6 +378,12 @@ std::vector<std::uint8_t> encode_snapshot_packet(
                 case SnapshotSectionType::kProjectileCompact:
                     payload.write_vec3(entity->position);
                     payload.write_vec3(entity->velocity);
+                    payload.write_u16(entity->state);
+                    payload.write_u32(entity->flags);
+                    break;
+                case SnapshotSectionType::kProjectileBeam:
+                    payload.write_vec3(entity->position);
+                    payload.write_vec3(entity->beam_end);
                     payload.write_u16(entity->state);
                     payload.write_u32(entity->flags);
                     break;
@@ -491,6 +538,20 @@ bool decode_snapshot_packet(
                     }
                     entity.rotation = projectile_rotation_from_velocity(entity.velocity);
                     break;
+                case SnapshotSectionType::kProjectileBeam:
+                    entity.type = EntityType::kProjectile;
+                    entity.state_flags |= kSnapshotStateFlagHpUnknown;
+                    entity.state_flags |= kSnapshotStateFlagProjectileBeam;
+                    if (!reader.read_vec3(&entity.position) ||
+                        !reader.read_vec3(&entity.beam_end) ||
+                        !reader.read_u16(&entity.state) ||
+                        !reader.read_u32(&entity.flags)) {
+                        return false;
+                    }
+                    // Along the beam, not along a velocity it does not have.
+                    entity.rotation =
+                        beam_rotation_from_span(entity.position, entity.beam_end);
+                    break;
                 case SnapshotSectionType::kProjectileHybridCorrection:
                     entity.type = EntityType::kProjectile;
                     entity.state_flags |= kSnapshotStateFlagHpUnknown;
@@ -580,6 +641,12 @@ std::size_t estimate_snapshot_entity_size(const EntitySnapshot& entity) {
                         : 0u);
         case SnapshotSectionType::kProjectileCompact:
             return kProjectileCompactSnapshotPayloadSize;
+        case SnapshotSectionType::kProjectileBeam:
+            // Plus the section header, which only exists because this beam does.
+            // Charging it to every beam rather than only the first over-counts
+            // slightly, which keeps the send budget on the conservative side.
+            return kProjectileBeamSnapshotPayloadSize +
+                   kSnapshotSectionHeaderPayloadSize;
         case SnapshotSectionType::kProjectileHybridCorrection:
             return kProjectileHybridCorrectionSnapshotPayloadSize;
         case SnapshotSectionType::kGeneric:
