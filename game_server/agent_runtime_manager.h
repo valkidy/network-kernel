@@ -29,7 +29,9 @@ public:
 private:
     bool spawn_director(const EntityTemplateConfig& director_template);
     void sync_agents_from_kernel();
-    bool apply_weapon_mechanics(std::uint32_t net_id) const;
+    bool apply_weapon_mechanics(
+        std::uint32_t net_id,
+        std::uint32_t actor_template_id) const;
     bool has_live_agent_or_director() const;
 
     KernelHandle* kernel_ = nullptr;

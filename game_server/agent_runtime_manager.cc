@@ -14,9 +14,16 @@ namespace {
 constexpr KernelQuat kIdentityRotation{0.0f, 0.0f, 0.0f, 1.0f};
 constexpr std::uint32_t kMaxQueriedAgents = 128;
 
-AgentSentryConfig agent_sentry_config(const GameServerGameplayConfig& config) {
+// Resolved from the agent's OWN actor template, not from the catalog's single
+// `enemy:` entry. Holding one controller-wide config meant an agent spawned by a
+// game-rule wave silently ran whichever template `enemy:` named -- a
+// passive_patrol walker spawned alongside a stationary artillery sentry never
+// patrolled, because the shared config came from the sentry.
+AgentSentryConfig agent_sentry_config(
+    const GameServerGameplayConfig& config,
+    std::uint32_t actor_template_id) {
     const ActorTemplateConfig* actor_template =
-        find_actor_template(config, config.agent.actor_template_id);
+        find_actor_template(config, actor_template_id);
     if (actor_template == nullptr) {
         return AgentSentryConfig{};
     }
@@ -58,8 +65,7 @@ AgentRuntimeManager::AgentRuntimeManager(
     KernelHandle* kernel,
     GameServerGameplayConfig config)
     : kernel_(kernel),
-      config_(std::move(config)),
-      sentry_(agent_sentry_config(config_)) {}
+      config_(std::move(config)) {}
 
 void AgentRuntimeManager::handle_event(const KernelEvent& event) {
     if (event.type != KernelEventType_EntityDestroyed) {
@@ -246,16 +252,24 @@ void AgentRuntimeManager::sync_agents_from_kernel() {
         agent.sentry.self_id = state.net_id;
         if (discovered_agent) {
             agent.patrol_anchor = state.position;
-            apply_weapon_mechanics(state.net_id);
+            // An actor template is immutable, so this is resolved once rather
+            // than every tick. state.actor_template_id is what the entity was
+            // actually spawned from, which is the whole point: a wave can spawn
+            // a template the catalog never names.
+            agent.sentry_config =
+                agent_sentry_config(config_, state.actor_template_id);
+            apply_weapon_mechanics(state.net_id, state.actor_template_id);
         }
         next_agents.push_back(agent);
     }
     agents_ = std::move(next_agents);
 }
 
-bool AgentRuntimeManager::apply_weapon_mechanics(std::uint32_t net_id) const {
+bool AgentRuntimeManager::apply_weapon_mechanics(
+    std::uint32_t net_id,
+    std::uint32_t actor_template_id) const {
     const ActorTemplateConfig* actor_template =
-        find_actor_template(config_, config_.agent.actor_template_id);
+        find_actor_template(config_, actor_template_id);
     if (actor_template == nullptr) {
         return false;
     }
