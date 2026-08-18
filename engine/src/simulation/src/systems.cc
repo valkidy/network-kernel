@@ -1301,6 +1301,9 @@ AiControllerType to_ai_controller_type(std::uint32_t controller_type) {
     if (controller_type == KernelAiControllerType_Director) {
         return AiControllerType::kDirector;
     }
+    if (controller_type == KernelAiControllerType_Chaser) {
+        return AiControllerType::kChaser;
+    }
     return AiControllerType::kNone;
 }
 

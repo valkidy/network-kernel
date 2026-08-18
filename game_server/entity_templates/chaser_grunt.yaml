@@ -1,0 +1,47 @@
+id: 26
+name: chaser_grunt
+entity_type: actor
+actor_type: agent
+camp: enemy_side
+collider_template: sentry_grunt_hit_aabb
+health:
+  hp: 500
+  max_hp: 500
+movement:
+  controller: grounded
+  move_speed_meters_per_second: 2.5
+  collider_template: sentry_grunt_movement_capsule
+  gravity: {x: 0.0, y: -9.81, z: 0.0}
+  max_slope_degrees: 50.0
+  step_height: 0.4
+  ground_probe_distance: 0.25
+  ground_snap_distance: 0.5
+hitbox:
+  center: {x: 0.0, y: 0.8, z: 0.0}
+  half_extents: {x: 0.4, y: 0.8, z: 0.4}
+weapon_slots:
+  - 2
+active_weapon_slot: 0
+animations:
+  idle: 0
+  chasing: 1
+vision:
+  collider_template: sentry_grunt_vision_cone
+# Detection and firing match sentry_grunt; the difference is that this one
+# closes on what it sees, and gives up the moment the target leaves its cone.
+ai:
+  controller: chaser
+  profile: default
+  sentry:
+    alert_ticks: 90
+    forget_ticks: 150
+    patrol_rotation_interval_ticks: 30
+    patrol_rotation_min_degrees: 15.0
+    patrol_rotation_max_degrees: 30.0
+    weapon_id: 2
+    animation_idle: idle
+    animation_attack: chasing
+  chaser:
+    stop_distance_meters: 2.0
+    resume_distance_meters: 3.0
+    input_magnitude: 1.0

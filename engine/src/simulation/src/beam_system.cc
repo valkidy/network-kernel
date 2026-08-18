@@ -70,35 +70,6 @@ std::uint16_t accumulate_tick_damage(
     return static_cast<std::uint16_t>(accumulated / kDamageScale);
 }
 
-// Whether a beam is allowed to hurt what it just ran into. Blocking is
-// deliberately not the same question: the collider stops every beam regardless
-// of side, and only this decides whether the tick's damage lands. Both sides
-// deploy the same cover, so neither can cut down its own -- the prop's own
-// lifetime is what removes it.
-//
-// Carrying no side at all means anything may damage it, which is the same
-// polarity the rest of the engine already gives an absent category:
-// filter_accepts treats gameplay_category 0 as visible to every query, and
-// homing_target_is_valid treats it as lockable by every missile. It is also the
-// only polarity this check can be lifted into the shared damage path under --
-// actors carry no GameplaySide, so reading absence as immunity would make every
-// player and agent invulnerable the moment anything but a beam consulted it.
-// Indestructible is spelled by having no Health, the way interaction_terminal
-// already spells it, not by withholding a side.
-bool beam_may_damage(
-    const World& world,
-    const ProjectileBeamRuntime& beam,
-    NetId target_net_id) {
-    if (target_net_id == 0) {
-        return false;
-    }
-    const std::optional<entt::entity> target = world.find_entity(target_net_id);
-    if (!target.has_value() || !world.registry().all_of<Health>(*target)) {
-        return false;
-    }
-    const GameplaySide* side = world.registry().try_get<GameplaySide>(*target);
-    return side == nullptr || (beam.collision_mask & side->category) != 0u;
-}
 
 }  // namespace
 
@@ -154,33 +125,49 @@ void simulate_beams(
         request.displacement = beam.direction * beam.length;
         request.filter = collision_filter_from_mask(beam.collision_mask);
         request.filter.ignored_entity_net_id = beam.shooter_net_id;
-        const std::vector<physics::CollisionHit> hits =
-            collision_world->shape_cast_all(request);
+
+        // Pass 1: what stops the beam. Restricted to the non-actor kinds so the
+        // closest-hit cast can shrink itself to the first wall instead of
+        // gathering every actor along the authored length first.
+        physics::ShapeCastRequest blocker_request = request;
+        blocker_request.filter.collision_mask &=
+            ~physics::collision_layer_bit(physics::CollisionLayer::kDamageable);
+        blocker_request.filter.object_kind_mask &=
+            ~(1u << static_cast<std::uint32_t>(
+                  physics::CollisionObjectKind::kActorHitbox));
+        physics::CollisionHit blocker{};
+        const bool blocked =
+            collision_world->shape_cast_closest(blocker_request, &blocker);
+        beam.effective_length =
+            blocked ? std::min(beam.length, blocker.distance) : beam.length;
 
         const std::uint32_t damage_units = tick_damage_units(beam);
         std::uint32_t sequence_id = 0;
-        for (const physics::CollisionHit& hit : hits) {
-            const NetId target_net_id = hit.identity.entity_net_id;
-            const bool blocks =
-                hit.identity.kind != physics::CollisionObjectKind::kActorHitbox;
-            // Hits arrive sorted by distance, so the first non-actor is what the
-            // beam runs into. A destructible blocker still takes this tick's
-            // damage on the way to stopping the beam; everything past it is out
-            // of reach either way.
-            if (blocks) {
-                beam.effective_length = std::min(beam.length, hit.distance);
-            }
-            if (blocks && !beam_may_damage(world, beam, target_net_id)) {
-                break;
-            }
-            const std::uint16_t damage =
-                accumulate_tick_damage(beam, target_net_id, damage_units);
-            if (damage != 0) {
+
+        // Pass 2: actors, and only as far as the beam actually reaches. A beam
+        // resting against a wall a metre away no longer pays to sweep its whole
+        // authored length. Skipped outright when the blocker is at the muzzle,
+        // where a zero displacement would turn the cast into an overlap.
+        if (beam.effective_length > 0.0001f) {
+            physics::ShapeCastRequest actor_request = request;
+            actor_request.displacement = beam.direction * beam.effective_length;
+            actor_request.filter.collision_mask &=
+                physics::collision_layer_bit(physics::CollisionLayer::kDamageable);
+            actor_request.filter.object_kind_mask &=
+                1u << static_cast<std::uint32_t>(
+                    physics::CollisionObjectKind::kActorHitbox);
+            for (const physics::CollisionHit& hit :
+                 collision_world->shape_cast_all(actor_request)) {
+                const std::uint16_t damage = accumulate_tick_damage(
+                    beam, hit.identity.entity_net_id, damage_units);
+                if (damage == 0) {
+                    continue;
+                }
                 active_damage_pipeline->submit_damage_request(DamageRequest{
                     current_tick,
                     sequence_id++,
                     identity.net_id,
-                    target_net_id,
+                    hit.identity.entity_net_id,
                     identity.owner_peer,
                     beam.source_code,
                     damage,
@@ -188,8 +175,27 @@ void simulate_beams(
                     hit.position,
                 });
             }
-            if (blocks) {
-                break;
+        }
+
+        // The blocker itself takes this tick's damage last, after everything it
+        // shelters, so damage ordering matches the old single-pass sweep.
+        if (blocked &&
+            damage_source_may_damage(
+                world, beam.collision_mask, blocker.identity.entity_net_id)) {
+            const std::uint16_t damage = accumulate_tick_damage(
+                beam, blocker.identity.entity_net_id, damage_units);
+            if (damage != 0) {
+                active_damage_pipeline->submit_damage_request(DamageRequest{
+                    current_tick,
+                    sequence_id++,
+                    identity.net_id,
+                    blocker.identity.entity_net_id,
+                    identity.owner_peer,
+                    beam.source_code,
+                    damage,
+                    server_time_us,
+                    blocker.position,
+                });
             }
         }
     }

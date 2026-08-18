@@ -686,6 +686,7 @@ typedef enum KernelAiControllerType {
     KernelAiControllerType_None = 0,
     KernelAiControllerType_Sentry = 1,
     KernelAiControllerType_Director = 2,
+    KernelAiControllerType_Chaser = 3,
 } KernelAiControllerType;
 
 typedef enum KernelEntityLifecycleEventType {

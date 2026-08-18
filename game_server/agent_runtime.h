@@ -57,6 +57,9 @@ struct AgentSentryConfig {
 
 struct AgentRuntimeState {
     std::uint32_t net_id = 0;
+    // Selects which controller and which tuning this agent runs under; agents
+    // spawned from different templates share one runtime list.
+    std::uint32_t actor_template_id = 0;
     KernelVec3 position{0.0f, 0.0f, 0.0f};
     KernelVec3 patrol_anchor{0.0f, 0.0f, 0.0f};
     KernelVec3 velocity{0.0f, 0.0f, 0.0f};
@@ -72,6 +75,9 @@ struct AgentRuntimeState {
     // discovers it; see AgentRuntimeManager::sync_agents_from_kernel.
     AgentSentryConfig sentry_config{};
     int patrol_direction = 1;
+    // Chaser only: true once the agent has closed inside its stop distance and
+    // is holding position, until the target opens the gap back up.
+    bool chase_holding = false;
 };
 
 }  // namespace network_example::game_server

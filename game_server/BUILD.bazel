@@ -29,7 +29,9 @@ cc_library(
     srcs = [
         "actor_intent_executor.cc",
         "ai_perception_adapter.cc",
+        "agent_chaser_controller.cc",
         "agent_sentry_controller.cc",
+        "agent_steering.cc",
         "agent_runtime_manager.cc",
         "ballistic_aim.cc",
         "gameplay_config.cc",
@@ -38,9 +40,11 @@ cc_library(
     hdrs = [
         "actor_intent_executor.h",
         "ai_perception_adapter.h",
+        "agent_chaser_controller.h",
         "agent_runtime.h",
         "agent_runtime_manager.h",
         "agent_sentry_controller.h",
+        "agent_steering.h",
         "ballistic_aim.h",
         "gameplay_config.h",
         "game_server.h",
@@ -157,6 +161,15 @@ cc_library(
 cc_test(
     name = "agent_sentry_controller_test",
     srcs = ["agent_sentry_controller_test.cc"],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "agent_chaser_controller_test",
+    srcs = ["agent_chaser_controller_test.cc"],
     deps = [
         ":game_server",
         "//engine/src/kernel:kernel",

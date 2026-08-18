@@ -2804,7 +2804,7 @@ bool KernelEngine::load_gameplay_catalog(
              entity_template.entity_type != KernelEntityType_Prop &&
              entity_template.entity_type != KernelEntityType_Director) ||
             entity_template.ai.struct_size < sizeof(KernelEntityAiDefinition) ||
-            entity_template.ai.controller_type > KernelAiControllerType_Director) {
+            entity_template.ai.controller_type > KernelAiControllerType_Chaser) {
             return false;
         }
         const KernelSkeletonBindingDefinition& skeleton =

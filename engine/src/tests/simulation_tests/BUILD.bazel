@@ -77,3 +77,15 @@ cc_test(
     srcs = ["item_system_test.cc"],
     deps = ["//engine/src/simulation:simulation"],
 )
+
+cc_binary(
+    name = "beam_occlusion_benchmark",
+    srcs = ["beam_occlusion_benchmark.cc"],
+    deps = ["//engine/src/simulation:simulation"],
+)
+
+cc_binary(
+    name = "projectile_query_benchmark",
+    srcs = ["projectile_query_benchmark.cc"],
+    deps = ["//engine/src/simulation:simulation"],
+)

@@ -1,8 +1,4 @@
-#include "game_server/agent_sentry_controller.h"
-
-#include <algorithm>
-#include <array>
-#include <cmath>
+#include "game_server/agent_chaser_controller.h"
 
 #include "ai_intent.h"
 #include "game_server/actor_intent_executor.h"
@@ -11,8 +7,42 @@
 #include "kernel/src/kernel_api_internal.h"
 
 namespace network_example::game_server {
+namespace {
 
-void AgentSentryController::tick(
+bool is_zero_move(const KernelVec2& move) {
+    return move.x == 0.0f && move.y == 0.0f;
+}
+
+// Hysteresis around the stop distance. Without the separate resume threshold an
+// agent parked exactly on the boundary would start and stop every tick.
+KernelVec2 chase_move(
+    const AgentChaseTuning& chase,
+    AgentRuntimeState* agent,
+    const KernelVec3& target_position) {
+    const float distance =
+        agent_steering::horizontal_distance(agent->position, target_position);
+    if (agent->chase_holding) {
+        if (distance >= chase.resume_distance_meters) {
+            agent->chase_holding = false;
+        }
+    } else if (distance <= chase.stop_distance_meters) {
+        agent->chase_holding = true;
+    }
+    if (agent->chase_holding) {
+        return KernelVec2{0.0f, 0.0f};
+    }
+    return agent_steering::horizontal_move_toward(
+        agent->position,
+        target_position,
+        chase.input_magnitude);
+}
+
+}  // namespace
+
+AgentChaserController::AgentChaserController(AgentChaserConfig config)
+    : config_(config) {}
+
+void AgentChaserController::tick(
     KernelHandle* kernel,
     std::vector<AgentRuntimeState>* agents,
     float) const {
@@ -20,16 +50,14 @@ void AgentSentryController::tick(
         return;
     }
 
-    for (AgentRuntimeState& agent : *agents) {
-        // Per agent, not per controller: the weapon and the ballistic profile
-        // belong to this agent's own actor template, so the executor is built
-        // inside the loop.
-        const AgentSentryConfig& config = agent.sentry_config;
-        ActorIntentExecutorConfig executor_config;
-        executor_config.weapon_id = config.weapon_id;
-        executor_config.ballistic_aim = config.ballistic_aim;
-        const ActorIntentExecutor actor_executor(executor_config);
+    const AgentSentryConfig& sentry_config = config_.sentry;
 
+    ActorIntentExecutorConfig executor_config;
+    executor_config.weapon_id = sentry_config.weapon_id;
+    executor_config.ballistic_aim = sentry_config.ballistic_aim;
+    const ActorIntentExecutor actor_executor(executor_config);
+
+    for (AgentRuntimeState& agent : *agents) {
         const SentryPerceptionSnapshot perception =
             AiPerceptionAdapter::build_sentry_snapshot(kernel, agent.net_id);
         if (!perception.has_self_state) {
@@ -40,48 +68,13 @@ void AgentSentryController::tick(
         agent.position = entity_state.position;
         agent.hp = entity_state.hp;
         agent.velocity = agent_steering::zero_vec3();
-        agent.animation_state = 0;
+        agent.animation_state = sentry_config.animation_idle;
         agent.sentry.self_id = agent.net_id;
-
-        if (config.passive_patrol) {
-            if (entity_state.position.x >=
-                agent.patrol_anchor.x + config.patrol_extent_x_meters) {
-                agent.patrol_direction = -1;
-            } else if (entity_state.position.x <=
-                       agent.patrol_anchor.x - config.patrol_extent_x_meters) {
-                agent.patrol_direction = 1;
-            }
-
-            KernelPlayerInput input{};
-            input.input_seq = agent.next_input_seq;
-            input.move = KernelVec2{
-                static_cast<float>(agent.patrol_direction) *
-                    config.patrol_input_magnitude,
-                0.0f,
-            };
-            if (Kernel_ServerSubmitEntityInput(kernel, agent.net_id, &input)) {
-                ++agent.next_input_seq;
-            }
-            agent.velocity = KernelVec3{
-                input.move.x * config.move_speed_meters_per_second,
-                entity_state.velocity.y,
-                0.0f,
-            };
-            agent.sentry.target = 0;
-            agent.target_player_net_id = 0;
-            agent.sentry.state = AgentSentryState::kIdle;
-            agent.animation_state = config.animation_idle;
-            Kernel_ServerEnqueueEntityState(
-                kernel,
-                KernelCommandSource_AI,
-                agent.net_id,
-                agent.animation_state,
-                0);
-            continue;
-        }
 
         KernelQuat desired_rotation = entity_state.rotation;
         bool should_update_rotation = false;
+        KernelVec2 move{0.0f, 0.0f};
+        bool submitted_input = false;
 
         const bool has_visible_target = perception.has_visible_target;
 
@@ -93,6 +86,9 @@ void AgentSentryController::tick(
             agent.sentry.lost_target_ticks = 0;
         } else {
             ++agent.sentry.lost_target_ticks;
+            // Losing sight ends the pursuit outright; the agent stops where it
+            // stands rather than walking to where the target was.
+            agent.chase_holding = false;
         }
 
         if (agent.sentry.state == AgentSentryState::kIdle) {
@@ -100,9 +96,9 @@ void AgentSentryController::tick(
                 agent_steering::transition_to(&agent, AgentSentryState::kAlert);
             } else {
                 should_update_rotation = agent_steering::update_patrol_facing(
-                    config.patrol_rotation_interval_ticks,
-                    config.patrol_rotation_min_degrees,
-                    config.patrol_rotation_max_degrees,
+                    sentry_config.patrol_rotation_interval_ticks,
+                    sentry_config.patrol_rotation_min_degrees,
+                    sentry_config.patrol_rotation_max_degrees,
                     &agent,
                     entity_state.rotation,
                     &desired_rotation);
@@ -111,21 +107,23 @@ void AgentSentryController::tick(
 
         if (agent.sentry.state == AgentSentryState::kAlert) {
             if (has_visible_target) {
-                const KernelVec3 target = perception.target_position;
                 should_update_rotation =
                     agent_steering::facing_rotation_from_vision_toward(
                         agent.position,
-                        target,
+                        perception.target_position,
                         perception.vision_forward,
                         entity_state.rotation,
                         &desired_rotation) ||
                     should_update_rotation;
+                move = chase_move(
+                    config_.chase, &agent, perception.target_position);
                 ++agent.sentry.state_ticks;
-                if (agent.sentry.state_ticks >= config.alert_ticks) {
+                if (agent.sentry.state_ticks >= sentry_config.alert_ticks) {
                     agent_steering::transition_to(
                         &agent, AgentSentryState::kAttack);
                 }
-            } else if (agent.sentry.lost_target_ticks >= config.forget_ticks) {
+            } else if (agent.sentry.lost_target_ticks >=
+                       sentry_config.forget_ticks) {
                 agent.sentry.target = 0;
                 agent_steering::transition_to(&agent, AgentSentryState::kIdle);
             }
@@ -134,15 +132,16 @@ void AgentSentryController::tick(
         if (agent.sentry.state == AgentSentryState::kAttack) {
             if (has_visible_target) {
                 agent.sentry.lost_target_ticks = 0;
-                const KernelVec3 target = perception.target_position;
                 should_update_rotation =
                     agent_steering::facing_rotation_from_vision_toward(
                         agent.position,
-                        target,
+                        perception.target_position,
                         perception.vision_forward,
                         entity_state.rotation,
                         &desired_rotation) ||
                     should_update_rotation;
+                move = chase_move(
+                    config_.chase, &agent, perception.target_position);
                 ai::ScopedIntent intent;
                 intent.scope = ai::IntentScope::kActor;
                 intent.type = "AttackTarget";
@@ -151,19 +150,54 @@ void AgentSentryController::tick(
                 if (agent.sentry.ballistic_retry_ticks > 0) {
                     --agent.sentry.ballistic_retry_ticks;
                 } else {
+                    // The move rides on the attack input: a separate movement
+                    // input in the same tick would carry a higher input_seq and
+                    // the movement solver would take that one instead.
                     const ActorIntentExecutionResult execution =
                         actor_executor.execute(
                             kernel,
                             &agent,
                             intent,
-                            perception);
+                            perception,
+                            move);
                     if (execution.ballistic_solution_unavailable) {
                         agent.sentry.ballistic_retry_ticks =
-                            config.ballistic_retry_cooldown_ticks;
+                            sentry_config.ballistic_retry_cooldown_ticks;
                     }
+                    submitted_input = execution.submitted_input;
                 }
-            } else if (agent.sentry.lost_target_ticks >= config.forget_ticks) {
+            } else if (agent.sentry.lost_target_ticks >=
+                       sentry_config.forget_ticks) {
                 agent_steering::transition_to(&agent, AgentSentryState::kAlert);
+            }
+        }
+
+        if (!is_zero_move(move)) {
+            agent.animation_state = sentry_config.animation_attack;
+            agent.velocity = KernelVec3{
+                move.x * sentry_config.move_speed_meters_per_second,
+                entity_state.velocity.y,
+                move.y * sentry_config.move_speed_meters_per_second,
+            };
+        }
+
+        // Exactly one input per tick, always. An agent that submits none keeps
+        // the horizontal velocity it already had, because the movement solver
+        // only zeroes uncommanded *players*.
+        if (!submitted_input) {
+            KernelPlayerInput input{};
+            input.input_seq = agent.next_input_seq;
+            input.move = move;
+            // Must match what the executor sends, or an in-flight action reads
+            // this as a weapon change and cancels itself.
+            input.selected_weapon =
+                static_cast<std::uint8_t>(sentry_config.weapon_id);
+            if (Kernel_ServerEnqueueEntityInput(
+                    kernel,
+                    KernelCommandSource_AI,
+                    agent.net_id,
+                    &input)) {
+                ++agent.next_input_seq;
             }
         }
 
@@ -176,11 +210,6 @@ void AgentSentryController::tick(
                 &entity_state.position,
                 &desired_rotation);
         }
-        Kernel_ServerEnqueueEntityVelocity(
-            kernel,
-            KernelCommandSource_AI,
-            agent.net_id,
-            &agent.velocity);
         Kernel_ServerEnqueueEntityState(
             kernel,
             KernelCommandSource_AI,

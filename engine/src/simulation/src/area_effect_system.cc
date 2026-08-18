@@ -149,6 +149,12 @@ void simulate_area_effects(
                 (area_effect.collision_mask & KERNEL_COLLISION_MASK_PROP) == 0u) {
                 continue;
             }
+            // Splash used to level a deployable no matter whose it was, so a
+            // rocket cleared the thrower's own cover while a beam could not.
+            if (!damage_source_may_damage(
+                    world, area_effect.collision_mask, target_net_id)) {
+                continue;
+            }
             const auto next_damage_tick =
                 area_effect.next_damage_tick_by_target.find(target_net_id);
             if (area_effect.action_graph_binding.has_value() &&

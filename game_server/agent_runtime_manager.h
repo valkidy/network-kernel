@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "game_server/agent_chaser_controller.h"
 #include "game_server/agent_sentry_controller.h"
 #include "game_server/agent_runtime.h"
 #include "game_server/gameplay_config.h"
@@ -27,16 +28,33 @@ public:
     const std::vector<AgentRuntimeState>& agents() const;
 
 private:
+    // One controller per agent actor template. Agents from different templates
+    // share the runtime list but never each other's tuning, so the list is
+    // split into per-template batches before the controllers run.
+    struct AgentControllerBinding {
+        std::uint32_t actor_template_id = 0;
+        std::uint32_t ai_controller_type = KernelAiControllerType_None;
+        AgentSentryController sentry;
+        AgentChaserController chaser;
+        std::vector<AgentRuntimeState> batch;
+    };
+
     bool spawn_director(const EntityTemplateConfig& director_template);
     void sync_agents_from_kernel();
     bool apply_weapon_mechanics(
         std::uint32_t net_id,
         std::uint32_t actor_template_id) const;
     bool has_live_agent_or_director() const;
+    void build_controllers();
+    void dispatch_controllers(float delta_seconds);
+    AgentControllerBinding* binding_for(std::uint32_t actor_template_id);
 
     KernelHandle* kernel_ = nullptr;
     GameServerGameplayConfig config_;
-    AgentSentryController sentry_;
+    std::vector<AgentControllerBinding> controllers_;
+    // Serves agents whose template carries no controller of its own; keeps the
+    // previous single-controller behavior for anything unrecognized.
+    std::size_t fallback_controller_index_ = 0;
     std::vector<AgentRuntimeState> agents_;
     std::vector<std::uint32_t> director_net_ids_;
     bool director_preload_attempted_ = false;
