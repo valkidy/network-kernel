@@ -70,35 +70,6 @@ std::uint16_t accumulate_tick_damage(
     return static_cast<std::uint16_t>(accumulated / kDamageScale);
 }
 
-// Whether a beam is allowed to hurt what it just ran into. Blocking is
-// deliberately not the same question: the collider stops every beam regardless
-// of side, and only this decides whether the tick's damage lands. Both sides
-// deploy the same cover, so neither can cut down its own -- the prop's own
-// lifetime is what removes it.
-//
-// Carrying no side at all means anything may damage it, which is the same
-// polarity the rest of the engine already gives an absent category:
-// filter_accepts treats gameplay_category 0 as visible to every query, and
-// homing_target_is_valid treats it as lockable by every missile. It is also the
-// only polarity this check can be lifted into the shared damage path under --
-// actors carry no GameplaySide, so reading absence as immunity would make every
-// player and agent invulnerable the moment anything but a beam consulted it.
-// Indestructible is spelled by having no Health, the way interaction_terminal
-// already spells it, not by withholding a side.
-bool beam_may_damage(
-    const World& world,
-    const ProjectileBeamRuntime& beam,
-    NetId target_net_id) {
-    if (target_net_id == 0) {
-        return false;
-    }
-    const std::optional<entt::entity> target = world.find_entity(target_net_id);
-    if (!target.has_value() || !world.registry().all_of<Health>(*target)) {
-        return false;
-    }
-    const GameplaySide* side = world.registry().try_get<GameplaySide>(*target);
-    return side == nullptr || (beam.collision_mask & side->category) != 0u;
-}
 
 }  // namespace
 
@@ -170,7 +141,7 @@ void simulate_beams(
             if (blocks) {
                 beam.effective_length = std::min(beam.length, hit.distance);
             }
-            if (blocks && !beam_may_damage(world, beam, target_net_id)) {
+            if (blocks && !damage_source_may_damage(world, beam.collision_mask, target_net_id)) {
                 break;
             }
             const std::uint16_t damage =

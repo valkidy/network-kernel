@@ -1,9 +1,11 @@
 #include <cassert>
 #include <cstdlib>
+#include <string>
 #include <vector>
 
 #include <glm/glm.hpp>
 
+#include "physics/public/physics_world.h"
 #include "simulation/public/simulation.h"
 
 namespace {
@@ -184,6 +186,91 @@ void area_effect_damage_order_is_deterministic() {
     require(events[5].health_delta == -10);
 }
 
+// A deployable: Health plus a side. World's own standalone collision world only
+// registers actors, so the prop has to be placed in a supplied world by hand --
+// as kStaticObstacle carrying the `damageable` category ice_block_hitbox.yaml
+// authors, which is what makes cover solid to every side.
+network_example::NetId spawn_cover_prop(
+    network_example::World& world,
+    network_example::physics::PhysicsWorld& physics,
+    const glm::vec3& position,
+    std::uint32_t side,
+    std::uint32_t collider_id) {
+    const network_example::NetId net_id = world.spawn_entity(
+        network_example::EntityType::kProp,
+        network_example::ActorType::kUnknown,
+        0,
+        position);
+    const auto entity = world.find_entity(net_id);
+    assert(entity.has_value());
+    world.registry().emplace_or_replace<network_example::Health>(
+        *entity, network_example::Health{100, 100});
+    world.registry().emplace_or_replace<network_example::PropWorldMode>(
+        *entity,
+        network_example::PropWorldMode{network_example::PropMode::kPlaced});
+    world.registry().emplace_or_replace<network_example::GameplaySide>(
+        *entity, network_example::GameplaySide{side});
+
+    network_example::physics::CollisionObjectDescriptor object;
+    object.identity = network_example::physics::CollisionObjectIdentity{
+        net_id,
+        collider_id,
+        0,
+        network_example::physics::CollisionObjectKind::kStaticObstacle,
+        network_example::physics::CollisionLayer::kStaticObstacle,
+    };
+    object.identity.gameplay_category = network_example::kCollisionMaskDamageable;
+    object.shape.type = network_example::physics::CollisionShapeType::kBox;
+    object.shape.half_extents = glm::vec3{0.5f, 0.5f, 0.5f};
+    object.position = position;
+    std::string error;
+    require(physics.upsert_object(object, &error));
+    return net_id;
+}
+
+void area_effect_spares_cover_on_a_side_it_does_not_attack() {
+    // Splash used to level a deployable regardless of whose it was, so a rocket
+    // cleared the thrower's own cover while a beam through the same block could
+    // not. The rule now lives in the shared damage path, so both agree.
+    //
+    // Both props look identical to the collision filter here -- World's
+    // standalone collision world tags everything carrying a Hitbox as an actor
+    // hitbox and derives the category from actor_type -- so reaching them is not
+    // what separates them. Only GameplaySide does, which is the point.
+    network_example::World world;
+    network_example::physics::PhysicsWorld physics;
+    world.set_collision_world(&physics);
+    const network_example::NetId friendly_cover = spawn_cover_prop(
+        world,
+        physics,
+        glm::vec3{1.0f, 0.0f, 0.0f},
+        network_example::kCollisionLayerPlayerSide,
+        930);
+    const network_example::NetId hostile_cover = spawn_cover_prop(
+        world,
+        physics,
+        glm::vec3{-1.0f, 0.0f, 0.0f},
+        network_example::kCollisionLayerHostileSide,
+        931);
+    const network_example::NetId net_id = spawn_area_projectile(
+        world, 0, glm::vec3{0.0f, 0.5f, 0.0f}, 3.0f, 10, 0, 20, 7);
+    const auto projectile_entity = world.find_entity(net_id);
+    assert(projectile_entity.has_value());
+    // Authored to attack hostiles, and allowed to touch props at all.
+    world.registry()
+        .get<network_example::ProjectileAreaEffectRuntime>(*projectile_entity)
+        .collision_mask =
+        network_example::kCollisionLayerHostileSide | KERNEL_COLLISION_MASK_PROP;
+
+    network_example::DamagePipeline pipeline;
+    std::vector<KernelEvent> events;
+    network_example::simulate_area_effects(world, 0, &events, &pipeline);
+    pipeline.confirm_ready(world, 0, 0, &events);
+
+    require(health(world, hostile_cover).hp == 80);
+    require(health(world, friendly_cover).hp == 100);
+}
+
 }  // namespace
 
 int main() {
@@ -192,5 +279,6 @@ int main() {
     server_owned_area_effect_uses_player_damage_grace();
     area_effect_expires_at_expire_tick();
     area_effect_damage_order_is_deterministic();
+    area_effect_spares_cover_on_a_side_it_does_not_attack();
     return 0;
 }

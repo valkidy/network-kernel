@@ -305,6 +305,27 @@ void simulate_weapons(
     const WeaponSimulationContext& context,
     std::vector<KernelEvent>* events);
 
+// Whether a damage source authored to attack `attacker_collision_mask` is
+// allowed to hurt `target_net_id`.
+//
+// This is deliberately a separate question from whether the source can *reach*
+// the target. Collision filtering decides reach, and a deployable is solid to
+// everyone regardless of who put it there; this decides only whether the damage
+// lands. Both sides deploy the same cover, so neither can cut down its own --
+// the prop's own lifetime is what removes it.
+//
+// A target carrying no GameplaySide may be damaged by anything. That polarity
+// matches how the engine reads an absent category elsewhere (filter_accepts
+// treats gameplay_category 0 as visible to every query; homing_target_is_valid
+// treats it as lockable by every missile) and it is the only polarity this can
+// hold: actors carry no GameplaySide at all, so reading absence as immunity
+// would make every player and agent invulnerable. Indestructible is spelled by
+// carrying no Health, the way interaction_terminal does.
+bool damage_source_may_damage(
+    const World& world,
+    std::uint32_t attacker_collision_mask,
+    NetId target_net_id);
+
 std::vector<ConfirmedDamage> apply_damage_applications(
     World& world,
     const std::vector<ConfirmedDamage>& damage_applications,

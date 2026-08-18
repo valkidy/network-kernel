@@ -837,6 +837,10 @@ ProjectileHitOutcome process_projectile_hit_records(
                 outcome.destroy_projectile = true;
                 return outcome;
             }
+            if (!damage_source_may_damage(
+                    world, projectile.collision_mask, record.target_net_id)) {
+                continue;
+            }
             damage_pipeline->submit_damage_request(DamageRequest{
                 current_tick,
                 record.sequence_id,
@@ -876,10 +880,16 @@ ProjectileHitOutcome process_projectile_hit_records(
         false,
         trigger_events);
 
+    // No-op while only actors are reachable here -- they carry no GameplaySide,
+    // so the rule admits every one of them. It is in place so that widening what
+    // a direct hit can touch cannot silently reintroduce a weapon that levels
+    // its own side's cover.
     if (projectile.damage_shape == ProjectileDamageShape::kDirectHit &&
         projectile.damage > 0 &&
         records.front().hit.identity.kind ==
-            physics::CollisionObjectKind::kActorHitbox) {
+            physics::CollisionObjectKind::kActorHitbox &&
+        damage_source_may_damage(
+            world, projectile.collision_mask, records.front().target_net_id)) {
         damage_pipeline->submit_damage_request(DamageRequest{
             current_tick,
             0,
