@@ -174,6 +174,49 @@ void require_equal(const std::vector<CollisionHit>& lhs, const std::vector<Colli
     }
 }
 
+void side_less_query_reaches_categorised_objects() {
+    // collision_filter_from_mask only forwards ACTOR bits into a query's
+    // gameplay_category_mask, so a projectile authored as terrain|obstacle
+    // arrives here naming no category at all. It must still be stopped by a
+    // prop that declares one, or deployable cover would be solid to everything
+    // that names a side and transparent to everything that does not.
+    PhysicsWorld world;
+
+    CollisionObjectDescriptor cover;
+    cover.identity = CollisionObjectIdentity{
+        7, 1, 0,
+        CollisionObjectKind::kStaticObstacle,
+        CollisionLayer::kStaticObstacle,
+    };
+    cover.identity.gameplay_category =
+        network_example::physics::kGameplayCategoryHostileSide;
+    cover.shape.type = CollisionShapeType::kBox;
+    cover.shape.half_extents = glm::vec3{0.5f, 0.5f, 0.5f};
+    cover.position = glm::vec3{2.0f, 0.0f, 0.0f};
+    std::string error;
+    assert(world.upsert_object(cover, &error));
+
+    RayCastRequest ray;
+    ray.origin = glm::vec3{0.0f, 0.0f, 0.0f};
+    ray.direction = glm::vec3{1.0f, 0.0f, 0.0f};
+    ray.max_distance = 10.0f;
+    ray.filter.collision_mask =
+        collision_layer_bit(CollisionLayer::kTerrain) |
+        collision_layer_bit(CollisionLayer::kStaticObstacle);
+    ray.filter.object_kind_mask =
+        (1u << static_cast<std::uint32_t>(CollisionObjectKind::kTerrain)) |
+        (1u << static_cast<std::uint32_t>(CollisionObjectKind::kStaticObstacle));
+    ray.filter.gameplay_category_mask = 0;
+    assert(world.ray_cast_all(ray).size() == 1);
+
+    // Naming a category the object does not carry still excludes it: an empty
+    // mask means "unconstrained", not "match anything I ask for". player_side
+    // and hostile_side are disjoint, so this must not reach the cover.
+    ray.filter.gameplay_category_mask =
+        network_example::physics::kGameplayCategoryPlayerSide;
+    assert(world.ray_cast_all(ray).empty());
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -604,5 +647,7 @@ int main(int argc, char** argv) {
     limb_ray.filter.collision_mask =
         network_example::physics::kCollisionMaskAll | limb_bit;
     assert(limb_world.ray_cast_all(limb_ray).size() == 5);
+
+    side_less_query_reaches_categorised_objects();
     return 0;
 }

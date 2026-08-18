@@ -481,9 +481,22 @@ bool filter_accepts(
     const CollisionQueryFilter& filter) {
     const std::uint32_t kind_bit =
         1u << static_cast<std::uint32_t>(identity.kind);
+    // Category filtering is symmetric: an object that declares no category is
+    // visible to every query -- that is how terrain is solid to all sides -- and
+    // a query that names no category is constrained only by layer and kind.
+    //
+    // Without the second half, a projectile authored to hit the world rather
+    // than a side (collision_mask terrain|obstacle) ends up with an empty
+    // gameplay_category_mask, because collision_filter_from_mask only forwards
+    // ACTOR bits into it. Such a query could then reach terrain, whose category
+    // is zero, but passed straight through any prop that declared one -- so
+    // deployable cover stopped every projectile that named a side and none of
+    // the ones that named none. Layer and kind still gate what it can reach, so
+    // naming no category widens nothing beyond what the mask already asked for.
     return (filter.collision_mask & collision_layer_bit(identity.layer)) != 0 &&
            (filter.object_kind_mask & kind_bit) != 0 &&
            (identity.gameplay_category == 0 ||
+            filter.gameplay_category_mask == 0 ||
             (filter.gameplay_category_mask & identity.gameplay_category) != 0) &&
            (filter.ignored_entity_net_id == 0 ||
             filter.ignored_entity_net_id != identity.entity_net_id) &&
