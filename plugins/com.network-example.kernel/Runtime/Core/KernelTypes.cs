@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 74;
+        public const uint AbiVersion = 75;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int GameplayCatalogEntryPathSize = 128;
@@ -1196,6 +1196,16 @@ namespace NetworkExample.Kernel
         public byte reserved_item0;
         public ushort reserved_item1;
         public uint carrier_entity_id;
+
+        /// <summary>
+        /// Beams only: the far end of the beam in world space, already cut short
+        /// at whatever stopped it. <see cref="position"/> is the near end, so the
+        /// pair gives both the direction to orient a beam by and the length to
+        /// scale it to. Zero for every other entity -- a beam is the only
+        /// projectile with an extent rather than a point, and the only one whose
+        /// rotation cannot be recovered from its velocity, because it has none.
+        /// </summary>
+        public KernelVec3 beam_end;
 
         public static uint StructSize => (uint)Marshal.SizeOf<RenderEntityState>();
     }
