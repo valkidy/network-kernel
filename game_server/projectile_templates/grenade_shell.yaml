@@ -2,7 +2,7 @@ id: 7
 name: grenade_shell_projectile
 damage: 0
 sync_mode: local_predicted_deterministic
-collider_template: projectile_sphere
+collider_template: projectile_aabb
 movement_model: parabolic
 hit_response: destroy
 damage_shape: none
