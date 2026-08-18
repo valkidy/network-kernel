@@ -1238,7 +1238,12 @@ void simulate_projectiles(
         // while the weapon is still refreshing them, and the refresh never
         // reset age_ticks. The beam was destroyed and respawned under a new
         // net_id every other tick.
-        if (world.registry().all_of<ProjectileBeamRuntime>(entity)) {
+        //
+        // Area effects are the same story with a different owner:
+        // simulate_area_effects expires them on their runtime's expire_tick,
+        // and they do not travel, so there is nothing here to advance.
+        if (world.registry().all_of<ProjectileBeamRuntime>(entity) ||
+            world.registry().all_of<ProjectileAreaEffectRuntime>(entity)) {
             continue;
         }
         const NetworkIdentity& identity = view.get<NetworkIdentity>(entity);
@@ -1291,7 +1296,14 @@ void simulate_projectiles(
         // not travel, so the swept query degenerates -- and any hit it did
         // report would destroy it outright, which is not how a held beam that
         // rests against a wall should behave.
-        if (world.registry().all_of<ProjectileBeamRuntime>(entity)) {
+        //
+        // The same is true of an area effect, and it is no longer hypothetical:
+        // now that fire_projectile copies collision geometry, a weapon-fired
+        // field (fire_floor) arrives here with a real overlap volume instead of
+        // a degenerate ray, and hit_response kDestroy would kill it on the tick
+        // it lands. simulate_area_effects is what resolves its hits.
+        if (world.registry().all_of<ProjectileBeamRuntime>(entity) ||
+            world.registry().all_of<ProjectileAreaEffectRuntime>(entity)) {
             continue;
         }
         const NetworkIdentity& identity = hit_view.get<NetworkIdentity>(entity);

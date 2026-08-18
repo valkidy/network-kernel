@@ -1444,6 +1444,94 @@ void projectile_collision_mask_excludes_players() {
     require(count_events(events, KernelEventType_DamageApplied) == 0);
 }
 
+void weapon_fired_projectile_carries_collider_geometry() {
+    // fire_projectile used to drop collision_geometry, so a weapon-fired
+    // projectile queried a thin segment between its previous and current
+    // position while the identical template spawned by an action graph swept
+    // its authored volume. Same template, two different hit shapes depending on
+    // which path created it.
+    network_example::World world;
+    spawn_player(world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
+
+    network_example::RuntimeProjectileTemplate projectile_template;
+    projectile_template.projectile_template_id = network_example::kWeaponId4;
+    projectile_template.weapon_id = network_example::kWeaponId4;
+    projectile_template.speed = 30.0f;
+    projectile_template.lifetime_ticks = 30;
+    projectile_template.has_collision_geometry = true;
+    projectile_template.collision_geometry.shape_type =
+        network_example::ColliderShapeType::kSphere;
+    projectile_template.collision_geometry.radius = 0.5f;
+    world.set_projectile_templates({projectile_template});
+
+    std::vector<KernelEvent> events;
+    network_example::WeaponState& weapon = weapon_state(world, 1);
+    weapon.weapon_ids[0] = network_example::kWeaponId4;
+    weapon.ammo[0] = 3;
+    KernelPlayerInput input = fire_input(network_example::kWeaponId4);
+    network_example::simulate_weapons(world, queue(input), 4, &events);
+
+    network_example::NetId projectile = 0;
+    for (const KernelEvent& event : events) {
+        if (event.type == KernelEventType_EntitySpawned &&
+            event.code == static_cast<std::uint32_t>(
+                              network_example::EntityType::kProjectile)) {
+            projectile = event.net_id;
+        }
+    }
+    require(projectile != 0);
+    const auto entity = world.find_entity(projectile);
+    require(entity.has_value());
+    const network_example::ProjectileState& state =
+        world.registry().get<network_example::ProjectileState>(*entity);
+    require(state.has_collision_geometry);
+    require(state.collision_geometry.shape_type ==
+            network_example::ColliderShapeType::kSphere);
+    require(state.collision_geometry.radius == 0.5f);
+}
+
+void weapon_fired_area_effect_survives_the_tick_it_lands() {
+    // Copying collision geometry onto weapon-fired projectiles gave a
+    // weapon-fired field (fire_floor) a real overlap volume in
+    // simulate_projectiles for the first time. With hit_response defaulting to
+    // kDestroy, the field was destroyed by the first thing it touched on the
+    // tick it landed, well inside its authored lifetime.
+    network_example::World world;
+    spawn_player(world, 1, glm::vec3{0.0f, 0.0f, 0.0f});
+    spawn_enemy(world, glm::vec3{1.0f, 0.0f, 0.0f});
+
+    network_example::RuntimeProjectileTemplate area_template;
+    area_template.projectile_template_id = network_example::kWeaponId4;
+    area_template.weapon_id = network_example::kWeaponId4;
+    area_template.projectile_type = network_example::ProjectileType::kAreaEffect;
+    area_template.damage = 5;
+    area_template.area_radius = 2.0f;
+    area_template.damage_interval_ticks = 2;
+    area_template.lifetime_ticks = 6;
+    area_template.collision_mask = network_example::kCollisionLayerHostileSide;
+    // What a catalog-loaded template carries whenever it names a collider.
+    area_template.has_collision_geometry = true;
+    area_template.collision_geometry.shape_type =
+        network_example::ColliderShapeType::kSphere;
+    area_template.collision_geometry.radius = 2.0f;
+    world.set_projectile_templates({area_template});
+
+    std::vector<KernelEvent> events;
+    network_example::WeaponState& weapon = weapon_state(world, 1);
+    weapon.weapon_ids[0] = network_example::kWeaponId4;
+    weapon.ammo[0] = 3;
+    KernelPlayerInput input = fire_input(network_example::kWeaponId4);
+    network_example::simulate_weapons(world, queue(input), 4, &events);
+    const network_example::NetId area = spawned_area_effect(events);
+    require(area != 0);
+
+    // The tick it lands, and several after: the field outlives contact.
+    for (std::uint32_t tick = 4; tick < 8; ++tick) {
+        network_example::simulate_projectiles(world, 1.0f / 30.0f, tick, &events);
+        require(world.find_entity(area).has_value());
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -1467,6 +1555,8 @@ int main() {
     rewind_hitscan_uses_historical_hit_volumes();
     rewind_shotgun_respects_range();
     area_effect_weapon_spawns_and_damages_enemy();
+    weapon_fired_projectile_carries_collider_geometry();
+    weapon_fired_area_effect_survives_the_tick_it_lands();
     piercing_projectile_damages_sorted_targets_up_to_max_hit_count();
     sphere_projectile_uses_swept_collider_geometry();
     box_projectile_uses_swept_collider_geometry();
