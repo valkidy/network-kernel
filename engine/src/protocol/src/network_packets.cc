@@ -16,6 +16,8 @@ namespace {
 constexpr std::size_t kInputPayloadSize = 57;
 constexpr std::size_t kSnapshotHeaderPayloadSize = 16;
 constexpr std::size_t kSnapshotSectionHeaderPayloadSize = 4;
+// Sections present in every snapshot; the beam section is optional on top.
+constexpr std::uint16_t kSnapshotSectionCount = 4;
 constexpr std::size_t kActorSnapshotBasePayloadSize = 52;
 constexpr std::size_t kActorActionTimelinePayloadSize = 20;
 constexpr std::size_t kActorOwnerPeerPayloadSize = 4;
@@ -318,7 +320,8 @@ std::vector<std::uint8_t> encode_snapshot_packet(
     // reader is driven by this count, so a variable number of sections is fine.
     const bool has_beam_section =
         !section_entities(snapshot, SnapshotSectionType::kProjectileBeam).empty();
-    payload.write_u16(has_beam_section ? 5 : 4);
+    payload.write_u16(
+        has_beam_section ? kSnapshotSectionCount + 1 : kSnapshotSectionCount);
     payload.write_u16(0);
 
     for (const SnapshotSectionType section_type : {
@@ -448,7 +451,13 @@ bool decode_snapshot_packet(
         return false;
     }
 
-    if (section_count != 4 || reserved != 0) {
+    // The beam section is only written when a beam exists, so a snapshot carries
+    // either the four sections every packet always has or those plus the beam
+    // one. Requiring exactly four here rejected the entire packet the moment
+    // anything fired a beam, which drops every entity in it, not just the beam.
+    if ((section_count != kSnapshotSectionCount &&
+         section_count != kSnapshotSectionCount + 1) ||
+        reserved != 0) {
         return false;
     }
 
@@ -603,7 +612,7 @@ bool decode_snapshot_packet(
 
 std::size_t estimate_snapshot_base_packet_size() {
     return kPacketHeaderSize + kSnapshotHeaderPayloadSize +
-           4 * kSnapshotSectionHeaderPayloadSize;
+           kSnapshotSectionCount * kSnapshotSectionHeaderPayloadSize;
 }
 
 std::size_t estimate_snapshot_entity_size(EntityType type) {

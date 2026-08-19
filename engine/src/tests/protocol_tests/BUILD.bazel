@@ -29,3 +29,9 @@ cc_test(
     srcs = ["sha256_test.cc"],
     deps = ["//engine/src/protocol:protocol"],
 )
+
+cc_test(
+    name = "beam_roundtrip_test",
+    srcs = ["beam_roundtrip_test.cc"],
+    deps = ["//engine/src/protocol:protocol", "//engine/src/sync:sync"],
+)
