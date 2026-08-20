@@ -754,9 +754,11 @@ bool projectile_trigger_is_valid(
     const std::uint32_t expected_count = trigger.action_count == 0u
         ? (trigger.action_type == KernelEntityTriggerActionType_None ? 0u : 1u)
         : trigger.action_count;
-    if (spawned_ids.size() != expected_count) {
-        return false;
-    }
+    // Only the spawn actions have to name a projectile. Requiring every action
+    // to be one rejected the impulse-on-impact triggers an area effect authors
+    // (rocket_explosion), even though simulate_projectiles implements exactly
+    // that -- the shape of the trigger is checked by validate_projectile_
+    // mechanics, and this function only owns the spawn references.
     for (std::uint32_t index = 0; index < expected_count; ++index) {
         const std::uint32_t condition_type = trigger.action_count == 0u
             ? trigger.condition_type
