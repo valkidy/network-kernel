@@ -370,6 +370,7 @@ std::vector<std::uint8_t> make_gameplay_bundle_zip(
     append_directory_files(&files, "weapon_templates");
     append_directory_files(&files, "action_templates");
     append_directory_files(&files, "action_graph_templates");
+    append_directory_files(&files, "status_effect_templates");
     append_directory_files(&files, "item_templates");
     append_directory_files(&files, "projectile_templates");
     files.insert(files.end(), extra_files.begin(), extra_files.end());
@@ -537,11 +538,10 @@ std::vector<std::uint8_t> make_entity_template_bundle_zip(
 
     append_directory_files(&files, "weapon_templates");
     append_directory_files(&files, "action_templates");
-    files.push_back({
-        "action_graph_templates/action_spawn_projectile_at_impact.yaml",
-        read_text_file(
-            "game_server/action_graph_templates/"
-            "action_spawn_projectile_at_impact.yaml")});
+    // The whole directory, not just the one graph this bundle's projectiles used
+    // to need: every projectile the enumeration pulls in may reference a graph,
+    // area effects included.
+    append_directory_files(&files, "action_graph_templates");
     append_directory_files(&files, "projectile_templates");
     return make_store_zip(files);
 }
@@ -582,6 +582,21 @@ std::string sentry_grunt_entity_template_yaml(std::string entity_type) {
 int main() {
     const network_example::game_server::GameServerGameplayConfig config =
         network_example::game_server::default_game_server_gameplay_config();
+    // actor_templates follows the enumerated file order, so the two templates the
+    // cases below mutate are located by id rather than assumed to sort first.
+    const auto actor_index_by_id = [&config](std::uint32_t id) -> std::size_t {
+        for (std::size_t index = 0u; index < config.actor_templates.size();
+             ++index) {
+            if (config.actor_templates[index].actor_template_id == id) {
+                return index;
+            }
+        }
+        require(false);
+        return 0u;
+    };
+    const std::size_t player_index = actor_index_by_id(1u);
+    const std::size_t sentry_index = actor_index_by_id(2u);
+
     assert(network_example::game_server::AgentSentryConfig{}.weapon_id ==
            UINT16_MAX);
     const std::vector<std::string> errors =
@@ -846,16 +861,23 @@ int main() {
     // shipped player template: they need live fungible and stateful slots to
     // corrupt, and commenting those out on disk used to rot every case here
     // into a replace_once that matched nothing.
-    const std::string inventory_player_yaml = replace_once(
-        production_player_yaml,
-        "  # - item_template: fungible_potion\n"
-        "  #  quantity: 5\n"
-        "  # - item_template: stateful_potion\n"
-        "  #  quantity: 1\n",
-        "  - item_template: fungible_potion\n"
-        "    quantity: 5\n"
-        "  - item_template: stateful_potion\n"
-        "    quantity: 1\n");
+    const std::string inventory_player_yaml = [&] {
+        const std::size_t slots_begin =
+            production_player_yaml.find("inventory_slots:\n");
+        require(slots_begin != std::string::npos);
+        const std::size_t slots_end =
+            production_player_yaml.find("animations:\n", slots_begin);
+        require(slots_end != std::string::npos);
+        return production_player_yaml.substr(0, slots_begin) +
+            "inventory_slots:\n"
+            "  - item_template: fungible_potion\n"
+            "    quantity: 5\n"
+            "  - item_template: stateful_potion\n"
+            "    quantity: 1\n"
+            "  - item_template: stateful_magic_bottle\n"
+            "    quantity: 1\n" +
+            production_player_yaml.substr(slots_end);
+    }();
     const network_example::game_server::GameServerGameplayConfig numeric_item_config =
         load_player_yaml(replace_once(
             inventory_player_yaml,
@@ -1322,7 +1344,7 @@ int main() {
         enemy_combat_state.active_weapon_slot == 0);
     assert(
         enemy_combat_state.weapon_ids[0] ==
-        network_example::game_server::kWeaponSpammer);
+        network_example::game_server::kWeaponGrenade);
     const network_example::game_server::ActorTemplateConfig* config_enemy_template =
         network_example::game_server::find_actor_template(
             config,
@@ -1330,7 +1352,7 @@ int main() {
     assert(config_enemy_template != nullptr);
     assert(config_enemy_template->move_speed_meters_per_second == 2.5f);
     assert(config_enemy_template->vision.camp == KernelAgentCamp_EnemySide);
-    assert(config_enemy_template->vision.vision_collider_template_id == 9);
+    assert(config_enemy_template->vision.vision_collider_template_id == 15);
     const network_example::game_server::KernelGameplayCatalogStorage catalog =
         network_example::game_server::build_kernel_gameplay_catalog(config);
     const network_example::game_server::KernelGameplayCatalogStorage
@@ -2094,9 +2116,12 @@ int main() {
         KernelEventVec3Source_Direction);
     assert(catalog.definition.actor_template_count == config.actor_templates.size());
     assert(catalog.actor_templates.size() == config.actor_templates.size());
-    assert(catalog.actor_templates[1].actor_template_id == 2);
-    assert(catalog.actor_templates[1].collider_template_id == 2);
-    assert(catalog.actor_templates[1].vision.vision_collider_template_id == 9);
+    // Same order as config.actor_templates, whose sizes are asserted equal just
+    // above, so the id-resolved index carries over.
+    assert(catalog.actor_templates[sentry_index].collider_template_id == 2);
+    assert(
+        catalog.actor_templates[sentry_index].vision.vision_collider_template_id ==
+        9);
 
     const KernelWeaponMechanicsDefinition& rifle =
         config.weapons.definitions[network_example::game_server::kWeaponRifle];
@@ -2124,18 +2149,18 @@ int main() {
     assert(grenade_launcher.magazine_size == 6);
     assert(grenade_launcher.projectile_template_id == 7);
     assert(config.weapons.collider_template_ids
-               [network_example::game_server::kWeaponGrenade] == 7);
+               [network_example::game_server::kWeaponGrenade] == 16);
     assert(config.weapons.names[network_example::game_server::kWeaponGrenade] ==
            "Grenade Launcher");
     assert(
         network_example::game_server::active_weapon_id(*config_enemy_template) ==
-        network_example::game_server::kWeaponSpammer);
+        network_example::game_server::kWeaponGrenade);
     assert(config_enemy_template->sentry.weapon_id ==
-           network_example::game_server::kWeaponSpammer);
+           network_example::game_server::kWeaponGrenade);
     const KernelWeaponMechanicsDefinition& projectile_spammer =
         config.weapons.definitions[network_example::game_server::kWeaponSpammer];
     assert(projectile_spammer.damage == 1);
-    assert(projectile_spammer.magazine_size == 120);
+    assert(projectile_spammer.magazine_size == 3);
     assert(projectile_spammer.reserve_magazines == kMaxReserveMagazines);
     assert(projectile_spammer.projectile_template_id == 2);
     assert(config.weapons.names[network_example::game_server::kWeaponSpammer] ==
@@ -2149,11 +2174,20 @@ int main() {
         config.weapons
             .projectile_sync_modes[network_example::game_server::kWeaponRocket] ==
         KernelProjectileSyncMode_ServerSnapshotOnly);
-    assert(config.colliders.templates.size() == 15);
+    // Counts the collider_templates/ directory, which the bundle now enumerates
+    // rather than lists, so this tracks the filesystem.
+    assert(config.colliders.templates.size() == 17);
     assert(config.colliders.bindings.empty());
-    assert(config.actor_templates.size() == 7);
+    // Every entity_templates/*.yaml with entity_type: actor. Tracks the
+    // filesystem for the same reason the collider count above does.
+    assert(config.actor_templates.size() == 8);
+    // By name: actor_templates follows the enumerated file order, so an index
+    // silently tracks whichever template sorts first.
+    const network_example::game_server::ActorTemplateConfig* player_template_ptr =
+        network_example::game_server::find_actor_template(config, 1u);
+    require(player_template_ptr != nullptr);
     const network_example::game_server::ActorTemplateConfig& player_template =
-        config.actor_templates[0];
+        *player_template_ptr;
     assert(player_template.actor_template_id == 1);
     assert(player_template.name == "player");
     assert(player_template.entity_type == network_example::game_server::kEntityTypeActor);
@@ -2165,20 +2199,26 @@ int main() {
     assert(player_template.weapon_ids[2] == network_example::game_server::kWeaponGrenade);
     assert(player_template.active_weapon_slot == 0);
     assert(player_template.inventory_slot_capacity == 8);
-    assert(player_template.inventory_slots.size() == 3);
-    assert(player_template.inventory_slots[0].item_template_id == 3002);
-    assert(player_template.inventory_slots[0].quantity == 5);
-    assert(player_template.inventory_slots[1].item_template_id == 3003);
-    assert(player_template.inventory_slots[1].quantity == 1);
-    assert(player_template.inventory_slots[2].item_template_id == 3004);
-    assert(player_template.inventory_slots[2].quantity == 1);
+    // player.yaml currently stocks five stateful_magic_bottle slots; the
+    // fungible and stateful_potion slots above them are commented out there.
+    // The mixed-item shape they used to give this case is exercised by
+    // inventory_player_yaml instead, which is a fixture of the test's own.
+    assert(player_template.inventory_slots.size() == 5);
+    for (const network_example::game_server::InventorySlotConfig& slot :
+         player_template.inventory_slots) {
+        assert(slot.item_template_id == 3004);
+        assert(slot.quantity == 1);
+    }
     assert(player_template.vision.camp == KernelAgentCamp_PlayerSide);
     assert(player_template.vision.vision_collider_template_id == 0);
     assert(player_template.movement_controller_type ==
            KernelMovementControllerType_Character);
     assert(player_template.movement_collider_template_id == 10);
+    const network_example::game_server::ActorTemplateConfig* enemy_template_ptr =
+        network_example::game_server::find_actor_template(config, 2u);
+    require(enemy_template_ptr != nullptr);
     const network_example::game_server::ActorTemplateConfig& enemy_template =
-        config.actor_templates[1];
+        *enemy_template_ptr;
     assert(enemy_template.actor_template_id == 2);
     assert(enemy_template.name == "sentry_grunt");
     assert(enemy_template.entity_type == network_example::game_server::kEntityTypeActor);
@@ -2262,7 +2302,7 @@ int main() {
     assert(homing_missile.projectile_template_id == 6);
     assert(config.weapons.collider_template_ids
                [network_example::game_server::kWeaponHomingMissile] == 7);
-    assert(config.projectile_templates.size() == 7);
+    assert(config.projectile_templates.size() == 8);
     bool found_homing_projectile = false;
     bool found_rocket_projectile = false;
     bool found_rocket_explosion = false;
@@ -2274,7 +2314,7 @@ int main() {
          config.projectile_templates) {
         if (projectile.name == "grenade_shell_projectile") {
             found_grenade_shell = true;
-            assert(projectile.definition.mechanics.collider_template_id == 7);
+            assert(projectile.definition.mechanics.collider_template_id == 16);
             assert(projectile.definition.mechanics.damage == 0);
             assert(projectile.definition.mechanics.damage_shape ==
                    KernelProjectileDamageShape_None);
@@ -2376,6 +2416,7 @@ int main() {
         "triggers:\n"
         "  on_collision:\n"
         "    action_graph: action_apply_impulse_test\n"
+        "    collision_mask: actor\n"
         "    parameters:\n"
         "      target: event.target\n"
         "      strength: 4.5\n";
@@ -2713,7 +2754,7 @@ int main() {
                 generated_bundle.data(),
                 static_cast<std::uint32_t>(generated_bundle.size()),
                 "legged_locomotion_gameplay_catalog.yaml");
-    require(legged_locomotion_config.weapons.catalog_version == 13u);
+    require(legged_locomotion_config.weapons.catalog_version == 10u);
     require(legged_locomotion_config.agent.override_director_spawn);
     require(legged_locomotion_config.agent.actor_template_id == 21u);
     require(legged_locomotion_config.agent.spawn_count == 1u);
@@ -2752,11 +2793,14 @@ int main() {
     require(legged_locomotion_director->ai.spawn_entity_template_id == 21u);
     require(legged_locomotion_director->ai.spawn_actor_template_id == 21u);
 
-    const std::string conflicting_enemy_catalog =
-        read_text_file("game_server/gameplay_catalog.yaml") +
+    // Replaces the catalog's own enemy block rather than appending a second one:
+    // a duplicate key would leave which block wins up to the YAML parser, and
+    // the case is about the loader rejecting a block that names both.
+    const std::string conflicting_enemy_catalog = replace_once(
+        read_text_file("game_server/gameplay_catalog.yaml"),
+        "enemy:\n",
         "enemy:\n"
-        "  actor_template: sentry_grunt\n"
-        "  entity_template: quadruped_actor\n";
+        "  actor_template: sentry_grunt\n");
     bool conflicting_enemy_rejected = false;
     try {
         const std::vector<std::uint8_t> conflicting_enemy_bundle =
@@ -3109,84 +3153,93 @@ int main() {
 
     network_example::game_server::GameServerGameplayConfig actor_hash_changed =
         config;
-    actor_hash_changed.actor_templates[0].health.hp += 1;
+    actor_hash_changed.actor_templates[player_index].health.hp += 1;
     require(
         config.weapons.catalog_hash !=
         network_example::game_server::compute_gameplay_catalog_hash(
             actor_hash_changed));
     actor_hash_changed = config;
-    actor_hash_changed.actor_templates[1].sentry.patrol_rotation_interval_ticks += 1;
+    actor_hash_changed.actor_templates[sentry_index].sentry.patrol_rotation_interval_ticks += 1;
     require(
         config.weapons.catalog_hash !=
         network_example::game_server::compute_gameplay_catalog_hash(
             actor_hash_changed));
     actor_hash_changed = config;
-    actor_hash_changed.actor_templates[1].sentry.patrol_rotation_max_degrees += 1.0f;
+    actor_hash_changed.actor_templates[sentry_index].sentry.patrol_rotation_max_degrees += 1.0f;
     require(
         config.weapons.catalog_hash !=
         network_example::game_server::compute_gameplay_catalog_hash(
             actor_hash_changed));
     actor_hash_changed = config;
-    actor_hash_changed.actor_templates[0].inventory_slot_capacity += 1;
+    actor_hash_changed.actor_templates[player_index].inventory_slot_capacity += 1;
     require(
         config.weapons.catalog_hash !=
         network_example::game_server::compute_gameplay_catalog_hash(
             actor_hash_changed));
     actor_hash_changed = config;
-    actor_hash_changed.actor_templates[0].inventory_slots[0].quantity -= 1;
+    actor_hash_changed.actor_templates[player_index].inventory_slots[0].quantity -= 1;
     require(
         config.weapons.catalog_hash !=
         network_example::game_server::compute_gameplay_catalog_hash(
             actor_hash_changed));
+    // Slot order is part of the hash. The shipped player stocks five identical
+    // slots, so one is made distinct first -- swapping two equal slots is a
+    // no-op and would pass this case for the wrong reason.
     actor_hash_changed = config;
+    actor_hash_changed.actor_templates[player_index]
+        .inventory_slots[1]
+        .quantity += 1;
+    const std::uint64_t ordered_slots_hash =
+        network_example::game_server::compute_gameplay_catalog_hash(
+            actor_hash_changed);
     std::swap(
-        actor_hash_changed.actor_templates[0].inventory_slots[0],
-        actor_hash_changed.actor_templates[0].inventory_slots[1]);
+        actor_hash_changed.actor_templates[player_index].inventory_slots[0],
+        actor_hash_changed.actor_templates[player_index].inventory_slots[1]);
     require(
-        config.weapons.catalog_hash !=
+        ordered_slots_hash !=
         network_example::game_server::compute_gameplay_catalog_hash(
             actor_hash_changed));
 
     invalid = config;
-    invalid.actor_templates[0].inventory_slot_capacity = 2;
+    invalid.actor_templates[player_index].inventory_slot_capacity = 2;
     assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
     invalid = config;
-    invalid.actor_templates[0].inventory_slots[0].quantity = 0;
+    invalid.actor_templates[player_index].inventory_slots[0].quantity = 0;
     assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
     invalid = config;
-    invalid.actor_templates[0].inventory_slots[0].quantity = 6;
+    invalid.actor_templates[player_index].inventory_slots[0].quantity = 6;
     assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
     invalid = config;
-    invalid.actor_templates[0].inventory_slots[1].quantity = 2;
+    invalid.actor_templates[player_index].inventory_slots[1].quantity = 2;
     assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
     invalid = config;
-    invalid.actor_templates[0].inventory_slots[0].item_template_id = 999999;
+    invalid.actor_templates[player_index].inventory_slots[0].item_template_id = 999999;
     assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
     invalid = config;
-    invalid.actor_templates[1].inventory_slot_capacity = 1;
-    invalid.actor_templates[1].inventory_slots = {
-        config.actor_templates[0].inventory_slots[0]};
+    invalid.actor_templates[sentry_index].inventory_slot_capacity = 1;
+    invalid.actor_templates[sentry_index].inventory_slots = {
+        config.actor_templates[player_index].inventory_slots[0]};
     assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
 
     invalid = config;
-    invalid.actor_templates[1].sentry.weapon_id =
+    invalid.actor_templates[sentry_index].sentry.weapon_id =
         network_example::game_server::kWeaponRocket;
     assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
     invalid = config;
-    invalid.actor_templates[1].sentry.alert_ticks = 0;
+    invalid.actor_templates[sentry_index].sentry.alert_ticks = 0;
     assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
     invalid = config;
-    invalid.actor_templates[1].sentry.forget_ticks = 0;
+    invalid.actor_templates[sentry_index].sentry.forget_ticks = 0;
     assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
     invalid = config;
-    invalid.actor_templates[1].sentry.patrol_rotation_interval_ticks = 0;
+    invalid.actor_templates[sentry_index].sentry.patrol_rotation_interval_ticks = 0;
     assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
     invalid = config;
-    invalid.actor_templates[1].sentry.patrol_rotation_min_degrees = 0.0f;
+    invalid.actor_templates[sentry_index].sentry.patrol_rotation_min_degrees = 0.0f;
     assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
     invalid = config;
-    invalid.actor_templates[1].sentry.patrol_rotation_max_degrees =
-        invalid.actor_templates[1].sentry.patrol_rotation_min_degrees - 1.0f;
+    invalid.actor_templates[sentry_index].sentry.patrol_rotation_max_degrees =
+        invalid.actor_templates[sentry_index].sentry.patrol_rotation_min_degrees - 1.0f;
     assert(!network_example::game_server::validate_gameplay_config(invalid).empty());
 
     const auto create_player_entity = [](KernelHandle* kernel) {
@@ -3253,7 +3306,10 @@ int main() {
                 UINT64_C(0xadde6d5f8fd65064),
                 complete_bind_pose.data(),
                 complete_bind_pose.size()) == 25u);
-    require(complete_bind_pose.back().local_scale.z == 1.0f);
+    // The rig's last bone is GEO_Body, whose rest scale carries the collider's
+    // size (6 m cube), so this also pins that the scale is copied out rather
+    // than normalised away.
+    require(complete_bind_pose.back().local_scale.z == 6.0f);
     require(Kernel_StartDedicatedServer(skeleton_kernel, 7900));
     KernelServerEntityCreateInfo skeleton_create{};
     skeleton_create.struct_size = sizeof(skeleton_create);
@@ -3286,7 +3342,9 @@ int main() {
     require(skeleton_result.required_state_count == 1u);
     require(skeleton_result.required_bone_transform_count == 25u);
     std::array<KernelSkeletonRenderState, 1> skeleton_states{};
-    std::array<KernelBoneLocalTransform, 41> bone_transforms{};
+    // Exactly the rig's bone count, so the size - 1 call below is genuinely one
+    // short and exercises the insufficient-capacity path.
+    std::array<KernelBoneLocalTransform, 25> bone_transforms{};
     skeleton_result.struct_size = sizeof(skeleton_result);
     require(Kernel_GetSkeletonRenderStates(
                skeleton_kernel,
@@ -3356,14 +3414,14 @@ int main() {
         follower.reset_runtime_state(KernelMode_Client);
         require(follower.load_gameplay_catalog(follower_catalog.definition));
 
-        constexpr network_example::NetId kMonsterNetId = 4242u;
-        constexpr std::uint32_t kMonsterTemplateId = 20u;
+        constexpr network_example::NetId kLeggedNetId = 4242u;
+        constexpr std::uint32_t kLeggedTemplateId = 21u;
         // A baseline is sent beside the spawn packet, so it can reach the
         // client before that entity's first snapshot. It must survive that.
         network_example::LocomotionStepBatchPacket early_baseline{};
         early_baseline.server_tick = 99u;
         early_baseline.records.push_back(network_example::LocomotionStepRecord{
-            kMonsterNetId, 2u, UINT8_MAX, glm::vec3{5.0f, 0.0f, -5.0f}});
+            kLeggedNetId, 2u, UINT8_MAX, glm::vec3{5.0f, 0.0f, -5.0f}});
         follower.handle_client_locomotion_step_batch(early_baseline);
         follower.update_follower_locomotion();
         require(follower.pending_follower_steps_.size() == 1u);
@@ -3375,19 +3433,19 @@ int main() {
         require(follower.pending_follower_steps_.size() == 1u);
 
         network_example::EntitySpawnPacket spawn{};
-        spawn.net_id = kMonsterNetId;
+        spawn.net_id = kLeggedNetId;
         spawn.entity_type = network_example::EntityType::kActor;
         spawn.actor_type = network_example::ActorType::kAgent;
         spawn.owner_peer = 0u;
-        spawn.actor_template_id = kMonsterTemplateId;
-        spawn.entity_template_id = kMonsterTemplateId;
+        spawn.actor_template_id = kLeggedTemplateId;
+        spawn.entity_template_id = kLeggedTemplateId;
         follower.handle_client_spawn(spawn);
 
         const auto push_snapshot = [&](std::uint32_t server_tick, float x) {
             network_example::WorldSnapshot snapshot;
             snapshot.header.server_tick = server_tick;
             network_example::EntitySnapshot entity;
-            entity.net_id = kMonsterNetId;
+            entity.net_id = kLeggedNetId;
             entity.type = network_example::EntityType::kActor;
             entity.actor_type = network_example::ActorType::kAgent;
             entity.position = glm::vec3{x, 0.0f, 0.0f};
@@ -3400,15 +3458,15 @@ int main() {
         push_snapshot(100u, 0.0f);
         push_snapshot(102u, 0.5f);
         follower.update_follower_locomotion();
-        require(follower.follower_locomotion_states_.count(kMonsterNetId) == 1u);
+        require(follower.follower_locomotion_states_.count(kLeggedNetId) == 1u);
         // Only the leg the early baseline named has committed to a world
         // position; nothing has stepped, so no other foot has.
         for (std::size_t leg_index = 0u;
              leg_index <
-                 follower.follower_locomotion_states_[kMonsterNetId].legs.size();
+                 follower.follower_locomotion_states_[kLeggedNetId].legs.size();
              ++leg_index) {
             const network_example::LegLocomotionState& leg =
-                follower.follower_locomotion_states_[kMonsterNetId]
+                follower.follower_locomotion_states_[kLeggedNetId]
                     .legs[leg_index];
             require(leg.foot_initialized == (leg_index == 2u));
         }
@@ -3422,7 +3480,7 @@ int main() {
         network_example::LocomotionStepBatchPacket step_batch{};
         step_batch.server_tick = 106u;
         step_batch.records.push_back(network_example::LocomotionStepRecord{
-            kMonsterNetId, 0u, 2u, landing});
+            kLeggedNetId, 0u, 2u, landing});
         const std::vector<std::uint8_t> encoded_steps =
             network_example::encode_locomotion_step_batch_packet(
                 step_batch, 1u);
@@ -3437,7 +3495,7 @@ int main() {
 
         // A step in the future is held, not applied early.
         follower.update_follower_locomotion();
-        require(!follower.follower_locomotion_states_[kMonsterNetId]
+        require(!follower.follower_locomotion_states_[kLeggedNetId]
                      .legs[0]
                      .foot_initialized);
         require(follower.pending_follower_steps_.size() == 1u);
@@ -3459,7 +3517,7 @@ int main() {
         require(follower.pending_follower_steps_.empty());
 
         const network_example::LegLocomotionState& stepped =
-            follower.follower_locomotion_states_[kMonsterNetId].legs[0];
+            follower.follower_locomotion_states_[kLeggedNetId].legs[0];
         require(stepped.foot_initialized);
         require(stepped.gait_state == network_example::LegGaitState::kSupport);
         // Landed exactly where the authority said, with no resync and no
@@ -3467,13 +3525,13 @@ int main() {
         require(glm::length(stepped.foot_target_world - landing) < 0.0001f);
         // Legs that were never told to step stay uncommitted rather than
         // guessing a foothold of their own.
-        require(!follower.follower_locomotion_states_[kMonsterNetId]
+        require(!follower.follower_locomotion_states_[kLeggedNetId]
                      .legs[1]
                      .foot_initialized);
         // The pre-snapshot baseline was kept and applied, so its leg is planted
         // rather than waiting for a step of its own.
         const network_example::LegLocomotionState& early_planted =
-            follower.follower_locomotion_states_[kMonsterNetId].legs[2];
+            follower.follower_locomotion_states_[kLeggedNetId].legs[2];
         require(early_planted.foot_initialized);
         require(glm::length(
                     early_planted.foot_target_world -
@@ -3481,8 +3539,8 @@ int main() {
 
         // Poses were recorded per server tick, so presentation can sample them
         // at the same instant it samples the roots.
-        require(follower.skeleton_pose_history_.count(kMonsterNetId) == 1u);
-        require(follower.skeleton_pose_history_[kMonsterNetId].size > 1u);
+        require(follower.skeleton_pose_history_.count(kLeggedNetId) == 1u);
+        require(follower.skeleton_pose_history_[kLeggedNetId].size > 1u);
 
         // And they survive the authoritative pass. simulate_tick runs
         // update_legged_locomotion first, which knows only the entities this
@@ -3492,17 +3550,17 @@ int main() {
         // sample, or the pose falls back to the newest solved tick while the
         // root stays interpolated, and every foot jumps between two placements.
         const std::size_t history_before =
-            follower.skeleton_pose_history_[kMonsterNetId].size;
+            follower.skeleton_pose_history_[kLeggedNetId].size;
         follower.update_legged_locomotion({}, 1.0f / 30.0f);
         follower.update_follower_locomotion();  // no new snapshot: steps 0 ticks
-        require(follower.skeleton_pose_history_.count(kMonsterNetId) == 1u);
-        require(follower.skeleton_pose_history_[kMonsterNetId].size ==
+        require(follower.skeleton_pose_history_.count(kLeggedNetId) == 1u);
+        require(follower.skeleton_pose_history_[kLeggedNetId].size ==
                 history_before);
         std::vector<KernelBoneLocalTransform> sampled;
         std::uint32_t sampled_tick = 0u;
         require(network_example::sample_skeleton_pose_history(
-            follower.skeleton_pose_history_[kMonsterNetId],
-            follower.skeleton_pose_history_[kMonsterNetId]
+            follower.skeleton_pose_history_[kLeggedNetId],
+            follower.skeleton_pose_history_[kLeggedNetId]
                 .samples[0]
                 .time_us,
             &sampled,
@@ -3516,7 +3574,7 @@ int main() {
             follower.skeleton_presentation_poses_.begin(),
             follower.skeleton_presentation_poses_.end(),
             [](const network_example::SkeletonPresentationPose& pose) {
-                return pose.entity_net_id == kMonsterNetId;
+                return pose.entity_net_id == kLeggedNetId;
             });
         require(presented != follower.skeleton_presentation_poses_.end());
         require(presented->pose_flags ==
@@ -3553,7 +3611,7 @@ int main() {
                 static_cast<std::uint32_t>(at_time_bones.size()),
                 &at_time_result);
         require(at_time_count == 1u);
-        require(at_time_states[0].entity_net_id == kMonsterNetId);
+        require(at_time_states[0].entity_net_id == kLeggedNetId);
         require(at_time_states[0].pose_flags ==
                 KERNEL_SKELETON_POSE_FLAG_PROCEDURAL);
         require(at_time_states[0].bone_count ==
@@ -3567,7 +3625,7 @@ int main() {
         network_example::LocomotionStepBatchPacket baseline{};
         baseline.server_tick = swing_end_tick + 2u;
         baseline.records.push_back(network_example::LocomotionStepRecord{
-            kMonsterNetId, 1u, UINT8_MAX, anchored});
+            kLeggedNetId, 1u, UINT8_MAX, anchored});
         follower.handle_client_locomotion_step_batch(baseline);
         push_snapshot(swing_end_tick + 2u, actor_x + 0.25f);
         follower.update_follower_locomotion();
@@ -3578,7 +3636,7 @@ int main() {
         network_example::LocomotionStepBatchPacket late_baseline{};
         late_baseline.server_tick = swing_end_tick + 2u;
         late_baseline.records.push_back(network_example::LocomotionStepRecord{
-            kMonsterNetId, 3u, UINT8_MAX, glm::vec3{2.0f, 0.0f, 2.0f}});
+            kLeggedNetId, 3u, UINT8_MAX, glm::vec3{2.0f, 0.0f, 2.0f}});
         follower.handle_client_locomotion_step_batch(late_baseline);
         follower.update_follower_locomotion();  // no new snapshot: steps 0 ticks
         require(follower.pending_follower_steps_.size() == 1u);
@@ -3586,14 +3644,14 @@ int main() {
         push_snapshot(swing_end_tick + 4u, actor_x + 0.5f);
         follower.update_follower_locomotion();
         const network_example::LegLocomotionState& late_planted =
-            follower.follower_locomotion_states_[kMonsterNetId].legs[3];
+            follower.follower_locomotion_states_[kLeggedNetId].legs[3];
         require(late_planted.foot_initialized);
         require(glm::length(
                     late_planted.foot_target_world -
                     glm::vec3{2.0f, 0.0f, 2.0f}) < 0.0001f);
 
         const network_example::LegLocomotionState& planted =
-            follower.follower_locomotion_states_[kMonsterNetId].legs[1];
+            follower.follower_locomotion_states_[kLeggedNetId].legs[1];
         require(planted.foot_initialized);
         require(planted.gait_state ==
                 network_example::LegGaitState::kSupport);
@@ -3624,6 +3682,22 @@ int main() {
     network_example::game_server::GameServer observer_server(
         observer_kernel,
         legged_locomotion_config);
+    // Created explicitly rather than left to a preloaded director: preloading is
+    // the app's job, not the catalog loader's, so nothing in this test would
+    // ever bring the director online. The agent runtime still adopts the entity
+    // and drives its patrol, which is what the run below measures.
+    KernelServerEntityCreateInfo observer_create{};
+    observer_create.struct_size = sizeof(observer_create);
+    observer_create.entity_type = network_example::game_server::kEntityTypeActor;
+    observer_create.actor_type = KernelActorType_Agent;
+    observer_create.entity_template_id = 21u;
+    observer_create.actor_template_id = 21u;
+    observer_create.position = KernelVec3{0.0f, 10.0f, 0.0f};
+    observer_create.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+    std::uint32_t observer_created_net_id = 0u;
+    require(Kernel_ServerCreateEntity(
+        observer_kernel, &observer_create, &observer_created_net_id));
+    require(observer_created_net_id != 0u);
 
     std::uint32_t observer_actor_net_id = 0u;
     float observer_actor_min_x = std::numeric_limits<float>::infinity();
@@ -3965,9 +4039,21 @@ int main() {
     require(patrol_velocity_from_synthetic_position(-30.0f) > 0.1f);
     Kernel_Destroy(observer_kernel);
 
+    // Driven from the mixed-slot fixture rather than the shipped player, whose
+    // five identical bottles cannot show quantity > 1 or two different portable
+    // state shapes.
+    const std::vector<std::uint8_t> inventory_bundle = make_gameplay_bundle_zip(
+        production_sentry_yaml,
+        {},
+        inventory_player_yaml);
+    const network_example::game_server::GameServerGameplayConfig inventory_config =
+        network_example::game_server::load_gameplay_config_from_bundle_memory(
+            inventory_bundle.data(),
+            static_cast<std::uint32_t>(inventory_bundle.size()),
+            "gameplay_catalog.yaml");
     KernelHandle* inventory_kernel = make_server_kernel();
     network_example::game_server::GameServer inventory_server(
-        inventory_kernel, config);
+        inventory_kernel, inventory_config);
     assert(Kernel_StartDedicatedServer(inventory_kernel, 7898));
     const std::uint32_t inventory_player = create_player_entity(inventory_kernel);
     KernelEvent player_joined{};
@@ -4019,8 +4105,8 @@ int main() {
 
     network_example::game_server::GameServerGameplayConfig no_inventory_config =
         config;
-    no_inventory_config.actor_templates[0].inventory_slot_capacity = 0;
-    no_inventory_config.actor_templates[0].inventory_slots.clear();
+    no_inventory_config.actor_templates[player_index].inventory_slot_capacity = 0;
+    no_inventory_config.actor_templates[player_index].inventory_slots.clear();
     no_inventory_config.entity_templates[0].inventory_slot_capacity = 0;
     no_inventory_config.entity_templates[0].inventory_slots.clear();
     no_inventory_config.weapons.catalog_hash =

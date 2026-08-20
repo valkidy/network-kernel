@@ -86,6 +86,22 @@ cc_test(
     ],
 )
 
+# The authoritative half of per-bone limb colliders, and the reference the
+# client side is compared against. Runs on a dedicated-server kernel because
+# that is the shipping environment; see the file header.
+cc_test(
+    name = "limb_collider_test",
+    srcs = ["limb_collider_test.cc"],
+    data = [
+        "//game_server/gameplay_catalog_bundle:bundle",
+    ],
+    deps = [
+        ":game_server",
+        ":game_server_bridge",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
 cc_test(
     name = "activation_gameplay_config_test",
     srcs = ["activation_gameplay_config_test.cc"],
