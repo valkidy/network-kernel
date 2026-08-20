@@ -754,9 +754,11 @@ bool projectile_trigger_is_valid(
     const std::uint32_t expected_count = trigger.action_count == 0u
         ? (trigger.action_type == KernelEntityTriggerActionType_None ? 0u : 1u)
         : trigger.action_count;
-    if (spawned_ids.size() != expected_count) {
-        return false;
-    }
+    // Only the spawn actions have to name a projectile. Requiring every action
+    // to be one rejected the impulse-on-impact triggers an area effect authors
+    // (rocket_explosion), even though simulate_projectiles implements exactly
+    // that -- the shape of the trigger is checked by validate_projectile_
+    // mechanics, and this function only owns the spawn references.
     for (std::uint32_t index = 0; index < expected_count; ++index) {
         const std::uint32_t condition_type = trigger.action_count == 0u
             ? trigger.condition_type
@@ -1829,6 +1831,7 @@ bool KernelEngine::prepare_prediction_physics() {
     prediction_physics_world_ = std::move(world);
     prediction_proxy_collider_ids_.clear();
     prediction_obstacle_collider_ids_.clear();
+    prediction_limb_collider_ids_.clear();
     next_prediction_proxy_collider_id_ = 0xc0000000u;
     return true;
 }
@@ -3396,7 +3399,7 @@ bool KernelEngine::load_gameplay_catalog(
             // and nothing else. An unknown bit here would silently widen or
             // narrow what stops the actor.
             (entity_template.movement.movement_collision_mask &
-             ~KERNEL_MOVEMENT_MASK_DEFAULT) != 0u) {
+             ~KERNEL_MOVEMENT_MASK_SUPPORTED) != 0u) {
             return false;
         }
         if (entity_template.movement.controller_type !=
@@ -4629,6 +4632,147 @@ void KernelEngine::sync_client_follower_limb_colliders() {
                     state.last_root_position,
                     state.applied_root_rotation));
         }
+    }
+}
+
+void KernelEngine::remove_prediction_limb_proxies(NetId net_id) {
+    const auto proxies = prediction_limb_collider_ids_.find(net_id);
+    if (proxies == prediction_limb_collider_ids_.end()) {
+        return;
+    }
+    if (prediction_physics_world_ != nullptr) {
+        for (const std::uint32_t collider_id : proxies->second) {
+            prediction_physics_world_->remove_object(collider_id);
+        }
+    }
+    prediction_limb_collider_ids_.erase(proxies);
+}
+
+// The prediction world's copy of a followed rig's legs.
+//
+// sync_client_follower_limb_colliders is the render-time twin of this: it says
+// where the limbs are, this is what makes anything able to walk into them. They
+// are separate because they run on different clocks -- that one per rendered
+// frame, this one per prediction tick -- and because the collider registry is
+// cleared and refilled by the render pass, which is exactly the churn a physics
+// body set must not inherit.
+void KernelEngine::sync_prediction_limb_proxies() {
+    if (prediction_physics_world_ == nullptr) {
+        return;
+    }
+    std::unordered_set<NetId> current;
+    for (const auto& [net_id, state] : follower_locomotion_states_) {
+        if (!state.pose_valid || state.solved_collider_poses.empty()) {
+            continue;
+        }
+        const auto replicated = std::find_if(
+            client_replicated_entities_.begin(),
+            client_replicated_entities_.end(),
+            [net_id = net_id](const ClientReplicatedEntity& candidate) {
+                return candidate.net_id == net_id;
+            });
+        if (replicated == client_replicated_entities_.end()) {
+            continue;
+        }
+        const KernelEntityTemplateDefinition* entity_template =
+            find_entity_template(
+                entity_templates_,
+                replicated->type == EntityType::kActor
+                    ? replicated->actor_template_id
+                    : replicated->entity_template_id);
+        if (entity_template == nullptr ||
+            entity_template->skeleton.struct_size <
+                sizeof(KernelSkeletonBindingDefinition) ||
+            entity_template->skeleton.collider_count !=
+                state.solved_collider_poses.size()) {
+            continue;
+        }
+        const RuntimeSkeletonAsset* skeleton_asset = find_skeleton_asset(
+            skeleton_assets_,
+            entity_template->skeleton.skeleton_asset_id);
+        if (skeleton_asset == nullptr) {
+            continue;
+        }
+
+        auto proxies = prediction_limb_collider_ids_.find(net_id);
+        const bool first_sync = proxies == prediction_limb_collider_ids_.end();
+        if (first_sync) {
+            std::vector<std::uint32_t> ids;
+            ids.reserve(entity_template->skeleton.collider_count);
+            for (std::uint32_t index = 0u;
+                 index < entity_template->skeleton.collider_count;
+                 ++index) {
+                ids.push_back(next_prediction_proxy_collider_id_++);
+            }
+            proxies =
+                prediction_limb_collider_ids_.emplace(net_id, std::move(ids))
+                    .first;
+        }
+
+        for (std::uint32_t index = 0u;
+             index < entity_template->skeleton.collider_count;
+             ++index) {
+            // Same derivation as the registry path, from the same root the
+            // solve published. Composing a pose solved at one instant onto a
+            // root taken at another is the time-base split that slides feet.
+            const ColliderInstance limb = make_limb_collider(
+                net_id,
+                replicated->type,
+                replicated->actor_type,
+                entity_template->skeleton.colliders[index],
+                state.solved_collider_poses[index],
+                skeleton_asset->bind_pose,
+                state.last_root_position,
+                state.applied_root_rotation);
+            const std::uint32_t collider_id = proxies->second[index];
+            if (!first_sync) {
+                // Legs move every tick but never come and go, so they are moved
+                // in place: upserting them instead would hand Jolt a fresh body
+                // set to churn through on every prediction step.
+                prediction_physics_world_->set_object_transform(
+                    collider_id, limb.world_center, limb.world_rotation);
+                continue;
+            }
+            physics::CollisionObjectDescriptor object{};
+            object.identity.entity_net_id = net_id;
+            object.identity.collider_id = collider_id;
+            object.identity.hit_zone = limb.hit_zone;
+            object.identity.kind = physics::CollisionObjectKind::kActorLimb;
+            object.identity.layer = physics::CollisionLayer::kActorLimb;
+            object.identity.gameplay_category = limb.layer_mask;
+            object.shape.type =
+                limb.shape_type == ColliderShapeType::kSphere
+                    ? physics::CollisionShapeType::kSphere
+                    : limb.shape_type == ColliderShapeType::kCapsule
+                        ? physics::CollisionShapeType::kCapsule
+                        : physics::CollisionShapeType::kBox;
+            object.shape.half_extents = limb.half_extents;
+            object.shape.radius = limb.radius;
+            object.shape.capsule_half_height = limb.capsule_half_height;
+            object.position = limb.world_center;
+            object.rotation = limb.world_rotation;
+            object.enabled = limb.enabled;
+            std::string error;
+            if (!prediction_physics_world_->upsert_object(object, &error)) {
+                spdlog::error(
+                    "failed to register prediction limb proxy net_id={}: {}",
+                    net_id,
+                    error);
+            }
+        }
+        current.insert(net_id);
+    }
+
+    for (auto entry = prediction_limb_collider_ids_.begin();
+         entry != prediction_limb_collider_ids_.end();) {
+        if (current.contains(entry->first)) {
+            ++entry;
+            continue;
+        }
+        for (const std::uint32_t collider_id : entry->second) {
+            prediction_physics_world_->remove_object(collider_id);
+        }
+        entry = prediction_limb_collider_ids_.erase(entry);
     }
 }
 
@@ -7152,6 +7296,7 @@ void KernelEngine::handle_client_despawn(const EntityDespawnPacket& packet) {
         }
         prediction_obstacle_collider_ids_.erase(obstacle);
     }
+    remove_prediction_limb_proxies(packet.net_id);
     client_metadata_timeout_reported_entities_.erase(packet.net_id);
     predicted_projectiles_.erase(
         std::remove_if(
@@ -7230,6 +7375,10 @@ void KernelEngine::clear_client_session() {
         }
     }
     prediction_obstacle_collider_ids_.clear();
+    while (!prediction_limb_collider_ids_.empty()) {
+        remove_prediction_limb_proxies(
+            prediction_limb_collider_ids_.begin()->first);
+    }
     local_client_peer_id_ = 0;
     local_player_net_id_ = 0;
     local_last_processed_input_seq_ = 0;
@@ -7715,8 +7864,15 @@ bool KernelEngine::build_local_character_movement_config(
         : authored_mask;
     if (session_rules_.actor_blocking_mode !=
         KernelActorBlockingMode_Predicted) {
-        config.filter.collision_mask &= ~physics::collision_layer_bit(
-            physics::CollisionLayer::kActorMovement);
+        // Limbs go with the capsule rather than surviving on their own: they
+        // are the same claim -- that another actor's body blocks this one --
+        // made about a different shape, and leaving them on in a session that
+        // does not block actors would stop the player on a leg while walking
+        // through the body it hangs from.
+        config.filter.collision_mask &= ~(
+            physics::collision_layer_bit(
+                physics::CollisionLayer::kActorMovement) |
+            physics::collision_layer_bit(physics::CollisionLayer::kActorLimb));
     }
     config.filter.ignored_entity_net_id = local_player_net_id_;
     local_player_move_speed_meters_per_second_ =
@@ -7850,6 +8006,13 @@ bool KernelEngine::step_local_character_prediction(
         local_presentation_velocity_ = predicted_local_entity_.velocity;
         has_local_presentation_position_ = true;
     }
+    // Before the capsules, and on this clock rather than the render frame's:
+    // the character step below is the only thing that reads them, so they have
+    // to be current as of this prediction tick. A replay of several pending
+    // inputs reuses one pose for all of them -- there is only ever one solved
+    // pose to hand, and unlike an actor capsule a limb has no velocity to
+    // extrapolate along.
+    sync_prediction_limb_proxies();
     movement_solver::CharacterMovementConfig movement_config{};
     if (!build_local_character_movement_config(&movement_config) ||
         !sync_prediction_actor_proxies(

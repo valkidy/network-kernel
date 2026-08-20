@@ -52,8 +52,17 @@ static_assert(
         physics::collision_layer_bit(physics::CollisionLayer::kActorMovement),
     "movement layer bits must match physics::CollisionLayer");
 static_assert(
+    KERNEL_MOVEMENT_LAYER_LIMB ==
+        physics::collision_layer_bit(physics::CollisionLayer::kActorLimb),
+    "movement layer bits must match physics::CollisionLayer");
+static_assert(
     KERNEL_MOVEMENT_MASK_DEFAULT == physics::kMovementCollisionMask,
     "the default movement mask must match the engine default");
+// The opt-in layer must stay out of the default, or every actor starts paying
+// for a dozen limb boxes it never asked about.
+static_assert(
+    (KERNEL_MOVEMENT_MASK_DEFAULT & KERNEL_MOVEMENT_LAYER_LIMB) == 0u,
+    "limbs must stay opt-in");
 
 // collision_mask is the authored MovementState::movement_collision_mask, where
 // zero means "whatever the engine has always used" -- terrain, static obstacles
@@ -333,9 +342,14 @@ void simulate_actor_movement(
                 collider->collider_id,
                 next_movement.movement_collision_mask);
             if (actor_blocking_mode == KernelActorBlockingMode_Disabled) {
-                config.filter.collision_mask &=
-                    ~physics::collision_layer_bit(
-                        physics::CollisionLayer::kActorMovement);
+                // Limbs are struck out with the capsule, not separately: both
+                // say "another actor's body blocks this one", so a session that
+                // does not block actors must not stop anyone on a leg either.
+                config.filter.collision_mask &= ~(
+                    physics::collision_layer_bit(
+                        physics::CollisionLayer::kActorMovement) |
+                    physics::collision_layer_bit(
+                        physics::CollisionLayer::kActorLimb));
             }
             movement_solver::CharacterMovementState state{};
             state.position = transform.position;

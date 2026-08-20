@@ -673,6 +673,11 @@ std::uint32_t movement_collision_layer_token_from_yaml(
     if (token == "actor") {
         return KERNEL_MOVEMENT_LAYER_ACTOR;
     }
+    // A rig's own bones. Naming it is the only way to collide with legs, which
+    // is what keeps the cost off every template that has no use for them.
+    if (token == "limb") {
+        return KERNEL_MOVEMENT_LAYER_LIMB;
+    }
     throw std::runtime_error("unsupported movement collision_mask: " + token);
 }
 
@@ -4008,6 +4013,9 @@ EntityTemplateConfig entity_template_from_yaml(
                 "server_only",
                 "transform",
                 "health",
+                // A prop is what an impulse actually pushes, so it carries the
+                // resistance the same way an actor does.
+                "impulse_resistance",
                 "physics",
                 "interaction",
                 "throw",
@@ -4024,6 +4032,10 @@ EntityTemplateConfig entity_template_from_yaml(
         entity_template.entity_type = KernelEntityType_Prop;
         entity_template.server_only =
             node["server_only"] ? node["server_only"].as<bool>() : false;
+        if (node["impulse_resistance"]) {
+            entity_template.impulse_resistance =
+                node["impulse_resistance"].as<float>();
+        }
         if (node["transform"]) {
             reject_unknown_keys(
                 node["transform"],
@@ -5185,6 +5197,40 @@ ProjectileTemplateConfig projectile_template_from_yaml(
     mechanics.collision_query_mode = collision_query_mode_from_yaml(
         node["collision_query_mode"] ? node["collision_query_mode"]
                                      : node["collision_query"]);
+    // Parsed before the area_effect branch below, which returns early. An
+    // area effect authors triggers like any other projectile -- rocket_explosion
+    // carries the damage-and-impulse graph -- and leaving this after that return
+    // dropped them silently, since "triggers" is a known key and so survives
+    // reject_unknown_keys either way.
+    const YAML::Node triggers = node["triggers"];
+    if (triggers) {
+        reject_unknown_keys(
+            triggers,
+            {"on_projectile_impact", "on_expired"},
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_PROJECTILE,
+            definition.projectile_template_id);
+        if (triggers["on_projectile_impact"]) {
+            projectile_template.projectile_impact_trigger =
+                trigger_binding_from_yaml(
+                    triggers["on_projectile_impact"],
+                    path,
+                    source_kind,
+                    KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_PROJECTILE,
+                    definition.projectile_template_id);
+        }
+        if (triggers["on_expired"]) {
+            projectile_template.expired_trigger =
+                trigger_binding_from_yaml(
+                    triggers["on_expired"],
+                    path,
+                    source_kind,
+                    KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_PROJECTILE,
+                    definition.projectile_template_id);
+        }
+    }
+
     if (mechanics.projectile_type == KernelProjectileType_AreaEffect) {
         const YAML::Node damage_behavior = node["damage_behavior"];
         if (!damage_behavior) {
@@ -5282,35 +5328,6 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             "beam " + projectile_template.name);
     } else if (node["beam"]) {
         throw std::runtime_error("beam block requires projectile type: beam");
-    }
-
-    const YAML::Node triggers = node["triggers"];
-    if (triggers) {
-        reject_unknown_keys(
-            triggers,
-            {"on_projectile_impact", "on_expired"},
-            path,
-            source_kind,
-            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_PROJECTILE,
-            definition.projectile_template_id);
-        if (triggers["on_projectile_impact"]) {
-            projectile_template.projectile_impact_trigger =
-                trigger_binding_from_yaml(
-                    triggers["on_projectile_impact"],
-                    path,
-                    source_kind,
-                    KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_PROJECTILE,
-                    definition.projectile_template_id);
-        }
-        if (triggers["on_expired"]) {
-            projectile_template.expired_trigger =
-                trigger_binding_from_yaml(
-                    triggers["on_expired"],
-                    path,
-                    source_kind,
-                    KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_PROJECTILE,
-                    definition.projectile_template_id);
-        }
     }
 
     if (mechanics.motion_model == KernelProjectileMotionModel_Homing) {

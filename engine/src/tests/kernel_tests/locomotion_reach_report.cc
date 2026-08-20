@@ -104,7 +104,7 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    // monster_sim_actor.yaml: max_reach_ratio 0.999 on every leg.
+    // quadruped_actor.yaml: max_reach_ratio 0.99 on every leg.
     constexpr float kMaxReachRatio = 0.999f;
     const std::array<const char*, 4> legs{
         "FrontLeft", "FrontRight", "RearLeft", "RearRight"};

@@ -11,11 +11,11 @@ set -euo pipefail
 out_path="$$(pwd)/$@"
 bundle_root="$(@D)/bundle_root"
 rm -rf "$$bundle_root"
-mkdir -p "$$bundle_root/action_templates" "$$bundle_root/action_graph_templates" "$$bundle_root/weapon_templates" "$$bundle_root/projectile_templates" "$$bundle_root/collider_templates" "$$bundle_root/entity_templates" "$$bundle_root/item_templates" "$$bundle_root/skeleton_assets/generated"
+mkdir -p "$$bundle_root/action_templates" "$$bundle_root/action_graph_templates" "$$bundle_root/status_effect_templates" "$$bundle_root/weapon_templates" "$$bundle_root/projectile_templates" "$$bundle_root/collider_templates" "$$bundle_root/entity_templates" "$$bundle_root/item_templates" "$$bundle_root/skeleton_assets/generated"
 for src in $(SRCS); do
   case "$$src" in
-    */test_catalogs/monster_observer/gameplay_catalog.yaml)
-      cp "$$src" "$$bundle_root/monster_observer_gameplay_catalog.yaml"
+    */test_catalogs/legged_locomotion/gameplay_catalog.yaml)
+      cp "$$src" "$$bundle_root/legged_locomotion_gameplay_catalog.yaml"
       ;;
     */gameplay_catalog.yaml)
       cp "$$src" "$$bundle_root/gameplay_catalog.yaml"
@@ -28,6 +28,9 @@ for src in $(SRCS); do
       ;;
     */action_graph_templates/*.yaml)
       cp "$$src" "$$bundle_root/action_graph_templates/$$(basename "$$src")"
+      ;;
+    */status_effect_templates/*.yaml)
+      cp "$$src" "$$bundle_root/status_effect_templates/$$(basename "$$src")"
       ;;
     */projectile_templates/*.yaml)
       cp "$$src" "$$bundle_root/projectile_templates/$$(basename "$$src")"

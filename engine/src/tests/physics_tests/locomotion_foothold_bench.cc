@@ -1,7 +1,7 @@
 // Measures what a leg's foothold sampling actually costs against real terrain.
 //
 // The locomotion pass fires one downward ray per authored candidate offset per
-// leg per tick (monster_sim_actor: 5 candidates x 4 legs = 20 rays), so moving
+// leg per tick (quadruped_actor: 5 candidates x 4 legs = 20 rays), so moving
 // the leg solve onto the presenting client means the client pays this on top of
 // the server. Whether that is affordable is the open question; this reports the
 // number instead of guessing it.
@@ -37,7 +37,7 @@ using network_example::physics::PhysicsWorld;
 using network_example::physics::PhysicsWorldConfig;
 using network_example::physics::RayCastRequest;
 
-// monster_sim_actor.yaml: 5 foothold candidates, 4 legs.
+// quadruped_actor.yaml: 5 foothold candidates, 4 legs.
 constexpr int kCandidatesPerLeg = 5;
 constexpr int kLegs = 4;
 constexpr int kRaysPerActorTick = kCandidatesPerLeg * kLegs;

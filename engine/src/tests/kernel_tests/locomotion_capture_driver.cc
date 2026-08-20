@@ -38,7 +38,7 @@
 //   locomotion_capture_driver --dylib=PATH --bundle=PATH --manifest=PATH
 //                             --out-prefix=PREFIX [--entry=NAME]
 //                             [--samples=300] [--tick-rate=30] [--path="+X"]
-//                             [--entity-template=20] [--spawn=x,y,z]
+//                             [--entity-template=21] [--spawn=x,y,z]
 //                             [--port=7777] [--label=native]
 //
 // Writes <out-prefix>_root.csv and <out-prefix>_bones.csv.
@@ -83,8 +83,8 @@ struct Options {
     std::string bundle_path;
     std::string manifest_path;
     std::string out_prefix;
-    std::string entry_path = "monster_observer_gameplay_catalog.yaml";
-    std::string content_namespace = "monster_observer";
+    std::string entry_path = "legged_locomotion_gameplay_catalog.yaml";
+    std::string content_namespace = "legged_locomotion";
     std::string path_text = "+X";
     std::string label = "capture";
     int samples = 300;

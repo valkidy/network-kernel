@@ -12,7 +12,7 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 74u`.
+`KERNEL_ABI_VERSION == 76u`.
 
 ## Ownership
 
@@ -30,6 +30,20 @@ failures return `NULL`, `false`, or `0`.
 Additive changes must prefer new `Kernel_*` functions or new capability flags.
 Breaking changes to public struct layout, enum semantics, buffer ownership, or
 function signatures require a `KERNEL_ABI_VERSION` bump.
+
+ABI version 76 adds `KERNEL_MOVEMENT_LAYER_LIMB` (`0x10`) to the movement
+collision-mask vocabulary, so a template can ask to be blocked by a legged rig's
+per-bone colliders. No struct layout changes; the bit is authored inside the
+existing `KernelMovementDefinition::movement_collision_mask`.
+
+The set of authorable bits moved from `KERNEL_MOVEMENT_MASK_DEFAULT` to the new
+`KERNEL_MOVEMENT_MASK_SUPPORTED`. The two are now different things on purpose:
+`DEFAULT` is what a mask of zero selects and is **unchanged**, so an actor that
+authors no mask keeps exactly the blockers it had, while `SUPPORTED` is what
+validation accepts. Limbs stay out of `DEFAULT` because a legged actor
+contributes a dozen boxes where every other actor contributes one capsule.
+Managed mirrors that reproduce the movement-layer constants must add the new bit
+and the new mask; the existing constants are unchanged.
 
 ABI version 74 appends `collider_count` and `colliders` to
 `KernelSkeletonBindingDefinition`, describing colliders carried by a skeleton's

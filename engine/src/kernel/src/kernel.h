@@ -797,6 +797,8 @@ private:
     // follower_locomotion_states_ rather than carried in the snapshot: the
     // follower solve already produced the frames, so this costs no wire bytes.
     void sync_client_follower_limb_colliders();
+    void sync_prediction_limb_proxies();
+    void remove_prediction_limb_proxies(NetId net_id);
     void materialize_projectile_collider(NetId net_id);
     void sync_entity_colliders_from_world();
     std::uint32_t collider_template_id_for_projectile_template(
@@ -948,6 +950,12 @@ private:
     std::unique_ptr<physics::PhysicsWorld> prediction_physics_world_;
     std::unordered_map<NetId, std::uint32_t> prediction_proxy_collider_ids_;
     std::unordered_map<NetId, std::uint32_t> prediction_obstacle_collider_ids_;
+    // One proxy per bone, unlike the two maps above which are one per entity: a
+    // rig contributes a dozen bodies. Their ids cannot come from the collider
+    // registry, which the render pass clears and refills every frame -- the ids
+    // would be new each time and Jolt would churn a whole body set per frame.
+    std::unordered_map<NetId, std::vector<std::uint32_t>>
+        prediction_limb_collider_ids_;
     std::uint32_t next_prediction_proxy_collider_id_ = 0xc0000000u;
     std::unordered_map<PeerId, GameplayCatalogTransfer>
         gameplay_catalog_transfers_;

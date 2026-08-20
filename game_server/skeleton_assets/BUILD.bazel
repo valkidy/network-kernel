@@ -4,23 +4,11 @@ load(":skeleton_asset_rules.bzl", "skeleton_asset")
 
 package(default_visibility = ["//visibility:public"])
 
-skeleton_asset(
-    name = "simplified_monster_sim_v4",
-    src = "raw/simplified_monster_sim_v4.glb",
-    rig = "raw/simplified_monster_sim_v4.rig.yaml",
-    asset_id = 1,
-)
-
-skeleton_asset(
-    name = "rock_robot_biped_24u_v3",
-    src = "raw/rock_robot_biped_24u_v3.glb",
-    asset_id = 2,
-)
-
-# Base locomotion templates, exported from LocomotionModel.unity by
-# //tools:unity_scene_to_glb with no coordinate conversion. simplified_monster_sim_v4
-# stays registered above until these have replaced it, because it is the only
-# rig with a capture golden proving the locomotion system unchanged.
+# The locomotion rigs, exported from LocomotionModel.unity by
+# //tools:unity_scene_to_glb with no coordinate conversion. asset_id 1 and 2
+# belonged to simplified_monster_sim_v4 and rock_robot_biped_24u_v3 and are
+# retired with them; ids are never reused, so a stale catalog naming one fails
+# to resolve rather than silently binding to a different rig.
 skeleton_asset(
     name = "simplified_biped",
     src = "raw/simplified_biped.glb",
