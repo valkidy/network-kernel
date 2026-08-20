@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -28,6 +29,14 @@
 #include "game_server/gameplay_config.h"
 #include "kernel/public/kernel_api.h"
 #include "kernel/public/kernel_types.h"
+#include "protocol/public/network_packets.h"
+#include "sync/public/snapshot.h"
+// The follower half below reads the engine's own client state -- the follower
+// locomotion map and the collider registry -- which no public entry point
+// exposes. Same access route the other game_server tests take.
+#define private public
+#include "kernel/src/kernel.h"
+#undef private
 
 namespace {
 
@@ -242,6 +251,207 @@ int main() {
     }
 
     Kernel_Destroy(kernel);
+
+    // ---------------------------------------------------------------------
+    // Client parity.
+    //
+    // The claim is NOT "the client draws something leg-shaped" -- it is that a
+    // client kernel derives the same nine boxes, in the same places, from the
+    // replicated root plus replicated steps alone. That is the whole argument
+    // for spending zero snapshot bytes on limbs, so it is asserted against the
+    // authority's own numbers rather than against constants.
+    //
+    // Two engines rather than one: an authority to be the reference, and a
+    // pure client to reproduce it. The client is fed exactly what the wire
+    // would carry -- a spawn, a locomotion baseline, and snapshots.
+    network_example::game_server::KernelGameplayCatalogStorage storage =
+        network_example::game_server::build_kernel_gameplay_catalog(config);
+
+    KernelConfig authority_config{};
+    authority_config.mode = KernelMode_DedicatedServer;
+    authority_config.tick.server_tick_rate = 30;
+    authority_config.tick.snapshot_rate = 30;
+    authority_config.max_render_states = 64;
+    authority_config.max_events = 128;
+    network_example::KernelEngine authority(authority_config);
+    // With the terrain, not without it: a foothold raycast that finds nothing
+    // leaves every foot uninitialised, and an actor with no planted feet
+    // publishes no limbs at all -- the parity check would then compare two
+    // empty sets and pass for the wrong reason.
+    const std::vector<std::uint8_t> scene_bytes =
+        network_example::game_server::load_gameplay_bundle_entry_bytes(
+            bundle.data(),
+            static_cast<std::uint32_t>(bundle.size()),
+            config.static_collision_scene.entry_path);
+    require(!scene_bytes.empty());
+    KernelStaticCollisionSceneConfig scene{};
+    scene.struct_size = sizeof(scene);
+    scene.artifact_bytes = scene_bytes.data();
+    scene.artifact_size = static_cast<std::uint32_t>(scene_bytes.size());
+    scene.scene_id = config.static_collision_scene.scene_id;
+    scene.collider_id = config.static_collision_scene.collider_id;
+    scene.collision_layer = config.static_collision_scene.collision_layer;
+    bool scene_rejected = true;
+    require(authority.load_gameplay_catalog_with_static_collision_scene(
+        storage.definition, scene, &scene_rejected));
+    require(!scene_rejected);
+    require(authority.start_dedicated_server(7907));
+
+    KernelServerEntityCreateInfo parity_create = create;
+    std::uint32_t parity_net_id = 0u;
+    require(authority.server_create_entity(parity_create, &parity_net_id));
+    require(parity_net_id != 0u);
+    for (std::uint32_t frame = 0u; frame < 90u; ++frame) {
+        authority.update(1.0f / 30.0f);
+    }
+
+    std::array<KernelColliderShapeView, 32> authority_shapes{};
+    KernelColliderShapeQuery parity_query{};
+    parity_query.struct_size = sizeof(parity_query);
+    parity_query.entity_net_id = parity_net_id;
+    parity_query.purpose_mask = KernelColliderPurpose_Limb;
+    const std::uint32_t authority_count = authority.query_collider_shapes(
+        &parity_query,
+        authority_shapes.data(),
+        static_cast<std::uint32_t>(authority_shapes.size()));
+    require(authority_count == kExpectedBoneIndices.size());
+
+    KernelServerEntityState authority_state{};
+    authority_state.struct_size = sizeof(authority_state);
+    require(authority.server_get_entity_state(parity_net_id, &authority_state));
+
+    KernelConfig follower_config{};
+    follower_config.mode = KernelMode_Client;
+    follower_config.tick.server_tick_rate = 30;
+    follower_config.tick.snapshot_rate = 15;
+    follower_config.max_render_states = 64;
+    follower_config.max_events = 128;
+    network_example::KernelEngine follower(follower_config);
+    follower.reset_runtime_state(KernelMode_Client);
+    // No scene on the follower on purpose: it never casts a foothold ray, and
+    // proving that is part of the point.
+    require(follower.load_gameplay_catalog(storage.definition));
+
+    network_example::EntitySpawnPacket spawn{};
+    spawn.net_id = parity_net_id;
+    spawn.entity_type = network_example::EntityType::kActor;
+    spawn.actor_type = network_example::ActorType::kAgent;
+    spawn.actor_template_id = 21u;
+    spawn.entity_template_id = 21u;
+    spawn.position = glm::vec3{
+        authority_state.position.x,
+        authority_state.position.y,
+        authority_state.position.z};
+    follower.handle_client_spawn(spawn);
+
+    // The baseline the server sends beside a spawn: every planted foot as a
+    // step that already finished, which the follower applies by planting it
+    // outright. Built here the way KernelEngine::send_locomotion_baseline
+    // builds it, from the authority's own feet.
+    const auto authority_locomotion =
+        authority.locomotion_states_.find(parity_net_id);
+    require(authority_locomotion != authority.locomotion_states_.end());
+    const std::uint32_t authority_tick = authority.tick_loop_.current_tick();
+    network_example::LocomotionStepBatchPacket baseline{};
+    baseline.server_tick = authority_tick;
+    for (std::uint32_t leg_index = 0u;
+         leg_index < authority_locomotion->second.legs.size();
+         ++leg_index) {
+        const network_example::LegLocomotionState& leg =
+            authority_locomotion->second.legs[leg_index];
+        require(leg.foot_initialized);
+        network_example::LocomotionStepRecord record{};
+        record.net_id = parity_net_id;
+        record.leg_index = static_cast<std::uint8_t>(leg_index);
+        record.start_tick_delta = UINT8_MAX;
+        record.landing_target_world = leg.foot_target_world;
+        baseline.records.push_back(record);
+    }
+    follower.handle_client_locomotion_step_batch(baseline);
+
+    const auto push_snapshot = [&](std::uint32_t server_tick) {
+        network_example::WorldSnapshot snapshot;
+        snapshot.header.server_tick = server_tick;
+        network_example::EntitySnapshot entity;
+        entity.net_id = parity_net_id;
+        entity.type = network_example::EntityType::kActor;
+        entity.actor_type = network_example::ActorType::kAgent;
+        entity.position = glm::vec3{
+            authority_state.position.x,
+            authority_state.position.y,
+            authority_state.position.z};
+        entity.rotation = glm::quat{
+            authority_state.rotation.w,
+            authority_state.rotation.x,
+            authority_state.rotation.y,
+            authority_state.rotation.z};
+        snapshot.entities.push_back(entity);
+        follower.handle_client_snapshot(snapshot);
+    };
+    // Two ticks apart so the buffer has a span to interpolate the root over.
+    push_snapshot(authority_tick);
+    push_snapshot(authority_tick + 2u);
+    for (std::uint32_t frame = 0u; frame < 8u; ++frame) {
+        follower.update(1.0f / 30.0f);
+    }
+
+    require(follower.follower_locomotion_states_.count(parity_net_id) == 1u);
+    std::array<KernelColliderShapeView, 32> follower_shapes{};
+    const std::uint32_t follower_count = follower.query_collider_shapes(
+        &parity_query,
+        follower_shapes.data(),
+        static_cast<std::uint32_t>(follower_shapes.size()));
+    require(follower_count == authority_count);
+
+    // Same derivation on both sides, so the flags, the shape and the size must
+    // be identical rather than merely similar -- they are read out of the same
+    // rig by the same function.
+    float worst_offset = 0.0f;
+    for (std::uint32_t index = 0u; index < follower_count; ++index) {
+        const KernelColliderShapeView& lhs = authority_shapes[index];
+        const KernelColliderShapeView& rhs = follower_shapes[index];
+        require(rhs.entity_net_id == lhs.entity_net_id);
+        require(rhs.collider_template_id == 0u);
+        require(rhs.shape_type == lhs.shape_type);
+        require(rhs.purpose_flags == lhs.purpose_flags);
+        require(rhs.layer_mask == lhs.layer_mask);
+        require(near_value(rhs.shape_params.x, lhs.shape_params.x));
+        require(near_value(rhs.shape_params.y, lhs.shape_params.y));
+        require(near_value(rhs.shape_params.z, lhs.shape_params.z));
+        const float dx = rhs.world_center.x - lhs.world_center.x;
+        const float dy = rhs.world_center.y - lhs.world_center.y;
+        const float dz = rhs.world_center.z - lhs.world_center.z;
+        const float offset = dx * dx + dy * dy + dz * dz;
+        worst_offset = offset > worst_offset ? offset : worst_offset;
+    }
+    // Guard against the comparison passing on two degenerate sets: the
+    // follower's own nine must be as spread out as the authority's, not nine
+    // boxes sharing an origin.
+    for (std::uint32_t left = 0u; left < follower_count; ++left) {
+        for (std::uint32_t right = left + 1u; right < follower_count; ++right) {
+            require(
+                !near_value(
+                    follower_shapes[left].world_center.x,
+                    follower_shapes[right].world_center.x) ||
+                !near_value(
+                    follower_shapes[left].world_center.y,
+                    follower_shapes[right].world_center.y) ||
+                !near_value(
+                    follower_shapes[left].world_center.z,
+                    follower_shapes[right].world_center.z));
+        }
+    }
+    worst_offset = std::sqrt(worst_offset);
+    std::printf(
+        "limb parity: worst limb centre offset %.4f m over %u colliders\n",
+        static_cast<double>(worst_offset),
+        follower_count);
+    // Tight on purpose. The follower reaches these positions from the
+    // replicated root and the baseline alone, so anything above a few
+    // centimetres means the two sides are deriving the pose differently, not
+    // that the wire lost precision.
+    require(worst_offset < 0.05f);
+
     std::printf("limb_collider_test: PASS\n");
     return 0;
 }
