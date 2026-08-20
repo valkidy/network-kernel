@@ -50,6 +50,8 @@ build:mingw_w64 --cxxopt=-std=gnu++20
 build:mingw_w64 --host_cxxopt=-std=gnu++20
 build:mingw_w64 --copt=-no-canonical-prefixes
 build:mingw_w64 --copt=-fno-canonical-system-headers
+# The kernel translation unit exceeds the standard COFF section limit.
+build:mingw_w64 --copt=-Wa,--mbig-obj
 # Windows target macros
 build:mingw_w64 --copt=-D_WIN32
 build:mingw_w64 --copt=-DWIN32
