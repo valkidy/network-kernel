@@ -509,6 +509,103 @@ int main() {
         !default_found ||
         default_hit.identity.kind != network_example::physics::CollisionObjectKind::kActorLimb);
 
+    // ---------------------------------------------------------------------
+    // The client's prediction world.
+    //
+    // The registry copy above is geometry: it says where the legs are and is
+    // what a debug view reads. Nothing can walk into it. This is the other
+    // half -- the same nine boxes as bodies in the world the predicted local
+    // player actually moves through -- and it is a separate follower because
+    // a prediction world only exists once a client has a verified static
+    // collision scene, which the parity follower above deliberately lacks.
+    network_example::KernelEngine predicting(follower_config);
+    predicting.reset_runtime_state(KernelMode_Client);
+    bool predicting_scene_rejected = true;
+    require(predicting.load_gameplay_catalog_with_static_collision_scene(
+        storage.definition, scene, &predicting_scene_rejected));
+    require(!predicting_scene_rejected);
+    // The welcome packet is what builds this world in a real session; there is
+    // no session here, so the same call is made directly.
+    require(predicting.prepare_prediction_physics());
+    require(predicting.prediction_physics_world_ != nullptr);
+
+    predicting.handle_client_spawn(spawn);
+    predicting.handle_client_locomotion_step_batch(baseline);
+    const auto push_predicting_snapshot = [&](std::uint32_t server_tick) {
+        network_example::WorldSnapshot snapshot;
+        snapshot.header.server_tick = server_tick;
+        network_example::EntitySnapshot entity;
+        entity.net_id = parity_net_id;
+        entity.type = network_example::EntityType::kActor;
+        entity.actor_type = network_example::ActorType::kAgent;
+        entity.position = glm::vec3{
+            authority_state.position.x,
+            authority_state.position.y,
+            authority_state.position.z};
+        entity.rotation = glm::quat{
+            authority_state.rotation.w,
+            authority_state.rotation.x,
+            authority_state.rotation.y,
+            authority_state.rotation.z};
+        snapshot.entities.push_back(entity);
+        predicting.handle_client_snapshot(snapshot);
+    };
+    push_predicting_snapshot(authority_tick);
+    push_predicting_snapshot(authority_tick + 2u);
+    for (std::uint32_t frame = 0u; frame < 8u; ++frame) {
+        predicting.update(1.0f / 30.0f);
+    }
+    require(predicting.follower_locomotion_states_.count(parity_net_id) == 1u);
+
+    predicting.sync_prediction_limb_proxies();
+    const auto predicted_proxies =
+        predicting.prediction_limb_collider_ids_.find(parity_net_id);
+    require(predicted_proxies != predicting.prediction_limb_collider_ids_.end());
+    require(predicted_proxies->second.size() == kExpectedBoneIndices.size());
+
+    // The same ray as on the authority, in the client's own world: a limb is
+    // there to be walked into, and only for a query that names the layer.
+    network_example::physics::CollisionHit predicted_hit{};
+    ray.filter.collision_mask = KERNEL_MOVEMENT_MASK_SUPPORTED;
+    require(predicting.prediction_physics_world_->ray_cast_closest(
+        ray, &predicted_hit));
+    require(
+        predicted_hit.identity.kind ==
+        network_example::physics::CollisionObjectKind::kActorLimb);
+    require(predicted_hit.identity.entity_net_id == parity_net_id);
+    // Within a millimetre of where the authority's ray struck: both worlds hold
+    // the same nine boxes in the same places, which is the whole claim.
+    require(near_value(predicted_hit.position.x, limb_hit.position.x));
+    require(near_value(predicted_hit.position.y, limb_hit.position.y));
+    require(near_value(predicted_hit.position.z, limb_hit.position.z));
+
+    ray.filter.collision_mask = KERNEL_MOVEMENT_MASK_DEFAULT;
+    network_example::physics::CollisionHit predicted_default_hit{};
+    const bool predicted_default_found =
+        predicting.prediction_physics_world_->ray_cast_closest(
+            ray, &predicted_default_hit);
+    require(
+        !predicted_default_found ||
+        predicted_default_hit.identity.kind !=
+            network_example::physics::CollisionObjectKind::kActorLimb);
+
+    // Retiring the entity retires its bodies. A leg left behind is an invisible
+    // wall standing where the rig no longer is.
+    network_example::EntityDespawnPacket despawn{};
+    despawn.net_id = parity_net_id;
+    predicting.handle_client_despawn(despawn);
+    require(
+        predicting.prediction_limb_collider_ids_.count(parity_net_id) == 0u);
+    ray.filter.collision_mask = KERNEL_MOVEMENT_MASK_SUPPORTED;
+    network_example::physics::CollisionHit after_despawn_hit{};
+    const bool after_despawn_found =
+        predicting.prediction_physics_world_->ray_cast_closest(
+            ray, &after_despawn_hit);
+    require(
+        !after_despawn_found ||
+        after_despawn_hit.identity.kind !=
+            network_example::physics::CollisionObjectKind::kActorLimb);
+
     std::printf("limb_collider_test: PASS\n");
     return 0;
 }
