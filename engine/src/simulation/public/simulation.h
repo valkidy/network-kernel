@@ -60,6 +60,13 @@ struct ConfirmedDamage {
 
 glm::vec3 projectile_launch_position(const Transform& transform);
 
+// Maps a beam's aim onto the local +Z its collider template and presentation
+// prefabs are both built along -- half_extents.z is where an oriented-box
+// template states a beam's reach. Every consumer of a beam's rotation has to
+// agree on this axis, including the client rebuilding a replicated beam from
+// its shooter's aim, which is why it does not live inside beam_system.cc.
+glm::quat beam_rotation(const glm::vec3& direction);
+
 glm::vec3 projectile_position_at(
     const glm::vec3& origin,
     const glm::vec3& initial_velocity,

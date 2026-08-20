@@ -6923,6 +6923,7 @@ void KernelEngine::handle_client_projectile_spawn_batch(
                 entity.net_id = record.projectile_net_id;
                 entity.type = EntityType::kProjectile;
                 entity.owner_peer = record.owner_peer;
+                entity.owner_net_id = record.owner_net_id;
                 entity.projectile_template_id =
                     projectile_template->projectile_template_id;
                 entity.collider_template_id =
@@ -6935,6 +6936,7 @@ void KernelEngine::handle_client_projectile_spawn_batch(
                 replicated->type = EntityType::kProjectile;
                 replicated->actor_type = ActorType::kUnknown;
                 replicated->owner_peer = record.owner_peer;
+                replicated->owner_net_id = record.owner_net_id;
                 replicated->projectile_template_id =
                     projectile_template->projectile_template_id;
                 replicated->collider_template_id =
@@ -7562,6 +7564,11 @@ void KernelEngine::poll_client_transport() {
 }
 
 void KernelEngine::handle_client_snapshot(WorldSnapshot snapshot) {
+    // Before anything reads or stores it: beams arrive as a bare reach and are
+    // not renderable until they have been hung off their shooter. Both the
+    // interpolation buffer and latest_client_snapshot_ are fed from here, and
+    // interpolation needs every frame it blends to be resolved already.
+    resolve_client_beam_geometry(&snapshot);
     if (has_client_snapshot_ &&
         snapshot.header.server_tick < latest_client_snapshot_.header.server_tick) {
         store_client_snapshot(std::move(snapshot));
@@ -7587,6 +7594,9 @@ void KernelEngine::handle_client_snapshot(WorldSnapshot snapshot) {
             replicated->position = entity.position;
             replicated->rotation = entity.rotation;
             replicated->velocity = entity.velocity;
+        }
+        if (entity.type == EntityType::kActor) {
+            replicated->aim_direction = entity.aim_direction;
         }
         replicated->snapshot_tick = latest_client_snapshot_.header.server_tick;
         replicated->active = true;
@@ -7646,6 +7656,71 @@ void KernelEngine::sync_client_vision_states_from_snapshot(
         view.resolved_collider_template_id = actor_template->collider_template_id;
         view.valid = 1u;
         vision_states_[entity.net_id].view = view;
+    }
+}
+
+void KernelEngine::resolve_client_beam_geometry(WorldSnapshot* snapshot) const {
+    if (snapshot == nullptr) {
+        return;
+    }
+    for (EntitySnapshot& entity : snapshot->entities) {
+        if ((entity.state_flags & kSnapshotStateFlagProjectileBeam) == 0u) {
+            continue;
+        }
+        const auto beam = std::find_if(
+            client_replicated_entities_.begin(),
+            client_replicated_entities_.end(),
+            [&entity](const ClientReplicatedEntity& candidate) {
+                return candidate.net_id == entity.net_id;
+            });
+        // The shooter comes from the projectile spawn batch, which is reliable
+        // and sent right behind the beam's EntitySpawn on the same channel, so
+        // it cannot be missing once the beam is known at all. A beam a snapshot
+        // mentions before either has landed is left at zero reach rather than
+        // drawn full length through the world origin.
+        glm::vec3 shooter_position{0.0f, 0.0f, 0.0f};
+        glm::vec3 shooter_aim{0.0f, 0.0f, 0.0f};
+        bool resolved = false;
+        if (beam != client_replicated_entities_.end() &&
+            beam->owner_net_id != 0u) {
+            const auto shooter_frame = std::find_if(
+                snapshot->entities.begin(),
+                snapshot->entities.end(),
+                [&beam](const EntitySnapshot& candidate) {
+                    return candidate.net_id == beam->owner_net_id;
+                });
+            if (shooter_frame != snapshot->entities.end()) {
+                shooter_position = shooter_frame->position;
+                shooter_aim = shooter_frame->aim_direction;
+                resolved = true;
+            } else {
+                // Relevance can cull the shooter while its beam is still in
+                // range -- the beam is a separate entity with its own distance
+                // test. Its last replicated aim beats no beam at all.
+                const auto shooter = std::find_if(
+                    client_replicated_entities_.begin(),
+                    client_replicated_entities_.end(),
+                    [&beam](const ClientReplicatedEntity& candidate) {
+                        return candidate.net_id == beam->owner_net_id;
+                    });
+                if (shooter != client_replicated_entities_.end()) {
+                    shooter_position = shooter->position;
+                    shooter_aim = shooter->aim_direction;
+                    resolved = true;
+                }
+            }
+        }
+        if (!resolved) {
+            entity.beam_effective_length = 0.0f;
+            continue;
+        }
+        // The same muzzle the server fired from, and the same axis mapping
+        // simulate_beams writes onto the beam's transform, so the reconstructed
+        // pose matches what used to be replicated outright. The one difference
+        // is lag compensation: the server rewinds this origin to the shooter's
+        // historical hitbox, which the client cannot see.
+        entity.position = projectile_launch_position(Transform{shooter_position});
+        entity.rotation = beam_rotation(shooter_aim);
     }
 }
 
