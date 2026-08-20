@@ -16,6 +16,11 @@ movement:
   step_height: 0.4
   ground_probe_distance: 0.25
   ground_snap_distance: 0.5
+  # The engine default (terrain | static_obstacle | actor) plus limb, so a
+  # legged rig's own bones stop the player instead of letting them walk through
+  # the legs of something whose body they cannot pass. Limbs are opt-in: this is
+  # the only place that asks for them, and every other actor is unaffected.
+  collision_mask: terrain | static_obstacle | actor | limb
 hitbox:
   center: {x: 0.0, y: 0.9, z: 0.0}
   half_extents: {x: 0.35, y: 0.9, z: 0.35}

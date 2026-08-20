@@ -30,6 +30,8 @@
 #include "kernel/public/kernel_api.h"
 #include "kernel/public/kernel_types.h"
 #include "protocol/public/network_packets.h"
+#include "physics/public/collision_types.h"
+#include "physics/public/physics_world.h"
 #include "sync/public/snapshot.h"
 // The follower half below reads the engine's own client state -- the follower
 // locomotion map and the collider registry -- which no public entry point
@@ -451,6 +453,61 @@ int main() {
     // centimetres means the two sides are deriving the pose differently, not
     // that the wire lost precision.
     require(worst_offset < 0.05f);
+
+    // ---------------------------------------------------------------------
+    // The movement layer.
+    //
+    // Registering limbs in the physics world is not the same as anything
+    // colliding with them: kActorLimb is off every default mask, so a query
+    // only sees limbs if it names them. Both halves of that are asserted here
+    // against the authority's own world, using the same filter a character
+    // move builds.
+    const network_example::game_server::ActorTemplateConfig* player_template =
+        network_example::game_server::find_actor_template(config, 1u);
+    require(player_template != nullptr);
+    require(
+        (player_template->movement_collision_mask &
+         KERNEL_MOVEMENT_LAYER_LIMB) != 0u);
+    // Authoring the opt-in layer must not have quietly dropped the rest.
+    require(
+        (player_template->movement_collision_mask &
+         KERNEL_MOVEMENT_MASK_DEFAULT) == KERNEL_MOVEMENT_MASK_DEFAULT);
+
+    require(authority.physics_world_ != nullptr);
+    // Aim at the longest segment -- a lower leg -- straight through its centre,
+    // from far enough out to be unambiguously outside it.
+    const KernelColliderShapeView* target = nullptr;
+    for (std::uint32_t index = 0u; index < authority_count; ++index) {
+        if (near_value(authority_shapes[index].shape_params.y, kLowerHalfY)) {
+            target = &authority_shapes[index];
+            break;
+        }
+    }
+    require(target != nullptr);
+
+    network_example::physics::RayCastRequest ray{};
+    ray.origin = glm::vec3{
+        target->world_center.x - 8.0f,
+        target->world_center.y,
+        target->world_center.z};
+    ray.direction = glm::vec3{1.0f, 0.0f, 0.0f};
+    ray.max_distance = 16.0f;
+    ray.filter.collision_mask = KERNEL_MOVEMENT_MASK_SUPPORTED;
+    network_example::physics::CollisionHit limb_hit{};
+    require(authority.physics_world_->ray_cast_closest(ray, &limb_hit));
+    require(limb_hit.identity.kind == network_example::physics::CollisionObjectKind::kActorLimb);
+    require(limb_hit.identity.layer == network_example::physics::CollisionLayer::kActorLimb);
+    require(limb_hit.identity.entity_net_id == parity_net_id);
+
+    // The same ray under the engine default finds nothing: the limb is the only
+    // thing on that line, and nothing that has not asked for limbs may see it.
+    ray.filter.collision_mask = KERNEL_MOVEMENT_MASK_DEFAULT;
+    network_example::physics::CollisionHit default_hit{};
+    const bool default_found =
+        authority.physics_world_->ray_cast_closest(ray, &default_hit);
+    require(
+        !default_found ||
+        default_hit.identity.kind != network_example::physics::CollisionObjectKind::kActorLimb);
 
     std::printf("limb_collider_test: PASS\n");
     return 0;

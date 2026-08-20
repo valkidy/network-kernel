@@ -5,6 +5,11 @@
 #include <stdint.h>
 
 /*
+ * 76: movement collision masks gained KERNEL_MOVEMENT_LAYER_LIMB, and the set
+ *     of authorable bits moved to KERNEL_MOVEMENT_MASK_SUPPORTED.
+ *     KERNEL_MOVEMENT_MASK_DEFAULT still means what zero selects and is
+ *     unchanged, so an actor that authors no mask keeps its current blockers.
+ * 75: (unchanged struct layout)
  * 74: KernelSkeletonBindingDefinition gained collider_count and
  *     colliders. Appended, but every managed mirror must add the same
  *     fields or the nested layout of KernelEntityTemplateDefinition shifts.
@@ -25,7 +30,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 75u
+#define KERNEL_ABI_VERSION 76u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -180,10 +185,27 @@ typedef enum KernelFootholdQueryType {
 #define KERNEL_MOVEMENT_LAYER_TERRAIN UINT32_C(0x00000001)
 #define KERNEL_MOVEMENT_LAYER_STATIC_OBSTACLE UINT32_C(0x00000002)
 #define KERNEL_MOVEMENT_LAYER_ACTOR UINT32_C(0x00000008)
+/*
+ * A rig's per-bone colliders. Deliberately absent from
+ * KERNEL_MOVEMENT_MASK_DEFAULT: a legged actor contributes a dozen boxes where
+ * every other actor contributes one capsule, so limbs stay opt-in and only a
+ * template that names them pays for them.
+ */
+#define KERNEL_MOVEMENT_LAYER_LIMB UINT32_C(0x00000010)
+/*
+ * What zero means: the mask an actor gets when its template authors none.
+ */
 #define KERNEL_MOVEMENT_MASK_DEFAULT \
     (KERNEL_MOVEMENT_LAYER_TERRAIN | \
      KERNEL_MOVEMENT_LAYER_STATIC_OBSTACLE | \
      KERNEL_MOVEMENT_LAYER_ACTOR)
+/*
+ * What may be authored, which is a superset of the default. Kept apart from it
+ * so that adding an opt-in layer cannot silently widen what an actor with no
+ * authored mask collides with.
+ */
+#define KERNEL_MOVEMENT_MASK_SUPPORTED \
+    (KERNEL_MOVEMENT_MASK_DEFAULT | KERNEL_MOVEMENT_LAYER_LIMB)
 
 /*
  * Visual flags are composable presentation hints, never gameplay authority.

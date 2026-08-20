@@ -673,6 +673,11 @@ std::uint32_t movement_collision_layer_token_from_yaml(
     if (token == "actor") {
         return KERNEL_MOVEMENT_LAYER_ACTOR;
     }
+    // A rig's own bones. Naming it is the only way to collide with legs, which
+    // is what keeps the cost off every template that has no use for them.
+    if (token == "limb") {
+        return KERNEL_MOVEMENT_LAYER_LIMB;
+    }
     throw std::runtime_error("unsupported movement collision_mask: " + token);
 }
 

@@ -3398,7 +3398,7 @@ bool KernelEngine::load_gameplay_catalog(
             // and nothing else. An unknown bit here would silently widen or
             // narrow what stops the actor.
             (entity_template.movement.movement_collision_mask &
-             ~KERNEL_MOVEMENT_MASK_DEFAULT) != 0u) {
+             ~KERNEL_MOVEMENT_MASK_SUPPORTED) != 0u) {
             return false;
         }
         if (entity_template.movement.controller_type !=
@@ -7717,8 +7717,15 @@ bool KernelEngine::build_local_character_movement_config(
         : authored_mask;
     if (session_rules_.actor_blocking_mode !=
         KernelActorBlockingMode_Predicted) {
-        config.filter.collision_mask &= ~physics::collision_layer_bit(
-            physics::CollisionLayer::kActorMovement);
+        // Limbs go with the capsule rather than surviving on their own: they
+        // are the same claim -- that another actor's body blocks this one --
+        // made about a different shape, and leaving them on in a session that
+        // does not block actors would stop the player on a leg while walking
+        // through the body it hangs from.
+        config.filter.collision_mask &= ~(
+            physics::collision_layer_bit(
+                physics::CollisionLayer::kActorMovement) |
+            physics::collision_layer_bit(physics::CollisionLayer::kActorLimb));
     }
     config.filter.ignored_entity_net_id = local_player_net_id_;
     local_player_move_speed_meters_per_second_ =
