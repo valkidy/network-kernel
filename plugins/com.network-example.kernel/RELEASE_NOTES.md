@@ -1,5 +1,10 @@
 0.6.11 release notes:
 
+- fixes MinGW large-object package builds
+
+
+0.6.11 release notes:
+
 - shrinks the beam snapshot record from 34 bytes to 6 (snapshot schema 18 -> 19)
 - no managed API change: kernel ABI stays at 76, every public struct keeps its
   layout, and RenderEntityState.beam_end still means the same thing. It is now
