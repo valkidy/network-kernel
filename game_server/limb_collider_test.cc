@@ -763,6 +763,112 @@ int main() {
     // player from being corrected back through a leg it should have hit.
     require(near_value(predicted_blocked_x, authority_blocked_x));
 
+    // ---------------------------------------------------------------------
+    // What a session that does not block actors does with limbs.
+    //
+    // Limbs are struck out alongside the movement capsule, never on their own:
+    // both say "another actor's body blocks this one". Getting that wrong the
+    // other way would stop a player on a leg while they walk through the body
+    // it hangs from. The engine default is Disabled, so this is the path a
+    // kernel takes unless something opts in.
+    {
+        network_example::EntitySpawnPacket local_player{};
+        local_player.net_id = 7001u;
+        local_player.entity_type = network_example::EntityType::kActor;
+        local_player.actor_type = network_example::ActorType::kPlayer;
+        local_player.actor_template_id = 1u;
+        local_player.entity_template_id = 1u;
+        predicting.handle_client_spawn(local_player);
+        predicting.local_player_net_id_ = local_player.net_id;
+
+        const std::uint32_t limb_bit =
+            network_example::physics::collision_layer_bit(
+                network_example::physics::CollisionLayer::kActorLimb);
+        const std::uint32_t capsule_bit =
+            network_example::physics::collision_layer_bit(
+                network_example::physics::CollisionLayer::kActorMovement);
+        const std::uint32_t terrain_bit =
+            network_example::physics::collision_layer_bit(
+                network_example::physics::CollisionLayer::kTerrain);
+
+        // A client receives this in the welcome packet rather than setting it;
+        // there is no session here, so the field is written directly.
+        network_example::movement_solver::CharacterMovementConfig blocking{};
+        predicting.session_rules_.actor_blocking_mode =
+            KernelActorBlockingMode_Predicted;
+        require(predicting.build_local_character_movement_config(&blocking));
+        // player.yaml authors limb, so a session that blocks actors keeps it.
+        require((blocking.filter.collision_mask & limb_bit) != 0u);
+        require((blocking.filter.collision_mask & capsule_bit) != 0u);
+
+        predicting.session_rules_.actor_blocking_mode =
+            KernelActorBlockingMode_Disabled;
+        require(predicting.build_local_character_movement_config(&blocking));
+        require((blocking.filter.collision_mask & limb_bit) == 0u);
+        require((blocking.filter.collision_mask & capsule_bit) == 0u);
+        // Only the actor layers go. The static world is not up for negotiation.
+        require((blocking.filter.collision_mask & terrain_bit) != 0u);
+
+        predicting.local_player_net_id_ = 0u;
+    }
+
+    // The same rule on the authoritative path, exercised through the real
+    // movement simulation rather than by inspecting a filter: a player pushed
+    // into a leg is stopped when the session blocks actors and walks through it
+    // when it does not.
+    {
+        KernelServerEntityCreateInfo player_create{};
+        player_create.struct_size = sizeof(player_create);
+        player_create.entity_type =
+            network_example::game_server::kEntityTypeActor;
+        player_create.actor_type = KernelActorType_Player;
+        player_create.entity_template_id = 1u;
+        player_create.actor_template_id = 1u;
+        player_create.owner_peer = 11u;
+        player_create.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+        std::uint32_t player_net_id = 0u;
+        require(authority.server_create_entity(player_create, &player_net_id));
+        require(player_net_id != 0u);
+
+        const auto push_player = [&](std::uint32_t blocking_mode) {
+            // set_session_rules refuses once a server is running, which is the
+            // right rule for a live session and the wrong one for sweeping the
+            // two modes here.
+            authority.session_rules_.actor_blocking_mode = blocking_mode;
+            const KernelVec3 start{
+                contact.x - approach_direction.x * 0.6f,
+                ground_hit.position.y,
+                contact.z - approach_direction.z * 0.6f};
+            const KernelQuat upright_rotation{0.0f, 0.0f, 0.0f, 1.0f};
+            require(authority.server_set_entity_transform(
+                player_net_id, start, upright_rotation));
+            for (std::uint32_t step = 0u; step < 12u; ++step) {
+                KernelPlayerInput input{};
+                input.input_seq = step + 1u;
+                input.move = KernelVec2{
+                    approach_direction.x, approach_direction.z};
+                require(authority.server_submit_entity_input(
+                    player_net_id, input));
+                authority.update(1.0f / 30.0f);
+            }
+            KernelServerEntityState state{};
+            state.struct_size = sizeof(state);
+            require(authority.server_get_entity_state(player_net_id, &state));
+            const glm::vec3 end{state.position.x, state.position.y, state.position.z};
+            const glm::vec3 begin{start.x, start.y, start.z};
+            return glm::dot(end - begin, approach_direction);
+        };
+
+        const float blocked = push_player(KernelActorBlockingMode_Predicted);
+        const float unblocked = push_player(KernelActorBlockingMode_Disabled);
+        std::printf(
+            "limb blocking: server player travels %.3f m blocking, %.3f m with "
+            "actor blocking disabled\n",
+            static_cast<double>(blocked),
+            static_cast<double>(unblocked));
+        require(unblocked > blocked + 0.5f);
+    }
+
     // Retiring the entity retires its bodies. A leg left behind is an invisible
     // wall standing where the rig no longer is.
     network_example::EntityDespawnPacket despawn{};
