@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 75;
+        public const uint AbiVersion = 76;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int GameplayCatalogEntryPathSize = 128;
@@ -131,8 +131,16 @@ namespace NetworkExample.Kernel
         public const uint MovementLayerTerrain = 0x00000001U;
         public const uint MovementLayerStaticObstacle = 0x00000002U;
         public const uint MovementLayerActor = 0x00000008U;
+        // A rig's per-bone colliders. Deliberately absent from
+        // MovementMaskDefault: a legged actor contributes a dozen boxes where
+        // every other actor contributes one capsule, so limbs stay opt-in.
+        public const uint MovementLayerLimb = 0x00000010U;
+        // What a mask of zero selects.
         public const uint MovementMaskDefault =
             MovementLayerTerrain | MovementLayerStaticObstacle | MovementLayerActor;
+        // What may be authored, which is a superset of the default.
+        public const uint MovementMaskSupported =
+            MovementMaskDefault | MovementLayerLimb;
 
         public const uint VisualFlagMoving = 0x00000001U;
         public const uint VisualFlagReloading = 0x00000002U;

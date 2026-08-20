@@ -1,3 +1,11 @@
+0.6.10 release notes:
+
+- aligns Unity plugin API with kernel ABI 76
+- adds MovementLayerLimb and MovementMaskSupported; a template may now ask to be
+  blocked by a legged rig's per-bone colliders. MovementMaskDefault is unchanged,
+  so any actor that authors no mask keeps exactly the blockers it had.
+
+
 0.6.9 release notes:
 
 - refreshes Unity package artifacts
