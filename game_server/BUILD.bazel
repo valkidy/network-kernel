@@ -102,6 +102,22 @@ cc_test(
     ],
 )
 
+# Reports timings, so it is a manual benchmark rather than a CI gate: a
+# wall-clock bound would be flaky and host-dependent.
+cc_test(
+    name = "limb_broad_phase_bench",
+    srcs = ["limb_broad_phase_bench.cc"],
+    data = [
+        "//game_server/gameplay_catalog_bundle:bundle",
+    ],
+    tags = ["manual"],
+    deps = [
+        ":game_server",
+        ":game_server_bridge",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
 cc_test(
     name = "activation_gameplay_config_test",
     srcs = ["activation_gameplay_config_test.cc"],
