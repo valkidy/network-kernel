@@ -1,3 +1,16 @@
+0.6.11 release notes:
+
+- shrinks the beam snapshot record from 34 bytes to 6 (snapshot schema 18 -> 19)
+- no managed API change: kernel ABI stays at 76, every public struct keeps its
+  layout, and RenderEntityState.beam_end still means the same thing. It is now
+  derived from the beam's origin, orientation and reach while render states are
+  built, rather than decoded straight off the wire, so presentation code that
+  reads it needs no change.
+- breaks wire compatibility. A client on 0.6.10 or earlier is rejected at the
+  handshake by a server built from this kernel, with a snapshot schema
+  mismatch. Clients and servers must be upgraded together.
+
+
 0.6.10 release notes:
 
 - aligns Unity plugin API with kernel ABI 76
