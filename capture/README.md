@@ -36,7 +36,7 @@ bazel run --config=macos -c opt //engine/src/tests/kernel_tests:locomotion_captu
 ```
 
 `turn` moves the *input* direction instantly; the body yaws toward it at the
-rig's `max_yaw_degrees_per_second` (45°/s for `monster_sim_actor`), so a turn
+rig's `max_yaw_degrees_per_second` (45°/s for `quadruped_actor`), so a turn
 takes a couple of seconds of walking to complete. When the script runs out the
 subject stands still for the remaining samples — a bare axis never runs out.
 

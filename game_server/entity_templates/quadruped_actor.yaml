@@ -19,7 +19,8 @@ movement:
   max_yaw_degrees_per_second: 45.0
   # The static world, but not other actors: everything between the legs is air a
   # walker steps over, not geometry it should collide with. Props stay in
-  # through static_obstacle. See monster_sim_actor.yaml.
+  # through static_obstacle. The mask is symmetric, so dropping "actor" also
+  # takes this rig out of every other actor's movement sweep.
   collision_mask: terrain
 hitbox:
   center: {x: 0.0, y: 12.0, z: 0.0}
@@ -58,13 +59,13 @@ locomotion:
   input_deadzone: 0.01
   gait:
     type: displacement_threshold
-    # Carried over from monster_sim_actor unchanged, deliberately. The gait
-    # timing is set by move_speed, not by leg length: stance =
-    # step_threshold / move_speed. This rig walks at the same 2.5 m/s, so
-    # rescaling the threshold to its longer legs would stretch the stance and
-    # bring back the low-duty leg-flick that tuning removed. Threshold and
-    # duration must always move together; see monster_sim_actor.yaml for the
-    # duty-factor and peak-foot-speed table behind 1.95/18.
+    # Carried over unchanged, deliberately. The gait timing is set by
+    # move_speed, not by leg length: stance = step_threshold / move_speed. This
+    # rig walks at the same 2.5 m/s, so rescaling the threshold to its longer
+    # legs would stretch the stance and bring back the low-duty leg-flick that
+    # tuning removed. Threshold and duration must always move together; see
+    # docs/LOCOMOTION_GAIT_TUNING.md for the duty-factor and peak-foot-speed
+    # table behind 1.95/18.
     step_threshold_meters: 1.95
     step_duration_ticks: 18
     # Diagonal trot: {leg0, leg2} and {leg1, leg3} are the two diagonals, and
@@ -73,8 +74,9 @@ locomotion:
     processing_order: [leg0, leg1, leg2, leg3]
   foothold:
     query: raycast
-    # Scaled to this rig the way monster_sim_actor's 30/90 is scaled to its
-    # ~18.2 m legs: these are 23.5 m, so 1.29x.
+    # Scaled to this rig the way the authored 30/90 baseline is scaled to the
+    # ~18.2 m legs it was sized against: these are 23.5 m, so 1.29x. See
+    # docs/LOCOMOTION_GAIT_TUNING.md.
     query_start_height_meters: 39.0
     query_distance_meters: 117.0
     candidate_offsets_meters:
@@ -85,18 +87,19 @@ locomotion:
       - {x: 0.0, z: -0.2}
   body:
     follow_speed: 10.0
-    # Held at 0 for the same reason as monster_sim_actor: tilt moves where the
-    # feet are placed, and a follower holds an identity tilt because it never
-    # samples ground normals, so enabling it on the authority alone
-    # desynchronises replicated legs.
+    # Held at 0 on every rig: tilt moves where the feet are placed, and a
+    # follower holds an identity tilt because it never samples ground normals,
+    # so enabling it on the authority alone desynchronises replicated legs.
     slope_alignment: 0.0
-    # Only 0.40 m, against monster_sim_actor's 4.0. That rig's bind pose is a
-    # near-straight strut resting at 97.7-98.9% of leg length, leaving 0.20-0.41 m
-    # of dip budget before the IK clamps, and the crouch existed to buy it back.
+    # Only 0.40 m, against the 4.0 the straight-strut rig in
+    # docs/LOCOMOTION_GAIT_TUNING.md needed. That bind pose rests at 97.7-98.9%
+    # of leg length, leaving 0.20-0.41 m of dip budget before the IK clamps, and
+    # the crouch existed to buy it back.
     # This rig is authored bent: it rests at 88.9% with 2.61 m of slack already,
-    # so 0.40 m is all it takes to reach the same ~3 m the tuned monster has.
+    # so 0.40 m is all it takes to reach the same ~3 m of slack that rig needed
+    # a 4.0 m crouch for.
     stance_crouch_meters: 0.40
-  # One value for every leg on all four rigs, so it is a default rather than
+  # One value for every leg on all three rigs, so it is a default rather than
   # something repeated per leg.
   leg_defaults:
     step_height_meters: 0.18

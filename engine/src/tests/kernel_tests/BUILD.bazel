@@ -124,7 +124,7 @@ sh_binary(
         "--driver=$(location :locomotion_capture_driver)",
         "--dylib=$(location //engine/src/kernel:network_kernel_shared)",
         "--bundle=$(location //game_server/gameplay_catalog_bundle:bundle)",
-        "--manifest=$(location //game_server/skeleton_assets:generated/simplified_monster_sim_v4.skeleton_manifest.json)",
+        "--manifest=$(location //game_server/skeleton_assets:generated/simplified_quadruped.skeleton_manifest.json)",
         "--preflight=$(location //tools/capture:capture_preflight.py)",
         "--render=$(location //tools/capture:render_transforms.py)",
         "--analyze=$(location //tools/capture:analyze_capture.py)",
@@ -134,7 +134,7 @@ sh_binary(
         ":locomotion_capture_driver",
         "//engine/src/kernel:network_kernel_shared",
         "//game_server/gameplay_catalog_bundle:bundle",
-        "//game_server/skeleton_assets:generated/simplified_monster_sim_v4.skeleton_manifest.json",
+        "//game_server/skeleton_assets:generated/simplified_quadruped.skeleton_manifest.json",
         "//tools/capture:analyze_capture.py",
         "//tools/capture:capture_preflight.py",
         "//tools/capture:render_transforms.py",
@@ -270,7 +270,7 @@ cc_test(
 # Diagnostic: how much of each leg's reach the bind pose already spends before
 # the gait asks for anything. Run against the monster rig with
 #   bazel run //engine/src/tests/kernel_tests:locomotion_reach_report -- \
-#     $(pwd)/bazel-bin/game_server/skeleton_assets/generated/simplified_monster_sim_v4.ozz
+#     $(pwd)/bazel-bin/game_server/skeleton_assets/generated/simplified_quadruped.ozz
 cc_binary(
     name = "locomotion_reach_report",
     srcs = ["locomotion_reach_report.cc"],

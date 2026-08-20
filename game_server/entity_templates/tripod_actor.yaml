@@ -72,7 +72,8 @@ locomotion:
     processing_order: [leg0, leg1, leg2]
   foothold:
     query: raycast
-    # 1.29x monster_sim_actor's 30/90, matching this rig's 23.5 m legs.
+    # 1.29x the authored 30/90 baseline, matching this rig's 23.5 m legs.
+    # See docs/LOCOMOTION_GAIT_TUNING.md.
     query_start_height_meters: 39.0
     query_distance_meters: 117.0
     candidate_offsets_meters:
@@ -87,7 +88,7 @@ locomotion:
     # Same 88.9% rest extension as the quadruped -- identical limbs, only the
     # hip placement differs -- so the same small crouch reaches ~3 m of slack.
     stance_crouch_meters: 0.40
-  # One value for every leg on all four rigs, so it is a default rather than
+  # One value for every leg on all three rigs, so it is a default rather than
   # something repeated per leg.
   leg_defaults:
     step_height_meters: 0.18

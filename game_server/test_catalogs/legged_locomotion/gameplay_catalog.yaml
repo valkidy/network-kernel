@@ -32,7 +32,7 @@ static_collision_scene:
 player:
   entity_template: player
 enemy:
-  actor_template: monster_sim_actor
+  actor_template: quadruped_actor
   spawn_count: 1
   spawn_radius: 0.0
   spawn_seed: 4242

@@ -15,9 +15,7 @@ filegroup(
         "weapon_templates/*.yaml",
     ]) + [
         "gameplay_catalog.yaml",
-        "test_catalogs/monster_observer/gameplay_catalog.yaml",
-        "//game_server/skeleton_assets:rock_robot_biped_24u_v3_assets",
-        "//game_server/skeleton_assets:simplified_monster_sim_v4_assets",
+        "test_catalogs/legged_locomotion/gameplay_catalog.yaml",
         "//game_server/skeleton_assets:simplified_biped_assets",
         "//game_server/skeleton_assets:simplified_quadruped_assets",
         "//game_server/skeleton_assets:simplified_tripod_assets",
@@ -75,8 +73,6 @@ cc_test(
     ]) + [
         "//game_server/gameplay_catalog_bundle:bundle",
         "gameplay_catalog.yaml",
-        "//game_server/skeleton_assets:rock_robot_biped_24u_v3_assets",
-        "//game_server/skeleton_assets:simplified_monster_sim_v4_assets",
         # Present so the skeleton_manifests_dir scan is exercised against a
         # directory the catalog never names file-by-file.
         "//game_server/skeleton_assets:simplified_biped_assets",
@@ -103,8 +99,6 @@ cc_test(
         "weapon_templates/*.yaml",
     ]) + [
         "gameplay_catalog.yaml",
-        "//game_server/skeleton_assets:rock_robot_biped_24u_v3_assets",
-        "//game_server/skeleton_assets:simplified_monster_sim_v4_assets",
         "//game_server/skeleton_assets:simplified_biped_assets",
         "//game_server/skeleton_assets:simplified_quadruped_assets",
         "//game_server/skeleton_assets:simplified_tripod_assets",
@@ -128,8 +122,6 @@ cc_test(
         "weapon_templates/*.yaml",
     ]) + [
         "gameplay_catalog.yaml",
-        "//game_server/skeleton_assets:rock_robot_biped_24u_v3_assets",
-        "//game_server/skeleton_assets:simplified_monster_sim_v4_assets",
         "//game_server/skeleton_assets:simplified_biped_assets",
         "//game_server/skeleton_assets:simplified_quadruped_assets",
         "//game_server/skeleton_assets:simplified_tripod_assets",
@@ -199,8 +191,6 @@ cc_test(
         "weapon_templates/*.yaml",
     ]) + [
         "gameplay_catalog.yaml",
-        "//game_server/skeleton_assets:rock_robot_biped_24u_v3_assets",
-        "//game_server/skeleton_assets:simplified_monster_sim_v4_assets",
         "//game_server/skeleton_assets:simplified_biped_assets",
         "//game_server/skeleton_assets:simplified_quadruped_assets",
         "//game_server/skeleton_assets:simplified_tripod_assets",
@@ -224,8 +214,6 @@ cc_test(
         "weapon_templates/*.yaml",
     ]) + [
         "gameplay_catalog.yaml",
-        "//game_server/skeleton_assets:rock_robot_biped_24u_v3_assets",
-        "//game_server/skeleton_assets:simplified_monster_sim_v4_assets",
         "//game_server/skeleton_assets:simplified_biped_assets",
         "//game_server/skeleton_assets:simplified_quadruped_assets",
         "//game_server/skeleton_assets:simplified_tripod_assets",
@@ -250,8 +238,6 @@ cc_test(
     ]) + [
         "//game_server/gameplay_catalog_bundle:bundle",
         "gameplay_catalog.yaml",
-        "//game_server/skeleton_assets:rock_robot_biped_24u_v3_assets",
-        "//game_server/skeleton_assets:simplified_monster_sim_v4_assets",
         "//game_server/skeleton_assets:simplified_biped_assets",
         "//game_server/skeleton_assets:simplified_quadruped_assets",
         "//game_server/skeleton_assets:simplified_tripod_assets",
@@ -276,8 +262,6 @@ cc_test(
         "weapon_templates/*.yaml",
     ]) + [
         "gameplay_catalog.yaml",
-        "//game_server/skeleton_assets:rock_robot_biped_24u_v3_assets",
-        "//game_server/skeleton_assets:simplified_monster_sim_v4_assets",
         "//game_server/skeleton_assets:simplified_biped_assets",
         "//game_server/skeleton_assets:simplified_quadruped_assets",
         "//game_server/skeleton_assets:simplified_tripod_assets",
