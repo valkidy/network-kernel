@@ -31,6 +31,7 @@
 #include "kernel/public/kernel_types.h"
 #include "protocol/public/network_packets.h"
 #include "physics/public/collision_types.h"
+#include "simulation/public/movement_solver.h"
 #include "physics/public/physics_world.h"
 #include "sync/public/snapshot.h"
 // The follower half below reads the engine's own client state -- the follower
@@ -588,6 +589,285 @@ int main() {
         !predicted_default_found ||
         predicted_default_hit.identity.kind !=
             network_example::physics::CollisionObjectKind::kActorLimb);
+
+    // ---------------------------------------------------------------------
+    // The thing all of the above exists for: a character that cannot walk
+    // through a leg.
+    //
+    // Every assertion so far has been a ray or an inventory. A ray proves the
+    // layer filter; it does not prove that the controller stops, which is the
+    // only claim a player can actually observe. Same capsule, same authored
+    // mask, run twice with the limb bit as the only difference.
+    const network_example::game_server::ColliderTemplateConfig* player_capsule =
+        nullptr;
+    for (const network_example::game_server::ColliderTemplateConfig& collider :
+         config.colliders.templates) {
+        if (collider.name == "player_movement_capsule") {
+            player_capsule = &collider;
+        }
+    }
+    require(player_capsule != nullptr);
+
+    // Where the ground is under the rig, and where a leg actually is at walking
+    // height. Both are found by casting rather than assumed: a quadruped's legs
+    // are bent, so the height a segment's centre sits at says little about
+    // where it crosses the line a walker travels along.
+    network_example::physics::RayCastRequest down{};
+    down.origin = glm::vec3{
+        authority_state.position.x,
+        authority_state.position.y + 60.0f,
+        authority_state.position.z};
+    down.direction = glm::vec3{0.0f, -1.0f, 0.0f};
+    down.max_distance = 200.0f;
+    down.filter.collision_mask =
+        network_example::physics::collision_layer_bit(
+            network_example::physics::CollisionLayer::kTerrain);
+    network_example::physics::CollisionHit ground_hit{};
+    require(authority.physics_world_->ray_cast_closest(down, &ground_hit));
+    const float walk_height = ground_hit.position.y + 0.9f;
+
+    // Sweep along each leg's own line rather than guessing offsets: the stance
+    // is metres wide and a line through the middle passes between the legs.
+    glm::vec3 contact{0.0f};
+    glm::vec3 approach_direction{1.0f, 0.0f, 0.0f};
+    glm::vec3 approach_origin{0.0f};
+    bool found_contact = false;
+    for (std::uint32_t index = 0u; index < authority_count && !found_contact;
+         ++index) {
+        const KernelColliderShapeView& limb = authority_shapes[index];
+        const glm::vec3 origins[2] = {
+            glm::vec3{
+                authority_state.position.x - 25.0f,
+                walk_height,
+                limb.world_center.z},
+            glm::vec3{
+                limb.world_center.x,
+                walk_height,
+                authority_state.position.z - 25.0f},
+        };
+        const glm::vec3 directions[2] = {
+            glm::vec3{1.0f, 0.0f, 0.0f},
+            glm::vec3{0.0f, 0.0f, 1.0f},
+        };
+        for (std::uint32_t axis = 0u; axis < 2u && !found_contact; ++axis) {
+            network_example::physics::RayCastRequest across{};
+            across.origin = origins[axis];
+            across.direction = directions[axis];
+            across.max_distance = 50.0f;
+            across.filter.collision_mask = KERNEL_MOVEMENT_MASK_SUPPORTED;
+            network_example::physics::CollisionHit across_hit{};
+            if (!authority.physics_world_->ray_cast_closest(across, &across_hit)) {
+                continue;
+            }
+            if (across_hit.identity.kind !=
+                network_example::physics::CollisionObjectKind::kActorLimb) {
+                continue;
+            }
+            contact = across_hit.position;
+            approach_origin = origins[axis];
+            approach_direction = directions[axis];
+            found_contact = true;
+        }
+    }
+    if (!found_contact) {
+        std::fprintf(stderr, "DIAG ground=%.3f walk=%.3f root=(%.2f,%.2f,%.2f)\n",
+            (double)ground_hit.position.y, (double)walk_height,
+            (double)authority_state.position.x,
+            (double)authority_state.position.y,
+            (double)authority_state.position.z);
+        for (std::uint32_t index = 0u; index < authority_count; ++index) {
+            std::fprintf(stderr,
+                "DIAG limb %u centre=(%.2f,%.2f,%.2f) half=(%.2f,%.2f,%.2f)\n",
+                index,
+                (double)authority_shapes[index].world_center.x,
+                (double)authority_shapes[index].world_center.y,
+                (double)authority_shapes[index].world_center.z,
+                (double)authority_shapes[index].shape_params.x,
+                (double)authority_shapes[index].shape_params.y,
+                (double)authority_shapes[index].shape_params.z);
+        }
+    }
+    require(found_contact);
+
+    const auto walk_into_leg = [&](network_example::physics::PhysicsWorld& world,
+                                   std::uint32_t collision_mask,
+                                   std::uint32_t character_id) {
+        network_example::movement_solver::CharacterMovementConfig walk{};
+        walk.character_id = character_id;
+        walk.shape.type = network_example::physics::CollisionShapeType::kCapsule;
+        walk.shape.local_center = glm::vec3{
+            player_capsule->definition.center.x,
+            player_capsule->definition.center.y,
+            player_capsule->definition.center.z};
+        walk.shape.capsule_half_height = player_capsule->definition.shape_params.x;
+        walk.shape.radius = player_capsule->definition.shape_params.y;
+        walk.gravity = glm::vec3{0.0f, -9.81f, 0.0f};
+        walk.max_slope_degrees = player_template->movement_max_slope_degrees;
+        walk.step_height = player_template->movement_step_height;
+        walk.ground_snap_distance =
+            player_template->movement_ground_snap_distance;
+        walk.filter.collision_mask = collision_mask;
+
+        network_example::movement_solver::CharacterMovementState state{};
+        // Point blank, on the ground, pushing straight into the leg. A long
+        // approach would not settle anything: the ground undulates, so most of
+        // the travel difference would be slope drift, and a capsule given room
+        // slides around a 1.5 m wide box rather than stopping against it.
+        state.position = glm::vec3{
+            contact.x - approach_direction.x * 0.6f,
+            ground_hit.position.y,
+            contact.z - approach_direction.z * 0.6f};
+        std::string error;
+        for (std::uint32_t step = 0u; step < 12u; ++step) {
+            require(network_example::movement_solver::step_character(
+                world,
+                walk,
+                approach_direction * 5.0f,
+                1.0f / 30.0f,
+                &state,
+                &error));
+        }
+        // Distance travelled along the approach, so the two axes read the same.
+        return glm::dot(state.position - approach_origin, approach_direction);
+    };
+
+    const float authority_blocked_x = walk_into_leg(
+        *authority.physics_world_, KERNEL_MOVEMENT_MASK_SUPPORTED, 900001u);
+    const float authority_free_x = walk_into_leg(
+        *authority.physics_world_, KERNEL_MOVEMENT_MASK_DEFAULT, 900002u);
+    const float contact_distance =
+        glm::dot(contact - approach_origin, approach_direction);
+    const float start_distance = contact_distance - 0.6f;
+    const float blocked_travel = authority_blocked_x - start_distance;
+    const float free_travel = authority_free_x - start_distance;
+    std::printf(
+        "limb blocking: 12 steps of a 2.0 m push -- %.3f m travelled with the "
+        "layer, %.3f m without\n",
+        static_cast<double>(blocked_travel),
+        static_cast<double>(free_travel));
+    // Without the layer the capsule covers the whole commanded distance and
+    // ends inside the leg. With it, it is stopped against the leg after a
+    // fraction of that. The bound is relative so this does not become a test of
+    // exactly where Jolt seats a capsule against a rotated box.
+    require(free_travel > 1.5f);
+    require(blocked_travel < free_travel * 0.5f);
+
+    const float predicted_blocked_x = walk_into_leg(
+        *predicting.prediction_physics_world_,
+        KERNEL_MOVEMENT_MASK_SUPPORTED,
+        900003u);
+    std::printf(
+        "limb blocking: client travels %.3f m\n",
+        static_cast<double>(predicted_blocked_x - start_distance));
+    // The client stops where the server does. This is what keeps a predicted
+    // player from being corrected back through a leg it should have hit.
+    require(near_value(predicted_blocked_x, authority_blocked_x));
+
+    // ---------------------------------------------------------------------
+    // What a session that does not block actors does with limbs.
+    //
+    // Limbs are struck out alongside the movement capsule, never on their own:
+    // both say "another actor's body blocks this one". Getting that wrong the
+    // other way would stop a player on a leg while they walk through the body
+    // it hangs from. The engine default is Disabled, so this is the path a
+    // kernel takes unless something opts in.
+    {
+        network_example::EntitySpawnPacket local_player{};
+        local_player.net_id = 7001u;
+        local_player.entity_type = network_example::EntityType::kActor;
+        local_player.actor_type = network_example::ActorType::kPlayer;
+        local_player.actor_template_id = 1u;
+        local_player.entity_template_id = 1u;
+        predicting.handle_client_spawn(local_player);
+        predicting.local_player_net_id_ = local_player.net_id;
+
+        const std::uint32_t limb_bit =
+            network_example::physics::collision_layer_bit(
+                network_example::physics::CollisionLayer::kActorLimb);
+        const std::uint32_t capsule_bit =
+            network_example::physics::collision_layer_bit(
+                network_example::physics::CollisionLayer::kActorMovement);
+        const std::uint32_t terrain_bit =
+            network_example::physics::collision_layer_bit(
+                network_example::physics::CollisionLayer::kTerrain);
+
+        // A client receives this in the welcome packet rather than setting it;
+        // there is no session here, so the field is written directly.
+        network_example::movement_solver::CharacterMovementConfig blocking{};
+        predicting.session_rules_.actor_blocking_mode =
+            KernelActorBlockingMode_Predicted;
+        require(predicting.build_local_character_movement_config(&blocking));
+        // player.yaml authors limb, so a session that blocks actors keeps it.
+        require((blocking.filter.collision_mask & limb_bit) != 0u);
+        require((blocking.filter.collision_mask & capsule_bit) != 0u);
+
+        predicting.session_rules_.actor_blocking_mode =
+            KernelActorBlockingMode_Disabled;
+        require(predicting.build_local_character_movement_config(&blocking));
+        require((blocking.filter.collision_mask & limb_bit) == 0u);
+        require((blocking.filter.collision_mask & capsule_bit) == 0u);
+        // Only the actor layers go. The static world is not up for negotiation.
+        require((blocking.filter.collision_mask & terrain_bit) != 0u);
+
+        predicting.local_player_net_id_ = 0u;
+    }
+
+    // The same rule on the authoritative path, exercised through the real
+    // movement simulation rather than by inspecting a filter: a player pushed
+    // into a leg is stopped when the session blocks actors and walks through it
+    // when it does not.
+    {
+        KernelServerEntityCreateInfo player_create{};
+        player_create.struct_size = sizeof(player_create);
+        player_create.entity_type =
+            network_example::game_server::kEntityTypeActor;
+        player_create.actor_type = KernelActorType_Player;
+        player_create.entity_template_id = 1u;
+        player_create.actor_template_id = 1u;
+        player_create.owner_peer = 11u;
+        player_create.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+        std::uint32_t player_net_id = 0u;
+        require(authority.server_create_entity(player_create, &player_net_id));
+        require(player_net_id != 0u);
+
+        const auto push_player = [&](std::uint32_t blocking_mode) {
+            // set_session_rules refuses once a server is running, which is the
+            // right rule for a live session and the wrong one for sweeping the
+            // two modes here.
+            authority.session_rules_.actor_blocking_mode = blocking_mode;
+            const KernelVec3 start{
+                contact.x - approach_direction.x * 0.6f,
+                ground_hit.position.y,
+                contact.z - approach_direction.z * 0.6f};
+            const KernelQuat upright_rotation{0.0f, 0.0f, 0.0f, 1.0f};
+            require(authority.server_set_entity_transform(
+                player_net_id, start, upright_rotation));
+            for (std::uint32_t step = 0u; step < 12u; ++step) {
+                KernelPlayerInput input{};
+                input.input_seq = step + 1u;
+                input.move = KernelVec2{
+                    approach_direction.x, approach_direction.z};
+                require(authority.server_submit_entity_input(
+                    player_net_id, input));
+                authority.update(1.0f / 30.0f);
+            }
+            KernelServerEntityState state{};
+            state.struct_size = sizeof(state);
+            require(authority.server_get_entity_state(player_net_id, &state));
+            const glm::vec3 end{state.position.x, state.position.y, state.position.z};
+            const glm::vec3 begin{start.x, start.y, start.z};
+            return glm::dot(end - begin, approach_direction);
+        };
+
+        const float blocked = push_player(KernelActorBlockingMode_Predicted);
+        const float unblocked = push_player(KernelActorBlockingMode_Disabled);
+        std::printf(
+            "limb blocking: server player travels %.3f m blocking, %.3f m with "
+            "actor blocking disabled\n",
+            static_cast<double>(blocked),
+            static_cast<double>(unblocked));
+        require(unblocked > blocked + 0.5f);
+    }
 
     // Retiring the entity retires its bodies. A leg left behind is an invisible
     // wall standing where the rig no longer is.

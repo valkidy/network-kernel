@@ -14,6 +14,19 @@ KernelQuat to_kernel_quat(const glm::quat& value) {
     return KernelQuat{value.x, value.y, value.z, value.w};
 }
 
+// Where a beam stops, rebuilt from the three things that are replicated: its
+// origin, its orientation, and how far it reached. beam_rotation() maps the aim
+// onto local +Z, so +Z rotated back out is the direction the cast ran along.
+// Non-beams keep the zero the render ABI treats as "no beam here".
+KernelVec3 beam_end_from(const EntitySnapshot& entity) {
+    if ((entity.state_flags & kSnapshotStateFlagProjectileBeam) == 0u) {
+        return KernelVec3{0.0f, 0.0f, 0.0f};
+    }
+    const glm::vec3 forward = entity.rotation * glm::vec3{0.0f, 0.0f, 1.0f};
+    return to_kernel_vec3(
+        entity.position + forward * entity.beam_effective_length);
+}
+
 std::uint32_t derived_visual_flags(const World& world, entt::entity entity) {
     std::uint32_t flags = 0;
     if (world.registry().all_of<Velocity>(entity) &&
@@ -208,7 +221,7 @@ RenderEntityState render_state_from_snapshot_entity(
         0,
         0,
         entity.carrier_entity_id,
-        to_kernel_vec3(entity.beam_end),
+        beam_end_from(entity),
     };
 }
 
@@ -221,10 +234,12 @@ EntitySnapshot interpolate_snapshot_entity(
     entity.rotation = glm::slerp(from.rotation, to.rotation, alpha);
     entity.velocity = from.velocity + (to.velocity - from.velocity) * alpha;
     // A beam sweeps as its owner turns and its reach jumps whenever what blocks
-    // it changes, so the far end has to travel with the near one. Left alone it
-    // would hold the newer snapshot's endpoint against an interpolated origin
-    // and the beam would visibly stretch and snap between snapshots.
-    entity.beam_end = from.beam_end + (to.beam_end - from.beam_end) * alpha;
+    // it changes. Both are already covered above -- the origin by position, the
+    // aim by rotation -- so only the reach is left, and holding the newer
+    // snapshot's reach against an interpolated origin would make the far end
+    // stretch and snap between snapshots.
+    entity.beam_effective_length = from.beam_effective_length +
+        (to.beam_effective_length - from.beam_effective_length) * alpha;
     return entity;
 }
 

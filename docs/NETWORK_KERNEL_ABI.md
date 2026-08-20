@@ -31,6 +31,24 @@ Additive changes must prefer new `Kernel_*` functions or new capability flags.
 Breaking changes to public struct layout, enum semantics, buffer ownership, or
 function signatures require a `KERNEL_ABI_VERSION` bump.
 
+Snapshot schema 19 shrinks the beam snapshot record from 34 bytes to 6:
+`net_id` plus the beam's reach as centimetres in a `uint16`. Position,
+rotation, velocity, state and flags all come off the wire. A beam's origin and
+aim were never its own -- they are its shooter's, and every snapshot already
+carries the shooter's position and `aim_direction` in the actor section -- so
+the client rebuilds both from the shooter named by `owner_net_id` in the
+projectile spawn batch, and the reach is the one thing only the server can
+know, because the server is what decides where the beam stops. State and flags
+were structurally zero: beam templates author `speed: 0` and carry neither
+`ReplicationState` nor `HomingState`.
+
+`KERNEL_ABI_VERSION`, packet schema 24, and protocol 3 are all unchanged, and
+`RenderEntityState::beam_end` still means exactly what it did -- it is now
+derived during render-state building instead of decoded. Managed mirrors need
+no change. Older clients are rejected at the handshake with
+`kDisconnectReasonSnapshotSchemaMismatch` rather than silently misreading the
+section.
+
 ABI version 76 adds `KERNEL_MOVEMENT_LAYER_LIMB` (`0x10`) to the movement
 collision-mask vocabulary, so a template can ask to be blocked by a legged rig's
 per-bone colliders. No struct layout changes; the bit is authored inside the

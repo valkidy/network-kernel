@@ -55,16 +55,15 @@ WorldSnapshot build_world_snapshot(
             entity_snapshot.velocity = world.registry().get<Velocity>(entity).linear;
         }
         if (world.registry().all_of<ProjectileBeamRuntime>(entity)) {
-            // The beam's own origin and direction rather than the transform's:
-            // simulate_beams writes both onto the transform, but the runtime is
-            // what the cast used, and effective_length is where that cast was
-            // actually stopped. Sending the transform's rotation instead would
-            // hand the client an authored length that reaches through walls.
+            // effective_length, not the authored length: the authored one
+            // reaches through walls. The transform above already carries the
+            // matching origin and aim, because simulate_beams writes both onto
+            // it from this same runtime, and it runs after the weapon refresh
+            // that re-aims the beam.
             const ProjectileBeamRuntime& beam =
                 world.registry().get<ProjectileBeamRuntime>(entity);
             entity_snapshot.state_flags |= kSnapshotStateFlagProjectileBeam;
-            entity_snapshot.beam_end =
-                beam.origin + beam.direction * beam.effective_length;
+            entity_snapshot.beam_effective_length = beam.effective_length;
         }
         if (world.registry().all_of<MovementState>(entity)) {
             const MovementState& movement =

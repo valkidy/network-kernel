@@ -405,6 +405,10 @@ private:
         EntityType type = EntityType::kUnknown;
         ActorType actor_type = ActorType::kUnknown;
         PeerId owner_peer = 0;
+        // The actor this entity was fired by, from the projectile spawn batch.
+        // A beam hangs off it: its origin and aim are not replicated, so the
+        // shooter is the only thing that says where it starts and points.
+        NetId owner_net_id = 0;
         std::uint32_t actor_template_id = 0;
         std::uint32_t entity_template_id = 0;
         std::uint32_t projectile_template_id = 0;
@@ -416,6 +420,9 @@ private:
         glm::vec3 position{0.0f, 0.0f, 0.0f};
         glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
         glm::vec3 velocity{0.0f, 0.0f, 0.0f};
+        // Last replicated aim, kept so a beam whose shooter has dropped out of
+        // this snapshot still has an aim to hang off.
+        glm::vec3 aim_direction{1.0f, 0.0f, 0.0f};
         std::uint32_t snapshot_tick = 0;
         std::uint16_t hp = 0;
         std::uint16_t max_hp = 0;
@@ -605,6 +612,7 @@ private:
     void rebuild_render_states_from_snapshot(std::uint64_t client_render_time_us);
     void report_render_state_overflow_if_needed();
     void handle_client_snapshot(WorldSnapshot snapshot);
+    void resolve_client_beam_geometry(WorldSnapshot* snapshot) const;
     void store_client_snapshot(WorldSnapshot snapshot);
     bool client_snapshot_entity_is_tombstoned(
         NetId net_id,

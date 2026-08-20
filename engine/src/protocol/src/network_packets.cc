@@ -25,9 +25,18 @@ constexpr std::size_t kActorRotationPayloadSize = 16;
 constexpr std::size_t kActorHealthPayloadSize = 4;
 constexpr std::size_t kActorMovementPayloadSize = 22;
 constexpr std::size_t kProjectileCompactSnapshotPayloadSize = 34;
-// net_id 4 + position 12 + beam_end 12 + state 2 + flags 4. No velocity: a beam
-// does not move, and the endpoint is what the client actually needs.
-constexpr std::size_t kProjectileBeamSnapshotPayloadSize = 34;
+// net_id 4 + effective_length 2. No position, rotation or velocity: a beam does
+// not move, and its origin and aim are the shooter's, which every snapshot
+// already carries in the actor section. No state or flags either -- beam
+// templates author speed 0 and carry neither ReplicationState nor HomingState,
+// so both were always zero on the wire. Only the reach is genuinely the beam's
+// own, and only because the server is what decides where it stops.
+constexpr std::size_t kProjectileBeamSnapshotPayloadSize = 6;
+// Beam reach on the wire: centimetres in a u16. Templates author 8 m and 14 m
+// beams today and the u16 still covers 655.35 m, while 1 cm is far below what
+// the presentation can resolve at any of those ranges.
+constexpr float kBeamLengthWireScale = 100.0f;
+constexpr float kBeamLengthWireMax = 65535.0f / kBeamLengthWireScale;
 constexpr std::size_t kProjectileHybridCorrectionSnapshotPayloadSize = 46;
 constexpr std::size_t kGenericSnapshotPayloadSize = 44;
 constexpr std::size_t kGenericHealthPayloadSize = 4;
@@ -47,6 +56,16 @@ constexpr std::size_t kGameplayRequestPayloadSize = 60;
 constexpr std::size_t kGameplayRequestOutcomePayloadSize = 32;
 constexpr std::size_t kInventorySnapshotRequestPayloadSize = 16;
 constexpr std::size_t kMaxInventoryPacketPayloadSize = 16u * 1024u;
+
+std::uint16_t beam_length_to_wire(float length) {
+    const float clamped = std::clamp(length, 0.0f, kBeamLengthWireMax);
+    return static_cast<std::uint16_t>(
+        std::lround(clamped * kBeamLengthWireScale));
+}
+
+float beam_length_from_wire(std::uint16_t value) {
+    return static_cast<float>(value) / kBeamLengthWireScale;
+}
 
 bool valid_wire_item(const InventoryWireItem& item) {
     return item.item_instance_id != 0u && item.item_template_id != 0u &&
@@ -166,29 +185,6 @@ glm::quat projectile_rotation_from_velocity(const glm::vec3& velocity) {
     }
     const glm::vec3 axis = glm::normalize(glm::cross(from, to));
     return glm::angleAxis(std::acos(dot), axis);
-}
-
-// Beams run along local +Z, not the +X that projectile_rotation_from_velocity
-// uses. The axis is not arbitrary on either side: an oriented-box collider
-// template states a beam's reach in half_extents.z, and the presentation prefabs
-// are built along the same axis, so this is the mapping both ends already agree
-// on. Kept in step with beam_rotation() in beam_system.cc.
-glm::quat beam_rotation_from_span(const glm::vec3& start, const glm::vec3& end) {
-    const glm::vec3 span = end - start;
-    const float length = glm::length(span);
-    if (length <= 0.0001f) {
-        return glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
-    }
-    const glm::vec3 from{0.0f, 0.0f, 1.0f};
-    const glm::vec3 to = span / length;
-    const float dot = std::clamp(glm::dot(from, to), -1.0f, 1.0f);
-    if (dot > 0.999f) {
-        return glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
-    }
-    if (dot < -0.999f) {
-        return glm::quat{0.0f, 0.0f, 1.0f, 0.0f};
-    }
-    return glm::angleAxis(std::acos(dot), glm::normalize(glm::cross(from, to)));
 }
 
 SnapshotSectionType snapshot_section_type(EntityType type) {
@@ -385,10 +381,8 @@ std::vector<std::uint8_t> encode_snapshot_packet(
                     payload.write_u32(entity->flags);
                     break;
                 case SnapshotSectionType::kProjectileBeam:
-                    payload.write_vec3(entity->position);
-                    payload.write_vec3(entity->beam_end);
-                    payload.write_u16(entity->state);
-                    payload.write_u32(entity->flags);
+                    payload.write_u16(
+                        beam_length_to_wire(entity->beam_effective_length));
                     break;
                 case SnapshotSectionType::kProjectileHybridCorrection:
                     payload.write_u32(entity->owner_peer);
@@ -547,20 +541,21 @@ bool decode_snapshot_packet(
                     }
                     entity.rotation = projectile_rotation_from_velocity(entity.velocity);
                     break;
-                case SnapshotSectionType::kProjectileBeam:
+                case SnapshotSectionType::kProjectileBeam: {
                     entity.type = EntityType::kProjectile;
                     entity.state_flags |= kSnapshotStateFlagHpUnknown;
                     entity.state_flags |= kSnapshotStateFlagProjectileBeam;
-                    if (!reader.read_vec3(&entity.position) ||
-                        !reader.read_vec3(&entity.beam_end) ||
-                        !reader.read_u16(&entity.state) ||
-                        !reader.read_u32(&entity.flags)) {
+                    std::uint16_t reach = 0;
+                    if (!reader.read_u16(&reach)) {
                         return false;
                     }
-                    // Along the beam, not along a velocity it does not have.
-                    entity.rotation =
-                        beam_rotation_from_span(entity.position, entity.beam_end);
+                    entity.beam_effective_length = beam_length_from_wire(reach);
+                    // position and rotation stay at their defaults: only the
+                    // owner knows where this beam starts and which way it
+                    // points, and the decoder cannot see the shooter. The
+                    // kernel fills both in before the snapshot is rendered.
                     break;
+                }
                 case SnapshotSectionType::kProjectileHybridCorrection:
                     entity.type = EntityType::kProjectile;
                     entity.state_flags |= kSnapshotStateFlagHpUnknown;

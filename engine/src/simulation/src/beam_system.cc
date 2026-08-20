@@ -9,28 +9,10 @@
 #include "simulation/public/collision_filter.h"
 
 namespace network_example {
-namespace {
 
-constexpr std::uint32_t kDamageScale = 1000000u;
-
-void push_event(
-    std::vector<KernelEvent>* events,
-    KernelEventType type,
-    std::uint32_t tick,
-    NetId net_id,
-    PeerId peer_id,
-    std::uint32_t code = 0) {
-    if (events == nullptr) {
-        return;
-    }
-    events->push_back(KernelEvent{type, tick, net_id, peer_id, code});
-}
-
-// Maps the collider's local +Z -- the axis beam_oriented_box's half_extents.z
-// runs along, and the axis the presentation prefabs are built on -- onto the
-// beam's aim. Nothing else writes a projectile's rotation: World::spawn_projectile
-// leaves it identity and the weapon refresh only moves the origin, so without
-// this a beam's replicated transform never turns with the shooter.
+// Nothing else writes a projectile's rotation: World::spawn_projectile leaves it
+// identity and the weapon refresh only moves the origin, so without this a
+// beam's replicated transform never turns with the shooter.
 glm::quat beam_rotation(const glm::vec3& direction) {
     const float length = glm::length(direction);
     if (length <= 0.0001f) {
@@ -48,6 +30,23 @@ glm::quat beam_rotation(const glm::vec3& direction) {
     }
     const glm::vec3 axis = glm::normalize(glm::cross(from, to));
     return glm::angleAxis(std::acos(dot), axis);
+}
+
+namespace {
+
+constexpr std::uint32_t kDamageScale = 1000000u;
+
+void push_event(
+    std::vector<KernelEvent>* events,
+    KernelEventType type,
+    std::uint32_t tick,
+    NetId net_id,
+    PeerId peer_id,
+    std::uint32_t code = 0) {
+    if (events == nullptr) {
+        return;
+    }
+    events->push_back(KernelEvent{type, tick, net_id, peer_id, code});
 }
 
 std::uint32_t tick_damage_units(const ProjectileBeamRuntime& beam) {
