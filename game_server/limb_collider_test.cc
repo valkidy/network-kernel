@@ -22,6 +22,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -31,6 +32,7 @@
 #include "kernel/public/kernel_types.h"
 #include "protocol/public/network_packets.h"
 #include "physics/public/collision_types.h"
+#include "simulation/public/collision_filter.h"
 #include "simulation/public/movement_solver.h"
 #include "physics/public/physics_world.h"
 #include "sync/public/snapshot.h"
@@ -867,6 +869,234 @@ int main() {
             static_cast<double>(blocked),
             static_cast<double>(unblocked));
         require(unblocked > blocked + 0.5f);
+    }
+
+    // ---------------------------------------------------------------------
+    // Authoring limbs as a gameplay target.
+    //
+    // The layer is reachable from data now, but nothing is pointed at it yet:
+    // this covers the plumbing from a written mask to the filter a query runs
+    // with, including the trap that a limb without a side matches nothing.
+    {
+        const std::uint32_t limb_layer =
+            network_example::physics::collision_layer_bit(
+                network_example::physics::CollisionLayer::kActorLimb);
+        const std::uint32_t limb_kind =
+            1u << static_cast<std::uint32_t>(
+                network_example::physics::CollisionObjectKind::kActorLimb);
+
+        // Naming it turns on both halves. A query is filtered on the layer and
+        // on the object kind, and one without the other sees nothing.
+        const network_example::physics::CollisionQueryFilter limbs =
+            network_example::collision_filter_from_mask(
+                KERNEL_COLLISION_LAYER_HOSTILE_SIDE |
+                KERNEL_COLLISION_LAYER_LIMB);
+        require((limbs.collision_mask & limb_layer) != 0u);
+        require((limbs.object_kind_mask & limb_kind) != 0u);
+        require(
+            (limbs.gameplay_category_mask &
+             KERNEL_COLLISION_LAYER_HOSTILE_SIDE) != 0u);
+
+        // Not naming it leaves every existing weapon exactly as it was.
+        const network_example::physics::CollisionQueryFilter without =
+            network_example::collision_filter_from_mask(
+                KERNEL_COLLISION_MASK_DAMAGEABLE |
+                KERNEL_COLLISION_MASK_STATIC_WORLD);
+        require((without.collision_mask & limb_layer) == 0u);
+        require((without.object_kind_mask & limb_kind) == 0u);
+
+        // The trap: gameplay_category_mask is built from the side bits alone,
+        // so a mask that names limbs and no side produces an empty category and
+        // matches nothing. Authoring has to pair them.
+        const network_example::physics::CollisionQueryFilter sideless =
+            network_example::collision_filter_from_mask(
+                KERNEL_COLLISION_LAYER_LIMB);
+        require((sideless.collision_mask & limb_layer) != 0u);
+        require(sideless.gameplay_category_mask == 0u);
+
+        // A limb hit resolves to the actor wearing it, not to scenery. The
+        // owning net id is asserted on every limb further up, so together with
+        // this the thrown-prop path reaches the monster: its overlap names the
+        // layer, the hit classifies as an actor, and the target it carries is
+        // the rig.
+        require(network_example::is_actor_hit(
+            network_example::physics::CollisionObjectKind::kActorLimb));
+        // The movement capsule is still not something you can hit.
+        require(!network_example::is_actor_hit(
+            network_example::physics::CollisionObjectKind::kActorMovement));
+
+        // The one prop that asks for limbs, read back from the shipped
+        // catalog rather than restated here.
+        const network_example::game_server::EntityTemplateConfig* damage_prop =
+            nullptr;
+        for (const network_example::game_server::EntityTemplateConfig& entity :
+             config.entity_templates) {
+            if (entity.name == "collision_damage_prop") {
+                damage_prop = &entity;
+            }
+        }
+        require(damage_prop != nullptr);
+        require(
+            (damage_prop->collision_trigger_mask &
+             KERNEL_COLLISION_LAYER_LIMB) != 0u);
+        require(
+            (damage_prop->collision_trigger_mask &
+             KERNEL_COLLISION_MASK_ACTOR) != 0u);
+        const network_example::physics::CollisionQueryFilter prop_filter =
+            network_example::collision_filter_from_mask(
+                damage_prop->collision_trigger_mask);
+        require((prop_filter.collision_mask & limb_layer) != 0u);
+        require((prop_filter.object_kind_mask & limb_kind) != 0u);
+
+        // hit_zone is authored per bone on the rig as a decimal and stored as
+        // hundredths. The legs take a shot poorly and the body takes one well,
+        // which is a property of which bone it is rather than of the actor.
+        const network_example::game_server::SkeletonAssetConfig* rig = nullptr;
+        for (const network_example::game_server::SkeletonAssetConfig& asset :
+             config.skeleton_assets) {
+            if (asset.name == "simplified_quadruped") {
+                rig = &asset;
+            }
+        }
+        require(rig != nullptr);
+        require(rig->colliders.size() == kExpectedBoneIndices.size());
+        for (const network_example::game_server::RigColliderConfig& collider :
+             rig->colliders) {
+            require(collider.has_hit_zone);
+            require(
+                collider.hit_zone == (collider.bone == "GEO_Body" ? 150u : 50u));
+        }
+
+        // And it survives the merge into the catalog the kernel loads, which is
+        // the half a rig edit cannot verify on its own.
+        const KernelEntityTemplateDefinition* quadruped = nullptr;
+        for (const KernelEntityTemplateDefinition& entity :
+             storage.entity_templates) {
+            if (entity.entity_template_id == 21u) {
+                quadruped = &entity;
+            }
+        }
+        require(quadruped != nullptr);
+        require(
+            quadruped->skeleton.collider_count == kExpectedBoneIndices.size());
+        std::uint32_t body_zones = 0u;
+        std::uint32_t leg_zones = 0u;
+        for (std::uint32_t index = 0u;
+             index < quadruped->skeleton.collider_count;
+             ++index) {
+            const std::uint16_t zone =
+                quadruped->skeleton.colliders[index].hit_zone;
+            require(zone == 150u || zone == 50u);
+            if (zone == 150u) {
+                ++body_zones;
+            } else {
+                ++leg_zones;
+            }
+        }
+        require(body_zones == 1u);
+        require(leg_zones == 8u);
+        // Never zero by omission: that is the value that would make a volume
+        // nobody authored immune.
+        require(KERNEL_HIT_ZONE_UNSCALED == 100u);
+
+        // And what the multiplier does to a number. Rounds half away from zero,
+        // so a halved hit is not quietly cheaper than the number says.
+        require(network_example::scale_damage_by_hit_zone(45u, 100u) == 45u);
+        require(network_example::scale_damage_by_hit_zone(45u, 50u) == 23u);
+        require(network_example::scale_damage_by_hit_zone(45u, 150u) == 68u);
+        // Authored harmlessness is a real answer, and it is the only way to
+        // reach zero.
+        require(network_example::scale_damage_by_hit_zone(45u, 0u) == 0u);
+        // Small damage survives being halved rather than vanishing.
+        require(network_example::scale_damage_by_hit_zone(1u, 50u) == 1u);
+        // A multiplier small enough to round a hit away does so, which is what
+        // "0.01 times 45 is nothing" means.
+        require(network_example::scale_damage_by_hit_zone(45u, 1u) == 0u);
+        // Saturates rather than wrapping.
+        require(
+            network_example::scale_damage_by_hit_zone(60000u, 60000u) ==
+            std::numeric_limits<std::uint16_t>::max());
+
+        // The one projectile that asks. A rocket strikes the leg in its path
+        // instead of sailing between them, and the hit resolves to the actor
+        // wearing it -- projectile hit records carry
+        // hit.identity.entity_net_id, which every limb above asserts is the rig.
+        const network_example::game_server::ProjectileTemplateConfig* rocket =
+            nullptr;
+        for (const network_example::game_server::ProjectileTemplateConfig&
+                 projectile : config.projectile_templates) {
+            if (projectile.name == "rocket_projectile") {
+                rocket = &projectile;
+            }
+        }
+        require(rocket != nullptr);
+        const std::uint32_t rocket_mask =
+            rocket->definition.mechanics.collision_mask;
+        require((rocket_mask & KERNEL_COLLISION_LAYER_LIMB) != 0u);
+        // Still a side-filtered weapon: the limb bit is not a side, so it can
+        // neither widen nor narrow who the rocket is allowed to damage.
+        require((rocket_mask & KERNEL_COLLISION_MASK_DAMAGEABLE) != 0u);
+        const network_example::physics::CollisionQueryFilter rocket_filter =
+            network_example::collision_filter_from_mask(rocket_mask);
+        require((rocket_filter.collision_mask & limb_layer) != 0u);
+        require((rocket_filter.object_kind_mask & limb_kind) != 0u);
+
+        // The rifle is the one hitscan that asks for limbs, which is what makes
+        // a rewound shot able to resolve against a leg at all: the rewound path
+        // never touches the physics world, so its opt-in is this mask reaching
+        // raycast_history_frame rather than a collision filter.
+        const std::uint8_t rifle_id =
+            network_example::game_server::kWeaponRifle;
+        require(config.weapons.configured[rifle_id]);
+        require(config.weapons.names[rifle_id] == "Rifle");
+        const std::uint32_t rifle_mask =
+            config.weapons.definitions[rifle_id].collision_mask;
+        require((rifle_mask & KERNEL_COLLISION_LAYER_LIMB) != 0u);
+        require((rifle_mask & KERNEL_COLLISION_MASK_DAMAGEABLE) != 0u);
+        // Walls still stop it, which the engine default did for free before the
+        // mask existed and would silently stop doing if it were dropped.
+        require((rifle_mask & KERNEL_COLLISION_MASK_STATIC_WORLD) != 0u);
+
+        // The shotgun does not ask, and its pellets go through the same
+        // resolver -- so this is also the assertion that the opt-in is
+        // per weapon rather than per code path.
+        const std::uint8_t shotgun_id =
+            network_example::game_server::kWeaponShotgun;
+        require(config.weapons.configured[shotgun_id]);
+        require(
+            (config.weapons.definitions[shotgun_id].collision_mask &
+             KERNEL_COLLISION_LAYER_LIMB) == 0u);
+
+        // The rocket into a quadruped's leg, which is what all of this was for:
+        // 45 damage on a 0.5 leg is 23.
+        require(
+            network_example::scale_damage_by_hit_zone(
+                static_cast<std::uint16_t>(
+                    rocket->definition.mechanics.damage),
+                quadruped->skeleton.colliders[0].hit_zone) == 23u);
+
+        // Everything that did not ask is untouched, including the default any
+        // query starts from -- that exclusion is what keeps hitscan, vision and
+        // every unnamed query at the cost and the results they had.
+        require(
+            (network_example::physics::kCollisionMaskAll & limb_layer) == 0u);
+        const network_example::game_server::ProjectileTemplateConfig* spammer =
+            nullptr;
+        for (const network_example::game_server::ProjectileTemplateConfig&
+                 projectile : config.projectile_templates) {
+            if (projectile.name == "spammer_projectile") {
+                spammer = &projectile;
+            }
+        }
+        require(spammer != nullptr);
+        require(
+            (spammer->definition.mechanics.collision_mask &
+             KERNEL_COLLISION_LAYER_LIMB) == 0u);
+        const network_example::physics::CollisionQueryFilter spammer_filter =
+            network_example::collision_filter_from_mask(
+                spammer->definition.mechanics.collision_mask);
+        require((spammer_filter.collision_mask & limb_layer) == 0u);
+        require((spammer_filter.object_kind_mask & limb_kind) == 0u);
     }
 
     // Retiring the entity retires its bodies. A leg left behind is an invisible

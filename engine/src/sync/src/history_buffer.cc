@@ -3,9 +3,27 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <unordered_map>
 
 namespace network_example {
 namespace {
+
+// The rewound volumes are oriented boxes -- HitVolumeSnapshot has carried a
+// rotation from the start -- so the ray is taken into the box's own frame and
+// tested there. Rotation preserves length, so the distance that comes back is
+// the distance in world space.
+//
+// Testing the world-axis bounds instead is close enough for a body box, which
+// is roughly upright, and badly wrong for anything long lying at an angle: a
+// 19 m leg tilted 45 degrees has an axis-aligned bound spanning some 13 m on
+// two axes, most of it empty air that would report hits on nothing.
+bool ray_intersects_obb(
+    const glm::vec3& ray_origin,
+    const glm::vec3& ray_direction,
+    const glm::vec3& box_center,
+    const glm::vec3& box_half_extents,
+    const glm::quat& box_rotation,
+    float* out_distance);
 
 bool ray_intersects_aabb(
     const glm::vec3& ray_origin,
@@ -46,6 +64,24 @@ bool ray_intersects_aabb(
     return true;
 }
 
+bool ray_intersects_obb(
+    const glm::vec3& ray_origin,
+    const glm::vec3& ray_direction,
+    const glm::vec3& box_center,
+    const glm::vec3& box_half_extents,
+    const glm::quat& box_rotation,
+    float* out_distance) {
+    const glm::quat inverse_rotation = glm::conjugate(box_rotation);
+    const glm::vec3 local_origin = inverse_rotation * (ray_origin - box_center);
+    const glm::vec3 local_direction = inverse_rotation * ray_direction;
+    return ray_intersects_aabb(
+        local_origin,
+        local_direction,
+        glm::vec3{0.0f, 0.0f, 0.0f},
+        box_half_extents,
+        out_distance);
+}
+
 }  // namespace
 
 HistoryBuffer::HistoryBuffer(std::uint32_t max_frames) : frames_(std::max(1u, max_frames)) {}
@@ -60,6 +96,7 @@ void HistoryBuffer::write_frame(const World& world, std::uint32_t server_tick) {
         const NetworkIdentity,
         const Transform,
         const Hitbox>();
+    std::unordered_map<NetId, bool> alive_by_net_id;
     for (const entt::entity entity : view) {
         if (world.registry().all_of<ProjectileTag>(entity)) {
             continue;
@@ -78,6 +115,40 @@ void HistoryBuffer::write_frame(const World& world, std::uint32_t server_tick) {
             hitbox.hit_zone,
             0,
             static_cast<std::uint8_t>(alive ? 1 : 0),
+            0,
+        });
+        alive_by_net_id[identity.net_id] = alive;
+    }
+
+    // A rig's per-bone volumes, taken from the collider registry rather than
+    // re-derived: the authoritative solve already refreshed them this tick, and
+    // rewinding a leg to somewhere the solve never put it would be worse than
+    // not rewinding it at all.
+    //
+    // They ride the owning actor's alive flag, which is why the hitbox pass
+    // above records it -- a limb is not separately killable.
+    for (const ColliderInstance& collider :
+         world.collider_registry().instances()) {
+        // Carrying a bone is what makes a collider a limb -- the registry
+        // itself keys them that way, and remove_bone_colliders uses the same
+        // test. Reading the ABI's purpose bit here would make sync depend on
+        // the kernel's public header for something the structure already says.
+        if (collider.bone_index == UINT32_MAX) {
+            continue;
+        }
+        const auto alive = alive_by_net_id.find(collider.entity_net_id);
+        if (alive == alive_by_net_id.end()) {
+            continue;
+        }
+        frame.volumes.push_back(HitVolumeSnapshot{
+            collider.entity_net_id,
+            collider.world_center,
+            collider.half_extents,
+            collider.world_rotation,
+            static_cast<std::uint16_t>(collider.hit_zone),
+            0,
+            static_cast<std::uint8_t>(alive->second ? 1 : 0),
+            1,
         });
     }
 
@@ -157,7 +228,8 @@ bool raycast_history_frame(
     const glm::vec3& ray_direction,
     float max_range,
     NetId ignored_net_id,
-    HistoricalHitResult* out_hit) {
+    HistoricalHitResult* out_hit,
+    bool include_limbs) {
     if (!frame.valid) {
         return false;
     }
@@ -166,16 +238,18 @@ bool raycast_history_frame(
     HistoricalHitResult best_hit;
     bool has_hit = false;
     for (const HitVolumeSnapshot& volume : frame.volumes) {
-        if (volume.net_id == ignored_net_id || volume.alive == 0) {
+        if (volume.net_id == ignored_net_id || volume.alive == 0 ||
+            (volume.is_limb != 0u && !include_limbs)) {
             continue;
         }
 
         float distance = 0.0f;
-        if (ray_intersects_aabb(
+        if (ray_intersects_obb(
                 ray_origin,
                 ray_direction,
                 volume.center,
                 volume.half_extents,
+                volume.rotation,
                 &distance) &&
             distance <= best_distance) {
             best_distance = distance;
@@ -199,7 +273,8 @@ bool sweep_history_frame(
     const glm::vec3& segment_start,
     const glm::vec3& segment_end,
     NetId ignored_net_id,
-    HistoricalHitResult* out_hit) {
+    HistoricalHitResult* out_hit,
+    bool include_limbs) {
     const glm::vec3 displacement = segment_end - segment_start;
     const float length = glm::length(displacement);
     if (length <= 0.0001f) {
@@ -211,7 +286,8 @@ bool sweep_history_frame(
         displacement / length,
         length,
         ignored_net_id,
-        out_hit);
+        out_hit,
+        include_limbs);
 }
 
 }  // namespace network_example

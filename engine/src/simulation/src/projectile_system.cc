@@ -818,8 +818,7 @@ ProjectileHitOutcome process_projectile_hit_records(
             if (projectile.hit_count >= projectile.max_hit_count) {
                 break;
             }
-            if (record.hit.identity.kind !=
-                physics::CollisionObjectKind::kActorHitbox) {
+            if (!is_actor_hit(record.hit.identity.kind)) {
                 queue_projectile_trigger(
                     world,
                     identity,
@@ -841,17 +840,15 @@ ProjectileHitOutcome process_projectile_hit_records(
                     world, projectile.collision_mask, record.target_net_id)) {
                 continue;
             }
-            damage_pipeline->submit_damage_request(DamageRequest{
+            damage_pipeline->submit_damage_request(damage_request_from_hit(
                 current_tick,
                 record.sequence_id,
                 identity.net_id,
-                record.target_net_id,
                 identity.owner_peer,
                 projectile.weapon_id,
                 projectile.damage,
                 hit_time_us,
-                record.hit.position,
-            });
+                record.hit));
             ++projectile.hit_count;
         }
         outcome.destroy_projectile = projectile.hit_count >= projectile.max_hit_count;
@@ -869,8 +866,7 @@ ProjectileHitOutcome process_projectile_hit_records(
         identity,
         projectile,
         TriggerEventType::kProjectileImpact,
-        records.front().hit.identity.kind ==
-                physics::CollisionObjectKind::kActorHitbox
+        is_actor_hit(records.front().hit.identity.kind)
             ? records.front().target_net_id
             : 0,
         impact_position,
@@ -886,11 +882,10 @@ ProjectileHitOutcome process_projectile_hit_records(
     // its own side's cover.
     if (projectile.damage_shape == ProjectileDamageShape::kDirectHit &&
         projectile.damage > 0 &&
-        records.front().hit.identity.kind ==
-            physics::CollisionObjectKind::kActorHitbox &&
+        is_actor_hit(records.front().hit.identity.kind) &&
         damage_source_may_damage(
             world, projectile.collision_mask, records.front().target_net_id)) {
-        damage_pipeline->submit_damage_request(DamageRequest{
+        damage_pipeline->submit_damage_request(damage_request_at(
             current_tick,
             0,
             identity.net_id,
@@ -900,7 +895,8 @@ ProjectileHitOutcome process_projectile_hit_records(
             projectile.damage,
             hit_time_us,
             impact_position,
-        });
+            static_cast<std::uint16_t>(
+                records.front().hit.identity.hit_zone)));
     }
 
     outcome.destroy_projectile = true;
@@ -1437,7 +1433,9 @@ bool resolve_projectile_historical_hit(
                     previous_position,
                     current_position,
                     ignored_net_id,
-                    &hit)) {
+                    &hit,
+                    (projectile.collision_mask &
+                     KERNEL_COLLISION_LAYER_LIMB) != 0u)) {
                 const std::uint64_t hit_time_us =
                     tick_time_us(frame->server_tick, fixed_delta_seconds);
                 const NetworkIdentity identity{projectile_net_id, owner_peer};
@@ -1459,7 +1457,7 @@ bool resolve_projectile_historical_hit(
                 if (projectile.damage_shape == ProjectileDamageShape::kDirectHit &&
                     projectile.damage > 0 &&
                     damage_pipeline != nullptr) {
-                    damage_pipeline->submit_damage_request(DamageRequest{
+                    damage_pipeline->submit_damage_request(damage_request_at(
                         current_tick,
                         0,
                         projectile_net_id,
@@ -1469,7 +1467,7 @@ bool resolve_projectile_historical_hit(
                         projectile.damage,
                         hit_time_us,
                         hit.impact_position,
-                    });
+                        hit.volume.hit_zone));
                 }
                 execute_queued_trigger_events(
                     world, &trigger_events, fixed_delta_seconds, events);

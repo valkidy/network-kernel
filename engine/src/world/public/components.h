@@ -47,6 +47,11 @@ struct ColliderWorldBounds {
     glm::vec3 half_extents{0.0f, 0.0f, 0.0f};
 };
 
+// See physics::kHitZoneUnscaled -- the same encoding, restated because world
+// does not depend on physics. Unspecified must read as this and never as zero,
+// or a volume nobody authored would be immune.
+inline constexpr std::uint16_t kHitZoneUnscaled = 100u;
+
 struct ColliderInstance {
     std::uint32_t collider_id = 0;
     std::uint32_t collider_template_id = 0;
@@ -57,7 +62,7 @@ struct ColliderInstance {
     ColliderShapeType shape_type = ColliderShapeType::kAabb;
     std::uint32_t purpose_flags = 0;
     std::uint32_t layer_mask = 0;
-    std::uint32_t hit_zone = 0;
+    std::uint32_t hit_zone = kHitZoneUnscaled;
     // Which skeleton bone carries this collider, or UINT32_MAX for the whole
     // entity's own collider. A rig contributes one instance per bone and they
     // all share a template id (none, in fact), so this is the third of the three
@@ -446,6 +451,8 @@ struct WeaponMechanicsDefinition {
     std::uint32_t projectile_template_id = 0;
     std::uint32_t fire_action_template_id = 0;
     std::uint32_t reload_action_template_id = 0;
+    // KERNEL_COLLISION_LAYER_* bits; zero keeps the engine default.
+    std::uint32_t collision_mask = 0;
 };
 
 struct WeaponTuning {
@@ -457,7 +464,7 @@ struct Hitbox {
     glm::vec3 center{0.0f, 0.0f, 0.0f};
     glm::vec3 half_extents{0.5f, 0.5f, 0.5f};
     std::uint32_t collider_template_id = 0;
-    std::uint8_t hit_zone = 0;
+    std::uint16_t hit_zone = kHitZoneUnscaled;
 };
 
 struct ProjectileState {

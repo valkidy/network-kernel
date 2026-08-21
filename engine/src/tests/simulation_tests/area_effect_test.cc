@@ -215,7 +215,7 @@ network_example::NetId spawn_cover_prop(
     object.identity = network_example::physics::CollisionObjectIdentity{
         net_id,
         collider_id,
-        0,
+        network_example::physics::kHitZoneUnscaled,
         network_example::physics::CollisionObjectKind::kStaticObstacle,
         network_example::physics::CollisionLayer::kStaticObstacle,
     };

@@ -67,7 +67,7 @@ CollisionObjectDescriptor limb(
     object.identity = CollisionObjectIdentity{
         entity_net_id,
         collider_id,
-        0,
+        network_example::physics::kHitZoneUnscaled,
         CollisionObjectKind::kActorLimb,
         CollisionLayer::kActorLimb,
         0,
@@ -471,7 +471,7 @@ int main(int argc, char** argv) {
     floor.identity = CollisionObjectIdentity{
         0,
         100,
-        0,
+        network_example::physics::kHitZoneUnscaled,
         CollisionObjectKind::kStaticObstacle,
         CollisionLayer::kStaticObstacle,
     };
@@ -484,7 +484,7 @@ int main(int argc, char** argv) {
     movement_body.identity = CollisionObjectIdentity{
         77,
         101,
-        0,
+        network_example::physics::kHitZoneUnscaled,
         CollisionObjectKind::kActorMovement,
         CollisionLayer::kActorMovement,
     };

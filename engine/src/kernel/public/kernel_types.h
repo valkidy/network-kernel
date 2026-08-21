@@ -5,6 +5,19 @@
 #include <stdint.h>
 
 /*
+ * 79: KernelWeaponMechanicsDefinition gained collision_mask, appended. Zero
+ *     means the engine default, so a weapon that authors nothing keeps the
+ *     shot it had.
+ * 78: KernelSkeletonColliderDefinition::hit_zone changed meaning. It is a
+ *     damage multiplier in hundredths, where KERNEL_HIT_ZONE_UNSCALED (100)
+ *     leaves damage alone; it was previously an unused body-part id whose only
+ *     value was zero. Layout and width are unchanged, so this is a semantic
+ *     break rather than a structural one -- a catalog built against 77 would
+ *     describe every volume as harmless.
+ * 77: gameplay collision masks gained KERNEL_COLLISION_LAYER_LIMB, so a
+ *     projectile, beam or prop trigger can name a rig's per-bone colliders as
+ *     a target. Absent from every MASK_ aggregate, so nothing that does not
+ *     name it changes.
  * 76: movement collision masks gained KERNEL_MOVEMENT_LAYER_LIMB, and the set
  *     of authorable bits moved to KERNEL_MOVEMENT_MASK_SUPPORTED.
  *     KERNEL_MOVEMENT_MASK_DEFAULT still means what zero selects and is
@@ -30,7 +43,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 76u
+#define KERNEL_ABI_VERSION 79u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -156,6 +169,32 @@ typedef enum KernelFootholdQueryType {
 #define KERNEL_COLLISION_LAYER_PLAYER_SIDE UINT32_C(0x00000001)
 #define KERNEL_COLLISION_LAYER_HOSTILE_SIDE UINT32_C(0x00000002)
 #define KERNEL_COLLISION_LAYER_PROJECTILE UINT32_C(0x00000004)
+/*
+ * A rig's per-bone colliders, as a gameplay target rather than as something to
+ * walk into. Distinct from KERNEL_MOVEMENT_LAYER_LIMB below, which happens to
+ * carry a different value in a different bit space -- these two are never
+ * interchangeable and the value matching anything there is a coincidence.
+ *
+ * Naming it is the only way a projectile, beam or thrown prop can touch a leg.
+ * It is absent from every MASK_ aggregate for that reason: a weapon that says
+ * nothing about limbs keeps the results and the cost it has today.
+ */
+#define KERNEL_COLLISION_LAYER_LIMB UINT32_C(0x00000008)
+
+/*
+ * hit_zone is a damage multiplier in hundredths, not a body-part id: 100 is
+ * unscaled, 50 halves the damage a hit on that volume does, 0 makes it harmless.
+ * The name is the common one for "where you were hit"; what this field carries
+ * is what being hit there costs.
+ *
+ * Hundredths rather than a float so the field keeps its width and the ABI its
+ * layout. Authoring is decimal -- 0.5 in YAML becomes 50 here -- and the step is
+ * therefore 0.01.
+ *
+ * Unspecified must read as KERNEL_HIT_ZONE_UNSCALED and never as zero, or a
+ * volume nobody authored would be immune.
+ */
+#define KERNEL_HIT_ZONE_UNSCALED UINT16_C(100)
 #define KERNEL_COLLISION_LAYER_AGENT_VISION UINT32_C(0x00000010)
 #define KERNEL_COLLISION_LAYER_NEUTRAL UINT32_C(0x00000020)
 #define KERNEL_COLLISION_LAYER_TERRAIN UINT32_C(0x00000040)
@@ -1895,6 +1934,14 @@ typedef struct KernelWeaponMechanicsDefinition {
     uint32_t segment_collider_template_id;
     uint32_t fire_action_template_id;
     uint32_t reload_action_template_id;
+    /*
+     * What this weapon's shot may touch, as KERNEL_COLLISION_LAYER_* bits.
+     * Zero means the engine default, which is what every weapon meant before
+     * the field existed. Naming KERNEL_COLLISION_LAYER_LIMB is the only way a
+     * hitscan reaches a rig's bones, on the live path and the rewound one
+     * alike.
+     */
+    uint32_t collision_mask;
 } KernelWeaponMechanicsDefinition;
 
 typedef struct KernelHomingState {

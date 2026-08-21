@@ -58,6 +58,16 @@ static_assert(
 static_assert(
     KERNEL_MOVEMENT_MASK_DEFAULT == physics::kMovementCollisionMask,
     "the default movement mask must match the engine default");
+// hit_zone's neutral value is spelled three times -- once for the ABI, once for
+// physics and once for world -- because the lower layers cannot see the ABI
+// header without inverting the layering. Same reasoning as the collision layers
+// above, and the same place to notice when one of them moves.
+static_assert(
+    KERNEL_HIT_ZONE_UNSCALED == physics::kHitZoneUnscaled,
+    "the neutral hit_zone must match across the ABI and physics");
+static_assert(
+    KERNEL_HIT_ZONE_UNSCALED == kHitZoneUnscaled,
+    "the neutral hit_zone must match across the ABI and world");
 // The opt-in layer must stay out of the default, or every actor starts paying
 // for a dozen limb boxes it never asked about.
 static_assert(

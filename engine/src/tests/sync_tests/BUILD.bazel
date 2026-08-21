@@ -5,3 +5,9 @@ cc_test(
     srcs = ["snapshot_test.cc"],
     deps = ["//engine/src/sync:sync"],
 )
+
+cc_test(
+    name = "history_buffer_test",
+    srcs = ["history_buffer_test.cc"],
+    deps = ["//engine/src/sync:sync"],
+)

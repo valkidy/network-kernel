@@ -83,6 +83,11 @@ struct RigColliderConfig {
     std::string leg_id;
     std::uint32_t bone_index = 0;
     std::uint8_t shape_type = KernelColliderShapeType_OrientedBox;
+    // Damage multiplier in hundredths. has_hit_zone separates "authored as 1.0"
+    // from "not authored", which is what lets the template supply a default
+    // without overriding a collider that meant unscaled.
+    std::uint16_t hit_zone = KERNEL_HIT_ZONE_UNSCALED;
+    bool has_hit_zone = false;
 };
 
 struct SkeletonAssetConfig {

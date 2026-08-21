@@ -6,8 +6,18 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 76u,
-    "limb movement layer ABI");
+    KERNEL_ABI_VERSION == 79u,
+    "weapon collision mask ABI");
+_Static_assert(
+    offsetof(KernelWeaponMechanicsDefinition, collision_mask) >
+        offsetof(KernelWeaponMechanicsDefinition, reload_action_template_id),
+    "the weapon collision mask is appended");
+_Static_assert(
+    KERNEL_HIT_ZONE_UNSCALED != 0u,
+    "the neutral multiplier must not be zero, or unauthored volumes are immune");
+_Static_assert(
+    (KERNEL_COLLISION_MASK_DAMAGEABLE & KERNEL_COLLISION_LAYER_LIMB) == 0u,
+    "limbs stay out of the damageable aggregate");
 _Static_assert(
     (KERNEL_MOVEMENT_MASK_DEFAULT & KERNEL_MOVEMENT_LAYER_LIMB) == 0u,
     "limbs stay out of what zero selects");
@@ -190,7 +200,10 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 76u);
+    assert(KERNEL_ABI_VERSION == 79u);
+    assert(KERNEL_HIT_ZONE_UNSCALED == 100u);
+    assert(KERNEL_COLLISION_LAYER_LIMB == (1u << 3));
+    assert((KERNEL_COLLISION_MASK_DAMAGEABLE & KERNEL_COLLISION_LAYER_LIMB) == 0u);
     assert(KERNEL_MOVEMENT_LAYER_LIMB == (1u << 4));
     assert((KERNEL_MOVEMENT_MASK_DEFAULT & KERNEL_MOVEMENT_LAYER_LIMB) == 0u);
     assert(sizeof(KernelSkeletonColliderDefinition) > 0u);

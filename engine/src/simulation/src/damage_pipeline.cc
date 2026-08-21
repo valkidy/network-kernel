@@ -1,6 +1,7 @@
 #include "simulation/public/simulation.h"
 
 #include <algorithm>
+#include <limits>
 #include <cmath>
 #include <optional>
 #include <utility>
@@ -75,7 +76,7 @@ bool DamagePipeline::submit_hit(
     std::uint8_t source_code,
     std::uint16_t damage,
     std::uint64_t hit_time_us) {
-    return submit_damage_request(DamageRequest{
+    return submit_damage_request(damage_request_at(
         0,
         0,
         source_net_id,
@@ -84,8 +85,70 @@ bool DamagePipeline::submit_hit(
         source_code,
         damage,
         hit_time_us,
-        glm::vec3{0.0f, 0.0f, 0.0f},
-    });
+        glm::vec3{0.0f, 0.0f, 0.0f}));
+}
+
+std::uint16_t scale_damage_by_hit_zone(
+    std::uint16_t damage,
+    std::uint16_t hit_zone) {
+    if (hit_zone == kHitZoneUnscaled) {
+        return damage;
+    }
+    const std::uint32_t scaled =
+        (static_cast<std::uint32_t>(damage) *
+             static_cast<std::uint32_t>(hit_zone) +
+         50u) /
+        100u;
+    return static_cast<std::uint16_t>(
+        std::min<std::uint32_t>(scaled, std::numeric_limits<std::uint16_t>::max()));
+}
+
+DamageRequest damage_request_from_hit(
+    std::uint32_t server_tick,
+    std::uint32_t sequence_id,
+    NetId source_net_id,
+    PeerId source_peer,
+    std::uint8_t source_code,
+    std::uint16_t damage,
+    std::uint64_t hit_time_us,
+    const physics::CollisionHit& hit) {
+    return DamageRequest{
+        server_tick,
+        sequence_id,
+        source_net_id,
+        hit.identity.entity_net_id,
+        source_peer,
+        source_code,
+        damage,
+        hit_time_us,
+        hit.position,
+        static_cast<std::uint16_t>(hit.identity.hit_zone),
+    };
+}
+
+DamageRequest damage_request_at(
+    std::uint32_t server_tick,
+    std::uint32_t sequence_id,
+    NetId source_net_id,
+    NetId target_net_id,
+    PeerId source_peer,
+    std::uint8_t source_code,
+    std::uint16_t damage,
+    std::uint64_t hit_time_us,
+    const glm::vec3& hit_position,
+    std::uint16_t hit_zone) {
+    return DamageRequest{
+        server_tick,
+        sequence_id,
+        source_net_id,
+        target_net_id,
+        source_peer,
+        source_code,
+        damage,
+        hit_time_us,
+        hit_position,
+        hit_zone,
+    };
 }
 
 bool DamagePipeline::submit_damage_request(const DamageRequest& request) {
@@ -117,7 +180,10 @@ std::vector<ConfirmedDamage> DamagePipeline::drain_ready_damage(
             request.source_net_id,
             request.source_peer,
             request.source_code,
-            request.damage,
+            // Scaled once, here, so everything downstream -- defensive actions,
+            // the drain, the confirmation -- agrees on what the hit was worth.
+            // The request keeps the unscaled figure and the zone beside it.
+            scale_damage_by_hit_zone(request.damage, request.hit_zone),
             request.hit_time_us,
             delay_for_defense
                 ? request.hit_time_us + DamagePipeline::kGraceWindowUs
@@ -125,6 +191,7 @@ std::vector<ConfirmedDamage> DamagePipeline::drain_ready_damage(
             request.server_tick,
             request.sequence_id,
             request.hit_position,
+            request.hit_zone,
             false,
             false,
         };
@@ -177,6 +244,7 @@ std::vector<ConfirmedDamage> DamagePipeline::drain_ready_damage(
             pending.damage,
             pending.hit_time_us,
             pending.hit_position,
+            pending.hit_zone,
         });
     }
     pending_damage_ = std::move(still_pending);

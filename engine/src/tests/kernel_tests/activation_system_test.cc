@@ -635,7 +635,7 @@ void static_collision_runs_once_for(
     obstacle.identity = network_example::physics::CollisionObjectIdentity{
         0,
         900,
-        0,
+        network_example::physics::kHitZoneUnscaled,
         impact_kind,
         impact_layer,
     };

@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "physics/public/physics_world.h"
+#include "simulation/public/collision_filter.h"
 
 namespace network_example {
 
@@ -124,6 +125,20 @@ std::vector<glm::vec3> projectile_burst_directions(
     return directions;
 }
 
+// Limbs are out of reach here, and cannot be authored into it.
+//
+// The live path below runs on the default query filter, whose collision_mask is
+// kCollisionMaskAll -- which excludes kActorLimb, so no limb hit ever arrives to
+// classify. The rewound path never touches the physics world at all: it tests
+// the history frame, which holds one volume per actor built from its Hitbox.
+//
+// Putting limbs in that frame is not a matter of pushing nine more volumes.
+// raycast_history_frame ignores volume.rotation and tests an axis-aligned box,
+// which is close enough for a hitbox and badly wrong for a 1.5 x 19 m leg lying
+// at an angle -- its AABB is mostly empty air, and shots near a monster would
+// register hits on nothing. Reaching limbs from a hitscan needs oriented-box
+// intersection in the history path plus a way for a weapon to opt in, and both
+// belong to their own change rather than being smuggled in here.
 bool find_hitscan_target(
     World& world,
     const HistoryFrame* rewind_frame,
@@ -131,7 +146,13 @@ bool find_hitscan_target(
     const glm::vec3& origin,
     const glm::vec3& direction,
     float max_range,
-    NetId* target_net_id) {
+    std::uint32_t collision_mask,
+    NetId* target_net_id,
+    std::uint16_t* target_hit_zone) {
+    // Reaching a rig's bones means naming their layer, on the rewound path and
+    // the live one alike -- a weapon that says nothing keeps the shot it had.
+    const bool include_limbs =
+        (collision_mask & KERNEL_COLLISION_LAYER_LIMB) != 0u;
     if (rewind_frame != nullptr) {
         HistoricalHitResult hit;
         if (raycast_history_frame(
@@ -140,9 +161,13 @@ bool find_hitscan_target(
                 direction,
                 max_range,
                 shooter_net_id,
-                &hit)) {
+                &hit,
+                include_limbs)) {
             if (target_net_id != nullptr) {
                 *target_net_id = hit.net_id;
+            }
+            if (target_hit_zone != nullptr) {
+                *target_hit_zone = hit.volume.hit_zone;
             }
             return true;
         }
@@ -159,9 +184,16 @@ bool find_hitscan_target(
     request.direction = direction;
     request.max_distance = max_range;
     request.filter.ignored_entity_net_id = shooter_net_id;
+    if (collision_mask != 0u) {
+        const physics::CollisionQueryFilter authored =
+            collision_filter_from_mask(collision_mask);
+        request.filter.collision_mask = authored.collision_mask;
+        request.filter.object_kind_mask = authored.object_kind_mask;
+        request.filter.gameplay_category_mask = authored.gameplay_category_mask;
+    }
     if (collision_world == nullptr ||
         !collision_world->ray_cast_closest(request, &hit) ||
-        hit.identity.kind != physics::CollisionObjectKind::kActorHitbox) {
+        !is_actor_hit(hit.identity.kind)) {
         if (target_net_id != nullptr) {
             *target_net_id = 0;
         }
@@ -169,6 +201,9 @@ bool find_hitscan_target(
     }
     if (target_net_id != nullptr) {
         *target_net_id = hit.identity.entity_net_id;
+    }
+    if (target_hit_zone != nullptr) {
+        *target_hit_zone = static_cast<std::uint16_t>(hit.identity.hit_zone);
     }
     return true;
 }
@@ -232,6 +267,7 @@ void apply_hitscan_damage(
     }
 
     NetId target_net_id = 0;
+    std::uint16_t target_hit_zone = kHitZoneUnscaled;
     if (!find_hitscan_target(
             world,
             rewind_frame,
@@ -239,12 +275,14 @@ void apply_hitscan_damage(
             origin,
             direction,
             definition.max_range,
-            &target_net_id)) {
+            definition.collision_mask,
+            &target_net_id,
+            &target_hit_zone)) {
         return;
     }
 
     if (damage_pipeline == nullptr ||
-        !damage_pipeline->submit_damage_request(DamageRequest{
+        !damage_pipeline->submit_damage_request(damage_request_at(
             current_tick,
             0,
             shooter_net_id,
@@ -254,7 +292,7 @@ void apply_hitscan_damage(
             definition.damage,
             hit_time_us,
             origin,
-        })) {
+            target_hit_zone))) {
         return;
     }
 }

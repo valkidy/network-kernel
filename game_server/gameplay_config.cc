@@ -124,6 +124,7 @@ void hash_weapon(std::uint64_t* hash, const KernelWeaponMechanicsDefinition& wea
     hash_scalar(hash, weapon.projectile_template_id);
     hash_scalar(hash, weapon.fire_action_template_id);
     hash_scalar(hash, weapon.reload_action_template_id);
+    hash_scalar(hash, weapon.collision_mask);
 }
 
 void hash_action_template(
@@ -625,6 +626,12 @@ std::uint32_t collision_mask_token_from_yaml(const std::string& token) {
     if (token == "prop") {
         return KERNEL_COLLISION_MASK_PROP;
     }
+    // A rig's own bones. Pair it with a side -- gameplay_category_mask is built
+    // from the side bits alone, so "limb" by itself matches nothing and the
+    // shot passes straight through.
+    if (token == "limb") {
+        return KERNEL_COLLISION_LAYER_LIMB;
+    }
     throw std::runtime_error("unsupported collision_mask: " + token);
 }
 
@@ -707,6 +714,31 @@ std::uint32_t movement_collision_mask_from_yaml(const YAML::Node& node) {
             "movement collision_mask must name at least one layer: " + value);
     }
     return mask;
+}
+
+// hit_zone is authored as a decimal multiplier and stored as hundredths: 0.5
+// becomes 50. Rounded rather than truncated, or 0.29 lands on 28 the moment the
+// literal is not exactly representable. The step is therefore 0.01, and a value
+// finer than that is rounded rather than rejected -- but anything that is not a
+// sane multiplier fails loudly here rather than becoming a silently harmless or
+// absurdly lethal volume.
+std::uint16_t hit_zone_from_yaml(
+    const YAML::Node& node,
+    const std::string& context) {
+    if (!node) {
+        return KERNEL_HIT_ZONE_UNSCALED;
+    }
+    const double value = node.as<double>();
+    if (!std::isfinite(value) || value < 0.0) {
+        throw std::runtime_error(
+            "hit_zone must be finite and non-negative: " + context);
+    }
+    const double hundredths = std::round(value * 100.0);
+    if (hundredths > 65535.0) {
+        throw std::runtime_error(
+            "hit_zone exceeds the maximum multiplier of 655.35: " + context);
+    }
+    return static_cast<std::uint16_t>(hundredths);
 }
 
 void require_supported_collision_mask(
@@ -2068,6 +2100,7 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
             "area_effect",
             "beam",
             "fire_action_template",
+            "collision_mask",
         },
         path,
         source_kind,
@@ -2082,6 +2115,17 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
     const std::string type = node["weapon_type"].as<std::string>();
     const std::uint16_t damage =
         node["damage"] ? node["damage"].as<std::uint16_t>() : 0u;
+    // What the shot may touch. Zero keeps the engine default, which is what
+    // every weapon meant before this existed; naming limb is the only way a
+    // hitscan reaches a rig's bones.
+    const std::uint32_t weapon_collision_mask =
+        node["collision_mask"] ? collision_mask_from_yaml(node["collision_mask"])
+                               : 0u;
+    require_supported_collision_mask(
+        weapon_collision_mask,
+        KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_MASK_STATIC_WORLD |
+            KERNEL_COLLISION_LAYER_LIMB,
+        "weapon " + node["name"].as<std::string>());
     if (type == "hitscan" || type == "shotgun") {
         if (node["projectile"] || node["area_effect"] || node["beam"]) {
             throw std::runtime_error(
@@ -2097,6 +2141,8 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
                 static_cast<std::uint8_t>(node["pellet_count"].as<int>()),
                 node["pellet_spread"].as<float>());
             weapon.reserve_magazines = reserve_magazines;
+        weapon.collision_mask = weapon_collision_mask;
+            weapon.collision_mask = weapon_collision_mask;
             return weapon;
         }
         KernelWeaponMechanicsDefinition weapon = hitscan_weapon(
@@ -2106,6 +2152,7 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
             reload_ticks,
             node["max_range"].as<float>());
         weapon.reserve_magazines = reserve_magazines;
+        weapon.collision_mask = weapon_collision_mask;
         return weapon;
     }
     if (type == "projectile") {
@@ -2127,6 +2174,7 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
         weapon.fire_mode = KernelWeaponFireMode_Projectile;
         weapon.magazine_size = magazine_size;
         weapon.reserve_magazines = reserve_magazines;
+        weapon.collision_mask = weapon_collision_mask;
         (void)reload_ticks;
         weapon.pellet_count = 1;
         weapon.pellet_count =
@@ -2152,6 +2200,7 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
             damage,
             reload_ticks);
         weapon.reserve_magazines = reserve_magazines;
+        weapon.collision_mask = weapon_collision_mask;
         return weapon;
     }
     if (type == "beam") {
@@ -2168,6 +2217,7 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
             damage,
             reload_ticks);
         weapon.reserve_magazines = reserve_magazines;
+        weapon.collision_mask = weapon_collision_mask;
         return weapon;
     }
     throw std::runtime_error("unsupported weapon_type: " + type);
@@ -2961,7 +3011,7 @@ void load_skeleton_rig(
     for (const YAML::Node& collider_node : rig["colliders"]) {
         reject_unknown_keys(
             collider_node,
-            {"bone", "leg", "shape"},
+            {"bone", "leg", "shape", "hit_zone"},
             rig_path,
             source.source_kind(),
             KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG,
@@ -2986,6 +3036,15 @@ void load_skeleton_rig(
         // leg indices are template-scoped until the legs themselves move here.
         if (collider_node["leg"]) {
             collider.leg_id = collider_node["leg"].as<std::string>();
+        }
+        // What being hit here costs, as a multiplier. Belongs to the rig rather
+        // than the template because it is a property of which bone this is -- a
+        // shin is a shin whoever is wearing it -- while whose side it is on is
+        // not. A collider that says nothing inherits the template's default.
+        if (collider_node["hit_zone"]) {
+            collider.hit_zone = hit_zone_from_yaml(
+                collider_node["hit_zone"], rig_path + " " + collider.bone);
+            collider.has_hit_zone = true;
         }
         asset->colliders.push_back(std::move(collider));
     }
@@ -3922,9 +3981,9 @@ ActorTemplateConfig actor_template_from_yaml(
                 skeleton_collision_purpose_from_yaml(flags["purpose"]);
             binding.collision_flags.layer_mask =
                 collider_layer_from_yaml(flags["layer"]);
-            binding.collision_flags.hit_zone = flags["hit_zone"]
-                ? flags["hit_zone"].as<std::uint16_t>()
-                : 0u;
+            // The default for colliders whose rig entry says nothing.
+            binding.collision_flags.hit_zone = hit_zone_from_yaml(
+                flags["hit_zone"], actor_template.name);
             if (asset->colliders.empty()) {
                 throw std::runtime_error(
                     "skeleton collision_flags set but rig " + asset->name +
@@ -4198,7 +4257,8 @@ EntityTemplateConfig entity_template_from_yaml(
                 require_supported_collision_mask(
                     entity_template.collision_trigger_mask,
                     KERNEL_COLLISION_MASK_ACTOR |
-                        KERNEL_COLLISION_MASK_STATIC_WORLD,
+                        KERNEL_COLLISION_MASK_STATIC_WORLD |
+                        KERNEL_COLLISION_LAYER_LIMB,
                     "on_collision");
                 entity_template.collision_trigger = trigger_binding_from_yaml(
                     collision,
@@ -5185,11 +5245,12 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             ? KERNEL_COLLISION_MASK_ACTOR
             : static_collision_mask);
         const std::uint32_t supported_collision_mask =
-            mechanics.projectile_type == KernelProjectileType_AreaEffect
+            KERNEL_COLLISION_LAYER_LIMB |
+            (mechanics.projectile_type == KernelProjectileType_AreaEffect
             ? KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_MASK_PROP
             : mechanics.projectile_type == KernelProjectileType_Beam
                 ? static_collision_mask
-                : static_collision_mask | KERNEL_COLLISION_LAYER_PROJECTILE;
+                : static_collision_mask | KERNEL_COLLISION_LAYER_PROJECTILE);
     require_supported_collision_mask(
         mechanics.collision_mask,
         supported_collision_mask,
@@ -5324,7 +5385,7 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             beam["collision_mask"], static_collision_mask);
         require_supported_collision_mask(
             mechanics.beam.collision_mask,
-            static_collision_mask,
+            static_collision_mask | KERNEL_COLLISION_LAYER_LIMB,
             "beam " + projectile_template.name);
     } else if (node["beam"]) {
         throw std::runtime_error("beam block requires projectile type: beam");
@@ -6840,6 +6901,8 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_string(&hash, collider.leg_id);
             hash_scalar(&hash, collider.bone_index);
             hash_scalar(&hash, collider.shape_type);
+            hash_scalar(&hash, collider.hit_zone);
+            hash_scalar(&hash, collider.has_hit_zone ? 1u : 0u);
         }
     }
     std::vector<ActorTemplateConfig> actor_templates = config.actor_templates;
@@ -7714,7 +7777,8 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
                                 leg_index,
                                 collider.shape_type,
                                 0u,
-                                flags.hit_zone,
+                                collider.has_hit_zone ? collider.hit_zone
+                                                      : flags.hit_zone,
                                 flags.purpose_flags,
                                 flags.layer_mask,
                             };

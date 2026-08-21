@@ -7,3 +7,7 @@ fire_action_template: rifle_fire
 reload_ticks: 30
 max_range: 100.0
 segment_collider: rifle_segment
+# actor | limb: a rifle shot resolves against a rig's bones as well as its body,
+# which is what makes shooting a monster's leg mean anything. static_world keeps
+# walls stopping the shot, as the engine default did.
+collision_mask: actor | limb | terrain | obstacle
