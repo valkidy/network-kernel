@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "physics/public/physics_world.h"
+#include "simulation/public/collision_filter.h"
 
 namespace network_example {
 
@@ -161,7 +162,7 @@ bool find_hitscan_target(
     request.filter.ignored_entity_net_id = shooter_net_id;
     if (collision_world == nullptr ||
         !collision_world->ray_cast_closest(request, &hit) ||
-        hit.identity.kind != physics::CollisionObjectKind::kActorHitbox) {
+        !is_actor_hit(hit.identity.kind)) {
         if (target_net_id != nullptr) {
             *target_net_id = 0;
         }

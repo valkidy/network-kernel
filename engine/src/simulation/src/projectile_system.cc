@@ -818,8 +818,7 @@ ProjectileHitOutcome process_projectile_hit_records(
             if (projectile.hit_count >= projectile.max_hit_count) {
                 break;
             }
-            if (record.hit.identity.kind !=
-                physics::CollisionObjectKind::kActorHitbox) {
+            if (!is_actor_hit(record.hit.identity.kind)) {
                 queue_projectile_trigger(
                     world,
                     identity,
@@ -869,8 +868,7 @@ ProjectileHitOutcome process_projectile_hit_records(
         identity,
         projectile,
         TriggerEventType::kProjectileImpact,
-        records.front().hit.identity.kind ==
-                physics::CollisionObjectKind::kActorHitbox
+        is_actor_hit(records.front().hit.identity.kind)
             ? records.front().target_net_id
             : 0,
         impact_position,
@@ -886,8 +884,7 @@ ProjectileHitOutcome process_projectile_hit_records(
     // its own side's cover.
     if (projectile.damage_shape == ProjectileDamageShape::kDirectHit &&
         projectile.damage > 0 &&
-        records.front().hit.identity.kind ==
-            physics::CollisionObjectKind::kActorHitbox &&
+        is_actor_hit(records.front().hit.identity.kind) &&
         damage_source_may_damage(
             world, projectile.collision_mask, records.front().target_net_id)) {
         damage_pipeline->submit_damage_request(DamageRequest{

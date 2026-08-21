@@ -129,11 +129,8 @@ void simulate_beams(
         // closest-hit cast can shrink itself to the first wall instead of
         // gathering every actor along the authored length first.
         physics::ShapeCastRequest blocker_request = request;
-        blocker_request.filter.collision_mask &=
-            ~physics::collision_layer_bit(physics::CollisionLayer::kDamageable);
-        blocker_request.filter.object_kind_mask &=
-            ~(1u << static_cast<std::uint32_t>(
-                  physics::CollisionObjectKind::kActorHitbox));
+        blocker_request.filter.collision_mask &= ~actor_hit_layer_mask();
+        blocker_request.filter.object_kind_mask &= ~actor_hit_kind_mask();
         physics::CollisionHit blocker{};
         const bool blocked =
             collision_world->shape_cast_closest(blocker_request, &blocker);
@@ -150,11 +147,8 @@ void simulate_beams(
         if (beam.effective_length > 0.0001f) {
             physics::ShapeCastRequest actor_request = request;
             actor_request.displacement = beam.direction * beam.effective_length;
-            actor_request.filter.collision_mask &=
-                physics::collision_layer_bit(physics::CollisionLayer::kDamageable);
-            actor_request.filter.object_kind_mask &=
-                1u << static_cast<std::uint32_t>(
-                    physics::CollisionObjectKind::kActorHitbox);
+            actor_request.filter.collision_mask &= actor_hit_layer_mask();
+            actor_request.filter.object_kind_mask &= actor_hit_kind_mask();
             for (const physics::CollisionHit& hit :
                  collision_world->shape_cast_all(actor_request)) {
                 const std::uint16_t damage = accumulate_tick_damage(

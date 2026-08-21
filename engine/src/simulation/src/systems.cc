@@ -2112,8 +2112,7 @@ void CollisionTriggerSystem::update(
                 }
             }
             for (const physics::CollisionHit& hit : hits) {
-                if (hit.identity.kind !=
-                        physics::CollisionObjectKind::kActorHitbox) {
+                if (!is_actor_hit(hit.identity.kind)) {
                     const auto hit_key = std::tuple{
                         hit.fraction,
                         hit.distance,
