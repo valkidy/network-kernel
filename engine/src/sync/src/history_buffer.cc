@@ -7,6 +7,23 @@
 namespace network_example {
 namespace {
 
+// The rewound volumes are oriented boxes -- HitVolumeSnapshot has carried a
+// rotation from the start -- so the ray is taken into the box's own frame and
+// tested there. Rotation preserves length, so the distance that comes back is
+// the distance in world space.
+//
+// Testing the world-axis bounds instead is close enough for a body box, which
+// is roughly upright, and badly wrong for anything long lying at an angle: a
+// 19 m leg tilted 45 degrees has an axis-aligned bound spanning some 13 m on
+// two axes, most of it empty air that would report hits on nothing.
+bool ray_intersects_obb(
+    const glm::vec3& ray_origin,
+    const glm::vec3& ray_direction,
+    const glm::vec3& box_center,
+    const glm::vec3& box_half_extents,
+    const glm::quat& box_rotation,
+    float* out_distance);
+
 bool ray_intersects_aabb(
     const glm::vec3& ray_origin,
     const glm::vec3& ray_direction,
@@ -44,6 +61,24 @@ bool ray_intersects_aabb(
         *out_distance = t_min;
     }
     return true;
+}
+
+bool ray_intersects_obb(
+    const glm::vec3& ray_origin,
+    const glm::vec3& ray_direction,
+    const glm::vec3& box_center,
+    const glm::vec3& box_half_extents,
+    const glm::quat& box_rotation,
+    float* out_distance) {
+    const glm::quat inverse_rotation = glm::conjugate(box_rotation);
+    const glm::vec3 local_origin = inverse_rotation * (ray_origin - box_center);
+    const glm::vec3 local_direction = inverse_rotation * ray_direction;
+    return ray_intersects_aabb(
+        local_origin,
+        local_direction,
+        glm::vec3{0.0f, 0.0f, 0.0f},
+        box_half_extents,
+        out_distance);
 }
 
 }  // namespace
@@ -171,11 +206,12 @@ bool raycast_history_frame(
         }
 
         float distance = 0.0f;
-        if (ray_intersects_aabb(
+        if (ray_intersects_obb(
                 ray_origin,
                 ray_direction,
                 volume.center,
                 volume.half_extents,
+                volume.rotation,
                 &distance) &&
             distance <= best_distance) {
             best_distance = distance;
