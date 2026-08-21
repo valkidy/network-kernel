@@ -5,6 +5,9 @@
 #include <stdint.h>
 
 /*
+ * 79: KernelWeaponMechanicsDefinition gained collision_mask, appended. Zero
+ *     means the engine default, so a weapon that authors nothing keeps the
+ *     shot it had.
  * 78: KernelSkeletonColliderDefinition::hit_zone changed meaning. It is a
  *     damage multiplier in hundredths, where KERNEL_HIT_ZONE_UNSCALED (100)
  *     leaves damage alone; it was previously an unused body-part id whose only
@@ -40,7 +43,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 78u
+#define KERNEL_ABI_VERSION 79u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -1931,6 +1934,14 @@ typedef struct KernelWeaponMechanicsDefinition {
     uint32_t segment_collider_template_id;
     uint32_t fire_action_template_id;
     uint32_t reload_action_template_id;
+    /*
+     * What this weapon's shot may touch, as KERNEL_COLLISION_LAYER_* bits.
+     * Zero means the engine default, which is what every weapon meant before
+     * the field existed. Naming KERNEL_COLLISION_LAYER_LIMB is the only way a
+     * hitscan reaches a rig's bones, on the live path and the rewound one
+     * alike.
+     */
+    uint32_t collision_mask;
 } KernelWeaponMechanicsDefinition;
 
 typedef struct KernelHomingState {

@@ -451,6 +451,8 @@ struct WeaponMechanicsDefinition {
     std::uint32_t projectile_template_id = 0;
     std::uint32_t fire_action_template_id = 0;
     std::uint32_t reload_action_template_id = 0;
+    // KERNEL_COLLISION_LAYER_* bits; zero keeps the engine default.
+    std::uint32_t collision_mask = 0;
 };
 
 struct WeaponTuning {

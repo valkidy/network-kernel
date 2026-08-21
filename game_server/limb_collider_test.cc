@@ -1041,6 +1041,32 @@ int main() {
         require((rocket_filter.collision_mask & limb_layer) != 0u);
         require((rocket_filter.object_kind_mask & limb_kind) != 0u);
 
+        // The rifle is the one hitscan that asks for limbs, which is what makes
+        // a rewound shot able to resolve against a leg at all: the rewound path
+        // never touches the physics world, so its opt-in is this mask reaching
+        // raycast_history_frame rather than a collision filter.
+        const std::uint8_t rifle_id =
+            network_example::game_server::kWeaponRifle;
+        require(config.weapons.configured[rifle_id]);
+        require(config.weapons.names[rifle_id] == "Rifle");
+        const std::uint32_t rifle_mask =
+            config.weapons.definitions[rifle_id].collision_mask;
+        require((rifle_mask & KERNEL_COLLISION_LAYER_LIMB) != 0u);
+        require((rifle_mask & KERNEL_COLLISION_MASK_DAMAGEABLE) != 0u);
+        // Walls still stop it, which the engine default did for free before the
+        // mask existed and would silently stop doing if it were dropped.
+        require((rifle_mask & KERNEL_COLLISION_MASK_STATIC_WORLD) != 0u);
+
+        // The shotgun does not ask, and its pellets go through the same
+        // resolver -- so this is also the assertion that the opt-in is
+        // per weapon rather than per code path.
+        const std::uint8_t shotgun_id =
+            network_example::game_server::kWeaponShotgun;
+        require(config.weapons.configured[shotgun_id]);
+        require(
+            (config.weapons.definitions[shotgun_id].collision_mask &
+             KERNEL_COLLISION_LAYER_LIMB) == 0u);
+
         // The rocket into a quadruped's leg, which is what all of this was for:
         // 45 damage on a 0.5 leg is 23.
         require(

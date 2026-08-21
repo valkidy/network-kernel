@@ -1433,7 +1433,9 @@ bool resolve_projectile_historical_hit(
                     previous_position,
                     current_position,
                     ignored_net_id,
-                    &hit)) {
+                    &hit,
+                    (projectile.collision_mask &
+                     KERNEL_COLLISION_LAYER_LIMB) != 0u)) {
                 const std::uint64_t hit_time_us =
                     tick_time_us(frame->server_tick, fixed_delta_seconds);
                 const NetworkIdentity identity{projectile_net_id, owner_peer};

@@ -1418,6 +1418,7 @@ WeaponMechanicsDefinition to_weapon_mechanics(
     mechanics.projectile_template_id = definition.projectile_template_id;
     mechanics.fire_action_template_id = definition.fire_action_template_id;
     mechanics.reload_action_template_id = definition.reload_action_template_id;
+    mechanics.collision_mask = definition.collision_mask;
     return mechanics;
 }
 
@@ -1438,6 +1439,7 @@ KernelWeaponMechanicsDefinition to_kernel_weapon_mechanics(
     definition.projectile_template_id = mechanics.projectile_template_id;
     definition.fire_action_template_id = mechanics.fire_action_template_id;
     definition.reload_action_template_id = mechanics.reload_action_template_id;
+    definition.collision_mask = mechanics.collision_mask;
     return definition;
 }
 

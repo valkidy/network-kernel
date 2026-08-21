@@ -146,8 +146,13 @@ bool find_hitscan_target(
     const glm::vec3& origin,
     const glm::vec3& direction,
     float max_range,
+    std::uint32_t collision_mask,
     NetId* target_net_id,
     std::uint16_t* target_hit_zone) {
+    // Reaching a rig's bones means naming their layer, on the rewound path and
+    // the live one alike -- a weapon that says nothing keeps the shot it had.
+    const bool include_limbs =
+        (collision_mask & KERNEL_COLLISION_LAYER_LIMB) != 0u;
     if (rewind_frame != nullptr) {
         HistoricalHitResult hit;
         if (raycast_history_frame(
@@ -156,7 +161,8 @@ bool find_hitscan_target(
                 direction,
                 max_range,
                 shooter_net_id,
-                &hit)) {
+                &hit,
+                include_limbs)) {
             if (target_net_id != nullptr) {
                 *target_net_id = hit.net_id;
             }
@@ -178,6 +184,13 @@ bool find_hitscan_target(
     request.direction = direction;
     request.max_distance = max_range;
     request.filter.ignored_entity_net_id = shooter_net_id;
+    if (collision_mask != 0u) {
+        const physics::CollisionQueryFilter authored =
+            collision_filter_from_mask(collision_mask);
+        request.filter.collision_mask = authored.collision_mask;
+        request.filter.object_kind_mask = authored.object_kind_mask;
+        request.filter.gameplay_category_mask = authored.gameplay_category_mask;
+    }
     if (collision_world == nullptr ||
         !collision_world->ray_cast_closest(request, &hit) ||
         !is_actor_hit(hit.identity.kind)) {
@@ -262,6 +275,7 @@ void apply_hitscan_damage(
             origin,
             direction,
             definition.max_range,
+            definition.collision_mask,
             &target_net_id,
             &target_hit_zone)) {
         return;

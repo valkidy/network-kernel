@@ -124,6 +124,7 @@ void hash_weapon(std::uint64_t* hash, const KernelWeaponMechanicsDefinition& wea
     hash_scalar(hash, weapon.projectile_template_id);
     hash_scalar(hash, weapon.fire_action_template_id);
     hash_scalar(hash, weapon.reload_action_template_id);
+    hash_scalar(hash, weapon.collision_mask);
 }
 
 void hash_action_template(
@@ -2099,6 +2100,7 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
             "area_effect",
             "beam",
             "fire_action_template",
+            "collision_mask",
         },
         path,
         source_kind,
@@ -2113,6 +2115,17 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
     const std::string type = node["weapon_type"].as<std::string>();
     const std::uint16_t damage =
         node["damage"] ? node["damage"].as<std::uint16_t>() : 0u;
+    // What the shot may touch. Zero keeps the engine default, which is what
+    // every weapon meant before this existed; naming limb is the only way a
+    // hitscan reaches a rig's bones.
+    const std::uint32_t weapon_collision_mask =
+        node["collision_mask"] ? collision_mask_from_yaml(node["collision_mask"])
+                               : 0u;
+    require_supported_collision_mask(
+        weapon_collision_mask,
+        KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_MASK_STATIC_WORLD |
+            KERNEL_COLLISION_LAYER_LIMB,
+        "weapon " + node["name"].as<std::string>());
     if (type == "hitscan" || type == "shotgun") {
         if (node["projectile"] || node["area_effect"] || node["beam"]) {
             throw std::runtime_error(
@@ -2128,6 +2141,8 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
                 static_cast<std::uint8_t>(node["pellet_count"].as<int>()),
                 node["pellet_spread"].as<float>());
             weapon.reserve_magazines = reserve_magazines;
+        weapon.collision_mask = weapon_collision_mask;
+            weapon.collision_mask = weapon_collision_mask;
             return weapon;
         }
         KernelWeaponMechanicsDefinition weapon = hitscan_weapon(
@@ -2137,6 +2152,7 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
             reload_ticks,
             node["max_range"].as<float>());
         weapon.reserve_magazines = reserve_magazines;
+        weapon.collision_mask = weapon_collision_mask;
         return weapon;
     }
     if (type == "projectile") {
@@ -2158,6 +2174,7 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
         weapon.fire_mode = KernelWeaponFireMode_Projectile;
         weapon.magazine_size = magazine_size;
         weapon.reserve_magazines = reserve_magazines;
+        weapon.collision_mask = weapon_collision_mask;
         (void)reload_ticks;
         weapon.pellet_count = 1;
         weapon.pellet_count =
@@ -2183,6 +2200,7 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
             damage,
             reload_ticks);
         weapon.reserve_magazines = reserve_magazines;
+        weapon.collision_mask = weapon_collision_mask;
         return weapon;
     }
     if (type == "beam") {
@@ -2199,6 +2217,7 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
             damage,
             reload_ticks);
         weapon.reserve_magazines = reserve_magazines;
+        weapon.collision_mask = weapon_collision_mask;
         return weapon;
     }
     throw std::runtime_error("unsupported weapon_type: " + type);
