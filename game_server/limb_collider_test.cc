@@ -31,6 +31,7 @@
 #include "kernel/public/kernel_types.h"
 #include "protocol/public/network_packets.h"
 #include "physics/public/collision_types.h"
+#include "simulation/public/collision_filter.h"
 #include "simulation/public/movement_solver.h"
 #include "physics/public/physics_world.h"
 #include "sync/public/snapshot.h"
@@ -867,6 +868,50 @@ int main() {
             static_cast<double>(blocked),
             static_cast<double>(unblocked));
         require(unblocked > blocked + 0.5f);
+    }
+
+    // ---------------------------------------------------------------------
+    // Authoring limbs as a gameplay target.
+    //
+    // The layer is reachable from data now, but nothing is pointed at it yet:
+    // this covers the plumbing from a written mask to the filter a query runs
+    // with, including the trap that a limb without a side matches nothing.
+    {
+        const std::uint32_t limb_layer =
+            network_example::physics::collision_layer_bit(
+                network_example::physics::CollisionLayer::kActorLimb);
+        const std::uint32_t limb_kind =
+            1u << static_cast<std::uint32_t>(
+                network_example::physics::CollisionObjectKind::kActorLimb);
+
+        // Naming it turns on both halves. A query is filtered on the layer and
+        // on the object kind, and one without the other sees nothing.
+        const network_example::physics::CollisionQueryFilter limbs =
+            network_example::collision_filter_from_mask(
+                KERNEL_COLLISION_LAYER_HOSTILE_SIDE |
+                KERNEL_COLLISION_LAYER_LIMB);
+        require((limbs.collision_mask & limb_layer) != 0u);
+        require((limbs.object_kind_mask & limb_kind) != 0u);
+        require(
+            (limbs.gameplay_category_mask &
+             KERNEL_COLLISION_LAYER_HOSTILE_SIDE) != 0u);
+
+        // Not naming it leaves every existing weapon exactly as it was.
+        const network_example::physics::CollisionQueryFilter without =
+            network_example::collision_filter_from_mask(
+                KERNEL_COLLISION_MASK_DAMAGEABLE |
+                KERNEL_COLLISION_MASK_STATIC_WORLD);
+        require((without.collision_mask & limb_layer) == 0u);
+        require((without.object_kind_mask & limb_kind) == 0u);
+
+        // The trap: gameplay_category_mask is built from the side bits alone,
+        // so a mask that names limbs and no side produces an empty category and
+        // matches nothing. Authoring has to pair them.
+        const network_example::physics::CollisionQueryFilter sideless =
+            network_example::collision_filter_from_mask(
+                KERNEL_COLLISION_LAYER_LIMB);
+        require((sideless.collision_mask & limb_layer) != 0u);
+        require(sideless.gameplay_category_mask == 0u);
     }
 
     // Retiring the entity retires its bodies. A leg left behind is an invisible

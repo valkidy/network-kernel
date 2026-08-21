@@ -59,6 +59,18 @@ inline physics::CollisionQueryFilter collision_filter_from_mask(
         filter.collision_mask |= actor_hit_layer_mask();
         filter.object_kind_mask |= actor_hit_kind_mask();
     }
+    // A rig's bones are their own layer and their own kind, so a query that
+    // does not name them never pays for them. gameplay_category_mask is built
+    // from the side bits above, and a limb carries its actor's side, so
+    // "limb" without a side matches nothing -- deliberately: that is the same
+    // rule every other damageable volume follows.
+    if ((mask & KERNEL_COLLISION_LAYER_LIMB) != 0u) {
+        filter.collision_mask |=
+            physics::collision_layer_bit(physics::CollisionLayer::kActorLimb);
+        filter.object_kind_mask |=
+            1u << static_cast<std::uint32_t>(
+                physics::CollisionObjectKind::kActorLimb);
+    }
     if ((mask & KERNEL_COLLISION_MASK_PROP) != 0u) {
         filter.collision_mask |= physics::collision_layer_bit(
             physics::CollisionLayer::kStaticObstacle);

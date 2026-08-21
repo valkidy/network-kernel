@@ -625,6 +625,12 @@ std::uint32_t collision_mask_token_from_yaml(const std::string& token) {
     if (token == "prop") {
         return KERNEL_COLLISION_MASK_PROP;
     }
+    // A rig's own bones. Pair it with a side -- gameplay_category_mask is built
+    // from the side bits alone, so "limb" by itself matches nothing and the
+    // shot passes straight through.
+    if (token == "limb") {
+        return KERNEL_COLLISION_LAYER_LIMB;
+    }
     throw std::runtime_error("unsupported collision_mask: " + token);
 }
 
@@ -4198,7 +4204,8 @@ EntityTemplateConfig entity_template_from_yaml(
                 require_supported_collision_mask(
                     entity_template.collision_trigger_mask,
                     KERNEL_COLLISION_MASK_ACTOR |
-                        KERNEL_COLLISION_MASK_STATIC_WORLD,
+                        KERNEL_COLLISION_MASK_STATIC_WORLD |
+                        KERNEL_COLLISION_LAYER_LIMB,
                     "on_collision");
                 entity_template.collision_trigger = trigger_binding_from_yaml(
                     collision,
@@ -5185,11 +5192,12 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             ? KERNEL_COLLISION_MASK_ACTOR
             : static_collision_mask);
         const std::uint32_t supported_collision_mask =
-            mechanics.projectile_type == KernelProjectileType_AreaEffect
+            KERNEL_COLLISION_LAYER_LIMB |
+            (mechanics.projectile_type == KernelProjectileType_AreaEffect
             ? KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_MASK_PROP
             : mechanics.projectile_type == KernelProjectileType_Beam
                 ? static_collision_mask
-                : static_collision_mask | KERNEL_COLLISION_LAYER_PROJECTILE;
+                : static_collision_mask | KERNEL_COLLISION_LAYER_PROJECTILE);
     require_supported_collision_mask(
         mechanics.collision_mask,
         supported_collision_mask,
@@ -5324,7 +5332,7 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             beam["collision_mask"], static_collision_mask);
         require_supported_collision_mask(
             mechanics.beam.collision_mask,
-            static_collision_mask,
+            static_collision_mask | KERNEL_COLLISION_LAYER_LIMB,
             "beam " + projectile_template.name);
     } else if (node["beam"]) {
         throw std::runtime_error("beam block requires projectile type: beam");

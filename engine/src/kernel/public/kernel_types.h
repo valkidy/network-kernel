@@ -5,6 +5,10 @@
 #include <stdint.h>
 
 /*
+ * 77: gameplay collision masks gained KERNEL_COLLISION_LAYER_LIMB, so a
+ *     projectile, beam or prop trigger can name a rig's per-bone colliders as
+ *     a target. Absent from every MASK_ aggregate, so nothing that does not
+ *     name it changes.
  * 76: movement collision masks gained KERNEL_MOVEMENT_LAYER_LIMB, and the set
  *     of authorable bits moved to KERNEL_MOVEMENT_MASK_SUPPORTED.
  *     KERNEL_MOVEMENT_MASK_DEFAULT still means what zero selects and is
@@ -30,7 +34,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 76u
+#define KERNEL_ABI_VERSION 77u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -156,6 +160,17 @@ typedef enum KernelFootholdQueryType {
 #define KERNEL_COLLISION_LAYER_PLAYER_SIDE UINT32_C(0x00000001)
 #define KERNEL_COLLISION_LAYER_HOSTILE_SIDE UINT32_C(0x00000002)
 #define KERNEL_COLLISION_LAYER_PROJECTILE UINT32_C(0x00000004)
+/*
+ * A rig's per-bone colliders, as a gameplay target rather than as something to
+ * walk into. Distinct from KERNEL_MOVEMENT_LAYER_LIMB below, which happens to
+ * carry a different value in a different bit space -- these two are never
+ * interchangeable and the value matching anything there is a coincidence.
+ *
+ * Naming it is the only way a projectile, beam or thrown prop can touch a leg.
+ * It is absent from every MASK_ aggregate for that reason: a weapon that says
+ * nothing about limbs keeps the results and the cost it has today.
+ */
+#define KERNEL_COLLISION_LAYER_LIMB UINT32_C(0x00000008)
 #define KERNEL_COLLISION_LAYER_AGENT_VISION UINT32_C(0x00000010)
 #define KERNEL_COLLISION_LAYER_NEUTRAL UINT32_C(0x00000020)
 #define KERNEL_COLLISION_LAYER_TERRAIN UINT32_C(0x00000040)
