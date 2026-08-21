@@ -22,6 +22,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -998,6 +999,24 @@ int main() {
         // nobody authored immune.
         require(KERNEL_HIT_ZONE_UNSCALED == 100u);
 
+        // And what the multiplier does to a number. Rounds half away from zero,
+        // so a halved hit is not quietly cheaper than the number says.
+        require(network_example::scale_damage_by_hit_zone(45u, 100u) == 45u);
+        require(network_example::scale_damage_by_hit_zone(45u, 50u) == 23u);
+        require(network_example::scale_damage_by_hit_zone(45u, 150u) == 68u);
+        // Authored harmlessness is a real answer, and it is the only way to
+        // reach zero.
+        require(network_example::scale_damage_by_hit_zone(45u, 0u) == 0u);
+        // Small damage survives being halved rather than vanishing.
+        require(network_example::scale_damage_by_hit_zone(1u, 50u) == 1u);
+        // A multiplier small enough to round a hit away does so, which is what
+        // "0.01 times 45 is nothing" means.
+        require(network_example::scale_damage_by_hit_zone(45u, 1u) == 0u);
+        // Saturates rather than wrapping.
+        require(
+            network_example::scale_damage_by_hit_zone(60000u, 60000u) ==
+            std::numeric_limits<std::uint16_t>::max());
+
         // The one projectile that asks. A rocket strikes the leg in its path
         // instead of sailing between them, and the hit resolves to the actor
         // wearing it -- projectile hit records carry
@@ -1021,6 +1040,14 @@ int main() {
             network_example::collision_filter_from_mask(rocket_mask);
         require((rocket_filter.collision_mask & limb_layer) != 0u);
         require((rocket_filter.object_kind_mask & limb_kind) != 0u);
+
+        // The rocket into a quadruped's leg, which is what all of this was for:
+        // 45 damage on a 0.5 leg is 23.
+        require(
+            network_example::scale_damage_by_hit_zone(
+                static_cast<std::uint16_t>(
+                    rocket->definition.mechanics.damage),
+                quadruped->skeleton.colliders[0].hit_zone) == 23u);
 
         // Everything that did not ask is untouched, including the default any
         // query starts from -- that exclusion is what keeps hitscan, vision and

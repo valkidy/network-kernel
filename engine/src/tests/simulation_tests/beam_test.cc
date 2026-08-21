@@ -1,4 +1,5 @@
 #include <cassert>
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <vector>
@@ -12,6 +13,9 @@ namespace {
 
 void require_impl(bool condition, int line) {
     if (!condition) {
+        // Named, because an assertion that aborts in silence tells whoever
+        // broke it nothing at all.
+        std::fprintf(stderr, "require failed at line %d\n", line);
         std::abort();
     }
 }
@@ -403,7 +407,7 @@ network_example::NetId spawn_cover_prop(
     object.identity = network_example::physics::CollisionObjectIdentity{
         net_id,
         collider_id,
-        0,
+        network_example::physics::kHitZoneUnscaled,
         network_example::physics::CollisionObjectKind::kStaticObstacle,
         network_example::physics::CollisionLayer::kStaticObstacle,
     };
@@ -435,7 +439,7 @@ void register_actor_hitbox(
     object.identity = network_example::physics::CollisionObjectIdentity{
         net_id,
         collider_id,
-        0,
+        network_example::physics::kHitZoneUnscaled,
         network_example::physics::CollisionObjectKind::kActorHitbox,
         network_example::physics::CollisionLayer::kDamageable,
     };

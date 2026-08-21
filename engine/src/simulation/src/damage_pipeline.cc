@@ -1,6 +1,7 @@
 #include "simulation/public/simulation.h"
 
 #include <algorithm>
+#include <limits>
 #include <cmath>
 #include <optional>
 #include <utility>
@@ -87,6 +88,21 @@ bool DamagePipeline::submit_hit(
         glm::vec3{0.0f, 0.0f, 0.0f}));
 }
 
+std::uint16_t scale_damage_by_hit_zone(
+    std::uint16_t damage,
+    std::uint16_t hit_zone) {
+    if (hit_zone == kHitZoneUnscaled) {
+        return damage;
+    }
+    const std::uint32_t scaled =
+        (static_cast<std::uint32_t>(damage) *
+             static_cast<std::uint32_t>(hit_zone) +
+         50u) /
+        100u;
+    return static_cast<std::uint16_t>(
+        std::min<std::uint32_t>(scaled, std::numeric_limits<std::uint16_t>::max()));
+}
+
 DamageRequest damage_request_from_hit(
     std::uint32_t server_tick,
     std::uint32_t sequence_id,
@@ -164,7 +180,10 @@ std::vector<ConfirmedDamage> DamagePipeline::drain_ready_damage(
             request.source_net_id,
             request.source_peer,
             request.source_code,
-            request.damage,
+            // Scaled once, here, so everything downstream -- defensive actions,
+            // the drain, the confirmation -- agrees on what the hit was worth.
+            // The request keeps the unscaled figure and the zone beside it.
+            scale_damage_by_hit_zone(request.damage, request.hit_zone),
             request.hit_time_us,
             delay_for_defense
                 ? request.hit_time_us + DamagePipeline::kGraceWindowUs

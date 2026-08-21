@@ -62,6 +62,20 @@ struct ConfirmedDamage {
     std::uint16_t hit_zone = kHitZoneUnscaled;
 };
 
+// Applies a volume's multiplier to a damage amount.
+//
+// Integer throughout: hit_zone is hundredths, so this is (damage * zone + 50)
+// / 100, which rounds half away from zero without going near a float. 45 at 0.5
+// is 23 rather than 22 -- rounding down would make every halved hit quietly
+// cheaper than the number says.
+//
+// A zone of zero yields zero, which is the authored way to say a volume is
+// harmless to hit. That is also why nothing may reach here with an unset zone;
+// see kHitZoneUnscaled.
+std::uint16_t scale_damage_by_hit_zone(
+    std::uint16_t damage,
+    std::uint16_t hit_zone);
+
 // The two ways a DamageRequest comes into being, so that its fields are set in
 // one place each rather than at eleven aggregate initialisations across six
 // files. Positional init of a ten-field struct is how a new field silently
