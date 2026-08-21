@@ -103,6 +103,45 @@ int main() {
             dead_frame, along * -30.0f, along, 100.0f, 0u, &hit));
     }
 
+    // Limbs are in the frame but opt-in: a caller that has not asked for them
+    // must see exactly what it saw before they were captured.
+    {
+        network_example::HitVolumeSnapshot limb = slab;
+        limb.is_limb = 1u;
+        const network_example::HistoryFrame limb_frame = frame_with(limb);
+        const glm::vec3 along = glm::normalize(glm::vec3{1.0f, 0.0f, 1.0f});
+        network_example::HistoricalHitResult hit;
+        require(!network_example::raycast_history_frame(
+            limb_frame, along * -30.0f, along, 100.0f, 0u, &hit));
+        require(network_example::raycast_history_frame(
+            limb_frame, along * -30.0f, along, 100.0f, 0u, &hit, true));
+        require(hit.net_id == 42u);
+        require(hit.volume.is_limb == 1u);
+        // And the multiplier rides along, so a rewound leg costs what a live
+        // one does.
+        require(hit.volume.hit_zone == network_example::kHitZoneUnscaled);
+    }
+
+    // A hitbox in the same frame answers either way.
+    {
+        network_example::HitVolumeSnapshot body = slab;
+        body.rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+        network_example::HistoryFrame mixed = frame_with(body);
+        network_example::HitVolumeSnapshot limb = slab;
+        limb.net_id = 43u;
+        limb.is_limb = 1u;
+        mixed.volumes.push_back(limb);
+        network_example::HistoricalHitResult hit;
+        require(network_example::raycast_history_frame(
+            mixed,
+            glm::vec3{0.0f, 0.0f, -30.0f},
+            glm::vec3{0.0f, 0.0f, 1.0f},
+            100.0f,
+            0u,
+            &hit));
+        require(hit.net_id == 42u);
+    }
+
     std::printf("history_buffer_test: PASS\n");
     return 0;
 }

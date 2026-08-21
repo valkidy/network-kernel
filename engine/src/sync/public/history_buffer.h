@@ -19,6 +19,11 @@ struct HitVolumeSnapshot {
     std::uint16_t hit_zone = kHitZoneUnscaled;
     std::uint8_t team = 0;
     std::uint8_t alive = 0;
+    // A rig's per-bone volume rather than the actor's own hitbox. Rewinding
+    // them is opt-in for the same reason colliding with them is: an actor
+    // contributes one hitbox and a legged rig contributes a dozen, and a query
+    // that never asked should not pay for them or start hitting them.
+    std::uint8_t is_limb = 0;
 };
 
 struct HistoryFrame {
@@ -51,20 +56,24 @@ private:
     std::uint32_t write_index_ = 0;
 };
 
+// include_limbs defaults to false so that a caller which has not been taught
+// about limbs keeps the results it had.
 bool raycast_history_frame(
     const HistoryFrame& frame,
     const glm::vec3& ray_origin,
     const glm::vec3& ray_direction,
     float max_range,
     NetId ignored_net_id,
-    HistoricalHitResult* out_hit);
+    HistoricalHitResult* out_hit,
+    bool include_limbs = false);
 
 bool sweep_history_frame(
     const HistoryFrame& frame,
     const glm::vec3& segment_start,
     const glm::vec3& segment_end,
     NetId ignored_net_id,
-    HistoricalHitResult* out_hit);
+    HistoricalHitResult* out_hit,
+    bool include_limbs = false);
 
 }  // namespace network_example
 

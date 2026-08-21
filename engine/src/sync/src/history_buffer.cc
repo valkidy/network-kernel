@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <unordered_map>
 
 namespace network_example {
 namespace {
@@ -95,6 +96,7 @@ void HistoryBuffer::write_frame(const World& world, std::uint32_t server_tick) {
         const NetworkIdentity,
         const Transform,
         const Hitbox>();
+    std::unordered_map<NetId, bool> alive_by_net_id;
     for (const entt::entity entity : view) {
         if (world.registry().all_of<ProjectileTag>(entity)) {
             continue;
@@ -113,6 +115,40 @@ void HistoryBuffer::write_frame(const World& world, std::uint32_t server_tick) {
             hitbox.hit_zone,
             0,
             static_cast<std::uint8_t>(alive ? 1 : 0),
+            0,
+        });
+        alive_by_net_id[identity.net_id] = alive;
+    }
+
+    // A rig's per-bone volumes, taken from the collider registry rather than
+    // re-derived: the authoritative solve already refreshed them this tick, and
+    // rewinding a leg to somewhere the solve never put it would be worse than
+    // not rewinding it at all.
+    //
+    // They ride the owning actor's alive flag, which is why the hitbox pass
+    // above records it -- a limb is not separately killable.
+    for (const ColliderInstance& collider :
+         world.collider_registry().instances()) {
+        // Carrying a bone is what makes a collider a limb -- the registry
+        // itself keys them that way, and remove_bone_colliders uses the same
+        // test. Reading the ABI's purpose bit here would make sync depend on
+        // the kernel's public header for something the structure already says.
+        if (collider.bone_index == UINT32_MAX) {
+            continue;
+        }
+        const auto alive = alive_by_net_id.find(collider.entity_net_id);
+        if (alive == alive_by_net_id.end()) {
+            continue;
+        }
+        frame.volumes.push_back(HitVolumeSnapshot{
+            collider.entity_net_id,
+            collider.world_center,
+            collider.half_extents,
+            collider.world_rotation,
+            static_cast<std::uint16_t>(collider.hit_zone),
+            0,
+            static_cast<std::uint8_t>(alive->second ? 1 : 0),
+            1,
         });
     }
 
@@ -192,7 +228,8 @@ bool raycast_history_frame(
     const glm::vec3& ray_direction,
     float max_range,
     NetId ignored_net_id,
-    HistoricalHitResult* out_hit) {
+    HistoricalHitResult* out_hit,
+    bool include_limbs) {
     if (!frame.valid) {
         return false;
     }
@@ -201,7 +238,8 @@ bool raycast_history_frame(
     HistoricalHitResult best_hit;
     bool has_hit = false;
     for (const HitVolumeSnapshot& volume : frame.volumes) {
-        if (volume.net_id == ignored_net_id || volume.alive == 0) {
+        if (volume.net_id == ignored_net_id || volume.alive == 0 ||
+            (volume.is_limb != 0u && !include_limbs)) {
             continue;
         }
 
@@ -235,7 +273,8 @@ bool sweep_history_frame(
     const glm::vec3& segment_start,
     const glm::vec3& segment_end,
     NetId ignored_net_id,
-    HistoricalHitResult* out_hit) {
+    HistoricalHitResult* out_hit,
+    bool include_limbs) {
     const glm::vec3 displacement = segment_end - segment_start;
     const float length = glm::length(displacement);
     if (length <= 0.0001f) {
@@ -247,7 +286,8 @@ bool sweep_history_frame(
         displacement / length,
         length,
         ignored_net_id,
-        out_hit);
+        out_hit,
+        include_limbs);
 }
 
 }  // namespace network_example
