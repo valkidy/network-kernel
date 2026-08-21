@@ -884,9 +884,97 @@ void catalog_file_loads_colliders() {
     assert(config.colliders.bindings.empty());
 }
 
+// A hitscan weapon may name a projectile template for presentation only. The
+// engine spawns nothing from it -- rifle resolves its shot by raycast -- so
+// what this pins is that the reference travels to the catalog without dragging
+// any of the projectile branch's behaviour along with it.
+void hitscan_weapon_carries_presentation_projectile_template() {
+    const std::filesystem::path dir =
+        runfiles_root() / "game_server" / "weapon_templates";
+    const network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::
+            load_gameplay_config_from_weapon_template_directory(dir.string());
+
+    const KernelWeaponMechanicsDefinition& rifle =
+        config.weapons.definitions[network_example::game_server::kWeaponRifle];
+    const KernelWeaponMechanicsDefinition& shotgun =
+        config.weapons.definitions[network_example::game_server::kWeaponShotgun];
+    assert(rifle.projectile_template_id == 10);
+    assert(shotgun.projectile_template_id == 11);
+
+    // Everything the projectile branch would have changed, and did not.
+    assert(rifle.fire_mode == KernelWeaponFireMode_Hitscan);
+    assert(shotgun.fire_mode == KernelWeaponFireMode_Shotgun);
+    assert(rifle.damage == 25);
+    assert(shotgun.damage == 10);
+    assert(rifle.segment_collider_template_id == 5);
+    assert(shotgun.segment_collider_template_id == 6);
+    assert(
+        config.weapons.collider_template_ids[
+            network_example::game_server::kWeaponRifle] == 5);
+    assert(
+        config.weapons.collider_template_ids[
+            network_example::game_server::kWeaponShotgun] == 6);
+    assert(
+        config.weapons.projectile_sync_modes[
+            network_example::game_server::kWeaponRifle] ==
+        KernelProjectileSyncMode_HybridDeterministicThenSnapshot);
+    assert(
+        config.weapons.projectile_sync_modes[
+            network_example::game_server::kWeaponShotgun] ==
+        KernelProjectileSyncMode_HybridDeterministicThenSnapshot);
+    // The spread a client reproduces its pellet tracers from, unchanged.
+    assert(shotgun.pellet_count == 5);
+
+    // Packed into the catalog even though no weapon spawns from them, which is
+    // what lets a client reach them, and inert if anything ever did spawn one.
+    const network_example::game_server::KernelGameplayCatalogStorage storage =
+        network_example::game_server::build_kernel_gameplay_catalog(config);
+    std::uint32_t found_tracers = 0;
+    for (std::uint32_t index = 0;
+         index < storage.definition.projectile_template_count;
+         ++index) {
+        const KernelProjectileTemplateDefinition& projectile_template =
+            storage.definition.projectile_templates[index];
+        if (projectile_template.projectile_template_id != 10 &&
+            projectile_template.projectile_template_id != 11) {
+            continue;
+        }
+        ++found_tracers;
+        assert(projectile_template.mechanics.damage == 0);
+        assert(projectile_template.mechanics.damage_shape ==
+               KernelProjectileDamageShape_None);
+        assert(projectile_template.mechanics.collision_mask == 0);
+    }
+    assert(found_tracers == 2);
+}
+
+// The reference is optional, which the repo templates can no longer show now
+// that both instant weapons author one. This fixture's rifle and shotgun do
+// not, and must still load.
+void instant_weapons_may_omit_the_presentation_template() {
+    const std::filesystem::path dir = tmp_dir("presentation_template_optional");
+    write_valid_templates(dir);
+
+    const network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::
+            load_gameplay_config_from_weapon_template_directory(dir.string());
+
+    assert(config.weapons.definitions[network_example::game_server::kWeaponRifle]
+               .projectile_template_id == 0);
+    assert(config.weapons
+               .definitions[network_example::game_server::kWeaponShotgun]
+               .projectile_template_id == 0);
+    // Still valid without it -- only the segment collider is required.
+    assert(config.weapons.definitions[network_example::game_server::kWeaponRifle]
+               .segment_collider_template_id != 0);
+}
+
 }  // namespace
 
 int main() {
+    hitscan_weapon_carries_presentation_projectile_template();
+    instant_weapons_may_omit_the_presentation_template();
     valid_repo_templates_load_all_slots();
     projectile_collision_query_modes_are_loaded();
     invalid_templates_are_rejected();

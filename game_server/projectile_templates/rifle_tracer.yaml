@@ -1,0 +1,31 @@
+id: 10
+name: rifle_tracer
+# Presentation only. Nothing spawns this: rifle is a hitscan weapon, so the
+# server resolves its shot by raycast and creates no projectile entity. The
+# template exists so a client can reach a tracer asset through the same
+# projectile-template mapping it already uses for weapons that do spawn one,
+# and so the visual can be retuned without touching the weapon's mechanics.
+#
+# Every projectile template is packed into the catalog whether or not a weapon
+# spawns from it, so this reaches a client like any other.
+type: standard
+collider_template: rifle_segment
+movement_model: linear
+sync_mode: local_predicted_deterministic
+hit_response: destroy
+# none, not direct_hit: if this template ever were spawned by mistake, it must
+# not be able to deal damage. collision_mask: none says the same thing from the
+# other side -- the effect may exist and sync, but resolves no damage targets.
+damage_shape: none
+damage: 0
+collision_mask: none
+# Read by the client as visual parameters, not simulated here. lifetime_ticks
+# matches the 3 ticks the server keeps its own hitscan segment alive, so a
+# tracer drawn from this template lasts as long as the shot it stands for.
+speed: 200.0
+lifetime_ticks: 3
+max_hit_count: 1
+gravity:
+  x: 0.0
+  y: 0.0
+  z: 0.0

@@ -6184,6 +6184,26 @@ void apply_weapon_template_references(
                 collider_template_id_from_ref(document["segment_collider"], colliders);
             weapons->definitions[weapon_id].segment_collider_template_id = template_id;
             weapons->collider_template_ids[weapon_id] = template_id;
+            // Presentation only. An instant weapon resolves its hit by raycast
+            // and spawns nothing, so no engine path reads this -- but a client
+            // has no other way to name the asset a tracer should be drawn from,
+            // and it already maps projectile templates to local assets for
+            // every weapon that does spawn one. Reusing that mapping beats
+            // inventing a second one keyed on weapon id.
+            //
+            // Deliberately not what the projectile branch below does: fire_mode
+            // stays Hitscan, damage keeps coming from the weapon template,
+            // collider_template_ids keeps the segment above, and the projectile
+            // template's weapon_id is left alone -- a presentation reference
+            // does not own the template it points at, and two weapons may well
+            // point at the same one.
+            if (document["projectile_template"]) {
+                weapons->definitions[weapon_id].projectile_template_id =
+                    projectile_template_from_ref(
+                        document["projectile_template"],
+                        projectile_templates)
+                        ->definition.projectile_template_id;
+            }
             continue;
         }
 

@@ -9,3 +9,6 @@ max_range: 40.0
 pellet_count: 5
 pellet_spread: 0.035
 segment_collider: shotgun_segment
+# Presentation only -- an instant weapon spawns no projectile. This names the
+# template a client draws its pellet tracers from; the engine never reads it.
+projectile_template: shotgun_tracer

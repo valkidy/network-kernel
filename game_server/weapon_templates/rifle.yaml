@@ -7,6 +7,9 @@ fire_action_template: rifle_fire
 reload_ticks: 30
 max_range: 100.0
 segment_collider: rifle_segment
+# Presentation only -- a hitscan weapon spawns no projectile. This names the
+# template a client draws its tracer from; the engine never reads it.
+projectile_template: rifle_tracer
 # actor | limb: a rifle shot resolves against a rig's bones as well as its body,
 # which is what makes shooting a monster's leg mean anything. static_world keeps
 # walls stopping the shot, as the engine default did.
