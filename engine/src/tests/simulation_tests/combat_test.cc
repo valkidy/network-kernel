@@ -92,14 +92,12 @@ network_example::WeaponMechanicsDefinition weapon_definition(
     network_example::WeaponFireMode mode,
     std::uint16_t magazine_size,
     std::uint16_t damage,
-    std::uint32_t reload_ticks,
     float max_range = 0.0f) {
     network_example::WeaponMechanicsDefinition definition;
     definition.id = id;
     definition.mode = mode;
     definition.magazine_size = magazine_size;
     definition.damage = damage;
-    (void)reload_ticks;
     definition.max_range = max_range;
     definition.pellet_count = 1;
     definition.fire_action_template_id = 1000u + id;
@@ -183,33 +181,28 @@ void configure_test_weapons(
             network_example::WeaponFireMode::kHitscan,
             30,
             25,
-            30,
             100.0f),
         weapon_definition(
             network_example::kWeaponSlot1,
             network_example::WeaponFireMode::kShotgun,
             8,
             10,
-            45,
             40.0f),
         weapon_definition(
             network_example::kWeaponSlot2,
             network_example::WeaponFireMode::kProjectile,
             30,
-            40,
-            60),
+            40),
         weapon_definition(
             network_example::kWeaponSlot3,
             network_example::WeaponFireMode::kProjectile,
             6,
-            45,
-            75),
+            45),
         weapon_definition(
             network_example::kWeaponId4,
             network_example::WeaponFireMode::kProjectile,
             3,
-            12,
-            30),
+            12),
     }};
     tuning.definitions[network_example::kWeaponSlot1].pellet_count = 5;
     tuning.definitions[network_example::kWeaponSlot1].pellet_spread = 0.035f;
@@ -438,8 +431,7 @@ void action_timeline_drives_rocket_rifle_and_beam() {
         network_example::kWeaponId5,
         network_example::WeaponFireMode::kProjectile,
         10,
-        1,
-        30);
+        1);
     beam_tuning.definitions[network_example::kWeaponId5].projectile_template_id = 5;
     beam_tuning.definitions[network_example::kWeaponId5]
         .fire_action_template_id = beam_action.action_template_id;

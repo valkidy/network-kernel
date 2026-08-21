@@ -309,8 +309,6 @@ struct ProjectileCollisionGeometry {
     glm::vec3 center{0.0f, 0.0f, 0.0f};
     glm::vec3 half_extents{0.0f, 0.0f, 0.0f};
     float radius = 0.0f;
-    float length = 0.0f;
-    float angle_degrees = 0.0f;
 };
 
 inline constexpr std::uint32_t kCollisionLayerPlayerSide = 0x00000001u;
@@ -424,21 +422,6 @@ struct ActionRuntimeState {
 };
 
 struct WeaponMechanicsDefinition {
-    WeaponMechanicsDefinition() = default;
-    WeaponMechanicsDefinition(
-        std::uint8_t definition_id,
-        WeaponFireMode fire_mode,
-        std::uint16_t definition_magazine_size,
-        std::uint16_t definition_damage,
-        std::uint32_t /*legacy_fire_interval_ticks*/,
-        std::uint32_t /*legacy_reload_ticks*/,
-        float definition_max_range = 0.0f)
-        : id(definition_id),
-          mode(fire_mode),
-          magazine_size(definition_magazine_size),
-          damage(definition_damage),
-          max_range(definition_max_range) {}
-
     std::uint8_t id = 0;
     WeaponFireMode mode = WeaponFireMode::kHitscan;
     std::uint16_t magazine_size = 0;

@@ -3,5 +3,4 @@ name: Rocket
 weapon_type: projectile
 magazine_size: 6
 fire_action_template: rocket_fire
-reload_ticks: 75
 projectile_template: rocket_projectile

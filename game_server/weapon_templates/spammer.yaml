@@ -4,7 +4,6 @@ weapon_type: projectile
 magazine_size: 3
 reserve_magazines: 65535
 fire_action_template: spammer_fire
-reload_ticks: 30
 burst_count: 3
 burst_spread_degrees: 15.0
 projectile_template: spammer_projectile

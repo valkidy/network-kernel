@@ -9,12 +9,5 @@ magazine_size: 45
 # The sentry has no ammo economy and no way to scavenge; running it dry would
 # just park it in a permanent reload. Same choice as spammer.yaml.
 reserve_magazines: 65535
-# Inert on both counts, kept for symmetry with the other weapon templates:
-# apply_weapon_template_references overwrites `damage` from the projectile
-# template (gameplay_config.cc:6081), and beam_weapon() discards `reload_ticks`
-# (gameplay_config.cc:546) because every weapon reloads through the catalog's
-# shared_reload action -- 30 ticks, set in gameplay_catalog.yaml.
-damage: 2
-reload_ticks: 30
 fire_action_template: beam_sentry_fire
 projectile_template: beam_sentry_beam

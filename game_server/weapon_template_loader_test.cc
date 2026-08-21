@@ -193,45 +193,45 @@ void write_valid_templates(const std::filesystem::path& dir) {
     write_file(
         dir / "rifle.yaml",
         "id: 0\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
-        "damage: 25\nfire_action_template: rifle_fire\nreload_ticks: 30\nmax_range: 100.0\n"
+        "damage: 25\nfire_action_template: rifle_fire\nmax_range: 100.0\n"
         "segment_collider: rifle_segment\n");
     write_file(
         dir / "shotgun.yaml",
         "id: 1\nname: Shotgun\nweapon_type: shotgun\nmagazine_size: 8\n"
-        "damage: 10\nfire_action_template: shotgun_fire\nreload_ticks: 45\nmax_range: 40.0\n"
+        "damage: 10\nfire_action_template: shotgun_fire\nmax_range: 40.0\n"
         "pellet_count: 5\npellet_spread: 0.035\n"
         "segment_collider: shotgun_segment\n");
     write_file(
         dir / "spammer.yaml",
         "id: 2\nname: Projectile Spammer\nweapon_type: projectile\n"
         "magazine_size: 120\n"
-        "fire_action_template: spammer_fire\nreload_ticks: 30\n"
+        "fire_action_template: spammer_fire\n"
         "projectile_template: spammer_projectile\n");
     write_file(
         dir / "rocket.yaml",
         "id: 3\nname: Rocket\nweapon_type: projectile\nmagazine_size: 6\n"
-        "fire_action_template: rocket_fire\nreload_ticks: 75\n"
+        "fire_action_template: rocket_fire\n"
         "projectile_template: rocket_projectile\n");
     write_file(
         dir / "fire_floor.yaml",
         "id: 4\nname: Fire Floor\nweapon_type: area_effect\nmagazine_size: 3\n"
-        "damage: 12\nfire_action_template: fire_floor_cast\nreload_ticks: 30\n"
+        "fire_action_template: fire_floor_cast\n"
         "projectile_template: fire_floor_area\n");
     write_file(
         dir / "beam_rifle.yaml",
         "id: 5\nname: Beam Rifle\nweapon_type: beam\nmagazine_size: 12\n"
-        "damage: 30\nfire_action_template: beam_rifle_fire\nreload_ticks: 45\n"
+        "fire_action_template: beam_rifle_fire\n"
         "projectile_template: beam_rifle_beam\n");
     write_file(
         dir / "homing_missile.yaml",
         "id: 6\nname: Homing Missile\nweapon_type: projectile\nmagazine_size: 4\n"
-        "fire_action_template: homing_missile_fire\nreload_ticks: 60\n"
+        "fire_action_template: homing_missile_fire\n"
         "projectile_template: homing_missile_projectile\n");
     write_file(
         dir / "grenade_launcher.yaml",
         "id: 99\nname: Grenade Launcher\nweapon_type: projectile\n"
         "magazine_size: 6\n"
-        "fire_action_template: grenade_launcher_fire\nreload_ticks: 90\n"
+        "fire_action_template: grenade_launcher_fire\n"
         "projectile_template: grenade_shell_projectile\n");
 }
 
@@ -373,9 +373,13 @@ void valid_repo_templates_load_all_slots() {
         if (collider.definition.template_id == 6) {
             found_segment = true;
             assert(collider.definition.shape_type == KernelColliderShapeType_Segment);
-            assert(collider.definition.shape_params.x == 40.0f);
-            assert(collider.definition.shape_params.z == 6.0f);
-            assert(collider.definition.lifetime_ticks == 3);
+            // A weapon segment declares no reach, no scatter, and no lifetime:
+            // all three are decided at fire time. Only an optional thickness
+            // survives, and shotgun_segment does not author one.
+            assert(collider.definition.shape_params.x == 0.0f);
+            assert(collider.definition.shape_params.y == 0.0f);
+            assert(collider.definition.shape_params.z == 0.0f);
+            assert(collider.definition.lifetime_ticks == 0);
         }
         if (collider.definition.template_id == 7) {
             found_sphere = true;
@@ -425,7 +429,7 @@ void invalid_templates_are_rejected() {
     write_file(
         legacy_dir / "rifle.yaml",
         "id: 0\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
-        "damage: 25\ncooldown_ticks: 3\nreload_ticks: 30\nmax_range: 100.0\n"
+        "damage: 25\ncooldown_ticks: 3\nmax_range: 100.0\n"
         "segment_collider: rifle_segment\n");
     try {
         (void)network_example::game_server::
@@ -504,7 +508,7 @@ void invalid_templates_are_rejected() {
     write_file(
         missing_policy_dir / "rifle.yaml",
         "id: 0\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
-        "damage: 25\nreload_ticks: 30\nmax_range: 100.0\n"
+        "damage: 25\nmax_range: 100.0\n"
         "segment_collider: rifle_segment\n");
     assert(load_fails(missing_policy_dir));
 
@@ -513,7 +517,7 @@ void invalid_templates_are_rejected() {
     write_file(
         dangling_action_dir / "rifle.yaml",
         "id: 0\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
-        "damage: 25\nfire_action_template: missing_action\nreload_ticks: 30\n"
+        "damage: 25\nfire_action_template: missing_action\n"
         "max_range: 100.0\nsegment_collider: rifle_segment\n");
     assert(load_fails(dangling_action_dir));
 
@@ -542,7 +546,7 @@ void invalid_templates_are_rejected() {
     write_file(
         duplicate_dir / "duplicate.yaml",
         "id: 4\nname: Duplicate\nweapon_type: hitscan\nmagazine_size: 1\n"
-        "damage: 1\nreload_ticks: 1\nmax_range: 1.0\n");
+        "damage: 1\nmax_range: 1.0\n");
     assert(load_fails(duplicate_dir));
 
     const std::filesystem::path duplicate_name_dir = tmp_dir("duplicate_name");
@@ -550,7 +554,7 @@ void invalid_templates_are_rejected() {
     write_file(
         duplicate_name_dir / "duplicate_name.yaml",
         "id: 4\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 1\n"
-        "damage: 1\nreload_ticks: 1\nmax_range: 1.0\n"
+        "damage: 1\nmax_range: 1.0\n"
         "segment_collider: rifle_segment\n");
     assert(load_fails(duplicate_name_dir));
 
@@ -560,7 +564,7 @@ void invalid_templates_are_rejected() {
     write_file(
         unknown_weapon_field_dir / "rifle.yaml",
         "id: 0\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
-        "damage: 25\nreload_ticks: 30\nmax_range: 100.0\n"
+        "damage: 25\nmax_range: 100.0\n"
         "segment_collider: rifle_segment\nruntime_instance_id: 9\n");
     assert(load_fails(unknown_weapon_field_dir));
 
@@ -570,7 +574,7 @@ void invalid_templates_are_rejected() {
     write_file(
         unknown_area_field_dir / "fire_floor.yaml",
         "id: 4\nname: Fire Floor\nweapon_type: area_effect\nmagazine_size: 3\n"
-        "damage: 12\nreload_ticks: 30\narea_effect:\n"
+        "area_effect:\n"
         "  collider_template: area_effect_sphere\n"
         "  radius: 2.0\n  damage_per_interval: 12\n  damage_interval_ticks: 2\n"
         "  lifetime_ticks: 6\n  spawn_distance: 1.0\n  collision_mask: hostile_side\n"
@@ -583,7 +587,7 @@ void invalid_templates_are_rejected() {
     write_file(
         unknown_beam_field_dir / "beam_rifle.yaml",
         "id: 5\nname: Beam Rifle\nweapon_type: beam\nmagazine_size: 12\n"
-        "damage: 30\nreload_ticks: 45\nbeam:\n"
+        "beam:\n"
         "  collider_template: beam_oriented_box\n"
         "  length: 8.0\n  radius: 0.25\n  damage_per_tick: 1\n"
         "  lifetime_ticks: 2\n  collision_mask: hostile_side\n  owner: player\n");
@@ -620,7 +624,7 @@ void invalid_templates_are_rejected() {
     write_file(
         hitscan_projectile_dir / "rifle.yaml",
         "id: 0\nname: Bad Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
-        "damage: 25\nreload_ticks: 30\nmax_range: 100.0\n"
+        "damage: 25\nmax_range: 100.0\n"
         "projectile: {speed: 10.0}\n");
     assert(load_fails(hitscan_projectile_dir));
 
@@ -628,8 +632,7 @@ void invalid_templates_are_rejected() {
     write_valid_templates(missing_beam_dir);
     write_file(
         missing_beam_dir / "beam_rifle.yaml",
-        "id: 5\nname: Beam\nweapon_type: beam\nmagazine_size: 1\n"
-        "damage: 1\nreload_ticks: 1\n");
+        "id: 5\nname: Beam\nweapon_type: beam\nmagazine_size: 1\n");
     assert(load_fails(missing_beam_dir));
 
     const std::filesystem::path invalid_beam_dir = tmp_dir("invalid_beam");
@@ -637,7 +640,7 @@ void invalid_templates_are_rejected() {
     write_file(
         invalid_beam_dir / "beam_rifle.yaml",
         "id: 5\nname: Beam\nweapon_type: beam\nmagazine_size: 1\n"
-        "damage: 1\nreload_ticks: 1\nbeam:\n"
+        "beam:\n"
         "  length: 0.0\n  radius: 0.25\n  damage_per_tick: 1\n"
         "  lifetime_ticks: 2\n  collision_mask: hostile_side\n");
     assert(load_fails(invalid_beam_dir));
@@ -647,7 +650,7 @@ void invalid_templates_are_rejected() {
     write_file(
         beam_on_hitscan_dir / "rifle.yaml",
         "id: 0\nname: Bad Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
-        "damage: 25\nreload_ticks: 30\nmax_range: 100.0\n"
+        "damage: 25\nmax_range: 100.0\n"
         "beam: {length: 8.0}\n");
     assert(load_fails(beam_on_hitscan_dir));
 
@@ -753,7 +756,6 @@ void invalid_templates_are_rejected() {
     write_file(
         unknown_projectile_dir / "rocket.yaml",
         "id: 3\nname: Rocket\nweapon_type: projectile\nmagazine_size: 6\n"
-        "reload_ticks: 75\n"
         "projectile_template: missing_projectile\n");
     assert(load_fails(unknown_projectile_dir));
 

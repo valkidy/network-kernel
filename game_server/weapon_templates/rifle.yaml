@@ -4,7 +4,6 @@ weapon_type: hitscan
 magazine_size: 30
 damage: 25
 fire_action_template: rifle_fire
-reload_ticks: 30
 max_range: 100.0
 segment_collider: rifle_segment
 # Presentation only -- a hitscan weapon spawns no projectile. This names the

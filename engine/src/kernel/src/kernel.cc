@@ -1282,12 +1282,9 @@ ProjectileCollisionGeometry projectile_collision_geometry_from_template(
     geometry.half_extents = collider_template_half_extents(collider_template);
     geometry.radius = collider_template_radius(collider_template);
     if (collider_template.shape_type == KernelColliderShapeType_Segment) {
-        geometry.length = collider_template.shape_params.x;
+        // A segment's thickness is the one shape value the query can use; its
+        // reach comes from how far the projectile travelled, not from here.
         geometry.radius = collider_template.shape_params.y;
-        geometry.angle_degrees = collider_template.shape_params.z;
-    } else if (collider_template.shape_type == KernelColliderShapeType_Cone) {
-        geometry.length = collider_template.shape_params.x;
-        geometry.angle_degrees = collider_template.shape_params.y;
     }
     return geometry;
 }
@@ -3330,10 +3327,11 @@ bool KernelEngine::load_gameplay_catalog(
               collider_template.shape_params.z <= 0.0f)) ||
             (collider_template.shape_type == KernelColliderShapeType_Sphere &&
              collider_template.shape_params.x <= 0.0f) ||
+            // A segment carries only an optional thickness. Its reach used to
+            // be validated here as shape_params.x, back when the template
+            // authored a `length` nothing read.
             (collider_template.shape_type == KernelColliderShapeType_Segment &&
-             (collider_template.shape_params.x <= 0.0f ||
-              collider_template.shape_params.y < 0.0f ||
-              collider_template.shape_params.z < 0.0f)) ||
+             collider_template.shape_params.y < 0.0f) ||
             (collider_template.shape_type == KernelColliderShapeType_Cone &&
              ((collider_template.purpose_flags & KernelColliderPurpose_Vision) == 0u ||
               collider_template.shape_params.x <= 0.0f ||

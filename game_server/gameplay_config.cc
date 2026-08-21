@@ -481,7 +481,6 @@ KernelWeaponMechanicsDefinition hitscan_weapon(
     std::uint8_t weapon_id,
     std::uint16_t magazine_size,
     std::uint16_t damage,
-    std::uint32_t reload_ticks,
     float max_range) {
     KernelWeaponMechanicsDefinition weapon{};
     weapon.struct_size = sizeof(KernelWeaponMechanicsDefinition);
@@ -490,7 +489,6 @@ KernelWeaponMechanicsDefinition hitscan_weapon(
     weapon.magazine_size = magazine_size;
     weapon.reserve_magazines = kDefaultReserveMagazines;
     weapon.damage = damage;
-    (void)reload_ticks;
     weapon.max_range = max_range;
     weapon.pellet_count = 1;
     return weapon;
@@ -500,17 +498,11 @@ KernelWeaponMechanicsDefinition shotgun_weapon(
     std::uint8_t weapon_id,
     std::uint16_t magazine_size,
     std::uint16_t damage,
-    std::uint32_t reload_ticks,
     float max_range,
     std::uint8_t pellet_count,
     float pellet_spread) {
     KernelWeaponMechanicsDefinition weapon =
-        hitscan_weapon(
-            weapon_id,
-            magazine_size,
-            damage,
-            reload_ticks,
-            max_range);
+        hitscan_weapon(weapon_id, magazine_size, damage, max_range);
     weapon.fire_mode = KernelWeaponFireMode_Shotgun;
     weapon.pellet_count = pellet_count;
     weapon.pellet_spread = pellet_spread;
@@ -519,17 +511,15 @@ KernelWeaponMechanicsDefinition shotgun_weapon(
 
 KernelWeaponMechanicsDefinition area_effect_weapon(
     std::uint8_t weapon_id,
-    std::uint16_t magazine_size,
-    std::uint16_t damage,
-    std::uint32_t reload_ticks) {
+    std::uint16_t magazine_size) {
     KernelWeaponMechanicsDefinition weapon{};
     weapon.struct_size = sizeof(KernelWeaponMechanicsDefinition);
     weapon.weapon_id = weapon_id;
     weapon.fire_mode = KernelWeaponFireMode_Projectile;
     weapon.magazine_size = magazine_size;
     weapon.reserve_magazines = kDefaultReserveMagazines;
-    weapon.damage = damage;
-    (void)reload_ticks;
+    // damage is left at zero on purpose: apply_weapon_template_references
+    // fills it in from the projectile template this weapon points at.
     weapon.pellet_count = 1;
     weapon.projectile_template_id = weapon_id;
     return weapon;
@@ -537,17 +527,15 @@ KernelWeaponMechanicsDefinition area_effect_weapon(
 
 KernelWeaponMechanicsDefinition beam_weapon(
     std::uint8_t weapon_id,
-    std::uint16_t magazine_size,
-    std::uint16_t damage,
-    std::uint32_t reload_ticks) {
+    std::uint16_t magazine_size) {
     KernelWeaponMechanicsDefinition weapon{};
     weapon.struct_size = sizeof(KernelWeaponMechanicsDefinition);
     weapon.weapon_id = weapon_id;
     weapon.fire_mode = KernelWeaponFireMode_Projectile;
     weapon.magazine_size = magazine_size;
     weapon.reserve_magazines = kDefaultReserveMagazines;
-    weapon.damage = damage;
-    (void)reload_ticks;
+    // damage is left at zero on purpose: apply_weapon_template_references
+    // fills it in from the projectile template this weapon points at.
     weapon.pellet_count = 1;
     weapon.projectile_template_id = weapon_id;
     return weapon;
@@ -2089,7 +2077,6 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
             "magazine_size",
             "reserve_magazines",
             "damage",
-            "reload_ticks",
             "max_range",
             "pellet_count",
             "pellet_spread",
@@ -2111,7 +2098,6 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
         node["reserve_magazines"]
             ? node["reserve_magazines"].as<std::uint16_t>()
             : kDefaultReserveMagazines;
-    const std::uint32_t reload_ticks = node["reload_ticks"].as<std::uint32_t>();
     const std::string type = node["weapon_type"].as<std::string>();
     const std::uint16_t damage =
         node["damage"] ? node["damage"].as<std::uint16_t>() : 0u;
@@ -2136,12 +2122,10 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
                 id,
                 magazine_size,
                 damage,
-                reload_ticks,
                 node["max_range"].as<float>(),
                 static_cast<std::uint8_t>(node["pellet_count"].as<int>()),
                 node["pellet_spread"].as<float>());
             weapon.reserve_magazines = reserve_magazines;
-        weapon.collision_mask = weapon_collision_mask;
             weapon.collision_mask = weapon_collision_mask;
             return weapon;
         }
@@ -2149,7 +2133,6 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
             id,
             magazine_size,
             damage,
-            reload_ticks,
             node["max_range"].as<float>());
         weapon.reserve_magazines = reserve_magazines;
         weapon.collision_mask = weapon_collision_mask;
@@ -2175,8 +2158,6 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
         weapon.magazine_size = magazine_size;
         weapon.reserve_magazines = reserve_magazines;
         weapon.collision_mask = weapon_collision_mask;
-        (void)reload_ticks;
-        weapon.pellet_count = 1;
         weapon.pellet_count =
             node["burst_count"]
                 ? static_cast<std::uint8_t>(node["burst_count"].as<int>())
@@ -2190,15 +2171,16 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
             throw std::runtime_error(
                 "area_effect weapons must use projectile_template, not inline mechanics");
         }
+        if (node["damage"]) {
+            throw std::runtime_error(
+                "area_effect weapons take damage from projectile_template");
+        }
         if (!node["projectile_template"]) {
             throw std::runtime_error(
                 "area_effect weapon requires projectile_template");
         }
-        KernelWeaponMechanicsDefinition weapon = area_effect_weapon(
-            id,
-            magazine_size,
-            damage,
-            reload_ticks);
+        KernelWeaponMechanicsDefinition weapon =
+            area_effect_weapon(id, magazine_size);
         weapon.reserve_magazines = reserve_magazines;
         weapon.collision_mask = weapon_collision_mask;
         return weapon;
@@ -2208,14 +2190,15 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
             throw std::runtime_error(
                 "beam weapons must use projectile_template, not inline mechanics");
         }
+        if (node["damage"]) {
+            throw std::runtime_error(
+                "beam weapons take damage from projectile_template");
+        }
         if (!node["projectile_template"]) {
             throw std::runtime_error("beam weapon requires projectile_template");
         }
-        KernelWeaponMechanicsDefinition weapon = beam_weapon(
-            id,
-            magazine_size,
-            damage,
-            reload_ticks);
+        KernelWeaponMechanicsDefinition weapon =
+            beam_weapon(id, magazine_size);
         weapon.reserve_magazines = reserve_magazines;
         weapon.collision_mask = weapon_collision_mask;
         return weapon;
@@ -2443,10 +2426,15 @@ KernelVec4 collider_shape_params_from_yaml(
         };
     }
     if (shape_type == KernelColliderShapeType_Segment) {
+        // A weapon segment's two endpoints are computed at fire time from the
+        // shooter's muzzle, aim, and the weapon's max_range, so the template
+        // has no reach of its own to declare -- it used to carry a `length`
+        // that duplicated max_range and was never read. `radius` stays: a
+        // segment with thickness is a real shape the query could honour.
         return KernelVec4{
-            node["length"].as<float>(),
+            0.0f,
             node["radius"] ? node["radius"].as<float>() : 0.0f,
-            node["scatter_degrees"] ? node["scatter_degrees"].as<float>() : 0.0f,
+            0.0f,
             0.0f,
         };
     }
@@ -2502,8 +2490,6 @@ ColliderCatalogConfig load_collider_catalog_from_source(
                 "half_extents",
                 "half_height",
                 "radius",
-                "length",
-                "scatter_degrees",
                 "range",
                 "fov_degrees",
                 "lifetime_ticks",
@@ -7387,11 +7373,11 @@ std::vector<std::string> validate_gameplay_config(
               definition.shape_params.z <= 0.0f)) ||
             (definition.shape_type == KernelColliderShapeType_Sphere &&
              definition.shape_params.x <= 0.0f) ||
+            // A segment carries only an optional thickness: its reach and the
+            // lifetime of the instance built from it are decided at fire time,
+            // not authored here.
             (definition.shape_type == KernelColliderShapeType_Segment &&
-             (definition.shape_params.x <= 0.0f ||
-              definition.shape_params.y < 0.0f ||
-              definition.shape_params.z < 0.0f ||
-              definition.lifetime_ticks == 0)) ||
+             definition.shape_params.y < 0.0f) ||
             (definition.shape_type == KernelColliderShapeType_Cone &&
              ((definition.purpose_flags & KernelColliderPurpose_Vision) == 0u ||
               definition.shape_params.x <= 0.0f ||
