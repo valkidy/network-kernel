@@ -22,9 +22,10 @@ director:
           - type: spawn_group
             group: wave_1
             count: 1
-            entity_template: grenade_sentry
+            # entity_template: grenade_sentry
+            entity_template: beam_sentry
             position: {x: 1.0, y: 1.0, z: 0.0}
-            radius: 0.0
+            radius: 20.0
             seed: 4242
         condition:
           type: group_eliminated

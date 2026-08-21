@@ -5,8 +5,8 @@ actor_type: agent
 camp: enemy_side
 collider_template: sentry_grunt_hit_aabb
 health:
-  hp: 500
-  max_hp: 500
+  hp: 1000
+  max_hp: 1000
 movement:
   controller: character
   move_speed_meters_per_second: 2.5

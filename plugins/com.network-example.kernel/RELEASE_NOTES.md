@@ -1,5 +1,10 @@
 0.7.0 release notes:
 
+- aligns Unity plugin API with kernel ABI 79
+
+
+0.7.0 release notes:
+
 - aligns the managed API with kernel ABI 79, catching up three kernel revisions
   at once. Reading this as one change is the point: 77, 78 and 79 all concern a
   legged rig's per-bone colliders, and a mirror that takes only some of them is
