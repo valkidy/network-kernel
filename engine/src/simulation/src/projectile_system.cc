@@ -894,7 +894,9 @@ ProjectileHitOutcome process_projectile_hit_records(
             projectile.weapon_id,
             projectile.damage,
             hit_time_us,
-            impact_position));
+            impact_position,
+            static_cast<std::uint16_t>(
+                records.front().hit.identity.hit_zone)));
     }
 
     outcome.destroy_projectile = true;
@@ -1462,7 +1464,8 @@ bool resolve_projectile_historical_hit(
                         projectile.weapon_id,
                         projectile.damage,
                         hit_time_us,
-                        hit.impact_position));
+                        hit.impact_position,
+                        hit.volume.hit_zone));
                 }
                 execute_queued_trigger_events(
                     world, &trigger_events, fixed_delta_seconds, events);

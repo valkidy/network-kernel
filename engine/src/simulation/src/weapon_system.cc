@@ -146,7 +146,8 @@ bool find_hitscan_target(
     const glm::vec3& origin,
     const glm::vec3& direction,
     float max_range,
-    NetId* target_net_id) {
+    NetId* target_net_id,
+    std::uint16_t* target_hit_zone) {
     if (rewind_frame != nullptr) {
         HistoricalHitResult hit;
         if (raycast_history_frame(
@@ -158,6 +159,9 @@ bool find_hitscan_target(
                 &hit)) {
             if (target_net_id != nullptr) {
                 *target_net_id = hit.net_id;
+            }
+            if (target_hit_zone != nullptr) {
+                *target_hit_zone = hit.volume.hit_zone;
             }
             return true;
         }
@@ -184,6 +188,9 @@ bool find_hitscan_target(
     }
     if (target_net_id != nullptr) {
         *target_net_id = hit.identity.entity_net_id;
+    }
+    if (target_hit_zone != nullptr) {
+        *target_hit_zone = static_cast<std::uint16_t>(hit.identity.hit_zone);
     }
     return true;
 }
@@ -247,6 +254,7 @@ void apply_hitscan_damage(
     }
 
     NetId target_net_id = 0;
+    std::uint16_t target_hit_zone = kHitZoneUnscaled;
     if (!find_hitscan_target(
             world,
             rewind_frame,
@@ -254,7 +262,8 @@ void apply_hitscan_damage(
             origin,
             direction,
             definition.max_range,
-            &target_net_id)) {
+            &target_net_id,
+            &target_hit_zone)) {
         return;
     }
 
@@ -268,7 +277,8 @@ void apply_hitscan_damage(
             definition.id,
             definition.damage,
             hit_time_us,
-            origin))) {
+            origin,
+            target_hit_zone))) {
         return;
     }
 }

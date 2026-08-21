@@ -16,7 +16,7 @@ struct HitVolumeSnapshot {
     glm::vec3 center{0.0f, 0.0f, 0.0f};
     glm::vec3 half_extents{0.0f, 0.0f, 0.0f};
     glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
-    std::uint8_t hit_zone = 0;
+    std::uint16_t hit_zone = kHitZoneUnscaled;
     std::uint8_t team = 0;
     std::uint8_t alive = 0;
 };

@@ -44,6 +44,9 @@ struct DamageRequest {
     std::uint16_t damage = 0;
     std::uint64_t hit_time_us = 0;
     glm::vec3 hit_position{0.0f, 0.0f, 0.0f};
+    // The multiplier carried by the volume that was hit, in hundredths. Carried
+    // here but not yet applied to `damage`; see kHitZoneUnscaled.
+    std::uint16_t hit_zone = kHitZoneUnscaled;
 };
 
 struct ConfirmedDamage {
@@ -56,6 +59,7 @@ struct ConfirmedDamage {
     std::uint16_t damage = 0;
     std::uint64_t hit_time_us = 0;
     glm::vec3 hit_position{0.0f, 0.0f, 0.0f};
+    std::uint16_t hit_zone = kHitZoneUnscaled;
 };
 
 // The two ways a DamageRequest comes into being, so that its fields are set in
@@ -88,7 +92,8 @@ DamageRequest damage_request_at(
     std::uint8_t source_code,
     std::uint16_t damage,
     std::uint64_t hit_time_us,
-    const glm::vec3& hit_position);
+    const glm::vec3& hit_position,
+    std::uint16_t hit_zone = kHitZoneUnscaled);
 
 glm::vec3 projectile_launch_position(const Transform& transform);
 
@@ -185,6 +190,7 @@ private:
         std::uint32_t server_tick = 0;
         std::uint32_t sequence_id = 0;
         glm::vec3 hit_position{0.0f, 0.0f, 0.0f};
+        std::uint16_t hit_zone = kHitZoneUnscaled;
         bool canceled = false;
         bool parry_applied = false;
     };

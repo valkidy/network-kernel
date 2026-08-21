@@ -70,10 +70,17 @@ struct CollisionShapeDescriptor {
     float capsule_half_height = 0.5f;
 };
 
+// A damage multiplier in hundredths carried on the volume that was hit: 100 is
+// unscaled, 50 halves it, 0 makes the hit harmless. Mirrors
+// KERNEL_HIT_ZONE_UNSCALED, which physics cannot see from here without
+// inverting the layering; player_movement.cc pins the two together the same way
+// it pins the collision layers.
+inline constexpr std::uint32_t kHitZoneUnscaled = 100u;
+
 struct CollisionObjectIdentity {
     std::uint32_t entity_net_id = 0;
     std::uint32_t collider_id = 0;
-    std::uint32_t hit_zone = 0;
+    std::uint32_t hit_zone = kHitZoneUnscaled;
     CollisionObjectKind kind = CollisionObjectKind::kTerrain;
     CollisionLayer layer = CollisionLayer::kNone;
     std::uint32_t scene_id = 0;

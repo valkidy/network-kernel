@@ -171,6 +171,21 @@ typedef enum KernelFootholdQueryType {
  * nothing about limbs keeps the results and the cost it has today.
  */
 #define KERNEL_COLLISION_LAYER_LIMB UINT32_C(0x00000008)
+
+/*
+ * hit_zone is a damage multiplier in hundredths, not a body-part id: 100 is
+ * unscaled, 50 halves the damage a hit on that volume does, 0 makes it harmless.
+ * The name is the common one for "where you were hit"; what this field carries
+ * is what being hit there costs.
+ *
+ * Hundredths rather than a float so the field keeps its width and the ABI its
+ * layout. Authoring is decimal -- 0.5 in YAML becomes 50 here -- and the step is
+ * therefore 0.01.
+ *
+ * Unspecified must read as KERNEL_HIT_ZONE_UNSCALED and never as zero, or a
+ * volume nobody authored would be immune.
+ */
+#define KERNEL_HIT_ZONE_UNSCALED UINT16_C(100)
 #define KERNEL_COLLISION_LAYER_AGENT_VISION UINT32_C(0x00000010)
 #define KERNEL_COLLISION_LAYER_NEUTRAL UINT32_C(0x00000020)
 #define KERNEL_COLLISION_LAYER_TERRAIN UINT32_C(0x00000040)

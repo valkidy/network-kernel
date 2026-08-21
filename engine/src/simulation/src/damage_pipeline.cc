@@ -106,6 +106,7 @@ DamageRequest damage_request_from_hit(
         damage,
         hit_time_us,
         hit.position,
+        static_cast<std::uint16_t>(hit.identity.hit_zone),
     };
 }
 
@@ -118,7 +119,8 @@ DamageRequest damage_request_at(
     std::uint8_t source_code,
     std::uint16_t damage,
     std::uint64_t hit_time_us,
-    const glm::vec3& hit_position) {
+    const glm::vec3& hit_position,
+    std::uint16_t hit_zone) {
     return DamageRequest{
         server_tick,
         sequence_id,
@@ -129,6 +131,7 @@ DamageRequest damage_request_at(
         damage,
         hit_time_us,
         hit_position,
+        hit_zone,
     };
 }
 
@@ -169,6 +172,7 @@ std::vector<ConfirmedDamage> DamagePipeline::drain_ready_damage(
             request.server_tick,
             request.sequence_id,
             request.hit_position,
+            request.hit_zone,
             false,
             false,
         };
@@ -221,6 +225,7 @@ std::vector<ConfirmedDamage> DamagePipeline::drain_ready_damage(
             pending.damage,
             pending.hit_time_us,
             pending.hit_position,
+            pending.hit_zone,
         });
     }
     pending_damage_ = std::move(still_pending);
