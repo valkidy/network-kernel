@@ -9650,19 +9650,15 @@ void KernelEngine::update_legged_locomotion(
             *skeleton_asset,
             state->second);
 
-        // Keep this tick's pose so presentation can evaluate the skeleton at a
-        // render time instead of snapping to the newest tick. Only the snapshot
-        // render path needs it, but recording is unconditional: whether a
-        // snapshot exists is a runtime property that can flip mid-session, and
-        // a history that starts empty at that moment would pop.
-        if (state->second.pose_valid) {
-            record_skeleton_pose_sample(
-                tick_loop_.current_tick(),
-                tick_time_us(tick_loop_.current_tick(), fixed_delta_seconds),
-                state->second.local_pose,
-                skeleton_pose_history_capacity(),
-                &skeleton_pose_history_[net_id]);
-        }
+        // Deliberately records no pose history. The history is sampled at the
+        // instant presentation renders, which is a server tick behind the live
+        // one this loop solves at; since the follower now reconstructs the same
+        // entities a listen server simulates, recording here too would put two
+        // time bases in one per-entity buffer and presentation would blend
+        // across them. step_follower_locomotion_tick owns it instead. A
+        // dedicated server records nothing and needs nothing: with no snapshot
+        // buffer there is no instant to interpolate to, and presentation there
+        // reads the live pose directly.
 
         // Publish the steps this tick committed. Both swing endpoints are frozen
         // at lift-off, so one of these fully describes a step and a follower can
@@ -9800,11 +9796,14 @@ void KernelEngine::step_follower_locomotion_tick(std::uint32_t server_tick) {
         return;
     }
     for (const EntitySnapshot& entity : stepped_snapshot.entities) {
-        // An entity this kernel simulates already has authoritative legs; the
-        // follower must not shadow them.
-        if (locomotion_states_.contains(entity.net_id)) {
-            continue;
-        }
+        // Every entity the client half was told about is reconstructed here,
+        // including the ones this kernel also simulates. A listen server used
+        // to skip those and present its own authoritative legs instead, which
+        // made it the one topology whose rigs were not what a client sees --
+        // useless as a stand-in for the dedicated server it is meant to model.
+        // The authoritative solve still runs: it owns the transform, the limb
+        // colliders and the steps published from here. It just no longer
+        // doubles as presentation.
         const auto replicated = std::find_if(
             client_replicated_entities_.begin(),
             client_replicated_entities_.end(),
@@ -11028,9 +11027,14 @@ void KernelEngine::rebuild_render_states() {
     rebuild_render_states_at_time(client_local_time_us_);
 }
 
+// Whether this kernel has a client half at all. Both modes that do render
+// through it: the snapshot buffer, its interpolation delay and its relevance
+// set are what presentation is defined against, and a listen server is not
+// exempt -- its client half simply receives over loopback instead of a socket.
+// A server with no client half (dedicated) renders its own world directly.
 bool KernelEngine::render_states_from_snapshot() const {
     return config_.mode == KernelMode_Client ||
-        (config_.mode == KernelMode_ListenServer && has_client_snapshot_);
+        config_.mode == KernelMode_ListenServer;
 }
 
 void KernelEngine::rebuild_render_states_at_time(
@@ -11064,16 +11068,16 @@ void KernelEngine::rebuild_skeleton_presentation_at_time(
     std::uint64_t client_render_time_us) {
     rebuild_render_states_at_time(client_render_time_us);
     skeleton_presentation_poses_.clear();
-    // The root transforms just rebuilt are only a function of render time on
-    // the snapshot path; the direct-from-world path renders the live tick. The
-    // pose has to follow whichever one produced the roots it will be composed
-    // onto, so resolve the evaluation instant the same way and only sample the
-    // history when there is one.
+    // The pose has to be evaluated at the instant the roots just rebuilt were,
+    // or the two are sampled apart and every foot slides. That instant only
+    // exists once there are snapshots to interpolate between, which is what
+    // client_render_server_time_us reports: it fails on an empty buffer, so a
+    // kernel with no client half (dedicated, rendering its own world) falls
+    // through to the live pose below without a mode test here.
     std::uint64_t pose_evaluation_time_us = 0;
-    const bool interpolate_pose = render_states_from_snapshot() &&
-        client_render_server_time_us(
-            client_render_time_us,
-            &pose_evaluation_time_us);
+    const bool interpolate_pose = client_render_server_time_us(
+        client_render_time_us,
+        &pose_evaluation_time_us);
     // Mirrors client_render_server_time_us: a listen server's client half runs
     // off the same clock as the server, so no conversion applies there.
     const bool shares_server_clock = config_.mode == KernelMode_ListenServer;
@@ -11097,18 +11101,20 @@ void KernelEngine::rebuild_skeleton_presentation_at_time(
         pose.skeleton_content_hash = asset->skeleton_content_hash;
         pose.pose_tick = tick_loop_.current_tick();
         pose.pose_time_us = client_render_time_us;
-        // Legs this kernel simulated win; legs reconstructed from replicated
-        // steps stand in for entities it only ever saw through snapshots. A
-        // listen server holds both, and must keep showing the authoritative one.
+        // What the client half reconstructed from replicated steps is what
+        // gets rendered, in every topology that has one. The authoritative
+        // solve is the fallback, for a rig this kernel simulates that the
+        // reconstruction has not reached yet -- and on a dedicated server,
+        // which has no client half at all, it is the only answer there is.
         const LocomotionState* solved = nullptr;
-        if (const auto locomotion =
-                locomotion_states_.find(render_state.net_id);
-            locomotion != locomotion_states_.end()) {
-            solved = &locomotion->second;
-        } else if (const auto follower =
-                       follower_locomotion_states_.find(render_state.net_id);
-                   follower != follower_locomotion_states_.end()) {
+        if (const auto follower =
+                follower_locomotion_states_.find(render_state.net_id);
+            follower != follower_locomotion_states_.end()) {
             solved = &follower->second;
+        } else if (const auto locomotion =
+                       locomotion_states_.find(render_state.net_id);
+                   locomotion != locomotion_states_.end()) {
+            solved = &locomotion->second;
         }
         if (solved != nullptr && solved->pose_valid &&
             solved->local_pose.size() == asset->bind_pose.size()) {

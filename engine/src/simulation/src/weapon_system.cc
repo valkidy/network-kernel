@@ -125,20 +125,6 @@ std::vector<glm::vec3> projectile_burst_directions(
     return directions;
 }
 
-// Limbs are out of reach here, and cannot be authored into it.
-//
-// The live path below runs on the default query filter, whose collision_mask is
-// kCollisionMaskAll -- which excludes kActorLimb, so no limb hit ever arrives to
-// classify. The rewound path never touches the physics world at all: it tests
-// the history frame, which holds one volume per actor built from its Hitbox.
-//
-// Putting limbs in that frame is not a matter of pushing nine more volumes.
-// raycast_history_frame ignores volume.rotation and tests an axis-aligned box,
-// which is close enough for a hitbox and badly wrong for a 1.5 x 19 m leg lying
-// at an angle -- its AABB is mostly empty air, and shots near a monster would
-// register hits on nothing. Reaching limbs from a hitscan needs oriented-box
-// intersection in the history path plus a way for a weapon to opt in, and both
-// belong to their own change rather than being smuggled in here.
 bool find_hitscan_target(
     World& world,
     const HistoryFrame* rewind_frame,
