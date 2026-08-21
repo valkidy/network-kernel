@@ -86,6 +86,20 @@ cc_test(
     ],
 )
 
+# What a listen host presents for a rig it simulates itself, checked against a
+# separate client kernel fed the same wire content; see the file header.
+cc_test(
+    name = "listen_host_pose_parity_test",
+    srcs = ["listen_host_pose_parity_test.cc"],
+    data = [
+        "//game_server/gameplay_catalog_bundle:bundle",
+    ],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
 # The authoritative half of per-bone limb colliders, and the reference the
 # client side is compared against. Runs on a dedicated-server kernel because
 # that is the shipping environment; see the file header.
