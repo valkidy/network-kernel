@@ -156,17 +156,16 @@ void simulate_beams(
                 if (damage == 0) {
                     continue;
                 }
-                active_damage_pipeline->submit_damage_request(DamageRequest{
-                    current_tick,
-                    sequence_id++,
-                    identity.net_id,
-                    hit.identity.entity_net_id,
-                    identity.owner_peer,
-                    beam.source_code,
-                    damage,
-                    server_time_us,
-                    hit.position,
-                });
+                active_damage_pipeline->submit_damage_request(
+                    damage_request_from_hit(
+                        current_tick,
+                        sequence_id++,
+                        identity.net_id,
+                        identity.owner_peer,
+                        beam.source_code,
+                        damage,
+                        server_time_us,
+                        hit));
             }
         }
 
@@ -178,17 +177,16 @@ void simulate_beams(
             const std::uint16_t damage = accumulate_tick_damage(
                 beam, blocker.identity.entity_net_id, damage_units);
             if (damage != 0) {
-                active_damage_pipeline->submit_damage_request(DamageRequest{
-                    current_tick,
-                    sequence_id++,
-                    identity.net_id,
-                    blocker.identity.entity_net_id,
-                    identity.owner_peer,
-                    beam.source_code,
-                    damage,
-                    server_time_us,
-                    blocker.position,
-                });
+                active_damage_pipeline->submit_damage_request(
+                    damage_request_from_hit(
+                        current_tick,
+                        sequence_id++,
+                        identity.net_id,
+                        identity.owner_peer,
+                        beam.source_code,
+                        damage,
+                        server_time_us,
+                        blocker));
             }
         }
     }

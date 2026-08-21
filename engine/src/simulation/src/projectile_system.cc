@@ -840,17 +840,15 @@ ProjectileHitOutcome process_projectile_hit_records(
                     world, projectile.collision_mask, record.target_net_id)) {
                 continue;
             }
-            damage_pipeline->submit_damage_request(DamageRequest{
+            damage_pipeline->submit_damage_request(damage_request_from_hit(
                 current_tick,
                 record.sequence_id,
                 identity.net_id,
-                record.target_net_id,
                 identity.owner_peer,
                 projectile.weapon_id,
                 projectile.damage,
                 hit_time_us,
-                record.hit.position,
-            });
+                record.hit));
             ++projectile.hit_count;
         }
         outcome.destroy_projectile = projectile.hit_count >= projectile.max_hit_count;
@@ -887,7 +885,7 @@ ProjectileHitOutcome process_projectile_hit_records(
         is_actor_hit(records.front().hit.identity.kind) &&
         damage_source_may_damage(
             world, projectile.collision_mask, records.front().target_net_id)) {
-        damage_pipeline->submit_damage_request(DamageRequest{
+        damage_pipeline->submit_damage_request(damage_request_at(
             current_tick,
             0,
             identity.net_id,
@@ -896,8 +894,7 @@ ProjectileHitOutcome process_projectile_hit_records(
             projectile.weapon_id,
             projectile.damage,
             hit_time_us,
-            impact_position,
-        });
+            impact_position));
     }
 
     outcome.destroy_projectile = true;
@@ -1456,7 +1453,7 @@ bool resolve_projectile_historical_hit(
                 if (projectile.damage_shape == ProjectileDamageShape::kDirectHit &&
                     projectile.damage > 0 &&
                     damage_pipeline != nullptr) {
-                    damage_pipeline->submit_damage_request(DamageRequest{
+                    damage_pipeline->submit_damage_request(damage_request_at(
                         current_tick,
                         0,
                         projectile_net_id,
@@ -1465,8 +1462,7 @@ bool resolve_projectile_historical_hit(
                         projectile.weapon_id,
                         projectile.damage,
                         hit_time_us,
-                        hit.impact_position,
-                    });
+                        hit.impact_position));
                 }
                 execute_queued_trigger_events(
                     world, &trigger_events, fixed_delta_seconds, events);

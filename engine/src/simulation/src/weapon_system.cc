@@ -259,7 +259,7 @@ void apply_hitscan_damage(
     }
 
     if (damage_pipeline == nullptr ||
-        !damage_pipeline->submit_damage_request(DamageRequest{
+        !damage_pipeline->submit_damage_request(damage_request_at(
             current_tick,
             0,
             shooter_net_id,
@@ -268,8 +268,7 @@ void apply_hitscan_damage(
             definition.id,
             definition.damage,
             hit_time_us,
-            origin,
-        })) {
+            origin))) {
         return;
     }
 }

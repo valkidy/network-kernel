@@ -753,7 +753,7 @@ bool execute_action_graph_commands(
                 !world.registry().all_of<Health>(*target)) {
                 continue;
             }
-            if (!damage_pipeline->submit_damage_request(DamageRequest{
+            if (!damage_pipeline->submit_damage_request(damage_request_at(
                     damage->provenance.server_tick,
                     static_cast<std::uint32_t>(index),
                     damage->source,
@@ -762,8 +762,7 @@ bool execute_action_graph_commands(
                     0u,
                     damage->amount,
                     server_time_us,
-                    batch.event.position,
-                })) {
+                    batch.event.position))) {
                 return false;
             }
             continue;
@@ -779,7 +778,7 @@ bool execute_action_graph_commands(
             if (health_change->amount < 0) {
                 const std::uint16_t damage_amount =
                     static_cast<std::uint16_t>(-health_change->amount);
-                if (!damage_pipeline->submit_damage_request(DamageRequest{
+                if (!damage_pipeline->submit_damage_request(damage_request_at(
                         health_change->provenance.server_tick,
                         static_cast<std::uint32_t>(index),
                         health_change->source,
@@ -788,8 +787,7 @@ bool execute_action_graph_commands(
                         0u,
                         damage_amount,
                         server_time_us,
-                        batch.event.position,
-                    })) {
+                        batch.event.position))) {
                     return false;
                 }
                 continue;

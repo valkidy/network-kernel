@@ -58,6 +58,38 @@ struct ConfirmedDamage {
     glm::vec3 hit_position{0.0f, 0.0f, 0.0f};
 };
 
+// The two ways a DamageRequest comes into being, so that its fields are set in
+// one place each rather than at eleven aggregate initialisations across six
+// files. Positional init of a ten-field struct is how a new field silently
+// takes a zero at ten call sites and a real value at one.
+//
+// A hit volume caused this damage. The target and the impact point are read off
+// the hit rather than restated, which is also what stops a request from naming
+// one entity while pointing at another's geometry.
+DamageRequest damage_request_from_hit(
+    std::uint32_t server_tick,
+    std::uint32_t sequence_id,
+    NetId source_net_id,
+    PeerId source_peer,
+    std::uint8_t source_code,
+    std::uint16_t damage,
+    std::uint64_t hit_time_us,
+    const physics::CollisionHit& hit);
+
+// Damage with no collision result behind it: an action graph decided it, or a
+// historical sweep resolved it against a rewound volume. The caller states the
+// target and the position because there is nothing to read them from.
+DamageRequest damage_request_at(
+    std::uint32_t server_tick,
+    std::uint32_t sequence_id,
+    NetId source_net_id,
+    NetId target_net_id,
+    PeerId source_peer,
+    std::uint8_t source_code,
+    std::uint16_t damage,
+    std::uint64_t hit_time_us,
+    const glm::vec3& hit_position);
+
 glm::vec3 projectile_launch_position(const Transform& transform);
 
 // Maps a beam's aim onto the local +Z its collider template and presentation

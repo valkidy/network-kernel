@@ -75,7 +75,7 @@ bool DamagePipeline::submit_hit(
     std::uint8_t source_code,
     std::uint16_t damage,
     std::uint64_t hit_time_us) {
-    return submit_damage_request(DamageRequest{
+    return submit_damage_request(damage_request_at(
         0,
         0,
         source_net_id,
@@ -84,8 +84,52 @@ bool DamagePipeline::submit_hit(
         source_code,
         damage,
         hit_time_us,
-        glm::vec3{0.0f, 0.0f, 0.0f},
-    });
+        glm::vec3{0.0f, 0.0f, 0.0f}));
+}
+
+DamageRequest damage_request_from_hit(
+    std::uint32_t server_tick,
+    std::uint32_t sequence_id,
+    NetId source_net_id,
+    PeerId source_peer,
+    std::uint8_t source_code,
+    std::uint16_t damage,
+    std::uint64_t hit_time_us,
+    const physics::CollisionHit& hit) {
+    return DamageRequest{
+        server_tick,
+        sequence_id,
+        source_net_id,
+        hit.identity.entity_net_id,
+        source_peer,
+        source_code,
+        damage,
+        hit_time_us,
+        hit.position,
+    };
+}
+
+DamageRequest damage_request_at(
+    std::uint32_t server_tick,
+    std::uint32_t sequence_id,
+    NetId source_net_id,
+    NetId target_net_id,
+    PeerId source_peer,
+    std::uint8_t source_code,
+    std::uint16_t damage,
+    std::uint64_t hit_time_us,
+    const glm::vec3& hit_position) {
+    return DamageRequest{
+        server_tick,
+        sequence_id,
+        source_net_id,
+        target_net_id,
+        source_peer,
+        source_code,
+        damage,
+        hit_time_us,
+        hit_position,
+    };
 }
 
 bool DamagePipeline::submit_damage_request(const DamageRequest& request) {

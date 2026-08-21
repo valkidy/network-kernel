@@ -211,17 +211,16 @@ void simulate_area_effects(
                     target_sequence,
                 });
             } else {
-                active_damage_pipeline->submit_damage_request(DamageRequest{
-                    current_tick,
-                    target_sequence,
-                    identity.net_id,
-                    target_net_id,
-                    identity.owner_peer,
-                    area_effect.source_code,
-                    damage,
-                    server_time_us,
-                    hit.position,
-                });
+                active_damage_pipeline->submit_damage_request(
+                    damage_request_from_hit(
+                        current_tick,
+                        target_sequence,
+                        identity.net_id,
+                        identity.owner_peer,
+                        area_effect.source_code,
+                        damage,
+                        server_time_us,
+                        hit));
             }
             area_effect.next_damage_tick_by_target[target_net_id] =
                 current_tick + std::max(1u, area_effect.damage_interval_ticks);
