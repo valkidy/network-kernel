@@ -10,4 +10,5 @@ name: Grenade Launcher
 weapon_type: projectile
 magazine_size: 6
 fire_action_template: grenade_launcher_fire
+reload_action_template: grenade_launcher_reload
 projectile_template: grenade_shell_projectile

@@ -1,0 +1,27 @@
+id: 11
+name: shotgun_shot
+# One pellet of the shotgun's shot. See rifle_shot.yaml: an instant weapon
+# authors its damage and its targets here, not on the weapon template.
+#
+# `damage` is per pellet. The weapon template's pellet_count decides how many
+# rays are fired and pellet_spread how wide the fan is, so the damage a full
+# hit deals is damage x pellet_count.
+type: standard
+collider_template: shotgun_segment
+movement_model: linear
+sync_mode: local_predicted_deterministic
+hit_response: destroy
+damage_shape: direct_hit
+damage: 10
+# No `limb`, deliberately. Reaching a rig's bones is opt-in per weapon, and the
+# shotgun never asked for it -- its pellets resolve against a body and the world
+# only. Naming actor/terrain/obstacle spells out what the engine default gave it
+# before the mask was authored anywhere.
+collision_mask: actor | terrain | obstacle
+speed: 200.0
+lifetime_ticks: 3
+max_hit_count: 1
+gravity:
+  x: 0.0
+  y: 0.0
+  z: 0.0

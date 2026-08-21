@@ -1,0 +1,30 @@
+id: 10
+name: rifle_shot
+# The rifle's shot. Nothing spawns from this -- a hitscan weapon resolves its
+# hit by raycast -- but the shot is still described here, so damage and
+# collision_mask are authored in the same place as they are for a weapon that
+# does spawn something. The weapon template carries no damage of its own.
+#
+# It also names the asset a client draws the tracer from, through the same
+# projectile-template mapping every other weapon already uses.
+type: standard
+collider_template: rifle_segment
+movement_model: linear
+sync_mode: local_predicted_deterministic
+hit_response: destroy
+damage_shape: direct_hit
+damage: 25
+# actor | limb: a rifle shot resolves against a rig's bones as well as its body,
+# which is what makes shooting a monster's leg mean anything. terrain and
+# obstacle keep walls stopping the shot.
+collision_mask: actor | limb | terrain | obstacle
+# Visual parameters for the tracer, not simulated: a hitscan shot has no travel
+# time. lifetime_ticks matches the 3 ticks the server keeps its own hitscan
+# segment alive.
+speed: 200.0
+lifetime_ticks: 3
+max_hit_count: 1
+gravity:
+  x: 0.0
+  y: 0.0
+  z: 0.0

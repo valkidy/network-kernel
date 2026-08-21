@@ -3,4 +3,5 @@ name: Beam Rifle
 weapon_type: beam
 magazine_size: 12
 fire_action_template: beam_rifle_fire
+reload_action_template: beam_rifle_reload
 projectile_template: beam_rifle_beam
