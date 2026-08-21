@@ -1210,7 +1210,7 @@ bool execute_action_graph_commands(
                 PropWorldMode& mode =
                     world.registry().get_or_emplace<PropWorldMode>(target);
                 mode.mode = PropMode::kInFlight;
-                world.registry().erase<CarriedBy>(target);
+                world.registry().remove<CarriedBy>(target);
                 const Transform& transform = world.registry().get<Transform>(target);
                 world.registry().emplace_or_replace<ThrownPropMotion>(
                     target,

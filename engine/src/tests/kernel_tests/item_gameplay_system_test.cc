@@ -14,6 +14,14 @@
 #include "simulation/public/action_graph.h"
 #include "simulation/public/simulation.h"
 
+namespace network_example {
+// Defined in simulation/src/systems.cc; not surfaced in a public header.
+bool execute_action_graph_command_batch(
+    KernelEngine& engine,
+    const ActionGraphCommandBatch& batch,
+    std::uint64_t server_time_us);
+}  // namespace network_example
+
 namespace {
 
 void require(
@@ -894,6 +902,77 @@ void health_change_no_op_still_consumes_item() {
     require(outcome.graph_outcome == KernelGameplayGraphOutcome_Succeeded);
 }
 
+// CarriedBy and PropWorldMode{kCarrying} are emplaced together and dropped
+// together, so a prop nobody is holding has no CarriedBy at all. The impulse
+// validation pass admits a prop target only when its mode is NOT kCarrying --
+// i.e. exactly the props missing the component -- so execution must not assume
+// it is there. It used to erase<CarriedBy> unconditionally, which reads an
+// empty sparse-set page: an assert in debug, a null deref in release. A rocket
+// blast catching any placed prop took the dedicated server down.
+void impulse_on_uncarried_prop_does_not_touch_absent_carrier() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+    engine.entity_templates_.push_back(prop_template());
+
+    KernelServerEntityCreateInfo actor_info{};
+    actor_info.struct_size = sizeof(actor_info);
+    actor_info.entity_type = KernelEntityType_Actor;
+    actor_info.actor_type = KernelActorType_Player;
+    actor_info.owner_peer = 7;
+    actor_info.position = KernelVec3{0.0f, 0.0f, 0.0f};
+    actor_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+    std::uint32_t actor = 0;
+    require(engine.server_create_entity(actor_info, &actor));
+
+    KernelServerEntityCreateInfo prop_info{};
+    prop_info.struct_size = sizeof(prop_info);
+    prop_info.entity_type = KernelEntityType_Prop;
+    prop_info.owner_peer = 7;
+    prop_info.position = KernelVec3{2.0f, 0.0f, 0.0f};
+    prop_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+    prop_info.entity_template_id = 200;
+    std::uint32_t prop = 0;
+    require(engine.server_create_entity(prop_info, &prop));
+
+    const auto prop_entity = engine.world_.find_entity(prop);
+    require(prop_entity.has_value());
+    entt::registry& registry = engine.world_.registry();
+    require(registry.get<network_example::PropWorldMode>(*prop_entity).mode ==
+            network_example::PropMode::kPlaced);
+    require(!registry.all_of<network_example::CarriedBy>(*prop_entity));
+
+    network_example::ActionGraphCommandBatch batch{};
+    batch.event.type = network_example::TriggerEventType::kProjectileImpact;
+    batch.event.instigator = actor;
+    batch.event.target = prop;
+    batch.provenance.request_id = 4242;
+    batch.provenance.owner_peer = 7;
+    batch.provenance.instigator = actor;
+    batch.sequence = 1;
+    network_example::ActionApplyImpulseCommand impulse{};
+    impulse.source = actor;
+    impulse.target = prop;
+    impulse.strength = 12.0f;
+    impulse.direction = glm::vec3{1.0f, 0.0f, 0.0f};
+    impulse.collision_mask = KERNEL_COLLISION_MASK_PROP;
+    impulse.provenance = batch.provenance;
+    batch.commands.emplace_back(impulse);
+
+    require(network_example::execute_action_graph_command_batch(
+        engine, batch, 0));
+
+    require(registry.get<network_example::PropWorldMode>(*prop_entity).mode ==
+            network_example::PropMode::kInFlight);
+    require(registry.all_of<network_example::ThrownPropMotion>(*prop_entity));
+    require(!registry.all_of<network_example::CarriedBy>(*prop_entity));
+    require(registry.get<network_example::Velocity>(*prop_entity).linear.x >
+            11.9f);
+}
+
 }  // namespace
 
 int main() {
@@ -905,5 +984,6 @@ int main() {
     stateful_health_round_trips_and_world_destroy_is_terminal();
     catalog_cross_validates_health_projection();
     health_change_no_op_still_consumes_item();
+    impulse_on_uncarried_prop_does_not_touch_absent_carrier();
     return 0;
 }
