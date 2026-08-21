@@ -11028,9 +11028,14 @@ void KernelEngine::rebuild_render_states() {
     rebuild_render_states_at_time(client_local_time_us_);
 }
 
+// Whether this kernel has a client half at all. Both modes that do render
+// through it: the snapshot buffer, its interpolation delay and its relevance
+// set are what presentation is defined against, and a listen server is not
+// exempt -- its client half simply receives over loopback instead of a socket.
+// A server with no client half (dedicated) renders its own world directly.
 bool KernelEngine::render_states_from_snapshot() const {
     return config_.mode == KernelMode_Client ||
-        (config_.mode == KernelMode_ListenServer && has_client_snapshot_);
+        config_.mode == KernelMode_ListenServer;
 }
 
 void KernelEngine::rebuild_render_states_at_time(
@@ -11064,16 +11069,16 @@ void KernelEngine::rebuild_skeleton_presentation_at_time(
     std::uint64_t client_render_time_us) {
     rebuild_render_states_at_time(client_render_time_us);
     skeleton_presentation_poses_.clear();
-    // The root transforms just rebuilt are only a function of render time on
-    // the snapshot path; the direct-from-world path renders the live tick. The
-    // pose has to follow whichever one produced the roots it will be composed
-    // onto, so resolve the evaluation instant the same way and only sample the
-    // history when there is one.
+    // The pose has to be evaluated at the instant the roots just rebuilt were,
+    // or the two are sampled apart and every foot slides. That instant only
+    // exists once there are snapshots to interpolate between, which is what
+    // client_render_server_time_us reports: it fails on an empty buffer, so a
+    // kernel with no client half (dedicated, rendering its own world) falls
+    // through to the live pose below without a mode test here.
     std::uint64_t pose_evaluation_time_us = 0;
-    const bool interpolate_pose = render_states_from_snapshot() &&
-        client_render_server_time_us(
-            client_render_time_us,
-            &pose_evaluation_time_us);
+    const bool interpolate_pose = client_render_server_time_us(
+        client_render_time_us,
+        &pose_evaluation_time_us);
     // Mirrors client_render_server_time_us: a listen server's client half runs
     // off the same clock as the server, so no conversion applies there.
     const bool shares_server_clock = config_.mode == KernelMode_ListenServer;
