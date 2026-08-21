@@ -946,6 +946,53 @@ int main() {
                 damage_prop->collision_trigger_mask);
         require((prop_filter.collision_mask & limb_layer) != 0u);
         require((prop_filter.object_kind_mask & limb_kind) != 0u);
+
+        // The one projectile that asks. A rocket strikes the leg in its path
+        // instead of sailing between them, and the hit resolves to the actor
+        // wearing it -- projectile hit records carry
+        // hit.identity.entity_net_id, which every limb above asserts is the rig.
+        const network_example::game_server::ProjectileTemplateConfig* rocket =
+            nullptr;
+        for (const network_example::game_server::ProjectileTemplateConfig&
+                 projectile : config.projectile_templates) {
+            if (projectile.name == "rocket_projectile") {
+                rocket = &projectile;
+            }
+        }
+        require(rocket != nullptr);
+        const std::uint32_t rocket_mask =
+            rocket->definition.mechanics.collision_mask;
+        require((rocket_mask & KERNEL_COLLISION_LAYER_LIMB) != 0u);
+        // Still a side-filtered weapon: the limb bit is not a side, so it can
+        // neither widen nor narrow who the rocket is allowed to damage.
+        require((rocket_mask & KERNEL_COLLISION_MASK_DAMAGEABLE) != 0u);
+        const network_example::physics::CollisionQueryFilter rocket_filter =
+            network_example::collision_filter_from_mask(rocket_mask);
+        require((rocket_filter.collision_mask & limb_layer) != 0u);
+        require((rocket_filter.object_kind_mask & limb_kind) != 0u);
+
+        // Everything that did not ask is untouched, including the default any
+        // query starts from -- that exclusion is what keeps hitscan, vision and
+        // every unnamed query at the cost and the results they had.
+        require(
+            (network_example::physics::kCollisionMaskAll & limb_layer) == 0u);
+        const network_example::game_server::ProjectileTemplateConfig* spammer =
+            nullptr;
+        for (const network_example::game_server::ProjectileTemplateConfig&
+                 projectile : config.projectile_templates) {
+            if (projectile.name == "spammer_projectile") {
+                spammer = &projectile;
+            }
+        }
+        require(spammer != nullptr);
+        require(
+            (spammer->definition.mechanics.collision_mask &
+             KERNEL_COLLISION_LAYER_LIMB) == 0u);
+        const network_example::physics::CollisionQueryFilter spammer_filter =
+            network_example::collision_filter_from_mask(
+                spammer->definition.mechanics.collision_mask);
+        require((spammer_filter.collision_mask & limb_layer) == 0u);
+        require((spammer_filter.object_kind_mask & limb_kind) == 0u);
     }
 
     // Retiring the entity retires its bodies. A leg left behind is an invisible
