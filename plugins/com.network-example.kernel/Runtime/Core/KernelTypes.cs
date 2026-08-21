@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 76;
+        public const uint AbiVersion = 79;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int GameplayCatalogEntryPathSize = 128;
@@ -117,6 +117,11 @@ namespace NetworkExample.Kernel
         public const uint CollisionLayerHostile = CollisionLayerHostileSide;
         public const uint CollisionLayerEnemy = CollisionLayerHostileSide;
         public const uint CollisionLayerProjectile = 0x00000004U;
+        // A rig's per-bone colliders as a gameplay target. Distinct bit space
+        // from MovementLayerLimb; the two are never interchangeable and their
+        // values differing is incidental. Absent from every mask aggregate, so
+        // nothing that does not name it changes.
+        public const uint CollisionLayerLimb = 0x00000008U;
         public const uint CollisionLayerAgentVision = 0x00000010U;
         public const uint CollisionLayerNeutral = 0x00000020U;
         public const uint CollisionLayerTerrain = 0x00000040U;
@@ -127,6 +132,11 @@ namespace NetworkExample.Kernel
         public const uint CollisionMaskActor = CollisionMaskDamageable;
         public const uint CollisionMaskStaticWorld =
             CollisionLayerTerrain | CollisionLayerStaticObstacle;
+
+        // hit_zone is a damage multiplier in hundredths, not a body-part id:
+        // 100 is unscaled, 50 halves the damage a hit on that volume does, 0
+        // makes it harmless. Unspecified must read as this and never as zero.
+        public const ushort HitZoneUnscaled = 100;
 
         public const uint MovementLayerTerrain = 0x00000001U;
         public const uint MovementLayerStaticObstacle = 0x00000002U;
@@ -2048,6 +2058,11 @@ namespace NetworkExample.Kernel
         public uint segment_collider_template_id;
         public uint fire_action_template_id;
         public uint reload_action_template_id;
+        // KERNEL_COLLISION_LAYER_* bits; zero means the engine default, which
+        // is what every weapon meant before this field existed. Appended, so it
+        // must stay last -- KernelGameplayCatalogDefinition nests this struct
+        // and a mismatch shifts everything after it.
+        public uint collision_mask;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelWeaponMechanicsDefinition>();
     }
@@ -2188,6 +2203,8 @@ namespace NetworkExample.Kernel
         public uint leg_index;
         public byte shape_type;
         public byte reserved0;
+        // Damage multiplier in hundredths -- see KernelConstants.HitZoneUnscaled.
+        // Width and offset are unchanged from ABI 77; only the meaning moved.
         public ushort hit_zone;
         public uint purpose_flags;
         public uint layer_mask;

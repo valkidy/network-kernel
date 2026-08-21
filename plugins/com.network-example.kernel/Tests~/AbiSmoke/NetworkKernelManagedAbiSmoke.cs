@@ -34,7 +34,7 @@ public static class NetworkKernelManagedAbiSmoke
         KernelBuildInfo buildInfo = KernelAbi.GetBuildInfo();
         GameServerAbiInfo gameServerInfo = GameServerAbi.GetInfo();
         RequireSkeletonBindingContract();
-        Require(KernelConstants.AbiVersion == 76, "Managed kernel ABI version was not v76.");
+        Require(KernelConstants.AbiVersion == 79, "Managed kernel ABI version was not v79.");
         Require(
             RenderEntityState.StructSize == 160,
             "Managed RenderEntityState layout was not 160 bytes.");
@@ -65,6 +65,41 @@ public static class NetworkKernelManagedAbiSmoke
             info.gameplay_catalog_sync_status_size ==
                 KernelGameplayCatalogSyncStatus.StructSize,
             "Kernel gameplay catalog sync status size mismatch.");
+        // The kernel reports this and nothing compared it, which is how a
+        // mirror that missed an appended field stayed quiet: the struct is
+        // nested inside the gameplay catalog, so the drift shows up as every
+        // field after it reading rubbish rather than as a size error.
+        Require(
+            info.weapon_mechanics_definition_size ==
+                KernelWeaponMechanicsDefinition.StructSize,
+            "Kernel weapon mechanics definition size mismatch.");
+        Require(
+            info.projectile_mechanics_definition_size ==
+                KernelProjectileMechanicsDefinition.StructSize,
+            "Kernel projectile mechanics definition size mismatch.");
+        Require(
+            info.combat_state_definition_size ==
+                KernelCombatStateDefinition.StructSize,
+            "Kernel combat state definition size mismatch.");
+        Require(
+            info.actor_template_definition_size ==
+                KernelEntityTemplateDefinition.StructSize,
+            "Kernel entity template definition size mismatch.");
+        // The limb layers are two different bit spaces that must not be
+        // confused, and the neutral hit_zone must never be zero.
+        Require(
+            KernelConstants.CollisionLayerLimb == 0x00000008U,
+            "Kernel gameplay limb collision layer mismatch.");
+        Require(
+            KernelConstants.MovementLayerLimb == 0x00000010U,
+            "Kernel movement limb layer mismatch.");
+        Require(
+            (KernelConstants.MovementMaskDefault &
+                KernelConstants.MovementLayerLimb) == 0U,
+            "Movement limbs must stay opt-in.");
+        Require(
+            KernelConstants.HitZoneUnscaled == 100,
+            "Neutral hit_zone must be 100, or unauthored volumes are immune.");
         Require(
             KernelConstants.CollisionLayerAgentVision == 0x00000010U,
             "Kernel agent vision collision layer mismatch.");

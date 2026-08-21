@@ -1,3 +1,35 @@
+0.7.0 release notes:
+
+- aligns the managed API with kernel ABI 79, catching up three kernel revisions
+  at once. Reading this as one change is the point: 77, 78 and 79 all concern a
+  legged rig's per-bone colliders, and a mirror that takes only some of them is
+  worse than one that takes none.
+
+- ABI 79 appends `collision_mask` to `KernelWeaponMechanicsDefinition`. This is
+  the one that breaks silently if it is missed: the struct is nested inside the
+  gameplay catalog, so an out-of-date mirror does not report a size error, it
+  shifts every field after it. Zero means the engine default, which is what
+  every weapon meant before the field existed.
+
+- ABI 78 changes what `KernelSkeletonColliderDefinition.hit_zone` means. Same
+  width, same offset, new meaning: a damage multiplier in hundredths, where
+  `KernelConstants.HitZoneUnscaled` (100) leaves damage alone and 0 makes a hit
+  on that volume harmless. It was previously an unused body-part id that was
+  always zero -- so a catalog built against 77 would describe every volume as
+  harmless.
+
+- ABI 77 adds `KernelConstants.CollisionLayerLimb` (0x08), the gameplay-side bit
+  that lets a projectile, beam or prop trigger name a rig's bones as a target.
+  Distinct from `MovementLayerLimb` (0x10), which is a different bit space; the
+  two are never interchangeable.
+
+- The managed ABI smoke now compares the sizes the kernel reports against the
+  managed structs for weapon mechanics, projectile mechanics, combat state and
+  entity templates, and pins both limb layers and the neutral hit_zone. Nothing
+  compared those before, which is how an appended field could go unmirrored
+  without a single check going red.
+
+
 0.6.11 release notes:
 
 - fixes MinGW large-object package builds
