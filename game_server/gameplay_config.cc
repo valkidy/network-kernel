@@ -715,6 +715,31 @@ std::uint32_t movement_collision_mask_from_yaml(const YAML::Node& node) {
     return mask;
 }
 
+// hit_zone is authored as a decimal multiplier and stored as hundredths: 0.5
+// becomes 50. Rounded rather than truncated, or 0.29 lands on 28 the moment the
+// literal is not exactly representable. The step is therefore 0.01, and a value
+// finer than that is rounded rather than rejected -- but anything that is not a
+// sane multiplier fails loudly here rather than becoming a silently harmless or
+// absurdly lethal volume.
+std::uint16_t hit_zone_from_yaml(
+    const YAML::Node& node,
+    const std::string& context) {
+    if (!node) {
+        return KERNEL_HIT_ZONE_UNSCALED;
+    }
+    const double value = node.as<double>();
+    if (!std::isfinite(value) || value < 0.0) {
+        throw std::runtime_error(
+            "hit_zone must be finite and non-negative: " + context);
+    }
+    const double hundredths = std::round(value * 100.0);
+    if (hundredths > 65535.0) {
+        throw std::runtime_error(
+            "hit_zone exceeds the maximum multiplier of 655.35: " + context);
+    }
+    return static_cast<std::uint16_t>(hundredths);
+}
+
 void require_supported_collision_mask(
     std::uint32_t mask,
     std::uint32_t supported_mask,
@@ -2967,7 +2992,7 @@ void load_skeleton_rig(
     for (const YAML::Node& collider_node : rig["colliders"]) {
         reject_unknown_keys(
             collider_node,
-            {"bone", "leg", "shape"},
+            {"bone", "leg", "shape", "hit_zone"},
             rig_path,
             source.source_kind(),
             KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG,
@@ -2992,6 +3017,15 @@ void load_skeleton_rig(
         // leg indices are template-scoped until the legs themselves move here.
         if (collider_node["leg"]) {
             collider.leg_id = collider_node["leg"].as<std::string>();
+        }
+        // What being hit here costs, as a multiplier. Belongs to the rig rather
+        // than the template because it is a property of which bone this is -- a
+        // shin is a shin whoever is wearing it -- while whose side it is on is
+        // not. A collider that says nothing inherits the template's default.
+        if (collider_node["hit_zone"]) {
+            collider.hit_zone = hit_zone_from_yaml(
+                collider_node["hit_zone"], rig_path + " " + collider.bone);
+            collider.has_hit_zone = true;
         }
         asset->colliders.push_back(std::move(collider));
     }
@@ -3928,9 +3962,9 @@ ActorTemplateConfig actor_template_from_yaml(
                 skeleton_collision_purpose_from_yaml(flags["purpose"]);
             binding.collision_flags.layer_mask =
                 collider_layer_from_yaml(flags["layer"]);
-            binding.collision_flags.hit_zone = flags["hit_zone"]
-                ? flags["hit_zone"].as<std::uint16_t>()
-                : 0u;
+            // The default for colliders whose rig entry says nothing.
+            binding.collision_flags.hit_zone = hit_zone_from_yaml(
+                flags["hit_zone"], actor_template.name);
             if (asset->colliders.empty()) {
                 throw std::runtime_error(
                     "skeleton collision_flags set but rig " + asset->name +
@@ -6848,6 +6882,8 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_string(&hash, collider.leg_id);
             hash_scalar(&hash, collider.bone_index);
             hash_scalar(&hash, collider.shape_type);
+            hash_scalar(&hash, collider.hit_zone);
+            hash_scalar(&hash, collider.has_hit_zone ? 1u : 0u);
         }
     }
     std::vector<ActorTemplateConfig> actor_templates = config.actor_templates;
@@ -7722,7 +7758,8 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
                                 leg_index,
                                 collider.shape_type,
                                 0u,
-                                flags.hit_zone,
+                                collider.has_hit_zone ? collider.hit_zone
+                                                      : flags.hit_zone,
                                 flags.purpose_flags,
                                 flags.layer_mask,
                             };

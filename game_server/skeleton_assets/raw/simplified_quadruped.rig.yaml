@@ -24,13 +24,18 @@ legs:
      pole_local: {x: -0.734, y: 0.305, z: -0.607}}
   - {id: leg3, hip: JNT_Leg3_Hip, knee: JNT_Leg3_Knee, foot: JNT_Leg3_Foot,
      pole_local: {x: 0.607, y: 0.305, z: -0.734}}
+# hit_zone is what being hit there costs, as a multiplier; absent means 1.0.
+# Legs are structure rather than vitals, so they take a shot poorly on this rig
+# and the body takes one well. It belongs here rather than on the entity
+# template because it is a property of which bone this is, not of whose side the
+# actor is on.
 colliders:
-  - {bone: GEO_Leg0_Upper, leg: leg0}
-  - {bone: GEO_Leg0_Lower, leg: leg0}
-  - {bone: GEO_Leg1_Upper, leg: leg1}
-  - {bone: GEO_Leg1_Lower, leg: leg1}
-  - {bone: GEO_Leg2_Upper, leg: leg2}
-  - {bone: GEO_Leg2_Lower, leg: leg2}
-  - {bone: GEO_Leg3_Upper, leg: leg3}
-  - {bone: GEO_Leg3_Lower, leg: leg3}
-  - {bone: GEO_Body}
+  - {bone: GEO_Leg0_Upper, leg: leg0, hit_zone: 0.5}
+  - {bone: GEO_Leg0_Lower, leg: leg0, hit_zone: 0.5}
+  - {bone: GEO_Leg1_Upper, leg: leg1, hit_zone: 0.5}
+  - {bone: GEO_Leg1_Lower, leg: leg1, hit_zone: 0.5}
+  - {bone: GEO_Leg2_Upper, leg: leg2, hit_zone: 0.5}
+  - {bone: GEO_Leg2_Lower, leg: leg2, hit_zone: 0.5}
+  - {bone: GEO_Leg3_Upper, leg: leg3, hit_zone: 0.5}
+  - {bone: GEO_Leg3_Lower, leg: leg3, hit_zone: 0.5}
+  - {bone: GEO_Body, hit_zone: 1.5}

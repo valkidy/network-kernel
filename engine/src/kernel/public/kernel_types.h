@@ -5,6 +5,12 @@
 #include <stdint.h>
 
 /*
+ * 78: KernelSkeletonColliderDefinition::hit_zone changed meaning. It is a
+ *     damage multiplier in hundredths, where KERNEL_HIT_ZONE_UNSCALED (100)
+ *     leaves damage alone; it was previously an unused body-part id whose only
+ *     value was zero. Layout and width are unchanged, so this is a semantic
+ *     break rather than a structural one -- a catalog built against 77 would
+ *     describe every volume as harmless.
  * 77: gameplay collision masks gained KERNEL_COLLISION_LAYER_LIMB, so a
  *     projectile, beam or prop trigger can name a rig's per-bone colliders as
  *     a target. Absent from every MASK_ aggregate, so nothing that does not
@@ -34,7 +40,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 77u
+#define KERNEL_ABI_VERSION 78u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)

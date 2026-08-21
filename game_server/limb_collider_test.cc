@@ -947,6 +947,57 @@ int main() {
         require((prop_filter.collision_mask & limb_layer) != 0u);
         require((prop_filter.object_kind_mask & limb_kind) != 0u);
 
+        // hit_zone is authored per bone on the rig as a decimal and stored as
+        // hundredths. The legs take a shot poorly and the body takes one well,
+        // which is a property of which bone it is rather than of the actor.
+        const network_example::game_server::SkeletonAssetConfig* rig = nullptr;
+        for (const network_example::game_server::SkeletonAssetConfig& asset :
+             config.skeleton_assets) {
+            if (asset.name == "simplified_quadruped") {
+                rig = &asset;
+            }
+        }
+        require(rig != nullptr);
+        require(rig->colliders.size() == kExpectedBoneIndices.size());
+        for (const network_example::game_server::RigColliderConfig& collider :
+             rig->colliders) {
+            require(collider.has_hit_zone);
+            require(
+                collider.hit_zone == (collider.bone == "GEO_Body" ? 150u : 50u));
+        }
+
+        // And it survives the merge into the catalog the kernel loads, which is
+        // the half a rig edit cannot verify on its own.
+        const KernelEntityTemplateDefinition* quadruped = nullptr;
+        for (const KernelEntityTemplateDefinition& entity :
+             storage.entity_templates) {
+            if (entity.entity_template_id == 21u) {
+                quadruped = &entity;
+            }
+        }
+        require(quadruped != nullptr);
+        require(
+            quadruped->skeleton.collider_count == kExpectedBoneIndices.size());
+        std::uint32_t body_zones = 0u;
+        std::uint32_t leg_zones = 0u;
+        for (std::uint32_t index = 0u;
+             index < quadruped->skeleton.collider_count;
+             ++index) {
+            const std::uint16_t zone =
+                quadruped->skeleton.colliders[index].hit_zone;
+            require(zone == 150u || zone == 50u);
+            if (zone == 150u) {
+                ++body_zones;
+            } else {
+                ++leg_zones;
+            }
+        }
+        require(body_zones == 1u);
+        require(leg_zones == 8u);
+        // Never zero by omission: that is the value that would make a volume
+        // nobody authored immune.
+        require(KERNEL_HIT_ZONE_UNSCALED == 100u);
+
         // The one projectile that asks. A rocket strikes the leg in its path
         // instead of sailing between them, and the hit resolves to the actor
         // wearing it -- projectile hit records carry
