@@ -8,7 +8,10 @@ physics:
   collider_template: collision_damage_prop_hitbox
 triggers:
   on_collision:
-    collision_mask: actor
+    # actor | limb: a legged rig's bones are part of the thing you hit, so a
+    # prop thrown into a leg counts as hitting the monster rather than landing
+    # on scenery. Limbs are opt-in and this is the only prop that asks.
+    collision_mask: actor | limb
     action_graph: action_apply_damage_at_collision
     parameters:
       source: self

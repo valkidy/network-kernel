@@ -1507,7 +1507,8 @@ bool validate_beam_mechanics(const KernelBeamMechanicsDefinition& beam) {
            beam.lifetime_ticks > 0 &&
            (beam.collision_mask &
             ~(KERNEL_COLLISION_MASK_ACTOR |
-              KERNEL_COLLISION_MASK_STATIC_WORLD)) == 0u;
+              KERNEL_COLLISION_MASK_STATIC_WORLD |
+              KERNEL_COLLISION_LAYER_LIMB)) == 0u;
 }
 
 bool validate_projectile_mechanics(
@@ -1591,15 +1592,18 @@ bool validate_projectile_mechanics(
         !valid_trigger(mechanics.expired_trigger)) {
         return false;
     }
+    // Kept in step with the same sets in gameplay_config.cc, which is where
+    // authoring is checked; this is where a catalog built anywhere else is.
     const std::uint32_t supported_collision_mask =
-        mechanics.projectile_type == KernelProjectileType_AreaEffect
+        KERNEL_COLLISION_LAYER_LIMB |
+        (mechanics.projectile_type == KernelProjectileType_AreaEffect
             ? KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_MASK_PROP
             : mechanics.projectile_type == KernelProjectileType_Beam
                 ? KERNEL_COLLISION_MASK_ACTOR |
                     KERNEL_COLLISION_MASK_STATIC_WORLD
                 : KERNEL_COLLISION_MASK_ACTOR |
                     KERNEL_COLLISION_MASK_STATIC_WORLD |
-                    KERNEL_COLLISION_LAYER_PROJECTILE;
+                    KERNEL_COLLISION_LAYER_PROJECTILE);
     if ((mechanics.collision_mask & ~supported_collision_mask) != 0u) {
         return false;
     }
@@ -3049,7 +3053,8 @@ bool KernelEngine::load_gameplay_catalog(
         }
         if ((entity_template.collision_trigger_mask &
              ~(KERNEL_COLLISION_MASK_ACTOR |
-               KERNEL_COLLISION_MASK_STATIC_WORLD)) != 0u ||
+               KERNEL_COLLISION_MASK_STATIC_WORLD |
+               KERNEL_COLLISION_LAYER_LIMB)) != 0u ||
             (entity_template.collision_trigger.struct_size == 0u &&
              entity_template.collision_trigger_mask != 0u)) {
             return false;

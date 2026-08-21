@@ -24,12 +24,15 @@ namespace network_example {
 // AND on the object kind, so anything that narrows one has to narrow the other
 // to match, or it silently keeps volumes it meant to drop.
 constexpr std::uint32_t actor_hit_layer_mask() {
-    return physics::collision_layer_bit(physics::CollisionLayer::kDamageable);
+    return physics::collision_layer_bit(physics::CollisionLayer::kDamageable) |
+        physics::collision_layer_bit(physics::CollisionLayer::kActorLimb);
 }
 
 constexpr std::uint32_t actor_hit_kind_mask() {
-    return 1u << static_cast<std::uint32_t>(
-               physics::CollisionObjectKind::kActorHitbox);
+    return (1u << static_cast<std::uint32_t>(
+                physics::CollisionObjectKind::kActorHitbox)) |
+        (1u << static_cast<std::uint32_t>(
+             physics::CollisionObjectKind::kActorLimb));
 }
 
 constexpr bool is_actor_hit(physics::CollisionObjectKind kind) {
@@ -37,14 +40,20 @@ constexpr bool is_actor_hit(physics::CollisionObjectKind kind) {
             (1u << static_cast<std::uint32_t>(kind))) != 0u;
 }
 
-// Pins today's answer, so that changing it is a deliberate edit here rather
-// than something that drifts. The limb line is the load-bearing one: a rig's
-// bones are an actor's volumes but are NOT damageable volumes yet, and nothing
-// downstream is ready for them to become so -- lag compensation rewinds
-// hitboxes only, so a leg hit on a moving rig would resolve against a leg that
-// is no longer there.
+// Pins the answer, so that changing it is a deliberate edit here rather than
+// something that drifts.
+//
+// A limb counts. Reaching one still requires naming KERNEL_COLLISION_LAYER_LIMB
+// in the authored mask -- that is where the opt-in lives, and a query that did
+// not ask never receives a limb hit to classify. What this decides is what
+// happens to one that did ask: a leg resolves to the actor wearing it rather
+// than to scenery.
+//
+// The movement capsule stays out. It is where an actor stands, not what it can
+// be hit on, and admitting it would let every weapon shoot the volume that
+// exists to stop people walking through each other.
 static_assert(is_actor_hit(physics::CollisionObjectKind::kActorHitbox));
-static_assert(!is_actor_hit(physics::CollisionObjectKind::kActorLimb));
+static_assert(is_actor_hit(physics::CollisionObjectKind::kActorLimb));
 static_assert(!is_actor_hit(physics::CollisionObjectKind::kActorMovement));
 static_assert(!is_actor_hit(physics::CollisionObjectKind::kTerrain));
 static_assert(!is_actor_hit(physics::CollisionObjectKind::kStaticObstacle));
@@ -55,9 +64,18 @@ inline physics::CollisionQueryFilter collision_filter_from_mask(
     filter.collision_mask = 0u;
     filter.object_kind_mask = 0u;
     filter.gameplay_category_mask = mask & KERNEL_COLLISION_MASK_ACTOR;
+    // Spelled out rather than reusing actor_hit_*_mask(), which is a different
+    // question that happened to have the same answer once. Those say what
+    // counts as hitting an actor when a result is classified, and limbs count.
+    // This says what the word "actor" turns on in an authored mask, and limbs
+    // are their own token -- folding the two together silently handed every
+    // weapon the limb layer it never asked for.
     if ((mask & KERNEL_COLLISION_MASK_ACTOR) != 0u) {
-        filter.collision_mask |= actor_hit_layer_mask();
-        filter.object_kind_mask |= actor_hit_kind_mask();
+        filter.collision_mask |= physics::collision_layer_bit(
+            physics::CollisionLayer::kDamageable);
+        filter.object_kind_mask |=
+            1u << static_cast<std::uint32_t>(
+                physics::CollisionObjectKind::kActorHitbox);
     }
     // A rig's bones are their own layer and their own kind, so a query that
     // does not name them never pays for them. gameplay_category_mask is built

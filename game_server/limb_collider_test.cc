@@ -912,6 +912,40 @@ int main() {
                 KERNEL_COLLISION_LAYER_LIMB);
         require((sideless.collision_mask & limb_layer) != 0u);
         require(sideless.gameplay_category_mask == 0u);
+
+        // A limb hit resolves to the actor wearing it, not to scenery. The
+        // owning net id is asserted on every limb further up, so together with
+        // this the thrown-prop path reaches the monster: its overlap names the
+        // layer, the hit classifies as an actor, and the target it carries is
+        // the rig.
+        require(network_example::is_actor_hit(
+            network_example::physics::CollisionObjectKind::kActorLimb));
+        // The movement capsule is still not something you can hit.
+        require(!network_example::is_actor_hit(
+            network_example::physics::CollisionObjectKind::kActorMovement));
+
+        // The one prop that asks for limbs, read back from the shipped
+        // catalog rather than restated here.
+        const network_example::game_server::EntityTemplateConfig* damage_prop =
+            nullptr;
+        for (const network_example::game_server::EntityTemplateConfig& entity :
+             config.entity_templates) {
+            if (entity.name == "collision_damage_prop") {
+                damage_prop = &entity;
+            }
+        }
+        require(damage_prop != nullptr);
+        require(
+            (damage_prop->collision_trigger_mask &
+             KERNEL_COLLISION_LAYER_LIMB) != 0u);
+        require(
+            (damage_prop->collision_trigger_mask &
+             KERNEL_COLLISION_MASK_ACTOR) != 0u);
+        const network_example::physics::CollisionQueryFilter prop_filter =
+            network_example::collision_filter_from_mask(
+                damage_prop->collision_trigger_mask);
+        require((prop_filter.collision_mask & limb_layer) != 0u);
+        require((prop_filter.object_kind_mask & limb_kind) != 0u);
     }
 
     // Retiring the entity retires its bodies. A leg left behind is an invisible
