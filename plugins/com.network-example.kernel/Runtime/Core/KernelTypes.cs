@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 79;
+        public const uint AbiVersion = 80;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int GameplayCatalogEntryPathSize = 128;
@@ -2024,6 +2024,9 @@ namespace NetworkExample.Kernel
         public uint lifetime_ticks;
         public float spawn_distance;
         public uint collision_mask;
+        public byte hit_instigator;
+        public byte reserved1;
+        public ushort reserved2;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelAreaEffectMechanicsDefinition>();
     }
