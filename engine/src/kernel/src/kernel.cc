@@ -9109,7 +9109,23 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
                             next_position,
                             filter);
                     if (!hits.empty()) {
-                        if (projectile_template->mechanics.projectile_type ==
+                        // The authority never lets an area effect touch whoever
+                        // fired it: simulate_area_effects hands its overlap
+                        // query ignored_entity_net_id = shooter_net_id, and a
+                        // spawn chain carries that shooter forward, so a rocket
+                        // and the explosion it spawns are filtered against the
+                        // same actor. Predicting a self-impulse would therefore
+                        // predict a push no snapshot can ever confirm, and the
+                        // next owner snapshot -- which overwrites the predicted
+                        // velocity outright rather than replaying this -- would
+                        // yank it back. owner_peer is the shooter's peer on
+                        // both spawn paths, which is all it takes to recognise
+                        // one of ours.
+                        const bool fired_by_local_player =
+                            local_client_peer_id_ != 0u &&
+                            projectile.owner_peer == local_client_peer_id_;
+                        if (!fired_by_local_player &&
+                            projectile_template->mechanics.projectile_type ==
                                 KernelProjectileType_AreaEffect &&
                             projectile_template->mechanics.projectile_impact_trigger
                                     .struct_size >=

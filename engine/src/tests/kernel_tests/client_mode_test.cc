@@ -3252,6 +3252,89 @@ void predicted_projectile_lifetime_cleanup_removes_batch_projectile() {
     require(client.predicted_projectiles_.empty());
 }
 
+// The authority filters an area effect's overlap query against the shooter, so
+// the one projectile a client can predict at fire time -- its own -- is exactly
+// the one whose impulse never lands. Predicting it anyway produced a push that
+// the next owner snapshot silently took back.
+void predicted_area_effect_impulse_skips_the_local_shooter() {
+    const auto predicted_velocity_after_impact = [](network_example::PeerId projectile_owner_peer) {
+        KernelConfig config{};
+        config.mode = KernelMode_Client;
+        config.tick.server_tick_rate = 30;
+        config.tick.snapshot_rate = 15;
+
+        network_example::KernelEngine client(config);
+        client.reset_runtime_state(KernelMode_Client);
+
+        KernelProjectileTemplateDefinition definition = projectile_template(
+            3, 3, KernelProjectileSyncMode_LocalPredictedDeterministic);
+        definition.mechanics.projectile_type = KernelProjectileType_AreaEffect;
+        definition.mechanics.speed = 0.0f;
+        definition.mechanics.collision_mask = KERNEL_COLLISION_MASK_ACTOR;
+        definition.mechanics.area_effect.struct_size =
+            sizeof(KernelAreaEffectMechanicsDefinition);
+        definition.mechanics.area_effect.radius = 3.0f;
+        definition.mechanics.area_effect.damage_per_interval = 5;
+        definition.mechanics.area_effect.damage_interval_ticks = 2;
+        definition.mechanics.area_effect.lifetime_ticks = 30;
+        definition.mechanics.area_effect.collision_mask =
+            KERNEL_COLLISION_MASK_ACTOR;
+        KernelActionTriggerDefinition& impact =
+            definition.mechanics.projectile_impact_trigger;
+        impact.struct_size = sizeof(KernelActionTriggerDefinition);
+        impact.action_count = 1;
+        impact.actions[0].action_type =
+            KernelEntityTriggerActionType_ApplyImpulse;
+        impact.actions[0].target_source = KernelEntityRefSource_EventTarget;
+        impact.actions[0].direction_source = KernelEventVec3Source_Direction;
+        impact.actions[0].impulse_strength = 12.0f;
+        impact.actions[0].impulse_collision_mask = KERNEL_COLLISION_MASK_ACTOR;
+
+        KernelColliderTemplateDefinition collider = projectile_collider_template();
+        collider.shape_params = KernelVec4{3.0f, 0.0f, 0.0f, 0.0f};
+        KernelGameplayCatalogDefinition catalog{};
+        catalog.struct_size = sizeof(catalog);
+        catalog.catalog_version = 1;
+        catalog.catalog_hash = kProjectileCollisionCatalogHash;
+        catalog.projectile_templates = &definition;
+        catalog.projectile_template_count = 1;
+        catalog.collider_templates = &collider;
+        catalog.collider_template_count = 1;
+        require(client.load_gameplay_catalog(catalog));
+
+        // The explosion sits still, so its sphere overlaps the terrain it was
+        // spawned against rather than sweeping into it.
+        install_prediction_terrain_box(
+            &client,
+            glm::vec3{0.0f, -0.5f, 0.0f},
+            glm::vec3{2.0f, 0.5f, 2.0f});
+
+        client.local_client_peer_id_ = 7;
+        client.local_player_net_id_ = 1;
+        client.predicted_local_entity_.net_id = 1;
+        client.predicted_local_entity_.type = network_example::EntityType::kActor;
+        client.predicted_local_entity_.position = glm::vec3{1.0f, 0.0f, 0.0f};
+        client.predicted_local_entity_.velocity = glm::vec3{0.0f, 0.0f, 0.0f};
+        client.has_predicted_local_entity_ = true;
+
+        auto projectile = predicted_projectile(
+            KernelProjectileSyncMode_LocalPredictedDeterministic,
+            glm::vec3{0.0f, 0.0f, 0.0f},
+            glm::vec3{0.0f, 0.0f, 0.0f});
+        projectile.owner_peer = projectile_owner_peer;
+        client.predicted_projectiles_.push_back(projectile);
+
+        client.advance_predicted_projectiles(1.0f / 30.0f);
+        return client.predicted_local_entity_.velocity;
+    };
+
+    // Fired by someone else: the authority will apply this impulse, so the
+    // client is right to predict it.
+    require(glm::length(predicted_velocity_after_impact(9)) > 0.0001f);
+    // Fired by this client: the authority never will.
+    require(glm::length(predicted_velocity_after_impact(7)) < 0.0001f);
+}
+
 void local_deterministic_sphere_projectile_hits_prediction_terrain() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
@@ -4534,6 +4617,7 @@ int main() {
     client_query_vision_state_uses_actor_template_debug_replication();
     server_snapshot_send_set_carries_vision_debug_to_client();
     predicted_projectile_lifetime_cleanup_removes_batch_projectile();
+    predicted_area_effect_impulse_skips_the_local_shooter();
     local_deterministic_sphere_projectile_hits_prediction_terrain();
     local_deterministic_projectile_hits_prediction_pure_prop();
     local_deterministic_box_projectile_hits_prediction_terrain();

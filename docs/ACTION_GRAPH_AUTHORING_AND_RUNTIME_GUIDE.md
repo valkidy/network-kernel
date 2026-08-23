@@ -244,10 +244,17 @@ Authoring 注意：
   與所有 player actor，其水平分量會在下一 tick 被覆寫或歸零，只有垂直分量會累積
   並繼續受重力影響。因此打在玩家身上的擊退實際只有 Y 分量有效，需要明顯推力時
   `direction` 應帶足夠的向上分量。沒有 input 的 AI actor 則會保留水平速度繼續滑行。
+- **Area effect 永遠打不到發射它的人**。overlap query 以 shooter 作為
+  `ignored_entity_net_id`，而 spawn chain 會把 shooter 一路帶下去，所以 rocket 與
+  它命中後生成的爆炸過濾的是同一個 actor。目前沒有 authoring 開關可以關掉這個
+  行為，也因此自推（rocket jump）現階段做不出來。注意側別 mask 不能用來做這件
+  事：`GameplaySide` 只掛在 prop 上，actor 完全不帶，所以 `hostile_side` 之類的
+  mask 對 actor 不生效。
 - Client prediction 只在「本地預測的 area effect projectile 擊中本地玩家」這條路徑
   上預先套用 impulse，而且該 area effect 必須 author
-  `sync_mode: local_predicted_deterministic`（預設是 `server_snapshot_only`）。
-  其餘情況一律等 authoritative snapshot。
+  `sync_mode: local_predicted_deterministic`（預設是 `server_snapshot_only`），
+  還必須**不是本地玩家自己發射的**——否則 authority 會把他過濾掉，預測就會套一個
+  永遠不會被 snapshot 確認的位移。其餘情況一律等 authoritative snapshot。
 
 目前 projectile-backed triggers 接受 `apply_damage`、`apply_health_change`、
 `apply_impulse` 與 `spawn_projectile` actions。
