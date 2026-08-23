@@ -21,7 +21,7 @@ Gameplay System
 → Authoritative Gameplay Side Effects
 ```
 
-目前實作版本日期：2026-07-26。
+目前實作版本日期：2026-08-23。
 
 ---
 
@@ -121,6 +121,9 @@ schema 的欄位會在載入階段被拒絕。
   command 必須提供有效 target。
 - Projectile 命中 world geometry 時，`on_projectile_impact.event.target` 可能為空；
   不需要 entity target 的 graph 應只使用 position/direction。
+- Area effect projectile 對半徑內每個受影響 target 各發一次
+  `on_projectile_impact`：`event.target` 是該 target，`event.direction` 是由爆心
+  指向 target 的徑向單位向量。直接命中的 `event.direction` 則是彈道方向。
 - `on_collision` 不提供 `event.instigator`；需要歸屬資訊的 collision 行為應由
   產生事件的 gameplay system 明確建模，而不是假設 target 是 instigator。
 - Runtime binding validator 會再次執行同一套 schema 驗證，防止無效 ABI input。
@@ -181,7 +184,71 @@ schema 的欄位會在載入階段被拒絕。
 - owner、shooter、weapon、action instance 等 attribution 由 execution provenance
   自動向下傳遞，不應重複出現在 YAML parameters。
 
-目前 projectile-backed triggers 只接受 `spawn_projectile` actions。
+### 4.4 `apply_impulse`
+
+```yaml
+- type: apply_impulse
+  target: params.target
+  strength: params.strength
+  direction: params.direction
+  collision_mask: actor | prop
+```
+
+輸入契約：
+
+- `target`：有效 `EntityRef`。Runtime 只對兩種 target 生效：actor，或不在
+  `carrying` 狀態的 prop。其他 target 靜默略過，不會讓整批失敗。
+- `strength`：正的有限 float，單位是 **m/s 的速度增量**。Runtime 直接執行
+  `velocity += normalize(direction) * strength`，不參與質量計算。
+- `direction`：只能綁定 `event.direction`，或由 graph 的 `direction` parameter 提供
+  vec3 default。Vec3 default 必須非零且有限，且目前只允許用在名為 `direction` 的
+  parameter 上。
+- `collision_mask`：`actor`、`prop` 或兩者的 or 組合；省略時預設 `actor`。不接受空
+  mask 或其他 collision layer bit。
+- 此 action 不接受 `position`、`amount`、`owner`、`entity_template`、
+  `item_template`、`quantity` 欄位。
+
+適用於 entity-backed 與 projectile-backed triggers。Status lifecycle trigger 不接受
+`apply_impulse`。`event.direction` 只在 `on_activated`、`on_collision`、
+`on_projectile_impact`、`on_expired`、`on_item_used` 可用，因此
+`on_health_depleted` 與 `on_destroy_entity` 上的擊退必須改用 vec3 default。
+
+Runtime 效果：
+
+- Actor：`Velocity` 增加該速度量，同時 `MovementState` 被強制設為 airborne，並清除
+  ground normal 與支撐體。若不清掉 grounded 狀態，下一 tick 的 movement solver 會
+  依斜面重算垂直速度，把上拋量吃掉。
+- Prop：切換為 in-flight、解除 carry、重新啟用 collider，之後由 thrown prop motion
+  以**直線** motion model 前進，不套用重力。In-flight prop 只有在 collision trigger
+  system 掃到 static contact 時才會落地並轉回 placed，而該 system 只處理有
+  `on_collision` binding 的 prop：因此要被推動的 prop 應同時 author `on_collision`
+  trigger，否則會一路直線滑行到 lifetime 結束。
+
+`impulse_resistance` 由 actor 或 prop entity template authoring（預設 0），語意是
+**門檻而非減量**：`strength <= impulse_resistance` 時整個 impulse 被忽略，不做任何
+衰減。
+
+```yaml
+# actor 或 prop entity template
+entity_type: prop
+impulse_resistance: 15.0   # strength <= 15.0 的 impulse 完全推不動
+```
+
+目前 repo 內沒有任何 template author 這個欄位，等同全部使用預設值 0。
+
+Authoring 注意：
+
+- Impulse 在 trigger 所屬 tick 的 command commit 階段套用，於**下一個** movement
+  tick 才反映到位置。
+- Movement solver 每個 tick 由 input 重新決定水平速度：有 movement input 的 actor
+  與所有 player actor，其水平分量會在下一 tick 被覆寫或歸零，只有垂直分量會累積
+  並繼續受重力影響。因此打在玩家身上的擊退實際只有 Y 分量有效，需要明顯推力時
+  `direction` 應帶足夠的向上分量。沒有 input 的 AI actor 則會保留水平速度繼續滑行。
+- Client prediction 只在「本地預測的 area effect projectile 擊中本地玩家」這條路徑
+  上預先套用 impulse；其餘情況等 authoritative snapshot。
+
+目前 projectile-backed triggers 接受 `apply_damage`、`apply_health_change`、
+`apply_impulse` 與 `spawn_projectile` actions。
 
 Status lifecycle 目前支援的 actions 為 `apply_damage`、health change、status
 apply/remove 與 speed modifier。Lifecycle safety contract 僅允許 `on_apply` 使用
@@ -323,6 +390,65 @@ triggers:
 `on_expired` 與 `on_projectile_impact` 是不同 gameplay facts。兩者可使用相同
 action schema，但 graph ID、trigger binding 與 exactly-once key 應清楚反映各自語意。
 
+### 6.5 爆炸命中後造成傷害與擊退
+
+Area effect projectile 對半徑內每個 target 各發一次 `on_projectile_impact`，因此
+同一份 graph 會對每個受影響 target 各執行一次：
+
+```yaml
+id: action_rocket_explosion_at_target
+
+parameters:
+  target: null
+  amount: 45
+  strength: 12.0
+  direction: null
+
+actions:
+  - type: apply_damage
+    target: params.target
+    amount: params.amount
+
+  - type: apply_impulse
+    target: params.target
+    strength: params.strength
+    direction: params.direction
+    collision_mask: actor | prop
+```
+
+Projectile binding：
+
+```yaml
+triggers:
+  on_projectile_impact:
+    action_graph: action_rocket_explosion_at_target
+    parameters:
+      target: event.target
+      amount: 45
+      strength: 12.0
+      direction: event.direction
+```
+
+此處的 `event.direction` 是爆心指向 target 的徑向向量，因此擊退方向隨相對位置改變。
+若要的是固定方向（例如把 target 往上頂），改成不在 binding 提供 `direction`，由
+graph parameter 的 vec3 default 決定：
+
+```yaml
+parameters:
+  direction: {x: 0.0, y: 1.0, z: 0.0}
+```
+
+Guidelines：
+
+- Damage 與 impulse 屬於同一個 batch：任一 command preflight 失敗時兩者都不提交。
+- `collision_mask` 決定這個擊退是否也推得動 prop；只想推 actor 時省略即可。
+- 擊退強度與傷害是各自獨立的數值，不應以 damage 反推 strength。
+
+參考實作：
+
+- `game_server/action_graph_templates/action_rocket_explosion_at_target.yaml`
+- `game_server/projectile_templates/rocket_explosion.yaml`
+
 ---
 
 ## 7. Command Batch 與 Exactly-once 契約
@@ -424,6 +550,8 @@ KernelActionTriggerDefinition
 - 保持 action list 短小且具單一 gameplay 目的。
 - 依 action 順序具有語意時，新增測試固定該順序。
 - Projectile attribution 一律使用 execution provenance。
+- 擊退方向以 gameplay 需求選擇來源：需要隨相對位置變化時綁 `event.direction`，需要
+  固定方向時用 `direction` parameter 的 vec3 default。
 - 生命週期 outcome 留在 Projectile/Entity Lifecycle System。
 
 ### 9.2 應避免
@@ -433,6 +561,8 @@ KernelActionTriggerDefinition
   check。
 - 不要引用 trigger schema 不提供的 `event.*` 欄位。
 - 不要假設 optional `event.target` 永遠存在。
+- 不要用 `apply_impulse` 表達持續性的位移或速度變化；持續效果屬於 status effect 的
+  speed modifier，`apply_impulse` 只是一次性的速度增量。
 - 不要讓 predicted client 與 authoritative server 各執行一次 gameplay side effect。
 - 不要用多個 actions 模擬缺乏 transaction semantics 的外部工作流。
 - 不要為 inventory-only item 強迫建立沒有 gameplay 必要的 ECS entity。
@@ -452,7 +582,15 @@ Catalog load/compile 會拒絕：
 - Parameter type 與 action schema 不相容。
 - 未知或不適用於 trigger 的 `event.*` expression。
 - 無效 Entity/Projectile Template reference。
-- Projectile trigger graph 使用非 `spawn_projectile` action。
+- Projectile trigger graph 使用 `apply_damage`、`apply_health_change`、
+  `apply_impulse`、`spawn_projectile` 以外的 action。
+- Status lifecycle graph 使用 `apply_impulse`。
+- `apply_impulse` 的 `strength` 非有限或不為正。
+- `apply_impulse` 的 `collision_mask` 為空，或含 `actor`/`prop` 以外的 bit。
+- `apply_impulse` 的 `direction` 既不是 `event.direction`，該 parameter 也沒有 vec3
+  default。
+- 非 `direction` parameter 使用 vec3 default，或 vec3 default 是零向量／非有限值。
+- Entity template 的 `impulse_resistance` 非有限或為負。
 - Projectile impact/expired graph reference cycle。
 
 Runtime protection 包含：
@@ -461,6 +599,9 @@ Runtime protection 包含：
 - 無效/已不存在的 damage target 或 owner。
 - 非 finite position/direction。
 - 非正整數或超過 `uint16` 的 damage amount。
+- 非有限或不為正的 impulse strength、非有限或零長度的 impulse direction（整批拒絕）。
+- Impulse target 不是 actor，也不是非攜帶中的 prop，或 `strength` 未超過
+  `impulse_resistance`（略過該 command，不影響同批其他 commands）。
 - 非 authoritative execution 不會產生 gameplay commands。
 
 ---
