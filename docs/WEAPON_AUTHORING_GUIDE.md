@@ -107,7 +107,7 @@ lifetime_ticks: 3
 |---|---|---|
 | `type` | `standard` | `standard`, `area_effect`, `beam` |
 | `movement_model` | `linear` | `linear`, `parabolic`, `homing` |
-| `sync_mode` | `hybrid_deterministic_then_snapshot` | |
+| `sync_mode` | `hybrid_deterministic_then_snapshot` | `area_effect` defaults to `server_snapshot_only` |
 | `hit_response` | `destroy` | |
 | `damage_shape` | `direct_hit` | `none` requires `damage: 0` |
 | `collision_mask` | `actor \| terrain \| obstacle` | |
@@ -137,6 +137,15 @@ damage_behavior:
   damage_interval_ticks: 2
   falloff: none          # or linear
 ```
+
+`movement_model`, `hit_response`, and `damage_shape` are **rejected** here: an
+area effect spawns with zero velocity, always ends on its lifetime, and takes
+its damage from `damage_behavior`, so none of the three can mean anything.
+
+`sync_mode` is accepted, and defaults to `server_snapshot_only` rather than the
+`hybrid_deterministic_then_snapshot` every other projectile type defaults to.
+Authoring `local_predicted_deterministic` is what lets the client predict an
+impact impulse on the local player from an area effect it fired itself.
 
 ### type: beam
 

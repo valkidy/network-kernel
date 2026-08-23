@@ -245,7 +245,9 @@ Authoring 注意：
   並繼續受重力影響。因此打在玩家身上的擊退實際只有 Y 分量有效，需要明顯推力時
   `direction` 應帶足夠的向上分量。沒有 input 的 AI actor 則會保留水平速度繼續滑行。
 - Client prediction 只在「本地預測的 area effect projectile 擊中本地玩家」這條路徑
-  上預先套用 impulse；其餘情況等 authoritative snapshot。
+  上預先套用 impulse，而且該 area effect 必須 author
+  `sync_mode: local_predicted_deterministic`（預設是 `server_snapshot_only`）。
+  其餘情況一律等 authoritative snapshot。
 
 目前 projectile-backed triggers 接受 `apply_damage`、`apply_health_change`、
 `apply_impulse` 與 `spawn_projectile` actions。

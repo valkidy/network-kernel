@@ -5279,8 +5279,30 @@ ProjectileTemplateConfig projectile_template_from_yaml(
                 "area_effect projectile requires damage_behavior.type area_interval: " +
                 projectile_template.name);
         }
+        // Three of the four fields below are the area effect's own to decide,
+        // and authoring them silently did nothing: an area effect spawns with
+        // zero velocity, so a motion model has nothing to integrate; it always
+        // ends on its lifetime; and its damage comes from damage_behavior, not
+        // from a shape. Rejecting them says so where it can be read, the same
+        // way a key nothing implements is rejected.
+        for (const char* overridden :
+             {"movement_model", "hit_response", "damage_shape"}) {
+            if (node[overridden]) {
+                throw std::runtime_error(
+                    std::string("area_effect projectile must not author ") +
+                    overridden + ": " + projectile_template.name);
+            }
+        }
         mechanics.motion_model = KernelProjectileMotionModel_Linear;
-        mechanics.sync_mode = KernelProjectileSyncMode_ServerSnapshotOnly;
+        // sync_mode is the one that is a real choice. It defaults to
+        // server-only, as it always has, but a locally predicted area effect is
+        // a shape the kernel implements -- an impact impulse on the local
+        // player is predicted only for one it owns -- and forcing the field
+        // here made that unreachable from authoring while still accepting the
+        // key.
+        mechanics.sync_mode = node["sync_mode"]
+            ? projectile_sync_mode_from_yaml(node["sync_mode"])
+            : KernelProjectileSyncMode_ServerSnapshotOnly;
         mechanics.hit_response = KernelProjectileHitResponse_Destroy;
         mechanics.damage_shape = KernelProjectileDamageShape_DirectHit;
         mechanics.damage = node["damage"].as<std::uint16_t>();

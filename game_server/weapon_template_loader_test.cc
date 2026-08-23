@@ -848,6 +848,71 @@ void collision_mask_expressions_are_loaded() {
            (KERNEL_COLLISION_LAYER_HOSTILE_SIDE | KERNEL_COLLISION_LAYER_PLAYER_SIDE));
 }
 
+// The area_effect branch of the projectile loader returns before the generic
+// field parsing, so every field it wants has to be handled inside it. sync_mode
+// used to be assigned there unconditionally, which accepted an authored value
+// and then discarded it -- the same silent drop `triggers` suffered.
+void area_effect_sync_mode_is_authored_not_forced() {
+    const auto area_effect_template = [](const std::string& extra_fields) {
+        return "id: 4\nname: fire_floor_area\ntype: area_effect\n"
+               "collider_template: area_effect_sphere\n"
+               "damage: 12\n"
+               "lifetime_ticks: 6\n"
+               "damage_behavior:\n"
+               "  type: area_interval\n"
+               "  damage_interval_ticks: 2\n"
+               "  falloff: none\n"
+               "collision_mask: hostile_side\n" +
+            extra_fields;
+    };
+
+    const std::filesystem::path default_dir = tmp_dir("area_sync_default");
+    write_valid_templates(default_dir);
+    write_file(
+        default_dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
+        area_effect_template(""));
+    network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            default_dir.string());
+    assert(projectile_mechanics(config, 4).sync_mode ==
+           KernelProjectileSyncMode_ServerSnapshotOnly);
+
+    const std::filesystem::path predicted_dir = tmp_dir("area_sync_predicted");
+    write_valid_templates(predicted_dir);
+    write_file(
+        predicted_dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
+        area_effect_template("sync_mode: local_predicted_deterministic\n"));
+    config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            predicted_dir.string());
+    assert(projectile_mechanics(config, 4).sync_mode ==
+           KernelProjectileSyncMode_LocalPredictedDeterministic);
+
+    const std::filesystem::path invalid_dir = tmp_dir("area_sync_invalid");
+    write_valid_templates(invalid_dir);
+    write_file(
+        invalid_dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
+        area_effect_template("sync_mode: remote_magic\n"));
+    assert(load_fails(invalid_dir));
+
+    // The three the area effect really does own are rejected rather than
+    // accepted and overwritten.
+    int overridden_index = 0;
+    for (const char* overridden_field :
+         {"movement_model: parabolic\n",
+          "hit_response: bounce\n",
+          "damage_shape: none\n"}) {
+        const std::filesystem::path overridden_dir = tmp_dir(
+            "area_overridden_" + std::to_string(overridden_index++));
+        write_valid_templates(overridden_dir);
+        write_file(
+            overridden_dir.parent_path() / "projectile_templates" /
+                "fire_floor_area.yaml",
+            area_effect_template(overridden_field));
+        assert(load_fails(overridden_dir));
+    }
+}
+
 void malformed_collision_masks_are_rejected() {
     const std::filesystem::path unknown_dir = tmp_dir("mask_unknown");
     write_valid_templates(unknown_dir);
@@ -1087,6 +1152,7 @@ int main() {
     invalid_templates_are_rejected();
     collision_mask_expressions_are_loaded();
     malformed_collision_masks_are_rejected();
+    area_effect_sync_mode_is_authored_not_forced();
     catalog_file_loads_colliders();
     return 0;
 }
