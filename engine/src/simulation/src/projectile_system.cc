@@ -118,6 +118,7 @@ bool spawn_projectile_from_template(
                 weapon_id,
                 projectile_template.collision_mask,
                 projectile_template.damage_falloff,
+                projectile_template.area_hit_instigator,
                 {},
                 projectile_template.projectile_impact_binding,
             });

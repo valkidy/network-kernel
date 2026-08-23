@@ -5,6 +5,11 @@
 #include <stdint.h>
 
 /*
+ * 80: KernelAreaEffectMechanicsDefinition gained hit_instigator, appended.
+ *     Zero keeps the standing rule that an area effect never reaches whoever
+ *     fired it; one lets it through, which is what a self-knockback needs. The
+ *     struct is nested inside KernelProjectileMechanicsDefinition, so every
+ *     managed mirror must add the same field or the parent's layout shifts.
  * 79: KernelWeaponMechanicsDefinition gained collision_mask, appended. Zero
  *     means the engine default, so a weapon that authors nothing keeps the
  *     shot it had.
@@ -43,7 +48,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 79u
+#define KERNEL_ABI_VERSION 80u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -1367,6 +1372,12 @@ typedef struct KernelAreaEffectMechanicsDefinition {
     uint32_t lifetime_ticks;
     float spawn_distance;
     uint32_t collision_mask;
+    /* Non-zero lets the area effect reach the actor that fired it -- damage
+     * included, since one overlap query feeds both. Zero, the default, keeps
+     * the shooter filtered out. */
+    uint8_t hit_instigator;
+    uint8_t reserved1;
+    uint16_t reserved2;
 } KernelAreaEffectMechanicsDefinition;
 
 typedef struct KernelBeamMechanicsDefinition {

@@ -852,6 +852,50 @@ void collision_mask_expressions_are_loaded() {
 // field parsing, so every field it wants has to be handled inside it. sync_mode
 // used to be assigned there unconditionally, which accepted an authored value
 // and then discarded it -- the same silent drop `triggers` suffered.
+// Reaching one's own blast is off by default and only an area effect can ask
+// for it, because only the area effect overlap query implements the filter it
+// switches off.
+void area_effect_hit_instigator_is_authored() {
+    const std::filesystem::path default_dir = tmp_dir("hit_instigator_default");
+    write_valid_templates(default_dir);
+    network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            default_dir.string());
+    assert(projectile_mechanics(config, 4).area_effect.hit_instigator == 0u);
+
+    const std::filesystem::path authored_dir = tmp_dir("hit_instigator_authored");
+    write_valid_templates(authored_dir);
+    write_file(
+        authored_dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
+        "id: 4\nname: fire_floor_area\ntype: area_effect\n"
+        "collider_template: area_effect_sphere\n"
+        "damage: 12\n"
+        "lifetime_ticks: 6\n"
+        "damage_behavior:\n"
+        "  type: area_interval\n"
+        "  damage_interval_ticks: 2\n"
+        "  falloff: none\n"
+        "collision_mask: hostile_side\n"
+        "hit_instigator: true\n");
+    config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            authored_dir.string());
+    assert(projectile_mechanics(config, 4).area_effect.hit_instigator == 1u);
+
+    const std::filesystem::path standard_dir = tmp_dir("hit_instigator_standard");
+    write_valid_templates(standard_dir);
+    write_file(
+        standard_dir.parent_path() / "projectile_templates" / "rocket.yaml",
+        "id: 3\nname: rocket_projectile\ndamage: 45\n"
+        "sync_mode: server_snapshot_only\ncollider_template: rocket_aabb\n"
+        "movement_model: linear\nhit_response: destroy\n"
+        "damage_shape: direct_hit\nspeed: 35.0\nlifetime_ticks: 75\n"
+        "collision_mask: damageable\nmax_hit_count: 1\n"
+        "hit_instigator: true\n"
+        "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
+    assert(load_fails(standard_dir));
+}
+
 void area_effect_sync_mode_is_authored_not_forced() {
     const auto area_effect_template = [](const std::string& extra_fields) {
         return "id: 4\nname: fire_floor_area\ntype: area_effect\n"
@@ -1153,6 +1197,7 @@ int main() {
     collision_mask_expressions_are_loaded();
     malformed_collision_masks_are_rejected();
     area_effect_sync_mode_is_authored_not_forced();
+    area_effect_hit_instigator_is_authored();
     catalog_file_loads_colliders();
     return 0;
 }

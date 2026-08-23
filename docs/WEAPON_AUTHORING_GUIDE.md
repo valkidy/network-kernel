@@ -142,6 +142,19 @@ damage_behavior:
 area effect spawns with zero velocity, always ends on its lifetime, and takes
 its damage from `damage_behavior`, so none of the three can mean anything.
 
+`hit_instigator` (default `false`) is accepted here and rejected everywhere
+else. An area effect normally filters the actor that fired it out of its overlap
+query, so a weapon's own blast can neither hurt nor push its shooter, and that
+filter follows a spawn chain — a rocket's explosion is filtered against the
+actor who fired the rocket. Authoring `hit_instigator: true` turns the filter
+off, which is what a self-knockback (rocket jump) needs. One query feeds both
+the damage and the impact trigger, so it buys self-damage along with the push.
+
+```yaml
+type: area_effect
+hit_instigator: true     # the shooter is hit by their own blast
+```
+
 `sync_mode` is accepted, and defaults to `server_snapshot_only` rather than the
 `hybrid_deterministic_then_snapshot` every other projectile type defaults to.
 Authoring `local_predicted_deterministic` is what lets the client predict an

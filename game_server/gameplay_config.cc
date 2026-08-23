@@ -193,6 +193,7 @@ void hash_projectile_template(
     hash_scalar(hash, mechanics.area_effect.damage_interval_ticks);
     hash_scalar(hash, mechanics.area_effect.lifetime_ticks);
     hash_scalar(hash, mechanics.area_effect.collision_mask);
+    hash_scalar(hash, mechanics.area_effect.hit_instigator);
     hash_float(hash, mechanics.beam.length);
     hash_float(hash, mechanics.beam.radius);
     hash_scalar(hash, mechanics.beam.damage_per_tick);
@@ -5164,6 +5165,7 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             "lifetime_ticks",
             "damage_behavior",
             "collision_mask",
+            "hit_instigator",
             "max_hit_count",
             "gravity",
             "triggers",
@@ -5321,9 +5323,21 @@ ProjectileTemplateConfig projectile_template_from_yaml(
         mechanics.area_effect.lifetime_ticks =
             node["lifetime_ticks"].as<std::uint32_t>();
         mechanics.area_effect.collision_mask = mechanics.collision_mask;
+        // Off unless authored: an area effect that reaches its own shooter also
+        // damages them, so it has to be asked for rather than inherited.
+        mechanics.area_effect.hit_instigator = static_cast<std::uint8_t>(
+            node["hit_instigator"] && node["hit_instigator"].as<bool>() ? 1 : 0);
         return projectile_template;
     }
 
+    if (node["hit_instigator"]) {
+        // Only the area effect query is authored here. A standard projectile or
+        // a beam filters its shooter out somewhere else entirely, so accepting
+        // the key on one would be a promise nothing keeps.
+        throw std::runtime_error(
+            "hit_instigator is only supported on area_effect projectiles: " +
+            projectile_template.name);
+    }
     mechanics.motion_model = motion_model_from_yaml(node["movement_model"]);
     mechanics.sync_mode = projectile_sync_mode_from_yaml(node["sync_mode"]);
     mechanics.hit_response = hit_response_from_yaml(node["hit_response"]);

@@ -6,8 +6,12 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 79u,
-    "weapon collision mask ABI");
+    KERNEL_ABI_VERSION == 80u,
+    "area effect hit_instigator ABI");
+_Static_assert(
+    offsetof(KernelAreaEffectMechanicsDefinition, hit_instigator) >
+        offsetof(KernelAreaEffectMechanicsDefinition, collision_mask),
+    "the area effect instigator switch is appended");
 _Static_assert(
     offsetof(KernelWeaponMechanicsDefinition, collision_mask) >
         offsetof(KernelWeaponMechanicsDefinition, reload_action_template_id),
@@ -200,7 +204,9 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 79u);
+    assert(KERNEL_ABI_VERSION == 80u);
+    assert(sizeof(KernelAreaEffectMechanicsDefinition) >
+           offsetof(KernelAreaEffectMechanicsDefinition, hit_instigator));
     assert(KERNEL_HIT_ZONE_UNSCALED == 100u);
     assert(KERNEL_COLLISION_LAYER_LIMB == (1u << 3));
     assert((KERNEL_COLLISION_MASK_DAMAGEABLE & KERNEL_COLLISION_LAYER_LIMB) == 0u);

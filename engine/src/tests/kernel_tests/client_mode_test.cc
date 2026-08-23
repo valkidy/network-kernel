@@ -3257,7 +3257,9 @@ void predicted_projectile_lifetime_cleanup_removes_batch_projectile() {
 // the one whose impulse never lands. Predicting it anyway produced a push that
 // the next owner snapshot silently took back.
 void predicted_area_effect_impulse_skips_the_local_shooter() {
-    const auto predicted_velocity_after_impact = [](network_example::PeerId projectile_owner_peer) {
+    const auto predicted_velocity_after_impact =
+        [](network_example::PeerId projectile_owner_peer,
+           std::uint8_t hit_instigator) {
         KernelConfig config{};
         config.mode = KernelMode_Client;
         config.tick.server_tick_rate = 30;
@@ -3279,6 +3281,7 @@ void predicted_area_effect_impulse_skips_the_local_shooter() {
         definition.mechanics.area_effect.lifetime_ticks = 30;
         definition.mechanics.area_effect.collision_mask =
             KERNEL_COLLISION_MASK_ACTOR;
+        definition.mechanics.area_effect.hit_instigator = hit_instigator;
         KernelActionTriggerDefinition& impact =
             definition.mechanics.projectile_impact_trigger;
         impact.struct_size = sizeof(KernelActionTriggerDefinition);
@@ -3330,9 +3333,13 @@ void predicted_area_effect_impulse_skips_the_local_shooter() {
 
     // Fired by someone else: the authority will apply this impulse, so the
     // client is right to predict it.
-    require(glm::length(predicted_velocity_after_impact(9)) > 0.0001f);
-    // Fired by this client: the authority never will.
-    require(glm::length(predicted_velocity_after_impact(7)) < 0.0001f);
+    require(glm::length(predicted_velocity_after_impact(9, 0u)) > 0.0001f);
+    // Fired by this client, and the template does not ask to reach its own
+    // shooter: the authority never will.
+    require(glm::length(predicted_velocity_after_impact(7, 0u)) < 0.0001f);
+    // Fired by this client with hit_instigator authored: now the authority does
+    // apply it, so predicting the self-knockback is the whole point.
+    require(glm::length(predicted_velocity_after_impact(7, 1u)) > 0.0001f);
 }
 
 void local_deterministic_sphere_projectile_hits_prediction_terrain() {

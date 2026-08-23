@@ -782,6 +782,8 @@ struct RuntimeProjectileTemplate {
     glm::vec3 gravity{0.0f, 0.0f, 0.0f};
     std::uint32_t collider_template_id = 0;
     float area_radius = 0.0f;
+    // Area effects only. Whether the effect may reach the actor that fired it.
+    bool area_hit_instigator = false;
     std::uint32_t collision_mask = kCollisionMaskDamageable;
     std::uint32_t max_hit_count = 1;
     std::optional<CompiledActionGraphBinding> projectile_impact_binding;
@@ -822,6 +824,7 @@ struct ProjectileAreaEffectRuntime {
     std::uint8_t source_code = 0;
     std::uint32_t collision_mask = kCollisionMaskDamageable;
     ProjectileDamageFalloff damage_falloff = ProjectileDamageFalloff::kNone;
+    bool hit_instigator = false;
     std::unordered_map<NetId, std::uint32_t> next_damage_tick_by_target;
     std::optional<CompiledActionGraphBinding> action_graph_binding;
 };
