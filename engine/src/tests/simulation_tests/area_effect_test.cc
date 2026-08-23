@@ -228,6 +228,43 @@ network_example::NetId spawn_cover_prop(
     return net_id;
 }
 
+// The overlap query filters the shooter out, which is why a weapon's own blast
+// has never been able to push or hurt the actor that fired it. hit_instigator is
+// how a template asks for the opposite, and it buys self-damage along with the
+// self-knockback because one query feeds both.
+void area_effect_reaches_its_own_shooter_only_when_authored() {
+    const auto shooter_hp_after_blast = [](bool hit_instigator) {
+        network_example::World world;
+        const network_example::NetId shooter =
+            spawn_enemy(world, glm::vec3{0.5f, 0.0f, 0.0f});
+        const network_example::NetId bystander =
+            spawn_enemy(world, glm::vec3{1.0f, 0.0f, 0.0f});
+        const network_example::NetId area = spawn_area_projectile(
+            world, 0, glm::vec3{0.0f, 0.5f, 0.0f}, 2.0f, 10, 0, 20, 7);
+        const auto area_entity = world.find_entity(area);
+        require(area_entity.has_value());
+        world.registry()
+            .get<network_example::ProjectileState>(*area_entity)
+            .shooter_net_id = shooter;
+        world.registry()
+            .get<network_example::ProjectileAreaEffectRuntime>(*area_entity)
+            .hit_instigator = hit_instigator;
+
+        network_example::DamagePipeline pipeline;
+        std::vector<KernelEvent> events;
+        network_example::simulate_area_effects(world, 0, &events, &pipeline);
+        pipeline.confirm_ready(world, 0, 0, &events);
+
+        // Whoever else is standing in it is hit either way; only the shooter's
+        // treatment is what this switch decides.
+        require(health(world, bystander).hp == 30);
+        return health(world, shooter).hp;
+    };
+
+    require(shooter_hp_after_blast(false) == 50);
+    require(shooter_hp_after_blast(true) == 30);
+}
+
 void area_effect_spares_cover_on_a_side_it_does_not_attack() {
     // Splash used to level a deployable regardless of whose it was, so a rocket
     // cleared the thrower's own cover while a beam through the same block could
@@ -279,6 +316,7 @@ int main() {
     server_owned_area_effect_uses_player_damage_grace();
     area_effect_expires_at_expire_tick();
     area_effect_damage_order_is_deterministic();
+    area_effect_reaches_its_own_shooter_only_when_authored();
     area_effect_spares_cover_on_a_side_it_does_not_attack();
     return 0;
 }

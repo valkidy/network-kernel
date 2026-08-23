@@ -21,15 +21,13 @@ int main() {
     network_example::WeaponTuning& tuning =
         world.registry().get<network_example::WeaponTuning>(*player_entity);
     tuning.configured[network_example::kWeaponSlot0] = true;
-    tuning.definitions[network_example::kWeaponSlot0] =
-        network_example::WeaponMechanicsDefinition{
-            network_example::kWeaponSlot0,
-            network_example::WeaponFireMode::kHitscan,
-            30,
-            25,
-            3,
-            30,
-            100.0f};
+    network_example::WeaponMechanicsDefinition& rifle =
+        tuning.definitions[network_example::kWeaponSlot0];
+    rifle.id = network_example::kWeaponSlot0;
+    rifle.mode = network_example::WeaponFireMode::kHitscan;
+    rifle.magazine_size = 30;
+    rifle.damage = 25;
+    rifle.max_range = 100.0f;
     world.registry().get<network_example::Hitbox>(*player_entity) =
         network_example::Hitbox{{0.0f, 0.9f, 0.0f}, {0.35f, 0.9f, 0.35f}, 0};
     const auto enemy_entity = world.find_entity(enemy);

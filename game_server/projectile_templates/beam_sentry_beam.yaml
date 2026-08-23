@@ -12,20 +12,16 @@
 #    belongs to exactly one weapon. Sharing is not available even if the mask
 #    were right.
 #
-# The mask is repeated inside `beam:` on purpose. beam_system reads only the
-# beam block's copy, and a non-zero beam mask overwrites the top-level one
-# (kernel.cc:1350) -- setting one without the other silently keeps the default.
 id: 9
 name: beam_sentry_beam
 type: beam
-# Inert: overwritten by beam.damage_per_tick below (kernel.cc:1345). Kept equal
-# to it so the file does not read as if it applied 30 damage a tick.
-damage: 2
 sync_mode: server_snapshot_only
 collider_template: beam_sentry_beam_box
 movement_model: linear
 hit_response: destroy
 damage_shape: direct_hit
+# Read as damage per tick while the beam is up.
+damage: 2
 speed: 0.0
 lifetime_ticks: 0
 collision_mask: player_side | terrain | obstacle
@@ -40,8 +36,6 @@ beam:
   radius: 0.3
   # 2 per tick at 30 Hz = 60 dps while the beam is up, and 90 damage per
   # 45-round magazine against a 1000 HP player.
-  damage_per_tick: 2
   # Two ticks of grace against a one-tick commit interval: the beam survives to
   # the tick that refreshes it, and expires two ticks after the sentry stops.
   lifetime_ticks: 2
-  collision_mask: player_side | terrain | obstacle

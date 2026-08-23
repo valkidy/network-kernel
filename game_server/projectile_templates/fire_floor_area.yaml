@@ -2,10 +2,11 @@ id: 4
 name: fire_floor_area
 type: area_effect
 collider_template: area_effect_sphere
+# Read as damage per interval, dealt every damage_interval_ticks.
+damage: 12
 lifetime_ticks: 6
 damage_behavior:
   type: area_interval
-  damage_per_interval: 12
   damage_interval_ticks: 2
   falloff: none
 collision_mask: hostile_side

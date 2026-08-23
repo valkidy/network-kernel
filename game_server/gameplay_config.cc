@@ -193,6 +193,7 @@ void hash_projectile_template(
     hash_scalar(hash, mechanics.area_effect.damage_interval_ticks);
     hash_scalar(hash, mechanics.area_effect.lifetime_ticks);
     hash_scalar(hash, mechanics.area_effect.collision_mask);
+    hash_scalar(hash, mechanics.area_effect.hit_instigator);
     hash_float(hash, mechanics.beam.length);
     hash_float(hash, mechanics.beam.radius);
     hash_scalar(hash, mechanics.beam.damage_per_tick);
@@ -480,8 +481,6 @@ std::uint32_t prop_population_group_id_from_ref(
 KernelWeaponMechanicsDefinition hitscan_weapon(
     std::uint8_t weapon_id,
     std::uint16_t magazine_size,
-    std::uint16_t damage,
-    std::uint32_t reload_ticks,
     float max_range) {
     KernelWeaponMechanicsDefinition weapon{};
     weapon.struct_size = sizeof(KernelWeaponMechanicsDefinition);
@@ -489,8 +488,10 @@ KernelWeaponMechanicsDefinition hitscan_weapon(
     weapon.fire_mode = KernelWeaponFireMode_Hitscan;
     weapon.magazine_size = magazine_size;
     weapon.reserve_magazines = kDefaultReserveMagazines;
-    weapon.damage = damage;
-    (void)reload_ticks;
+    // damage and collision_mask are left at zero on purpose:
+    // apply_weapon_template_references fills them in from the projectile
+    // template this weapon points at, the same way it does for every other
+    // fire mode. One authoring surface for both.
     weapon.max_range = max_range;
     weapon.pellet_count = 1;
     return weapon;
@@ -499,18 +500,11 @@ KernelWeaponMechanicsDefinition hitscan_weapon(
 KernelWeaponMechanicsDefinition shotgun_weapon(
     std::uint8_t weapon_id,
     std::uint16_t magazine_size,
-    std::uint16_t damage,
-    std::uint32_t reload_ticks,
     float max_range,
     std::uint8_t pellet_count,
     float pellet_spread) {
     KernelWeaponMechanicsDefinition weapon =
-        hitscan_weapon(
-            weapon_id,
-            magazine_size,
-            damage,
-            reload_ticks,
-            max_range);
+        hitscan_weapon(weapon_id, magazine_size, max_range);
     weapon.fire_mode = KernelWeaponFireMode_Shotgun;
     weapon.pellet_count = pellet_count;
     weapon.pellet_spread = pellet_spread;
@@ -519,17 +513,15 @@ KernelWeaponMechanicsDefinition shotgun_weapon(
 
 KernelWeaponMechanicsDefinition area_effect_weapon(
     std::uint8_t weapon_id,
-    std::uint16_t magazine_size,
-    std::uint16_t damage,
-    std::uint32_t reload_ticks) {
+    std::uint16_t magazine_size) {
     KernelWeaponMechanicsDefinition weapon{};
     weapon.struct_size = sizeof(KernelWeaponMechanicsDefinition);
     weapon.weapon_id = weapon_id;
     weapon.fire_mode = KernelWeaponFireMode_Projectile;
     weapon.magazine_size = magazine_size;
     weapon.reserve_magazines = kDefaultReserveMagazines;
-    weapon.damage = damage;
-    (void)reload_ticks;
+    // damage is left at zero on purpose: apply_weapon_template_references
+    // fills it in from the projectile template this weapon points at.
     weapon.pellet_count = 1;
     weapon.projectile_template_id = weapon_id;
     return weapon;
@@ -537,17 +529,15 @@ KernelWeaponMechanicsDefinition area_effect_weapon(
 
 KernelWeaponMechanicsDefinition beam_weapon(
     std::uint8_t weapon_id,
-    std::uint16_t magazine_size,
-    std::uint16_t damage,
-    std::uint32_t reload_ticks) {
+    std::uint16_t magazine_size) {
     KernelWeaponMechanicsDefinition weapon{};
     weapon.struct_size = sizeof(KernelWeaponMechanicsDefinition);
     weapon.weapon_id = weapon_id;
     weapon.fire_mode = KernelWeaponFireMode_Projectile;
     weapon.magazine_size = magazine_size;
     weapon.reserve_magazines = kDefaultReserveMagazines;
-    weapon.damage = damage;
-    (void)reload_ticks;
+    // damage is left at zero on purpose: apply_weapon_template_references
+    // fills it in from the projectile template this weapon points at.
     weapon.pellet_count = 1;
     weapon.projectile_template_id = weapon_id;
     return weapon;
@@ -2040,9 +2030,10 @@ const ActionGraphTemplateConfig* action_graph_template_from_ref(
 
 const ActionTemplateConfig* action_template_from_ref(
     const YAML::Node& node,
-    const std::vector<ActionTemplateConfig>& actions) {
+    const std::vector<ActionTemplateConfig>& actions,
+    const std::string& field) {
     if (!node || !node.IsScalar()) {
-        throw std::runtime_error("fire_action_template reference must be a scalar");
+        throw std::runtime_error(field + " reference must be a scalar");
     }
     const std::string value = node.as<std::string>();
     const bool numeric = !value.empty() &&
@@ -2058,9 +2049,9 @@ const ActionTemplateConfig* action_template_from_ref(
     }
     throw DataLoadError(
         KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_MISSING_TEMPLATE_REFERENCE,
-        "unknown fire_action_template reference: " + value,
+        "unknown " + field + " reference: " + value,
         {},
-        "fire_action_template",
+        field,
         KERNEL_GAMEPLAY_CATALOG_LOAD_SOURCE_UNKNOWN,
         KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTION);
 }
@@ -2088,8 +2079,6 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
             "weapon_type",
             "magazine_size",
             "reserve_magazines",
-            "damage",
-            "reload_ticks",
             "max_range",
             "pellet_count",
             "pellet_spread",
@@ -2100,7 +2089,7 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
             "area_effect",
             "beam",
             "fire_action_template",
-            "collision_mask",
+            "reload_action_template",
         },
         path,
         source_kind,
@@ -2111,48 +2100,29 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
         node["reserve_magazines"]
             ? node["reserve_magazines"].as<std::uint16_t>()
             : kDefaultReserveMagazines;
-    const std::uint32_t reload_ticks = node["reload_ticks"].as<std::uint32_t>();
     const std::string type = node["weapon_type"].as<std::string>();
-    const std::uint16_t damage =
-        node["damage"] ? node["damage"].as<std::uint16_t>() : 0u;
-    // What the shot may touch. Zero keeps the engine default, which is what
-    // every weapon meant before this existed; naming limb is the only way a
-    // hitscan reaches a rig's bones.
-    const std::uint32_t weapon_collision_mask =
-        node["collision_mask"] ? collision_mask_from_yaml(node["collision_mask"])
-                               : 0u;
-    require_supported_collision_mask(
-        weapon_collision_mask,
-        KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_MASK_STATIC_WORLD |
-            KERNEL_COLLISION_LAYER_LIMB,
-        "weapon " + node["name"].as<std::string>());
     if (type == "hitscan" || type == "shotgun") {
         if (node["projectile"] || node["area_effect"] || node["beam"]) {
             throw std::runtime_error(
                 "instant weapons must not define projectile, area_effect, or beam");
         }
+        if (!node["projectile_template"]) {
+            throw std::runtime_error(
+                "instant weapon requires projectile_template");
+        }
         if (type == "shotgun") {
             KernelWeaponMechanicsDefinition weapon = shotgun_weapon(
                 id,
                 magazine_size,
-                damage,
-                reload_ticks,
                 node["max_range"].as<float>(),
                 static_cast<std::uint8_t>(node["pellet_count"].as<int>()),
                 node["pellet_spread"].as<float>());
             weapon.reserve_magazines = reserve_magazines;
-        weapon.collision_mask = weapon_collision_mask;
-            weapon.collision_mask = weapon_collision_mask;
             return weapon;
         }
-        KernelWeaponMechanicsDefinition weapon = hitscan_weapon(
-            id,
-            magazine_size,
-            damage,
-            reload_ticks,
-            node["max_range"].as<float>());
+        KernelWeaponMechanicsDefinition weapon =
+            hitscan_weapon(id, magazine_size, node["max_range"].as<float>());
         weapon.reserve_magazines = reserve_magazines;
-        weapon.collision_mask = weapon_collision_mask;
         return weapon;
     }
     if (type == "projectile") {
@@ -2160,7 +2130,7 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
             throw std::runtime_error(
                 "projectile weapons must not define area_effect or beam");
         }
-        if (node["projectile"] || node["damage"]) {
+        if (node["projectile"]) {
             throw std::runtime_error(
                 "projectile weapons must use projectile_template, not inline projectile data");
         }
@@ -2174,9 +2144,6 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
         weapon.fire_mode = KernelWeaponFireMode_Projectile;
         weapon.magazine_size = magazine_size;
         weapon.reserve_magazines = reserve_magazines;
-        weapon.collision_mask = weapon_collision_mask;
-        (void)reload_ticks;
-        weapon.pellet_count = 1;
         weapon.pellet_count =
             node["burst_count"]
                 ? static_cast<std::uint8_t>(node["burst_count"].as<int>())
@@ -2194,13 +2161,9 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
             throw std::runtime_error(
                 "area_effect weapon requires projectile_template");
         }
-        KernelWeaponMechanicsDefinition weapon = area_effect_weapon(
-            id,
-            magazine_size,
-            damage,
-            reload_ticks);
+        KernelWeaponMechanicsDefinition weapon =
+            area_effect_weapon(id, magazine_size);
         weapon.reserve_magazines = reserve_magazines;
-        weapon.collision_mask = weapon_collision_mask;
         return weapon;
     }
     if (type == "beam") {
@@ -2211,13 +2174,9 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
         if (!node["projectile_template"]) {
             throw std::runtime_error("beam weapon requires projectile_template");
         }
-        KernelWeaponMechanicsDefinition weapon = beam_weapon(
-            id,
-            magazine_size,
-            damage,
-            reload_ticks);
+        KernelWeaponMechanicsDefinition weapon =
+            beam_weapon(id, magazine_size);
         weapon.reserve_magazines = reserve_magazines;
-        weapon.collision_mask = weapon_collision_mask;
         return weapon;
     }
     throw std::runtime_error("unsupported weapon_type: " + type);
@@ -2443,10 +2402,15 @@ KernelVec4 collider_shape_params_from_yaml(
         };
     }
     if (shape_type == KernelColliderShapeType_Segment) {
+        // A weapon segment's two endpoints are computed at fire time from the
+        // shooter's muzzle, aim, and the weapon's max_range, so the template
+        // has no reach of its own to declare -- it used to carry a `length`
+        // that duplicated max_range and was never read. `radius` stays: a
+        // segment with thickness is a real shape the query could honour.
         return KernelVec4{
-            node["length"].as<float>(),
+            0.0f,
             node["radius"] ? node["radius"].as<float>() : 0.0f,
-            node["scatter_degrees"] ? node["scatter_degrees"].as<float>() : 0.0f,
+            0.0f,
             0.0f,
         };
     }
@@ -2502,8 +2466,6 @@ ColliderCatalogConfig load_collider_catalog_from_source(
                 "half_extents",
                 "half_height",
                 "radius",
-                "length",
-                "scatter_degrees",
                 "range",
                 "fov_degrees",
                 "lifetime_ticks",
@@ -5203,6 +5165,7 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             "lifetime_ticks",
             "damage_behavior",
             "collision_mask",
+            "hit_instigator",
             "max_hit_count",
             "gravity",
             "triggers",
@@ -5303,7 +5266,6 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             damage_behavior,
             {
                 "type",
-                "damage_per_interval",
                 "damage_interval_ticks",
                 "falloff",
             },
@@ -5319,12 +5281,33 @@ ProjectileTemplateConfig projectile_template_from_yaml(
                 "area_effect projectile requires damage_behavior.type area_interval: " +
                 projectile_template.name);
         }
+        // Three of the four fields below are the area effect's own to decide,
+        // and authoring them silently did nothing: an area effect spawns with
+        // zero velocity, so a motion model has nothing to integrate; it always
+        // ends on its lifetime; and its damage comes from damage_behavior, not
+        // from a shape. Rejecting them says so where it can be read, the same
+        // way a key nothing implements is rejected.
+        for (const char* overridden :
+             {"movement_model", "hit_response", "damage_shape"}) {
+            if (node[overridden]) {
+                throw std::runtime_error(
+                    std::string("area_effect projectile must not author ") +
+                    overridden + ": " + projectile_template.name);
+            }
+        }
         mechanics.motion_model = KernelProjectileMotionModel_Linear;
-        mechanics.sync_mode = KernelProjectileSyncMode_ServerSnapshotOnly;
+        // sync_mode is the one that is a real choice. It defaults to
+        // server-only, as it always has, but a locally predicted area effect is
+        // a shape the kernel implements -- an impact impulse on the local
+        // player is predicted only for one it owns -- and forcing the field
+        // here made that unreachable from authoring while still accepting the
+        // key.
+        mechanics.sync_mode = node["sync_mode"]
+            ? projectile_sync_mode_from_yaml(node["sync_mode"])
+            : KernelProjectileSyncMode_ServerSnapshotOnly;
         mechanics.hit_response = KernelProjectileHitResponse_Destroy;
         mechanics.damage_shape = KernelProjectileDamageShape_DirectHit;
-        mechanics.damage =
-            damage_behavior["damage_per_interval"].as<std::uint16_t>();
+        mechanics.damage = node["damage"].as<std::uint16_t>();
         mechanics.damage_falloff =
             damage_falloff_from_yaml(damage_behavior["falloff"]);
         mechanics.max_hit_count = 1;
@@ -5340,9 +5323,21 @@ ProjectileTemplateConfig projectile_template_from_yaml(
         mechanics.area_effect.lifetime_ticks =
             node["lifetime_ticks"].as<std::uint32_t>();
         mechanics.area_effect.collision_mask = mechanics.collision_mask;
+        // Off unless authored: an area effect that reaches its own shooter also
+        // damages them, so it has to be asked for rather than inherited.
+        mechanics.area_effect.hit_instigator = static_cast<std::uint8_t>(
+            node["hit_instigator"] && node["hit_instigator"].as<bool>() ? 1 : 0);
         return projectile_template;
     }
 
+    if (node["hit_instigator"]) {
+        // Only the area effect query is authored here. A standard projectile or
+        // a beam filters its shooter out somewhere else entirely, so accepting
+        // the key on one would be a promise nothing keeps.
+        throw std::runtime_error(
+            "hit_instigator is only supported on area_effect projectiles: " +
+            projectile_template.name);
+    }
     mechanics.motion_model = motion_model_from_yaml(node["movement_model"]);
     mechanics.sync_mode = projectile_sync_mode_from_yaml(node["sync_mode"]);
     mechanics.hit_response = hit_response_from_yaml(node["hit_response"]);
@@ -5366,9 +5361,7 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             {
                 "length",
                 "radius",
-                "damage_per_tick",
                 "lifetime_ticks",
-                "collision_mask",
             },
             path,
             source_kind,
@@ -5377,16 +5370,14 @@ ProjectileTemplateConfig projectile_template_from_yaml(
         mechanics.beam.struct_size = sizeof(KernelBeamMechanicsDefinition);
         mechanics.beam.length = beam["length"].as<float>();
         mechanics.beam.radius = beam["radius"].as<float>();
-        mechanics.beam.damage_per_tick =
-            beam["damage_per_tick"].as<std::uint16_t>();
         mechanics.beam.lifetime_ticks =
             beam["lifetime_ticks"] ? beam["lifetime_ticks"].as<std::uint32_t>() : 2u;
-        mechanics.beam.collision_mask = collision_mask_from_yaml(
-            beam["collision_mask"], static_collision_mask);
-        require_supported_collision_mask(
-            mechanics.beam.collision_mask,
-            static_collision_mask | KERNEL_COLLISION_LAYER_LIMB,
-            "beam " + projectile_template.name);
+        // Derived, not authored. A beam's damage is the template's `damage`
+        // read as "per tick", and its targets are the template's
+        // `collision_mask` -- beam_system only ever reads these two copies, so
+        // deriving them is what stops the block and the template disagreeing.
+        mechanics.beam.damage_per_tick = mechanics.damage;
+        mechanics.beam.collision_mask = mechanics.collision_mask;
     } else if (node["beam"]) {
         throw std::runtime_error("beam block requires projectile type: beam");
     }
@@ -6156,7 +6147,9 @@ void apply_weapon_template_references(
         if (document["fire_action_template"]) {
             const ActionTemplateConfig* fire_action =
                 action_template_from_ref(
-                    document["fire_action_template"], action_templates);
+                    document["fire_action_template"],
+                    action_templates,
+                    "fire_action_template");
             if (fire_action->definition.commit_interval_ticks == 0u) {
                 throw DataLoadError(
                     KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_INVALID_NUMERIC_RANGE,
@@ -6174,6 +6167,21 @@ void apply_weapon_template_references(
             weapons->definitions[weapon_id].fire_action_template_id =
                 fire_action->definition.action_template_id;
         }
+        // A weapon that names its own reload owns both the duration and the
+        // shape of it: the action template carries commit_offset_ticks (how
+        // long the reload takes), but also trigger_mode, flags, and the commit
+        // count -- so a shell-at-a-time reload that the player can interrupt is
+        // expressible here without a second authoring surface. A weapon that
+        // names none falls back to the catalog's shared reload, filled in after
+        // this pass.
+        if (document["reload_action_template"]) {
+            weapons->definitions[weapon_id].reload_action_template_id =
+                action_template_from_ref(
+                    document["reload_action_template"],
+                    action_templates,
+                    "reload_action_template")
+                    ->definition.action_template_id;
+        }
         const std::string type = document["weapon_type"].as<std::string>();
         if (type == "hitscan" || type == "shotgun") {
             if (!document["segment_collider"]) {
@@ -6184,6 +6192,26 @@ void apply_weapon_template_references(
                 collider_template_id_from_ref(document["segment_collider"], colliders);
             weapons->definitions[weapon_id].segment_collider_template_id = template_id;
             weapons->collider_template_ids[weapon_id] = template_id;
+            // An instant weapon spawns nothing, but its shot is still described
+            // by a projectile template: that is where its damage and its target
+            // mask are authored, exactly as they are for a weapon that does
+            // spawn something. One place to look for either number, whatever
+            // the fire mode.
+            //
+            // fire_mode stays Hitscan/Shotgun and collider_template_ids keeps
+            // the segment above -- only the two authored values are taken.
+            ProjectileTemplateConfig* shot_template =
+                projectile_template_from_ref(
+                    document["projectile_template"],
+                    projectile_templates);
+            KernelWeaponMechanicsDefinition& instant_weapon =
+                weapons->definitions[weapon_id];
+            shot_template->definition.weapon_id = weapon_id;
+            instant_weapon.projectile_template_id =
+                shot_template->definition.projectile_template_id;
+            instant_weapon.damage = shot_template->definition.mechanics.damage;
+            instant_weapon.collision_mask =
+                shot_template->definition.mechanics.collision_mask;
             continue;
         }
 
@@ -6200,6 +6228,7 @@ void apply_weapon_template_references(
             weapon.fire_mode = KernelWeaponFireMode_Projectile;
             weapon.projectile_template_id = definition.projectile_template_id;
             weapon.damage = definition.mechanics.damage;
+            weapon.collision_mask = definition.mechanics.collision_mask;
             weapons->projectile_sync_modes[weapon_id] =
                 definition.mechanics.sync_mode;
             weapons->collider_template_ids[weapon_id] =
@@ -6304,8 +6333,12 @@ GameServerGameplayConfig load_gameplay_config_from_weapon_template_source(
         &config.projectile_templates,
         config.action_templates,
         &config.weapons);
+    // Only where the weapon named none of its own. This used to overwrite every
+    // weapon unconditionally, which is why a per-weapon reload had nowhere to
+    // live and `reload_ticks` sat in the templates doing nothing.
     for (std::size_t id = 0; id < config.weapons.definitions.size(); ++id) {
-        if (config.weapons.configured[id]) {
+        if (config.weapons.configured[id] &&
+            config.weapons.definitions[id].reload_action_template_id == 0u) {
             config.weapons.definitions[id].reload_action_template_id =
                 reload_action.definition.action_template_id;
         }
@@ -6511,8 +6544,12 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
         &config.projectile_templates,
         config.action_templates,
         &config.weapons);
+    // Only where the weapon named none of its own. This used to overwrite every
+    // weapon unconditionally, which is why a per-weapon reload had nowhere to
+    // live and `reload_ticks` sat in the templates doing nothing.
     for (std::size_t id = 0; id < config.weapons.definitions.size(); ++id) {
-        if (config.weapons.configured[id]) {
+        if (config.weapons.configured[id] &&
+            config.weapons.definitions[id].reload_action_template_id == 0u) {
             config.weapons.definitions[id].reload_action_template_id =
                 reload_action.definition.action_template_id;
         }
@@ -7367,11 +7404,11 @@ std::vector<std::string> validate_gameplay_config(
               definition.shape_params.z <= 0.0f)) ||
             (definition.shape_type == KernelColliderShapeType_Sphere &&
              definition.shape_params.x <= 0.0f) ||
+            // A segment carries only an optional thickness: its reach and the
+            // lifetime of the instance built from it are decided at fire time,
+            // not authored here.
             (definition.shape_type == KernelColliderShapeType_Segment &&
-             (definition.shape_params.x <= 0.0f ||
-              definition.shape_params.y < 0.0f ||
-              definition.shape_params.z < 0.0f ||
-              definition.lifetime_ticks == 0)) ||
+             definition.shape_params.y < 0.0f) ||
             (definition.shape_type == KernelColliderShapeType_Cone &&
              ((definition.purpose_flags & KernelColliderPurpose_Vision) == 0u ||
               definition.shape_params.x <= 0.0f ||

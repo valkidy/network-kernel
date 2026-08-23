@@ -113,6 +113,12 @@ collider between ticks. They cannot be picked up, carried, or activated. Their
 first valid static contact places the Prop at the hit fraction, zeros velocity,
 and changes the mode to Placed; collision graphs receive the contact position.
 
+An Action Graph `apply_impulse` whose collision mask includes `prop` puts a
+non-Carrying Prop into the same InFlight mode, seeded from the impulse velocity.
+That path uses a linear motion model with no gravity rather than an authored
+trajectory Projectile, and only a Prop with an `on_collision` binding is swept
+back to Placed on static contact.
+
 Requests are processed by the single-threaded authoritative queue. The first
 request that commits a contested Item/Prop wins; later requests receive a
 stable rejection and do not mutate the source.

@@ -3,5 +3,5 @@ name: Homing Missile
 weapon_type: projectile
 magazine_size: 4
 fire_action_template: homing_missile_fire
-reload_ticks: 60
+reload_action_template: homing_missile_reload
 projectile_template: homing_missile_projectile

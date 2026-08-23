@@ -118,6 +118,7 @@ bool spawn_projectile_from_template(
                 weapon_id,
                 projectile_template.collision_mask,
                 projectile_template.damage_falloff,
+                projectile_template.area_hit_instigator,
                 {},
                 projectile_template.projectile_impact_binding,
             });
@@ -452,10 +453,11 @@ ProjectileCollisionQuery build_projectile_collision_query(
     const bool force_ray = mode == ProjectileCollisionQueryMode::kRay;
 
     if (force_ray || geometry.shape_type == ColliderShapeType::kSegment) {
-        if (geometry.length > 0.0f && !moved) {
-            query.current_position =
-                current_center + glm::vec3{geometry.length, 0.0f, 0.0f};
-        }
+        // A stationary segment used to be extended by the collider template's
+        // `length` along world +X -- an axis that had nothing to do with where
+        // the projectile was pointing, fed by a field no weapon path read. The
+        // field is gone; the query is the path travelled this tick, which is
+        // what every projectile that actually uses a segment wants.
         return make_segment_projectile_query(
             query.previous_position,
             query.current_position);

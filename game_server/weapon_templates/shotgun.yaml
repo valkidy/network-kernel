@@ -2,10 +2,11 @@ id: 1
 name: Shotgun
 weapon_type: shotgun
 magazine_size: 8
-damage: 10
 fire_action_template: shotgun_fire
-reload_ticks: 45
+reload_action_template: shotgun_reload
 max_range: 40.0
 pellet_count: 5
 pellet_spread: 0.035
 segment_collider: shotgun_segment
+# Damage and target mask are authored in this template.
+projectile_template: shotgun_shot

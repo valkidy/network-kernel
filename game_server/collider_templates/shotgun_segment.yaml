@@ -1,11 +1,8 @@
 id: 6
 name: shotgun_segment
+# See rifle_segment.yaml: a weapon segment's geometry comes from the shot, not
+# from here. Pellet spread in particular lives on the weapon template as
+# `pellet_spread`, which is the value pellet_directions() actually reads.
 shape: segment
-center: {x: 0.0, y: 0.0, z: 0.0}
-half_extents: {x: 0.0, y: 0.0, z: 0.0}
-radius: 0.0
-length: 40.0
-scatter_degrees: 6.0
-lifetime_ticks: 3
 purpose: damage
 layer: projectile

@@ -98,7 +98,12 @@ void simulate_area_effects(
         request.shape.radius = area_effect.radius;
         request.position = transform.position;
         request.filter = collision_filter_from_mask(area_effect.collision_mask);
-        request.filter.ignored_entity_net_id = projectile.shooter_net_id;
+        // One query feeds both the damage and the impulse trigger, so opting
+        // in to reaching the shooter opts in to self-damage as well. That is
+        // the trade a self-knockback is normally paying for.
+        request.filter.ignored_entity_net_id = area_effect.hit_instigator
+            ? 0u
+            : projectile.shooter_net_id;
         std::vector<physics::CollisionHit> hits =
             collision_world->overlap_all(request);
         std::sort(

@@ -323,6 +323,10 @@ Validation:
 - `active_weapon_slot` defaults to `0` and must be in range.
 - enemy AI derived from actor data must reference usable weapon timing, reload,
   and magazine values.
+- `impulse_resistance` is optional and defaults to `0`; it must be finite and
+  non-negative. Props author the same field. It is a threshold, not a
+  reduction: an `apply_impulse` whose strength is at or below it is ignored
+  outright, and anything above it is applied in full.
 
 ## Collider Template Policy
 

@@ -1,0 +1,13 @@
+# Grenade Launcher's reload. commit_offset_ticks is the reload itself: the magazine
+# refills on the action's single commit, so delaying that commit by 90
+# ticks is what makes the reload take 3 s at 30 Hz.
+id: 4117
+name: grenade_launcher_reload
+trigger_mode: press
+flags: [cancel_on_death, cancel_on_weapon_change, cancel_before_first_commit]
+ammo_cost_per_commit: 0
+commit_offset_ticks: 90
+commit_interval_ticks: 0
+max_commit_count: 1
+recovery_ticks: 0
+hold_input_timeout_ticks: 0

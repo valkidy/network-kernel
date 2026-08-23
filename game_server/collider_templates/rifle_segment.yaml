@@ -1,11 +1,10 @@
 id: 5
 name: rifle_segment
+# A weapon segment declares only what it is for, not where it reaches: both
+# endpoints are computed at fire time from the shooter's muzzle, the aim, and
+# the weapon's max_range, and the instance lives a fixed 3 ticks. The reach,
+# scatter, box extents, centre, and lifetime this file used to carry were all
+# duplicates of that -- authored, packed, and never read.
 shape: segment
-center: {x: 0.0, y: 0.0, z: 0.0}
-half_extents: {x: 0.0, y: 0.0, z: 0.0}
-radius: 0.0
-length: 100.0
-scatter_degrees: 0.0
-lifetime_ticks: 3
 purpose: damage
 layer: projectile

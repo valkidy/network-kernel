@@ -2193,10 +2193,13 @@ int main() {
     assert(player_template.entity_type == network_example::game_server::kEntityTypeActor);
     assert(player_template.actor_type == network_example::game_server::kActorTypePlayer);
     assert(player_template.collider_template_id == 1);
-    assert(player_template.weapon_slot_count == 3);
+    assert(player_template.weapon_slot_count == 4);
     assert(player_template.weapon_ids[0] == network_example::game_server::kWeaponRocket);
     assert(player_template.weapon_ids[1] == network_example::game_server::kWeaponShotgun);
     assert(player_template.weapon_ids[2] == network_example::game_server::kWeaponGrenade);
+    // Rifle rides in the last slot rather than the first so the weapon a player
+    // spawns holding is unchanged; it is here to make weapon 0 reachable at all.
+    assert(player_template.weapon_ids[3] == network_example::game_server::kWeaponRifle);
     assert(player_template.active_weapon_slot == 0);
     assert(player_template.inventory_slot_capacity == 8);
     // player.yaml currently stocks five stateful_magic_bottle slots; the
@@ -2302,7 +2305,10 @@ int main() {
     assert(homing_missile.projectile_template_id == 6);
     assert(config.weapons.collider_template_ids
                [network_example::game_server::kWeaponHomingMissile] == 7);
-    assert(config.projectile_templates.size() == 8);
+    // 8 spawnable templates plus rifle_tracer and shotgun_tracer, which nothing
+    // spawns: they are authored for presentation and reach a client like any
+    // other.
+    assert(config.projectile_templates.size() == 10);
     bool found_homing_projectile = false;
     bool found_rocket_projectile = false;
     bool found_rocket_explosion = false;

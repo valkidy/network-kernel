@@ -1282,12 +1282,9 @@ ProjectileCollisionGeometry projectile_collision_geometry_from_template(
     geometry.half_extents = collider_template_half_extents(collider_template);
     geometry.radius = collider_template_radius(collider_template);
     if (collider_template.shape_type == KernelColliderShapeType_Segment) {
-        geometry.length = collider_template.shape_params.x;
+        // A segment's thickness is the one shape value the query can use; its
+        // reach comes from how far the projectile travelled, not from here.
         geometry.radius = collider_template.shape_params.y;
-        geometry.angle_degrees = collider_template.shape_params.z;
-    } else if (collider_template.shape_type == KernelColliderShapeType_Cone) {
-        geometry.length = collider_template.shape_params.x;
-        geometry.angle_degrees = collider_template.shape_params.y;
     }
     return geometry;
 }
@@ -1357,6 +1354,8 @@ RuntimeProjectileTemplate to_runtime_projectile_template(
     if (mechanics.area_effect.collision_mask != 0u) {
         projectile_template.collision_mask = mechanics.area_effect.collision_mask;
     }
+    projectile_template.area_hit_instigator =
+        mechanics.area_effect.hit_instigator != 0u;
     projectile_template.beam_length = mechanics.beam.length;
     projectile_template.beam_radius = mechanics.beam.radius;
     if (projectile_template.has_collision_geometry &&
@@ -1498,7 +1497,8 @@ bool validate_area_effect_mechanics(
            area_effect.damage_interval_ticks > 0 &&
            area_effect.lifetime_ticks > 0 &&
            (area_effect.collision_mask &
-            ~(KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_MASK_PROP)) == 0u;
+            ~(KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_MASK_PROP)) == 0u &&
+           area_effect.hit_instigator <= 1u;
 }
 
 bool validate_beam_mechanics(const KernelBeamMechanicsDefinition& beam) {
@@ -3330,10 +3330,11 @@ bool KernelEngine::load_gameplay_catalog(
               collider_template.shape_params.z <= 0.0f)) ||
             (collider_template.shape_type == KernelColliderShapeType_Sphere &&
              collider_template.shape_params.x <= 0.0f) ||
+            // A segment carries only an optional thickness. Its reach used to
+            // be validated here as shape_params.x, back when the template
+            // authored a `length` nothing read.
             (collider_template.shape_type == KernelColliderShapeType_Segment &&
-             (collider_template.shape_params.x <= 0.0f ||
-              collider_template.shape_params.y < 0.0f ||
-              collider_template.shape_params.z < 0.0f)) ||
+             collider_template.shape_params.y < 0.0f) ||
             (collider_template.shape_type == KernelColliderShapeType_Cone &&
              ((collider_template.purpose_flags & KernelColliderPurpose_Vision) == 0u ||
               collider_template.shape_params.x <= 0.0f ||
@@ -9111,7 +9112,26 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
                             next_position,
                             filter);
                     if (!hits.empty()) {
-                        if (projectile_template->mechanics.projectile_type ==
+                        // Unless the template opts in, the authority does not
+                        // let an area effect touch whoever fired it:
+                        // simulate_area_effects hands its overlap query
+                        // ignored_entity_net_id = shooter_net_id, and a spawn
+                        // chain carries that shooter forward, so a rocket and
+                        // the explosion it spawns are filtered against the same
+                        // actor. Predicting a self-impulse the authority will
+                        // not apply predicts a push no snapshot can confirm,
+                        // and the next owner snapshot -- which overwrites the
+                        // predicted velocity outright rather than replaying
+                        // this -- would yank it back. owner_peer is the
+                        // shooter's peer on both spawn paths, which is all it
+                        // takes to recognise one of ours.
+                        const bool self_impulse_filtered_by_authority =
+                            local_client_peer_id_ != 0u &&
+                            projectile.owner_peer == local_client_peer_id_ &&
+                            projectile_template->mechanics.area_effect
+                                    .hit_instigator == 0u;
+                        if (!self_impulse_filtered_by_authority &&
+                            projectile_template->mechanics.projectile_type ==
                                 KernelProjectileType_AreaEffect &&
                             projectile_template->mechanics.projectile_impact_trigger
                                     .struct_size >=

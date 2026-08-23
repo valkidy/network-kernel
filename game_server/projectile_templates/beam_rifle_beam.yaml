@@ -1,12 +1,13 @@
 id: 5
 name: beam_rifle_beam
 type: beam
-damage: 30
 sync_mode: server_snapshot_only
 collider_template: beam_oriented_box
 movement_model: linear
 hit_response: destroy
 damage_shape: direct_hit
+# Read as damage per tick while the beam is up.
+damage: 1
 speed: 0.0
 lifetime_ticks: 0
 collision_mask: hostile_side | terrain | obstacle
@@ -15,6 +16,4 @@ gravity: {x: 0.0, y: 0.0, z: 0.0}
 beam:
   length: 8.0
   radius: 0.25
-  damage_per_tick: 1
   lifetime_ticks: 2
-  collision_mask: hostile_side | terrain | obstacle

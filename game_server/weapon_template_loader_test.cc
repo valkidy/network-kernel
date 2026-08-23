@@ -94,6 +94,24 @@ void write_valid_templates(const std::filesystem::path& dir) {
     write_valid_action_catalog(dir);
     write_valid_action_graph_catalog(dir);
     write_file(
+        dir.parent_path() / "projectile_templates" / "rifle_shot.yaml",
+        "id: 10\nname: rifle_shot\ntype: standard\n"
+        "collider_template: rifle_segment\n"
+        "movement_model: linear\nsync_mode: local_predicted_deterministic\n"
+        "hit_response: destroy\ndamage_shape: direct_hit\ndamage: 25\n"
+        "collision_mask: actor | limb | terrain | obstacle\n"
+        "speed: 200.0\nlifetime_ticks: 3\nmax_hit_count: 1\n"
+        "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
+    write_file(
+        dir.parent_path() / "projectile_templates" / "shotgun_shot.yaml",
+        "id: 11\nname: shotgun_shot\ntype: standard\n"
+        "collider_template: shotgun_segment\n"
+        "movement_model: linear\nsync_mode: local_predicted_deterministic\n"
+        "hit_response: destroy\ndamage_shape: direct_hit\ndamage: 10\n"
+        "collision_mask: actor | terrain | obstacle\n"
+        "speed: 200.0\nlifetime_ticks: 3\nmax_hit_count: 1\n"
+        "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
+    write_file(
         dir.parent_path() / "projectile_templates" / "spammer.yaml",
         "id: 2\nname: spammer_projectile\ndamage: 1\n"
         "sync_mode: local_predicted_deterministic\n"
@@ -122,10 +140,10 @@ void write_valid_templates(const std::filesystem::path& dir) {
         dir.parent_path() / "projectile_templates" / "rocket_explosion.yaml",
         "id: 8\nname: rocket_explosion\nkind: area_effect\n"
         "collider_template: area_effect_sphere\n"
+        "damage: 45\n"
         "lifetime_ticks: 45\n"
         "damage_behavior:\n"
         "  type: area_interval\n"
-        "  damage_per_interval: 45\n"
         "  damage_interval_ticks: 45\n"
         "  falloff: linear\n"
         "collision_mask: damageable\n");
@@ -168,16 +186,16 @@ void write_valid_templates(const std::filesystem::path& dir) {
         dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
         "id: 4\nname: fire_floor_area\ntype: area_effect\n"
         "collider_template: area_effect_sphere\n"
+        "damage: 12\n"
         "lifetime_ticks: 6\n"
         "damage_behavior:\n"
         "  type: area_interval\n"
-        "  damage_per_interval: 12\n"
         "  damage_interval_ticks: 2\n"
         "  falloff: none\n"
         "collision_mask: hostile_side\n");
     write_file(
         dir.parent_path() / "projectile_templates" / "beam_rifle_beam.yaml",
-        "id: 5\nname: beam_rifle_beam\ntype: beam\ndamage: 30\n"
+        "id: 5\nname: beam_rifle_beam\ntype: beam\ndamage: 1\n"
         "sync_mode: server_snapshot_only\n"
         "collider_template: beam_oriented_box\n"
         "movement_model: linear\nhit_response: destroy\n"
@@ -187,51 +205,51 @@ void write_valid_templates(const std::filesystem::path& dir) {
         "beam:\n"
         "  length: 8.0\n"
         "  radius: 0.25\n"
-        "  damage_per_tick: 1\n"
-        "  lifetime_ticks: 2\n"
-        "  collision_mask: hostile_side\n");
+        "  lifetime_ticks: 2\n");
     write_file(
         dir / "rifle.yaml",
         "id: 0\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
-        "damage: 25\nfire_action_template: rifle_fire\nreload_ticks: 30\nmax_range: 100.0\n"
-        "segment_collider: rifle_segment\n");
+        "fire_action_template: rifle_fire\nmax_range: 100.0\n"
+        "segment_collider: rifle_segment\n"
+        "projectile_template: rifle_shot\n");
     write_file(
         dir / "shotgun.yaml",
         "id: 1\nname: Shotgun\nweapon_type: shotgun\nmagazine_size: 8\n"
-        "damage: 10\nfire_action_template: shotgun_fire\nreload_ticks: 45\nmax_range: 40.0\n"
+        "fire_action_template: shotgun_fire\nmax_range: 40.0\n"
         "pellet_count: 5\npellet_spread: 0.035\n"
-        "segment_collider: shotgun_segment\n");
+        "segment_collider: shotgun_segment\n"
+        "projectile_template: shotgun_shot\n");
     write_file(
         dir / "spammer.yaml",
         "id: 2\nname: Projectile Spammer\nweapon_type: projectile\n"
         "magazine_size: 120\n"
-        "fire_action_template: spammer_fire\nreload_ticks: 30\n"
+        "fire_action_template: spammer_fire\n"
         "projectile_template: spammer_projectile\n");
     write_file(
         dir / "rocket.yaml",
         "id: 3\nname: Rocket\nweapon_type: projectile\nmagazine_size: 6\n"
-        "fire_action_template: rocket_fire\nreload_ticks: 75\n"
+        "fire_action_template: rocket_fire\n"
         "projectile_template: rocket_projectile\n");
     write_file(
         dir / "fire_floor.yaml",
         "id: 4\nname: Fire Floor\nweapon_type: area_effect\nmagazine_size: 3\n"
-        "damage: 12\nfire_action_template: fire_floor_cast\nreload_ticks: 30\n"
+        "fire_action_template: fire_floor_cast\n"
         "projectile_template: fire_floor_area\n");
     write_file(
         dir / "beam_rifle.yaml",
         "id: 5\nname: Beam Rifle\nweapon_type: beam\nmagazine_size: 12\n"
-        "damage: 30\nfire_action_template: beam_rifle_fire\nreload_ticks: 45\n"
+        "fire_action_template: beam_rifle_fire\n"
         "projectile_template: beam_rifle_beam\n");
     write_file(
         dir / "homing_missile.yaml",
         "id: 6\nname: Homing Missile\nweapon_type: projectile\nmagazine_size: 4\n"
-        "fire_action_template: homing_missile_fire\nreload_ticks: 60\n"
+        "fire_action_template: homing_missile_fire\n"
         "projectile_template: homing_missile_projectile\n");
     write_file(
         dir / "grenade_launcher.yaml",
         "id: 99\nname: Grenade Launcher\nweapon_type: projectile\n"
         "magazine_size: 6\n"
-        "fire_action_template: grenade_launcher_fire\nreload_ticks: 90\n"
+        "fire_action_template: grenade_launcher_fire\n"
         "projectile_template: grenade_shell_projectile\n");
 }
 
@@ -373,9 +391,13 @@ void valid_repo_templates_load_all_slots() {
         if (collider.definition.template_id == 6) {
             found_segment = true;
             assert(collider.definition.shape_type == KernelColliderShapeType_Segment);
-            assert(collider.definition.shape_params.x == 40.0f);
-            assert(collider.definition.shape_params.z == 6.0f);
-            assert(collider.definition.lifetime_ticks == 3);
+            // A weapon segment declares no reach, no scatter, and no lifetime:
+            // all three are decided at fire time. Only an optional thickness
+            // survives, and shotgun_segment does not author one.
+            assert(collider.definition.shape_params.x == 0.0f);
+            assert(collider.definition.shape_params.y == 0.0f);
+            assert(collider.definition.shape_params.z == 0.0f);
+            assert(collider.definition.lifetime_ticks == 0);
         }
         if (collider.definition.template_id == 7) {
             found_sphere = true;
@@ -425,7 +447,7 @@ void invalid_templates_are_rejected() {
     write_file(
         legacy_dir / "rifle.yaml",
         "id: 0\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
-        "damage: 25\ncooldown_ticks: 3\nreload_ticks: 30\nmax_range: 100.0\n"
+        "damage: 25\ncooldown_ticks: 3\nmax_range: 100.0\n"
         "segment_collider: rifle_segment\n");
     try {
         (void)network_example::game_server::
@@ -504,7 +526,7 @@ void invalid_templates_are_rejected() {
     write_file(
         missing_policy_dir / "rifle.yaml",
         "id: 0\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
-        "damage: 25\nreload_ticks: 30\nmax_range: 100.0\n"
+        "damage: 25\nmax_range: 100.0\n"
         "segment_collider: rifle_segment\n");
     assert(load_fails(missing_policy_dir));
 
@@ -513,7 +535,7 @@ void invalid_templates_are_rejected() {
     write_file(
         dangling_action_dir / "rifle.yaml",
         "id: 0\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
-        "damage: 25\nfire_action_template: missing_action\nreload_ticks: 30\n"
+        "damage: 25\nfire_action_template: missing_action\n"
         "max_range: 100.0\nsegment_collider: rifle_segment\n");
     assert(load_fails(dangling_action_dir));
 
@@ -542,7 +564,7 @@ void invalid_templates_are_rejected() {
     write_file(
         duplicate_dir / "duplicate.yaml",
         "id: 4\nname: Duplicate\nweapon_type: hitscan\nmagazine_size: 1\n"
-        "damage: 1\nreload_ticks: 1\nmax_range: 1.0\n");
+        "damage: 1\nmax_range: 1.0\n");
     assert(load_fails(duplicate_dir));
 
     const std::filesystem::path duplicate_name_dir = tmp_dir("duplicate_name");
@@ -550,7 +572,7 @@ void invalid_templates_are_rejected() {
     write_file(
         duplicate_name_dir / "duplicate_name.yaml",
         "id: 4\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 1\n"
-        "damage: 1\nreload_ticks: 1\nmax_range: 1.0\n"
+        "damage: 1\nmax_range: 1.0\n"
         "segment_collider: rifle_segment\n");
     assert(load_fails(duplicate_name_dir));
 
@@ -560,7 +582,7 @@ void invalid_templates_are_rejected() {
     write_file(
         unknown_weapon_field_dir / "rifle.yaml",
         "id: 0\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
-        "damage: 25\nreload_ticks: 30\nmax_range: 100.0\n"
+        "damage: 25\nmax_range: 100.0\n"
         "segment_collider: rifle_segment\nruntime_instance_id: 9\n");
     assert(load_fails(unknown_weapon_field_dir));
 
@@ -570,7 +592,7 @@ void invalid_templates_are_rejected() {
     write_file(
         unknown_area_field_dir / "fire_floor.yaml",
         "id: 4\nname: Fire Floor\nweapon_type: area_effect\nmagazine_size: 3\n"
-        "damage: 12\nreload_ticks: 30\narea_effect:\n"
+        "area_effect:\n"
         "  collider_template: area_effect_sphere\n"
         "  radius: 2.0\n  damage_per_interval: 12\n  damage_interval_ticks: 2\n"
         "  lifetime_ticks: 6\n  spawn_distance: 1.0\n  collision_mask: hostile_side\n"
@@ -583,9 +605,9 @@ void invalid_templates_are_rejected() {
     write_file(
         unknown_beam_field_dir / "beam_rifle.yaml",
         "id: 5\nname: Beam Rifle\nweapon_type: beam\nmagazine_size: 12\n"
-        "damage: 30\nreload_ticks: 45\nbeam:\n"
+        "beam:\n"
         "  collider_template: beam_oriented_box\n"
-        "  length: 8.0\n  radius: 0.25\n  damage_per_tick: 1\n"
+        "  length: 8.0\n  radius: 0.25\n"
         "  lifetime_ticks: 2\n  collision_mask: hostile_side\n  owner: player\n");
     assert(load_fails(unknown_beam_field_dir));
 
@@ -620,7 +642,7 @@ void invalid_templates_are_rejected() {
     write_file(
         hitscan_projectile_dir / "rifle.yaml",
         "id: 0\nname: Bad Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
-        "damage: 25\nreload_ticks: 30\nmax_range: 100.0\n"
+        "damage: 25\nmax_range: 100.0\n"
         "projectile: {speed: 10.0}\n");
     assert(load_fails(hitscan_projectile_dir));
 
@@ -628,8 +650,7 @@ void invalid_templates_are_rejected() {
     write_valid_templates(missing_beam_dir);
     write_file(
         missing_beam_dir / "beam_rifle.yaml",
-        "id: 5\nname: Beam\nweapon_type: beam\nmagazine_size: 1\n"
-        "damage: 1\nreload_ticks: 1\n");
+        "id: 5\nname: Beam\nweapon_type: beam\nmagazine_size: 1\n");
     assert(load_fails(missing_beam_dir));
 
     const std::filesystem::path invalid_beam_dir = tmp_dir("invalid_beam");
@@ -637,9 +658,9 @@ void invalid_templates_are_rejected() {
     write_file(
         invalid_beam_dir / "beam_rifle.yaml",
         "id: 5\nname: Beam\nweapon_type: beam\nmagazine_size: 1\n"
-        "damage: 1\nreload_ticks: 1\nbeam:\n"
-        "  length: 0.0\n  radius: 0.25\n  damage_per_tick: 1\n"
-        "  lifetime_ticks: 2\n  collision_mask: hostile_side\n");
+        "beam:\n"
+        "  length: 0.0\n  radius: 0.25\n"
+        "  lifetime_ticks: 2\n");
     assert(load_fails(invalid_beam_dir));
 
     const std::filesystem::path beam_on_hitscan_dir = tmp_dir("beam_on_hitscan");
@@ -647,7 +668,7 @@ void invalid_templates_are_rejected() {
     write_file(
         beam_on_hitscan_dir / "rifle.yaml",
         "id: 0\nname: Bad Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
-        "damage: 25\nreload_ticks: 30\nmax_range: 100.0\n"
+        "damage: 25\nmax_range: 100.0\n"
         "beam: {length: 8.0}\n");
     assert(load_fails(beam_on_hitscan_dir));
 
@@ -753,7 +774,6 @@ void invalid_templates_are_rejected() {
     write_file(
         unknown_projectile_dir / "rocket.yaml",
         "id: 3\nname: Rocket\nweapon_type: projectile\nmagazine_size: 6\n"
-        "reload_ticks: 75\n"
         "projectile_template: missing_projectile\n");
     assert(load_fails(unknown_projectile_dir));
 
@@ -792,7 +812,7 @@ void collision_mask_expressions_are_loaded() {
     write_valid_templates(zero_dir);
     write_file(
         zero_dir.parent_path() / "projectile_templates" / "beam_rifle_beam.yaml",
-        "id: 5\nname: beam_rifle_beam\ntype: beam\ndamage: 30\n"
+        "id: 5\nname: beam_rifle_beam\ntype: beam\ndamage: 1\n"
         "sync_mode: server_snapshot_only\n"
         "collider_template: beam_oriented_box\n"
         "movement_model: linear\nhit_response: destroy\n"
@@ -800,8 +820,8 @@ void collision_mask_expressions_are_loaded() {
         "collision_mask: 0\nmax_hit_count: 1\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n"
         "beam:\n"
-        "  length: 8.0\n  radius: 0.25\n  damage_per_tick: 1\n"
-        "  lifetime_ticks: 2\n  collision_mask: 0\n");
+        "  length: 8.0\n  radius: 0.25\n"
+        "  lifetime_ticks: 2\n");
     config =
         network_example::game_server::load_gameplay_config_from_weapon_template_directory(
             zero_dir.string());
@@ -814,10 +834,10 @@ void collision_mask_expressions_are_loaded() {
         expression_dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
         "id: 4\nname: fire_floor_area\ntype: area_effect\n"
         "collider_template: area_effect_sphere\n"
+        "damage: 12\n"
         "lifetime_ticks: 6\n"
         "damage_behavior:\n"
         "  type: area_interval\n"
-        "  damage_per_interval: 12\n"
         "  damage_interval_ticks: 2\n"
         "  falloff: none\n"
         "collision_mask: player_side | hostile_side\n");
@@ -826,6 +846,115 @@ void collision_mask_expressions_are_loaded() {
             expression_dir.string());
     assert(projectile_mechanics(config, 4).area_effect.collision_mask ==
            (KERNEL_COLLISION_LAYER_HOSTILE_SIDE | KERNEL_COLLISION_LAYER_PLAYER_SIDE));
+}
+
+// The area_effect branch of the projectile loader returns before the generic
+// field parsing, so every field it wants has to be handled inside it. sync_mode
+// used to be assigned there unconditionally, which accepted an authored value
+// and then discarded it -- the same silent drop `triggers` suffered.
+// Reaching one's own blast is off by default and only an area effect can ask
+// for it, because only the area effect overlap query implements the filter it
+// switches off.
+void area_effect_hit_instigator_is_authored() {
+    const std::filesystem::path default_dir = tmp_dir("hit_instigator_default");
+    write_valid_templates(default_dir);
+    network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            default_dir.string());
+    assert(projectile_mechanics(config, 4).area_effect.hit_instigator == 0u);
+
+    const std::filesystem::path authored_dir = tmp_dir("hit_instigator_authored");
+    write_valid_templates(authored_dir);
+    write_file(
+        authored_dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
+        "id: 4\nname: fire_floor_area\ntype: area_effect\n"
+        "collider_template: area_effect_sphere\n"
+        "damage: 12\n"
+        "lifetime_ticks: 6\n"
+        "damage_behavior:\n"
+        "  type: area_interval\n"
+        "  damage_interval_ticks: 2\n"
+        "  falloff: none\n"
+        "collision_mask: hostile_side\n"
+        "hit_instigator: true\n");
+    config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            authored_dir.string());
+    assert(projectile_mechanics(config, 4).area_effect.hit_instigator == 1u);
+
+    const std::filesystem::path standard_dir = tmp_dir("hit_instigator_standard");
+    write_valid_templates(standard_dir);
+    write_file(
+        standard_dir.parent_path() / "projectile_templates" / "rocket.yaml",
+        "id: 3\nname: rocket_projectile\ndamage: 45\n"
+        "sync_mode: server_snapshot_only\ncollider_template: rocket_aabb\n"
+        "movement_model: linear\nhit_response: destroy\n"
+        "damage_shape: direct_hit\nspeed: 35.0\nlifetime_ticks: 75\n"
+        "collision_mask: damageable\nmax_hit_count: 1\n"
+        "hit_instigator: true\n"
+        "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
+    assert(load_fails(standard_dir));
+}
+
+void area_effect_sync_mode_is_authored_not_forced() {
+    const auto area_effect_template = [](const std::string& extra_fields) {
+        return "id: 4\nname: fire_floor_area\ntype: area_effect\n"
+               "collider_template: area_effect_sphere\n"
+               "damage: 12\n"
+               "lifetime_ticks: 6\n"
+               "damage_behavior:\n"
+               "  type: area_interval\n"
+               "  damage_interval_ticks: 2\n"
+               "  falloff: none\n"
+               "collision_mask: hostile_side\n" +
+            extra_fields;
+    };
+
+    const std::filesystem::path default_dir = tmp_dir("area_sync_default");
+    write_valid_templates(default_dir);
+    write_file(
+        default_dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
+        area_effect_template(""));
+    network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            default_dir.string());
+    assert(projectile_mechanics(config, 4).sync_mode ==
+           KernelProjectileSyncMode_ServerSnapshotOnly);
+
+    const std::filesystem::path predicted_dir = tmp_dir("area_sync_predicted");
+    write_valid_templates(predicted_dir);
+    write_file(
+        predicted_dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
+        area_effect_template("sync_mode: local_predicted_deterministic\n"));
+    config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            predicted_dir.string());
+    assert(projectile_mechanics(config, 4).sync_mode ==
+           KernelProjectileSyncMode_LocalPredictedDeterministic);
+
+    const std::filesystem::path invalid_dir = tmp_dir("area_sync_invalid");
+    write_valid_templates(invalid_dir);
+    write_file(
+        invalid_dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
+        area_effect_template("sync_mode: remote_magic\n"));
+    assert(load_fails(invalid_dir));
+
+    // The three the area effect really does own are rejected rather than
+    // accepted and overwritten.
+    int overridden_index = 0;
+    for (const char* overridden_field :
+         {"movement_model: parabolic\n",
+          "hit_response: bounce\n",
+          "damage_shape: none\n"}) {
+        const std::filesystem::path overridden_dir = tmp_dir(
+            "area_overridden_" + std::to_string(overridden_index++));
+        write_valid_templates(overridden_dir);
+        write_file(
+            overridden_dir.parent_path() / "projectile_templates" /
+                "fire_floor_area.yaml",
+            area_effect_template(overridden_field));
+        assert(load_fails(overridden_dir));
+    }
 }
 
 void malformed_collision_masks_are_rejected() {
@@ -862,10 +991,10 @@ void malformed_collision_masks_are_rejected() {
             "projectile_templates" / "fire_floor_area.yaml",
         "id: 4\nname: fire_floor_area\ntype: area_effect\n"
         "collider_template: area_effect_sphere\n"
+        "damage: 12\n"
         "lifetime_ticks: 6\n"
         "damage_behavior:\n"
         "  type: area_interval\n"
-        "  damage_per_interval: 12\n"
         "  damage_interval_ticks: 2\n"
         "  falloff: none\n"
         "collision_mask: hostile_side | terrain\n");
@@ -884,14 +1013,191 @@ void catalog_file_loads_colliders() {
     assert(config.colliders.bindings.empty());
 }
 
+// An instant weapon's shot template describes the shot without spawning it, so
+// what this pins is that naming one does not drag the projectile branch's
+// behaviour along with it: the weapon is still resolved by raycast.
+void instant_weapon_keeps_its_fire_mode_and_segment() {
+    const std::filesystem::path dir =
+        runfiles_root() / "game_server" / "weapon_templates";
+    const network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::
+            load_gameplay_config_from_weapon_template_directory(dir.string());
+
+    const KernelWeaponMechanicsDefinition& rifle =
+        config.weapons.definitions[network_example::game_server::kWeaponRifle];
+    const KernelWeaponMechanicsDefinition& shotgun =
+        config.weapons.definitions[network_example::game_server::kWeaponShotgun];
+    assert(rifle.projectile_template_id == 10);
+    assert(shotgun.projectile_template_id == 11);
+
+    // Everything the projectile branch would have changed, and did not.
+    assert(rifle.fire_mode == KernelWeaponFireMode_Hitscan);
+    assert(shotgun.fire_mode == KernelWeaponFireMode_Shotgun);
+    assert(rifle.segment_collider_template_id == 5);
+    assert(shotgun.segment_collider_template_id == 6);
+    // collider_template_ids keeps the segment, not the shot template's collider.
+    assert(
+        config.weapons.collider_template_ids[
+            network_example::game_server::kWeaponRifle] == 5);
+    assert(
+        config.weapons.collider_template_ids[
+            network_example::game_server::kWeaponShotgun] == 6);
+    assert(
+        config.weapons.projectile_sync_modes[
+            network_example::game_server::kWeaponRifle] ==
+        KernelProjectileSyncMode_HybridDeterministicThenSnapshot);
+    assert(shotgun.pellet_count == 5);
+
+    // Both shot templates reach the catalog, which is what lets a client find
+    // the asset it draws a tracer from.
+    const network_example::game_server::KernelGameplayCatalogStorage storage =
+        network_example::game_server::build_kernel_gameplay_catalog(config);
+    std::uint32_t found_shots = 0;
+    for (std::uint32_t index = 0;
+         index < storage.definition.projectile_template_count;
+         ++index) {
+        const std::uint32_t id =
+            storage.definition.projectile_templates[index].projectile_template_id;
+        if (id == 10 || id == 11) {
+            ++found_shots;
+        }
+    }
+    assert(found_shots == 2);
+}
+
+// Reload timing is per weapon, and it lives in an action template rather than a
+// bare tick count so a weapon can change the *shape* of its reload -- a
+// shell-at-a-time refill the player can interrupt is a different trigger_mode,
+// flag set, and commit count, none of which a scalar could carry.
+void weapons_name_their_own_reload_action() {
+    const std::filesystem::path dir =
+        runfiles_root() / "game_server" / "weapon_templates";
+    const network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::
+            load_gameplay_config_from_weapon_template_directory(dir.string());
+
+    const auto reload_of = [&config](std::uint8_t weapon_id) {
+        return config.weapons.definitions[weapon_id].reload_action_template_id;
+    };
+    const auto reload_offset_of = [&config](std::uint32_t action_template_id) {
+        for (const network_example::game_server::ActionTemplateConfig& action :
+             config.action_templates) {
+            if (action.definition.action_template_id == action_template_id) {
+                return action.definition.commit_offset_ticks;
+            }
+        }
+        std::abort();
+    };
+
+    // Each weapon reaches a different template, and the durations are the ones
+    // the weapon templates used to state in a `reload_ticks` nothing read.
+    assert(reload_offset_of(reload_of(network_example::game_server::kWeaponRifle)) == 30);
+    assert(reload_offset_of(reload_of(network_example::game_server::kWeaponShotgun)) == 45);
+    assert(reload_offset_of(reload_of(network_example::game_server::kWeaponRocket)) == 75);
+    assert(reload_offset_of(reload_of(network_example::game_server::kWeaponGrenade)) == 90);
+    assert(reload_offset_of(
+               reload_of(network_example::game_server::kWeaponHomingMissile)) == 60);
+
+    // Distinct templates, and none of them the catalog's shared fallback.
+    assert(reload_of(network_example::game_server::kWeaponRifle) !=
+           reload_of(network_example::game_server::kWeaponShotgun));
+    for (std::size_t id = 0; id < config.weapons.definitions.size(); ++id) {
+        if (config.weapons.configured[id]) {
+            assert(config.weapons.definitions[id].reload_action_template_id != 4199u);
+        }
+    }
+}
+
+// Naming one is optional: a weapon that says nothing still reloads, through the
+// catalog's shared action. The fixture's weapons author no reload reference.
+void weapons_without_a_reload_action_fall_back_to_the_shared_one() {
+    const std::filesystem::path dir = tmp_dir("shared_reload_fallback");
+    write_valid_templates(dir);
+
+    const network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::
+            load_gameplay_config_from_weapon_template_directory(dir.string());
+
+    for (std::size_t id = 0; id < config.weapons.definitions.size(); ++id) {
+        if (config.weapons.configured[id]) {
+            assert(config.weapons.definitions[id].reload_action_template_id == 4199u);
+        }
+    }
+}
+
+// Damage is authored in exactly one place per projectile template -- the
+// top-level `damage` -- whatever the type. The beam block and the area-effect
+// block used to carry their own copies, which the loader then overwrote or
+// silently lost to.
+void damage_is_authored_once_per_projectile_template() {
+    const std::filesystem::path dir =
+        runfiles_root() / "game_server" / "weapon_templates";
+    const network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::
+            load_gameplay_config_from_weapon_template_directory(dir.string());
+
+    // Beam: `damage` read as per-tick, copied into the block the runtime uses.
+    const KernelProjectileMechanicsDefinition& beam_rifle =
+        projectile_mechanics(config, 5);
+    assert(beam_rifle.damage == 1);
+    assert(beam_rifle.beam.damage_per_tick == beam_rifle.damage);
+
+    // Area effect: `damage` read as per-interval, likewise.
+    const KernelProjectileMechanicsDefinition& fire_floor =
+        projectile_mechanics(config, 4);
+    assert(fire_floor.damage == 12);
+    assert(fire_floor.area_effect.damage_per_interval == fire_floor.damage);
+
+    // An instant weapon is no different: its shot template owns the number, and
+    // the weapon definition mirrors it rather than authoring a second one.
+    const KernelProjectileMechanicsDefinition& rifle_shot =
+        projectile_mechanics(config, 10);
+    assert(rifle_shot.damage == 25);
+    assert(config.weapons.definitions[network_example::game_server::kWeaponRifle]
+               .damage == rifle_shot.damage);
+    const KernelProjectileMechanicsDefinition& shotgun_shot =
+        projectile_mechanics(config, 11);
+    assert(shotgun_shot.damage == 10);
+    assert(config.weapons
+               .definitions[network_example::game_server::kWeaponShotgun]
+               .damage == shotgun_shot.damage);
+
+    // collision_mask travels the same way, and the shotgun still does not ask
+    // for limbs while the rifle does.
+    assert(config.weapons.definitions[network_example::game_server::kWeaponRifle]
+               .collision_mask == rifle_shot.collision_mask);
+    assert((config.weapons.definitions[network_example::game_server::kWeaponRifle]
+                .collision_mask & KERNEL_COLLISION_LAYER_LIMB) != 0u);
+    assert((config.weapons
+                .definitions[network_example::game_server::kWeaponShotgun]
+                .collision_mask & KERNEL_COLLISION_LAYER_LIMB) == 0u);
+
+    // An instant weapon without a shot template has nowhere to put either
+    // number, so it is rejected rather than defaulting to zero damage.
+    const std::filesystem::path no_shot_dir = tmp_dir("instant_without_shot");
+    write_valid_templates(no_shot_dir);
+    write_file(
+        no_shot_dir / "rifle.yaml",
+        "id: 0\nname: Rifle\nweapon_type: hitscan\nmagazine_size: 30\n"
+        "fire_action_template: rifle_fire\nmax_range: 100.0\n"
+        "segment_collider: rifle_segment\n");
+    assert(load_fails(no_shot_dir));
+}
+
 }  // namespace
 
 int main() {
+    weapons_name_their_own_reload_action();
+    weapons_without_a_reload_action_fall_back_to_the_shared_one();
+    damage_is_authored_once_per_projectile_template();
+    instant_weapon_keeps_its_fire_mode_and_segment();
     valid_repo_templates_load_all_slots();
     projectile_collision_query_modes_are_loaded();
     invalid_templates_are_rejected();
     collision_mask_expressions_are_loaded();
     malformed_collision_masks_are_rejected();
+    area_effect_sync_mode_is_authored_not_forced();
+    area_effect_hit_instigator_is_authored();
     catalog_file_loads_colliders();
     return 0;
 }
