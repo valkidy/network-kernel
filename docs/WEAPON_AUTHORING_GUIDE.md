@@ -92,7 +92,7 @@ name: smg_shot
 type: standard
 collider_template: rifle_segment
 damage: 18
-collision_mask: actor | terrain | obstacle
+collision_mask: actor | terrain | static_obstacle
 damage_shape: direct_hit
 speed: 200.0
 lifetime_ticks: 3
@@ -110,14 +110,14 @@ lifetime_ticks: 3
 | `sync_mode` | `hybrid_deterministic_then_snapshot` | `area_effect` defaults to `server_snapshot_only` |
 | `hit_response` | `destroy` | |
 | `damage_shape` | `direct_hit` | `none` requires `damage: 0` |
-| `collision_mask` | `actor \| terrain \| obstacle` | |
+| `collision_mask` | `actor \| terrain \| static_obstacle` | |
 | `max_hit_count` | `1` | how many targets one shot may hit |
 | `gravity` | `{0, 0, 0}` | |
 
 ### collision_mask tokens
 
 `damageable` (= `player_side | hostile_side | neutral`), `player_side`,
-`hostile_side`, `neutral`, `actor`, `limb`, `terrain`, `obstacle`, `prop`,
+`hostile_side`, `neutral`, `actor`, `limb`, `terrain`, `static_obstacle`, `prop`,
 `projectile`, `none`. Combine with `|`.
 
 `limb` is opt-in per weapon: without it, a shot passes through a creature's legs

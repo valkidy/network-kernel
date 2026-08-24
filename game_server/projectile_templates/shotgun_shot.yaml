@@ -15,9 +15,9 @@ damage_shape: direct_hit
 damage: 10
 # No `limb`, deliberately. Reaching a rig's bones is opt-in per weapon, and the
 # shotgun never asked for it -- its pellets resolve against a body and the world
-# only. Naming actor/terrain/obstacle spells out what the engine default gave it
+# only. Naming actor/terrain/static_obstacle spells out what the engine default gave it
 # before the mask was authored anywhere.
-collision_mask: actor | terrain | obstacle
+collision_mask: actor | terrain | static_obstacle
 speed: 200.0
 lifetime_ticks: 3
 max_hit_count: 1

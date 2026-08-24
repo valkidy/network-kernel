@@ -8,7 +8,7 @@ physics:
   collider_template: collision_damage_prop_hitbox
 triggers:
   on_collision:
-    collision_mask: actor|terrain|obstacle
+    collision_mask: actor|terrain|static_obstacle
     action_graph: action_apply_damage_at_destroy_entity
     parameters:
       target: self

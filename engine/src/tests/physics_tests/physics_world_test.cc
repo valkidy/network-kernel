@@ -237,7 +237,7 @@ void closest_shape_cast_matches_the_all_hit_front() {
 
 void side_less_query_reaches_categorised_objects() {
     // collision_filter_from_mask only forwards ACTOR bits into a query's
-    // gameplay_category_mask, so a projectile authored as terrain|obstacle
+    // gameplay_category_mask, so a projectile authored as terrain|static_obstacle
     // arrives here naming no category at all. It must still be stopped by a
     // prop that declares one, or deployable cover would be solid to everything
     // that names a side and transparent to everything that does not.

@@ -11,7 +11,7 @@
 # anything that attacks any side, while the entity's GameplaySide still decides
 # who may damage it.
 #
-# Known gap: a projectile that names no side at all (`spammer`, terrain|obstacle)
+# Known gap: a projectile that names no side at all (`spammer`, terrain|static_obstacle)
 # has an empty gameplay_category_mask and still passes through. Side-agnostic
 # projectiles would need `layer_mask == 0` to be blocked, which the catalog
 # validator rejects outright (gameplay_config.cc:7219).

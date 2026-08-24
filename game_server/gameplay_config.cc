@@ -610,7 +610,7 @@ std::uint32_t collision_mask_token_from_yaml(const std::string& token) {
     if (token == "terrain") {
         return KERNEL_COLLISION_LAYER_TERRAIN;
     }
-    if (token == "obstacle" || token == "static_obstacle") {
+    if (token == "static_obstacle") {
         return KERNEL_COLLISION_LAYER_STATIC_OBSTACLE;
     }
     if (token == "prop") {
@@ -664,7 +664,7 @@ std::uint32_t movement_collision_layer_token_from_yaml(
     if (token == "terrain") {
         return KERNEL_MOVEMENT_LAYER_TERRAIN;
     }
-    if (token == "obstacle" || token == "static_obstacle") {
+    if (token == "static_obstacle") {
         return KERNEL_MOVEMENT_LAYER_STATIC_OBSTACLE;
     }
     if (token == "actor") {

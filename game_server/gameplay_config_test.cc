@@ -2491,7 +2491,7 @@ int main() {
         "  collider_template: rocket_aabb\n"
         "triggers:\n"
         "  on_collision:\n"
-        "    collision_mask: actor | terrain | obstacle\n"
+        "    collision_mask: actor | terrain | static_obstacle\n"
         "    action_graph: action_apply_health_change\n"
         "    parameters:\n"
         "      target: event.target\n"

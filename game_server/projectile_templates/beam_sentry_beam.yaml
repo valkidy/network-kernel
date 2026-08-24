@@ -24,9 +24,9 @@ damage_shape: direct_hit
 damage: 2
 speed: 0.0
 lifetime_ticks: 0
-collision_mask: player_side | terrain | obstacle
+collision_mask: player_side | terrain | static_obstacle
 # Also inert for beams: beam_system stops at the first non-actor hit (terrain,
-# obstacle) but never counts actor hits, so the beam always passes through every
+# static_obstacle) but never counts actor hits, so the beam always passes through every
 # player along its length. Left at 1 to match the other templates.
 max_hit_count: 1
 gravity: {x: 0.0, y: 0.0, z: 0.0}
