@@ -1,6 +1,7 @@
 id: 204
 name: ice_block
 entity_type: prop
+impulse_resistance: 15.0
 lifecycle:
   lifetime_ticks: 900
   population_group: temporary_deployable
