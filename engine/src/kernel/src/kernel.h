@@ -981,6 +981,13 @@ private:
     movement_solver::CharacterMovementState predicted_character_state_{};
     bool has_authoritative_local_entity_ = false;
     std::uint32_t predicted_character_tick_ = 0;
+    // The client twin of the server's ImpulseLockout. Held on the prediction
+    // clock, because that is the clock step_local_character_prediction runs
+    // on; the point is that both sides withhold input from horizontal
+    // velocity for the same number of ticks, so the predicted path does not
+    // drift and get yanked back at reconciliation.
+    std::uint32_t predicted_impulse_lockout_until_tick_ = 0;
+    std::uint32_t predicted_impulse_lockout_armed_tick_ = 0;
     std::uint32_t predicted_action_buttons_ = 0;
     std::uint16_t predicted_action_binding_id_ = 0;
     std::uint8_t predicted_action_weapon_id_ = 0;

@@ -6,7 +6,7 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 80u,
+    KERNEL_ABI_VERSION == 82u,
     "area effect hit_instigator ABI");
 _Static_assert(
     offsetof(KernelAreaEffectMechanicsDefinition, hit_instigator) >
@@ -57,8 +57,24 @@ _Static_assert(
         offsetof(KernelSkeletonBindingDefinition, processing_order),
     "stance crouch is appended to the skeleton binding ABI");
 _Static_assert(
-    sizeof(KernelActionTriggerDefinition) == 584u,
+    sizeof(KernelActionTriggerDefinition) == 692u,
     "KernelActionTriggerDefinition ABI size");
+_Static_assert(
+    offsetof(KernelActionDefinition, impulse_strength_vertical) >
+        offsetof(KernelActionDefinition, impulse_lockout_ticks),
+    "impulse strength split is appended to KernelActionDefinition");
+_Static_assert(
+    offsetof(KernelActionTriggerDefinition, impulse_strength_vertical) >
+        offsetof(KernelActionTriggerDefinition, impulse_lockout_ticks),
+    "impulse strength split is appended to KernelActionTriggerDefinition");
+_Static_assert(
+    offsetof(KernelActionDefinition, impulse_lockout_ticks) >
+        offsetof(KernelActionDefinition, modifier_value),
+    "impulse_lockout_ticks is appended to KernelActionDefinition");
+_Static_assert(
+    offsetof(KernelActionTriggerDefinition, impulse_lockout_ticks) >
+        offsetof(KernelActionTriggerDefinition, modifier_value),
+    "impulse_lockout_ticks is appended to KernelActionTriggerDefinition");
 _Static_assert(
     offsetof(KernelActionDefinition, health_change_amount) >
         offsetof(KernelActionDefinition, spawn_item_quantity),
@@ -204,7 +220,7 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 80u);
+    assert(KERNEL_ABI_VERSION == 82u);
     assert(sizeof(KernelAreaEffectMechanicsDefinition) >
            offsetof(KernelAreaEffectMechanicsDefinition, hit_instigator));
     assert(KERNEL_HIT_ZONE_UNSCALED == 100u);

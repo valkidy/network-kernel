@@ -318,7 +318,18 @@ void simulate_actor_movement(
                 ? by_owner->second
                 : nullptr;
         }
-        if (movement_input != nullptr) {
+        // A knockback lives in Velocity, and this is the line that would
+        // otherwise redefine the horizontal half of it from input every tick.
+        // While the lockout stands, desired_horizontal keeps the value it was
+        // seeded with -- the actor's current horizontal velocity -- so the
+        // impulse carries instead of being overwritten one tick later.
+        const ImpulseLockout* impulse_lockout =
+            world.registry().try_get<ImpulseLockout>(entity);
+        const bool impulse_locked = impulse_lockout != nullptr &&
+            current_tick < impulse_lockout->until_tick;
+        if (impulse_locked) {
+            // nothing: the seeded current-velocity horizontal stands
+        } else if (movement_input != nullptr) {
             desired_horizontal =
                 movement_solver::input_move_to_world(movement_input->input) *
                 next_movement.speed_meters_per_second;
@@ -585,6 +596,19 @@ void simulate_actor_movement(
         world.registry().get<Transform>(result.entity).position = result.position;
         world.registry().get<Velocity>(result.entity).linear = result.velocity;
         world.registry().get<MovementState>(result.entity) = result.movement;
+        // Landing ends the lockout early: once the ground is back under the
+        // actor, control belongs to whoever is driving it again. The tick
+        // count is only the ceiling for a knockback that never lands -- and a
+        // flat knockback on a grounded actor is precisely that, which is why
+        // the landing release cannot fire on the arming tick.
+        if (const ImpulseLockout* lockout =
+                world.registry().try_get<ImpulseLockout>(result.entity);
+            lockout != nullptr &&
+            (current_tick >= lockout->until_tick ||
+             (result.movement.landed_this_tick &&
+              current_tick > lockout->armed_tick))) {
+            world.registry().remove<ImpulseLockout>(result.entity);
+        }
         if (result.physics_finalized &&
             physics_finalized_actor_net_ids != nullptr) {
             physics_finalized_actor_net_ids->push_back(result.net_id);

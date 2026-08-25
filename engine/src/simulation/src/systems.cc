@@ -496,7 +496,10 @@ bool execute_action_graph_commands(
             const std::optional<entt::entity> target =
                 world.find_entity(impulse->target);
             if (impulse->source == 0u || !target.has_value() ||
-                !std::isfinite(impulse->strength) || impulse->strength <= 0.0f ||
+                !impulse_strength_is_authorable(
+                    impulse->strength_mode,
+                    impulse->strength,
+                    impulse->vertical_strength) ||
                 !std::isfinite(impulse->direction.x) ||
                 !std::isfinite(impulse->direction.y) ||
                 !std::isfinite(impulse->direction.z) ||
@@ -1190,11 +1193,29 @@ bool execute_action_graph_commands(
             const float resistance = world.registry().all_of<ImpulseResistance>(target)
                 ? world.registry().get<ImpulseResistance>(target).value
                 : 0.0f;
-            if (!std::isfinite(resistance) || impulse->strength <= resistance) {
+            const float effective_strength = impulse_effective_strength(
+                impulse->strength_mode,
+                impulse->strength,
+                impulse->vertical_strength);
+            if (!std::isfinite(resistance) || effective_strength <= resistance) {
                 continue;
             }
             Velocity& velocity = world.registry().get_or_emplace<Velocity>(target);
-            velocity.linear += direction * impulse->strength;
+            velocity.linear += impulse_velocity_delta(
+                impulse->strength_mode,
+                direction,
+                impulse->strength,
+                impulse->vertical_strength);
+            if (impulse->lockout_ticks > 0u) {
+                // Re-arming from zero rather than extending: a second impulse
+                // during a lockout should grant its own full duration, not the
+                // remainder of the first one's.
+                world.registry().emplace_or_replace<ImpulseLockout>(
+                    target,
+                    ImpulseLockout{
+                        engine.current_tick() + impulse->lockout_ticks,
+                        engine.current_tick()});
+            }
             const EntityKind& kind = world.registry().get<EntityKind>(target);
             if (kind.type == EntityType::kActor) {
                 MovementState& movement =
@@ -2732,6 +2753,15 @@ bool EntityStateSystem::set_velocity(
     const std::optional<entt::entity> entity = engine.world_.find_entity(net_id);
     if (!entity.has_value() ||
         !engine.world_.registry().all_of<Velocity>(*entity)) {
+        return false;
+    }
+    // The gate lives here rather than in each AI controller on purpose: every
+    // controller writes velocity every tick, so a knockback that is not
+    // refused at this one seam is erased by whichever controller is next to
+    // ship, and the next author has to rediscover the rule.
+    const ImpulseLockout* lockout =
+        engine.world_.registry().try_get<ImpulseLockout>(*entity);
+    if (lockout != nullptr && engine.current_tick() < lockout->until_tick) {
         return false;
     }
     engine.world_.registry().get<Velocity>(*entity).linear =
