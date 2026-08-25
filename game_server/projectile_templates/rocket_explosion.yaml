@@ -16,5 +16,8 @@ triggers:
     parameters:
       target: event.target
       amount: 45
-      strength: 12.0
+      # No `strength` here on purpose. A binding override is always read as the
+      # scalar form, so passing one would silently defeat the graph's
+      # [horizontal, vertical] default and put the knockback back to what it
+      # was before it worked.
       direction: event.direction

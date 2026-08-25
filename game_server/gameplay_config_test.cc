@@ -2362,8 +2362,21 @@ int main() {
                    2u);
             assert(projectile.definition.mechanics.projectile_impact_trigger.actions[1].action_type ==
                    KernelEntityTriggerActionType_ApplyImpulse);
+            // All four, not just the horizontal. `impulse_strength` alone reads
+            // 12.0 under both forms, so on its own it cannot tell the split
+            // authoring apart from the scalar one it replaced -- and the way
+            // this authoring fails is silent: a `strength` in the trigger
+            // binding is always taken as the scalar form and would quietly
+            // defeat the graph's [horizontal, vertical] default. The mode is
+            // what pins that down.
+            assert(projectile.definition.mechanics.projectile_impact_trigger.actions[1].impulse_strength_mode ==
+                   KERNEL_IMPULSE_STRENGTH_MODE_SPLIT);
             assert(projectile.definition.mechanics.projectile_impact_trigger.actions[1].impulse_strength ==
                    12.0f);
+            assert(projectile.definition.mechanics.projectile_impact_trigger.actions[1].impulse_strength_vertical ==
+                   5.0f);
+            assert(projectile.definition.mechanics.projectile_impact_trigger.actions[1].impulse_lockout_ticks ==
+                   40u);
         }
         if (projectile.name == "homing_missile_projectile") {
             found_homing_projectile = true;
