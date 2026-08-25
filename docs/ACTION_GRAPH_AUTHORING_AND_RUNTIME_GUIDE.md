@@ -192,19 +192,46 @@ schema 的欄位會在載入階段被拒絕。
   strength: params.strength
   direction: params.direction
   collision_mask: actor | prop
+  lockout_ticks: 20
 ```
 
 輸入契約：
 
 - `target`：有效 `EntityRef`。Runtime 只對兩種 target 生效：actor，或不在
   `carrying` 狀態的 prop。其他 target 靜默略過，不會讓整批失敗。
-- `strength`：正的有限 float，單位是 **m/s 的速度增量**。Runtime 直接執行
-  `velocity += normalize(direction) * strength`，不參與質量計算。
+- `strength`：單位一律是 **m/s 的速度增量**，不參與質量計算。有兩種形式，語意
+  刻意不同：
+  - **純量**（`strength: 12.0`）：正的有限 float。Runtime 執行
+    `velocity += normalize(direction) * strength`，三軸等向縮放。
+  - **List**（`strength: [8.0, 4.0]`）：讀作 `[水平, 垂直]`。Runtime 執行
+    `velocity += {dir.x * 水平, 垂直, dir.z * 水平}`——**垂直分量是絕對帶號增量，
+    不是 `direction.y` 的縮放係數**。水平必須是非負有限值，垂直必須有限，兩者
+    不能同時為零；水平為 0 就是純垂直發射。
+  兩種形式都 author 在 **graph parameter 的 default 上**，不是寫在 action 裡——
+  action 那一行永遠是 `strength: params.strength`：
+
+  ```yaml
+  parameters:
+    strength: 12.0        # 純量形式
+    # strength: [8.0, 4.0]  # list 形式：水平 8 m/s、垂直 4 m/s
+  actions:
+    - type: apply_impulse
+      strength: params.strength
+  ```
+
+  若 trigger binding 自己傳了 `strength`，那一定是純量形式；只有「binding 沒有
+  覆寫、且 parameter default 是 list」才會選到 list 語意。不使用 list 形式時行為
+  與過去完全相同，既有 template 一個字都不用改。差別不是語法糖，見下方
+  「為什麼垂直分量必須是絕對值」。
 - `direction`：只能綁定 `event.direction`，或由 graph 的 `direction` parameter 提供
   vec3 default。Vec3 default 必須非零且有限，且目前只允許用在名為 `direction` 的
   parameter 上。
 - `collision_mask`：`actor`、`prop` 或兩者的 or 組合；省略時預設 `actor`。不接受空
   mask 或其他 collision layer bit。
+- `lockout_ticks`：非負整數，上限 `KERNEL_MAX_IMPULSE_LOCKOUT_TICKS`（300，30 Hz
+  下的十秒）。擊退期間有多少 tick 不允許 target 自己的 movement input 重新決定
+  水平速度，詳見下方 Authoring 注意。**省略或 0 等同舊行為**，既有 template 不需
+  改動。時長 author 在 action 上而非 target 上，所以重型火箭可以鎖得比輕推久。
 - 此 action 不接受 `position`、`amount`、`owner`、`entity_template`、
   `item_template`、`quantity` 欄位。
 
@@ -225,13 +252,15 @@ Runtime 效果：
   trigger，否則會一路直線滑行到 lifetime 結束。
 
 `impulse_resistance` 由 actor 或 prop entity template authoring（預設 0），語意是
-**門檻而非減量**：`strength <= impulse_resistance` 時整個 impulse 被忽略，不做任何
-衰減。
+**門檻而非減量**：未超過門檻時整個 impulse 被忽略，不做任何衰減。比較用的量值：
+純量形式就是 `strength` 本身（位元不變，既有 template 的判定結果不可能移動）；
+list 形式取 `max(水平, |垂直|)`，所以一個推不動重型目標的水平力道，仍可能靠夠大的
+垂直分量把它頂起來。
 
 ```yaml
 # actor 或 prop entity template
 entity_type: prop
-impulse_resistance: 15.0   # strength <= 15.0 的 impulse 完全推不動
+impulse_resistance: 15.0   # 有效強度 <= 15.0 的 impulse 完全推不動
 ```
 
 目前 repo 內沒有任何 template author 這個欄位，等同全部使用預設值 0。
@@ -240,10 +269,25 @@ Authoring 注意：
 
 - Impulse 在 trigger 所屬 tick 的 command commit 階段套用，於**下一個** movement
   tick 才反映到位置。
-- Movement solver 每個 tick 由 input 重新決定水平速度：有 movement input 的 actor
-  與所有 player actor，其水平分量會在下一 tick 被覆寫或歸零，只有垂直分量會累積
-  並繼續受重力影響。因此打在玩家身上的擊退實際只有 Y 分量有效，需要明顯推力時
-  `direction` 應帶足夠的向上分量。沒有 input 的 AI actor 則會保留水平速度繼續滑行。
+- **水平擊退需要 `lockout_ticks` 才會成立。** Movement solver 每個 tick 由 input
+  重新決定水平速度，而且不只玩家會被影響：repo 內每個 AI controller 都刻意每 tick
+  送剛好一個 input（見 `game_server/agent_chaser_controller.cc` 的註解），sentry
+  更會另外每 tick 無條件覆寫整個 `Velocity`。所以「沒有 input 的 AI actor 會保留
+  水平速度繼續滑行」就 movement solver 單獨看雖然成立，實務上沒有任何 actor 處在
+  那個狀態。`lockout_ticks > 0` 會在 target 上掛一個 server-only 的
+  `ImpulseLockout`，在時效內同時擋掉兩個覆寫點：movement solver 不用 input 重建
+  水平速度，`EntityStateSystem::set_velocity` 直接回 false。閘門放在 set_velocity
+  這一層而不是各個 controller 裡，所以新寫的 AI controller 不必知道這條規則。
+- Lockout 的解除條件是 **N ticks 或落地，取先到者**；但落地解除不會在武裝的那一
+  tick 生效。apply_impulse 會把 actor 強制設為 airborne，站在地上的目標挨了純水平
+  擊退後，同一個 movement step 就會重新落地——若不排除武裝當 tick，長距離平推
+  剛好是 lockout 完全失效的那個 case。
+- **為什麼垂直分量必須是絕對值。** Area effect 交給 apply_impulse 的
+  `event.direction` 是「爆心 → 命中點」的徑向單位向量，爆心與目標同高時
+  `direction.y ≈ 0`。若 list 形式的垂直數字是 `direction.y` 的縮放係數，乘上零
+  還是零，一個平地爆炸無論垂直數字寫多大都做不出向上發射。改成絕對增量之後，
+  `[8.0, 4.0]` 就直接讀作「水平推 8、垂直抬 4」，而 `[0.0, 10.0]` 是純發射。
+  想要「垂直分量跟隨徑向的正負」時，純量形式就是現成的退路。
 - **Area effect 預設打不到發射它的人**。overlap query 以 shooter 作為
   `ignored_entity_net_id`，而 spawn chain 會把 shooter 一路帶下去，所以 rocket 與
   它命中後生成的爆炸過濾的是同一個 actor。要做自推（rocket jump）必須在該 area
@@ -256,7 +300,9 @@ Authoring 注意：
   `sync_mode: local_predicted_deterministic`（預設是 `server_snapshot_only`），
   若是本地玩家自己發射的，則該 template 必須 author `hit_instigator: true`——
   否則 authority 會把他過濾掉，預測就會套一個永遠不會被 snapshot 確認的位移。
-  其餘情況一律等 authoritative snapshot。
+  其餘情況一律等 authoritative snapshot。Client 對本地玩家預先套用 impulse 時
+  也會同步起算 lockout，並用與 authority 相同的推導擋住預測用的水平 input——
+  兩邊必須一致，否則預測會走開 N ticks 再被 reconciliation 硬拉回來。
 
 目前 projectile-backed triggers 接受 `apply_damage`、`apply_health_change`、
 `apply_impulse` 與 `spawn_projectile` actions。
@@ -441,13 +487,23 @@ triggers:
 ```
 
 此處的 `event.direction` 是爆心指向 target 的徑向向量，因此擊退方向隨相對位置改變。
-若要的是固定方向（例如把 target 往上頂），改成不在 binding 提供 `direction`，由
-graph parameter 的 vec3 default 決定：
+若要的是固定方向（例如把每個 target 都往同一邊推），改成不在 binding 提供
+`direction`，由 graph parameter 的 vec3 default 決定：
 
 ```yaml
 parameters:
   direction: {x: 0.0, y: 1.0, z: 0.0}
 ```
+
+但「徑向推開 **並且** 往上頂」不能靠改 `direction` 做到——平地爆炸的徑向向量
+`y ≈ 0`，換成固定向上又會失去徑向。這是 `strength` list 形式存在的理由：
+
+```yaml
+parameters:
+  strength: [8.0, 4.0]   # 沿徑向推 8 m/s，另外垂直抬 4 m/s
+```
+
+配合 `lockout_ticks` 才能讓水平那一半真的留在 target 身上，見 §4.4。
 
 Guidelines：
 
@@ -522,8 +578,8 @@ sequence 代表多個不同 collision/impact occurrences。
 
 ## 8. Kernel ABI 與 Compiled Representation
 
-目前 Kernel ABI version 為 73；packet schema version 為 24，snapshot schema
-version 為 17。
+目前 Kernel ABI version 為 82；packet schema version 為 24，snapshot schema
+version 為 19。
 
 ```text
 KernelActionTriggerDefinition
@@ -596,7 +652,10 @@ Catalog load/compile 會拒絕：
 - Projectile trigger graph 使用 `apply_damage`、`apply_health_change`、
   `apply_impulse`、`spawn_projectile` 以外的 action。
 - Status lifecycle graph 使用 `apply_impulse`。
-- `apply_impulse` 的 `strength` 非有限或不為正。
+- `apply_impulse` 的 `strength`：純量形式非有限或不為正；list 形式不是剛好兩個
+  數字、水平為負、任一項非有限，或兩項同時為零。
+- `apply_impulse` 的 `lockout_ticks` 超過 `KERNEL_MAX_IMPULSE_LOCKOUT_TICKS`。
+- 非 `strength` parameter 使用 list default。
 - `apply_impulse` 的 `collision_mask` 為空，或含 `actor`/`prop` 以外的 bit。
 - `apply_impulse` 的 `direction` 既不是 `event.direction`，該 parameter 也沒有 vec3
   default。
@@ -610,8 +669,8 @@ Runtime protection 包含：
 - 無效/已不存在的 damage target 或 owner。
 - 非 finite position/direction。
 - 非正整數或超過 `uint16` 的 damage amount。
-- 非有限或不為正的 impulse strength、非有限或零長度的 impulse direction（整批拒絕）。
-- Impulse target 不是 actor，也不是非攜帶中的 prop，或 `strength` 未超過
+- 未通過形式檢查的 impulse strength、非有限或零長度的 impulse direction（整批拒絕）。
+- Impulse target 不是 actor，也不是非攜帶中的 prop，或有效強度未超過
   `impulse_resistance`（略過該 command，不影響同批其他 commands）。
 - 非 authoritative execution 不會產生 gameplay commands。
 
@@ -682,4 +741,5 @@ template + quantity，或可在 world/inventory 間轉換的 instance。Action G
 - Entity command executor：`engine/src/simulation/src/systems.cc`
 - Projectile command executor：`engine/src/simulation/src/projectile_system.cc`
 - Exactly-once ledger：`engine/src/world/public/world.h`
+- 遊戲內手測載具：`docs/ACTION_GRAPH_TEST_BOTTLES.md`
 - 原始設計背景：`docs/plan/Trigger Event Tag 與 Action Graph 設計.md`
