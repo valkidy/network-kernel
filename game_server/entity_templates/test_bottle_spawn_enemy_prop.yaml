@@ -1,0 +1,28 @@
+# Test vehicle: throw it, and whatever it lands on gets a chaser_grunt.
+#
+# See docs/ACTION_GRAPH_TEST_BOTTLES.md. The two lines worth editing are
+# `action_graph` and the `parameters` block under it -- everything else exists
+# only to get a throwable prop into the world with a collision to fire on.
+id: 206
+name: test_bottle_spawn_enemy_prop
+entity_type: prop
+health:
+  hp: 1
+  max_hp: 1
+physics:
+  collider_template: collision_damage_prop_hitbox
+triggers:
+  on_collision:
+    # Anything solid, so the vehicle fires wherever it is aimed rather than
+    # only on the floor.
+    collision_mask: terrain | static_obstacle | actor
+    # The graph under test. Despite the name this one is entirely generic --
+    # it spawns whatever `template` names and then destroys the bottle.
+    action_graph: action_spawn_ice_and_damage_self_at_collision
+    parameters:
+      template: chaser_grunt
+      position: event.position
+      direction: event.direction
+      owner: self
+      source: self
+      self_damage: 1

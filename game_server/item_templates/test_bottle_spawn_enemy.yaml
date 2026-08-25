@@ -1,0 +1,24 @@
+# Inventory half of the test_bottle_spawn_enemy vehicle. Identity-preserving
+# throw, so the prop that lands is this very item and its on_collision trigger
+# is the one that fires.
+id: 3005
+name: test_bottle_spawn_enemy
+mode: stateful
+max_stack: 1
+capabilities: [pickupable, throwable]
+entity_template: test_bottle_spawn_enemy_prop
+world_interaction:
+  range: 3.0
+  line_of_sight_required: false
+throw:
+  mode: identity_preserving
+  trajectory_projectile: grenade_shell_projectile
+use:
+  quantity_cost: 0
+  cooldown_ticks: 0
+  destroy_when_empty: false
+portable_state:
+  - id: hp
+    type: uint32
+    default: 1
+    world_projection: health_current

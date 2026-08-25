@@ -1,11 +1,15 @@
 #include <cassert>
+#include <cmath>
 #include <cstdlib>
+#include <optional>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include <glm/glm.hpp>
 
 #include "physics/public/physics_world.h"
+#include "simulation/public/action_graph.h"
 #include "simulation/public/simulation.h"
 
 namespace {
@@ -308,6 +312,113 @@ void area_effect_spares_cover_on_a_side_it_does_not_attack() {
     require(health(world, friendly_cover).hp == 100);
 }
 
+// An area effect that carries an action graph takes a different branch than one
+// that only deals damage: it queues one trigger per target and hands the batches
+// back to the caller instead of submitting damage requests. Nothing covered that
+// branch, so "splash only pushed one unit" had no test that could tell a
+// single-target *query* apart from a single-target *dispatch*.
+network_example::CompiledActionGraphBinding impulse_on_impact_binding(
+    float strength) {
+    KernelActionTriggerDefinition trigger{};
+    trigger.struct_size = sizeof(trigger);
+    trigger.action_type = KernelEntityTriggerActionType_ApplyImpulse;
+    trigger.target_source = KernelEntityRefSource_EventTarget;
+    trigger.direction_source = KernelEventVec3Source_Direction;
+    trigger.impulse_strength = strength;
+    trigger.impulse_collision_mask = KERNEL_COLLISION_MASK_ACTOR;
+    std::optional<network_example::CompiledActionGraphBinding> binding =
+        network_example::compile_action_trigger_definition(
+            network_example::TriggerEventType::kProjectileImpact, trigger);
+    require(binding.has_value());
+    return *binding;
+}
+
+void bind_impulse_graph(
+    network_example::World& world,
+    network_example::NetId area_net_id,
+    float strength) {
+    const auto entity = world.find_entity(area_net_id);
+    require(entity.has_value());
+    world.registry()
+        .get<network_example::ProjectileAreaEffectRuntime>(*entity)
+        .action_graph_binding = impulse_on_impact_binding(strength);
+}
+
+const network_example::ActionApplyImpulseCommand& only_impulse_command(
+    const network_example::ActionGraphCommandBatch& batch) {
+    require(batch.commands.size() == 1);
+    const auto* impulse =
+        std::get_if<network_example::ActionApplyImpulseCommand>(
+            &batch.commands.front());
+    require(impulse != nullptr);
+    return *impulse;
+}
+
+void area_effect_dispatches_its_graph_once_per_target_in_radius() {
+    network_example::World world;
+    const network_example::NetId first =
+        spawn_enemy(world, glm::vec3{1.0f, 0.0f, 0.0f});
+    const network_example::NetId second =
+        spawn_enemy(world, glm::vec3{-2.0f, 0.0f, 0.0f});
+    const network_example::NetId outside =
+        spawn_enemy(world, glm::vec3{9.0f, 0.0f, 0.0f});
+    const network_example::NetId area = spawn_area_projectile(
+        world, 0, glm::vec3{0.0f, 0.5f, 0.0f}, 4.0f, 45, 0, 45, 7);
+    bind_impulse_graph(world, area, 12.0f);
+
+    network_example::DamagePipeline pipeline;
+    std::vector<KernelEvent> events;
+    std::vector<network_example::ActionGraphCommandBatch> batches;
+    network_example::simulate_area_effects(
+        world, 0, 0, &events, &pipeline, &batches);
+
+    // One batch per target inside the radius, and none for the one outside it.
+    require(batches.size() == 2);
+    const network_example::ActionApplyImpulseCommand& first_impulse =
+        only_impulse_command(batches[0]);
+    const network_example::ActionApplyImpulseCommand& second_impulse =
+        only_impulse_command(batches[1]);
+    require(first_impulse.target != second_impulse.target);
+    require(first_impulse.target == first || first_impulse.target == second);
+    require(second_impulse.target == first || second_impulse.target == second);
+    require(first_impulse.target != outside);
+    require(second_impulse.target != outside);
+    require(first_impulse.strength == 12.0f);
+    require(second_impulse.strength == 12.0f);
+
+    // The graph branch replaces the damage branch outright: neither target is
+    // in the damage pipeline, so a graph that forgets apply_damage deals none.
+    require(pipeline.pending_count() == 0);
+    require(health(world, first).hp == 50);
+    require(health(world, second).hp == 50);
+}
+
+// Where the push points, for a blast whose centre sits at the same height as
+// what it hits. This is not a preference, it is what the radial direction
+// geometrically is -- and it is the half of the knockback the movement solver
+// then throws away for anything that submits input.
+void area_effect_impulse_direction_is_level_for_a_level_blast() {
+    network_example::World world;
+    const network_example::NetId east =
+        spawn_enemy(world, glm::vec3{2.0f, 0.0f, 0.0f});
+    const network_example::NetId area = spawn_area_projectile(
+        world, 0, glm::vec3{0.0f, 0.5f, 0.0f}, 4.0f, 45, 0, 45, 7);
+    bind_impulse_graph(world, area, 12.0f);
+
+    network_example::DamagePipeline pipeline;
+    std::vector<KernelEvent> events;
+    std::vector<network_example::ActionGraphCommandBatch> batches;
+    network_example::simulate_area_effects(
+        world, 0, 0, &events, &pipeline, &batches);
+
+    require(batches.size() == 1);
+    const network_example::ActionApplyImpulseCommand& impulse =
+        only_impulse_command(batches[0]);
+    require(impulse.target == east);
+    require(impulse.direction.x > 0.9f);
+    require(std::abs(impulse.direction.y) < 0.05f);
+}
+
 }  // namespace
 
 int main() {
@@ -318,5 +429,7 @@ int main() {
     area_effect_damage_order_is_deterministic();
     area_effect_reaches_its_own_shooter_only_when_authored();
     area_effect_spares_cover_on_a_side_it_does_not_attack();
+    area_effect_dispatches_its_graph_once_per_target_in_radius();
+    area_effect_impulse_direction_is_level_for_a_level_blast();
     return 0;
 }
