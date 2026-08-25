@@ -43,6 +43,18 @@ cc_test(
 )
 
 cc_test(
+    name = "impulse_lockout_test",
+    srcs = ["impulse_lockout_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
+    name = "impulse_strength_test",
+    srcs = ["impulse_strength_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
     name = "collision_query_test",
     srcs = ["collision_query_test.cc"],
     deps = ["//engine/src/simulation:simulation"],

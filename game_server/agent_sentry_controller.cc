@@ -39,7 +39,13 @@ void AgentSentryController::tick(
 
         agent.position = entity_state.position;
         agent.hp = entity_state.hp;
-        agent.velocity = agent_steering::zero_vec3();
+        // Horizontal only. This velocity is enqueued unconditionally at the
+        // bottom of the loop, so zeroing all three axes here told the kernel
+        // every tick that the agent's vertical speed was zero -- gravity could
+        // never accumulate and a sentry spawned in the air simply hung there.
+        // Y belongs to the movement solver; the controller only ever decides
+        // where the agent walks. The patrol branch below already did this.
+        agent.velocity = KernelVec3{0.0f, entity_state.velocity.y, 0.0f};
         agent.animation_state = 0;
         agent.sentry.self_id = agent.net_id;
 

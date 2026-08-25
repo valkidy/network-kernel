@@ -262,6 +262,10 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
             action.impulse_strength = trigger.impulse_strength;
             action.impulse_collision_mask = trigger.impulse_collision_mask;
             action.impulse_direction = trigger.impulse_direction;
+            action.impulse_lockout_ticks = trigger.impulse_lockout_ticks;
+            action.impulse_strength_mode = trigger.impulse_strength_mode;
+            action.impulse_strength_vertical =
+                trigger.impulse_strength_vertical;
         } else {
             action = trigger.actions[index];
         }
@@ -423,6 +427,9 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
                 "strength" + suffix,
                 direction_name,
                 action.impulse_collision_mask,
+                action.impulse_lockout_ticks,
+                action.impulse_strength_mode,
+                action.impulse_strength_vertical,
                 action.direction_source == KernelEventVec3Source_Literal
                     ? std::optional<glm::vec3>{glm::vec3{
                           action.impulse_direction.x,
@@ -983,7 +990,9 @@ bool evaluate_action_graph(
             }
             const glm::vec3 direction = std::get<glm::vec3>(*direction_value);
             const float direction_length = glm::length(direction);
-            if (amount <= 0.0f || direction_length <= 0.0f ||
+            if (!impulse_strength_is_authorable(
+                    impulse->strength_mode, amount, impulse->vertical_strength) ||
+                direction_length <= 0.0f ||
                 !std::isfinite(direction.x) || !std::isfinite(direction.y) ||
                 !std::isfinite(direction.z)) {
                 return fail(error, "apply_impulse requires positive strength and a finite non-zero direction");
@@ -1001,6 +1010,9 @@ bool evaluate_action_graph(
                 amount,
                 direction / direction_length,
                 impulse->collision_mask,
+                impulse->lockout_ticks,
+                impulse->strength_mode,
+                impulse->vertical_strength,
                 provenance,
             });
             continue;

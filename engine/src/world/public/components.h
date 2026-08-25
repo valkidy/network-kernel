@@ -147,6 +147,22 @@ struct ImpulseResistance {
     float value = 0.0f;
 };
 
+// Server-only, and deliberately not a MovementState field: MovementState is
+// replicated, and a snapshot byte per actor is the wrong price for a counter
+// only the authority reads. While current_tick < until_tick the actor's own
+// movement input is not allowed to redefine its horizontal velocity, which is
+// what makes a horizontal knockback survive the tick after it lands.
+struct ImpulseLockout {
+    std::uint32_t until_tick = 0;
+    // The tick the impulse armed this. Landing only ends the lockout on a
+    // later tick: applying an impulse forces the actor airborne, so a purely
+    // horizontal knockback on someone already standing on the ground re-lands
+    // during the very same movement step and would otherwise release the
+    // lockout before it held anything off -- which is exactly the long, flat
+    // knockback the split strength form exists to author.
+    std::uint32_t armed_tick = 0;
+};
+
 struct Health {
     std::uint16_t hp = 0;
     std::uint16_t max_hp = 0;
@@ -652,6 +668,13 @@ struct ActionApplyImpulseDefinition {
     std::string strength_parameter;
     std::string direction_parameter;
     std::uint32_t collision_mask = kCollisionMaskDamageable;
+    std::uint32_t lockout_ticks = 0;
+    // KERNEL_IMPULSE_STRENGTH_MODE_RADIAL / _SPLIT. Spelled as a plain zero
+    // default because this header sits below the kernel's public types and
+    // must not pull them in; RADIAL is zero, so an unset field still means
+    // the historical single-scalar reading.
+    std::uint32_t strength_mode = 0;
+    float vertical_strength = 0.0f;
     std::optional<glm::vec3> direction_literal;
     ActionConditionType condition = ActionConditionType::kAlways;
 };

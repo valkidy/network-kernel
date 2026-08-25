@@ -1538,6 +1538,10 @@ bool validate_projectile_mechanics(
                 action.impulse_strength = trigger.impulse_strength;
                 action.impulse_collision_mask = trigger.impulse_collision_mask;
                 action.impulse_direction = trigger.impulse_direction;
+                action.impulse_lockout_ticks = trigger.impulse_lockout_ticks;
+                action.impulse_strength_mode = trigger.impulse_strength_mode;
+                action.impulse_strength_vertical =
+                    trigger.impulse_strength_vertical;
             } else {
                 action = trigger.actions[index];
             }
@@ -1552,8 +1556,10 @@ bool validate_projectile_mechanics(
                     action.damage_amount == 0u) return false;
             } else if (action.action_type == KernelEntityTriggerActionType_ApplyImpulse) {
                 if (action.target_source > KernelEntityRefSource_EventInstigator ||
-                    !std::isfinite(action.impulse_strength) ||
-                    action.impulse_strength <= 0.0f ||
+                    !impulse_strength_is_authorable(
+                        action.impulse_strength_mode,
+                        action.impulse_strength,
+                        action.impulse_strength_vertical) ||
                     (action.direction_source != KernelEventVec3Source_Direction &&
                      action.direction_source != KernelEventVec3Source_Literal) ||
                     (action.direction_source == KernelEventVec3Source_Literal &&
@@ -1566,7 +1572,9 @@ bool validate_projectile_mechanics(
                     (action.impulse_collision_mask &
                      (KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_MASK_PROP)) == 0u ||
                     (action.impulse_collision_mask &
-                     ~(KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_MASK_PROP)) != 0u) {
+                     ~(KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_MASK_PROP)) != 0u ||
+                    action.impulse_lockout_ticks >
+                        KERNEL_MAX_IMPULSE_LOCKOUT_TICKS) {
                     return false;
                 }
             } else {
@@ -2957,6 +2965,12 @@ bool KernelEngine::load_gameplay_catalog(
                     action.impulse_collision_mask =
                         trigger->impulse_collision_mask;
                     action.impulse_direction = trigger->impulse_direction;
+                    action.impulse_lockout_ticks =
+                        trigger->impulse_lockout_ticks;
+                    action.impulse_strength_mode =
+                        trigger->impulse_strength_mode;
+                    action.impulse_strength_vertical =
+                        trigger->impulse_strength_vertical;
                     action.condition_type = trigger->condition_type;
                 } else {
                     action = trigger->actions[action_index];
@@ -2993,8 +3007,10 @@ bool KernelEngine::load_gameplay_catalog(
                     KernelEntityTriggerActionType_ApplyImpulse) {
                     if (action.target_source >
                             KernelEntityRefSource_EventInstigator ||
-                        !std::isfinite(action.impulse_strength) ||
-                        action.impulse_strength <= 0.0f ||
+                        !impulse_strength_is_authorable(
+                            action.impulse_strength_mode,
+                            action.impulse_strength,
+                            action.impulse_strength_vertical) ||
                         (action.direction_source !=
                              KernelEventVec3Source_Direction &&
                          action.direction_source !=
@@ -3012,7 +3028,9 @@ bool KernelEngine::load_gameplay_catalog(
                           KERNEL_COLLISION_MASK_PROP)) == 0u ||
                         (action.impulse_collision_mask &
                          ~(KERNEL_COLLISION_MASK_ACTOR |
-                           KERNEL_COLLISION_MASK_PROP)) != 0u) {
+                           KERNEL_COLLISION_MASK_PROP)) != 0u ||
+                        action.impulse_lockout_ticks >
+                            KERNEL_MAX_IMPULSE_LOCKOUT_TICKS) {
                         return false;
                     }
                     continue;
@@ -5833,6 +5851,8 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     has_authoritative_local_entity_ = false;
     predicted_character_state_ = movement_solver::CharacterMovementState{};
     predicted_character_tick_ = 0;
+    predicted_impulse_lockout_until_tick_ = 0u;
+    predicted_impulse_lockout_armed_tick_ = 0u;
     predicted_action_buttons_ = 0u;
     predicted_action_binding_id_ = 0u;
     predicted_action_weapon_id_ = 0u;
@@ -7410,6 +7430,8 @@ void KernelEngine::clear_client_session() {
     has_latest_client_input_ = false;
     predicted_character_state_ = movement_solver::CharacterMovementState{};
     predicted_character_tick_ = 0;
+    predicted_impulse_lockout_until_tick_ = 0u;
+    predicted_impulse_lockout_armed_tick_ = 0u;
     local_presentation_position_ = glm::vec3{0.0f, 0.0f, 0.0f};
     local_presentation_velocity_ = glm::vec3{0.0f, 0.0f, 0.0f};
     has_local_presentation_position_ = false;
@@ -8102,17 +8124,39 @@ bool KernelEngine::step_local_character_prediction(
             latest_client_snapshot_, prediction_tick)) {
         return false;
     }
+    // The twin of player_movement.cc's desired_horizontal: while the impulse
+    // lockout stands the authority keeps the actor's current horizontal
+    // velocity instead of rebuilding it from input, so the prediction has to
+    // do exactly the same or it walks away from the authority for N ticks and
+    // is snapped back at reconciliation.
+    const bool impulse_locked =
+        prediction_tick < predicted_impulse_lockout_until_tick_;
+    const glm::vec3 desired_horizontal = impulse_locked
+        ? glm::vec3{
+              predicted_character_state_.velocity.x,
+              0.0f,
+              predicted_character_state_.velocity.z}
+        : movement_solver::input_move_to_world(input) *
+              local_player_move_speed_meters_per_second_;
     std::string error;
     if (!movement_solver::step_character(
             *prediction_physics_world_,
             movement_config,
-            movement_solver::input_move_to_world(input) *
-                local_player_move_speed_meters_per_second_,
+            desired_horizontal,
             tick_loop_.fixed_delta_seconds(),
             &predicted_character_state_,
             &error)) {
         spdlog::error("client CharacterVirtual prediction step failed: {}", error);
         return false;
+    }
+    // Same rule as the authority: the landing release cannot fire on the tick
+    // the impulse armed, or a flat knockback on a grounded actor releases
+    // before it has held anything off.
+    if (impulse_locked &&
+        prediction_tick > predicted_impulse_lockout_armed_tick_ &&
+        predicted_character_state_.ground_state ==
+            physics::CharacterGroundState::kGrounded) {
+        predicted_impulse_lockout_until_tick_ = 0u;
     }
     predicted_character_tick_ = prediction_tick;
     predicted_local_entity_.position = predicted_character_state_.position;
@@ -9184,6 +9228,9 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
                                         action.impulse_strength = trigger.impulse_strength;
                                         action.impulse_collision_mask = trigger.impulse_collision_mask;
                                         action.impulse_direction = trigger.impulse_direction;
+                                        action.impulse_lockout_ticks = trigger.impulse_lockout_ticks;
+                                        action.impulse_strength_mode = trigger.impulse_strength_mode;
+                                        action.impulse_strength_vertical = trigger.impulse_strength_vertical;
                                     } else {
                                         action = trigger.actions[action_index];
                                     }
@@ -9193,8 +9240,15 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
                                             KernelEntityRefSource_EventTarget ||
                                         (action.impulse_collision_mask &
                                          KERNEL_COLLISION_MASK_ACTOR) == 0u ||
-                                        !std::isfinite(action.impulse_strength) ||
-                                        action.impulse_strength <= resistance) {
+                                        !impulse_strength_is_authorable(
+                                            action.impulse_strength_mode,
+                                            action.impulse_strength,
+                                            action.impulse_strength_vertical) ||
+                                        impulse_effective_strength(
+                                            action.impulse_strength_mode,
+                                            action.impulse_strength,
+                                            action.impulse_strength_vertical) <=
+                                            resistance) {
                                         continue;
                                     }
                                     const glm::vec3 direction =
@@ -9206,13 +9260,23 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
                                                   action.impulse_direction.z}
                                             : glm::normalize(radial);
                                     const glm::vec3 impulse =
-                                        glm::normalize(direction) *
-                                        action.impulse_strength;
+                                        impulse_velocity_delta(
+                                            action.impulse_strength_mode,
+                                            glm::normalize(direction),
+                                            action.impulse_strength,
+                                            action.impulse_strength_vertical);
                                     predicted_local_entity_.velocity += impulse;
                                     predicted_character_state_.velocity += impulse;
                                     predicted_character_state_.ground_state =
                                         physics::CharacterGroundState::kAirborne;
                                     predicted_character_state_.supporting_identity = {};
+                                    if (action.impulse_lockout_ticks > 0u) {
+                                        predicted_impulse_lockout_until_tick_ =
+                                            predicted_character_tick_ +
+                                            action.impulse_lockout_ticks;
+                                        predicted_impulse_lockout_armed_tick_ =
+                                            predicted_character_tick_;
+                                    }
                                     break;
                                 }
                             }
