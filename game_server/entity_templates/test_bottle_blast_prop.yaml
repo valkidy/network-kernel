@@ -1,0 +1,37 @@
+# Test vehicle: throw it, and wherever it lands takes a rocket_explosion.
+#
+# See docs/ACTION_GRAPH_TEST_BOTTLES.md. The two lines worth editing are
+# `action_graph` and the `parameters` block under it -- everything else exists
+# only to get a throwable prop into the world with a collision to fire on.
+#
+# rocket_explosion is an authored area-effect projectile that already carries
+# the AoE damage and knockback graph (projectile_templates/rocket_explosion.yaml
+# -> action_rocket_explosion_at_target), so one throw exercises the whole
+# area-effect path -- radius, falloff, apply_damage and the split-strength
+# apply_impulse -- without a line of engine code.
+#
+# This used to live on the item's on_item_used instead, because the catalog
+# loader accepted spawn_projectile on an entity trigger while the kernel's
+# entity-template validator had no branch for it and rejected the whole
+# catalog. That branch exists now, pinned by
+# //engine/src/tests/kernel_tests:entity_trigger_action_parity_test.
+id: 207
+name: test_bottle_blast_prop
+entity_type: prop
+health:
+  hp: 1
+  max_hp: 1
+physics:
+  collider_template: collision_damage_prop_hitbox
+triggers:
+  on_collision:
+    # Anything solid, so the vehicle fires wherever it is aimed rather than
+    # only on the floor.
+    collision_mask: terrain | static_obstacle | actor
+    action_graph: action_spawn_projectile_and_damage_self_at_collision
+    parameters:
+      template: rocket_explosion
+      position: event.position
+      direction: event.direction
+      source: self
+      self_damage: 1

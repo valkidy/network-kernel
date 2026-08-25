@@ -2956,6 +2956,19 @@ bool KernelEngine::load_gameplay_catalog(
                     action.damage_amount = trigger->damage_amount;
                     action.spawn_entity_template_id =
                         trigger->spawn_entity_template_id;
+                    // The projectile-side mirror has always carried this; this
+                    // one did not, because nothing here read it until the
+                    // SpawnProjectile branch below existed. The catalog loader
+                    // always sets action_count, so only hand-built ABI input
+                    // reaches this path -- which is exactly what the parity
+                    // test drives.
+                    action.spawn_projectile_template_id =
+                        trigger->spawn_projectile_template_id;
+                    // Same omission, found by the same test: the ApplyStatus /
+                    // RemoveStatus branch below reads this and the mirror never
+                    // set it, so a legacy-form status trigger was rejected for
+                    // having status id 0 rather than for anything it said.
+                    action.status_effect_id = trigger->status_effect_id;
                     action.position_source = trigger->position_source;
                     action.direction_source = trigger->direction_source;
                     action.owner_source = trigger->owner_source;
@@ -3064,6 +3077,26 @@ bool KernelEngine::load_gameplay_catalog(
                             KernelEventVec3Source_Position ||
                         action.owner_source >
                             KernelEntityRefSource_EventInstigator) {
+                        return false;
+                    }
+                    continue;
+                }
+                // Same three checks the projectile-trigger validator makes;
+                // entity-backed triggers accept this action too, and the
+                // catalog loader has always compiled it for them
+                // (gameplay_config.cc's entity trigger path). Missing here, the
+                // loader accepted a prop that spawns a projectile and the
+                // kernel then rejected the whole catalog -- which is a load
+                // failure for every template, not just the offending one. That
+                // is the third time these two tables have drifted apart; see
+                // entity_trigger_action_parity_test.
+                if (action.action_type ==
+                    KernelEntityTriggerActionType_SpawnProjectile) {
+                    if (action.spawn_projectile_template_id == 0u ||
+                        action.position_source !=
+                            KernelEventVec3Source_Position ||
+                        action.direction_source !=
+                            KernelEventVec3Source_Direction) {
                         return false;
                     }
                     continue;

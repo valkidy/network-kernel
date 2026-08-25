@@ -1,0 +1,25 @@
+# The projectile twin of action_spawn_ice_and_damage_self_at_collision: spawn
+# something at the contact point, then spend the thing that carried it there.
+# The self-damage is not flavour -- a prop that survives its own collision keeps
+# colliding, so without it one throw detonates on every tick it stays in
+# contact.
+#
+# Order matters. Damage is submitted to the pipeline rather than applied inline,
+# so the bottle is still alive when the projectile spawns either way, but
+# keeping spawn first matches the ice graph and reads in the order things
+# happen.
+id: action_spawn_projectile_and_damage_self_at_collision
+parameters:
+  template: null
+  position: null
+  direction: null
+  source: null
+  self_damage: 1
+actions:
+  - type: spawn_projectile
+    projectile_template: params.template
+    position: params.position
+    direction: params.direction
+  - type: apply_damage
+    target: params.source
+    amount: params.self_damage

@@ -1,35 +1,25 @@
-# Test vehicle: detonate a rocket_explosion where you are aiming.
-#
-# rocket_explosion is an authored area-effect projectile that already carries
-# the AoE damage and knockback graph (projectile_templates/rocket_explosion.yaml
-# -> action_rocket_explosion_at_target), so using this exercises the whole
-# area-effect path -- radius, falloff, apply_damage and apply_impulse --
-# without a line of engine code or a C++ test. See
-# docs/ACTION_GRAPH_TEST_BOTTLES.md.
-#
-# Why on_item_used rather than a thrown prop's on_collision, which would be the
-# more natural shape: the catalog loader accepts spawn_projectile on an entity
-# trigger, but the kernel's own entity-template validator has no branch for it
-# and rejects the entire catalog. That gap is written up in the doc. An item
-# trigger has no such restriction, which is why grenade_consumable can do this
-# and a prop cannot.
+# Inventory half of the test_bottle_blast vehicle. Identity-preserving throw,
+# so the prop that lands is this very item and its on_collision trigger is the
+# one that fires -- the same shape as test_bottle_spawn_enemy, which is the
+# point: both bottles now differ only in the graph they point at.
 id: 3006
 name: test_bottle_blast
-mode: fungible
-max_stack: 5
-capabilities: [throwable]
+mode: stateful
+max_stack: 1
+capabilities: [pickupable, throwable]
+entity_template: test_bottle_blast_prop
+world_interaction:
+  range: 3.0
+  line_of_sight_required: false
 throw:
-  mode: consume_and_spawn
+  mode: identity_preserving
+  trajectory_projectile: grenade_shell_projectile
 use:
-  quantity_cost: 1
-  cooldown_ticks: 15
-  destroy_when_empty: true
-triggers:
-  on_item_used:
-    # Reuses the shipped graph unchanged -- only `template` differs from
-    # grenade_consumable. This is the knob to point at your own graph.
-    action_graph: action_spawn_projectile_at_impact
-    parameters:
-      template: rocket_explosion
-      position: event.position
-      direction: event.direction
+  quantity_cost: 0
+  cooldown_ticks: 0
+  destroy_when_empty: false
+portable_state:
+  - id: hp
+    type: uint32
+    default: 1
+    world_projection: health_current
