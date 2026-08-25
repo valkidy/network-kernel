@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 80;
+        public const uint AbiVersion = 82;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int GameplayCatalogEntryPathSize = 128;
@@ -27,6 +27,9 @@ namespace NetworkExample.Kernel
         public const int MaxSkeletonColliders = 16;
         public const int MaxActionGraphActions = 8;
         public const int MaxPortableStateFields = 8;
+        public const uint MaxImpulseLockoutTicks = 300U;
+        public const uint ImpulseStrengthModeRadial = 0U;
+        public const uint ImpulseStrengthModeSplit = 1U;
         public const byte DebugWildcardU8 = 0xff;
 
         public const uint GameplayCatalogLoadStatusFailed = 0;
@@ -937,6 +940,9 @@ namespace NetworkExample.Kernel
         public byte reserved1;
         public ushort reserved2;
         public float modifier_value;
+        public uint impulse_lockout_ticks;
+        public uint impulse_strength_mode;
+        public float impulse_strength_vertical;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelActionDefinition>();
     }
@@ -969,6 +975,9 @@ namespace NetworkExample.Kernel
         public byte reserved1;
         public ushort reserved2;
         public float modifier_value;
+        public uint impulse_lockout_ticks;
+        public uint impulse_strength_mode;
+        public float impulse_strength_vertical;
 
         public static uint StructSize =>
             (uint)Marshal.SizeOf<KernelActionTriggerDefinition>();
