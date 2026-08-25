@@ -206,6 +206,16 @@ cc_test(
 )
 
 cc_test(
+    name = "agent_sentry_gravity_test",
+    srcs = ["agent_sentry_gravity_test.cc"],
+    data = ["//game_server/mesh_assets:cooked_mesh_assets"],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
     name = "agent_chaser_controller_test",
     srcs = ["agent_chaser_controller_test.cc"],
     deps = [
