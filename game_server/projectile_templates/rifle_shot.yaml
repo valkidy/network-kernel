@@ -16,8 +16,8 @@ damage_shape: direct_hit
 damage: 25
 # actor | limb: a rifle shot resolves against a rig's bones as well as its body,
 # which is what makes shooting a monster's leg mean anything. terrain and
-# obstacle keep walls stopping the shot.
-collision_mask: actor | limb | terrain | obstacle
+# static_obstacle keep walls stopping the shot.
+collision_mask: actor | limb | terrain | static_obstacle
 # Visual parameters for the tracer, not simulated: a hitscan shot has no travel
 # time. lifetime_ticks matches the 3 ticks the server keeps its own hitscan
 # segment alive.

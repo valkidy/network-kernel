@@ -5,6 +5,25 @@
 #include <stdint.h>
 
 /*
+ * 82: apply_impulse gained impulse_strength_mode and
+ *     impulse_strength_vertical, appended to both KernelActionDefinition and
+ *     KernelActionTriggerDefinition. RADIAL (zero) is the standing meaning of
+ *     impulse_strength -- normalize(direction) * strength -- so every catalog
+ *     authored before this is bit-identical. SPLIT reads the two numbers as
+ *     metres per second directly: horizontal scales the direction's X and Z,
+ *     and vertical is an absolute signed Y increment rather than a scale on
+ *     the direction's Y. It has to be absolute, because an area effect's
+ *     direction is radial from the blast and a level blast leaves Y at
+ *     roughly zero -- scaling it could never lift anything.
+ * 81: apply_impulse gained impulse_lockout_ticks, appended to both
+ *     KernelActionDefinition and KernelActionTriggerDefinition. It is the
+ *     number of ticks the impulse holds the target's movement input off its
+ *     own velocity, so a horizontal knockback survives the next input tick
+ *     instead of being overwritten by it. Zero keeps the old behaviour, so a
+ *     catalog that authors nothing is unchanged. KernelActionDefinition is
+ *     embedded as KernelActionTriggerDefinition::actions[], so growing it
+ *     shifts every trigger field after that array -- every managed mirror
+ *     must add the same field to BOTH structs or the layout skews.
  * 80: KernelAreaEffectMechanicsDefinition gained hit_instigator, appended.
  *     Zero keeps the standing rule that an area effect never reaches whoever
  *     fired it; one lets it through, which is what a self-knockback needs. The
@@ -48,7 +67,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 80u
+#define KERNEL_ABI_VERSION 82u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -604,6 +623,21 @@ typedef enum KernelActionConditionType {
 
 #define KERNEL_MAX_ACTION_GRAPH_ACTIONS 8
 
+/* Ceiling on apply_impulse's impulse_lockout_ticks. Ten seconds at the 30 Hz
+ * server tick -- far past any knockback, but low enough that a typo cannot
+ * hand an actor's movement away indefinitely. The catalog loader and the
+ * kernel validators both check against this one constant; they used to keep
+ * separate tables and drifted. */
+#define KERNEL_MAX_IMPULSE_LOCKOUT_TICKS 300u
+
+/* How apply_impulse reads impulse_strength / impulse_strength_vertical.
+ * RADIAL: the historical single-scalar form, delta = normalize(dir) * strength.
+ * SPLIT:  delta = {dir.x * horizontal, vertical, dir.z * horizontal}, both
+ *         numbers in metres per second. The two forms mean deliberately
+ *         different things; see the authoring guide. */
+#define KERNEL_IMPULSE_STRENGTH_MODE_RADIAL 0u
+#define KERNEL_IMPULSE_STRENGTH_MODE_SPLIT 1u
+
 typedef struct KernelActionDefinition {
     uint8_t action_type;
     uint8_t target_source;
@@ -626,6 +660,9 @@ typedef struct KernelActionDefinition {
     uint8_t reserved1;
     uint16_t reserved2;
     float modifier_value;
+    uint32_t impulse_lockout_ticks;
+    uint32_t impulse_strength_mode;
+    float impulse_strength_vertical;
 } KernelActionDefinition;
 
 typedef struct KernelActionTriggerDefinition {
@@ -655,6 +692,9 @@ typedef struct KernelActionTriggerDefinition {
     uint8_t reserved1;
     uint16_t reserved2;
     float modifier_value;
+    uint32_t impulse_lockout_ticks;
+    uint32_t impulse_strength_mode;
+    float impulse_strength_vertical;
 } KernelActionTriggerDefinition;
 
 typedef struct KernelStatusEffectDefinition {

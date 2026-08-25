@@ -1,6 +1,7 @@
 #include "game_server/gameplay_config.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
@@ -215,6 +216,9 @@ void hash_projectile_template(
             hash_scalar(hash, action.health_change_amount);
             hash_scalar(hash, action.impulse_strength);
             hash_scalar(hash, action.impulse_collision_mask);
+            hash_scalar(hash, action.impulse_lockout_ticks);
+            hash_scalar(hash, action.impulse_strength_mode);
+            hash_scalar(hash, action.impulse_strength_vertical);
             hash_scalar(hash, action.condition_type);
         }
     }
@@ -610,7 +614,7 @@ std::uint32_t collision_mask_token_from_yaml(const std::string& token) {
     if (token == "terrain") {
         return KERNEL_COLLISION_LAYER_TERRAIN;
     }
-    if (token == "obstacle" || token == "static_obstacle") {
+    if (token == "static_obstacle") {
         return KERNEL_COLLISION_LAYER_STATIC_OBSTACLE;
     }
     if (token == "prop") {
@@ -664,7 +668,7 @@ std::uint32_t movement_collision_layer_token_from_yaml(
     if (token == "terrain") {
         return KERNEL_MOVEMENT_LAYER_TERRAIN;
     }
-    if (token == "obstacle" || token == "static_obstacle") {
+    if (token == "static_obstacle") {
         return KERNEL_MOVEMENT_LAYER_STATIC_OBSTACLE;
     }
     if (token == "actor") {
@@ -899,6 +903,36 @@ std::optional<KernelVec3> optional_vec3_default_from_yaml(
         (value.x == 0.0f && value.y == 0.0f && value.z == 0.0f)) {
         throw std::runtime_error(
             "action graph parameters.direction must be a non-zero finite vec3: " +
+            path);
+    }
+    return value;
+}
+
+// The list form of parameters.strength: [horizontal, vertical], both read
+// straight as metres per second. Restricted to `strength` the same way the
+// vec3 default is restricted to `direction` -- a bare two-element list on any
+// other parameter is far more likely a typo than an intent.
+std::optional<std::array<float, 2>> optional_strength_pair_from_yaml(
+    const YAML::Node& node,
+    const std::string& parameter_name,
+    const std::string& path) {
+    if (!node || !node.IsSequence()) {
+        return std::nullopt;
+    }
+    if (parameter_name != "strength" || node.size() != 2u ||
+        !node[0].IsScalar() || !node[1].IsScalar()) {
+        throw std::runtime_error(
+            "action graph list default is only supported as parameters.strength [horizontal, vertical]: " +
+            path);
+    }
+    const std::array<float, 2> value{
+        node[0].as<float>(), node[1].as<float>()};
+    // A zero horizontal is legal -- that is a pure vertical launch. Zero on
+    // both axes is not: it authors an impulse that does nothing.
+    if (!std::isfinite(value[0]) || !std::isfinite(value[1]) ||
+        value[0] < 0.0f || (value[0] == 0.0f && value[1] == 0.0f)) {
+        throw std::runtime_error(
+            "action graph parameters.strength [horizontal, vertical] requires a non-negative finite horizontal and a non-zero pair: " +
             path);
     }
     return value;
@@ -1619,6 +1653,8 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
         const bool has_default = !entry.second.IsNull();
         const std::optional<KernelVec3> default_vec3 =
             optional_vec3_default_from_yaml(entry.second, name, path);
+        const std::optional<std::array<float, 2>> default_strength_pair =
+            optional_strength_pair_from_yaml(entry.second, name, path);
         graph.parameters.push_back(ActionGraphParameterConfig{
             name,
             has_default,
@@ -1628,6 +1664,7 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                        : std::string{})
                 : std::string{},
             default_vec3,
+            default_strength_pair,
         });
     }
     const YAML::Node actions = node["actions"];
@@ -1657,6 +1694,7 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 "operation",
                 "value",
                 "collision_mask",
+                "lockout_ticks",
                 "item_template",
                 "quantity",
                 "when",
@@ -1747,7 +1785,7 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 action["direction"] || action["entity_template"] ||
                 action["owner"] || action["item_template"] ||
                 action["quantity"] || action["strength"] ||
-                action["collision_mask"]) {
+                action["collision_mask"] || action["lockout_ticks"]) {
                 throw std::runtime_error(
                     compiled_action.action_type +
                     " action has unsupported fields: " + path);
@@ -1784,6 +1822,19 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                     "apply_impulse collision_mask must contain actor and/or prop: " +
                     path);
             }
+            // Authored on the action, not the target: a rocket and a shove
+            // want different hold times against the same actor.
+            if (action["lockout_ticks"]) {
+                compiled_action.lockout_ticks =
+                    action["lockout_ticks"].as<std::uint32_t>();
+                if (compiled_action.lockout_ticks >
+                    KERNEL_MAX_IMPULSE_LOCKOUT_TICKS) {
+                    throw std::runtime_error(
+                        "apply_impulse lockout_ticks must not exceed " +
+                        std::to_string(KERNEL_MAX_IMPULSE_LOCKOUT_TICKS) +
+                        ": " + path);
+                }
+            }
             action_parameters = {
                 &compiled_action.target_parameter,
                 &compiled_action.strength_parameter,
@@ -1795,7 +1846,8 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 action["direction"] || action["owner"] || action["amount"] ||
                 action["strength"] || action["operation"] || action["value"] ||
                 action["entity_template"] || action["item_template"] ||
-                action["quantity"] || action["collision_mask"]) {
+                action["quantity"] || action["collision_mask"] ||
+                action["lockout_ticks"]) {
                 throw std::runtime_error(
                     compiled_action.action_type +
                     " action has unsupported fields: " + path);
@@ -1813,7 +1865,8 @@ ActionGraphTemplateConfig action_graph_template_from_yaml(
                 action["direction"] || action["owner"] || action["amount"] ||
                 action["strength"] || action["status"] ||
                 action["entity_template"] || action["item_template"] ||
-                action["quantity"] || action["collision_mask"]) {
+                action["quantity"] || action["collision_mask"] ||
+                action["lockout_ticks"]) {
                 throw std::runtime_error(
                     "apply_speed_modifier action has unsupported fields: " +
                     path);
@@ -5459,6 +5512,45 @@ std::string trigger_parameter_value(
         "required action graph parameter is missing: " + parameter.name);
 }
 
+// Both trigger compilers -- projectile and entity -- resolve apply_impulse's
+// strength identically, and the two used to spell it out separately. A binding
+// that overrides the parameter always wins and is always the scalar form; only
+// an unoverridden [horizontal, vertical] default selects the split reading.
+void compile_impulse_strength(
+    const TriggerBindingConfig& binding,
+    const ActionGraphParameterConfig& strength_parameter,
+    KernelActionDefinition* compiled_action,
+    const char* diagnostic) {
+    const auto override_binding = std::find_if(
+        binding.parameters.begin(),
+        binding.parameters.end(),
+        [&](const auto& value) {
+            return value.first == strength_parameter.name;
+        });
+    if (override_binding == binding.parameters.end() &&
+        strength_parameter.default_strength_pair.has_value()) {
+        const std::array<float, 2>& pair =
+            *strength_parameter.default_strength_pair;
+        compiled_action->impulse_strength_mode =
+            KERNEL_IMPULSE_STRENGTH_MODE_SPLIT;
+        compiled_action->impulse_strength = pair[0];
+        compiled_action->impulse_strength_vertical = pair[1];
+        return;
+    }
+    const std::string strength =
+        trigger_parameter_value(binding, strength_parameter);
+    std::size_t parsed = 0;
+    const float parsed_strength = std::stof(strength, &parsed);
+    if (parsed != strength.size() || !std::isfinite(parsed_strength) ||
+        parsed_strength <= 0.0f) {
+        throw std::runtime_error(diagnostic);
+    }
+    compiled_action->impulse_strength_mode =
+        KERNEL_IMPULSE_STRENGTH_MODE_RADIAL;
+    compiled_action->impulse_strength = parsed_strength;
+    compiled_action->impulse_strength_vertical = 0.0f;
+}
+
 bool event_expression_available(
     std::string_view trigger_name,
     std::string_view expression) {
@@ -5522,7 +5614,8 @@ void validate_trigger_parameters(
         }
     }
     for (const ActionGraphParameterConfig& parameter : graph.parameters) {
-        if (parameter.default_vec3.has_value() &&
+        if ((parameter.default_vec3.has_value() ||
+             parameter.default_strength_pair.has_value()) &&
             std::none_of(
                 binding.parameters.begin(),
                 binding.parameters.end(),
@@ -5557,6 +5650,9 @@ void mirror_first_action(KernelActionTriggerDefinition* trigger) {
     trigger->impulse_strength = action.impulse_strength;
     trigger->impulse_collision_mask = action.impulse_collision_mask;
     trigger->impulse_direction = action.impulse_direction;
+    trigger->impulse_lockout_ticks = action.impulse_lockout_ticks;
+    trigger->impulse_strength_mode = action.impulse_strength_mode;
+    trigger->impulse_strength_vertical = action.impulse_strength_vertical;
     trigger->status_effect_id = action.status_effect_id;
     trigger->modifier_operation = action.modifier_operation;
     trigger->modifier_value = action.modifier_value;
@@ -5618,8 +5714,11 @@ void compile_projectile_trigger_binding(
                 binding, graph_parameter(action.target_parameter));
             compiled_action.target_source = entity_ref_source(target);
             if (action.action_type == "apply_impulse") {
-                const std::string strength = trigger_parameter_value(
-                    binding, graph_parameter(action.strength_parameter));
+                compile_impulse_strength(
+                    binding,
+                    graph_parameter(action.strength_parameter),
+                    &compiled_action,
+                    "apply_impulse projectile trigger requires positive strength");
                 const ActionGraphParameterConfig& direction_parameter =
                     graph_parameter(action.direction_parameter);
                 const auto direction_binding = std::find_if(
@@ -5628,13 +5727,6 @@ void compile_projectile_trigger_binding(
                     [&](const auto& value) {
                         return value.first == direction_parameter.name;
                     });
-                std::size_t parsed = 0;
-                const float parsed_strength = std::stof(strength, &parsed);
-                if (parsed != strength.size() ||
-                    !std::isfinite(parsed_strength) || parsed_strength <= 0.0f) {
-                    throw std::runtime_error(
-                        "apply_impulse projectile trigger requires positive strength");
-                }
                 compiled_action.action_type =
                     KernelEntityTriggerActionType_ApplyImpulse;
                 if (direction_binding == binding.parameters.end() &&
@@ -5653,8 +5745,8 @@ void compile_projectile_trigger_binding(
                     compiled_action.direction_source =
                         KernelEventVec3Source_Direction;
                 }
-                compiled_action.impulse_strength = parsed_strength;
                 compiled_action.impulse_collision_mask = action.collision_mask;
+                compiled_action.impulse_lockout_ticks = action.lockout_ticks;
             } else {
                 const std::string amount = trigger_parameter_value(
                     binding, graph_parameter(action.amount_parameter));
@@ -5883,8 +5975,11 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
         if (action.action_type == "apply_impulse") {
             const std::string target = trigger_parameter_value(
                 binding, graph_parameter(action.target_parameter));
-            const std::string strength = trigger_parameter_value(
-                binding, graph_parameter(action.strength_parameter));
+            compile_impulse_strength(
+                binding,
+                graph_parameter(action.strength_parameter),
+                &compiled_action,
+                "apply_impulse strength must be a positive finite float");
             const ActionGraphParameterConfig& direction_parameter =
                 graph_parameter(action.direction_parameter);
             const auto direction_binding = std::find_if(
@@ -5893,13 +5988,6 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
                 [&](const auto& value) {
                     return value.first == direction_parameter.name;
                 });
-            std::size_t parsed = 0;
-            const float parsed_strength = std::stof(strength, &parsed);
-            if (parsed != strength.size() || !std::isfinite(parsed_strength) ||
-                parsed_strength <= 0.0f) {
-                throw std::runtime_error(
-                    "apply_impulse strength must be a positive finite float");
-            }
             compiled_action.action_type =
                 KernelEntityTriggerActionType_ApplyImpulse;
             compiled_action.target_source = entity_ref_source(target);
@@ -5919,8 +6007,8 @@ KernelActionTriggerDefinition compile_action_trigger_binding(
                 compiled_action.direction_source =
                     KernelEventVec3Source_Direction;
             }
-            compiled_action.impulse_strength = parsed_strength;
             compiled_action.impulse_collision_mask = action.collision_mask;
+            compiled_action.impulse_lockout_ticks = action.lockout_ticks;
             continue;
         }
         if (action.action_type == "apply_status" ||
@@ -6424,7 +6512,8 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     // an older kernel with a bare field error instead of a version one.
     if (catalog_version != 8u && catalog_version != 9u &&
         catalog_version != 10u && catalog_version != 11u &&
-        catalog_version != 12u && catalog_version != 13u) {
+        catalog_version != 12u && catalog_version != 13u &&
+        catalog_version != 14u && catalog_version != 15u) {
         throw DataLoadError(
             KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNSUPPORTED_CATALOG_VERSION,
             "unsupported catalog_version: " + std::to_string(catalog_version),
@@ -6770,6 +6859,11 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_string(&hash, parameter.name);
             hash_scalar(&hash, parameter.has_default);
             hash_string(&hash, parameter.default_value);
+            hash_scalar(&hash, parameter.default_strength_pair.has_value());
+            if (parameter.default_strength_pair.has_value()) {
+                hash_scalar(&hash, (*parameter.default_strength_pair)[0]);
+                hash_scalar(&hash, (*parameter.default_strength_pair)[1]);
+            }
             hash_scalar(&hash, parameter.default_vec3.has_value());
             if (parameter.default_vec3.has_value()) {
                 hash_scalar(&hash, parameter.default_vec3->x);
@@ -6791,6 +6885,7 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_string(&hash, action.operation_parameter);
             hash_string(&hash, action.value_parameter);
             hash_scalar(&hash, action.collision_mask);
+            hash_scalar(&hash, action.lockout_ticks);
             hash_string(&hash, action.item_template_ref);
             hash_scalar(&hash, action.quantity);
             hash_scalar(&hash, action.condition_type);

@@ -4,7 +4,7 @@ This document records the major features delivered since the repository was
 created. It is a chronological development history, not a list of planned
 milestones.
 
-- **Covered period:** 2026-05-05 to 2026-07-23
+- **Covered period:** 2026-05-05 to 2026-08-24
 - **Source of truth:** Git history on the current branch
 - **Selection rule:** Functional, architecture, platform, and integration
   milestones are included. Routine fixes and small tuning changes are omitted
@@ -41,11 +41,21 @@ milestones.
 | 2026-07-16 | Character physics and local prediction | Added grounding, kinematic bodies, Jolt `CharacterVirtual`, actor-blocking filters, and local character prediction. | `6530bcc`, `f093c85` |
 | 2026-07-17 | Static worlds and deterministic projectile collision | Added gameplay-catalog-controlled static collision loading, ABI v43 load options, fixed-tick input guards, local predicted deterministic projectile collision, terrain grounding, and the grenade launcher. | `3556738`, `a1b176a`, `407e0c1`, `929eada`, `bab7a8c` |
 | 2026-07-18 – 2026-07-23 | Session and presentation resilience | Preserved client sessions across relevance tombstones, corrected projectile expiry semantics, made predicted render smoothing time-based, separated the local presentation cursor, and reliably merged local actor metadata into predicted render states. | `118b5c3`, `4dc8d9f`, `24def2e`, `8f86e39`, `0515cee` |
+| 2026-07-26 | Triggered action graphs | Added queued trigger-event dispatch, projectile-impact and prop-collision triggers, health-depleted and destroy-entity triggers, generic entity spawning, and multi-action authoring contracts. | `c84b66f`, `a9f5ffd`, `4691a54`, `d2e8056`, `0727b8b`, `028c227` |
+| 2026-07-29 – 2026-07-31 | Items, props, and transactional gameplay | Delivered the unified Item/Prop system with semantic requests, replication, item-backed action graphs, inventory templates, health/world-impact updates, thrown-prop ballistics, dormancy, and deterministic prop lifetime management. | `9cf261e`, `2f7f5d4`, `f5dafa4`, `ce9eea8`, `cb84492`, `6b62072` |
+| 2026-08-01 – 2026-08-08 | Native locomotion and Unity skeleton presentation | Added skeleton and bind-pose presentation, deterministic legged locomotion with foothold grounding and IK, Unity actor/prefab binding, replicated locomotion steps, client-side leg reconstruction, locomotion capture tooling, and authored biped/quadruped/tripod templates. | `bd2cf3c`, `d62c262`, `af68626`, `1192c10`, `404fcb2`, `a56f8f6`, `6ab0f89` |
+| 2026-08-09 – 2026-08-11 | Runtime packaging and locomotion robustness | Made gameplay bundle caching reproducible and digest-keyed, aligned movement collision masks, fixed Jolt broad-phase refresh leaks, and corrected `CharacterVirtual` actor collision coverage. | `db08f43`, `898dfb8`, `36b3e78`, `cb7cf39` |
+| 2026-08-13 – 2026-08-14 | Impulse actions and status effects | Added terrain-safe predicted `apply_impulse`, server-authoritative status-effect action graphs, channel replacement and speed modifiers, authoritative apply presentation events, transactional stack/refresh lifecycle sync, and bounded deduplication. | `8c7faa9`, `48894b9`, `45c3639`, `be06ac6`, `c192368`, `95e59bd` |
+| 2026-08-16 – 2026-08-17 | Game rules, ballistic AI, and limb collision | Added the server-only game-rule director with spawn groups and lifecycle tracking, player-gated flow, ballistic grenade-sentry aiming, chaser AI, and catalog-driven per-bone limb colliders rebuilt on clients. | `cf9e2a3`, `3d11d0f`, `5b2e1f8`, `5ffc78a`, `4cf5645`, `1b34a0e` |
+| 2026-08-18 – 2026-08-20 | Beam weapons and scalable rig collision | Added data-driven beam weapons with swept-volume collision, endpoint replication, deployable-side damage rules, query benchmarking, and compact beam snapshots; made limb colliders an authorable movement layer and included followed rigs in client prediction. | `32c8b25`, `c91da7a`, `70a3c16`, `5a9d4c2`, `dede2b7`, `39900b4`, `30d6ae1` |
+| 2026-08-21 – 2026-08-24 | Limb-aware combat and unified presentation | Added opt-in rewound limb hits, per-bone hit zones and damage multipliers, oriented-volume rewind, weapon-selected limb targeting, listen-server rendering through its client half, Unity package 0.7.0 with ABI 79, single-source weapon authoring, and area-effect impulse synchronization fixes. | `3524d81`, `135c386`, `3aa94e3`, `242e527`, `7c1e9a3`, `24f3784`, `e6b6424`, `d35db3d` |
 
 ## Current State
 
-As of 2026-07-23, the repository provides a server-authoritative multiplayer
+As of 2026-08-24, the repository provides a server-authoritative multiplayer
 kernel with dedicated-server and listen-host modes, real network transport,
 prediction and interpolation, data-driven gameplay catalogs, authoritative
-weapons and projectiles, ECS/director AI, Jolt-based character and world
-collision, native control-plane APIs, and Unity-facing native plugin packaging.
+weapons, projectiles, beams, items, and props, triggered action graphs, status
+effects, ECS/director AI, native legged locomotion and skeleton presentation,
+rewound limb-aware collision, Jolt-based character and world collision, native
+control-plane APIs, and Unity-facing native plugin packaging through ABI 79.

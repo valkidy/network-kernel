@@ -99,7 +99,7 @@ void write_valid_templates(const std::filesystem::path& dir) {
         "collider_template: rifle_segment\n"
         "movement_model: linear\nsync_mode: local_predicted_deterministic\n"
         "hit_response: destroy\ndamage_shape: direct_hit\ndamage: 25\n"
-        "collision_mask: actor | limb | terrain | obstacle\n"
+        "collision_mask: actor | limb | terrain | static_obstacle\n"
         "speed: 200.0\nlifetime_ticks: 3\nmax_hit_count: 1\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
     write_file(
@@ -108,7 +108,7 @@ void write_valid_templates(const std::filesystem::path& dir) {
         "collider_template: shotgun_segment\n"
         "movement_model: linear\nsync_mode: local_predicted_deterministic\n"
         "hit_response: destroy\ndamage_shape: direct_hit\ndamage: 10\n"
-        "collision_mask: actor | terrain | obstacle\n"
+        "collision_mask: actor | terrain | static_obstacle\n"
         "speed: 200.0\nlifetime_ticks: 3\nmax_hit_count: 1\n"
         "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
     write_file(

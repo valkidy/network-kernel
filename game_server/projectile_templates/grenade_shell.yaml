@@ -8,7 +8,7 @@ hit_response: destroy
 damage_shape: none
 speed: 24.0
 lifetime_ticks: 180
-collision_mask: damageable | terrain | obstacle
+collision_mask: damageable | terrain | static_obstacle
 max_hit_count: 1
 gravity:
   x: 0.0

@@ -486,7 +486,7 @@ bool filter_accepts(
     // a query that names no category is constrained only by layer and kind.
     //
     // Without the second half, a projectile authored to hit the world rather
-    // than a side (collision_mask terrain|obstacle) ends up with an empty
+    // than a side (collision_mask terrain|static_obstacle) ends up with an empty
     // gameplay_category_mask, because collision_filter_from_mask only forwards
     // ACTOR bits into it. Such a query could then reach terrain, whose category
     // is zero, but passed straight through any prop that declared one -- so

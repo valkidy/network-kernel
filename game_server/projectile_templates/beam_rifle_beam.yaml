@@ -10,7 +10,7 @@ damage_shape: direct_hit
 damage: 1
 speed: 0.0
 lifetime_ticks: 0
-collision_mask: hostile_side | terrain | obstacle
+collision_mask: hostile_side | terrain | static_obstacle
 max_hit_count: 1
 gravity: {x: 0.0, y: 0.0, z: 0.0}
 beam:

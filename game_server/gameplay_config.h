@@ -276,6 +276,10 @@ struct ActionGraphParameterConfig {
     bool has_default = false;
     std::string default_value;
     std::optional<KernelVec3> default_vec3;
+    // parameters.strength authored as [horizontal, vertical]. Present only for
+    // the list form; the scalar form leaves this empty and keeps meaning what
+    // it always meant.
+    std::optional<std::array<float, 2>> default_strength_pair;
 };
 
 struct ActionGraphActionConfig {
@@ -292,6 +296,7 @@ struct ActionGraphActionConfig {
     std::string operation_parameter;
     std::string value_parameter;
     std::uint32_t collision_mask = KERNEL_COLLISION_MASK_ACTOR;
+    std::uint32_t lockout_ticks = 0;
     std::string item_template_ref;
     std::uint32_t quantity = 0;
     std::uint32_t condition_type = KernelActionConditionType_Always;

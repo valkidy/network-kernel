@@ -1214,7 +1214,7 @@ int main() {
     assert(
         config.static_collision_scene.collision_layer ==
         KERNEL_STATIC_COLLISION_LAYER_TERRAIN);
-    require(config.weapons.catalog_version == 13);
+    require(config.weapons.catalog_version == 15);
     require(config.prop_population_rules.size() == 1u);
     require(config.prop_population_rules[0].name == "temporary_deployable");
     require(
@@ -2456,6 +2456,131 @@ int main() {
             0.0f);
     require(impulse_entity->collision_trigger.actions[0].impulse_direction.z ==
             0.0f);
+    // The scalar form is the radial one, and the two fields appended after it
+    // are inert on an action that authors neither.
+    require(impulse_entity->collision_trigger.actions[0].impulse_strength_mode ==
+            KERNEL_IMPULSE_STRENGTH_MODE_RADIAL);
+    require(impulse_entity->collision_trigger.actions[0]
+                .impulse_strength_vertical == 0.0f);
+    require(impulse_entity->collision_trigger.actions[0]
+                .impulse_lockout_ticks == 0u);
+
+    // The list form of strength, and the lockout, both authored on the action.
+    // This is the loader half of the pair: the runtime half lives in
+    // //engine/src/tests/simulation_tests:impulse_strength_test and
+    // :impulse_lockout_test.
+    const std::string split_impulse_graph =
+        "id: action_split_impulse_test\n"
+        "parameters:\n"
+        "  target: null\n"
+        "  strength: [8.0, 4.0]\n"
+        "  direction: {x: 1.0, y: 0.0, z: 0.0}\n"
+        "actions:\n"
+        "  - type: apply_impulse\n"
+        "    target: params.target\n"
+        "    strength: params.strength\n"
+        "    direction: params.direction\n"
+        "    lockout_ticks: 20\n";
+    const std::string split_impulse_prop =
+        "id: 303\n"
+        "name: split_impulse_prop\n"
+        "entity_type: prop\n"
+        "health:\n"
+        "  hp: 3\n"
+        "  max_hp: 3\n"
+        "physics:\n"
+        "  collider_template: rocket_aabb\n"
+        "triggers:\n"
+        "  on_collision:\n"
+        "    action_graph: action_split_impulse_test\n"
+        "    collision_mask: actor\n"
+        "    parameters:\n"
+        "      target: event.target\n";
+    const auto split_impulse_bundle = make_gameplay_bundle_zip(
+        read_text_file("game_server/entity_templates/sentry_grunt.yaml"),
+        {{"action_graph_templates/action_split_impulse_test.yaml",
+          split_impulse_graph},
+         {"entity_templates/split_impulse_prop.yaml", split_impulse_prop}});
+    const auto split_impulse_catalog =
+        network_example::game_server::build_kernel_gameplay_catalog(
+            network_example::game_server::load_gameplay_config_from_bundle_memory(
+                split_impulse_bundle.data(),
+                static_cast<std::uint32_t>(split_impulse_bundle.size()),
+                "gameplay_catalog.yaml"));
+    const auto split_impulse_entity = std::find_if(
+        split_impulse_catalog.entity_templates.begin(),
+        split_impulse_catalog.entity_templates.end(),
+        [](const auto& entity) { return entity.entity_template_id == 303u; });
+    require(split_impulse_entity != split_impulse_catalog.entity_templates.end());
+    const KernelActionDefinition& split_action =
+        split_impulse_entity->collision_trigger.actions[0];
+    require(split_action.action_type ==
+            KernelEntityTriggerActionType_ApplyImpulse);
+    require(split_action.impulse_strength_mode ==
+            KERNEL_IMPULSE_STRENGTH_MODE_SPLIT);
+    require(split_action.impulse_strength == 8.0f);
+    require(split_action.impulse_strength_vertical == 4.0f);
+    require(split_action.impulse_lockout_ticks == 20u);
+
+    // A lockout past the ceiling is a typo, not an intent, and the loader is
+    // the half that has a file path to name.
+    bool oversized_lockout_rejected = false;
+    try {
+        const std::string oversized_graph =
+            "id: action_split_impulse_test\n"
+            "parameters:\n"
+            "  target: null\n"
+            "  strength: [8.0, 4.0]\n"
+            "  direction: {x: 1.0, y: 0.0, z: 0.0}\n"
+            "actions:\n"
+            "  - type: apply_impulse\n"
+            "    target: params.target\n"
+            "    strength: params.strength\n"
+            "    direction: params.direction\n"
+            "    lockout_ticks: 100000\n";
+        const auto oversized_bundle = make_gameplay_bundle_zip(
+            read_text_file("game_server/entity_templates/sentry_grunt.yaml"),
+            {{"action_graph_templates/action_split_impulse_test.yaml",
+              oversized_graph},
+             {"entity_templates/split_impulse_prop.yaml", split_impulse_prop}});
+        (void)network_example::game_server::load_gameplay_config_from_bundle_memory(
+            oversized_bundle.data(),
+            static_cast<std::uint32_t>(oversized_bundle.size()),
+            "gameplay_catalog.yaml");
+    } catch (const std::exception& error) {
+        oversized_lockout_rejected =
+            std::string(error.what()).find("lockout_ticks") != std::string::npos;
+    }
+    require(oversized_lockout_rejected);
+
+    // Both axes zero is an impulse that does nothing; the pair form says so.
+    bool empty_pair_rejected = false;
+    try {
+        const std::string empty_graph =
+            "id: action_split_impulse_test\n"
+            "parameters:\n"
+            "  target: null\n"
+            "  strength: [0.0, 0.0]\n"
+            "  direction: {x: 1.0, y: 0.0, z: 0.0}\n"
+            "actions:\n"
+            "  - type: apply_impulse\n"
+            "    target: params.target\n"
+            "    strength: params.strength\n"
+            "    direction: params.direction\n";
+        const auto empty_bundle = make_gameplay_bundle_zip(
+            read_text_file("game_server/entity_templates/sentry_grunt.yaml"),
+            {{"action_graph_templates/action_split_impulse_test.yaml",
+              empty_graph},
+             {"entity_templates/split_impulse_prop.yaml", split_impulse_prop}});
+        (void)network_example::game_server::load_gameplay_config_from_bundle_memory(
+            empty_bundle.data(),
+            static_cast<std::uint32_t>(empty_bundle.size()),
+            "gameplay_catalog.yaml");
+    } catch (const std::exception& error) {
+        empty_pair_rejected =
+            std::string(error.what()).find("non-zero pair") != std::string::npos;
+    }
+    require(empty_pair_rejected);
 
     const std::vector<std::uint8_t> gameplay_bundle = make_gameplay_bundle_zip();
     const network_example::game_server::GameServerGameplayConfig bundle_config =
@@ -2491,7 +2616,7 @@ int main() {
         "  collider_template: rocket_aabb\n"
         "triggers:\n"
         "  on_collision:\n"
-        "    collision_mask: actor | terrain | obstacle\n"
+        "    collision_mask: actor | terrain | static_obstacle\n"
         "    action_graph: action_apply_health_change\n"
         "    parameters:\n"
         "      target: event.target\n"
