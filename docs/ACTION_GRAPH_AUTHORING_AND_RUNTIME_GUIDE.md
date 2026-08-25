@@ -263,7 +263,10 @@ entity_type: prop
 impulse_resistance: 15.0   # 有效強度 <= 15.0 的 impulse 完全推不動
 ```
 
-目前 repo 內沒有任何 template author 這個欄位，等同全部使用預設值 0。
+目前只有 `ice_block.yaml` author 了這個欄位（`15.0`），其餘 template 一律使用預設
+值 0。這個數字的實際效果值得記住：`action_rocket_explosion_at_target` 的
+`strength: [12.0, 5.0]` 有效強度是 `max(12, 5) = 12`，低於 15，所以火箭的爆風推不動
+冰塊——這是刻意的，掩體不該被一發火箭吹走。
 
 Authoring 注意：
 
