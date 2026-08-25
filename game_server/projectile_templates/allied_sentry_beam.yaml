@@ -1,0 +1,42 @@
+# Player-side twin of beam_sentry_beam. Identical geometry and damage; the only
+# difference that matters is which side the mask names.
+#
+# It has to be its own template for the same two reasons beam_sentry_beam is its
+# own template rather than sharing the player's:
+#
+# 1. collision_mask is an absolute category, not one relative to the shooter.
+#    `hostile_side` here is what stops this beam from sweeping the player and
+#    the player's other allies -- it is the same mask beam_rifle_beam carries,
+#    because this sentry is on the player's side and shoots at what the player
+#    shoots at.
+# 2. apply_weapon_template_references stamps `weapon_id` onto the projectile
+#    template it resolves (gameplay_config.cc:6297), so a projectile template
+#    belongs to exactly one weapon. Sharing beam_sentry_beam is not available
+#    even if the mask were right.
+#
+# The collider is shared with the enemy sentry on purpose: beam_sentry_beam_box
+# is `layer: projectile` and carries only the beam's reach, which is the same
+# 14 m against the same 12 m vision cone.
+id: 12
+name: allied_sentry_beam
+type: beam
+sync_mode: server_snapshot_only
+collider_template: beam_sentry_beam_box
+movement_model: linear
+hit_response: destroy
+damage_shape: direct_hit
+# Read as damage per tick while the beam is up.
+damage: 2
+speed: 0.0
+lifetime_ticks: 0
+collision_mask: hostile_side | terrain | static_obstacle
+max_hit_count: 1
+gravity: {x: 0.0, y: 0.0, z: 0.0}
+beam:
+  # Documented here, decided in beam_sentry_beam_box.yaml.
+  length: 14.0
+  radius: 0.3
+  # Two ticks of grace against a one-tick commit interval, matching
+  # beam_sentry_fire's cadence -- the beam survives to the tick that refreshes
+  # it and expires two ticks after the sentry stops.
+  lifetime_ticks: 2
