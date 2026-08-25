@@ -266,6 +266,12 @@ cc_test(
     deps = ["//engine/src/kernel:kernel"],
 )
 
+cc_binary(
+    name = "snapshot_bandwidth_benchmark",
+    srcs = ["snapshot_bandwidth_benchmark.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
 cc_test(
     name = "movement_collision_mask_test",
     srcs = ["movement_collision_mask_test.cc"],
