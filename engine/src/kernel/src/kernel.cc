@@ -1356,6 +1356,8 @@ RuntimeProjectileTemplate to_runtime_projectile_template(
     }
     projectile_template.area_hit_instigator =
         mechanics.area_effect.hit_instigator != 0u;
+    projectile_template.area_motion_collision_mask =
+        mechanics.area_effect.motion_collision_mask;
     projectile_template.beam_length = mechanics.beam.length;
     projectile_template.beam_radius = mechanics.beam.radius;
     if (projectile_template.has_collision_geometry &&
@@ -1498,7 +1500,13 @@ bool validate_area_effect_mechanics(
            area_effect.lifetime_ticks > 0 &&
            (area_effect.collision_mask &
             ~(KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_MASK_PROP)) == 0u &&
-           area_effect.hit_instigator <= 1u;
+           area_effect.hit_instigator <= 1u &&
+           // Only the static world can stop a travelling field. Actors and
+           // props are what it affects, which collision_mask above already
+           // says, and letting those bits in here would read as a second,
+           // contradictory answer to that question.
+           (area_effect.motion_collision_mask &
+            ~KERNEL_COLLISION_MASK_STATIC_WORLD) == 0u;
 }
 
 bool validate_beam_mechanics(const KernelBeamMechanicsDefinition& beam) {
@@ -9349,6 +9357,31 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
                         }
                         projectile.position = hits.front().position;
                         projectile.velocity = glm::vec3{0.0f, 0.0f, 0.0f};
+                        // An area effect that meets the world is parked by the
+                        // authority, not destroyed by it -- simulate_area_effects
+                        // still owns when it ends -- so terminating it here
+                        // would blink out a field the next snapshot still has.
+                        // Zeroing initial_velocity parks it the same way the
+                        // authority does.
+                        if (projectile_template->mechanics.projectile_type ==
+                            KernelProjectileType_AreaEffect) {
+                            // And only if the template said the world stops
+                            // it. One that did not is advanced straight
+                            // through terrain by the authority, so parking it
+                            // here would invent a stop no snapshot agrees
+                            // with.
+                            if (projectile_template->mechanics.area_effect
+                                    .motion_collision_mask == 0u) {
+                                projectile.position = next_position;
+                                projectile.velocity = next_velocity;
+                                continue;
+                            }
+                            projectile.spawn_position = projectile.position;
+                            projectile.initial_velocity =
+                                glm::vec3{0.0f, 0.0f, 0.0f};
+                            projectile.age_ticks = 0;
+                            continue;
+                        }
                         projectile.locally_terminated = true;
                         continue;
                     }

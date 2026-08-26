@@ -222,9 +222,24 @@ damage_behavior:
   falloff: none
 ```
 
-**It passes through terrain.** A travelling area effect is advanced but not
-swept against the world, so it will cross walls and floors. Author one only
-where that reads as intended until a swept query is added.
+`motion_collision_mask` is what stops it. It is a separate mask from
+`collision_mask` on purpose: `collision_mask` says *who the field affects*,
+this one says *what stops the field*, and only static-world bits (`terrain`,
+`static_obstacle`) are accepted. Absent, the default, means nothing stops it —
+the field crosses walls, and **no swept query is run for it at all**, so a
+template that does not need this does not pay for it.
+
+```yaml
+type: area_effect
+speed: 6.0
+motion_collision_mask: terrain | static_obstacle
+```
+
+On contact the field **stops at the contact point and keeps working from
+there** for the rest of its lifetime; it is not destroyed. Its expiry still
+belongs to `lifetime_ticks`. Authoring `motion_collision_mask` on a template
+with no `speed`, on a non-area-effect type, or with actor/prop bits in it is
+rejected at load.
 
 `hit_instigator` (default `false`) is accepted here and rejected everywhere
 else. An area effect normally filters the actor that fired it out of its overlap

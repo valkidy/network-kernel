@@ -122,6 +122,7 @@ bool spawn_projectile_from_template(
                 projectile_template.collision_mask,
                 projectile_template.damage_falloff,
                 projectile_template.area_hit_instigator,
+                projectile_template.area_motion_collision_mask,
                 {},
                 projectile_template.projectile_impact_binding,
             });
@@ -1303,6 +1304,39 @@ void simulate_projectiles(
                 projectile.gravity,
                 next_age_duration);
             projectile.age_ticks = next_age_ticks;
+        }
+
+        // A travelling field is swept against the world only if it authored
+        // something that stops it. That mask is zero unless asked for, so a
+        // field that is happy to cross walls -- and every field that does not
+        // move at all, which never reaches this line -- runs no query here.
+        if (auto* area_effect =
+                world.registry().try_get<ProjectileAreaEffectRuntime>(entity);
+            area_effect != nullptr &&
+            area_effect->motion_collision_mask != 0u &&
+            world.collision_world() != nullptr) {
+            physics::CollisionQueryFilter filter =
+                collision_filter_from_mask(area_effect->motion_collision_mask);
+            const std::vector<physics::CollisionHit> hits =
+                query_projectile_collision_hits(
+                    *world.collision_world(),
+                    projectile,
+                    projectile.previous_position,
+                    transform.position,
+                    filter);
+            if (!hits.empty()) {
+                // It stops where it met the wall and keeps working from there
+                // for the rest of its lifetime, rather than being destroyed:
+                // an area effect's expiry belongs to simulate_area_effects, and
+                // there is no impact trigger on this path to announce anything
+                // else. Zeroing initial_velocity is what parks it -- the gate
+                // above reads that, so from now on this entity skips the whole
+                // block, sweep included.
+                transform.position = hits.front().position;
+                projectile.spawn_position = transform.position;
+                projectile.initial_velocity = glm::vec3{0.0f};
+                velocity.linear = glm::vec3{0.0f};
+            }
         }
     }
 

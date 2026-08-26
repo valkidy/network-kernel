@@ -195,6 +195,7 @@ void hash_projectile_template(
     hash_scalar(hash, mechanics.area_effect.lifetime_ticks);
     hash_scalar(hash, mechanics.area_effect.collision_mask);
     hash_scalar(hash, mechanics.area_effect.hit_instigator);
+    hash_scalar(hash, mechanics.area_effect.motion_collision_mask);
     hash_float(hash, mechanics.beam.length);
     hash_float(hash, mechanics.beam.radius);
     hash_scalar(hash, mechanics.beam.damage_per_tick);
@@ -5219,6 +5220,7 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             "damage_behavior",
             "collision_mask",
             "hit_instigator",
+            "motion_collision_mask",
             "max_hit_count",
             "gravity",
             "triggers",
@@ -5389,6 +5391,21 @@ ProjectileTemplateConfig projectile_template_from_yaml(
         mechanics.area_effect.lifetime_ticks =
             node["lifetime_ticks"].as<std::uint32_t>();
         mechanics.area_effect.collision_mask = mechanics.collision_mask;
+        // What stops the effect as it travels, as opposed to collision_mask
+        // above, which is who it affects. Absent means nothing stops it: it
+        // crosses walls, and no swept query is run for it at all.
+        mechanics.area_effect.motion_collision_mask = collision_mask_from_yaml(
+            node["motion_collision_mask"], KERNEL_COLLISION_MASK_NONE);
+        require_supported_collision_mask(
+            mechanics.area_effect.motion_collision_mask,
+            KERNEL_COLLISION_MASK_STATIC_WORLD,
+            "area_effect motion_collision_mask " + projectile_template.name);
+        if (mechanics.area_effect.motion_collision_mask != 0u &&
+            mechanics.speed <= 0.0f) {
+            throw std::runtime_error(
+                "motion_collision_mask needs an area_effect that travels: " +
+                projectile_template.name);
+        }
         // Off unless authored: an area effect that reaches its own shooter also
         // damages them, so it has to be asked for rather than inherited.
         mechanics.area_effect.hit_instigator = static_cast<std::uint8_t>(
@@ -5396,6 +5413,14 @@ ProjectileTemplateConfig projectile_template_from_yaml(
         return projectile_template;
     }
 
+    if (node["motion_collision_mask"]) {
+        // Every other projectile type already answers "what stops me" with its
+        // own collision_mask. Only an area effect needs the two questions kept
+        // apart, because its collision_mask is spoken for.
+        throw std::runtime_error(
+            "motion_collision_mask is only supported on area_effect projectiles: " +
+            projectile_template.name);
+    }
     if (node["hit_instigator"]) {
         // Only the area effect query is authored here. A standard projectile or
         // a beam filters its shooter out somewhere else entirely, so accepting

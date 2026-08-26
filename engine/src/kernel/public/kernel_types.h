@@ -5,6 +5,11 @@
 #include <stdint.h>
 
 /*
+ * 84: KernelAreaEffectMechanicsDefinition gained motion_collision_mask,
+ *     appended. Zero, the default, is the standing behaviour: a travelling
+ *     area effect is never swept against the world and so passes through it.
+ *     Naming terrain or static obstacle bits is what buys the sweep, and with
+ *     it the per-tick cost, so nothing that does not ask for it pays.
  * 83: KernelEventVec3Source gained SubjectDirection, the direction the entity
  *     the event happened to is travelling. It is frozen into the event the way
  *     every other event vec3 is, rather than read off a live entity, so a
@@ -72,7 +77,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 83u
+#define KERNEL_ABI_VERSION 84u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -1427,6 +1432,12 @@ typedef struct KernelAreaEffectMechanicsDefinition {
     uint8_t hit_instigator;
     uint8_t reserved1;
     uint16_t reserved2;
+    /* What stops this effect as it travels, as KERNEL_COLLISION_LAYER_TERRAIN
+     * and KERNEL_COLLISION_LAYER_STATIC_OBSTACLE bits. Zero means nothing does:
+     * the effect is advanced but never swept, which is both the old behaviour
+     * and the reason a field that does not need this costs nothing to have it.
+     * Distinct from collision_mask, which says who the effect affects. */
+    uint32_t motion_collision_mask;
 } KernelAreaEffectMechanicsDefinition;
 
 typedef struct KernelBeamMechanicsDefinition {

@@ -816,6 +816,9 @@ struct RuntimeProjectileTemplate {
     float area_radius = 0.0f;
     // Area effects only. Whether the effect may reach the actor that fired it.
     bool area_hit_instigator = false;
+    // Area effects only. What stops the effect as it travels, as static-world
+    // layer bits. Zero means nothing does and no sweep is run at all.
+    std::uint32_t area_motion_collision_mask = 0;
     std::uint32_t collision_mask = kCollisionMaskDamageable;
     std::uint32_t max_hit_count = 1;
     std::optional<CompiledActionGraphBinding> projectile_impact_binding;
@@ -857,6 +860,7 @@ struct ProjectileAreaEffectRuntime {
     std::uint32_t collision_mask = kCollisionMaskDamageable;
     ProjectileDamageFalloff damage_falloff = ProjectileDamageFalloff::kNone;
     bool hit_instigator = false;
+    std::uint32_t motion_collision_mask = 0;
     std::unordered_map<NetId, std::uint32_t> next_damage_tick_by_target;
     std::optional<CompiledActionGraphBinding> action_graph_binding;
 };

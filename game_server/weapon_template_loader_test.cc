@@ -861,6 +861,74 @@ void collision_mask_expressions_are_loaded() {
 // event.subject_direction is the heading of whatever the graph is running on,
 // which only a projectile trigger has. A field that never moves has none, and
 // the loader is what keeps that from reaching the runtime as a zero vector.
+// The mask that decides what stops a travelling field, kept apart from the one
+// that decides who it affects. Absent means nothing stops it and no sweep runs.
+void area_effect_motion_collision_mask_is_authored() {
+    const std::string area_template =
+        "id: 4\nname: fire_floor_area\ntype: area_effect\n"
+        "collider_template: area_effect_sphere\n"
+        "damage: 12\n"
+        "lifetime_ticks: 6\n"
+        "damage_behavior:\n"
+        "  type: area_interval\n"
+        "  damage_interval_ticks: 2\n"
+        "  falloff: none\n"
+        "collision_mask: hostile_side\n";
+
+    const std::filesystem::path default_dir = tmp_dir("motion_mask_default");
+    write_valid_templates(default_dir);
+    network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            default_dir.string());
+    assert(projectile_mechanics(config, 4).area_effect.motion_collision_mask ==
+           KERNEL_COLLISION_MASK_NONE);
+
+    const std::filesystem::path authored_dir = tmp_dir("motion_mask_authored");
+    write_valid_templates(authored_dir);
+    write_file(
+        authored_dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
+        area_template + "speed: 6.0\nmotion_collision_mask: terrain | static_obstacle\n");
+    config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            authored_dir.string());
+    assert(projectile_mechanics(config, 4).area_effect.motion_collision_mask ==
+           KERNEL_COLLISION_MASK_STATIC_WORLD);
+    // The mask that says who it affects is untouched by the one that says what
+    // stops it.
+    assert(projectile_mechanics(config, 4).area_effect.collision_mask ==
+           KERNEL_COLLISION_LAYER_HOSTILE_SIDE);
+
+    // Only the static world can stop it: actors and props are what it affects.
+    const std::filesystem::path actor_dir = tmp_dir("motion_mask_actor");
+    write_valid_templates(actor_dir);
+    write_file(
+        actor_dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
+        area_template + "speed: 6.0\nmotion_collision_mask: hostile_side\n");
+    assert(load_fails(actor_dir));
+
+    // A field that never moves has nothing to be stopped.
+    const std::filesystem::path still_dir = tmp_dir("motion_mask_still");
+    write_valid_templates(still_dir);
+    write_file(
+        still_dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
+        area_template + "motion_collision_mask: terrain\n");
+    assert(load_fails(still_dir));
+
+    // And no other projectile type answers this question twice.
+    const std::filesystem::path standard_dir = tmp_dir("motion_mask_standard");
+    write_valid_templates(standard_dir);
+    write_file(
+        standard_dir.parent_path() / "projectile_templates" / "rocket.yaml",
+        "id: 3\nname: rocket_projectile\ndamage: 45\n"
+        "sync_mode: server_snapshot_only\ncollider_template: rocket_aabb\n"
+        "movement_model: linear\nhit_response: destroy\n"
+        "damage_shape: direct_hit\nspeed: 35.0\nlifetime_ticks: 75\n"
+        "collision_mask: damageable\nmax_hit_count: 1\n"
+        "motion_collision_mask: terrain\n"
+        "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
+    assert(load_fails(standard_dir));
+}
+
 void subject_direction_needs_a_projectile_that_travels() {
     const auto write_impulse_graph = [](const std::filesystem::path& dir,
                                         const std::string& direction) {
@@ -1306,6 +1374,7 @@ int main() {
     area_effect_hit_instigator_is_authored();
     area_effect_speed_is_authored();
     subject_direction_needs_a_projectile_that_travels();
+    area_effect_motion_collision_mask_is_authored();
     catalog_file_loads_colliders();
     return 0;
 }
