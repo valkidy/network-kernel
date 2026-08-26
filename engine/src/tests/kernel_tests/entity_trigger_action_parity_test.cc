@@ -151,9 +151,11 @@ KernelActionTriggerDefinition legacy_mirror_trigger(std::uint8_t action_type) {
 }
 
 // What game_server/gameplay_config.cc's entity-trigger path can compile.
-// apply_speed_modifier is deliberately absent: the loader restricts it to a
-// status `on_apply`, so it is not part of this contract even though the kernel
-// happens to have a branch for it.
+// apply_speed_modifier is absent because it is not authorable here at all --
+// the loader restricts it to a status `on_apply` and the kernel now rejects it
+// on an entity trigger to match. That agreement is asserted in
+// malformed_actions_are_still_rejected rather than here, since this list is
+// the set the kernel must *accept*.
 constexpr std::uint8_t kEntityTriggerActions[] = {
     KernelEntityTriggerActionType_ApplyDamage,
     KernelEntityTriggerActionType_ApplyHealthChange,
@@ -194,6 +196,30 @@ void malformed_actions_are_still_rejected() {
 
     KernelActionTriggerDefinition unknown_action = multi_action_trigger(200u);
     require(!load_with_collision_trigger(unknown_action));
+
+    // An entity trigger may not carry a speed modifier at all -- not a
+    // malformed one, and not a perfectly well-formed one either. A speed
+    // modifier belongs to a status effect's lifetime: its status_instance_id
+    // comes from provenance that only the status lifecycle fills, the preflight
+    // rejects an id of 0, applying it needs a matching active status, and
+    // expiry removes it by that id. None of that exists on a collision, so the
+    // shape can only fail at runtime -- and take the rest of its batch with it,
+    // because the preflight is all-or-nothing.
+    //
+    // Rejecting it at load is also what makes the two tables agree: the catalog
+    // loader already throws on apply_speed_modifier outside a status on_apply.
+    // This is the one place where loader-rejects and kernel-rejects, so it is
+    // asserted rather than left to the parity loop above, which only covers
+    // what the loader accepts.
+    for (const std::uint8_t form_is_legacy : {0u, 1u}) {
+        const KernelActionTriggerDefinition speed_modifier =
+            form_is_legacy != 0u
+                ? legacy_mirror_trigger(
+                      KernelEntityTriggerActionType_ApplySpeedModifier)
+                : multi_action_trigger(
+                      KernelEntityTriggerActionType_ApplySpeedModifier);
+        require(!load_with_collision_trigger(speed_modifier));
+    }
 }
 
 }  // namespace

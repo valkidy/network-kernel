@@ -2969,6 +2969,10 @@ bool KernelEngine::load_gameplay_catalog(
                     // set it, so a legacy-form status trigger was rejected for
                     // having status id 0 rather than for anything it said.
                     action.status_effect_id = trigger->status_effect_id;
+                    // modifier_operation / modifier_value are deliberately not
+                    // mirrored: no branch below reads them, because an entity
+                    // trigger cannot carry a speed modifier at all. See the
+                    // ApplySpeedModifier note at the end of the chain.
                     action.position_source = trigger->position_source;
                     action.direction_source = trigger->direction_source;
                     action.owner_source = trigger->owner_source;
@@ -3059,17 +3063,25 @@ bool KernelEngine::load_gameplay_catalog(
                     }
                     continue;
                 }
-                if (action.action_type ==
-                    KernelEntityTriggerActionType_ApplySpeedModifier) {
-                    if (action.target_source >
-                            KernelEntityRefSource_EventInstigator ||
-                        action.modifier_operation >
-                            KernelStatModifierOperation_Multiplier ||
-                        !std::isfinite(action.modifier_value)) {
-                        return false;
-                    }
-                    continue;
-                }
+                // No ApplySpeedModifier branch, so one falls through to the
+                // reject below. A speed modifier is not a standalone effect --
+                // it is a part of a status effect's lifetime, and it is keyed
+                // to a status instance in three separate places: the command's
+                // status_instance_id comes from provenance, which only
+                // prepare_status_lifecycle ever fills; the batch preflight
+                // rejects an id of 0; applying it requires a matching *active*
+                // status on the target; and expiry removes it by that same id.
+                // An entity trigger has no status instance in scope, so it can
+                // satisfy none of that.
+                //
+                // Accepting it here would let a catalog load a trigger that can
+                // only fail at runtime -- and fail the whole batch with it,
+                // since the preflight is all-or-nothing, so the other actions
+                // in the same graph would silently stop working too. Rejecting
+                // it at load instead matches the catalog loader, which already
+                // refuses apply_speed_modifier outside a status on_apply.
+                // "Collision slows the target" is authored as on_collision ->
+                // apply_status, and that status's on_apply -> speed modifier.
                 if (action.action_type ==
                     KernelEntityTriggerActionType_SpawnEntity) {
                     if (action.spawn_entity_template_id == 0u ||
