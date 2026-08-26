@@ -236,6 +236,63 @@ network_example::NetId spawn_cover_prop(
 // has never been able to push or hurt the actor that fired it. hit_instigator is
 // how a template asks for the opposite, and it buys self-damage along with the
 // self-knockback because one query feeds both.
+// An area effect used to be pinned where it spawned: the loader dropped any
+// authored speed and the spawn path overwrote its velocity with zero. It can
+// now travel, which is what a field that sweeps across the ground needs. A
+// blast authors no speed and so still costs the ageing loop nothing.
+void a_travelling_area_effect_advances_and_a_still_one_does_not() {
+    const auto x_after_two_ticks = [](float speed) {
+        network_example::World world;
+        network_example::RuntimeProjectileTemplate area_template{};
+        area_template.projectile_template_id = 41;
+        area_template.projectile_type = network_example::ProjectileType::kAreaEffect;
+        area_template.motion_model = network_example::ProjectileMotionModel::kLinear;
+        area_template.speed = speed;
+        area_template.area_radius = 2.0f;
+        area_template.damage = 20;
+        area_template.damage_interval_ticks = 10;
+        area_template.lifetime_ticks = 30;
+        area_template.collision_mask = network_example::kCollisionMaskDamageable;
+        world.set_projectile_templates({area_template});
+
+        require(network_example::spawn_action_graph_projectile(
+            world,
+            41,
+            0,
+            0,
+            0,
+            glm::vec3{0.0f, 0.5f, 0.0f},
+            glm::vec3{1.0f, 0.0f, 0.0f},
+            0,
+            1.0f / 30.0f));
+
+        network_example::NetId area = 0;
+        for (const entt::entity entity :
+             world.registry().view<
+                 network_example::NetworkIdentity,
+                 network_example::ProjectileAreaEffectRuntime>()) {
+            area = world.registry()
+                       .get<network_example::NetworkIdentity>(entity)
+                       .net_id;
+        }
+        require(area != 0);
+
+        network_example::simulate_projectiles(world, 1.0f / 30.0f);
+        network_example::simulate_projectiles(world, 1.0f / 30.0f);
+
+        const auto entity = world.find_entity(area);
+        require(entity.has_value());
+        return world.registry()
+            .get<network_example::Transform>(*entity)
+            .position.x;
+    };
+
+    require(x_after_two_ticks(0.0f) == 0.0f);
+    // Two ticks at 6 m/s on a 30 Hz clock.
+    const float travelled = x_after_two_ticks(6.0f);
+    require(travelled > 0.39f && travelled < 0.41f);
+}
+
 void area_effect_reaches_its_own_shooter_only_when_authored() {
     const auto shooter_hp_after_blast = [](bool hit_instigator) {
         network_example::World world;
@@ -427,6 +484,7 @@ int main() {
     server_owned_area_effect_uses_player_damage_grace();
     area_effect_expires_at_expire_tick();
     area_effect_damage_order_is_deterministic();
+    a_travelling_area_effect_advances_and_a_still_one_does_not();
     area_effect_reaches_its_own_shooter_only_when_authored();
     area_effect_spares_cover_on_a_side_it_does_not_attack();
     area_effect_dispatches_its_graph_once_per_target_in_radius();

@@ -186,7 +186,8 @@ target's end.
 
 ### type: area_effect
 
-Replaces `speed` with a damage-over-time block.
+Adds a damage-over-time block. `speed` is optional here and defaults to `0`,
+which is a field that sits where it was spawned — every blast wants that.
 
 ```yaml
 type: area_effect
@@ -200,8 +201,30 @@ damage_behavior:
 ```
 
 `movement_model`, `hit_response`, and `damage_shape` are **rejected** here: an
-area effect spawns with zero velocity, always ends on its lifetime, and takes
-its damage from `damage_behavior`, so none of the three can mean anything.
+area effect always ends on its lifetime and takes its damage from
+`damage_behavior`, and its motion model is fixed to linear — homing stays a
+standard-projectile model — so none of the three can mean anything.
+
+### A travelling area effect
+
+Author a non-zero `speed` and the field travels instead of sitting still: a
+front that sweeps across the ground rather than a blast. It keeps applying its
+`damage_behavior` every `damage_interval_ticks` to whatever is inside it as it
+goes, and its direction is whatever direction it was spawned facing.
+
+```yaml
+type: area_effect
+speed: 6.0               # metres per second; 0 (default) stays put
+lifetime_ticks: 90
+damage_behavior:
+  type: area_interval
+  damage_interval_ticks: 2
+  falloff: none
+```
+
+**It passes through terrain.** A travelling area effect is advanced but not
+swept against the world, so it will cross walls and floors. Author one only
+where that reads as intended until a swept query is added.
 
 `hit_instigator` (default `false`) is accepted here and rejected everywhere
 else. An area effect normally filters the actor that fired it out of its overlap

@@ -5349,6 +5349,19 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             }
         }
         mechanics.motion_model = KernelProjectileMotionModel_Linear;
+        // A field that travels -- a tornado rather than a blast. Zero is the
+        // standing behaviour: the effect sits where it was spawned. Read here
+        // because this branch returns before the generic speed read below,
+        // which is why authoring speed on an area effect used to do nothing at
+        // all. The motion model stays linear: a travelling field follows a
+        // straight line for now, and homing is deliberately still limited to
+        // standard projectiles.
+        mechanics.speed = node["speed"] ? node["speed"].as<float>() : 0.0f;
+        if (!std::isfinite(mechanics.speed) || mechanics.speed < 0.0f) {
+            throw std::runtime_error(
+                "area_effect projectile speed must be finite and non-negative: " +
+                projectile_template.name);
+        }
         // sync_mode is the one that is a real choice. It defaults to
         // server-only, as it always has, but a locally predicted area effect is
         // a shape the kernel implements -- an impact impulse on the local

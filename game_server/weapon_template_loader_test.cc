@@ -855,6 +855,49 @@ void collision_mask_expressions_are_loaded() {
 // Reaching one's own blast is off by default and only an area effect can ask
 // for it, because only the area effect overlap query implements the filter it
 // switches off.
+// speed sits below the area_effect branch's early return, so authoring it used
+// to be accepted and then discarded -- the effect stayed pinned where it
+// spawned. It now means what it says, and still defaults to standing still.
+void area_effect_speed_is_authored() {
+    const std::filesystem::path default_dir = tmp_dir("area_speed_default");
+    write_valid_templates(default_dir);
+    network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            default_dir.string());
+    assert(projectile_mechanics(config, 4).speed == 0.0f);
+
+    const std::filesystem::path moving_dir = tmp_dir("area_speed_moving");
+    write_valid_templates(moving_dir);
+    const std::string moving_template =
+        "id: 4\nname: fire_floor_area\ntype: area_effect\n"
+        "collider_template: area_effect_sphere\n"
+        "damage: 12\n"
+        "lifetime_ticks: 6\n"
+        "damage_behavior:\n"
+        "  type: area_interval\n"
+        "  damage_interval_ticks: 2\n"
+        "  falloff: none\n"
+        "collision_mask: hostile_side\n";
+    write_file(
+        moving_dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
+        moving_template + "speed: 6.0\n");
+    config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            moving_dir.string());
+    assert(projectile_mechanics(config, 4).speed == 6.0f);
+    // The motion model stays linear whatever the speed: homing is still a
+    // standard-projectile-only model.
+    assert(projectile_mechanics(config, 4).motion_model ==
+           KernelProjectileMotionModel_Linear);
+
+    const std::filesystem::path negative_dir = tmp_dir("area_speed_negative");
+    write_valid_templates(negative_dir);
+    write_file(
+        negative_dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
+        moving_template + "speed: -1.0\n");
+    assert(load_fails(negative_dir));
+}
+
 void area_effect_hit_instigator_is_authored() {
     const std::filesystem::path default_dir = tmp_dir("hit_instigator_default");
     write_valid_templates(default_dir);
@@ -1198,6 +1241,7 @@ int main() {
     malformed_collision_masks_are_rejected();
     area_effect_sync_mode_is_authored_not_forced();
     area_effect_hit_instigator_is_authored();
+    area_effect_speed_is_authored();
     catalog_file_loads_colliders();
     return 0;
 }
