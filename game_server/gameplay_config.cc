@@ -5600,6 +5600,12 @@ bool event_expression_available(
             trigger_name == "on_projectile_impact" ||
             trigger_name == "on_expired";
     }
+    if (expression == "event.subject_direction") {
+        // Only a projectile's own triggers have a subject that was going
+        // somewhere to report.
+        return trigger_name == "on_projectile_impact" ||
+            trigger_name == "on_expired";
+    }
     return false;
 }
 
@@ -5751,12 +5757,28 @@ void compile_projectile_trigger_binding(
                 } else {
                     const std::string direction = trigger_parameter_value(
                         binding, direction_parameter);
-                    if (direction != "event.direction") {
+                    if (direction != "event.direction" &&
+                        direction != "event.subject_direction") {
                         throw std::runtime_error(
-                            "apply_impulse projectile trigger direction must be event.direction or a direction vec3 default");
+                            "apply_impulse projectile trigger direction must be event.direction, event.subject_direction, or a direction vec3 default");
+                    }
+                    // A field that never moves has no heading to report, and
+                    // the runtime would hand the graph a zero vector that fails
+                    // the whole batch. Refusing it here is the reason the
+                    // runtime never has to deal with that.
+                    if (direction == "event.subject_direction" &&
+                        projectile_template->definition.mechanics
+                                .projectile_type ==
+                            KernelProjectileType_AreaEffect &&
+                        projectile_template->definition.mechanics.speed <= 0.0f) {
+                        throw std::runtime_error(
+                            "event.subject_direction needs a projectile that travels: " +
+                            projectile_template->name);
                     }
                     compiled_action.direction_source =
-                        KernelEventVec3Source_Direction;
+                        direction == "event.subject_direction"
+                            ? KernelEventVec3Source_SubjectDirection
+                            : KernelEventVec3Source_Direction;
                 }
                 compiled_action.impulse_collision_mask = action.collision_mask;
                 compiled_action.impulse_lockout_ticks = action.lockout_ticks;

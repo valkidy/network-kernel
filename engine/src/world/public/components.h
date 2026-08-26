@@ -551,6 +551,14 @@ struct TriggerEvent {
     glm::vec3 direction{0.0f};
     std::optional<ProjectileImpactPayload> projectile_impact;
     std::optional<ItemUsedPayload> item_used;
+    // Where the subject was heading when this happened, as opposed to where
+    // the event itself pointed. The two differ most for an area effect, whose
+    // `direction` is radial and so is a different vector for every target it
+    // reports; this one is the same for all of them. Zero when the subject was
+    // not moving -- the loader is what keeps a graph from asking a motionless
+    // template for it. Last so that a producer with nothing to say about it
+    // simply leaves it out.
+    glm::vec3 subject_direction{0.0f};
 };
 
 enum class ActionAuthoritySource : std::uint8_t {
@@ -615,6 +623,7 @@ struct EntityRefExpression {
 enum class EventVec3Source : std::uint8_t {
     kPosition,
     kDirection,
+    kSubjectDirection,
 };
 
 enum class ActionConditionType : std::uint8_t {

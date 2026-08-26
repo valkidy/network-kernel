@@ -696,6 +696,15 @@ void queue_projectile_trigger(
                   historical,
               }}
             : std::nullopt,
+        std::nullopt,
+        // The heading the projectile itself was on, which is not what
+        // `direction` reports once an area effect fans this event out per
+        // target. Read from initial_velocity rather than the live velocity so
+        // that a parabolic shot reports where it was aimed rather than where
+        // gravity has since turned it; a stationary area effect has no heading
+        // at all and reports zero, which the loader is what keeps a graph from
+        // asking for.
+        normalized_or(projectile.initial_velocity, glm::vec3{0.0f}),
     };
     trigger_events->push_back(ActionGraphQueuedTrigger{
         std::move(*binding),

@@ -6,8 +6,8 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 82u,
-    "area effect hit_instigator ABI");
+    KERNEL_ABI_VERSION == 83u,
+    "event subject direction ABI");
 _Static_assert(
     offsetof(KernelAreaEffectMechanicsDefinition, hit_instigator) >
         offsetof(KernelAreaEffectMechanicsDefinition, collision_mask),
@@ -220,7 +220,8 @@ int main(void) {
     (void)vision_query;
     (void)vision_state;
 
-    assert(KERNEL_ABI_VERSION == 82u);
+    assert(KERNEL_ABI_VERSION == 83u);
+    assert(KernelEventVec3Source_SubjectDirection == 3);
     assert(sizeof(KernelAreaEffectMechanicsDefinition) >
            offsetof(KernelAreaEffectMechanicsDefinition, hit_instigator));
     assert(KERNEL_HIT_ZONE_UNSCALED == 100u);

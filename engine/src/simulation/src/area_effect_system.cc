@@ -123,6 +123,15 @@ void simulate_area_effects(
                 return lhs.distance < rhs.distance;
             });
 
+        // initial_velocity rather than the live one, to match what a projectile
+        // impact reports: an area effect is held to the linear model, so the
+        // two are the same vector anyway, and reading the authored one keeps
+        // both producers answering the same question.
+        const glm::vec3 subject_direction =
+            glm::length(projectile.initial_velocity) > 0.0001f
+                ? glm::normalize(projectile.initial_velocity)
+                : glm::vec3{0.0f};
+
         std::uint32_t sequence_id = 0;
         std::unordered_set<NetId> seen_targets;
         std::vector<ActionGraphQueuedTrigger> queued_triggers;
@@ -201,7 +210,12 @@ void simulate_area_effects(
                             projectile.action_instance_id,
                             projectile.weapon_id,
                             false},
-                        std::nullopt},
+                        std::nullopt,
+                        // Every target of one blast gets its own radial
+                        // `direction` above; this is the one vector they all
+                        // share -- where the field itself was travelling. Zero
+                        // for a field that stays put, which is most of them.
+                        subject_direction},
                     ActionExecutionProvenance{
                         (static_cast<std::uint64_t>(current_tick) << 32u) ^
                             (static_cast<std::uint64_t>(identity.net_id) << 1u) ^

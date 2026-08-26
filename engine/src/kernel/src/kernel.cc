@@ -1561,6 +1561,8 @@ bool validate_projectile_mechanics(
                         action.impulse_strength,
                         action.impulse_strength_vertical) ||
                     (action.direction_source != KernelEventVec3Source_Direction &&
+                     action.direction_source !=
+                         KernelEventVec3Source_SubjectDirection &&
                      action.direction_source != KernelEventVec3Source_Literal) ||
                     (action.direction_source == KernelEventVec3Source_Literal &&
                      (!std::isfinite(action.impulse_direction.x) ||
@@ -3030,6 +3032,8 @@ bool KernelEngine::load_gameplay_catalog(
                             action.impulse_strength_vertical) ||
                         (action.direction_source !=
                              KernelEventVec3Source_Direction &&
+                         action.direction_source !=
+                             KernelEventVec3Source_SubjectDirection &&
                          action.direction_source !=
                              KernelEventVec3Source_Literal) ||
                         (action.direction_source ==
@@ -9296,14 +9300,31 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
                                             resistance) {
                                         continue;
                                     }
-                                    const glm::vec3 direction =
+                                    // Whatever the authority will resolve the
+                                    // source to, resolved the same way here.
+                                    // A subject direction that came out zero
+                                    // means the field is not travelling, which
+                                    // the catalog loader refuses to author, so
+                                    // treating it as "nothing to predict" is
+                                    // belt and braces rather than a fallback
+                                    // with its own behaviour.
+                                    glm::vec3 direction = glm::normalize(radial);
+                                    if (action.direction_source ==
+                                        KernelEventVec3Source_Literal) {
+                                        direction = glm::vec3{
+                                            action.impulse_direction.x,
+                                            action.impulse_direction.y,
+                                            action.impulse_direction.z};
+                                    } else if (
                                         action.direction_source ==
-                                                KernelEventVec3Source_Literal
-                                            ? glm::vec3{
-                                                  action.impulse_direction.x,
-                                                  action.impulse_direction.y,
-                                                  action.impulse_direction.z}
-                                            : glm::normalize(radial);
+                                        KernelEventVec3Source_SubjectDirection) {
+                                        if (glm::length(projectile.initial_velocity) <=
+                                            0.0001f) {
+                                            continue;
+                                        }
+                                        direction = glm::normalize(
+                                            projectile.initial_velocity);
+                                    }
                                     const glm::vec3 impulse =
                                         impulse_velocity_delta(
                                             action.impulse_strength_mode,

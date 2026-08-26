@@ -375,12 +375,13 @@ void area_effect_spares_cover_on_a_side_it_does_not_attack() {
 // branch, so "splash only pushed one unit" had no test that could tell a
 // single-target *query* apart from a single-target *dispatch*.
 network_example::CompiledActionGraphBinding impulse_on_impact_binding(
-    float strength) {
+    float strength,
+    std::uint8_t direction_source = KernelEventVec3Source_Direction) {
     KernelActionTriggerDefinition trigger{};
     trigger.struct_size = sizeof(trigger);
     trigger.action_type = KernelEntityTriggerActionType_ApplyImpulse;
     trigger.target_source = KernelEntityRefSource_EventTarget;
-    trigger.direction_source = KernelEventVec3Source_Direction;
+    trigger.direction_source = direction_source;
     trigger.impulse_strength = strength;
     trigger.impulse_collision_mask = KERNEL_COLLISION_MASK_ACTOR;
     std::optional<network_example::CompiledActionGraphBinding> binding =
@@ -393,12 +394,14 @@ network_example::CompiledActionGraphBinding impulse_on_impact_binding(
 void bind_impulse_graph(
     network_example::World& world,
     network_example::NetId area_net_id,
-    float strength) {
+    float strength,
+    std::uint8_t direction_source = KernelEventVec3Source_Direction) {
     const auto entity = world.find_entity(area_net_id);
     require(entity.has_value());
     world.registry()
         .get<network_example::ProjectileAreaEffectRuntime>(*entity)
-        .action_graph_binding = impulse_on_impact_binding(strength);
+        .action_graph_binding =
+            impulse_on_impact_binding(strength, direction_source);
 }
 
 const network_example::ActionApplyImpulseCommand& only_impulse_command(
@@ -454,6 +457,49 @@ void area_effect_dispatches_its_graph_once_per_target_in_radius() {
 // what it hits. This is not a preference, it is what the radial direction
 // geometrically is -- and it is the half of the knockback the movement solver
 // then throws away for anything that submits input.
+// `direction` is radial, so it is a different vector for every target one blast
+// reports. `subject_direction` is the field's own heading, so it is the same
+// vector for all of them -- which is what a front that sweeps across the ground
+// needs, and what a blast standing still has none of.
+void a_travelling_area_effect_reports_its_own_heading() {
+    const auto impulse_direction_for = [](std::uint8_t direction_source) {
+        network_example::World world;
+        // Off the travel axis on purpose: the radial push is +Z here, so the
+        // two sources cannot be confused for one another.
+        const network_example::NetId target =
+            spawn_enemy(world, glm::vec3{0.0f, 0.0f, 2.0f});
+        const network_example::NetId area = spawn_area_projectile(
+            world, 0, glm::vec3{0.0f, 0.5f, 0.0f}, 4.0f, 45, 0, 45, 7);
+        const auto entity = world.find_entity(area);
+        require(entity.has_value());
+        // Travelling along +X.
+        world.registry()
+            .get<network_example::ProjectileState>(*entity)
+            .initial_velocity = glm::vec3{6.0f, 0.0f, 0.0f};
+        bind_impulse_graph(world, area, 12.0f, direction_source);
+
+        network_example::DamagePipeline pipeline;
+        std::vector<KernelEvent> events;
+        std::vector<network_example::ActionGraphCommandBatch> batches;
+        network_example::simulate_area_effects(
+            world, 0, 0, &events, &pipeline, &batches);
+        require(batches.size() == 1);
+        const network_example::ActionApplyImpulseCommand& impulse =
+            only_impulse_command(batches.front());
+        require(impulse.target == target);
+        return impulse.direction;
+    };
+
+    const glm::vec3 radial = impulse_direction_for(KernelEventVec3Source_Direction);
+    require(radial.z > 0.9f);
+    require(std::fabs(radial.x) < 0.1f);
+
+    const glm::vec3 heading =
+        impulse_direction_for(KernelEventVec3Source_SubjectDirection);
+    require(heading.x > 0.9f);
+    require(std::fabs(heading.z) < 0.1f);
+}
+
 void area_effect_impulse_direction_is_level_for_a_level_blast() {
     network_example::World world;
     const network_example::NetId east =
@@ -488,6 +534,7 @@ int main() {
     area_effect_reaches_its_own_shooter_only_when_authored();
     area_effect_spares_cover_on_a_side_it_does_not_attack();
     area_effect_dispatches_its_graph_once_per_target_in_radius();
+    a_travelling_area_effect_reports_its_own_heading();
     area_effect_impulse_direction_is_level_for_a_level_blast();
     return 0;
 }

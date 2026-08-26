@@ -109,11 +109,37 @@ bool expression_available_for_event(
         event_vec3->source == EventVec3Source::kPosition) {
         return true;
     }
+    if (event_vec3->source == EventVec3Source::kSubjectDirection) {
+        // Only the projectile triggers carry a subject that was going
+        // somewhere. The others have a subject that is standing still, or no
+        // single heading to report, and answering them with a zero vector
+        // would be worse than refusing.
+        return event_type == TriggerEventType::kProjectileImpact ||
+            event_type == TriggerEventType::kExpired;
+    }
     return event_type == TriggerEventType::kActivated ||
         event_type == TriggerEventType::kItemUsed ||
         event_type == TriggerEventType::kCollision ||
         event_type == TriggerEventType::kProjectileImpact ||
         event_type == TriggerEventType::kExpired;
+}
+
+// Deliberately a switch rather than the cast this used to be. The two enums are
+// separate types that only happened to line up, and KernelEventVec3Source_Literal
+// has no counterpart here at all -- callers strip that one before asking, since
+// a literal resolves to a value rather than to an event lookup. Anything else is
+// a source this build does not implement, and the position is the one every
+// trigger provides.
+EventVec3Source event_vec3_source_from_kernel(std::uint8_t source) {
+    switch (source) {
+        case KernelEventVec3Source_Direction:
+            return EventVec3Source::kDirection;
+        case KernelEventVec3Source_SubjectDirection:
+            return EventVec3Source::kSubjectDirection;
+        case KernelEventVec3Source_Position:
+        default:
+            return EventVec3Source::kPosition;
+    }
 }
 
 std::optional<ActionConditionType> action_condition_from_kernel(
@@ -186,9 +212,15 @@ std::optional<ActionGraphParameterValue> resolve_expression(
     if (event_vec3 == nullptr) {
         return std::nullopt;
     }
-    return event_vec3->source == EventVec3Source::kPosition
-        ? ActionGraphParameterValue{event.position}
-        : ActionGraphParameterValue{event.direction};
+    switch (event_vec3->source) {
+        case EventVec3Source::kPosition:
+            return ActionGraphParameterValue{event.position};
+        case EventVec3Source::kSubjectDirection:
+            return ActionGraphParameterValue{event.subject_direction};
+        case EventVec3Source::kDirection:
+            break;
+    }
+    return ActionGraphParameterValue{event.direction};
 }
 
 const ActionGraphParameterValue* find_resolved_parameter(
@@ -296,12 +328,12 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
             });
             binding.parameters.push_back({
                 position_name,
-                EventVec3Expression{static_cast<EventVec3Source>(
+                EventVec3Expression{event_vec3_source_from_kernel(
                     action.position_source)},
             });
             binding.parameters.push_back({
                 direction_name,
-                EventVec3Expression{static_cast<EventVec3Source>(
+                EventVec3Expression{event_vec3_source_from_kernel(
                     action.direction_source)},
             });
             continue;
@@ -337,7 +369,7 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
             });
             binding.parameters.push_back({
                 position_name,
-                EventVec3Expression{static_cast<EventVec3Source>(
+                EventVec3Expression{event_vec3_source_from_kernel(
                     action.position_source)},
             });
             if (!direction_name.empty()) {
@@ -446,7 +478,7 @@ std::optional<CompiledActionGraphBinding> compile_action_trigger_definition(
             if (action.direction_source != KernelEventVec3Source_Literal) {
                 binding.parameters.push_back({
                     direction_name,
-                    EventVec3Expression{static_cast<EventVec3Source>(
+                    EventVec3Expression{event_vec3_source_from_kernel(
                         action.direction_source)},
                 });
             }

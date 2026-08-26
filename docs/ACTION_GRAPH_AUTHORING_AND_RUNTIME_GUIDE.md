@@ -86,6 +86,7 @@ event.instigator  = 造成事件的 actor/entity
 event.target      = 事件涉及的另一個 entity
 event.position    = authoritative event position
 event.direction   = authoritative event direction
+event.subject_direction = subject 當時的行進方向（只有 projectile trigger 有）
 params.*          = binding/default 解析後的 graph parameters
 ```
 
@@ -109,8 +110,8 @@ schema 的欄位會在載入階段被拒絕。
 | `on_collision` | `subject`, `target`, `position`, `direction` | 碰撞傷害、陷阱 |
 | `on_health_depleted` | `subject`, `instigator`, `position` | 死亡前反應、反傷 |
 | `on_destroy_entity` | `subject`, `instigator`, `position` | 銷毀時生成 entity |
-| `on_projectile_impact` | `subject`, `instigator`, `target`, `position`, `direction` | 命中後生成爆炸物 |
-| `on_expired` | `subject`, `instigator`, `position`, `direction` | projectile 到期後生成效果 |
+| `on_projectile_impact` | `subject`, `instigator`, `target`, `position`, `direction`, `subject_direction` | 命中後生成爆炸物 |
+| `on_expired` | `subject`, `instigator`, `position`, `direction`, `subject_direction` | projectile 到期後生成效果 |
 | `on_apply` | `subject`, `instigator`, `target` | status 建立或 stack apply |
 | `on_tick` | `subject`, `instigator`, `target` | status interval tick |
 | `on_expire` | `subject`, `instigator`, `target` | status natural expire 或 remove |
@@ -223,9 +224,9 @@ schema 的欄位會在載入階段被拒絕。
   覆寫、且 parameter default 是 list」才會選到 list 語意。不使用 list 形式時行為
   與過去完全相同，既有 template 一個字都不用改。差別不是語法糖，見下方
   「為什麼垂直分量必須是絕對值」。
-- `direction`：只能綁定 `event.direction`，或由 graph 的 `direction` parameter 提供
-  vec3 default。Vec3 default 必須非零且有限，且目前只允許用在名為 `direction` 的
-  parameter 上。
+- `direction`：只能綁定 `event.direction`、`event.subject_direction`，或由 graph 的
+  `direction` parameter 提供 vec3 default。Vec3 default 必須非零且有限，且目前只
+  允許用在名為 `direction` 的 parameter 上。
 - `collision_mask`：`actor`、`prop` 或兩者的 or 組合；省略時預設 `actor`。不接受空
   mask 或其他 collision layer bit。
 - `lockout_ticks`：非負整數，上限 `KERNEL_MAX_IMPULSE_LOCKOUT_TICKS`（300，30 Hz
@@ -239,6 +240,17 @@ schema 的欄位會在載入階段被拒絕。
 `apply_impulse`。`event.direction` 只在 `on_activated`、`on_collision`、
 `on_projectile_impact`、`on_expired`、`on_item_used` 可用，因此
 `on_health_depleted` 與 `on_destroy_entity` 上的擊退必須改用 vec3 default。
+
+`event.subject_direction` 與 `event.direction` 的差別，在 area effect 上最明顯：
+`direction` 是徑向，一次爆炸對每個目標各是一個向量；`subject_direction` 是**該
+projectile 自己的行進方向**，同一次事件的所有目標共用同一個。會移動的 area effect
+（`speed` 非零）要「把捲到的東西往前帶」時用它，固定爆炸要「往外炸開」時用
+`direction`。
+
+它只在 `on_projectile_impact` 與 `on_expired` 可用——其他 trigger 的 subject 沒有
+行進方向可報。而且**不會動的 projectile 不能引用它**：`speed` 為 0 的 area effect
+上寫 `event.subject_direction` 會在載入期被拒，因為它只會是零向量，而零向量會讓
+整個 batch 在 runtime 被拒。
 
 Runtime 效果：
 
