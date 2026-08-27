@@ -1,0 +1,21 @@
+# Player-side twin of sentry_grunt_hit_aabb -- same box, opposite side.
+#
+# The `layer` is what actually puts an actor on a side. In production the
+# collider's gameplay_category comes from its template's layer
+# (kernel.cc:4319), not from actor_type, so an agent authored `camp:
+# player_side` still reads as hostile to every weapon in the game unless its hit
+# collider says otherwise. Without this file the allied sentry would be shot by
+# the player's own `hostile_side` weapons and ignored by the enemy's
+# `player_side` ones -- hostile to everyone and everything at once.
+#
+# (world.cc:272 derives the same category from actor_type instead, but that is
+# the standalone collision world used by tests that supply no PhysicsWorld; it
+# never runs on a real server.)
+id: 18
+name: allied_sentry_hit_aabb
+shape: aabb
+center: {x: 0.0, y: 0.8, z: 0.0}
+half_extents: {x: 0.4, y: 0.8, z: 0.4}
+radius: 0.0
+purpose: hit
+layer: player_side

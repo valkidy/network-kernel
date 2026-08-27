@@ -56,11 +56,14 @@ bool spawn_projectile_from_template(
     const std::uint8_t weapon_id =
         projectile_template.weapon_id == 0 ? source_weapon_id
                                            : projectile_template.weapon_id;
+    // An area effect used to be forced to a standstill here regardless of what
+    // it authored. It no longer needs the special case: its speed defaults to
+    // zero, so a blast still spawns exactly as motionless as before, while a
+    // template that authors one travels like anything else. The weapon-fired
+    // path never had the special case to begin with.
     const glm::vec3 velocity =
-        projectile_template.projectile_type == ProjectileType::kAreaEffect
-            ? glm::vec3{0.0f, 0.0f, 0.0f}
-            : normalized_or(direction, glm::vec3{1.0f, 0.0f, 0.0f}) *
-                  projectile_template.speed;
+        normalized_or(direction, glm::vec3{1.0f, 0.0f, 0.0f}) *
+        projectile_template.speed;
     const NetId projectile_net_id = world.spawn_projectile(
         owner_peer,
         position,
@@ -119,6 +122,7 @@ bool spawn_projectile_from_template(
                 projectile_template.collision_mask,
                 projectile_template.damage_falloff,
                 projectile_template.area_hit_instigator,
+                projectile_template.area_motion_collision_mask,
                 {},
                 projectile_template.projectile_impact_binding,
             });
@@ -693,6 +697,15 @@ void queue_projectile_trigger(
                   historical,
               }}
             : std::nullopt,
+        std::nullopt,
+        // The heading the projectile itself was on, which is not what
+        // `direction` reports once an area effect fans this event out per
+        // target. Read from initial_velocity rather than the live velocity so
+        // that a parabolic shot reports where it was aimed rather than where
+        // gravity has since turned it; a stationary area effect has no heading
+        // at all and reports zero, which the loader is what keeps a graph from
+        // asking for.
+        normalized_or(projectile.initial_velocity, glm::vec3{0.0f}),
     };
     trigger_events->push_back(ActionGraphQueuedTrigger{
         std::move(*binding),
@@ -1237,12 +1250,26 @@ void simulate_projectiles(
         // reset age_ticks. The beam was destroyed and respawned under a new
         // net_id every other tick.
         //
-        // Area effects are the same story with a different owner:
-        // simulate_area_effects expires them on their runtime's expire_tick,
-        // and they do not travel, so there is nothing here to advance.
-        if (world.registry().all_of<ProjectileBeamRuntime>(entity) ||
-            world.registry().all_of<ProjectileAreaEffectRuntime>(entity)) {
+        // An area effect is half of that story: simulate_area_effects still
+        // owns its expiry, but it is no longer true that it cannot travel.
+        // One that authors no speed is still skipped outright, which is what
+        // keeps every blast template exactly as cheap here as it was -- the
+        // gate below is the authored speed, not the type. Reading
+        // initial_velocity is enough to decide it: the loader keeps an area
+        // effect on the linear model, so a start of zero stays zero.
+        //
+        // Advancing is all this does. The hit loop further down still leaves
+        // an area effect alone, so a travelling one passes through terrain
+        // until a swept query is added there.
+        if (world.registry().all_of<ProjectileBeamRuntime>(entity)) {
             continue;
+        }
+        if (world.registry().all_of<ProjectileAreaEffectRuntime>(entity)) {
+            const glm::vec3& area_initial_velocity =
+                view.get<ProjectileState>(entity).initial_velocity;
+            if (glm::dot(area_initial_velocity, area_initial_velocity) <= 0.0f) {
+                continue;
+            }
         }
         const NetworkIdentity& identity = view.get<NetworkIdentity>(entity);
         Transform& transform = view.get<Transform>(entity);
@@ -1277,6 +1304,39 @@ void simulate_projectiles(
                 projectile.gravity,
                 next_age_duration);
             projectile.age_ticks = next_age_ticks;
+        }
+
+        // A travelling field is swept against the world only if it authored
+        // something that stops it. That mask is zero unless asked for, so a
+        // field that is happy to cross walls -- and every field that does not
+        // move at all, which never reaches this line -- runs no query here.
+        if (auto* area_effect =
+                world.registry().try_get<ProjectileAreaEffectRuntime>(entity);
+            area_effect != nullptr &&
+            area_effect->motion_collision_mask != 0u &&
+            world.collision_world() != nullptr) {
+            physics::CollisionQueryFilter filter =
+                collision_filter_from_mask(area_effect->motion_collision_mask);
+            const std::vector<physics::CollisionHit> hits =
+                query_projectile_collision_hits(
+                    *world.collision_world(),
+                    projectile,
+                    projectile.previous_position,
+                    transform.position,
+                    filter);
+            if (!hits.empty()) {
+                // It stops where it met the wall and keeps working from there
+                // for the rest of its lifetime, rather than being destroyed:
+                // an area effect's expiry belongs to simulate_area_effects, and
+                // there is no impact trigger on this path to announce anything
+                // else. Zeroing initial_velocity is what parks it -- the gate
+                // above reads that, so from now on this entity skips the whole
+                // block, sweep included.
+                transform.position = hits.front().position;
+                projectile.spawn_position = transform.position;
+                projectile.initial_velocity = glm::vec3{0.0f};
+                velocity.linear = glm::vec3{0.0f};
+            }
         }
     }
 

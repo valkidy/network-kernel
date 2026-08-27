@@ -395,6 +395,7 @@ NetId fire_projectile(
                     projectile_template.collision_mask,
                     projectile_template.damage_falloff,
                     projectile_template.area_hit_instigator,
+                    projectile_template.area_motion_collision_mask,
                     {},
                     projectile_template.projectile_impact_binding,
                 });

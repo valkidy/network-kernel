@@ -182,6 +182,12 @@ cc_test(
 )
 
 cc_test(
+    name = "entity_trigger_action_parity_test",
+    srcs = ["entity_trigger_action_parity_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
     name = "skeleton_presentation_test",
     srcs = ["skeleton_presentation_test.cc"],
     deps = ["//engine/src/kernel:kernel"],
@@ -263,6 +269,12 @@ cc_test(
 cc_test(
     name = "beam_client_reconstruction_test",
     srcs = ["beam_client_reconstruction_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_binary(
+    name = "snapshot_bandwidth_benchmark",
+    srcs = ["snapshot_bandwidth_benchmark.cc"],
     deps = ["//engine/src/kernel:kernel"],
 )
 

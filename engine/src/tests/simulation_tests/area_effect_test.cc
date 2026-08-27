@@ -104,7 +104,9 @@ void area_effect_damages_only_targets_inside_radius() {
     require(count_damage_events(events) == 1);
 }
 
-void area_effect_respects_per_target_damage_interval() {
+// The interval is the field's, and it now gates the overlap query rather than
+// each hit that query returns.
+void area_effect_respects_its_damage_interval() {
     network_example::World world;
     const network_example::NetId target = spawn_enemy(world, glm::vec3{1.0f, 0.0f, 0.0f});
     spawn_area_projectile(
@@ -121,6 +123,34 @@ void area_effect_respects_per_target_damage_interval() {
 
     require(health(world, target).hp == 10);
     require(count_damage_events(events) == 2);
+}
+
+// The price of gating the query instead of the hits: between two evaluations
+// the field is not looking, so somebody who walks in waits for the next one.
+// Pinned deliberately -- it is the behaviour bought in exchange for not paying
+// for an overlap on every tick of the interval.
+void a_target_that_arrives_between_evaluations_waits_for_the_next_one() {
+    network_example::World world;
+    spawn_area_projectile(
+        world, 0, glm::vec3{0.0f, 0.5f, 0.0f}, 2.0f, 10, 0, 20, 7);
+    network_example::DamagePipeline pipeline;
+    std::vector<KernelEvent> events;
+
+    // Nobody there for the first evaluation, which still consumes it.
+    network_example::simulate_area_effects(world, 0, &events, &pipeline);
+    pipeline.confirm_ready(world, 0, 0, &events);
+
+    const network_example::NetId latecomer =
+        spawn_enemy(world, glm::vec3{1.0f, 0.0f, 0.0f});
+    for (std::uint32_t tick = 1; tick < 10; ++tick) {
+        network_example::simulate_area_effects(world, tick, &events, &pipeline);
+        pipeline.confirm_ready(world, tick, tick, &events);
+    }
+    require(health(world, latecomer).hp == 50);
+
+    network_example::simulate_area_effects(world, 10, &events, &pipeline);
+    pipeline.confirm_ready(world, 10, 10, &events);
+    require(health(world, latecomer).hp == 30);
 }
 
 void server_owned_area_effect_uses_player_damage_grace() {
@@ -232,6 +262,119 @@ network_example::NetId spawn_cover_prop(
     return net_id;
 }
 
+// The sweep is what stops a travelling field at a wall, and it is not run at all
+// unless the template authored something that stops it. Zero, the default, is
+// both the old behaviour and the reason nothing that does not need this pays
+// for it.
+void a_travelling_area_effect_is_swept_only_when_it_authored_a_motion_mask() {
+    const auto x_after_two_ticks = [](std::uint32_t motion_collision_mask) {
+        network_example::World world;
+        network_example::physics::PhysicsWorld physics;
+        world.set_collision_world(&physics);
+
+        // A wall across the path, 1 m out.
+        network_example::physics::CollisionObjectDescriptor wall;
+        wall.identity = network_example::physics::CollisionObjectIdentity{
+            0,
+            9001,
+            network_example::physics::kHitZoneUnscaled,
+            network_example::physics::CollisionObjectKind::kTerrain,
+            network_example::physics::CollisionLayer::kTerrain,
+        };
+        wall.shape.type = network_example::physics::CollisionShapeType::kBox;
+        wall.shape.half_extents = glm::vec3{0.25f, 2.0f, 4.0f};
+        wall.position = glm::vec3{1.0f, 0.5f, 0.0f};
+        std::string error;
+        require(physics.upsert_object(wall, &error));
+
+        const network_example::NetId area = spawn_area_projectile(
+            world, 0, glm::vec3{0.0f, 0.5f, 0.0f}, 2.0f, 10, 0, 20, 7);
+        const auto entity = world.find_entity(area);
+        require(entity.has_value());
+        network_example::ProjectileState& projectile =
+            world.registry().get<network_example::ProjectileState>(*entity);
+        projectile.spawn_position = glm::vec3{0.0f, 0.5f, 0.0f};
+        projectile.initial_velocity = glm::vec3{30.0f, 0.0f, 0.0f};
+        projectile.collision_geometry.shape_type =
+            network_example::ColliderShapeType::kSphere;
+        projectile.collision_geometry.radius = 0.1f;
+        projectile.has_collision_geometry = true;
+        world.registry()
+            .get<network_example::ProjectileAreaEffectRuntime>(*entity)
+            .motion_collision_mask = motion_collision_mask;
+
+        network_example::simulate_projectiles(world, 1.0f / 30.0f);
+        network_example::simulate_projectiles(world, 1.0f / 30.0f);
+        return world.registry()
+            .get<network_example::Transform>(*entity)
+            .position.x;
+    };
+
+    // 30 m/s for two ticks is 2 m, so an unswept field is well past the wall.
+    require(x_after_two_ticks(0u) > 1.9f);
+    // Swept, it stops short of the wall's near face.
+    const float stopped = x_after_two_ticks(KERNEL_COLLISION_LAYER_TERRAIN);
+    require(stopped > 0.0f);
+    require(stopped < 1.0f);
+}
+
+// An area effect used to be pinned where it spawned: the loader dropped any
+// authored speed and the spawn path overwrote its velocity with zero. It can
+// now travel, which is what a field that sweeps across the ground needs. A
+// blast authors no speed and so still costs the ageing loop nothing.
+void a_travelling_area_effect_advances_and_a_still_one_does_not() {
+    const auto x_after_two_ticks = [](float speed) {
+        network_example::World world;
+        network_example::RuntimeProjectileTemplate area_template{};
+        area_template.projectile_template_id = 41;
+        area_template.projectile_type = network_example::ProjectileType::kAreaEffect;
+        area_template.motion_model = network_example::ProjectileMotionModel::kLinear;
+        area_template.speed = speed;
+        area_template.area_radius = 2.0f;
+        area_template.damage = 20;
+        area_template.damage_interval_ticks = 10;
+        area_template.lifetime_ticks = 30;
+        area_template.collision_mask = network_example::kCollisionMaskDamageable;
+        world.set_projectile_templates({area_template});
+
+        require(network_example::spawn_action_graph_projectile(
+            world,
+            41,
+            0,
+            0,
+            0,
+            glm::vec3{0.0f, 0.5f, 0.0f},
+            glm::vec3{1.0f, 0.0f, 0.0f},
+            0,
+            1.0f / 30.0f));
+
+        network_example::NetId area = 0;
+        for (const entt::entity entity :
+             world.registry().view<
+                 network_example::NetworkIdentity,
+                 network_example::ProjectileAreaEffectRuntime>()) {
+            area = world.registry()
+                       .get<network_example::NetworkIdentity>(entity)
+                       .net_id;
+        }
+        require(area != 0);
+
+        network_example::simulate_projectiles(world, 1.0f / 30.0f);
+        network_example::simulate_projectiles(world, 1.0f / 30.0f);
+
+        const auto entity = world.find_entity(area);
+        require(entity.has_value());
+        return world.registry()
+            .get<network_example::Transform>(*entity)
+            .position.x;
+    };
+
+    require(x_after_two_ticks(0.0f) == 0.0f);
+    // Two ticks at 6 m/s on a 30 Hz clock.
+    const float travelled = x_after_two_ticks(6.0f);
+    require(travelled > 0.39f && travelled < 0.41f);
+}
+
 // The overlap query filters the shooter out, which is why a weapon's own blast
 // has never been able to push or hurt the actor that fired it. hit_instigator is
 // how a template asks for the opposite, and it buys self-damage along with the
@@ -318,12 +461,13 @@ void area_effect_spares_cover_on_a_side_it_does_not_attack() {
 // branch, so "splash only pushed one unit" had no test that could tell a
 // single-target *query* apart from a single-target *dispatch*.
 network_example::CompiledActionGraphBinding impulse_on_impact_binding(
-    float strength) {
+    float strength,
+    std::uint8_t direction_source = KernelEventVec3Source_Direction) {
     KernelActionTriggerDefinition trigger{};
     trigger.struct_size = sizeof(trigger);
     trigger.action_type = KernelEntityTriggerActionType_ApplyImpulse;
     trigger.target_source = KernelEntityRefSource_EventTarget;
-    trigger.direction_source = KernelEventVec3Source_Direction;
+    trigger.direction_source = direction_source;
     trigger.impulse_strength = strength;
     trigger.impulse_collision_mask = KERNEL_COLLISION_MASK_ACTOR;
     std::optional<network_example::CompiledActionGraphBinding> binding =
@@ -336,12 +480,14 @@ network_example::CompiledActionGraphBinding impulse_on_impact_binding(
 void bind_impulse_graph(
     network_example::World& world,
     network_example::NetId area_net_id,
-    float strength) {
+    float strength,
+    std::uint8_t direction_source = KernelEventVec3Source_Direction) {
     const auto entity = world.find_entity(area_net_id);
     require(entity.has_value());
     world.registry()
         .get<network_example::ProjectileAreaEffectRuntime>(*entity)
-        .action_graph_binding = impulse_on_impact_binding(strength);
+        .action_graph_binding =
+            impulse_on_impact_binding(strength, direction_source);
 }
 
 const network_example::ActionApplyImpulseCommand& only_impulse_command(
@@ -393,6 +539,49 @@ void area_effect_dispatches_its_graph_once_per_target_in_radius() {
     require(health(world, second).hp == 50);
 }
 
+// `direction` is radial, so it is a different vector for every target one blast
+// reports. `subject_direction` is the field's own heading, so it is the same
+// vector for all of them -- which is what a front that sweeps across the ground
+// needs, and what a blast standing still has none of.
+void a_travelling_area_effect_reports_its_own_heading() {
+    const auto impulse_direction_for = [](std::uint8_t direction_source) {
+        network_example::World world;
+        // Off the travel axis on purpose: the radial push is +Z here, so the
+        // two sources cannot be confused for one another.
+        const network_example::NetId target =
+            spawn_enemy(world, glm::vec3{0.0f, 0.0f, 2.0f});
+        const network_example::NetId area = spawn_area_projectile(
+            world, 0, glm::vec3{0.0f, 0.5f, 0.0f}, 4.0f, 45, 0, 45, 7);
+        const auto entity = world.find_entity(area);
+        require(entity.has_value());
+        // Travelling along +X.
+        world.registry()
+            .get<network_example::ProjectileState>(*entity)
+            .initial_velocity = glm::vec3{6.0f, 0.0f, 0.0f};
+        bind_impulse_graph(world, area, 12.0f, direction_source);
+
+        network_example::DamagePipeline pipeline;
+        std::vector<KernelEvent> events;
+        std::vector<network_example::ActionGraphCommandBatch> batches;
+        network_example::simulate_area_effects(
+            world, 0, 0, &events, &pipeline, &batches);
+        require(batches.size() == 1);
+        const network_example::ActionApplyImpulseCommand& impulse =
+            only_impulse_command(batches.front());
+        require(impulse.target == target);
+        return impulse.direction;
+    };
+
+    const glm::vec3 radial = impulse_direction_for(KernelEventVec3Source_Direction);
+    require(radial.z > 0.9f);
+    require(std::fabs(radial.x) < 0.1f);
+
+    const glm::vec3 heading =
+        impulse_direction_for(KernelEventVec3Source_SubjectDirection);
+    require(heading.x > 0.9f);
+    require(std::fabs(heading.z) < 0.1f);
+}
+
 // Where the push points, for a blast whose centre sits at the same height as
 // what it hits. This is not a preference, it is what the radial direction
 // geometrically is -- and it is the half of the knockback the movement solver
@@ -423,13 +612,17 @@ void area_effect_impulse_direction_is_level_for_a_level_blast() {
 
 int main() {
     area_effect_damages_only_targets_inside_radius();
-    area_effect_respects_per_target_damage_interval();
+    area_effect_respects_its_damage_interval();
+    a_target_that_arrives_between_evaluations_waits_for_the_next_one();
     server_owned_area_effect_uses_player_damage_grace();
     area_effect_expires_at_expire_tick();
     area_effect_damage_order_is_deterministic();
+    a_travelling_area_effect_advances_and_a_still_one_does_not();
+    a_travelling_area_effect_is_swept_only_when_it_authored_a_motion_mask();
     area_effect_reaches_its_own_shooter_only_when_authored();
     area_effect_spares_cover_on_a_side_it_does_not_attack();
     area_effect_dispatches_its_graph_once_per_target_in_radius();
+    a_travelling_area_effect_reports_its_own_heading();
     area_effect_impulse_direction_is_level_for_a_level_blast();
     return 0;
 }

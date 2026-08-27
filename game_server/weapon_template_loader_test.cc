@@ -855,6 +855,180 @@ void collision_mask_expressions_are_loaded() {
 // Reaching one's own blast is off by default and only an area effect can ask
 // for it, because only the area effect overlap query implements the filter it
 // switches off.
+// speed sits below the area_effect branch's early return, so authoring it used
+// to be accepted and then discarded -- the effect stayed pinned where it
+// spawned. It now means what it says, and still defaults to standing still.
+// event.subject_direction is the heading of whatever the graph is running on,
+// which only a projectile trigger has. A field that never moves has none, and
+// the loader is what keeps that from reaching the runtime as a zero vector.
+// The mask that decides what stops a travelling field, kept apart from the one
+// that decides who it affects. Absent means nothing stops it and no sweep runs.
+void area_effect_motion_collision_mask_is_authored() {
+    const std::string area_template =
+        "id: 4\nname: fire_floor_area\ntype: area_effect\n"
+        "collider_template: area_effect_sphere\n"
+        "damage: 12\n"
+        "lifetime_ticks: 6\n"
+        "damage_behavior:\n"
+        "  type: area_interval\n"
+        "  damage_interval_ticks: 2\n"
+        "  falloff: none\n"
+        "collision_mask: hostile_side\n";
+
+    const std::filesystem::path default_dir = tmp_dir("motion_mask_default");
+    write_valid_templates(default_dir);
+    network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            default_dir.string());
+    assert(projectile_mechanics(config, 4).area_effect.motion_collision_mask ==
+           KERNEL_COLLISION_MASK_NONE);
+
+    const std::filesystem::path authored_dir = tmp_dir("motion_mask_authored");
+    write_valid_templates(authored_dir);
+    write_file(
+        authored_dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
+        area_template + "speed: 6.0\nmotion_collision_mask: terrain | static_obstacle\n");
+    config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            authored_dir.string());
+    assert(projectile_mechanics(config, 4).area_effect.motion_collision_mask ==
+           KERNEL_COLLISION_MASK_STATIC_WORLD);
+    // The mask that says who it affects is untouched by the one that says what
+    // stops it.
+    assert(projectile_mechanics(config, 4).area_effect.collision_mask ==
+           KERNEL_COLLISION_LAYER_HOSTILE_SIDE);
+
+    // Only the static world can stop it: actors and props are what it affects.
+    const std::filesystem::path actor_dir = tmp_dir("motion_mask_actor");
+    write_valid_templates(actor_dir);
+    write_file(
+        actor_dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
+        area_template + "speed: 6.0\nmotion_collision_mask: hostile_side\n");
+    assert(load_fails(actor_dir));
+
+    // A field that never moves has nothing to be stopped.
+    const std::filesystem::path still_dir = tmp_dir("motion_mask_still");
+    write_valid_templates(still_dir);
+    write_file(
+        still_dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
+        area_template + "motion_collision_mask: terrain\n");
+    assert(load_fails(still_dir));
+
+    // And no other projectile type answers this question twice.
+    const std::filesystem::path standard_dir = tmp_dir("motion_mask_standard");
+    write_valid_templates(standard_dir);
+    write_file(
+        standard_dir.parent_path() / "projectile_templates" / "rocket.yaml",
+        "id: 3\nname: rocket_projectile\ndamage: 45\n"
+        "sync_mode: server_snapshot_only\ncollider_template: rocket_aabb\n"
+        "movement_model: linear\nhit_response: destroy\n"
+        "damage_shape: direct_hit\nspeed: 35.0\nlifetime_ticks: 75\n"
+        "collision_mask: damageable\nmax_hit_count: 1\n"
+        "motion_collision_mask: terrain\n"
+        "gravity: {x: 0.0, y: 0.0, z: 0.0}\n");
+    assert(load_fails(standard_dir));
+}
+
+void subject_direction_needs_a_projectile_that_travels() {
+    const auto write_impulse_graph = [](const std::filesystem::path& dir,
+                                        const std::string& direction) {
+        write_file(
+            dir.parent_path() / "action_graph_templates" /
+                "action_sweep_impulse.yaml",
+            "id: action_sweep_impulse\n"
+            "parameters:\n"
+            "  target: null\n"
+            "  strength: 12.0\n"
+            "  direction: null\n"
+            "actions:\n"
+            "  - type: apply_impulse\n"
+            "    target: params.target\n"
+            "    strength: params.strength\n"
+            "    direction: params.direction\n"
+            "    collision_mask: actor\n");
+        return "triggers:\n"
+               "  on_projectile_impact:\n"
+               "    action_graph: action_sweep_impulse\n"
+               "    parameters:\n"
+               "      target: event.target\n"
+               "      strength: 12.0\n"
+               "      direction: " + direction + "\n";
+    };
+    const std::string area_template =
+        "id: 4\nname: fire_floor_area\ntype: area_effect\n"
+        "collider_template: area_effect_sphere\n"
+        "damage: 12\n"
+        "lifetime_ticks: 6\n"
+        "damage_behavior:\n"
+        "  type: area_interval\n"
+        "  damage_interval_ticks: 2\n"
+        "  falloff: none\n"
+        "collision_mask: hostile_side\n";
+
+    const std::filesystem::path moving_dir = tmp_dir("subject_direction_moving");
+    write_valid_templates(moving_dir);
+    const std::string moving_triggers =
+        write_impulse_graph(moving_dir, "event.subject_direction");
+    write_file(
+        moving_dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
+        area_template + "speed: 6.0\n" + moving_triggers);
+    const network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            moving_dir.string());
+    assert(projectile_mechanics(config, 4)
+               .projectile_impact_trigger.actions[0]
+               .direction_source == KernelEventVec3Source_SubjectDirection);
+
+    const std::filesystem::path still_dir = tmp_dir("subject_direction_still");
+    write_valid_templates(still_dir);
+    const std::string still_triggers =
+        write_impulse_graph(still_dir, "event.subject_direction");
+    write_file(
+        still_dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
+        area_template + still_triggers);
+    assert(load_fails(still_dir));
+}
+
+void area_effect_speed_is_authored() {
+    const std::filesystem::path default_dir = tmp_dir("area_speed_default");
+    write_valid_templates(default_dir);
+    network_example::game_server::GameServerGameplayConfig config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            default_dir.string());
+    assert(projectile_mechanics(config, 4).speed == 0.0f);
+
+    const std::filesystem::path moving_dir = tmp_dir("area_speed_moving");
+    write_valid_templates(moving_dir);
+    const std::string moving_template =
+        "id: 4\nname: fire_floor_area\ntype: area_effect\n"
+        "collider_template: area_effect_sphere\n"
+        "damage: 12\n"
+        "lifetime_ticks: 6\n"
+        "damage_behavior:\n"
+        "  type: area_interval\n"
+        "  damage_interval_ticks: 2\n"
+        "  falloff: none\n"
+        "collision_mask: hostile_side\n";
+    write_file(
+        moving_dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
+        moving_template + "speed: 6.0\n");
+    config =
+        network_example::game_server::load_gameplay_config_from_weapon_template_directory(
+            moving_dir.string());
+    assert(projectile_mechanics(config, 4).speed == 6.0f);
+    // The motion model stays linear whatever the speed: homing is still a
+    // standard-projectile-only model.
+    assert(projectile_mechanics(config, 4).motion_model ==
+           KernelProjectileMotionModel_Linear);
+
+    const std::filesystem::path negative_dir = tmp_dir("area_speed_negative");
+    write_valid_templates(negative_dir);
+    write_file(
+        negative_dir.parent_path() / "projectile_templates" / "fire_floor_area.yaml",
+        moving_template + "speed: -1.0\n");
+    assert(load_fails(negative_dir));
+}
+
 void area_effect_hit_instigator_is_authored() {
     const std::filesystem::path default_dir = tmp_dir("hit_instigator_default");
     write_valid_templates(default_dir);
@@ -1198,6 +1372,9 @@ int main() {
     malformed_collision_masks_are_rejected();
     area_effect_sync_mode_is_authored_not_forced();
     area_effect_hit_instigator_is_authored();
+    area_effect_speed_is_authored();
+    subject_direction_needs_a_projectile_that_travels();
+    area_effect_motion_collision_mask_is_authored();
     catalog_file_loads_colliders();
     return 0;
 }

@@ -551,6 +551,14 @@ struct TriggerEvent {
     glm::vec3 direction{0.0f};
     std::optional<ProjectileImpactPayload> projectile_impact;
     std::optional<ItemUsedPayload> item_used;
+    // Where the subject was heading when this happened, as opposed to where
+    // the event itself pointed. The two differ most for an area effect, whose
+    // `direction` is radial and so is a different vector for every target it
+    // reports; this one is the same for all of them. Zero when the subject was
+    // not moving -- the loader is what keeps a graph from asking a motionless
+    // template for it. Last so that a producer with nothing to say about it
+    // simply leaves it out.
+    glm::vec3 subject_direction{0.0f};
 };
 
 enum class ActionAuthoritySource : std::uint8_t {
@@ -615,6 +623,7 @@ struct EntityRefExpression {
 enum class EventVec3Source : std::uint8_t {
     kPosition,
     kDirection,
+    kSubjectDirection,
 };
 
 enum class ActionConditionType : std::uint8_t {
@@ -807,6 +816,9 @@ struct RuntimeProjectileTemplate {
     float area_radius = 0.0f;
     // Area effects only. Whether the effect may reach the actor that fired it.
     bool area_hit_instigator = false;
+    // Area effects only. What stops the effect as it travels, as static-world
+    // layer bits. Zero means nothing does and no sweep is run at all.
+    std::uint32_t area_motion_collision_mask = 0;
     std::uint32_t collision_mask = kCollisionMaskDamageable;
     std::uint32_t max_hit_count = 1;
     std::optional<CompiledActionGraphBinding> projectile_impact_binding;
@@ -848,7 +860,13 @@ struct ProjectileAreaEffectRuntime {
     std::uint32_t collision_mask = kCollisionMaskDamageable;
     ProjectileDamageFalloff damage_falloff = ProjectileDamageFalloff::kNone;
     bool hit_instigator = false;
-    std::unordered_map<NetId, std::uint32_t> next_damage_tick_by_target;
+    std::uint32_t motion_collision_mask = 0;
+    // The whole field's clock, not one per target. It ticks from the first
+    // evaluation rather than from spawn, because an effect spawned by an action
+    // graph is created after simulate_area_effects has already run for the
+    // tick, and anchoring on spawn_tick would push a one-shot blast's only
+    // evaluation past its own lifetime.
+    std::uint32_t next_damage_tick = 0;
     std::optional<CompiledActionGraphBinding> action_graph_binding;
 };
 

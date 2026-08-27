@@ -2,7 +2,15 @@ id: action_rocket_explosion_at_target
 parameters:
   target: null
   amount: 45
-  strength: 12.0
+  # [horizontal, vertical] in m/s. The horizontal 12.0 is what the old scalar
+  # form already delivered; the vertical is new and is what makes the knockback
+  # visible at all. An area effect's event.direction is the radial from the
+  # blast centre to the target, so for a blast level with what it hits its y is
+  # ~0 -- the scalar form therefore scaled a vertical component that was not
+  # there. 5.0 m/s against 9.81 gives ~1.0 s of airtime, and it is the airtime
+  # that lets the horizontal half carry: a flat knockback re-lands on the very
+  # next movement tick and hands control straight back.
+  strength: [12.0, 5.0]
   direction: null
 actions:
   - type: apply_damage
@@ -13,3 +21,8 @@ actions:
     strength: params.strength
     direction: params.direction
     collision_mask: actor | prop
+    # The ceiling, not the expected duration: landing releases the lockout on
+    # any tick after the one that armed it, so ~1.0 s of airtime ends this at
+    # around tick 31. 40 leaves headroom for a target blasted off a ledge
+    # without handing its movement away for long if it never lands.
+    lockout_ticks: 40

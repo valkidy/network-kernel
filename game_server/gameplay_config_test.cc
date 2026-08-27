@@ -2176,11 +2176,58 @@ int main() {
         KernelProjectileSyncMode_ServerSnapshotOnly);
     // Counts the collider_templates/ directory, which the bundle now enumerates
     // rather than lists, so this tracks the filesystem.
-    assert(config.colliders.templates.size() == 17);
+    assert(config.colliders.templates.size() == 18);
     assert(config.colliders.bindings.empty());
     // Every entity_templates/*.yaml with entity_type: actor. Tracks the
     // filesystem for the same reason the collider count above does.
-    assert(config.actor_templates.size() == 8);
+    assert(config.actor_templates.size() == 9);
+    // A friendly agent is friendly in three independent places, and each is a
+    // different mechanism: camp decides who it looks for, its hit collider's
+    // layer decides who can shoot it, and its projectile's mask decides who it
+    // can shoot. Two out of three produces a unit that is allied in one system
+    // and hostile in another -- a sentry the player cannot damage but that
+    // still shoots the player, or one the enemy ignores entirely. They are
+    // asserted together because they only mean anything together.
+    {
+        const network_example::game_server::ActorTemplateConfig* allied_sentry =
+            network_example::game_server::find_actor_template(config, 27u);
+        require(allied_sentry != nullptr);
+        assert(allied_sentry->name == "allied_beam_sentry");
+        assert(allied_sentry->actor_type ==
+               network_example::game_server::kActorTypeAgent);
+        // 1. Not the enemy_side an agent defaults to.
+        assert(allied_sentry->vision.camp == KernelAgentCamp_PlayerSide);
+        // 2. Its hit collider is on the player's side, so the player's
+        //    hostile_side weapons pass it by and the enemy's reach it.
+        const network_example::game_server::ColliderTemplateConfig*
+            allied_sentry_hitbox = nullptr;
+        for (const auto& collider : config.colliders.templates) {
+            if (collider.definition.template_id ==
+                allied_sentry->collider_template_id) {
+                allied_sentry_hitbox = &collider;
+            }
+        }
+        require(allied_sentry_hitbox != nullptr);
+        assert(allied_sentry_hitbox->definition.layer_mask ==
+               KERNEL_COLLISION_LAYER_PLAYER_SIDE);
+        // 3. And what it fires is aimed at the other side.
+        assert(allied_sentry->sentry.weapon_id == 9u);
+        const auto& allied_weapon = config.weapons.definitions[9];
+        const auto allied_beam = std::find_if(
+            config.projectile_templates.begin(),
+            config.projectile_templates.end(),
+            [&](const network_example::game_server::ProjectileTemplateConfig& candidate) {
+                return candidate.definition.projectile_template_id ==
+                    allied_weapon.projectile_template_id;
+            });
+        require(allied_beam != config.projectile_templates.end());
+        assert(allied_beam->name == "allied_sentry_beam");
+        assert((allied_beam->definition.mechanics.collision_mask &
+                KERNEL_COLLISION_LAYER_HOSTILE_SIDE) != 0u);
+        assert((allied_beam->definition.mechanics.collision_mask &
+                KERNEL_COLLISION_LAYER_PLAYER_SIDE) == 0u);
+    }
+
     // By name: actor_templates follows the enumerated file order, so an index
     // silently tracks whichever template sorts first.
     const network_example::game_server::ActorTemplateConfig* player_template_ptr =
@@ -2308,7 +2355,7 @@ int main() {
     // 8 spawnable templates plus rifle_tracer and shotgun_tracer, which nothing
     // spawns: they are authored for presentation and reach a client like any
     // other.
-    assert(config.projectile_templates.size() == 10);
+    assert(config.projectile_templates.size() == 11);
     bool found_homing_projectile = false;
     bool found_rocket_projectile = false;
     bool found_rocket_explosion = false;
@@ -2362,8 +2409,21 @@ int main() {
                    2u);
             assert(projectile.definition.mechanics.projectile_impact_trigger.actions[1].action_type ==
                    KernelEntityTriggerActionType_ApplyImpulse);
+            // All four, not just the horizontal. `impulse_strength` alone reads
+            // 12.0 under both forms, so on its own it cannot tell the split
+            // authoring apart from the scalar one it replaced -- and the way
+            // this authoring fails is silent: a `strength` in the trigger
+            // binding is always taken as the scalar form and would quietly
+            // defeat the graph's [horizontal, vertical] default. The mode is
+            // what pins that down.
+            assert(projectile.definition.mechanics.projectile_impact_trigger.actions[1].impulse_strength_mode ==
+                   KERNEL_IMPULSE_STRENGTH_MODE_SPLIT);
             assert(projectile.definition.mechanics.projectile_impact_trigger.actions[1].impulse_strength ==
                    12.0f);
+            assert(projectile.definition.mechanics.projectile_impact_trigger.actions[1].impulse_strength_vertical ==
+                   5.0f);
+            assert(projectile.definition.mechanics.projectile_impact_trigger.actions[1].impulse_lockout_ticks ==
+                   40u);
         }
         if (projectile.name == "homing_missile_projectile") {
             found_homing_projectile = true;

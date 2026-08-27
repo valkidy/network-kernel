@@ -195,6 +195,7 @@ void hash_projectile_template(
     hash_scalar(hash, mechanics.area_effect.lifetime_ticks);
     hash_scalar(hash, mechanics.area_effect.collision_mask);
     hash_scalar(hash, mechanics.area_effect.hit_instigator);
+    hash_scalar(hash, mechanics.area_effect.motion_collision_mask);
     hash_float(hash, mechanics.beam.length);
     hash_float(hash, mechanics.beam.radius);
     hash_scalar(hash, mechanics.beam.damage_per_tick);
@@ -5219,6 +5220,7 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             "damage_behavior",
             "collision_mask",
             "hit_instigator",
+            "motion_collision_mask",
             "max_hit_count",
             "gravity",
             "triggers",
@@ -5349,6 +5351,19 @@ ProjectileTemplateConfig projectile_template_from_yaml(
             }
         }
         mechanics.motion_model = KernelProjectileMotionModel_Linear;
+        // A field that travels -- a tornado rather than a blast. Zero is the
+        // standing behaviour: the effect sits where it was spawned. Read here
+        // because this branch returns before the generic speed read below,
+        // which is why authoring speed on an area effect used to do nothing at
+        // all. The motion model stays linear: a travelling field follows a
+        // straight line for now, and homing is deliberately still limited to
+        // standard projectiles.
+        mechanics.speed = node["speed"] ? node["speed"].as<float>() : 0.0f;
+        if (!std::isfinite(mechanics.speed) || mechanics.speed < 0.0f) {
+            throw std::runtime_error(
+                "area_effect projectile speed must be finite and non-negative: " +
+                projectile_template.name);
+        }
         // sync_mode is the one that is a real choice. It defaults to
         // server-only, as it always has, but a locally predicted area effect is
         // a shape the kernel implements -- an impact impulse on the local
@@ -5376,6 +5391,21 @@ ProjectileTemplateConfig projectile_template_from_yaml(
         mechanics.area_effect.lifetime_ticks =
             node["lifetime_ticks"].as<std::uint32_t>();
         mechanics.area_effect.collision_mask = mechanics.collision_mask;
+        // What stops the effect as it travels, as opposed to collision_mask
+        // above, which is who it affects. Absent means nothing stops it: it
+        // crosses walls, and no swept query is run for it at all.
+        mechanics.area_effect.motion_collision_mask = collision_mask_from_yaml(
+            node["motion_collision_mask"], KERNEL_COLLISION_MASK_NONE);
+        require_supported_collision_mask(
+            mechanics.area_effect.motion_collision_mask,
+            KERNEL_COLLISION_MASK_STATIC_WORLD,
+            "area_effect motion_collision_mask " + projectile_template.name);
+        if (mechanics.area_effect.motion_collision_mask != 0u &&
+            mechanics.speed <= 0.0f) {
+            throw std::runtime_error(
+                "motion_collision_mask needs an area_effect that travels: " +
+                projectile_template.name);
+        }
         // Off unless authored: an area effect that reaches its own shooter also
         // damages them, so it has to be asked for rather than inherited.
         mechanics.area_effect.hit_instigator = static_cast<std::uint8_t>(
@@ -5383,6 +5413,14 @@ ProjectileTemplateConfig projectile_template_from_yaml(
         return projectile_template;
     }
 
+    if (node["motion_collision_mask"]) {
+        // Every other projectile type already answers "what stops me" with its
+        // own collision_mask. Only an area effect needs the two questions kept
+        // apart, because its collision_mask is spoken for.
+        throw std::runtime_error(
+            "motion_collision_mask is only supported on area_effect projectiles: " +
+            projectile_template.name);
+    }
     if (node["hit_instigator"]) {
         // Only the area effect query is authored here. A standard projectile or
         // a beam filters its shooter out somewhere else entirely, so accepting
@@ -5587,6 +5625,12 @@ bool event_expression_available(
             trigger_name == "on_projectile_impact" ||
             trigger_name == "on_expired";
     }
+    if (expression == "event.subject_direction") {
+        // Only a projectile's own triggers have a subject that was going
+        // somewhere to report.
+        return trigger_name == "on_projectile_impact" ||
+            trigger_name == "on_expired";
+    }
     return false;
 }
 
@@ -5738,12 +5782,28 @@ void compile_projectile_trigger_binding(
                 } else {
                     const std::string direction = trigger_parameter_value(
                         binding, direction_parameter);
-                    if (direction != "event.direction") {
+                    if (direction != "event.direction" &&
+                        direction != "event.subject_direction") {
                         throw std::runtime_error(
-                            "apply_impulse projectile trigger direction must be event.direction or a direction vec3 default");
+                            "apply_impulse projectile trigger direction must be event.direction, event.subject_direction, or a direction vec3 default");
+                    }
+                    // A field that never moves has no heading to report, and
+                    // the runtime would hand the graph a zero vector that fails
+                    // the whole batch. Refusing it here is the reason the
+                    // runtime never has to deal with that.
+                    if (direction == "event.subject_direction" &&
+                        projectile_template->definition.mechanics
+                                .projectile_type ==
+                            KernelProjectileType_AreaEffect &&
+                        projectile_template->definition.mechanics.speed <= 0.0f) {
+                        throw std::runtime_error(
+                            "event.subject_direction needs a projectile that travels: " +
+                            projectile_template->name);
                     }
                     compiled_action.direction_source =
-                        KernelEventVec3Source_Direction;
+                        direction == "event.subject_direction"
+                            ? KernelEventVec3Source_SubjectDirection
+                            : KernelEventVec3Source_Direction;
                 }
                 compiled_action.impulse_collision_mask = action.collision_mask;
                 compiled_action.impulse_lockout_ticks = action.lockout_ticks;

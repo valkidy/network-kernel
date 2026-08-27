@@ -1356,6 +1356,8 @@ RuntimeProjectileTemplate to_runtime_projectile_template(
     }
     projectile_template.area_hit_instigator =
         mechanics.area_effect.hit_instigator != 0u;
+    projectile_template.area_motion_collision_mask =
+        mechanics.area_effect.motion_collision_mask;
     projectile_template.beam_length = mechanics.beam.length;
     projectile_template.beam_radius = mechanics.beam.radius;
     if (projectile_template.has_collision_geometry &&
@@ -1498,7 +1500,13 @@ bool validate_area_effect_mechanics(
            area_effect.lifetime_ticks > 0 &&
            (area_effect.collision_mask &
             ~(KERNEL_COLLISION_MASK_ACTOR | KERNEL_COLLISION_MASK_PROP)) == 0u &&
-           area_effect.hit_instigator <= 1u;
+           area_effect.hit_instigator <= 1u &&
+           // Only the static world can stop a travelling field. Actors and
+           // props are what it affects, which collision_mask above already
+           // says, and letting those bits in here would read as a second,
+           // contradictory answer to that question.
+           (area_effect.motion_collision_mask &
+            ~KERNEL_COLLISION_MASK_STATIC_WORLD) == 0u;
 }
 
 bool validate_beam_mechanics(const KernelBeamMechanicsDefinition& beam) {
@@ -1561,6 +1569,8 @@ bool validate_projectile_mechanics(
                         action.impulse_strength,
                         action.impulse_strength_vertical) ||
                     (action.direction_source != KernelEventVec3Source_Direction &&
+                     action.direction_source !=
+                         KernelEventVec3Source_SubjectDirection &&
                      action.direction_source != KernelEventVec3Source_Literal) ||
                     (action.direction_source == KernelEventVec3Source_Literal &&
                      (!std::isfinite(action.impulse_direction.x) ||
@@ -2956,6 +2966,23 @@ bool KernelEngine::load_gameplay_catalog(
                     action.damage_amount = trigger->damage_amount;
                     action.spawn_entity_template_id =
                         trigger->spawn_entity_template_id;
+                    // The projectile-side mirror has always carried this; this
+                    // one did not, because nothing here read it until the
+                    // SpawnProjectile branch below existed. The catalog loader
+                    // always sets action_count, so only hand-built ABI input
+                    // reaches this path -- which is exactly what the parity
+                    // test drives.
+                    action.spawn_projectile_template_id =
+                        trigger->spawn_projectile_template_id;
+                    // Same omission, found by the same test: the ApplyStatus /
+                    // RemoveStatus branch below reads this and the mirror never
+                    // set it, so a legacy-form status trigger was rejected for
+                    // having status id 0 rather than for anything it said.
+                    action.status_effect_id = trigger->status_effect_id;
+                    // modifier_operation / modifier_value are deliberately not
+                    // mirrored: no branch below reads them, because an entity
+                    // trigger cannot carry a speed modifier at all. See the
+                    // ApplySpeedModifier note at the end of the chain.
                     action.position_source = trigger->position_source;
                     action.direction_source = trigger->direction_source;
                     action.owner_source = trigger->owner_source;
@@ -3014,6 +3041,8 @@ bool KernelEngine::load_gameplay_catalog(
                         (action.direction_source !=
                              KernelEventVec3Source_Direction &&
                          action.direction_source !=
+                             KernelEventVec3Source_SubjectDirection &&
+                         action.direction_source !=
                              KernelEventVec3Source_Literal) ||
                         (action.direction_source ==
                              KernelEventVec3Source_Literal &&
@@ -3046,17 +3075,25 @@ bool KernelEngine::load_gameplay_catalog(
                     }
                     continue;
                 }
-                if (action.action_type ==
-                    KernelEntityTriggerActionType_ApplySpeedModifier) {
-                    if (action.target_source >
-                            KernelEntityRefSource_EventInstigator ||
-                        action.modifier_operation >
-                            KernelStatModifierOperation_Multiplier ||
-                        !std::isfinite(action.modifier_value)) {
-                        return false;
-                    }
-                    continue;
-                }
+                // No ApplySpeedModifier branch, so one falls through to the
+                // reject below. A speed modifier is not a standalone effect --
+                // it is a part of a status effect's lifetime, and it is keyed
+                // to a status instance in three separate places: the command's
+                // status_instance_id comes from provenance, which only
+                // prepare_status_lifecycle ever fills; the batch preflight
+                // rejects an id of 0; applying it requires a matching *active*
+                // status on the target; and expiry removes it by that same id.
+                // An entity trigger has no status instance in scope, so it can
+                // satisfy none of that.
+                //
+                // Accepting it here would let a catalog load a trigger that can
+                // only fail at runtime -- and fail the whole batch with it,
+                // since the preflight is all-or-nothing, so the other actions
+                // in the same graph would silently stop working too. Rejecting
+                // it at load instead matches the catalog loader, which already
+                // refuses apply_speed_modifier outside a status on_apply.
+                // "Collision slows the target" is authored as on_collision ->
+                // apply_status, and that status's on_apply -> speed modifier.
                 if (action.action_type ==
                     KernelEntityTriggerActionType_SpawnEntity) {
                     if (action.spawn_entity_template_id == 0u ||
@@ -3064,6 +3101,26 @@ bool KernelEngine::load_gameplay_catalog(
                             KernelEventVec3Source_Position ||
                         action.owner_source >
                             KernelEntityRefSource_EventInstigator) {
+                        return false;
+                    }
+                    continue;
+                }
+                // Same three checks the projectile-trigger validator makes;
+                // entity-backed triggers accept this action too, and the
+                // catalog loader has always compiled it for them
+                // (gameplay_config.cc's entity trigger path). Missing here, the
+                // loader accepted a prop that spawns a projectile and the
+                // kernel then rejected the whole catalog -- which is a load
+                // failure for every template, not just the offending one. That
+                // is the third time these two tables have drifted apart; see
+                // entity_trigger_action_parity_test.
+                if (action.action_type ==
+                    KernelEntityTriggerActionType_SpawnProjectile) {
+                    if (action.spawn_projectile_template_id == 0u ||
+                        action.position_source !=
+                            KernelEventVec3Source_Position ||
+                        action.direction_source !=
+                            KernelEventVec3Source_Direction) {
                         return false;
                     }
                     continue;
@@ -9251,14 +9308,31 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
                                             resistance) {
                                         continue;
                                     }
-                                    const glm::vec3 direction =
+                                    // Whatever the authority will resolve the
+                                    // source to, resolved the same way here.
+                                    // A subject direction that came out zero
+                                    // means the field is not travelling, which
+                                    // the catalog loader refuses to author, so
+                                    // treating it as "nothing to predict" is
+                                    // belt and braces rather than a fallback
+                                    // with its own behaviour.
+                                    glm::vec3 direction = glm::normalize(radial);
+                                    if (action.direction_source ==
+                                        KernelEventVec3Source_Literal) {
+                                        direction = glm::vec3{
+                                            action.impulse_direction.x,
+                                            action.impulse_direction.y,
+                                            action.impulse_direction.z};
+                                    } else if (
                                         action.direction_source ==
-                                                KernelEventVec3Source_Literal
-                                            ? glm::vec3{
-                                                  action.impulse_direction.x,
-                                                  action.impulse_direction.y,
-                                                  action.impulse_direction.z}
-                                            : glm::normalize(radial);
+                                        KernelEventVec3Source_SubjectDirection) {
+                                        if (glm::length(projectile.initial_velocity) <=
+                                            0.0001f) {
+                                            continue;
+                                        }
+                                        direction = glm::normalize(
+                                            projectile.initial_velocity);
+                                    }
                                     const glm::vec3 impulse =
                                         impulse_velocity_delta(
                                             action.impulse_strength_mode,
@@ -9283,6 +9357,31 @@ void KernelEngine::advance_predicted_projectiles(float fixed_delta_seconds) {
                         }
                         projectile.position = hits.front().position;
                         projectile.velocity = glm::vec3{0.0f, 0.0f, 0.0f};
+                        // An area effect that meets the world is parked by the
+                        // authority, not destroyed by it -- simulate_area_effects
+                        // still owns when it ends -- so terminating it here
+                        // would blink out a field the next snapshot still has.
+                        // Zeroing initial_velocity parks it the same way the
+                        // authority does.
+                        if (projectile_template->mechanics.projectile_type ==
+                            KernelProjectileType_AreaEffect) {
+                            // And only if the template said the world stops
+                            // it. One that did not is advanced straight
+                            // through terrain by the authority, so parking it
+                            // here would invent a stop no snapshot agrees
+                            // with.
+                            if (projectile_template->mechanics.area_effect
+                                    .motion_collision_mask == 0u) {
+                                projectile.position = next_position;
+                                projectile.velocity = next_velocity;
+                                continue;
+                            }
+                            projectile.spawn_position = projectile.position;
+                            projectile.initial_velocity =
+                                glm::vec3{0.0f, 0.0f, 0.0f};
+                            projectile.age_ticks = 0;
+                            continue;
+                        }
                         projectile.locally_terminated = true;
                         continue;
                     }

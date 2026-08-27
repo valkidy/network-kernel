@@ -1,0 +1,22 @@
+# Agent-only, like beam_sentry_rifle. Nothing puts weapon 9 in a player
+# loadout; it exists so allied_beam_sentry.yaml has something to point
+# weapon_slots at.
+#
+# The fire and reload actions are shared with the enemy beam sentry rather than
+# duplicated. Action templates are resolved by reference and only their id is
+# copied (gameplay_config.cc:6255), with none of the back-stamping that makes a
+# projectile template single-owner -- so two weapons may name the same action,
+# and the firing cadence of an allied sentry has no reason to differ from a
+# hostile one.
+id: 9
+name: Allied Sentry Beam Emitter
+weapon_type: beam
+# 45 ticks = 1.5 s of continuous beam per magazine at 30 Hz, since the fire
+# action spends one round per tick.
+magazine_size: 45
+# No ammo economy and no way to scavenge; running it dry would park it in a
+# permanent reload. Same choice as beam_sentry_rifle.yaml.
+reserve_magazines: 65535
+fire_action_template: beam_sentry_fire
+reload_action_template: beam_sentry_reload
+projectile_template: allied_sentry_beam
