@@ -104,7 +104,9 @@ void area_effect_damages_only_targets_inside_radius() {
     require(count_damage_events(events) == 1);
 }
 
-void area_effect_respects_per_target_damage_interval() {
+// The interval is the field's, and it now gates the overlap query rather than
+// each hit that query returns.
+void area_effect_respects_its_damage_interval() {
     network_example::World world;
     const network_example::NetId target = spawn_enemy(world, glm::vec3{1.0f, 0.0f, 0.0f});
     spawn_area_projectile(
@@ -121,6 +123,34 @@ void area_effect_respects_per_target_damage_interval() {
 
     require(health(world, target).hp == 10);
     require(count_damage_events(events) == 2);
+}
+
+// The price of gating the query instead of the hits: between two evaluations
+// the field is not looking, so somebody who walks in waits for the next one.
+// Pinned deliberately -- it is the behaviour bought in exchange for not paying
+// for an overlap on every tick of the interval.
+void a_target_that_arrives_between_evaluations_waits_for_the_next_one() {
+    network_example::World world;
+    spawn_area_projectile(
+        world, 0, glm::vec3{0.0f, 0.5f, 0.0f}, 2.0f, 10, 0, 20, 7);
+    network_example::DamagePipeline pipeline;
+    std::vector<KernelEvent> events;
+
+    // Nobody there for the first evaluation, which still consumes it.
+    network_example::simulate_area_effects(world, 0, &events, &pipeline);
+    pipeline.confirm_ready(world, 0, 0, &events);
+
+    const network_example::NetId latecomer =
+        spawn_enemy(world, glm::vec3{1.0f, 0.0f, 0.0f});
+    for (std::uint32_t tick = 1; tick < 10; ++tick) {
+        network_example::simulate_area_effects(world, tick, &events, &pipeline);
+        pipeline.confirm_ready(world, tick, tick, &events);
+    }
+    require(health(world, latecomer).hp == 50);
+
+    network_example::simulate_area_effects(world, 10, &events, &pipeline);
+    pipeline.confirm_ready(world, 10, 10, &events);
+    require(health(world, latecomer).hp == 30);
 }
 
 void server_owned_area_effect_uses_player_damage_grace() {
@@ -582,7 +612,8 @@ void area_effect_impulse_direction_is_level_for_a_level_blast() {
 
 int main() {
     area_effect_damages_only_targets_inside_radius();
-    area_effect_respects_per_target_damage_interval();
+    area_effect_respects_its_damage_interval();
+    a_target_that_arrives_between_evaluations_waits_for_the_next_one();
     server_owned_area_effect_uses_player_damage_grace();
     area_effect_expires_at_expire_tick();
     area_effect_damage_order_is_deterministic();

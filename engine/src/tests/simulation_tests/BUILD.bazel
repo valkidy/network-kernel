@@ -97,6 +97,12 @@ cc_binary(
 )
 
 cc_binary(
+    name = "area_effect_motion_benchmark",
+    srcs = ["area_effect_motion_benchmark.cc"],
+    deps = ["//engine/src/simulation:simulation"],
+)
+
+cc_binary(
     name = "projectile_query_benchmark",
     srcs = ["projectile_query_benchmark.cc"],
     deps = ["//engine/src/simulation:simulation"],

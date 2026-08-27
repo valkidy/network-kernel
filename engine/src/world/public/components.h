@@ -861,7 +861,12 @@ struct ProjectileAreaEffectRuntime {
     ProjectileDamageFalloff damage_falloff = ProjectileDamageFalloff::kNone;
     bool hit_instigator = false;
     std::uint32_t motion_collision_mask = 0;
-    std::unordered_map<NetId, std::uint32_t> next_damage_tick_by_target;
+    // The whole field's clock, not one per target. It ticks from the first
+    // evaluation rather than from spawn, because an effect spawned by an action
+    // graph is created after simulate_area_effects has already run for the
+    // tick, and anchoring on spawn_tick would push a one-shot blast's only
+    // evaluation past its own lifetime.
+    std::uint32_t next_damage_tick = 0;
     std::optional<CompiledActionGraphBinding> action_graph_binding;
 };
 

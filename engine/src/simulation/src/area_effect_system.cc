@@ -93,6 +93,16 @@ void simulate_area_effects(
         if (collision_world == nullptr) {
             continue;
         }
+        // The interval gates the query itself, not each hit the query returns.
+        // It used to be checked per target after the overlap, which meant a
+        // field with an interval of five still paid for five overlaps to act on
+        // one -- and that overlap is by far the most expensive thing here,
+        // several hundred microseconds against the one a swept motion query
+        // costs. The price of moving the gate up is that nobody who walks in
+        // between two evaluations is noticed until the next one.
+        if (current_tick < area_effect.next_damage_tick) {
+            continue;
+        }
         physics::OverlapRequest request{};
         request.shape.type = physics::CollisionShapeType::kSphere;
         request.shape.radius = area_effect.radius;
@@ -169,14 +179,8 @@ void simulate_area_effects(
                     world, area_effect.collision_mask, target_net_id)) {
                 continue;
             }
-            const auto next_damage_tick =
-                area_effect.next_damage_tick_by_target.find(target_net_id);
             if (area_effect.action_graph_binding.has_value() &&
                 area_effect.damage_interval_ticks == 0u) {
-                continue;
-            }
-            if (next_damage_tick != area_effect.next_damage_tick_by_target.end() &&
-                current_tick < next_damage_tick->second) {
                 continue;
             }
 
@@ -241,9 +245,9 @@ void simulate_area_effects(
                         server_time_us,
                         hit));
             }
-            area_effect.next_damage_tick_by_target[target_net_id] =
-                current_tick + std::max(1u, area_effect.damage_interval_ticks);
         }
+        area_effect.next_damage_tick =
+            current_tick + std::max(1u, area_effect.damage_interval_ticks);
         if (action_graph_batches != nullptr && !queued_triggers.empty()) {
             std::vector<ActionGraphCommandBatch> batches;
             if (dispatch_action_graph_triggers(

@@ -189,6 +189,14 @@ target's end.
 Adds a damage-over-time block. `speed` is optional here and defaults to `0`,
 which is a field that sits where it was spawned — every blast wants that.
 
+`damage_interval_ticks` is the field's own cadence, not a per-target one: the
+effect looks for targets once every interval and hits everything it finds. A
+target that walks in between two of those evaluations is not noticed until the
+next one, so the interval is also the worst-case delay before someone entering
+the field is first hit. Keep it short for a field people walk into; a blast
+whose interval is at least its `lifetime_ticks` is evaluated exactly once, at
+the moment it appears.
+
 ```yaml
 type: area_effect
 collider_template: area_effect_sphere
