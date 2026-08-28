@@ -1,10 +1,10 @@
 // How often does one client actually hear about one agent?
 //
-// The per-client snapshot send budget is a hard 1200 B and the agent section is
-// round-robin, so past a certain population every agent's position is stale for
-// most of the time. This measures that directly -- it drives the real
-// build_relevant_snapshot / build_snapshot_send_set pair over a synthetic
-// population and records, per agent, how many snapshots pass between
+// The per-client snapshot send budget is a hard 1200 B and the agent section
+// serves whoever has waited longest, so past a certain population every agent's
+// position is stale for part of the time. This measures that directly -- it
+// drives the real build_relevant_snapshot / build_snapshot_send_set pair over a
+// synthetic population and records, per agent, how many snapshots pass between
 // appearances. It derives nothing from the budget arithmetic.
 //
 // Run:
@@ -68,16 +68,9 @@ glm::vec3 agent_position(std::size_t index, std::size_t count) {
         static_cast<float>(radius * std::sin(angle))};
 }
 
-// advance_by_packed emulates the one-line alternative to the shipped cursor
-// rule: today build_snapshot_send_set always advances the agent cursor by
-// exactly 1 per snapshot, whatever it managed to pack. Setting this true
-// rewinds that and advances by the number actually packed instead, which is
-// what turns a rotating window into a partition. Nothing in the engine is
-// modified -- the cursor is simply overwritten between calls.
 Row measure(
     std::size_t agent_count,
     std::size_t snapshot_count,
-    bool advance_by_packed = false,
     bool agents_acting = false) {
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;
@@ -125,7 +118,6 @@ Row measure(
                 }
             }
         }
-        const std::size_t cursor_before = session.actor_snapshot_cursor;
         const WorldSnapshot send =
             engine.build_snapshot_send_set(session, relevant, kSendBudgetBytes);
         bytes_per_snapshot.push_back(
@@ -152,10 +144,6 @@ Row measure(
             last_seen[slot] = tick;
         }
         packed_per_snapshot.push_back(packed);
-        if (advance_by_packed && agent_count > 0 && packed > 0) {
-            session.actor_snapshot_cursor =
-                (cursor_before + packed) % agent_count;
-        }
         if (tick == 0 && !send.entities.empty()) {
             for (const EntitySnapshot& entity : send.entities) {
                 if (entity.type == network_example::EntityType::kActor &&
@@ -184,10 +172,8 @@ Row measure(
     row.agents_per_snapshot = mean(packed_per_snapshot);
     row.mean_snapshot_bytes = mean(bytes_per_snapshot);
     row.agent_entity_bytes = agent_entity_bytes;
-    // The gap distribution is bimodal, not centred: an agent is refreshed on
-    // several consecutive snapshots and then goes dark. A mean would describe
-    // neither half, so report the median (the inside-the-burst case) and the
-    // maximum (the blackout, which is what a player actually sees).
+    // The maximum is what a player actually sees, so it is reported alongside
+    // the median rather than folded into a mean.
     row.median_gap_snapshots = gaps.empty() ? 0 : gaps[gaps.size() / 2];
     row.max_gap_snapshots = gaps.empty() ? 0 : gaps.back();
     row.blackout_seconds = static_cast<double>(row.max_gap_snapshots) /
@@ -199,10 +185,7 @@ Row measure(
 
 }  // namespace
 
-void print_table(
-    const char* title,
-    bool advance_by_packed,
-    bool agents_acting = false) {
+void print_table(const char* title, bool agents_acting = false) {
     std::printf("%s\n", title);
     std::printf(
         "%7s %9s %10s %8s %9s %10s %10s %11s %10s\n",
@@ -212,8 +195,7 @@ void print_table(
         // Eight full cycles, so the longest gap is sampled repeatedly rather
         // than clipped by the end of the window.
         const std::size_t snapshots = std::max<std::size_t>(600, agent_count * 8);
-        const Row row =
-            measure(agent_count, snapshots, advance_by_packed, agents_acting);
+        const Row row = measure(agent_count, snapshots, agents_acting);
         std::printf(
             "%7zu %9zu %10.2f %8zu %9.1f %10zu %10zu %11.2f %10.0f\n",
             row.agent_count,
@@ -232,10 +214,8 @@ void print_table(
 int main() {
     std::printf("budget=%zu B  snapshot_rate=%u Hz  relevance_radius=%.0f m\n\n",
                 kSendBudgetBytes, kSnapshotsPerSecond, kRelevanceRadiusMeters);
-    print_table("A. SHIPPED: agent cursor advances by 1 per snapshot", false);
-    print_table("B. SHIPPED, every agent mid-action (+20 B each)", false, true);
-    print_table("C. CONTROL: cursor advances by the number packed", true);
-    print_table("D. CONTROL, every agent mid-action", true, true);
+    print_table("A. Idle agents");
+    print_table("B. Every agent mid-action (+20 B each)", true);
     std::printf("per-client snapshot ceiling at a continuously full budget: "
                 "%zu B/s (%.0f kbit/s)\n",
                 kSendBudgetBytes * kSnapshotsPerSecond,

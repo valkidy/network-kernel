@@ -8,6 +8,11 @@
 - Snapshot schema: 19
 - Gameplay catalog version: 15
 
+The catalog and packet-size measurements are from that baseline. **Measured
+Agent Refresh Rate** below was re-measured after the agent and projectile
+sections stopped rotating on a sliding index; nothing it depends on — record
+sizes, the send budget, the snapshot rate — changed with it.
+
 ## Scope And Measurement Boundary
 
 This report covers gameplay catalog synchronization, catalog metadata used
@@ -139,7 +144,8 @@ shown above.
 ## Measured Agent Refresh Rate
 
 Derived budget arithmetic is not sufficient here, because the agent section is
-round-robin and the cursor rule decides the refresh period. The numbers below
+rotated by a selection rule rather than sent whole, and that rule decides the
+refresh period. The numbers below
 are measured by driving the real `build_relevant_snapshot` /
 `build_snapshot_send_set` pair over a synthetic population and recording, per
 agent, how many snapshots pass between appearances.
@@ -152,49 +158,40 @@ Idle agents, 1,200 B budget, 15 snapshots per second:
 | Agents | Packed per snapshot | Snapshot bytes | Median gap | Max gap | Blackout |
 |---:|---:|---:|---:|---:|---:|
 | 16 | 15 | 1,178 B | 1 | 2 | 0.13 s |
-| 64 | 15 | 1,178 B | 1 | 50 | 3.33 s |
-| 128 | 15 | 1,178 B | 1 | 114 | 7.60 s |
-| 256 | 15 | 1,178 B | 1 | 242 | 16.13 s |
-| 500 | 15 | 1,178 B | 1 | 486 | 32.40 s |
+| 64 | 15 | 1,178 B | 4 | 5 | 0.33 s |
+| 128 | 15 | 1,178 B | 9 | 9 | 0.60 s |
+| 256 | 15 | 1,178 B | 17 | 18 | 1.20 s |
+| 500 | 15 | 1,178 B | 33 | 34 | 2.27 s |
 
 With every agent mid-action (88 B each), 11 agents fit per snapshot and the
-blackout at 500 agents is 32.67 s.
+blackout at 500 agents is 3.07 s.
 
-The gap distribution is bimodal and a mean describes neither half. An agent is
-refreshed on 15 consecutive snapshots — one second of smooth motion — and then
-goes dark for the rest of the cycle. The blackout is what a player sees, and it
-is `(N - 14) / 15` seconds.
+Median and maximum are within one snapshot of each other at every population.
+The section serves whoever has waited longest, so the population is partitioned
+across consecutive snapshots and every agent's gap is the length of one pass.
+There is no burst-then-blackout pattern to average over, and a client can treat
+the interval between updates for a given agent as a constant.
 
-### Why the cycle is N and not N/15
+### Why the cycle is the number of passes and not the population
 
-`build_snapshot_send_set` advances the agent cursor by exactly one per
-snapshot, regardless of how many agents it packed:
+`build_snapshot_send_set` stamps each net id with the send sequence it last
+went out on, and orders the section by that stamp — never-sent first, net id
+breaking ties. An entity therefore does not come up again until everything else
+in its section has had a turn, and one pass costs `ceil(N / K)` snapshots.
 
-```cpp
-const std::size_t start = *cursor % entities.size();
-for (std::size_t offset = 0; offset < entities.size(); ++offset) {
-    const std::size_t index = (start + offset) % entities.size();
-    try_add_entity(*entities[index]);
-}
-*cursor = (start + 1) % entities.size();
-```
+An earlier rule kept a single index into the relevant list and advanced it by
+one per snapshot regardless of how many entities it packed. The window slid
+instead of stepping, so a section that packed 15 entities re-sent 14 of them on
+the next snapshot and one pass took `N` snapshots rather than `N / K`. The
+blackout was `(N - K + 1) / 15` seconds — 7.60 s at 128 agents, 16.13 s at 256
+— and the gap distribution was bimodal: an agent was refreshed on 15 consecutive
+snapshots and then went dark for the rest of the cycle.
 
-The window therefore slides by one rather than stepping to the next disjoint
-group, so the cycle length is the population size rather than
-`population / packed`. A control run that advances the cursor by the number
-actually packed — measured through the same code path, with the cursor
-overwritten between calls and no engine change — gives:
-
-| Agents | Blackout, cursor +1 (shipped) | Blackout, cursor +packed (control) |
-|---:|---:|---:|
-| 64 | 3.33 s | 0.33 s |
-| 128 | 7.60 s | 0.60 s |
-| 256 | 16.13 s | 1.20 s |
-| 500 | 32.40 s | 2.27 s |
-
-The control is a measurement, not a proposal: sliding windows and disjoint
-partitions have different behaviour under churn, and nothing here evaluates
-that.
+Stamps rather than an index, because an index only survives as long as the list
+it points into. Agents enter and leave the relevant set constantly, and a
+departure shifts every entity behind it forward by one slot — handing them
+somebody else's turn, and skipping whoever the index now points past for a
+further full cycle. A stamp is keyed on net id and moves with its entity.
 
 ### Population ceiling
 
@@ -202,21 +199,21 @@ Bandwidth is unchanged by population — the budget is saturated from about 15
 relevant agents upward, and per-client snapshot traffic is a flat 17,670 B/s
 (141 kbit/s). What population buys is staleness, not bytes.
 
-The blackout is `(N - K + 1) / 15` seconds, where `K` is the number of agents
+The blackout is `ceil(N / K) / 15` seconds, where `K` is the number of agents
 that fit in one snapshot: 15 idle, 11 mid-action. Inverting it, for a target
 worst-case staleness `S` seconds the ceiling on simultaneously relevant agents
-is `N <= 15 * S + K - 1`:
+is `N <= 15 * S * K`:
 
 | Worst-case staleness | Idle agents (K=15) | Mid-action agents (K=11) |
 |---:|---:|---:|
-| 0.5 s | 21 | 17 |
-| 1 s | 29 | 25 |
-| 2 s | 44 | 40 |
-| 5 s | 89 | 85 |
+| 0.5 s | 112 | 82 |
+| 1 s | 225 | 165 |
+| 2 s | 450 | 330 |
+| 5 s | 1125 | 825 |
 
-The two columns converge because `K` shifts the intercept, not the slope: past
-a couple of seconds of tolerance the ceiling is set almost entirely by the
-snapshot rate, and packing more agents per snapshot barely moves it.
+`K` is now a multiplier rather than an intercept, so bytes per agent moves the
+ceiling proportionally: halving the agent record roughly doubles the population
+that fits a given staleness target. That is the lever quantisation pulls.
 
 ## Reproduction
 

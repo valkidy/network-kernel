@@ -10347,6 +10347,10 @@ WorldSnapshot KernelEngine::build_snapshot_send_set(
     if (byte_budget < estimated_size) {
         return send_snapshot;
     }
+    // Counts send sets, not ticks: the sections rotate once per snapshot, and
+    // keying the stamps on the server tick would tie their order to a caller
+    // that is free to build several send sets for the same tick.
+    ++session.snapshot_send_sequence;
 
     const auto prepare_send_entity =
         [&](const EntitySnapshot& entity) -> std::optional<EntitySnapshot> {
@@ -10407,26 +10411,61 @@ WorldSnapshot KernelEngine::build_snapshot_send_set(
         return true;
     };
 
-    const auto add_round_robin_entities =
-        [&](EntityType type, ActorType actor_type, std::size_t* cursor) {
-            std::vector<const EntitySnapshot*> entities;
+    // Serves whoever has waited longest. The previous rule started at a cursor
+    // and advanced it by one per snapshot, which made the window slide rather
+    // than step: a section that packed fifteen entities re-sent fourteen of
+    // them next snapshot, so one full pass took as many snapshots as there
+    // were entities instead of as many as it took to cover them.
+    const auto add_stalest_entities =
+        [&](EntityType type,
+            ActorType actor_type,
+            std::unordered_map<NetId, std::uint64_t>* last_sent) {
+            std::vector<std::pair<std::uint64_t, const EntitySnapshot*>> candidates;
+            candidates.reserve(relevant_snapshot.entities.size());
             for (const EntitySnapshot& entity : relevant_snapshot.entities) {
-                if (entity.type == type &&
-                    (actor_type == ActorType::kUnknown ||
-                     entity.actor_type == actor_type)) {
-                    entities.push_back(&entity);
+                if (entity.type != type ||
+                    (actor_type != ActorType::kUnknown &&
+                     entity.actor_type != actor_type)) {
+                    continue;
                 }
+                const auto stamp = last_sent->find(entity.net_id);
+                candidates.emplace_back(
+                    stamp == last_sent->end() ? 0u : stamp->second,
+                    &entity);
             }
-            if (entities.empty()) {
-                *cursor = 0;
+            if (candidates.empty()) {
+                last_sent->clear();
                 return;
             }
-            const std::size_t start = *cursor % entities.size();
-            for (std::size_t offset = 0; offset < entities.size(); ++offset) {
-                const std::size_t index = (start + offset) % entities.size();
-                try_add_entity(*entities[index]);
+            // Net id breaks the tie so that a run of equal stamps -- every
+            // entity on the first snapshot, all of them unsent -- is ordered by
+            // something stable rather than by however the world iterated.
+            std::sort(
+                candidates.begin(),
+                candidates.end(),
+                [](const std::pair<std::uint64_t, const EntitySnapshot*>& lhs,
+                   const std::pair<std::uint64_t, const EntitySnapshot*>& rhs) {
+                    if (lhs.first != rhs.first) {
+                        return lhs.first < rhs.first;
+                    }
+                    return lhs.second->net_id < rhs.second->net_id;
+                });
+            // Rebuilt rather than updated in place, so that an entity which has
+            // left the relevant set drops its stamp with it. Kept without a
+            // stamp of its own, a returning or recycled net id would look
+            // freshly served and lose a turn.
+            std::unordered_map<NetId, std::uint64_t> next_last_sent;
+            next_last_sent.reserve(candidates.size());
+            for (const std::pair<std::uint64_t, const EntitySnapshot*>& candidate :
+                 candidates) {
+                // Deliberately not stopping at the first entity that does not
+                // fit: a later one may be smaller, and an entity too large for
+                // the whole budget must not shut the section down.
+                const bool sent = try_add_entity(*candidate.second);
+                next_last_sent[candidate.second->net_id] =
+                    sent ? session.snapshot_send_sequence : candidate.first;
             }
-            *cursor = (start + 1) % entities.size();
+            *last_sent = std::move(next_last_sent);
         };
 
     for (const EntitySnapshot& entity : relevant_snapshot.entities) {
@@ -10435,14 +10474,14 @@ WorldSnapshot KernelEngine::build_snapshot_send_set(
             try_add_entity(entity);
         }
     }
-    add_round_robin_entities(
+    add_stalest_entities(
         EntityType::kActor,
         ActorType::kAgent,
-        &session.actor_snapshot_cursor);
-    add_round_robin_entities(
+        &session.actor_last_sent_sequence);
+    add_stalest_entities(
         EntityType::kProjectile,
         ActorType::kUnknown,
-        &session.projectile_snapshot_cursor);
+        &session.projectile_last_sent_sequence);
     for (const EntitySnapshot& entity : relevant_snapshot.entities) {
         if (!(entity.type == EntityType::kActor &&
               (entity.actor_type == ActorType::kPlayer ||

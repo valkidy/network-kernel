@@ -628,6 +628,50 @@ int main() {
     assert(!contains_entity(second_round, 201));
     assert(contains_entity(second_round, 202));
 
+    // The reason the send order is keyed on net id rather than on a position
+    // in the relevant list. An index survives only as long as the list does:
+    // serve the first of three agents, let it leave, and an index of 1 now
+    // points past the second agent to the third, so the second waits out
+    // another full cycle for a turn it had already earned.
+    network_example::EntitySnapshot churn_first = enemy_entity;
+    churn_first.net_id = 211;
+    network_example::EntitySnapshot churn_second = enemy_entity;
+    churn_second.net_id = 212;
+    network_example::EntitySnapshot churn_third = enemy_entity;
+    churn_third.net_id = 213;
+    network_example::WorldSnapshot churn_relevant;
+    churn_relevant.header = crowded.header;
+    churn_relevant.entities.push_back(churn_first);
+    churn_relevant.entities.push_back(churn_second);
+    churn_relevant.entities.push_back(churn_third);
+    const std::size_t one_enemy_budget =
+        network_example::estimate_snapshot_base_packet_size() +
+        network_example::estimate_snapshot_entity_size(churn_first);
+    const network_example::WorldSnapshot churn_round_one =
+        engine.build_snapshot_send_set(
+            session_one,
+            churn_relevant,
+            one_enemy_budget);
+    assert(contains_entity(churn_round_one, 211));
+    network_example::WorldSnapshot churn_departed;
+    churn_departed.header = crowded.header;
+    churn_departed.entities.push_back(churn_second);
+    churn_departed.entities.push_back(churn_third);
+    const network_example::WorldSnapshot churn_round_two =
+        engine.build_snapshot_send_set(
+            session_one,
+            churn_departed,
+            one_enemy_budget);
+    assert(contains_entity(churn_round_two, 212));
+    assert(!contains_entity(churn_round_two, 213));
+    const network_example::WorldSnapshot churn_round_three =
+        engine.build_snapshot_send_set(
+            session_one,
+            churn_departed,
+            one_enemy_budget);
+    assert(contains_entity(churn_round_three, 213));
+    assert(!contains_entity(churn_round_three, 212));
+
     network_example::EntitySnapshot compact_projectile = projectile_entity;
     compact_projectile.net_id = 301;
     network_example::EntitySnapshot hybrid_projectile = projectile_entity;
