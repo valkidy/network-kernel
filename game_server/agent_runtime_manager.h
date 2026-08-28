@@ -45,6 +45,10 @@ private:
         std::uint32_t net_id,
         std::uint32_t actor_template_id) const;
     bool has_live_agent_or_director() const;
+    // Fills `buffer` with every actor state the kernel holds, growing it as
+    // needed, and returns how many it wrote.
+    std::uint32_t query_actor_states(
+        std::vector<KernelServerEntityState>* buffer) const;
     void build_controllers();
     void dispatch_controllers(float delta_seconds);
     AgentControllerBinding* binding_for(std::uint32_t actor_template_id);
@@ -56,6 +60,9 @@ private:
     // previous single-controller behavior for anything unrecognized.
     std::size_t fallback_controller_index_ = 0;
     std::vector<AgentRuntimeState> agents_;
+    // Kept across ticks so that a population which has already been sized for
+    // does not reallocate every tick.
+    mutable std::vector<KernelServerEntityState> actor_query_buffer_;
     std::vector<std::uint32_t> director_net_ids_;
     bool director_preload_attempted_ = false;
     bool director_preload_succeeded_ = false;

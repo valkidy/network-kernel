@@ -1,7 +1,6 @@
 #include "game_server/agent_runtime_manager.h"
 
 #include <algorithm>
-#include <array>
 #include <utility>
 
 #include <spdlog/spdlog.h>
@@ -12,7 +11,11 @@ namespace network_example::game_server {
 namespace {
 
 constexpr KernelQuat kIdentityRotation{0.0f, 0.0f, 0.0f, 1.0f};
-constexpr std::uint32_t kMaxQueriedAgents = 128;
+// Where the actor query starts, not where it stops. It grows to fit the
+// population; the ceiling only exists so that a query which somehow never comes
+// back short cannot grow without bound.
+constexpr std::size_t kInitialQueriedActors = 128;
+constexpr std::size_t kMaxQueriedActors = 65536;
 
 // Resolved from the agent's OWN actor template, not from the catalog's single
 // `enemy:` entry. Holding one controller-wide config meant an agent spawned by a
@@ -302,15 +305,8 @@ void AgentRuntimeManager::sync_agents_from_kernel() {
             }),
         director_net_ids_.end());
 
-    std::array<KernelServerEntityState, kMaxQueriedAgents> states{};
-    for (KernelServerEntityState& state : states) {
-        state.struct_size = sizeof(KernelServerEntityState);
-    }
-    const std::uint32_t state_count = Kernel_ServerQueryEntities(
-        kernel_,
-        kEntityTypeActor,
-        states.data(),
-        static_cast<std::uint32_t>(states.size()));
+    const std::uint32_t state_count = query_actor_states(&actor_query_buffer_);
+    const std::vector<KernelServerEntityState>& states = actor_query_buffer_;
 
     std::vector<AgentRuntimeState> next_agents;
     next_agents.reserve(state_count);
@@ -377,21 +373,48 @@ bool AgentRuntimeManager::has_live_agent_or_director() const {
             return true;
         }
     }
-    std::array<KernelServerEntityState, kMaxQueriedAgents> states{};
-    for (KernelServerEntityState& state : states) {
-        state.struct_size = sizeof(KernelServerEntityState);
-    }
-    const std::uint32_t state_count = Kernel_ServerQueryEntities(
-        kernel_,
-        kEntityTypeActor,
-        states.data(),
-        static_cast<std::uint32_t>(states.size()));
+    std::vector<KernelServerEntityState> states;
+    const std::uint32_t state_count = query_actor_states(&states);
     for (std::uint32_t index = 0; index < state_count; ++index) {
         if (states[index].valid != 0u && states[index].actor_type == kActorTypeAgent) {
             return true;
         }
     }
     return false;
+}
+
+// Kernel_ServerQueryEntities reports how many states it wrote, never how many
+// it had, and it stops writing when the buffer is full. A count that exactly
+// fills the buffer is therefore indistinguishable from a truncated one, so the
+// buffer is grown and the query repeated until it comes back short. Truncation
+// here does not degrade anything gracefully: an agent the query drops is an
+// agent the controllers never see, which stands still for as long as it stays
+// dropped -- and which 128 of the actors get through was decided by world
+// iteration order, so the same agent could be driven on one tick and frozen on
+// the next.
+std::uint32_t AgentRuntimeManager::query_actor_states(
+    std::vector<KernelServerEntityState>* buffer) const {
+    if (kernel_ == nullptr || buffer == nullptr) {
+        return 0;
+    }
+    if (buffer->size() < kInitialQueriedActors) {
+        buffer->resize(kInitialQueriedActors);
+    }
+    while (true) {
+        for (KernelServerEntityState& state : *buffer) {
+            state.struct_size = sizeof(KernelServerEntityState);
+        }
+        const std::uint32_t count = Kernel_ServerQueryEntities(
+            kernel_,
+            kEntityTypeActor,
+            buffer->data(),
+            static_cast<std::uint32_t>(buffer->size()));
+        if (count < buffer->size() || buffer->size() >= kMaxQueriedActors) {
+            return count;
+        }
+        buffer->resize(
+            std::min(buffer->size() * 2, kMaxQueriedActors));
+    }
 }
 
 }  // namespace network_example::game_server

@@ -251,6 +251,30 @@ cc_test(
 )
 
 cc_test(
+    name = "agent_query_cap_test",
+    srcs = ["agent_query_cap_test.cc"],
+    data = glob([
+        "action_graph_templates/*.yaml",
+        "action_templates/*.yaml",
+        "collider_templates/*.yaml",
+        "entity_templates/*.yaml",
+        "item_templates/*.yaml",
+        "projectile_templates/*.yaml",
+        "weapon_templates/*.yaml",
+    ]) + [
+        "gameplay_catalog.yaml",
+        "//game_server/skeleton_assets:simplified_biped_assets",
+        "//game_server/skeleton_assets:simplified_quadruped_assets",
+        "//game_server/skeleton_assets:simplified_tripod_assets",
+    ],
+    deps = [
+        ":game_server",
+        ":game_server_bridge",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
     name = "agent_runtime_manager_test",
     srcs = ["agent_runtime_manager_test.cc"],
     data = glob([
