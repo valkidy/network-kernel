@@ -563,15 +563,38 @@ int main() {
         engine,
         near_enemy,
         KernelDespawnReason_OutOfRange));
+    // Past the entry radius, but near_enemy is already relevant and leaving
+    // costs more than staying: it holds until the exit radius.
     set_position(engine.world_, near_enemy, glm::vec3{40.01f, 0.0f, 0.0f});
-    const network_example::WorldSnapshot after_range_change =
+    const network_example::WorldSnapshot inside_hysteresis_band =
         engine.build_relevant_snapshot(session_one, 200);
+    assert(contains_entity(inside_hysteresis_band, near_enemy));
+    engine.sync_session_relevance(&session_one, inside_hysteresis_band);
+    assert(!poll_despawn(
+        engine,
+        near_enemy,
+        KernelDespawnReason_OutOfRange));
+    set_position(engine.world_, near_enemy, glm::vec3{44.01f, 0.0f, 0.0f});
+    const network_example::WorldSnapshot after_range_change =
+        engine.build_relevant_snapshot(session_one, 225);
     assert(!contains_entity(after_range_change, near_enemy));
     engine.sync_session_relevance(&session_one, after_range_change);
     assert(poll_despawn(
         engine,
         near_enemy,
         KernelDespawnReason_OutOfRange));
+    // The band holds on the way back in too, or it would not be a band: inside
+    // the exit radius is not yet inside the entry radius.
+    set_position(engine.world_, near_enemy, glm::vec3{42.0f, 0.0f, 0.0f});
+    const network_example::WorldSnapshot inside_exit_radius =
+        engine.build_relevant_snapshot(session_one, 250);
+    assert(!contains_entity(inside_exit_radius, near_enemy));
+    engine.sync_session_relevance(&session_one, inside_exit_radius);
+    set_position(engine.world_, near_enemy, glm::vec3{39.0f, 0.0f, 0.0f});
+    const network_example::WorldSnapshot back_inside_entry_radius =
+        engine.build_relevant_snapshot(session_one, 275);
+    assert(contains_entity(back_inside_entry_radius, near_enemy));
+    engine.sync_session_relevance(&session_one, back_inside_entry_radius);
 
     network_example::WorldSnapshot crowded;
     crowded.header.server_tick = 30;

@@ -321,6 +321,14 @@ constexpr std::uint64_t kClockSyncIntervalUs = 1000000u;
 constexpr double kClientClockOffsetSmoothingFactor = 0.25;
 constexpr float kMaxHomingVisualExtrapolationSeconds = 0.2f;
 constexpr float kDefaultEntityRelevanceDistanceMeters = 40.0f;
+// The radius an entity has to pass to STOP being relevant, as opposed to the
+// one it has to pass to start. Leaving costs a reliable despawn and returning
+// costs a reliable spawn plus a locomotion baseline, so a single threshold
+// turns an entity idling on the boundary into a packet source: it flips on
+// every snapshot its position happens to jitter across the line. The band has
+// to outlast that jitter, not merely exceed it -- at a walking 2.5 m/s it is
+// over a second of travel.
+constexpr float kDefaultEntityRelevanceExitDistanceMeters = 44.0f;
 constexpr float kDefaultProjectileRelevanceDistanceMeters = 80.0f;
 constexpr std::uint32_t kLargeSyncPacketWarningBytes = 1200;
 
@@ -10682,7 +10690,13 @@ bool KernelEngine::is_entity_relevant_to_session(
     }
 
     const float distance = glm::length(entity.position - player_entity->position);
-    if (distance <= kDefaultEntityRelevanceDistanceMeters) {
+    // relevant_entities is still last snapshot's set here: sync_session_relevance
+    // runs after this, on the snapshot this call helps build.
+    const float relevance_distance =
+        session.relevant_entities.contains(entity.net_id)
+            ? kDefaultEntityRelevanceExitDistanceMeters
+            : kDefaultEntityRelevanceDistanceMeters;
+    if (distance <= relevance_distance) {
         return true;
     }
     if (entity.type == EntityType::kProjectile &&
