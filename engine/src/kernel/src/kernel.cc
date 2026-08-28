@@ -331,6 +331,12 @@ constexpr float kDefaultEntityRelevanceDistanceMeters = 40.0f;
 constexpr float kDefaultEntityRelevanceExitDistanceMeters = 44.0f;
 constexpr float kDefaultProjectileRelevanceDistanceMeters = 80.0f;
 constexpr std::uint32_t kLargeSyncPacketWarningBytes = 1200;
+// How many entities one session may be introduced to in a single snapshot.
+// Every introduction is a reliable entity spawn plus a locomotion baseline, and
+// none of it is charged to the snapshot byte budget -- so a player who rounds a
+// corner onto a crowd used to produce one reliable packet per crowd member, all
+// in the same snapshot, however large the crowd was.
+constexpr std::size_t kMaxEntitySpawnsPerSnapshot = 16;
 
 KernelEntityLifecycleEventType lifecycle_type_for_despawn_reason(
     std::uint32_t reason) {
@@ -10719,33 +10725,76 @@ void KernelEngine::sync_session_relevance(
     }
 
     std::unordered_set<NetId> next_relevant;
+    std::vector<const EntitySnapshot*> newly_relevant;
     for (const EntitySnapshot& entity : snapshot.entities) {
-        next_relevant.insert(entity.net_id);
         if (entity.type == EntityType::kProjectile) {
             session->out_of_range_projectiles.erase(entity.net_id);
         }
-        if (session->relevant_entities.find(entity.net_id) ==
+        if (session->relevant_entities.find(entity.net_id) !=
             session->relevant_entities.end()) {
-            send_entity_spawn(session->peer, entity);
-            // Steps alone cannot tell a session where feet already are, so a
-            // session that has just started seeing an entity is handed them.
-            // Without this its legs would appear one at a time, each only once
-            // it happened to take its first step.
-            send_locomotion_baseline(session, entity.net_id);
-            if (entity.net_id == session->player) {
-                send_status_effect_state(session, entity.net_id);
-            }
-            if (entity.type == EntityType::kProp &&
-                is_dormant_placed_prop(entity.net_id)) {
-                PropStateChangeBatchPacket prop_state{};
-                prop_state.server_tick = tick_loop_.current_tick();
-                PropStateChangeRecord record{};
-                if (make_prop_state_change_record(entity.net_id, &record)) {
-                    prop_state.records.push_back(record);
-                    send_prop_state_changes(session, prop_state);
+            next_relevant.insert(entity.net_id);
+            continue;
+        }
+        newly_relevant.push_back(&entity);
+    }
+
+    // Nearest first. The quota below defers the rest to later snapshots, and
+    // what the player is walking towards must not queue behind whatever the
+    // world happened to iterate first -- an arbitrary order would trade the
+    // burst for entities popping in back to front.
+    const EntitySnapshot* player_entity =
+        find_snapshot_entity(snapshot, session->player);
+    if (player_entity != nullptr &&
+        newly_relevant.size() > kMaxEntitySpawnsPerSnapshot) {
+        const glm::vec3 player_position = player_entity->position;
+        std::sort(
+            newly_relevant.begin(),
+            newly_relevant.end(),
+            [&player_position](
+                const EntitySnapshot* lhs, const EntitySnapshot* rhs) {
+                const glm::vec3 lhs_delta = lhs->position - player_position;
+                const glm::vec3 rhs_delta = rhs->position - player_position;
+                const float lhs_distance = glm::dot(lhs_delta, lhs_delta);
+                const float rhs_distance = glm::dot(rhs_delta, rhs_delta);
+                if (lhs_distance != rhs_distance) {
+                    return lhs_distance < rhs_distance;
                 }
+                return lhs->net_id < rhs->net_id;
+            });
+    }
+
+    std::size_t spawns_sent = 0;
+    for (const EntitySnapshot* entity : newly_relevant) {
+        // The session's own player is never deferred: nothing it predicts can
+        // begin before it exists.
+        const bool is_own_player = entity->net_id == session->player;
+        if (!is_own_player && spawns_sent >= kMaxEntitySpawnsPerSnapshot) {
+            // Left out of next_relevant on purpose, so the next snapshot sees
+            // it as new again and offers it another turn. Nothing has to
+            // remember it: the relevant set is rebuilt from scratch each time.
+            continue;
+        }
+        ++spawns_sent;
+        send_entity_spawn(session->peer, *entity);
+        // Steps alone cannot tell a session where feet already are, so a
+        // session that has just started seeing an entity is handed them.
+        // Without this its legs would appear one at a time, each only once
+        // it happened to take its first step.
+        send_locomotion_baseline(session, entity->net_id);
+        if (is_own_player) {
+            send_status_effect_state(session, entity->net_id);
+        }
+        if (entity->type == EntityType::kProp &&
+            is_dormant_placed_prop(entity->net_id)) {
+            PropStateChangeBatchPacket prop_state{};
+            prop_state.server_tick = tick_loop_.current_tick();
+            PropStateChangeRecord record{};
+            if (make_prop_state_change_record(entity->net_id, &record)) {
+                prop_state.records.push_back(record);
+                send_prop_state_changes(session, prop_state);
             }
         }
+        next_relevant.insert(entity->net_id);
     }
 
     for (NetId net_id : session->relevant_entities) {
@@ -10763,6 +10812,28 @@ void KernelEngine::sync_session_relevance(
         }
     }
     session->relevant_entities = std::move(next_relevant);
+}
+
+// A client silently ignores a snapshot record for a net id it has never been
+// given a spawn for -- handle_client_snapshot looks the entity up and skips it.
+// Those bytes are therefore not merely early, they are discarded on arrival,
+// and while they sat in the send set they displaced entities the client could
+// actually have used. Run this after sync_session_relevance, whose quota is
+// what leaves entities deferred in the first place.
+void KernelEngine::drop_unannounced_entities(
+    const PeerSession& session,
+    WorldSnapshot* snapshot) const {
+    if (snapshot == nullptr) {
+        return;
+    }
+    snapshot->entities.erase(
+        std::remove_if(
+            snapshot->entities.begin(),
+            snapshot->entities.end(),
+            [&session](const EntitySnapshot& entity) {
+                return !session.relevant_entities.contains(entity.net_id);
+            }),
+        snapshot->entities.end());
 }
 
 bool KernelEngine::is_dormant_placed_prop(NetId net_id) const {
@@ -11646,9 +11717,10 @@ void KernelEngine::publish_snapshot() {
         local_listen_session_.player = local_player_net_id_;
         local_listen_session_.last_processed_input_seq = local_last_processed_input_seq_;
         local_listen_session_.welcomed = local_player_net_id_ != 0;
-        const WorldSnapshot peer_snapshot =
+        WorldSnapshot peer_snapshot =
             build_relevant_snapshot(local_listen_session_, server_time_ms);
         sync_session_relevance(&local_listen_session_, peer_snapshot);
+        drop_unannounced_entities(local_listen_session_, &peer_snapshot);
         const WorldSnapshot send_snapshot = build_snapshot_send_set(
             local_listen_session_,
             peer_snapshot,
@@ -11675,9 +11747,10 @@ void KernelEngine::publish_snapshot() {
             if (!session.welcomed) {
                 continue;
             }
-            const WorldSnapshot peer_snapshot =
+            WorldSnapshot peer_snapshot =
                 build_relevant_snapshot(session, server_time_ms);
             sync_session_relevance(&session, peer_snapshot);
+            drop_unannounced_entities(session, &peer_snapshot);
             const WorldSnapshot send_snapshot = build_snapshot_send_set(
                 session,
                 peer_snapshot,

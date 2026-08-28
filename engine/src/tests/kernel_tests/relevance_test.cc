@@ -1,3 +1,4 @@
+#include <cstdio>
 #include <algorithm>
 #include <cassert>
 #include <memory>
@@ -28,6 +29,18 @@ bool contains_entity(
             return entity.net_id == net_id;
         });
 }
+
+// assert() is compiled out under -c opt, which is how this suite is normally
+// run, so anything that must actually gate uses this instead.
+void require_impl(bool condition, const char* expression, int line) {
+    if (condition) {
+        return;
+    }
+    std::fprintf(stderr, "require failed at line %d: %s\n", line, expression);
+    std::abort();
+}
+
+#define require(condition) require_impl((condition), #condition, __LINE__)
 
 void set_position(
     network_example::World& world,
@@ -192,6 +205,169 @@ void configure_expiring_projectiles(
         .emplace<network_example::ProjectileBeamRuntime>(*beam_entity)
         .expire_tick = 1;
     *out_projectiles = {projectile, area_effect, beam};
+}
+
+std::size_t poll_client_spawn_count(
+    network_example::LoopbackTransport* transport) {
+    std::size_t spawns = 0;
+    if (transport == nullptr) {
+        return spawns;
+    }
+    network_example::TransportEvent event;
+    while (transport->PollClientEvent(event)) {
+        network_example::EntitySpawnPacket spawn{};
+        if (event.channel == network_example::ChannelId::kReliableEvent &&
+            network_example::decode_entity_spawn_packet(
+                event.payload.data(), event.payload.size(), &spawn)) {
+            ++spawns;
+        }
+    }
+    return spawns;
+}
+
+// A crowd is introduced over several snapshots rather than all at once.
+//
+// Every introduction is a reliable entity spawn plus a locomotion baseline, and
+// none of it is charged to the snapshot byte budget -- so before the quota, a
+// player who became relevant to sixty agents in one snapshot produced sixty
+// reliable packets in that snapshot. Both halves matter here: the per-snapshot
+// ceiling, and that the backlog still drains, because deferring is only
+// acceptable if the deferred entities actually arrive.
+void a_crowd_is_introduced_over_several_snapshots() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+
+    auto transport = std::make_unique<network_example::LoopbackTransport>();
+    network_example::LoopbackTransport* loopback = transport.get();
+    engine.transport_ = std::move(transport);
+    // Started after reset_runtime_state, not before: the reset stops the
+    // transport, and a stopped LoopbackTransport drops every Send silently.
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+    require(loopback->StartServer(7783));
+
+    constexpr std::size_t kCrowd = 60;
+    // The quota is 16; one more is allowed because the session's own player is
+    // exempt from it.
+    constexpr std::size_t kMaxSpawnsPerSnapshot = 17;
+    const network_example::NetId player =
+        engine.world_.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+    for (std::size_t index = 0; index < kCrowd; ++index) {
+        // Well inside the 40 m relevance radius, so all of them are relevant
+        // from the very first snapshot.
+        engine.world_.spawn_enemy(glm::vec3{
+            1.0f + static_cast<float>(index) * 0.5f, 0.0f, 0.0f});
+    }
+    network_example::KernelEngine::PeerSession session{1, player, 0, true, {}};
+    engine.peer_sessions_.push_back(std::move(session));
+
+    const std::size_t expected_total = kCrowd + 1;
+    std::size_t announced = 0;
+    std::size_t snapshots = 0;
+    while (announced < expected_total) {
+        // Two ticks per snapshot at a 30 Hz tick and a 15 Hz snapshot rate.
+        engine.simulate_tick();
+        engine.simulate_tick();
+        const std::size_t spawns = poll_client_spawn_count(loopback);
+        require(spawns <= kMaxSpawnsPerSnapshot);
+        announced += spawns;
+        ++snapshots;
+        require(snapshots < 32);
+    }
+    require(announced == expected_total);
+    // 61 introductions cannot have fitted into three snapshots of 16.
+    require(snapshots >= 4);
+    require(
+        engine.peer_sessions_[0].relevant_entities.size() == expected_total);
+}
+
+// The relevance band, on its own engine so that it actually runs: everything in
+// main() sits below a long-standing abort and never executes under a debug
+// build, and its assert()s are compiled out under -c opt.
+void relevance_holds_until_a_wider_radius_than_it_entered() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+
+    auto transport = std::make_unique<network_example::LoopbackTransport>();
+    network_example::LoopbackTransport* loopback = transport.get();
+    engine.transport_ = std::move(transport);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+    require(loopback->StartServer(7784));
+
+    const network_example::NetId player =
+        engine.world_.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+    const network_example::NetId enemy =
+        engine.world_.spawn_enemy(glm::vec3{10.0f, 0.0f, 0.0f});
+    network_example::KernelEngine::PeerSession session{1, player, 0, true, {}};
+    engine.peer_sessions_.push_back(std::move(session));
+
+    const auto relevant_at = [&](float x) {
+        set_position(engine.world_, enemy, glm::vec3{x, 0.0f, 0.0f});
+        network_example::KernelEngine::PeerSession& live =
+            engine.peer_sessions_[0];
+        const network_example::WorldSnapshot snapshot =
+            engine.build_relevant_snapshot(live, 0);
+        const bool contained = contains_entity(snapshot, enemy);
+        engine.sync_session_relevance(&live, snapshot);
+        return contained;
+    };
+
+    require(relevant_at(10.0f));
+    // Past the entry radius, but leaving costs a reliable despawn and coming
+    // back costs a reliable spawn, so it holds.
+    require(relevant_at(40.01f));
+    require(!relevant_at(44.01f));
+    // And the band holds on the way back in, or it would not be a band.
+    require(!relevant_at(42.0f));
+    require(relevant_at(39.0f));
+}
+
+// Why the send order is keyed on net id rather than on a position in the
+// relevant list: an index only survives as long as the list does.
+void a_departure_does_not_cost_the_next_entity_its_turn() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+
+    network_example::EntitySnapshot agent;
+    agent.type = network_example::EntityType::kActor;
+    agent.actor_type = network_example::ActorType::kAgent;
+    network_example::EntitySnapshot first = agent;
+    first.net_id = 211;
+    network_example::EntitySnapshot second = agent;
+    second.net_id = 212;
+    network_example::EntitySnapshot third = agent;
+    third.net_id = 213;
+
+    network_example::WorldSnapshot all_three;
+    all_three.entities = {first, second, third};
+    network_example::WorldSnapshot without_first;
+    without_first.entities = {second, third};
+    const std::size_t one_agent_budget =
+        network_example::estimate_snapshot_base_packet_size() +
+        network_example::estimate_snapshot_entity_size(first);
+
+    network_example::KernelEngine::PeerSession session{1, 0, 0, true, {}};
+    const network_example::WorldSnapshot round_one =
+        engine.build_snapshot_send_set(session, all_three, one_agent_budget);
+    require(contains_entity(round_one, 211));
+    // 211 has left. An index of 1 would now point past 212 to 213, and 212
+    // would wait out another full cycle for a turn it had already earned.
+    const network_example::WorldSnapshot round_two =
+        engine.build_snapshot_send_set(session, without_first, one_agent_budget);
+    require(contains_entity(round_two, 212));
+    require(!contains_entity(round_two, 213));
+    const network_example::WorldSnapshot round_three =
+        engine.build_snapshot_send_set(session, without_first, one_agent_budget);
+    require(contains_entity(round_three, 213));
+    require(!contains_entity(round_three, 212));
 }
 
 void dedicated_server_projectile_destruction_uses_destroyed_reason() {
@@ -388,6 +564,12 @@ void listen_server_projectile_destruction_uses_destroyed_reason() {
 }  // namespace
 
 int main() {
+    // Ahead of everything else: main() carries a long-standing abort part way
+    // down, and anything below it never runs in a build where assert() is live.
+    a_departure_does_not_cost_the_next_entity_its_turn();
+    relevance_holds_until_a_wider_radius_than_it_entered();
+    a_crowd_is_introduced_over_several_snapshots();
+
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;
     config.tick.server_tick_rate = 30;

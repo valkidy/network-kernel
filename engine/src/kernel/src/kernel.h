@@ -712,6 +712,9 @@ private:
         PeerId peer,
         NetId net_id,
         std::uint32_t actor_template_id);
+    void drop_unannounced_entities(
+        const PeerSession& session,
+        WorldSnapshot* snapshot) const;
     WorldSnapshot build_snapshot_send_set(
         PeerSession& session,
         const WorldSnapshot& relevant_snapshot,
