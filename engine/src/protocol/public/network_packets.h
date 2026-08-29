@@ -215,6 +215,18 @@ bool decode_snapshot_packet(
     std::size_t size,
     WorldSnapshot* out_snapshot);
 
+// The per-client snapshot send budget, and the size past which a snapshot is
+// warned about. One constant because they are the same number: the budget is
+// what the sender fills to, and anything larger than it got there by a path that
+// did not consult the budget.
+//
+// Deliberately not configurable. It is bounded above by the path MTU -- 1,200
+// plus the 28-byte packet header still fits one datagram with room to spare --
+// and snapshots travel unreliably, so a value that fragments multiplies the
+// effective loss rate rather than buying throughput. Exposed here so that a
+// server can report what it will cost per client, not so that it can be dialled.
+constexpr std::size_t kSnapshotSendBudgetBytes = 1200;
+
 std::size_t estimate_snapshot_base_packet_size();
 std::size_t estimate_snapshot_entity_size(EntityType type);
 std::size_t estimate_snapshot_entity_size(const EntitySnapshot& entity);

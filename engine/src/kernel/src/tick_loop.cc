@@ -1,6 +1,8 @@
 #include "kernel/src/tick_loop.h"
 
 #include <algorithm>
+#include <string_view>
+#include <vector>
 
 namespace network_example {
 
@@ -22,6 +24,42 @@ TickConfig shooter_tuning_preset() {
     };
 }
 
+TickConfig standard_netcode_preset() {
+    return current_netcode_preset();
+}
+
+TickConfig responsive_netcode_preset() {
+    TickConfig config = current_netcode_preset();
+    config.snapshot_rate = config.server_tick_rate;
+    return config;
+}
+
+bool find_netcode_preset(std::string_view name, TickConfig* out_tick) {
+    if (out_tick == nullptr) {
+        return false;
+    }
+    if (name == "standard") {
+        *out_tick = standard_netcode_preset();
+        return true;
+    }
+    if (name == "responsive") {
+        *out_tick = responsive_netcode_preset();
+        return true;
+    }
+    return false;
+}
+
+std::vector<std::string_view> netcode_preset_names() {
+    return {"standard", "responsive"};
+}
+
+std::uint32_t interpolation_delay_ms(const TickConfig& tick) {
+    const TickConfig resolved = with_tick_defaults(tick);
+    const std::uint32_t interval_ticks =
+        std::max(1u, resolved.server_tick_rate / resolved.snapshot_rate);
+    return interval_ticks * 2u * 1000u / resolved.server_tick_rate;
+}
+
 TickConfig with_tick_defaults(TickConfig config) {
     const TickConfig current = current_netcode_preset();
     if (config.server_tick_rate == 0) {
@@ -35,6 +73,14 @@ TickConfig with_tick_defaults(TickConfig config) {
     }
     if (config.max_ticks_per_update == 0) {
         config.max_ticks_per_update = current.max_ticks_per_update;
+    }
+    // Clamped here rather than left to snapshot_interval_ticks, which divides
+    // the two and floors at 1: a snapshot rate above the tick rate used to be
+    // truncated silently, so the welcome packet told the client a rate the
+    // server was never going to send at, and the client sized its interpolation
+    // delay from that. Clamping makes the config say what actually happens.
+    if (config.snapshot_rate > config.server_tick_rate) {
+        config.snapshot_rate = config.server_tick_rate;
     }
     return config;
 }

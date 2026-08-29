@@ -330,7 +330,6 @@ constexpr float kDefaultEntityRelevanceDistanceMeters = 40.0f;
 // over a second of travel.
 constexpr float kDefaultEntityRelevanceExitDistanceMeters = 44.0f;
 constexpr float kDefaultProjectileRelevanceDistanceMeters = 80.0f;
-constexpr std::uint32_t kLargeSyncPacketWarningBytes = 1200;
 // Slots go to whoever has waited longest, scaled by how much the receiving
 // player is likely to notice. Without the weights every relevant agent gets the
 // same share, which at 200 agents and 32 slots is 1.8 Hz each whether it is
@@ -11822,7 +11821,7 @@ void KernelEngine::publish_snapshot() {
         const WorldSnapshot send_snapshot = build_snapshot_send_set(
             local_listen_session_,
             peer_snapshot,
-            kLargeSyncPacketWarningBytes);
+            kSnapshotSendBudgetBytes);
         const std::vector<std::uint8_t> packet =
             encode_snapshot_packet(send_snapshot, next_packet_sequence_++);
         if (!listen_server_transport_->Send(
@@ -11852,7 +11851,7 @@ void KernelEngine::publish_snapshot() {
             const WorldSnapshot send_snapshot = build_snapshot_send_set(
                 session,
                 peer_snapshot,
-                kLargeSyncPacketWarningBytes);
+                kSnapshotSendBudgetBytes);
             const std::vector<std::uint8_t> packet =
                 encode_snapshot_packet(send_snapshot, next_packet_sequence_++);
             if (!transport_->Send(
@@ -12328,12 +12327,12 @@ void KernelEngine::record_sent_packet(
     }
     if ((channel == ChannelId::kSnapshot ||
          channel == ChannelId::kReliableEvent) &&
-        packet_size > kLargeSyncPacketWarningBytes) {
+        packet_size > kSnapshotSendBudgetBytes) {
         spdlog::warn(
             "[NetworkExample] large sync packet size={} warning_threshold={} "
             "send_mode={} channel={}",
             packet_size,
-            kLargeSyncPacketWarningBytes,
+            kSnapshotSendBudgetBytes,
             send_mode_name(mode),
             channel_name(channel));
     }
