@@ -176,7 +176,9 @@ struct LocomotionStepRecord {
     std::uint8_t leg_index = 0;
     // Ticks before the batch's server_tick that the swing began. Steps are
     // collected as they are committed and flushed with the next snapshot, so
-    // this spans a snapshot interval, not a session.
+    // this spans a snapshot interval, not a session. A step committed on a tick
+    // that carries no snapshot waits for the one that does, which is what makes
+    // this field non-zero.
     std::uint8_t start_tick_delta = 0;
     glm::vec3 landing_target_world{0.0f};
 };

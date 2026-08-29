@@ -460,6 +460,50 @@ the agents fire, with no lifetimes — so the split is indicative rather than
 final. `kSnapshotPriorityActorWeight` is one constant with a measured effect;
 re-run the composition table after changing it.
 
+### The locomotion step channel has no budget
+
+Replicated locomotion steps are not snapshot records and the 1,200 B budget does
+not reach them. They are sent unreliably as their own packet on the snapshot
+channel, flushed with the snapshot, and filtered only by relevance and by a step
+being older than 255 ticks. Nothing caps them.
+
+Measured with patrolling quadrupeds, which walk on their own — `passive_patrol`
+over a 30 m extent — so the gait is the shipping one rather than something the
+bench drove:
+
+| Rigs | Steps/s | Steps/s per rig | Step B/s | Step B/s per rig | Snapshot B/s |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 2.80 | 2.80 | 121.8 | 121.8 | 2,910 |
+| 8 | 23.60 | 2.95 | 802.2 | 100.3 | 6,270 |
+| 32 | 86.00 | 2.69 | 2,044.4 | 63.9 | 17,646 |
+| 64 | 172.30 | 2.69 | 3,611.4 | 56.4 | 17,790 |
+
+The per-rig step rate is flat at about 2.7 a second whatever the crowd size,
+because it is set by the gait against a fixed 2.5 m/s and not by density:
+`stride 3.50 m / 2.5 m/s = 1.4 s` a leg, four legs. The per-rig *byte* figure
+falls with crowd size only because the 34 B packet header amortises — past about
+32 rigs there is a step to send on nearly every tick, so the channel settles at
+30 packets a second plus 18 B a step.
+
+Extrapolating the flat per-rig rate, 200 quadrupeds cost `200 * 2.69 * 18` plus
+15 packet headers a second, or **10.2 kB/s — 82 kbit/s against the snapshot
+channel's 143**. A rig at the eight-leg cap (`KERNEL_MAX_SKELETON_LEGS`) doubles
+that.
+
+Flushing with the snapshot rather than every tick is what took the header count
+from 30 a second to 15. The byte saving is real but small and *fixed* — about
+510 B/s once there is a step to send on every flush, which is 12% at 64 rigs and
+proportionally less above that. What the cadence actually buys is that the
+netcode preset now governs this channel too: a server started at a snapshot
+every tick moves both channels together, and the per-flush unit here is the same
+one the snapshot budget is expressed in, which is what a budget on this channel
+would have to be sized against.
+
+Two things the table shows besides the rate. The snapshot column saturates at 32
+rigs, so a legged crowd is already spending the whole send budget before any of
+this is added on top. And the growth is linear and uncapped: 500 rigs would put
+more on the step channel than on the snapshot one.
+
 ## Reproduction
 
 ```text

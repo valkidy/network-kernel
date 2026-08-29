@@ -43,6 +43,7 @@
 #include "game_server/gameplay_config.h"
 #include "kernel/public/kernel_api.h"
 #include "kernel/public/kernel_types.h"
+#include "transport/public/loopback_transport.h"
 #include "protocol/public/network_packets.h"
 #define private public
 #include "kernel/src/kernel.h"
@@ -707,6 +708,170 @@ void print_composition_table(const Catalog& catalog) {
     std::printf("\n");
 }
 
+// What a legged crowd puts on the wire, which is a channel with no budget on it
+// at all.
+//
+// Locomotion steps are flushed every tick, sent unreliably on the snapshot
+// channel as their own packet, and filtered only by relevance -- the 1,200 B
+// send budget does not apply to them. This measures the rate directly rather
+// than deriving it from the gait: quadrupeds patrol on their own
+// (passive_patrol, a 30 m extent), so they walk without a player to chase.
+struct LocomotionRow {
+    std::size_t agent_count = 0;
+    double steps_per_second = 0.0;
+    double step_bytes_per_second = 0.0;
+    double snapshot_bytes_per_second = 0.0;
+};
+
+Catalog load_legged_catalog() {
+    const std::vector<std::uint8_t> bundle = read_binary_file(
+        (runfiles_root() / "game_server" / "gameplay_catalog_bundle" / "bundle.zip")
+            .string());
+    Catalog catalog;
+    catalog.config =
+        network_example::game_server::load_gameplay_config_from_bundle_memory(
+            bundle.data(),
+            static_cast<std::uint32_t>(bundle.size()),
+            "legged_locomotion_gameplay_catalog.yaml");
+    catalog.storage =
+        network_example::game_server::build_kernel_gameplay_catalog(catalog.config);
+    catalog.scene_bytes =
+        network_example::game_server::load_gameplay_bundle_entry_bytes(
+            bundle.data(),
+            static_cast<std::uint32_t>(bundle.size()),
+            catalog.config.static_collision_scene.entry_path);
+    require(!catalog.scene_bytes.empty());
+    return catalog;
+}
+
+LocomotionRow measure_locomotion(
+    const Catalog& catalog,
+    std::size_t agent_count,
+    std::uint16_t port) {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = kServerTickRate;
+    config.tick.snapshot_rate = 15;
+    config.max_events = 8192;
+    config.max_render_states = 4096;
+    KernelHandle* kernel = Kernel_Create(&config);
+    require(kernel != nullptr);
+
+    KernelStaticCollisionSceneConfig scene{};
+    scene.struct_size = sizeof(scene);
+    scene.artifact_bytes = catalog.scene_bytes.data();
+    scene.artifact_size = static_cast<std::uint32_t>(catalog.scene_bytes.size());
+    scene.scene_id = catalog.config.static_collision_scene.scene_id;
+    scene.collider_id = catalog.config.static_collision_scene.collider_id;
+    scene.collision_layer = catalog.config.static_collision_scene.collision_layer;
+    require(Kernel_SetStaticCollisionScene(kernel, &scene));
+    require(Kernel_StartDedicatedServer(kernel, port));
+    require(Kernel_LoadGameplayCatalog(kernel, &catalog.storage.definition, nullptr));
+
+    network_example::KernelEngine& engine = engine_of(kernel);
+    // Swapped in after the server is running, so the engine keeps `running_`
+    // but everything it sends lands somewhere this bench can read.
+    auto loopback = std::make_unique<network_example::LoopbackTransport>();
+    network_example::LoopbackTransport* link = loopback.get();
+    engine.transport_ = std::move(loopback);
+    require(link->StartServer(port + 1u));
+
+    const network_example::game_server::ActorTemplateConfig* quadruped =
+        find_template(catalog.config.actor_templates, "quadruped_actor");
+    require(quadruped != nullptr);
+
+    const std::uint32_t player = spawn_actor(
+        kernel,
+        catalog.config.player.actor_template_id,
+        network_example::game_server::kActorTypePlayer,
+        KernelVec3{0.0f, 1.0f, 0.0f});
+    for (std::size_t index = 0; index < agent_count; ++index) {
+        const KernelVec3 offset = agent_position(index, agent_count);
+        spawn_actor(
+            kernel,
+            quadruped->actor_template_id,
+            network_example::game_server::kActorTypeAgent,
+            KernelVec3{offset.x * 0.5f, 2.0f, offset.z * 0.5f});
+    }
+
+    network_example::game_server::AgentRuntimeManager manager(
+        kernel, catalog.config);
+    engine.peer_sessions_.push_back(
+        network_example::KernelEngine::PeerSession{1, player, 0, true, {}});
+
+    const auto drain = [&](std::size_t* out_steps,
+                           std::size_t* out_step_bytes,
+                           std::size_t* out_snapshot_bytes) {
+        network_example::TransportEvent event;
+        while (link->PollClientEvent(event)) {
+            if (event.channel != network_example::ChannelId::kSnapshot) {
+                continue;
+            }
+            network_example::LocomotionStepBatchPacket batch;
+            if (network_example::decode_locomotion_step_batch_packet(
+                    event.payload.data(), event.payload.size(), &batch)) {
+                *out_steps += batch.records.size();
+                *out_step_bytes += event.payload.size();
+                continue;
+            }
+            *out_snapshot_bytes += event.payload.size();
+        }
+    };
+
+    // Legs need a few seconds to settle before their gait is representative.
+    std::size_t discard = 0;
+    for (std::uint32_t tick = 0; tick < 90u; ++tick) {
+        manager.tick(kTickSeconds);
+        Kernel_Update(kernel, kTickSeconds);
+        drain(&discard, &discard, &discard);
+    }
+
+    std::size_t steps = 0;
+    std::size_t step_bytes = 0;
+    std::size_t snapshot_bytes = 0;
+    constexpr std::uint32_t kMeasuredTicks = 300;
+    for (std::uint32_t tick = 0; tick < kMeasuredTicks; ++tick) {
+        manager.tick(kTickSeconds);
+        Kernel_Update(kernel, kTickSeconds);
+        drain(&steps, &step_bytes, &snapshot_bytes);
+    }
+
+    const double seconds =
+        static_cast<double>(kMeasuredTicks) / static_cast<double>(kServerTickRate);
+    LocomotionRow row;
+    row.agent_count = agent_count;
+    row.steps_per_second = static_cast<double>(steps) / seconds;
+    row.step_bytes_per_second = static_cast<double>(step_bytes) / seconds;
+    row.snapshot_bytes_per_second =
+        static_cast<double>(snapshot_bytes) / seconds;
+
+    Kernel_Destroy(kernel);
+    return row;
+}
+
+void print_locomotion_table() {
+    const Catalog catalog = load_legged_catalog();
+    std::printf("H. LOCOMOTION STEP CHANNEL (quadrupeds, no budget on it)\n");
+    std::printf(
+        "%8s %11s %13s %13s %14s %13s\n",
+        "rigs", "steps/s", "steps/s/rig", "step B/s", "step B/s/rig",
+        "snapshot B/s");
+    for (const std::size_t agent_count : {1u, 8u, 32u, 64u}) {
+        const LocomotionRow row =
+            measure_locomotion(catalog, agent_count, next_port++);
+        const double per_rig = static_cast<double>(row.agent_count);
+        std::printf(
+            "%8zu %11.2f %13.2f %13.1f %14.1f %13.1f\n",
+            row.agent_count,
+            row.steps_per_second,
+            row.steps_per_second / per_rig,
+            row.step_bytes_per_second,
+            row.step_bytes_per_second / per_rig,
+            row.snapshot_bytes_per_second);
+    }
+    std::printf("\n");
+}
+
 // Staleness is deliberately not reported here. Slots are weighted, so an
 // entity's refresh interval depends on its band rather than on the population
 // divided by the packed count; snapshot_bandwidth_benchmark measures it per
@@ -805,5 +970,6 @@ int main() {
     print_snapshot_table(catalog, 4);
     print_scenario_table(catalog);
     print_composition_table(catalog);
+    print_locomotion_table();
     return 0;
 }

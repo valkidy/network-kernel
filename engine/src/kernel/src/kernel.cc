@@ -10345,14 +10345,30 @@ void KernelEngine::simulate_tick() {
     pending_server_remote_presentations_.clear();
     broadcast_combat_events(first_tick_event, last_tick_event);
     history_buffer_.write_frame(world_, tick_loop_.current_tick());
-    if (released_first_physics_actor ||
+    const bool wrote_snapshot =
+        released_first_physics_actor ||
         tick_loop_.should_write_snapshot() ||
-        !pending_network_gameplay_outcomes_.empty()) {
+        !pending_network_gameplay_outcomes_.empty();
+    if (wrote_snapshot) {
         publish_snapshot();
     }
     flush_inventory_replication();
     flush_prop_state_changes();
-    flush_locomotion_steps();
+    // With the snapshot rather than every tick, which is what
+    // LocomotionStepRecord has always said it does: start_tick_delta exists so
+    // that a batch can span a snapshot interval. Flushing per tick sent a packet
+    // header -- 34 B of it -- for each tick that produced a single step, and
+    // left this channel on a cadence the netcode preset does not govern; a
+    // server switched to a snapshot every tick now moves both channels, and one
+    // at half rate moves neither.
+    //
+    // The cost is up to one tick of latency on a footfall, against the 133 ms
+    // the client already holds every snapshot for. The follower was built for
+    // this: update_follower_locomotion is written to be called on ticks that
+    // carry no new step.
+    if (wrote_snapshot) {
+        flush_locomotion_steps();
+    }
     flush_network_gameplay_request_outcomes();
     send_due_clock_sync_pings(server_time_us);
     pending_inputs_.clear();
