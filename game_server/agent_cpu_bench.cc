@@ -438,12 +438,20 @@ network_example::KernelEngine& engine_of(KernelHandle* handle) {
 struct ScenarioRow {
     const char* name = "";
     std::size_t world_agents = 0;
+    std::size_t world_entities = 0;
     std::size_t relevant_per_session = 0;
+    std::size_t relevant_projectiles = 0;
+    std::size_t relevant_props = 0;
     std::size_t packed_per_snapshot = 0;
+    std::size_t packed_projectiles = 0;
+    std::size_t packed_props = 0;
     double ai_us = 0.0;
     double kernel_us = 0.0;
     double snapshot_us = 0.0;
 };
+
+// The prop the catalog's temporary_deployable population rule caps at 256.
+constexpr std::uint32_t kIceBlockTemplateId = 204;
 
 // Both four-player shapes, with the same thing held constant: each player has
 // roughly the same number of agents in view. What differs is how many the world
@@ -453,6 +461,8 @@ ScenarioRow measure_scenario(
     const char* name,
     const std::vector<KernelVec3>& cluster_centres,
     const std::vector<std::size_t>& agents_per_cluster,
+    std::size_t projectile_count,
+    std::size_t prop_count,
     std::uint16_t port) {
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;
@@ -508,6 +518,30 @@ ScenarioRow measure_scenario(
         kernel, catalog.config);
     network_example::KernelEngine& engine = engine_of(kernel);
 
+    // Both are placed around the first cluster, so they land inside the
+    // measured session's relevance sphere rather than padding the world with
+    // entities it never has to look at.
+    const KernelVec3 focus = cluster_centres.front();
+    for (std::size_t index = 0; index < projectile_count; ++index) {
+        const KernelVec3 offset = agent_position(index, projectile_count);
+        engine.world_.spawn_projectile(
+            1,
+            glm::vec3{focus.x + offset.x * 0.5f, 1.0f, focus.z + offset.z * 0.5f},
+            glm::vec3{1.0f, 0.0f, 0.0f});
+    }
+    for (std::size_t index = 0; index < prop_count; ++index) {
+        const KernelVec3 offset = agent_position(index, prop_count);
+        KernelServerEntityCreateInfo create{};
+        create.struct_size = sizeof(create);
+        create.entity_type = 2;  // KernelEntityType_Prop
+        create.entity_template_id = kIceBlockTemplateId;
+        create.position = KernelVec3{
+            focus.x + offset.x * 0.7f, 0.0f, focus.z + offset.z * 0.7f};
+        create.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+        std::uint32_t net_id = 0;
+        require(Kernel_ServerCreateEntity(kernel, &create, &net_id));
+    }
+
     // Held outside the engine's own session list on purpose, so that
     // Kernel_Update does not also build these snapshots and land the same work
     // in two columns.
@@ -526,7 +560,11 @@ ScenarioRow measure_scenario(
     double kernel_us = 0.0;
     double snapshot_us = 0.0;
     std::size_t relevant_per_session = 0;
-    std::size_t packed_per_snapshot = 0;
+    std::size_t relevant_projectiles = 0;
+    std::size_t relevant_props = 0;
+    std::size_t packed_agent_total = 0;
+    std::size_t packed_projectile_total = 0;
+    std::size_t packed_prop_total = 0;
     for (std::uint32_t tick = 0; tick < kSampleTicks; ++tick) {
         const auto ai_start = std::chrono::steady_clock::now();
         manager.tick(kTickSeconds);
@@ -537,7 +575,11 @@ ScenarioRow measure_scenario(
 
         const auto snapshot_start = std::chrono::steady_clock::now();
         std::size_t relevant_agents = 0;
+        std::size_t relevant_projectile_records = 0;
+        std::size_t relevant_prop_records = 0;
         std::size_t packed_agents = 0;
+        std::size_t packed_projectile_records = 0;
+        std::size_t packed_prop_records = 0;
         for (network_example::KernelEngine::PeerSession& session : sessions) {
             const network_example::WorldSnapshot relevant =
                 engine.build_relevant_snapshot(session, tick * 66u);
@@ -549,6 +591,12 @@ ScenarioRow measure_scenario(
                     if (entity.actor_type ==
                         network_example::ActorType::kAgent) {
                         ++relevant_agents;
+                    } else if (entity.type ==
+                               network_example::EntityType::kProjectile) {
+                        ++relevant_projectile_records;
+                    } else if (entity.type ==
+                               network_example::EntityType::kProp) {
+                        ++relevant_prop_records;
                     }
                 }
                 for (const network_example::EntitySnapshot& entity :
@@ -556,26 +604,107 @@ ScenarioRow measure_scenario(
                     if (entity.actor_type ==
                         network_example::ActorType::kAgent) {
                         ++packed_agents;
+                    } else if (entity.type ==
+                               network_example::EntityType::kProjectile) {
+                        ++packed_projectile_records;
+                    } else if (entity.type ==
+                               network_example::EntityType::kProp) {
+                        ++packed_prop_records;
                     }
                 }
             }
         }
         snapshot_us += micros_since(snapshot_start);
         relevant_per_session = relevant_agents;
-        packed_per_snapshot = packed_agents;
+        relevant_projectiles = relevant_projectile_records;
+        relevant_props = relevant_prop_records;
+        // Summed, not assigned: one snapshot is a single draw from a rotating
+        // queue, and reading the last tick's counts as a rate is how the first
+        // version of this table came out looking like projectiles had taken
+        // ninety per cent of the budget.
+        packed_agent_total += packed_agents;
+        packed_projectile_total += packed_projectile_records;
+        packed_prop_total += packed_prop_records;
     }
 
     ScenarioRow row;
     row.name = name;
     row.world_agents = world_agents;
     row.relevant_per_session = relevant_per_session;
-    row.packed_per_snapshot = packed_per_snapshot;
+    row.relevant_projectiles = relevant_projectiles;
+    row.relevant_props = relevant_props;
+    row.packed_per_snapshot = packed_agent_total / kSampleTicks;
+    row.packed_projectiles = packed_projectile_total / kSampleTicks;
+    row.packed_props = packed_prop_total / kSampleTicks;
+    std::vector<KernelServerEntityState> census(kQueryCapacity);
+    for (KernelServerEntityState& state : census) {
+        state.struct_size = sizeof(KernelServerEntityState);
+    }
+    row.world_entities = Kernel_ServerQueryEntities(
+        kernel, 0u, census.data(),
+        static_cast<std::uint32_t>(census.size()));
     row.ai_us = ai_us / static_cast<double>(kSampleTicks);
     row.kernel_us = kernel_us / static_cast<double>(kSampleTicks);
     row.snapshot_us = snapshot_us / static_cast<double>(kSampleTicks);
 
     Kernel_Destroy(kernel);
     return row;
+}
+
+// What the world actually holds once projectiles and deployable props are in it
+// alongside the actors. Held at one arrangement -- four players, the capped
+// world in front of one of them -- so that the only thing moving between rows is
+// what kind of entity was added.
+void print_composition_table(const Catalog& catalog) {
+    std::printf("G. COMPOSITION: actors, then projectiles, then props\n");
+    std::printf(
+        "%-30s %8s %8s %8s %8s %9s %8s %9s %10s\n",
+        "world", "rel agnt", "rel proj", "rel prop", "pk agent", "pk projec",
+        "pk prop", "kernel us", "% of 33ms");
+    const std::vector<KernelVec3> apart{
+        KernelVec3{-70.0f, 0.0f, -70.0f},
+        KernelVec3{70.0f, 0.0f, -70.0f},
+        KernelVec3{-70.0f, 0.0f, 70.0f},
+        KernelVec3{70.0f, 0.0f, 70.0f}};
+    const struct {
+        const char* name;
+        std::size_t agents;
+        std::size_t projectiles;
+        std::size_t props;
+    } compositions[] = {
+        {"196 agents + 4 players", 196, 0, 0},
+        {"  + 200 projectiles", 196, 200, 0},
+        {"  + 256 props", 196, 200, 256},
+        {"196 agents + 256 props", 196, 0, 256},
+        // The control. If the two zero columns above are the agent section
+        // eating the whole budget before the later sections are reached, then
+        // leaving room must let them through; if they stay zero, something else
+        // is dropping them.
+        {"20 agents, same everything", 20, 200, 256},
+    };
+    for (const auto& composition : compositions) {
+        const ScenarioRow row = measure_scenario(
+            catalog,
+            composition.name,
+            apart,
+            {composition.agents, 0, 0, 0},
+            composition.projectiles,
+            composition.props,
+            next_port++);
+        const double total_us = row.ai_us + row.kernel_us + row.snapshot_us;
+        std::printf(
+            "%-30s %8zu %8zu %8zu %8zu %9zu %8zu %9.1f %10.1f\n",
+            row.name,
+            row.relevant_per_session,
+            row.relevant_projectiles,
+            row.relevant_props,
+            row.packed_per_snapshot,
+            row.packed_projectiles,
+            row.packed_props,
+            row.kernel_us,
+            total_us / (1'000'000.0 / kServerTickRate) * 100.0);
+    }
+    std::printf("\n");
 }
 
 // Staleness is deliberately not reported here. Slots are weighted, so an
@@ -605,19 +734,19 @@ void print_scenario_table(const Catalog& catalog) {
         // every agent is relevant to every session.
         measure_scenario(
             catalog, "A. party, shared 200",
-            together, {50, 50, 50, 50}, next_port++),
+            together, {50, 50, 50, 50}, 0, 0, next_port++),
         measure_scenario(
             catalog, "B. spread, 200 each",
-            apart, {200, 200, 200, 200}, next_port++),
+            apart, {200, 200, 200, 200}, 0, 0, next_port++),
         // A global population cap instead of a per-view one: the world holds
         // 200 however the players are arranged. Split evenly, and then all of
         // it in front of one player, which is the case the cap is written for.
         measure_scenario(
             catalog, "C1. spread, capped, even",
-            apart, {50, 50, 50, 50}, next_port++),
+            apart, {50, 50, 50, 50}, 0, 0, next_port++),
         measure_scenario(
             catalog, "C2. spread, capped, all on one",
-            apart, {200, 0, 0, 0}, next_port++),
+            apart, {200, 0, 0, 0}, 0, 0, next_port++),
     };
     for (const ScenarioRow& row : rows) {
         const double total_us = row.ai_us + row.kernel_us + row.snapshot_us;
@@ -675,5 +804,6 @@ int main() {
     print_snapshot_table(catalog, 1);
     print_snapshot_table(catalog, 4);
     print_scenario_table(catalog);
+    print_composition_table(catalog);
     return 0;
 }

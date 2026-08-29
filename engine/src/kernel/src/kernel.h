@@ -375,8 +375,11 @@ private:
         // constantly, and an index would hand every entity behind the change
         // somebody else's turn.
         std::uint64_t snapshot_send_sequence = 0;
-        std::unordered_map<NetId, std::uint64_t> actor_last_sent_sequence;
-        std::unordered_map<NetId, std::uint64_t> projectile_last_sent_sequence;
+        // One queue for everything, not one per snapshot section. Sections used
+        // to be served in a fixed order, so whichever came first took the whole
+        // budget and the ones behind it got nothing -- with a crowd of agents
+        // relevant, no projectile ever reached the client.
+        std::unordered_map<NetId, std::uint64_t> last_sent_sequence;
         std::unordered_map<KernelInventoryContainerId, std::uint64_t>
             inventory_revisions;
         std::uint32_t pending_clock_sync_nonce = 0;

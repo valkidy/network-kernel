@@ -350,6 +350,18 @@ constexpr float kSnapshotPriorityMidMeters = 25.0f;
 constexpr std::uint64_t kSnapshotPriorityNearWeight = 4;
 constexpr std::uint64_t kSnapshotPriorityMidWeight = 2;
 constexpr std::uint64_t kSnapshotPriorityActingWeight = 2;
+// An actor's snapshot record is the only thing that tells the client where it
+// is. A projectile's is a correction on top of a reliable spawn that already
+// carried its position and velocity, which the client dead-reckons between
+// corrections -- so what a projectile needs is a prompt first delivery, not a
+// high sustained rate, and `wait * weight` only buys the latter.
+//
+// Left neutral, the queue splits by population: measured at 192 relevant agents
+// against 228 relevant projectiles it gave 13 agent slots to 12 projectile ones,
+// taking agents from 30 a snapshot to 13. This is the multiplier that says an
+// actor's turn is worth eight projectile turns.
+constexpr std::uint64_t kSnapshotPriorityActorWeight = 8;
+constexpr std::uint64_t kSnapshotPriorityProjectileWeight = 1;
 // The backstop under the weights. A weighted queue serves in proportion to
 // weight, so a crowd that is mostly high-weight can hold a low-weight entity off
 // for far longer than the unweighted rotation ever did. Anything that has gone
@@ -10463,9 +10475,15 @@ WorldSnapshot KernelEngine::build_snapshot_send_set(
 
     const auto entity_send_weight = [&](const EntitySnapshot& entity) {
         std::uint64_t weight = 1;
+        if (entity.type == EntityType::kActor) {
+            weight *= kSnapshotPriorityActorWeight;
+        }
         if (entity.type == EntityType::kActor &&
             entity.actor_type == ActorType::kPlayer) {
             weight *= kSnapshotPriorityPlayerWeight;
+        }
+        if (entity.type == EntityType::kProjectile) {
+            weight *= kSnapshotPriorityProjectileWeight;
         }
         if (entity.action_template_id != 0u ||
             entity.action_phase != KernelActionPhase_None) {
@@ -10483,116 +10501,107 @@ WorldSnapshot KernelEngine::build_snapshot_send_set(
         return weight;
     };
 
-    // Serves whoever is most overdue for its own share, which is how long it has
-    // waited multiplied by how much that wait matters. Equal weights reduce this
-    // to plain longest-waiting-first.
+    // One queue over everything the session can see, serving whoever is most
+    // overdue for its own share -- how long it has waited multiplied by how much
+    // that wait matters. Equal weights reduce this to plain
+    // longest-waiting-first.
     //
-    // An earlier rule started at a cursor and advanced it by one per snapshot,
-    // which made the window slide rather than step: a section that packed
-    // fifteen entities re-sent fourteen of them next snapshot, so one full pass
-    // took as many snapshots as there were entities instead of as many as it
-    // took to cover them.
+    // It used to be three passes in a fixed order: actors, then projectiles,
+    // then everything else written straight out with no rotation at all. The
+    // first pass to fill the budget took all of it, so a crowd of relevant
+    // agents meant projectiles and props reached the client at a rate of zero,
+    // and the tail had no memory of who it had dropped.
+    //
+    // Selection order does not have to match the wire: encode_snapshot_packet
+    // regroups by section at encode time, so merging the queue leaves the packet
+    // format untouched.
     struct SendCandidate {
         bool overdue = false;
         std::uint64_t priority = 0;
         std::uint64_t stamp = 0;
-        const EntitySnapshot* entity = nullptr;
+        NetId net_id = 0;
+        std::size_t size = 0;
+        EntitySnapshot entity;
     };
-
-    // Takes a predicate rather than a type pair, because the actor rotation now
-    // carries players and agents together and has to hold back exactly one
-    // entity -- the session's own -- which no enum combination expresses.
-    const auto add_stalest_entities =
-        [&](auto&& in_section,
-            std::unordered_map<NetId, std::uint64_t>* last_sent) {
-            std::vector<SendCandidate> candidates;
-            candidates.reserve(relevant_snapshot.entities.size());
-            for (const EntitySnapshot& entity : relevant_snapshot.entities) {
-                if (!in_section(entity)) {
-                    continue;
-                }
-                const auto found = last_sent->find(entity.net_id);
-                const std::uint64_t stamp =
-                    found == last_sent->end() ? 0u : found->second;
-                // A never-sent entity carries stamp 0 and therefore the largest
-                // wait available, which is what puts newcomers at the front
-                // without a special case for them.
-                const std::uint64_t wait =
-                    session.snapshot_send_sequence - stamp;
-                candidates.push_back(SendCandidate{
-                    wait >= kMaxSnapshotsWithoutSend,
-                    wait * entity_send_weight(entity),
-                    stamp,
-                    &entity});
-            }
-            if (candidates.empty()) {
-                last_sent->clear();
-                return;
-            }
-            // Net id breaks the tie so that a run of equal priorities -- every
-            // entity on the first snapshot, all of them unsent and equally
-            // weighted -- is ordered by something stable rather than by however
-            // the world iterated.
-            std::sort(
-                candidates.begin(),
-                candidates.end(),
-                [](const SendCandidate& lhs, const SendCandidate& rhs) {
-                    if (lhs.overdue != rhs.overdue) {
-                        return lhs.overdue;
-                    }
-                    if (lhs.priority != rhs.priority) {
-                        return lhs.priority > rhs.priority;
-                    }
-                    return lhs.entity->net_id < rhs.entity->net_id;
-                });
-            // Rebuilt rather than updated in place, so that an entity which has
-            // left the relevant set drops its stamp with it. Kept without a
-            // stamp of its own, a returning or recycled net id would look
-            // freshly served and lose a turn.
-            std::unordered_map<NetId, std::uint64_t> next_last_sent;
-            next_last_sent.reserve(candidates.size());
-            for (const SendCandidate& candidate : candidates) {
-                // Deliberately not stopping at the first entity that does not
-                // fit: a later one may be smaller, and an entity too large for
-                // the whole budget must not shut the section down.
-                const bool sent = try_add_entity(*candidate.entity);
-                next_last_sent[candidate.entity->net_id] =
-                    sent ? session.snapshot_send_sequence : candidate.stamp;
-            }
-            *last_sent = std::move(next_last_sent);
-        };
 
     // The receiving session's own player is the one record that is never
     // scheduled: local prediction is reconciled against the authoritative state
     // in here, so a snapshot that omits it is a snapshot the client cannot
-    // correct itself with. Everyone else's player record competes on weight
-    // like anything else.
+    // correct itself with.
     for (const EntitySnapshot& entity : relevant_snapshot.entities) {
         if (entity.net_id == session.player) {
             try_add_entity(entity);
         }
     }
-    add_stalest_entities(
-        [&session](const EntitySnapshot& entity) {
-            return entity.type == EntityType::kActor &&
-                (entity.actor_type == ActorType::kPlayer ||
-                 entity.actor_type == ActorType::kAgent) &&
-                entity.net_id != session.player;
-        },
-        &session.actor_last_sent_sequence);
-    add_stalest_entities(
-        [](const EntitySnapshot& entity) {
-            return entity.type == EntityType::kProjectile;
-        },
-        &session.projectile_last_sent_sequence);
+
+    std::vector<SendCandidate> candidates;
+    candidates.reserve(relevant_snapshot.entities.size());
     for (const EntitySnapshot& entity : relevant_snapshot.entities) {
-        if (!(entity.type == EntityType::kActor &&
-              (entity.actor_type == ActorType::kPlayer ||
-               entity.actor_type == ActorType::kAgent)) &&
-            entity.type != EntityType::kProjectile) {
-            try_add_entity(entity);
+        if (entity.net_id == session.player) {
+            continue;
         }
+        // Resolved once, here, rather than again inside the packing loop. An
+        // entity this rejects -- a dormant placed prop, a projectile the client
+        // predicts for itself -- is not deliverable at all this snapshot, so it
+        // is dropped before the sort instead of sitting permanently overdue at
+        // the head of a queue it can never be served from.
+        std::optional<EntitySnapshot> prepared = prepare_send_entity(entity);
+        if (!prepared.has_value()) {
+            continue;
+        }
+        const auto found = session.last_sent_sequence.find(entity.net_id);
+        const std::uint64_t stamp =
+            found == session.last_sent_sequence.end() ? 0u : found->second;
+        // A never-sent entity carries stamp 0 and therefore the largest wait
+        // available, which is what puts newcomers at the front without a
+        // special case for them.
+        const std::uint64_t wait = session.snapshot_send_sequence - stamp;
+        const std::size_t size = estimate_snapshot_entity_size(*prepared);
+        candidates.push_back(SendCandidate{
+            wait >= kMaxSnapshotsWithoutSend,
+            wait * entity_send_weight(entity),
+            stamp,
+            entity.net_id,
+            size,
+            std::move(*prepared)});
     }
+
+    // Net id breaks the tie so that a run of equal priorities -- every entity on
+    // the first snapshot, all of them unsent and equally weighted -- is ordered
+    // by something stable rather than by however the world iterated.
+    std::sort(
+        candidates.begin(),
+        candidates.end(),
+        [](const SendCandidate& lhs, const SendCandidate& rhs) {
+            if (lhs.overdue != rhs.overdue) {
+                return lhs.overdue;
+            }
+            if (lhs.priority != rhs.priority) {
+                return lhs.priority > rhs.priority;
+            }
+            return lhs.net_id < rhs.net_id;
+        });
+
+    // Rebuilt rather than updated in place, so that an entity which has left the
+    // relevant set drops its stamp with it. Kept without a stamp of its own, a
+    // returning or recycled net id would look freshly served and lose a turn.
+    std::unordered_map<NetId, std::uint64_t> next_last_sent;
+    next_last_sent.reserve(candidates.size());
+    for (SendCandidate& candidate : candidates) {
+        // Deliberately not stopping at the first entity that does not fit: a
+        // later one may be smaller, and an entity too large for the whole budget
+        // must not shut the queue down. The cost is that a large record can be
+        // passed over for smaller ones while the budget is nearly full, which is
+        // what kMaxSnapshotsWithoutSend is underneath to catch.
+        const bool fits = estimated_size + candidate.size <= byte_budget;
+        if (fits) {
+            send_snapshot.entities.push_back(std::move(candidate.entity));
+            estimated_size += candidate.size;
+        }
+        next_last_sent[candidate.net_id] =
+            fits ? session.snapshot_send_sequence : candidate.stamp;
+    }
+    session.last_sent_sequence = std::move(next_last_sent);
     return send_snapshot;
 }
 

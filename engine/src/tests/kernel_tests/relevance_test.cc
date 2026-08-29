@@ -554,6 +554,100 @@ void a_distant_teammate_competes_and_the_own_player_does_not() {
     require(agent_sends > 0);
 }
 
+// One budget, one queue. Agents used to be served to exhaustion before the
+// projectile pass was reached and before props were written at all, so a crowd
+// of relevant agents meant a projectile reached the client at a rate of zero --
+// measured, not hypothetical: agent_cpu_bench packed 0 projectiles at 196
+// agents and 8 at 20.
+void every_kind_of_entity_shares_one_budget() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+
+    network_example::EntitySnapshot own_player;
+    own_player.net_id = 1;
+    own_player.type = network_example::EntityType::kActor;
+    own_player.actor_type = network_example::ActorType::kPlayer;
+    own_player.has_authoritative_movement_state = true;
+
+    network_example::WorldSnapshot relevant;
+    relevant.entities.push_back(own_player);
+    // Enough agents to take every slot the old order would have given them.
+    for (std::uint32_t index = 0; index < 20u; ++index) {
+        network_example::EntitySnapshot agent;
+        agent.net_id = 100u + index;
+        agent.type = network_example::EntityType::kActor;
+        agent.actor_type = network_example::ActorType::kAgent;
+        agent.position = glm::vec3{2.0f + static_cast<float>(index), 0.0f, 0.0f};
+        relevant.entities.push_back(agent);
+    }
+    for (std::uint32_t index = 0; index < 3u; ++index) {
+        network_example::EntitySnapshot projectile;
+        projectile.net_id = 200u + index;
+        projectile.type = network_example::EntityType::kProjectile;
+        projectile.position = glm::vec3{3.0f + static_cast<float>(index), 0.0f, 0.0f};
+        projectile.velocity = glm::vec3{40.0f, 0.0f, 0.0f};
+        relevant.entities.push_back(projectile);
+    }
+    for (std::uint32_t index = 0; index < 2u; ++index) {
+        network_example::EntitySnapshot prop;
+        prop.net_id = 300u + index;
+        prop.type = network_example::EntityType::kProp;
+        prop.position = glm::vec3{4.0f + static_cast<float>(index), 0.0f, 0.0f};
+        relevant.entities.push_back(prop);
+    }
+
+    network_example::EntitySnapshot sizing_agent;
+    sizing_agent.type = network_example::EntityType::kActor;
+    sizing_agent.actor_type = network_example::ActorType::kAgent;
+    // The player, which is never scheduled, plus room for four agent records --
+    // far less than the twenty agents want.
+    const std::size_t budget =
+        network_example::estimate_snapshot_base_packet_size() +
+        network_example::estimate_snapshot_entity_size(own_player) +
+        4u * network_example::estimate_snapshot_entity_size(sizing_agent);
+
+    network_example::KernelEngine::PeerSession session{1, own_player.net_id, 0, true, {}};
+    constexpr std::size_t kSnapshots = 24;
+    std::size_t agent_sends = 0;
+    std::size_t projectile_sends = 0;
+    std::size_t prop_sends = 0;
+    std::size_t first_projectile_gap = 0;
+    std::size_t worst_first_projectile_gap = 0;
+    for (std::size_t index = 0; index < kSnapshots; ++index) {
+        const network_example::WorldSnapshot send =
+            engine.build_snapshot_send_set(session, relevant, budget);
+        require(contains_entity(send, own_player.net_id));
+        for (const network_example::EntitySnapshot& entity : send.entities) {
+            if (entity.type == network_example::EntityType::kProjectile) {
+                ++projectile_sends;
+            } else if (entity.type == network_example::EntityType::kProp) {
+                ++prop_sends;
+            } else if (entity.actor_type ==
+                       network_example::ActorType::kAgent) {
+                ++agent_sends;
+            }
+        }
+        if (contains_entity(send, 200u)) {
+            first_projectile_gap = 0;
+        } else {
+            ++first_projectile_gap;
+            worst_first_projectile_gap =
+                std::max(worst_first_projectile_gap, first_projectile_gap);
+        }
+    }
+    require(agent_sends > 0);
+    // The bug. Both of these were zero for as long as the sections were served
+    // in a fixed order.
+    require(projectile_sends > 0);
+    require(prop_sends > 0);
+    // And the floor reaches across the whole queue now, rather than being
+    // promised separately inside a section that never got any budget.
+    require(worst_first_projectile_gap <= 16);
+}
+
 void dedicated_server_projectile_destruction_uses_destroyed_reason() {
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;
@@ -756,6 +850,7 @@ int main() {
     a_nearer_agent_is_served_more_often_than_a_distant_one();
     an_outvoted_agent_is_still_served_within_the_starvation_window();
     a_distant_teammate_competes_and_the_own_player_does_not();
+    every_kind_of_entity_shares_one_budget();
 
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;

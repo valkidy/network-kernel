@@ -387,6 +387,79 @@ upwards. **200–250 is a sound cap and 400 is the hard ceiling** for this
 architecture; the two failures past it are silent ones — a warning in a log, and
 AI commands dropped without an error.
 
+## Composition
+
+Agents are not the only thing in the world. The target is roughly 200 actors,
+200 projectiles in flight, and up to 256 deployable props — the cap the
+catalog's `temporary_deployable` population rule already carries.
+
+| World | Relevant agents | Relevant projectiles | Relevant props | Packed agents | Packed projectiles | Packed props | Kernel | Share of tick |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 196 agents + 4 players | 192 | 93 | 0 | 30 | 0 | 0 | 1.64 ms | 5.3% |
+| + 200 projectiles | 192 | 228 | 0 | 17 | 9 | 0 | 2.38 ms | 7.7% |
+| + 256 props | 192 | 138 | 256 | 17 | 9 | 0 | 3.31 ms | 10.7% |
+| 196 agents + 256 props | 192 | 0 | 256 | 30 | 0 | 0 | 2.28 ms | 7.4% |
+| 20 agents, same everything | 20 | 193 | 256 | 8 | 16 | 0 | 0.43 ms | 1.7% |
+
+Packed counts are averages over the sample window. A single snapshot is one draw
+from a rotating queue, and reading the last tick's counts as a rate is how an
+earlier version of this table came out showing projectiles taking ninety per
+cent of the budget.
+
+**CPU is not the constraint.** The full composition is 594 entities at 10.7% of
+the tick, and the marginal costs are small: about 0.74 ms for the projectiles and
+0.65 ms for the props.
+
+### Sections used to starve each other
+
+The send set was built section by section in a fixed order — actors, then
+projectiles, then everything else written straight out with no rotation at all.
+The first section to fill the budget took all of it, so with a crowd of relevant
+agents **no projectile reached the client at all**: 0 packed against 93 relevant
+in the first row above, and 8 packed once the agent count dropped to 20. That was
+measured, not deduced.
+
+The queue is now one pass over everything the session can see, ordered by the
+same `wait * weight` rule. Selection order does not have to match the wire:
+`encode_snapshot_packet` regroups by section at encode time, so the merge left
+the packet format untouched — no schema bump, no client change. The tail also
+gains a rotation it never had; props and world items used to be written in world
+iteration order with no memory of who had been dropped.
+
+### Dormant props cost nothing on the wire
+
+`packed props` is zero in every row, and that is by design rather than
+starvation. A placed prop that is not moving is rejected by
+`prepare_send_entity`; it is bootstrapped once through a
+`PropStateChangeBatchPacket` when it enters relevance and then costs no snapshot
+budget at all. **256 props are free on the wire.** Their cost is CPU and one
+reliable packet each. A prop that starts moving rejoins the queue like anything
+else.
+
+### An actor's turn against a projectile's
+
+Left weight-neutral, the queue splits by population: 192 relevant agents against
+228 relevant projectiles gave 13 agent slots to 12 projectile ones, taking agents
+from 30 a snapshot to 13.
+
+That is the wrong split, for a reason that is about mechanism rather than taste.
+An actor's snapshot record is the only thing telling the client where it is. A
+projectile's is a *correction* on top of a reliable spawn packet that already
+carried its position and velocity, which the client dead-reckons between
+corrections — so what a projectile needs is a prompt first delivery, and
+`wait * weight` only buys a high sustained rate. `kSnapshotPriorityActorWeight`
+is the multiplier that says so; at 8 the split measures 17 agents to 9
+projectiles.
+
+Agents still lose about 43% of their rate when 228 projectiles are in flight, and
+that is real: the budget is fixed, and anything projectiles get is taken from
+somewhere. The far band goes from 0.47 s to roughly 0.75 s under that load.
+
+The projectile population here is synthetic — 200 hand-spawned alongside whatever
+the agents fire, with no lifetimes — so the split is indicative rather than
+final. `kSnapshotPriorityActorWeight` is one constant with a measured effect;
+re-run the composition table after changing it.
+
 ## Reproduction
 
 ```text
