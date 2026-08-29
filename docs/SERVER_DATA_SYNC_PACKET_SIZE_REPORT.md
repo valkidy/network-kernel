@@ -472,6 +472,12 @@ bazel run -c opt //engine/src/tests/kernel_tests:snapshot_bandwidth_benchmark
 bazel run --config=macos -c opt //game_server:agent_cpu_bench
 ```
 
+`//engine/src/tests/kernel_tests:snapshot_end_to_end_test` is the one test that
+takes an agent from a server's world through the encoder, over a transport, back
+out of the decoder and into a client's replicated state. Everything else in the
+suite hands the client an in-memory `WorldSnapshot`, so a change to the record
+layout or the schema can pass the whole suite without ever reaching a client.
+
 `agent_cpu_bench` is the source for the **Four Players** section and for the CPU
 figures quoted in it. It drives real `chaser_grunt` agents through the shipping
 `AgentRuntimeManager` path against the real catalog, and reports wall clock on
