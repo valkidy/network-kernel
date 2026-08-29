@@ -5,13 +5,14 @@
 - Kernel ABI: 82
 - Protocol version: 3
 - Packet schema: 24
-- Snapshot schema: 19
+- Snapshot schema: 20
 - Gameplay catalog version: 15
 
-The catalog and packet-size measurements are from that baseline. **Measured
-Agent Refresh Rate** below was re-measured after the agent and projectile
-sections stopped rotating on a sliding index; nothing it depends on — record
-sizes, the send budget, the snapshot rate — changed with it.
+The catalog measurements are from that baseline. The snapshot budget table and
+**Measured Agent Refresh Rate** below were re-measured after two changes: the
+agent and projectile sections stopped rotating on a sliding index, and agents
+moved onto a record of their own. The send budget and the snapshot rate are
+unchanged.
 
 ## Scope And Measurement Boundary
 
@@ -103,6 +104,16 @@ transport with a lower reliable-message limit must revisit
 Snapshot records are sectioned and conditional. Actor sizes must be calculated
 from the fields present rather than from entity type alone.
 
+Agents ride a record of their own rather than the shared actor one. An agent is
+never the receiving session's own player, which removes most of what the actor
+record spends its bytes on, and it stands on the ground, so its facing is a
+quaternion with one live axis. The agent record carries its type and actor type
+in the section header rather than per entity, a `u16` turn in place of the
+quaternion and again in place of the aim vector, velocity as three `i16` at
+1/256 m/s, and single-byte-or-`u16` state and flags. Position is still three
+floats — see **Position Is Still Three Floats** below, which is a decision
+rather than an omission.
+
 Which conditional blocks appear is decided per session, not per entity:
 
 - The **owner peer** and **health** blocks are written only for actors whose
@@ -116,17 +127,19 @@ Which conditional blocks appear is decided per session, not per entity:
 
 | Snapshot item | Encoded application size |
 |---|---:|
-| Snapshot base, including four section headers | 60 B |
+| Snapshot base, including five section headers | 64 B |
 | Actor base | 52 B |
 | Actor rotation block | +16 B |
 | Actor owner peer block (player only) | +4 B |
 | Actor health block (player only) | +4 B |
 | Actor action timeline | +20 B |
 | Actor movement state (own player only) | +22 B |
+| Agent base | 32 B |
+| Agent action timeline | +20 B |
 | Own player, idle | 98 B |
 | Own player, active action | 118 B |
-| **Agent, idle** | **68 B** |
-| **Agent, active action** | **88 B** |
+| **Agent, idle** | **32 B** |
+| **Agent, active action** | **52 B** |
 | Compact projectile | 34 B |
 | Hybrid-correction projectile | 46 B |
 | Input packet | 85 B |
@@ -140,6 +153,51 @@ transport overhead.
 Action and movement templates are synchronized once through the catalog.
 Runtime action and movement state appears only in the conditional actor blocks
 shown above.
+
+### Position Is Still Three Floats
+
+Position is 12 of the agent record's 32 bytes and the only field in it that was
+left at full width. That is deliberate, and this section exists so the next
+person does not have to rediscover why.
+
+Quantising a position needs a bounded range to quantise against, and the two
+candidate ranges are not equivalent:
+
+- **World-absolute.** The scene today is `plane_200x200`, so a `u16` per axis
+  over ±100 m resolves 3 mm. It also writes the size of the world into the wire
+  format: a larger map is the same 65,536 steps spread over more metres, so
+  resolution falls as the map grows.
+- **Relative to the receiving player.** The range is then the relevance radius —
+  44 m today, the outer edge of the hysteresis band — so a `u16` per axis
+  resolves 1.5 mm and stays there whatever size the map is.
+  `build_snapshot_send_set` packs every player record before it rotates the
+  agent section, so the origin is always present in the same packet. The cost is
+  that an agent record can no longer be decoded on its own; it depends on
+  another record in the same snapshot.
+
+What it would buy, as arithmetic on the measured `K` below rather than as a
+measurement of its own: the record goes 32 B to 26 B, `K` goes 32 to 39, and the
+worst-case staleness moves like this.
+
+| Agents | Now (32 B) | Quantised (26 B) |
+|---:|---:|---:|
+| 128 | 0.27 s | 0.27 s |
+| 200 | 0.47 s | 0.40 s |
+| 256 | 0.53 s | 0.47 s |
+| 500 | 1.07 s | 0.87 s |
+
+At 128 agents it changes nothing at all, and across the 100–200 range it is
+worth one snapshot of a pass. The leverage in this record has largely been spent
+already: the fields that were carrying dead weight — a quaternion with one live
+axis, a unit vector in three floats, a duplicated entity type — are gone, and
+what is left is mostly information.
+
+**Revisit this when the map grows.** Note which way growth pushes: it makes the
+world-absolute option *worse*, not the deferral wrong, so a larger map argues
+for the player-relative encoding rather than for leaving position alone. The
+other input to re-check at the same time is
+`kDefaultEntityRelevanceExitDistanceMeters`, because that radius is what a
+player-relative encoding would be sized against.
 
 ## Measured Agent Refresh Rate
 
@@ -157,14 +215,18 @@ Idle agents, 1,200 B budget, 15 snapshots per second:
 
 | Agents | Packed per snapshot | Snapshot bytes | Median gap | Max gap | Blackout |
 |---:|---:|---:|---:|---:|---:|
-| 16 | 15 | 1,178 B | 1 | 2 | 0.13 s |
-| 64 | 15 | 1,178 B | 4 | 5 | 0.33 s |
-| 128 | 15 | 1,178 B | 9 | 9 | 0.60 s |
-| 256 | 15 | 1,178 B | 17 | 18 | 1.20 s |
-| 500 | 15 | 1,178 B | 33 | 34 | 2.27 s |
+| 16 | 16 | 674 B | 1 | 1 | 0.07 s |
+| 64 | 32 | 1,186 B | 2 | 2 | 0.13 s |
+| 128 | 32 | 1,186 B | 4 | 4 | 0.27 s |
+| 256 | 32 | 1,186 B | 8 | 8 | 0.53 s |
+| 500 | 32 | 1,186 B | 16 | 16 | 1.07 s |
 
-With every agent mid-action (88 B each), 11 agents fit per snapshot and the
-blackout at 500 agents is 3.07 s.
+With every agent mid-action (52 B each), 19 agents fit per snapshot and the
+blackout at 500 agents is 1.80 s.
+
+At 16 agents the budget is no longer saturated at all — the whole population
+fits in one snapshot, and a light scene now costs 674 B rather than the full
+1,178 B it did when an agent was 68 B.
 
 Median and maximum are within one snapshot of each other at every population.
 The section serves whoever has waited longest, so the population is partitioned
@@ -200,16 +262,16 @@ relevant agents upward, and per-client snapshot traffic is a flat 17,670 B/s
 (141 kbit/s). What population buys is staleness, not bytes.
 
 The blackout is `ceil(N / K) / 15` seconds, where `K` is the number of agents
-that fit in one snapshot: 15 idle, 11 mid-action. Inverting it, for a target
+that fit in one snapshot: 32 idle, 19 mid-action. Inverting it, for a target
 worst-case staleness `S` seconds the ceiling on simultaneously relevant agents
 is `N <= 15 * S * K`:
 
-| Worst-case staleness | Idle agents (K=15) | Mid-action agents (K=11) |
+| Worst-case staleness | Idle agents (K=32) | Mid-action agents (K=19) |
 |---:|---:|---:|
-| 0.5 s | 112 | 82 |
-| 1 s | 225 | 165 |
-| 2 s | 450 | 330 |
-| 5 s | 1125 | 825 |
+| 0.5 s | 240 | 142 |
+| 1 s | 480 | 285 |
+| 2 s | 960 | 570 |
+| 5 s | 2400 | 1425 |
 
 `K` is now a multiplier rather than an intercept, so bytes per agent moves the
 ceiling proportionally: halving the agent record roughly doubles the population

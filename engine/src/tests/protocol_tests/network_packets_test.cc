@@ -1,4 +1,6 @@
 #include <cassert>
+#include <cstdio>
+#include <cstdlib>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -15,7 +17,185 @@ bool nearly_equal(float lhs, float rhs) {
 
 }  // namespace
 
+namespace {
+
+// assert() is compiled out under -c opt, which is how this suite is normally
+// run, so anything that must actually gate uses this instead.
+void require_impl(bool condition, const char* expression, int line) {
+    if (condition) {
+        return;
+    }
+    std::fprintf(stderr, "require failed at line %d: %s\n", line, expression);
+    std::abort();
+}
+
+#define require(condition) require_impl((condition), #condition, __LINE__)
+
+// build_snapshot_send_set fills its byte budget using
+// estimate_snapshot_entity_size, so an estimator that disagrees with the
+// encoder either leaves budget unspent or overruns the packet -- and neither
+// failure is visible from the outside. main() covers this too, but with
+// assert(), and below an abort that stops the run before reaching it.
+//
+// Stated as encoder-estimator parity rather than as literal byte counts, so
+// that it keeps gating across a record layout change instead of having to be
+// rewritten by whoever makes one.
+void the_estimator_agrees_with_the_encoder() {
+    const auto agrees = [](const network_example::EntitySnapshot& entity) {
+        network_example::WorldSnapshot snapshot;
+        snapshot.entities.push_back(entity);
+        const std::size_t encoded =
+            network_example::encode_snapshot_packet(snapshot, 1).size();
+        const std::size_t estimated =
+            network_example::estimate_snapshot_base_packet_size() +
+            network_example::estimate_snapshot_entity_size(entity);
+        if (encoded != estimated) {
+            std::fprintf(
+                stderr,
+                "  net_id=%u encoded=%zu estimated=%zu\n",
+                entity.net_id,
+                encoded,
+                estimated);
+        }
+        return encoded == estimated;
+    };
+
+    network_example::EntitySnapshot own_player;
+    own_player.net_id = 1;
+    own_player.type = network_example::EntityType::kActor;
+    own_player.actor_type = network_example::ActorType::kPlayer;
+    own_player.owner_peer = 2;
+    own_player.hp = 90;
+    own_player.max_hp = 100;
+    own_player.has_authoritative_movement_state = true;
+    own_player.action_template_id = 1001;
+    own_player.action_phase = KernelActionPhase_Active;
+    require(agrees(own_player));
+
+    network_example::EntitySnapshot idle_player = own_player;
+    idle_player.has_authoritative_movement_state = false;
+    idle_player.action_template_id = 0;
+    idle_player.action_phase = KernelActionPhase_None;
+    require(agrees(idle_player));
+
+    network_example::EntitySnapshot agent;
+    agent.net_id = 3;
+    agent.type = network_example::EntityType::kActor;
+    agent.actor_type = network_example::ActorType::kAgent;
+    require(agrees(agent));
+
+    network_example::EntitySnapshot acting_agent = agent;
+    acting_agent.action_template_id = 1002;
+    acting_agent.action_phase = KernelActionPhase_Active;
+    require(agrees(acting_agent));
+
+    network_example::EntitySnapshot compact_projectile;
+    compact_projectile.net_id = 4;
+    compact_projectile.type = network_example::EntityType::kProjectile;
+    require(agrees(compact_projectile));
+
+    network_example::EntitySnapshot hybrid_projectile = compact_projectile;
+    hybrid_projectile.net_id = 5;
+    hybrid_projectile.state_flags |=
+        network_example::kSnapshotStateFlagProjectileHybridCorrection;
+    require(agrees(hybrid_projectile));
+
+    network_example::EntitySnapshot beam = compact_projectile;
+    beam.net_id = 6;
+    beam.state_flags |= network_example::kSnapshotStateFlagProjectileBeam;
+    beam.beam_effective_length = 8.0f;
+    require(agrees(beam));
+
+    network_example::EntitySnapshot prop;
+    prop.net_id = 7;
+    prop.type = network_example::EntityType::kProp;
+    prop.hp = 50;
+    prop.max_hp = 100;
+    require(agrees(prop));
+
+    network_example::EntitySnapshot prop_without_health = prop;
+    prop_without_health.state_flags |=
+        network_example::kSnapshotStateFlagHpUnknown;
+    require(agrees(prop_without_health));
+}
+
+// Sizes agreeing does not mean the decoder reads what the encoder wrote: two
+// fields of the same width swapped between them keeps every size assertion
+// happy. This checks the values back out, at the precision the wire actually
+// promises.
+void an_agent_record_survives_a_round_trip() {
+    network_example::EntitySnapshot agent;
+    agent.net_id = 4242;
+    agent.type = network_example::EntityType::kActor;
+    agent.actor_type = network_example::ActorType::kAgent;
+    agent.position = glm::vec3{12.5f, 3.25f, -48.125f};
+    agent.velocity = glm::vec3{2.5f, -0.75f, 1.25f};
+    // Facing +Z, which is the axis a yaw of a quarter turn has to survive.
+    agent.rotation = glm::angleAxis(
+        -1.5707963267948966f, glm::vec3{0.0f, 1.0f, 0.0f});
+    agent.aim_direction = glm::normalize(glm::vec3{0.6f, 0.3f, -0.7f});
+    agent.state = 1;
+    agent.flags = network_example::kVisualFlagMoving |
+        network_example::kVisualFlagFiring;
+    agent.action_template_id = 1002;
+    agent.action_instance_id = 77;
+    agent.action_start_tick = 900;
+    agent.action_commit_count = 3;
+    agent.action_phase = KernelActionPhase_Active;
+
+    network_example::WorldSnapshot snapshot;
+    snapshot.header.server_tick = 5;
+    snapshot.entities.push_back(agent);
+    const std::vector<std::uint8_t> packet =
+        network_example::encode_snapshot_packet(snapshot, 9);
+    network_example::WorldSnapshot decoded;
+    require(network_example::decode_snapshot_packet(
+        packet.data(), packet.size(), &decoded));
+    require(decoded.entities.size() == 1);
+    const network_example::EntitySnapshot& out = decoded.entities[0];
+
+    require(out.net_id == agent.net_id);
+    require(out.type == network_example::EntityType::kActor);
+    require(out.actor_type == network_example::ActorType::kAgent);
+    // Position is still a full trio of floats, so it is exact.
+    require(out.position == agent.position);
+    // Velocity is i16 at 1/256 m/s, so a step is under 4 mm/s.
+    require(glm::length(out.velocity - agent.velocity) < 0.005f);
+    // Facing is compared as the direction it means, not as the quaternion:
+    // only the yaw of the original survives, which is the whole point.
+    const glm::vec3 forward = out.rotation * glm::vec3{1.0f, 0.0f, 0.0f};
+    const glm::vec3 expected_forward =
+        agent.rotation * glm::vec3{1.0f, 0.0f, 0.0f};
+    require(glm::length(forward - expected_forward) < 0.001f);
+    // Aim pitch is a signed byte over a half turn, so ~0.7 degrees a step.
+    require(glm::length(out.aim_direction - agent.aim_direction) < 0.02f);
+    require(out.state == agent.state);
+    require(out.flags == agent.flags);
+    require(out.action_template_id == agent.action_template_id);
+    require(out.action_instance_id == agent.action_instance_id);
+    require(out.action_start_tick == agent.action_start_tick);
+    require(out.action_commit_count == agent.action_commit_count);
+    require(out.action_phase == agent.action_phase);
+
+    // And the sizes this whole exercise is for.
+    network_example::EntitySnapshot idle = agent;
+    idle.action_template_id = 0;
+    idle.action_instance_id = 0;
+    idle.action_start_tick = 0;
+    idle.action_commit_count = 0;
+    idle.action_phase = KernelActionPhase_None;
+    require(network_example::estimate_snapshot_entity_size(idle) == 32u);
+    require(network_example::estimate_snapshot_entity_size(agent) == 52u);
+}
+
+}  // namespace
+
 int main() {
+    // Ahead of everything else: main() carries a long-standing abort part way
+    // down, and anything below it never runs in a build where assert() is live.
+    the_estimator_agrees_with_the_encoder();
+    an_agent_record_survives_a_round_trip();
+
     // Replicated locomotion steps. A step is 22 bytes of payload: the entity,
     // which leg, how many ticks ago the swing began, and where it lands. No
     // lift-off point -- a receiver in sync already has it planted.
@@ -176,11 +356,13 @@ int main() {
     owner_without_action.action_instance_id = 0;
     owner_without_action.action_phase = KernelActionPhase_None;
     assert(network_example::estimate_snapshot_entity_size(owner_without_action) == 98u);
-    assert(network_example::estimate_snapshot_entity_size(enemy) == 68u);
+    // Agents ride their own, narrower record; see the agent section in
+    // network_packets.cc.
+    assert(network_example::estimate_snapshot_entity_size(enemy) == 32u);
     network_example::EntitySnapshot active_enemy = enemy;
     active_enemy.action_template_id = 1002;
     active_enemy.action_phase = KernelActionPhase_Active;
-    assert(network_example::estimate_snapshot_entity_size(active_enemy) == 88u);
+    assert(network_example::estimate_snapshot_entity_size(active_enemy) == 52u);
     assert(network_example::estimate_snapshot_entity_size(compact_projectile) == 34u);
     assert(network_example::estimate_snapshot_entity_size(hybrid_projectile) == 46u);
     network_example::WorldSnapshot decoded_snapshot;

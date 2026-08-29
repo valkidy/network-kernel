@@ -636,7 +636,7 @@ int main() {
     require(build_info.module_file_name[0] != '\0');
     require(has_version_revision_suffix(build_info.module_version));
     require(build_info.protocol_version == 3u);
-    require(build_info.snapshot_schema_version == 19u);
+    require(build_info.snapshot_schema_version == 20u);
     require(build_info.packet_schema_version == 24u);
     require(build_info.git_commit[0] != '\0');
     require(std::string(build_info.git_commit) != "unknown");

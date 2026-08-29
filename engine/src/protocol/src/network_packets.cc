@@ -17,8 +17,19 @@ constexpr std::size_t kInputPayloadSize = 57;
 constexpr std::size_t kSnapshotHeaderPayloadSize = 16;
 constexpr std::size_t kSnapshotSectionHeaderPayloadSize = 4;
 // Sections present in every snapshot; the beam section is optional on top.
-constexpr std::uint16_t kSnapshotSectionCount = 4;
+constexpr std::uint16_t kSnapshotSectionCount = 5;
 constexpr std::size_t kActorSnapshotBasePayloadSize = 52;
+// net_id 4 + record flags 1 + position 12 + velocity 6 + facing 2 + aim 3 +
+// animation state 2 + visual flags 2.
+//
+// An agent is an actor that is never the receiving session's own player, which
+// removes most of what the shared actor record spends its bytes on. Its type
+// and actor type are implied by the section. Its facing is a quaternion holding
+// one live axis -- it stands on the ground -- so a turn in a u16 says the same
+// thing in an eighth of the space, and the aim vector goes the same way. Only
+// position stays a full trio of floats, because narrowing it needs a bounded
+// range to quantise against and that is a separate decision.
+constexpr std::size_t kAgentSnapshotBasePayloadSize = 32;
 constexpr std::size_t kActorActionTimelinePayloadSize = 20;
 constexpr std::size_t kActorOwnerPeerPayloadSize = 4;
 constexpr std::size_t kActorRotationPayloadSize = 16;
@@ -56,6 +67,67 @@ constexpr std::size_t kGameplayRequestPayloadSize = 60;
 constexpr std::size_t kGameplayRequestOutcomePayloadSize = 32;
 constexpr std::size_t kInventorySnapshotRequestPayloadSize = 16;
 constexpr std::size_t kMaxInventoryPacketPayloadSize = 16u * 1024u;
+
+constexpr float kTwoPi = 6.283185307179586f;
+constexpr float kHalfPi = 1.5707963267948966f;
+constexpr float kYawWireSteps = 65536.0f;
+// A turn in a u16 is 0.005 degrees a step, which no presentation resolves, and
+// it replaces a four-component quaternion carrying one live axis.
+std::uint16_t yaw_to_wire(float radians) {
+    float turns = radians / kTwoPi;
+    turns -= std::floor(turns);
+    return static_cast<std::uint16_t>(
+        static_cast<std::uint32_t>(std::lround(turns * kYawWireSteps)) & 0xFFFFu);
+}
+
+float yaw_from_wire(std::uint16_t value) {
+    return static_cast<float>(value) / kYawWireSteps * kTwoPi;
+}
+
+// Pitch in a signed byte over a half turn: 0.7 degrees a step. Aim only has to
+// point a muzzle for presentation here -- the server hits what it hits from its
+// own state, never from this.
+std::int8_t pitch_to_wire(float radians) {
+    const float clamped = std::clamp(radians, -kHalfPi, kHalfPi);
+    return static_cast<std::int8_t>(std::lround(clamped / kHalfPi * 127.0f));
+}
+
+float pitch_from_wire(std::int8_t value) {
+    return static_cast<float>(value) / 127.0f * kHalfPi;
+}
+
+// Velocity in i16 at 1/256 m/s: 4 mm/s a step against a walking 2.5 m/s, and
+// 128 m/s of range. Quantised rather than dropped, because the client feeds it
+// into the render state and interpolates it between snapshots -- unlike the
+// rotation's three dead axes, something downstream can see this one.
+constexpr float kVelocityWireScale = 256.0f;
+
+std::uint16_t velocity_to_wire(float value) {
+    const float clamped =
+        std::clamp(value * kVelocityWireScale, -32768.0f, 32767.0f);
+    return static_cast<std::uint16_t>(
+        static_cast<std::int16_t>(std::lround(clamped)));
+}
+
+float velocity_from_wire(std::uint16_t value) {
+    return static_cast<float>(static_cast<std::int16_t>(value)) /
+        kVelocityWireScale;
+}
+
+// +X is forward, the same convention update_vision_states resolves a vision
+// cone with.
+float yaw_of_direction(const glm::vec3& direction) {
+    if (std::fabs(direction.x) < 1e-6f && std::fabs(direction.z) < 1e-6f) {
+        return 0.0f;
+    }
+    return std::atan2(direction.z, direction.x);
+}
+
+glm::quat rotation_from_yaw(float yaw) {
+    // Negated because a positive turn about +Y takes +X towards -Z, and
+    // yaw_of_direction measures towards +Z.
+    return glm::angleAxis(-yaw, glm::vec3{0.0f, 1.0f, 0.0f});
+}
 
 std::uint16_t beam_length_to_wire(float length) {
     const float clamped = std::clamp(length, 0.0f, kBeamLengthWireMax);
@@ -132,6 +204,11 @@ enum class SnapshotSectionType : std::uint16_t {
     kProjectileHybridCorrection = 3,
     kGeneric = 4,
     kProjectileBeam = 5,
+    kActorAgent = 6,
+};
+
+enum AgentSnapshotRecordFlag : std::uint8_t {
+    kAgentSnapshotHasActionTimeline = 1u << 0,
 };
 
 enum ActorSnapshotRecordFlag : std::uint16_t {
@@ -160,6 +237,15 @@ std::uint16_t actor_record_flags(const EntitySnapshot& entity) {
     }
     if (entity.has_authoritative_movement_state) {
         flags |= kActorSnapshotHasMovementState;
+    }
+    return flags;
+}
+
+std::uint8_t agent_record_flags(const EntitySnapshot& entity) {
+    std::uint8_t flags = 0;
+    if (entity.action_template_id != 0u ||
+        entity.action_phase != KernelActionPhase_None) {
+        flags |= kAgentSnapshotHasActionTimeline;
     }
     return flags;
 }
@@ -199,7 +285,13 @@ SnapshotSectionType snapshot_section_type(EntityType type) {
 
 SnapshotSectionType snapshot_section_type(const EntitySnapshot& entity) {
     if (is_actor_entity_type(entity.type)) {
-        return SnapshotSectionType::kActor;
+        // Movement state is written for the receiving session's own player and
+        // nothing else, so an actor carrying it is never eligible for the
+        // agent record however its actor type reads.
+        return entity.actor_type == ActorType::kAgent &&
+                !entity.has_authoritative_movement_state
+            ? SnapshotSectionType::kActorAgent
+            : SnapshotSectionType::kActor;
     }
     if (is_hybrid_correction_projectile(entity)) {
         return SnapshotSectionType::kProjectileHybridCorrection;
@@ -322,6 +414,7 @@ std::vector<std::uint8_t> encode_snapshot_packet(
 
     for (const SnapshotSectionType section_type : {
              SnapshotSectionType::kActor,
+             SnapshotSectionType::kActorAgent,
              SnapshotSectionType::kProjectileCompact,
              SnapshotSectionType::kProjectileHybridCorrection,
              SnapshotSectionType::kProjectileBeam,
@@ -371,6 +464,37 @@ std::vector<std::uint8_t> encode_snapshot_packet(
                         payload.write_vec3(entity->ground_normal);
                         payload.write_u32(entity->supporting_entity_net_id);
                         payload.write_u32(entity->supporting_collider_id);
+                    }
+                    break;
+                }
+                case SnapshotSectionType::kActorAgent: {
+                    const std::uint8_t record_flags = agent_record_flags(*entity);
+                    payload.write_u8(record_flags);
+                    payload.write_vec3(entity->position);
+                    payload.write_u16(velocity_to_wire(entity->velocity.x));
+                    payload.write_u16(velocity_to_wire(entity->velocity.y));
+                    payload.write_u16(velocity_to_wire(entity->velocity.z));
+                    payload.write_u16(yaw_to_wire(yaw_of_direction(
+                        entity->rotation * glm::vec3{1.0f, 0.0f, 0.0f})));
+                    const glm::vec3 aim = entity->aim_direction;
+                    const float aim_length = glm::length(aim);
+                    // A zero aim cannot be carried as angles at all. It decodes
+                    // as +X, which is what EntitySnapshot defaults to and what
+                    // an agent with no ActionInputState already reports.
+                    payload.write_u16(yaw_to_wire(yaw_of_direction(aim)));
+                    payload.write_u8(static_cast<std::uint8_t>(pitch_to_wire(
+                        aim_length > 1e-6f
+                            ? std::asin(std::clamp(aim.y / aim_length, -1.0f, 1.0f))
+                            : 0.0f)));
+                    payload.write_u16(entity->state);
+                    payload.write_u16(static_cast<std::uint16_t>(entity->flags));
+                    if ((record_flags & kAgentSnapshotHasActionTimeline) != 0u) {
+                        payload.write_u32(entity->action_template_id);
+                        payload.write_u32(entity->action_instance_id);
+                        payload.write_u32(entity->action_start_tick);
+                        payload.write_u32(entity->action_commit_count);
+                        payload.write_u16(entity->action_phase);
+                        payload.write_u16(0u);
                     }
                     break;
                 }
@@ -530,6 +654,62 @@ bool decode_snapshot_packet(
                     }
                     break;
                 }
+                case SnapshotSectionType::kActorAgent: {
+                    std::uint8_t record_flags = 0;
+                    std::uint16_t velocity_x = 0;
+                    std::uint16_t velocity_y = 0;
+                    std::uint16_t velocity_z = 0;
+                    std::uint16_t facing_yaw = 0;
+                    std::uint16_t aim_yaw = 0;
+                    std::uint8_t aim_pitch = 0;
+                    std::uint16_t visual_flags = 0;
+                    if (!reader.read_u8(&record_flags) ||
+                        !reader.read_vec3(&entity.position) ||
+                        !reader.read_u16(&velocity_x) ||
+                        !reader.read_u16(&velocity_y) ||
+                        !reader.read_u16(&velocity_z) ||
+                        !reader.read_u16(&facing_yaw) ||
+                        !reader.read_u16(&aim_yaw) ||
+                        !reader.read_u8(&aim_pitch) ||
+                        !reader.read_u16(&entity.state) ||
+                        !reader.read_u16(&visual_flags)) {
+                        return false;
+                    }
+                    entity.type = EntityType::kActor;
+                    entity.actor_type = ActorType::kAgent;
+                    entity.state_flags |= kSnapshotStateFlagHpUnknown;
+                    entity.velocity = glm::vec3{
+                        velocity_from_wire(velocity_x),
+                        velocity_from_wire(velocity_y),
+                        velocity_from_wire(velocity_z)};
+                    entity.rotation = rotation_from_yaw(yaw_from_wire(facing_yaw));
+                    const float aim_yaw_radians = yaw_from_wire(aim_yaw);
+                    const float aim_pitch_radians =
+                        pitch_from_wire(static_cast<std::int8_t>(aim_pitch));
+                    const float aim_cos_pitch = std::cos(aim_pitch_radians);
+                    entity.aim_direction = glm::vec3{
+                        aim_cos_pitch * std::cos(aim_yaw_radians),
+                        std::sin(aim_pitch_radians),
+                        aim_cos_pitch * std::sin(aim_yaw_radians)};
+                    entity.flags = visual_flags;
+                    if ((record_flags & kAgentSnapshotHasActionTimeline) != 0u) {
+                        std::uint16_t action_phase = 0;
+                        std::uint16_t padding = 0;
+                        if (!reader.read_u32(&entity.action_template_id) ||
+                            !reader.read_u32(&entity.action_instance_id) ||
+                            !reader.read_u32(&entity.action_start_tick) ||
+                            !reader.read_u32(&entity.action_commit_count) ||
+                            !reader.read_u16(&action_phase) ||
+                            !reader.read_u16(&padding) ||
+                            action_phase > KernelActionPhase_Recovery ||
+                            padding != 0u) {
+                            return false;
+                        }
+                        entity.action_phase =
+                            static_cast<std::uint8_t>(action_phase);
+                    }
+                    break;
+                }
                 case SnapshotSectionType::kProjectileCompact:
                     entity.type = EntityType::kProjectile;
                     entity.state_flags |= kSnapshotStateFlagHpUnknown;
@@ -642,6 +822,12 @@ std::size_t estimate_snapshot_entity_size(const EntitySnapshot& entity) {
                    ((actor_record_flags(entity) &
                      kActorSnapshotHasMovementState) != 0u
                         ? kActorMovementPayloadSize
+                        : 0u);
+        case SnapshotSectionType::kActorAgent:
+            return kAgentSnapshotBasePayloadSize +
+                   ((agent_record_flags(entity) &
+                     kAgentSnapshotHasActionTimeline) != 0u
+                        ? kActorActionTimelinePayloadSize
                         : 0u);
         case SnapshotSectionType::kProjectileCompact:
             return kProjectileCompactSnapshotPayloadSize;
