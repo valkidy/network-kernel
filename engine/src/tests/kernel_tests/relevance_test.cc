@@ -486,6 +486,74 @@ void an_outvoted_agent_is_still_served_within_the_starvation_window() {
     require(worst_gap <= 16);
 }
 
+// A teammate's record is scheduled, not guaranteed -- except the receiving
+// session's own, which is neither.
+void a_distant_teammate_competes_and_the_own_player_does_not() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+
+    network_example::EntitySnapshot own_player;
+    own_player.net_id = 1;
+    own_player.type = network_example::EntityType::kActor;
+    own_player.actor_type = network_example::ActorType::kPlayer;
+    network_example::EntitySnapshot teammate = own_player;
+    teammate.net_id = 2;
+    teammate.position = glm::vec3{35.0f, 0.0f, 0.0f};
+    network_example::EntitySnapshot near_agent;
+    near_agent.net_id = 3;
+    near_agent.type = network_example::EntityType::kActor;
+    near_agent.actor_type = network_example::ActorType::kAgent;
+    near_agent.position = glm::vec3{5.0f, 0.0f, 0.0f};
+    // Mid-action doubles its weight, so a near agent doing something outranks a
+    // teammate at the edge of the sphere.
+    near_agent.action_template_id = 1002;
+    near_agent.action_phase = KernelActionPhase_Active;
+
+    network_example::WorldSnapshot relevant;
+    relevant.entities = {own_player, teammate, near_agent};
+    // The own player, plus room for one of the other two -- the teammate record
+    // is the larger of them, so whichever wins takes the whole remainder.
+    const std::size_t budget =
+        network_example::estimate_snapshot_base_packet_size() +
+        network_example::estimate_snapshot_entity_size(own_player) +
+        network_example::estimate_snapshot_entity_size(teammate);
+
+    network_example::KernelEngine::PeerSession session{1, own_player.net_id, 0, true, {}};
+    constexpr std::size_t kSnapshots = 24;
+    std::size_t own_sends = 0;
+    std::size_t teammate_sends = 0;
+    std::size_t agent_sends = 0;
+    for (std::size_t index = 0; index < kSnapshots; ++index) {
+        const network_example::WorldSnapshot send =
+            engine.build_snapshot_send_set(session, relevant, budget);
+        if (contains_entity(send, own_player.net_id)) {
+            ++own_sends;
+        }
+        if (contains_entity(send, teammate.net_id)) {
+            ++teammate_sends;
+        }
+        if (contains_entity(send, near_agent.net_id)) {
+            ++agent_sends;
+        }
+    }
+    // Never scheduled, never skipped: local prediction is reconciled against it.
+    require(own_sends == kSnapshots);
+    // The change this pins. A teammate record used to be written before the
+    // rotation ran at all, so this was kSnapshots too.
+    require(teammate_sends < kSnapshots);
+    require(teammate_sends > 0);
+    // The agent gets turns it could not have had before, when the teammate was
+    // written ahead of the rotation and took the whole remainder every time.
+    // How the two divide those turns is the weighting's business and is pinned
+    // by a_nearer_agent_is_served_more_often_than_a_distant_one; with only two
+    // entities and one slot the integer arithmetic ties often enough that a
+    // ratio asserted here would be measuring the tie-break, not the weights.
+    require(agent_sends > 0);
+}
+
 void dedicated_server_projectile_destruction_uses_destroyed_reason() {
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;
@@ -687,6 +755,7 @@ int main() {
     a_crowd_is_introduced_over_several_snapshots();
     a_nearer_agent_is_served_more_often_than_a_distant_one();
     an_outvoted_agent_is_still_served_within_the_starvation_window();
+    a_distant_teammate_competes_and_the_own_player_does_not();
 
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;

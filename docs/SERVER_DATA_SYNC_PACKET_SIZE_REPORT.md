@@ -315,12 +315,18 @@ whether four players means four times the agents.
 |---|---:|---:|---:|---:|
 | World agents | 200 | 800 | 200 | 200 |
 | Relevant to the measured player | 200 | 196 | 49 | 196 |
-| Packed per snapshot | 24 | 32 | 30 | 32 |
-| AI | 60.8 us | 586.1 us | 62.9 us | 59.8 us |
-| Kernel update | 1.83 ms | **36.9 ms** | 1.39 ms | 1.68 ms |
-| Snapshot build, four sessions | 111.2 us | 282.9 us | 65.7 us | 67.9 us |
-| **Share of the 33.3 ms tick** | 6.0% | **113.2%** | 4.5% | 5.4% |
-| Worst-case staleness | 0.60 s | 0.47 s | 0.13 s | 0.47 s |
+| Packed per snapshot | 25 | 27 | 30 | 26 |
+| AI | 68.4 us | 631.3 us | 62.8 us | 62.1 us |
+| Kernel update | 1.87 ms | **37.7 ms** | 1.40 ms | 1.71 ms |
+| Snapshot build, four sessions | 126.2 us | 290.4 us | 71.7 us | 71.9 us |
+| **Share of the 33.3 ms tick** | 6.2% | **115.8%** | 4.6% | 5.5% |
+
+Staleness is not a column here. Slots are weighted, so an entity's refresh
+interval depends on which band it is in rather than on the population divided by
+the packed count; **Measured Agent Refresh Rate** above reports it per band. The
+packed count is also not a measure of throughput any more — the weighting pulls
+mid-action agents forward, and those carry the 20 B action timeline, so the same
+1,136 B of budget buys fewer but more relevant records.
 
 All four hold the same thing constant where they can: roughly 200 agents in
 front of the measured player. What differs is how many the world holds and where
@@ -336,9 +342,9 @@ C is the same situation under a global population cap — the world holds 200
 however the players are arranged — and it removes the problem outright, at no
 cost to the player who has the crowd:
 
-- server cost `113.2% -> 5.4%`, a factor of twenty-one;
-- the player in front of the crowd sees **no change at all**: 32 packed per
-  snapshot and 0.47 s of staleness either way.
+- server cost `115.8% -> 5.5%`, a factor of twenty-one;
+- the player in front of the crowd sees **no change at all**: 27 packed per
+  snapshot against 26, from an identical relevant set.
 
 The three players who get an empty stretch of map are paying for it, but nothing
 is transferred to the first player. This is not a trade against frame time.
@@ -346,20 +352,27 @@ is transferred to the first player. This is not a trade against frame time.
 C1 and C2 differ only in how the capped population happens to be distributed,
 which is a consequence of where players go rather than something the server
 chooses. The measurement is here to answer whether that distribution matters to
-performance, and it does not: 4.5% against 5.4%, with the kernel column moving
-1.39 ms to 1.68 ms. Either distribution is comfortably inside budget, so the
+performance, and it does not: 4.6% against 5.5%, with the kernel column moving
+1.40 ms to 1.71 ms. Either distribution is comfortably inside budget, so the
 allocation policy can be decided on gameplay grounds alone.
 
-### Standing together is the expensive arrangement
+### Standing together costs a little more
 
-A costs more and is staler than C2, on the same 200-agent world. The `packed`
-column is why: 24 against 32.
+A costs 6.2% against C2's 5.5% on the same 200-agent world, and the difference
+is the teammates: four players inside one relevance sphere means each session's
+packet carries three of them at 76 B alongside its own record.
 
-`build_snapshot_send_set` writes every player record before it rotates the agent
-section. Four players inside one relevance sphere means each session's packet
-carries three teammates at 76 B plus its own player at 98 B — 326 B, a quarter
-of the budget, which is eight agent slots every snapshot. Spread out, each
-session sees only itself and the agents get the whole remainder.
+Those records are scheduled rather than guaranteed. Only the receiving session's
+own player is written unconditionally — local prediction is reconciled against
+it, so a snapshot without it is one the client cannot correct itself with.
+Everyone else's competes on weight like an agent does, with a player bonus that
+keeps a teammate standing next to you ahead of the crowd around it and lets one
+at the edge of the sphere fall back to roughly what a near agent gets.
+
+Which means the party case does not get much cheaper, and should not: teammates
+you are standing next to are worth the bytes. What the change buys is the other
+arrangement — a teammate 35 m away no longer holds a guaranteed slot against the
+agents you are actually fighting.
 
 ### Where the ceiling is
 

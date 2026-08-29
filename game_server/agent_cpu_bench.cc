@@ -578,12 +578,16 @@ ScenarioRow measure_scenario(
     return row;
 }
 
+// Staleness is deliberately not reported here. Slots are weighted, so an
+// entity's refresh interval depends on its band rather than on the population
+// divided by the packed count; snapshot_bandwidth_benchmark measures it per
+// band. What this table is for is the CPU cost of each player arrangement.
 void print_scenario_table(const Catalog& catalog) {
     std::printf("F. FOUR PLAYERS: one shared crowd vs one crowd each\n");
     std::printf(
-        "%-26s %8s %10s %9s %10s %11s %12s %10s %11s\n",
+        "%-26s %8s %10s %9s %10s %11s %12s %10s\n",
         "scenario", "world", "relevant", "packed", "ai us", "kernel us",
-        "snapshot us", "% of 33ms", "stale s");
+        "snapshot us", "% of 33ms");
     const std::vector<KernelVec3> together{
         KernelVec3{0.0f, 0.0f, 0.0f},
         KernelVec3{2.0f, 0.0f, 0.0f},
@@ -617,14 +621,8 @@ void print_scenario_table(const Catalog& catalog) {
     };
     for (const ScenarioRow& row : rows) {
         const double total_us = row.ai_us + row.kernel_us + row.snapshot_us;
-        const double stale = row.packed_per_snapshot == 0
-            ? 0.0
-            : std::ceil(
-                  static_cast<double>(row.relevant_per_session) /
-                  static_cast<double>(row.packed_per_snapshot)) /
-                15.0;
         std::printf(
-            "%-26s %8zu %10zu %9zu %10.1f %11.1f %12.1f %10.1f %11.2f\n",
+            "%-26s %8zu %10zu %9zu %10.1f %11.1f %12.1f %10.1f\n",
             row.name,
             row.world_agents,
             row.relevant_per_session,
@@ -632,8 +630,7 @@ void print_scenario_table(const Catalog& catalog) {
             row.ai_us,
             row.kernel_us,
             row.snapshot_us,
-            total_us / (1'000'000.0 / kServerTickRate) * 100.0,
-            stale);
+            total_us / (1'000'000.0 / kServerTickRate) * 100.0);
     }
     std::printf("\n");
 }

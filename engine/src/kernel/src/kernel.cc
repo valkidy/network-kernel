@@ -339,6 +339,12 @@ constexpr std::uint32_t kLargeSyncPacketWarningBytes = 1200;
 // The bands are deliberately coarse rather than a curve: what an entity's turn
 // costs its neighbours should be obvious from reading the constants, and a
 // discrete factor is something a test can pin.
+// A teammate standing next to you is the most noticeable thing on screen after
+// yourself, and one 35 m away is not. Players used to be written before the
+// rotation ran at all, unconditionally, which spent budget on both alike. The
+// bonus keeps a near teammate ahead of the agents around it while letting a
+// distant one fall back to roughly what a near agent gets.
+constexpr std::uint64_t kSnapshotPriorityPlayerWeight = 4;
 constexpr float kSnapshotPriorityNearMeters = 10.0f;
 constexpr float kSnapshotPriorityMidMeters = 25.0f;
 constexpr std::uint64_t kSnapshotPriorityNearWeight = 4;
@@ -10457,6 +10463,10 @@ WorldSnapshot KernelEngine::build_snapshot_send_set(
 
     const auto entity_send_weight = [&](const EntitySnapshot& entity) {
         std::uint64_t weight = 1;
+        if (entity.type == EntityType::kActor &&
+            entity.actor_type == ActorType::kPlayer) {
+            weight *= kSnapshotPriorityPlayerWeight;
+        }
         if (entity.action_template_id != 0u ||
             entity.action_phase != KernelActionPhase_None) {
             weight *= kSnapshotPriorityActingWeight;
@@ -10489,16 +10499,16 @@ WorldSnapshot KernelEngine::build_snapshot_send_set(
         const EntitySnapshot* entity = nullptr;
     };
 
+    // Takes a predicate rather than a type pair, because the actor rotation now
+    // carries players and agents together and has to hold back exactly one
+    // entity -- the session's own -- which no enum combination expresses.
     const auto add_stalest_entities =
-        [&](EntityType type,
-            ActorType actor_type,
+        [&](auto&& in_section,
             std::unordered_map<NetId, std::uint64_t>* last_sent) {
             std::vector<SendCandidate> candidates;
             candidates.reserve(relevant_snapshot.entities.size());
             for (const EntitySnapshot& entity : relevant_snapshot.entities) {
-                if (entity.type != type ||
-                    (actor_type != ActorType::kUnknown &&
-                     entity.actor_type != actor_type)) {
+                if (!in_section(entity)) {
                     continue;
                 }
                 const auto found = last_sent->find(entity.net_id);
@@ -10552,19 +10562,28 @@ WorldSnapshot KernelEngine::build_snapshot_send_set(
             *last_sent = std::move(next_last_sent);
         };
 
+    // The receiving session's own player is the one record that is never
+    // scheduled: local prediction is reconciled against the authoritative state
+    // in here, so a snapshot that omits it is a snapshot the client cannot
+    // correct itself with. Everyone else's player record competes on weight
+    // like anything else.
     for (const EntitySnapshot& entity : relevant_snapshot.entities) {
-        if (entity.type == EntityType::kActor &&
-            entity.actor_type == ActorType::kPlayer) {
+        if (entity.net_id == session.player) {
             try_add_entity(entity);
         }
     }
     add_stalest_entities(
-        EntityType::kActor,
-        ActorType::kAgent,
+        [&session](const EntitySnapshot& entity) {
+            return entity.type == EntityType::kActor &&
+                (entity.actor_type == ActorType::kPlayer ||
+                 entity.actor_type == ActorType::kAgent) &&
+                entity.net_id != session.player;
+        },
         &session.actor_last_sent_sequence);
     add_stalest_entities(
-        EntityType::kProjectile,
-        ActorType::kUnknown,
+        [](const EntitySnapshot& entity) {
+            return entity.type == EntityType::kProjectile;
+        },
         &session.projectile_last_sent_sequence);
     for (const EntitySnapshot& entity : relevant_snapshot.entities) {
         if (!(entity.type == EntityType::kActor &&
