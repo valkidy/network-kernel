@@ -10,6 +10,7 @@
 // Run:
 //   bazel run -c opt //engine/src/tests/kernel_tests:snapshot_bandwidth_benchmark
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cmath>
@@ -42,6 +43,12 @@ constexpr std::uint32_t kSnapshotsPerSecond = 15;
 // Relevance keeps everything within 40 m, so the population is packed inside
 // that sphere -- this measures the send-set selection, not the range filter.
 constexpr float kRelevanceRadiusMeters = 40.0f;
+// The bands build_snapshot_send_set weights by; kept in step with
+// kSnapshotPriorityNearMeters / kSnapshotPriorityMidMeters in kernel.cc.
+// Reporting one number across all of them would read the weighting as a
+// regression: the far band is meant to get worse, and pays for the near one.
+constexpr float kNearBandMeters = 10.0f;
+constexpr float kMidBandMeters = 25.0f;
 
 struct Row {
     std::size_t agent_count = 0;
@@ -49,9 +56,11 @@ struct Row {
     double agents_per_snapshot = 0.0;
     double mean_snapshot_bytes = 0.0;
     std::size_t agent_entity_bytes = 0;
-    std::size_t median_gap_snapshots = 0;
     std::size_t max_gap_snapshots = 0;
     double blackout_seconds = 0.0;
+    double near_blackout_seconds = 0.0;
+    double mid_blackout_seconds = 0.0;
+    double far_blackout_seconds = 0.0;
     double bytes_per_second = 0.0;
 };
 
@@ -102,6 +111,16 @@ Row measure(
     std::vector<std::size_t> last_seen(agent_count, 0);
     std::vector<bool> seen_once(agent_count, false);
     std::vector<std::size_t> gaps;
+    // Indexed by band: 0 near, 1 mid, 2 far.
+    std::array<std::vector<std::size_t>, 3> band_gaps;
+    std::vector<std::size_t> agent_band(agent_count, 2);
+    for (std::size_t index = 0; index < agent_count; ++index) {
+        const glm::vec3 position = agent_position(index, agent_count);
+        const float distance = glm::length(position);
+        agent_band[index] = distance <= kNearBandMeters
+            ? 0u
+            : (distance <= kMidBandMeters ? 1u : 2u);
+    }
     std::vector<std::size_t> packed_per_snapshot;
     std::vector<std::size_t> bytes_per_snapshot;
     std::size_t relevant_agents = 0;
@@ -139,6 +158,7 @@ Row measure(
                 static_cast<std::size_t>(found - agents.begin());
             if (seen_once[slot]) {
                 gaps.push_back(tick - last_seen[slot]);
+                band_gaps[agent_band[slot]].push_back(tick - last_seen[slot]);
             }
             seen_once[slot] = true;
             last_seen[slot] = tick;
@@ -166,18 +186,30 @@ Row measure(
     };
 
     std::sort(gaps.begin(), gaps.end());
+    const auto band_blackout = [&](std::size_t band) {
+        if (band_gaps[band].empty()) {
+            return 0.0;
+        }
+        const std::size_t worst =
+            *std::max_element(band_gaps[band].begin(), band_gaps[band].end());
+        return static_cast<double>(worst) /
+            static_cast<double>(kSnapshotsPerSecond);
+    };
     Row row;
     row.agent_count = agent_count;
     row.relevant_agents = relevant_agents;
     row.agents_per_snapshot = mean(packed_per_snapshot);
     row.mean_snapshot_bytes = mean(bytes_per_snapshot);
     row.agent_entity_bytes = agent_entity_bytes;
-    // The maximum is what a player actually sees, so it is reported alongside
-    // the median rather than folded into a mean.
-    row.median_gap_snapshots = gaps.empty() ? 0 : gaps[gaps.size() / 2];
+    // Reported per band, because the weighting deliberately spends the far
+    // band's refresh rate on the near one. A single worst-case number across all
+    // agents describes the outcome of that trade as if it were only a loss.
     row.max_gap_snapshots = gaps.empty() ? 0 : gaps.back();
     row.blackout_seconds = static_cast<double>(row.max_gap_snapshots) /
         static_cast<double>(kSnapshotsPerSecond);
+    row.near_blackout_seconds = band_blackout(0);
+    row.mid_blackout_seconds = band_blackout(1);
+    row.far_blackout_seconds = band_blackout(2);
     row.bytes_per_second =
         row.mean_snapshot_bytes * static_cast<double>(kSnapshotsPerSecond);
     return row;
@@ -188,23 +220,24 @@ Row measure(
 void print_table(const char* title, bool agents_acting = false) {
     std::printf("%s\n", title);
     std::printf(
-        "%7s %9s %10s %8s %9s %10s %10s %11s %10s\n",
+        "%7s %9s %10s %8s %9s %9s %9s %9s %11s %10s\n",
         "agents", "relevant", "packed/ss", "agent B", "mean B",
-        "median gap", "max gap", "blackout s", "B/s");
+        "near s", "mid s", "far s", "worst s", "B/s");
     for (const std::size_t agent_count : {16u, 64u, 128u, 256u, 500u}) {
         // Eight full cycles, so the longest gap is sampled repeatedly rather
         // than clipped by the end of the window.
         const std::size_t snapshots = std::max<std::size_t>(600, agent_count * 8);
         const Row row = measure(agent_count, snapshots, agents_acting);
         std::printf(
-            "%7zu %9zu %10.2f %8zu %9.1f %10zu %10zu %11.2f %10.0f\n",
+            "%7zu %9zu %10.2f %8zu %9.1f %9.2f %9.2f %9.2f %11.2f %10.0f\n",
             row.agent_count,
             row.relevant_agents,
             row.agents_per_snapshot,
             row.agent_entity_bytes,
             row.mean_snapshot_bytes,
-            row.median_gap_snapshots,
-            row.max_gap_snapshots,
+            row.near_blackout_seconds,
+            row.mid_blackout_seconds,
+            row.far_blackout_seconds,
             row.blackout_seconds,
             row.bytes_per_second);
     }

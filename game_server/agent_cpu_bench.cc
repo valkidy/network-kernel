@@ -33,6 +33,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -302,7 +303,7 @@ void print_table(const Catalog& catalog, const char* title, Drive drive, bool en
     std::printf(
         "%7s %9s %10s %11s %11s %10s\n",
         "agents", "driven", "entities", "ai us", "kernel us", "% of 33ms");
-    for (const std::size_t agent_count : {0u, 25u, 50u, 100u, 150u, 200u}) {
+    for (const std::size_t agent_count : {0u, 50u, 100u, 200u, 400u, 800u}) {
         const Row row =
             measure(catalog, agent_count, drive, engaged, next_port++);
         const double total_us = row.ai_us + row.kernel_us;
@@ -332,6 +333,7 @@ struct SnapshotRow {
 SnapshotRow measure_snapshot_build(
     const Catalog& catalog,
     std::size_t agent_count,
+    std::size_t session_count,
     std::uint16_t port) {
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;
@@ -374,10 +376,16 @@ SnapshotRow measure_snapshot_build(
         return net_id;
     };
 
-    const std::uint32_t player = spawn(
-        catalog.config.player.actor_template_id,
-        network_example::game_server::kActorTypePlayer,
-        KernelVec3{0.0f, 1.0f, 0.0f});
+    std::vector<std::uint32_t> players;
+    for (std::size_t index = 0; index < session_count; ++index) {
+        // Kept close together, so every session finds every agent relevant.
+        // That is the worst case for per-session work and the one a party
+        // fighting the same crowd actually produces.
+        players.push_back(spawn(
+            catalog.config.player.actor_template_id,
+            network_example::game_server::kActorTypePlayer,
+            KernelVec3{static_cast<float>(index) * 2.0f, 1.0f, 0.0f}));
+    }
     for (std::size_t index = 0; index < agent_count; ++index) {
         spawn(
             chaser->actor_template_id,
@@ -388,17 +396,23 @@ SnapshotRow measure_snapshot_build(
         engine.update(kTickSeconds);
     }
 
-    network_example::KernelEngine::PeerSession session{1, player, 0, true, {}};
+    std::vector<network_example::KernelEngine::PeerSession> sessions;
+    for (std::size_t index = 0; index < players.size(); ++index) {
+        sessions.push_back(network_example::KernelEngine::PeerSession{
+            static_cast<std::uint32_t>(index + 1), players[index], 0, true, {}});
+    }
     double total_us = 0.0;
     std::size_t sent_entities = 0;
     for (std::uint32_t sample = 0; sample < kSampleTicks; ++sample) {
         const auto start = std::chrono::steady_clock::now();
-        const network_example::WorldSnapshot relevant =
-            engine.build_relevant_snapshot(session, sample * 66u);
-        const network_example::WorldSnapshot send =
-            engine.build_snapshot_send_set(session, relevant, 1200u);
+        for (network_example::KernelEngine::PeerSession& session : sessions) {
+            const network_example::WorldSnapshot relevant =
+                engine.build_relevant_snapshot(session, sample * 66u);
+            const network_example::WorldSnapshot send =
+                engine.build_snapshot_send_set(session, relevant, 1200u);
+            sent_entities = send.entities.size();
+        }
         total_us += micros_since(start);
-        sent_entities = send.entities.size();
     }
 
     SnapshotRow row;
@@ -408,14 +422,232 @@ SnapshotRow measure_snapshot_build(
     return row;
 }
 
-void print_snapshot_table(const Catalog& catalog) {
-    std::printf("E. SNAPSHOT BUILD, one session (not included in the tables above)\n");
+// KernelHandle is opaque in the public header but is only a unique_ptr to the
+// engine (kernel_api.cc). Mirrored here so that one world can be measured on
+// both sides of the API at once -- the C API for the shipping AI path, the
+// engine for the per-session snapshot path -- rather than running the same
+// configuration twice and hoping the two runs matched.
+struct KernelHandleLayout {
+    std::unique_ptr<network_example::KernelEngine> engine;
+};
+
+network_example::KernelEngine& engine_of(KernelHandle* handle) {
+    return *reinterpret_cast<KernelHandleLayout*>(handle)->engine;
+}
+
+struct ScenarioRow {
+    const char* name = "";
+    std::size_t world_agents = 0;
+    std::size_t relevant_per_session = 0;
+    std::size_t packed_per_snapshot = 0;
+    double ai_us = 0.0;
+    double kernel_us = 0.0;
+    double snapshot_us = 0.0;
+};
+
+// Both four-player shapes, with the same thing held constant: each player has
+// roughly the same number of agents in view. What differs is how many the world
+// holds -- one shared crowd, or one crowd per player.
+ScenarioRow measure_scenario(
+    const Catalog& catalog,
+    const char* name,
+    const std::vector<KernelVec3>& cluster_centres,
+    const std::vector<std::size_t>& agents_per_cluster,
+    std::uint16_t port) {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = kServerTickRate;
+    config.tick.snapshot_rate = 15;
+    config.max_events = 8192;
+    config.max_render_states = 4096;
+    KernelHandle* kernel = Kernel_Create(&config);
+    require(kernel != nullptr);
+
+    KernelStaticCollisionSceneConfig scene{};
+    scene.struct_size = sizeof(scene);
+    scene.artifact_bytes = catalog.scene_bytes.data();
+    scene.artifact_size = static_cast<std::uint32_t>(catalog.scene_bytes.size());
+    scene.scene_id = catalog.config.static_collision_scene.scene_id;
+    scene.collider_id = catalog.config.static_collision_scene.collider_id;
+    scene.collision_layer = catalog.config.static_collision_scene.collision_layer;
+    require(Kernel_SetStaticCollisionScene(kernel, &scene));
+    require(Kernel_StartDedicatedServer(kernel, port));
+    require(Kernel_LoadGameplayCatalog(kernel, &catalog.storage.definition, nullptr));
+
+    const network_example::game_server::ActorTemplateConfig* chaser =
+        find_template(catalog.config.actor_templates, "chaser_grunt");
+    require(chaser != nullptr);
+
+    std::vector<std::uint32_t> players;
+    std::size_t world_agents = 0;
+    for (std::size_t cluster = 0; cluster < cluster_centres.size(); ++cluster) {
+        const KernelVec3 centre = cluster_centres[cluster];
+        players.push_back(spawn_actor(
+            kernel,
+            catalog.config.player.actor_template_id,
+            network_example::game_server::kActorTypePlayer,
+            KernelVec3{centre.x, 1.0f, centre.z}));
+        const std::size_t cluster_agents = agents_per_cluster[cluster];
+        for (std::size_t index = 0; index < cluster_agents; ++index) {
+            // The same spread the other tables use, re-centred on this cluster
+            // and kept inside the relevance radius of its own player only.
+            const KernelVec3 offset = agent_position(index, cluster_agents);
+            spawn_actor(
+                kernel,
+                chaser->actor_template_id,
+                network_example::game_server::kActorTypeAgent,
+                KernelVec3{
+                    centre.x + offset.x * 0.9f,
+                    1.0f,
+                    centre.z + offset.z * 0.9f});
+            ++world_agents;
+        }
+    }
+
+    network_example::game_server::AgentRuntimeManager manager(
+        kernel, catalog.config);
+    network_example::KernelEngine& engine = engine_of(kernel);
+
+    // Held outside the engine's own session list on purpose, so that
+    // Kernel_Update does not also build these snapshots and land the same work
+    // in two columns.
+    std::vector<network_example::KernelEngine::PeerSession> sessions;
+    for (std::size_t index = 0; index < players.size(); ++index) {
+        sessions.push_back(network_example::KernelEngine::PeerSession{
+            static_cast<std::uint32_t>(index + 1), players[index], 0, true, {}});
+    }
+
+    for (std::uint32_t tick = 0; tick < kWarmupTicks; ++tick) {
+        manager.tick(kTickSeconds);
+        Kernel_Update(kernel, kTickSeconds);
+    }
+
+    double ai_us = 0.0;
+    double kernel_us = 0.0;
+    double snapshot_us = 0.0;
+    std::size_t relevant_per_session = 0;
+    std::size_t packed_per_snapshot = 0;
+    for (std::uint32_t tick = 0; tick < kSampleTicks; ++tick) {
+        const auto ai_start = std::chrono::steady_clock::now();
+        manager.tick(kTickSeconds);
+        ai_us += micros_since(ai_start);
+        const auto kernel_start = std::chrono::steady_clock::now();
+        Kernel_Update(kernel, kTickSeconds);
+        kernel_us += micros_since(kernel_start);
+
+        const auto snapshot_start = std::chrono::steady_clock::now();
+        std::size_t relevant_agents = 0;
+        std::size_t packed_agents = 0;
+        for (network_example::KernelEngine::PeerSession& session : sessions) {
+            const network_example::WorldSnapshot relevant =
+                engine.build_relevant_snapshot(session, tick * 66u);
+            const network_example::WorldSnapshot send =
+                engine.build_snapshot_send_set(session, relevant, 1200u);
+            if (&session == &sessions.front()) {
+                for (const network_example::EntitySnapshot& entity :
+                     relevant.entities) {
+                    if (entity.actor_type ==
+                        network_example::ActorType::kAgent) {
+                        ++relevant_agents;
+                    }
+                }
+                for (const network_example::EntitySnapshot& entity :
+                     send.entities) {
+                    if (entity.actor_type ==
+                        network_example::ActorType::kAgent) {
+                        ++packed_agents;
+                    }
+                }
+            }
+        }
+        snapshot_us += micros_since(snapshot_start);
+        relevant_per_session = relevant_agents;
+        packed_per_snapshot = packed_agents;
+    }
+
+    ScenarioRow row;
+    row.name = name;
+    row.world_agents = world_agents;
+    row.relevant_per_session = relevant_per_session;
+    row.packed_per_snapshot = packed_per_snapshot;
+    row.ai_us = ai_us / static_cast<double>(kSampleTicks);
+    row.kernel_us = kernel_us / static_cast<double>(kSampleTicks);
+    row.snapshot_us = snapshot_us / static_cast<double>(kSampleTicks);
+
+    Kernel_Destroy(kernel);
+    return row;
+}
+
+void print_scenario_table(const Catalog& catalog) {
+    std::printf("F. FOUR PLAYERS: one shared crowd vs one crowd each\n");
+    std::printf(
+        "%-26s %8s %10s %9s %10s %11s %12s %10s %11s\n",
+        "scenario", "world", "relevant", "packed", "ai us", "kernel us",
+        "snapshot us", "% of 33ms", "stale s");
+    const std::vector<KernelVec3> together{
+        KernelVec3{0.0f, 0.0f, 0.0f},
+        KernelVec3{2.0f, 0.0f, 0.0f},
+        KernelVec3{0.0f, 0.0f, 2.0f},
+        KernelVec3{2.0f, 0.0f, 2.0f}};
+    // Far enough apart that no player is inside another cluster's relevance
+    // radius, and still on the 200 x 200 ground plane.
+    const std::vector<KernelVec3> apart{
+        KernelVec3{-70.0f, 0.0f, -70.0f},
+        KernelVec3{70.0f, 0.0f, -70.0f},
+        KernelVec3{-70.0f, 0.0f, 70.0f},
+        KernelVec3{70.0f, 0.0f, 70.0f}};
+    const ScenarioRow rows[] = {
+        // Four players standing in one crowd of 200: the clusters overlap, so
+        // every agent is relevant to every session.
+        measure_scenario(
+            catalog, "A. party, shared 200",
+            together, {50, 50, 50, 50}, next_port++),
+        measure_scenario(
+            catalog, "B. spread, 200 each",
+            apart, {200, 200, 200, 200}, next_port++),
+        // A global population cap instead of a per-view one: the world holds
+        // 200 however the players are arranged. Split evenly, and then all of
+        // it in front of one player, which is the case the cap is written for.
+        measure_scenario(
+            catalog, "C1. spread, capped, even",
+            apart, {50, 50, 50, 50}, next_port++),
+        measure_scenario(
+            catalog, "C2. spread, capped, all on one",
+            apart, {200, 0, 0, 0}, next_port++),
+    };
+    for (const ScenarioRow& row : rows) {
+        const double total_us = row.ai_us + row.kernel_us + row.snapshot_us;
+        const double stale = row.packed_per_snapshot == 0
+            ? 0.0
+            : std::ceil(
+                  static_cast<double>(row.relevant_per_session) /
+                  static_cast<double>(row.packed_per_snapshot)) /
+                15.0;
+        std::printf(
+            "%-26s %8zu %10zu %9zu %10.1f %11.1f %12.1f %10.1f %11.2f\n",
+            row.name,
+            row.world_agents,
+            row.relevant_per_session,
+            row.packed_per_snapshot,
+            row.ai_us,
+            row.kernel_us,
+            row.snapshot_us,
+            total_us / (1'000'000.0 / kServerTickRate) * 100.0,
+            stale);
+    }
+    std::printf("\n");
+}
+
+void print_snapshot_table(const Catalog& catalog, std::size_t session_count) {
+    std::printf(
+        "E. SNAPSHOT BUILD, %zu session(s) (not included in the tables above)\n",
+        session_count);
     std::printf(
         "%7s %10s %14s %18s\n",
         "agents", "sent", "per build us", "% of 33ms at 15Hz");
-    for (const std::size_t agent_count : {0u, 25u, 50u, 100u, 150u, 200u}) {
-        const SnapshotRow row =
-            measure_snapshot_build(catalog, agent_count, next_port++);
+    for (const std::size_t agent_count : {0u, 50u, 100u, 200u, 400u, 800u}) {
+        const SnapshotRow row = measure_snapshot_build(
+            catalog, agent_count, session_count, next_port++);
         // Two snapshots per three ticks at 15 Hz on a 30 Hz tick, so half a
         // build lands on the average tick.
         const double per_tick_us = row.build_us * 15.0 / kServerTickRate;
@@ -443,6 +675,8 @@ int main() {
     print_table(catalog, "B. CONTROLLER, idle", Drive::kController, false);
     print_table(catalog, "C. CONTROLLER, engaged", Drive::kController, true);
     print_table(catalog, "D. MANAGER (shipping path), engaged", Drive::kManager, true);
-    print_snapshot_table(catalog);
+    print_snapshot_table(catalog, 1);
+    print_snapshot_table(catalog, 4);
+    print_scenario_table(catalog);
     return 0;
 }

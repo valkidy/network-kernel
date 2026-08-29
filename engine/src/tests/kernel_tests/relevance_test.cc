@@ -370,6 +370,122 @@ void a_departure_does_not_cost_the_next_entity_its_turn() {
     require(!contains_entity(round_three, 212));
 }
 
+// Slots are weighted by distance, so a crowd the player is standing in front of
+// refreshes faster than one at the edge of the relevance sphere.
+void a_nearer_agent_is_served_more_often_than_a_distant_one() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+
+    network_example::EntitySnapshot player;
+    player.net_id = 1;
+    player.type = network_example::EntityType::kActor;
+    player.actor_type = network_example::ActorType::kPlayer;
+    network_example::EntitySnapshot near_agent;
+    near_agent.net_id = 2;
+    near_agent.type = network_example::EntityType::kActor;
+    near_agent.actor_type = network_example::ActorType::kAgent;
+    near_agent.position = glm::vec3{5.0f, 0.0f, 0.0f};
+    network_example::EntitySnapshot far_agent = near_agent;
+    far_agent.net_id = 3;
+    far_agent.position = glm::vec3{30.0f, 0.0f, 0.0f};
+
+    network_example::WorldSnapshot relevant;
+    relevant.entities = {player, near_agent, far_agent};
+    // Room for the player record, which is always written, and exactly one
+    // agent -- so every snapshot is a choice between the two.
+    const std::size_t one_agent_budget =
+        network_example::estimate_snapshot_base_packet_size() +
+        network_example::estimate_snapshot_entity_size(player) +
+        network_example::estimate_snapshot_entity_size(near_agent);
+
+    network_example::KernelEngine::PeerSession session{1, player.net_id, 0, true, {}};
+    constexpr std::size_t kSnapshots = 24;
+    std::size_t near_sends = 0;
+    std::size_t far_sends = 0;
+    for (std::size_t index = 0; index < kSnapshots; ++index) {
+        const network_example::WorldSnapshot send =
+            engine.build_snapshot_send_set(session, relevant, one_agent_budget);
+        if (contains_entity(send, near_agent.net_id)) {
+            ++near_sends;
+        }
+        if (contains_entity(send, far_agent.net_id)) {
+            ++far_sends;
+        }
+    }
+    require(near_sends + far_sends == kSnapshots);
+    // The near band is weighted four to one against the far band; asserted as
+    // a factor of two so that tuning the constants does not have to come back
+    // through this test to stay true.
+    require(near_sends > far_sends * 2);
+    // Weighted, not exclusive. Losing every turn forever is the failure this
+    // guards against.
+    require(far_sends > 0);
+}
+
+// The backstop under the weighting. Outvoted by a crowd of higher-weight
+// neighbours, an agent still gets a turn inside the starvation window rather
+// than waiting for a share it will never be given.
+void an_outvoted_agent_is_still_served_within_the_starvation_window() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+
+    network_example::EntitySnapshot player;
+    player.net_id = 1;
+    player.type = network_example::EntityType::kActor;
+    player.actor_type = network_example::ActorType::kPlayer;
+    network_example::EntitySnapshot agent;
+    agent.type = network_example::EntityType::kActor;
+    agent.actor_type = network_example::ActorType::kAgent;
+
+    network_example::WorldSnapshot relevant;
+    relevant.entities.push_back(player);
+    // Five agents in the near band against one in the far band. Their combined
+    // weight is 21 to 1 with a single slot to share, so the far one's weighted
+    // share alone would leave it waiting longer than the window allows.
+    for (std::uint32_t index = 0; index < 5u; ++index) {
+        network_example::EntitySnapshot near_agent = agent;
+        near_agent.net_id = 10u + index;
+        near_agent.position = glm::vec3{2.0f + static_cast<float>(index), 0.0f, 0.0f};
+        relevant.entities.push_back(near_agent);
+    }
+    network_example::EntitySnapshot far_agent = agent;
+    far_agent.net_id = 99;
+    far_agent.position = glm::vec3{35.0f, 0.0f, 0.0f};
+    relevant.entities.push_back(far_agent);
+
+    const std::size_t one_agent_budget =
+        network_example::estimate_snapshot_base_packet_size() +
+        network_example::estimate_snapshot_entity_size(player) +
+        network_example::estimate_snapshot_entity_size(far_agent);
+
+    network_example::KernelEngine::PeerSession session{1, player.net_id, 0, true, {}};
+    constexpr std::size_t kSnapshots = 60;
+    std::size_t worst_gap = 0;
+    std::size_t gap = 0;
+    std::size_t far_sends = 0;
+    for (std::size_t index = 0; index < kSnapshots; ++index) {
+        const network_example::WorldSnapshot send =
+            engine.build_snapshot_send_set(session, relevant, one_agent_budget);
+        if (contains_entity(send, far_agent.net_id)) {
+            ++far_sends;
+            gap = 0;
+            continue;
+        }
+        ++gap;
+        worst_gap = std::max(worst_gap, gap);
+    }
+    require(far_sends > 0);
+    // kMaxSnapshotsWithoutSend is 15; one more for the snapshot the promotion
+    // is decided on.
+    require(worst_gap <= 16);
+}
+
 void dedicated_server_projectile_destruction_uses_destroyed_reason() {
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;
@@ -569,6 +685,8 @@ int main() {
     a_departure_does_not_cost_the_next_entity_its_turn();
     relevance_holds_until_a_wider_radius_than_it_entered();
     a_crowd_is_introduced_over_several_snapshots();
+    a_nearer_agent_is_served_more_often_than_a_distant_one();
+    an_outvoted_agent_is_still_served_within_the_starvation_window();
 
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;
