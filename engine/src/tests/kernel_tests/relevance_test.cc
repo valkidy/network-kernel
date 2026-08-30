@@ -1,3 +1,4 @@
+#include <cstdio>
 #include <algorithm>
 #include <cassert>
 #include <memory>
@@ -28,6 +29,18 @@ bool contains_entity(
             return entity.net_id == net_id;
         });
 }
+
+// assert() is compiled out under -c opt, which is how this suite is normally
+// run, so anything that must actually gate uses this instead.
+void require_impl(bool condition, const char* expression, int line) {
+    if (condition) {
+        return;
+    }
+    std::fprintf(stderr, "require failed at line %d: %s\n", line, expression);
+    std::abort();
+}
+
+#define require(condition) require_impl((condition), #condition, __LINE__)
 
 void set_position(
     network_example::World& world,
@@ -192,6 +205,555 @@ void configure_expiring_projectiles(
         .emplace<network_example::ProjectileBeamRuntime>(*beam_entity)
         .expire_tick = 1;
     *out_projectiles = {projectile, area_effect, beam};
+}
+
+std::size_t poll_client_spawn_count(
+    network_example::LoopbackTransport* transport) {
+    std::size_t spawns = 0;
+    if (transport == nullptr) {
+        return spawns;
+    }
+    network_example::TransportEvent event;
+    while (transport->PollClientEvent(event)) {
+        network_example::EntitySpawnPacket spawn{};
+        if (event.channel == network_example::ChannelId::kReliableEvent &&
+            network_example::decode_entity_spawn_packet(
+                event.payload.data(), event.payload.size(), &spawn)) {
+            ++spawns;
+        }
+    }
+    return spawns;
+}
+
+// A crowd is introduced over several snapshots rather than all at once.
+//
+// Every introduction is a reliable entity spawn plus a locomotion baseline, and
+// none of it is charged to the snapshot byte budget -- so before the quota, a
+// player who became relevant to sixty agents in one snapshot produced sixty
+// reliable packets in that snapshot. Both halves matter here: the per-snapshot
+// ceiling, and that the backlog still drains, because deferring is only
+// acceptable if the deferred entities actually arrive.
+void a_crowd_is_introduced_over_several_snapshots() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+
+    auto transport = std::make_unique<network_example::LoopbackTransport>();
+    network_example::LoopbackTransport* loopback = transport.get();
+    engine.transport_ = std::move(transport);
+    // Started after reset_runtime_state, not before: the reset stops the
+    // transport, and a stopped LoopbackTransport drops every Send silently.
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+    require(loopback->StartServer(7783));
+
+    constexpr std::size_t kCrowd = 60;
+    // The quota is 16; one more is allowed because the session's own player is
+    // exempt from it.
+    constexpr std::size_t kMaxSpawnsPerSnapshot = 17;
+    const network_example::NetId player =
+        engine.world_.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+    for (std::size_t index = 0; index < kCrowd; ++index) {
+        // Well inside the 40 m relevance radius, so all of them are relevant
+        // from the very first snapshot.
+        engine.world_.spawn_enemy(glm::vec3{
+            1.0f + static_cast<float>(index) * 0.5f, 0.0f, 0.0f});
+    }
+    network_example::KernelEngine::PeerSession session{1, player, 0, true, {}};
+    engine.peer_sessions_.push_back(std::move(session));
+
+    const std::size_t expected_total = kCrowd + 1;
+    std::size_t announced = 0;
+    std::size_t snapshots = 0;
+    while (announced < expected_total) {
+        // Two ticks per snapshot at a 30 Hz tick and a 15 Hz snapshot rate.
+        engine.simulate_tick();
+        engine.simulate_tick();
+        const std::size_t spawns = poll_client_spawn_count(loopback);
+        require(spawns <= kMaxSpawnsPerSnapshot);
+        announced += spawns;
+        ++snapshots;
+        require(snapshots < 32);
+    }
+    require(announced == expected_total);
+    // 61 introductions cannot have fitted into three snapshots of 16.
+    require(snapshots >= 4);
+    require(
+        engine.peer_sessions_[0].relevant_entities.size() == expected_total);
+}
+
+// The relevance band, on its own engine so that it actually runs: everything in
+// main() sits below a long-standing abort and never executes under a debug
+// build, and its assert()s are compiled out under -c opt.
+void relevance_holds_until_a_wider_radius_than_it_entered() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+
+    auto transport = std::make_unique<network_example::LoopbackTransport>();
+    network_example::LoopbackTransport* loopback = transport.get();
+    engine.transport_ = std::move(transport);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+    require(loopback->StartServer(7784));
+
+    const network_example::NetId player =
+        engine.world_.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+    const network_example::NetId enemy =
+        engine.world_.spawn_enemy(glm::vec3{10.0f, 0.0f, 0.0f});
+    // Relevance measures to an entity's near edge, so a hitbox of any size would
+    // shift the boundaries this test pins by exactly its radius. Zeroed here so
+    // that what is under test is the band and nothing else; the radius has its
+    // own test.
+    const std::optional<entt::entity> enemy_entity =
+        engine.world_.find_entity(enemy);
+    require(enemy_entity.has_value());
+    engine.world_.registry().get<network_example::Hitbox>(*enemy_entity)
+        .half_extents = glm::vec3{0.0f, 0.0f, 0.0f};
+    network_example::KernelEngine::PeerSession session{1, player, 0, true, {}};
+    engine.peer_sessions_.push_back(std::move(session));
+
+    const auto relevant_at = [&](float x) {
+        set_position(engine.world_, enemy, glm::vec3{x, 0.0f, 0.0f});
+        network_example::KernelEngine::PeerSession& live =
+            engine.peer_sessions_[0];
+        const network_example::WorldSnapshot snapshot =
+            engine.build_relevant_snapshot(live, 0);
+        const bool contained = contains_entity(snapshot, enemy);
+        engine.sync_session_relevance(&live, snapshot);
+        return contained;
+    };
+
+    require(relevant_at(10.0f));
+    // Past the entry radius, but leaving costs a reliable despawn and coming
+    // back costs a reliable spawn, so it holds.
+    require(relevant_at(40.01f));
+    require(!relevant_at(44.01f));
+    // And the band holds on the way back in, or it would not be a band.
+    require(!relevant_at(42.0f));
+    require(relevant_at(39.0f));
+}
+
+// Why the send order is keyed on net id rather than on a position in the
+// relevant list: an index only survives as long as the list does.
+void a_departure_does_not_cost_the_next_entity_its_turn() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+
+    network_example::EntitySnapshot agent;
+    agent.type = network_example::EntityType::kActor;
+    agent.actor_type = network_example::ActorType::kAgent;
+    network_example::EntitySnapshot first = agent;
+    first.net_id = 211;
+    network_example::EntitySnapshot second = agent;
+    second.net_id = 212;
+    network_example::EntitySnapshot third = agent;
+    third.net_id = 213;
+
+    network_example::WorldSnapshot all_three;
+    all_three.entities = {first, second, third};
+    network_example::WorldSnapshot without_first;
+    without_first.entities = {second, third};
+    const std::size_t one_agent_budget =
+        network_example::estimate_snapshot_base_packet_size() +
+        network_example::estimate_snapshot_entity_size(first);
+
+    network_example::KernelEngine::PeerSession session{1, 0, 0, true, {}};
+    const network_example::WorldSnapshot round_one =
+        engine.build_snapshot_send_set(session, all_three, one_agent_budget);
+    require(contains_entity(round_one, 211));
+    // 211 has left. An index of 1 would now point past 212 to 213, and 212
+    // would wait out another full cycle for a turn it had already earned.
+    const network_example::WorldSnapshot round_two =
+        engine.build_snapshot_send_set(session, without_first, one_agent_budget);
+    require(contains_entity(round_two, 212));
+    require(!contains_entity(round_two, 213));
+    const network_example::WorldSnapshot round_three =
+        engine.build_snapshot_send_set(session, without_first, one_agent_budget);
+    require(contains_entity(round_three, 213));
+    require(!contains_entity(round_three, 212));
+}
+
+// Slots are weighted by distance, so a crowd the player is standing in front of
+// refreshes faster than one at the edge of the relevance sphere.
+void a_nearer_agent_is_served_more_often_than_a_distant_one() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+
+    network_example::EntitySnapshot player;
+    player.net_id = 1;
+    player.type = network_example::EntityType::kActor;
+    player.actor_type = network_example::ActorType::kPlayer;
+    network_example::EntitySnapshot near_agent;
+    near_agent.net_id = 2;
+    near_agent.type = network_example::EntityType::kActor;
+    near_agent.actor_type = network_example::ActorType::kAgent;
+    near_agent.position = glm::vec3{5.0f, 0.0f, 0.0f};
+    network_example::EntitySnapshot far_agent = near_agent;
+    far_agent.net_id = 3;
+    far_agent.position = glm::vec3{30.0f, 0.0f, 0.0f};
+
+    network_example::WorldSnapshot relevant;
+    relevant.entities = {player, near_agent, far_agent};
+    // Room for the player record, which is always written, and exactly one
+    // agent -- so every snapshot is a choice between the two.
+    const std::size_t one_agent_budget =
+        network_example::estimate_snapshot_base_packet_size() +
+        network_example::estimate_snapshot_entity_size(player) +
+        network_example::estimate_snapshot_entity_size(near_agent);
+
+    network_example::KernelEngine::PeerSession session{1, player.net_id, 0, true, {}};
+    constexpr std::size_t kSnapshots = 24;
+    std::size_t near_sends = 0;
+    std::size_t far_sends = 0;
+    for (std::size_t index = 0; index < kSnapshots; ++index) {
+        const network_example::WorldSnapshot send =
+            engine.build_snapshot_send_set(session, relevant, one_agent_budget);
+        if (contains_entity(send, near_agent.net_id)) {
+            ++near_sends;
+        }
+        if (contains_entity(send, far_agent.net_id)) {
+            ++far_sends;
+        }
+    }
+    require(near_sends + far_sends == kSnapshots);
+    // The near band is weighted four to one against the far band; asserted as
+    // a factor of two so that tuning the constants does not have to come back
+    // through this test to stay true.
+    require(near_sends > far_sends * 2);
+    // Weighted, not exclusive. Losing every turn forever is the failure this
+    // guards against.
+    require(far_sends > 0);
+}
+
+// The backstop under the weighting. Outvoted by a crowd of higher-weight
+// neighbours, an agent still gets a turn inside the starvation window rather
+// than waiting for a share it will never be given.
+void an_outvoted_agent_is_still_served_within_the_starvation_window() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+
+    network_example::EntitySnapshot player;
+    player.net_id = 1;
+    player.type = network_example::EntityType::kActor;
+    player.actor_type = network_example::ActorType::kPlayer;
+    network_example::EntitySnapshot agent;
+    agent.type = network_example::EntityType::kActor;
+    agent.actor_type = network_example::ActorType::kAgent;
+
+    network_example::WorldSnapshot relevant;
+    relevant.entities.push_back(player);
+    // Five agents in the near band against one in the far band. Their combined
+    // weight is 21 to 1 with a single slot to share, so the far one's weighted
+    // share alone would leave it waiting longer than the window allows.
+    for (std::uint32_t index = 0; index < 5u; ++index) {
+        network_example::EntitySnapshot near_agent = agent;
+        near_agent.net_id = 10u + index;
+        near_agent.position = glm::vec3{2.0f + static_cast<float>(index), 0.0f, 0.0f};
+        relevant.entities.push_back(near_agent);
+    }
+    network_example::EntitySnapshot far_agent = agent;
+    far_agent.net_id = 99;
+    far_agent.position = glm::vec3{35.0f, 0.0f, 0.0f};
+    relevant.entities.push_back(far_agent);
+
+    const std::size_t one_agent_budget =
+        network_example::estimate_snapshot_base_packet_size() +
+        network_example::estimate_snapshot_entity_size(player) +
+        network_example::estimate_snapshot_entity_size(far_agent);
+
+    network_example::KernelEngine::PeerSession session{1, player.net_id, 0, true, {}};
+    constexpr std::size_t kSnapshots = 60;
+    std::size_t worst_gap = 0;
+    std::size_t gap = 0;
+    std::size_t far_sends = 0;
+    for (std::size_t index = 0; index < kSnapshots; ++index) {
+        const network_example::WorldSnapshot send =
+            engine.build_snapshot_send_set(session, relevant, one_agent_budget);
+        if (contains_entity(send, far_agent.net_id)) {
+            ++far_sends;
+            gap = 0;
+            continue;
+        }
+        ++gap;
+        worst_gap = std::max(worst_gap, gap);
+    }
+    require(far_sends > 0);
+    // kMaxSnapshotsWithoutSend is 15; one more for the snapshot the promotion
+    // is decided on.
+    require(worst_gap <= 16);
+}
+
+// A teammate's record is scheduled, not guaranteed -- except the receiving
+// session's own, which is neither.
+void a_distant_teammate_competes_and_the_own_player_does_not() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+
+    network_example::EntitySnapshot own_player;
+    own_player.net_id = 1;
+    own_player.type = network_example::EntityType::kActor;
+    own_player.actor_type = network_example::ActorType::kPlayer;
+    network_example::EntitySnapshot teammate = own_player;
+    teammate.net_id = 2;
+    teammate.position = glm::vec3{35.0f, 0.0f, 0.0f};
+    network_example::EntitySnapshot near_agent;
+    near_agent.net_id = 3;
+    near_agent.type = network_example::EntityType::kActor;
+    near_agent.actor_type = network_example::ActorType::kAgent;
+    near_agent.position = glm::vec3{5.0f, 0.0f, 0.0f};
+    // Mid-action doubles its weight, so a near agent doing something outranks a
+    // teammate at the edge of the sphere.
+    near_agent.action_template_id = 1002;
+    near_agent.action_phase = KernelActionPhase_Active;
+
+    network_example::WorldSnapshot relevant;
+    relevant.entities = {own_player, teammate, near_agent};
+    // The own player, plus room for one of the other two -- the teammate record
+    // is the larger of them, so whichever wins takes the whole remainder.
+    const std::size_t budget =
+        network_example::estimate_snapshot_base_packet_size() +
+        network_example::estimate_snapshot_entity_size(own_player) +
+        network_example::estimate_snapshot_entity_size(teammate);
+
+    network_example::KernelEngine::PeerSession session{1, own_player.net_id, 0, true, {}};
+    constexpr std::size_t kSnapshots = 24;
+    std::size_t own_sends = 0;
+    std::size_t teammate_sends = 0;
+    std::size_t agent_sends = 0;
+    for (std::size_t index = 0; index < kSnapshots; ++index) {
+        const network_example::WorldSnapshot send =
+            engine.build_snapshot_send_set(session, relevant, budget);
+        if (contains_entity(send, own_player.net_id)) {
+            ++own_sends;
+        }
+        if (contains_entity(send, teammate.net_id)) {
+            ++teammate_sends;
+        }
+        if (contains_entity(send, near_agent.net_id)) {
+            ++agent_sends;
+        }
+    }
+    // Never scheduled, never skipped: local prediction is reconciled against it.
+    require(own_sends == kSnapshots);
+    // The change this pins. A teammate record used to be written before the
+    // rotation ran at all, so this was kSnapshots too.
+    require(teammate_sends < kSnapshots);
+    require(teammate_sends > 0);
+    // The agent gets turns it could not have had before, when the teammate was
+    // written ahead of the rotation and took the whole remainder every time.
+    // How the two divide those turns is the weighting's business and is pinned
+    // by a_nearer_agent_is_served_more_often_than_a_distant_one; with only two
+    // entities and one slot the integer arithmetic ties often enough that a
+    // ratio asserted here would be measuring the tie-break, not the weights.
+    require(agent_sends > 0);
+}
+
+// One budget, one queue. Agents used to be served to exhaustion before the
+// projectile pass was reached and before props were written at all, so a crowd
+// of relevant agents meant a projectile reached the client at a rate of zero --
+// measured, not hypothetical: agent_cpu_bench packed 0 projectiles at 196
+// agents and 8 at 20.
+void every_kind_of_entity_shares_one_budget() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+
+    network_example::EntitySnapshot own_player;
+    own_player.net_id = 1;
+    own_player.type = network_example::EntityType::kActor;
+    own_player.actor_type = network_example::ActorType::kPlayer;
+    own_player.has_authoritative_movement_state = true;
+
+    network_example::WorldSnapshot relevant;
+    relevant.entities.push_back(own_player);
+    // Enough agents to take every slot the old order would have given them.
+    for (std::uint32_t index = 0; index < 20u; ++index) {
+        network_example::EntitySnapshot agent;
+        agent.net_id = 100u + index;
+        agent.type = network_example::EntityType::kActor;
+        agent.actor_type = network_example::ActorType::kAgent;
+        agent.position = glm::vec3{2.0f + static_cast<float>(index), 0.0f, 0.0f};
+        relevant.entities.push_back(agent);
+    }
+    for (std::uint32_t index = 0; index < 3u; ++index) {
+        network_example::EntitySnapshot projectile;
+        projectile.net_id = 200u + index;
+        projectile.type = network_example::EntityType::kProjectile;
+        projectile.position = glm::vec3{3.0f + static_cast<float>(index), 0.0f, 0.0f};
+        projectile.velocity = glm::vec3{40.0f, 0.0f, 0.0f};
+        relevant.entities.push_back(projectile);
+    }
+    for (std::uint32_t index = 0; index < 2u; ++index) {
+        network_example::EntitySnapshot prop;
+        prop.net_id = 300u + index;
+        prop.type = network_example::EntityType::kProp;
+        prop.position = glm::vec3{4.0f + static_cast<float>(index), 0.0f, 0.0f};
+        relevant.entities.push_back(prop);
+    }
+
+    network_example::EntitySnapshot sizing_agent;
+    sizing_agent.type = network_example::EntityType::kActor;
+    sizing_agent.actor_type = network_example::ActorType::kAgent;
+    // The player, which is never scheduled, plus room for four agent records --
+    // far less than the twenty agents want.
+    const std::size_t budget =
+        network_example::estimate_snapshot_base_packet_size() +
+        network_example::estimate_snapshot_entity_size(own_player) +
+        4u * network_example::estimate_snapshot_entity_size(sizing_agent);
+
+    network_example::KernelEngine::PeerSession session{1, own_player.net_id, 0, true, {}};
+    constexpr std::size_t kSnapshots = 24;
+    std::size_t agent_sends = 0;
+    std::size_t projectile_sends = 0;
+    std::size_t prop_sends = 0;
+    std::size_t first_projectile_gap = 0;
+    std::size_t worst_first_projectile_gap = 0;
+    for (std::size_t index = 0; index < kSnapshots; ++index) {
+        const network_example::WorldSnapshot send =
+            engine.build_snapshot_send_set(session, relevant, budget);
+        require(contains_entity(send, own_player.net_id));
+        for (const network_example::EntitySnapshot& entity : send.entities) {
+            if (entity.type == network_example::EntityType::kProjectile) {
+                ++projectile_sends;
+            } else if (entity.type == network_example::EntityType::kProp) {
+                ++prop_sends;
+            } else if (entity.actor_type ==
+                       network_example::ActorType::kAgent) {
+                ++agent_sends;
+            }
+        }
+        if (contains_entity(send, 200u)) {
+            first_projectile_gap = 0;
+        } else {
+            ++first_projectile_gap;
+            worst_first_projectile_gap =
+                std::max(worst_first_projectile_gap, first_projectile_gap);
+        }
+    }
+    require(agent_sends > 0);
+    // The bug. Both of these were zero for as long as the sections were served
+    // in a fixed order.
+    require(projectile_sends > 0);
+    require(prop_sends > 0);
+    // And the floor reaches across the whole queue now, rather than being
+    // promised separately inside a section that never got any budget.
+    require(worst_first_projectile_gap <= 16);
+}
+
+// Relevance and the priority bands measure to an entity's near edge, not to its
+// origin.
+//
+// Every actor used to be a point. That is fine for a 0.8 m grunt and wrong for
+// the legged rigs the catalog ships: a quadruped's hitbox is 24 m across and
+// 28 m tall, and a biped is 42 m tall -- taller than the 40 m radius that used to
+// cull it. Both were disappearing while still filling a third of the screen.
+void a_large_rig_is_measured_by_its_edge_not_its_origin() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+
+    auto transport = std::make_unique<network_example::LoopbackTransport>();
+    network_example::LoopbackTransport* loopback = transport.get();
+    engine.transport_ = std::move(transport);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+    require(loopback->StartServer(7795));
+
+    const network_example::NetId player =
+        engine.world_.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+    const network_example::NetId grunt =
+        engine.world_.spawn_enemy(glm::vec3{50.0f, 0.0f, 0.0f});
+    const network_example::NetId rig =
+        engine.world_.spawn_enemy(glm::vec3{50.0f, 0.0f, 0.0f});
+    // The quadruped's authored hitbox: 12 m in x and z, so a horizontal radius
+    // of about 17 m.
+    const std::optional<entt::entity> rig_entity = engine.world_.find_entity(rig);
+    require(rig_entity.has_value());
+    engine.world_.registry().get<network_example::Hitbox>(*rig_entity)
+        .half_extents = glm::vec3{12.0f, 14.0f, 12.0f};
+
+    network_example::KernelEngine::PeerSession session{1, player, 0, true, {}};
+    engine.peer_sessions_.push_back(std::move(session));
+    network_example::KernelEngine::PeerSession& live = engine.peer_sessions_[0];
+
+    require(std::fabs(engine.entity_bounding_radius(rig) - 16.97f) < 0.05f);
+    // A grunt keeps the default half-metre box spawn_enemy leaves it, so its
+    // radius is 0.71 m -- nothing about this moves the small units, which is
+    // the property that makes measuring to an edge safe to apply to everything.
+    require(engine.entity_bounding_radius(grunt) < 1.0f);
+
+    const auto relevant_at = [&](network_example::NetId net_id, float x) {
+        set_position(engine.world_, net_id, glm::vec3{x, 0.0f, 0.0f});
+        const network_example::WorldSnapshot snapshot =
+            engine.build_relevant_snapshot(live, 0);
+        const bool contained = contains_entity(snapshot, net_id);
+        engine.sync_session_relevance(&live, snapshot);
+        return contained;
+    };
+
+    // A grunt at 50 m is gone, as it always was.
+    require(!relevant_at(grunt, 50.0f));
+    // 50 - 17 = 33 m of clear air between the player and the rig's near face,
+    // which is well inside the 40 m entry radius. On the old point test this
+    // was culled.
+    require(relevant_at(rig, 50.0f));
+    // And it still ends somewhere: past 40 + 17 with the exit band on top.
+    require(!relevant_at(rig, 62.0f));
+
+    // The bands move with it too. The rig's origin at 26 m would have been the
+    // far band on a point measurement; its near face is 9 m away, so it is the
+    // near band and outranks a grunt standing at the same distance.
+    set_position(engine.world_, rig, glm::vec3{26.0f, 0.0f, 0.0f});
+    set_position(engine.world_, grunt, glm::vec3{26.0f, 0.0f, 0.0f});
+    const network_example::WorldSnapshot both =
+        engine.build_relevant_snapshot(live, 0);
+    engine.sync_session_relevance(&live, both);
+    const auto record_for = [&](network_example::NetId net_id) {
+        for (const network_example::EntitySnapshot& entity : both.entities) {
+            if (entity.net_id == net_id) {
+                return entity;
+            }
+        }
+        require(false);
+        return network_example::EntitySnapshot{};
+    };
+    // The player, which is written unconditionally, plus room for exactly one
+    // of the two agents -- so every snapshot is a choice between them.
+    const std::size_t one_agent_budget =
+        network_example::estimate_snapshot_base_packet_size() +
+        network_example::estimate_snapshot_entity_size(record_for(player)) +
+        network_example::estimate_snapshot_entity_size(record_for(rig));
+    std::size_t rig_sends = 0;
+    std::size_t grunt_sends = 0;
+    for (std::size_t index = 0; index < 24u; ++index) {
+        const network_example::WorldSnapshot send =
+            engine.build_snapshot_send_set(live, both, one_agent_budget);
+        if (contains_entity(send, rig)) {
+            ++rig_sends;
+        }
+        if (contains_entity(send, grunt)) {
+            ++grunt_sends;
+        }
+    }
+    require(rig_sends > grunt_sends);
 }
 
 void dedicated_server_projectile_destruction_uses_destroyed_reason() {
@@ -388,6 +950,17 @@ void listen_server_projectile_destruction_uses_destroyed_reason() {
 }  // namespace
 
 int main() {
+    // Ahead of everything else: main() carries a long-standing abort part way
+    // down, and anything below it never runs in a build where assert() is live.
+    a_departure_does_not_cost_the_next_entity_its_turn();
+    relevance_holds_until_a_wider_radius_than_it_entered();
+    a_crowd_is_introduced_over_several_snapshots();
+    a_nearer_agent_is_served_more_often_than_a_distant_one();
+    an_outvoted_agent_is_still_served_within_the_starvation_window();
+    a_distant_teammate_competes_and_the_own_player_does_not();
+    every_kind_of_entity_shares_one_budget();
+    a_large_rig_is_measured_by_its_edge_not_its_origin();
+
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;
     config.tick.server_tick_rate = 30;
@@ -563,15 +1136,38 @@ int main() {
         engine,
         near_enemy,
         KernelDespawnReason_OutOfRange));
+    // Past the entry radius, but near_enemy is already relevant and leaving
+    // costs more than staying: it holds until the exit radius.
     set_position(engine.world_, near_enemy, glm::vec3{40.01f, 0.0f, 0.0f});
-    const network_example::WorldSnapshot after_range_change =
+    const network_example::WorldSnapshot inside_hysteresis_band =
         engine.build_relevant_snapshot(session_one, 200);
+    assert(contains_entity(inside_hysteresis_band, near_enemy));
+    engine.sync_session_relevance(&session_one, inside_hysteresis_band);
+    assert(!poll_despawn(
+        engine,
+        near_enemy,
+        KernelDespawnReason_OutOfRange));
+    set_position(engine.world_, near_enemy, glm::vec3{44.01f, 0.0f, 0.0f});
+    const network_example::WorldSnapshot after_range_change =
+        engine.build_relevant_snapshot(session_one, 225);
     assert(!contains_entity(after_range_change, near_enemy));
     engine.sync_session_relevance(&session_one, after_range_change);
     assert(poll_despawn(
         engine,
         near_enemy,
         KernelDespawnReason_OutOfRange));
+    // The band holds on the way back in too, or it would not be a band: inside
+    // the exit radius is not yet inside the entry radius.
+    set_position(engine.world_, near_enemy, glm::vec3{42.0f, 0.0f, 0.0f});
+    const network_example::WorldSnapshot inside_exit_radius =
+        engine.build_relevant_snapshot(session_one, 250);
+    assert(!contains_entity(inside_exit_radius, near_enemy));
+    engine.sync_session_relevance(&session_one, inside_exit_radius);
+    set_position(engine.world_, near_enemy, glm::vec3{39.0f, 0.0f, 0.0f});
+    const network_example::WorldSnapshot back_inside_entry_radius =
+        engine.build_relevant_snapshot(session_one, 275);
+    assert(contains_entity(back_inside_entry_radius, near_enemy));
+    engine.sync_session_relevance(&session_one, back_inside_entry_radius);
 
     network_example::WorldSnapshot crowded;
     crowded.header.server_tick = 30;
@@ -627,6 +1223,50 @@ int main() {
     assert(!contains_entity(first_round, 202));
     assert(!contains_entity(second_round, 201));
     assert(contains_entity(second_round, 202));
+
+    // The reason the send order is keyed on net id rather than on a position
+    // in the relevant list. An index survives only as long as the list does:
+    // serve the first of three agents, let it leave, and an index of 1 now
+    // points past the second agent to the third, so the second waits out
+    // another full cycle for a turn it had already earned.
+    network_example::EntitySnapshot churn_first = enemy_entity;
+    churn_first.net_id = 211;
+    network_example::EntitySnapshot churn_second = enemy_entity;
+    churn_second.net_id = 212;
+    network_example::EntitySnapshot churn_third = enemy_entity;
+    churn_third.net_id = 213;
+    network_example::WorldSnapshot churn_relevant;
+    churn_relevant.header = crowded.header;
+    churn_relevant.entities.push_back(churn_first);
+    churn_relevant.entities.push_back(churn_second);
+    churn_relevant.entities.push_back(churn_third);
+    const std::size_t one_enemy_budget =
+        network_example::estimate_snapshot_base_packet_size() +
+        network_example::estimate_snapshot_entity_size(churn_first);
+    const network_example::WorldSnapshot churn_round_one =
+        engine.build_snapshot_send_set(
+            session_one,
+            churn_relevant,
+            one_enemy_budget);
+    assert(contains_entity(churn_round_one, 211));
+    network_example::WorldSnapshot churn_departed;
+    churn_departed.header = crowded.header;
+    churn_departed.entities.push_back(churn_second);
+    churn_departed.entities.push_back(churn_third);
+    const network_example::WorldSnapshot churn_round_two =
+        engine.build_snapshot_send_set(
+            session_one,
+            churn_departed,
+            one_enemy_budget);
+    assert(contains_entity(churn_round_two, 212));
+    assert(!contains_entity(churn_round_two, 213));
+    const network_example::WorldSnapshot churn_round_three =
+        engine.build_snapshot_send_set(
+            session_one,
+            churn_departed,
+            one_enemy_budget);
+    assert(contains_entity(churn_round_three, 213));
+    assert(!contains_entity(churn_round_three, 212));
 
     network_example::EntitySnapshot compact_projectile = projectile_entity;
     compact_projectile.net_id = 301;

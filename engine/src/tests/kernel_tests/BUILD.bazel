@@ -261,6 +261,18 @@ cc_test(
 )
 
 cc_test(
+    name = "locomotion_step_cadence_test",
+    srcs = ["locomotion_step_cadence_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
+    name = "snapshot_end_to_end_test",
+    srcs = ["snapshot_end_to_end_test.cc"],
+    deps = ["//engine/src/kernel:kernel"],
+)
+
+cc_test(
     name = "relevance_test",
     srcs = ["relevance_test.cc"],
     deps = ["//engine/src/kernel:kernel"],

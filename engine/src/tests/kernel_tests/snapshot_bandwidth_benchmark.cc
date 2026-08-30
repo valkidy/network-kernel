@@ -1,15 +1,16 @@
 // How often does one client actually hear about one agent?
 //
-// The per-client snapshot send budget is a hard 1200 B and the agent section is
-// round-robin, so past a certain population every agent's position is stale for
-// most of the time. This measures that directly -- it drives the real
-// build_relevant_snapshot / build_snapshot_send_set pair over a synthetic
-// population and records, per agent, how many snapshots pass between
+// The per-client snapshot send budget is a hard 1200 B and the agent section
+// serves whoever has waited longest, so past a certain population every agent's
+// position is stale for part of the time. This measures that directly -- it
+// drives the real build_relevant_snapshot / build_snapshot_send_set pair over a
+// synthetic population and records, per agent, how many snapshots pass between
 // appearances. It derives nothing from the budget arithmetic.
 //
 // Run:
 //   bazel run -c opt //engine/src/tests/kernel_tests:snapshot_bandwidth_benchmark
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cmath>
@@ -42,6 +43,12 @@ constexpr std::uint32_t kSnapshotsPerSecond = 15;
 // Relevance keeps everything within 40 m, so the population is packed inside
 // that sphere -- this measures the send-set selection, not the range filter.
 constexpr float kRelevanceRadiusMeters = 40.0f;
+// The bands build_snapshot_send_set weights by; kept in step with
+// kSnapshotPriorityNearMeters / kSnapshotPriorityMidMeters in kernel.cc.
+// Reporting one number across all of them would read the weighting as a
+// regression: the far band is meant to get worse, and pays for the near one.
+constexpr float kNearBandMeters = 10.0f;
+constexpr float kMidBandMeters = 25.0f;
 
 struct Row {
     std::size_t agent_count = 0;
@@ -49,9 +56,11 @@ struct Row {
     double agents_per_snapshot = 0.0;
     double mean_snapshot_bytes = 0.0;
     std::size_t agent_entity_bytes = 0;
-    std::size_t median_gap_snapshots = 0;
     std::size_t max_gap_snapshots = 0;
     double blackout_seconds = 0.0;
+    double near_blackout_seconds = 0.0;
+    double mid_blackout_seconds = 0.0;
+    double far_blackout_seconds = 0.0;
     double bytes_per_second = 0.0;
 };
 
@@ -68,16 +77,9 @@ glm::vec3 agent_position(std::size_t index, std::size_t count) {
         static_cast<float>(radius * std::sin(angle))};
 }
 
-// advance_by_packed emulates the one-line alternative to the shipped cursor
-// rule: today build_snapshot_send_set always advances the agent cursor by
-// exactly 1 per snapshot, whatever it managed to pack. Setting this true
-// rewinds that and advances by the number actually packed instead, which is
-// what turns a rotating window into a partition. Nothing in the engine is
-// modified -- the cursor is simply overwritten between calls.
 Row measure(
     std::size_t agent_count,
     std::size_t snapshot_count,
-    bool advance_by_packed = false,
     bool agents_acting = false) {
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;
@@ -109,6 +111,16 @@ Row measure(
     std::vector<std::size_t> last_seen(agent_count, 0);
     std::vector<bool> seen_once(agent_count, false);
     std::vector<std::size_t> gaps;
+    // Indexed by band: 0 near, 1 mid, 2 far.
+    std::array<std::vector<std::size_t>, 3> band_gaps;
+    std::vector<std::size_t> agent_band(agent_count, 2);
+    for (std::size_t index = 0; index < agent_count; ++index) {
+        const glm::vec3 position = agent_position(index, agent_count);
+        const float distance = glm::length(position);
+        agent_band[index] = distance <= kNearBandMeters
+            ? 0u
+            : (distance <= kMidBandMeters ? 1u : 2u);
+    }
     std::vector<std::size_t> packed_per_snapshot;
     std::vector<std::size_t> bytes_per_snapshot;
     std::size_t relevant_agents = 0;
@@ -125,7 +137,6 @@ Row measure(
                 }
             }
         }
-        const std::size_t cursor_before = session.actor_snapshot_cursor;
         const WorldSnapshot send =
             engine.build_snapshot_send_set(session, relevant, kSendBudgetBytes);
         bytes_per_snapshot.push_back(
@@ -147,15 +158,12 @@ Row measure(
                 static_cast<std::size_t>(found - agents.begin());
             if (seen_once[slot]) {
                 gaps.push_back(tick - last_seen[slot]);
+                band_gaps[agent_band[slot]].push_back(tick - last_seen[slot]);
             }
             seen_once[slot] = true;
             last_seen[slot] = tick;
         }
         packed_per_snapshot.push_back(packed);
-        if (advance_by_packed && agent_count > 0 && packed > 0) {
-            session.actor_snapshot_cursor =
-                (cursor_before + packed) % agent_count;
-        }
         if (tick == 0 && !send.entities.empty()) {
             for (const EntitySnapshot& entity : send.entities) {
                 if (entity.type == network_example::EntityType::kActor &&
@@ -178,20 +186,30 @@ Row measure(
     };
 
     std::sort(gaps.begin(), gaps.end());
+    const auto band_blackout = [&](std::size_t band) {
+        if (band_gaps[band].empty()) {
+            return 0.0;
+        }
+        const std::size_t worst =
+            *std::max_element(band_gaps[band].begin(), band_gaps[band].end());
+        return static_cast<double>(worst) /
+            static_cast<double>(kSnapshotsPerSecond);
+    };
     Row row;
     row.agent_count = agent_count;
     row.relevant_agents = relevant_agents;
     row.agents_per_snapshot = mean(packed_per_snapshot);
     row.mean_snapshot_bytes = mean(bytes_per_snapshot);
     row.agent_entity_bytes = agent_entity_bytes;
-    // The gap distribution is bimodal, not centred: an agent is refreshed on
-    // several consecutive snapshots and then goes dark. A mean would describe
-    // neither half, so report the median (the inside-the-burst case) and the
-    // maximum (the blackout, which is what a player actually sees).
-    row.median_gap_snapshots = gaps.empty() ? 0 : gaps[gaps.size() / 2];
+    // Reported per band, because the weighting deliberately spends the far
+    // band's refresh rate on the near one. A single worst-case number across all
+    // agents describes the outcome of that trade as if it were only a loss.
     row.max_gap_snapshots = gaps.empty() ? 0 : gaps.back();
     row.blackout_seconds = static_cast<double>(row.max_gap_snapshots) /
         static_cast<double>(kSnapshotsPerSecond);
+    row.near_blackout_seconds = band_blackout(0);
+    row.mid_blackout_seconds = band_blackout(1);
+    row.far_blackout_seconds = band_blackout(2);
     row.bytes_per_second =
         row.mean_snapshot_bytes * static_cast<double>(kSnapshotsPerSecond);
     return row;
@@ -199,30 +217,27 @@ Row measure(
 
 }  // namespace
 
-void print_table(
-    const char* title,
-    bool advance_by_packed,
-    bool agents_acting = false) {
+void print_table(const char* title, bool agents_acting = false) {
     std::printf("%s\n", title);
     std::printf(
-        "%7s %9s %10s %8s %9s %10s %10s %11s %10s\n",
+        "%7s %9s %10s %8s %9s %9s %9s %9s %11s %10s\n",
         "agents", "relevant", "packed/ss", "agent B", "mean B",
-        "median gap", "max gap", "blackout s", "B/s");
+        "near s", "mid s", "far s", "worst s", "B/s");
     for (const std::size_t agent_count : {16u, 64u, 128u, 256u, 500u}) {
         // Eight full cycles, so the longest gap is sampled repeatedly rather
         // than clipped by the end of the window.
         const std::size_t snapshots = std::max<std::size_t>(600, agent_count * 8);
-        const Row row =
-            measure(agent_count, snapshots, advance_by_packed, agents_acting);
+        const Row row = measure(agent_count, snapshots, agents_acting);
         std::printf(
-            "%7zu %9zu %10.2f %8zu %9.1f %10zu %10zu %11.2f %10.0f\n",
+            "%7zu %9zu %10.2f %8zu %9.1f %9.2f %9.2f %9.2f %11.2f %10.0f\n",
             row.agent_count,
             row.relevant_agents,
             row.agents_per_snapshot,
             row.agent_entity_bytes,
             row.mean_snapshot_bytes,
-            row.median_gap_snapshots,
-            row.max_gap_snapshots,
+            row.near_blackout_seconds,
+            row.mid_blackout_seconds,
+            row.far_blackout_seconds,
             row.blackout_seconds,
             row.bytes_per_second);
     }
@@ -232,10 +247,8 @@ void print_table(
 int main() {
     std::printf("budget=%zu B  snapshot_rate=%u Hz  relevance_radius=%.0f m\n\n",
                 kSendBudgetBytes, kSnapshotsPerSecond, kRelevanceRadiusMeters);
-    print_table("A. SHIPPED: agent cursor advances by 1 per snapshot", false);
-    print_table("B. SHIPPED, every agent mid-action (+20 B each)", false, true);
-    print_table("C. CONTROL: cursor advances by the number packed", true);
-    print_table("D. CONTROL, every agent mid-action", true, true);
+    print_table("A. Idle agents");
+    print_table("B. Every agent mid-action (+20 B each)", true);
     std::printf("per-client snapshot ceiling at a continuously full budget: "
                 "%zu B/s (%.0f kbit/s)\n",
                 kSendBudgetBytes * kSnapshotsPerSecond,

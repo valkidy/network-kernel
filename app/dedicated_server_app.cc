@@ -14,6 +14,7 @@
 #include "game_server/game_server.h"
 #include "client_app.h"
 #include "kernel/public/kernel_api.h"
+#include "protocol/public/network_packets.h"
 #include "kernel/src/tick_loop.h"
 
 namespace {
@@ -32,14 +33,32 @@ std::uint64_t estimated_catalog_sync_protocol_bytes(std::uint64_t bundle_size) {
            catalog_bundle_chunk_count(bundle_size) * kCatalogChunkProtocolBytes;
 }
 
-KernelConfig default_config() {
+KernelConfig default_config(const TickConfig& tick) {
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;
-    config.tick = network_example::current_netcode_preset();
+    config.tick = tick;
     config.max_render_states = 2048;
     config.max_events = 2048;
     config.network_stats.mode = GetAppNetworkStatsMode();
     return config;
+}
+
+// What the operator actually chose, in the units the choice is made in. The
+// rate on its own says neither of these, and both move with it.
+void log_netcode_preset(const char* name, const TickConfig& tick) {
+    const std::uint64_t snapshot_bits_per_second =
+        static_cast<std::uint64_t>(network_example::kSnapshotSendBudgetBytes) *
+        tick.snapshot_rate * 8u;
+    spdlog::info(
+        "[NetworkExample] Dedicated Server: netcode preset={} tick={} Hz "
+        "snapshots={} Hz budget={} B ceiling={} kbit/s per client "
+        "interpolation_delay={} ms",
+        name,
+        tick.server_tick_rate,
+        tick.snapshot_rate,
+        network_example::kSnapshotSendBudgetBytes,
+        snapshot_bits_per_second / 1000u,
+        network_example::interpolation_delay_ms(tick));
 }
 
 void log_dedicated_server_build_info(
@@ -103,7 +122,8 @@ int RunDedicatedServer(
     const char* gameplay_catalog_content_namespace,
     std::uint32_t physics_simulation,
     std::uint32_t physics_workers,
-    std::uint32_t actor_blocking) {
+    std::uint32_t actor_blocking,
+    const char* netcode_preset) {
     log_dedicated_server_build_info(
         physics_simulation,
         physics_workers,
@@ -163,7 +183,17 @@ int RunDedicatedServer(
         return 1;
     }
 
-    KernelConfig config = default_config();
+    TickConfig tick{};
+    if (!network_example::find_netcode_preset(netcode_preset, &tick)) {
+        spdlog::error(
+            "unknown netcode preset: {} (expected standard or responsive)",
+            netcode_preset);
+        return 1;
+    }
+    tick = network_example::with_tick_defaults(tick);
+    log_netcode_preset(netcode_preset, tick);
+
+    KernelConfig config = default_config(tick);
     KernelHandle* kernel = Kernel_Create(&config);
     KernelPhysicsConfig physics_config{};
     physics_config.struct_size = sizeof(physics_config);

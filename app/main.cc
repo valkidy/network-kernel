@@ -14,6 +14,7 @@
 #include "dedicated_server_app.h"
 #include "host_server_app.h"
 #include "kernel/public/kernel_types.h"
+#include "kernel/src/tick_loop.h"
 
 namespace {
 
@@ -37,6 +38,7 @@ struct Options {
     std::uint32_t physics_simulation = 0;
     std::uint32_t physics_workers = 0;
     std::uint32_t actor_blocking = KernelActorBlockingMode_Predicted;
+    std::string netcode_preset{"standard"};
     float aim_pitch_degrees = 0.0f;
     bool actor_blocking_explicit = false;
     bool gameplay_catalog_explicit = false;
@@ -55,6 +57,9 @@ void print_usage() {
         "[--aim-pitch-degrees=-89..89] "
         "[--physics_simulation=0|1] [--physics-workers=0|N] "
         "[--actor-blocking=0|1] "
+        "[--netcode=standard|responsive] "
+        "(standard=15 snapshots/s, 143 kbit/s, 133 ms interpolation delay; "
+        "responsive=30 snapshots/s, 285 kbit/s, 67 ms; dedicated server only) "
         "(0=disabled, 1=predicted; server default=1; predicted clients "
         "require --catalog-cache-dir)");
 }
@@ -250,6 +255,15 @@ bool parse_args(int argc, char** argv, Options* options) {
             }
             continue;
         }
+        if (read_value(arg, "--netcode", &index, argc, argv, &value)) {
+            TickConfig preset{};
+            if (!network_example::find_netcode_preset(value, &preset)) {
+                spdlog::error("invalid netcode preset: {}", value);
+                return false;
+            }
+            options->netcode_preset = std::string(value);
+            continue;
+        }
         if (read_value(arg, "--physics_simulation", &index, argc, argv, &value)) {
             if (!parse_u32_allow_zero(value, &options->physics_simulation) ||
                 options->physics_simulation > 1) {
@@ -331,7 +345,8 @@ int main(int argc, char** argv) {
             options.gameplay_catalog_content_namespace.c_str(),
             options.physics_simulation,
             options.physics_workers,
-            options.actor_blocking);
+            options.actor_blocking,
+            options.netcode_preset.c_str());
     }
     if (options.mode == "client") {
         return RunClient(

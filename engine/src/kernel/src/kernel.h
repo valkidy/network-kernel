@@ -367,8 +367,19 @@ private:
             recent_action_results;
         std::vector<std::uint32_t> recent_action_result_order;
         std::vector<KernelLocalActionResult> pending_action_results;
-        std::size_t actor_snapshot_cursor = 0;
-        std::size_t projectile_snapshot_cursor = 0;
+        // Whose turn it is in the agent and projectile sections. The stamp
+        // is the send sequence at which this session last received that net
+        // id, and zero means never sent, so a newcomer always outranks
+        // everything already being served. Keyed on net id rather than on a
+        // position in the relevant list: entities enter and leave that list
+        // constantly, and an index would hand every entity behind the change
+        // somebody else's turn.
+        std::uint64_t snapshot_send_sequence = 0;
+        // One queue for everything, not one per snapshot section. Sections used
+        // to be served in a fixed order, so whichever came first took the whole
+        // budget and the ones behind it got nothing -- with a crowd of agents
+        // relevant, no projectile ever reached the client.
+        std::unordered_map<NetId, std::uint64_t> last_sent_sequence;
         std::unordered_map<KernelInventoryContainerId, std::uint64_t>
             inventory_revisions;
         std::uint32_t pending_clock_sync_nonce = 0;
@@ -694,6 +705,7 @@ private:
         PeerSession* session,
         const WorldSnapshot& snapshot);
     bool is_dormant_placed_prop(NetId net_id) const;
+    float entity_bounding_radius(NetId net_id) const;
     void send_entity_spawn(PeerId peer, const EntitySnapshot& entity);
     void send_projectile_spawn_batch(PeerId peer, const EntitySnapshot& entity);
     void send_entity_despawn(
@@ -704,6 +716,9 @@ private:
         PeerId peer,
         NetId net_id,
         std::uint32_t actor_template_id);
+    void drop_unannounced_entities(
+        const PeerSession& session,
+        WorldSnapshot* snapshot) const;
     WorldSnapshot build_snapshot_send_set(
         PeerSession& session,
         const WorldSnapshot& relevant_snapshot,

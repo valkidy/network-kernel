@@ -321,8 +321,92 @@ constexpr std::uint64_t kClockSyncIntervalUs = 1000000u;
 constexpr double kClientClockOffsetSmoothingFactor = 0.25;
 constexpr float kMaxHomingVisualExtrapolationSeconds = 0.2f;
 constexpr float kDefaultEntityRelevanceDistanceMeters = 40.0f;
+// The radius an entity has to pass to STOP being relevant, as opposed to the
+// one it has to pass to start. Leaving costs a reliable despawn and returning
+// costs a reliable spawn plus a locomotion baseline, so a single threshold
+// turns an entity idling on the boundary into a packet source: it flips on
+// every snapshot its position happens to jitter across the line. The band has
+// to outlast that jitter, not merely exceed it -- at a walking 2.5 m/s it is
+// over a second of travel.
+constexpr float kDefaultEntityRelevanceExitDistanceMeters = 44.0f;
 constexpr float kDefaultProjectileRelevanceDistanceMeters = 80.0f;
-constexpr std::uint32_t kLargeSyncPacketWarningBytes = 1200;
+// Slots go to whoever has waited longest, scaled by how much the receiving
+// player is likely to notice. Without the weights every relevant agent gets the
+// same share, which at 200 agents and 32 slots is 1.8 Hz each whether it is
+// firing in the player's face or idling at the edge of the relevance sphere.
+//
+// The bands are deliberately coarse rather than a curve: what an entity's turn
+// costs its neighbours should be obvious from reading the constants, and a
+// discrete factor is something a test can pin.
+// A teammate standing next to you is the most noticeable thing on screen after
+// yourself, and one 35 m away is not. Players used to be written before the
+// rotation ran at all, unconditionally, which spent budget on both alike. The
+// bonus keeps a near teammate ahead of the agents around it while letting a
+// distant one fall back to roughly what a near agent gets.
+constexpr std::uint64_t kSnapshotPriorityPlayerWeight = 4;
+constexpr float kSnapshotPriorityNearMeters = 10.0f;
+constexpr float kSnapshotPriorityMidMeters = 25.0f;
+constexpr std::uint64_t kSnapshotPriorityNearWeight = 4;
+constexpr std::uint64_t kSnapshotPriorityMidWeight = 2;
+constexpr std::uint64_t kSnapshotPriorityActingWeight = 2;
+// An actor's snapshot record is the only thing that tells the client where it
+// is. A projectile's is a correction on top of a reliable spawn that already
+// carried its position and velocity, which the client dead-reckons between
+// corrections -- so what a projectile needs is a prompt first delivery, not a
+// high sustained rate, and `wait * weight` only buys the latter.
+//
+// Left neutral, the queue splits by population: measured at 192 relevant agents
+// against 228 relevant projectiles it gave 13 agent slots to 12 projectile ones,
+// taking agents from 30 a snapshot to 13. This is the multiplier that says an
+// actor's turn is worth eight projectile turns.
+constexpr std::uint64_t kSnapshotPriorityActorWeight = 8;
+constexpr std::uint64_t kSnapshotPriorityProjectileWeight = 1;
+// The backstop under the weights. A weighted queue serves in proportion to
+// weight, so a crowd that is mostly high-weight can hold a low-weight entity off
+// for far longer than the unweighted rotation ever did. Anything that has gone
+// this many snapshots without a turn jumps ahead of the weighting entirely.
+//
+// At 15 snapshots per second this is a one second floor, and it holds as long as
+// the budget can still carry the whole relevant population inside that window --
+// past roughly 480 agents at the current record size there are not enough slots
+// for any rule to promise it.
+constexpr std::uint64_t kMaxSnapshotsWithoutSend = 15;
+// What one flush of the locomotion step channel may cost. It is its own packet
+// and the snapshot budget does not reach it, so until this existed the channel
+// was bounded by nothing but how many legged rigs happened to be relevant --
+// measured at 18 B a step and 2.7 steps a second a quadruped, 200 of them want
+// about 680 B a flush and would simply take it.
+//
+// A third of the snapshot budget holds 20 records. Against the spread the
+// benchmarks use that covers the near and mid bands of a 200-rig crowd and cuts
+// the far tail, which is the trade this is for. It reaches the *average* demand
+// at about 110 rigs, but steps do not arrive evenly -- measured at 64 rigs, an
+// 11.5-a-flush average against a cap of 20 still trims 2% of steps off the burst
+// peaks. Re-derive it from the locomotion table in agent_cpu_bench rather than
+// adjusting it by feel.
+constexpr std::size_t kLocomotionStepBudgetBytes = kSnapshotSendBudgetBytes / 3;
+// Reorders a distance band from flush to flush. Without it a budget that cuts
+// into a band cuts the same rigs every time, and their legs hold the pose the
+// baseline planted while their bodies keep moving -- skating, which is worse
+// than the lag a dropped step normally costs.
+//
+// A mixer rather than `net_id + tick`: adding the tick shifts every id by the
+// same amount, which leaves the relative order intact everywhere except the
+// wrap, so the rigs at the front stay at the front. This is deterministic and
+// needs no per-session state -- the tick is the whole seed.
+std::uint32_t locomotion_step_rotation(NetId net_id, std::uint32_t tick) {
+    std::uint32_t value = net_id ^ (tick * 0x9E3779B9u);
+    value ^= value >> 16;
+    value *= 0x7FEB352Du;
+    value ^= value >> 15;
+    return value;
+}
+// How many entities one session may be introduced to in a single snapshot.
+// Every introduction is a reliable entity spawn plus a locomotion baseline, and
+// none of it is charged to the snapshot byte budget -- so a player who rounds a
+// corner onto a crowd used to produce one reliable packet per crowd member, all
+// in the same snapshot, however large the crowd was.
+constexpr std::size_t kMaxEntitySpawnsPerSnapshot = 16;
 
 KernelEntityLifecycleEventType lifecycle_type_for_despawn_reason(
     std::uint32_t reason) {
@@ -10291,14 +10375,30 @@ void KernelEngine::simulate_tick() {
     pending_server_remote_presentations_.clear();
     broadcast_combat_events(first_tick_event, last_tick_event);
     history_buffer_.write_frame(world_, tick_loop_.current_tick());
-    if (released_first_physics_actor ||
+    const bool wrote_snapshot =
+        released_first_physics_actor ||
         tick_loop_.should_write_snapshot() ||
-        !pending_network_gameplay_outcomes_.empty()) {
+        !pending_network_gameplay_outcomes_.empty();
+    if (wrote_snapshot) {
         publish_snapshot();
     }
     flush_inventory_replication();
     flush_prop_state_changes();
-    flush_locomotion_steps();
+    // With the snapshot rather than every tick, which is what
+    // LocomotionStepRecord has always said it does: start_tick_delta exists so
+    // that a batch can span a snapshot interval. Flushing per tick sent a packet
+    // header -- 34 B of it -- for each tick that produced a single step, and
+    // left this channel on a cadence the netcode preset does not govern; a
+    // server switched to a snapshot every tick now moves both channels, and one
+    // at half rate moves neither.
+    //
+    // The cost is up to one tick of latency on a footfall, against the 133 ms
+    // the client already holds every snapshot for. The follower was built for
+    // this: update_follower_locomotion is written to be called on ticks that
+    // carry no new step.
+    if (wrote_snapshot) {
+        flush_locomotion_steps();
+    }
     flush_network_gameplay_request_outcomes();
     send_due_clock_sync_pings(server_time_us);
     pending_inputs_.clear();
@@ -10347,6 +10447,10 @@ WorldSnapshot KernelEngine::build_snapshot_send_set(
     if (byte_budget < estimated_size) {
         return send_snapshot;
     }
+    // Counts send sets, not ticks: the sections rotate once per snapshot, and
+    // keying the stamps on the server tick would tie their order to a caller
+    // that is free to build several send sets for the same tick.
+    ++session.snapshot_send_sequence;
 
     const auto prepare_send_entity =
         [&](const EntitySnapshot& entity) -> std::optional<EntitySnapshot> {
@@ -10407,50 +10511,144 @@ WorldSnapshot KernelEngine::build_snapshot_send_set(
         return true;
     };
 
-    const auto add_round_robin_entities =
-        [&](EntityType type, ActorType actor_type, std::size_t* cursor) {
-            std::vector<const EntitySnapshot*> entities;
-            for (const EntitySnapshot& entity : relevant_snapshot.entities) {
-                if (entity.type == type &&
-                    (actor_type == ActorType::kUnknown ||
-                     entity.actor_type == actor_type)) {
-                    entities.push_back(&entity);
-                }
-            }
-            if (entities.empty()) {
-                *cursor = 0;
-                return;
-            }
-            const std::size_t start = *cursor % entities.size();
-            for (std::size_t offset = 0; offset < entities.size(); ++offset) {
-                const std::size_t index = (start + offset) % entities.size();
-                try_add_entity(*entities[index]);
-            }
-            *cursor = (start + 1) % entities.size();
-        };
+    // What the receiving player's own position is, for the distance weighting
+    // below. Absent only if the player's own record did not survive relevance,
+    // in which case every entity falls into the far band and the weighting
+    // reduces to whether the entity is mid-action.
+    const EntitySnapshot* priority_origin =
+        find_snapshot_entity(relevant_snapshot, session.player);
 
-    for (const EntitySnapshot& entity : relevant_snapshot.entities) {
+    const auto entity_send_weight = [&](const EntitySnapshot& entity) {
+        std::uint64_t weight = 1;
+        if (entity.type == EntityType::kActor) {
+            weight *= kSnapshotPriorityActorWeight;
+        }
         if (entity.type == EntityType::kActor &&
             entity.actor_type == ActorType::kPlayer) {
-            try_add_entity(entity);
+            weight *= kSnapshotPriorityPlayerWeight;
         }
-    }
-    add_round_robin_entities(
-        EntityType::kActor,
-        ActorType::kAgent,
-        &session.actor_snapshot_cursor);
-    add_round_robin_entities(
-        EntityType::kProjectile,
-        ActorType::kUnknown,
-        &session.projectile_snapshot_cursor);
+        if (entity.type == EntityType::kProjectile) {
+            weight *= kSnapshotPriorityProjectileWeight;
+        }
+        if (entity.action_template_id != 0u ||
+            entity.action_phase != KernelActionPhase_None) {
+            weight *= kSnapshotPriorityActingWeight;
+        }
+        if (priority_origin != nullptr) {
+            const float distance = std::max(
+                0.0f,
+                glm::length(entity.position - priority_origin->position) -
+                    entity_bounding_radius(entity.net_id));
+            if (distance <= kSnapshotPriorityNearMeters) {
+                weight *= kSnapshotPriorityNearWeight;
+            } else if (distance <= kSnapshotPriorityMidMeters) {
+                weight *= kSnapshotPriorityMidWeight;
+            }
+        }
+        return weight;
+    };
+
+    // One queue over everything the session can see, serving whoever is most
+    // overdue for its own share -- how long it has waited multiplied by how much
+    // that wait matters. Equal weights reduce this to plain
+    // longest-waiting-first.
+    //
+    // It used to be three passes in a fixed order: actors, then projectiles,
+    // then everything else written straight out with no rotation at all. The
+    // first pass to fill the budget took all of it, so a crowd of relevant
+    // agents meant projectiles and props reached the client at a rate of zero,
+    // and the tail had no memory of who it had dropped.
+    //
+    // Selection order does not have to match the wire: encode_snapshot_packet
+    // regroups by section at encode time, so merging the queue leaves the packet
+    // format untouched.
+    struct SendCandidate {
+        bool overdue = false;
+        std::uint64_t priority = 0;
+        std::uint64_t stamp = 0;
+        NetId net_id = 0;
+        std::size_t size = 0;
+        EntitySnapshot entity;
+    };
+
+    // The receiving session's own player is the one record that is never
+    // scheduled: local prediction is reconciled against the authoritative state
+    // in here, so a snapshot that omits it is a snapshot the client cannot
+    // correct itself with.
     for (const EntitySnapshot& entity : relevant_snapshot.entities) {
-        if (!(entity.type == EntityType::kActor &&
-              (entity.actor_type == ActorType::kPlayer ||
-               entity.actor_type == ActorType::kAgent)) &&
-            entity.type != EntityType::kProjectile) {
+        if (entity.net_id == session.player) {
             try_add_entity(entity);
         }
     }
+
+    std::vector<SendCandidate> candidates;
+    candidates.reserve(relevant_snapshot.entities.size());
+    for (const EntitySnapshot& entity : relevant_snapshot.entities) {
+        if (entity.net_id == session.player) {
+            continue;
+        }
+        // Resolved once, here, rather than again inside the packing loop. An
+        // entity this rejects -- a dormant placed prop, a projectile the client
+        // predicts for itself -- is not deliverable at all this snapshot, so it
+        // is dropped before the sort instead of sitting permanently overdue at
+        // the head of a queue it can never be served from.
+        std::optional<EntitySnapshot> prepared = prepare_send_entity(entity);
+        if (!prepared.has_value()) {
+            continue;
+        }
+        const auto found = session.last_sent_sequence.find(entity.net_id);
+        const std::uint64_t stamp =
+            found == session.last_sent_sequence.end() ? 0u : found->second;
+        // A never-sent entity carries stamp 0 and therefore the largest wait
+        // available, which is what puts newcomers at the front without a
+        // special case for them.
+        const std::uint64_t wait = session.snapshot_send_sequence - stamp;
+        const std::size_t size = estimate_snapshot_entity_size(*prepared);
+        candidates.push_back(SendCandidate{
+            wait >= kMaxSnapshotsWithoutSend,
+            wait * entity_send_weight(entity),
+            stamp,
+            entity.net_id,
+            size,
+            std::move(*prepared)});
+    }
+
+    // Net id breaks the tie so that a run of equal priorities -- every entity on
+    // the first snapshot, all of them unsent and equally weighted -- is ordered
+    // by something stable rather than by however the world iterated.
+    std::sort(
+        candidates.begin(),
+        candidates.end(),
+        [](const SendCandidate& lhs, const SendCandidate& rhs) {
+            if (lhs.overdue != rhs.overdue) {
+                return lhs.overdue;
+            }
+            if (lhs.priority != rhs.priority) {
+                return lhs.priority > rhs.priority;
+            }
+            return lhs.net_id < rhs.net_id;
+        });
+
+    // Rebuilt rather than updated in place, so that an entity which has left the
+    // relevant set drops its stamp with it. Kept without a stamp of its own, a
+    // returning or recycled net id would look freshly served and lose a turn.
+    std::unordered_map<NetId, std::uint64_t> next_last_sent;
+    next_last_sent.reserve(candidates.size());
+    for (SendCandidate& candidate : candidates) {
+        // Deliberately not stopping at the first entity that does not fit: a
+        // later one may be smaller, and an entity too large for the whole budget
+        // must not shut the queue down. The cost is that a large record can be
+        // passed over for smaller ones while the budget is nearly full, which is
+        // what kMaxSnapshotsWithoutSend is underneath to catch.
+        const bool fits = estimated_size + candidate.size <= byte_budget;
+        if (fits) {
+            send_snapshot.entities.push_back(std::move(candidate.entity));
+            estimated_size += candidate.size;
+        }
+        next_last_sent[candidate.net_id] =
+            fits ? session.snapshot_send_sequence : candidate.stamp;
+    }
+    session.last_sent_sequence = std::move(next_last_sent);
     return send_snapshot;
 }
 
@@ -10643,7 +10841,16 @@ bool KernelEngine::is_entity_relevant_to_session(
     }
 
     const float distance = glm::length(entity.position - player_entity->position);
-    if (distance <= kDefaultEntityRelevanceDistanceMeters) {
+    // To the entity's near edge, not to its origin: see entity_bounding_radius.
+    const float effective_distance =
+        std::max(0.0f, distance - entity_bounding_radius(entity.net_id));
+    // relevant_entities is still last snapshot's set here: sync_session_relevance
+    // runs after this, on the snapshot this call helps build.
+    const float relevance_distance =
+        session.relevant_entities.contains(entity.net_id)
+            ? kDefaultEntityRelevanceExitDistanceMeters
+            : kDefaultEntityRelevanceDistanceMeters;
+    if (effective_distance <= relevance_distance) {
         return true;
     }
     if (entity.type == EntityType::kProjectile &&
@@ -10666,33 +10873,76 @@ void KernelEngine::sync_session_relevance(
     }
 
     std::unordered_set<NetId> next_relevant;
+    std::vector<const EntitySnapshot*> newly_relevant;
     for (const EntitySnapshot& entity : snapshot.entities) {
-        next_relevant.insert(entity.net_id);
         if (entity.type == EntityType::kProjectile) {
             session->out_of_range_projectiles.erase(entity.net_id);
         }
-        if (session->relevant_entities.find(entity.net_id) ==
+        if (session->relevant_entities.find(entity.net_id) !=
             session->relevant_entities.end()) {
-            send_entity_spawn(session->peer, entity);
-            // Steps alone cannot tell a session where feet already are, so a
-            // session that has just started seeing an entity is handed them.
-            // Without this its legs would appear one at a time, each only once
-            // it happened to take its first step.
-            send_locomotion_baseline(session, entity.net_id);
-            if (entity.net_id == session->player) {
-                send_status_effect_state(session, entity.net_id);
-            }
-            if (entity.type == EntityType::kProp &&
-                is_dormant_placed_prop(entity.net_id)) {
-                PropStateChangeBatchPacket prop_state{};
-                prop_state.server_tick = tick_loop_.current_tick();
-                PropStateChangeRecord record{};
-                if (make_prop_state_change_record(entity.net_id, &record)) {
-                    prop_state.records.push_back(record);
-                    send_prop_state_changes(session, prop_state);
+            next_relevant.insert(entity.net_id);
+            continue;
+        }
+        newly_relevant.push_back(&entity);
+    }
+
+    // Nearest first. The quota below defers the rest to later snapshots, and
+    // what the player is walking towards must not queue behind whatever the
+    // world happened to iterate first -- an arbitrary order would trade the
+    // burst for entities popping in back to front.
+    const EntitySnapshot* player_entity =
+        find_snapshot_entity(snapshot, session->player);
+    if (player_entity != nullptr &&
+        newly_relevant.size() > kMaxEntitySpawnsPerSnapshot) {
+        const glm::vec3 player_position = player_entity->position;
+        std::sort(
+            newly_relevant.begin(),
+            newly_relevant.end(),
+            [&player_position](
+                const EntitySnapshot* lhs, const EntitySnapshot* rhs) {
+                const glm::vec3 lhs_delta = lhs->position - player_position;
+                const glm::vec3 rhs_delta = rhs->position - player_position;
+                const float lhs_distance = glm::dot(lhs_delta, lhs_delta);
+                const float rhs_distance = glm::dot(rhs_delta, rhs_delta);
+                if (lhs_distance != rhs_distance) {
+                    return lhs_distance < rhs_distance;
                 }
+                return lhs->net_id < rhs->net_id;
+            });
+    }
+
+    std::size_t spawns_sent = 0;
+    for (const EntitySnapshot* entity : newly_relevant) {
+        // The session's own player is never deferred: nothing it predicts can
+        // begin before it exists.
+        const bool is_own_player = entity->net_id == session->player;
+        if (!is_own_player && spawns_sent >= kMaxEntitySpawnsPerSnapshot) {
+            // Left out of next_relevant on purpose, so the next snapshot sees
+            // it as new again and offers it another turn. Nothing has to
+            // remember it: the relevant set is rebuilt from scratch each time.
+            continue;
+        }
+        ++spawns_sent;
+        send_entity_spawn(session->peer, *entity);
+        // Steps alone cannot tell a session where feet already are, so a
+        // session that has just started seeing an entity is handed them.
+        // Without this its legs would appear one at a time, each only once
+        // it happened to take its first step.
+        send_locomotion_baseline(session, entity->net_id);
+        if (is_own_player) {
+            send_status_effect_state(session, entity->net_id);
+        }
+        if (entity->type == EntityType::kProp &&
+            is_dormant_placed_prop(entity->net_id)) {
+            PropStateChangeBatchPacket prop_state{};
+            prop_state.server_tick = tick_loop_.current_tick();
+            PropStateChangeRecord record{};
+            if (make_prop_state_change_record(entity->net_id, &record)) {
+                prop_state.records.push_back(record);
+                send_prop_state_changes(session, prop_state);
             }
         }
+        next_relevant.insert(entity->net_id);
     }
 
     for (NetId net_id : session->relevant_entities) {
@@ -10710,6 +10960,54 @@ void KernelEngine::sync_session_relevance(
         }
     }
     session->relevant_entities = std::move(next_relevant);
+}
+
+// A client silently ignores a snapshot record for a net id it has never been
+// given a spawn for -- handle_client_snapshot looks the entity up and skips it.
+// Those bytes are therefore not merely early, they are discarded on arrival,
+// and while they sat in the send set they displaced entities the client could
+// actually have used. Run this after sync_session_relevance, whose quota is
+// what leaves entities deferred in the first place.
+void KernelEngine::drop_unannounced_entities(
+    const PeerSession& session,
+    WorldSnapshot* snapshot) const {
+    if (snapshot == nullptr) {
+        return;
+    }
+    snapshot->entities.erase(
+        std::remove_if(
+            snapshot->entities.begin(),
+            snapshot->entities.end(),
+            [&session](const EntitySnapshot& entity) {
+                return !session.relevant_entities.contains(entity.net_id);
+            }),
+        snapshot->entities.end());
+}
+
+// How far an entity reaches from its own origin, horizontally.
+//
+// Relevance and the priority bands both measure to an origin, which treats every
+// entity as a point. That is fine for a 0.8 m grunt and wrong for the legged
+// rigs: a quadruped is 24 m across and 28 m tall, a biped is 42 m tall -- taller
+// than the radius at which it used to be culled. Subtracting this from the
+// centre distance is what lets those two rules ask how far away the *object* is
+// rather than how far away its origin is, and it changes nothing for anything
+// small, because a grunt's radius is 0.57 m.
+//
+// Horizontal only. Relevance and the bands are about how much of the view an
+// entity occupies from a player standing on roughly the same ground, and a rig's
+// height is already most of its half extents.
+float KernelEngine::entity_bounding_radius(NetId net_id) const {
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value() || !world_.registry().all_of<Hitbox>(*entity)) {
+        return 0.0f;
+    }
+    // The authored hitbox, which the spawn path copies straight off the entity
+    // template -- so this is the size the catalog says the thing is, with no
+    // second source to drift from.
+    const glm::vec3& extents =
+        world_.registry().get<Hitbox>(*entity).half_extents;
+    return std::sqrt(extents.x * extents.x + extents.z * extents.z);
 }
 
 bool KernelEngine::is_dormant_placed_prop(NetId net_id) const {
@@ -10919,9 +11217,34 @@ void KernelEngine::flush_locomotion_steps() {
     if (outgoing_locomotion_steps_.empty()) {
         return;
     }
+    // Dropped rather than deferred, unlike a snapshot record. A step's landing
+    // target is stale the moment it is not sent, start_tick_delta expires it
+    // after 255 ticks anyway, and the channel is already unreliable by design --
+    // a lost step leaves one leg wrong until its next step, because the landing
+    // position is absolute. So a budget here is not introducing loss, it is
+    // choosing which loss instead of leaving it to the network.
+    //
+    // The leg a step never arrives for is still initialised:
+    // send_locomotion_baseline writes every planted leg when an entity becomes
+    // relevant, so nothing here can leave a leg at its bind pose.
+    struct StepCandidate {
+        std::uint32_t band = 0;
+        std::uint32_t rotation = 0;
+        LocomotionStepRecord record;
+    };
+
     const auto send = [&](PeerSession* session) {
-        LocomotionStepBatchPacket batch{};
-        batch.server_tick = current_tick;
+        glm::vec3 origin{0.0f, 0.0f, 0.0f};
+        bool has_origin = false;
+        const std::optional<entt::entity> player =
+            world_.find_entity(session->player);
+        if (player.has_value() && world_.registry().all_of<Transform>(*player)) {
+            origin = world_.registry().get<Transform>(*player).position;
+            has_origin = true;
+        }
+
+        std::vector<StepCandidate> candidates;
+        candidates.reserve(outgoing_locomotion_steps_.size());
         for (const PendingLocomotionStep& step : outgoing_locomotion_steps_) {
             if (!session->relevant_entities.contains(step.net_id)) {
                 continue;
@@ -10936,10 +11259,67 @@ void KernelEngine::flush_locomotion_steps() {
             record.leg_index = static_cast<std::uint8_t>(step.event.leg_index);
             record.start_tick_delta = static_cast<std::uint8_t>(age);
             record.landing_target_world = step.event.landing_target_world;
-            batch.records.push_back(record);
+
+            // Banded on the rig, not on where its foot happens to land. A rig
+            // with 23 m legs can put a foot a whole band away from its body, and
+            // banding the two differently would deprioritise a body whose
+            // footfalls are being prioritised. One object, one distance -- the
+            // same one relevance uses.
+            std::uint32_t band = 0;
+            if (has_origin) {
+                const std::optional<entt::entity> rig =
+                    world_.find_entity(step.net_id);
+                const glm::vec3 rig_position =
+                    rig.has_value() &&
+                        world_.registry().all_of<Transform>(*rig)
+                    ? world_.registry().get<Transform>(*rig).position
+                    : record.landing_target_world;
+                const float distance = std::max(
+                    0.0f,
+                    glm::length(rig_position - origin) -
+                        entity_bounding_radius(step.net_id));
+                band = distance <= kSnapshotPriorityNearMeters
+                    ? 0u
+                    : (distance <= kSnapshotPriorityMidMeters ? 1u : 2u);
+            }
+            candidates.push_back(StepCandidate{
+                band,
+                locomotion_step_rotation(record.net_id, current_tick),
+                record});
+        }
+        if (candidates.empty()) {
+            return;
+        }
+        std::sort(
+            candidates.begin(),
+            candidates.end(),
+            [](const StepCandidate& lhs, const StepCandidate& rhs) {
+                if (lhs.band != rhs.band) {
+                    return lhs.band < rhs.band;
+                }
+                if (lhs.rotation != rhs.rotation) {
+                    return lhs.rotation < rhs.rotation;
+                }
+                if (lhs.record.net_id != rhs.record.net_id) {
+                    return lhs.record.net_id < rhs.record.net_id;
+                }
+                return lhs.record.leg_index < rhs.record.leg_index;
+            });
+
+        LocomotionStepBatchPacket batch{};
+        batch.server_tick = current_tick;
+        for (const StepCandidate& candidate : candidates) {
+            // Every record is the same size, so the first one that does not fit
+            // means none of the rest do either.
+            if (estimate_locomotion_step_batch_size(batch.records.size() + 1u) >
+                kLocomotionStepBudgetBytes) {
+                break;
+            }
+            batch.records.push_back(candidate.record);
         }
         send_locomotion_steps(session, batch);
     };
+
     if (config_.mode == KernelMode_ListenServer &&
         local_listen_session_.welcomed) {
         send(&local_listen_session_);
@@ -11593,13 +11973,14 @@ void KernelEngine::publish_snapshot() {
         local_listen_session_.player = local_player_net_id_;
         local_listen_session_.last_processed_input_seq = local_last_processed_input_seq_;
         local_listen_session_.welcomed = local_player_net_id_ != 0;
-        const WorldSnapshot peer_snapshot =
+        WorldSnapshot peer_snapshot =
             build_relevant_snapshot(local_listen_session_, server_time_ms);
         sync_session_relevance(&local_listen_session_, peer_snapshot);
+        drop_unannounced_entities(local_listen_session_, &peer_snapshot);
         const WorldSnapshot send_snapshot = build_snapshot_send_set(
             local_listen_session_,
             peer_snapshot,
-            kLargeSyncPacketWarningBytes);
+            kSnapshotSendBudgetBytes);
         const std::vector<std::uint8_t> packet =
             encode_snapshot_packet(send_snapshot, next_packet_sequence_++);
         if (!listen_server_transport_->Send(
@@ -11622,13 +12003,14 @@ void KernelEngine::publish_snapshot() {
             if (!session.welcomed) {
                 continue;
             }
-            const WorldSnapshot peer_snapshot =
+            WorldSnapshot peer_snapshot =
                 build_relevant_snapshot(session, server_time_ms);
             sync_session_relevance(&session, peer_snapshot);
+            drop_unannounced_entities(session, &peer_snapshot);
             const WorldSnapshot send_snapshot = build_snapshot_send_set(
                 session,
                 peer_snapshot,
-                kLargeSyncPacketWarningBytes);
+                kSnapshotSendBudgetBytes);
             const std::vector<std::uint8_t> packet =
                 encode_snapshot_packet(send_snapshot, next_packet_sequence_++);
             if (!transport_->Send(
@@ -12104,12 +12486,12 @@ void KernelEngine::record_sent_packet(
     }
     if ((channel == ChannelId::kSnapshot ||
          channel == ChannelId::kReliableEvent) &&
-        packet_size > kLargeSyncPacketWarningBytes) {
+        packet_size > kSnapshotSendBudgetBytes) {
         spdlog::warn(
             "[NetworkExample] large sync packet size={} warning_threshold={} "
             "send_mode={} channel={}",
             packet_size,
-            kLargeSyncPacketWarningBytes,
+            kSnapshotSendBudgetBytes,
             send_mode_name(mode),
             channel_name(channel));
     }
