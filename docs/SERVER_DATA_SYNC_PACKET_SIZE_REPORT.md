@@ -460,12 +460,12 @@ the agents fire, with no lifetimes — so the split is indicative rather than
 final. `kSnapshotPriorityActorWeight` is one constant with a measured effect;
 re-run the composition table after changing it.
 
-### The locomotion step channel has no budget
+### The locomotion step channel
 
-Replicated locomotion steps are not snapshot records and the 1,200 B budget does
-not reach them. They are sent unreliably as their own packet on the snapshot
-channel, flushed with the snapshot, and filtered only by relevance and by a step
-being older than 255 ticks. Nothing caps them.
+Replicated locomotion steps are not snapshot records and the 1,200 B snapshot
+budget does not reach them. They are sent unreliably as their own packet on the
+snapshot channel, flushed with the snapshot, and carry their own budget of
+`kSnapshotSendBudgetBytes / 3` — 400 B, twenty records — filled nearest first.
 
 Measured with patrolling quadrupeds, which walk on their own — `passive_patrol`
 over a 30 m extent — so the gait is the shipping one rather than something the
@@ -476,7 +476,7 @@ bench drove:
 | 1 | 2.80 | 2.80 | 121.8 | 121.8 | 2,910 |
 | 8 | 23.60 | 2.95 | 802.2 | 100.3 | 6,270 |
 | 32 | 86.00 | 2.69 | 2,044.4 | 63.9 | 17,646 |
-| 64 | 172.30 | 2.69 | 3,611.4 | 56.4 | 17,790 |
+| 64 | 169.00 | 2.64 | 3,552.0 | 55.5 | 17,790 |
 
 The per-rig step rate is flat at about 2.7 a second whatever the crowd size,
 because it is set by the gait against a fixed 2.5 m/s and not by density:
@@ -499,10 +499,28 @@ every tick moves both channels together, and the per-flush unit here is the same
 one the snapshot budget is expressed in, which is what a budget on this channel
 would have to be sized against.
 
-Two things the table shows besides the rate. The snapshot column saturates at 32
-rigs, so a legged crowd is already spending the whole send budget before any of
-this is added on top. And the growth is linear and uncapped: 500 rigs would put
-more on the step channel than on the snapshot one.
+The snapshot column saturates at 32 rigs, so a legged crowd is already spending
+the whole send budget before any of this is added on top.
+
+**The budget, and what it drops.** Steps are dropped rather than deferred: a
+landing target is stale the moment it is not sent, `start_tick_delta` expires it
+after 255 ticks, and the channel is unreliable by design — a lost step leaves one
+leg wrong until its next step, because the landing position is absolute. So a cap
+here is not introducing loss, it is choosing which loss instead of leaving it to
+the network. Nothing it drops can leave a leg at its bind pose either:
+`send_locomotion_baseline` writes every planted leg when an entity becomes
+relevant.
+
+What it drops first is the far band, using the same distance bands the snapshot
+scheduler weights by. Within a band the order is re-permuted every flush from the
+tick, so a cap that cuts into a band does not cut the same rigs every time —
+otherwise those rigs would hold their baseline pose while their bodies kept
+moving, which is skating rather than the lag a dropped step normally costs.
+
+The cap reaches the *average* demand at about 110 rigs, but steps do not arrive
+evenly: at 64 rigs an 11.5-a-flush average against a cap of 20 still trims 2% of
+steps off the burst peaks, which is the difference between the 172.3 steps/s
+measured before it and the 169.0 above.
 
 ## Reproduction
 

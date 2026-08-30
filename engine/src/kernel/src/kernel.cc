@@ -371,6 +371,36 @@ constexpr std::uint64_t kSnapshotPriorityProjectileWeight = 1;
 // past roughly 480 agents at the current record size there are not enough slots
 // for any rule to promise it.
 constexpr std::uint64_t kMaxSnapshotsWithoutSend = 15;
+// What one flush of the locomotion step channel may cost. It is its own packet
+// and the snapshot budget does not reach it, so until this existed the channel
+// was bounded by nothing but how many legged rigs happened to be relevant --
+// measured at 18 B a step and 2.7 steps a second a quadruped, 200 of them want
+// about 680 B a flush and would simply take it.
+//
+// A third of the snapshot budget holds 20 records. Against the spread the
+// benchmarks use that covers the near and mid bands of a 200-rig crowd and cuts
+// the far tail, which is the trade this is for. It reaches the *average* demand
+// at about 110 rigs, but steps do not arrive evenly -- measured at 64 rigs, an
+// 11.5-a-flush average against a cap of 20 still trims 2% of steps off the burst
+// peaks. Re-derive it from the locomotion table in agent_cpu_bench rather than
+// adjusting it by feel.
+constexpr std::size_t kLocomotionStepBudgetBytes = kSnapshotSendBudgetBytes / 3;
+// Reorders a distance band from flush to flush. Without it a budget that cuts
+// into a band cuts the same rigs every time, and their legs hold the pose the
+// baseline planted while their bodies keep moving -- skating, which is worse
+// than the lag a dropped step normally costs.
+//
+// A mixer rather than `net_id + tick`: adding the tick shifts every id by the
+// same amount, which leaves the relative order intact everywhere except the
+// wrap, so the rigs at the front stay at the front. This is deterministic and
+// needs no per-session state -- the tick is the whole seed.
+std::uint32_t locomotion_step_rotation(NetId net_id, std::uint32_t tick) {
+    std::uint32_t value = net_id ^ (tick * 0x9E3779B9u);
+    value ^= value >> 16;
+    value *= 0x7FEB352Du;
+    value ^= value >> 15;
+    return value;
+}
 // How many entities one session may be introduced to in a single snapshot.
 // Every introduction is a reliable entity spawn plus a locomotion baseline, and
 // none of it is charged to the snapshot byte budget -- so a player who rounds a
@@ -11156,9 +11186,34 @@ void KernelEngine::flush_locomotion_steps() {
     if (outgoing_locomotion_steps_.empty()) {
         return;
     }
+    // Dropped rather than deferred, unlike a snapshot record. A step's landing
+    // target is stale the moment it is not sent, start_tick_delta expires it
+    // after 255 ticks anyway, and the channel is already unreliable by design --
+    // a lost step leaves one leg wrong until its next step, because the landing
+    // position is absolute. So a budget here is not introducing loss, it is
+    // choosing which loss instead of leaving it to the network.
+    //
+    // The leg a step never arrives for is still initialised:
+    // send_locomotion_baseline writes every planted leg when an entity becomes
+    // relevant, so nothing here can leave a leg at its bind pose.
+    struct StepCandidate {
+        std::uint32_t band = 0;
+        std::uint32_t rotation = 0;
+        LocomotionStepRecord record;
+    };
+
     const auto send = [&](PeerSession* session) {
-        LocomotionStepBatchPacket batch{};
-        batch.server_tick = current_tick;
+        glm::vec3 origin{0.0f, 0.0f, 0.0f};
+        bool has_origin = false;
+        const std::optional<entt::entity> player =
+            world_.find_entity(session->player);
+        if (player.has_value() && world_.registry().all_of<Transform>(*player)) {
+            origin = world_.registry().get<Transform>(*player).position;
+            has_origin = true;
+        }
+
+        std::vector<StepCandidate> candidates;
+        candidates.reserve(outgoing_locomotion_steps_.size());
         for (const PendingLocomotionStep& step : outgoing_locomotion_steps_) {
             if (!session->relevant_entities.contains(step.net_id)) {
                 continue;
@@ -11173,10 +11228,55 @@ void KernelEngine::flush_locomotion_steps() {
             record.leg_index = static_cast<std::uint8_t>(step.event.leg_index);
             record.start_tick_delta = static_cast<std::uint8_t>(age);
             record.landing_target_world = step.event.landing_target_world;
-            batch.records.push_back(record);
+
+            // The landing target stands in for where the rig is, which saves a
+            // world lookup per step and is the position the footfall is at.
+            std::uint32_t band = 0;
+            if (has_origin) {
+                const float distance =
+                    glm::length(record.landing_target_world - origin);
+                band = distance <= kSnapshotPriorityNearMeters
+                    ? 0u
+                    : (distance <= kSnapshotPriorityMidMeters ? 1u : 2u);
+            }
+            candidates.push_back(StepCandidate{
+                band,
+                locomotion_step_rotation(record.net_id, current_tick),
+                record});
+        }
+        if (candidates.empty()) {
+            return;
+        }
+        std::sort(
+            candidates.begin(),
+            candidates.end(),
+            [](const StepCandidate& lhs, const StepCandidate& rhs) {
+                if (lhs.band != rhs.band) {
+                    return lhs.band < rhs.band;
+                }
+                if (lhs.rotation != rhs.rotation) {
+                    return lhs.rotation < rhs.rotation;
+                }
+                if (lhs.record.net_id != rhs.record.net_id) {
+                    return lhs.record.net_id < rhs.record.net_id;
+                }
+                return lhs.record.leg_index < rhs.record.leg_index;
+            });
+
+        LocomotionStepBatchPacket batch{};
+        batch.server_tick = current_tick;
+        for (const StepCandidate& candidate : candidates) {
+            // Every record is the same size, so the first one that does not fit
+            // means none of the rest do either.
+            if (estimate_locomotion_step_batch_size(batch.records.size() + 1u) >
+                kLocomotionStepBudgetBytes) {
+                break;
+            }
+            batch.records.push_back(candidate.record);
         }
         send_locomotion_steps(session, batch);
     };
+
     if (config_.mode == KernelMode_ListenServer &&
         local_listen_session_.welcomed) {
         send(&local_listen_session_);

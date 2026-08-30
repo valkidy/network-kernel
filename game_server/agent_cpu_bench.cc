@@ -708,14 +708,13 @@ void print_composition_table(const Catalog& catalog) {
     std::printf("\n");
 }
 
-// What a legged crowd puts on the wire, which is a channel with no budget on it
-// at all.
+// What a legged crowd puts on the wire.
 //
-// Locomotion steps are flushed every tick, sent unreliably on the snapshot
-// channel as their own packet, and filtered only by relevance -- the 1,200 B
-// send budget does not apply to them. This measures the rate directly rather
-// than deriving it from the gait: quadrupeds patrol on their own
-// (passive_patrol, a 30 m extent), so they walk without a player to chase.
+// Locomotion steps are their own packet on the snapshot channel, flushed with
+// the snapshot and capped by their own budget rather than by the 1,200 B
+// snapshot one. This measures the rate directly rather than deriving it from the
+// gait: quadrupeds patrol on their own (passive_patrol, a 30 m extent), so they
+// walk without a player to chase.
 struct LocomotionRow {
     std::size_t agent_count = 0;
     double steps_per_second = 0.0;
@@ -851,7 +850,7 @@ LocomotionRow measure_locomotion(
 
 void print_locomotion_table() {
     const Catalog catalog = load_legged_catalog();
-    std::printf("H. LOCOMOTION STEP CHANNEL (quadrupeds, no budget on it)\n");
+    std::printf("H. LOCOMOTION STEP CHANNEL (quadrupeds)\n");
     std::printf(
         "%8s %11s %13s %13s %14s %13s\n",
         "rigs", "steps/s", "steps/s/rig", "step B/s", "step B/s/rig",

@@ -51,6 +51,10 @@ constexpr float kBeamLengthWireMax = 65535.0f / kBeamLengthWireScale;
 constexpr std::size_t kProjectileHybridCorrectionSnapshotPayloadSize = 46;
 constexpr std::size_t kGenericSnapshotPayloadSize = 44;
 constexpr std::size_t kGenericHealthPayloadSize = 4;
+// server_tick 4 + record count 2.
+constexpr std::size_t kLocomotionStepBatchHeaderPayloadSize = 6;
+// net_id 4 + leg_index 1 + start_tick_delta 1 + landing target 12.
+constexpr std::size_t kLocomotionStepRecordPayloadSize = 18;
 constexpr std::size_t kReliableEventPayloadSize = 34;
 constexpr std::size_t kEntitySpawnPayloadSize = 73;
 constexpr std::size_t kEntityDespawnPayloadSize = 12;
@@ -783,6 +787,11 @@ bool decode_snapshot_packet(
 
     *out_snapshot = std::move(snapshot);
     return true;
+}
+
+std::size_t estimate_locomotion_step_batch_size(std::size_t record_count) {
+    return kPacketHeaderSize + kLocomotionStepBatchHeaderPayloadSize +
+           record_count * kLocomotionStepRecordPayloadSize;
 }
 
 std::size_t estimate_snapshot_base_packet_size() {

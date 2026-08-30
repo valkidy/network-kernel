@@ -69,9 +69,128 @@ void drain(network_example::LoopbackTransport* link, Delivered* out) {
     }
 }
 
+// The budget, and what it drops first.
+//
+// Steps are their own packet and the snapshot budget does not reach them, so
+// before this the channel was bounded only by how many legged rigs happened to
+// be relevant. A cap has to cut the right ones: a footfall at the edge of the
+// relevance sphere is a few pixels, one at the player's feet is not.
+void the_budget_cuts_the_far_band_first() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    config.max_events = 4096;
+    config.max_render_states = 512;
+    network_example::KernelEngine engine(config);
+
+    auto transport = std::make_unique<network_example::LoopbackTransport>();
+    network_example::LoopbackTransport* link = transport.get();
+    engine.transport_ = std::move(transport);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+    require(link->StartServer(7794));
+
+    const network_example::NetId player =
+        engine.world_.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+    network_example::KernelEngine::PeerSession session{1, player, 0, true, {}};
+
+    // Far rigs outnumber near ones by a lot, which is the arrangement that
+    // makes an unprioritised cap spend the whole budget on footfalls nobody can
+    // see.
+    constexpr std::size_t kNearRigs = 4;
+    constexpr std::size_t kFarRigs = 40;
+    std::vector<network_example::NetId> near_rigs;
+    std::vector<network_example::NetId> far_rigs;
+    for (std::size_t index = 0; index < kNearRigs; ++index) {
+        near_rigs.push_back(
+            engine.world_.spawn_enemy(glm::vec3{2.0f, 0.0f, 0.0f}));
+    }
+    for (std::size_t index = 0; index < kFarRigs; ++index) {
+        far_rigs.push_back(
+            engine.world_.spawn_enemy(glm::vec3{35.0f, 0.0f, 0.0f}));
+    }
+    for (const network_example::NetId rig : near_rigs) {
+        session.relevant_entities.insert(rig);
+    }
+    for (const network_example::NetId rig : far_rigs) {
+        session.relevant_entities.insert(rig);
+    }
+    engine.peer_sessions_.push_back(std::move(session));
+
+    const auto queue_step = [&](network_example::NetId net_id, float x) {
+        network_example::KernelEngine::PendingLocomotionStep step;
+        step.net_id = net_id;
+        step.event.leg_index = 0u;
+        step.event.start_tick = engine.tick_loop_.current_tick();
+        step.event.landing_target_world = glm::vec3{x, 0.0f, 0.0f};
+        engine.outgoing_locomotion_steps_.push_back(step);
+    };
+
+    constexpr std::size_t kFlushes = 40;
+    std::size_t near_delivered = 0;
+    std::size_t far_delivered = 0;
+    std::vector<std::size_t> far_hits(kFarRigs, 0);
+    std::size_t largest_batch = 0;
+    for (std::size_t flush = 0; flush < kFlushes; ++flush) {
+        // Every rig steps on every flush: more than the budget can carry, which
+        // is the whole point.
+        for (const network_example::NetId rig : near_rigs) {
+            queue_step(rig, 2.0f);
+        }
+        for (const network_example::NetId rig : far_rigs) {
+            queue_step(rig, 35.0f);
+        }
+        // Two ticks per snapshot, and steps flush with the snapshot.
+        engine.simulate_tick();
+        engine.simulate_tick();
+
+        network_example::TransportEvent event;
+        while (link->PollClientEvent(event)) {
+            network_example::LocomotionStepBatchPacket batch;
+            if (event.channel != network_example::ChannelId::kSnapshot ||
+                !network_example::decode_locomotion_step_batch_packet(
+                    event.payload.data(), event.payload.size(), &batch)) {
+                continue;
+            }
+            // The cap, in the units it is written in.
+            require(
+                event.payload.size() <=
+                network_example::estimate_locomotion_step_batch_size(20u));
+            largest_batch = std::max(largest_batch, batch.records.size());
+            for (const network_example::LocomotionStepRecord& record :
+                 batch.records) {
+                const auto far_slot =
+                    std::find(far_rigs.begin(), far_rigs.end(), record.net_id);
+                if (far_slot != far_rigs.end()) {
+                    ++far_delivered;
+                    ++far_hits[static_cast<std::size_t>(
+                        far_slot - far_rigs.begin())];
+                } else {
+                    ++near_delivered;
+                }
+            }
+        }
+    }
+
+    // The channel is actually capped: 44 rigs step every flush and no batch
+    // carries all of them.
+    require(largest_batch < kNearRigs + kFarRigs);
+    // The near band is never the thing that gets cut.
+    require(near_delivered == kNearRigs * kFlushes);
+    // And the far band is thinned rather than silenced -- every far rig gets
+    // turns, because the order inside a band rotates with the tick. Without
+    // that the same far rigs would win every flush and the rest would hold the
+    // pose their baseline planted while their bodies kept moving.
+    require(far_delivered > 0);
+    for (const std::size_t hits : far_hits) {
+        require(hits > 0);
+    }
+}
+
 }  // namespace
 
 int main() {
+    the_budget_cuts_the_far_band_first();
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;
     config.tick.server_tick_rate = 30;

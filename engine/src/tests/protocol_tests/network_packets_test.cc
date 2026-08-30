@@ -113,6 +113,24 @@ void the_estimator_agrees_with_the_encoder() {
     prop.max_hp = 100;
     require(agrees(prop));
 
+    // The locomotion step channel budgets against this, and it is its own
+    // packet rather than a snapshot section, so it needs the same parity.
+    for (const std::size_t record_count : {std::size_t{1}, std::size_t{7},
+                                           std::size_t{40}}) {
+        network_example::LocomotionStepBatchPacket batch{};
+        batch.server_tick = 900u;
+        for (std::size_t index = 0; index < record_count; ++index) {
+            batch.records.push_back(network_example::LocomotionStepRecord{
+                static_cast<std::uint32_t>(100u + index),
+                static_cast<std::uint8_t>(index % 4u),
+                3u,
+                glm::vec3{1.0f, 2.0f, 3.0f}});
+        }
+        require(
+            network_example::encode_locomotion_step_batch_packet(batch, 1).size() ==
+            network_example::estimate_locomotion_step_batch_size(record_count));
+    }
+
     network_example::EntitySnapshot prop_without_health = prop;
     prop_without_health.state_flags |=
         network_example::kSnapshotStateFlagHpUnknown;

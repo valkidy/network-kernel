@@ -229,6 +229,12 @@ bool decode_snapshot_packet(
 // server can report what it will cost per client, not so that it can be dialled.
 constexpr std::size_t kSnapshotSendBudgetBytes = 1200;
 
+// Encoded size of a locomotion step batch carrying `record_count` records,
+// including the packet header. Kept beside the encoder for the same reason the
+// snapshot estimators are: a sender that budgets against a number the encoder
+// does not agree with either leaves budget unspent or overruns the packet.
+std::size_t estimate_locomotion_step_batch_size(std::size_t record_count);
+
 std::size_t estimate_snapshot_base_packet_size();
 std::size_t estimate_snapshot_entity_size(EntityType type);
 std::size_t estimate_snapshot_entity_size(const EntitySnapshot& entity);
