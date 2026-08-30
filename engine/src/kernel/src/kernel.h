@@ -705,6 +705,7 @@ private:
         PeerSession* session,
         const WorldSnapshot& snapshot);
     bool is_dormant_placed_prop(NetId net_id) const;
+    float entity_bounding_radius(NetId net_id) const;
     void send_entity_spawn(PeerId peer, const EntitySnapshot& entity);
     void send_projectile_spawn_batch(PeerId peer, const EntitySnapshot& entity);
     void send_entity_despawn(

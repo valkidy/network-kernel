@@ -303,6 +303,15 @@ void relevance_holds_until_a_wider_radius_than_it_entered() {
         engine.world_.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
     const network_example::NetId enemy =
         engine.world_.spawn_enemy(glm::vec3{10.0f, 0.0f, 0.0f});
+    // Relevance measures to an entity's near edge, so a hitbox of any size would
+    // shift the boundaries this test pins by exactly its radius. Zeroed here so
+    // that what is under test is the band and nothing else; the radius has its
+    // own test.
+    const std::optional<entt::entity> enemy_entity =
+        engine.world_.find_entity(enemy);
+    require(enemy_entity.has_value());
+    engine.world_.registry().get<network_example::Hitbox>(*enemy_entity)
+        .half_extents = glm::vec3{0.0f, 0.0f, 0.0f};
     network_example::KernelEngine::PeerSession session{1, player, 0, true, {}};
     engine.peer_sessions_.push_back(std::move(session));
 
@@ -648,6 +657,105 @@ void every_kind_of_entity_shares_one_budget() {
     require(worst_first_projectile_gap <= 16);
 }
 
+// Relevance and the priority bands measure to an entity's near edge, not to its
+// origin.
+//
+// Every actor used to be a point. That is fine for a 0.8 m grunt and wrong for
+// the legged rigs the catalog ships: a quadruped's hitbox is 24 m across and
+// 28 m tall, and a biped is 42 m tall -- taller than the 40 m radius that used to
+// cull it. Both were disappearing while still filling a third of the screen.
+void a_large_rig_is_measured_by_its_edge_not_its_origin() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+    network_example::KernelEngine engine(config);
+
+    auto transport = std::make_unique<network_example::LoopbackTransport>();
+    network_example::LoopbackTransport* loopback = transport.get();
+    engine.transport_ = std::move(transport);
+    engine.reset_runtime_state(KernelMode_DedicatedServer);
+    require(loopback->StartServer(7795));
+
+    const network_example::NetId player =
+        engine.world_.spawn_player(1, glm::vec3{0.0f, 0.0f, 0.0f});
+    const network_example::NetId grunt =
+        engine.world_.spawn_enemy(glm::vec3{50.0f, 0.0f, 0.0f});
+    const network_example::NetId rig =
+        engine.world_.spawn_enemy(glm::vec3{50.0f, 0.0f, 0.0f});
+    // The quadruped's authored hitbox: 12 m in x and z, so a horizontal radius
+    // of about 17 m.
+    const std::optional<entt::entity> rig_entity = engine.world_.find_entity(rig);
+    require(rig_entity.has_value());
+    engine.world_.registry().get<network_example::Hitbox>(*rig_entity)
+        .half_extents = glm::vec3{12.0f, 14.0f, 12.0f};
+
+    network_example::KernelEngine::PeerSession session{1, player, 0, true, {}};
+    engine.peer_sessions_.push_back(std::move(session));
+    network_example::KernelEngine::PeerSession& live = engine.peer_sessions_[0];
+
+    require(std::fabs(engine.entity_bounding_radius(rig) - 16.97f) < 0.05f);
+    // A grunt keeps the default half-metre box spawn_enemy leaves it, so its
+    // radius is 0.71 m -- nothing about this moves the small units, which is
+    // the property that makes measuring to an edge safe to apply to everything.
+    require(engine.entity_bounding_radius(grunt) < 1.0f);
+
+    const auto relevant_at = [&](network_example::NetId net_id, float x) {
+        set_position(engine.world_, net_id, glm::vec3{x, 0.0f, 0.0f});
+        const network_example::WorldSnapshot snapshot =
+            engine.build_relevant_snapshot(live, 0);
+        const bool contained = contains_entity(snapshot, net_id);
+        engine.sync_session_relevance(&live, snapshot);
+        return contained;
+    };
+
+    // A grunt at 50 m is gone, as it always was.
+    require(!relevant_at(grunt, 50.0f));
+    // 50 - 17 = 33 m of clear air between the player and the rig's near face,
+    // which is well inside the 40 m entry radius. On the old point test this
+    // was culled.
+    require(relevant_at(rig, 50.0f));
+    // And it still ends somewhere: past 40 + 17 with the exit band on top.
+    require(!relevant_at(rig, 62.0f));
+
+    // The bands move with it too. The rig's origin at 26 m would have been the
+    // far band on a point measurement; its near face is 9 m away, so it is the
+    // near band and outranks a grunt standing at the same distance.
+    set_position(engine.world_, rig, glm::vec3{26.0f, 0.0f, 0.0f});
+    set_position(engine.world_, grunt, glm::vec3{26.0f, 0.0f, 0.0f});
+    const network_example::WorldSnapshot both =
+        engine.build_relevant_snapshot(live, 0);
+    engine.sync_session_relevance(&live, both);
+    const auto record_for = [&](network_example::NetId net_id) {
+        for (const network_example::EntitySnapshot& entity : both.entities) {
+            if (entity.net_id == net_id) {
+                return entity;
+            }
+        }
+        require(false);
+        return network_example::EntitySnapshot{};
+    };
+    // The player, which is written unconditionally, plus room for exactly one
+    // of the two agents -- so every snapshot is a choice between them.
+    const std::size_t one_agent_budget =
+        network_example::estimate_snapshot_base_packet_size() +
+        network_example::estimate_snapshot_entity_size(record_for(player)) +
+        network_example::estimate_snapshot_entity_size(record_for(rig));
+    std::size_t rig_sends = 0;
+    std::size_t grunt_sends = 0;
+    for (std::size_t index = 0; index < 24u; ++index) {
+        const network_example::WorldSnapshot send =
+            engine.build_snapshot_send_set(live, both, one_agent_budget);
+        if (contains_entity(send, rig)) {
+            ++rig_sends;
+        }
+        if (contains_entity(send, grunt)) {
+            ++grunt_sends;
+        }
+    }
+    require(rig_sends > grunt_sends);
+}
+
 void dedicated_server_projectile_destruction_uses_destroyed_reason() {
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;
@@ -851,6 +959,7 @@ int main() {
     an_outvoted_agent_is_still_served_within_the_starvation_window();
     a_distant_teammate_competes_and_the_own_player_does_not();
     every_kind_of_entity_shares_one_budget();
+    a_large_rig_is_measured_by_its_edge_not_its_origin();
 
     KernelConfig config{};
     config.mode = KernelMode_DedicatedServer;

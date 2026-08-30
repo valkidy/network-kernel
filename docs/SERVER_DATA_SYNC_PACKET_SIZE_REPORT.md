@@ -154,6 +154,41 @@ Action and movement templates are synchronized once through the catalog.
 Runtime action and movement state appears only in the conditional actor blocks
 shown above.
 
+### Distance is measured to an entity's edge
+
+Relevance and the send-priority bands both ask how far away an entity is, and
+both used to answer with the distance between two origins. That treats every
+actor as a point, which is fine until the catalog ships something large:
+
+| Template | Hitbox | Horizontal radius |
+|---|---|---:|
+| `quadruped_actor` | 24 x 28 x 24 m | 17.0 m |
+| `tripod_actor` | 20 x 28 x 20 m | 14.1 m |
+| `biped_actor` | 24 x 44 x 16 m | 14.4 m |
+| `chaser_grunt` | 0.8 x 1.6 x 0.8 m | 0.57 m |
+| `player` | 0.7 x 1.8 x 0.7 m | 0.49 m |
+
+A quadruped culled at the 44 m exit radius still had 27 m of clear air between
+the player and its nearest face, and stood 26 m tall — roughly 30 degrees of the
+view, popping out of existence. The biped is 44 m tall, which is more than the
+40 m radius that used to remove it.
+
+Both rules now subtract the entity's own reach:
+
+```text
+effective_distance = max(0, distance - horizontal hitbox radius)
+```
+
+The radius is read straight off the entity's `Hitbox`, which the spawn path
+copies from the entity template, so there is no second source to drift from. It
+changes nothing for small units — half a metre on a grunt — which is what makes
+it safe to apply to everything rather than to a flagged subset.
+
+The locomotion step channel bands on the same distance rather than on where a
+foot landed. A rig with 23 m legs can put a foot a whole band away from its body,
+and banding the two separately would deprioritise a body whose footfalls were
+being prioritised.
+
 ### Position Is Still Three Floats
 
 Position is 12 of the agent record's 32 bytes and the only field in it that was
@@ -213,7 +248,8 @@ relevant and the measurement isolates send-set selection from range culling.
 
 Slots are weighted, so the refresh rate is not one number. An entity's share
 scales with a weight taken from how far it is from the receiving player — four
-inside 10 m, two inside 25 m, one beyond — doubled again while it is mid-action.
+inside 10 m, two inside 25 m, one beyond, measured to the entity's edge rather
+than its origin — doubled again while it is mid-action.
 The gap is therefore reported per band; a single worst case across all agents
 would describe the far band's share being spent on the near band as if it were
 only a loss.

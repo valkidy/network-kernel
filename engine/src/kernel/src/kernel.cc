@@ -10535,8 +10535,10 @@ WorldSnapshot KernelEngine::build_snapshot_send_set(
             weight *= kSnapshotPriorityActingWeight;
         }
         if (priority_origin != nullptr) {
-            const float distance =
-                glm::length(entity.position - priority_origin->position);
+            const float distance = std::max(
+                0.0f,
+                glm::length(entity.position - priority_origin->position) -
+                    entity_bounding_radius(entity.net_id));
             if (distance <= kSnapshotPriorityNearMeters) {
                 weight *= kSnapshotPriorityNearWeight;
             } else if (distance <= kSnapshotPriorityMidMeters) {
@@ -10839,13 +10841,16 @@ bool KernelEngine::is_entity_relevant_to_session(
     }
 
     const float distance = glm::length(entity.position - player_entity->position);
+    // To the entity's near edge, not to its origin: see entity_bounding_radius.
+    const float effective_distance =
+        std::max(0.0f, distance - entity_bounding_radius(entity.net_id));
     // relevant_entities is still last snapshot's set here: sync_session_relevance
     // runs after this, on the snapshot this call helps build.
     const float relevance_distance =
         session.relevant_entities.contains(entity.net_id)
             ? kDefaultEntityRelevanceExitDistanceMeters
             : kDefaultEntityRelevanceDistanceMeters;
-    if (distance <= relevance_distance) {
+    if (effective_distance <= relevance_distance) {
         return true;
     }
     if (entity.type == EntityType::kProjectile &&
@@ -10977,6 +10982,32 @@ void KernelEngine::drop_unannounced_entities(
                 return !session.relevant_entities.contains(entity.net_id);
             }),
         snapshot->entities.end());
+}
+
+// How far an entity reaches from its own origin, horizontally.
+//
+// Relevance and the priority bands both measure to an origin, which treats every
+// entity as a point. That is fine for a 0.8 m grunt and wrong for the legged
+// rigs: a quadruped is 24 m across and 28 m tall, a biped is 42 m tall -- taller
+// than the radius at which it used to be culled. Subtracting this from the
+// centre distance is what lets those two rules ask how far away the *object* is
+// rather than how far away its origin is, and it changes nothing for anything
+// small, because a grunt's radius is 0.57 m.
+//
+// Horizontal only. Relevance and the bands are about how much of the view an
+// entity occupies from a player standing on roughly the same ground, and a rig's
+// height is already most of its half extents.
+float KernelEngine::entity_bounding_radius(NetId net_id) const {
+    const std::optional<entt::entity> entity = world_.find_entity(net_id);
+    if (!entity.has_value() || !world_.registry().all_of<Hitbox>(*entity)) {
+        return 0.0f;
+    }
+    // The authored hitbox, which the spawn path copies straight off the entity
+    // template -- so this is the size the catalog says the thing is, with no
+    // second source to drift from.
+    const glm::vec3& extents =
+        world_.registry().get<Hitbox>(*entity).half_extents;
+    return std::sqrt(extents.x * extents.x + extents.z * extents.z);
 }
 
 bool KernelEngine::is_dormant_placed_prop(NetId net_id) const {
@@ -11229,12 +11260,24 @@ void KernelEngine::flush_locomotion_steps() {
             record.start_tick_delta = static_cast<std::uint8_t>(age);
             record.landing_target_world = step.event.landing_target_world;
 
-            // The landing target stands in for where the rig is, which saves a
-            // world lookup per step and is the position the footfall is at.
+            // Banded on the rig, not on where its foot happens to land. A rig
+            // with 23 m legs can put a foot a whole band away from its body, and
+            // banding the two differently would deprioritise a body whose
+            // footfalls are being prioritised. One object, one distance -- the
+            // same one relevance uses.
             std::uint32_t band = 0;
             if (has_origin) {
-                const float distance =
-                    glm::length(record.landing_target_world - origin);
+                const std::optional<entt::entity> rig =
+                    world_.find_entity(step.net_id);
+                const glm::vec3 rig_position =
+                    rig.has_value() &&
+                        world_.registry().all_of<Transform>(*rig)
+                    ? world_.registry().get<Transform>(*rig).position
+                    : record.landing_target_world;
+                const float distance = std::max(
+                    0.0f,
+                    glm::length(rig_position - origin) -
+                        entity_bounding_radius(step.net_id));
                 band = distance <= kSnapshotPriorityNearMeters
                     ? 0u
                     : (distance <= kSnapshotPriorityMidMeters ? 1u : 2u);
