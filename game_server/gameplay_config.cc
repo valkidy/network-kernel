@@ -287,6 +287,7 @@ void hash_actor_template(
     hash_float(hash, actor_template.chaser.stop_distance_meters);
     hash_float(hash, actor_template.chaser.resume_distance_meters);
     hash_float(hash, actor_template.chaser.input_magnitude);
+    hash_float(hash, actor_template.chaser.attack_range_meters);
     hash_scalar(hash, actor_template.vision.camp);
     hash_scalar(hash, actor_template.vision.vision_collider_template_id);
     hash_scalar(hash, actor_template.vision.max_visible_hostiles);
@@ -2832,6 +2833,7 @@ AgentChaseTuning chaser_config_from_yaml(
             "stop_distance_meters",
             "resume_distance_meters",
             "input_magnitude",
+            "attack_range_meters",
         },
         path,
         source_kind,
@@ -2847,6 +2849,10 @@ AgentChaseTuning chaser_config_from_yaml(
     }
     if (chaser_node["input_magnitude"]) {
         chaser.input_magnitude = chaser_node["input_magnitude"].as<float>();
+    }
+    if (chaser_node["attack_range_meters"]) {
+        chaser.attack_range_meters =
+            chaser_node["attack_range_meters"].as<float>();
     }
     return chaser;
 }
@@ -7573,6 +7579,17 @@ std::vector<std::string> validate_gameplay_config(
                  actor_template.chaser.stop_distance_meters ||
              actor_template.chaser.input_magnitude <= 0.0f ||
              actor_template.chaser.input_magnitude > 1.0f ||
+             !std::isfinite(actor_template.chaser.attack_range_meters) ||
+             // Zero is the no-gate default, so only a negative one is wrong.
+             actor_template.chaser.attack_range_meters < 0.0f ||
+             // Holding persists out to resume_distance, so a resume beyond the
+             // attack range leaves a band where the agent has stopped chasing
+             // and cannot yet attack: it parks and does nothing until the
+             // target walks far enough to restart the chase. Only checked when
+             // a range is authored at all -- zero means no gate and no band.
+             (actor_template.chaser.attack_range_meters > 0.0f &&
+              actor_template.chaser.resume_distance_meters >
+                  actor_template.chaser.attack_range_meters) ||
              actor_template.sentry.passive_patrol ||
              !std::isfinite(actor_template.sentry.move_speed_meters_per_second) ||
              actor_template.sentry.move_speed_meters_per_second <= 0.0f)) {

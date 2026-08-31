@@ -19,6 +19,17 @@ struct AgentChaseTuning {
     float resume_distance_meters = 3.0f;
     // Fraction of the template's move speed to chase at, 0..1.
     float input_magnitude = 1.0f;
+    // How close the target must be before the agent will actually attack.
+    // Visibility is the sentry's gate and it reaches as far as the vision cone,
+    // which is much further than a melee weapon does -- without a gate of its
+    // own a chaser carrying one swings through empty air the moment it sees
+    // anything. Zero means no gate, which is what a chaser carrying a ranged
+    // weapon wants and what every chaser did before this field existed.
+    //
+    // Measured between origins, while the weapon reaches to a target's near
+    // edge, so a value equal to the weapon's reach is deliberately on the
+    // conservative side of it.
+    float attack_range_meters = 0.0f;
 };
 
 struct AgentChaserConfig {

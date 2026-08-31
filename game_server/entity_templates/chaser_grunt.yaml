@@ -32,10 +32,9 @@ vision:
 # closes on what it sees, and gives up the moment the target leaves its cone.
 #
 # It closes because it has to: the claw is a two-metre cone, so an attack from
-# anywhere else in the vision cone swings through empty air. Nothing stops it
-# from doing exactly that yet -- the controller commits an attack on visibility
-# alone, with no range of its own to check against -- so a grunt that has seen
-# a target will swing at it from across the room until that gate exists.
+# anywhere else in the vision cone would swing through empty air. That is what
+# chaser.attack_range_meters below is for -- visibility alone would have it
+# swinging from across the room.
 ai:
   controller: chaser
   profile: default
@@ -49,6 +48,16 @@ ai:
     animation_idle: idle
     animation_attack: chasing
   chaser:
-    stop_distance_meters: 2.0
-    resume_distance_meters: 3.0
+    # These three are one setting, not three. Holding persists from
+    # stop_distance all the way out to resume_distance, so a resume_distance
+    # beyond attack_range opens a band where the grunt has stopped chasing and
+    # cannot yet attack -- it stands still and does nothing until the target
+    # walks far enough away to restart the chase. Keeping resume inside
+    # attack_range closes that band: everywhere the grunt is parked, it swings.
+    stop_distance_meters: 1.8
+    resume_distance_meters: 2.1
     input_magnitude: 1.0
+    # Matches the claw's cone range. Measured origin to origin, while the swing
+    # reaches to a target's near edge, so this sits on the conservative side of
+    # the weapon: everything this lets the grunt attack, it can actually hit.
+    attack_range_meters: 2.2
