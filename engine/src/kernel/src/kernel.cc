@@ -5682,10 +5682,34 @@ bool KernelEngine::server_set_entity_weapon_mechanics(
     if (!entity.has_value()) {
         return false;
     }
+    WeaponMechanicsDefinition mechanics = to_weapon_mechanics(weapon_mechanics);
+    // Only the template id crosses the ABI; the shape it stands for is read
+    // here, once, because nothing downstream can. Rejecting a melee weapon
+    // whose collider is missing, is not a cone, or carries no damage purpose
+    // at configuration time is what keeps apply_melee_damage from having to
+    // decide what a malformed swing means.
+    if (mechanics.mode == WeaponFireMode::kMelee) {
+        const KernelColliderTemplateDefinition* melee_collider =
+            find_collider_template(
+                collider_templates_,
+                weapon_mechanics.melee_collider_template_id);
+        if (melee_collider == nullptr ||
+            melee_collider->shape_type != KernelColliderShapeType_Cone ||
+            (melee_collider->purpose_flags & KernelColliderPurpose_Damage) == 0u) {
+            return false;
+        }
+        mechanics.melee_range = collider_template_cone_range(*melee_collider);
+        mechanics.melee_fov_degrees =
+            collider_template_cone_fov_degrees(*melee_collider);
+        if (mechanics.melee_range <= 0.0f ||
+            mechanics.melee_fov_degrees <= 0.0f) {
+            return false;
+        }
+    }
     WeaponTuning& tuning = world_.registry().get_or_emplace<WeaponTuning>(*entity);
     const std::size_t index = static_cast<std::size_t>(weapon_mechanics.weapon_id);
     tuning.configured[index] = true;
-    tuning.definitions[index] = to_weapon_mechanics(weapon_mechanics);
+    tuning.definitions[index] = mechanics;
     return true;
 }
 

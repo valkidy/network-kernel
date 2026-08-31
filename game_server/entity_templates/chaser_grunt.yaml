@@ -21,7 +21,7 @@ hitbox:
   center: {x: 0.0, y: 0.8, z: 0.0}
   half_extents: {x: 0.4, y: 0.8, z: 0.4}
 weapon_slots:
-  - 2
+  - 10
 active_weapon_slot: 0
 animations:
   idle: 0
@@ -30,6 +30,12 @@ vision:
   collider_template: sentry_grunt_vision_cone
 # Detection and firing match sentry_grunt; the difference is that this one
 # closes on what it sees, and gives up the moment the target leaves its cone.
+#
+# It closes because it has to: the claw is a two-metre cone, so an attack from
+# anywhere else in the vision cone swings through empty air. Nothing stops it
+# from doing exactly that yet -- the controller commits an attack on visibility
+# alone, with no range of its own to check against -- so a grunt that has seen
+# a target will swing at it from across the room until that gate exists.
 ai:
   controller: chaser
   profile: default
@@ -39,7 +45,7 @@ ai:
     patrol_rotation_interval_ticks: 30
     patrol_rotation_min_degrees: 15.0
     patrol_rotation_max_degrees: 30.0
-    weapon_id: 2
+    weapon_id: 10
     animation_idle: idle
     animation_attack: chasing
   chaser:

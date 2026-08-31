@@ -67,6 +67,12 @@ cc_test(
 )
 
 cc_test(
+    name = "melee_test",
+    srcs = ["melee_test.cc"],
+    deps = ["//engine/src/simulation:simulation"],
+)
+
+cc_test(
     name = "beam_test",
     srcs = ["beam_test.cc"],
     deps = ["//engine/src/simulation:simulation"],

@@ -1,0 +1,29 @@
+id: 13
+name: grunt_claw_hit
+# The grunt's claw swing. Nothing spawns from this -- a melee weapon resolves
+# its hits by overlap -- but the swing is still described here, so damage and
+# collision_mask are authored in the same place as they are for a weapon that
+# does spawn something. The weapon template carries no damage of its own.
+type: standard
+collider_template: melee_swing_marker
+movement_model: linear
+sync_mode: server_snapshot_only
+hit_response: destroy
+damage_shape: direct_hit
+damage: 35
+# player_side, not hostile_side: collision_mask is an absolute category rather
+# than one relative to the shooter, so an enemy's weapon names the player's
+# side. `limb` reaches a rig's bones, which is what lets a claw connect with a
+# leg. Terrain is deliberately absent -- see below.
+collision_mask: player_side | limb
+# How many targets one swing may reach. The nearest that many inside the cone
+# are damaged; the rest of the overlap is discarded.
+max_hit_count: 3
+# Unsimulated, and present only because a standard template is validated for
+# them. A melee swing has no travel: it resolves on the tick its action commits.
+speed: 0.1
+lifetime_ticks: 3
+gravity:
+  x: 0.0
+  y: 0.0
+  z: 0.0

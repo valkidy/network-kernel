@@ -1,0 +1,13 @@
+id: 10
+name: Grunt Claw
+weapon_type: melee
+# Effectively bottomless, the way every AI weapon in this catalog is: an agent
+# that runs dry stops attacking to reload, and a grunt has nothing else to do.
+magazine_size: 1
+reserve_magazines: 65535
+fire_action_template: grunt_claw_swing
+reload_action_template: shared_reload
+# The shape, and with it the reach and the angle.
+melee_collider: grunt_claw_cone
+# The damage and the target mask.
+projectile_template: grunt_claw_hit

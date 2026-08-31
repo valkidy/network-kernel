@@ -458,6 +458,13 @@ struct WeaponMechanicsDefinition {
     // kMelee only. The swept volume's shape, and the reach with it -- a cone
     // template's range and fov are read from here, not from max_range.
     std::uint32_t melee_collider_template_id = 0;
+    // The two numbers that template stands for, resolved once when the weapon
+    // is configured. They are cached here because the simulation layer has no
+    // collider-template lookup at all -- the same reason an area effect's
+    // radius is baked into its projectile template at load rather than read
+    // back from the collider it was authored on.
+    float melee_range = 0.0f;
+    float melee_fov_degrees = 0.0f;
 };
 
 struct WeaponTuning {

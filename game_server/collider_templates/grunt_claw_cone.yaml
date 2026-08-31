@@ -1,0 +1,25 @@
+id: 19
+name: grunt_claw_cone
+# The volume a melee swing sweeps. Both numbers a swing needs live here and
+# nowhere else: the weapon template authors no max_range, because two places to
+# state one reach is two numbers that drift apart.
+#
+# There is no cone in Jolt, so nothing builds a body from this -- the swing is
+# resolved as a sphere query of `range` followed by a horizontal angle test
+# against `fov_degrees`, the same shape of answer a vision cone computes. That
+# also means `fov_degrees` buys accuracy rather than speed: narrowing the angle
+# rejects more of what the query returned, it does not make the query cheaper.
+# Shortening `range` is what does that.
+#
+# `purpose: damage` is load-bearing. A cone used to be accepted only with
+# `vision`, and melee is the second consumer that knows how to resolve one; the
+# weapon is rejected at configuration time if this is missing.
+#
+# No `center`: the apex is the shooter's launch position, computed at swing
+# time, exactly as a hitscan's segment endpoints are. Nothing reads a centre off
+# this template.
+shape: cone
+range: 2.2
+fov_degrees: 100.0
+purpose: damage
+layer: projectile
