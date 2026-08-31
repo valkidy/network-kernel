@@ -1,0 +1,30 @@
+id: action_melee_impact
+parameters:
+  target: null
+  amount: 40
+  # [horizontal, vertical] in m/s, the split form. It has to be the split form:
+  # a swing's event.direction runs from the attacker to the contact point and is
+  # flattened, so its y is roughly zero -- the scalar form would scale that zero
+  # and produce no lift at all. Horizontal shoves; vertical is added outright.
+  #
+  # The lift is not decoration. A flat shove re-lands on the very next movement
+  # tick and hands control straight back, which reads as nothing happening;
+  # 3.5 m/s against 9.81 buys about 0.7 s of airtime, and it is the airtime that
+  # lets the horizontal half actually carry.
+  strength: [8.0, 3.5]
+  direction: null
+actions:
+  # The swing submits no damage of its own once it names this graph, the same
+  # way an area effect's does not. Both halves of the hit live here.
+  - type: apply_damage
+    target: params.target
+    amount: params.amount
+  - type: apply_impulse
+    target: params.target
+    strength: params.strength
+    direction: params.direction
+    collision_mask: actor | prop
+    # A ceiling, not the expected duration: landing releases the lockout on any
+    # tick after the one that armed it, so ~0.7 s of airtime ends this around
+    # tick 22. The headroom covers a target shoved off a ledge.
+    lockout_ticks: 28

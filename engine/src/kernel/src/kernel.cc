@@ -10296,6 +10296,9 @@ void KernelEngine::simulate_tick() {
         }
         ++pending;
     }
+    // Filled by the weapon pass (a melee swing's impact graph) and the area
+    // effect pass alike; drained once, after both, further down.
+    std::vector<ActionGraphCommandBatch> action_graph_batches;
     for (const QueuedInput& pending_input : pending_inputs_) {
         const HistoryFrame* rewind_frame = nullptr;
         std::uint32_t rewind_tick = tick_loop_.current_tick();
@@ -10323,7 +10326,8 @@ void KernelEngine::simulate_tick() {
                 tick_loop_.current_tick(),
                 fixed_delta,
                 compensated_action_time_us(pending_input),
-                &action_outcomes},
+                &action_outcomes,
+                &action_graph_batches},
             &events_);
     }
     simulate_weapons(
@@ -10337,10 +10341,10 @@ void KernelEngine::simulate_tick() {
             tick_loop_.current_tick(),
             fixed_delta,
             server_time_us,
-            &action_outcomes},
+            &action_outcomes,
+            &action_graph_batches},
         &events_);
     const std::size_t first_projectile_simulation_event = events_.size();
-    std::vector<ActionGraphCommandBatch> area_action_graph_batches;
     simulate_projectiles(
         world_,
         fixed_delta,
@@ -10353,8 +10357,13 @@ void KernelEngine::simulate_tick() {
         server_time_us,
         &events_,
         &damage_pipeline_,
-        &area_action_graph_batches);
-    for (const ActionGraphCommandBatch& batch : area_action_graph_batches) {
+        &action_graph_batches);
+    // One execution point for both producers. A melee swing's impact graph is
+    // queued well before this, during the weapon pass, but running it there
+    // would execute it against a world the projectile and area passes have not
+    // touched yet -- and an impulse applied out of that order is an impulse the
+    // movement solver has already moved past.
+    for (const ActionGraphCommandBatch& batch : action_graph_batches) {
         (void)execute_action_graph_command_batch(*this, batch, server_time_us);
     }
     simulate_beams(

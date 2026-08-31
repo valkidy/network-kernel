@@ -1,0 +1,14 @@
+id: 21
+name: grunt_slam_cone
+# The slam's volume. Starts identical to grunt_claw_cone on purpose: the two
+# weapons differ in what they do on contact, not yet in what they reach. It is a
+# separate template rather than a shared one so that tuning the slam's arc later
+# does not silently retune the plain claw as well.
+#
+# See grunt_claw_cone for why a cone is never a body and why fov_degrees buys
+# accuracy rather than speed.
+shape: cone
+range: 2.2
+fov_degrees: 100.0
+purpose: damage
+layer: projectile

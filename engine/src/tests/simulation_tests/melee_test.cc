@@ -1,10 +1,14 @@
 #include <cassert>
+#include <cmath>
 #include <cstdlib>
+#include <optional>
+#include <variant>
 #include <vector>
 
 #include <glm/glm.hpp>
 
 #include "kernel/public/kernel_types.h"
+#include "simulation/public/action_graph.h"
 #include "simulation/public/simulation.h"
 
 namespace {
@@ -70,7 +74,10 @@ network_example::NetId spawn_swinger(
     return player;
 }
 
-void swing(network_example::World& world, const glm::vec3& aim) {
+void swing(
+    network_example::World& world,
+    const glm::vec3& aim,
+    std::vector<network_example::ActionGraphCommandBatch>* batches = nullptr) {
     KernelPlayerInput input{};
     input.input_seq = 1;
     input.aim_dir = KernelVec3{aim.x, aim.y, aim.z};
@@ -85,7 +92,7 @@ void swing(network_example::World& world, const glm::vec3& aim) {
         world,
         inputs,
         network_example::WeaponSimulationContext{
-            nullptr, nullptr, &pipeline, 0, 0, 0.0f, 0, nullptr},
+            nullptr, nullptr, &pipeline, 0, 0, 0.0f, 0, nullptr, batches},
         &events);
     pipeline.confirm_ready(world, 0, 0, &events);
 }
@@ -152,11 +159,96 @@ void a_swing_cleaves_the_nearest_targets_up_to_max_hit_count() {
     require(health(world, furthest).hp == 100);
 }
 
+network_example::CompiledActionGraphBinding impulse_on_impact_binding(
+    float strength) {
+    KernelActionTriggerDefinition trigger{};
+    trigger.struct_size = sizeof(trigger);
+    trigger.action_type = KernelEntityTriggerActionType_ApplyImpulse;
+    trigger.target_source = KernelEntityRefSource_EventTarget;
+    trigger.direction_source = KernelEventVec3Source_Direction;
+    trigger.impulse_strength = strength;
+    trigger.impulse_collision_mask = KERNEL_COLLISION_MASK_ACTOR;
+    std::optional<network_example::CompiledActionGraphBinding> binding =
+        network_example::compile_action_trigger_definition(
+            network_example::TriggerEventType::kProjectileImpact, trigger);
+    require(binding.has_value());
+    return *binding;
+}
+
+const network_example::ActionApplyImpulseCommand& only_impulse_command(
+    const network_example::ActionGraphCommandBatch& batch) {
+    require(batch.commands.size() == 1);
+    const auto* impulse =
+        std::get_if<network_example::ActionApplyImpulseCommand>(
+            &batch.commands.front());
+    require(impulse != nullptr);
+    return *impulse;
+}
+
+// A swing whose shot template names an impact graph takes a different branch
+// from one that only hurts: it queues one trigger per target it found and
+// submits no damage of its own, so a graph that forgets apply_damage deals
+// none. That is the same trade an area effect makes, and it is what lets one
+// authoring surface say "hurt and shove" without a second one for the shoving.
+void a_swing_with_an_impact_graph_dispatches_it_instead_of_dealing_damage() {
+    network_example::World world;
+    const network_example::NetId front =
+        spawn_enemy(world, glm::vec3{1.5f, 0.0f, 0.0f});
+    const network_example::NetId behind =
+        spawn_enemy(world, glm::vec3{-1.5f, 0.0f, 0.0f});
+    network_example::RuntimeProjectileTemplate shot{};
+    shot.projectile_template_id = 7;
+    shot.max_hit_count = 4;
+    shot.projectile_impact_binding = impulse_on_impact_binding(8.0f);
+    world.set_projectile_templates({shot});
+    spawn_swinger(world, 2.2f, 100.0f, 7);
+
+    std::vector<network_example::ActionGraphCommandBatch> batches;
+    swing(world, glm::vec3{1.0f, 0.0f, 0.0f}, &batches);
+
+    // The cone still decides who is in it, graph or no graph.
+    require(batches.size() == 1);
+    const network_example::ActionApplyImpulseCommand& impulse =
+        only_impulse_command(batches[0]);
+    require(impulse.target == front);
+    require(impulse.strength == 8.0f);
+
+    // Neither target is hurt: the graph owns the damage now. A swing that kept
+    // submitting its own would double up on whatever the graph deals.
+    require(health(world, front).hp == 100);
+    require(health(world, behind).hp == 100);
+}
+
+// The reason a melee knockback has to state its vertical component absolutely
+// rather than scale one. The direction handed to the graph runs from the
+// attacker to the contact point with its y flattened away, so a scalar strength
+// multiplies a zero and lifts nothing.
+void the_impact_direction_a_swing_reports_is_level() {
+    network_example::World world;
+    spawn_enemy(world, glm::vec3{1.5f, 0.0f, 0.0f});
+    network_example::RuntimeProjectileTemplate shot{};
+    shot.projectile_template_id = 7;
+    shot.max_hit_count = 4;
+    shot.projectile_impact_binding = impulse_on_impact_binding(8.0f);
+    world.set_projectile_templates({shot});
+    spawn_swinger(world, 2.2f, 100.0f, 7);
+
+    std::vector<network_example::ActionGraphCommandBatch> batches;
+    swing(world, glm::vec3{1.0f, 0.0f, 0.0f}, &batches);
+
+    require(batches.size() == 1);
+    const glm::vec3 direction = only_impulse_command(batches[0]).direction;
+    require(direction.x > 0.9f);
+    require(std::fabs(direction.y) < 0.01f);
+}
+
 }  // namespace
 
 int main() {
     a_swing_reaches_what_is_in_front_and_not_what_is_behind();
     a_swing_does_not_reach_past_its_range();
     a_swing_cleaves_the_nearest_targets_up_to_max_hit_count();
+    a_swing_with_an_impact_graph_dispatches_it_instead_of_dealing_damage();
+    the_impact_direction_a_swing_reports_is_level();
     return 0;
 }

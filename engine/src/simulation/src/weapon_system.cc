@@ -3,7 +3,10 @@
 #include <algorithm>
 #include <cmath>
 
+#include <iterator>
+
 #include "physics/public/physics_world.h"
+#include "simulation/public/action_graph.h"
 #include "simulation/public/collision_filter.h"
 
 namespace network_example {
@@ -306,7 +309,9 @@ void apply_melee_damage(
     const glm::vec3& origin,
     const glm::vec3& direction,
     std::uint64_t hit_time_us,
-    DamagePipeline* damage_pipeline) {
+    std::uint32_t action_instance_id,
+    DamagePipeline* damage_pipeline,
+    std::vector<ActionGraphCommandBatch>* action_graph_batches) {
     if (definition.melee_range <= 0.0f || damage_pipeline == nullptr) {
         return;
     }
@@ -366,6 +371,17 @@ void apply_melee_damage(
     const float half_fov_cos = std::cos(
         definition.melee_fov_degrees * 0.5f * (std::acos(-1.0f) / 180.0f));
 
+    // A swing whose shot template names an impact graph hands every target to
+    // that graph instead of submitting damage itself, exactly as an area effect
+    // does: the graph is then responsible for the damage as well as whatever
+    // else it does, which is how one authoring surface expresses "hurt and
+    // shove" without a second one for the shoving. Falls back to plain damage
+    // when the caller gave nowhere to put the batches.
+    const bool dispatches_impact_graph = shot != nullptr &&
+        shot->projectile_impact_binding.has_value() &&
+        action_graph_batches != nullptr;
+    std::vector<ActionGraphQueuedTrigger> queued_triggers;
+
     std::vector<NetId> damaged;
     std::uint32_t sequence_id = 0;
     for (const physics::CollisionHit& hit : hits) {
@@ -394,9 +410,53 @@ void apply_melee_damage(
             glm::dot(forward, glm::normalize(radial)) < half_fov_cos) {
             continue;
         }
+        const std::uint32_t target_sequence = sequence_id++;
+        if (dispatches_impact_graph) {
+            // Attacker to contact point, flattened. A knockback authored off
+            // this has a y of roughly zero, so its vertical component has to be
+            // stated absolutely rather than scaled -- see the split form of
+            // apply_impulse's strength.
+            const glm::vec3 direction = glm::dot(radial, radial) > 0.000001f
+                ? glm::normalize(radial)
+                : forward;
+            queued_triggers.push_back(ActionGraphQueuedTrigger{
+                *shot->projectile_impact_binding,
+                shooter_net_id,
+                TriggerEvent{
+                    TriggerEventType::kProjectileImpact,
+                    shooter_net_id,
+                    shooter_net_id,
+                    target_net_id,
+                    hit.position,
+                    direction,
+                    ProjectileImpactPayload{
+                        definition.projectile_template_id,
+                        action_instance_id,
+                        definition.id,
+                        false},
+                    std::nullopt,
+                    // Each target gets its own `direction` above; this is the
+                    // one vector they share -- the way the swing itself went.
+                    forward},
+                ActionExecutionProvenance{
+                    (static_cast<std::uint64_t>(current_tick) << 32u) ^
+                        (static_cast<std::uint64_t>(shooter_net_id) << 1u) ^
+                        target_sequence,
+                    action_instance_id,
+                    current_tick,
+                    shooter_net_id,
+                    shooter_peer_id,
+                    definition.id,
+                    ActionAuthoritySource::kAuthoritativeSimulation,
+                    0u},
+                target_sequence,
+            });
+            damaged.push_back(target_net_id);
+            continue;
+        }
         if (damage_pipeline->submit_damage_request(damage_request_from_hit(
                 current_tick,
-                sequence_id++,
+                target_sequence,
                 shooter_net_id,
                 shooter_peer_id,
                 definition.id,
@@ -404,6 +464,16 @@ void apply_melee_damage(
                 hit_time_us,
                 hit))) {
             damaged.push_back(target_net_id);
+        }
+    }
+
+    if (!queued_triggers.empty()) {
+        std::vector<ActionGraphCommandBatch> batches;
+        if (dispatch_action_graph_triggers(&queued_triggers, &batches, nullptr)) {
+            action_graph_batches->insert(
+                action_graph_batches->end(),
+                std::make_move_iterator(batches.begin()),
+                std::make_move_iterator(batches.end()));
         }
     }
 }
@@ -801,7 +871,9 @@ void simulate_weapons(
                     origin,
                     direction,
                     hit_time_us,
-                    damage_pipeline);
+                    queued_input.input.action_intent.action_instance_id,
+                    damage_pipeline,
+                    context.action_graph_batches);
             } else if (definition->mode == WeaponFireMode::kProjectile) {
                 const RuntimeProjectileTemplate* projectile_template =
                     world.find_projectile_template(definition->projectile_template_id);

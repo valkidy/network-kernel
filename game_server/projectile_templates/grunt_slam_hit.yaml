@@ -1,0 +1,35 @@
+id: 14
+name: grunt_slam_hit
+# The slam's contact. Nothing spawns from this -- a melee weapon resolves its
+# hits by overlap -- but naming an impact graph changes who deals the damage:
+# the swing stops submitting any of its own and hands every target it found to
+# the graph, which is what lets one authoring surface say "hurt and shove".
+#
+# `damage` below is therefore the weapon's authored damage, not the number that
+# lands; the graph's `amount` is. They are kept equal deliberately, the same way
+# rocket_explosion keeps its two in step.
+type: standard
+collider_template: melee_swing_marker
+movement_model: linear
+sync_mode: server_snapshot_only
+hit_response: destroy
+damage_shape: direct_hit
+damage: 40
+collision_mask: player_side | limb
+max_hit_count: 3
+speed: 0.1
+lifetime_ticks: 3
+gravity:
+  x: 0.0
+  y: 0.0
+  z: 0.0
+triggers:
+  on_projectile_impact:
+    action_graph: action_melee_impact
+    parameters:
+      target: event.target
+      amount: 40
+      direction: event.direction
+      # No `strength` override here on purpose: a binding override is always
+      # read as the scalar form, so passing one would silently defeat the
+      # graph's [horizontal, vertical] default and take the lift back out.
