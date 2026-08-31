@@ -7564,8 +7564,12 @@ std::vector<std::string> validate_gameplay_config(
             // not authored here.
             (definition.shape_type == KernelColliderShapeType_Segment &&
              definition.shape_params.y < 0.0f) ||
+            // Mirrors the kernel-side cone check: vision and melee are the
+            // two consumers that resolve a cone as a bounding query plus an
+            // angle test, and nothing honours any other purpose on one.
             (definition.shape_type == KernelColliderShapeType_Cone &&
-             ((definition.purpose_flags & KernelColliderPurpose_Vision) == 0u ||
+             ((definition.purpose_flags &
+               (KernelColliderPurpose_Vision | KernelColliderPurpose_Damage)) == 0u ||
               definition.shape_params.x <= 0.0f ||
               definition.shape_params.y <= 0.0f ||
               definition.shape_params.y > 360.0f))) {

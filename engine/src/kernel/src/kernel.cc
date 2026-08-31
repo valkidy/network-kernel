@@ -1484,6 +1484,9 @@ WeaponFireMode to_weapon_fire_mode(std::uint8_t fire_mode) {
     if (fire_mode == KernelWeaponFireMode_Projectile) {
         return WeaponFireMode::kProjectile;
     }
+    if (fire_mode == KernelWeaponFireMode_Melee) {
+        return WeaponFireMode::kMelee;
+    }
     return WeaponFireMode::kHitscan;
 }
 
@@ -1504,6 +1507,8 @@ WeaponMechanicsDefinition to_weapon_mechanics(
     mechanics.fire_action_template_id = definition.fire_action_template_id;
     mechanics.reload_action_template_id = definition.reload_action_template_id;
     mechanics.collision_mask = definition.collision_mask;
+    mechanics.melee_collider_template_id =
+        definition.melee_collider_template_id;
     return mechanics;
 }
 
@@ -1525,6 +1530,8 @@ KernelWeaponMechanicsDefinition to_kernel_weapon_mechanics(
     definition.fire_action_template_id = mechanics.fire_action_template_id;
     definition.reload_action_template_id = mechanics.reload_action_template_id;
     definition.collision_mask = mechanics.collision_mask;
+    definition.melee_collider_template_id =
+        mechanics.melee_collider_template_id;
     return definition;
 }
 
@@ -1749,11 +1756,20 @@ bool validate_weapon_mechanics(const KernelWeaponMechanicsDefinition& definition
         definition.reload_action_template_id == 0u) {
         return false;
     }
-    if (definition.fire_mode > KernelWeaponFireMode_Projectile) {
+    if (definition.fire_mode > KernelWeaponFireMode_Melee) {
         return false;
     }
     if (definition.fire_mode == KernelWeaponFireMode_Projectile) {
         return definition.projectile_template_id != 0;
+    }
+    // A melee weapon's reach is the cone on its collider template, so it is
+    // deliberately not held to max_range the way the other instant modes are:
+    // authoring both invites two numbers that drift apart. Its damage is
+    // already required non-zero above, and comes from the projectile template
+    // it names -- the same one authoring surface a hitscan uses.
+    if (definition.fire_mode == KernelWeaponFireMode_Melee) {
+        return definition.melee_collider_template_id != 0 &&
+               definition.projectile_template_id != 0;
     }
     if (definition.max_range <= 0.0f) {
         return false;
@@ -3494,8 +3510,14 @@ bool KernelEngine::load_gameplay_catalog(
             // authored a `length` nothing read.
             (collider_template.shape_type == KernelColliderShapeType_Segment &&
              collider_template.shape_params.y < 0.0f) ||
+            // A cone is a query shape, never a body: Jolt has no cone, so
+            // every consumer resolves one as a bounding query plus an angle
+            // test. Vision was the only consumer until melee, which sweeps the
+            // same shape for damage -- hence the second purpose. Anything else
+            // still has no code that would honour it.
             (collider_template.shape_type == KernelColliderShapeType_Cone &&
-             ((collider_template.purpose_flags & KernelColliderPurpose_Vision) == 0u ||
+             ((collider_template.purpose_flags &
+               (KernelColliderPurpose_Vision | KernelColliderPurpose_Damage)) == 0u ||
               collider_template.shape_params.x <= 0.0f ||
               collider_template.shape_params.y <= 0.0f ||
               collider_template.shape_params.y > 360.0f)) ||

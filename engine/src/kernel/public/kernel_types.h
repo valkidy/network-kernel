@@ -5,6 +5,12 @@
 #include <stdint.h>
 
 /*
+ * 85: KernelWeaponFireMode gained _Melee, and KernelWeaponMechanicsDefinition
+ *     gained melee_collider_template_id, appended. Zero for every other fire
+ *     mode, so catalogs authored before this are bit-identical. A melee weapon
+ *     resolves its hit from that collider template's shape the way a hitscan
+ *     resolves one from its segment; a cone's range and fov live there, which
+ *     is why max_range takes no part in validating a melee weapon.
  * 84: KernelAreaEffectMechanicsDefinition gained motion_collision_mask,
  *     appended. Zero, the default, is the standing behaviour: a travelling
  *     area effect is never swept against the world and so passes through it.
@@ -77,7 +83,7 @@
  *     appended, but every managed mirror of these structs must add the same
  *     field or the nested layout of KernelEntityTemplateDefinition shifts.
  */
-#define KERNEL_ABI_VERSION 84u
+#define KERNEL_ABI_VERSION 85u
 
 #ifndef KERNEL_RPC
 #define KERNEL_RPC(metadata)
@@ -885,6 +891,13 @@ typedef enum KernelWeaponFireMode {
     KernelWeaponFireMode_Hitscan = 0,
     KernelWeaponFireMode_Shotgun = 1,
     KernelWeaponFireMode_Projectile = 2,
+    /*
+     * Instant like a hitscan, but resolved as an overlap against a shaped
+     * volume instead of a ray. Spawns nothing: the swing is an ephemeral
+     * collider and a damage submission, so a crowd of melee units costs no
+     * entities, no spawn packets, and no snapshot records.
+     */
+    KernelWeaponFireMode_Melee = 3,
 } KernelWeaponFireMode;
 
 typedef enum KernelProjectileMotionModel {
@@ -2013,6 +2026,14 @@ typedef struct KernelWeaponMechanicsDefinition {
      * alike.
      */
     uint32_t collision_mask;
+    /*
+     * Melee only, and the only place a melee weapon's reach lives: a cone
+     * template carries range and fov_degrees, so max_range is not consulted
+     * for KernelWeaponFireMode_Melee. Zero for every other fire mode. This is
+     * the melee counterpart of segment_collider_template_id, kept separate
+     * because that one is built as a segment by every consumer that reads it.
+     */
+    uint32_t melee_collider_template_id;
 } KernelWeaponMechanicsDefinition;
 
 typedef struct KernelHomingState {

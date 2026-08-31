@@ -260,6 +260,9 @@ enum class WeaponFireMode : std::uint8_t {
     kHitscan = 0,
     kShotgun = 1,
     kProjectile = 2,
+    // Instant like kHitscan, but an overlap against a shaped volume rather
+    // than a ray, and it spawns nothing.
+    kMelee = 3,
 };
 
 enum class ProjectileMotionModel : std::uint8_t {
@@ -452,6 +455,9 @@ struct WeaponMechanicsDefinition {
     std::uint32_t reload_action_template_id = 0;
     // KERNEL_COLLISION_LAYER_* bits; zero keeps the engine default.
     std::uint32_t collision_mask = 0;
+    // kMelee only. The swept volume's shape, and the reach with it -- a cone
+    // template's range and fov are read from here, not from max_range.
+    std::uint32_t melee_collider_template_id = 0;
 };
 
 struct WeaponTuning {
