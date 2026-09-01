@@ -1,0 +1,15 @@
+id: 22
+name: gingerbread_hit_aabb
+# What a weapon has to touch to hurt a gingerbread. Shared by both variants:
+# they are the same body, and only what they do with it differs.
+#
+# PLACEHOLDER EXTENTS. These are sentry_grunt's, carried over so the templates
+# load and play; they are not measured from the model. Replace them with the
+# character's actual half extents, and keep them in step with the hitbox block
+# in each entity template -- that block is what the server builds the volume
+# from, this template only says whose side it is on and what it is for.
+shape: aabb
+center: {x: 0.0, y: 0.8, z: 0.0}
+half_extents: {x: 0.4, y: 0.8, z: 0.4}
+purpose: hit
+layer: hostile_side

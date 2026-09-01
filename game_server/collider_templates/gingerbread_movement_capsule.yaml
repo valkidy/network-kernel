@@ -1,0 +1,14 @@
+id: 23
+name: gingerbread_movement_capsule
+# What the character solver pushes around the world. Separate from the hit box
+# above on purpose: one is what you can shoot, the other is what walls stop.
+#
+# PLACEHOLDER DIMENSIONS, as above -- sized from sentry_grunt, not from the
+# model. A capsule that does not match the mesh reads as the character clipping
+# scenery or floating off it.
+shape: capsule
+center: {x: 0.0, y: 0.9, z: 0.0}
+half_height: 0.5
+radius: 0.4
+purpose: movement
+layer: hostile_side
