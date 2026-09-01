@@ -5,7 +5,7 @@ namespace NetworkExample.Kernel
 {
     public static class KernelConstants
     {
-        public const uint AbiVersion = 84;
+        public const uint AbiVersion = 85;
         public const int BuildInfoTextSize = 128;
         public const int LANDiscoveryTextSize = 128;
         public const int GameplayCatalogEntryPathSize = 128;
@@ -489,6 +489,7 @@ namespace NetworkExample.Kernel
         Hitscan = 0,
         Shotgun = 1,
         Projectile = 2,
+        Melee = 3,
     }
 
     public enum KernelProjectileMotionModel : byte
@@ -2078,6 +2079,7 @@ namespace NetworkExample.Kernel
         // must stay last -- KernelGameplayCatalogDefinition nests this struct
         // and a mismatch shifts everything after it.
         public uint collision_mask;
+        public uint melee_collider_template_id;
 
         public static uint StructSize => (uint)Marshal.SizeOf<KernelWeaponMechanicsDefinition>();
     }
