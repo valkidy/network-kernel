@@ -441,6 +441,17 @@ private:
         std::uint32_t prop_state_tick = 0;
         std::uint8_t prop_state_fields = 0;
         bool has_prop_state = false;
+        // Where a thrown prop's flight was last anchored, and when. A throw is
+        // closed-form on the server -- projectile_position_at over spawn,
+        // velocity, gravity and age -- and the reliable prop-state record the
+        // throw emits carries that initial condition on its own channel, off
+        // the snapshot budget. Kept apart from `position`/`velocity`, which the
+        // render pass overwrites with whatever the last snapshot sampled: the
+        // anchor has to survive those writes to be worth anything.
+        glm::vec3 thrown_anchor_position{0.0f, 0.0f, 0.0f};
+        glm::vec3 thrown_anchor_velocity{0.0f, 0.0f, 0.0f};
+        std::uint32_t thrown_anchor_tick = 0;
+        bool has_thrown_anchor = false;
         bool active = false;
     };
 
@@ -746,6 +757,15 @@ private:
         const InventoryDeltaBatchPacket& packet);
     void handle_client_inventory_snapshot_page(
         const InventorySnapshotPagePacket& packet);
+    // The render transform of a prop in flight, evaluated from its throw
+    // anchor rather than read from the snapshot. False when the prop is not in
+    // flight, has no anchor, or its template names no throw trajectory -- the
+    // caller then falls back to the replicated sample.
+    bool thrown_prop_render_transform(
+        const ClientReplicatedEntity& replicated,
+        std::uint32_t render_tick,
+        glm::vec3* out_position,
+        glm::vec3* out_velocity) const;
     void handle_client_prop_state_change_batch(
         const PropStateChangeBatchPacket& packet);
     void request_inventory_snapshot(

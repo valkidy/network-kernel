@@ -142,14 +142,23 @@ void AgentChaserController::tick(
                     should_update_rotation;
                 move = chase_move(
                     config_.chase, &agent, perception.target_position);
-                ai::ScopedIntent intent;
-                intent.scope = ai::IntentScope::kActor;
-                intent.type = "AttackTarget";
-                intent.subject = agent.net_id;
-                intent.params["target_id"] = agent.sentry.target;
+                // Seeing a target is not the same as being able to hit one.
+                // Not attacking leaves submitted_input false, so the tail of
+                // the loop still sends exactly one input carrying `move` --
+                // the agent keeps closing, it just does not swing yet.
+                const bool target_within_attack_range =
+                    config_.chase.attack_range_meters <= 0.0f ||
+                    agent_steering::horizontal_distance(
+                        agent.position, perception.target_position) <=
+                        config_.chase.attack_range_meters;
                 if (agent.sentry.ballistic_retry_ticks > 0) {
                     --agent.sentry.ballistic_retry_ticks;
-                } else {
+                } else if (target_within_attack_range) {
+                    ai::ScopedIntent intent;
+                    intent.scope = ai::IntentScope::kActor;
+                    intent.type = "AttackTarget";
+                    intent.subject = agent.net_id;
+                    intent.params["target_id"] = agent.sentry.target;
                     // The move rides on the attack input: a separate movement
                     // input in the same tick would carry a higher input_seq and
                     // the movement solver would take that one instead.

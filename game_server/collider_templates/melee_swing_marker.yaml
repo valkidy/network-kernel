@@ -1,0 +1,10 @@
+id: 20
+name: melee_swing_marker
+# The shot template of a melee weapon has to name a collider, the way every
+# projectile template does, but the shape that actually matters is the cone on
+# the weapon itself. This declares only what it is for -- a projectile template
+# may not carry a cone, and giving this one real extents would put a second,
+# unread reach next to the authored one.
+shape: segment
+purpose: damage
+layer: projectile

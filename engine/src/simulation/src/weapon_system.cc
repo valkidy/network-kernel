@@ -3,7 +3,10 @@
 #include <algorithm>
 #include <cmath>
 
+#include <iterator>
+
 #include "physics/public/physics_world.h"
+#include "simulation/public/action_graph.h"
 #include "simulation/public/collision_filter.h"
 
 namespace network_example {
@@ -280,6 +283,198 @@ void apply_hitscan_damage(
             origin,
             target_hit_zone))) {
         return;
+    }
+}
+
+// A melee swing is a hitscan with a volume instead of a ray: it resolves the
+// moment the action commits, spawns nothing, and leaves no entity behind -- no
+// net id, no spawn packet, no snapshot record, which is what makes a crowd of
+// melee units affordable at all.
+//
+// The cone is not a Jolt shape; there is none. The reach is queried as a sphere
+// and the angle is a filter on what comes back, the same answer the vision cone
+// computes. So the fov buys accuracy, not speed: a narrow swing pays the same
+// broad phase as a full circle of equal reach, and only shortening the *reach*
+// makes it cheaper.
+//
+// No lag compensation, deliberately. The rewind path can only raycast a history
+// frame, and a swing that lands inside a couple of metres has far less to gain
+// from rewinding than a rifle shot across the map.
+void apply_melee_damage(
+    World& world,
+    const WeaponMechanicsDefinition& definition,
+    std::uint32_t current_tick,
+    NetId shooter_net_id,
+    PeerId shooter_peer_id,
+    const glm::vec3& origin,
+    const glm::vec3& direction,
+    std::uint64_t hit_time_us,
+    std::uint32_t action_instance_id,
+    DamagePipeline* damage_pipeline,
+    std::vector<ActionGraphCommandBatch>* action_graph_batches) {
+    if (definition.melee_range <= 0.0f || damage_pipeline == nullptr) {
+        return;
+    }
+    physics::PhysicsWorld* collision_world = world.collision_world();
+    if (collision_world == nullptr) {
+        return;
+    }
+    // The angle is measured in the XZ plane, the way a vision cone's is, so a
+    // target standing on a step is still in front of the swing rather than
+    // outside it.
+    glm::vec3 forward{direction.x, 0.0f, direction.z};
+    if (glm::dot(forward, forward) <= 0.000001f) {
+        return;
+    }
+    forward = glm::normalize(forward);
+
+    physics::OverlapRequest request{};
+    request.shape.type = physics::CollisionShapeType::kSphere;
+    request.shape.radius = definition.melee_range;
+    request.position = origin;
+    request.filter = collision_filter_from_mask(definition.collision_mask);
+    request.filter.ignored_entity_net_id = shooter_net_id;
+    std::vector<physics::CollisionHit> hits =
+        collision_world->overlap_all(request);
+
+    // Nearest first, then by identity. Distance is what should decide which
+    // targets survive max_hit_count -- a swing that reaches three should reach
+    // the three closest -- and the identity keys behind it keep a tie from
+    // resolving on whatever order the broad phase happened to produce.
+    std::sort(
+        hits.begin(),
+        hits.end(),
+        [](const physics::CollisionHit& lhs, const physics::CollisionHit& rhs) {
+            if (lhs.distance != rhs.distance) {
+                return lhs.distance < rhs.distance;
+            }
+            if (lhs.identity.entity_net_id != rhs.identity.entity_net_id) {
+                return lhs.identity.entity_net_id < rhs.identity.entity_net_id;
+            }
+            if (lhs.identity.collider_id != rhs.identity.collider_id) {
+                return lhs.identity.collider_id < rhs.identity.collider_id;
+            }
+            return lhs.subshape_id < rhs.subshape_id;
+        });
+
+    // Damage and target mask ride on the weapon; how many targets one swing
+    // may reach is authored on the shot template -- the same template a
+    // hitscan reads its two numbers from. Damage does not fall off with
+    // distance: damage_behavior is parsed for area effects only, so a standard
+    // shot template has no way to author a falloff, and inventing one for a
+    // two-metre cone would be spending an authoring surface on a gradient
+    // nobody could feel.
+    const RuntimeProjectileTemplate* shot =
+        world.find_projectile_template(definition.projectile_template_id);
+    const std::uint32_t max_targets =
+        shot == nullptr ? 1u : std::max(1u, shot->max_hit_count);
+    const float half_fov_cos = std::cos(
+        definition.melee_fov_degrees * 0.5f * (std::acos(-1.0f) / 180.0f));
+
+    // A swing whose shot template names an impact graph hands every target to
+    // that graph instead of submitting damage itself, exactly as an area effect
+    // does: the graph is then responsible for the damage as well as whatever
+    // else it does, which is how one authoring surface expresses "hurt and
+    // shove" without a second one for the shoving. Falls back to plain damage
+    // when the caller gave nowhere to put the batches.
+    const bool dispatches_impact_graph = shot != nullptr &&
+        shot->projectile_impact_binding.has_value() &&
+        action_graph_batches != nullptr;
+    std::vector<ActionGraphQueuedTrigger> queued_triggers;
+
+    std::vector<NetId> damaged;
+    std::uint32_t sequence_id = 0;
+    for (const physics::CollisionHit& hit : hits) {
+        if (damaged.size() >= max_targets) {
+            break;
+        }
+        if (!is_actor_hit(hit.identity.kind)) {
+            continue;
+        }
+        const NetId target_net_id = hit.identity.entity_net_id;
+        if (target_net_id == 0 || target_net_id == shooter_net_id) {
+            continue;
+        }
+        // A rig contributes one collider per bone, so the same target comes
+        // back several times. One swing, one wound.
+        if (std::find(damaged.begin(), damaged.end(), target_net_id) !=
+            damaged.end()) {
+            continue;
+        }
+        // Measured to the contact point, not to the target's origin: a body
+        // whose edge clips the cone is in it. That is the forgiving reading,
+        // and the one that matches what the swing looks like.
+        glm::vec3 radial{
+            hit.position.x - origin.x, 0.0f, hit.position.z - origin.z};
+        if (glm::dot(radial, radial) > 0.000001f &&
+            glm::dot(forward, glm::normalize(radial)) < half_fov_cos) {
+            continue;
+        }
+        const std::uint32_t target_sequence = sequence_id++;
+        if (dispatches_impact_graph) {
+            // Attacker to contact point, flattened. A knockback authored off
+            // this has a y of roughly zero, so its vertical component has to be
+            // stated absolutely rather than scaled -- see the split form of
+            // apply_impulse's strength.
+            const glm::vec3 direction = glm::dot(radial, radial) > 0.000001f
+                ? glm::normalize(radial)
+                : forward;
+            queued_triggers.push_back(ActionGraphQueuedTrigger{
+                *shot->projectile_impact_binding,
+                shooter_net_id,
+                TriggerEvent{
+                    TriggerEventType::kProjectileImpact,
+                    shooter_net_id,
+                    shooter_net_id,
+                    target_net_id,
+                    hit.position,
+                    direction,
+                    ProjectileImpactPayload{
+                        definition.projectile_template_id,
+                        action_instance_id,
+                        definition.id,
+                        false},
+                    std::nullopt,
+                    // Each target gets its own `direction` above; this is the
+                    // one vector they share -- the way the swing itself went.
+                    forward},
+                ActionExecutionProvenance{
+                    (static_cast<std::uint64_t>(current_tick) << 32u) ^
+                        (static_cast<std::uint64_t>(shooter_net_id) << 1u) ^
+                        target_sequence,
+                    action_instance_id,
+                    current_tick,
+                    shooter_net_id,
+                    shooter_peer_id,
+                    definition.id,
+                    ActionAuthoritySource::kAuthoritativeSimulation,
+                    0u},
+                target_sequence,
+            });
+            damaged.push_back(target_net_id);
+            continue;
+        }
+        if (damage_pipeline->submit_damage_request(damage_request_from_hit(
+                current_tick,
+                target_sequence,
+                shooter_net_id,
+                shooter_peer_id,
+                definition.id,
+                definition.damage,
+                hit_time_us,
+                hit))) {
+            damaged.push_back(target_net_id);
+        }
+    }
+
+    if (!queued_triggers.empty()) {
+        std::vector<ActionGraphCommandBatch> batches;
+        if (dispatch_action_graph_triggers(&queued_triggers, &batches, nullptr)) {
+            action_graph_batches->insert(
+                action_graph_batches->end(),
+                std::make_move_iterator(batches.begin()),
+                std::make_move_iterator(batches.end()));
+        }
     }
 }
 
@@ -666,6 +861,19 @@ void simulate_weapons(
                         events,
                         damage_pipeline);
                 }
+            } else if (definition->mode == WeaponFireMode::kMelee) {
+                apply_melee_damage(
+                    world,
+                    *definition,
+                    current_tick,
+                    player_identity.net_id,
+                    queued_input.owner_peer,
+                    origin,
+                    direction,
+                    hit_time_us,
+                    queued_input.input.action_intent.action_instance_id,
+                    damage_pipeline,
+                    context.action_graph_batches);
             } else if (definition->mode == WeaponFireMode::kProjectile) {
                 const RuntimeProjectileTemplate* projectile_template =
                     world.find_projectile_template(definition->projectile_template_id);

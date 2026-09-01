@@ -32,6 +32,10 @@ struct WeaponSimulationContext {
     float fixed_delta_seconds = 0.0f;
     std::uint64_t action_time_us = 0;
     std::vector<struct ActionOutcome>* action_outcomes = nullptr;
+    // Where a melee swing's impact graphs go. Left null, a swing that names one
+    // silently does nothing -- which is why apply_melee_damage falls back to
+    // submitting plain damage when there is nowhere to put the batches.
+    std::vector<ActionGraphCommandBatch>* action_graph_batches = nullptr;
 };
 
 struct DamageRequest {

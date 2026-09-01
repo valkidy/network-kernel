@@ -1,0 +1,13 @@
+id: 4106
+name: grunt_slam_swing
+# Starts as a copy of grunt_claw_swing. Separate so the slam can telegraph its
+# wind-up harder later without touching the plain claw -- every other weapon in
+# this catalog owns its fire action too.
+trigger_mode: press
+flags: [cancel_on_death, cancel_on_weapon_change, cancel_before_first_commit]
+ammo_cost_per_commit: 1
+commit_offset_ticks: 8
+commit_interval_ticks: 45
+max_commit_count: 1
+recovery_ticks: 12
+hold_input_timeout_ticks: 0

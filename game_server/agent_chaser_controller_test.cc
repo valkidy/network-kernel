@@ -4,12 +4,25 @@
 #include <cassert>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <vector>
 
 #include "game_server/ai_perception_adapter.h"
 #include "game_server/gameplay_config.h"
 
 namespace {
+
+// Every kernel call in this file's setup used to sit inside assert(). Under
+// -c opt -- the configuration the suite is actually run in -- NDEBUG expands
+// assert(expr) to ((void)0), so the expression is never evaluated: no catalog
+// was loaded, no entity was created, no vision was configured, and the test
+// reported PASSED having called nothing. A precondition with a side effect has
+// to be stated in something that survives NDEBUG.
+void require(bool condition) {
+    if (!condition) {
+        std::abort();
+    }
+}
 
 constexpr std::uint32_t kTestFireActionTemplateId = 100;
 constexpr std::uint32_t kTestReloadActionTemplateId = 101;
@@ -199,7 +212,7 @@ void load_catalog(KernelHandle* kernel) {
     catalog.actor_template_count = 1;
     catalog.entity_templates = &entity_template;
     catalog.entity_template_count = 1;
-    assert(Kernel_LoadGameplayCatalog(kernel, &catalog, nullptr));
+    require(Kernel_LoadGameplayCatalog(kernel, &catalog, nullptr));
 }
 
 std::uint32_t create_agent(KernelHandle* kernel, const KernelVec3& position) {
@@ -212,8 +225,8 @@ std::uint32_t create_agent(KernelHandle* kernel, const KernelVec3& position) {
     create_info.position = position;
     create_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
     std::uint32_t net_id = 0;
-    assert(Kernel_ServerCreateEntity(kernel, &create_info, &net_id));
-    assert(net_id != 0);
+    require(Kernel_ServerCreateEntity(kernel, &create_info, &net_id));
+    require(net_id != 0);
     return net_id;
 }
 
@@ -225,8 +238,8 @@ std::uint32_t create_player(KernelHandle* kernel, const KernelVec3& position) {
     create_info.position = position;
     create_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
     std::uint32_t net_id = 0;
-    assert(Kernel_ServerCreateEntity(kernel, &create_info, &net_id));
-    assert(net_id != 0);
+    require(Kernel_ServerCreateEntity(kernel, &create_info, &net_id));
+    require(net_id != 0);
     return net_id;
 }
 
@@ -246,7 +259,7 @@ void set_combat(KernelHandle* kernel, std::uint32_t net_id, std::uint16_t ammo) 
     combat.hitbox_half_extents = KernelVec3{0.4f, 0.8f, 0.4f};
     combat.ammo[0] = ammo;
     combat.reserve_magazines[0] = 9;
-    assert(Kernel_ServerSetEntityCombatState(kernel, net_id, &combat));
+    require(Kernel_ServerSetEntityCombatState(kernel, net_id, &combat));
 }
 
 void set_weapon_mechanics(KernelHandle* kernel, std::uint32_t net_id) {
@@ -259,7 +272,7 @@ void set_weapon_mechanics(KernelHandle* kernel, std::uint32_t net_id) {
     weapon.fire_action_template_id = kTestFireActionTemplateId;
     weapon.reload_action_template_id = kTestReloadActionTemplateId;
     weapon.projectile_template_id = 3;
-    assert(Kernel_ServerSetEntityWeaponMechanics(kernel, net_id, &weapon));
+    require(Kernel_ServerSetEntityWeaponMechanics(kernel, net_id, &weapon));
 }
 
 void set_vision(
@@ -273,14 +286,14 @@ void set_vision(
     vision.vision_collider_template_id = vision_collider_template_id;
     vision.max_visible_hostiles = KERNEL_MAX_VISIBLE_HOSTILES;
     vision.max_visible_allies = KERNEL_MAX_VISIBLE_ALLIES;
-    assert(Kernel_ServerSetEntityVisionConfig(kernel, net_id, &vision));
+    require(Kernel_ServerSetEntityVisionConfig(kernel, net_id, &vision));
 }
 
 KernelServerEntityState query_state(KernelHandle* kernel, std::uint32_t net_id) {
     KernelServerEntityState state{};
     state.struct_size = sizeof(state);
-    assert(Kernel_ServerGetEntityState(kernel, net_id, &state));
-    assert(state.valid != 0u);
+    require(Kernel_ServerGetEntityState(kernel, net_id, &state));
+    require(state.valid != 0u);
     return state;
 }
 
@@ -289,7 +302,7 @@ void set_position(
     std::uint32_t net_id,
     const KernelVec3& position) {
     KernelQuat identity{0.0f, 0.0f, 0.0f, 1.0f};
-    assert(Kernel_ServerSetEntityTransform(kernel, net_id, &position, &identity));
+    require(Kernel_ServerSetEntityTransform(kernel, net_id, &position, &identity));
 }
 
 void run_frame(
@@ -326,13 +339,122 @@ network_example::game_server::AgentChaserConfig chaser_config() {
     return config;
 }
 
+// Seeing a target and being able to hit one are different distances. The vision
+// cone reaches much further than a melee weapon does, and the controller used
+// to commit an attack the moment the sentry half said "visible" -- so a grunt
+// carrying a claw swung, and spent ammo, at a target across the room.
+//
+// Ammo is the observable: the fire action costs one per commit, so a swing that
+// happened shows up here.
+//
+// Takes main's agent vector rather than a fresh one. The kernel keeps only the
+// highest input_seq it has seen for a net id, so an AgentRuntimeState that
+// starts its sequence over at zero has every input it submits discarded. The
+// state machine still advances, because that runs off perception, so the only
+// symptom is that nothing the agent decides ever reaches the world.
+void a_chaser_attacks_only_inside_its_attack_range(
+    KernelHandle* kernel,
+    std::uint32_t agent_net_id,
+    std::uint32_t player_net_id,
+    std::vector<network_example::game_server::AgentRuntimeState>* agents) {
+    network_example::game_server::AgentChaserConfig chaser = chaser_config();
+    chaser.chase.attack_range_meters = 2.5f;
+    // Parked from the first tick, so the distance under test stays the one set
+    // here rather than whatever the chase happens to close to.
+    chaser.chase.stop_distance_meters = 20.0f;
+    chaser.chase.resume_distance_meters = 21.0f;
+    const network_example::game_server::AgentChaserController controller(chaser);
+
+    set_position(kernel, agent_net_id, {0.0f, 0.0f, 0.0f});
+    set_position(kernel, player_net_id, {6.0f, 0.0f, 0.0f});
+    set_combat(kernel, agent_net_id, 30);
+    Kernel_Update(kernel, kFixedDelta);
+    for (int tick = 0; tick < 8; ++tick) {
+        run_frame(kernel, controller, agents);
+    }
+    require(
+        (*agents)[0].sentry.state ==
+        network_example::game_server::AgentSentryState::kAttack);
+    require((*agents)[0].sentry.target == player_net_id);
+
+    // Well inside what it can see, well outside what it can reach.
+    const std::uint16_t ammo_out_of_range =
+        query_state(kernel, agent_net_id).ammo[0];
+    require(ammo_out_of_range != 0);
+    for (int tick = 0; tick < 5; ++tick) {
+        run_frame(kernel, controller, agents);
+    }
+    require(query_state(kernel, agent_net_id).ammo[0] == ammo_out_of_range);
+    // Still hunting it, just not swinging at it.
+    require(
+        (*agents)[0].sentry.state ==
+        network_example::game_server::AgentSentryState::kAttack);
+    require((*agents)[0].sentry.target == player_net_id);
+
+    // The same agent, the same state, the target brought within reach.
+    set_position(kernel, player_net_id, {1.5f, 0.0f, 0.0f});
+    Kernel_Update(kernel, kFixedDelta);
+    for (int tick = 0; tick < 5; ++tick) {
+        run_frame(kernel, controller, agents);
+    }
+    require(query_state(kernel, agent_net_id).ammo[0] < ammo_out_of_range);
+}
+
+// The other design the same controller has to serve: a chaser carrying a ranged
+// weapon opens fire as soon as the target is inside the weapon's range and
+// keeps closing while it shoots. Nothing about the gate is melee-specific --
+// it is the same field with a bigger number, and zero turns it off entirely
+// for a chaser that should fire at anything it can see.
+void a_ranged_chaser_fires_while_it_is_still_closing(
+    KernelHandle* kernel,
+    std::uint32_t agent_net_id,
+    std::uint32_t player_net_id,
+    std::vector<network_example::game_server::AgentRuntimeState>* agents) {
+    network_example::game_server::AgentChaserConfig chaser = chaser_config();
+    // A firing range rather than a reach, and the chase thresholds it used to
+    // have. resume stays inside attack_range, which is what keeps the agent
+    // from parking in a band where it neither chases nor shoots.
+    chaser.chase.attack_range_meters = 8.0f;
+    chaser.chase.stop_distance_meters = 2.0f;
+    chaser.chase.resume_distance_meters = 3.0f;
+    const network_example::game_server::AgentChaserController controller(chaser);
+
+    set_position(kernel, agent_net_id, {0.0f, 0.0f, 0.0f});
+    set_position(kernel, player_net_id, {6.0f, 0.0f, 0.0f});
+    set_combat(kernel, agent_net_id, 30);
+    Kernel_Update(kernel, kFixedDelta);
+    for (int tick = 0; tick < 8; ++tick) {
+        run_frame(kernel, controller, agents);
+    }
+    require(
+        (*agents)[0].sentry.state ==
+        network_example::game_server::AgentSentryState::kAttack);
+
+    const std::uint16_t ammo_before = query_state(kernel, agent_net_id).ammo[0];
+    require(ammo_before != 0);
+    for (int tick = 0; tick < 5; ++tick) {
+        run_frame(kernel, controller, agents);
+    }
+    // It fired...
+    require(query_state(kernel, agent_net_id).ammo[0] < ammo_before);
+    // ...from outside the distance it would have stopped at, so the shooting
+    // is not something that only starts once the agent has arrived.
+    const KernelServerEntityState agent_state = query_state(kernel, agent_net_id);
+    const KernelServerEntityState target_state =
+        query_state(kernel, player_net_id);
+    require(
+        horizontal_distance(agent_state.position, target_state.position) >
+        chaser.chase.stop_distance_meters);
+    require(!(*agents)[0].chase_holding);
+}
+
 }  // namespace
 
 int main() {
     KernelConfig config = server_config();
     KernelHandle* kernel = Kernel_Create(&config);
-    assert(kernel != nullptr);
-    assert(Kernel_StartDedicatedServer(kernel, 7787));
+    require(kernel != nullptr);
+    require(Kernel_StartDedicatedServer(kernel, 7787));
     load_catalog(kernel);
 
     const std::uint32_t agent_net_id = create_agent(kernel, {0.0f, 0.0f, 0.0f});
@@ -439,6 +561,11 @@ int main() {
     assert(
         agents[0].sentry.state ==
         network_example::game_server::AgentSentryState::kIdle);
+
+    a_chaser_attacks_only_inside_its_attack_range(
+        kernel, agent_net_id, player_net_id, &agents);
+    a_ranged_chaser_fires_while_it_is_still_closing(
+        kernel, agent_net_id, player_net_id, &agents);
 
     Kernel_Destroy(kernel);
     return 0;

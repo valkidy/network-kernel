@@ -1484,6 +1484,9 @@ WeaponFireMode to_weapon_fire_mode(std::uint8_t fire_mode) {
     if (fire_mode == KernelWeaponFireMode_Projectile) {
         return WeaponFireMode::kProjectile;
     }
+    if (fire_mode == KernelWeaponFireMode_Melee) {
+        return WeaponFireMode::kMelee;
+    }
     return WeaponFireMode::kHitscan;
 }
 
@@ -1504,6 +1507,8 @@ WeaponMechanicsDefinition to_weapon_mechanics(
     mechanics.fire_action_template_id = definition.fire_action_template_id;
     mechanics.reload_action_template_id = definition.reload_action_template_id;
     mechanics.collision_mask = definition.collision_mask;
+    mechanics.melee_collider_template_id =
+        definition.melee_collider_template_id;
     return mechanics;
 }
 
@@ -1525,6 +1530,8 @@ KernelWeaponMechanicsDefinition to_kernel_weapon_mechanics(
     definition.fire_action_template_id = mechanics.fire_action_template_id;
     definition.reload_action_template_id = mechanics.reload_action_template_id;
     definition.collision_mask = mechanics.collision_mask;
+    definition.melee_collider_template_id =
+        mechanics.melee_collider_template_id;
     return definition;
 }
 
@@ -1749,11 +1756,20 @@ bool validate_weapon_mechanics(const KernelWeaponMechanicsDefinition& definition
         definition.reload_action_template_id == 0u) {
         return false;
     }
-    if (definition.fire_mode > KernelWeaponFireMode_Projectile) {
+    if (definition.fire_mode > KernelWeaponFireMode_Melee) {
         return false;
     }
     if (definition.fire_mode == KernelWeaponFireMode_Projectile) {
         return definition.projectile_template_id != 0;
+    }
+    // A melee weapon's reach is the cone on its collider template, so it is
+    // deliberately not held to max_range the way the other instant modes are:
+    // authoring both invites two numbers that drift apart. Its damage is
+    // already required non-zero above, and comes from the projectile template
+    // it names -- the same one authoring surface a hitscan uses.
+    if (definition.fire_mode == KernelWeaponFireMode_Melee) {
+        return definition.melee_collider_template_id != 0 &&
+               definition.projectile_template_id != 0;
     }
     if (definition.max_range <= 0.0f) {
         return false;
@@ -3494,8 +3510,14 @@ bool KernelEngine::load_gameplay_catalog(
             // authored a `length` nothing read.
             (collider_template.shape_type == KernelColliderShapeType_Segment &&
              collider_template.shape_params.y < 0.0f) ||
+            // A cone is a query shape, never a body: Jolt has no cone, so
+            // every consumer resolves one as a bounding query plus an angle
+            // test. Vision was the only consumer until melee, which sweeps the
+            // same shape for damage -- hence the second purpose. Anything else
+            // still has no code that would honour it.
             (collider_template.shape_type == KernelColliderShapeType_Cone &&
-             ((collider_template.purpose_flags & KernelColliderPurpose_Vision) == 0u ||
+             ((collider_template.purpose_flags &
+               (KernelColliderPurpose_Vision | KernelColliderPurpose_Damage)) == 0u ||
               collider_template.shape_params.x <= 0.0f ||
               collider_template.shape_params.y <= 0.0f ||
               collider_template.shape_params.y > 360.0f)) ||
@@ -5660,10 +5682,34 @@ bool KernelEngine::server_set_entity_weapon_mechanics(
     if (!entity.has_value()) {
         return false;
     }
+    WeaponMechanicsDefinition mechanics = to_weapon_mechanics(weapon_mechanics);
+    // Only the template id crosses the ABI; the shape it stands for is read
+    // here, once, because nothing downstream can. Rejecting a melee weapon
+    // whose collider is missing, is not a cone, or carries no damage purpose
+    // at configuration time is what keeps apply_melee_damage from having to
+    // decide what a malformed swing means.
+    if (mechanics.mode == WeaponFireMode::kMelee) {
+        const KernelColliderTemplateDefinition* melee_collider =
+            find_collider_template(
+                collider_templates_,
+                weapon_mechanics.melee_collider_template_id);
+        if (melee_collider == nullptr ||
+            melee_collider->shape_type != KernelColliderShapeType_Cone ||
+            (melee_collider->purpose_flags & KernelColliderPurpose_Damage) == 0u) {
+            return false;
+        }
+        mechanics.melee_range = collider_template_cone_range(*melee_collider);
+        mechanics.melee_fov_degrees =
+            collider_template_cone_fov_degrees(*melee_collider);
+        if (mechanics.melee_range <= 0.0f ||
+            mechanics.melee_fov_degrees <= 0.0f) {
+            return false;
+        }
+    }
     WeaponTuning& tuning = world_.registry().get_or_emplace<WeaponTuning>(*entity);
     const std::size_t index = static_cast<std::size_t>(weapon_mechanics.weapon_id);
     tuning.configured[index] = true;
-    tuning.definitions[index] = to_weapon_mechanics(weapon_mechanics);
+    tuning.definitions[index] = mechanics;
     return true;
 }
 
@@ -10250,6 +10296,9 @@ void KernelEngine::simulate_tick() {
         }
         ++pending;
     }
+    // Filled by the weapon pass (a melee swing's impact graph) and the area
+    // effect pass alike; drained once, after both, further down.
+    std::vector<ActionGraphCommandBatch> action_graph_batches;
     for (const QueuedInput& pending_input : pending_inputs_) {
         const HistoryFrame* rewind_frame = nullptr;
         std::uint32_t rewind_tick = tick_loop_.current_tick();
@@ -10277,7 +10326,8 @@ void KernelEngine::simulate_tick() {
                 tick_loop_.current_tick(),
                 fixed_delta,
                 compensated_action_time_us(pending_input),
-                &action_outcomes},
+                &action_outcomes,
+                &action_graph_batches},
             &events_);
     }
     simulate_weapons(
@@ -10291,10 +10341,10 @@ void KernelEngine::simulate_tick() {
             tick_loop_.current_tick(),
             fixed_delta,
             server_time_us,
-            &action_outcomes},
+            &action_outcomes,
+            &action_graph_batches},
         &events_);
     const std::size_t first_projectile_simulation_event = events_.size();
-    std::vector<ActionGraphCommandBatch> area_action_graph_batches;
     simulate_projectiles(
         world_,
         fixed_delta,
@@ -10307,8 +10357,13 @@ void KernelEngine::simulate_tick() {
         server_time_us,
         &events_,
         &damage_pipeline_,
-        &area_action_graph_batches);
-    for (const ActionGraphCommandBatch& batch : area_action_graph_batches) {
+        &action_graph_batches);
+    // One execution point for both producers. A melee swing's impact graph is
+    // queued well before this, during the weapon pass, but running it there
+    // would execute it against a world the projectile and area passes have not
+    // touched yet -- and an impulse applied out of that order is an impulse the
+    // movement solver has already moved past.
+    for (const ActionGraphCommandBatch& batch : action_graph_batches) {
         (void)execute_action_graph_command_batch(*this, batch, server_time_us);
     }
     simulate_beams(
@@ -11481,8 +11536,82 @@ void KernelEngine::handle_client_prop_state_change_batch(
         entity->prop_state_tick = packet.server_tick;
         entity->prop_state_fields |= record.changed_fields;
         entity->has_prop_state = true;
+        // A throw arrives here as one record carrying mode, transform and
+        // velocity together (make_prop_state_change_record always sends the
+        // three), which is the whole initial condition of the flight. Anchoring
+        // on it lets the render pass evaluate the trajectory instead of waiting
+        // for the snapshot rotation to sample it again. Re-anchoring on any
+        // later in-flight record is deliberate: the server is authoritative, so
+        // a correction mid-flight moves the curve rather than being argued with.
+        const bool in_flight =
+            entity->world_item_mode == KernelWorldItemMode_InFlight;
+        const bool carries_initial_condition =
+            (record.changed_fields & kPropStateChangeTransform) != 0u &&
+            (record.changed_fields & kPropStateChangeVelocity) != 0u;
+        if (in_flight && carries_initial_condition) {
+            entity->thrown_anchor_position = entity->position;
+            entity->thrown_anchor_velocity = entity->velocity;
+            entity->thrown_anchor_tick = packet.server_tick;
+            entity->has_thrown_anchor = true;
+        } else if (!in_flight) {
+            entity->has_thrown_anchor = false;
+        }
     }
     if (has_client_snapshot_) rebuild_render_states();
+}
+
+bool KernelEngine::thrown_prop_render_transform(
+    const ClientReplicatedEntity& replicated,
+    std::uint32_t render_tick,
+    glm::vec3* out_position,
+    glm::vec3* out_velocity) const {
+    if (out_position == nullptr || out_velocity == nullptr ||
+        replicated.type != EntityType::kProp ||
+        !replicated.has_thrown_anchor ||
+        replicated.world_item_mode != KernelWorldItemMode_InFlight) {
+        return false;
+    }
+    const KernelEntityTemplateDefinition* entity_template =
+        find_entity_template(entity_templates_, replicated.entity_template_id);
+    if (entity_template == nullptr ||
+        entity_template->prop.throw_trajectory_projectile_template_id == 0u) {
+        return false;
+    }
+    const KernelProjectileTemplateDefinition* trajectory =
+        find_projectile_template(
+            projectile_templates_,
+            entity_template->prop.throw_trajectory_projectile_template_id);
+    if (trajectory == nullptr) {
+        return false;
+    }
+    // Signed: the render instant sits an interpolation delay behind the server,
+    // so the first frames after a throw are still earlier than the anchor. The
+    // curve is only run forwards -- backwards would draw the prop somewhere it
+    // was never thrown from.
+    const std::int32_t elapsed_ticks =
+        static_cast<std::int32_t>(render_tick - replicated.thrown_anchor_tick);
+    const float elapsed_seconds = elapsed_ticks <= 0
+        ? 0.0f
+        : static_cast<float>(elapsed_ticks) * tick_loop_.fixed_delta_seconds();
+    // The same evaluator the server steps the prop with, over the same motion
+    // model and gravity -- both read from the trajectory projectile the item's
+    // throw policy names, which the client already holds in the synced catalog.
+    // Nothing about this needs a wire field that is not already sent.
+    const ProjectileMotionModel motion_model =
+        to_projectile_motion_model(trajectory->mechanics.motion_model);
+    const glm::vec3 gravity = from_kernel_vec3(trajectory->mechanics.gravity);
+    *out_position = projectile_position_at(
+        replicated.thrown_anchor_position,
+        replicated.thrown_anchor_velocity,
+        motion_model,
+        gravity,
+        elapsed_seconds);
+    *out_velocity = projectile_velocity_at(
+        replicated.thrown_anchor_velocity,
+        motion_model,
+        gravity,
+        elapsed_seconds);
+    return true;
 }
 
 void KernelEngine::send_projectile_spawn_batch(
@@ -11866,6 +11995,25 @@ void KernelEngine::rebuild_render_states_from_snapshot(
                 render_entity.state_flags &= ~kSnapshotStateFlagHpUnknown;
             }
         }
+        // A prop in flight is drawn from its own trajectory instead of from the
+        // snapshot sample. This is not smoothing: the server steps the throw
+        // with projectile_position_at over the same anchor, model and gravity,
+        // so the two agree exactly, and anything that changes the flight --
+        // an impulse, a correction -- arrives as a prop-state record and
+        // re-anchors it. What it buys is independence from the send set, where
+        // a weight-1 prop record among a crowd of weight-8 actors can go the
+        // full kMaxSnapshotsWithoutSend between samples; the interpolator can
+        // only render that as hold-then-jump.
+        glm::vec3 thrown_position{0.0f, 0.0f, 0.0f};
+        glm::vec3 thrown_velocity{0.0f, 0.0f, 0.0f};
+        if (thrown_prop_render_transform(
+                *replicated,
+                snapshot.header.server_tick,
+                &thrown_position,
+                &thrown_velocity)) {
+            render_entity.position = thrown_position;
+            render_entity.velocity = thrown_velocity;
+        }
         if ((render_entity.state_flags & kSnapshotStateFlagHpUnknown) != 0u) {
             if (replicated->hp_known) {
                 render_entity.hp = replicated->hp;
@@ -11922,22 +12070,34 @@ void KernelEngine::rebuild_render_states_from_snapshot(
             entity.type == EntityType::kActor
                 ? collider_template_id_for_actor_template(entity.actor_template_id)
                 : entity.collider_template_id;
+        // This loop is the omitted case -- entities the render snapshot has no
+        // record for -- which is exactly where a starved prop lands, so a prop
+        // in flight is evaluated here rather than drawn at the last position it
+        // was sampled at. It is derived from an authoritative anchor, not
+        // guessed, so it is reported Predicted rather than Stale.
+        glm::vec3 position = entity.position;
+        glm::vec3 velocity{0.0f, 0.0f, 0.0f};
+        const bool thrown = thrown_prop_render_transform(
+            entity,
+            snapshot.header.server_tick,
+            &position,
+            &velocity);
         render_states_.push_back(RenderEntityState{
             entity_id_for_net_id(entity.net_id),
             entity.net_id,
             static_cast<std::uint16_t>(entity.type),
             static_cast<std::uint16_t>(entity.actor_type),
             entity.owner_peer,
-            to_kernel_vec3(entity.position),
+            to_kernel_vec3(position),
             to_kernel_quat(entity.rotation),
-            KernelVec3{0.0f, 0.0f, 0.0f},
+            to_kernel_vec3(velocity),
             entity.hp_known ? entity.hp : static_cast<std::uint16_t>(0),
             entity.hp_known ? entity.max_hp : static_cast<std::uint16_t>(0),
             0,
             entity.hp_known ? 0u : kVisualFlagHpUnknown,
             0,
             0,
-            RenderEntityStatus_Stale,
+            thrown ? RenderEntityStatus_Predicted : RenderEntityStatus_Stale,
             render_template_id(entity),
             collider_template_id,
             KernelActionRuntimeView{sizeof(KernelActionRuntimeView)},

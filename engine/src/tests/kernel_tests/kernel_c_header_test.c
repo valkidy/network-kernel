@@ -6,8 +6,12 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 84u,
-    "area effect motion collision mask ABI");
+    KERNEL_ABI_VERSION == 85u,
+    "melee fire mode and melee collider template ABI");
+_Static_assert(
+    offsetof(KernelWeaponMechanicsDefinition, melee_collider_template_id) >
+        offsetof(KernelWeaponMechanicsDefinition, collision_mask),
+    "the melee collider template is appended");
 _Static_assert(
     offsetof(KernelAreaEffectMechanicsDefinition, motion_collision_mask) >
         offsetof(KernelAreaEffectMechanicsDefinition, collision_mask),

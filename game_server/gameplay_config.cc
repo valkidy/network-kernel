@@ -126,6 +126,7 @@ void hash_weapon(std::uint64_t* hash, const KernelWeaponMechanicsDefinition& wea
     hash_scalar(hash, weapon.fire_action_template_id);
     hash_scalar(hash, weapon.reload_action_template_id);
     hash_scalar(hash, weapon.collision_mask);
+    hash_scalar(hash, weapon.melee_collider_template_id);
 }
 
 void hash_action_template(
@@ -286,6 +287,7 @@ void hash_actor_template(
     hash_float(hash, actor_template.chaser.stop_distance_meters);
     hash_float(hash, actor_template.chaser.resume_distance_meters);
     hash_float(hash, actor_template.chaser.input_magnitude);
+    hash_float(hash, actor_template.chaser.attack_range_meters);
     hash_scalar(hash, actor_template.vision.camp);
     hash_scalar(hash, actor_template.vision.vision_collider_template_id);
     hash_scalar(hash, actor_template.vision.max_visible_hostiles);
@@ -532,6 +534,24 @@ KernelWeaponMechanicsDefinition area_effect_weapon(
     return weapon;
 }
 
+KernelWeaponMechanicsDefinition melee_weapon(
+    std::uint8_t weapon_id,
+    std::uint16_t magazine_size) {
+    KernelWeaponMechanicsDefinition weapon{};
+    weapon.struct_size = sizeof(KernelWeaponMechanicsDefinition);
+    weapon.weapon_id = weapon_id;
+    weapon.fire_mode = KernelWeaponFireMode_Melee;
+    weapon.magazine_size = magazine_size;
+    weapon.reserve_magazines = kDefaultReserveMagazines;
+    // damage, collision_mask and the collider binding are all left at zero:
+    // apply_weapon_template_references fills them from the shot template and
+    // the melee_collider this weapon names, the same way it does for a
+    // hitscan. max_range stays zero on purpose -- a melee weapon's reach is
+    // its cone's, and nothing reads this field for one.
+    weapon.pellet_count = 1;
+    return weapon;
+}
+
 KernelWeaponMechanicsDefinition beam_weapon(
     std::uint8_t weapon_id,
     std::uint16_t magazine_size) {
@@ -556,11 +576,18 @@ bool validate_weapon_mechanics(
          weapon.damage == 0) ||
         weapon.fire_action_template_id == 0u ||
         weapon.reload_action_template_id == 0u ||
-        weapon.fire_mode > KernelWeaponFireMode_Projectile) {
+        weapon.fire_mode > KernelWeaponFireMode_Melee) {
         return false;
     }
     if (weapon.fire_mode == KernelWeaponFireMode_Projectile) {
         return weapon.projectile_template_id != 0;
+    }
+    // A melee weapon's reach is the cone on the collider template it names, so
+    // it is deliberately not held to max_range the way the other instant modes
+    // are. Mirrors validate_weapon_mechanics on the kernel side.
+    if (weapon.fire_mode == KernelWeaponFireMode_Melee) {
+        return weapon.melee_collider_template_id != 0 &&
+               weapon.projectile_template_id != 0;
     }
     if (weapon.max_range <= 0.0f) {
         return false;
@@ -2137,6 +2164,7 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
             "pellet_count",
             "pellet_spread",
             "segment_collider",
+            "melee_collider",
             "projectile_template",
             "burst_count",
             "burst_spread_degrees",
@@ -2204,6 +2232,22 @@ KernelWeaponMechanicsDefinition weapon_from_yaml(
                 : 1;
         weapon.pellet_spread =
             node["burst_spread_degrees"] ? node["burst_spread_degrees"].as<float>() : 0.0f;
+        return weapon;
+    }
+    if (type == "melee") {
+        if (node["projectile"] || node["area_effect"] || node["beam"]) {
+            throw std::runtime_error(
+                "melee weapons must use melee_collider and projectile_template, "
+                "not inline mechanics");
+        }
+        if (!node["melee_collider"]) {
+            throw std::runtime_error("melee weapon requires melee_collider");
+        }
+        if (!node["projectile_template"]) {
+            throw std::runtime_error("melee weapon requires projectile_template");
+        }
+        KernelWeaponMechanicsDefinition weapon = melee_weapon(id, magazine_size);
+        weapon.reserve_magazines = reserve_magazines;
         return weapon;
     }
     if (type == "area_effect") {
@@ -2789,6 +2833,7 @@ AgentChaseTuning chaser_config_from_yaml(
             "stop_distance_meters",
             "resume_distance_meters",
             "input_magnitude",
+            "attack_range_meters",
         },
         path,
         source_kind,
@@ -2804,6 +2849,10 @@ AgentChaseTuning chaser_config_from_yaml(
     }
     if (chaser_node["input_magnitude"]) {
         chaser.input_magnitude = chaser_node["input_magnitude"].as<float>();
+    }
+    if (chaser_node["attack_range_meters"]) {
+        chaser.attack_range_meters =
+            chaser_node["attack_range_meters"].as<float>();
     }
     return chaser;
 }
@@ -6363,6 +6412,37 @@ void apply_weapon_template_references(
             continue;
         }
 
+        if (type == "melee") {
+            if (!document["melee_collider"]) {
+                throw std::runtime_error(
+                    "melee weapon requires melee_collider: " + file);
+            }
+            // The cone. Both the reach and the angle live on it, which is why
+            // a melee weapon authors no max_range: one shape, one place.
+            const std::uint32_t template_id =
+                collider_template_id_from_ref(document["melee_collider"], colliders);
+            weapons->definitions[weapon_id].melee_collider_template_id = template_id;
+            weapons->collider_template_ids[weapon_id] = template_id;
+            // A melee weapon spawns nothing, exactly as an instant one does
+            // not, and its swing is still described by a projectile template
+            // for the same reason: damage and target mask are authored in one
+            // place whatever the fire mode. max_hit_count and the falloff are
+            // read from that template at swing time as well.
+            ProjectileTemplateConfig* shot_template =
+                projectile_template_from_ref(
+                    document["projectile_template"],
+                    projectile_templates);
+            KernelWeaponMechanicsDefinition& melee =
+                weapons->definitions[weapon_id];
+            shot_template->definition.weapon_id = weapon_id;
+            melee.projectile_template_id =
+                shot_template->definition.projectile_template_id;
+            melee.damage = shot_template->definition.mechanics.damage;
+            melee.collision_mask =
+                shot_template->definition.mechanics.collision_mask;
+            continue;
+        }
+
         if (type == "projectile" || type == "area_effect" || type == "beam") {
             ProjectileTemplateConfig* projectile_template =
                 projectile_template_from_ref(
@@ -7499,6 +7579,17 @@ std::vector<std::string> validate_gameplay_config(
                  actor_template.chaser.stop_distance_meters ||
              actor_template.chaser.input_magnitude <= 0.0f ||
              actor_template.chaser.input_magnitude > 1.0f ||
+             !std::isfinite(actor_template.chaser.attack_range_meters) ||
+             // Zero is the no-gate default, so only a negative one is wrong.
+             actor_template.chaser.attack_range_meters < 0.0f ||
+             // Holding persists out to resume_distance, so a resume beyond the
+             // attack range leaves a band where the agent has stopped chasing
+             // and cannot yet attack: it parks and does nothing until the
+             // target walks far enough to restart the chase. Only checked when
+             // a range is authored at all -- zero means no gate and no band.
+             (actor_template.chaser.attack_range_meters > 0.0f &&
+              actor_template.chaser.resume_distance_meters >
+                  actor_template.chaser.attack_range_meters) ||
              actor_template.sentry.passive_patrol ||
              !std::isfinite(actor_template.sentry.move_speed_meters_per_second) ||
              actor_template.sentry.move_speed_meters_per_second <= 0.0f)) {
@@ -7564,8 +7655,12 @@ std::vector<std::string> validate_gameplay_config(
             // not authored here.
             (definition.shape_type == KernelColliderShapeType_Segment &&
              definition.shape_params.y < 0.0f) ||
+            // Mirrors the kernel-side cone check: vision and melee are the
+            // two consumers that resolve a cone as a bounding query plus an
+            // angle test, and nothing honours any other purpose on one.
             (definition.shape_type == KernelColliderShapeType_Cone &&
-             ((definition.purpose_flags & KernelColliderPurpose_Vision) == 0u ||
+             ((definition.purpose_flags &
+               (KernelColliderPurpose_Vision | KernelColliderPurpose_Damage)) == 0u ||
               definition.shape_params.x <= 0.0f ||
               definition.shape_params.y <= 0.0f ||
               definition.shape_params.y > 360.0f))) {
