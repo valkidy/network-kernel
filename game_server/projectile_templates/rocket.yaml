@@ -1,7 +1,16 @@
 id: 3
 name: rocket_projectile
 damage: 45
-sync_mode: server_snapshot_only
+# Linear, zero gravity, constant speed: the path is a closed-form function of
+# spawn position and initial velocity, so there is nothing here a client
+# cannot reproduce. Held at server_snapshot_only it had no local prediction
+# at all (kernel.cc: a ServerSnapshotOnly template never becomes a
+# PredictedProjectile), which left it drawn purely from the budgeted
+# snapshot rotation -- weight 1 against an actor's 8 -- and a crowd of
+# agents starved it down to the kMaxSnapshotsWithoutSend floor. Hybrid is
+# what NETCODE_SYNC_POLICY.md already calls this weapon: predict the flight
+# locally, keep the snapshot as the authoritative correction.
+sync_mode: hybrid_deterministic_then_snapshot
 collider_template: rocket_aabb
 movement_model: linear
 hit_response: destroy
