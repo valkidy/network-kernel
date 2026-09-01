@@ -2629,6 +2629,156 @@ void reliable_prop_state_overrides_older_snapshot_and_survives_omission() {
     require(states[0].hp == 3);
 }
 
+// A throw is closed-form on the server, so the client can draw the curve
+// instead of waiting for the send set to sample it. That matters because a prop
+// carries snapshot weight 1: among a crowd of actors it can go the full
+// kMaxSnapshotsWithoutSend between samples, and the interpolator renders a gap
+// like that as hold-then-jump. Here every snapshot after the throw omits the
+// prop entirely, which is the starved case, and the render still has to move
+// along the trajectory the item's throw policy names.
+void thrown_prop_renders_its_trajectory_while_snapshots_omit_it() {
+    KernelConfig config{};
+    config.mode = KernelMode_Client;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 15;
+
+    network_example::KernelEngine client(config);
+    client.reset_runtime_state(KernelMode_Client);
+
+    constexpr std::uint32_t kTrajectoryTemplateId = 21;
+    constexpr std::uint32_t kEntityTemplateId = 7;
+    const glm::vec3 anchor_position{0.0f, 1.0f, 0.0f};
+    const glm::vec3 anchor_velocity{24.0f, 6.0f, 0.0f};
+    const glm::vec3 gravity{0.0f, -9.81f, 0.0f};
+
+    KernelProjectileTemplateDefinition trajectory{};
+    trajectory.struct_size = sizeof(trajectory);
+    trajectory.projectile_template_id = kTrajectoryTemplateId;
+    trajectory.mechanics.struct_size = sizeof(trajectory.mechanics);
+    trajectory.mechanics.motion_model = KernelProjectileMotionModel_Parabolic;
+    trajectory.mechanics.sync_mode =
+        KernelProjectileSyncMode_LocalPredictedDeterministic;
+    trajectory.mechanics.speed = 24.0f;
+    trajectory.mechanics.gravity = KernelVec3{gravity.x, gravity.y, gravity.z};
+    client.projectile_templates_.push_back(trajectory);
+
+    KernelEntityTemplateDefinition entity_template{};
+    entity_template.struct_size = sizeof(entity_template);
+    entity_template.entity_template_id = kEntityTemplateId;
+    entity_template.entity_type =
+        static_cast<std::uint16_t>(network_example::EntityType::kProp);
+    entity_template.prop.struct_size = sizeof(entity_template.prop);
+    entity_template.prop.throw_trajectory_projectile_template_id =
+        kTrajectoryTemplateId;
+    client.entity_templates_.push_back(entity_template);
+
+    network_example::EntitySpawnPacket spawn{};
+    spawn.net_id = 51;
+    spawn.entity_type = network_example::EntityType::kProp;
+    spawn.server_tick = 10;
+    spawn.position = anchor_position;
+    spawn.entity_template_id = kEntityTemplateId;
+    spawn.item_template_id = 13;
+    spawn.item_instance_id = 1001;
+    spawn.world_item_mode = KernelWorldItemMode_InFlight;
+    client.handle_client_spawn(spawn);
+
+    // The one snapshot that carries the prop. Everything after it omits the
+    // record, which is what the weighted rotation does under load.
+    network_example::WorldSnapshot thrown;
+    thrown.header.server_tick = 10;
+    network_example::EntitySnapshot prop;
+    prop.net_id = 51;
+    prop.type = network_example::EntityType::kProp;
+    prop.position = anchor_position;
+    prop.velocity = anchor_velocity;
+    thrown.entities.push_back(prop);
+    client.handle_client_snapshot(thrown);
+
+    network_example::PropStateChangeBatchPacket throw_batch{};
+    throw_batch.server_tick = 10;
+    network_example::PropStateChangeRecord throw_record{};
+    throw_record.net_id = 51;
+    throw_record.changed_fields = network_example::kPropStateChangeMode |
+        network_example::kPropStateChangeTransform |
+        network_example::kPropStateChangeVelocity;
+    throw_record.world_mode = KernelWorldItemMode_InFlight;
+    throw_record.position = anchor_position;
+    throw_record.rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+    throw_record.velocity = anchor_velocity;
+    throw_batch.records.push_back(throw_record);
+    client.handle_client_prop_state_change_batch(throw_batch);
+
+    for (std::uint32_t tick = 11; tick <= 40; ++tick) {
+        network_example::WorldSnapshot omitted;
+        omitted.header.server_tick = tick;
+        client.handle_client_snapshot(omitted);
+    }
+
+    // Deliberately not asserting a particular server tick: which one a render
+    // instant resolves to is the interpolation delay's business, not this
+    // test's. What has to hold is that the rendered point is on the throw's
+    // parabola at some elapsed time strictly after the anchor -- a frozen
+    // sample sits at elapsed zero, and a jumped one is off the curve entirely.
+    const auto on_trajectory_elapsed_seconds =
+        [&](const KernelVec3& position) {
+            const float elapsed = (position.x - anchor_position.x) /
+                anchor_velocity.x;
+            const float expected_y = anchor_position.y +
+                anchor_velocity.y * elapsed +
+                0.5f * gravity.y * elapsed * elapsed;
+            require(std::fabs(position.y - expected_y) < 0.001f);
+            require(std::fabs(position.z - anchor_position.z) < 0.001f);
+            return elapsed;
+        };
+
+    std::array<RenderEntityState, 4> states{};
+    std::uint32_t count =
+        client.get_render_states_at_time(700000, states.data(), states.size());
+    require(count == 1);
+    require(states[0].net_id == 51);
+    require(states[0].world_item_mode == KernelWorldItemMode_InFlight);
+    const float first_elapsed = on_trajectory_elapsed_seconds(states[0].position);
+    require(first_elapsed > 0.0f);
+
+    // And it keeps moving along that curve as the world advances -- more
+    // snapshots arrive, still none of them carrying this prop, which is the
+    // starvation being reproduced. Without clock sync the render instant is
+    // derived from the newest snapshot rather than from the time passed in, so
+    // advancing it means feeding snapshots, not asking for a later instant.
+    for (std::uint32_t tick = 41; tick <= 50; ++tick) {
+        network_example::WorldSnapshot omitted;
+        omitted.header.server_tick = tick;
+        client.handle_client_snapshot(omitted);
+    }
+    count = client.get_render_states_at_time(900000, states.data(), states.size());
+    require(count == 1);
+    const float second_elapsed = on_trajectory_elapsed_seconds(states[0].position);
+    require(second_elapsed > first_elapsed);
+
+    // Landing clears the anchor: a placed prop is wherever the server says it
+    // came to rest, not wherever the parabola would have carried it.
+    network_example::PropStateChangeBatchPacket landed{};
+    landed.server_tick = 51;
+    network_example::PropStateChangeRecord landed_record{};
+    landed_record.net_id = 51;
+    landed_record.changed_fields = network_example::kPropStateChangeMode |
+        network_example::kPropStateChangeTransform |
+        network_example::kPropStateChangeVelocity;
+    landed_record.world_mode = KernelWorldItemMode_Placed;
+    landed_record.position = glm::vec3{12.0f, 0.0f, 0.0f};
+    landed_record.rotation = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
+    landed_record.velocity = glm::vec3{0.0f};
+    landed.records.push_back(landed_record);
+    client.handle_client_prop_state_change_batch(landed);
+
+    count = client.get_render_states_at_time(1400000, states.data(), states.size());
+    require(count == 1);
+    require(states[0].world_item_mode == KernelWorldItemMode_Placed);
+    require(std::fabs(states[0].position.x - 12.0f) < 0.001f);
+    require(std::fabs(states[0].position.y) < 0.001f);
+}
+
 void destroyed_tombstone_blocks_older_snapshot_render() {
     KernelConfig config{};
     config.mode = KernelMode_Client;
@@ -4614,6 +4764,7 @@ int main() {
     out_of_range_despawn_keeps_local_deterministic_predicted_projectile();
     budget_omitted_projectile_snapshot_does_not_delete_bound_prediction();
     reliable_prop_state_overrides_older_snapshot_and_survives_omission();
+    thrown_prop_renders_its_trajectory_while_snapshots_omit_it();
     pure_prop_render_uses_entity_template_as_template_id();
     destroyed_tombstone_blocks_older_snapshot_render();
     out_of_range_tombstone_does_not_fail_client_prediction();

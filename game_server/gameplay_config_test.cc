@@ -2170,10 +2170,19 @@ int main() {
     assert(config_enemy_template->sentry.patrol_rotation_interval_ticks == 30);
     assert(config_enemy_template->sentry.patrol_rotation_min_degrees == 15.0f);
     assert(config_enemy_template->sentry.patrol_rotation_max_degrees == 30.0f);
+    // Hybrid, not server-only. The rocket's path is linear at a constant speed
+    // with no gravity, so a client can reproduce it from the spawn record
+    // alone; held at server-only it was never made a PredictedProjectile at
+    // all, and the only thing drawing it was the budgeted snapshot rotation,
+    // where a projectile carries weight 1 against an actor's 8. A crowd of
+    // agents therefore starved it down to the kMaxSnapshotsWithoutSend floor
+    // and the interpolator drew the gaps as hold-then-jump. Beams are what
+    // genuinely need server-only here: their reach depends on what blocks them,
+    // which is not derivable client-side.
     assert(
         config.weapons
             .projectile_sync_modes[network_example::game_server::kWeaponRocket] ==
-        KernelProjectileSyncMode_ServerSnapshotOnly);
+        KernelProjectileSyncMode_HybridDeterministicThenSnapshot);
     // Counts the collider_templates/ directory, which the bundle now enumerates
     // rather than lists, so this tracks the filesystem.
     assert(config.colliders.templates.size() == 18);
