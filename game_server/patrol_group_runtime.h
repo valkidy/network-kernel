@@ -9,6 +9,18 @@
 
 namespace network_example::game_server {
 
+// Per squad, not per runtime: two definitions can want different speeds, and a
+// runtime-wide setting would silently give both whichever one was constructed
+// with.
+struct PatrolGroupTuning {
+    // How fast the squad's cursor walks the route. Below the members' move
+    // speed on purpose: a cursor that moves as fast as they do leaves them
+    // permanently chasing it, and every slot permanently unreached.
+    float advance_speed_meters_per_second = 1.25f;
+    // How close the cursor has to get to a waypoint to move on to the next.
+    float waypoint_radius_meters = 0.5f;
+};
+
 // A squad walking one route together.
 //
 // The route lives here rather than on its members because it is one route, not
@@ -36,6 +48,10 @@ struct PatrolGroup {
     // sideways.
     KernelVec3 cursor{0.0f, 0.0f, 0.0f};
     bool route_complete = false;
+    // Ticks since the route was walked out, which is what a retirement linger
+    // counts. Frozen while the squad is fighting, so a squad that finishes its
+    // route mid-engagement does not have its linger run out during the fight.
+    std::uint32_t ticks_since_route_complete = 0;
     // Whether the squad held station last tick because one of its own was
     // fighting. Kept for the caller to read; the tick recomputes it.
     bool holding = false;
@@ -45,22 +61,13 @@ struct PatrolGroup {
     // turns instead of shearing into world axes.
     std::vector<std::uint32_t> member_net_ids;
     std::vector<KernelVec3> member_offsets;
+    PatrolGroupTuning tuning{};
 };
 
-struct PatrolGroupTuning {
-    // How fast the squad's cursor walks the route. Below the members' move
-    // speed on purpose: a cursor that moves as fast as they do leaves them
-    // permanently chasing it, and every slot permanently unreached.
-    float advance_speed_meters_per_second = 1.25f;
-    // How close the cursor has to get to a waypoint to move on to the next.
-    float waypoint_radius_meters = 0.5f;
-};
 
 // Owns the live squads and, once per tick, tells every member where to stand.
 class PatrolGroupRuntime {
 public:
-    explicit PatrolGroupRuntime(PatrolGroupTuning tuning = {});
-
     // `origin` is where the squad starts walking from -- normally where it
     // spawned, which is not the first waypoint, so the first leg is walked
     // rather than skipped. Returns the group id, or 0 if the request was not
@@ -70,7 +77,8 @@ public:
         std::vector<KernelVec3> waypoints,
         const KernelVec3& origin,
         const std::vector<std::uint32_t>& member_net_ids,
-        const std::vector<KernelVec3>& member_offsets);
+        const std::vector<KernelVec3>& member_offsets,
+        PatrolGroupTuning tuning = {});
 
     // Advances each squad and writes its members' slots. Members that no longer
     // appear in `agents` are dropped, which is how a squad shrinks as it takes
@@ -82,7 +90,6 @@ public:
     void remove_group(std::uint32_t group_id);
 
 private:
-    PatrolGroupTuning tuning_;
     std::vector<PatrolGroup> groups_;
     std::uint32_t next_group_id_ = 1;
 };

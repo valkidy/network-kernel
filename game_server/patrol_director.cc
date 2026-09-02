@@ -13,6 +13,10 @@ namespace {
 
 constexpr float kPi = 3.14159265358979323846f;
 constexpr KernelQuat kIdentityRotation{0.0f, 0.0f, 0.0f, 1.0f};
+// The lifecycle command's `reason` is an opaque caller-chosen tag -- the kernel
+// stores and reports it without attaching any meaning -- so this only has to be
+// distinguishable from whatever else destroys an entity.
+constexpr std::uint32_t kPatrolRetiredReason = 2;
 // A route of two points is the whole of the degenerate navigation this ships
 // with: a straight chord, walked with the character controller absorbing slopes
 // and steps. //game_server:patrol_nav_bench measured what that costs -- on flat
@@ -172,8 +176,12 @@ std::vector<KernelVec3> formation_offsets(std::uint32_t count, float spacing) {
     return offsets;
 }
 
-PatrolDirector::PatrolDirector(std::vector<PatrolDefinitionConfig> definitions)
-    : definitions_(std::move(definitions)), runtimes_(definitions_.size()) {
+PatrolDirector::PatrolDirector(
+    std::vector<PatrolDefinitionConfig> definitions,
+    PatrolBudgetConfig budget)
+    : definitions_(std::move(definitions)),
+      budget_(budget),
+      runtimes_(definitions_.size()) {
     for (std::size_t index = 0; index < definitions_.size(); ++index) {
         // Staggered by one interval rather than firing on tick zero, so that a
         // server which has just started does not put every patrol in the world
@@ -185,6 +193,12 @@ PatrolDirector::PatrolDirector(std::vector<PatrolDefinitionConfig> definitions)
 void PatrolDirector::tick(KernelHandle* kernel, PatrolGroupRuntime* groups) {
     if (kernel == nullptr || groups == nullptr) {
         return;
+    }
+    retire_finished_patrols(kernel, groups);
+
+    std::uint32_t live_agents = 0;
+    for (const PatrolGroup& group : groups->groups()) {
+        live_agents += static_cast<std::uint32_t>(group.member_net_ids.size());
     }
     for (std::size_t index = 0; index < definitions_.size(); ++index) {
         const PatrolDefinitionConfig& definition = definitions_[index];
@@ -205,9 +219,130 @@ void PatrolDirector::tick(KernelHandle* kernel, PatrolGroupRuntime* groups) {
             // taken as soon as it appears rather than a whole interval later.
             continue;
         }
+        // Against the largest squad this definition could draw, not the one it
+        // is about to: a budget that admitted a spawn and then found out it had
+        // overshot would have nothing useful to do about it.
+        if (budget_.max_live_agents != 0 &&
+            live_agents + definition.count_max > budget_.max_live_agents) {
+            continue;
+        }
         if (spawn_patrol(kernel, groups, definition, &runtime)) {
             runtime.ticks_until_spawn = definition.interval_ticks;
+            live_agents += definition.count_max;
         }
+    }
+}
+
+
+namespace {
+
+// Squared, because this is only ever compared against another distance.
+float horizontal_distance_squared(const KernelVec3& from, const KernelVec3& to) {
+    const float delta_x = to.x - from.x;
+    const float delta_z = to.z - from.z;
+    return delta_x * delta_x + delta_z * delta_z;
+}
+
+// How far the nearest player is from a point, or a negative number when there
+// are no players at all -- which is not "infinitely far" for retirement
+// purposes: an empty server should not sweep its patrols away, because the
+// distance rule is about a squad nobody can see rather than about a squad
+// nobody owns.
+float nearest_player_distance(
+    KernelHandle* kernel,
+    const KernelVec3& from,
+    std::vector<KernelServerEntityState>* buffer) {
+    if (buffer->size() < 64) {
+        buffer->resize(64);
+    }
+    while (true) {
+        for (KernelServerEntityState& state : *buffer) {
+            state.struct_size = sizeof(KernelServerEntityState);
+        }
+        const std::uint32_t count = Kernel_ServerQueryEntities(
+            kernel,
+            kEntityTypeActor,
+            buffer->data(),
+            static_cast<std::uint32_t>(buffer->size()));
+        // Same truncation trap AgentRuntimeManager::query_actor_states
+        // documents: the query reports what it wrote, never what it had, so a
+        // full buffer is indistinguishable from a truncated one.
+        if (count >= buffer->size() && buffer->size() < 4096) {
+            buffer->resize(buffer->size() * 2);
+            continue;
+        }
+        float nearest = -1.0f;
+        for (std::uint32_t index = 0; index < count; ++index) {
+            const KernelServerEntityState& state = (*buffer)[index];
+            if (state.valid == 0u || state.actor_type != kActorTypePlayer) {
+                continue;
+            }
+            const float distance = std::sqrt(
+                horizontal_distance_squared(from, state.position));
+            if (nearest < 0.0f || distance < nearest) {
+                nearest = distance;
+            }
+        }
+        return nearest;
+    }
+}
+
+}  // namespace
+
+void PatrolDirector::retire_finished_patrols(
+    KernelHandle* kernel,
+    PatrolGroupRuntime* groups) {
+    std::vector<std::uint32_t> retiring;
+    std::vector<KernelServerEntityState> actor_states;
+    for (const PatrolGroup& group : groups->groups()) {
+        const auto definition = std::find_if(
+            definitions_.begin(),
+            definitions_.end(),
+            [&group](const PatrolDefinitionConfig& candidate) {
+                return candidate.id == group.definition_id;
+            });
+        if (definition == definitions_.end()) {
+            continue;
+        }
+        // A squad in a fight is never retired, whichever rule would have
+        // retired it. Despawning enemies out from under the player who is
+        // shooting at them is worse than any population it would have saved.
+        if (group.holding) {
+            continue;
+        }
+        bool retire = group.route_complete &&
+            group.ticks_since_route_complete >= definition->despawn_linger_ticks;
+        if (!retire && definition->despawn_distance_meters > 0.0f) {
+            const float nearest =
+                nearest_player_distance(kernel, group.cursor, &actor_states);
+            retire = nearest >= 0.0f &&
+                nearest > definition->despawn_distance_meters;
+        }
+        if (retire) {
+            retiring.push_back(group.group_id);
+        }
+    }
+
+    for (const std::uint32_t group_id : retiring) {
+        const PatrolGroup* group = groups->find_group(group_id);
+        if (group == nullptr) {
+            continue;
+        }
+        for (const std::uint32_t net_id : group->member_net_ids) {
+            KernelEntityLifecycleCommand command{};
+            command.struct_size = sizeof(command);
+            command.command_type = KernelEntityLifecycleCommandType_Destroy;
+            command.net_id = net_id;
+            command.reason = kPatrolRetiredReason;
+            Kernel_ServerEnqueueEntityLifecycle(
+                kernel, KernelCommandSource_Internal, &command);
+        }
+        spdlog::info(
+            "patrol retired group={} members={}",
+            group_id,
+            group->member_net_ids.size());
+        groups->remove_group(group_id);
+        ++retired_group_count_;
     }
 }
 
@@ -287,7 +422,8 @@ bool PatrolDirector::spawn_patrol(
         std::move(waypoints),
         route_start,
         member_net_ids,
-        member_offsets);
+        member_offsets,
+        definition.group);
     if (group_id == 0) {
         return false;
     }
@@ -314,6 +450,10 @@ const std::vector<PatrolDefinitionConfig>& PatrolDirector::definitions() const {
 
 std::uint32_t PatrolDirector::spawned_group_count() const {
     return spawned_group_count_;
+}
+
+std::uint32_t PatrolDirector::retired_group_count() const {
+    return retired_group_count_;
 }
 
 }  // namespace network_example::game_server

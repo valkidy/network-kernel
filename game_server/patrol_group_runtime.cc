@@ -49,15 +49,13 @@ AgentRuntimeState* find_agent(
 
 }  // namespace
 
-PatrolGroupRuntime::PatrolGroupRuntime(PatrolGroupTuning tuning)
-    : tuning_(tuning) {}
-
 std::uint32_t PatrolGroupRuntime::create_group(
     std::uint32_t definition_id,
     std::vector<KernelVec3> waypoints,
     const KernelVec3& origin,
     const std::vector<std::uint32_t>& member_net_ids,
-    const std::vector<KernelVec3>& member_offsets) {
+    const std::vector<KernelVec3>& member_offsets,
+    PatrolGroupTuning tuning) {
     if (waypoints.empty() || member_net_ids.empty() ||
         member_net_ids.size() != member_offsets.size()) {
         return 0;
@@ -69,6 +67,7 @@ std::uint32_t PatrolGroupRuntime::create_group(
     group.cursor = origin;
     group.member_net_ids = member_net_ids;
     group.member_offsets = member_offsets;
+    group.tuning = tuning;
     groups_.push_back(std::move(group));
     return groups_.back().group_id;
 }
@@ -130,7 +129,7 @@ void PatrolGroupRuntime::tick(
         }
 
         if (!group.holding && !group.route_complete) {
-            float remaining = tuning_.advance_speed_meters_per_second * delta_seconds;
+            float remaining = group.tuning.advance_speed_meters_per_second * delta_seconds;
             // A loop rather than one step, so a tick long enough to cross a
             // whole leg does not leave the cursor stalled on a waypoint it has
             // already passed.
@@ -139,7 +138,7 @@ void PatrolGroupRuntime::tick(
                 const KernelVec3& waypoint = group.waypoints[group.next_waypoint];
                 const float distance =
                     agent_steering::horizontal_distance(group.cursor, waypoint);
-                if (distance <= tuning_.waypoint_radius_meters) {
+                if (distance <= group.tuning.waypoint_radius_meters) {
                     ++group.next_waypoint;
                     continue;
                 }
@@ -154,6 +153,9 @@ void PatrolGroupRuntime::tick(
             if (group.next_waypoint >= group.waypoints.size()) {
                 group.route_complete = true;
             }
+        }
+        if (group.route_complete && !group.holding) {
+            ++group.ticks_since_route_complete;
         }
 
         for (std::size_t member = 0; member < group.member_net_ids.size();

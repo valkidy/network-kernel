@@ -366,6 +366,7 @@ struct GameServerGameplayConfig {
     // AgentSentryConfig is authored, validated and hashed here while living
     // entirely outside the kernel ABI.
     std::vector<PatrolDefinitionConfig> patrols;
+    PatrolBudgetConfig patrol_budget;
     std::vector<std::uint32_t> preload_director_template_ids;
     std::vector<EntityTemplateConfig> entity_templates;
     std::vector<ActorTemplateConfig> actor_templates;

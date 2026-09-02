@@ -6657,6 +6657,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             "enemy",
             "preload_directors",
             "patrols",
+            "patrol_budget",
         },
         path,
         source.source_kind(),
@@ -6999,6 +7000,19 @@ void apply_catalog_patrol_config(
     GameServerGameplayConfig* config,
     const std::string& path,
     std::uint32_t source_kind) {
+    const YAML::Node budget = document["patrol_budget"];
+    if (budget) {
+        reject_unknown_keys(
+            budget,
+            {"max_live_agents"},
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+        if (budget["max_live_agents"]) {
+            config->patrol_budget.max_live_agents =
+                budget["max_live_agents"].as<std::uint32_t>();
+        }
+    }
     const YAML::Node patrols = document["patrols"];
     if (!patrols) {
         return;
@@ -7022,6 +7036,8 @@ void apply_catalog_patrol_config(
                 "formation_spacing_meters",
                 "advance_speed_meters_per_second",
                 "waypoint_radius_meters",
+                "despawn_linger_ticks",
+                "despawn_distance_meters",
             },
             path,
             source_kind,
@@ -7060,6 +7076,14 @@ void apply_catalog_patrol_config(
         if (node["waypoint_radius_meters"]) {
             patrol.group.waypoint_radius_meters =
                 node["waypoint_radius_meters"].as<float>();
+        }
+        if (node["despawn_linger_ticks"]) {
+            patrol.despawn_linger_ticks =
+                node["despawn_linger_ticks"].as<std::uint32_t>();
+        }
+        if (node["despawn_distance_meters"]) {
+            patrol.despawn_distance_meters =
+                node["despawn_distance_meters"].as<float>();
         }
         const YAML::Node count = node["count"];
         if (!count) {
@@ -7366,6 +7390,8 @@ std::uint64_t compute_gameplay_catalog_hash(
         hash_float(&hash, patrol.formation_spacing_meters);
         hash_float(&hash, patrol.group.advance_speed_meters_per_second);
         hash_float(&hash, patrol.group.waypoint_radius_meters);
+        hash_scalar(&hash, patrol.despawn_linger_ticks);
+        hash_float(&hash, patrol.despawn_distance_meters);
         for (const PatrolCompositionEntry& entry : patrol.composition) {
             hash_string(&hash, entry.entity_template_ref);
             hash_scalar(&hash, entry.entity_template_id);
@@ -7373,6 +7399,7 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_scalar(&hash, entry.max_count);
         }
     }
+    hash_scalar(&hash, config.patrol_budget.max_live_agents);
     hash_string(&hash, config.static_collision_scene.entry_path);
     hash_scalar(&hash, config.static_collision_scene.scene_id);
     hash_scalar(&hash, config.static_collision_scene.collider_id);

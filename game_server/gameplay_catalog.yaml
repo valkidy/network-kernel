@@ -43,6 +43,11 @@ enemy:
 # The route is a straight chord between two points in the area, which is exactly
 # a pathed route on this map -- plane_200x200 is flat -- and wrong the day the
 # map is not. See //game_server:patrol_nav_bench.
+#
+# A ceiling across every definition, which is the one thing the per-definition
+# ceilings below cannot express.
+patrol_budget:
+  max_live_agents: 48
 patrols:
   - id: 1
     name: grunt_sweep
@@ -51,11 +56,10 @@ patrols:
       center: {x: 0.0, y: 0.0, z: 0.0}
       half_extents: {x: 40.0, y: 0.0, z: 40.0}
     seed: 7717
-    # Every 30 s at 30 Hz, and one squad at a time. Nothing despawns a squad
-    # that has walked its route out yet, so a second one would arrive to find
-    # the first still counting against this ceiling.
+    # Every 30 s at 30 Hz, and two squads at a time now that a finished squad
+    # retires and gives its place back.
     interval_ticks: 900
-    max_live_groups: 1
+    max_live_groups: 2
     count: {min: 4, max: 6}
     composition:
       - entity_template: chaser_grunt
@@ -64,3 +68,9 @@ patrols:
     formation_spacing_meters: 1.5
     advance_speed_meters_per_second: 1.25
     waypoint_radius_meters: 0.5
+    # Ten seconds standing at the end of the route before the squad goes, so it
+    # does not vanish in front of whoever walked it down.
+    despawn_linger_ticks: 300
+    # And gone early if nobody is within 120 m, which on a 200 m map means a
+    # squad on the far side of it. Never while it is fighting.
+    despawn_distance_meters: 120.0

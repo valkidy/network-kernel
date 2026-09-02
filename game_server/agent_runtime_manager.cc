@@ -69,7 +69,7 @@ AgentRuntimeManager::AgentRuntimeManager(
     GameServerGameplayConfig config)
     : kernel_(kernel), config_(std::move(config)) {
     build_controllers();
-    patrol_director_ = PatrolDirector(config_.patrols);
+    patrol_director_ = PatrolDirector(config_.patrols, config_.patrol_budget);
 }
 
 void AgentRuntimeManager::build_controllers() {

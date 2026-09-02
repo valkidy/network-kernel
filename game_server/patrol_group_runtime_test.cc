@@ -59,7 +59,7 @@ int main() {
     PatrolGroupTuning tuning;
     tuning.advance_speed_meters_per_second = 3.0f;
     tuning.waypoint_radius_meters = 0.5f;
-    PatrolGroupRuntime runtime(tuning);
+    PatrolGroupRuntime runtime;
 
     std::vector<AgentRuntimeState> agents{agent(1), agent(2), agent(3)};
 
@@ -71,7 +71,8 @@ int main() {
         {KernelVec3{10.0f, 0.0f, 0.0f}, KernelVec3{10.0f, 0.0f, 10.0f}},
         KernelVec3{0.0f, 0.0f, 0.0f},
         {1u, 2u, 3u},
-        wedge_offsets());
+        wedge_offsets(),
+        tuning);
     require(group_id != 0);
 
     // A route with no waypoints, or a member list that does not line up with

@@ -11,6 +11,7 @@
 #include "game_server/agent_runtime.h"
 #include "game_server/patrol_group_runtime.h"
 #include "kernel/public/kernel_api.h"
+#include "kernel/src/kernel_api_internal.h"
 
 namespace {
 
@@ -455,6 +456,309 @@ void the_same_seed_spawns_the_same_squad() {
     require(varied);
 }
 
+
+// Walks until the squad's route is finished, and no further -- the linger
+// starts counting the moment it is, so overshooting here would spend it.
+void walk_until_route_complete(
+    network_example::game_server::PatrolGroupRuntime* groups,
+    std::vector<network_example::game_server::AgentRuntimeState>* agents) {
+    for (int tick = 0; tick < 500; ++tick) {
+        if (!groups->groups().empty() && groups->groups()[0].route_complete) {
+            return;
+        }
+        groups->tick(agents, 1.0f / 30.0f);
+    }
+}
+
+// Walks a squad's route out by ticking the group runtime, which is what moves
+// the cursor and starts the retirement linger counting.
+void walk_route_out(
+    network_example::game_server::PatrolGroupRuntime* groups,
+    std::vector<network_example::game_server::AgentRuntimeState>* agents,
+    int ticks) {
+    for (int tick = 0; tick < ticks; ++tick) {
+        groups->tick(agents, 1.0f / 30.0f);
+    }
+}
+
+std::vector<network_example::game_server::AgentRuntimeState> members_of(
+    const network_example::game_server::PatrolGroup& group) {
+    std::vector<network_example::game_server::AgentRuntimeState> agents;
+    for (const std::uint32_t net_id : group.member_net_ids) {
+        network_example::game_server::AgentRuntimeState agent;
+        agent.net_id = net_id;
+        agents.push_back(agent);
+    }
+    return agents;
+}
+
+// A finished squad goes, and its entities go with it. Without this a
+// definition's live ceiling fills with squads standing at the end of their
+// route and never spawns again -- which is what the previous phase shipped.
+void a_finished_patrol_retires_after_its_linger() {
+    using network_example::game_server::AgentSentryState;
+    using network_example::game_server::PatrolDirector;
+    using network_example::game_server::PatrolGroupRuntime;
+
+    const KernelConfig config = server_config();
+    KernelHandle* kernel = Kernel_Create(&config);
+    require(kernel != nullptr);
+    require(Kernel_StartDedicatedServer(kernel, 7826));
+    load_catalog(kernel);
+
+    PatrolDefinitionConfig definition = mixed_definition();
+    definition.interval_ticks = 1;
+    definition.max_live_groups = 1;
+    definition.despawn_linger_ticks = 10;
+    // Fast enough that walking the route out is a handful of ticks rather than
+    // the three quarters of a minute the shipping cadence takes.
+    definition.group.advance_speed_meters_per_second = 200.0f;
+    PatrolDirector director({definition});
+    PatrolGroupRuntime groups;
+
+    director.tick(kernel, &groups);
+    director.tick(kernel, &groups);
+    require(groups.groups().size() == 1u);
+    const std::vector<std::uint32_t> members = groups.groups()[0].member_net_ids;
+    std::vector<network_example::game_server::AgentRuntimeState> agents =
+        members_of(groups.groups()[0]);
+
+    // Finished, but still inside the linger: it stays.
+    walk_until_route_complete(&groups, &agents);
+    require(groups.groups()[0].route_complete);
+    require(
+        groups.groups()[0].ticks_since_route_complete <
+        definition.despawn_linger_ticks);
+    director.tick(kernel, &groups);
+    require(groups.groups().size() == 1u);
+    require(director.retired_group_count() == 0u);
+
+    walk_route_out(&groups, &agents, 20);
+    director.tick(kernel, &groups);
+    Kernel_Update(kernel, 1.0f / 30.0f);
+    require(director.retired_group_count() == 1u);
+
+    // The entities are actually gone, not just the bookkeeping.
+    for (const std::uint32_t net_id : members) {
+        KernelServerEntityState state{};
+        state.struct_size = sizeof(state);
+        const bool found = Kernel_ServerGetEntityState(kernel, net_id, &state);
+        require(!found || state.valid == 0u);
+    }
+
+    // And the freed place is taken, which is the whole point of retiring.
+    director.tick(kernel, &groups);
+    require(groups.groups().size() == 1u);
+    require(director.spawned_group_count() == 2u);
+
+    Kernel_Destroy(kernel);
+}
+
+// Despawning enemies out from under the player shooting at them is worse than
+// any population it would have saved, so a squad in a fight is never retired.
+//
+// The squad is walked past its linger BEFORE the fight starts, so retirement is
+// due and the engagement is the only thing holding it off. Starting the fight
+// first would freeze the route instead, and the case would pass without the
+// guard existing at all.
+void a_squad_in_a_fight_is_never_retired() {
+    using network_example::game_server::AgentSentryState;
+    using network_example::game_server::PatrolDirector;
+    using network_example::game_server::PatrolGroupRuntime;
+
+    const KernelConfig config = server_config();
+    KernelHandle* kernel = Kernel_Create(&config);
+    require(kernel != nullptr);
+    require(Kernel_StartDedicatedServer(kernel, 7827));
+    load_catalog(kernel);
+
+    PatrolDefinitionConfig definition = mixed_definition();
+    definition.interval_ticks = 1;
+    definition.max_live_groups = 1;
+    definition.despawn_linger_ticks = 5;
+    definition.group.advance_speed_meters_per_second = 200.0f;
+    PatrolDirector director({definition});
+    PatrolGroupRuntime groups;
+
+    director.tick(kernel, &groups);
+    director.tick(kernel, &groups);
+    require(groups.groups().size() == 1u);
+    std::vector<network_example::game_server::AgentRuntimeState> agents =
+        members_of(groups.groups()[0]);
+
+    walk_until_route_complete(&groups, &agents);
+    walk_route_out(&groups, &agents, 20);
+    require(
+        groups.groups()[0].ticks_since_route_complete >=
+        definition.despawn_linger_ticks);
+
+    // Retirement is due, and then one of them picks a fight.
+    agents[0].sentry.state = AgentSentryState::kAlert;
+    groups.tick(&agents, 1.0f / 30.0f);
+    require(groups.groups()[0].holding);
+    for (int tick = 0; tick < 10; ++tick) {
+        director.tick(kernel, &groups);
+    }
+    require(director.retired_group_count() == 0u);
+    require(groups.groups().size() == 1u);
+
+    // The fight ends, and now it goes.
+    agents[0].sentry.state = AgentSentryState::kIdle;
+    groups.tick(&agents, 1.0f / 30.0f);
+    director.tick(kernel, &groups);
+    require(director.retired_group_count() == 1u);
+
+    Kernel_Destroy(kernel);
+}
+
+std::uint32_t create_player(KernelHandle* kernel, const KernelVec3& position) {
+    KernelServerEntityCreateInfo create_info{};
+    create_info.struct_size = sizeof(create_info);
+    create_info.entity_type = network_example::game_server::kEntityTypeActor;
+    create_info.actor_type = network_example::game_server::kActorTypePlayer;
+    create_info.position = position;
+    create_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
+    std::uint32_t net_id = 0;
+    require(Kernel_ServerCreateEntity(kernel, &create_info, &net_id));
+    require(net_id != 0);
+    return net_id;
+}
+
+// The distance rule retires a squad nobody is near, and only that squad. Its
+// route is nowhere near finished in either half here, so the linger cannot be
+// what decides it.
+void a_patrol_nobody_is_near_retires_early() {
+    using network_example::game_server::PatrolDirector;
+    using network_example::game_server::PatrolGroupRuntime;
+
+    const KernelConfig config = server_config();
+    KernelHandle* kernel = Kernel_Create(&config);
+    require(kernel != nullptr);
+    require(Kernel_StartDedicatedServer(kernel, 7830));
+    load_catalog(kernel);
+
+    PatrolDefinitionConfig definition = mixed_definition();
+    definition.interval_ticks = 1;
+    definition.max_live_groups = 1;
+    definition.despawn_linger_ticks = 100000;
+    definition.despawn_distance_meters = 50.0f;
+
+    // A player standing on the area keeps the squad, which is the half that
+    // says the rule is reading a distance rather than firing on any player at
+    // all.
+    create_player(kernel, KernelVec3{0.0f, 0.0f, 0.0f});
+    PatrolDirector near_director({definition});
+    PatrolGroupRuntime near_groups;
+    near_director.tick(kernel, &near_groups);
+    near_director.tick(kernel, &near_groups);
+    require(near_groups.groups().size() == 1u);
+    for (int tick = 0; tick < 10; ++tick) {
+        near_director.tick(kernel, &near_groups);
+    }
+    require(near_director.retired_group_count() == 0u);
+
+    // The same squad, with the only player 500 m away.
+    create_player(kernel, KernelVec3{500.0f, 0.0f, 500.0f});
+    KernelServerEntityState state{};
+    state.struct_size = sizeof(state);
+    PatrolDirector far_director({definition});
+    PatrolGroupRuntime far_groups;
+    far_director.tick(kernel, &far_groups);
+    far_director.tick(kernel, &far_groups);
+    require(far_groups.groups().size() == 1u);
+    // The near player has to go first, or the nearest one is still on the area.
+    KernelEntityLifecycleCommand destroy{};
+    destroy.struct_size = sizeof(destroy);
+    destroy.command_type = KernelEntityLifecycleCommandType_Destroy;
+    destroy.net_id = 1;
+    destroy.reason = 0;
+    Kernel_ServerEnqueueEntityLifecycle(
+        kernel, KernelCommandSource_Internal, &destroy);
+    Kernel_Update(kernel, 1.0f / 30.0f);
+    far_director.tick(kernel, &far_groups);
+    require(far_director.retired_group_count() == 1u);
+
+    Kernel_Destroy(kernel);
+}
+
+// An empty server is not "everyone is infinitely far away". Reading it that way
+// would have a server with nobody on it sweep away every patrol it spawns, on
+// the tick it spawns them.
+void an_empty_server_does_not_sweep_its_patrols_away() {
+    using network_example::game_server::PatrolDirector;
+    using network_example::game_server::PatrolGroupRuntime;
+
+    const KernelConfig config = server_config();
+    KernelHandle* kernel = Kernel_Create(&config);
+    require(kernel != nullptr);
+    require(Kernel_StartDedicatedServer(kernel, 7828));
+    load_catalog(kernel);
+
+    PatrolDefinitionConfig definition = mixed_definition();
+    definition.interval_ticks = 1;
+    definition.max_live_groups = 1;
+    definition.despawn_linger_ticks = 100000;
+    definition.despawn_distance_meters = 1.0f;
+    PatrolDirector director({definition});
+    PatrolGroupRuntime groups;
+
+    director.tick(kernel, &groups);
+    director.tick(kernel, &groups);
+    require(groups.groups().size() == 1u);
+    for (int tick = 0; tick < 20; ++tick) {
+        director.tick(kernel, &groups);
+    }
+    require(director.retired_group_count() == 0u);
+    require(groups.groups().size() == 1u);
+
+    Kernel_Destroy(kernel);
+}
+
+// Per-definition ceilings cannot express a total: two definitions of four
+// squads each are eight squads, and only the budget notices.
+void the_budget_caps_agents_across_definitions() {
+    using network_example::game_server::PatrolBudgetConfig;
+    using network_example::game_server::PatrolDirector;
+    using network_example::game_server::PatrolGroupRuntime;
+
+    const KernelConfig config = server_config();
+    KernelHandle* kernel = Kernel_Create(&config);
+    require(kernel != nullptr);
+    require(Kernel_StartDedicatedServer(kernel, 7829));
+    load_catalog(kernel);
+
+    PatrolDefinitionConfig first = mixed_definition();
+    first.interval_ticks = 1;
+    first.max_live_groups = 4;
+    PatrolDefinitionConfig second = mixed_definition();
+    second.id = 2;
+    second.name = "mixed_two";
+    second.interval_ticks = 1;
+    second.max_live_groups = 4;
+
+    PatrolBudgetConfig budget;
+    // Two squads' worth at the largest they can draw, so the ceilings would
+    // allow eight squads and the budget allows two.
+    budget.max_live_agents = 20;
+    PatrolDirector director({first, second}, budget);
+    PatrolGroupRuntime groups;
+
+    for (int tick = 0; tick < 40; ++tick) {
+        director.tick(kernel, &groups);
+        std::uint32_t live = 0;
+        for (const network_example::game_server::PatrolGroup& group :
+             groups.groups()) {
+            live += static_cast<std::uint32_t>(group.member_net_ids.size());
+        }
+        require(live <= budget.max_live_agents);
+    }
+    require(groups.groups().size() == 2u);
+    // Both definitions got a look in, rather than the first eating the budget.
+    require(groups.groups()[0].definition_id != groups.groups()[1].definition_id);
+
+    Kernel_Destroy(kernel);
+}
+
 }  // namespace
 
 int main() {
@@ -463,5 +767,10 @@ int main() {
     a_formation_ranks_up_behind_the_squad();
     a_patrol_spawns_on_its_interval();
     the_same_seed_spawns_the_same_squad();
+    a_finished_patrol_retires_after_its_linger();
+    a_squad_in_a_fight_is_never_retired();
+    an_empty_server_does_not_sweep_its_patrols_away();
+    a_patrol_nobody_is_near_retires_early();
+    the_budget_caps_agents_across_definitions();
     return 0;
 }

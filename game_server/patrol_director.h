@@ -78,6 +78,27 @@ struct PatrolDefinitionConfig {
 
     float formation_spacing_meters = 1.5f;
     PatrolGroupTuning group{};
+
+    // A squad that has walked its route out is finished, and finished squads
+    // are what a one-shot route leaves behind. Retiring them is not an
+    // optimisation: without it a definition's live ceiling fills with squads
+    // standing at the far end of their route and never spawns again.
+    //
+    // The linger is so that a squad does not vanish in front of whoever walked
+    // it down. Zero retires on the tick it finishes.
+    std::uint32_t despawn_linger_ticks = 300;
+    // Retire early when the nearest player is further away than this, finished
+    // or not. Zero leaves a squad walking its route however far from anyone it
+    // gets, which is what to author when the patrol is the point rather than
+    // the encounter. Never applies to a squad that is fighting.
+    float despawn_distance_meters = 0.0f;
+};
+
+// A ceiling across every definition, which is the one thing per-definition
+// ceilings cannot express: three definitions of four squads each are twelve
+// squads, and nothing but this notices. Zero is unbounded.
+struct PatrolBudgetConfig {
+    std::uint32_t max_live_agents = 0;
 };
 
 // Rejects a definition that cannot be satisfied, with a sentence saying why.
@@ -109,7 +130,9 @@ std::vector<KernelVec3> formation_offsets(std::uint32_t count, float spacing);
 // nothing about squads. Everything below runs on the public server API.
 class PatrolDirector {
 public:
-    explicit PatrolDirector(std::vector<PatrolDefinitionConfig> definitions = {});
+    explicit PatrolDirector(
+        std::vector<PatrolDefinitionConfig> definitions = {},
+        PatrolBudgetConfig budget = {});
 
     // Runs before the agent list is resynced, so that the entities it creates
     // are discovered on the same tick their squad is. The other order drops
@@ -120,12 +143,17 @@ public:
     // Squads spawned since the server started, across all definitions. The
     // draws are derived from it, so it is also what makes them replayable.
     std::uint32_t spawned_group_count() const;
+    std::uint32_t retired_group_count() const;
 
 private:
     struct DefinitionRuntime {
         std::uint32_t ticks_until_spawn = 0;
         std::uint32_t spawn_ordinal = 0;
     };
+
+    void retire_finished_patrols(
+        KernelHandle* kernel,
+        PatrolGroupRuntime* groups);
 
     bool spawn_patrol(
         KernelHandle* kernel,
@@ -134,8 +162,10 @@ private:
         DefinitionRuntime* runtime);
 
     std::vector<PatrolDefinitionConfig> definitions_;
+    PatrolBudgetConfig budget_;
     std::vector<DefinitionRuntime> runtimes_;
     std::uint32_t spawned_group_count_ = 0;
+    std::uint32_t retired_group_count_ = 0;
 };
 
 }  // namespace network_example::game_server
