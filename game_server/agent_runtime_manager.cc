@@ -70,6 +70,23 @@ AgentRuntimeManager::AgentRuntimeManager(
     : kernel_(kernel), config_(std::move(config)) {
     build_controllers();
     patrol_director_ = PatrolDirector(config_.patrols, config_.patrol_budget);
+    if (!config_.navigation_mesh.artifact.empty()) {
+        std::string error;
+        if (patrol_navigation_.load(config_.navigation_mesh.artifact, &error)) {
+            spdlog::info(
+                "patrol navigation loaded entry={} bytes={}",
+                config_.navigation_mesh.entry_path,
+                config_.navigation_mesh.artifact.size());
+        } else {
+            // Not fatal: patrol routes fall back to a straight chord, which is
+            // what they were before a navmesh was loaded at all. Fatal would
+            // take the whole server down over a feature that degrades.
+            spdlog::error(
+                "patrol navigation failed entry={} reason={}",
+                config_.navigation_mesh.entry_path,
+                error);
+        }
+    }
 }
 
 void AgentRuntimeManager::build_controllers() {
@@ -190,7 +207,7 @@ void AgentRuntimeManager::tick(float delta_seconds) {
     // group runtime drops members it cannot find in the agent list. Ticking it
     // after the resync would drop every member of a squad on the tick it was
     // spawned.
-    patrol_director_.tick(kernel_, &patrol_groups_);
+    patrol_director_.tick(kernel_, &patrol_groups_, &patrol_navigation_);
     sync_agents_from_kernel();
     // Ahead of the controllers, so a member reads the slot its squad wants it
     // in this tick rather than the one from last tick.
@@ -249,6 +266,10 @@ const PatrolGroupRuntime& AgentRuntimeManager::patrol_groups() const {
 
 const PatrolDirector& AgentRuntimeManager::patrol_director() const {
     return patrol_director_;
+}
+
+const PatrolNavigation& AgentRuntimeManager::patrol_navigation() const {
+    return patrol_navigation_;
 }
 
 bool AgentRuntimeManager::preload_directors() {

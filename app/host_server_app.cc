@@ -124,6 +124,16 @@ int RunHostServer(
                         static_cast<std::uint32_t>(bundle_bytes.size()),
                         gameplay_config.static_collision_scene.entry_path);
             }
+            // The navmesh goes to game_server rather than to the kernel, so
+            // unlike the collision scene it rides along on the config it was
+            // named in.
+            if (!gameplay_config.navigation_mesh.entry_path.empty()) {
+                gameplay_config.navigation_mesh.artifact =
+                    network_example::game_server::load_gameplay_bundle_entry_bytes(
+                        bundle_bytes.data(),
+                        static_cast<std::uint32_t>(bundle_bytes.size()),
+                        gameplay_config.navigation_mesh.entry_path);
+            }
         } else {
             gameplay_config =
                 network_example::game_server::load_gameplay_config_from_catalog_file(

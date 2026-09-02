@@ -5,11 +5,14 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
 #include "game_server/agent_runtime.h"
 #include "game_server/patrol_group_runtime.h"
+#include "game_server/patrol_navigation.h"
 #include "kernel/public/kernel_api.h"
 #include "kernel/src/kernel_api_internal.h"
 
@@ -24,6 +27,22 @@ void require_impl(bool condition, int line, const char* text) {
 }
 
 #define require(expr) require_impl(static_cast<bool>(expr), __LINE__, #expr)
+
+std::filesystem::path runfiles_root() {
+    const char* test_srcdir = std::getenv("TEST_SRCDIR");
+    const char* test_workspace = std::getenv("TEST_WORKSPACE");
+    require(test_srcdir != nullptr);
+    require(test_workspace != nullptr);
+    return std::filesystem::path(test_srcdir) / test_workspace;
+}
+
+std::vector<std::uint8_t> read_binary_file(const std::string& path) {
+    std::ifstream stream(path, std::ios::binary);
+    require(stream.good());
+    return std::vector<std::uint8_t>(
+        std::istreambuf_iterator<char>(stream),
+        std::istreambuf_iterator<char>());
+}
 
 constexpr std::uint32_t kTestFireActionTemplateId = 100;
 constexpr std::uint32_t kTestReloadActionTemplateId = 101;
@@ -361,10 +380,10 @@ void a_patrol_spawns_on_its_interval() {
 
     // Staggered by one interval rather than firing on tick zero.
     for (std::uint32_t tick = 0; tick < definition.interval_ticks; ++tick) {
-        director.tick(kernel, &groups);
+        director.tick(kernel, &groups, nullptr);
         require(groups.groups().empty());
     }
-    director.tick(kernel, &groups);
+    director.tick(kernel, &groups, nullptr);
     require(groups.groups().size() == 1u);
     require(director.spawned_group_count() == 1u);
 
@@ -401,7 +420,7 @@ void a_patrol_spawns_on_its_interval() {
     // The ceiling holds: the interval passes again and no second squad appears
     // while the first is still alive.
     for (std::uint32_t tick = 0; tick < definition.interval_ticks * 3u; ++tick) {
-        director.tick(kernel, &groups);
+        director.tick(kernel, &groups, nullptr);
     }
     require(groups.groups().size() == 1u);
     require(director.spawned_group_count() == 1u);
@@ -432,7 +451,7 @@ void the_same_seed_spawns_the_same_squad() {
         PatrolDirector director({definition});
         PatrolGroupRuntime groups;
         for (int tick = 0; tick < 8; ++tick) {
-            director.tick(kernel, &groups);
+            director.tick(kernel, &groups, nullptr);
         }
         require(groups.groups().size() == 4u);
         for (const network_example::game_server::PatrolGroup& group :
@@ -516,8 +535,8 @@ void a_finished_patrol_retires_after_its_linger() {
     PatrolDirector director({definition});
     PatrolGroupRuntime groups;
 
-    director.tick(kernel, &groups);
-    director.tick(kernel, &groups);
+    director.tick(kernel, &groups, nullptr);
+    director.tick(kernel, &groups, nullptr);
     require(groups.groups().size() == 1u);
     const std::vector<std::uint32_t> members = groups.groups()[0].member_net_ids;
     std::vector<network_example::game_server::AgentRuntimeState> agents =
@@ -529,12 +548,12 @@ void a_finished_patrol_retires_after_its_linger() {
     require(
         groups.groups()[0].ticks_since_route_complete <
         definition.despawn_linger_ticks);
-    director.tick(kernel, &groups);
+    director.tick(kernel, &groups, nullptr);
     require(groups.groups().size() == 1u);
     require(director.retired_group_count() == 0u);
 
     walk_route_out(&groups, &agents, 20);
-    director.tick(kernel, &groups);
+    director.tick(kernel, &groups, nullptr);
     Kernel_Update(kernel, 1.0f / 30.0f);
     require(director.retired_group_count() == 1u);
 
@@ -547,7 +566,7 @@ void a_finished_patrol_retires_after_its_linger() {
     }
 
     // And the freed place is taken, which is the whole point of retiring.
-    director.tick(kernel, &groups);
+    director.tick(kernel, &groups, nullptr);
     require(groups.groups().size() == 1u);
     require(director.spawned_group_count() == 2u);
 
@@ -580,8 +599,8 @@ void a_squad_in_a_fight_is_never_retired() {
     PatrolDirector director({definition});
     PatrolGroupRuntime groups;
 
-    director.tick(kernel, &groups);
-    director.tick(kernel, &groups);
+    director.tick(kernel, &groups, nullptr);
+    director.tick(kernel, &groups, nullptr);
     require(groups.groups().size() == 1u);
     std::vector<network_example::game_server::AgentRuntimeState> agents =
         members_of(groups.groups()[0]);
@@ -597,7 +616,7 @@ void a_squad_in_a_fight_is_never_retired() {
     groups.tick(&agents, 1.0f / 30.0f);
     require(groups.groups()[0].holding);
     for (int tick = 0; tick < 10; ++tick) {
-        director.tick(kernel, &groups);
+        director.tick(kernel, &groups, nullptr);
     }
     require(director.retired_group_count() == 0u);
     require(groups.groups().size() == 1u);
@@ -605,7 +624,7 @@ void a_squad_in_a_fight_is_never_retired() {
     // The fight ends, and now it goes.
     agents[0].sentry.state = AgentSentryState::kIdle;
     groups.tick(&agents, 1.0f / 30.0f);
-    director.tick(kernel, &groups);
+    director.tick(kernel, &groups, nullptr);
     require(director.retired_group_count() == 1u);
 
     Kernel_Destroy(kernel);
@@ -649,11 +668,11 @@ void a_patrol_nobody_is_near_retires_early() {
     create_player(kernel, KernelVec3{0.0f, 0.0f, 0.0f});
     PatrolDirector near_director({definition});
     PatrolGroupRuntime near_groups;
-    near_director.tick(kernel, &near_groups);
-    near_director.tick(kernel, &near_groups);
+    near_director.tick(kernel, &near_groups, nullptr);
+    near_director.tick(kernel, &near_groups, nullptr);
     require(near_groups.groups().size() == 1u);
     for (int tick = 0; tick < 10; ++tick) {
-        near_director.tick(kernel, &near_groups);
+        near_director.tick(kernel, &near_groups, nullptr);
     }
     require(near_director.retired_group_count() == 0u);
 
@@ -663,8 +682,8 @@ void a_patrol_nobody_is_near_retires_early() {
     state.struct_size = sizeof(state);
     PatrolDirector far_director({definition});
     PatrolGroupRuntime far_groups;
-    far_director.tick(kernel, &far_groups);
-    far_director.tick(kernel, &far_groups);
+    far_director.tick(kernel, &far_groups, nullptr);
+    far_director.tick(kernel, &far_groups, nullptr);
     require(far_groups.groups().size() == 1u);
     // The near player has to go first, or the nearest one is still on the area.
     KernelEntityLifecycleCommand destroy{};
@@ -675,7 +694,7 @@ void a_patrol_nobody_is_near_retires_early() {
     Kernel_ServerEnqueueEntityLifecycle(
         kernel, KernelCommandSource_Internal, &destroy);
     Kernel_Update(kernel, 1.0f / 30.0f);
-    far_director.tick(kernel, &far_groups);
+    far_director.tick(kernel, &far_groups, nullptr);
     require(far_director.retired_group_count() == 1u);
 
     Kernel_Destroy(kernel);
@@ -702,11 +721,11 @@ void an_empty_server_does_not_sweep_its_patrols_away() {
     PatrolDirector director({definition});
     PatrolGroupRuntime groups;
 
-    director.tick(kernel, &groups);
-    director.tick(kernel, &groups);
+    director.tick(kernel, &groups, nullptr);
+    director.tick(kernel, &groups, nullptr);
     require(groups.groups().size() == 1u);
     for (int tick = 0; tick < 20; ++tick) {
-        director.tick(kernel, &groups);
+        director.tick(kernel, &groups, nullptr);
     }
     require(director.retired_group_count() == 0u);
     require(groups.groups().size() == 1u);
@@ -744,7 +763,7 @@ void the_budget_caps_agents_across_definitions() {
     PatrolGroupRuntime groups;
 
     for (int tick = 0; tick < 40; ++tick) {
-        director.tick(kernel, &groups);
+        director.tick(kernel, &groups, nullptr);
         std::uint32_t live = 0;
         for (const network_example::game_server::PatrolGroup& group :
              groups.groups()) {
@@ -755,6 +774,101 @@ void the_budget_caps_agents_across_definitions() {
     require(groups.groups().size() == 2u);
     // Both definitions got a look in, rather than the first eating the budget.
     require(groups.groups()[0].definition_id != groups.groups()[1].definition_id);
+
+    Kernel_Destroy(kernel);
+}
+
+
+// With a navmesh, a route is a path: it bends around what is in the way, and
+// its start is somewhere the squad can stand. The straight chord this replaces
+// can do neither, so a bend is the observable difference.
+void a_navigable_patrol_routes_around_obstacles() {
+    using network_example::game_server::PatrolDirector;
+    using network_example::game_server::PatrolGroupRuntime;
+    using network_example::game_server::PatrolNavigation;
+
+    const std::vector<std::uint8_t> artifact = read_binary_file(
+        (runfiles_root() / "game_server" / "test_mesh_assets" / "generated" /
+         "recast" / "obstructed_field.navmesh")
+            .string());
+    PatrolNavigation navigation;
+    std::string load_error;
+    require(navigation.load(artifact, &load_error));
+
+    const KernelConfig config = server_config();
+    KernelHandle* kernel = Kernel_Create(&config);
+    require(kernel != nullptr);
+    require(Kernel_StartDedicatedServer(kernel, 7831));
+    load_catalog(kernel);
+
+    PatrolDefinitionConfig definition = mixed_definition();
+    definition.interval_ticks = 1;
+    definition.max_live_groups = 16;
+    // The whole terrain, walls and pits included, so draws land on both sides
+    // of the zigzag.
+    definition.area.half_extents = KernelVec3{45.0f, 0.0f, 45.0f};
+    definition.max_detour_ratio = 6.0f;
+    definition.route_attempts = 16;
+    PatrolDirector director({definition}, {});
+    PatrolGroupRuntime groups;
+
+    for (int tick = 0; tick < 40; ++tick) {
+        director.tick(kernel, &groups, &navigation);
+    }
+    require(groups.groups().size() == 16u);
+
+    bool saw_a_bend = false;
+    for (const network_example::game_server::PatrolGroup& group :
+         groups.groups()) {
+        require(!group.waypoints.empty());
+        saw_a_bend = saw_a_bend || group.waypoints.size() > 1u;
+        // Every squad starts where it can stand. A draw that landed in a pit
+        // was either snapped out of it or thrown away.
+        KernelVec3 snapped{0.0f, 0.0f, 0.0f};
+        require(navigation.snap(group.cursor, 0.5f, &snapped));
+    }
+    require(saw_a_bend);
+
+    Kernel_Destroy(kernel);
+}
+
+// An area with no walkable ground in it produces no squads, and says so,
+// rather than producing squads standing inside the scenery.
+void an_unwalkable_area_spawns_nothing() {
+    using network_example::game_server::PatrolDirector;
+    using network_example::game_server::PatrolGroupRuntime;
+    using network_example::game_server::PatrolNavigation;
+
+    const std::vector<std::uint8_t> artifact = read_binary_file(
+        (runfiles_root() / "game_server" / "test_mesh_assets" / "generated" /
+         "recast" / "obstructed_field.navmesh")
+            .string());
+    PatrolNavigation navigation;
+    std::string load_error;
+    require(navigation.load(artifact, &load_error));
+
+    const KernelConfig config = server_config();
+    KernelHandle* kernel = Kernel_Create(&config);
+    require(kernel != nullptr);
+    require(Kernel_StartDedicatedServer(kernel, 7832));
+    load_catalog(kernel);
+
+    PatrolDefinitionConfig definition = mixed_definition();
+    definition.interval_ticks = 1;
+    definition.max_live_groups = 4;
+    // Well off the terrain entirely.
+    definition.area.center = KernelVec3{5000.0f, 0.0f, 5000.0f};
+    definition.area.half_extents = KernelVec3{10.0f, 0.0f, 10.0f};
+    definition.route_attempts = 4;
+    PatrolDirector director({definition}, {});
+    PatrolGroupRuntime groups;
+
+    for (int tick = 0; tick < 20; ++tick) {
+        director.tick(kernel, &groups, &navigation);
+    }
+    require(groups.groups().empty());
+    require(director.route_failure_count() > 0u);
+    require(director.spawned_group_count() == 0u);
 
     Kernel_Destroy(kernel);
 }
@@ -772,5 +886,7 @@ int main() {
     an_empty_server_does_not_sweep_its_patrols_away();
     a_patrol_nobody_is_near_retires_early();
     the_budget_caps_agents_across_definitions();
+    a_navigable_patrol_routes_around_obstacles();
+    an_unwalkable_area_spawns_nothing();
     return 0;
 }

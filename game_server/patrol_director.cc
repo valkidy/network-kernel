@@ -190,7 +190,10 @@ PatrolDirector::PatrolDirector(
     }
 }
 
-void PatrolDirector::tick(KernelHandle* kernel, PatrolGroupRuntime* groups) {
+void PatrolDirector::tick(
+    KernelHandle* kernel,
+    PatrolGroupRuntime* groups,
+    const PatrolNavigation* navigation) {
     if (kernel == nullptr || groups == nullptr) {
         return;
     }
@@ -226,7 +229,7 @@ void PatrolDirector::tick(KernelHandle* kernel, PatrolGroupRuntime* groups) {
             live_agents + definition.count_max > budget_.max_live_agents) {
             continue;
         }
-        if (spawn_patrol(kernel, groups, definition, &runtime)) {
+        if (spawn_patrol(kernel, groups, navigation, definition, &runtime)) {
             runtime.ticks_until_spawn = definition.interval_ticks;
             live_agents += definition.count_max;
         }
@@ -346,9 +349,50 @@ void PatrolDirector::retire_finished_patrols(
     }
 }
 
+// Draws a start and an end out of the area until one pair produces a route the
+// definition will accept. With a navmesh that is a real path, corners and all;
+// without one it is the straight chord, which is what the degenerate first
+// version shipped and what a flat map makes indistinguishable from a path.
+bool draw_route(
+    const PatrolDefinitionConfig& definition,
+    const PatrolNavigation* navigation,
+    std::uint64_t* random_state,
+    KernelVec3* origin,
+    std::vector<KernelVec3>* waypoints) {
+    const bool navigable = navigation != nullptr && navigation->valid();
+    const std::uint32_t attempts =
+        navigable ? std::max<std::uint32_t>(1u, definition.route_attempts) : 1u;
+    for (std::uint32_t attempt = 0; attempt < attempts; ++attempt) {
+        KernelVec3 start = sample_area(definition.area, random_state);
+        const KernelVec3 end = sample_area(definition.area, random_state);
+        if (!navigable) {
+            *origin = start;
+            // One waypoint, not two: the cursor starts at the origin, so the
+            // chord is the single leg from there to the far end.
+            *waypoints = {end};
+            return true;
+        }
+        PatrolRouteRequest request;
+        // Snapped first, so the squad is placed where it can actually stand
+        // rather than wherever in the rectangle the draw landed.
+        if (!navigation->snap(start, 1.0f, &start)) {
+            continue;
+        }
+        request.start = start;
+        request.end = end;
+        request.max_detour_ratio = definition.max_detour_ratio;
+        if (navigation->find_route(request, waypoints)) {
+            *origin = start;
+            return true;
+        }
+    }
+    return false;
+}
+
 bool PatrolDirector::spawn_patrol(
     KernelHandle* kernel,
     PatrolGroupRuntime* groups,
+    const PatrolNavigation* navigation,
     const PatrolDefinitionConfig& definition,
     DefinitionRuntime* runtime) {
     // Derived from the definition's seed and how many squads it has spawned, so
@@ -363,11 +407,18 @@ bool PatrolDirector::spawn_patrol(
     const std::vector<std::uint32_t> drawn =
         draw_composition(definition, count, &random_state);
 
-    const KernelVec3 route_start = sample_area(definition.area, &random_state);
-    const KernelVec3 route_end = sample_area(definition.area, &random_state);
-    // One waypoint, not two: the squad's cursor starts at route_start, so the
-    // straight chord is the single leg from there to route_end.
-    std::vector<KernelVec3> waypoints{route_end};
+    KernelVec3 route_start{0.0f, 0.0f, 0.0f};
+    std::vector<KernelVec3> waypoints;
+    if (!draw_route(
+            definition, navigation, &random_state, &route_start, &waypoints)) {
+        ++route_failure_count_;
+        spdlog::warn(
+            "patrol found no route patrol={} attempts={}",
+            definition.name,
+            definition.route_attempts);
+        return false;
+    }
+    const KernelVec3 route_end = waypoints.back();
 
     const std::vector<KernelVec3> offsets =
         formation_offsets(count, definition.formation_spacing_meters);
@@ -454,6 +505,10 @@ std::uint32_t PatrolDirector::spawned_group_count() const {
 
 std::uint32_t PatrolDirector::retired_group_count() const {
     return retired_group_count_;
+}
+
+std::uint32_t PatrolDirector::route_failure_count() const {
+    return route_failure_count_;
 }
 
 }  // namespace network_example::game_server

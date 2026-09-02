@@ -6658,6 +6658,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             "preload_directors",
             "patrols",
             "patrol_budget",
+            "navigation_mesh",
         },
         path,
         source.source_kind(),
@@ -6758,6 +6759,25 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             document["prop_population_rules"],
             path,
             source.source_kind());
+    }
+    if (document["navigation_mesh"]) {
+        const YAML::Node navigation = document["navigation_mesh"];
+        reject_unknown_keys(
+            navigation,
+            {"entry_path"},
+            path,
+            source.source_kind(),
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+        if (!navigation["entry_path"]) {
+            throw std::runtime_error(
+                "navigation_mesh requires entry_path: " + path);
+        }
+        // Path only, the way static_collision_scene does it. The bytes are a
+        // generated artifact that exists in the bundle and not in the source
+        // tree, so reading them here would make every filesystem catalog load
+        // fail on an asset that was never meant to be there.
+        config.navigation_mesh.entry_path =
+            navigation["entry_path"].as<std::string>();
     }
     if (document["static_collision_scene"]) {
         const YAML::Node scene = document["static_collision_scene"];
@@ -7038,6 +7058,8 @@ void apply_catalog_patrol_config(
                 "waypoint_radius_meters",
                 "despawn_linger_ticks",
                 "despawn_distance_meters",
+                "max_detour_ratio",
+                "route_attempts",
             },
             path,
             source_kind,
@@ -7084,6 +7106,12 @@ void apply_catalog_patrol_config(
         if (node["despawn_distance_meters"]) {
             patrol.despawn_distance_meters =
                 node["despawn_distance_meters"].as<float>();
+        }
+        if (node["max_detour_ratio"]) {
+            patrol.max_detour_ratio = node["max_detour_ratio"].as<float>();
+        }
+        if (node["route_attempts"]) {
+            patrol.route_attempts = node["route_attempts"].as<std::uint32_t>();
         }
         const YAML::Node count = node["count"];
         if (!count) {
@@ -7392,6 +7420,8 @@ std::uint64_t compute_gameplay_catalog_hash(
         hash_float(&hash, patrol.group.waypoint_radius_meters);
         hash_scalar(&hash, patrol.despawn_linger_ticks);
         hash_float(&hash, patrol.despawn_distance_meters);
+        hash_float(&hash, patrol.max_detour_ratio);
+        hash_scalar(&hash, patrol.route_attempts);
         for (const PatrolCompositionEntry& entry : patrol.composition) {
             hash_string(&hash, entry.entity_template_ref);
             hash_scalar(&hash, entry.entity_template_id);
@@ -7400,6 +7430,10 @@ std::uint64_t compute_gameplay_catalog_hash(
         }
     }
     hash_scalar(&hash, config.patrol_budget.max_live_agents);
+    hash_string(&hash, config.navigation_mesh.entry_path);
+    hash_scalar(
+        &hash,
+        static_cast<std::uint32_t>(config.navigation_mesh.artifact.size()));
     hash_string(&hash, config.static_collision_scene.entry_path);
     hash_scalar(&hash, config.static_collision_scene.scene_id);
     hash_scalar(&hash, config.static_collision_scene.collider_id);

@@ -7,6 +7,7 @@
 
 #include "game_server/agent_runtime.h"
 #include "game_server/patrol_group_runtime.h"
+#include "game_server/patrol_navigation.h"
 #include "kernel/public/kernel_api.h"
 #include "kernel/public/kernel_types.h"
 
@@ -79,6 +80,18 @@ struct PatrolDefinitionConfig {
     float formation_spacing_meters = 1.5f;
     PatrolGroupTuning group{};
 
+    // How far a route may walk relative to the straight line between its ends.
+    // The bench measured 1.01 median on rolling ground and 1.23 on a walled
+    // level, against a worst case of 18.10 -- so this is not about typical
+    // routes, it is about refusing the pair that would have a squad spend its
+    // whole life walking round one wall. Ignored without a navmesh, where every
+    // route is the straight line.
+    float max_detour_ratio = 4.0f;
+    // Start/end pairs to try before giving up for this interval. A rectangle
+    // that is mostly unwalkable will fail some draws; one that is entirely
+    // unwalkable should give up rather than search forever.
+    std::uint32_t route_attempts = 8;
+
     // A squad that has walked its route out is finished, and finished squads
     // are what a one-shot route leaves behind. Retiring them is not an
     // optimisation: without it a definition's live ceiling fills with squads
@@ -137,13 +150,24 @@ public:
     // Runs before the agent list is resynced, so that the entities it creates
     // are discovered on the same tick their squad is. The other order drops
     // every new member the moment the group runtime looks for it.
-    void tick(KernelHandle* kernel, PatrolGroupRuntime* groups);
+    // `navigation` may be null, or loaded from a catalog that authored no
+    // navmesh, in which case a route is the straight chord between two points
+    // in the area -- exactly a pathed route on flat ground, and wrong anywhere
+    // else. See //game_server:patrol_nav_bench.
+    void tick(
+        KernelHandle* kernel,
+        PatrolGroupRuntime* groups,
+        const PatrolNavigation* navigation);
 
     const std::vector<PatrolDefinitionConfig>& definitions() const;
     // Squads spawned since the server started, across all definitions. The
     // draws are derived from it, so it is also what makes them replayable.
     std::uint32_t spawned_group_count() const;
     std::uint32_t retired_group_count() const;
+    // Spawns abandoned because no start/end pair in the area produced an
+    // acceptable route. Worth watching: a definition whose area is mostly
+    // unwalkable reports it here rather than by quietly never spawning.
+    std::uint32_t route_failure_count() const;
 
 private:
     struct DefinitionRuntime {
@@ -158,6 +182,7 @@ private:
     bool spawn_patrol(
         KernelHandle* kernel,
         PatrolGroupRuntime* groups,
+        const PatrolNavigation* navigation,
         const PatrolDefinitionConfig& definition,
         DefinitionRuntime* runtime);
 
@@ -166,6 +191,7 @@ private:
     std::vector<DefinitionRuntime> runtimes_;
     std::uint32_t spawned_group_count_ = 0;
     std::uint32_t retired_group_count_ = 0;
+    std::uint32_t route_failure_count_ = 0;
 };
 
 }  // namespace network_example::game_server

@@ -36,6 +36,7 @@ cc_library(
         "game_server.cc",
         "patrol_director.cc",
         "patrol_group_runtime.cc",
+        "patrol_navigation.cc",
     ],
     hdrs = [
         "actor_intent_executor.h",
@@ -50,12 +51,14 @@ cc_library(
         "game_server.h",
         "patrol_director.h",
         "patrol_group_runtime.h",
+        "patrol_navigation.h",
         "public/game_server_types.h",
     ],
     deps = [
         "//engine/components/ai:ai",
         "//engine/src/kernel:kernel_api",
         "//engine/src/kernel:kernel_api_internal",
+        "@recastnavigation//:detour",
         "@spdlog//:spdlog",
         "@zip_archive//:zip",
         "@yaml-cpp//:yaml-cpp",
@@ -265,9 +268,23 @@ cc_test(
 cc_test(
     name = "patrol_director_test",
     srcs = ["patrol_director_test.cc"],
+    data = [
+        "//game_server/test_mesh_assets:cooked_test_mesh_assets",
+    ],
     deps = [
         ":game_server",
         "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "patrol_navigation_test",
+    srcs = ["patrol_navigation_test.cc"],
+    data = [
+        "//game_server/test_mesh_assets:cooked_test_mesh_assets",
+    ],
+    deps = [
+        ":game_server",
     ],
 )
 

@@ -27,6 +27,15 @@ inline constexpr std::uint8_t kWeaponBeamRifle = 5;
 inline constexpr std::uint8_t kWeaponHomingMissile = 6;
 inline constexpr std::uint8_t kWeaponGrenade = 7;
 inline constexpr std::size_t kWeaponIdCount = 256;
+struct NavigationMeshConfig {
+    std::string entry_path;
+    // Filled by whoever has the bundle open, not by the catalog loader: the
+    // baked navmesh exists in the bundle and not in the source tree, the same
+    // way the collision scene does. Empty leaves patrol routes on the straight
+    // chord they used before a navmesh was loaded at all.
+    std::vector<std::uint8_t> artifact;
+};
+
 struct EntityHealthDefinition {
     std::uint16_t hp = 0;
     std::uint16_t max_hp = 0;
@@ -367,6 +376,10 @@ struct GameServerGameplayConfig {
     // entirely outside the kernel ABI.
     std::vector<PatrolDefinitionConfig> patrols;
     PatrolBudgetConfig patrol_budget;
+    // The baked navmesh, carried whole rather than by path: game_server loads
+    // it itself -- Detour never reaches the kernel -- so nothing downstream has
+    // the archive open any more by the time it is needed.
+    NavigationMeshConfig navigation_mesh;
     std::vector<std::uint32_t> preload_director_template_ids;
     std::vector<EntityTemplateConfig> entity_templates;
     std::vector<ActorTemplateConfig> actor_templates;
