@@ -9,6 +9,7 @@
 #include "game_server/agent_sentry_controller.h"
 #include "game_server/agent_runtime.h"
 #include "game_server/gameplay_config.h"
+#include "game_server/patrol_group_runtime.h"
 #include "kernel/public/kernel_api.h"
 
 namespace network_example::game_server {
@@ -26,6 +27,10 @@ public:
 
     std::size_t agent_count() const;
     const std::vector<AgentRuntimeState>& agents() const;
+    // The squads this server is running. Empty until something creates one;
+    // ticking them is already wired, so creating one is all that is left.
+    PatrolGroupRuntime& patrol_groups();
+    const PatrolGroupRuntime& patrol_groups() const;
 
 private:
     // One controller per agent actor template. Agents from different templates
@@ -60,6 +65,7 @@ private:
     // previous single-controller behavior for anything unrecognized.
     std::size_t fallback_controller_index_ = 0;
     std::vector<AgentRuntimeState> agents_;
+    PatrolGroupRuntime patrol_groups_;
     // Kept across ticks so that a population which has already been sized for
     // does not reallocate every tick.
     mutable std::vector<KernelServerEntityState> actor_query_buffer_;

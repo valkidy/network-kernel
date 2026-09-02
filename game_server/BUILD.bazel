@@ -34,6 +34,7 @@ cc_library(
         "ballistic_aim.cc",
         "gameplay_config.cc",
         "game_server.cc",
+        "patrol_group_runtime.cc",
     ],
     hdrs = [
         "actor_intent_executor.h",
@@ -46,6 +47,7 @@ cc_library(
         "ballistic_aim.h",
         "gameplay_config.h",
         "game_server.h",
+        "patrol_group_runtime.h",
         "public/game_server_types.h",
     ],
     deps = [
@@ -255,6 +257,14 @@ cc_test(
     deps = [
         ":game_server",
         "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "patrol_group_runtime_test",
+    srcs = ["patrol_group_runtime_test.cc"],
+    deps = [
+        ":game_server",
     ],
 )
 

@@ -2,7 +2,6 @@
 #define GAME_SERVER_AGENT_RUNTIME_H_
 
 #include <cstdint>
-#include <vector>
 
 #include "game_server/ballistic_aim.h"
 #include "kernel/public/kernel_types.h"
@@ -26,29 +25,21 @@ enum class AgentSentryState : std::uint8_t {
     kReturn = 3,
 };
 
-// A patrol route as a polyline the agent walks once, first waypoint to last,
-// and then reports finished. It does not loop: the squad model is a one-shot
-// route across the world, so "finished" is what hands the agent to the despawn
-// path rather than what starts a second lap.
+// What a squad member needs to know about the squad, which is very little: the
+// point it should be standing on. The route, the formation and the progress
+// along it all live on the PatrolGroup, so the controller can walk a patrol
+// without knowing that routes exist.
 //
-// Empty is the normal state for every agent that is not patrolling, and an
-// empty route leaves the chaser behaving exactly as it did before routes
-// existed.
-//
-// The waypoint list lives on the agent only while a patrol is one agent. It
-// belongs to the squad, and moves there once squads exist; until then this
-// costs an allocation on each of the two copies AgentRuntimeManager makes per
-// tick.
+// has_slot false is every agent that is not in a squad, and it leaves the
+// chaser behaving exactly as it did before squads existed.
 struct AgentPatrolRuntimeState {
-    std::vector<KernelVec3> waypoints;
-    // The waypoint being walked toward. Equal to waypoints.size() once the
-    // route has been walked out.
-    std::size_t next_waypoint = 0;
-    bool route_complete = false;
-    // Where the agent stood when it broke off the route to give chase. The
-    // leash is measured from here rather than from the route, so "how far a
-    // pursuit may drag a patrol" is a property of the pursuit and does not
-    // change as the route runs on ahead.
+    std::uint32_t group_id = 0;
+    KernelVec3 slot{0.0f, 0.0f, 0.0f};
+    bool has_slot = false;
+    // Where the agent stood when it broke off to give chase. The leash is
+    // measured from here rather than from the slot, so "how far a pursuit may
+    // drag a patrol" is a property of the pursuit and does not change as the
+    // squad moves on.
     KernelVec3 leash_anchor{0.0f, 0.0f, 0.0f};
 };
 

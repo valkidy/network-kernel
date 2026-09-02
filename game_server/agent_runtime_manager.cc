@@ -185,6 +185,9 @@ void AgentRuntimeManager::tick(float delta_seconds) {
     }
 
     sync_agents_from_kernel();
+    // Ahead of the controllers, so a member reads the slot its squad wants it
+    // in this tick rather than the one from last tick.
+    patrol_groups_.tick(&agents_, delta_seconds);
     dispatch_controllers(delta_seconds);
 }
 
@@ -227,6 +230,14 @@ std::size_t AgentRuntimeManager::agent_count() const {
 
 const std::vector<AgentRuntimeState>& AgentRuntimeManager::agents() const {
     return agents_;
+}
+
+PatrolGroupRuntime& AgentRuntimeManager::patrol_groups() {
+    return patrol_groups_;
+}
+
+const PatrolGroupRuntime& AgentRuntimeManager::patrol_groups() const {
+    return patrol_groups_;
 }
 
 bool AgentRuntimeManager::preload_directors() {
