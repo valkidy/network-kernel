@@ -46,27 +46,6 @@ KernelColliderTemplateDefinition hit_collider_template() {
     return collider;
 }
 
-KernelEntityTemplateDefinition director_template() {
-    KernelEntityTemplateDefinition entity_template{};
-    entity_template.struct_size = sizeof(entity_template);
-    entity_template.entity_template_id = 100;
-    entity_template.entity_type = KernelEntityType_Director;
-    entity_template.component_flags =
-        KERNEL_ENTITY_COMPONENT_SERVER_ONLY | KERNEL_ENTITY_COMPONENT_TRANSFORM |
-        KERNEL_ENTITY_COMPONENT_AGENT_RUNTIME |
-        KERNEL_ENTITY_COMPONENT_DIRECTOR_RUNTIME;
-    entity_template.ai.struct_size = sizeof(entity_template.ai);
-    entity_template.ai.controller_type = KernelAiControllerType_Director;
-    entity_template.ai.tick_interval = 2;
-    entity_template.ai.spawn_target_count = 3;
-    entity_template.ai.spawn_entity_template_id = 200;
-    entity_template.ai.spawn_actor_template_id = 2;
-    entity_template.ai.spawn_position = KernelVec3{6.0f, 0.0f, 0.0f};
-    entity_template.ai.spawn_radius = 1.0f;
-    entity_template.ai.spawn_seed = 99;
-    return entity_template;
-}
-
 KernelEntityTemplateDefinition agent_entity_template() {
     KernelEntityTemplateDefinition entity_template{};
     entity_template.struct_size = sizeof(entity_template);

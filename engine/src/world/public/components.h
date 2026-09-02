@@ -181,7 +181,6 @@ struct ServerOnly {};
 enum class AiControllerType : std::uint32_t {
     kNone = 0,
     kSentry = 1,
-    kDirector = 2,
     kChaser = 3,
 };
 

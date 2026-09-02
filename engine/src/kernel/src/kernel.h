@@ -913,10 +913,6 @@ private:
     std::vector<KernelActionTemplateDefinition> action_templates_;
     std::vector<KernelItemTemplateDefinition> item_templates_;
     std::vector<KernelPropPopulationRuleDefinition> prop_population_rules_;
-    std::vector<KernelGameRuleDefinition> game_rule_definitions_;
-    std::vector<KernelGameRuleNodeDefinition> game_rule_nodes_;
-    std::vector<KernelGameRuleEdgeDefinition> game_rule_edges_;
-    std::vector<KernelGameRuleSpawnGroupEffectDefinition> game_rule_effects_;
     std::vector<RuntimeSkeletonAsset> skeleton_assets_;
     ItemStore item_store_;
     std::vector<KernelGameplayRequestOutcome> processed_gameplay_requests_;

@@ -2638,13 +2638,6 @@ bool KernelEngine::load_gameplay_catalog(
          catalog.skeleton_assets == nullptr) ||
         (catalog.status_effect_count != 0 &&
          catalog.status_effects == nullptr) ||
-        (catalog.game_rule_count != 0 && catalog.game_rules == nullptr) ||
-        (catalog.game_rule_node_count != 0 &&
-         catalog.game_rule_nodes == nullptr) ||
-        (catalog.game_rule_edge_count != 0 &&
-         catalog.game_rule_edges == nullptr) ||
-        (catalog.game_rule_effect_count != 0 &&
-         catalog.game_rule_effects == nullptr) ||
         (catalog.entity_template_count != 0 &&
          catalog.entity_templates == nullptr) ||
         catalog.collider_binding_count != 0) {
@@ -2707,11 +2700,6 @@ bool KernelEngine::load_gameplay_catalog(
     std::vector<KernelProjectileTemplateDefinition>
         validated_projectile_templates;
     std::vector<KernelColliderTemplateDefinition> validated_collider_templates;
-    std::vector<KernelGameRuleDefinition> validated_game_rules;
-    std::vector<KernelGameRuleNodeDefinition> validated_game_rule_nodes;
-    std::vector<KernelGameRuleEdgeDefinition> validated_game_rule_edges;
-    std::vector<KernelGameRuleSpawnGroupEffectDefinition>
-        validated_game_rule_effects;
     validated_entity_templates.reserve(catalog.entity_template_count);
     validated_actor_templates.reserve(catalog.actor_template_count);
     validated_projectile_templates.reserve(catalog.projectile_template_count);
@@ -3236,26 +3224,11 @@ bool KernelEngine::load_gameplay_catalog(
              entity_template.collision_trigger_mask != 0u)) {
             return false;
         }
-        // Game rules are the only directors the kernel runs. A world rule is
-        // game_server's, has no entity here, and is never sent -- so one
+        // The kernel has no directors. Both kinds are game_server's, neither
+        // is an entity here, and no director template is sent -- so one
         // arriving is a catalog built against an older kernel, and accepting it
-        // would mean storing a director that nothing ticks. The ai.spawn_*
-        // fields belonged to world rules and must now be clear on everything.
-        if (entity_template.entity_type == KernelEntityType_Director &&
-            ((entity_template.component_flags &
-             KERNEL_ENTITY_COMPONENT_DIRECTOR_RUNTIME) == 0u ||
-             entity_template.ai.controller_type != KernelAiControllerType_Director ||
-             entity_template.ai.tick_interval == 0u ||
-             entity_template.ai.director_kind != KernelDirectorKind_GameRule ||
-             entity_template.ai.game_rule_definition_id == 0u ||
-             entity_template.ai.spawn_target_count != 0u ||
-             entity_template.ai.spawn_entity_template_id != 0u ||
-             entity_template.ai.spawn_actor_template_id != 0u ||
-             entity_template.ai.spawn_position.x != 0.0f ||
-             entity_template.ai.spawn_position.y != 0.0f ||
-             entity_template.ai.spawn_position.z != 0.0f ||
-             entity_template.ai.spawn_radius != 0.0f ||
-             entity_template.ai.spawn_seed != 0u)) {
+        // would mean storing a template nothing can ever instantiate.
+        if (entity_template.entity_type == KernelEntityType_Director) {
             return false;
         }
         if (entity_template.entity_type != KernelEntityType_Prop &&
@@ -3310,171 +3283,6 @@ bool KernelEngine::load_gameplay_catalog(
             }
         }
         validated_entity_templates.push_back(entity_template);
-    }
-    if (catalog.game_rule_node_count != 0u) {
-        validated_game_rule_nodes.assign(
-            catalog.game_rule_nodes,
-            catalog.game_rule_nodes + catalog.game_rule_node_count);
-    }
-    if (catalog.game_rule_edge_count != 0u) {
-        validated_game_rule_edges.assign(
-            catalog.game_rule_edges,
-            catalog.game_rule_edges + catalog.game_rule_edge_count);
-    }
-    if (catalog.game_rule_effect_count != 0u) {
-        validated_game_rule_effects.assign(
-            catalog.game_rule_effects,
-            catalog.game_rule_effects + catalog.game_rule_effect_count);
-    }
-    for (std::uint32_t index = 0u; index < catalog.game_rule_count; ++index) {
-        const KernelGameRuleDefinition& rule = catalog.game_rules[index];
-        if (rule.struct_size < sizeof(KernelGameRuleDefinition) ||
-            rule.game_rule_definition_id == 0u || rule.node_count == 0u ||
-            rule.node_count > KERNEL_MAX_GAME_RULE_NODES ||
-            rule.edge_count > KERNEL_MAX_GAME_RULE_EDGES ||
-            rule.effect_count > KERNEL_MAX_GAME_RULE_EFFECTS ||
-            rule.first_node > catalog.game_rule_node_count ||
-            rule.node_count > catalog.game_rule_node_count - rule.first_node ||
-            rule.first_edge > catalog.game_rule_edge_count ||
-            rule.edge_count > catalog.game_rule_edge_count - rule.first_edge ||
-            rule.first_effect > catalog.game_rule_effect_count ||
-            rule.effect_count >
-                catalog.game_rule_effect_count - rule.first_effect ||
-            std::any_of(
-                validated_game_rules.begin(),
-                validated_game_rules.end(),
-                [&](const KernelGameRuleDefinition& candidate) {
-                    return candidate.game_rule_definition_id ==
-                        rule.game_rule_definition_id;
-                })) {
-            return false;
-        }
-        std::unordered_set<std::uint32_t> node_ids;
-        std::unordered_set<std::uint32_t> group_ids;
-        std::uint32_t group_condition_count = 0u;
-        for (std::uint32_t offset = 0u; offset < rule.node_count; ++offset) {
-            const KernelGameRuleNodeDefinition& node =
-                catalog.game_rule_nodes[rule.first_node + offset];
-            const bool group_condition =
-                node.condition_type ==
-                KernelGameRuleConditionType_GroupEliminated;
-            const bool player_count_condition =
-                node.condition_type ==
-                KernelGameRuleConditionType_PlayerCountAtLeast;
-            if (node.struct_size < sizeof(KernelGameRuleNodeDefinition) ||
-                node.node_id == 0u ||
-                !node_ids.insert(node.node_id).second ||
-                (!group_condition && !player_count_condition) ||
-                (group_condition &&
-                 (node.condition_group_id == 0u ||
-                  node.condition_count != 0u ||
-                  !group_ids.insert(node.condition_group_id).second)) ||
-                (player_count_condition &&
-                 (node.condition_group_id != 0u ||
-                  node.condition_count == 0u))) {
-                return false;
-            }
-            if (group_condition) {
-                ++group_condition_count;
-            }
-        }
-        std::unordered_set<std::uint64_t> edge_keys;
-        std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> outgoing;
-        for (std::uint32_t offset = 0u; offset < rule.edge_count; ++offset) {
-            const KernelGameRuleEdgeDefinition& edge =
-                catalog.game_rule_edges[rule.first_edge + offset];
-            const std::uint64_t key =
-                (static_cast<std::uint64_t>(edge.source_node_id) << 32u) |
-                edge.target_node_id;
-            if (edge.struct_size < sizeof(KernelGameRuleEdgeDefinition) ||
-                edge.source_node_id == edge.target_node_id ||
-                !node_ids.contains(edge.source_node_id) ||
-                !node_ids.contains(edge.target_node_id) ||
-                !edge_keys.insert(key).second) {
-                return false;
-            }
-            outgoing[edge.source_node_id].push_back(edge.target_node_id);
-        }
-        std::unordered_map<std::uint32_t, std::uint8_t> visit;
-        const std::function<bool(std::uint32_t)> has_cycle =
-            [&](std::uint32_t node_id) {
-                std::uint8_t& state = visit[node_id];
-                if (state == 1u) {
-                    return true;
-                }
-                if (state == 2u) {
-                    return false;
-                }
-                state = 1u;
-                for (const std::uint32_t target : outgoing[node_id]) {
-                    if (has_cycle(target)) {
-                        return true;
-                    }
-                }
-                state = 2u;
-                return false;
-            };
-        for (const std::uint32_t node_id : node_ids) {
-            if (has_cycle(node_id)) {
-                return false;
-            }
-        }
-        std::unordered_set<std::uint32_t> effect_node_ids;
-        std::unordered_set<std::uint32_t> effect_group_ids;
-        for (std::uint32_t offset = 0u; offset < rule.effect_count; ++offset) {
-            const KernelGameRuleSpawnGroupEffectDefinition& effect =
-                catalog.game_rule_effects[rule.first_effect + offset];
-            const auto node = std::find_if(
-                catalog.game_rule_nodes + rule.first_node,
-                catalog.game_rule_nodes + rule.first_node + rule.node_count,
-                [&](const KernelGameRuleNodeDefinition& candidate) {
-                    return candidate.node_id == effect.node_id;
-                });
-            const auto entity = std::find_if(
-                validated_entity_templates.begin(),
-                validated_entity_templates.end(),
-                [&](const KernelEntityTemplateDefinition& candidate) {
-                    return candidate.entity_template_id ==
-                        effect.entity_template_id;
-                });
-            if (effect.struct_size <
-                    sizeof(KernelGameRuleSpawnGroupEffectDefinition) ||
-                effect.effect_type != KernelGameRuleEffectType_SpawnGroup ||
-                effect.count == 0u ||
-                !effect_node_ids.insert(effect.node_id).second ||
-                !effect_group_ids.insert(effect.group_id).second || node ==
-                    catalog.game_rule_nodes + rule.first_node + rule.node_count ||
-                node->condition_type !=
-                    KernelGameRuleConditionType_GroupEliminated ||
-                effect.group_id != node->condition_group_id ||
-                entity == validated_entity_templates.end() ||
-                entity->entity_type != KernelEntityType_Actor ||
-                entity->actor_type != KernelActorType_Agent ||
-                !std::isfinite(effect.position.x) ||
-                !std::isfinite(effect.position.y) ||
-                !std::isfinite(effect.position.z) ||
-                !std::isfinite(effect.radius) || effect.radius < 0.0f) {
-                return false;
-            }
-        }
-        if (effect_node_ids.size() != group_condition_count) {
-            return false;
-        }
-        validated_game_rules.push_back(rule);
-    }
-    for (const KernelEntityTemplateDefinition& entity_template :
-         validated_entity_templates) {
-        if (entity_template.entity_type == KernelEntityType_Director &&
-            entity_template.ai.director_kind == KernelDirectorKind_GameRule &&
-            std::none_of(
-                validated_game_rules.begin(),
-                validated_game_rules.end(),
-                [&](const KernelGameRuleDefinition& rule) {
-                    return rule.game_rule_definition_id ==
-                        entity_template.ai.game_rule_definition_id;
-                })) {
-            return false;
-        }
     }
     for (std::uint32_t index = 0; index < catalog.projectile_template_count; ++index) {
         const KernelProjectileTemplateDefinition& projectile_template =
@@ -3608,18 +3416,6 @@ bool KernelEngine::load_gameplay_catalog(
             find_actor_template(
                 validated_actor_templates,
                 entity_template.actor_template_id) == nullptr) {
-            return false;
-        }
-        if (entity_template.ai.spawn_actor_template_id != 0u &&
-            find_actor_template(
-                validated_actor_templates,
-                entity_template.ai.spawn_actor_template_id) == nullptr) {
-            return false;
-        }
-        if (entity_template.ai.spawn_entity_template_id != 0u &&
-            find_entity_template(
-                validated_entity_templates,
-                entity_template.ai.spawn_entity_template_id) == nullptr) {
             return false;
         }
         for (const KernelActionTriggerDefinition* trigger : {
@@ -3837,10 +3633,6 @@ bool KernelEngine::load_gameplay_catalog(
     item_templates_ = std::move(validated_item_templates);
     prop_population_rules_ =
         std::move(validated_prop_population_rules);
-    game_rule_definitions_ = std::move(validated_game_rules);
-    game_rule_nodes_ = std::move(validated_game_rule_nodes);
-    game_rule_edges_ = std::move(validated_game_rule_edges);
-    game_rule_effects_ = std::move(validated_game_rule_effects);
     skeleton_assets_ = std::move(validated_skeleton_assets);
     locomotion_states_.clear();
     skeleton_pose_history_.clear();

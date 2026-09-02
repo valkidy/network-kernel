@@ -1317,9 +1317,6 @@ AiControllerType to_ai_controller_type(std::uint32_t controller_type) {
     if (controller_type == KernelAiControllerType_Sentry) {
         return AiControllerType::kSentry;
     }
-    if (controller_type == KernelAiControllerType_Director) {
-        return AiControllerType::kDirector;
-    }
     if (controller_type == KernelAiControllerType_Chaser) {
         return AiControllerType::kChaser;
     }
@@ -1740,9 +1737,6 @@ bool EntityLifecycleSystem::create_entity(
         if ((entity_template->component_flags &
              KERNEL_ENTITY_COMPONENT_SENTRY_RUNTIME) != 0u) {
             registry.get_or_emplace<AgentSentryRuntime>(*entity);
-        }
-        if ((entity_template->component_flags &
-             KERNEL_ENTITY_COMPONENT_DIRECTOR_RUNTIME) != 0u) {
         }
         if (const std::optional<CompiledActionGraphBinding> binding =
                 compile_entity_trigger_binding(

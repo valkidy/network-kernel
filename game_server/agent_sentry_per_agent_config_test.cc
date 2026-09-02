@@ -191,7 +191,7 @@ void manager_resolves_config_from_the_spawned_template() {
     for (network_example::game_server::EntityTemplateConfig& entity_template :
          gameplay_config.entity_templates) {
         if (entity_template.entity_type != KernelEntityType_Director ||
-            entity_template.director_kind != KernelDirectorKind_WorldRule) {
+            entity_template.director_kind != network_example::game_server::AuthoredDirectorKind::kWorldRule) {
             continue;
         }
         entity_template.director_spawn_target_count = 1;

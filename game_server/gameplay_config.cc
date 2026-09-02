@@ -301,7 +301,7 @@ void hash_actor_template(
     hash_vec3(hash, actor_template.vision.local_forward);
     hash_scalar(hash, actor_template.ai_controller_type);
     hash_scalar(hash, actor_template.ai_tick_interval);
-    hash_scalar(hash, actor_template.director_kind);
+    hash_scalar(hash, static_cast<std::uint32_t>(actor_template.director_kind));
     hash_scalar(hash, actor_template.director_spawn_target_count);
     hash_scalar(hash, actor_template.director_spawn_entity_template_id);
     hash_scalar(hash, actor_template.director_spawn_actor_template_id);
@@ -3683,7 +3683,7 @@ ActorTemplateConfig actor_template_from_yaml(
             } else if (controller == "chaser") {
                 actor_template.ai_controller_type = KernelAiControllerType_Chaser;
             } else if (controller == "director") {
-                actor_template.ai_controller_type = KernelAiControllerType_Director;
+                actor_template.ai_controller_type = kAiControllerTypeDirector;
             } else {
                 throw std::runtime_error("unsupported ai.controller: " + controller);
             }
@@ -4463,7 +4463,7 @@ EntityTemplateConfig entity_template_from_yaml(
     if (controller != "director") {
         throw std::runtime_error("director template requires ai.controller: director");
     }
-    entity_template.ai_controller_type = KernelAiControllerType_Director;
+    entity_template.ai_controller_type = kAiControllerTypeDirector;
     entity_template.ai_tick_interval =
         ai["tick_interval"] ? ai["tick_interval"].as<std::uint32_t>() : 1u;
 
@@ -4485,8 +4485,8 @@ EntityTemplateConfig entity_template_from_yaml(
         throw std::runtime_error("unsupported director.kind: " + kind);
     }
     entity_template.director_kind = kind == "world_rule"
-        ? KernelDirectorKind_WorldRule
-        : KernelDirectorKind_GameRule;
+        ? AuthoredDirectorKind::kWorldRule
+        : AuthoredDirectorKind::kGameRule;
     if (kind == "game_rule") {
         if (director["spawn"] || !director["graph"]) {
             throw std::runtime_error(
@@ -4503,7 +4503,7 @@ EntityTemplateConfig entity_template_from_yaml(
             entity_template.actor_template_id);
         const YAML::Node nodes = graph["nodes"];
         if (!nodes || !nodes.IsSequence() || nodes.size() == 0u ||
-            nodes.size() > KERNEL_MAX_GAME_RULE_NODES) {
+            nodes.size() > kMaxGameRuleNodes) {
             throw std::runtime_error(
                 "game_rule graph requires 1..64 nodes: " + entity_template.name);
         }
@@ -4552,7 +4552,7 @@ EntityTemplateConfig entity_template_from_yaml(
                         "group_eliminated requires group and must not define count");
                 }
                 node_config.condition_type =
-                    KernelGameRuleConditionType_GroupEliminated;
+                    kGameRuleConditionGroupEliminated;
                 node_config.group = condition["group"].as<std::string>();
                 node_config.group_id = node_config.node_id;
                 if (node_config.group.empty() ||
@@ -4566,7 +4566,7 @@ EntityTemplateConfig entity_template_from_yaml(
                         "player_count_at_least requires count and must not define group");
                 }
                 node_config.condition_type =
-                    KernelGameRuleConditionType_PlayerCountAtLeast;
+                    kGameRuleConditionPlayerCountAtLeast;
                 node_config.condition_count =
                     condition["count"].as<std::uint32_t>();
                 if (node_config.condition_count == 0u) {
@@ -4579,7 +4579,7 @@ EntityTemplateConfig entity_template_from_yaml(
             }
             if (authored["on_activate"]) {
                 if (node_config.condition_type !=
-                    KernelGameRuleConditionType_GroupEliminated) {
+                    kGameRuleConditionGroupEliminated) {
                     throw std::runtime_error(
                         "player_count_at_least node must not define on_activate");
                 }
@@ -4621,7 +4621,7 @@ EntityTemplateConfig entity_template_from_yaml(
                         "invalid game_rule spawn_group values");
                 }
             } else if (node_config.condition_type ==
-                       KernelGameRuleConditionType_GroupEliminated) {
+                       kGameRuleConditionGroupEliminated) {
                 throw std::runtime_error(
                     "group_eliminated node requires a matching spawn_group effect");
             }
@@ -4649,7 +4649,7 @@ EntityTemplateConfig entity_template_from_yaml(
                 ++edge_count;
             }
         }
-        if (edge_count > KERNEL_MAX_GAME_RULE_EDGES) {
+        if (edge_count > kMaxGameRuleEdges) {
             throw std::runtime_error("game_rule graph exceeds 256 edges");
         }
         std::vector<std::uint8_t> visit(entity_template.game_rule_nodes.size(), 0u);
@@ -4895,7 +4895,7 @@ std::vector<EntityTemplateConfig> load_entity_templates_from_source(
         if (entity_template.entity_type != KernelEntityType_Director) {
             continue;
         }
-        if (entity_template.director_kind == KernelDirectorKind_WorldRule) {
+        if (entity_template.director_kind == AuthoredDirectorKind::kWorldRule) {
             const YAML::Node ref(
                 entity_template.director_spawn_entity_template_ref);
             entity_template.director_spawn_entity_template_id =
@@ -7033,7 +7033,7 @@ void apply_catalog_world_rule_config(GameServerGameplayConfig* config) {
         const std::uint32_t template_id = candidate.actor_template_id;
         const auto entity_template = config->entity_templates.begin() +
             (&candidate - config->entity_templates.data());
-        if (entity_template->director_kind == KernelDirectorKind_GameRule) {
+        if (entity_template->director_kind == AuthoredDirectorKind::kGameRule) {
             GameRuleConfig game_rule;
             game_rule.director_template_id = template_id;
             game_rule.name = entity_template->name;
@@ -7046,7 +7046,7 @@ void apply_catalog_world_rule_config(GameServerGameplayConfig* config) {
                 node.node_id = authored_node.node_id;
                 node.condition_type =
                     authored_node.condition_type ==
-                        KernelGameRuleConditionType_PlayerCountAtLeast
+                        kGameRuleConditionPlayerCountAtLeast
                     ? GameRuleConditionType::kPlayerCountAtLeast
                     : GameRuleConditionType::kGroupEliminated;
                 node.condition_group_id = authored_node.group_id;
@@ -7254,7 +7254,7 @@ void apply_catalog_agent_config(
             [](const EntityTemplateConfig& entity_template) {
                 return entity_template.entity_type == KernelEntityType_Director &&
                        entity_template.director_kind ==
-                           KernelDirectorKind_WorldRule &&
+                           AuthoredDirectorKind::kWorldRule &&
                        entity_template.director_spawn_actor_template_id != 0u;
             });
         if (director != config->entity_templates.end()) {
@@ -8511,83 +8511,11 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
                         : authored_template.ai_tick_interval;
             }
         } else if (authored_template.entity_type == KernelEntityType_Director) {
-            // World rules are driven by game_server's WorldRuleDirector and
-            // have no entity in the world, so the kernel is never told about
-            // them. Game rules still are, until they move too.
-            if (authored_template.director_kind != KernelDirectorKind_GameRule) {
-                continue;
-            }
-            entity_template.component_flags =
-                KERNEL_ENTITY_COMPONENT_TRANSFORM |
-                KERNEL_ENTITY_COMPONENT_AGENT_RUNTIME |
-                KERNEL_ENTITY_COMPONENT_DIRECTOR_RUNTIME;
-            if (authored_template.server_only) {
-                entity_template.component_flags |= KERNEL_ENTITY_COMPONENT_SERVER_ONLY;
-            }
-            entity_template.ai.controller_type = KernelAiControllerType_Director;
-            entity_template.ai.director_kind = authored_template.director_kind;
-            entity_template.ai.game_rule_definition_id =
-                authored_template.director_kind == KernelDirectorKind_GameRule
-                    ? authored_template.actor_template_id
-                    : 0u;
-            entity_template.ai.tick_interval =
-                authored_template.ai_tick_interval == 0u
-                    ? 1u
-                    : authored_template.ai_tick_interval;
-            if (authored_template.director_kind == KernelDirectorKind_GameRule) {
-                const std::uint32_t first_node =
-                    static_cast<std::uint32_t>(storage.game_rule_nodes.size());
-                const std::uint32_t first_edge =
-                    static_cast<std::uint32_t>(storage.game_rule_edges.size());
-                const std::uint32_t first_effect =
-                    static_cast<std::uint32_t>(storage.game_rule_effects.size());
-                for (const ActorTemplateConfig::GameRuleNodeConfig& node :
-                     authored_template.game_rule_nodes) {
-                    storage.game_rule_nodes.push_back(KernelGameRuleNodeDefinition{
-                        sizeof(KernelGameRuleNodeDefinition),
-                        node.node_id,
-                        node.condition_type,
-                        node.group_id,
-                        node.condition_count,
-                    });
-                    if (node.has_spawn_effect) {
-                        storage.game_rule_effects.push_back(
-                            KernelGameRuleSpawnGroupEffectDefinition{
-                                sizeof(KernelGameRuleSpawnGroupEffectDefinition),
-                                KernelGameRuleEffectType_SpawnGroup,
-                                node.node_id,
-                                node.group_id,
-                                node.spawn_count,
-                                node.spawn_entity_template_id,
-                                node.spawn_position,
-                                node.spawn_radius,
-                                node.spawn_seed,
-                            });
-                    }
-                    for (const std::uint32_t next_node_id :
-                         node.next_node_ids) {
-                        storage.game_rule_edges.push_back(
-                            KernelGameRuleEdgeDefinition{
-                                sizeof(KernelGameRuleEdgeDefinition),
-                                node.node_id,
-                                next_node_id,
-                            });
-                    }
-                }
-                storage.game_rules.push_back(KernelGameRuleDefinition{
-                    sizeof(KernelGameRuleDefinition),
-                    authored_template.actor_template_id,
-                    first_node,
-                    static_cast<std::uint32_t>(
-                        authored_template.game_rule_nodes.size()),
-                    first_edge,
-                    static_cast<std::uint32_t>(
-                        storage.game_rule_edges.size() - first_edge),
-                    first_effect,
-                    static_cast<std::uint32_t>(
-                        storage.game_rule_effects.size() - first_effect),
-                });
-            }
+            // Neither kind of director is a kernel entity any more, so no
+            // director template is sent at all. The authored graph is compiled
+            // into config.game_rules, and the world rule into
+            // config.world_rule_spawns, both of which game_server runs itself.
+            continue;
         } else if (authored_template.entity_type == KernelEntityType_Prop) {
             entity_template.prop = authored_template.prop;
             entity_template.component_flags = KERNEL_ENTITY_COMPONENT_TRANSFORM;
@@ -8785,18 +8713,6 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
     storage.definition.skeleton_assets = storage.skeleton_assets.data();
     storage.definition.skeleton_asset_count =
         static_cast<std::uint32_t>(storage.skeleton_assets.size());
-    storage.definition.game_rules = storage.game_rules.data();
-    storage.definition.game_rule_count =
-        static_cast<std::uint32_t>(storage.game_rules.size());
-    storage.definition.game_rule_nodes = storage.game_rule_nodes.data();
-    storage.definition.game_rule_node_count =
-        static_cast<std::uint32_t>(storage.game_rule_nodes.size());
-    storage.definition.game_rule_edges = storage.game_rule_edges.data();
-    storage.definition.game_rule_edge_count =
-        static_cast<std::uint32_t>(storage.game_rule_edges.size());
-    storage.definition.game_rule_effects = storage.game_rule_effects.data();
-    storage.definition.game_rule_effect_count =
-        static_cast<std::uint32_t>(storage.game_rule_effects.size());
     return storage;
 }
 

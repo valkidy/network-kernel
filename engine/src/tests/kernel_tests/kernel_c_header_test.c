@@ -6,8 +6,9 @@
 #include "kernel/public/kernel_api.h"
 
 _Static_assert(
-    KERNEL_ABI_VERSION == 85u,
-    "melee fire mode and melee collider template ABI");
+    KERNEL_ABI_VERSION == 86u,
+    "directors left the kernel: no game-rule structs, no director kind, and "
+    "no spawn fields on the AI definition");
 _Static_assert(
     offsetof(KernelWeaponMechanicsDefinition, melee_collider_template_id) >
         offsetof(KernelWeaponMechanicsDefinition, collision_mask),

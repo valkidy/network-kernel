@@ -992,7 +992,7 @@ int main() {
     assert(entity_catalog.entity_templates[2].ai.tick_interval == 10);
     assert(
         entity_catalog.entity_templates[2].ai.director_kind ==
-        KernelDirectorKind_WorldRule);
+        network_example::game_server::AuthoredDirectorKind::kWorldRule);
     assert(entity_catalog.entity_templates[2].ai.spawn_target_count == 10);
     assert(entity_catalog.entity_templates[2].ai.spawn_entity_template_id == 2);
     assert(entity_catalog.definition.game_rule_count == 0u);
@@ -1011,34 +1011,65 @@ int main() {
         game_rule_catalog =
             network_example::game_server::build_kernel_gameplay_catalog(
                 game_rule_config);
-    require(game_rule_catalog.definition.game_rule_count == 1u);
-    require(game_rule_catalog.definition.game_rule_node_count == 4u);
-    require(game_rule_catalog.definition.game_rule_edge_count == 3u);
-    require(game_rule_catalog.definition.game_rule_effect_count == 3u);
+    // The authored graph compiles into game_server's own config now; no
+    // director reaches the kernel at all, so the catalog carries none.
+    require(std::none_of(
+        game_rule_catalog.entity_templates.begin(),
+        game_rule_catalog.entity_templates.end(),
+        [](const KernelEntityTemplateDefinition& definition) {
+            return definition.entity_type == KernelEntityType_Director;
+        }));
+    require(game_rule_config.game_rules.size() == 1u);
+    const network_example::game_server::GameRuleConfig& compiled_rule =
+        game_rule_config.game_rules[0];
+    require(compiled_rule.nodes.size() == 4u);
+    require(compiled_rule.nodes[0].node_id == 1u);
+    require(compiled_rule.nodes[1].node_id == 2u);
     require(
-        game_rule_catalog.entity_templates[2].ai.director_kind ==
-        KernelDirectorKind_GameRule);
-    require(
-        game_rule_catalog.entity_templates[2].ai.game_rule_definition_id ==
-        game_rule_catalog.entity_templates[2].entity_template_id);
-    require(game_rule_catalog.game_rule_nodes[0].node_id == 1u);
-    require(game_rule_catalog.game_rule_nodes[1].node_id == 2u);
-    require(
-        game_rule_catalog.game_rule_nodes[0].condition_type ==
-        KernelGameRuleConditionType_PlayerCountAtLeast);
-    require(game_rule_catalog.game_rule_nodes[0].condition_count == 1u);
-    require(game_rule_catalog.game_rule_nodes[0].condition_group_id == 0u);
-    require(game_rule_catalog.game_rule_edges[0].source_node_id == 1u);
-    require(game_rule_catalog.game_rule_edges[0].target_node_id == 2u);
-    require(game_rule_catalog.game_rule_edges[1].source_node_id == 2u);
-    require(game_rule_catalog.game_rule_edges[1].target_node_id == 3u);
-    require(game_rule_catalog.game_rule_edges[2].target_node_id == 4u);
-    require(game_rule_catalog.game_rule_effects[0].node_id == 2u);
-    require(game_rule_catalog.game_rule_effects[0].count == 2u);
-    require(game_rule_catalog.game_rule_effects[0].entity_template_id == 2u);
-    require(game_rule_catalog.game_rule_effects[0].radius == 4.0f);
-    require(game_rule_catalog.game_rule_effects[1].radius == 0.0f);
-    require(game_rule_catalog.game_rule_effects[1].seed == 1u);
+        compiled_rule.nodes[0].condition_type ==
+        network_example::game_server::GameRuleConditionType::kPlayerCountAtLeast);
+    require(compiled_rule.nodes[0].condition_count == 1u);
+    require(compiled_rule.nodes[0].condition_group_id == 0u);
+    // The same three edges the kernel catalog used to carry: 1 -> 2, 2 -> 3,
+    // and something -> 4. Stated as edges rather than as one node's exact list,
+    // because which node fans out to 4 is the fixture's business.
+    const auto has_edge = [&compiled_rule](
+                              std::uint32_t source, std::uint32_t target) {
+        for (const network_example::game_server::GameRuleNodeConfig& node :
+             compiled_rule.nodes) {
+            if (node.node_id != source) {
+                continue;
+            }
+            return std::find(
+                       node.next_node_ids.begin(),
+                       node.next_node_ids.end(),
+                       target) != node.next_node_ids.end();
+        }
+        return false;
+    };
+    require(has_edge(1u, 2u));
+    require(has_edge(2u, 3u));
+    std::uint32_t edge_count = 0;
+    bool reaches_four = false;
+    for (const network_example::game_server::GameRuleNodeConfig& node :
+         compiled_rule.nodes) {
+        edge_count += static_cast<std::uint32_t>(node.next_node_ids.size());
+        reaches_four = reaches_four ||
+            std::find(
+                node.next_node_ids.begin(), node.next_node_ids.end(), 4u) !=
+                node.next_node_ids.end();
+    }
+    require(edge_count == 3u);
+    require(reaches_four);
+    // Three of the four nodes spawn; the player gate does not.
+    require(!compiled_rule.nodes[0].has_spawn_effect);
+    require(compiled_rule.nodes[1].has_spawn_effect);
+    require(compiled_rule.nodes[1].spawn.count == 2u);
+    require(compiled_rule.nodes[1].spawn.entity_template_id == 2u);
+    require(compiled_rule.nodes[1].spawn.radius == 4.0f);
+    require(compiled_rule.nodes[2].spawn.radius == 0.0f);
+    require(compiled_rule.nodes[2].spawn.seed == 1u);
+
     const network_example::game_server::KernelGameplayCatalogStorage
         repeated_game_rule_catalog =
             network_example::game_server::build_kernel_gameplay_catalog(
@@ -1106,7 +1137,7 @@ int main() {
         "  graph:\n"
         "    nodes:\n";
     for (std::uint32_t index = 0u;
-         index <= KERNEL_MAX_GAME_RULE_NODES;
+         index <= network_example::game_server::kMaxGameRuleNodes;
          ++index) {
         const std::string suffix = std::to_string(index);
         oversized_game_rule +=
@@ -2980,23 +3011,12 @@ int main() {
         legged_locomotion_catalog =
             network_example::game_server::build_kernel_gameplay_catalog(
                 legged_locomotion_config);
-    // A world rule is not sent to the kernel at all now: it has no entity, and
-    // game_server drives it. Game rules still are, and this catalog globs the
-    // whole template directory, so one of those is legitimately still here --
-    // what must not be is a world rule.
+    // No director of either kind is sent to the kernel now.
     require(std::none_of(
         legged_locomotion_catalog.entity_templates.begin(),
         legged_locomotion_catalog.entity_templates.end(),
         [](const KernelEntityTemplateDefinition& definition) {
-            return definition.entity_type == KernelEntityType_Director &&
-                definition.ai.director_kind == KernelDirectorKind_WorldRule;
-        }));
-    require(std::any_of(
-        legged_locomotion_catalog.entity_templates.begin(),
-        legged_locomotion_catalog.entity_templates.end(),
-        [](const KernelEntityTemplateDefinition& definition) {
-            return definition.entity_type == KernelEntityType_Director &&
-                definition.ai.director_kind == KernelDirectorKind_GameRule;
+            return definition.entity_type == KernelEntityType_Director;
         }));
     require(legged_locomotion_config.world_rule_spawns.size() == 1u);
     require(legged_locomotion_config.world_rule_spawns[0].target_count == 1u);

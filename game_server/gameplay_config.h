@@ -29,6 +29,24 @@ inline constexpr std::uint8_t kWeaponBeamRifle = 5;
 inline constexpr std::uint8_t kWeaponHomingMissile = 6;
 inline constexpr std::uint8_t kWeaponGrenade = 7;
 inline constexpr std::size_t kWeaponIdCount = 256;
+// These were kernel constants until directors stopped being kernel entities.
+// The values are unchanged on purpose: they are hashed into the catalog, and
+// renumbering them would change the hash of every catalog for no reason.
+inline constexpr std::uint32_t kAiControllerTypeDirector = 2;
+inline constexpr std::uint32_t kGameRuleConditionGroupEliminated = 1;
+inline constexpr std::uint32_t kGameRuleConditionPlayerCountAtLeast = 2;
+inline constexpr std::size_t kMaxGameRuleNodes = 64;
+inline constexpr std::size_t kMaxGameRuleEdges = 256;
+inline constexpr std::size_t kMaxGameRuleEffects = 64;
+
+// Which kind of director a template authors. game_server's own, because the
+// kernel has no director kinds any more -- it has no directors.
+enum class AuthoredDirectorKind : std::uint8_t {
+    kNone = 0,
+    kWorldRule = 1,
+    kGameRule = 2,
+};
+
 struct NavigationMeshConfig {
     std::string entry_path;
     // Filled by whoever has the bundle open, not by the catalog loader: the
@@ -214,7 +232,7 @@ struct ActorTemplateConfig {
     KernelAgentVisionConfig vision{};
     std::uint32_t ai_controller_type = KernelAiControllerType_None;
     std::uint32_t ai_tick_interval = 1;
-    std::uint32_t director_kind = KernelDirectorKind_None;
+    AuthoredDirectorKind director_kind = AuthoredDirectorKind::kNone;
     std::uint32_t director_spawn_target_count = 0;
     std::uint32_t director_spawn_entity_template_id = 0;
     std::uint32_t director_spawn_actor_template_id = 0;
@@ -413,10 +431,6 @@ struct KernelGameplayCatalogStorage {
     std::vector<KernelItemTemplateDefinition> item_templates;
     std::vector<KernelPropPopulationRuleDefinition> prop_population_rules;
     std::vector<KernelStatusEffectDefinition> status_effects;
-    std::vector<KernelGameRuleDefinition> game_rules;
-    std::vector<KernelGameRuleNodeDefinition> game_rule_nodes;
-    std::vector<KernelGameRuleEdgeDefinition> game_rule_edges;
-    std::vector<KernelGameRuleSpawnGroupEffectDefinition> game_rule_effects;
     std::vector<std::vector<std::uint8_t>> skeleton_asset_bytes;
     std::vector<KernelSkeletonAssetDefinition> skeleton_assets;
     KernelGameplayCatalogDefinition definition{};
