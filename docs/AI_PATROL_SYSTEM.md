@@ -1,7 +1,8 @@
 # AI Patrol System
 
-Status: **Implemented for flat terrain. Placement reachability deferred — see
-"Deferred: placement reachability" for what that costs and when it comes due.**
+Status: **Implemented for flat terrain, and both directors have since moved out
+of the kernel. Placement reachability is deferred — see "Deferred: placement
+reachability" for what that costs and when it comes due.**
 
 A patrol is a squad the world produces on its own schedule: it spawns somewhere
 in an authored area, walks one route across the map, engages what it sees on the
@@ -296,80 +297,101 @@ The trigger is explicit: **the first terrain that is not flat, or the first
 building.** At that point, re-run `patrol_nav_bench` on the real terrain before
 designing anything. Its numbers are what decided every route question so far.
 
+## Done: the directors moved out of the kernel
+
+Both directors live in `game_server` now, and the kernel has none. This was not
+waiting on a feature, and the reason to do it was not that one arrived.
+
+The repository had come to hold two contradictory answers to "how do I build a
+system that spawns things": patrol, which is `game_server` and touches no kernel
+ABI, and the `game_rule` / `world_rule` directors, which were ECS components,
+kernel validation, and four structs in the kernel ABI. Whoever added the next
+population system would have read both, and the older one was larger and looked
+more settled. A wrong design left in place is not inert; it is a worked example,
+and it teaches.
+
+### What it took
+
+| Step | Outcome |
+|---|---|
+| Make the gate real | `game_rule_director_test` was 517 lines and 64 `assert()`, all compiled out under `-c opt`. None had ever been evaluated. |
+| Move the world rule | `game_server/world_rule_director.{h,cc}` |
+| Move the game rule | `game_server/game_rule_director.{h,cc}` |
+| Delete the ABI | `KERNEL_ABI_VERSION` 85 -> 86, a removal |
+
+The gate came first on purpose. A behaviour-preserving port needs behaviour it
+can preserve against, and there was none: a suite that evaluates nothing would
+have made the port feel safe and proved nothing.
+
+### What the move taught, which reading would not have
+
+**Two behaviour differences only tests found.** The agent count a world rule
+works against has to come from the entity list with no validity filter, because
+an agent created this tick is not valid until physics finalises -- counting the
+`game_server` way had the rule spawn a replacement for the agent it had just
+made. And the interval is wall clock, not time spent short: the kernel held an
+absolute `next_tick`, so a rule at full strength for longer than its interval
+replaces a casualty on the tick it appears.
+
+**Synchronous spawning deleted a mechanism rather than porting it.** The kernel
+dispatched creates through a command queue, so a group could not know when it
+was fully populated: hence `pending_spawn_count`, hence `sealed`, hence an
+empty-but-unfilled group not reading as cleared. `Kernel_ServerCreateEntity`
+returns the net id, so a node is activated, its group filled and its members
+recorded inside one call. `sealed` was carried over at first, and a mutation
+removing it changed no behaviour -- because it cannot. A flag nothing can
+observe is a flag that will eventually be believed.
+
+**Extracting config at load quietly moved a decision.** Pulling the directors
+out of the catalog during load meant that rewriting
+`preload_director_template_ids` no longer disabled anything -- which is how a
+test disables a director. Every authored director is translated now, and the
+preload list is applied where the directors are constructed, so it stays the
+live decision it always was.
+
+**The ABI got smaller.** Nothing outside `engine` and `game_server` consumed any
+of it, so the removal needed no coordination. The estimate that said otherwise
+was wrong, and so was the one that called the port a rewrite of mission flow: it
+is the same DAG, the same conditions and the same effects, on the other side of
+the boundary.
+
+### Where the coverage went
+
+Behaviour moved with the mechanism rather than being deleted with it.
+`//game_server:world_rule_director_test` covers filling a target, the wall-clock
+interval, and the golden-angle ring and its cursor.
+`//game_server:game_rule_director_test` covers the player gate, a cleared wave
+opening the next, a join waiting for every branch rather than the first one
+home, and a spawn that cannot happen failing the rule. The kernel tests that
+drove the old mechanism are gone.
+
 ## Other open items
 
 - **The layering criterion.** `//tools:check_layering_boundaries` enforces the
   dependency direction; the other direction -- a gameplay concept added to a
   kernel or world header -- is a review criterion in
-  `docs/GAME_SERVER_V1.md`, deliberately not an automated check.
-- **The two director systems.** See "Planned: move the directors out of the
-  kernel" below. Patrol is a third population system, on the correct side of the
-  boundary; the kernel-side directors are the ones that move.
-- **`enemy:` in the catalog** sets `override_director_spawn`, which replaces
-  every world-rule director's spawn config wholesale. It does not affect patrols,
-  which never reach the kernel as a director, but it does mean the world-rule
-  director's own authored spawn is inert whenever `enemy:` is present.
+  `docs/GAME_SERVER_V1.md`, deliberately not an automated check. The director
+  machinery is the worked example of why: every one of its types arrived as an
+  addition to a header, not as a dependency edge.
+- **`AgentRuntime::controller_type` is write-only in the kernel.** Its only
+  reader was the director tick. The kernel still materialises it and still
+  validates the ABI field, and nothing consumes either. Removing it is not quite
+  free, because `ai.controller_type == None` is also the gate deciding whether
+  `AgentRuntime` is attached at all, so it wants its own change.
+- **`enforce_prop_population_limit` is still in the kernel**
+  (`simulation/src/systems.cc`). A ceiling on how many of something may exist is
+  a rule, and this is the same rule `patrol_budget` states in `game_server`. It
+  cannot move alone: props are spawned by kernel-internal trigger actions, so
+  `game_server` has no point at which to apply it. Prop spawning would have to
+  move first.
 - **Pressure and credit**, the other options on the WHEN and WHAT axes.
-
-## Planned: move the directors out of the kernel
-
-Unlike placement reachability, this is **not** waiting on anything. It is
-scheduled work, and the reason is not that a feature needs it.
-
-The repository currently contains two contradictory answers to "how do I build a
-system that spawns things": patrol, which is `game_server` and touches no kernel
-ABI, and the `game_rule` / `world_rule` directors, which are ECS components,
-kernel validation, and four structs in the kernel ABI. The next person adding a
-population system will read both. The older one is larger and looks more
-established, so it is the one likely to be copied — and copying it produces
-another system on the wrong side of the boundary, which then has to be moved too.
-
-A wrong design left in place is not inert. It is a worked example, and it is
-teaching.
-
-### What moves
-
-| Location | What |
-|---|---|
-| `engine/src/world/public/components.h` | `DirectorRuntime`, `WorldRuleRuntime`, `GameRuleRuntime`, `GameRuleGroupRuntime`, `GameplayGroupMembership`, `DirectorKind`, `GameRuleStatus`, `GameRuleNodeState` |
-| `engine/src/simulation/src/systems.cc` | the `SpawnGroup` / `SpawnAgent` executors, the golden-angle placement, DAG advancement |
-| `engine/src/kernel/src/kernel.cc` | game-rule graph validation and storage |
-| `engine/src/kernel/public/kernel_types.h` | `KernelGameRuleDefinition`, `...NodeDefinition`, `...EdgeDefinition`, `...SpawnGroupEffectDefinition`, `KernelDirectorKind`, and the three `KERNEL_MAX_GAME_RULE_*` limits |
-| `engine/src/simulation/src/command_dispatcher.cc` | the group bookkeeping in the `kCreateEntity` branch |
-| `game_server/gameplay_config.cc` | stops compiling the graph into the kernel catalog and keeps it in `game_server` |
-
-Roughly 230 lines across four engine files, plus about 100 in the config loader.
-
-**This shrinks the ABI rather than growing it.** Nothing outside `engine` and
-`game_server` consumes any of it — no C# or Unity binding references
-`KernelGameRule*` or `KernelDirectorKind`, so the removal needs no coordination.
-
-One consequence worth naming: `AiControllerType` in the kernel exists **only** to
-decide whether an entity is a director the kernel should tick
-(`systems.cc:1442`). Everywhere else the kernel needs to know an entity is an
-agent, which `AgentTag` and `actor_type` already say, and controller routing has
-always lived in `game_server`'s `AgentControllerBinding`. When directors leave,
-that enum is vestigial.
-
-### Sequence
-
-1. **Make the gate real.** Done. `game_rule_director_test` (517 lines, 64
-   assertions) and `simulation_command_dispatcher_test` (10 more) were entirely
-   `assert()`, which `-c opt` compiles away, so a "passing" suite was evaluating
-   nothing. They are `require()` now, all 74 pass, and the gate was
-   mutation-checked. A behaviour-preserving port needs behaviour it can preserve
-   against, and there was none.
-2. **Port the world-rule director first.** It is the smaller of the two, its
-   "keep a population topped up" job is what `PatrolDirector` already does, and
-   the catalog's `enemy:` block makes its authored spawn inert today — so it is
-   the one with the least behaviour to preserve.
-3. **Port the game-rule director.** Behaviour-preserving: the same DAG, the same
-   conditions, the same effects, in `game_server`. Gated on the test from step 1.
-4. **Remove the ABI structs and the vestigial `AiControllerType`**, and drop the
-   catalog's `enemy:` override with them.
-
-Steps 2 and 3 each want the same treatment patrol got: mutation-check every
-behaviour, because a green test in this area has been wrong four times.
+- **Five test files have their assertions compiled out.**
+  `entity_lifecycle_system_test` is the one still outstanding, at 89 `assert()`
+  under a suite that runs `-c opt`. It passes, which currently means only that
+  it does not crash. The other four were converted as they were encountered
+  (`agent_chaser_controller_test`, `world_test`, `game_rule_director_test`,
+  `simulation_command_dispatcher_test`), and in two of those the conversion
+  immediately mattered.
 
 ## Tests
 

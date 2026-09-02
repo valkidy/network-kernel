@@ -90,12 +90,19 @@ A dependency edge is not the only way a boundary is crossed. The other way is a
 gameplay concept added to `engine/src/world/public/components.h` or to the kernel
 ABI, which no dependency check will ever notice, because there is no new edge.
 
-That is how the director machinery ended up where it is: `DirectorRuntime`,
+That is how the director machinery ended up in the kernel: `DirectorRuntime`,
 `GameRuleRuntime`, `GameRuleGroupRuntime`, `GameplayGroupMembership` and the
-`KernelGameRule*` ABI structs describe waves, elimination conditions and spawn
-shapes, none of which the kernel's own responsibilities need. See
-`docs/AI_PATROL_SYSTEM.md` for why that is recorded as a transitional state
-rather than fixed.
+`KernelGameRule*` ABI structs described waves, elimination conditions and spawn
+shapes, none of which the kernel's own responsibilities need. Every one of them
+arrived as a type added to a header, which is why no dependency check would have
+caught any of it.
+
+They have since been moved to `game_server` and deleted from the kernel
+(`docs/AI_PATROL_SYSTEM.md` records the migration). The reason to move them was
+not that a feature needed it. It was that the repository had come to hold two
+contradictory answers to "how do I build a system that spawns things", and the
+older, larger one was the one a newcomer would copy. A wrong design left in
+place is not inert; it is a worked example, and it teaches.
 
 There is no automated check for it, on purpose. Any such check is a word
 blocklist plus a baseline of existing exceptions, and the baseline gets edited by

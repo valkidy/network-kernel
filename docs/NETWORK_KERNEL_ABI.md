@@ -12,7 +12,8 @@ create it with `Kernel_Create` and release it with `Kernel_Destroy`.
 `Kernel_GetAbiInfo` returns the ABI version, public struct sizes, and capability
 flags. Consumers should call it before creating a kernel and reject an ABI
 version they do not support. The current native ABI version is
-`KERNEL_ABI_VERSION == 76u`.
+`KERNEL_ABI_VERSION == 86u`. (This line had read 76 for some time; treat
+`kernel_types.h` as the authority and this document as a description.)
 
 ## Ownership
 
@@ -30,6 +31,18 @@ failures return `NULL`, `false`, or `0`.
 Additive changes must prefer new `Kernel_*` functions or new capability flags.
 Breaking changes to public struct layout, enum semantics, buffer ownership, or
 function signatures require a `KERNEL_ABI_VERSION` bump.
+
+ABI 86 is a removal rather than an addition, which the rule above does not
+otherwise cover. Directors moved out of the kernel entirely, so the game-rule
+definition, node, edge and spawn-group-effect structs went, along with both
+game-rule enums, the three `KERNEL_MAX_GAME_RULE_*` limits, the four catalog
+arrays and their counts, `KernelDirectorKind`,
+`KERNEL_ENTITY_COMPONENT_DIRECTOR_RUNTIME`, `KernelAiControllerType_Director`,
+and the eight director fields on `KernelEntityAiDefinition`. A director entity
+template is now rejected at catalog load rather than validated. Nothing outside
+`engine` and `game_server` consumed any of it -- no managed binding referenced a
+game-rule struct or the director kind -- so this needed no coordination.
+`docs/AI_PATROL_SYSTEM.md` records why they moved.
 
 Snapshot schema 19 shrinks the beam snapshot record from 34 bytes to 6:
 `net_id` plus the beam's reach as centimetres in a `uint16`. Position,
