@@ -302,16 +302,74 @@ designing anything. Its numbers are what decided every route question so far.
   dependency direction; the other direction -- a gameplay concept added to a
   kernel or world header -- is a review criterion in
   `docs/GAME_SERVER_V1.md`, deliberately not an automated check.
-- **The two director systems.** The kernel-side `game_rule` and `world_rule`
-  directors still exist and still spawn. Patrol is a third population system on
-  the correct side of the boundary. This is a known transitional state, not a
-  design: the intent is that the kernel-side directors move to `game_server`
-  rather than that patrol moves back.
+- **The two director systems.** See "Planned: move the directors out of the
+  kernel" below. Patrol is a third population system, on the correct side of the
+  boundary; the kernel-side directors are the ones that move.
 - **`enemy:` in the catalog** sets `override_director_spawn`, which replaces
   every world-rule director's spawn config wholesale. It does not affect patrols,
   which never reach the kernel as a director, but it does mean the world-rule
   director's own authored spawn is inert whenever `enemy:` is present.
 - **Pressure and credit**, the other options on the WHEN and WHAT axes.
+
+## Planned: move the directors out of the kernel
+
+Unlike placement reachability, this is **not** waiting on anything. It is
+scheduled work, and the reason is not that a feature needs it.
+
+The repository currently contains two contradictory answers to "how do I build a
+system that spawns things": patrol, which is `game_server` and touches no kernel
+ABI, and the `game_rule` / `world_rule` directors, which are ECS components,
+kernel validation, and four structs in the kernel ABI. The next person adding a
+population system will read both. The older one is larger and looks more
+established, so it is the one likely to be copied — and copying it produces
+another system on the wrong side of the boundary, which then has to be moved too.
+
+A wrong design left in place is not inert. It is a worked example, and it is
+teaching.
+
+### What moves
+
+| Location | What |
+|---|---|
+| `engine/src/world/public/components.h` | `DirectorRuntime`, `WorldRuleRuntime`, `GameRuleRuntime`, `GameRuleGroupRuntime`, `GameplayGroupMembership`, `DirectorKind`, `GameRuleStatus`, `GameRuleNodeState` |
+| `engine/src/simulation/src/systems.cc` | the `SpawnGroup` / `SpawnAgent` executors, the golden-angle placement, DAG advancement |
+| `engine/src/kernel/src/kernel.cc` | game-rule graph validation and storage |
+| `engine/src/kernel/public/kernel_types.h` | `KernelGameRuleDefinition`, `...NodeDefinition`, `...EdgeDefinition`, `...SpawnGroupEffectDefinition`, `KernelDirectorKind`, and the three `KERNEL_MAX_GAME_RULE_*` limits |
+| `engine/src/simulation/src/command_dispatcher.cc` | the group bookkeeping in the `kCreateEntity` branch |
+| `game_server/gameplay_config.cc` | stops compiling the graph into the kernel catalog and keeps it in `game_server` |
+
+Roughly 230 lines across four engine files, plus about 100 in the config loader.
+
+**This shrinks the ABI rather than growing it.** Nothing outside `engine` and
+`game_server` consumes any of it — no C# or Unity binding references
+`KernelGameRule*` or `KernelDirectorKind`, so the removal needs no coordination.
+
+One consequence worth naming: `AiControllerType` in the kernel exists **only** to
+decide whether an entity is a director the kernel should tick
+(`systems.cc:1442`). Everywhere else the kernel needs to know an entity is an
+agent, which `AgentTag` and `actor_type` already say, and controller routing has
+always lived in `game_server`'s `AgentControllerBinding`. When directors leave,
+that enum is vestigial.
+
+### Sequence
+
+1. **Make the gate real.** Done. `game_rule_director_test` (517 lines, 64
+   assertions) and `simulation_command_dispatcher_test` (10 more) were entirely
+   `assert()`, which `-c opt` compiles away, so a "passing" suite was evaluating
+   nothing. They are `require()` now, all 74 pass, and the gate was
+   mutation-checked. A behaviour-preserving port needs behaviour it can preserve
+   against, and there was none.
+2. **Port the world-rule director first.** It is the smaller of the two, its
+   "keep a population topped up" job is what `PatrolDirector` already does, and
+   the catalog's `enemy:` block makes its authored spawn inert today — so it is
+   the one with the least behaviour to preserve.
+3. **Port the game-rule director.** Behaviour-preserving: the same DAG, the same
+   conditions, the same effects, in `game_server`. Gated on the test from step 1.
+4. **Remove the ABI structs and the vestigial `AiControllerType`**, and drop the
+   catalog's `enemy:` override with them.
+
+Steps 2 and 3 each want the same treatment patrol got: mutation-check every
+behaviour, because a green test in this area has been wrong four times.
 
 ## Tests
 
