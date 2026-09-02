@@ -2,6 +2,7 @@
 #define GAME_SERVER_AGENT_RUNTIME_H_
 
 #include <cstdint>
+#include <vector>
 
 #include "game_server/ballistic_aim.h"
 #include "kernel/public/kernel_types.h"
@@ -19,6 +20,36 @@ enum class AgentSentryState : std::uint8_t {
     kIdle = 0,
     kAlert = 1,
     kAttack = 2,
+    // Walking back to the route after a pursuit, and refusing to start another
+    // one on the way. Without a state of its own the agent re-acquires the
+    // target it just broke off from on the very next tick and never returns.
+    kReturn = 3,
+};
+
+// A patrol route as a polyline the agent walks once, first waypoint to last,
+// and then reports finished. It does not loop: the squad model is a one-shot
+// route across the world, so "finished" is what hands the agent to the despawn
+// path rather than what starts a second lap.
+//
+// Empty is the normal state for every agent that is not patrolling, and an
+// empty route leaves the chaser behaving exactly as it did before routes
+// existed.
+//
+// The waypoint list lives on the agent only while a patrol is one agent. It
+// belongs to the squad, and moves there once squads exist; until then this
+// costs an allocation on each of the two copies AgentRuntimeManager makes per
+// tick.
+struct AgentPatrolRuntimeState {
+    std::vector<KernelVec3> waypoints;
+    // The waypoint being walked toward. Equal to waypoints.size() once the
+    // route has been walked out.
+    std::size_t next_waypoint = 0;
+    bool route_complete = false;
+    // Where the agent stood when it broke off the route to give chase. The
+    // leash is measured from here rather than from the route, so "how far a
+    // pursuit may drag a patrol" is a property of the pursuit and does not
+    // change as the route runs on ahead.
+    KernelVec3 leash_anchor{0.0f, 0.0f, 0.0f};
 };
 
 struct AgentSentryRuntimeState {
@@ -78,6 +109,7 @@ struct AgentRuntimeState {
     // Chaser only: true once the agent has closed inside its stop distance and
     // is holding position, until the target opens the gap back up.
     bool chase_holding = false;
+    AgentPatrolRuntimeState patrol{};
 };
 
 }  // namespace network_example::game_server
