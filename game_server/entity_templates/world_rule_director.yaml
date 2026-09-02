@@ -1,0 +1,33 @@
+# The world's own population: encounters and roaming enemies that exist
+# whether or not a mission is running. A world rule keeps a population
+# topped up; it never advances through states, which is why it carries a
+# `spawn` block and no graph. Patrols will be owned here when they land,
+# because a patrol is something the world produces on its own schedule
+# rather than a step the mission is waiting on.
+#
+# Its counterpart is game_rule_director, which owns mission flow.
+#
+# Currently inert in the shipping catalog, for two separate reasons worth
+# knowing before editing the spawn block below: gameplay_catalog.yaml does
+# not preload this director, and its `enemy:` entry sets
+# override_director_spawn, which replaces every world rule director's spawn
+# config wholesale (gameplay_config.cc:8173). The legged_locomotion test
+# catalog does preload it.
+id: 100
+name: world_rule_director
+entity_type: director
+server_only: true
+transform:
+  position: {x: 6.0, y: 0.0, z: 0.0}
+ai:
+  controller: director
+  profile: world_rule
+  tick_interval: 30
+director:
+  kind: world_rule
+  spawn:
+    target_count: 1
+    entity_template: tripod_actor
+    position: {x: 0.0, y: 10.0, z: 0.0}
+    radius: 10.0
+    seed: 4242

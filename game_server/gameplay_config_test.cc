@@ -661,21 +661,21 @@ int main() {
     };
     const auto numeric_preload_config = load_with_catalog(replace_once(
         production_catalog_yaml,
-        "  - game_flow_director\n",
+        "  - game_rule_director\n",
         "  - 101\n"));
     require(numeric_preload_config.preload_director_template_ids.size() == 1u);
     require(numeric_preload_config.preload_director_template_ids[0] == 101u);
     require(rejects_preload_catalog(replace_once(
         production_catalog_yaml,
-        "  - game_flow_director\n",
+        "  - game_rule_director\n",
         "  - player\n")));
     require(rejects_preload_catalog(replace_once(
         production_catalog_yaml,
-        "  - game_flow_director\n",
-        "  - game_flow_director\n  - game_flow_director\n")));
+        "  - game_rule_director\n",
+        "  - game_rule_director\n  - game_rule_director\n")));
     const auto empty_preload_config = load_with_catalog(replace_once(
         production_catalog_yaml,
-        "preload_directors:\n  - game_flow_director\n",
+        "preload_directors:\n  - game_rule_director\n",
         ""));
     require(empty_preload_config.preload_director_template_ids.empty());
     const std::string production_quadruped_rig =
