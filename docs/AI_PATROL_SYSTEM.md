@@ -385,13 +385,18 @@ drove the old mechanism are gone.
   `game_server` has no point at which to apply it. Prop spawning would have to
   move first.
 - **Pressure and credit**, the other options on the WHEN and WHAT axes.
-- **Five test files have their assertions compiled out.**
-  `entity_lifecycle_system_test` is the one still outstanding, at 89 `assert()`
-  under a suite that runs `-c opt`. It passes, which currently means only that
-  it does not crash. The other four were converted as they were encountered
+- **Assertions compiled out under `-c opt`.** Five files in this area were
+  found with every check inside `assert()`, which this suite compiles away, so
+  none of them had ever been evaluated. All five are converted now
   (`agent_chaser_controller_test`, `world_test`, `game_rule_director_test`,
-  `simulation_command_dispatcher_test`), and in two of those the conversion
-  immediately mattered.
+  `simulation_command_dispatcher_test`, `entity_lifecycle_system_test`). Three
+  of the five were hiding something: two turned out to be passing for the wrong
+  reason, and the last was hiding two stale assertions -- a `visual_flags`
+  equality that broke when `derived_visual_flags` gained its grounded/falling
+  bits, and a snapshot check from when creation built the snapshot itself.
+  Neither was a product bug, and neither could have been found while the file
+  reported PASSED. Worth assuming there are more elsewhere in the tree: grep for
+  `assert(` in a test that has no `require`.
 
 ## Tests
 

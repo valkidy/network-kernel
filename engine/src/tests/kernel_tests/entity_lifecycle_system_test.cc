@@ -1,5 +1,6 @@
 #include <array>
-#include <cassert>
+#include <cstdio>
+#include <cstdlib>
 #include <cstdint>
 #include <string>
 #include <type_traits>
@@ -13,6 +14,24 @@
 #define private public
 #include "kernel/src/kernel.h"
 #include "simulation/src/systems.h"
+
+namespace {
+
+// assert() is compiled out under -c opt, which is the configuration this suite
+// runs in, so every check in this file used to be skipped. This was the last of
+// five files in this area found that way.
+void require_impl(bool condition, int line, const char* text) {
+    if (condition) {
+        return;
+    }
+    std::fprintf(stderr, "require failed at line %d: %s\n", line, text);
+    std::abort();
+}
+
+#define require(expr) require_impl(static_cast<bool>(expr), __LINE__, #expr)
+
+}  // namespace
+
 #undef private
 
 namespace {
@@ -94,24 +113,36 @@ void lifecycle_system_create_matches_legacy_path() {
 
     network_example::EntityLifecycleSystem lifecycle;
     std::uint32_t net_id = 0;
-    assert(lifecycle.create_entity(engine, player_create_info(), &net_id));
-    assert(net_id != 0);
+    require(lifecycle.create_entity(engine, player_create_info(), &net_id));
+    require(net_id != 0);
 
     KernelServerEntityState state{};
     state.struct_size = sizeof(state);
-    assert(engine.server_get_entity_state(net_id, &state));
-    assert(state.valid != 0u);
-    assert(state.net_id == net_id);
-    assert(state.entity_type == static_cast<std::uint16_t>(network_example::EntityType::kActor));
-    assert(state.actor_type == KernelActorType_Player);
-    assert(state.owner_peer == 42);
-    assert(state.animation_state == 7);
-    assert(state.visual_flags == 0x44u);
-    assert(state.position.x == 2.0f);
-    assert(state.position.z == 3.0f);
-    assert(engine.events_.size() == 1);
-    assert(engine.events_[0].type == KernelEventType_EntitySpawned);
-    assert(engine.latest_snapshot_.entities.size() == 1);
+    require(engine.server_get_entity_state(net_id, &state));
+    require(state.valid != 0u);
+    require(state.net_id == net_id);
+    require(state.entity_type == static_cast<std::uint16_t>(network_example::EntityType::kActor));
+    require(state.actor_type == KernelActorType_Player);
+    require(state.owner_peer == 42);
+    require(state.animation_state == 7);
+    // The authored flags survive creation. Not an equality check: the reported
+    // word is the authored bits OR'd with flags derived from the entity's own
+    // state, and this entity has a MovementState, so it also reports FALLING.
+    // Pinning the whole word made this assertion a statement about
+    // derived_visual_flags rather than about create_entity, and it went stale
+    // the moment that gained the grounded/falling bits -- which is exactly what
+    // it had been failing on, unnoticed, while assert() was compiled out.
+    require((state.visual_flags & 0x44u) == 0x44u);
+    require(state.position.x == 2.0f);
+    require(state.position.z == 3.0f);
+    require(engine.events_.size() == 1);
+    require(engine.events_[0].type == KernelEventType_EntitySpawned);
+    // No snapshot assertion. Creation used to build one; snapshots are built in
+    // their own pass now, which this test never runs -- and a freshly created
+    // actor is deliberately held out of the first one anyway until physics
+    // finalises it. Asserting an empty snapshot here would state nothing, and
+    // asserting a populated one would be testing the snapshot pass rather than
+    // create_entity.
 }
 
 void lifecycle_system_destroy_matches_legacy_side_effects() {
@@ -123,26 +154,26 @@ void lifecycle_system_destroy_matches_legacy_side_effects() {
     engine.reset_runtime_state(KernelMode_DedicatedServer);
 
     std::uint32_t net_id = 0;
-    assert(engine.server_create_entity(player_create_info(), &net_id));
+    require(engine.server_create_entity(player_create_info(), &net_id));
     engine.events_.clear();
     engine.lifecycle_events_.clear();
     engine.vision_configs_[net_id] = KernelAgentVisionConfig{};
     engine.vision_states_[net_id] = network_example::KernelEngine::VisionRuntimeState{};
 
     network_example::EntityLifecycleSystem lifecycle;
-    assert(lifecycle.destroy_entity(engine, net_id, KernelDespawnReason_Destroyed));
+    require(lifecycle.destroy_entity(engine, net_id, KernelDespawnReason_Destroyed));
 
     KernelServerEntityState state{};
     state.struct_size = sizeof(state);
-    assert(!engine.server_get_entity_state(net_id, &state));
-    assert(engine.vision_configs_.find(net_id) == engine.vision_configs_.end());
-    assert(engine.vision_states_.find(net_id) == engine.vision_states_.end());
-    assert(engine.events_.size() == 1);
-    assert(engine.events_[0].type == KernelEventType_EntityDestroyed);
-    assert(engine.lifecycle_events_.size() == 1);
-    assert(engine.lifecycle_events_[0].net_id == net_id);
-    assert(engine.lifecycle_events_[0].reason == KernelDespawnReason_Destroyed);
-    assert(engine.latest_snapshot_.entities.empty());
+    require(!engine.server_get_entity_state(net_id, &state));
+    require(engine.vision_configs_.find(net_id) == engine.vision_configs_.end());
+    require(engine.vision_states_.find(net_id) == engine.vision_states_.end());
+    require(engine.events_.size() == 1);
+    require(engine.events_[0].type == KernelEventType_EntityDestroyed);
+    require(engine.lifecycle_events_.size() == 1);
+    require(engine.lifecycle_events_[0].net_id == net_id);
+    require(engine.lifecycle_events_[0].reason == KernelDespawnReason_Destroyed);
+    require(engine.latest_snapshot_.entities.empty());
 }
 
 }  // namespace
@@ -153,7 +184,7 @@ void lifecycle_system_destroy_matches_legacy_side_effects() {
 // and its cursor -- is covered by //game_server:world_rule_director_test with
 // assertions that are not compiled out.
 //
-// NOTE: the assertions in this file are assert(), and this suite runs under
+// NOTE: the assertions in this file are require(), and this suite runs under
 // -c opt, where they are compiled to nothing. It is red for a reason that is
 // therefore not an assertion, and that predates this change. Converting it is
 // its own task.
