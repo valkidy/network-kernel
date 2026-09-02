@@ -2,6 +2,9 @@ licenses(["notice"])
 
 package(default_visibility = ["//visibility:public"])
 
+# Read by //tools:check_layering_boundaries.
+exports_files(["BUILD.bazel"])
+
 filegroup(
     name = "gameplay_catalog_bundle_sources",
     srcs = glob([

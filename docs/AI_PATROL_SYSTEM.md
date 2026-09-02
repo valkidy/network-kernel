@@ -298,6 +298,10 @@ designing anything. Its numbers are what decided every route question so far.
 
 ## Other open items
 
+- **The layering criterion.** `//tools:check_layering_boundaries` enforces the
+  dependency direction; the other direction -- a gameplay concept added to a
+  kernel or world header -- is a review criterion in
+  `docs/GAME_SERVER_V1.md`, deliberately not an automated check.
 - **The two director systems.** The kernel-side `game_rule` and `world_rule`
   directors still exist and still spawn. Patrol is a third population system on
   the correct side of the boundary. This is a known transitional state, not a
