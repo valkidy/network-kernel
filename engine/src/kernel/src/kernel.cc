@@ -3236,27 +3236,26 @@ bool KernelEngine::load_gameplay_catalog(
              entity_template.collision_trigger_mask != 0u)) {
             return false;
         }
+        // Game rules are the only directors the kernel runs. A world rule is
+        // game_server's, has no entity here, and is never sent -- so one
+        // arriving is a catalog built against an older kernel, and accepting it
+        // would mean storing a director that nothing ticks. The ai.spawn_*
+        // fields belonged to world rules and must now be clear on everything.
         if (entity_template.entity_type == KernelEntityType_Director &&
             ((entity_template.component_flags &
              KERNEL_ENTITY_COMPONENT_DIRECTOR_RUNTIME) == 0u ||
              entity_template.ai.controller_type != KernelAiControllerType_Director ||
              entity_template.ai.tick_interval == 0u ||
-             entity_template.ai.director_kind > KernelDirectorKind_GameRule ||
-             (entity_template.ai.director_kind != KernelDirectorKind_GameRule &&
-              entity_template.ai.spawn_actor_template_id == 0u &&
-              entity_template.ai.spawn_entity_template_id == 0u) ||
-             (entity_template.ai.director_kind != KernelDirectorKind_GameRule &&
-              entity_template.ai.game_rule_definition_id != 0u) ||
-             (entity_template.ai.director_kind == KernelDirectorKind_GameRule &&
-              (entity_template.ai.game_rule_definition_id == 0u ||
-               entity_template.ai.spawn_target_count != 0u ||
-               entity_template.ai.spawn_entity_template_id != 0u ||
-               entity_template.ai.spawn_actor_template_id != 0u ||
-               entity_template.ai.spawn_position.x != 0.0f ||
-               entity_template.ai.spawn_position.y != 0.0f ||
-               entity_template.ai.spawn_position.z != 0.0f ||
-               entity_template.ai.spawn_radius != 0.0f ||
-               entity_template.ai.spawn_seed != 0u)))) {
+             entity_template.ai.director_kind != KernelDirectorKind_GameRule ||
+             entity_template.ai.game_rule_definition_id == 0u ||
+             entity_template.ai.spawn_target_count != 0u ||
+             entity_template.ai.spawn_entity_template_id != 0u ||
+             entity_template.ai.spawn_actor_template_id != 0u ||
+             entity_template.ai.spawn_position.x != 0.0f ||
+             entity_template.ai.spawn_position.y != 0.0f ||
+             entity_template.ai.spawn_position.z != 0.0f ||
+             entity_template.ai.spawn_radius != 0.0f ||
+             entity_template.ai.spawn_seed != 0u)) {
             return false;
         }
         if (entity_template.entity_type != KernelEntityType_Prop &&

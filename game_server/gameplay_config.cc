@@ -2550,6 +2550,7 @@ void apply_catalog_patrol_config(
     GameServerGameplayConfig* config,
     const std::string& path,
     std::uint32_t source_kind);
+void apply_catalog_world_rule_config(GameServerGameplayConfig* config);
 std::uint32_t collider_template_id_from_ref(
     const YAML::Node& node,
     const ColliderCatalogConfig& colliders);
@@ -6904,6 +6905,8 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     apply_catalog_agent_config(document, &config);
     apply_catalog_patrol_config(
         document, &config, path, source.source_kind());
+    // After the preload list and after `enemy:`, because it reads both.
+    apply_catalog_world_rule_config(&config);
 
     const std::vector<std::string> errors = validate_gameplay_config(config);
     if (!errors.empty()) {
@@ -7013,6 +7016,52 @@ PatrolAreaConfig patrol_area_from_yaml(
         area.half_extents = vec3_from_yaml(node["half_extents"]);
     }
     return area;
+}
+
+// A world rule is active because it was preloaded. That was true when it was a
+// director entity -- preload_directors is what created it -- and it stays true
+// now that game_server drives it instead, so the same list decides.
+void apply_catalog_world_rule_config(GameServerGameplayConfig* config) {
+    for (const std::uint32_t template_id :
+         config->preload_director_template_ids) {
+        const auto entity_template = std::find_if(
+            config->entity_templates.begin(),
+            config->entity_templates.end(),
+            [template_id](const EntityTemplateConfig& candidate) {
+                return candidate.actor_template_id == template_id;
+            });
+        if (entity_template == config->entity_templates.end() ||
+            entity_template->entity_type != KernelEntityType_Director ||
+            entity_template->director_kind == KernelDirectorKind_GameRule) {
+            continue;
+        }
+        WorldRuleSpawnConfig rule;
+        rule.director_template_id = template_id;
+        rule.name = entity_template->name;
+        rule.tick_interval = entity_template->ai_tick_interval == 0u
+            ? 1u
+            : entity_template->ai_tick_interval;
+        // `enemy:` replaces every world rule's spawn wholesale. Kept exactly:
+        // it is why world_rule_director.yaml's own spawn block is inert in the
+        // shipping catalog, and changing that here would be a behaviour change
+        // hidden inside a move.
+        if (config->agent.override_director_spawn) {
+            rule.target_count = config->agent.spawn_count;
+            rule.spawn_entity_template_id = config->agent.actor_template_id;
+            rule.spawn_actor_template_id = config->agent.actor_template_id;
+            rule.position = config->agent.spawn_position;
+            rule.radius = config->agent.spawn_radius;
+        } else {
+            rule.target_count = entity_template->director_spawn_target_count;
+            rule.spawn_entity_template_id =
+                entity_template->director_spawn_entity_template_id;
+            rule.spawn_actor_template_id =
+                entity_template->director_spawn_actor_template_id;
+            rule.position = entity_template->director_spawn_position;
+            rule.radius = entity_template->director_spawn_radius;
+        }
+        config->world_rule_spawns.push_back(std::move(rule));
+    }
 }
 
 void apply_catalog_patrol_config(
@@ -7428,6 +7477,16 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_scalar(&hash, entry.min_count);
             hash_scalar(&hash, entry.max_count);
         }
+    }
+    for (const WorldRuleSpawnConfig& rule : config.world_rule_spawns) {
+        hash_scalar(&hash, rule.director_template_id);
+        hash_string(&hash, rule.name);
+        hash_scalar(&hash, rule.spawn_entity_template_id);
+        hash_scalar(&hash, rule.spawn_actor_template_id);
+        hash_scalar(&hash, rule.target_count);
+        hash_vec3(&hash, rule.position);
+        hash_float(&hash, rule.radius);
+        hash_scalar(&hash, rule.tick_interval);
     }
     hash_scalar(&hash, config.patrol_budget.max_live_agents);
     hash_string(&hash, config.navigation_mesh.entry_path);
@@ -8401,6 +8460,12 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
                         : authored_template.ai_tick_interval;
             }
         } else if (authored_template.entity_type == KernelEntityType_Director) {
+            // World rules are driven by game_server's WorldRuleDirector and
+            // have no entity in the world, so the kernel is never told about
+            // them. Game rules still are, until they move too.
+            if (authored_template.director_kind != KernelDirectorKind_GameRule) {
+                continue;
+            }
             entity_template.component_flags =
                 KERNEL_ENTITY_COMPONENT_TRANSFORM |
                 KERNEL_ENTITY_COMPONENT_AGENT_RUNTIME |
@@ -8471,27 +8536,6 @@ KernelGameplayCatalogStorage build_kernel_gameplay_catalog(
                     static_cast<std::uint32_t>(
                         storage.game_rule_effects.size() - first_effect),
                 });
-            } else if (config.agent.override_director_spawn) {
-                entity_template.ai.spawn_target_count = config.agent.spawn_count;
-                entity_template.ai.spawn_entity_template_id =
-                    config.agent.actor_template_id;
-                entity_template.ai.spawn_actor_template_id =
-                    config.agent.actor_template_id;
-                entity_template.ai.spawn_position = config.agent.spawn_position;
-                entity_template.ai.spawn_radius = config.agent.spawn_radius;
-                entity_template.ai.spawn_seed = config.agent.spawn_seed;
-            } else {
-                entity_template.ai.spawn_target_count =
-                    authored_template.director_spawn_target_count;
-                entity_template.ai.spawn_entity_template_id =
-                    authored_template.director_spawn_entity_template_id;
-                entity_template.ai.spawn_actor_template_id =
-                    authored_template.director_spawn_actor_template_id;
-                entity_template.ai.spawn_position =
-                    authored_template.director_spawn_position;
-                entity_template.ai.spawn_radius =
-                    authored_template.director_spawn_radius;
-                entity_template.ai.spawn_seed = authored_template.director_spawn_seed;
             }
         } else if (authored_template.entity_type == KernelEntityType_Prop) {
             entity_template.prop = authored_template.prop;

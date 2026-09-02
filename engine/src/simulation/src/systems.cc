@@ -1452,23 +1452,14 @@ void materialize_director_runtime(
             ai.tick_interval == 0u ? 1u : ai.tick_interval,
             0u,
         });
+    // Only game rules reach the kernel now. A world rule is game_server's
+    // WorldRuleDirector: keeping a population topped up is a gameplay rule, and
+    // the kernel is not told about it.
     if (kind == DirectorKind::kGameRule) {
         registry.emplace_or_replace<GameRuleRuntime>(
             entity,
             GameRuleRuntime{ai.game_rule_definition_id});
-        return;
     }
-    registry.emplace_or_replace<WorldRuleRuntime>(
-        entity,
-        WorldRuleRuntime{
-            ai.spawn_target_count,
-            ai.spawn_entity_template_id,
-            ai.spawn_actor_template_id,
-            from_kernel_vec3(ai.spawn_position),
-            ai.spawn_radius,
-            ai.spawn_seed == 0u ? 1u : ai.spawn_seed,
-            0u,
-        });
 }
 
 KernelEntityLifecycleEventType lifecycle_type_for_despawn_reason(
@@ -2922,146 +2913,8 @@ DirectorIntentExecutionResult DirectorIntentExecutor::execute(
         result.status = ai::IntentStatus::kSucceeded;
         return result;
     }
-    if (intent.type != "SpawnAgent") {
-        result.status = ai::IntentStatus::kFailed;
-        result.unsupported = true;
-        return result;
-    }
-    const std::optional<std::uint32_t> spawn_count =
-        uint32_param(intent, "count");
-    const std::optional<std::uint32_t> spawn_target_count =
-        uint32_param(intent, "spawn_target_count");
-    const std::optional<std::uint32_t> spawn_entity_template_id =
-        uint32_param(intent, "spawn_entity_template_id");
-    const std::optional<std::uint32_t> spawn_actor_template_id =
-        uint32_param(intent, "spawn_actor_template_id");
-    const std::optional<float> spawn_position_x =
-        float_param(intent, "spawn_position_x");
-    const std::optional<float> spawn_position_y =
-        float_param(intent, "spawn_position_y");
-    const std::optional<float> spawn_position_z =
-        float_param(intent, "spawn_position_z");
-    const std::optional<float> spawn_radius =
-        float_param(intent, "spawn_radius");
-    const std::optional<std::uint32_t> base_spawn_cursor =
-        uint32_param(intent, "base_spawn_cursor");
-    if (!spawn_count.has_value() || !spawn_target_count.has_value() ||
-        !spawn_entity_template_id.has_value() ||
-        !spawn_actor_template_id.has_value() || !spawn_position_x.has_value() ||
-        !spawn_position_y.has_value() || !spawn_position_z.has_value() ||
-        !spawn_radius.has_value() || !base_spawn_cursor.has_value()) {
-        return result;
-    }
-    const KernelVec3 spawn_position{
-        *spawn_position_x,
-        *spawn_position_y,
-        *spawn_position_z,
-    };
-    if (!engine.running_ || !is_server_mode(engine.config_.mode) ||
-        intent.subject == 0 || *spawn_count == 0) {
-        return result;
-    }
-
-    const std::optional<entt::entity> entity =
-        engine.world_.find_entity(intent.subject);
-    if (!entity.has_value() ||
-        !engine.world_.registry().all_of<
-            AgentRuntime,
-            DirectorRuntime,
-            WorldRuleRuntime,
-            Transform,
-            ServerOnly,
-            EntityKind>(*entity)) {
-        return result;
-    }
-
-    auto& registry = engine.world_.registry();
-    const EntityKind& kind = registry.get<EntityKind>(*entity);
-    const AgentRuntime& agent = registry.get<AgentRuntime>(*entity);
-    DirectorRuntime& director_common = registry.get<DirectorRuntime>(*entity);
-    WorldRuleRuntime& director = registry.get<WorldRuleRuntime>(*entity);
-    if (kind.type != EntityType::kDirector ||
-        agent.controller_type != AiControllerType::kDirector ||
-        director_common.kind != DirectorKind::kWorldRule ||
-        *spawn_target_count != director.spawn_target_count ||
-        *spawn_entity_template_id != director.spawn_entity_template_id ||
-        *spawn_actor_template_id != director.spawn_actor_template_id ||
-        !same_vec3(spawn_position, to_kernel_vec3(director.spawn_position)) ||
-        *spawn_radius != director.spawn_radius ||
-        *base_spawn_cursor != director.spawn_cursor) {
-        return result;
-    }
-
-    if (*spawn_entity_template_id != 0u) {
-        const KernelEntityTemplateDefinition* entity_template =
-            find_entity_template(
-                engine.entity_templates_,
-                *spawn_entity_template_id);
-        if (entity_template == nullptr ||
-            entity_template->entity_type != KernelEntityType_Actor ||
-            entity_template->actor_type != KernelActorType_Agent) {
-            return result;
-        }
-    } else {
-        const KernelActorTemplateDefinition* actor_template =
-            find_actor_template(
-                engine.actor_templates_,
-                *spawn_actor_template_id);
-        if (actor_template == nullptr ||
-            actor_template->entity_type != KernelEntityType_Actor ||
-            actor_template->actor_type != KernelActorType_Agent) {
-            return result;
-        }
-    }
-
-    const std::uint32_t live_count = live_agent_count(engine.world_);
-    if (*spawn_target_count <= live_count) {
-        return result;
-    }
-    const std::uint32_t allowed_count =
-        std::min(*spawn_count, *spawn_target_count - live_count);
-    for (std::uint32_t index = 0; index < allowed_count; ++index) {
-        const float angle =
-            static_cast<float>(*base_spawn_cursor + index) * 2.39996323f;
-        const float radius = *spawn_radius;
-        KernelServerEntityCreateInfo create_info{};
-        create_info.struct_size = sizeof(create_info);
-        create_info.owner_peer = 0;
-        create_info.position = KernelVec3{
-            spawn_position.x + std::cos(angle) * radius,
-            spawn_position.y,
-            spawn_position.z + std::sin(angle) * radius,
-        };
-        create_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
-        if (*spawn_entity_template_id != 0u) {
-            create_info.entity_template_id = *spawn_entity_template_id;
-        } else {
-            create_info.entity_type = static_cast<std::uint16_t>(EntityType::kActor);
-            create_info.actor_type = static_cast<std::uint16_t>(ActorType::kAgent);
-            create_info.actor_template_id = *spawn_actor_template_id;
-        }
-
-        simulation::Command command{};
-        command.id = simulation::CommandId::kCreateEntity;
-        command.source = simulation::CommandSource::kAi;
-        command.create_entity.create_info = create_info;
-        if (!engine.enqueue_simulation_command(command)) {
-            if (result.created_count > 0) {
-                director.spawn_cursor += result.created_count;
-                director_common.next_tick =
-                    engine.tick_loop_.current_tick() +
-                    std::max<std::uint32_t>(1u, director_common.tick_interval);
-            }
-            result.status = ai::IntentStatus::kFailed;
-            return result;
-        }
-        ++result.created_count;
-    }
-    director.spawn_cursor += result.created_count;
-    director_common.next_tick =
-        engine.tick_loop_.current_tick() +
-        std::max<std::uint32_t>(1u, director_common.tick_interval);
-    result.status = ai::IntentStatus::kSucceeded;
+    result.status = ai::IntentStatus::kFailed;
+    result.unsupported = true;
     return result;
 }
 
@@ -3088,55 +2941,6 @@ void DirectorIntentExecutor::update(KernelEngine& engine) const {
 void DirectorAISystem::update(KernelEngine& engine) const {
     if (!engine.running_ || !is_server_mode(engine.config_.mode)) {
         return;
-    }
-
-    std::uint32_t live_count = live_agent_count(engine.world_);
-
-    auto world_rule_view =
-        engine.world_.registry()
-            .view<
-                EntityKind,
-                NetworkIdentity,
-                AgentRuntime,
-                DirectorRuntime,
-                WorldRuleRuntime,
-                Transform,
-                ServerOnly>();
-    for (const entt::entity entity : world_rule_view) {
-        const EntityKind& kind = world_rule_view.get<EntityKind>(entity);
-        const NetworkIdentity& identity =
-            world_rule_view.get<NetworkIdentity>(entity);
-        AgentRuntime& agent = world_rule_view.get<AgentRuntime>(entity);
-        DirectorRuntime& director = world_rule_view.get<DirectorRuntime>(entity);
-        WorldRuleRuntime& world_rule =
-            world_rule_view.get<WorldRuleRuntime>(entity);
-        if (kind.type != EntityType::kDirector ||
-            agent.controller_type != AiControllerType::kDirector ||
-            director.kind != DirectorKind::kWorldRule ||
-            world_rule.spawn_target_count <= live_count ||
-            engine.tick_loop_.current_tick() < director.next_tick) {
-            continue;
-        }
-
-        const std::uint32_t missing_count =
-            world_rule.spawn_target_count - live_count;
-        ai::ScopedIntent intent;
-        intent.scope = ai::IntentScope::kDirector;
-        intent.type = "SpawnAgent";
-        intent.subject = identity.net_id;
-        intent.params["count"] = missing_count;
-        intent.params["spawn_target_count"] = world_rule.spawn_target_count;
-        intent.params["spawn_entity_template_id"] =
-            world_rule.spawn_entity_template_id;
-        intent.params["spawn_actor_template_id"] =
-            world_rule.spawn_actor_template_id;
-        intent.params["spawn_position_x"] = world_rule.spawn_position.x;
-        intent.params["spawn_position_y"] = world_rule.spawn_position.y;
-        intent.params["spawn_position_z"] = world_rule.spawn_position.z;
-        intent.params["spawn_radius"] = world_rule.spawn_radius;
-        intent.params["base_spawn_cursor"] = world_rule.spawn_cursor;
-        engine.pending_director_intents_.push_back(std::move(intent));
-        live_count += missing_count;
     }
 
     auto game_rule_view =

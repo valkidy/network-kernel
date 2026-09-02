@@ -70,6 +70,7 @@ AgentRuntimeManager::AgentRuntimeManager(
     : kernel_(kernel), config_(std::move(config)) {
     build_controllers();
     patrol_director_ = PatrolDirector(config_.patrols, config_.patrol_budget);
+    world_rule_director_ = WorldRuleDirector(config_.world_rule_spawns);
     if (!config_.navigation_mesh.artifact.empty()) {
         std::string error;
         if (patrol_navigation_.load(config_.navigation_mesh.artifact, &error)) {
@@ -208,6 +209,7 @@ void AgentRuntimeManager::tick(float delta_seconds) {
     // after the resync would drop every member of a squad on the tick it was
     // spawned.
     patrol_director_.tick(kernel_, &patrol_groups_, &patrol_navigation_);
+    world_rule_director_.tick(kernel_, live_agent_count());
     sync_agents_from_kernel();
     // Ahead of the controllers, so a member reads the slot its squad wants it
     // in this tick rather than the one from last tick.
@@ -272,6 +274,10 @@ const PatrolNavigation& AgentRuntimeManager::patrol_navigation() const {
     return patrol_navigation_;
 }
 
+const WorldRuleDirector& AgentRuntimeManager::world_rule_director() const {
+    return world_rule_director_;
+}
+
 bool AgentRuntimeManager::preload_directors() {
     if (director_preload_attempted_) {
         return director_preload_succeeded_;
@@ -292,6 +298,13 @@ bool AgentRuntimeManager::preload_directors() {
                 "director preload failed template_id={} reason=invalid_template",
                 template_id);
             return false;
+        }
+        // World rules are game_server's now: they have no entity, and the
+        // kernel was never sent a template to create one from. Being in the
+        // preload list is still what makes one active -- it is read into
+        // config_.world_rule_spawns -- so this is a skip rather than an error.
+        if (entity_template->director_kind != KernelDirectorKind_GameRule) {
+            continue;
         }
         if (!spawn_director(*entity_template)) {
             return false;
@@ -405,6 +418,18 @@ bool AgentRuntimeManager::apply_weapon_mechanics(
         }
     }
     return true;
+}
+
+std::uint32_t AgentRuntimeManager::live_agent_count() const {
+    const std::uint32_t state_count = query_actor_states(&actor_query_buffer_);
+    std::uint32_t agents = 0;
+    for (std::uint32_t index = 0; index < state_count; ++index) {
+        // No `valid` check on purpose; see the declaration.
+        if (actor_query_buffer_[index].actor_type == kActorTypeAgent) {
+            ++agents;
+        }
+    }
+    return agents;
 }
 
 bool AgentRuntimeManager::has_live_agent_or_director() const {

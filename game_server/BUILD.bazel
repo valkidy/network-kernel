@@ -40,6 +40,7 @@ cc_library(
         "patrol_director.cc",
         "patrol_group_runtime.cc",
         "patrol_navigation.cc",
+        "world_rule_director.cc",
     ],
     hdrs = [
         "actor_intent_executor.h",
@@ -55,6 +56,7 @@ cc_library(
         "patrol_director.h",
         "patrol_group_runtime.h",
         "patrol_navigation.h",
+        "world_rule_director.h",
         "public/game_server_types.h",
     ],
     deps = [
@@ -274,6 +276,15 @@ cc_test(
     data = [
         "//game_server/test_mesh_assets:cooked_test_mesh_assets",
     ],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "world_rule_director_test",
+    srcs = ["world_rule_director_test.cc"],
     deps = [
         ":game_server",
         "//engine/src/kernel:kernel",

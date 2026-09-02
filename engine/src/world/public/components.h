@@ -202,16 +202,6 @@ struct DirectorRuntime {
     std::uint32_t next_tick = 0;
 };
 
-struct WorldRuleRuntime {
-    std::uint32_t spawn_target_count = 0;
-    std::uint32_t spawn_entity_template_id = 0;
-    std::uint32_t spawn_actor_template_id = 0;
-    glm::vec3 spawn_position{0.0f, 0.0f, 0.0f};
-    float spawn_radius = 0.0f;
-    std::uint32_t spawn_seed = 1;
-    std::uint32_t spawn_cursor = 0;
-};
-
 enum class GameRuleStatus : std::uint8_t {
     kRunning,
     kCompleted,

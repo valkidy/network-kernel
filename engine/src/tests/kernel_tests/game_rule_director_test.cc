@@ -270,32 +270,6 @@ void initialize_player_gate_engine(network_example::KernelEngine& engine) {
     require(fixture.load(engine));
 }
 
-void initialize_world_rule_engine(network_example::KernelEngine& engine) {
-    engine.reset_runtime_state(KernelMode_DedicatedServer);
-    const std::array<KernelColliderTemplateDefinition, 2> colliders = {
-        hit_collider_template(),
-        movement_collider_template(),
-    };
-    const std::array<KernelActorTemplateDefinition, 1> actors = {
-        agent_actor_template(),
-    };
-    const std::array<KernelEntityTemplateDefinition, 2> entities = {
-        world_rule_director_template(),
-        agent_entity_template(),
-    };
-    KernelGameplayCatalogDefinition catalog{};
-    catalog.struct_size = sizeof(catalog);
-    catalog.catalog_version = 1u;
-    catalog.catalog_hash = 1u;
-    catalog.collider_templates = colliders.data();
-    catalog.collider_template_count = colliders.size();
-    catalog.actor_templates = actors.data();
-    catalog.actor_template_count = actors.size();
-    catalog.entity_templates = entities.data();
-    catalog.entity_template_count = entities.size();
-    require(engine.load_gameplay_catalog(catalog));
-}
-
 network_example::NetId create_director(network_example::KernelEngine& engine) {
     KernelServerEntityCreateInfo create{};
     create.struct_size = sizeof(create);
@@ -352,31 +326,6 @@ std::vector<network_example::NetId> live_agents(
         }
     }
     return agents;
-}
-
-void world_rule_still_maintains_target_count() {
-    const KernelConfig config = dedicated_config();
-    network_example::KernelEngine engine(config);
-    initialize_world_rule_engine(engine);
-    const network_example::NetId director = create_director(engine);
-    const std::optional<entt::entity> director_entity =
-        engine.world_.find_entity(director);
-    require(director_entity.has_value());
-    require((engine.world_.registry().all_of<
-        network_example::DirectorRuntime,
-        network_example::WorldRuleRuntime>(*director_entity)));
-    require(!engine.world_.registry().all_of<network_example::GameRuleRuntime>(
-        *director_entity));
-    update(engine);
-    update(engine);
-    std::vector<network_example::NetId> agents = live_agents(engine);
-    require(agents.size() == 1u);
-    require(network_example::EntityLifecycleSystem{}.destroy_entity(
-        engine, agents[0], KernelDespawnReason_Destroyed));
-    update(engine);
-    update(engine);
-    agents = live_agents(engine);
-    require(agents.size() == 1u);
 }
 
 void game_rule_waits_for_player_before_spawning_wave() {
@@ -526,8 +475,10 @@ void spawn_execution_failure_fails_game_rule() {
 
 }  // namespace
 
+// world_rule_still_maintains_target_count lived here. A world rule is no longer
+// a director in the kernel at all, so the claim moved with the mechanism to
+// //game_server:world_rule_director_test.
 int main() {
-    world_rule_still_maintains_target_count();
     game_rule_waits_for_player_before_spawning_wave();
     game_rule_advances_branch_and_join_deterministically();
     spawn_enqueue_failure_fails_game_rule();

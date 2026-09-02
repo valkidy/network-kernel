@@ -12,6 +12,7 @@
 #include "game_server/agent_chaser_controller.h"
 #include "game_server/agent_sentry_controller.h"
 #include "game_server/patrol_director.h"
+#include "game_server/world_rule_director.h"
 #include "kernel/public/kernel_types.h"
 
 struct KernelHandle;
@@ -380,6 +381,10 @@ struct GameServerGameplayConfig {
     // it itself -- Detour never reaches the kernel -- so nothing downstream has
     // the archive open any more by the time it is needed.
     NavigationMeshConfig navigation_mesh;
+    // World rules that were preloaded. Built from director entity templates
+    // whose kind is world_rule, and driven by game_server: a population ceiling
+    // is a gameplay rule, so it never reaches the kernel as a director.
+    std::vector<WorldRuleSpawnConfig> world_rule_spawns;
     std::vector<std::uint32_t> preload_director_template_ids;
     std::vector<EntityTemplateConfig> entity_templates;
     std::vector<ActorTemplateConfig> actor_templates;

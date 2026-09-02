@@ -2980,18 +2980,32 @@ int main() {
         legged_locomotion_catalog =
             network_example::game_server::build_kernel_gameplay_catalog(
                 legged_locomotion_config);
-    const auto legged_locomotion_director = std::find_if(
+    // A world rule is not sent to the kernel at all now: it has no entity, and
+    // game_server drives it. Game rules still are, and this catalog globs the
+    // whole template directory, so one of those is legitimately still here --
+    // what must not be is a world rule.
+    require(std::none_of(
         legged_locomotion_catalog.entity_templates.begin(),
         legged_locomotion_catalog.entity_templates.end(),
         [](const KernelEntityTemplateDefinition& definition) {
-            return definition.entity_type == KernelEntityType_Director;
-        });
+            return definition.entity_type == KernelEntityType_Director &&
+                definition.ai.director_kind == KernelDirectorKind_WorldRule;
+        }));
+    require(std::any_of(
+        legged_locomotion_catalog.entity_templates.begin(),
+        legged_locomotion_catalog.entity_templates.end(),
+        [](const KernelEntityTemplateDefinition& definition) {
+            return definition.entity_type == KernelEntityType_Director &&
+                definition.ai.director_kind == KernelDirectorKind_GameRule;
+        }));
+    require(legged_locomotion_config.world_rule_spawns.size() == 1u);
+    require(legged_locomotion_config.world_rule_spawns[0].target_count == 1u);
     require(
-        legged_locomotion_director !=
-        legged_locomotion_catalog.entity_templates.end());
-    require(legged_locomotion_director->ai.spawn_target_count == 1u);
-    require(legged_locomotion_director->ai.spawn_entity_template_id == 21u);
-    require(legged_locomotion_director->ai.spawn_actor_template_id == 21u);
+        legged_locomotion_config.world_rule_spawns[0].spawn_entity_template_id ==
+        21u);
+    require(
+        legged_locomotion_config.world_rule_spawns[0].spawn_actor_template_id ==
+        21u);
 
     // Replaces the catalog's own enemy block rather than appending a second one:
     // a duplicate key would leave which block wins up to the YAML parser, and

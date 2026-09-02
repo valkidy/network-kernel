@@ -11,6 +11,7 @@
 #include "game_server/gameplay_config.h"
 #include "game_server/patrol_director.h"
 #include "game_server/patrol_navigation.h"
+#include "game_server/world_rule_director.h"
 #include "game_server/patrol_group_runtime.h"
 #include "kernel/public/kernel_api.h"
 
@@ -35,6 +36,7 @@ public:
     const PatrolGroupRuntime& patrol_groups() const;
     const PatrolDirector& patrol_director() const;
     const PatrolNavigation& patrol_navigation() const;
+    const WorldRuleDirector& world_rule_director() const;
 
 private:
     // One controller per agent actor template. Agents from different templates
@@ -54,6 +56,12 @@ private:
         std::uint32_t net_id,
         std::uint32_t actor_template_id) const;
     bool has_live_agent_or_director() const;
+    // Every agent entity the kernel holds, counted the way the kernel's own
+    // world-rule director counted: off the entity list, with no validity
+    // filter. An agent created this tick is not valid until physics finalises,
+    // so a count that skipped those would have the rule spawn a replacement for
+    // the agent it just made.
+    std::uint32_t live_agent_count() const;
     // Fills `buffer` with every actor state the kernel holds, growing it as
     // needed, and returns how many it wrote.
     std::uint32_t query_actor_states(
@@ -72,6 +80,7 @@ private:
     PatrolGroupRuntime patrol_groups_;
     PatrolDirector patrol_director_;
     PatrolNavigation patrol_navigation_;
+    WorldRuleDirector world_rule_director_;
     // Kept across ticks so that a population which has already been sized for
     // does not reallocate every tick.
     mutable std::vector<KernelServerEntityState> actor_query_buffer_;
