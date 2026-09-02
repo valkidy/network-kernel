@@ -1351,30 +1351,6 @@ std::uint32_t live_player_count(World& world) {
     return count;
 }
 
-GameRuleGroupRuntime* find_game_rule_group(
-    GameRuleRuntime& runtime,
-    std::uint32_t group_id) {
-    const auto found = std::find_if(
-        runtime.groups.begin(),
-        runtime.groups.end(),
-        [group_id](const GameRuleGroupRuntime& group) {
-            return group.group_id == group_id;
-        });
-    return found == runtime.groups.end() ? nullptr : &*found;
-}
-
-const KernelGameRuleDefinition* find_game_rule_definition(
-    const std::vector<KernelGameRuleDefinition>& definitions,
-    std::uint32_t definition_id) {
-    const auto found = std::find_if(
-        definitions.begin(),
-        definitions.end(),
-        [definition_id](const KernelGameRuleDefinition& definition) {
-            return definition.game_rule_definition_id == definition_id;
-        });
-    return found == definitions.end() ? nullptr : &*found;
-}
-
 const ai::AIValue* intent_param(
     const ai::ScopedIntent& intent,
     const char* key) {
@@ -1433,33 +1409,6 @@ void materialize_ai_runtime(
             0u,
             ai.blackboard_id,
         });
-}
-
-void materialize_director_runtime(
-    entt::registry& registry,
-    entt::entity entity,
-    const KernelEntityAiDefinition& ai) {
-    if (ai.controller_type != KernelAiControllerType_Director) {
-        return;
-    }
-    const DirectorKind kind = ai.director_kind == KernelDirectorKind_GameRule
-        ? DirectorKind::kGameRule
-        : DirectorKind::kWorldRule;
-    registry.emplace_or_replace<DirectorRuntime>(
-        entity,
-        DirectorRuntime{
-            kind,
-            ai.tick_interval == 0u ? 1u : ai.tick_interval,
-            0u,
-        });
-    // Only game rules reach the kernel now. A world rule is game_server's
-    // WorldRuleDirector: keeping a population topped up is a gameplay rule, and
-    // the kernel is not told about it.
-    if (kind == DirectorKind::kGameRule) {
-        registry.emplace_or_replace<GameRuleRuntime>(
-            entity,
-            GameRuleRuntime{ai.game_rule_definition_id});
-    }
 }
 
 KernelEntityLifecycleEventType lifecycle_type_for_despawn_reason(
@@ -1794,7 +1743,6 @@ bool EntityLifecycleSystem::create_entity(
         }
         if ((entity_template->component_flags &
              KERNEL_ENTITY_COMPONENT_DIRECTOR_RUNTIME) != 0u) {
-            materialize_director_runtime(registry, *entity, entity_template->ai);
         }
         if (const std::optional<CompiledActionGraphBinding> binding =
                 compile_entity_trigger_binding(
@@ -2517,11 +2465,6 @@ bool EntityLifecycleSystem::destroy_entity_with_context(
             world_item_id = candidate;
         }
     }
-    std::optional<GameplayGroupMembership> group_membership;
-    if (engine.world_.registry().all_of<GameplayGroupMembership>(*entity)) {
-        group_membership =
-            engine.world_.registry().get<GameplayGroupMembership>(*entity);
-    }
     std::vector<ActionGraphQueuedTrigger> queued_triggers;
     if (execute_destroy_graph &&
         engine.world_.registry().all_of<
@@ -2563,20 +2506,6 @@ bool EntityLifecycleSystem::destroy_entity_with_context(
     }
     if (!engine.world_.destroy(net_id)) {
         return false;
-    }
-    if (group_membership.has_value()) {
-        const std::optional<entt::entity> director =
-            engine.world_.find_entity(group_membership->director_net_id);
-        if (director.has_value() &&
-            engine.world_.registry().all_of<GameRuleRuntime>(*director)) {
-            GameRuleRuntime& runtime =
-                engine.world_.registry().get<GameRuleRuntime>(*director);
-            GameRuleGroupRuntime* group = find_game_rule_group(
-                runtime, group_membership->group_id);
-            if (group != nullptr && group->alive_count > 0u) {
-                --group->alive_count;
-            }
-        }
     }
     if (world_item_id != 0u) {
         (void)engine.item_store_.terminate(world_item_id);
@@ -2806,311 +2735,6 @@ bool MovementSystem::submit_player_input(
         net_id,
     });
     return true;
-}
-
-DirectorIntentExecutionResult DirectorIntentExecutor::execute(
-    KernelEngine& engine,
-    const ai::ScopedIntent& intent) const {
-    DirectorIntentExecutionResult result;
-    if (intent.scope != ai::IntentScope::kDirector) {
-        result.status = ai::IntentStatus::kFailed;
-        result.unsupported = true;
-        return result;
-    }
-    if (intent.type == "SpawnGroup") {
-        const std::optional<std::uint32_t> node_id =
-            uint32_param(intent, "node_id");
-        const std::optional<std::uint32_t> group_id =
-            uint32_param(intent, "group_id");
-        const std::optional<std::uint32_t> spawn_count =
-            uint32_param(intent, "count");
-        const std::optional<std::uint32_t> entity_template_id =
-            uint32_param(intent, "entity_template_id");
-        const std::optional<float> position_x =
-            float_param(intent, "position_x");
-        const std::optional<float> position_y =
-            float_param(intent, "position_y");
-        const std::optional<float> position_z =
-            float_param(intent, "position_z");
-        const std::optional<float> radius = float_param(intent, "radius");
-        const std::optional<std::uint32_t> seed = uint32_param(intent, "seed");
-        if (!node_id.has_value() || !group_id.has_value() ||
-            !spawn_count.has_value() || !entity_template_id.has_value() ||
-            !position_x.has_value() || !position_y.has_value() ||
-            !position_z.has_value() || !radius.has_value() || !seed.has_value() ||
-            *spawn_count == 0u || intent.subject == 0u || !engine.running_ ||
-            !is_server_mode(engine.config_.mode)) {
-            return result;
-        }
-        const std::optional<entt::entity> entity =
-            engine.world_.find_entity(intent.subject);
-        if (!entity.has_value() ||
-            !engine.world_.registry().all_of<
-                DirectorRuntime,
-                GameRuleRuntime,
-                ServerOnly,
-                EntityKind>(*entity)) {
-            return result;
-        }
-        DirectorRuntime& director =
-            engine.world_.registry().get<DirectorRuntime>(*entity);
-        GameRuleRuntime& runtime =
-            engine.world_.registry().get<GameRuleRuntime>(*entity);
-        GameRuleGroupRuntime* group = find_game_rule_group(runtime, *group_id);
-        const KernelGameRuleDefinition* definition = find_game_rule_definition(
-            engine.game_rule_definitions_, runtime.definition_id);
-        if (director.kind != DirectorKind::kGameRule || definition == nullptr ||
-            runtime.status != GameRuleStatus::kRunning || group == nullptr ||
-            group->pending_spawn_count != 0u || group->sealed) {
-            return result;
-        }
-        const auto effect = std::find_if(
-            engine.game_rule_effects_.begin() + definition->first_effect,
-            engine.game_rule_effects_.begin() + definition->first_effect +
-                definition->effect_count,
-            [&](const KernelGameRuleSpawnGroupEffectDefinition& candidate) {
-                return candidate.node_id == *node_id &&
-                    candidate.group_id == *group_id &&
-                    candidate.count == *spawn_count &&
-                    candidate.entity_template_id == *entity_template_id;
-            });
-        if (effect == engine.game_rule_effects_.begin() +
-                          definition->first_effect + definition->effect_count ||
-            effect->position.x != *position_x || effect->position.y != *position_y ||
-            effect->position.z != *position_z || effect->radius != *radius ||
-            effect->seed != *seed) {
-            return result;
-        }
-        group->pending_spawn_count = *spawn_count;
-        for (std::uint32_t index = 0u; index < *spawn_count; ++index) {
-            const float angle =
-                static_cast<float>(*seed + index) * 2.39996323f;
-            KernelServerEntityCreateInfo create_info{};
-            create_info.struct_size = sizeof(create_info);
-            create_info.owner_peer = 0u;
-            create_info.entity_template_id = *entity_template_id;
-            create_info.position = KernelVec3{
-                *position_x + std::cos(angle) * *radius,
-                *position_y,
-                *position_z + std::sin(angle) * *radius,
-            };
-            create_info.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
-            simulation::Command command{};
-            command.id = simulation::CommandId::kCreateEntity;
-            command.source = simulation::CommandSource::kAi;
-            command.create_entity.create_info = create_info;
-            command.create_entity.director_net_id = intent.subject;
-            command.create_entity.gameplay_group_id = *group_id;
-            command.create_entity.spawn_batch_id = *group_id;
-            if (!engine.enqueue_simulation_command(command)) {
-                group->failed = true;
-                runtime.status = GameRuleStatus::kFailed;
-                result.status = ai::IntentStatus::kFailed;
-                return result;
-            }
-            ++result.created_count;
-        }
-        result.status = ai::IntentStatus::kSucceeded;
-        return result;
-    }
-    result.status = ai::IntentStatus::kFailed;
-    result.unsupported = true;
-    return result;
-}
-
-void DirectorIntentExecutor::update(KernelEngine& engine) const {
-    std::vector<ai::ScopedIntent> intents =
-        std::move(engine.pending_director_intents_);
-    engine.pending_director_intents_.clear();
-    engine.last_director_intent_processed_count_ = intents.size();
-    engine.last_director_intent_created_count_ = 0;
-    engine.last_director_intent_failed_count_ = 0;
-    engine.last_director_intent_unsupported_count_ = 0;
-
-    for (const ai::ScopedIntent& intent : intents) {
-        const DirectorIntentExecutionResult result = execute(engine, intent);
-        engine.last_director_intent_created_count_ += result.created_count;
-        if (result.unsupported) {
-            ++engine.last_director_intent_unsupported_count_;
-        } else if (result.status == ai::IntentStatus::kFailed) {
-            ++engine.last_director_intent_failed_count_;
-        }
-    }
-}
-
-void DirectorAISystem::update(KernelEngine& engine) const {
-    if (!engine.running_ || !is_server_mode(engine.config_.mode)) {
-        return;
-    }
-
-    auto game_rule_view =
-        engine.world_.registry()
-            .view<
-                EntityKind,
-                NetworkIdentity,
-                DirectorRuntime,
-                GameRuleRuntime,
-                ServerOnly>();
-    for (const entt::entity entity : game_rule_view) {
-        const EntityKind& kind = game_rule_view.get<EntityKind>(entity);
-        const NetworkIdentity& identity =
-            game_rule_view.get<NetworkIdentity>(entity);
-        DirectorRuntime& director = game_rule_view.get<DirectorRuntime>(entity);
-        GameRuleRuntime& runtime = game_rule_view.get<GameRuleRuntime>(entity);
-        if (kind.type != EntityType::kDirector ||
-            director.kind != DirectorKind::kGameRule ||
-            runtime.status != GameRuleStatus::kRunning ||
-            engine.tick_loop_.current_tick() < director.next_tick) {
-            continue;
-        }
-        const KernelGameRuleDefinition* definition = find_game_rule_definition(
-            engine.game_rule_definitions_, runtime.definition_id);
-        if (definition == nullptr) {
-            runtime.status = GameRuleStatus::kFailed;
-            continue;
-        }
-        const auto node_begin =
-            engine.game_rule_nodes_.begin() + definition->first_node;
-        const auto edge_begin =
-            engine.game_rule_edges_.begin() + definition->first_edge;
-        const auto effect_begin =
-            engine.game_rule_effects_.begin() + definition->first_effect;
-        const std::uint32_t player_count = live_player_count(engine.world_);
-        const auto node_offset = [&](std::uint32_t node_id)
-            -> std::optional<std::size_t> {
-            const auto found = std::find_if(
-                node_begin,
-                node_begin + definition->node_count,
-                [node_id](const KernelGameRuleNodeDefinition& node) {
-                    return node.node_id == node_id;
-                });
-            if (found == node_begin + definition->node_count) {
-                return std::nullopt;
-            }
-            return static_cast<std::size_t>(found - node_begin);
-        };
-        const auto activate = [&](std::size_t offset) {
-            runtime.node_states[offset] = GameRuleNodeState::kActive;
-            const KernelGameRuleNodeDefinition& node = node_begin[offset];
-            const auto effect = std::find_if(
-                effect_begin,
-                effect_begin + definition->effect_count,
-                [&](const KernelGameRuleSpawnGroupEffectDefinition& candidate) {
-                    return candidate.node_id == node.node_id;
-                });
-            if (effect == effect_begin + definition->effect_count) {
-                if (node.condition_type !=
-                    KernelGameRuleConditionType_PlayerCountAtLeast) {
-                    runtime.status = GameRuleStatus::kFailed;
-                }
-                return;
-            }
-            ai::ScopedIntent intent;
-            intent.scope = ai::IntentScope::kDirector;
-            intent.type = "SpawnGroup";
-            intent.subject = identity.net_id;
-            intent.params["node_id"] = effect->node_id;
-            intent.params["group_id"] = effect->group_id;
-            intent.params["count"] = effect->count;
-            intent.params["entity_template_id"] = effect->entity_template_id;
-            intent.params["position_x"] = effect->position.x;
-            intent.params["position_y"] = effect->position.y;
-            intent.params["position_z"] = effect->position.z;
-            intent.params["radius"] = effect->radius;
-            intent.params["seed"] = effect->seed;
-            engine.pending_director_intents_.push_back(std::move(intent));
-        };
-        if (!runtime.initialized) {
-            runtime.node_states.assign(
-                definition->node_count, GameRuleNodeState::kInactive);
-            runtime.groups.clear();
-            runtime.groups.reserve(definition->node_count);
-            for (std::uint32_t offset = 0u; offset < definition->node_count;
-                 ++offset) {
-                if (node_begin[offset].condition_type ==
-                    KernelGameRuleConditionType_GroupEliminated) {
-                    runtime.groups.push_back(GameRuleGroupRuntime{
-                        node_begin[offset].condition_group_id});
-                }
-            }
-            runtime.initialized = true;
-            for (std::uint32_t offset = 0u; offset < definition->node_count;
-                 ++offset) {
-                const std::uint32_t node_id = node_begin[offset].node_id;
-                const bool has_predecessor = std::any_of(
-                    edge_begin,
-                    edge_begin + definition->edge_count,
-                    [node_id](const KernelGameRuleEdgeDefinition& edge) {
-                        return edge.target_node_id == node_id;
-                    });
-                if (!has_predecessor) {
-                    activate(offset);
-                }
-            }
-        } else {
-            for (std::uint32_t offset = 0u; offset < definition->node_count;
-                 ++offset) {
-                if (runtime.node_states[offset] != GameRuleNodeState::kActive) {
-                    continue;
-                }
-                const KernelGameRuleNodeDefinition& node = node_begin[offset];
-                bool completed = false;
-                if (node.condition_type ==
-                    KernelGameRuleConditionType_GroupEliminated) {
-                    GameRuleGroupRuntime* group = find_game_rule_group(
-                        runtime, node.condition_group_id);
-                    completed = group != nullptr && group->sealed &&
-                        !group->failed && group->alive_count == 0u;
-                } else if (node.condition_type ==
-                           KernelGameRuleConditionType_PlayerCountAtLeast) {
-                    completed = player_count >= node.condition_count;
-                }
-                if (completed) {
-                    runtime.node_states[offset] = GameRuleNodeState::kCompleted;
-                }
-            }
-            for (std::uint32_t offset = 0u; offset < definition->node_count;
-                 ++offset) {
-                if (runtime.node_states[offset] != GameRuleNodeState::kInactive) {
-                    continue;
-                }
-                const std::uint32_t node_id = node_begin[offset].node_id;
-                bool has_predecessor = false;
-                bool all_completed = true;
-                for (std::uint32_t edge_offset = 0u;
-                     edge_offset < definition->edge_count;
-                     ++edge_offset) {
-                    const KernelGameRuleEdgeDefinition& edge =
-                        edge_begin[edge_offset];
-                    if (edge.target_node_id != node_id) {
-                        continue;
-                    }
-                    has_predecessor = true;
-                    const std::optional<std::size_t> predecessor =
-                        node_offset(edge.source_node_id);
-                    if (!predecessor.has_value() ||
-                        runtime.node_states[*predecessor] !=
-                            GameRuleNodeState::kCompleted) {
-                        all_completed = false;
-                    }
-                }
-                if (has_predecessor && all_completed) {
-                    activate(offset);
-                }
-            }
-        }
-        if (runtime.status == GameRuleStatus::kRunning &&
-            std::all_of(
-                runtime.node_states.begin(),
-                runtime.node_states.end(),
-                [](GameRuleNodeState state) {
-                    return state == GameRuleNodeState::kCompleted;
-                })) {
-            runtime.status = GameRuleStatus::kCompleted;
-        }
-        director.next_tick = engine.tick_loop_.current_tick() +
-            std::max<std::uint32_t>(1u, director.tick_interval);
-    }
 }
 
 }  // namespace network_example

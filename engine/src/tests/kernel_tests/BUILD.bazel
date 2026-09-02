@@ -16,12 +16,6 @@ cc_test(
 )
 
 cc_test(
-    name = "game_rule_director_test",
-    srcs = ["game_rule_director_test.cc"],
-    deps = ["//engine/src/kernel:kernel"],
-)
-
-cc_test(
     name = "activation_system_test",
     srcs = ["activation_system_test.cc"],
     deps = ["//engine/src/kernel:kernel"],

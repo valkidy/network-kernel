@@ -12,6 +12,7 @@
 #include "game_server/agent_chaser_controller.h"
 #include "game_server/agent_sentry_controller.h"
 #include "game_server/patrol_director.h"
+#include "game_server/game_rule_director.h"
 #include "game_server/world_rule_director.h"
 #include "kernel/public/kernel_types.h"
 
@@ -385,6 +386,10 @@ struct GameServerGameplayConfig {
     // whose kind is world_rule, and driven by game_server: a population ceiling
     // is a gameplay rule, so it never reaches the kernel as a director.
     std::vector<WorldRuleSpawnConfig> world_rule_spawns;
+    // Mission flows that were preloaded. Like world rules, driven by
+    // game_server: "this wave is cleared, open the next one" is a mission rule,
+    // not something the kernel stores or validates.
+    std::vector<GameRuleConfig> game_rules;
     std::vector<std::uint32_t> preload_director_template_ids;
     std::vector<EntityTemplateConfig> entity_templates;
     std::vector<ActorTemplateConfig> actor_templates;

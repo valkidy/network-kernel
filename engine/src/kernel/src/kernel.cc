@@ -6007,7 +6007,6 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     vision_configs_.clear();
     vision_states_.clear();
     pending_first_physics_actors_.clear();
-    pending_director_intents_.clear();
     network_stats_ = KernelNetworkStats{};
     network_stats_.struct_size = sizeof(KernelNetworkStats);
     network_stats_.collection_mode = config_.network_stats.mode;
@@ -6019,10 +6018,6 @@ void KernelEngine::reset_runtime_state(KernelMode mode) {
     last_command_queue_capacity_warning_tick_ = 0;
     last_simulation_command_queue_depth_ = 0;
     last_simulation_command_processed_count_ = 0;
-    last_director_intent_processed_count_ = 0;
-    last_director_intent_created_count_ = 0;
-    last_director_intent_failed_count_ = 0;
-    last_director_intent_unsupported_count_ = 0;
     simulation_tick_cost_samples_us_.fill(0);
     simulation_tick_cost_sample_index_ = 0;
     simulation_tick_cost_sample_count_ = 0;
@@ -10390,8 +10385,9 @@ void KernelEngine::simulate_tick() {
         *this, health_depleted, server_time_us);
     lifecycle_system.destroy_dead_entities(*this, health_depleted);
     update_vision_states(fixed_delta);
-    DirectorAISystem{}.update(*this);
-    DirectorIntentExecutor{}.update(*this);
+    // Directors used to be ticked here and their intents executed. Both kinds
+    // are game_server's now, driven from its own tick, so the kernel has no
+    // director pass at all.
     const std::size_t last_tick_event = events_.size();
     for (std::size_t index = first_tick_event; index < last_tick_event; ++index) {
         if (events_[index].type != KernelEventType_HealthChanged) {

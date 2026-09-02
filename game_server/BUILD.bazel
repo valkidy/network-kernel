@@ -35,6 +35,7 @@ cc_library(
         "agent_steering.cc",
         "agent_runtime_manager.cc",
         "ballistic_aim.cc",
+        "game_rule_director.cc",
         "gameplay_config.cc",
         "game_server.cc",
         "patrol_director.cc",
@@ -51,6 +52,7 @@ cc_library(
         "agent_sentry_controller.h",
         "agent_steering.h",
         "ballistic_aim.h",
+        "game_rule_director.h",
         "gameplay_config.h",
         "game_server.h",
         "patrol_director.h",
@@ -276,6 +278,15 @@ cc_test(
     data = [
         "//game_server/test_mesh_assets:cooked_test_mesh_assets",
     ],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "game_rule_director_test",
+    srcs = ["game_rule_director_test.cc"],
     deps = [
         ":game_server",
         "//engine/src/kernel:kernel",

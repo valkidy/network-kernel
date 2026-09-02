@@ -183,6 +183,11 @@ void manager_resolves_config_from_the_spawned_template() {
     // are never overridden.
     gameplay_config.agent.override_director_spawn = false;
     gameplay_config.preload_director_template_ids.clear();
+    // The rules the catalog extracted go too. Directors are game_server config
+    // now, so editing the entity templates below no longer reaches them --
+    // this test states the rule it wants directly.
+    gameplay_config.world_rule_spawns.clear();
+    gameplay_config.game_rules.clear();
     for (network_example::game_server::EntityTemplateConfig& entity_template :
          gameplay_config.entity_templates) {
         if (entity_template.entity_type != KernelEntityType_Director ||

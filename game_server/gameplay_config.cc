@@ -7018,21 +7018,51 @@ PatrolAreaConfig patrol_area_from_yaml(
     return area;
 }
 
-// A world rule is active because it was preloaded. That was true when it was a
-// director entity -- preload_directors is what created it -- and it stays true
-// now that game_server drives it instead, so the same list decides.
+// Translates every authored director into the form game_server runs it in.
+//
+// Every one, not just the preloaded ones. Which are active is still decided by
+// preload_director_template_ids, but that decision is applied where the
+// directors are constructed rather than baked in here -- otherwise rewriting
+// the preload list, which is how a test disables a director, would silently do
+// nothing because the rules had already been extracted.
 void apply_catalog_world_rule_config(GameServerGameplayConfig* config) {
-    for (const std::uint32_t template_id :
-         config->preload_director_template_ids) {
-        const auto entity_template = std::find_if(
-            config->entity_templates.begin(),
-            config->entity_templates.end(),
-            [template_id](const EntityTemplateConfig& candidate) {
-                return candidate.actor_template_id == template_id;
-            });
-        if (entity_template == config->entity_templates.end() ||
-            entity_template->entity_type != KernelEntityType_Director ||
-            entity_template->director_kind == KernelDirectorKind_GameRule) {
+    for (const EntityTemplateConfig& candidate : config->entity_templates) {
+        if (candidate.entity_type != KernelEntityType_Director) {
+            continue;
+        }
+        const std::uint32_t template_id = candidate.actor_template_id;
+        const auto entity_template = config->entity_templates.begin() +
+            (&candidate - config->entity_templates.data());
+        if (entity_template->director_kind == KernelDirectorKind_GameRule) {
+            GameRuleConfig game_rule;
+            game_rule.director_template_id = template_id;
+            game_rule.name = entity_template->name;
+            game_rule.tick_interval = entity_template->ai_tick_interval == 0u
+                ? 1u
+                : entity_template->ai_tick_interval;
+            for (const ActorTemplateConfig::GameRuleNodeConfig& authored_node :
+                 entity_template->game_rule_nodes) {
+                GameRuleNodeConfig node;
+                node.node_id = authored_node.node_id;
+                node.condition_type =
+                    authored_node.condition_type ==
+                        KernelGameRuleConditionType_PlayerCountAtLeast
+                    ? GameRuleConditionType::kPlayerCountAtLeast
+                    : GameRuleConditionType::kGroupEliminated;
+                node.condition_group_id = authored_node.group_id;
+                node.condition_count = authored_node.condition_count;
+                node.next_node_ids = authored_node.next_node_ids;
+                node.has_spawn_effect = authored_node.has_spawn_effect;
+                node.spawn.group_id = authored_node.group_id;
+                node.spawn.count = authored_node.spawn_count;
+                node.spawn.entity_template_id =
+                    authored_node.spawn_entity_template_id;
+                node.spawn.position = authored_node.spawn_position;
+                node.spawn.radius = authored_node.spawn_radius;
+                node.spawn.seed = authored_node.spawn_seed;
+                game_rule.nodes.push_back(std::move(node));
+            }
+            config->game_rules.push_back(std::move(game_rule));
             continue;
         }
         WorldRuleSpawnConfig rule;
@@ -7476,6 +7506,27 @@ std::uint64_t compute_gameplay_catalog_hash(
             hash_scalar(&hash, entry.entity_template_id);
             hash_scalar(&hash, entry.min_count);
             hash_scalar(&hash, entry.max_count);
+        }
+    }
+    for (const GameRuleConfig& rule : config.game_rules) {
+        hash_scalar(&hash, rule.director_template_id);
+        hash_string(&hash, rule.name);
+        hash_scalar(&hash, rule.tick_interval);
+        for (const GameRuleNodeConfig& node : rule.nodes) {
+            hash_scalar(&hash, node.node_id);
+            hash_scalar(&hash, static_cast<std::uint32_t>(node.condition_type));
+            hash_scalar(&hash, node.condition_group_id);
+            hash_scalar(&hash, node.condition_count);
+            for (const std::uint32_t next : node.next_node_ids) {
+                hash_scalar(&hash, next);
+            }
+            hash_scalar(&hash, node.has_spawn_effect ? 1u : 0u);
+            hash_scalar(&hash, node.spawn.group_id);
+            hash_scalar(&hash, node.spawn.count);
+            hash_scalar(&hash, node.spawn.entity_template_id);
+            hash_vec3(&hash, node.spawn.position);
+            hash_float(&hash, node.spawn.radius);
+            hash_scalar(&hash, node.spawn.seed);
         }
     }
     for (const WorldRuleSpawnConfig& rule : config.world_rule_spawns) {

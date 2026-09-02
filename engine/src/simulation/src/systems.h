@@ -107,20 +107,6 @@ struct DirectorIntentExecutionResult {
     std::uint32_t created_count = 0;
 };
 
-class DirectorIntentExecutor {
-public:
-    DirectorIntentExecutionResult execute(
-        KernelEngine& engine,
-        const ai::ScopedIntent& intent) const;
-
-    void update(KernelEngine& engine) const;
-};
-
-class DirectorAISystem {
-public:
-    void update(KernelEngine& engine) const;
-};
-
 }  // namespace network_example
 
 #endif  // SIMULATION_SRC_SYSTEMS_H_

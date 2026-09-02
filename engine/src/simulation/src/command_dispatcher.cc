@@ -10,60 +10,15 @@ CommandResult Dispatcher::dispatch(
     const Command& command) const {
     switch (command.id) {
         case CommandId::kCreateEntity: {
+            // Group membership and its bookkeeping used to be attached here,
+            // for the game-rule director. Both directors are game_server's now,
+            // and game_server spawns synchronously, so it holds the net ids it
+            // created and needs nothing recorded on its behalf.
             NetId net_id = 0;
-            const GameplayGroupMembership membership{
-                command.create_entity.director_net_id,
-                command.create_entity.gameplay_group_id,
-                command.create_entity.spawn_batch_id,
-            };
-            const GameplayGroupMembership* membership_ptr =
-                membership.director_net_id == 0u ? nullptr : &membership;
             const bool ok = EntityLifecycleSystem{}.create_entity(
                 engine,
                 command.create_entity.create_info,
                 &net_id);
-            if (membership_ptr != nullptr) {
-                World& world = engine.simulation_world();
-                bool spawn_succeeded = ok;
-                if (spawn_succeeded) {
-                    const std::optional<entt::entity> spawned =
-                        world.find_entity(net_id);
-                    spawn_succeeded = spawned.has_value();
-                    if (spawned.has_value()) {
-                        world.registry().emplace_or_replace<
-                            GameplayGroupMembership>(*spawned, membership);
-                    }
-                }
-                const std::optional<entt::entity> director =
-                    world.find_entity(membership.director_net_id);
-                if (director.has_value() &&
-                    world.registry().all_of<GameRuleRuntime>(*director)) {
-                    GameRuleRuntime& runtime =
-                        world.registry().get<GameRuleRuntime>(*director);
-                    auto group = std::find_if(
-                        runtime.groups.begin(),
-                        runtime.groups.end(),
-                        [&](const GameRuleGroupRuntime& candidate) {
-                            return candidate.group_id == membership.group_id;
-                        });
-                    if (group == runtime.groups.end()) {
-                        runtime.status = GameRuleStatus::kFailed;
-                    } else {
-                        if (spawn_succeeded) {
-                            ++group->alive_count;
-                        } else {
-                            group->failed = true;
-                            runtime.status = GameRuleStatus::kFailed;
-                        }
-                        if (group->pending_spawn_count > 0u) {
-                            --group->pending_spawn_count;
-                        }
-                        if (group->pending_spawn_count == 0u) {
-                            group->sealed = true;
-                        }
-                    }
-                }
-            }
             return CommandResult{ok, net_id};
         }
         case CommandId::kDestroyEntity:
