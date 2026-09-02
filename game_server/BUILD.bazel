@@ -148,6 +148,24 @@ cc_test(
     ],
 )
 
+# Measures whether a patrol route can be a straight line, on the navmesh the
+# mesh bake already ships in the catalog bundle. Reports numbers rather than
+# asserting them -- the acceptable rate is a design decision and the answer is a
+# property of the authored terrain -- so it is manual, like the other benches.
+cc_test(
+    name = "patrol_nav_bench",
+    srcs = ["patrol_nav_bench.cc"],
+    data = [
+        "//game_server/gameplay_catalog_bundle:bundle",
+        "//game_server/test_mesh_assets:cooked_test_mesh_assets",
+    ],
+    tags = ["manual"],
+    deps = [
+        ":game_server",
+        "@recastnavigation//:detour",
+    ],
+)
+
 cc_test(
     name = "activation_gameplay_config_test",
     srcs = ["activation_gameplay_config_test.cc"],
