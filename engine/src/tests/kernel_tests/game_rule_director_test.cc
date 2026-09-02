@@ -1,6 +1,7 @@
+#include <cstdio>
+#include <cstdlib>
 #include <algorithm>
 #include <array>
-#include <cassert>
 #include <cstdint>
 #include <optional>
 #include <vector>
@@ -12,6 +13,24 @@
 #define private public
 #include "kernel/src/kernel.h"
 #include "simulation/src/systems.h"
+
+namespace {
+
+// assert() is compiled out under -c opt, which is the configuration this suite
+// runs in, so every check in this file was previously not being run at all.
+// This is the fourth file in this area found that way.
+void require_impl(bool condition, int line, const char* text) {
+    if (condition) {
+        return;
+    }
+    std::fprintf(stderr, "require failed at line %d: %s\n", line, text);
+    std::abort();
+}
+
+#define require(expr) require_impl(static_cast<bool>(expr), __LINE__, #expr)
+
+}  // namespace
+
 #undef private
 
 namespace {
@@ -242,13 +261,13 @@ KernelConfig dedicated_config() {
 void initialize_engine(network_example::KernelEngine& engine) {
     engine.reset_runtime_state(KernelMode_DedicatedServer);
     const CatalogFixture fixture;
-    assert(fixture.load(engine));
+    require(fixture.load(engine));
 }
 
 void initialize_player_gate_engine(network_example::KernelEngine& engine) {
     engine.reset_runtime_state(KernelMode_DedicatedServer);
     const PlayerGateCatalogFixture fixture;
-    assert(fixture.load(engine));
+    require(fixture.load(engine));
 }
 
 void initialize_world_rule_engine(network_example::KernelEngine& engine) {
@@ -274,7 +293,7 @@ void initialize_world_rule_engine(network_example::KernelEngine& engine) {
     catalog.actor_template_count = actors.size();
     catalog.entity_templates = entities.data();
     catalog.entity_template_count = entities.size();
-    assert(engine.load_gameplay_catalog(catalog));
+    require(engine.load_gameplay_catalog(catalog));
 }
 
 network_example::NetId create_director(network_example::KernelEngine& engine) {
@@ -283,7 +302,7 @@ network_example::NetId create_director(network_example::KernelEngine& engine) {
     create.entity_template_id = 100u;
     create.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
     network_example::NetId director = 0u;
-    assert(engine.server_create_entity(create, &director));
+    require(engine.server_create_entity(create, &director));
     return director;
 }
 
@@ -291,7 +310,7 @@ network_example::GameRuleRuntime& runtime_for(
     network_example::KernelEngine& engine,
     network_example::NetId director) {
     const std::optional<entt::entity> entity = engine.world_.find_entity(director);
-    assert(entity.has_value());
+    require(entity.has_value());
     return engine.world_.registry().get<network_example::GameRuleRuntime>(*entity);
 }
 
@@ -342,22 +361,22 @@ void world_rule_still_maintains_target_count() {
     const network_example::NetId director = create_director(engine);
     const std::optional<entt::entity> director_entity =
         engine.world_.find_entity(director);
-    assert(director_entity.has_value());
-    assert((engine.world_.registry().all_of<
+    require(director_entity.has_value());
+    require((engine.world_.registry().all_of<
         network_example::DirectorRuntime,
         network_example::WorldRuleRuntime>(*director_entity)));
-    assert(!engine.world_.registry().all_of<network_example::GameRuleRuntime>(
+    require(!engine.world_.registry().all_of<network_example::GameRuleRuntime>(
         *director_entity));
     update(engine);
     update(engine);
     std::vector<network_example::NetId> agents = live_agents(engine);
-    assert(agents.size() == 1u);
-    assert(network_example::EntityLifecycleSystem{}.destroy_entity(
+    require(agents.size() == 1u);
+    require(network_example::EntityLifecycleSystem{}.destroy_entity(
         engine, agents[0], KernelDespawnReason_Destroyed));
     update(engine);
     update(engine);
     agents = live_agents(engine);
-    assert(agents.size() == 1u);
+    require(agents.size() == 1u);
 }
 
 void game_rule_waits_for_player_before_spawning_wave() {
@@ -368,15 +387,15 @@ void game_rule_waits_for_player_before_spawning_wave() {
 
     update(engine);
     network_example::GameRuleRuntime& runtime = runtime_for(engine, director);
-    assert(runtime.node_states[0] == network_example::GameRuleNodeState::kActive);
-    assert(runtime.node_states[1] == network_example::GameRuleNodeState::kInactive);
-    assert(runtime.groups.size() == 1u);
-    assert(runtime.groups[0].group_id == 2u);
-    assert(engine.command_queue_.size() == 0u);
+    require(runtime.node_states[0] == network_example::GameRuleNodeState::kActive);
+    require(runtime.node_states[1] == network_example::GameRuleNodeState::kInactive);
+    require(runtime.groups.size() == 1u);
+    require(runtime.groups[0].group_id == 2u);
+    require(engine.command_queue_.size() == 0u);
 
     update(engine);
-    assert(runtime.node_states[0] == network_example::GameRuleNodeState::kActive);
-    assert(runtime.node_states[1] == network_example::GameRuleNodeState::kInactive);
+    require(runtime.node_states[0] == network_example::GameRuleNodeState::kActive);
+    require(runtime.node_states[1] == network_example::GameRuleNodeState::kInactive);
 
     KernelServerEntityCreateInfo player_create{};
     player_create.struct_size = sizeof(player_create);
@@ -384,16 +403,16 @@ void game_rule_waits_for_player_before_spawning_wave() {
     player_create.actor_type = KernelActorType_Player;
     player_create.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
     network_example::NetId player = 0u;
-    assert(engine.server_create_entity(player_create, &player));
-    assert(player != 0u);
+    require(engine.server_create_entity(player_create, &player));
+    require(player != 0u);
 
     update(engine);
-    assert(runtime.node_states[0] == network_example::GameRuleNodeState::kCompleted);
-    assert(runtime.node_states[1] == network_example::GameRuleNodeState::kActive);
-    assert(engine.command_queue_.size() == 1u);
+    require(runtime.node_states[0] == network_example::GameRuleNodeState::kCompleted);
+    require(runtime.node_states[1] == network_example::GameRuleNodeState::kActive);
+    require(engine.command_queue_.size() == 1u);
     update(engine);
-    assert(runtime.groups[0].sealed);
-    assert(runtime.groups[0].alive_count == 1u);
+    require(runtime.groups[0].sealed);
+    require(runtime.groups[0].alive_count == 1u);
 }
 
 void game_rule_advances_branch_and_join_deterministically() {
@@ -404,65 +423,65 @@ void game_rule_advances_branch_and_join_deterministically() {
 
     update(engine);
     network_example::GameRuleRuntime& runtime = runtime_for(engine, director);
-    assert(runtime.node_states[0] == network_example::GameRuleNodeState::kActive);
-    assert(runtime.groups[0].pending_spawn_count == 1u);
-    assert(!runtime.groups[0].sealed);
-    assert(engine.command_queue_.size() == 1u);
+    require(runtime.node_states[0] == network_example::GameRuleNodeState::kActive);
+    require(runtime.groups[0].pending_spawn_count == 1u);
+    require(!runtime.groups[0].sealed);
+    require(engine.command_queue_.size() == 1u);
 
     update(engine);
-    assert(runtime.groups[0].pending_spawn_count == 0u);
-    assert(runtime.groups[0].alive_count == 1u);
-    assert(runtime.groups[0].sealed);
-    assert(runtime.node_states[0] == network_example::GameRuleNodeState::kActive);
+    require(runtime.groups[0].pending_spawn_count == 0u);
+    require(runtime.groups[0].alive_count == 1u);
+    require(runtime.groups[0].sealed);
+    require(runtime.node_states[0] == network_example::GameRuleNodeState::kActive);
 
     KernelServerEntityCreateInfo unrelated_create{};
     unrelated_create.struct_size = sizeof(unrelated_create);
     unrelated_create.entity_template_id = 200u;
     unrelated_create.rotation = KernelQuat{0.0f, 0.0f, 0.0f, 1.0f};
     network_example::NetId unrelated = 0u;
-    assert(engine.server_create_entity(unrelated_create, &unrelated));
-    assert(network_example::EntityLifecycleSystem{}.destroy_entity(
+    require(engine.server_create_entity(unrelated_create, &unrelated));
+    require(network_example::EntityLifecycleSystem{}.destroy_entity(
         engine, unrelated, KernelDespawnReason_Destroyed));
-    assert(runtime.groups[0].alive_count == 1u);
+    require(runtime.groups[0].alive_count == 1u);
 
     const network_example::NetId group_one = entity_in_group(engine, director, 1u);
-    assert(group_one != 0u);
-    assert(network_example::EntityLifecycleSystem{}.destroy_entity(
+    require(group_one != 0u);
+    require(network_example::EntityLifecycleSystem{}.destroy_entity(
         engine, group_one, KernelDespawnReason_Destroyed));
     update(engine);
-    assert(runtime.node_states[0] == network_example::GameRuleNodeState::kCompleted);
-    assert(runtime.node_states[1] == network_example::GameRuleNodeState::kActive);
-    assert(runtime.node_states[2] == network_example::GameRuleNodeState::kActive);
-    assert(runtime.node_states[3] == network_example::GameRuleNodeState::kInactive);
-    assert(engine.command_queue_.size() == 2u);
+    require(runtime.node_states[0] == network_example::GameRuleNodeState::kCompleted);
+    require(runtime.node_states[1] == network_example::GameRuleNodeState::kActive);
+    require(runtime.node_states[2] == network_example::GameRuleNodeState::kActive);
+    require(runtime.node_states[3] == network_example::GameRuleNodeState::kInactive);
+    require(engine.command_queue_.size() == 2u);
     const auto commands = engine.command_queue_.commands();
-    assert(commands[0].create_entity.gameplay_group_id == 2u);
-    assert(commands[1].create_entity.gameplay_group_id == 3u);
+    require(commands[0].create_entity.gameplay_group_id == 2u);
+    require(commands[1].create_entity.gameplay_group_id == 3u);
 
     update(engine);
     const network_example::NetId group_two = entity_in_group(engine, director, 2u);
     const network_example::NetId group_three = entity_in_group(engine, director, 3u);
-    assert(group_two != 0u && group_three != 0u);
-    assert(network_example::EntityLifecycleSystem{}.destroy_entity(
+    require(group_two != 0u && group_three != 0u);
+    require(network_example::EntityLifecycleSystem{}.destroy_entity(
         engine, group_two, KernelDespawnReason_OutOfRange));
     update(engine);
-    assert(runtime.node_states[1] == network_example::GameRuleNodeState::kCompleted);
-    assert(runtime.node_states[3] == network_example::GameRuleNodeState::kInactive);
+    require(runtime.node_states[1] == network_example::GameRuleNodeState::kCompleted);
+    require(runtime.node_states[3] == network_example::GameRuleNodeState::kInactive);
 
-    assert(network_example::EntityLifecycleSystem{}.destroy_entity(
+    require(network_example::EntityLifecycleSystem{}.destroy_entity(
         engine, group_three, KernelDespawnReason_Disconnected));
     update(engine);
-    assert(runtime.node_states[2] == network_example::GameRuleNodeState::kCompleted);
-    assert(runtime.node_states[3] == network_example::GameRuleNodeState::kActive);
-    assert(engine.command_queue_.size() == 1u);
+    require(runtime.node_states[2] == network_example::GameRuleNodeState::kCompleted);
+    require(runtime.node_states[3] == network_example::GameRuleNodeState::kActive);
+    require(engine.command_queue_.size() == 1u);
 
     update(engine);
     const network_example::NetId group_four = entity_in_group(engine, director, 4u);
-    assert(group_four != 0u);
-    assert(network_example::EntityLifecycleSystem{}.destroy_entity(
+    require(group_four != 0u);
+    require(network_example::EntityLifecycleSystem{}.destroy_entity(
         engine, group_four, KernelDespawnReason_Destroyed));
     update(engine);
-    assert(runtime.status == network_example::GameRuleStatus::kCompleted);
+    require(runtime.status == network_example::GameRuleStatus::kCompleted);
 }
 
 void spawn_enqueue_failure_fails_game_rule() {
@@ -471,14 +490,14 @@ void spawn_enqueue_failure_fails_game_rule() {
     initialize_engine(engine);
     const network_example::NetId director = create_director(engine);
     network_example::DirectorAISystem{}.update(engine);
-    assert(engine.pending_director_intents_.size() == 1u);
+    require(engine.pending_director_intents_.size() == 1u);
     network_example::simulation::Command filler{};
     while (engine.command_queue_.enqueue(filler)) {
     }
     network_example::DirectorIntentExecutor{}.update(engine);
     const network_example::GameRuleRuntime& runtime = runtime_for(engine, director);
-    assert(runtime.status == network_example::GameRuleStatus::kFailed);
-    assert(runtime.groups[0].failed);
+    require(runtime.status == network_example::GameRuleStatus::kFailed);
+    require(runtime.groups[0].failed);
 }
 
 void spawn_execution_failure_fails_game_rule() {
@@ -489,7 +508,7 @@ void spawn_execution_failure_fails_game_rule() {
     network_example::DirectorAISystem{}.update(engine);
     network_example::DirectorIntentExecutor{}.update(engine);
     network_example::GameRuleRuntime& runtime = runtime_for(engine, director);
-    assert(runtime.groups[0].pending_spawn_count == 1u);
+    require(runtime.groups[0].pending_spawn_count == 1u);
     engine.entity_templates_.erase(
         std::remove_if(
             engine.entity_templates_.begin(),
@@ -499,10 +518,10 @@ void spawn_execution_failure_fails_game_rule() {
             }),
         engine.entity_templates_.end());
     update(engine);
-    assert(runtime.status == network_example::GameRuleStatus::kFailed);
-    assert(runtime.groups[0].failed);
-    assert(runtime.groups[0].pending_spawn_count == 0u);
-    assert(runtime.groups[0].sealed);
+    require(runtime.status == network_example::GameRuleStatus::kFailed);
+    require(runtime.groups[0].failed);
+    require(runtime.groups[0].pending_spawn_count == 0u);
+    require(runtime.groups[0].sealed);
 }
 
 }  // namespace
