@@ -34,6 +34,7 @@ cc_library(
         "ballistic_aim.cc",
         "gameplay_config.cc",
         "game_server.cc",
+        "patrol_director.cc",
         "patrol_group_runtime.cc",
     ],
     hdrs = [
@@ -47,6 +48,7 @@ cc_library(
         "ballistic_aim.h",
         "gameplay_config.h",
         "game_server.h",
+        "patrol_director.h",
         "patrol_group_runtime.h",
         "public/game_server_types.h",
     ],
@@ -254,6 +256,15 @@ cc_test(
 cc_test(
     name = "agent_chaser_controller_test",
     srcs = ["agent_chaser_controller_test.cc"],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
+    name = "patrol_director_test",
+    srcs = ["patrol_director_test.cc"],
     deps = [
         ":game_server",
         "//engine/src/kernel:kernel",

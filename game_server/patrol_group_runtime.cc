@@ -53,6 +53,7 @@ PatrolGroupRuntime::PatrolGroupRuntime(PatrolGroupTuning tuning)
     : tuning_(tuning) {}
 
 std::uint32_t PatrolGroupRuntime::create_group(
+    std::uint32_t definition_id,
     std::vector<KernelVec3> waypoints,
     const KernelVec3& origin,
     const std::vector<std::uint32_t>& member_net_ids,
@@ -63,6 +64,7 @@ std::uint32_t PatrolGroupRuntime::create_group(
     }
     PatrolGroup group;
     group.group_id = next_group_id_++;
+    group.definition_id = definition_id;
     group.waypoints = std::move(waypoints);
     group.cursor = origin;
     group.member_net_ids = member_net_ids;
@@ -78,6 +80,22 @@ void PatrolGroupRuntime::tick(
         return;
     }
 
+    // A squad that has lost everyone is not a squad, and leaving it in the list
+    // would hold a slot against its definition's live ceiling for good.
+    groups_.erase(
+        std::remove_if(
+            groups_.begin(),
+            groups_.end(),
+            [&agents](const PatrolGroup& group) {
+                return std::none_of(
+                    group.member_net_ids.begin(),
+                    group.member_net_ids.end(),
+                    [&agents](std::uint32_t net_id) {
+                        return find_agent(agents, net_id) != nullptr;
+                    });
+            }),
+        groups_.end());
+
     for (PatrolGroup& group : groups_) {
         // Casualties first, so a dead member neither holds the squad in place
         // nor keeps a slot nobody is standing in.
@@ -88,9 +106,6 @@ void PatrolGroupRuntime::tick(
             }
             group.member_net_ids.erase(group.member_net_ids.begin() + member);
             group.member_offsets.erase(group.member_offsets.begin() + member);
-        }
-        if (group.member_net_ids.empty()) {
-            continue;
         }
 
         // One member in a fight stops the squad. The alternative -- walking on

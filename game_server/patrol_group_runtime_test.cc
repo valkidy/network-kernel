@@ -65,7 +65,9 @@ int main() {
 
     // An L-shaped route, because a straight one cannot show whether the
     // formation turns with it.
+    constexpr std::uint32_t kDefinitionId = 9;
     const std::uint32_t group_id = runtime.create_group(
+        kDefinitionId,
         {KernelVec3{10.0f, 0.0f, 0.0f}, KernelVec3{10.0f, 0.0f, 10.0f}},
         KernelVec3{0.0f, 0.0f, 0.0f},
         {1u, 2u, 3u},
@@ -74,10 +76,14 @@ int main() {
 
     // A route with no waypoints, or a member list that does not line up with
     // the offsets, is not a squad.
-    require(runtime.create_group({}, {}, {1u}, {KernelVec3{}}) == 0);
+    require(runtime.create_group(kDefinitionId, {}, {}, {1u}, {KernelVec3{}}) == 0);
     require(
         runtime.create_group(
-            {KernelVec3{1.0f, 0.0f, 0.0f}}, {}, {1u, 2u}, {KernelVec3{}}) == 0);
+            kDefinitionId,
+            {KernelVec3{1.0f, 0.0f, 0.0f}},
+            {},
+            {1u, 2u},
+            {KernelVec3{}}) == 0);
 
     // One second of walking, along +X.
     for (int tick = 0; tick < 30; ++tick) {
@@ -85,6 +91,7 @@ int main() {
     }
     const PatrolGroup* group = runtime.find_group(group_id);
     require(group != nullptr);
+    require(group->definition_id == kDefinitionId);
     require(almost_equal(group->cursor.x, 3.0f, 0.05f));
     require(almost_equal(group->cursor.z, 0.0f));
     require(!group->holding);

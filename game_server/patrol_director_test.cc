@@ -1,0 +1,467 @@
+#include "game_server/patrol_director.h"
+
+#include <array>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <string>
+#include <vector>
+
+#include "game_server/agent_runtime.h"
+#include "game_server/patrol_group_runtime.h"
+#include "kernel/public/kernel_api.h"
+
+namespace {
+
+void require_impl(bool condition, int line, const char* text) {
+    if (condition) {
+        return;
+    }
+    std::fprintf(stderr, "require failed at line %d: %s\n", line, text);
+    std::abort();
+}
+
+#define require(expr) require_impl(static_cast<bool>(expr), __LINE__, #expr)
+
+constexpr std::uint32_t kTestFireActionTemplateId = 100;
+constexpr std::uint32_t kTestReloadActionTemplateId = 101;
+constexpr std::uint8_t kSpammerWeaponId =
+    network_example::game_server::kAgentSpammerWeaponId;
+constexpr std::uint32_t kGruntEntityTemplateId = 102;
+constexpr std::uint32_t kBruteEntityTemplateId = 103;
+
+using network_example::game_server::PatrolAreaShape;
+using network_example::game_server::PatrolCompositionEntry;
+using network_example::game_server::PatrolDefinitionConfig;
+
+// The example from the original design note: a squad of 8 to 10 out of a mix
+// authored as 2-8 of one and 4-20 of the other. Read as a second opinion about
+// the total it is unsatisfiable -- the floors sum to 6 and the ceilings to 28 --
+// which is exactly why the bands are floors plus capacity.
+PatrolDefinitionConfig mixed_definition() {
+    PatrolDefinitionConfig definition;
+    definition.id = 1;
+    definition.name = "mixed";
+    definition.area.shape = PatrolAreaShape::kRect;
+    definition.area.half_extents = KernelVec3{20.0f, 0.0f, 20.0f};
+    definition.seed = 4242;
+    definition.count_min = 8;
+    definition.count_max = 10;
+    definition.composition = {
+        PatrolCompositionEntry{"grunt", kGruntEntityTemplateId, 2, 8},
+        PatrolCompositionEntry{"brute", kBruteEntityTemplateId, 4, 20},
+    };
+    return definition;
+}
+
+void composition_is_floors_plus_capacity() {
+    const PatrolDefinitionConfig definition = mixed_definition();
+    require(network_example::game_server::validate_patrol_definition(definition)
+                .empty());
+
+    // Every total the count can draw is fillable, every floor is honoured, and
+    // no ceiling is passed. Swept rather than sampled, because the failure this
+    // guards against is one particular total coming out short.
+    for (std::uint32_t count = definition.count_min;
+         count <= definition.count_max;
+         ++count) {
+        for (std::uint32_t draw = 0; draw < 32; ++draw) {
+            std::uint64_t state = draw * 0x9e3779b97f4a7c15ull + count;
+            const std::vector<std::uint32_t> drawn =
+                network_example::game_server::draw_composition(
+                    definition, count, &state);
+            require(drawn.size() == definition.composition.size());
+            std::uint32_t total = 0;
+            for (std::size_t entry = 0; entry < drawn.size(); ++entry) {
+                require(drawn[entry] >= definition.composition[entry].min_count);
+                require(drawn[entry] <= definition.composition[entry].max_count);
+                total += drawn[entry];
+            }
+            require(total == count);
+        }
+    }
+
+    // And the mix actually varies. A draw that always answered "floors, then
+    // everything to the first entry" would satisfy every assertion above.
+    bool saw_more_grunts = false;
+    bool saw_more_brutes = false;
+    for (std::uint32_t draw = 0; draw < 64; ++draw) {
+        std::uint64_t state = draw * 0x9e3779b97f4a7c15ull;
+        const std::vector<std::uint32_t> drawn =
+            network_example::game_server::draw_composition(definition, 10, &state);
+        saw_more_grunts = saw_more_grunts || drawn[0] > 4;
+        saw_more_brutes = saw_more_brutes || drawn[1] > 6;
+    }
+    require(saw_more_grunts);
+    require(saw_more_brutes);
+}
+
+void an_unsatisfiable_definition_is_rejected() {
+    using network_example::game_server::validate_patrol_definition;
+
+    // Floors that do not fit inside the smallest squad the count can draw.
+    PatrolDefinitionConfig too_many_floors = mixed_definition();
+    too_many_floors.count_min = 5;
+    require(!validate_patrol_definition(too_many_floors).empty());
+
+    // Ceilings that cannot reach the largest.
+    PatrolDefinitionConfig too_few_seats = mixed_definition();
+    too_few_seats.composition[0].max_count = 2;
+    too_few_seats.composition[1].max_count = 4;
+    require(!validate_patrol_definition(too_few_seats).empty());
+
+    PatrolDefinitionConfig empty_count = mixed_definition();
+    empty_count.count_max = empty_count.count_min - 1;
+    require(!validate_patrol_definition(empty_count).empty());
+
+    PatrolDefinitionConfig no_composition = mixed_definition();
+    no_composition.composition.clear();
+    require(!validate_patrol_definition(no_composition).empty());
+
+    // An area with no extent would place a whole squad on one point.
+    PatrolDefinitionConfig flat_rect = mixed_definition();
+    flat_rect.area.half_extents.z = 0.0f;
+    require(!validate_patrol_definition(flat_rect).empty());
+
+    PatrolDefinitionConfig no_radius = mixed_definition();
+    no_radius.area.shape = PatrolAreaShape::kCircle;
+    no_radius.area.half_extents.x = 0.0f;
+    require(!validate_patrol_definition(no_radius).empty());
+}
+
+void a_formation_ranks_up_behind_the_squad() {
+    const std::vector<KernelVec3> offsets =
+        network_example::game_server::formation_offsets(7, 2.0f);
+    require(offsets.size() == 7u);
+    // Three across, then behind. Nobody stands in front of the squad's point.
+    for (const KernelVec3& offset : offsets) {
+        require(offset.x <= 0.0f);
+    }
+    require(offsets[0].z < offsets[1].z);
+    require(offsets[1].z < offsets[2].z);
+    require(offsets[3].x < offsets[0].x);
+    // Nobody stands on anybody.
+    for (std::size_t lhs = 0; lhs < offsets.size(); ++lhs) {
+        for (std::size_t rhs = lhs + 1; rhs < offsets.size(); ++rhs) {
+            require(
+                std::fabs(offsets[lhs].x - offsets[rhs].x) > 0.01f ||
+                std::fabs(offsets[lhs].z - offsets[rhs].z) > 0.01f);
+        }
+    }
+}
+
+KernelConfig server_config() {
+    KernelConfig config{};
+    config.mode = KernelMode_DedicatedServer;
+    config.tick.server_tick_rate = 30;
+    config.tick.snapshot_rate = 30;
+    config.max_events = 64;
+    config.max_render_states = 64;
+    return config;
+}
+
+KernelColliderTemplateDefinition hit_collider_template() {
+    KernelColliderTemplateDefinition collider{};
+    collider.struct_size = sizeof(collider);
+    collider.template_id = 1;
+    collider.shape_type = KernelColliderShapeType_Aabb;
+    collider.center = KernelVec3{0.0f, 0.8f, 0.0f};
+    collider.shape_params = KernelVec4{0.4f, 0.8f, 0.4f, 0.0f};
+    collider.purpose_flags = KernelColliderPurpose_Hit;
+    collider.layer_mask = KERNEL_COLLISION_MASK_DAMAGEABLE;
+    return collider;
+}
+
+KernelColliderTemplateDefinition movement_collider_template() {
+    KernelColliderTemplateDefinition collider{};
+    collider.struct_size = sizeof(collider);
+    collider.template_id = 11;
+    collider.shape_type = KernelColliderShapeType_Capsule;
+    collider.center = KernelVec3{0.0f, 0.9f, 0.0f};
+    collider.shape_params = KernelVec4{0.55f, 0.35f, 0.0f, 0.0f};
+    collider.purpose_flags = KernelColliderPurpose_Movement;
+    collider.layer_mask =
+        KERNEL_COLLISION_LAYER_PLAYER_SIDE | KERNEL_COLLISION_LAYER_HOSTILE_SIDE;
+    return collider;
+}
+
+KernelColliderTemplateDefinition projectile_collider_template() {
+    KernelColliderTemplateDefinition collider{};
+    collider.struct_size = sizeof(collider);
+    collider.template_id = 3;
+    collider.shape_type = KernelColliderShapeType_Sphere;
+    collider.shape_params = KernelVec4{0.2f, 0.0f, 0.0f, 0.0f};
+    collider.purpose_flags = KernelColliderPurpose_Hit;
+    collider.layer_mask = KERNEL_COLLISION_LAYER_PROJECTILE;
+    return collider;
+}
+
+KernelProjectileTemplateDefinition projectile_template() {
+    KernelProjectileTemplateDefinition projectile{};
+    projectile.struct_size = sizeof(projectile);
+    projectile.projectile_template_id = 3;
+    projectile.weapon_id = kSpammerWeaponId;
+    projectile.mechanics.struct_size = sizeof(KernelProjectileMechanicsDefinition);
+    projectile.mechanics.projectile_type = KernelProjectileType_Standard;
+    projectile.mechanics.motion_model = KernelProjectileMotionModel_Linear;
+    projectile.mechanics.sync_mode = KernelProjectileSyncMode_ServerSnapshotOnly;
+    projectile.mechanics.hit_response = KernelProjectileHitResponse_Destroy;
+    projectile.mechanics.damage_shape = KernelProjectileDamageShape_DirectHit;
+    projectile.mechanics.damage = 1;
+    projectile.mechanics.speed = 35.0f;
+    projectile.mechanics.lifetime_ticks = 90;
+    projectile.mechanics.collider_template_id = 3;
+    projectile.mechanics.collision_mask = KERNEL_COLLISION_MASK_DAMAGEABLE;
+    projectile.mechanics.max_hit_count = 1;
+    return projectile;
+}
+
+KernelActionTemplateDefinition fire_action_template() {
+    KernelActionTemplateDefinition action{};
+    action.struct_size = sizeof(action);
+    action.action_template_id = kTestFireActionTemplateId;
+    action.trigger_mode = KernelActionTriggerMode_Press;
+    action.ammo_cost_per_commit = 1;
+    action.max_commit_count = 1;
+    return action;
+}
+
+KernelActionTemplateDefinition reload_action_template() {
+    KernelActionTemplateDefinition action{};
+    action.struct_size = sizeof(action);
+    action.action_template_id = kTestReloadActionTemplateId;
+    action.trigger_mode = KernelActionTriggerMode_Press;
+    action.commit_offset_ticks = 3;
+    action.max_commit_count = 1;
+    return action;
+}
+
+KernelColliderTemplateDefinition vision_collider_template() {
+    KernelColliderTemplateDefinition collider{};
+    collider.struct_size = sizeof(collider);
+    collider.template_id = 2;
+    collider.shape_type = KernelColliderShapeType_Cone;
+    collider.shape_params = KernelVec4{20.0f, 90.0f, 0.0f, 0.0f};
+    collider.purpose_flags = KernelColliderPurpose_Vision;
+    collider.layer_mask = KERNEL_COLLISION_LAYER_AGENT_VISION;
+    return collider;
+}
+
+// Trimmed from agent_chaser_controller_test's: no weapon, because nothing here
+// fires. Vision stays -- an agent template carrying the sentry runtime has to
+// have somewhere to look from -- and so does the component set, which is what
+// makes an entity an agent the runtime will pick up.
+KernelEntityTemplateDefinition agent_entity_template(std::uint32_t template_id) {
+    KernelEntityTemplateDefinition entity_template{};
+    entity_template.struct_size = sizeof(entity_template);
+    entity_template.entity_template_id = template_id;
+    entity_template.entity_type = KernelEntityType_Actor;
+    entity_template.actor_type = KernelActorType_Agent;
+    entity_template.actor_template_id = 2u;
+    entity_template.component_flags =
+        KERNEL_ENTITY_COMPONENT_TRANSFORM | KERNEL_ENTITY_COMPONENT_VELOCITY |
+        KERNEL_ENTITY_COMPONENT_HEALTH | KERNEL_ENTITY_COMPONENT_HITBOX |
+        KERNEL_ENTITY_COMPONENT_AGENT_RUNTIME |
+        KERNEL_ENTITY_COMPONENT_SENTRY_RUNTIME;
+    entity_template.collider_template_id = 1u;
+    entity_template.combat.struct_size = sizeof(entity_template.combat);
+    entity_template.combat.hp = 100;
+    entity_template.combat.max_hp = 100;
+    entity_template.combat.move_speed_meters_per_second = 2.5f;
+    entity_template.combat.hitbox_center = KernelVec3{0.0f, 0.8f, 0.0f};
+    entity_template.combat.hitbox_half_extents = KernelVec3{0.4f, 0.8f, 0.4f};
+    entity_template.ai.struct_size = sizeof(KernelEntityAiDefinition);
+    entity_template.movement.struct_size = sizeof(KernelMovementDefinition);
+    entity_template.movement.controller_type =
+        KernelMovementControllerType_Grounded;
+    entity_template.movement.movement_collider_template_id = 11u;
+    entity_template.movement.max_slope_degrees = 50.0f;
+    entity_template.movement.ground_probe_distance = 0.25f;
+    entity_template.movement.ground_snap_distance = 0.5f;
+    entity_template.ai.controller_type = KernelAiControllerType_Chaser;
+    entity_template.ai.tick_interval = 1u;
+    entity_template.vision.struct_size = sizeof(KernelAgentVisionConfig);
+    entity_template.vision.camp = KernelAgentCamp_EnemySide;
+    entity_template.vision.vision_collider_template_id = 2u;
+    entity_template.vision.max_visible_hostiles = KERNEL_MAX_VISIBLE_HOSTILES;
+    entity_template.vision.max_visible_allies = KERNEL_MAX_VISIBLE_ALLIES;
+    return entity_template;
+}
+
+KernelActorTemplateDefinition agent_actor_template() {
+    KernelActorTemplateDefinition actor_template{};
+    actor_template.struct_size = sizeof(actor_template);
+    actor_template.actor_template_id = 2u;
+    actor_template.entity_type = KernelEntityType_Actor;
+    actor_template.actor_type = KernelActorType_Agent;
+    actor_template.collider_template_id = 1u;
+    actor_template.vision.struct_size = sizeof(KernelAgentVisionConfig);
+    actor_template.vision.camp = KernelAgentCamp_EnemySide;
+    actor_template.vision.vision_collider_template_id = 2u;
+    actor_template.vision.max_visible_hostiles = KERNEL_MAX_VISIBLE_HOSTILES;
+    actor_template.vision.max_visible_allies = KERNEL_MAX_VISIBLE_ALLIES;
+    return actor_template;
+}
+
+void load_catalog(KernelHandle* kernel) {
+    const std::array<KernelColliderTemplateDefinition, 4> colliders = {
+        hit_collider_template(),
+        vision_collider_template(),
+        projectile_collider_template(),
+        movement_collider_template(),
+    };
+    const KernelProjectileTemplateDefinition projectile = projectile_template();
+    const std::array<KernelActionTemplateDefinition, 2> actions = {
+        fire_action_template(),
+        reload_action_template(),
+    };
+    const std::array<KernelEntityTemplateDefinition, 2> entity_templates = {
+        agent_entity_template(kGruntEntityTemplateId),
+        agent_entity_template(kBruteEntityTemplateId),
+    };
+    const KernelActorTemplateDefinition actor_template = agent_actor_template();
+    KernelGameplayCatalogDefinition catalog{};
+    catalog.struct_size = sizeof(catalog);
+    catalog.catalog_version = 1;
+    catalog.catalog_hash = 1;
+    catalog.collider_templates = colliders.data();
+    catalog.collider_template_count =
+        static_cast<std::uint32_t>(colliders.size());
+    catalog.projectile_templates = &projectile;
+    catalog.projectile_template_count = 1;
+    catalog.action_templates = actions.data();
+    catalog.action_template_count = static_cast<std::uint32_t>(actions.size());
+    catalog.actor_templates = &actor_template;
+    catalog.actor_template_count = 1;
+    catalog.entity_templates = entity_templates.data();
+    catalog.entity_template_count =
+        static_cast<std::uint32_t>(entity_templates.size());
+    require(Kernel_LoadGameplayCatalog(kernel, &catalog, nullptr));
+}
+
+// The director spawns on its interval, once, into a squad whose members are
+// real entities standing in the authored area.
+void a_patrol_spawns_on_its_interval() {
+    using network_example::game_server::PatrolDirector;
+    using network_example::game_server::PatrolGroupRuntime;
+
+    const KernelConfig config = server_config();
+    KernelHandle* kernel = Kernel_Create(&config);
+    require(kernel != nullptr);
+    require(Kernel_StartDedicatedServer(kernel, 7823));
+    load_catalog(kernel);
+
+    PatrolDefinitionConfig definition = mixed_definition();
+    definition.interval_ticks = 5;
+    definition.max_live_groups = 1;
+    PatrolDirector director({definition});
+    PatrolGroupRuntime groups;
+
+    // Staggered by one interval rather than firing on tick zero.
+    for (std::uint32_t tick = 0; tick < definition.interval_ticks; ++tick) {
+        director.tick(kernel, &groups);
+        require(groups.groups().empty());
+    }
+    director.tick(kernel, &groups);
+    require(groups.groups().size() == 1u);
+    require(director.spawned_group_count() == 1u);
+
+    const network_example::game_server::PatrolGroup& group = groups.groups()[0];
+    require(group.definition_id == definition.id);
+    require(group.member_net_ids.size() >= definition.count_min);
+    require(group.member_net_ids.size() <= definition.count_max);
+    require(group.member_offsets.size() == group.member_net_ids.size());
+    // One waypoint: the cursor starts where the squad spawned, so the straight
+    // chord is the single leg to the far end.
+    require(group.waypoints.size() == 1u);
+
+    // Every member is a live entity, inside the authored rectangle, and no two
+    // of them were put in the same place.
+    for (std::size_t member = 0; member < group.member_net_ids.size(); ++member) {
+        KernelServerEntityState state{};
+        state.struct_size = sizeof(state);
+        require(Kernel_ServerGetEntityState(
+            kernel, group.member_net_ids[member], &state));
+        require(state.valid != 0u);
+        require(state.actor_type == KernelActorType_Agent);
+        // The formation reaches outside the area by its own spacing, which is
+        // why this is the extent plus a formation's width rather than the
+        // extent alone.
+        require(std::fabs(state.position.x) <= 20.0f + 8.0f);
+        require(std::fabs(state.position.z) <= 20.0f + 8.0f);
+        for (std::size_t other = member + 1;
+             other < group.member_net_ids.size();
+             ++other) {
+            require(group.member_net_ids[member] != group.member_net_ids[other]);
+        }
+    }
+
+    // The ceiling holds: the interval passes again and no second squad appears
+    // while the first is still alive.
+    for (std::uint32_t tick = 0; tick < definition.interval_ticks * 3u; ++tick) {
+        director.tick(kernel, &groups);
+    }
+    require(groups.groups().size() == 1u);
+    require(director.spawned_group_count() == 1u);
+
+    Kernel_Destroy(kernel);
+}
+
+// Two directors built from the same definition spawn the same squad. The draws
+// are derived from the seed and the count of squads already spawned, which is
+// what lets a patrol be reasoned about before it exists.
+void the_same_seed_spawns_the_same_squad() {
+    using network_example::game_server::PatrolDirector;
+    using network_example::game_server::PatrolGroupRuntime;
+
+    PatrolDefinitionConfig definition = mixed_definition();
+    definition.interval_ticks = 1;
+    definition.max_live_groups = 4;
+
+    std::vector<std::size_t> sizes;
+    std::vector<float> first_waypoints;
+    for (int run = 0; run < 2; ++run) {
+        const KernelConfig config = server_config();
+        KernelHandle* kernel = Kernel_Create(&config);
+        require(kernel != nullptr);
+        require(Kernel_StartDedicatedServer(
+            kernel, static_cast<std::uint16_t>(7824 + run)));
+        load_catalog(kernel);
+        PatrolDirector director({definition});
+        PatrolGroupRuntime groups;
+        for (int tick = 0; tick < 8; ++tick) {
+            director.tick(kernel, &groups);
+        }
+        require(groups.groups().size() == 4u);
+        for (const network_example::game_server::PatrolGroup& group :
+             groups.groups()) {
+            sizes.push_back(group.member_net_ids.size());
+            first_waypoints.push_back(group.waypoints[0].x);
+        }
+        Kernel_Destroy(kernel);
+    }
+    require(sizes.size() == 8u);
+    for (std::size_t index = 0; index < 4; ++index) {
+        require(sizes[index] == sizes[index + 4]);
+        require(first_waypoints[index] == first_waypoints[index + 4]);
+    }
+    // Successive squads out of one definition differ, or the seed would be
+    // producing one squad over and over rather than a replayable sequence.
+    bool varied = false;
+    for (std::size_t index = 1; index < 4; ++index) {
+        varied = varied || first_waypoints[index] != first_waypoints[0];
+    }
+    require(varied);
+}
+
+}  // namespace
+
+int main() {
+    composition_is_floors_plus_capacity();
+    an_unsatisfiable_definition_is_rejected();
+    a_formation_ranks_up_behind_the_squad();
+    a_patrol_spawns_on_its_interval();
+    the_same_seed_spawns_the_same_squad();
+    return 0;
+}

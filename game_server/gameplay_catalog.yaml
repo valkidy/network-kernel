@@ -1,4 +1,4 @@
-catalog_version: 15
+catalog_version: 16
 prop_population_rules:
   - id: 1
     name: temporary_deployable
@@ -35,3 +35,32 @@ player:
   entity_template: player
 enemy:
   entity_template: grenade_sentry
+# Squads the world produces on its own schedule, independent of the mission.
+# Authored here rather than on world_rule_director because a patrol never
+# reaches the kernel as a director: game_server spawns it, owns its grouping and
+# walks its route, the same way it owns every other AI decision.
+#
+# The route is a straight chord between two points in the area, which is exactly
+# a pathed route on this map -- plane_200x200 is flat -- and wrong the day the
+# map is not. See //game_server:patrol_nav_bench.
+patrols:
+  - id: 1
+    name: grunt_sweep
+    area:
+      shape: rect
+      center: {x: 0.0, y: 0.0, z: 0.0}
+      half_extents: {x: 40.0, y: 0.0, z: 40.0}
+    seed: 7717
+    # Every 30 s at 30 Hz, and one squad at a time. Nothing despawns a squad
+    # that has walked its route out yet, so a second one would arrive to find
+    # the first still counting against this ceiling.
+    interval_ticks: 900
+    max_live_groups: 1
+    count: {min: 4, max: 6}
+    composition:
+      - entity_template: chaser_grunt
+        min: 4
+        max: 6
+    formation_spacing_meters: 1.5
+    advance_speed_meters_per_second: 1.25
+    waypoint_radius_meters: 0.5

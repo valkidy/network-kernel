@@ -1,9 +1,12 @@
 # The world's own population: encounters and roaming enemies that exist
 # whether or not a mission is running. A world rule keeps a population
 # topped up; it never advances through states, which is why it carries a
-# `spawn` block and no graph. Patrols will be owned here when they land,
-# because a patrol is something the world produces on its own schedule
-# rather than a step the mission is waiting on.
+# `spawn` block and no graph.
+#
+# Patrols are the other half of world population and are authored in the
+# catalog's `patrols:` section, not here: game_server spawns and drives them
+# without ever asking the kernel for a director, so there is no template for
+# them to hang off.
 #
 # Its counterpart is game_rule_director, which owns mission flow.
 #

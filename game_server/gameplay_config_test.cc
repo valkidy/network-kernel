@@ -1214,7 +1214,7 @@ int main() {
     assert(
         config.static_collision_scene.collision_layer ==
         KERNEL_STATIC_COLLISION_LAYER_TERRAIN);
-    require(config.weapons.catalog_version == 15);
+    require(config.weapons.catalog_version == 16);
     require(config.prop_population_rules.size() == 1u);
     require(config.prop_population_rules[0].name == "temporary_deployable");
     require(

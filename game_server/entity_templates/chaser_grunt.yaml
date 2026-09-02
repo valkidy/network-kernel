@@ -61,3 +61,15 @@ ai:
     # reaches to a target's near edge, so this sits on the conservative side of
     # the weapon: everything this lets the grunt attack, it can actually hit.
     attack_range_meters: 2.2
+  # Only read when this grunt is in a squad; a lone chaser has no slot and none
+  # of this applies to it.
+  patrol:
+    slot_radius_meters: 1.2
+    # Half speed, so a patrol reads as a patrol rather than as a pursuit that
+    # has not noticed anyone yet.
+    input_magnitude: 0.5
+    # Roughly the vision cone's own reach, so a grunt gives up at about the
+    # distance it would have stopped seeing anything anyway. resume has to sit
+    # well inside it or the grunt yo-yos on the boundary.
+    leash_meters: 18.0
+    leash_resume_meters: 6.0

@@ -23,6 +23,9 @@ namespace network_example::game_server {
 // needs to know that squads are a thing.
 struct PatrolGroup {
     std::uint32_t group_id = 0;
+    // Which authored patrol produced this squad, so a definition can be held to
+    // its own live-squad ceiling without counting anyone else's.
+    std::uint32_t definition_id = 0;
     // Walked once, first to last. The squad model is a one-shot route across
     // the world, so reaching the end is what will hand the group to a despawn
     // rather than what starts another lap.
@@ -63,6 +66,7 @@ public:
     // rather than skipped. Returns the group id, or 0 if the request was not
     // usable.
     std::uint32_t create_group(
+        std::uint32_t definition_id,
         std::vector<KernelVec3> waypoints,
         const KernelVec3& origin,
         const std::vector<std::uint32_t>& member_net_ids,
@@ -70,7 +74,7 @@ public:
 
     // Advances each squad and writes its members' slots. Members that no longer
     // appear in `agents` are dropped, which is how a squad shrinks as it takes
-    // casualties.
+    // casualties, and a squad that loses its last member is dropped with them.
     void tick(std::vector<AgentRuntimeState>* agents, float delta_seconds);
 
     const std::vector<PatrolGroup>& groups() const;

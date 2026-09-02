@@ -288,6 +288,10 @@ void hash_actor_template(
     hash_float(hash, actor_template.chaser.resume_distance_meters);
     hash_float(hash, actor_template.chaser.input_magnitude);
     hash_float(hash, actor_template.chaser.attack_range_meters);
+    hash_float(hash, actor_template.patrol.slot_radius_meters);
+    hash_float(hash, actor_template.patrol.input_magnitude);
+    hash_float(hash, actor_template.patrol.leash_meters);
+    hash_float(hash, actor_template.patrol.leash_resume_meters);
     hash_scalar(hash, actor_template.vision.camp);
     hash_scalar(hash, actor_template.vision.vision_collider_template_id);
     hash_scalar(hash, actor_template.vision.max_visible_hostiles);
@@ -2541,6 +2545,11 @@ void apply_catalog_director_preload_config(
 void apply_catalog_agent_config(
     const YAML::Node& document,
     GameServerGameplayConfig* config);
+void apply_catalog_patrol_config(
+    const YAML::Node& document,
+    GameServerGameplayConfig* config,
+    const std::string& path,
+    std::uint32_t source_kind);
 std::uint32_t collider_template_id_from_ref(
     const YAML::Node& node,
     const ColliderCatalogConfig& colliders);
@@ -2815,6 +2824,45 @@ AgentSentryConfig sentry_config_from_yaml(
         }
     }
     return sentry;
+}
+
+AgentPatrolTuning patrol_tuning_from_yaml(
+    const YAML::Node& node,
+    const ActorTemplateConfig& actor_template,
+    const std::string& path,
+    std::uint32_t source_kind) {
+    AgentPatrolTuning patrol = actor_template.patrol;
+    const YAML::Node patrol_node = node ? node["patrol"] : YAML::Node{};
+    if (!patrol_node) {
+        return patrol;
+    }
+    reject_unknown_keys(
+        patrol_node,
+        {
+            "slot_radius_meters",
+            "input_magnitude",
+            "leash_meters",
+            "leash_resume_meters",
+        },
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_ACTOR,
+        actor_template.actor_template_id);
+    if (patrol_node["slot_radius_meters"]) {
+        patrol.slot_radius_meters =
+            patrol_node["slot_radius_meters"].as<float>();
+    }
+    if (patrol_node["input_magnitude"]) {
+        patrol.input_magnitude = patrol_node["input_magnitude"].as<float>();
+    }
+    if (patrol_node["leash_meters"]) {
+        patrol.leash_meters = patrol_node["leash_meters"].as<float>();
+    }
+    if (patrol_node["leash_resume_meters"]) {
+        patrol.leash_resume_meters =
+            patrol_node["leash_resume_meters"].as<float>();
+    }
+    return patrol;
 }
 
 AgentChaseTuning chaser_config_from_yaml(
@@ -3620,6 +3668,7 @@ ActorTemplateConfig actor_template_from_yaml(
                 "tick_interval",
                 "sentry",
                 "chaser",
+                "patrol",
             },
             path,
             source_kind,
@@ -3647,6 +3696,8 @@ ActorTemplateConfig actor_template_from_yaml(
         sentry_config_from_yaml(node["ai"], actor_template, weapons, path, source_kind);
     actor_template.chaser =
         chaser_config_from_yaml(node["ai"], actor_template, path, source_kind);
+    actor_template.patrol =
+        patrol_tuning_from_yaml(node["ai"], actor_template, path, source_kind);
     actor_template.vision = vision_config_from_yaml(
         node["vision"],
         actor_template,
@@ -6605,6 +6656,7 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
             "player",
             "enemy",
             "preload_directors",
+            "patrols",
         },
         path,
         source.source_kind(),
@@ -6653,7 +6705,8 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     if (catalog_version != 8u && catalog_version != 9u &&
         catalog_version != 10u && catalog_version != 11u &&
         catalog_version != 12u && catalog_version != 13u &&
-        catalog_version != 14u && catalog_version != 15u) {
+        catalog_version != 14u && catalog_version != 15u &&
+        catalog_version != 16u) {
         throw DataLoadError(
             KERNEL_GAMEPLAY_CATALOG_LOAD_ERROR_UNSUPPORTED_CATALOG_VERSION,
             "unsupported catalog_version: " + std::to_string(catalog_version),
@@ -6828,6 +6881,8 @@ GameServerGameplayConfig load_gameplay_config_from_catalog_source(
     apply_catalog_player_config(document, &config);
     apply_catalog_director_preload_config(document, &config);
     apply_catalog_agent_config(document, &config);
+    apply_catalog_patrol_config(
+        document, &config, path, source.source_kind());
 
     const std::vector<std::string> errors = validate_gameplay_config(config);
     if (!errors.empty()) {
@@ -6892,6 +6947,168 @@ void apply_catalog_director_preload_config(
                 std::to_string(template_id));
         }
         config->preload_director_template_ids.push_back(template_id);
+    }
+}
+
+
+PatrolAreaConfig patrol_area_from_yaml(
+    const YAML::Node& node,
+    const std::string& path,
+    std::uint32_t source_kind) {
+    PatrolAreaConfig area;
+    if (!node) {
+        throw std::runtime_error("patrol requires an area");
+    }
+    reject_unknown_keys(
+        node,
+        {"shape", "center", "radius", "half_extents"},
+        path,
+        source_kind,
+        KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+    const std::string shape =
+        node["shape"] ? node["shape"].as<std::string>() : "circle";
+    if (shape == "rect") {
+        area.shape = PatrolAreaShape::kRect;
+    } else if (shape == "circle") {
+        area.shape = PatrolAreaShape::kCircle;
+    } else {
+        throw std::runtime_error("patrol area shape must be circle or rect");
+    }
+    if (node["center"]) {
+        area.center = vec3_from_yaml(node["center"]);
+    }
+    // A circle says radius and a rect says half_extents. Accepting either key
+    // for either shape would let a rect be authored with one number and quietly
+    // come out with no depth.
+    if (area.shape == PatrolAreaShape::kCircle) {
+        if (!node["radius"]) {
+            throw std::runtime_error("patrol circle area requires radius");
+        }
+        area.half_extents.x = node["radius"].as<float>();
+    } else {
+        if (!node["half_extents"]) {
+            throw std::runtime_error("patrol rect area requires half_extents");
+        }
+        area.half_extents = vec3_from_yaml(node["half_extents"]);
+    }
+    return area;
+}
+
+void apply_catalog_patrol_config(
+    const YAML::Node& document,
+    GameServerGameplayConfig* config,
+    const std::string& path,
+    std::uint32_t source_kind) {
+    const YAML::Node patrols = document["patrols"];
+    if (!patrols) {
+        return;
+    }
+    if (!patrols.IsSequence()) {
+        throw std::runtime_error("patrols must be a sequence");
+    }
+    std::unordered_set<std::uint32_t> configured_ids;
+    for (const YAML::Node& node : patrols) {
+        reject_unknown_keys(
+            node,
+            {
+                "id",
+                "name",
+                "area",
+                "seed",
+                "interval_ticks",
+                "max_live_groups",
+                "count",
+                "composition",
+                "formation_spacing_meters",
+                "advance_speed_meters_per_second",
+                "waypoint_radius_meters",
+            },
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+        PatrolDefinitionConfig patrol;
+        if (!node["id"] || !node["name"]) {
+            throw std::runtime_error("patrol requires id and name");
+        }
+        patrol.id = node["id"].as<std::uint32_t>();
+        patrol.name = node["name"].as<std::string>();
+        if (patrol.id == 0) {
+            throw std::runtime_error("patrol id must not be zero");
+        }
+        if (!configured_ids.insert(patrol.id).second) {
+            throw std::runtime_error(
+                "duplicate patrol id: " + std::to_string(patrol.id));
+        }
+        patrol.area = patrol_area_from_yaml(node["area"], path, source_kind);
+        if (node["seed"]) {
+            patrol.seed = node["seed"].as<std::uint32_t>();
+        }
+        if (node["interval_ticks"]) {
+            patrol.interval_ticks = node["interval_ticks"].as<std::uint32_t>();
+        }
+        if (node["max_live_groups"]) {
+            patrol.max_live_groups = node["max_live_groups"].as<std::uint32_t>();
+        }
+        if (node["formation_spacing_meters"]) {
+            patrol.formation_spacing_meters =
+                node["formation_spacing_meters"].as<float>();
+        }
+        if (node["advance_speed_meters_per_second"]) {
+            patrol.group.advance_speed_meters_per_second =
+                node["advance_speed_meters_per_second"].as<float>();
+        }
+        if (node["waypoint_radius_meters"]) {
+            patrol.group.waypoint_radius_meters =
+                node["waypoint_radius_meters"].as<float>();
+        }
+        const YAML::Node count = node["count"];
+        if (!count) {
+            throw std::runtime_error("patrol requires count");
+        }
+        reject_unknown_keys(
+            count,
+            {"min", "max"},
+            path,
+            source_kind,
+            KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+        if (!count["min"] || !count["max"]) {
+            throw std::runtime_error("patrol count requires min and max");
+        }
+        patrol.count_min = count["min"].as<std::uint32_t>();
+        patrol.count_max = count["max"].as<std::uint32_t>();
+        const YAML::Node composition = node["composition"];
+        if (!composition || !composition.IsSequence()) {
+            throw std::runtime_error("patrol composition must be a sequence");
+        }
+        for (const YAML::Node& entry_node : composition) {
+            reject_unknown_keys(
+                entry_node,
+                {"entity_template", "min", "max"},
+                path,
+                source_kind,
+                KERNEL_GAMEPLAY_CATALOG_TEMPLATE_KIND_CATALOG);
+            if (!entry_node["entity_template"] || !entry_node["min"] ||
+                !entry_node["max"]) {
+                throw std::runtime_error(
+                    "patrol composition entry requires entity_template, min "
+                    "and max");
+            }
+            PatrolCompositionEntry entry;
+            entry.entity_template_ref =
+                entry_node["entity_template"].as<std::string>();
+            entry.entity_template_id = entity_template_ref_from_yaml(
+                entry_node["entity_template"], config->entity_templates);
+            entry.min_count = entry_node["min"].as<std::uint32_t>();
+            entry.max_count = entry_node["max"].as<std::uint32_t>();
+            patrol.composition.push_back(std::move(entry));
+        }
+        // Unsatisfiable here means a catalog that does not load, rather than a
+        // squad that quietly comes out the wrong size at run time.
+        const std::string error = validate_patrol_definition(patrol);
+        if (!error.empty()) {
+            throw std::runtime_error(error + ": " + patrol.name);
+        }
+        config->patrols.push_back(std::move(patrol));
     }
 }
 
@@ -7132,6 +7349,29 @@ std::uint64_t compute_gameplay_catalog_hash(
     for (const std::uint32_t template_id :
          config.preload_director_template_ids) {
         hash_scalar(&hash, template_id);
+    }
+    for (const PatrolDefinitionConfig& patrol : config.patrols) {
+        hash_scalar(&hash, patrol.id);
+        hash_string(&hash, patrol.name);
+        hash_scalar(&hash, static_cast<std::uint32_t>(patrol.area.shape));
+        hash_vec3(&hash, patrol.area.center);
+        hash_vec3(&hash, patrol.area.half_extents);
+        hash_scalar(&hash, patrol.seed);
+        hash_scalar(&hash, static_cast<std::uint32_t>(patrol.trigger));
+        hash_scalar(&hash, patrol.interval_ticks);
+        hash_scalar(&hash, patrol.max_live_groups);
+        hash_scalar(&hash, static_cast<std::uint32_t>(patrol.composition_mode));
+        hash_scalar(&hash, patrol.count_min);
+        hash_scalar(&hash, patrol.count_max);
+        hash_float(&hash, patrol.formation_spacing_meters);
+        hash_float(&hash, patrol.group.advance_speed_meters_per_second);
+        hash_float(&hash, patrol.group.waypoint_radius_meters);
+        for (const PatrolCompositionEntry& entry : patrol.composition) {
+            hash_string(&hash, entry.entity_template_ref);
+            hash_scalar(&hash, entry.entity_template_id);
+            hash_scalar(&hash, entry.min_count);
+            hash_scalar(&hash, entry.max_count);
+        }
     }
     hash_string(&hash, config.static_collision_scene.entry_path);
     hash_scalar(&hash, config.static_collision_scene.scene_id);

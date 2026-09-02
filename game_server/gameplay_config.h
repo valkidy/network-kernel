@@ -11,6 +11,7 @@
 
 #include "game_server/agent_chaser_controller.h"
 #include "game_server/agent_sentry_controller.h"
+#include "game_server/patrol_director.h"
 #include "kernel/public/kernel_types.h"
 
 struct KernelHandle;
@@ -198,6 +199,7 @@ struct ActorTemplateConfig {
     // Only read when ai_controller_type is Chaser; the perception and attack
     // half of a chaser comes from `sentry`.
     AgentChaseTuning chaser{};
+    AgentPatrolTuning patrol{};
     KernelAgentVisionConfig vision{};
     std::uint32_t ai_controller_type = KernelAiControllerType_None;
     std::uint32_t ai_tick_interval = 1;
@@ -358,6 +360,12 @@ struct GameServerGameplayConfig {
     std::vector<ActionTemplateConfig> action_templates;
     PlayerGameplayDefinition player;
     AgentSpawnDefinition agent;
+    // Squads the world produces on its own schedule. Authored at catalog top
+    // level beside `player:` and `enemy:`, because a patrol is game_server
+    // gameplay and never reaches the kernel as a director: the same reason
+    // AgentSentryConfig is authored, validated and hashed here while living
+    // entirely outside the kernel ABI.
+    std::vector<PatrolDefinitionConfig> patrols;
     std::vector<std::uint32_t> preload_director_template_ids;
     std::vector<EntityTemplateConfig> entity_templates;
     std::vector<ActorTemplateConfig> actor_templates;

@@ -69,6 +69,7 @@ AgentRuntimeManager::AgentRuntimeManager(
     GameServerGameplayConfig config)
     : kernel_(kernel), config_(std::move(config)) {
     build_controllers();
+    patrol_director_ = PatrolDirector(config_.patrols);
 }
 
 void AgentRuntimeManager::build_controllers() {
@@ -89,6 +90,7 @@ void AgentRuntimeManager::build_controllers() {
             chaser.sentry =
                 agent_sentry_config(config_, actor_template.actor_template_id);
             chaser.chase = actor_template.chaser;
+            chaser.patrol = actor_template.patrol;
             binding.chaser = AgentChaserController(chaser);
         }
         controllers_.push_back(std::move(binding));
@@ -184,6 +186,11 @@ void AgentRuntimeManager::tick(float delta_seconds) {
         }
     }
 
+    // Ahead of the resync on purpose: the director creates entities, and the
+    // group runtime drops members it cannot find in the agent list. Ticking it
+    // after the resync would drop every member of a squad on the tick it was
+    // spawned.
+    patrol_director_.tick(kernel_, &patrol_groups_);
     sync_agents_from_kernel();
     // Ahead of the controllers, so a member reads the slot its squad wants it
     // in this tick rather than the one from last tick.
@@ -238,6 +245,10 @@ PatrolGroupRuntime& AgentRuntimeManager::patrol_groups() {
 
 const PatrolGroupRuntime& AgentRuntimeManager::patrol_groups() const {
     return patrol_groups_;
+}
+
+const PatrolDirector& AgentRuntimeManager::patrol_director() const {
+    return patrol_director_;
 }
 
 bool AgentRuntimeManager::preload_directors() {
