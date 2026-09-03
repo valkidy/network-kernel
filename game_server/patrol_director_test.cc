@@ -117,6 +117,53 @@ void composition_is_floors_plus_capacity() {
     require(saw_more_brutes);
 }
 
+
+// A narrow band beside a wide one must not saturate. The shipping warband is
+// the shape that exposes it: 1-5 warriors and 6-24 rank and file over a total
+// of 20-24 leaves a remainder of thirteen to seventeen, against four spare
+// warrior slots. Handing that out uniformly among the entries with room filled
+// the warriors to five about 95% of the time, which made `max: 5` read as
+// "always 5". Weighted by remaining room it is roughly 20%.
+//
+// Stated as a band, not a figure: the exact rate is a property of the
+// distribution, and pinning it would be pinning the PRNG stream instead.
+void a_narrow_band_does_not_saturate_beside_a_wide_one() {
+    PatrolDefinitionConfig definition = mixed_definition();
+    definition.count_min = 20;
+    definition.count_max = 24;
+    definition.composition = {
+        PatrolCompositionEntry{"warrior", kBruteEntityTemplateId, 1, 5},
+        PatrolCompositionEntry{"rank_and_file", kGruntEntityTemplateId, 6, 24},
+    };
+    require(network_example::game_server::validate_patrol_definition(definition)
+                .empty());
+
+    constexpr int kDraws = 4000;
+    int at_ceiling = 0;
+    std::array<int, 6> warriors_seen{};
+    for (int draw = 0; draw < kDraws; ++draw) {
+        std::uint64_t state = static_cast<std::uint64_t>(draw) *
+            0x9e3779b97f4a7c15ull;
+        // The same uniform total the director draws.
+        const std::uint32_t count = 20u + static_cast<std::uint32_t>(draw % 5);
+        const std::vector<std::uint32_t> drawn =
+            network_example::game_server::draw_composition(
+                definition, count, &state);
+        require(drawn[0] >= 1u && drawn[0] <= 5u);
+        require(drawn[0] + drawn[1] == count);
+        ++warriors_seen[drawn[0]];
+        at_ceiling += drawn[0] == 5u ? 1 : 0;
+    }
+    const double ceiling_rate =
+        static_cast<double>(at_ceiling) / static_cast<double>(kDraws);
+    require(ceiling_rate > 0.10);
+    require(ceiling_rate < 0.32);
+    // And the whole band is reachable, not just its ends.
+    for (std::size_t warriors = 1; warriors <= 5; ++warriors) {
+        require(warriors_seen[warriors] > 0);
+    }
+}
+
 void an_unsatisfiable_definition_is_rejected() {
     using network_example::game_server::validate_patrol_definition;
 
@@ -877,6 +924,7 @@ void an_unwalkable_area_spawns_nothing() {
 
 int main() {
     composition_is_floors_plus_capacity();
+    a_narrow_band_does_not_saturate_beside_a_wide_one();
     an_unsatisfiable_definition_is_rejected();
     a_formation_ranks_up_behind_the_squad();
     a_patrol_spawns_on_its_interval();

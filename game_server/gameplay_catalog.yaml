@@ -72,12 +72,16 @@ patrols:
     count: {min: 20, max: 24}
     # Floors plus capacity, not a second opinion about the total. Every entry
     # gets its minimum -- 1 warrior and 6 gingerbread, 7 of the 20 -- and the
-    # remainder goes to whoever still has room, one at a time. The floors have
-    # to fit inside the smallest squad (7 <= 20) and the ceilings have to fill
-    # the largest (5 + 24 = 29 >= 24), or the catalog refuses to load.
+    # remainder is handed out one at a time, each unit going to an entry in
+    # proportion to the room it has left. The floors have to fit inside the
+    # smallest squad (7 <= 20) and the ceilings have to fill the largest
+    # (5 + 24 = 29 >= 24), or the catalog refuses to load.
     #
-    # So a squad is mostly gingerbread with a warrior or a few stiffening it,
-    # and never more than five of the heavy ones.
+    # The whole 1-5 band is reachable rather than pinned at its ceiling: four
+    # spare warrior slots against eighteen spare gingerbread ones, dealt into a
+    # remainder of 13 to 17, puts warriors at five about 20% of the time and
+    # spreads the rest across 1 to 4. Widening the gingerbread band, or raising
+    # the total, pushes that number down; narrowing it pushes it up.
     composition:
       - entity_template: gingerbread_warrior
         min: 1

@@ -122,11 +122,19 @@ std::string validate_patrol_definition(const PatrolDefinitionConfig& definition)
 // How many of each composition entry a squad of `count` is made of.
 //
 // The bands are read as floors plus capacity, not as a second opinion about the
-// total: every entry gets its minimum, and what is left over goes to entries
-// still under their maximum, one at a time, chosen by the same stream every
-// other draw comes from. Read any other way, `count: 8-10` with
-// `[A: 2-8, B: 4-20]` is unsatisfiable -- the floors sum to 6 and the ceilings
-// to 28, and neither is 8 to 10.
+// total: every entry gets its minimum, and what is left over is handed out one
+// at a time. Read any other way, `count: 8-10` with `[A: 2-8, B: 4-20]` is
+// unsatisfiable -- the floors sum to 6 and the ceilings to 28, and neither is 8
+// to 10.
+//
+// Each unit of the remainder goes to an entry chosen in proportion to the room
+// it has left, not uniformly among the entries that have any. The difference is
+// not a detail. Uniformly, a narrow band beside a wide one saturates: 1-5
+// warriors next to 6-24 rank and file, over a remainder of thirteen, fills the
+// warriors to five about 95% of the time, so `max` reads as "always". Weighting
+// by remaining room makes the choice equivalent to dealing the remainder into
+// the spare slots uniformly, which makes each entry's count hypergeometric --
+// and the same warriors land on five about 20% of the time.
 std::vector<std::uint32_t> draw_composition(
     const PatrolDefinitionConfig& definition,
     std::uint32_t count,

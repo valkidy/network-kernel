@@ -140,24 +140,29 @@ std::vector<std::uint32_t> draw_composition(
         drawn[index] = definition.composition[index].min_count;
         assigned += drawn[index];
     }
-    // Entries still under their ceiling, rebuilt each time one fills up. A
-    // squad of ten drawn against two entries should be able to come out nine
-    // and one, so the choice has to be over who has room left rather than over
-    // the entry list.
+    // Weighted by the room each entry has left, which is the same thing as
+    // dealing the remainder into the spare slots uniformly. Choosing uniformly
+    // among the entries that have any room instead would let a narrow band
+    // beside a wide one fill up almost every time -- see the header.
     while (assigned < count) {
-        std::vector<std::size_t> candidates;
-        candidates.reserve(definition.composition.size());
-        for (std::size_t index = 0; index < definition.composition.size(); ++index) {
-            if (drawn[index] < definition.composition[index].max_count) {
-                candidates.push_back(index);
-            }
+        std::uint32_t capacity_total = 0;
+        for (std::size_t index = 0; index < drawn.size(); ++index) {
+            capacity_total += definition.composition[index].max_count - drawn[index];
         }
-        if (candidates.empty()) {
+        if (capacity_total == 0) {
             break;
         }
-        const std::size_t pick = static_cast<std::size_t>(
-            next_random(random_state) % candidates.size());
-        ++drawn[candidates[pick]];
+        auto pick = static_cast<std::uint32_t>(
+            next_random(random_state) % capacity_total);
+        for (std::size_t index = 0; index < drawn.size(); ++index) {
+            const std::uint32_t capacity =
+                definition.composition[index].max_count - drawn[index];
+            if (pick < capacity) {
+                ++drawn[index];
+                break;
+            }
+            pick -= capacity;
+        }
         ++assigned;
     }
     return drawn;
