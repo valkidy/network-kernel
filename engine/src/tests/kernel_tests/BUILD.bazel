@@ -316,3 +316,17 @@ cc_test(
         "//engine/src/physics:physics",
     ],
 )
+
+# The same impact, with latency on the link. Manual for the same reason the
+# other benches are: it reports what a policy costs against a link rather than
+# asserting a bound that would not survive a different host.
+cc_test(
+    name = "impact_latency_bench",
+    srcs = ["impact_latency_bench.cc"],
+    tags = ["manual"],
+    deps = [
+        "//engine/src/kernel:kernel",
+        "//engine/src/physics:physics",
+        "//engine/src/transport:transport",
+    ],
+)
