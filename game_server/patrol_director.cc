@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string>
 #include <utility>
 
 #include <spdlog/spdlog.h>
@@ -480,12 +481,24 @@ bool PatrolDirector::spawn_patrol(
     }
     ++runtime->spawn_ordinal;
     ++spawned_group_count_;
+    // The breakdown, not just the total: a mixed composition is drawn per
+    // squad, so "how many of each did this one actually get" is the question an
+    // operator has when a warband reads wrong.
+    std::string composition;
+    for (std::size_t entry = 0; entry < drawn.size(); ++entry) {
+        if (!composition.empty()) {
+            composition += ", ";
+        }
+        composition += definition.composition[entry].entity_template_ref + " x" +
+            std::to_string(drawn[entry]);
+    }
     spdlog::info(
-        "patrol spawned patrol={} group={} members={} from=({}, {}, {}) "
+        "patrol spawned patrol={} group={} members={} [{}] from=({}, {}, {}) "
         "to=({}, {}, {})",
         definition.name,
         group_id,
         member_net_ids.size(),
+        composition,
         route_start.x,
         route_start.y,
         route_start.z,

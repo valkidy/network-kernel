@@ -59,23 +59,40 @@ patrol_budget:
   max_live_agents: 48
 patrols:
   - id: 1
-    name: grunt_sweep
+    name: gingerbread_warband
     area:
       shape: rect
       center: {x: 0.0, y: 0.0, z: 0.0}
       half_extents: {x: 40.0, y: 0.0, z: 40.0}
     seed: 7717
-    # Every 30 s at 30 Hz, and two squads at a time now that a finished squad
-    # retires and gives its place back.
+    # Every 30 s at 30 Hz, and two squads at a time; a finished squad retires
+    # and gives its place back.
     interval_ticks: 900
     max_live_groups: 2
-    count: {min: 4, max: 6}
+    count: {min: 20, max: 24}
+    # Floors plus capacity, not a second opinion about the total. Every entry
+    # gets its minimum -- 1 warrior and 6 gingerbread, 7 of the 20 -- and the
+    # remainder goes to whoever still has room, one at a time. The floors have
+    # to fit inside the smallest squad (7 <= 20) and the ceilings have to fill
+    # the largest (5 + 24 = 29 >= 24), or the catalog refuses to load.
+    #
+    # So a squad is mostly gingerbread with a warrior or a few stiffening it,
+    # and never more than five of the heavy ones.
     composition:
-      - entity_template: chaser_grunt
-        min: 4
-        max: 6
+      - entity_template: gingerbread_warrior
+        min: 1
+        max: 5
+      - entity_template: gingerbread
+        min: 6
+        max: 24
+    # Three abreast, so 24 members stand eight ranks deep -- about 10 m of
+    # column behind the squad's point. The rank width is not authored; it is
+    # kRankWidth in formation_offsets.
     formation_spacing_meters: 1.5
-    advance_speed_meters_per_second: 1.25
+    # Below the slowest member's patrol speed. gingerbread walks at 1.26 m/s
+    # and the warrior at 1.20; a cursor faster than either would leave that
+    # member behind its slot for the whole route.
+    advance_speed_meters_per_second: 0.9
     waypoint_radius_meters: 0.5
     # Ten seconds standing at the end of the route before the squad goes, so it
     # does not vanish in front of whoever walked it down.
