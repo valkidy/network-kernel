@@ -392,6 +392,29 @@ cc_test(
 )
 
 cc_test(
+    name = "shipping_catalog_flow_test",
+    srcs = ["shipping_catalog_flow_test.cc"],
+    data = glob([
+        "action_graph_templates/*.yaml",
+        "action_templates/*.yaml",
+        "collider_templates/*.yaml",
+        "entity_templates/*.yaml",
+        "item_templates/*.yaml",
+        "projectile_templates/*.yaml",
+        "weapon_templates/*.yaml",
+    ]) + [
+        "gameplay_catalog.yaml",
+        "//game_server/skeleton_assets:simplified_biped_assets",
+        "//game_server/skeleton_assets:simplified_quadruped_assets",
+        "//game_server/skeleton_assets:simplified_tripod_assets",
+    ],
+    deps = [
+        ":game_server",
+        "//engine/src/kernel:kernel",
+    ],
+)
+
+cc_test(
     name = "agent_sentry_per_agent_config_test",
     srcs = ["agent_sentry_per_agent_config_test.cc"],
     data = glob([

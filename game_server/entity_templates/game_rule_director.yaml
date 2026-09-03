@@ -21,29 +21,25 @@ director:
         condition:
           type: player_count_at_least
           count: 1
-        next: [wave_1]
-      - id: wave_1
+        next: [clear_the_nests]
+      # The objective is the nests themselves. Placing them here and waiting on
+      # the same group being eliminated is the whole mission: three things in
+      # the world, each putting gingerbread out until it is destroyed.
+      #
+      # Nothing special connects the two halves. The mission rule spawns props
+      # and waits for them to die, which it could already do; each prop carries
+      # its own spawner, which needs nothing from the mission rule. A nest is a
+      # group member and a spawner at once because those are separate concerns
+      # that happen to meet on one entity.
+      - id: clear_the_nests
         on_activate:
           - type: spawn_group
-            group: wave_1
-            count: 1
-            entity_template: grenade_sentry
-            position: {x: 1.0, y: 1.0, z: 0.0}
-            radius: 0.0
+            group: nests
+            count: 3
+            entity_template: gingerbread_nest
+            position: {x: 0.0, y: 0.0, z: 0.0}
+            radius: 30.0
             seed: 4242
         condition:
           type: group_eliminated
-          group: wave_1
-        next: [wave_2]
-      - id: wave_2
-        on_activate:
-          - type: spawn_group
-            group: wave_2
-            count: 1
-            entity_template: tripod_actor
-            position: {x: 0.0, y: 10.0, z: 0.0}
-            radius: 10.0
-            seed: 4242
-        condition:
-          type: group_eliminated
-          group: wave_2
+          group: nests

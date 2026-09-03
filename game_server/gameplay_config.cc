@@ -4948,18 +4948,27 @@ std::vector<EntityTemplateConfig> load_entity_templates_from_source(
             const YAML::Node ref(node.spawn_entity_template_ref);
             node.spawn_entity_template_id =
                 entity_template_ref_from_yaml(ref, entity_templates);
+            // Not "must be an agent". A mission can legitimately place
+            // something destructible as the objective itself -- a nest, a
+            // fabricator, a generator -- and those are props. Two things it
+            // must be: destructible, since the node waits on the group being
+            // eliminated and a member with no health would stall the mission
+            // for ever with nothing to say why; and not a player, which has
+            // health and is still never a thing a wave spawns.
             const auto actor_match = std::find_if(
                 entity_templates.begin(),
                 entity_templates.end(),
                 [&](const EntityTemplateConfig& candidate) {
                     return candidate.actor_template_id ==
                                node.spawn_entity_template_id &&
-                           candidate.entity_type == KernelEntityType_Actor &&
-                           candidate.actor_type == KernelActorType_Agent;
+                           candidate.health.max_hp > 0u &&
+                           !(candidate.entity_type == KernelEntityType_Actor &&
+                             candidate.actor_type == KernelActorType_Player);
                 });
             if (actor_match == entity_templates.end()) {
                 throw std::runtime_error(
-                    "game_rule spawn_group entity_template must reference an agent actor: " +
+                    "game_rule spawn_group entity_template must reference "
+                    "something destructible that is not a player: " +
                     entity_template.name);
             }
         }
